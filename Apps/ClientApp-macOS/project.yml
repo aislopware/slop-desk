@@ -1,0 +1,59 @@
+# XcodeGen spec for the Rwork macOS client app.
+#
+# This project.yml is the SOURCE OF TRUTH; the generated `.xcodeproj` is gitignored
+# (regenerate with: `xcodegen generate --spec Apps/ClientApp-macOS/project.yml`).
+#
+# The app target depends on the LOCAL SwiftPM package product `RworkClientUI` (which
+# transitively pulls RworkClient/RworkInspector/RworkClaudeCode/RworkTerminal). The `@main`
+# entry is `Apps/Shared/AppMain.swift` → `RworkClientApp` (in the library).
+#
+# The libghostty `GhosttyTerminalView` (Metal + GhosttySurface) is added once the
+# xcframework exists (see Apps/Shared/AppMain.swift wiring notes + ThirdParty/ghostty/README);
+# until then the BUILD-STATUS placeholder renders (libghostty-only policy, no fallback).
+name: ClientApp-macOS
+options:
+  bundleIdPrefix: com.rwork
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+packages:
+  Rwork:
+    # The local SwiftPM package at the repo root (two levels up from this spec).
+    path: ../..
+
+targets:
+  ClientApp-macOS:
+    type: application
+    platform: macOS
+    sources:
+      - path: ../Shared
+    dependencies:
+      - package: Rwork
+        product: RworkClientUI
+    info:
+      path: Info.plist
+      properties:
+        LSMinimumSystemVersion: "14.0"
+        NSHighResolutionCapable: true
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+    entitlements:
+      path: ClientApp-macOS.entitlements
+      properties:
+        # The macOS CLIENT is a viewer: connects out over (NetBird) network + renders bytes.
+        # No Accessibility / CGEvent / screen-capture (those are PATH 2 HOST concerns, doc 06)
+        # → sandboxed with only an outbound network-client entitlement.
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rwork.client.macos
+        PRODUCT_NAME: Rwork
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_STYLE: Automatic
+        # Best-effort builds in CI / this environment run unsigned:
+        #   xcodebuild build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO

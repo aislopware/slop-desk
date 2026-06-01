@@ -12,6 +12,12 @@ xcuserdata/
 # macOS
 .DS_Store
 
+# WF-8 Xcode app projects — generated from the committed project.yml (source of truth).
+# Regenerate with: xcodegen generate --spec Apps/<App>/project.yml
+# The .xcodeproj is derived; the project.yml + sources + Info.plist + entitlements are
+# the committed deliverable.
+Apps/**/*.xcodeproj
+
 # NOTE: Package.resolved is intentionally NOT ignored — pin the dependency graph.
 
 # WF-5 libghostty build infra — derived / large artifacts (the SCRIPT is committed;

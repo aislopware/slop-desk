@@ -23,6 +23,7 @@ let package = Package(
         .library(name: "RworkTTY", targets: ["RworkTTY"]),
         .library(name: "RworkInspector", targets: ["RworkInspector"]),
         .library(name: "RworkClaudeCode", targets: ["RworkClaudeCode"]),
+        .library(name: "RworkClientUI", targets: ["RworkClientUI"]),
     ],
     targets: [
         // MARK: Libraries
@@ -69,6 +70,28 @@ let package = Package(
         // launch env + auth resolution live in RworkHost (macOS, the WF-7 seam).
         .target(name: "RworkClaudeCode", dependencies: ["RworkProtocol"]),
 
+        // Cross-platform SwiftUI client UI (WF-8): the views + @MainActor @Observable
+        // view-models that bind the existing modules — RworkClient (byte pipeline +
+        // reconnect), RworkInspector (read-only structured panel), RworkClaudeCode
+        // (input-box A/B1 affordance), RworkTerminal (the renderer SEAM) — into a
+        // working client. Builds for macOS 14 + iOS 17.
+        //
+        // The terminal pixels are a SEAM (`TerminalRenderingView`): production =
+        // `GhosttyTerminalView` (Metal-hosted `GhosttySurface`, the gated binding under
+        // ThirdParty/ghostty/integration, compiled only inside the Xcode app target with
+        // the xcframework); the no-framework case shows a labelled BUILD-STATUS
+        // placeholder — NOT a substitute VT renderer (libghostty-only policy, DECISIONS).
+        //
+        // The iOS UIKit native-feel table-stakes (doc 17 §2.5) live here too: all
+        // timing/threshold/mapping LOGIC is in pure, `#if`-unguarded types
+        // (`KeyRepeater`/`FloatingCursorMapping`/`KeyboardAccessoryDecision`/`InputRouting`)
+        // unit-tested on macOS; the UIKit view wrappers that drive them are `#if os(iOS)`
+        // and are typechecked via an iOS-triple build.
+        .target(
+            name: "RworkClientUI",
+            dependencies: ["RworkClient", "RworkInspector", "RworkClaudeCode", "RworkTerminal"]
+        ),
+
         // MARK: Executables
 
         // Headless host daemon (PTY + transport). Sources under Sources/rwork-hostd.
@@ -99,6 +122,16 @@ let package = Package(
         .testTarget(
             name: "RworkClaudeCodeTests",
             dependencies: ["RworkClaudeCode", "RworkHost", "RworkProtocol"]
+        ),
+        // WF-8 client UI: the iOS table-stakes PURE logic (key-repeat cadence via an
+        // injected scheduler, floating-cursor delta→arrow mapping, accessory-bar show/hide
+        // decision, IME-vs-key routing) + the view-model state transitions on RworkClient
+        // events (driven by an in-process stub client over loopback). Deterministic, runs
+        // on macOS — the UIKit view wrappers are iOS-gated and typechecked via the iOS
+        // triple build, not here.
+        .testTarget(
+            name: "RworkClientUITests",
+            dependencies: ["RworkClientUI", "RworkClient", "RworkHost", "RworkInspector", "RworkClaudeCode", "RworkTerminal"]
         ),
     ]
 )

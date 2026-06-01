@@ -1,0 +1,61 @@
+# XcodeGen spec for the Rwork iOS client app.
+#
+# This project.yml is the SOURCE OF TRUTH; the generated `.xcodeproj` is gitignored
+# (regenerate with: `xcodegen generate --spec Apps/ClientApp-iOS/project.yml`).
+#
+# The app target depends on the LOCAL SwiftPM package product `RworkClientUI`, which carries
+# the iOS UIKit native-feel table-stakes (KeyRepeater / IMEProxyTextView /
+# FloatingCursorController / KeyboardAccessoryBar — doc 17 §2.5). The `@main` entry is
+# `Apps/Shared/AppMain.swift` → `RworkClientApp`.
+#
+# The libghostty `GhosttyTerminalView` is added once the xcframework exists; until then the
+# BUILD-STATUS placeholder renders (libghostty-only policy, no fallback VT engine).
+name: ClientApp-iOS
+options:
+  bundleIdPrefix: com.rwork
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+packages:
+  Rwork:
+    path: ../..
+
+targets:
+  ClientApp-iOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: ../Shared
+    dependencies:
+      - package: Rwork
+        product: RworkClientUI
+    info:
+      path: Info.plist
+      properties:
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+    # iOS apps are not App-Sandboxed via entitlement keys and have network access by
+    # default; the byte pipeline pauses on background + resumes byte-exact on foreground
+    # (RworkClient.pause()/resume()), so no persistent background mode is declared. No
+    # custom entitlements needed for the standard client.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rwork.client.ios
+        PRODUCT_NAME: Rwork
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        # Best-effort builds run unsigned for an iOS Simulator destination:
+        #   xcodebuild build -destination 'generic/platform=iOS Simulator' \
+        #     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
