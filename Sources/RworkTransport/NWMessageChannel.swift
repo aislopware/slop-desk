@@ -94,12 +94,18 @@ public actor NWMessageChannel: MessageChannel {
 
     /// Frames and writes one message. Suspends until the OS accepts the bytes; throws
     /// on send failure or if the connection is not usable.
+    ///
+    /// A `.cancelled`/`.failed` channel fails fast with a typed ``RworkTransportError/notConnected``
+    /// *before* touching `NWConnection.send`, so a caller (e.g. the host relay) can tell
+    /// "the channel is gone" apart from a genuine transient send error — and treat the
+    /// former as the client going offline rather than a fatal fault. See the reconnect
+    /// race in ``HostSessionTransport/sendOutput(_:)``.
     public func send(_ message: WireMessage) async throws {
         switch state {
         case .failed(let reason):
-            throw RworkTransportError.connectionFailed(reason)
+            throw RworkTransportError.notConnected(reason)
         case .cancelled:
-            throw RworkTransportError.connectionFailed("cancelled")
+            throw RworkTransportError.notConnected("cancelled")
         case .setup, .ready:
             break
         }
@@ -203,6 +209,11 @@ public actor NWMessageChannel: MessageChannel {
 public enum RworkTransportError: Error, Equatable, Sendable {
     /// The underlying `NWConnection` failed or was cancelled before/while in use.
     case connectionFailed(String)
+    /// A send was attempted on a channel that is already `.cancelled`/`.failed` (the
+    /// channel is gone, not a transient send fault). Distinct from ``sendFailed(_:)`` so
+    /// the relay can treat it as "client offline → replay on next reconnect" rather than
+    /// a fatal error.
+    case notConnected(String)
     /// `NWConnection.send` reported an error.
     case sendFailed(String)
     /// `NWConnection.receive` reported an error.

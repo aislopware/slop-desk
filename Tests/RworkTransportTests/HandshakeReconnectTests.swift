@@ -276,7 +276,15 @@ final class HandshakeReconnectTests: XCTestCase {
         //    (un-acked but already-received) output is re-sent. Prove it by sending one
         //    live output and asserting the FIRST thing the client sees is the live
         //    seq N+1 — never a duplicate of any seq <= N.
-        let liveSeq = try await session.sendOutput(Data("after-resume\n".utf8))
+        //
+        //    This is the empty-tail case: `after-resume` is the FIRST send on the freshly
+        //    associated data channel (no replay loop preceded it to let the channel
+        //    settle). On loopback the prior connection's connect/close churn can drive the
+        //    new channel to `.cancelled` right after it reaches `.ready` — the production
+        //    fix retains the bytes and marks the client offline rather than throwing, but
+        //    in this single-shot test we want the live send to actually land, so retry the
+        //    first post-resume send until it reaches a genuinely-ready channel.
+        let liveSeq = try await sendOutputWhenReady(session, Data("after-resume\n".utf8))
         XCTAssertEqual(liveSeq, Int64(n + 1))
 
         let first = try await nextInbound(client2)
@@ -345,6 +353,27 @@ final class HandshakeReconnectTests: XCTestCase {
     }
 
     // MARK: Helpers
+
+    /// Sends one live `output` only once the session's freshly-rebound data channel has
+    /// settled at `.ready`, so the empty-tail "first post-resume send" cannot race the
+    /// loopback connect/close churn that can drive the new channel to `.cancelled` right
+    /// after it reaches `.ready`. Polls readiness before the single send; throws if the
+    /// channel never settles (or goes offline) within the bound.
+    private func sendOutputWhenReady(
+        _ session: HostSessionTransport,
+        _ bytes: Data,
+        timeout: Duration = .seconds(5)
+    ) async throws -> Int64 {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while ContinuousClock.now < deadline {
+            if await session.dataChannelState == .ready { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard await session.dataChannelState == .ready else {
+            throw RworkTransportError.timedOut("data channel never reached .ready post-resume")
+        }
+        return try await session.sendOutput(bytes)
+    }
 
     /// Polls `condition` until true or `timeout`, with a small sleep between tries.
     private func waitUntil(timeout: Duration, _ condition: @Sendable () async -> Bool) async throws {

@@ -256,17 +256,31 @@ public actor ClientTransport {
     }
 
     private func startDataForwarding(from channel: NWMessageChannel) {
-        let continuation = inboundContinuation
-        let task = Task {
+        let task = Task { [weak self] in
+            guard let self else { return }
             do {
                 for try await message in channel.inbound {
-                    continuation.yield(message)
+                    await self.yieldInbound(message)
                 }
+                // Symmetric with the control forwarder: a CLEAN finish (FIN / a channel
+                // cancelled during the reconnect race) must ALSO terminate the merged
+                // inbound. NWMessageChannel.finish() carries no error on a clean cancel, so
+                // without this the data forwarder's loop would end silently and the merged
+                // `inbound` would stay open forever — RworkClient.handleStreamEnded would
+                // never run, no `.disconnected` would surface, and ReconnectManager would
+                // never fire (the client would silently stall with no output/recovery).
+                await self.finishInbound(error: nil)
             } catch {
-                continuation.finish(throwing: error)
+                await self.finishInbound(error: error)
             }
         }
         forwarders.append(task)
+    }
+
+    /// Actor-isolated yield into the merged inbound (so the data forwarder hops onto the
+    /// actor for both yield and finish, keeping ordering well-defined).
+    private func yieldInbound(_ message: WireMessage) {
+        inboundContinuation.yield(message)
     }
 
     // MARK: Outbound (client → host)

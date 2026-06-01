@@ -202,6 +202,16 @@ public actor RworkClient {
         }
     }
 
+    /// Test-only seam: drive one inbound `WireMessage` through the exact same handling
+    /// path the live inbound pump uses (dedup + contiguous tracking + surface/event
+    /// fan-out), without standing up a real ``ClientTransport``. `internal`, reached via
+    /// `@testable import` — this is the only way to prove the client-side dedup high-water
+    /// mark independent of host replay behavior (the host always keys replay off
+    /// `lastReceivedSeq`, so an e2e never feeds an already-fed seq).
+    func _handleInboundForTesting(_ message: WireMessage) {
+        handleInbound(message)
+    }
+
     private func handleInbound(_ message: WireMessage) {
         switch message {
         case let .output(seq, bytes):

@@ -115,10 +115,49 @@ public actor HostSessionTransport {
         // next reconnect replays it anyway.)
         if isResuming { return seq }
         if let dataChannel {
-            try await dataChannel.send(.output(seq: seq, bytes: bytes))
-            highestSentSeq = max(highestSentSeq, seq)
+            do {
+                try await dataChannel.send(.output(seq: seq, bytes: bytes))
+                highestSentSeq = max(highestSentSeq, seq)
+            } catch {
+                // The freshly-rebound data channel can lose to the reconnect race: it
+                // reaches `.ready` (resume's waitUntilReady returned) but is then driven
+                // to `.cancelled` before/at this first live send (POSIX 89 "operation
+                // canceled"). The bytes are already retained in the ReplayBuffer, so they
+                // replay on the next reconnect — we must NOT surface this as a fatal send
+                // fault. If the channel is genuinely gone, mark the client offline and
+                // drop it so the offline gate engages and the next resume rebinds cleanly;
+                // a real send error on a still-live channel is re-thrown.
+                if await isChannelDown(dataChannel) {
+                    clearDataChannelOffline(dataChannel)
+                    return seq
+                }
+                throw error
+            }
         }
         return seq
+    }
+
+    /// True if `channel`'s current state is `.cancelled`/`.failed` (the channel is gone).
+    /// Re-reads state after a thrown send so ``sendOutput(_:)``/``sendExit(code:)`` can
+    /// distinguish channel death (NWMessageChannel's `notConnected` fast-fail, or an
+    /// in-flight send that lost to a concurrent cancel) from a transient send error on a
+    /// still-live channel.
+    private func isChannelDown(_ channel: NWMessageChannel) async -> Bool {
+        switch await channel.currentState {
+        case .cancelled, .failed:
+            return true
+        case .setup, .ready:
+            return false
+        }
+    }
+
+    /// Marks the client offline and clears the (now-dead) data channel, but only if it is
+    /// still the bound one (a concurrent ``resume`` may have already swapped in a fresh
+    /// channel — in that case we must not clobber it).
+    private func clearDataChannelOffline(_ deadChannel: NWMessageChannel) {
+        guard dataChannel === deadChannel else { return }
+        setClientOnline(false)
+        dataChannel = nil
     }
 
     /// Sends a control message (`title`/`bell`/`exit`-as-control is not used; `exit`
@@ -145,7 +184,18 @@ public actor HostSessionTransport {
         // Throwing here would only be swallowed by the relay's `try?` and lose nothing,
         // but recording-and-returning makes the offline-exit path explicit.
         guard let dataChannel else { return }
-        try await dataChannel.send(.exit(code: code))
+        do {
+            try await dataChannel.send(.exit(code: code))
+        } catch {
+            // Same reconnect-race handling as live output: if the channel is gone, the
+            // recorded exit code replays after the tail on the next resume — don't surface
+            // a fatal send fault. A real send error on a live channel is re-thrown.
+            if await isChannelDown(dataChannel) {
+                clearDataChannelOffline(dataChannel)
+                return
+            }
+            throw error
+        }
     }
 
     // MARK: Reconnect support
@@ -171,6 +221,13 @@ public actor HostSessionTransport {
 
     /// The highest seq assigned so far.
     public var highestSeq: Int64 { replay.highestSeq }
+
+    /// The bound data channel's current state, or `nil` if no data channel is bound.
+    /// Internal (not public): used by transport tests to poll for `.ready` before the
+    /// first post-resume send so the assertion does not race the loopback teardown churn.
+    var dataChannelState: NWMessageChannel.State? {
+        get async { await dataChannel?.currentState }
+    }
 
     /// Snapshot of whether the PTY drain should currently be paused.
     public var shouldPauseDrain: Bool { replay.shouldPauseDrain }

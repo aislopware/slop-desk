@@ -87,6 +87,14 @@ public final class HostSession: @unchecked Sendable {
         self.outputContinuation = continuation
         outputTask = Task {
             for await chunk in outputStream {
+                // `sendOutput` itself handles channel death: if the data channel is gone
+                // (cancelled/failed — e.g. the reconnect race) it retains the bytes for
+                // replay AND flips the client offline (engaging the ReplayBuffer offline
+                // gate) instead of throwing, so a transient channel hiccup no longer
+                // silently relies on a future reconnect — the gate backpressures the PTY
+                // and the next resume replays the tail. The `try?` therefore only swallows
+                // a genuine transient send error on a still-live channel (the bytes stay
+                // retained and replay on reconnect either way).
                 _ = try? await transport.sendOutput(chunk)
             }
         }

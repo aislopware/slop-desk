@@ -157,18 +157,63 @@ let exitState = ExitState()
 // signal handlers, and the explicit restore on disconnect/exit.
 if interactive {
     do {
-        try TerminalRawMode.enableRaw(fd: STDIN_FILENO)
+        // Install the restoring handlers FIRST (they are a no-op while raw mode is not
+        // yet active), then apply raw attributes. This closes the enable-time window where
+        // a SIGTERM/SIGHUP arriving after tcsetattr(raw) took effect but before a handler
+        // existed would kill the process with the terminal left in raw mode.
         TerminalRawMode.installRestoreOnSignals()
+        try TerminalRawMode.enableRaw(fd: STDIN_FILENO)
     } catch {
         stderrLine("could not enter raw mode: \(error)")
         exit(1)
     }
 }
 
+/// Coordinates a deterministic shutdown so `finish()` stops the foreign producers (the
+/// dedicated stdin read thread and the SIGWINCH `DispatchSource`) BEFORE it flips the tty
+/// back to cooked mode and calls `exit()`. Without this, `restore()`'s `tcsetattr` runs
+/// while the input thread is mid-`read(STDIN_FILENO)` on the same fd, and `exit()` runs
+/// process-wide teardown concurrently with a live foreign thread still touching stdin — a
+/// genuine data race that can also swallow a stray keystroke.
+///
+/// `shuttingDown` is a `sig_atomic_t` the input thread re-checks after an interrupted
+/// read so it returns instead of issuing another `read`. Closing STDIN makes any in-flight
+/// blocking `read` return immediately.
+final class Shutdown: @unchecked Sendable {
+    private let lock = NSLock()
+    private var winchSource: DispatchSourceSignal?
+    private var didStop = false
+    var shuttingDown: sig_atomic_t = 0
+
+    func register(winchSource: DispatchSourceSignal) {
+        lock.lock(); self.winchSource = winchSource; lock.unlock()
+    }
+
+    /// Stop the producers deterministically. Idempotent. Called by `finish()` before the
+    /// final tty restore so `restore()` is guaranteed to be the last tty mutation.
+    func stopProducers() {
+        lock.lock()
+        if didStop { lock.unlock(); return }
+        didStop = true
+        let source = winchSource
+        winchSource = nil
+        lock.unlock()
+
+        shuttingDown = 1
+        source?.cancel()
+        // Wake the blocked stdin read so the input thread observes `shuttingDown` and
+        // returns instead of consuming/losing a stray keystroke during teardown.
+        close(STDIN_FILENO)
+    }
+}
+let shutdown = Shutdown()
+
 /// Restore the terminal and exit with `code`. Centralizes the "never leave the terminal
 /// corrupted" guarantee for the normal/disconnect exit paths (signals are covered by
-/// `installRestoreOnSignals`).
+/// `installRestoreOnSignals`). Stops the foreign producers first so `restore()` is the
+/// final tty mutation and no live thread is touching stdin as the process exits.
 func finish(_ code: Int32) -> Never {
+    shutdown.stopProducers()
     TerminalRawMode.restore()
     exit(code)
 }
@@ -179,6 +224,7 @@ let resizeBridge = ResizeBridge()
 signal(SIGWINCH, SIG_IGN)
 let winchSource = DispatchSource.makeSignalSource(signal: SIGWINCH, queue: .global())
 winchSource.setEventHandler { resizeBridge.signal() }
+shutdown.register(winchSource: winchSource)
 winchSource.resume()
 
 // The main driver task: connect, wire the relay, and run until exit/disconnect.
@@ -262,6 +308,13 @@ Task {
     let inputThread = Thread {
         var buf = [UInt8](repeating: 0, count: 4096)
         while true {
+            // If a shutdown began (finish() closed STDIN), return without issuing another
+            // read so we never touch the fd while the tty is being restored.
+            if shutdown.shuttingDown != 0 {
+                inputChunksCont.finish()
+                stdinDoneCont.yield(()); stdinDoneCont.finish()
+                return
+            }
             let n = read(STDIN_FILENO, &buf, buf.count)
             if n > 0 {
                 let slice = Data(buf[0..<n])
@@ -281,7 +334,10 @@ Task {
                 stdinDoneCont.yield(()); stdinDoneCont.finish()
                 return
             } else {
-                if errno == EINTR { continue }
+                // EINTR during normal operation: retry. But if a shutdown began (STDIN was
+                // closed by finish()), the read will fail with EBADF/EINTR — re-check the
+                // flag and return rather than spinning or re-reading a closed/cooked fd.
+                if errno == EINTR, shutdown.shuttingDown == 0 { continue }
                 inputChunksCont.finish()
                 stdinDoneCont.yield(()); stdinDoneCont.finish()
                 return

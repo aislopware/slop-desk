@@ -49,6 +49,32 @@ swift test
 Both run headless — no GUI, no libghostty, no signing required for the core libraries,
 CLIs, and tests.
 
+## Running the client (`rwork-client`)
+
+`rwork-client` is the interactive terminal client. Point it at a running `rwork-hostd`:
+
+```sh
+rwork-client --host <host> --port <port> [--no-raw]
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--host`, `-h` | Host running `rwork-hostd`. |
+| `--port`, `-p` | TCP port `rwork-hostd` listens on. |
+| `--no-raw` | Do not put the local terminal in raw mode (use for pipes / scripting). |
+
+In interactive mode (stdin is a TTY and `--no-raw` is not set) the local terminal is put
+into raw mode and every keystroke — **including `Ctrl-C`** — is forwarded to the remote
+shell as a raw byte (the remote line discipline raises `SIGINT` there, not locally).
+
+Because `Ctrl-C` is passed through, the only **local** escape is the disconnect key:
+
+> **`Ctrl-]`** — cleanly disconnects, restores the terminal, and exits `0`.
+
+The terminal is always restored on exit (normal exit, disconnect key, and
+`SIGINT`/`SIGTERM`/`SIGQUIT`/`SIGHUP`), so a wedged session never leaves the terminal in
+raw mode. (This is the same disconnect key as the `--help` text; keep the two in sync.)
+
 ## License
 
 [MIT](LICENSE)
