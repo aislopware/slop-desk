@@ -120,6 +120,13 @@ public struct SubagentNode: Sendable, Equatable, Codable {
     /// The subagent id (`agentId` on its sidechain lines, or hook `agent_id`).
     public var id: String
     /// Parent: `nil` = attached directly under the main session.
+    ///
+    /// **Unsourced today.** No documented Claude Code signal in the doc-16 corpus
+    /// carries a cross-file parent link (the `SubagentStop` hook has no
+    /// `parent_agent_id`; sidechain lines carry only intra-file `parentUuid`). So in
+    /// practice this stays `nil` and the tree is flat. The field is kept for when a real
+    /// linkage source lands (e.g. correlating the parent session's `Task` `tool_use` id);
+    /// see ``InspectorViewModel/subagentTree``.
     public var parentID: String?
     /// e.g. "Ariadne", "general-purpose" — from the `.meta.json` / hook `agent_type`.
     public var agentType: String?

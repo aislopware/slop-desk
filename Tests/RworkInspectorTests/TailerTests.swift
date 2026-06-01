@@ -125,6 +125,37 @@ final class TailerTests: XCTestCase {
         XCTAssertEqual(uuids, ["1", "2", "3"], "every line once, in order; partial held until newline")
     }
 
+    func testTailerDetectsRotationToSameOrLargerFile() async throws {
+        // Rotation where the NEW file is >= the consumed offset: a size-only check would
+        // read from the stale offset into the new file and lose its prefix. Identity
+        // (inode) detection must reset and read the new file from the top.
+        let url = makeTempFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        // Old file: one short line (consumes a small offset).
+        try Self.append(#"{"type":"user","uuid":"old","message":{"role":"user","content":"x"}}"# + "\n", to: url)
+
+        let tailer = TranscriptTailer(path: url.path, pollInterval: .milliseconds(20))
+
+        let lines = await collect(tailer, count: 3, producing: {
+            try? await Task.sleep(for: .milliseconds(80))
+            // Rotate: remove the old file and create a FRESH (different inode) one whose
+            // first line, on its own, already exceeds the old byte count.
+            try? FileManager.default.removeItem(at: url)
+            let newFirst = #"{"type":"user","uuid":"new1","message":{"role":"user","content":"a longer first line of the rotated file"}}"# + "\n"
+            FileManager.default.createFile(atPath: url.path, contents: Data(newFirst.utf8))
+            try? await Task.sleep(for: .milliseconds(80))
+            try? Self.append(#"{"type":"user","uuid":"new2","message":{"role":"user","content":"y"}}"# + "\n", to: url)
+        })
+
+        let uuids = lines.compactMap { line -> String? in
+            if case let .user(u) = line { return u.identity.uuid }
+            return nil
+        }
+        // The rotated file's PREFIX line ("new1") must not be lost.
+        XCTAssertEqual(uuids, ["old", "new1", "new2"],
+                       "rotation to a same-or-larger file resets via inode identity; no prefix lost")
+    }
+
     func testTailerToleratesMissingFileThenAppears() async throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("rwork-late-\(UUID().uuidString).jsonl")

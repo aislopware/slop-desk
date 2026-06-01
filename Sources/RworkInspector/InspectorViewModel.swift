@@ -84,6 +84,15 @@ public final class InspectorViewModel {
 
     /// The subagent tree as roots + children, sorted by id for stable rendering. (Sort
     /// in-level — doc 16: subagent ordering is async; sort within a level, not globally.)
+    ///
+    /// **In practice this is flat today.** Nesting is keyed off ``SubagentNode/parentID``,
+    /// and no documented Claude Code signal in the doc-16 corpus carries a cross-file
+    /// parent link (the `SubagentStop` hook has no `parent_agent_id`; sidechain lines
+    /// only carry intra-file `parentUuid`). So every node currently has `parentID == nil`
+    /// and attaches directly under the main session — a single flat level. The recursive
+    /// build is retained so that when a real parent-linkage source lands (e.g. correlating
+    /// the parent session's `Task` `tool_use` id), nesting works without an API change;
+    /// it is not a claim that nested data exists today.
     public var subagentTree: [SubagentTreeNode] {
         let all = Array(subagents.values)
         let byParent = Dictionary(grouping: all) { $0.parentID ?? "" }

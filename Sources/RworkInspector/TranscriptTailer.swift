@@ -15,9 +15,15 @@ import Foundation
 ///   anyway, and we'd still have to read the delta) and cannot double-emit (the offset
 ///   only ever advances past bytes we've turned into complete lines).
 ///
-/// **Truncation / rotation** is handled defensively: if the file's size is *smaller*
-/// than our last offset, the file was truncated or rotated, so we reset the offset to
-/// 0 and the accumulator (dropping any stale half-line) and re-read from the top.
+/// **Truncation / rotation** is handled defensively in two ways: (1) if the file's
+/// size is *smaller* than our last offset, it was truncated/rotated-to-smaller, so we
+/// reset the offset to 0 and the accumulator (dropping any stale half-line) and re-read
+/// from the top; (2) we remember the file's identity (device + inode) the first time we
+/// see it and, on every poll, compare it — if the identity changes (the path now names
+/// a *different* file, e.g. `mv old old.1` then a fresh file is created at `old`), we
+/// reset too, *regardless of size*. Identity-based detection catches same-or-larger
+/// rotation that a size-only check silently mis-reads as an append (reading from the
+/// stale offset into the new file and losing its prefix).
 ///
 /// **Path discovery.** Production discovers the path from a `SessionStart` hook's
 /// `transcript_path` (doc 16 — we never reconstruct it from `cwd`). For the model we
@@ -35,6 +41,18 @@ public actor TranscriptTailer {
     private var offset: UInt64 = 0
     private var accumulator = LineAccumulator()
     private var stopped = false
+    /// The (device, inode) of the file behind `url` the last time we read it. `nil`
+    /// until the file first exists. A change means the path now names a different file
+    /// (rotation), so we must reset even if the new file is the same size or larger.
+    private var identity: FileIdentity?
+
+    /// A file's on-disk identity: same path can point at different files over time
+    /// (rotation), and the same file can be reached by different paths — `(dev, ino)`
+    /// is the stable identity.
+    private struct FileIdentity: Equatable {
+        let device: UInt64
+        let inode: UInt64
+    }
 
     public init(
         path: String,
@@ -99,10 +117,21 @@ public actor TranscriptTailer {
         }
         defer { try? handle.close() }
 
+        // Read identity from the open descriptor so size + identity refer to the same
+        // file even if it is rotated mid-poll.
+        let currentIdentity = fileIdentity(of: handle)
+        if let currentIdentity, let identity, currentIdentity != identity {
+            // The path now names a *different* file (rotation): restart from the top,
+            // drop the stale half-line — even if the new file is the same size or larger.
+            offset = 0
+            accumulator.reset()
+        }
+        if let currentIdentity { identity = currentIdentity }
+
         let size = (try? handle.seekToEnd()) ?? 0
 
         if size < offset {
-            // Truncated or rotated: restart from the top, drop the stale half-line.
+            // Truncated or rotated-to-smaller: restart from the top, drop the half-line.
             offset = 0
             accumulator.reset()
         }
@@ -120,5 +149,13 @@ public actor TranscriptTailer {
         guard !data.isEmpty else { return [] }
         offset += UInt64(data.count)
         return accumulator.append(data)
+    }
+
+    /// The `(device, inode)` of an open file descriptor via `fstat`, or `nil` on error.
+    private func fileIdentity(of handle: FileHandle) -> FileIdentity? {
+        var info = stat()
+        guard fstat(handle.fileDescriptor, &info) == 0 else { return nil }
+        return FileIdentity(device: UInt64(bitPattern: Int64(info.st_dev)),
+                            inode: UInt64(info.st_ino))
     }
 }

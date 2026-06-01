@@ -84,6 +84,11 @@ public enum HookParser {
                 ?? obj["agent_transcript_path"]?.stringValue.map(Self.agentHash) // fall back to path hash
                 ?? UUID().uuidString
             let node = SubagentNode(
+                // No documented `SubagentStop` field links to a parent agent (doc 16):
+                // the corpus payload carries agent_id / agent_type / agent_transcript_path
+                // / last_assistant_message only. We *tolerate* a parent_agent_id if a
+                // future/non-native producer sends one, but in practice this is `nil` and
+                // the tree is flat — see `SubagentNode.parentID` / `subagentTree`.
                 id: id,
                 parentID: obj["parent_agent_id"]?.stringValue ?? obj["parentAgentId"]?.stringValue,
                 agentType: obj["agent_type"]?.stringValue ?? obj["agentType"]?.stringValue,
