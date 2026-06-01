@@ -229,6 +229,37 @@ public final class PTYProcess: @unchecked Sendable {
         #endif
     }
 
+    /// Closes the PTY master fd exactly once and marks it `-1`.
+    ///
+    /// On a successful ``spawn(_:arguments:environment:argv0:cols:rows:)`` the master fd
+    /// is held open for the life of the session (the host reads child output / writes
+    /// input through it). It is **not** closed by ``terminate()`` (which only signals the
+    /// child) so the relay can still drain the child's final output before EOF. The owner
+    /// (``HostSession/shutdown()``) calls this **after stopping the read loop** so no
+    /// concurrent `read()` can race the close; a `deinit` safety net catches any path
+    /// that forgot. Idempotent.
+    ///
+    /// Without this the master fd leaked once per spawn — a long-running daemon exhausted
+    /// the default 256-fd soft limit after ~250 sessions and `openpty` began returning
+    /// `EMFILE`.
+    public func closeMaster() {
+        #if canImport(Darwin)
+        exitLock.lock()
+        let fd = masterFD
+        masterFD = -1
+        exitLock.unlock()
+        if fd >= 0 { close(fd) }
+        #endif
+    }
+
+    deinit {
+        #if canImport(Darwin)
+        // Safety net: if an owner forgot to closeMaster(), don't leak the fd. By the time
+        // deinit runs nothing else references this object, so no read can race the close.
+        if masterFD >= 0 { close(masterFD) }
+        #endif
+    }
+
     /// The child's exit code. Suspends until the child has been reaped. Multiple
     /// awaiters are all resumed with the same code.
     public func waitForExit() async -> Int32 {

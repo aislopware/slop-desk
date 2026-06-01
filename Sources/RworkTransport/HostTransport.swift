@@ -104,6 +104,18 @@ public actor HostTransport {
         sessionContinuation.finish()
     }
 
+    /// Drops a session from the map and tears down its channels + forwarder tasks.
+    ///
+    /// Used by the owner (WF-3 `HostServer`) when a NEW session was already bound and
+    /// published but its shell failed to spawn — without this the orphaned
+    /// `HostSessionTransport` would linger in the map with live forwarders and an open
+    /// data + control connection behind no shell (a connection/actor leak). No-op if the
+    /// id is unknown.
+    public func dropSession(_ id: UUID) async {
+        guard let session = sessions.removeValue(forKey: id) else { return }
+        await session.close()
+    }
+
     // MARK: Accept + handshake
 
     private func acceptConnection(_ connection: NWConnection) {

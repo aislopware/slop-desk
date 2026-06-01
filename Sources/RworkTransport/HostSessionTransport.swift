@@ -58,6 +58,14 @@ public actor HostSessionTransport {
     /// by the resume flush to avoid re-sending anything the replay loop already sent.
     private var highestSentSeq: Int64 = 0
 
+    /// The child's exit code, once it has exited. `exit` is a lifecycle marker and is
+    /// **not** sequenced/replayed via the ``ReplayBuffer`` (only `.output` is). We still
+    /// must deliver it across a reconnect, otherwise a client that was offline when the
+    /// shell exited would replay the final output but never the exit marker — its byte
+    /// stream would never terminate (a "zombie session"). So we record the code here and
+    /// re-send it after the resume tail flush (see ``resume(data:control:after:)``).
+    private var exitCode: Int32?
+
     public init(sessionID: UUID) {
         self.sessionID = sessionID
         var inputC: AsyncStream<Data>.Continuation!
@@ -121,8 +129,22 @@ public actor HostSessionTransport {
     }
 
     /// Sends `exit(code:)` on the data channel (terminates the byte stream cleanly).
+    ///
+    /// Records the code so a reconnecting client that missed it still gets it: if a
+    /// resume is in flight the live send is withheld (it must not jump ahead of the
+    /// replay tail flush) and ``resume(data:control:after:)`` re-sends it after the tail;
+    /// likewise if the data channel is currently down the recorded code replays on the
+    /// next resume.
     public func sendExit(code: Int32) async throws {
-        guard let dataChannel else { throw RworkTransportError.invalidState("no data channel") }
+        exitCode = code
+        // Hold the exit behind a resume the same way live output is: the exit marker must
+        // come AFTER the replayed output tail, never ahead of it. resume() flushes it.
+        if isResuming { return }
+        // If the client is offline (no bound data channel) we do NOT throw — the code is
+        // already recorded above and resume() re-sends it after the tail on reconnect.
+        // Throwing here would only be swallowed by the relay's `try?` and lose nothing,
+        // but recording-and-returning makes the offline-exit path explicit.
+        guard let dataChannel else { return }
         try await dataChannel.send(.exit(code: code))
     }
 
@@ -192,6 +214,34 @@ public actor HostSessionTransport {
                 highestSentSeq = entry.seq
             }
         }
+
+        // If the child already exited while the client was offline, re-deliver the exit
+        // marker AFTER the replayed output tail so the reconnecting client's byte stream
+        // terminates cleanly instead of showing a live session behind a dead shell.
+        if let code = exitCode {
+            try await channel.send(.exit(code: code))
+        }
+    }
+
+    /// Tears the session down: cancel the inbound forwarders, close both channels, and
+    /// finish the inbound streams so any relay consumers terminate. Called by the owner
+    /// (e.g. ``HostTransport`` when a NEW session is orphaned because its shell failed to
+    /// spawn) to release the bound channels + forwarder tasks instead of leaking them.
+    public func close() async {
+        dataForwarder?.cancel()
+        controlForwarder?.cancel()
+        dataForwarder = nil
+        controlForwarder = nil
+        let oldData = dataChannel
+        let oldControl = controlChannel
+        dataChannel = nil
+        controlChannel = nil
+        await oldData?.close()
+        await oldControl?.close()
+        inputContinuation.finish()
+        resizeContinuation.finish()
+        ackContinuation.finish()
+        drainContinuation.finish()
     }
 
     /// Common channel swap: cancel old forwarders, close old channels, install new ones.

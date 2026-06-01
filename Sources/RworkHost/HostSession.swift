@@ -8,9 +8,12 @@ import RworkTransport
 ///
 /// ## Relay shape (`DECISIONS.md` / [17] / [12] Part B)
 /// - **Output:** ``PTYReadLoop`` reads the master fd at `QOS_CLASS_USER_INTERACTIVE`
-///   and hands each chunk straight to ``HostSessionTransport/sendOutput(_:)`` (which
-///   assigns the seq via the `ReplayBuffer`, retains for replay, and writes `output`
-///   on the data channel). No intermediate buffer.
+///   and yields each chunk into an ordered FIFO `AsyncStream` whose single consumer task
+///   awaits ``HostSessionTransport/sendOutput(_:)`` sequentially (which assigns the seq
+///   via the `ReplayBuffer`, retains for replay, and writes `output` on the data
+///   channel). The single sequential awaiter guarantees actor-arrival order == PTY read
+///   order, so seqs are assigned in true byte order. No intermediate ring buffer (the
+///   FIFO carries no data the `ReplayBuffer` would not).
 /// - **Input:** ``HostSessionTransport/inboundInput`` → `write()` to the master fd.
 /// - **Resize:** ``HostSessionTransport/inboundResize`` →
 ///   ``PTYProcess/setWindowSize(cols:rows:pxWidth:pxHeight:)`` (`TIOCSWINSZ` + `SIGWINCH`).
@@ -46,6 +49,8 @@ public final class HostSession: @unchecked Sendable {
     private var ackTask: Task<Void, Never>?
     private var drainTask: Task<Void, Never>?
     private var exitTask: Task<Void, Never>?
+    private var outputTask: Task<Void, Never>?
+    private var outputContinuation: AsyncStream<Data>.Continuation?
     private var readLoop: PTYReadLoop?
     private var started = false
 
@@ -68,14 +73,28 @@ public final class HostSession: @unchecked Sendable {
         let transport = self.transport
         let masterFD = pty.masterFD
 
-        // OUTPUT: no-buffer read loop → sendOutput. The closure bridges from the
-        // user-interactive read queue into the transport actor via an unstructured
-        // Task; ordering is preserved because each chunk is enqueued in read order and
-        // sendOutput assigns the seq on the actor in that same order.
+        // OUTPUT: no-buffer read loop → sendOutput, bridged through a single ordered
+        // FIFO. `onChunk` runs synchronously on the user-interactive read queue in strict
+        // read order and yields each chunk into an AsyncStream; ONE consumer task awaits
+        // sendOutput sequentially, so the actor-arrival order == read order and the
+        // ReplayBuffer assigns seqs in true byte order. (A per-chunk detached Task would
+        // NOT preserve order: independent tasks hop onto the actor in scheduler order, not
+        // creation order — that corrupts both the live stream and the replayed tail. See
+        // the WF-3 review.)
+        var continuationOut: AsyncStream<Data>.Continuation!
+        let outputStream = AsyncStream<Data>(bufferingPolicy: .unbounded) { continuationOut = $0 }
+        let continuation = continuationOut!
+        self.outputContinuation = continuation
+        outputTask = Task {
+            for await chunk in outputStream {
+                _ = try? await transport.sendOutput(chunk)
+            }
+        }
+
         let readLoop = PTYReadLoop(
             fd: masterFD,
             onChunk: { chunk in
-                Task { try? await transport.sendOutput(chunk) }
+                continuation.yield(chunk)
             },
             onEOF: {
                 // EOF on the master: child closed its tty. The reaper Task surfaces the
@@ -118,8 +137,9 @@ public final class HostSession: @unchecked Sendable {
         }
 
         // EXIT: when the child exits, surface `exit(code:)` on the data channel so the
-        // client's byte stream terminates cleanly. (If the client is offline this send
-        // simply no-ops at the transport; the code is not replayed — control/lifecycle.)
+        // client's byte stream terminates cleanly. `sendExit` records the code so a client
+        // that was offline when the shell exited still receives the exit marker after the
+        // replayed output tail on reconnect (resume() re-sends it) — no zombie session.
         exitTask = Task {
             let code = await pty.waitForExit()
             try? await transport.sendExit(code: code)
@@ -130,14 +150,23 @@ public final class HostSession: @unchecked Sendable {
     /// wants the session gone (NOT on a client disconnect — see session survival).
     public func shutdown() {
         taskLock.lock()
+        // Stop the read loop FIRST so no concurrent read() can race the master fd close
+        // below. Finish the output FIFO so its single consumer task drains and exits.
         readLoop?.stop()
+        outputContinuation?.finish()
+        outputContinuation = nil
         inputTask?.cancel()
         resizeTask?.cancel()
         ackTask?.cancel()
         drainTask?.cancel()
         exitTask?.cancel()
+        outputTask?.cancel()
         taskLock.unlock()
         pty.terminate()
+        // Close the master fd now that the read loop is stopped (deinit is only a safety
+        // net). Without this every spawned session leaks one master fd — a long-running
+        // daemon exhausts the 256-fd soft limit after ~250 sessions (openpty -> EMFILE).
+        pty.closeMaster()
     }
 
     // MARK: Helpers

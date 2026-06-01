@@ -83,27 +83,39 @@ final class PTYProcessTests: XCTestCase {
     }
 
     func testControllingTTY() throws {
-        // 40 rows x 132 cols at spawn; `tty` must be a real /dev/ttys* and `stty size`
-        // must reflect the openpty winsize — proving the slave is the controlling
-        // terminal AND TIOCSWINSZ/openpty winsize plumbing works.
+        // 40 rows x 132 cols at spawn. We exercise the CONTROLLING-TERMINAL alias
+        // `/dev/tty` (NOT fd 0/1/2): `/dev/tty` only opens if the slave is genuinely the
+        // session's controlling terminal. `tty </dev/tty` / `stty size </dev/tty` operate
+        // on that alias, so they prove POSIX_SPAWN_SETSID acquired the controlling tty —
+        // running the same file-actions WITHOUT setsid yields "/dev/tty: Device not
+        // configured" here (whereas plain `tty`/`stty size` on fd 0 would still pass,
+        // making this the regression-meaningful form). Verified empirically.
         let pty = PTYProcess()
         try pty.spawn(
             "/bin/sh",
-            arguments: ["-c", "tty; stty size"],
+            arguments: ["-c", "tty </dev/tty; stty size </dev/tty"],
             environment: curatedEnv(),
             cols: 132, rows: 40
         )
 
         let output = readUntil(fd: pty.masterFD, needle: "40 132")
+        // `tty </dev/tty` resolves and prints the controlling-terminal ALIAS `/dev/tty`
+        // (verified empirically: WITH setsid -> "/dev/tty"; WITHOUT setsid ->
+        // "/dev/tty: Device not configured"). The "Device not configured" check is what
+        // makes this regression-meaningful for POSIX_SPAWN_SETSID — opening fd 0/1/2's
+        // path would pass even with setsid broken, but /dev/tty would not.
         XCTAssertTrue(
-            output.contains("/dev/ttys"),
-            "expected a controlling tty path /dev/ttys*, got: \(output)")
+            output.contains("/dev/tty"),
+            "expected /dev/tty to resolve (controlling terminal), got: \(output)")
+        XCTAssertFalse(
+            output.lowercased().contains("device not configured"),
+            "/dev/tty reported 'Device not configured' — slave is NOT the controlling terminal (setsid broken): \(output)")
         XCTAssertFalse(
             output.lowercased().contains("not a tty"),
             "tty reported 'not a tty' — slave is NOT the controlling terminal: \(output)")
         XCTAssertTrue(
             output.contains("40 132"),
-            "expected 'stty size' = '40 132', got: \(output)")
+            "expected 'stty size </dev/tty' = '40 132', got: \(output)")
     }
 
     func testResizeAfterSpawn() throws {
@@ -136,6 +148,60 @@ final class PTYProcessTests: XCTestCase {
         wait(for: [exp], timeout: 5)
     }
 
+    func testSignalExitReportsShellConvention() throws {
+        // WIFSIGNALED branch of the reaper: a child that signals itself reports
+        // 128 + signal (shell convention). SIGTERM (15) -> 143. This exercises the
+        // `(status & 0o177)` arithmetic that the normal-exit test never touches.
+        let pty = PTYProcess()
+        try pty.spawn("/bin/sh", arguments: ["-c", "kill -TERM $$"], environment: curatedEnv())
+
+        let exp = expectation(description: "signal-exit-143")
+        Task {
+            let code = await pty.waitForExit()
+            XCTAssertEqual(code, 143, "expected 128 + SIGTERM(15) = 143 for a self-TERM child")
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 5)
+    }
+
+    func testMasterFDClosedOnShutdownNoFDLeak() throws {
+        // FD-hygiene regression: each successful spawn opens one PTY master fd; before the
+        // fix it was never closed (no deinit, terminate()/shutdown() did not close it), so
+        // a long-running daemon leaked one fd per session and eventually hit EMFILE. Spawn
+        // + drive a full HostSession relay + shutdown N times and assert the open-fd delta
+        // is ~0 (we allow tiny slack for transient runtime fds, but a per-spawn leak would
+        // show ~N).
+        let n = 40
+        let before = PTYProcessTests.openFDCount()
+        for _ in 0..<n {
+            let pty = PTYProcess()
+            try pty.spawn("/bin/sh", arguments: ["-c", "printf hi; exit 0"], environment: curatedEnv())
+            let transport = HostSessionTransport(sessionID: UUID())
+            let session = HostSession(sessionID: transport.sessionID, pty: pty, transport: transport)
+            session.startRelay()
+            _ = readUntil(fd: pty.masterFD, needle: "\u{04}", timeout: 1) // drain to EOF
+            session.shutdown()
+            XCTAssertEqual(pty.masterFD, -1, "closeMaster() must mark the master fd -1 after shutdown")
+        }
+        // Give any in-flight teardown a beat to release fds.
+        Thread.sleep(forTimeInterval: 0.2)
+        let after = PTYProcessTests.openFDCount()
+        let delta = after - before
+        XCTAssertLessThan(
+            delta, n / 2,
+            "open-fd delta \(delta) over \(n) spawn+shutdown cycles indicates a per-session fd leak")
+    }
+
+    func testCloseMasterIsIdempotent() throws {
+        let pty = PTYProcess()
+        try pty.spawn("/bin/sh", arguments: ["-c", "exit 0"], environment: curatedEnv())
+        XCTAssertGreaterThanOrEqual(pty.masterFD, 0)
+        pty.closeMaster()
+        XCTAssertEqual(pty.masterFD, -1)
+        pty.closeMaster() // second call must be a harmless no-op (no double-close)
+        XCTAssertEqual(pty.masterFD, -1)
+    }
+
     func testMasterFDIsBlockingAfterSpawn() throws {
         let pty = PTYProcess()
         try pty.spawn("/bin/sh", arguments: ["-c", "exit 0"], environment: curatedEnv())
@@ -146,6 +212,14 @@ final class PTYProcessTests: XCTestCase {
     }
 
     // MARK: util
+
+    /// Counts the process's currently-open file descriptors by listing `/dev/fd`
+    /// (macOS exposes one entry per open fd). Used by the fd-leak regression test.
+    static func openFDCount() -> Int {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(atPath: "/dev/fd") else { return -1 }
+        return entries.count
+    }
 
     static func write(_ fd: Int32, _ string: String) {
         let data = Array(string.utf8)

@@ -289,6 +289,61 @@ final class HandshakeReconnectTests: XCTestCase {
         await client2.close()
     }
 
+    // MARK: Reconnect re-delivers a missed exit marker (no zombie session)
+
+    /// If the child exits while the client is offline, the `exit` marker (which is NOT
+    /// sequenced/replayed via the ReplayBuffer) would otherwise be lost: the reconnecting
+    /// client replays the final output but never sees the stream terminate — a "zombie
+    /// session". The fix records the exit code and re-sends it AFTER the replayed output
+    /// tail on resume. This test drives the real reconnect path and asserts the client
+    /// receives the replayed tail followed by the exit marker, in that order.
+    func testReconnectRedeliversMissedExitAfterTail() async throws {
+        let (host, port) = try await startHost()
+        defer { Task { await host.stop() } }
+
+        // 1. Connect, capture the session id.
+        let client1 = ClientTransport()
+        try await client1.connect(host: "127.0.0.1", port: port)
+        let session = try await nextSession(host)
+        let client1SessionID = await client1.sessionID
+        let sessionID = try XCTUnwrap(client1SessionID)
+
+        // 2. Host sends output 1..N, client receives all, acks nothing.
+        let n = 4
+        for i in 1...n { _ = try await session.sendOutput(Data("out-\(i)\n".utf8)) }
+        var received = 0
+        while received < n {
+            if case .output = try await nextInbound(client1) { received += 1 }
+        }
+
+        // 3. Client drops; THEN the child "exits" while offline (host sends exit, which
+        //    no-ops on the wire but is recorded for replay).
+        await client1.close()
+        try await Task.sleep(for: .milliseconds(200))
+        try await session.sendExit(code: 143)
+
+        // 4. Reconnect from lastReceivedSeq 0 so the whole tail 1..N replays first.
+        let client2 = ClientTransport()
+        try await client2.connect(host: "127.0.0.1", port: port, resume: sessionID, lastReceivedSeq: 0)
+        let client2Returning = await client2.returningClient
+        XCTAssertTrue(client2Returning)
+
+        // 5. Expect output 1..N in order, then the exit marker LAST.
+        var seqs: [Int64] = []
+        var sawExit: Int32?
+        while sawExit == nil {
+            switch try await nextInbound(client2) {
+            case let .output(seq, _): seqs.append(seq)
+            case let .exit(code): sawExit = code
+            default: break
+            }
+        }
+        XCTAssertEqual(seqs, Array(1...Int64(n)), "the full tail must replay before the exit marker")
+        XCTAssertEqual(sawExit, 143, "the missed exit code must be re-delivered on reconnect")
+
+        await client2.close()
+    }
+
     // MARK: Helpers
 
     /// Polls `condition` until true or `timeout`, with a small sleep between tries.

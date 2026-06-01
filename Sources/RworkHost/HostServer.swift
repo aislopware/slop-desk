@@ -107,6 +107,11 @@ public final class HostServer: @unchecked Sendable {
             )
         } catch {
             onLog?("session \(id): shell spawn failed: \(error)")
+            // The transport already bound + published this session (live forwarders + open
+            // data/control connections). With no shell behind it, drop it so we don't leak
+            // the channels and forwarder tasks. (spawn() already closed its local master fd
+            // on the failure path, so there is no PTY fd to release here.)
+            Task { await self.transport.dropSession(id) }
             return
         }
 
