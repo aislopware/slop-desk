@@ -105,10 +105,12 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         SCContentFilter(desktopIndependentWindow: window)
     }
 
-    /// Starts capturing the given window. ⚠️ Requires a window-server + Screen-
-    /// Recording TCC session — NEVER call from a test (it will hang).
-    public func start(window: SCWindow) async throws {
-        let config = Self.makeConfiguration(width: Int(window.frame.width), height: Int(window.frame.height))
+    /// Starts capturing the given window at an explicit PIXEL size (`pixelWidth`×`pixelHeight`).
+    /// Passing the window's backing-pixel size (points × display scale) captures at native
+    /// Retina resolution — sharp text — instead of the soft point-resolution default. ⚠️
+    /// Requires a window-server + Screen-Recording TCC session — NEVER call from a test.
+    public func start(window: SCWindow, pixelWidth: Int, pixelHeight: Int) async throws {
+        let config = Self.makeConfiguration(width: pixelWidth, height: pixelHeight)
         let filter = Self.makeFilter(window: window)
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: frameQueue)

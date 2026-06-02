@@ -30,8 +30,9 @@ public enum VideoEncoderError: Error {
 ///   true`; property keys `RealTime=true`, `ExpectedFrameRate=30`,
 ///   `PrioritizeEncodingSpeedOverQuality=true`, `AllowFrameReordering=false`,
 ///   `MaxKeyFrameInterval=INT_MAX`, `AverageBitRate` + `DataRateLimits=[12_000_000/8,
-///   1.0]` (12 Mbps hard cap, **/8 not /4**), `SpatialAdaptiveQPLevel=Disable`
-///   (required by the SDK with low-latency on). ProfileLevel OMITTED. HEVC Main 8-bit 4:2:0.
+///   1.0]` (12 Mbps hard cap, **/8 not /4**), `SpatialAdaptiveQPLevel=Disable` (BEST-EFFORT —
+///   `kVTPropertyNotSupportedErr`/-12900 on encoders without the key; not latency-critical).
+///   ProfileLevel OMITTED. HEVC Main 8-bit 4:2:0.
 /// - **Session B (on-demand crisp)** = all-intra: `Quality=1.0` +
 ///   `AllowTemporalCompression=false`. There is NO `Lossless` key (-12900 — do not
 ///   use it).
@@ -61,13 +62,18 @@ public final class VideoEncoder: @unchecked Sendable {
     private let width: Int32
     private let height: Int32
     private let outputHandler: OutputHandler
+    /// Live-session target bitrate (bits/sec). The 12 Mbps spike default is great for video,
+    /// but SHARP TEXT (screen sharing) needs more bits or HEVC softens glyph edges — so the
+    /// host can raise it (e.g. ~40 Mbps over LAN/NetBird) for crisp text.
+    private let bitrate: Int
 
     private var liveSession: VTCompressionSession?
     private var crispSession: VTCompressionSession?
 
-    public init(width: Int, height: Int, outputHandler: @escaping OutputHandler) {
+    public init(width: Int, height: Int, bitrate: Int = bitrateBitsPerSecond, outputHandler: @escaping OutputHandler) {
         self.width = Int32(width)
         self.height = Int32(height)
+        self.bitrate = max(1_000_000, bitrate)
         self.outputHandler = outputHandler
     }
 
@@ -119,14 +125,17 @@ public final class VideoEncoder: @unchecked Sendable {
         set(session, kVTCompressionPropertyKey_MaxKeyFrameInterval, Int(Int32.max) as CFNumber) // IDR on-demand (best-effort)
         // AverageBitRate + DataRateLimits together ARE the low-latency rate-control
         // contract — both latency-critical.
-        try setCritical(session, kVTCompressionPropertyKey_AverageBitRate, Self.bitrateBitsPerSecond as CFNumber)
-        // DataRateLimits = [maxBytes, seconds]; 12 Mbps hard cap (/8 not /4).
-        try setCritical(session, kVTCompressionPropertyKey_DataRateLimits, [Self.dataRateMaxBytes, 1.0] as CFArray)
-        // SpatialAdaptiveQPLevel=Disable — required by the SDK when low-latency is on.
-        // kVTQPModulationLevel_Disable (== 0) wrapped as CFNumber (the property is a
-        // CFNumberRef per the SDK header). Latency-critical (SDK rejects low-latency
-        // otherwise).
-        try setCritical(session, kVTCompressionPropertyKey_SpatialAdaptiveQPLevel, kVTQPModulationLevel_Disable as CFNumber)
+        try setCritical(session, kVTCompressionPropertyKey_AverageBitRate, bitrate as CFNumber)
+        // DataRateLimits = [maxBytes, seconds]; hard cap at the configured bitrate (/8 not /4).
+        try setCritical(session, kVTCompressionPropertyKey_DataRateLimits, [bitrate / 8, 1.0] as CFArray)
+        // SpatialAdaptiveQPLevel=Disable is a QP-modulation HINT. The spike host advertised it,
+        // but it is kVTPropertyNotSupportedErr (-12900) on HEVC encoders that don't implement
+        // the key — and low-latency rate control is ALREADY established by
+        // EnableLowLatencyRateControl (spec) + AverageBitRate/DataRateLimits. So set it
+        // BEST-EFFORT: apply it where supported, tolerate -12900 elsewhere. (Forcing it as
+        // critical aborted the WHOLE encoder on such hardware, leaving PATH 2 unable to produce
+        // a single frame — observed via check-video.sh's host diagnostics, 2026-06-02.)
+        set(session, kVTCompressionPropertyKey_SpatialAdaptiveQPLevel, kVTQPModulationLevel_Disable as CFNumber)
         // ProfileLevel OMITTED for the low-latency session (doc 18 §E).
         // NOTE: do NOT query UsingHardwareAcceleratedVideoEncoder here — it returns
         // -12900 with low-latency on; HW is already gated by Require...=true above.
@@ -204,7 +213,7 @@ public final class VideoEncoder: @unchecked Sendable {
         var dataPointer: UnsafeMutablePointer<CChar>?
         guard CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &totalLength, dataPointerOut: &dataPointer) == noErr,
               let dataPointer else { return }
-        let avcc = Data(bytes: dataPointer, count: totalLength)
+        var avcc = Data(bytes: dataPointer, count: totalLength)
 
         // Keyframe? Absence of the not-sync attachment ⇒ keyframe.
         var keyframe = true
@@ -213,7 +222,48 @@ public final class VideoEncoder: @unchecked Sendable {
            let notSync = first[kCMSampleAttachmentKey_NotSync] as? Bool {
             keyframe = !notSync
         }
+
+        // CRITICAL: VTCompressionSession keeps the HEVC VPS/SPS/PPS parameter sets in the sample
+        // buffer's FORMAT DESCRIPTION, NOT inline in the CMBlockBuffer — so the bytes above are
+        // the coded slice ONLY. The client builds its CMVideoFormatDescription from parameter
+        // sets it expects to find INLINE ahead of the IDR slice (HEVCParameterSets.extract); with
+        // none present it can never decode (`awaitingKeyframe`) and the window stays blank. So on
+        // a keyframe we prepend the VPS/SPS/PPS (length-prefixed, same 4-byte AVCC framing) pulled
+        // from the format description. (Found via check-video.sh's client decode diagnostics,
+        // 2026-06-02 — the prior "host emits parameter sets inline" assumption was wrong.)
+        if keyframe, let fmt = CMSampleBufferGetFormatDescription(sampleBuffer),
+           let params = hevcParameterSetsAVCC(from: fmt) {
+            avcc = params + avcc
+        }
         handler(avcc, keyframe, mode)
+    }
+
+    /// Extracts the HEVC VPS/SPS/PPS parameter sets from a `CMVideoFormatDescription` and returns
+    /// them as length-prefixed (4-byte big-endian) AVCC NAL units, in index order — ready to
+    /// prepend to a keyframe's coded slice so the client can build its decode format description.
+    /// Returns `nil` if the description carries no parameter sets.
+    private static func hevcParameterSetsAVCC(from formatDescription: CMFormatDescription) -> Data? {
+        var count = 0
+        let probe = CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
+            formatDescription, parameterSetIndex: 0,
+            parameterSetPointerOut: nil, parameterSetSizeOut: nil,
+            parameterSetCountOut: &count, nalUnitHeaderLengthOut: nil)
+        guard probe == noErr, count > 0 else { return nil }
+
+        var out = Data()
+        for index in 0..<count {
+            var pointer: UnsafePointer<UInt8>?
+            var size = 0
+            let status = CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
+                formatDescription, parameterSetIndex: index,
+                parameterSetPointerOut: &pointer, parameterSetSizeOut: &size,
+                parameterSetCountOut: nil, nalUnitHeaderLengthOut: nil)
+            guard status == noErr, let pointer, size > 0 else { return nil }
+            var lengthBE = UInt32(size).bigEndian
+            withUnsafeBytes(of: &lengthBE) { out.append(contentsOf: $0) }   // 4-byte AVCC length
+            out.append(UnsafeBufferPointer(start: pointer, count: size))
+        }
+        return out
     }
 
     /// Re-creates both sessions on a window resize (doc 18 §G — recreate on resize).
@@ -221,9 +271,11 @@ public final class VideoEncoder: @unchecked Sendable {
 
     /// Sets a LATENCY-CRITICAL property and THROWS ``VideoEncoderError/propertyFailed(key:status:)``
     /// if it does not apply. Used for the proven low-latency rate-control keys
-    /// (RealTime, AllowFrameReordering, AverageBitRate, DataRateLimits,
-    /// SpatialAdaptiveQPLevel) where a silent failure corrupts the measured config
-    /// (doc 18 §E). The encoder must NOT proceed with a half-applied low-latency config.
+    /// (RealTime, AllowFrameReordering, AverageBitRate, DataRateLimits) where a silent
+    /// failure corrupts the measured config (doc 18 §E). The encoder must NOT proceed with a
+    /// half-applied low-latency config. (SpatialAdaptiveQPLevel is deliberately NOT here — it
+    /// is best-effort; some HEVC encoders return -12900 for it and aborting would yield zero
+    /// frames.)
     private func setCritical(_ session: VTCompressionSession, _ key: CFString, _ value: CFTypeRef) throws {
         let status = VTSessionSetProperty(session, key: key, value: value)
         guard status == noErr else {

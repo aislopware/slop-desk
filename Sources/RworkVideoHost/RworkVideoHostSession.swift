@@ -34,8 +34,25 @@ import RworkVideoProtocol
 public actor RworkVideoHostSession {
     private let log = Logger(subsystem: "rwork.video.host", category: "RworkVideoHostSession")
 
+    /// Opt-in stderr diagnostics (set `RWORK_VIDEO_DEBUG=1`). OSLog `.info`/`.debug` are not
+    /// persisted, so a headless verify (`scripts/check-video.sh`) cannot read the capture/encode
+    /// flow from `log show`. When enabled, the key lifecycle beats are mirrored to stderr so the
+    /// gate can pinpoint where (if anywhere) the pipeline stalls. No-op in production.
+    private static let debugStderr = ProcessInfo.processInfo.environment["RWORK_VIDEO_DEBUG"] != nil
+    private var encodedFrameCount = 0
+    nonisolated private func dbg(_ message: @autoclosure () -> String) {
+        guard Self.debugStderr else { return }
+        FileHandle.standardError.write(Data("rwork-videohostd[session]: \(message())\n".utf8))
+    }
+
     private let transport: any VideoDatagramTransport
     private let window: SCWindow
+    /// Capture/encode at `window points × captureScale` PIXELS — 2 (Retina) gives sharp text;
+    /// the helloAck/cursor mapping stays in POINTS so coordinates are unaffected.
+    private let captureScale: Double
+    /// Live-encoder target bitrate (bits/sec). Higher = crisper text (HEVC softens glyph edges
+    /// at low bitrate); raise it over LAN/NetBird where bandwidth is ample.
+    private let bitrate: Int
     private let scheduler = VideoSendScheduler()
     private let router = InputDatagramRouter()
     private let recoveryRouter = RecoveryDatagramRouter()
@@ -56,9 +73,11 @@ public actor RworkVideoHostSession {
     ///   - window: the desktop-independent window to remote.
     ///   - transport: the UDP datagram transport (production: ``NWVideoDatagramTransport``).
     ///   - fec: optional FEC scheme for the video packetizer (default 20% XOR parity).
-    public init(window: SCWindow, transport: any VideoDatagramTransport, fec: FECScheme? = XORParityFEC()) {
+    public init(window: SCWindow, transport: any VideoDatagramTransport, fec: FECScheme? = XORParityFEC(), captureScale: Double = 2.0, bitrate: Int = VideoEncoder.bitrateBitsPerSecond) {
         self.window = window
         self.transport = transport
+        self.captureScale = max(1.0, captureScale)
+        self.bitrate = bitrate
         self.stateMachine = VideoSessionStateMachine()
         self.packetizer = VideoPacketizer(fec: fec)
     }
@@ -104,8 +123,10 @@ public actor RworkVideoHostSession {
         let message: VideoControlMessage
         do { message = try VideoControlMessage.decode(data) } catch {
             log.error("dropping malformed control datagram")
+            dbg("control datagram malformed (\(data.count)B) — dropped")
             return
         }
+        dbg("control received: \(String(describing: message)) (window=\(window.windowID))")
         let bounds = currentWindowBoundsCG()
         let effects = stateMachine.handleControl(message, windowBoundsCG: bounds) { [window] requestedWindowID, viewport in
             // Accept only the window this session was created for; size the capture to
@@ -166,10 +187,13 @@ public actor RworkVideoHostSession {
     private func apply(_ effect: VideoSessionStateMachine.Effect) async {
         switch effect {
         case .sendControl(let message):
+            dbg("→ sending control: \(String(describing: message))")
             transport.send(scheduler.scheduleControl(message).bytes, on: .control)
         case .startCapture(_, let width, let height):
+            dbg("effect startCapture \(width)x\(height) — bringing up live capture/encode")
             await startLiveComponents(width: Int(width), height: Int(height))
         case .stopCapture:
+            dbg("effect stopCapture")
             await teardownLiveComponents()
         }
     }
@@ -179,8 +203,13 @@ public actor RworkVideoHostSession {
     private func startLiveComponents(width: Int, height: Int) async {
         let bounds = currentWindowBoundsCG()
 
+        // Capture/encode at PIXEL resolution (window points × captureScale) for sharp text;
+        // helloAck/cursor coordinates stay in points (this multiplier is display-only).
+        let pixelWidth = max(1, Int((Double(width) * captureScale).rounded()))
+        let pixelHeight = max(1, Int((Double(height) * captureScale).rounded()))
+
         // Encoder: the EXACT doc-18 2-session HEVC config (created inside VideoEncoder).
-        let encoder = VideoEncoder(width: width, height: height) { [weak self] avcc, keyframe, mode in
+        let encoder = VideoEncoder(width: pixelWidth, height: pixelHeight, bitrate: bitrate) { [weak self] avcc, keyframe, mode in
             guard let self else { return }
             Task { await self.onEncodedFrame(avcc: avcc, keyframe: keyframe, crisp: mode == .crisp) }
         }
@@ -189,6 +218,7 @@ public actor RworkVideoHostSession {
             try encoder.createCrispSession()
         } catch {
             log.error("encoder session create failed: \(String(describing: error)) — aborting session")
+            dbg("ENCODER create FAILED: \(String(describing: error)) — aborting")
             return
         }
         self.encoder = encoder
@@ -238,9 +268,11 @@ public actor RworkVideoHostSession {
         let captureWindow = window
         do {
             nonisolated(unsafe) let w = captureWindow
-            try await capturer.start(window: w)
+            try await capturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+            dbg("SCStream capture started (\(pixelWidth)x\(pixelHeight) px @\(captureScale)×, \(width)x\(height) pt) — awaiting frames")
         } catch {
             log.error("capturer start failed: \(String(describing: error))")
+            dbg("SCStream capture START FAILED: \(String(describing: error))")
         }
         geometryWatcher.startDragPolling()
         cursorSampler.start()
@@ -261,7 +293,14 @@ public actor RworkVideoHostSession {
     // MARK: Component callbacks
 
     private func onEncodedFrame(avcc: Data, keyframe: Bool, crisp: Bool) {
-        guard stateMachine.mediaFlowing else { return }
+        guard stateMachine.mediaFlowing else {
+            dbg("encoded frame DROPPED (mediaFlowing=false)")
+            return
+        }
+        encodedFrameCount += 1
+        if encodedFrameCount == 1 || encodedFrameCount % 15 == 0 {
+            dbg("encoded+sent frame #\(encodedFrameCount) (\(avcc.count)B, keyframe=\(keyframe), crisp=\(crisp))")
+        }
         let fragments = packetizer.packetize(frame: avcc, keyframe: keyframe, crisp: crisp)
         for outgoing in scheduler.scheduleFrame(fragments) {
             transport.send(outgoing.bytes, on: outgoing.channel)

@@ -22,6 +22,7 @@
 import Foundation
 
 #if os(macOS)
+import AppKit
 import ScreenCaptureKit
 import RworkVideoHost
 import RworkVideoProtocol
@@ -34,6 +35,8 @@ struct VideoHostdArguments {
     var windowTitle: String?
     var mediaPort: UInt16 = 9000
     var cursorPort: UInt16 = 9001
+    var scale: Double = 1.0   // capture at window-points × scale PIXELS (1 = point-res/light; raise for sharper)
+    var bitrateMbps: Int = 12 // live-encoder target bitrate (Mbps); raise for crisper text
 
     static func usage(_ program: String) -> String {
         """
@@ -45,6 +48,10 @@ struct VideoHostdArguments {
           --window-title S   serve the first on-screen window whose title contains S
           --media-port N     UDP media/control/geometry/input port (default 9000)
           --cursor-port N    UDP dedicated cursor port (default 9001)
+          --scale N          capture at window-points × N PIXELS (default 1 = light; 2 = Retina/sharper)
+          --bitrate N        live-encoder target bitrate in Mbps (default 12; higher = crisper text,
+                             but the low-latency rate-control caps keyframe growth — for truly sharp
+                             text raise --scale instead, or use an all-intra mode)
 
         Needs Screen-Recording (capture) + Accessibility & Post-Event (input) TCC, and a
         real GUI login session. Run from the desktop, not over SSH.
@@ -70,6 +77,12 @@ struct VideoHostdArguments {
             case "--cursor-port":
                 guard let v = next(), let n = UInt16(v) else { return nil }
                 a.cursorPort = n; i += 1
+            case "--scale":
+                guard let v = next(), let n = Double(v), n >= 1 else { return nil }
+                a.scale = n; i += 1
+            case "--bitrate":
+                guard let v = next(), let n = Int(v), n >= 1 else { return nil }
+                a.bitrateMbps = n; i += 1
             case "-h", "--help": return nil
             default: return nil
             }
@@ -99,6 +112,15 @@ guard let args = VideoHostdArguments.parse(argv) else {
 func log(_ message: String) {
     FileHandle.standardError.write(Data("\(program): \(message)\n".utf8))
 }
+
+// Live ScreenCaptureKit capture needs a window-server connection. A bare command-line binary
+// never establishes one, so `SCStream.startCapture()` aborts with
+// `Assertion failed: (did_initialize), CGS_REQUIRE_INIT` — even though `SCShareableContent`
+// enumeration (used by --list) works without it. Initialising the shared `NSApplication`
+// connects this process to the window server; `.accessory` keeps it off the Dock / out of the
+// menu bar. Do this BEFORE any capture starts. (We keep `dispatchMain()` as the run loop;
+// frame delivery is on SCStream's own dispatch queue.)
+NSApplication.shared.setActivationPolicy(.accessory)
 
 /// Fetches the shareable, on-screen windows (excluding desktop chrome).
 func shareableWindows() async throws -> [SCWindow] {
@@ -178,7 +200,7 @@ Task {
         let wid = window.windowID
 
         let transport = NWVideoDatagramTransport(mediaPort: args.mediaPort, cursorPort: args.cursorPort)
-        let session = RworkVideoHostSession(window: window, transport: transport)
+        let session = RworkVideoHostSession(window: window, transport: transport, captureScale: args.scale, bitrate: args.bitrateMbps * 1_000_000)
         holder.set(session)
         try await session.start()
 
