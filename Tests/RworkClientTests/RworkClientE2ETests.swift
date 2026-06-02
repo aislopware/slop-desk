@@ -82,6 +82,50 @@ final class RworkClientE2ETests: XCTestCase {
         await client.close()
     }
 
+    // MARK: - E2E title/bell sniffer (wire types 21/22 fire from a real PTY)
+
+    /// Proves the host-side OSC/BEL sniffer end to end: a real `/bin/sh` in a real PTY
+    /// printing an OSC 0 title and a BEL makes the host emit `.title`/`.bell` CONTROL
+    /// messages (wire 21/22) that the real client surfaces as `.title`/`.bell` events.
+    /// This is the path the audit found dead — `sendControl` had zero callers; the sniffer
+    /// is now its caller, wired into `HostSession`'s output relay.
+    func testTitleAndBellSurfaceEndToEnd() async throws {
+        let (server, port) = try await startHost()
+        defer { Task { await server.stop() } }
+
+        let client = RworkClient()
+        try await client.connect(host: "127.0.0.1", port: port)
+
+        // Collect title/bell events as they arrive.
+        let titleSeen = Task { () -> String? in
+            for await event in client.events {
+                if case let .title(text) = event, text == "hello" { return text }
+            }
+            return nil
+        }
+        let bellSeen = Task { () -> Bool in
+            for await event in client.events {
+                if case .bell = event { return true }
+            }
+            return false
+        }
+
+        // OSC 0 title via BEL terminator: `ESC ] 0 ; hello BEL`. `printf` writes it raw to
+        // stdout; the host PTY relays the bytes and the sniffer detects the title.
+        try await client.sendInput(Data((#"printf '\033]0;hello\007'"# + "\n").utf8))
+        let title = await withTimeout(.seconds(10)) { await titleSeen.value }
+        titleSeen.cancel()
+        XCTAssertEqual(title, "hello", "expected a .title(\"hello\") event from the OSC 0 sniffer")
+
+        // Standalone BEL: `printf '\a'` → a real terminal bell (NOT an OSC terminator).
+        try await client.sendInput(Data((#"printf '\a'"# + "\n").utf8))
+        let rang = await withTimeout(.seconds(10)) { await bellSeen.value }
+        bellSeen.cancel()
+        XCTAssertEqual(rang, true, "expected a .bell event from the standalone-BEL sniffer")
+
+        await client.close()
+    }
+
     // MARK: - Ack correctness: never ack an unreceived seq; ack releases retained bytes
 
     func testClientNeverAcksUnreceivedSeq() async throws {

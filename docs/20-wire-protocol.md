@@ -109,6 +109,26 @@ negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` who
   client.
 - **`title`** payload must be valid UTF-8; a non-UTF-8 body decodes to
   `RworkError.malformedBody`.
+- **`title` (21) and `bell` (22) are PRODUCED by the host**, by a non-destructive OSC/BEL
+  sniffer (`HostTitleBellSniffer` in `RworkHost`, wired into `HostSession`'s output relay).
+  As the host relays the raw PTY byte stream it ALSO observes a copy of those exact bytes
+  and emits these control messages:
+  - **`title`** ← **OSC 0** (`ESC ] 0 ; <text> <term>`, icon + window title) or **OSC 2**
+    (`ESC ] 2 ; <text> <term>`, window title), where `<term>` is `BEL` (`0x07`) **or** `ST`
+    (`ESC \`). **OSC 1** (icon-name only) is deliberately ignored — it never sets the window
+    title. Identical consecutive titles are coalesced (de-duped).
+  - **`bell`** ← a **standalone** `BEL` (`0x07`) seen outside any escape sequence. A `BEL`
+    that *terminates* an OSC string is the OSC's terminator and fires `title` (if OSC 0/2),
+    **never** `bell` — the sniffer's state machine distinguishes the two structurally.
+
+  The sniffer is **non-destructive** (the raw bytes are forwarded to the client unchanged —
+  libghostty is the real terminal; the sniffer only observes) and **streaming-safe** (a true
+  byte-at-a-time state machine that holds partial state across read chunks, bounds the
+  buffered OSC payload to defend against an unterminated/hostile OSC, and re-syncs on a stray
+  `ESC` without swallowing the next sequence's introducer). The client surfaces both as
+  `RworkClient.Event.title` / `.bell` (and the `rwork-client` CLI / `TerminalViewModel`
+  consume them). These ride the head-of-line-independent CONTROL channel and are **not**
+  sequenced/replayed.
 
 ## 5. Seq / ack / replay semantics
 

@@ -50,9 +50,20 @@ public final class HostSession: @unchecked Sendable {
     private var drainTask: Task<Void, Never>?
     private var exitTask: Task<Void, Never>?
     private var outputTask: Task<Void, Never>?
-    private var outputContinuation: AsyncStream<Data>.Continuation?
+    private var outputContinuation: AsyncStream<OutputChunk>.Continuation?
     private var readLoop: PTYReadLoop?
     private var started = false
+
+    /// One PTY read chunk plus the CONTROL messages (`.title`/`.bell`) the
+    /// ``HostTitleBellSniffer`` detected in it. The raw `bytes` are ALWAYS forwarded to
+    /// the client unchanged (non-destructive sniffing — see ``HostTitleBellSniffer``); the
+    /// `control` messages are sent on the control channel alongside. Carrying both through
+    /// the SAME ordered FIFO keeps a chunk's control messages ordered relative to the
+    /// output that produced them, on the one sequential awaiter.
+    private struct OutputChunk: Sendable {
+        let bytes: Data
+        let control: [WireMessage]
+    }
 
     /// Builds a session around an already-spawned PTY and an already-bound transport.
     public init(sessionID: UUID, pty: PTYProcess, transport: HostSessionTransport) {
@@ -81,8 +92,8 @@ public final class HostSession: @unchecked Sendable {
         // NOT preserve order: independent tasks hop onto the actor in scheduler order, not
         // creation order — that corrupts both the live stream and the replayed tail. See
         // the WF-3 review.)
-        var continuationOut: AsyncStream<Data>.Continuation!
-        let outputStream = AsyncStream<Data>(bufferingPolicy: .unbounded) { continuationOut = $0 }
+        var continuationOut: AsyncStream<OutputChunk>.Continuation!
+        let outputStream = AsyncStream<OutputChunk>(bufferingPolicy: .unbounded) { continuationOut = $0 }
         let continuation = continuationOut!
         self.outputContinuation = continuation
         outputTask = Task {
@@ -95,14 +106,29 @@ public final class HostSession: @unchecked Sendable {
                 // and the next resume replays the tail. The `try?` therefore only swallows
                 // a genuine transient send error on a still-live channel (the bytes stay
                 // retained and replay on reconnect either way).
-                _ = try? await transport.sendOutput(chunk)
+                _ = try? await transport.sendOutput(chunk.bytes)
+                // CONTROL: emit the title/bell the sniffer found in this chunk on the
+                // (head-of-line-independent) control channel, AFTER the output bytes that
+                // carried them, on this same sequential awaiter so they stay in read order.
+                // `sendControl` is not sequenced/replayed; a dead control channel just
+                // throws and is swallowed (the bytes themselves already went out / are
+                // retained — a missed title/bell is cosmetic, not a correctness loss).
+                for message in chunk.control {
+                    try? await transport.sendControl(message)
+                }
             }
         }
 
+        // Non-destructive OSC/BEL sniffer over the SAME outbound bytes. It only OBSERVES;
+        // the raw `chunk` is yielded to the relay UNCHANGED (libghostty on the client is
+        // the real terminal). `onChunk` runs on the single serial read-loop queue, so the
+        // sniffer is driven in strict read order with no concurrent calls.
+        let sniffer = HostTitleBellSniffer()
         let readLoop = PTYReadLoop(
             fd: masterFD,
             onChunk: { chunk in
-                continuation.yield(chunk)
+                let control = sniffer.observe(chunk)
+                continuation.yield(OutputChunk(bytes: chunk, control: control))
             },
             onEOF: {
                 // EOF on the master: child closed its tty. The reaper Task surfaces the
