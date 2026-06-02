@@ -1,6 +1,4 @@
-#if canImport(Darwin)
 import Darwin
-#endif
 import Foundation
 import RworkProtocol
 
@@ -76,7 +74,6 @@ public final class PTYProcess: @unchecked Sendable {
         cols: UInt16 = 80,
         rows: UInt16 = 24
     ) throws {
-        #if canImport(Darwin)
         precondition(masterFD == -1, "PTYProcess.spawn called twice")
 
         var master: Int32 = -1
@@ -160,12 +157,8 @@ public final class PTYProcess: @unchecked Sendable {
         self.masterFD = master
         self.pid = childPID
         startReaper(pid: childPID)
-        #else
-        throw HostError.notImplemented("PTYProcess.spawn — Darwin only")
-        #endif
     }
 
-    #if canImport(Darwin)
     /// Sets the standard control characters (VINTR, VEOF, VERASE, …) to sane defaults
     /// so cooked-mode editing behaves like a normal login terminal.
     private func setControlChars(_ term: inout termios) {
@@ -191,19 +184,16 @@ public final class PTYProcess: @unchecked Sendable {
             set(VTIME, 0)
         }
     }
-    #endif
 
     // MARK: setBlocking
 
     /// Clears `O_NONBLOCK` on `fd` so reads/writes block (Happy #301).
     /// Exposed for WF-3 wiring and tests.
     public static func setBlocking(_ fd: Int32) {
-        #if canImport(Darwin)
         let flags = fcntl(fd, F_GETFL)
         if flags >= 0 {
             _ = fcntl(fd, F_SETFL, flags & ~O_NONBLOCK)
         }
-        #endif
     }
 
     // MARK: Resize
@@ -211,11 +201,9 @@ public final class PTYProcess: @unchecked Sendable {
     /// Applies a terminal size to the PTY via `TIOCSWINSZ` (driven by `resize`). The
     /// kernel then delivers `SIGWINCH` to the child's foreground process group.
     public func setWindowSize(cols: UInt16, rows: UInt16, pxWidth: UInt16 = 0, pxHeight: UInt16 = 0) {
-        #if canImport(Darwin)
         guard masterFD >= 0 else { return }
         var ws = winsize(ws_row: rows, ws_col: cols, ws_xpixel: pxWidth, ws_ypixel: pxHeight)
         _ = ioctl(masterFD, TIOCSWINSZ, &ws)
-        #endif
     }
 
     // MARK: Lifecycle
@@ -223,10 +211,8 @@ public final class PTYProcess: @unchecked Sendable {
     /// Sends `SIGTERM` to the child (it is a session leader, so this reaches the group
     /// via the controlling tty's hangup machinery once the master closes too).
     public func terminate() {
-        #if canImport(Darwin)
         guard pid > 0 else { return }
         kill(pid, SIGTERM)
-        #endif
     }
 
     /// Closes the PTY master fd exactly once and marks it `-1`.
@@ -243,21 +229,17 @@ public final class PTYProcess: @unchecked Sendable {
     /// the default 256-fd soft limit after ~250 sessions and `openpty` began returning
     /// `EMFILE`.
     public func closeMaster() {
-        #if canImport(Darwin)
         exitLock.lock()
         let fd = masterFD
         masterFD = -1
         exitLock.unlock()
         if fd >= 0 { close(fd) }
-        #endif
     }
 
     deinit {
-        #if canImport(Darwin)
         // Safety net: if an owner forgot to closeMaster(), don't leak the fd. By the time
         // deinit runs nothing else references this object, so no read can race the close.
         if masterFD >= 0 { close(masterFD) }
-        #endif
     }
 
     /// The child's exit code. Suspends until the child has been reaped. Multiple
@@ -282,7 +264,6 @@ public final class PTYProcess: @unchecked Sendable {
         return exitCode
     }
 
-    #if canImport(Darwin)
     /// Spawns a dedicated blocking `waitpid` thread that reaps the child and surfaces
     /// the exit status (used as `WireMessage.exit(code:)` by the relay). A dedicated
     /// thread (not SIGCHLD) keeps reaping local to this process object and avoids
@@ -306,7 +287,6 @@ public final class PTYProcess: @unchecked Sendable {
             self?.completeExit(code: code)
         }
     }
-    #endif
 
     private func completeExit(code: Int32) {
         exitLock.lock()
@@ -322,8 +302,6 @@ public final class PTYProcess: @unchecked Sendable {
 
 /// Host-side errors. Distinct from ``RworkError`` (which is wire-decode only).
 public enum HostError: Error, Equatable, Sendable {
-    /// A seam that WF-3 has not implemented yet (or a non-Darwin platform).
-    case notImplemented(String)
     /// A POSIX syscall failed; associated value is `errno`.
     case posix(Int32)
 }

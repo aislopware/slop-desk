@@ -8,7 +8,6 @@ import SwiftUI
 /// The view itself is renderer-agnostic — it asks the factory for the rendering view and
 /// lays a title bar over it. The byte pipeline is driven by `observe(client:)`, started by
 /// the embedding scene (`RworkClientApp`) so this view can be reused inside the split layout.
-@available(macOS 14.0, iOS 17.0, *)
 public struct TerminalScreenView: View {
     @State private var model: TerminalViewModel
 
@@ -40,7 +39,6 @@ public struct TerminalScreenView: View {
     }
 }
 
-@available(macOS 14.0, iOS 17.0, *)
 struct StatusDot: View {
     let status: TerminalViewModel.ConnectionStatus
 

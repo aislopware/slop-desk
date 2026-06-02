@@ -26,7 +26,6 @@ import RworkVideoProtocol
 /// 3. `CGEvent.post(.cghidEventTap)` / `CGWarpMouseCursorPosition`, stamping
 ///    `eventSourceUserData` = the event's `tag` so the host can FILTER its own
 ///    self-injected events out of the cursor/geometry watchers (avoids loops).
-@available(macOS 14.0, *)
 public final class InputInjector: @unchecked Sendable {
     private let pid: pid_t
     private let windowID: CGWindowID

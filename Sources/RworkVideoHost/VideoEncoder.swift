@@ -28,7 +28,7 @@ public enum VideoEncoderError: Error {
 ///   `PrioritizeEncodingSpeedOverQuality=true`, `AllowFrameReordering=false`,
 ///   `MaxKeyFrameInterval=INT_MAX`, `AverageBitRate` + `DataRateLimits=[12_000_000/8,
 ///   1.0]` (12 Mbps hard cap, **/8 not /4**), `SpatialAdaptiveQPLevel=Disable`
-///   (macOS 15+, availability-wrapped). ProfileLevel OMITTED. HEVC Main 8-bit 4:2:0.
+///   (required by the SDK with low-latency on). ProfileLevel OMITTED. HEVC Main 8-bit 4:2:0.
 /// - **Session B (on-demand crisp)** = all-intra: `Quality=1.0` +
 ///   `AllowTemporalCompression=false`. There is NO `Lossless` key (-12900 — do not
 ///   use it).
@@ -39,7 +39,6 @@ public enum VideoEncoderError: Error {
 ///   `RequireHardwareAcceleratedVideoEncoder=true` instead.
 /// - Recreate the session on resize.
 /// - Retry create on -12905 (XPC race) with 50-100ms backoff.
-@available(macOS 14.0, *)
 public final class VideoEncoder: @unchecked Sendable {
     /// 12 Mbps hard bitrate cap (doc 18 §E). DataRateLimits is `[maxBytes, seconds]`
     /// → `[12_000_000 / 8, 1.0]` = 1.5 MB per 1 s. **/8 (bits→bytes), not /4.**
@@ -115,13 +114,10 @@ public final class VideoEncoder: @unchecked Sendable {
         set(session, kVTCompressionPropertyKey_AverageBitRate, Self.bitrateBitsPerSecond as CFNumber)
         // DataRateLimits = [maxBytes, seconds]; 12 Mbps hard cap (/8 not /4).
         set(session, kVTCompressionPropertyKey_DataRateLimits, [Self.dataRateMaxBytes, 1.0] as CFArray)
-        // SpatialAdaptiveQPLevel=Disable — required by the SDK when low-latency is on
-        // (macOS 15+, availability-wrapped).
-        if #available(macOS 15.0, *) {
-            // kVTQPModulationLevel_Disable (== 0) wrapped as CFNumber (the property
-            // is a CFNumberRef per the SDK header).
-            set(session, kVTCompressionPropertyKey_SpatialAdaptiveQPLevel, kVTQPModulationLevel_Disable as CFNumber)
-        }
+        // SpatialAdaptiveQPLevel=Disable — required by the SDK when low-latency is on.
+        // kVTQPModulationLevel_Disable (== 0) wrapped as CFNumber (the property is a
+        // CFNumberRef per the SDK header).
+        set(session, kVTCompressionPropertyKey_SpatialAdaptiveQPLevel, kVTQPModulationLevel_Disable as CFNumber)
         // ProfileLevel OMITTED for the low-latency session (doc 18 §E).
         // NOTE: do NOT query UsingHardwareAcceleratedVideoEncoder here — it returns
         // -12900 with low-latency on; HW is already gated by Require...=true above.

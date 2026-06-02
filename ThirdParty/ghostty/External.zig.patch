@@ -1,5 +1,9 @@
 # External.zig.patch — the source delta that enables external-IO (use_custom_io)
 #
+# NOTE: DOCUMENTATION ONLY — this file is NOT a self-sufficient diff. Only Part 1 (the
+# new-file diff for src/termio/External.zig) is a real, applicable `git diff`; Parts 2 & 3
+# are prose pointers into large files. Do NOT expect a clean `git apply` of this file.
+#
 # APPROACH (b): we pin daiimus/ghostty @ ios-external-backend (SHA 21c71734) DIRECTLY,
 # so this patch is NOT applied by build-libghostty.sh — the symbols already exist on
 # the pinned branch. This file is the DOCUMENTED record of the delta (for an eventual

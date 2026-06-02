@@ -7,8 +7,8 @@
 //
 // Components:
 // - VideoDecoder           — VTDecompressionSession, decodeFlags=[] synchronous
-//                            single-frame, RequireHardwareAcceleratedVideoDecoder
-//                            gated @available(iOS 17), feeds reassembled AVCC.
+//                            single-frame, RequireHardwareAcceleratedVideoDecoder,
+//                            feeds reassembled AVCC.
 // - MetalVideoRenderer     — CVMetalTextureCache NV12->Metal zero-copy + YCbCr->RGB
 //                            shader, CAMetalLayer maximumDrawableCount=2 (NOT
 //                            AVSampleBufferDisplayLayer).

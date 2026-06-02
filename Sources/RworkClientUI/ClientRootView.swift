@@ -10,7 +10,6 @@ import RworkInspector
 ///   doc 16 "desktop = split-view".
 /// - **iOS**: the inspector is a bottom sheet / overlay toggled from the toolbar — doc 16
 ///   "iOS = tab/bottom-sheet".
-@available(macOS 14.0, iOS 17.0, *)
 public struct ClientRootView: View {
     @State private var connection: ConnectionViewModel
     @State private var input: InputBarModel

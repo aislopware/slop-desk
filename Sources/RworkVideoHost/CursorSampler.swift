@@ -16,7 +16,6 @@ import RworkVideoProtocol
 /// id appears), and sends a tiny <64-byte ``CursorUpdate``. The channel is a
 /// **separate UDP socket** — never multiplexed with video — so video backpressure
 /// never delays the cursor (doc 17 §3.3).
-@available(macOS 14.0, *)
 public final class CursorSampler: @unchecked Sendable {
     /// Sample rate (doc 17 §3.3: "~120 Hz").
     public static let sampleHz: Double = 120

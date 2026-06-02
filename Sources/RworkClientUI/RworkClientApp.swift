@@ -15,7 +15,6 @@ import SwiftUI
 /// ``TerminalRendererFactory/shared`` factory that builds the libghostty
 /// `GhosttyTerminalView` once the xcframework is present; until then the BUILD-STATUS
 /// placeholder shows. The library compiles and runs without it.
-@available(macOS 14.0, iOS 17.0, *)
 public struct RworkClientApp: App {
     @State private var terminal = TerminalViewModel()
     @State private var connection: ConnectionViewModel

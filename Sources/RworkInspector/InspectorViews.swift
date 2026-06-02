@@ -8,7 +8,6 @@ import SwiftUI
 /// The top-level inspector pane: session header + tool timeline, subagent tree, todos,
 /// and the thinking-placeholder indicator. Drive it from a view-model fed by the
 /// `InspectorClient` event stream (e.g. in a `.task { await vm.consume(client.events()) }`).
-@available(macOS 14.0, iOS 17.0, *)
 public struct InspectorPane: View {
     private let model: InspectorViewModel
 
@@ -42,7 +41,6 @@ public struct InspectorPane: View {
     }
 }
 
-@available(macOS 14.0, iOS 17.0, *)
 struct SessionHeaderView: View {
     let session: SessionInfo?
     let workflow: WorkflowMarker.State
@@ -68,7 +66,6 @@ struct SessionHeaderView: View {
 }
 
 /// A timeline / list of tool cards (input + output + status).
-@available(macOS 14.0, iOS 17.0, *)
 public struct ToolCardListView: View {
     let title: String
     let cards: [ToolCard]
@@ -90,7 +87,6 @@ public struct ToolCardListView: View {
     }
 }
 
-@available(macOS 14.0, iOS 17.0, *)
 struct ToolCardView: View {
     let card: ToolCard
 
@@ -136,7 +132,6 @@ struct ToolCardView: View {
 }
 
 /// The todo / task list with status glyphs.
-@available(macOS 14.0, iOS 17.0, *)
 public struct TodoListView: View {
     let todos: [TodoItem]
 
@@ -178,7 +173,6 @@ public struct TodoListView: View {
 }
 
 /// A collapsible subagent tree (each node shows its type/status + its own tool cards).
-@available(macOS 14.0, iOS 17.0, *)
 public struct SubagentTreeView: View {
     let roots: [SubagentTreeNode]
 
@@ -196,7 +190,6 @@ public struct SubagentTreeView: View {
     }
 }
 
-@available(macOS 14.0, iOS 17.0, *)
 struct SubagentNodeView: View {
     let node: SubagentTreeNode
 
@@ -229,7 +222,6 @@ struct SubagentNodeView: View {
 }
 
 /// The thinking-placeholder indicator (doc 16: placeholder only, empty-aware).
-@available(macOS 14.0, iOS 17.0, *)
 public struct ThinkingIndicatorView: View {
     let marker: ThinkingMarker?
     let count: Int

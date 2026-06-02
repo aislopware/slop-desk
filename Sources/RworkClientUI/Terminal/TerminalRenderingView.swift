@@ -23,14 +23,12 @@ import RworkTerminal
 ///
 /// The view is given the ``TerminalViewModel`` so the production conformer can attach its
 /// `GhosttySurface` to the model's surface feed; the placeholder just reads connection state.
-@available(macOS 14.0, iOS 17.0, *)
 public protocol TerminalRenderingView: View {
     init(model: TerminalViewModel)
 }
 
 /// The no-framework BUILD-STATUS placeholder (libghostty-only policy: not a fallback VT
 /// renderer). Shown wherever the production `GhosttyTerminalView` has not been injected.
-@available(macOS 14.0, iOS 17.0, *)
 public struct BuildStatusPlaceholderView: TerminalRenderingView {
     private let model: TerminalViewModel
 
@@ -72,7 +70,6 @@ public struct BuildStatusPlaceholderView: TerminalRenderingView {
 /// ``shared`` at launch to a factory that builds its Metal-hosted `GhosttyTerminalView`; the
 /// library calls ``make(model:)`` and falls back to the ``BuildStatusPlaceholderView`` when no
 /// factory was registered. This is the documented extension point.
-@available(macOS 14.0, iOS 17.0, *)
 @MainActor
 public final class TerminalRendererFactory {
     /// The app-registered factory (set once at launch). `nil` → use the placeholder.

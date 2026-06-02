@@ -24,7 +24,6 @@ import SwiftUI
 ///     AnyView(VideoWindowView(title: descriptor.title))
 /// }
 /// ```
-@available(macOS 14.0, iOS 17.0, *)
 public struct RemoteWindowDescriptor: Sendable, Equatable {
     /// The remote window's last-known title (from the geometry channel).
     public var title: String
@@ -39,7 +38,6 @@ public struct RemoteWindowDescriptor: Sendable, Equatable {
 
 /// Injects the production remote-GUI-window video view when the app target provides
 /// one. `nil` → the gated placeholder is shown.
-@available(macOS 14.0, iOS 17.0, *)
 @MainActor
 public final class VideoWindowFactory {
     /// App-registered factory (set once at launch). `nil` → use the placeholder.
@@ -59,7 +57,6 @@ public final class VideoWindowFactory {
 /// capturing / no `RworkVideoClient` view injected). It is NOT a substitute renderer
 /// — it explains that the secondary GUI video path is idle. The terminal path is the
 /// primary experience (doc 17: terminal-first).
-@available(macOS 14.0, iOS 17.0, *)
 public struct RemoteWindowPlaceholderView: View {
     let descriptor: RemoteWindowDescriptor
 

@@ -17,7 +17,6 @@ import QuartzCore
 ///
 /// The "keep only the newest frame" logic is pure and is unit-testable in isolation;
 /// the `CADisplayLink` wiring is GUI-only.
-@available(macOS 14.0, iOS 17.0, *)
 public final class FramePacer: @unchecked Sendable {
     /// Called each VSync with the frame to draw (the newest decoded, or the last
     /// shown when nothing newer arrived). `nil` only before the first frame.

@@ -89,7 +89,9 @@ anticipated in [`docs/19`] (brew 0.16.0 "too new for the fork"); the inverse —
 - a future Zig that supports **both** the macOS 26.x SDK and the fork's `build.zig`
   (then bump the `ZIG_*` pins here and re-verify the header), **or**
 - bump the **fork pin** to a daiimus/own SHA whose `build.zig` accepts a
-  macOS-26-capable Zig (re-confirm the external-IO symbols after the bump).
+  macOS-26-capable Zig — **no such SHA is known to exist today**; this option is
+  hypothetical and would require first producing (or finding) such a branch and then
+  re-confirming the external-IO symbols after the bump.
 
 `build-libghostty.sh` now **preflights** this exact condition (a libSystem link
 smoke test) and fails fast with the actionable message above, instead of burning the

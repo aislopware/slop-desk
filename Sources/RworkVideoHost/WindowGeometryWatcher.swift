@@ -18,7 +18,6 @@ import RworkVideoProtocol
 ///   in sync per-frame while AX is silent mid-drag (AX only fires at the end).
 ///
 /// The TCC need is documented in ``InputInjector`` (Accessibility).
-@available(macOS 14.0, *)
 public final class WindowGeometryWatcher: @unchecked Sendable {
     /// Poll cadence during an active drag (per video frame ≈ 30 Hz; doc 18 §B).
     public static let dragPollHz: Double = 30

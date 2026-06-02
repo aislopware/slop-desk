@@ -25,12 +25,10 @@ public enum VideoDecoderError: Error {
 /// Configs (cited):
 /// - `decodeFlags = []` → **synchronous single-frame** decode (MEASURED 0.9-1.1ms,
 ///   NOT 2-frame-buffered — RESULTS.md F / doc 18 §F).
-/// - `RequireHardwareAcceleratedVideoDecoder` is version-gated behind `@available
-///   (iOS 17)` (doc 18 §F: iOS <=16 HEVC HW-decode is the default on A-series).
+/// - `RequireHardwareAcceleratedVideoDecoder = true` is set unconditionally.
 /// - Output `CVPixelBuffer` is NV12 + Metal-compatible for the zero-copy renderer.
 /// - Reassembled frames arrive as AVCC bytes; we wrap them in a `CMSampleBuffer`
 ///   against the running format description.
-@available(macOS 14.0, iOS 17.0, *)
 public final class VideoDecoder: @unchecked Sendable {
     /// Emits a decoded NV12 `CVPixelBuffer` for the renderer to draw at vsync.
     public typealias DecodedFrameHandler = @Sendable (CVImageBuffer) -> Void
@@ -64,9 +62,7 @@ public final class VideoDecoder: @unchecked Sendable {
             kCVPixelBufferIOSurfacePropertiesKey: [:],
         ]
         var spec: [CFString: Any] = [:]
-        // RequireHardwareAcceleratedVideoDecoder is version-gated behind the type's
-        // @available(macOS 14.0, iOS 17.0) bound (doc 18 §F: iOS <=16 HEVC HW-decode
-        // is the default on A-series anyway, so requiring it pre-iOS-17 is needless).
+        // Require HW-accelerated HEVC decode (set unconditionally).
         spec[kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder] = true
 
         var session: VTDecompressionSession?

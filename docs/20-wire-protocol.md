@@ -85,7 +85,10 @@ UUIDs (`sessionID`) are sent as their **16 raw bytes** in canonical order (not a
 | 21 | `title`    | host → client | control | remaining bytes = UTF-8 window/title string |
 | 22 | `bell`     | host → client | control | (empty) |
 
-`protocolVersion` is currently **1** (`Rwork.protocolVersion`).
+`protocolVersion` is currently **1** (`Rwork.protocolVersion`). There is **no version
+negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` whose
+`protocolVersion` differs is rejected outright with a generic `handshakeFailed`
+(`HostTransport`); the host never offers or falls back to another version.
 
 ### Field notes
 
@@ -192,8 +195,10 @@ the authoritative `sessionID` (the same 16 raw bytes UUID layout used everywhere
 1. **Client** opens the **CONTROL** connection, writes the control preamble (`0x01`),
    then sends `hello(protocolVersion, sessionID, lastReceivedSeq)`
    (all-zero `sessionID` = NEW; a non-zero id = resume request).
-2. **Host** reads the control preamble, reads `hello`, validates `protocolVersion`,
-   and **decides** NEW vs RETURNING_CLIENT (it, not the client, is authoritative — see
+2. **Host** reads the control preamble, reads `hello`, and **strictly checks**
+   `protocolVersion == 1` (any other value → `handshakeFailed`, connection dropped; no
+   negotiation, no downgrade). It then **decides** NEW vs RETURNING_CLIENT (it, not the
+   client, is authoritative — see
    §5 and Eternal Terminal `Connection.cpp`). It replies
    `helloAck(authoritativeSessionID, resumeFromSeq, returningClient)` on CONTROL:
    - unknown / all-zero id → mint a fresh id, `resumeFromSeq = 0`, `returningClient = 0`;

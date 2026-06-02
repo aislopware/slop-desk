@@ -1,6 +1,4 @@
-#if canImport(Darwin)
 import Darwin
-#endif
 import Foundation
 
 /// The host **output path**: a tight blocking `read()` loop on the PTY master fd,
@@ -104,11 +102,7 @@ public final class PTYReadLoop: @unchecked Sendable {
             }
             gate.unlock()
 
-            #if canImport(Darwin)
             let n = read(fd, buffer, Self.readChunkSize)
-            #else
-            let n = -1
-            #endif
 
             if n > 0 {
                 // Copy out of the reusable buffer into a Data the sink owns. This is the
@@ -125,9 +119,7 @@ public final class PTYReadLoop: @unchecked Sendable {
             }
 
             // n < 0
-            #if canImport(Darwin)
             if errno == EINTR { continue }
-            #endif
             // EIO is the normal "slave side hung up" result on macOS when the child
             // exits — treat any other error as EOF too.
             onEOF()

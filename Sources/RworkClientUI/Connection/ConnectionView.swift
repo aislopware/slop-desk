@@ -3,7 +3,6 @@ import SwiftUI
 
 /// Host/port entry + connect/disconnect + live status + session id. Binds a
 /// ``ConnectionViewModel`` (which owns the ``RworkClient`` + ``ReconnectManager``).
-@available(macOS 14.0, iOS 17.0, *)
 public struct ConnectionView: View {
     @Bindable private var model: ConnectionViewModel
 

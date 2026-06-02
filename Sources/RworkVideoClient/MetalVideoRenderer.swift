@@ -22,7 +22,6 @@ import simd
 ///   ``FramePacer``. On an empty queue it shows the last decoded frame; late frames
 ///   are skipped (doc 17 §3.7).
 /// - Does NOT use `AVSampleBufferDisplayLayer` (adds >=1 frame buffering — doc 18 §F).
-@available(macOS 14.0, iOS 17.0, *)
 public final class MetalVideoRenderer {
     private let log = Logger(subsystem: "rwork.video.client", category: "MetalVideoRenderer")
     public let device: MTLDevice

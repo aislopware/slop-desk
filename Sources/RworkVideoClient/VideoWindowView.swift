@@ -12,7 +12,6 @@ import Metal
 /// screen. COMPILED + reviewed; not driven from tests. This is the wiring point that
 /// `RworkClientUI` injects when a host is actively capturing a GUI window (see the
 /// `VideoWindowSeam` in RworkClientUI).
-@available(macOS 14.0, iOS 17.0, *)
 public struct VideoWindowView: View {
     /// The remote window's title, shown in the chrome until geometry/title arrives.
     public let title: String
@@ -29,14 +28,12 @@ public struct VideoWindowView: View {
 
 #if os(macOS)
 /// `NSViewRepresentable` host backing the `CAMetalLayer` on macOS.
-@available(macOS 14.0, *)
 struct MetalVideoLayerView: NSViewRepresentable {
     func makeNSView(context: Context) -> MetalLayerBackedView { MetalLayerBackedView() }
     func updateNSView(_ nsView: MetalLayerBackedView, context: Context) {}
 }
 
 /// A layer-backed `NSView` whose backing layer is a `CAMetalLayer`.
-@available(macOS 14.0, *)
 final class MetalLayerBackedView: NSView {
     let videoLayer = CAMetalLayer()
     override init(frame frameRect: NSRect) {
@@ -51,14 +48,12 @@ final class MetalLayerBackedView: NSView {
 #elseif os(iOS)
 import UIKit
 /// `UIViewRepresentable` host backing the `CAMetalLayer` on iOS.
-@available(iOS 17.0, *)
 struct MetalVideoLayerView: UIViewRepresentable {
     func makeUIView(context: Context) -> MetalLayerBackedView { MetalLayerBackedView() }
     func updateUIView(_ uiView: MetalLayerBackedView, context: Context) {}
 }
 
 /// A `UIView` whose `layerClass` is `CAMetalLayer`.
-@available(iOS 17.0, *)
 final class MetalLayerBackedView: UIView {
     override class var layerClass: AnyClass { CAMetalLayer.self }
     var videoLayer: CAMetalLayer { layer as! CAMetalLayer }

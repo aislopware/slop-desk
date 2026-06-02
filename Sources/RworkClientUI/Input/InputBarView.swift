@@ -7,7 +7,6 @@ import RworkClient
 /// `RworkClient.sendInput`, switching its label/behaviour with the ``InputBarModel``'s
 /// affordance (shell-command 'A' vs TUI-compose 'B1'). The logic lives in
 /// `RworkClaudeCode.InputBoxModel`; this is the view.
-@available(macOS 14.0, iOS 17.0, *)
 public struct InputBarView: View {
     @Bindable private var model: InputBarModel
     private let client: RworkClient?

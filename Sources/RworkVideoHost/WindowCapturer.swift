@@ -27,7 +27,6 @@ import OSLog
 /// - Idle-skip: `SCStreamFrameInfo.status == .idle` → return immediately, no encode,
 ///   no send (doc 17 §3.5). >90% of coding frames are static.
 /// - Heartbeat IDR ~1s so a reconnecting/loss-recovering client catches a frame.
-@available(macOS 14.0, *)
 public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     /// Heartbeat IDR cadence: force a keyframe ~every second on an idle window
     /// (doc 17 §3.5) so a late-joining / loss-recovering client gets a decode anchor.
@@ -56,17 +55,14 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// Builds the MEASURED-config `SCStreamConfiguration` for a single window.
     /// `pointPixelScale` lets a Retina capture request native pixels (default 1.0 =
     /// point-sized; the host typically captures at the window's backing scale).
-    @available(macOS 14.0, *)
     public static func makeConfiguration(width: Int, height: Int) -> SCStreamConfiguration {
         let config = SCStreamConfiguration()
         config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange // NV12 zero-copy (doc 02 §3.1)
         config.showsCursor = false                                          // client-side cursor (RESULTS.md D)
         // showMouseClicks gates the click "ripple" overlay (default NO; only applies
         // to BGRA capture per the SDK header — a no-op for our NV12 path, set for
-        // intent). macOS 15+.
-        if #available(macOS 15.0, *) {
-            config.showMouseClicks = false
-        }
+        // intent).
+        config.showMouseClicks = false
         config.minimumFrameInterval = CMTime(value: 1, timescale: 30)       // cap ~30fps (doc 02 §3.1)
         config.queueDepth = 3                                               // 2-3 for low latency (doc 02 §3.1)
         config.width = width
@@ -78,14 +74,12 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// Creates the content filter for one desktop-independent window. Captures the
     /// window's backing store at origin (0,0) so in-window coordinates are direct
     /// (doc 18 §B note).
-    @available(macOS 14.0, *)
     public static func makeFilter(window: SCWindow) -> SCContentFilter {
         SCContentFilter(desktopIndependentWindow: window)
     }
 
     /// Starts capturing the given window. ⚠️ Requires a window-server + Screen-
     /// Recording TCC session — NEVER call from a test (it will hang).
-    @available(macOS 14.0, *)
     public func start(window: SCWindow) async throws {
         let config = Self.makeConfiguration(width: Int(window.frame.width), height: Int(window.frame.height))
         let filter = Self.makeFilter(window: window)

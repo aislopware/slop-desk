@@ -14,7 +14,6 @@ import RworkVideoProtocol
 /// cursor as a `CALayer` (or Metal quad) on TOP of the decoded frame each vsync.
 /// Result: **pointer latency = RTT**, fully decoupled from encode/decode (doc 17
 /// §3.3). The cursor moves smoothly even while video frames are stale.
-@available(macOS 14.0, iOS 17.0, *)
 public final class ClientCursorCompositor {
     /// The cursor overlay layer (caller adds it above the Metal layer).
     public let cursorLayer: CALayer

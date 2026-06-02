@@ -10,7 +10,6 @@ import RworkInspector
 /// Read-only by construction (doc 16): the panel only *consumes* events; it never produces
 /// any signal that reaches the agent. The terminal byte pipeline (PATH 1) is entirely
 /// separate — this panel rides the inspector's second channel.
-@available(macOS 14.0, iOS 17.0, *)
 public struct InspectorPanel: View {
     @State private var model: InspectorViewModel
     private let client: InspectorClient?

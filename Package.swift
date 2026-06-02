@@ -11,8 +11,10 @@ import PackageDescription
 let package = Package(
     name: "Rwork",
     platforms: [
-        .macOS(.v14),
-        .iOS(.v17),
+        // `.v26` requires _PackageDescription 6.2; this manifest is swift-tools-version:6.0,
+        // so the string form is used to express the macOS 26 / iOS 26 floor.
+        .macOS("26.0"),
+        .iOS("26.0"),
     ],
     products: [
         .library(name: "RworkProtocol", targets: ["RworkProtocol"]),
@@ -78,7 +80,7 @@ let package = Package(
         // view-models that bind the existing modules — RworkClient (byte pipeline +
         // reconnect), RworkInspector (read-only structured panel), RworkClaudeCode
         // (input-box A/B1 affordance), RworkTerminal (the renderer SEAM) — into a
-        // working client. Builds for macOS 14 + iOS 17.
+        // working client.
         //
         // The terminal pixels are a SEAM (`TerminalRenderingView`): production =
         // `GhosttyTerminalView` (Metal-hosted `GhosttySurface`, the gated binding under
@@ -91,6 +93,8 @@ let package = Package(
         // (`KeyRepeater`/`FloatingCursorMapping`/`KeyboardAccessoryDecision`/`InputRouting`)
         // unit-tested on macOS; the UIKit view wrappers that drive them are `#if os(iOS)`
         // and are typechecked via an iOS-triple build.
+        //
+        // Builds for macOS 26 + iOS 26 (the deployment floor — no fallback below that).
         .target(
             name: "RworkClientUI",
             dependencies: ["RworkClient", "RworkInspector", "RworkClaudeCode", "RworkTerminal"]
