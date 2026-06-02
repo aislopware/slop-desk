@@ -24,6 +24,10 @@ let package = Package(
         .library(name: "RworkInspector", targets: ["RworkInspector"]),
         .library(name: "RworkClaudeCode", targets: ["RworkClaudeCode"]),
         .library(name: "RworkClientUI", targets: ["RworkClientUI"]),
+        // PATH 2 (GUI video path, Phase 4 / WF-9).
+        .library(name: "RworkVideoProtocol", targets: ["RworkVideoProtocol"]),
+        .library(name: "RworkVideoHost", targets: ["RworkVideoHost"]),
+        .library(name: "RworkVideoClient", targets: ["RworkVideoClient"]),
     ],
     targets: [
         // MARK: Libraries
@@ -92,6 +96,37 @@ let package = Package(
             dependencies: ["RworkClient", "RworkInspector", "RworkClaudeCode", "RworkTerminal"]
         ),
 
+        // MARK: PATH 2 — GUI video path (Phase 4 / WF-9)
+
+        // Cross-platform PURE wire format for the GUI video path: UDP frame
+        // packetizer/reassembler (with loss detect + recovery signalling), FEC
+        // (XOR parity, swappable for Reed-Solomon), cursor side-channel codec,
+        // window-geometry codec, coordinate-mapping math (multi-monitor Cocoa-flip +
+        // Retina), and the client->host input-event codec. ZERO platform dependency
+        // (no ScreenCaptureKit/VideoToolbox/AppKit) so it builds macOS + iOS and is
+        // fully unit-testable in isolation — same discipline as RworkProtocol.
+        .target(name: "RworkVideoProtocol"),
+
+        // macOS-only host capture + encode + input injection. USES
+        // ScreenCaptureKit / VideoToolbox / CoreGraphics / AppKit. COMPILED + code-
+        // reviewed, NEVER executed in tests: SCStream capture AND VTCompressionSession
+        // HW encode HANG without a window-server + Screen-Recording TCC session, which
+        // a headless test/CI run does not have (docs/research/spikes/vtbench/RESULTS.md).
+        // The encoder/capture configs match the MEASURED spike configs exactly.
+        .target(
+            name: "RworkVideoHost",
+            dependencies: ["RworkVideoProtocol"],
+            // macOS-only: SCStream + VTCompressionSession + AX/CGEvent are macOS APIs.
+            // (RworkVideoProtocol stays cross-platform; only this host layer is gated.)
+            swiftSettings: []
+        ),
+
+        // macOS + iOS client decode + Metal render + client-side cursor. USES
+        // VideoToolbox (decode) / Metal / CoreVideo / QuartzCore. COMPILED + reviewed;
+        // decode is MEASURED-safe (~0.9-1.1ms synchronous) but to honour the hang-
+        // safety rule NO VTDecompressionSession is instantiated in tests either.
+        .target(name: "RworkVideoClient", dependencies: ["RworkVideoProtocol"]),
+
         // MARK: Executables
 
         // Headless host daemon (PTY + transport). Sources under Sources/rwork-hostd.
@@ -133,5 +168,13 @@ let package = Package(
             name: "RworkClientUITests",
             dependencies: ["RworkClientUI", "RworkClient", "RworkHost", "RworkInspector", "RworkClaudeCode", "RworkTerminal"]
         ),
+        // WF-9 GUI video path: ONLY the PURE RworkVideoProtocol is unit-tested
+        // (packetize/reassemble incl. fragment-loss → drop + recovery, FEC real
+        // single-loss recovery, cursor codec round-trip + <64B size, coordinate
+        // mapping single/multi-monitor/Retina, window-geometry codec, input-event
+        // codec). NO VideoToolbox / ScreenCaptureKit is instantiated anywhere here —
+        // the host/client video code HANGS without a window-server + TCC session, so
+        // it is COMPILED (swift build) + code-reviewed, never executed in a test.
+        .testTarget(name: "RworkVideoProtocolTests", dependencies: ["RworkVideoProtocol"]),
     ]
 )
