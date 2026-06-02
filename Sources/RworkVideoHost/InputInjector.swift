@@ -124,8 +124,26 @@ public final class InputInjector: @unchecked Sendable {
     }
 
     private func postScroll(dx: Double, dy: Double, tag: UInt32) {
-        guard let event = CGEvent(scrollWheelEvent2Source: eventSource, units: .pixel, wheelCount: 2, wheel1: Int32(dy), wheel2: Int32(dx), wheel3: 0) else { return }
+        // dx/dy arrive off the (untrusted) wire. `Int32(Double)` is the TRAPPING
+        // initializer — it fatal-errors on NaN/±inf or any value outside Int32's range
+        // (e.g. a hostile `1e300`), so a single crafted scroll datagram could crash the
+        // whole host process. `RworkVideoProtocol` already rejects non-finite deltas at
+        // decode; this clamp is the defence-in-depth backstop for a finite-but-huge value,
+        // and it can never trap.
+        guard let event = CGEvent(scrollWheelEvent2Source: eventSource, units: .pixel, wheelCount: 2,
+                                  wheel1: Self.clampToInt32(dy), wheel2: Self.clampToInt32(dx), wheel3: 0) else { return }
         stampAndPost(event, tag: tag)
+    }
+
+    /// Clamps a wire-supplied scroll delta into `Int32` without ever trapping. `NaN` becomes
+    /// 0; ±infinity and any out-of-range magnitude saturate to `Int32.min`/`Int32.max`. (The
+    /// NaN check MUST come first — every comparison with NaN is false, so it would otherwise
+    /// fall through to the trapping `Int32(_:)`.)
+    static func clampToInt32(_ value: Double) -> Int32 {
+        if value.isNaN { return 0 }
+        if value >= Double(Int32.max) { return Int32.max }
+        if value <= Double(Int32.min) { return Int32.min }
+        return Int32(value.rounded())
     }
 
     private func postKey(keyCode: UInt16, down: Bool, modifiers: InputModifiers, tag: UInt32) {

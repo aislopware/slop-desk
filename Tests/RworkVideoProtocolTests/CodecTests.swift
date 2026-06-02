@@ -94,6 +94,33 @@ final class CodecTests: XCTestCase {
         XCTAssertThrowsError(try InputEvent.decode(Data([250])))
     }
 
+    func testInputEventRejectsNonFiniteFloatFields() {
+        // A hostile peer can put ANY IEEE-754 bit pattern on the wire (`readFloat64` rebuilds
+        // it verbatim). A non-finite coordinate / scroll delta must be rejected at decode: the
+        // host's scroll injector converts the delta with the TRAPPING `Int32(Double)`, so a
+        // single NaN/±inf datagram would otherwise crash the whole host process. The router
+        // turns the throw into a dropped datagram (a corrupt packet must never crash the peer).
+        let nonFinite: [InputEvent] = [
+            .scroll(dx: .nan, dy: 1, normalized: VideoPoint(x: 0, y: 0), tag: 1),
+            .scroll(dx: 1, dy: .infinity, normalized: VideoPoint(x: 0, y: 0), tag: 1),
+            .scroll(dx: 1, dy: 1, normalized: VideoPoint(x: .nan, y: 0), tag: 1),
+            .mouseMove(normalized: VideoPoint(x: .infinity, y: 0), tag: 1),
+            .mouseDown(button: .left, normalized: VideoPoint(x: 0, y: -.infinity), clickCount: 1, modifiers: [], tag: 1),
+            .mouseUp(button: .right, normalized: VideoPoint(x: .nan, y: .nan), clickCount: 1, modifiers: [], tag: 1),
+        ]
+        for event in nonFinite {
+            XCTAssertThrowsError(try InputEvent.decode(event.encode()), "expected \(event) to be rejected") { error in
+                guard let e = error as? VideoProtocolError, case .malformed = e else {
+                    return XCTFail("expected .malformed for \(event), got \(error)")
+                }
+            }
+        }
+        // A FINITE (even very large) scroll delta still decodes — clamping out-of-Int32-range
+        // values is the host injector's job (Self.clampToInt32), not decode's.
+        XCTAssertNoThrow(try InputEvent.decode(
+            InputEvent.scroll(dx: 1e9, dy: -1e9, normalized: VideoPoint(x: 0.5, y: 0.5), tag: 1).encode()))
+    }
+
     func testModifierBitmaskIsStable() {
         let all: InputModifiers = [.shift, .control, .option, .command, .capsLock, .function]
         XCTAssertEqual(all.rawValue, 0b0011_1111)
