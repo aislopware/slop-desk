@@ -150,14 +150,22 @@ script is never truncated.
 
 ## GUI renderer + PATH 2 (libghostty + video) — how to run on hardware
 
-The libghostty renderer **compiles + LINKS** on this macOS-26.5 host for **both macOS AND iOS**
-(0 undefined symbols) — the former Zig↔SDK blocker is gone. Key insight: an xcframework slice
+The libghostty renderer **compiles, LINKS, and RENDERS at runtime** on this macOS-26.5 host for
+**both macOS AND iOS** (0 undefined symbols) — the former Zig↔SDK blocker is gone, and the iOS
+renderer is **verified rendering on the iOS 26.5 Simulator** (driven via maestro: glyphs, ANSI
+colors, nerd-font/powerline icons, live `ls`/Starship output, cursor — updating per feed). Key insight: an xcframework slice
 is a **static archive (no final link step)**, so Zig 0.15.2 cross-compiles iOS objects against
 the installed **iOS 26.5 SDK** fine — **no iOS ≤18 SDK needed**. (macOS needs an `xcrun`
 PATH-shim to point the native build-runner at the CLT's `MacOSX15.sdk`; iOS passes through to
 26.5.) The renderer stays gated `#if canImport(CGhostty)` and is in NO `Package.swift` target,
-so the headless `swift build`/`swift test` never see it; the 64 MB+ xcframework is gitignored
-and `project.yml` stays renderer-free by default.
+so the headless `swift build`/`swift test` never see it; the 64 MB+ xcframework is gitignored.
+The **iOS** app ships with the renderer **enabled** in its committed `project.yml` — so you must
+build `libghostty.xcframework` first (step 1) or the iOS `xcodebuild` fails to link. The **macOS**
+app stays renderer-free by default (enable on demand, step 2a). Rendering on the iOS Simulator
+also requires `ThirdParty/ghostty/patches/0001-rwork-sync-updateframe-in-draw.patch` (auto-applied
+by `build-libghostty.sh`): it makes `Surface.draw()` run `updateFrame` synchronously, because the
+renderer thread's libxev `wakeup` async isn't pumped on the Simulator (so the normal cell-rebuild
+never re-runs → blank glyphs without the patch).
 
 ```sh
 # 1. Build the universal xcframework (macos-arm64 + ios-arm64 + ios-arm64-simulator).
@@ -170,11 +178,14 @@ xcodebuild -project Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj -scheme Clien
   -destination 'generic/platform=macOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
 git checkout -- Apps/ClientApp-macOS/project.yml && xcodegen generate --spec Apps/ClientApp-macOS/project.yml
 
-# 2b. iOS GUI terminal (Simulator; the script pins ARCHS=arm64):
-bash scripts/enable-ios-renderer.sh
+# 2b. iOS GUI terminal (Simulator). project.yml is committed renderer-ENABLED (+ pins ARCHS=arm64),
+#     so just (re)generate the .xcodeproj and build — no enable step, no restore:
+xcodegen generate --spec Apps/ClientApp-iOS/project.yml   # or: bash scripts/enable-ios-renderer.sh (idempotent)
 xcodebuild -project Apps/ClientApp-iOS/ClientApp-iOS.xcodeproj -scheme ClientApp-iOS \
   -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
-git checkout -- Apps/ClientApp-iOS/project.yml && xcodegen generate --spec Apps/ClientApp-iOS/project.yml
+# Install + run on the booted simulator:
+xcrun simctl install booted .work/ios-dd/Build/Products/Debug-iphonesimulator/Rwork.app  # (set -derivedDataPath .work/ios-dd)
+# (To DISABLE the renderer for a lightweight iOS build, revert the renderer wiring in project.yml.)
 ```
 
 The GUI terminal is **interactive** — keystrokes (`GhosttySurface.onWrite`) and grid resizes

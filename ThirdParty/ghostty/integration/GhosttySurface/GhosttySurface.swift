@@ -270,6 +270,20 @@ public final class GhosttySurface: @MainActor TerminalSurface {
         onResize?(cols, rows)
     }
 
+    /// Sets the surface size in ACTUAL layer PIXELS (the GUI layout path).
+    ///
+    /// libghostty sizes in pixels (`ghostty_surface_set_size`, header 1174) and derives
+    /// the grid (cols/rows) from its OWN measured cell metrics, then fires
+    /// `resize_callback` → ``onResize`` so the host gets the right `TIOCSWINSZ`. This is
+    /// the correct GUI path: pass the layer's real pixel extent and let libghostty own the
+    /// grid. (The cols/rows round-trip in ``setSize(cols:rows:)`` is only for headless/test
+    /// drivers — using it from layout double-applies the cell size and oversizes the
+    /// surface, which prevents the Metal layer from presenting.)
+    public func setPixelSize(widthPx: UInt32, heightPx: UInt32) {
+        guard let s = surface, widthPx > 0, heightPx > 0 else { return }
+        ghostty_surface_set_size(s, widthPx, heightPx)   // header 1174
+    }
+
     /// Updates the backing scale factor (e.g. moving between Retina/non-Retina).
     /// `ghostty_surface_set_content_scale` (header 1170).
     public func setContentScale(_ scale: Double) {
@@ -330,6 +344,19 @@ public final class GhosttySurface: @MainActor TerminalSurface {
         guard let s = surface else { return }
         ghostty_surface_refresh(s)
         ghostty_surface_draw(s)
+    }
+
+    /// Non-coalescing frame request intended for a `CADisplayLink` (iOS). Signals
+    /// libghostty's RENDERER THREAD (header 1169 `ghostty_surface_draw_now`) to run a
+    /// full `updateFrame → rebuildCells → drawFrame` cycle. The glyph atlas + foreground
+    /// cells are built LAZILY on that thread; the synchronous `ghostty_surface_draw` (in
+    /// `feed`/`redraw`) can race ahead of glyph rasterization and present a zero-fg-cell
+    /// frame — the background paints but glyphs do not. Driving this every display tick
+    /// lets the renderer thread rasterize + present the glyphs (matches the upstream iOS
+    /// embedding, which pairs a CADisplayLink with `draw_now`).
+    public func drawNow() {
+        guard let s = surface else { return }
+        ghostty_surface_draw_now(s)
     }
 
     /// Focus state (header 1171 `ghostty_surface_set_focus`).

@@ -27,6 +27,10 @@ targets:
     platform: iOS
     sources:
       - path: ../Shared
+      # PATH 1 (libghostty renderer): the gated renderer host + binding (GhosttySurface.swift
+      # + GhosttyTerminalView.swift). NOT members of any Package.swift target — they join THIS
+      # app target so `import CGhostty` resolves and `#if canImport(CGhostty)` flips true.
+      - path: ../../ThirdParty/ghostty/integration/GhosttySurface
     dependencies:
       - package: Rwork
         product: RworkClientUI
@@ -35,6 +39,12 @@ targets:
       # Carries VideoToolbox/Metal — never instantiated in tests, only at GUI launch.
       - package: Rwork
         product: RworkVideoClient
+      # PATH 1 (libghostty renderer): the libghostty static binary (link-time `ghostty`
+      # C-ABI symbols) as an xcframework. The UNIVERSAL build ships ios-arm64 (device) +
+      # ios-arm64-simulator slices, both built on this host against the iOS 26.5 SDK; the
+      # xcframework auto-selects the right slice per destination.
+      - framework: ../../ThirdParty/ghostty/libghostty.xcframework
+        embed: true
     info:
       path: Info.plist
       properties:
@@ -61,6 +71,30 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
+        # PATH 1 (libghostty renderer): point the Swift importer at the CGhostty clang
+        # module map (module.modulemap + vendored ghostty.h) so `import CGhostty` resolves
+        # and `#if canImport(CGhostty)` flips true → GhosttyTerminalView/GhosttySurface
+        # compile into this target and link against libghostty.xcframework.
+        SWIFT_INCLUDE_PATHS: $(SRCROOT)/../../ThirdParty/ghostty/integration/CGhostty
+        # The xcframework ships ios-arm64 (device) + ios-arm64-simulator — both arm64
+        # only (Apple-silicon target). Pin ARCHS=arm64 so a generic 'iOS Simulator'
+        # destination does NOT also demand an x86_64 slice (which would fail to link).
+        ARCHS: arm64
+        ONLY_ACTIVE_ARCH: "NO"
+        # libghostty vendors C/C++ deps (Dear ImGui, spirv-cross, glslang, FreeType,
+        # sentry, oniguruma, …) referencing the C++ runtime + a few iOS system frameworks
+        # (CoreText/CoreGraphics for fonts, QuartzCore/Metal for the layer). NO Carbon —
+        # it is macOS-only; the iOS slice does not reference it.
+        OTHER_LDFLAGS:
+          - -lc++
+          - -framework
+          - CoreText
+          - -framework
+          - CoreGraphics
+          - -framework
+          - QuartzCore
+          - -framework
+          - Metal
         # Best-effort builds run unsigned for an iOS Simulator destination:
         #   xcodebuild build -destination 'generic/platform=iOS Simulator' \
         #     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO

@@ -3,10 +3,12 @@
 # enable-ios-renderer.sh — wire the libghostty renderer into the iOS client app.
 #
 # The iOS sibling of scripts/enable-macos-renderer.sh. The committed
-# `Apps/ClientApp-iOS/project.yml` stays in its PLACEHOLDER state so the default iOS app
-# builds without the (gitignored) `ThirdParty/ghostty/libghostty.xcframework`. This script
-# reproduces the renderer wiring ON DEMAND once the UNIVERSAL xcframework is built (it carries
-# the ios-arm64 device + ios-arm64-simulator slices):
+# `Apps/ClientApp-iOS/project.yml` now ships with the renderer ENABLED (it references the
+# gitignored `ThirdParty/ghostty/libghostty.xcframework`, so that UNIVERSAL xcframework — carrying
+# the ios-arm64 device + ios-arm64-simulator slices — must be built FIRST or the iOS build fails to
+# link). This script is IDEMPOTENT: it (re-)asserts the renderer wiring in project.yml and
+# regenerates the .xcodeproj — a no-op if the wiring is already present. It is how that wiring was
+# authored, and remains the way to restore it after a revert:
 #
 #     XCFRAMEWORK_TARGET=universal bash ThirdParty/ghostty/build-libghostty.sh
 #     bash scripts/enable-ios-renderer.sh

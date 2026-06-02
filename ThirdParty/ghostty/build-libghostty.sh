@@ -298,6 +298,32 @@ if grep -q "minimum_zig_version" "${SRC_DIR}/build.zig.zon"; then
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 2b. Apply Rwork's local libghostty patches (idempotent).
+#
+#   patches/0001-rwork-sync-updateframe-in-draw.patch — makes core Surface.draw()
+#   run renderer.updateFrame() synchronously BEFORE drawFrame(), so a synchronous
+#   `ghostty_surface_draw` rebuilds the cell buffer on the CALLING (app) thread.
+#   Without it the only cell-rebuild path is the renderer thread's libxev `wakeup`
+#   async, which is NOT pumped after the initial startup notify on the iOS
+#   Simulator — so the terminal paints only a background with no glyphs. With the
+#   patch the Simulator renders correctly; it is harmless (idempotent rebuild)
+#   on device and macOS. updateFrame locks renderer_state.mutex internally.
+# ─────────────────────────────────────────────────────────────────────────────
+PATCH_DIR="${SCRIPT_DIR}/patches"
+if [ -d "${PATCH_DIR}" ]; then
+  for p in "${PATCH_DIR}"/*.patch; do
+    [ -f "${p}" ] || continue
+    if git -C "${SRC_DIR}" apply --reverse --check "${p}" >/dev/null 2>&1; then
+      log "patch already applied: $(basename "${p}")"
+    elif git -C "${SRC_DIR}" apply --check "${p}" >/dev/null 2>&1; then
+      git -C "${SRC_DIR}" apply "${p}" && log "applied patch: $(basename "${p}")"
+    else
+      log "WARN: patch does not apply cleanly (skipping): $(basename "${p}")"
+    fi
+  done
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 3. Build with the build-local Zig + the xcrun shim on PATH.
 #
 #    IMPORTANT (caveat #3): `zig build -Demit-xcframework` runs the libtool steps

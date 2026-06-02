@@ -268,13 +268,15 @@ final class GhosttyLayerBackedView: NSView {
         // .setSize reads ghostty_surface_size); the seed here just keeps the grid sane.
         let scale = window?.backingScaleFactor ?? 2.0
         metalLayer.contentsScale = scale
-        let pxW = bounds.width * scale
-        let pxH = bounds.height * scale
-        // 8×16 seed cell (matches GhosttySurface's seed); the surface refines it.
-        let cols = UInt16(max(1, Int(pxW / 8)))
-        let rows = UInt16(max(1, Int(pxH / 16)))
+        // Pass ACTUAL layer pixels; libghostty derives the grid from its measured cell
+        // metrics and fires resize_callback → onResize (host TIOCSWINSZ). Do NOT route
+        // through setSize(cols:rows:) here — that double-applies the cell size (seed 8×16
+        // → measured 29×63) and oversizes the surface ~3.6×, so the Metal layer never
+        // presents.
+        let pxW = UInt32(max(1, Int((bounds.width * scale).rounded())))
+        let pxH = UInt32(max(1, Int((bounds.height * scale).rounded())))
         surface?.setContentScale(Double(scale))
-        surface?.setSize(cols: cols, rows: rows)
+        surface?.setPixelSize(widthPx: pxW, heightPx: pxH)
         surface?.redraw()
     }
 
@@ -380,6 +382,11 @@ final class GhosttyLayerBackedView: UIView {
 
     private var surface: GhosttySurface?
     private weak var model: TerminalViewModel?
+    /// Drives libghostty's renderer thread each display tick via `ghostty_surface_draw_now`.
+    /// REQUIRED for glyphs: libghostty rasterizes glyphs + rebuilds foreground cells lazily
+    /// on its render thread; without a steady tick the synchronous `feed`-time draw can
+    /// present a background-only frame (no text) and never self-correct.
+    private var displayLink: CADisplayLink?
 
     func attach(model: TerminalViewModel) {
         self.model = model
@@ -406,9 +413,25 @@ final class GhosttyLayerBackedView: UIView {
         }
         model.surface = surface
         surface?.setFocus(true)
+
+        // Start the render-thread pacing tick (idempotent). 60 fps is plenty for a
+        // terminal; libghostty coalesces (its updateFrame is dirty-gated, so idle ticks
+        // are cheap no-ops).
+        if displayLink == nil {
+            let link = CADisplayLink(target: self, selector: #selector(renderTick))
+            link.preferredFramesPerSecond = 60
+            link.add(to: .main, forMode: .common)
+            displayLink = link
+        }
+    }
+
+    @objc private func renderTick() {
+        surface?.drawNow()
     }
 
     func detach() {
+        displayLink?.invalidate()
+        displayLink = nil
         surface?.close()
         surface = nil
         model?.surface = nil
@@ -418,12 +441,22 @@ final class GhosttyLayerBackedView: UIView {
         super.layoutSubviews()
         let scale = window?.screen.scale ?? UIScreen.main.scale
         metalLayer.contentsScale = scale
-        let pxW = bounds.width * scale
-        let pxH = bounds.height * scale
-        let cols = UInt16(max(1, Int(pxW / 8)))
-        let rows = UInt16(max(1, Int(pxH / 16)))
+        // CRITICAL (iOS): libghostty renders into an `IOSurfaceLayer` it adds as a
+        // SUBLAYER of this view's layer (`Metal.zig` `addSublayer:`) — and it NEVER sizes
+        // that sublayer. UIKit does not auto-resize a manually-added sublayer, so it stays
+        // 0×0; `drawFrame()` then reads `bounds × contentsScale == 0` and silently
+        // early-returns (renderer/generic.zig zero-size guard) → blank screen, no error.
+        // (macOS works because libghostty makes its layer the view's *backing* layer,
+        // which AppKit auto-sizes.) Size every sublayer to our bounds + scale.
+        layer.sublayers?.forEach { sub in
+            sub.frame = bounds
+            sub.contentsScale = scale
+        }
+        let pxW = UInt32(max(1, Int((bounds.width * scale).rounded())))
+        let pxH = UInt32(max(1, Int((bounds.height * scale).rounded())))
         surface?.setContentScale(Double(scale))
-        surface?.setSize(cols: cols, rows: rows)
+        // Pass ACTUAL layer pixels; libghostty derives the grid + fires resize_callback.
+        surface?.setPixelSize(widthPx: pxW, heightPx: pxH)
         surface?.redraw()
     }
 }
