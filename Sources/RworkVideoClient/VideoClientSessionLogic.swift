@@ -219,9 +219,10 @@ public struct InputEventEncoder: Sendable {
         layerSize: VideoSize,
         videoNativeSize: VideoSize,
         zoom: Double = 1,
-        pan: VideoPoint = VideoPoint(x: 0, y: 0)
+        pan: VideoPoint = VideoPoint(x: 0, y: 0),
+        mode: VideoContentMode = .fit
     ) -> VideoPoint {
-        let r = AspectFit.displayedVideoRect(viewSize: layerSize, videoNativeSize: videoNativeSize)
+        let r = AspectFit.displayedVideoRect(viewSize: layerSize, videoNativeSize: videoNativeSize, mode: mode)
         // 0..1 over the DISPLAYED (un-zoomed) video rect; degenerate rect → 0.
         let u = r.size.width > 0 ? (viewPoint.x - r.origin.x) / r.size.width : 0
         let v = r.size.height > 0 ? (viewPoint.y - r.origin.y) / r.size.height : 0
@@ -244,20 +245,26 @@ public struct InputEventEncoder: Sendable {
         return tag
     }
 
-    public mutating func mouseMove(viewPoint: VideoPoint, layerSize: VideoSize, videoNativeSize: VideoSize, zoom: Double = 1, pan: VideoPoint = VideoPoint(x: 0, y: 0)) -> InputEvent {
-        .mouseMove(normalized: Self.normalize(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan), tag: takeTag())
+    public mutating func mouseMove(viewPoint: VideoPoint, layerSize: VideoSize, videoNativeSize: VideoSize, zoom: Double = 1, pan: VideoPoint = VideoPoint(x: 0, y: 0), mode: VideoContentMode = .fit) -> InputEvent {
+        .mouseMove(normalized: Self.normalize(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan, mode: mode), tag: takeTag())
     }
 
-    public mutating func mouseDown(button: MouseButton, viewPoint: VideoPoint, layerSize: VideoSize, videoNativeSize: VideoSize, clickCount: UInt8, modifiers: InputModifiers, zoom: Double = 1, pan: VideoPoint = VideoPoint(x: 0, y: 0)) -> InputEvent {
-        .mouseDown(button: button, normalized: Self.normalize(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan), clickCount: clickCount, modifiers: modifiers, tag: takeTag())
+    public mutating func mouseDown(button: MouseButton, viewPoint: VideoPoint, layerSize: VideoSize, videoNativeSize: VideoSize, clickCount: UInt8, modifiers: InputModifiers, zoom: Double = 1, pan: VideoPoint = VideoPoint(x: 0, y: 0), mode: VideoContentMode = .fit) -> InputEvent {
+        .mouseDown(button: button, normalized: Self.normalize(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan, mode: mode), clickCount: clickCount, modifiers: modifiers, tag: takeTag())
     }
 
-    public mutating func mouseUp(button: MouseButton, viewPoint: VideoPoint, layerSize: VideoSize, videoNativeSize: VideoSize, clickCount: UInt8, modifiers: InputModifiers, zoom: Double = 1, pan: VideoPoint = VideoPoint(x: 0, y: 0)) -> InputEvent {
-        .mouseUp(button: button, normalized: Self.normalize(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan), clickCount: clickCount, modifiers: modifiers, tag: takeTag())
+    public mutating func mouseUp(button: MouseButton, viewPoint: VideoPoint, layerSize: VideoSize, videoNativeSize: VideoSize, clickCount: UInt8, modifiers: InputModifiers, zoom: Double = 1, pan: VideoPoint = VideoPoint(x: 0, y: 0), mode: VideoContentMode = .fit) -> InputEvent {
+        .mouseUp(button: button, normalized: Self.normalize(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan, mode: mode), clickCount: clickCount, modifiers: modifiers, tag: takeTag())
     }
 
-    public mutating func scroll(dx: Double, dy: Double, viewPoint: VideoPoint, layerSize: VideoSize, videoNativeSize: VideoSize, zoom: Double = 1, pan: VideoPoint = VideoPoint(x: 0, y: 0)) -> InputEvent {
-        .scroll(dx: dx, dy: dy, normalized: Self.normalize(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan), tag: takeTag())
+    /// A drag move (a button is held). Emitted from the view's `mouseDragged`/`rightMouseDragged`
+    /// — distinct from a hover `mouseMove` — so the host posts a `*MouseDragged` statelessly.
+    public mutating func mouseDrag(button: MouseButton, viewPoint: VideoPoint, layerSize: VideoSize, videoNativeSize: VideoSize, clickCount: UInt8, modifiers: InputModifiers, zoom: Double = 1, pan: VideoPoint = VideoPoint(x: 0, y: 0), mode: VideoContentMode = .fit) -> InputEvent {
+        .mouseDrag(button: button, normalized: Self.normalize(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan, mode: mode), clickCount: clickCount, modifiers: modifiers, tag: takeTag())
+    }
+
+    public mutating func scroll(dx: Double, dy: Double, viewPoint: VideoPoint, layerSize: VideoSize, videoNativeSize: VideoSize, zoom: Double = 1, pan: VideoPoint = VideoPoint(x: 0, y: 0), mode: VideoContentMode = .fit) -> InputEvent {
+        .scroll(dx: dx, dy: dy, normalized: Self.normalize(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan, mode: mode), tag: takeTag())
     }
 
     public mutating func key(keyCode: UInt16, down: Bool, modifiers: InputModifiers) -> InputEvent {

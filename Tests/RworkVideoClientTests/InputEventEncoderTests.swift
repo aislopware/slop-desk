@@ -54,6 +54,19 @@ final class InputEventEncoderTests: XCTestCase {
         XCTAssertEqual(try InputEvent.decode(event.encode()), event)
     }
 
+    func testMouseDragNormalisesAndRoundTrips() throws {
+        var enc = InputEventEncoder()
+        let event = enc.mouseDrag(button: .left, viewPoint: VideoPoint(x: 400, y: 300), layerSize: VideoSize(width: 800, height: 600), videoNativeSize: VideoSize(width: 800, height: 600), clickCount: 1, modifiers: [.shift])
+        guard case .mouseDrag(let button, let n, let clicks, let mods, let tag) = event else { return XCTFail("not a mouseDrag") }
+        XCTAssertEqual(button, .left)
+        XCTAssertEqual(n.x, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(n.y, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(clicks, 1)
+        XCTAssertEqual(mods, [.shift])   // a shift-drag extends a selection — must survive the wire
+        XCTAssertEqual(tag, 1)
+        XCTAssertEqual(try InputEvent.decode(event.encode()), event)
+    }
+
     func testScrollAndTextRoundTrip() throws {
         var enc = InputEventEncoder()
         let layer = VideoSize(width: 200, height: 200)

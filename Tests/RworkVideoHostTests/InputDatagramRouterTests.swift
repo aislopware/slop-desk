@@ -44,6 +44,7 @@ final class InputDatagramRouterTests: XCTestCase {
     func testMoveScrollKeyTextDoNotRaiseWithLatchClear() {
         let events: [InputEvent] = [
             .mouseMove(normalized: n, tag: 0),
+            .mouseDrag(button: .left, normalized: n, clickCount: 1, modifiers: [], tag: 0),
             .scroll(dx: 1, dy: -2, normalized: n, tag: 0),
             .key(keyCode: 1, down: true, modifiers: [], tag: 0),
             .text("x", tag: 0),
@@ -60,6 +61,7 @@ final class InputDatagramRouterTests: XCTestCase {
         XCTAssertTrue(InputDatagramRouter.rearmRaiseAfter(.mouseUp(button: .left, normalized: n, clickCount: 1, modifiers: [], tag: 0)))
         XCTAssertFalse(InputDatagramRouter.rearmRaiseAfter(.mouseDown(button: .left, normalized: n, clickCount: 1, modifiers: [], tag: 0)))
         XCTAssertFalse(InputDatagramRouter.rearmRaiseAfter(.mouseMove(normalized: n, tag: 0)))
+        XCTAssertFalse(InputDatagramRouter.rearmRaiseAfter(.mouseDrag(button: .left, normalized: n, clickCount: 1, modifiers: [], tag: 0)))
         XCTAssertFalse(InputDatagramRouter.rearmRaiseAfter(.text("x", tag: 0)))
     }
 

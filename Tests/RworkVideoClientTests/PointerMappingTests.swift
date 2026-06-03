@@ -123,6 +123,41 @@ final class PointerMappingTests: XCTestCase {
             XCTAssertEqual(r.size.height / view.height, fy, accuracy: 1e-9, "fit.y mismatch for \(view)/\(video)")
         }
     }
+
+    // MARK: .fill (cover) — forward then inverse must STILL be identity (incl. cropped points)
+
+    func testFillModeRoundTripIsIdentity() {
+        // In .fill the video COVERS the layer (overflow cropped). The forward transform can map
+        // a host point to a view point OUTSIDE the layer bounds (the cropped region); normalize
+        // with mode:.fill must invert it back to the original source 0..1 — proving render and
+        // input agree in fill mode exactly as they do in fit. (zoom == 1, the macOS fill case.)
+        let view = VideoSize(width: 1600, height: 1000)   // aspect 1.6
+        let video = VideoSize(width: 1920, height: 1080)  // aspect 1.778 → fill crops left/right
+        for host in [VideoPoint(x: 0, y: 0), VideoPoint(x: 960, y: 540), VideoPoint(x: 1920, y: 1080), VideoPoint(x: 1500, y: 200)] {
+            let vp = AspectFit.viewPoint(forHostPoint: host, viewSize: view, videoNativeSize: video, mode: .fill)
+            let back = InputEventEncoder.normalize(viewPoint: vp, layerSize: view, videoNativeSize: video, mode: .fill)
+            XCTAssertEqual(back.x, host.x / video.width, accuracy: 1e-6, "x for \(host)")
+            XCTAssertEqual(back.y, host.y / video.height, accuracy: 1e-6, "y for \(host)")
+        }
+    }
+
+    func testRendererFillFitCoversTheDrawable() {
+        // In .fill the renderer's quad must COVER the drawable: both fit.x and fit.y ≥ 1, with
+        // the tighter axis exactly 1 (the other overflows and is viewport-clipped). Derived from
+        // displayedVideoRect(.fill) — the single source the input/cursor mapping also invert.
+        let cases: [(VideoSize, VideoSize)] = [
+            (VideoSize(width: 1600, height: 1000), VideoSize(width: 1920, height: 1080)),
+            (VideoSize(width: 1600, height: 1000), VideoSize(width: 1000, height: 1000)),
+            (VideoSize(width: 1080, height: 1920), VideoSize(width: 1920, height: 1080)),
+        ]
+        for (view, video) in cases {
+            let r = AspectFit.displayedVideoRect(viewSize: view, videoNativeSize: video, mode: .fill)
+            let fx = r.size.width / view.width, fy = r.size.height / view.height
+            XCTAssertGreaterThanOrEqual(fx, 1 - 1e-9, "fit.x must cover for \(view)/\(video)")
+            XCTAssertGreaterThanOrEqual(fy, 1 - 1e-9, "fit.y must cover for \(view)/\(video)")
+            XCTAssertEqual(min(fx, fy), 1, accuracy: 1e-9, "tighter axis is exactly 1 (cover)")
+        }
+    }
 }
 
 #if os(macOS)

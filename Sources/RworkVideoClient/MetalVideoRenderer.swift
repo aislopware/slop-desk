@@ -42,6 +42,11 @@ public final class MetalVideoRenderer {
     /// pacer re-presents the last frame each vsync, so changes apply live on a static window.
     public var zoom: CGFloat = 1
     public var panNormalized: CGPoint = .zero
+    /// `.fit` (letterbox/pillarbox — whole window, bars) or `.fill` (cover — the video is
+    /// scaled up to cover the whole drawable, the overflowing axis clipped by the viewport;
+    /// no bars, aspect preserved). Both go through the SAME ``AspectFit/displayedVideoRect``
+    /// the input encoder + cursor invert, so a fit↔fill toggle never desyncs click mapping.
+    public var contentMode: VideoContentMode = .fit
 
     public init?(metalLayer: CAMetalLayer) {
         guard let device = metalLayer.device ?? MTLCreateSystemDefaultDevice(),
@@ -77,12 +82,24 @@ public final class MetalVideoRenderer {
 
     /// Draws one NV12 `CVPixelBuffer`. Called at vsync by ``FramePacer`` with the
     /// most recent decoded frame (show-last-frame on empty queue, skip-late upstream).
+    private var renderDiagCount = 0
+    private static let renderDiag = ProcessInfo.processInfo.environment["RWORK_VIDEO_DEBUG"] != nil
+
     public func render(_ pixelBuffer: CVPixelBuffer) {
         guard let textureCache,
               let drawable = metalLayer.nextDrawable() else { return } // nil → skip this vsync
 
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
+
+        // DIAGNOSTIC: the exact render-time geometry — drawable TEXTURE px (what the GPU
+        // actually allocated, not the requested drawableSize), layer bounds (pt), contentsScale,
+        // gravity, native px. The "half-size top-left" symptom means drawable.texture ≠
+        // bounds×scale or gravity isn't resize. Logged on frame 1 + every 120 frames.
+        if Self.renderDiag, renderDiagCount == 0 || renderDiagCount % 120 == 0 {
+            FileHandle.standardError.write(Data("Rwork[video.client]: RENDER#\(renderDiagCount) drawable.tex=\(drawable.texture.width)x\(drawable.texture.height)px drawableSize=\(Int(metalLayer.drawableSize.width))x\(Int(metalLayer.drawableSize.height)) layer.bounds=\(Int(metalLayer.bounds.width))x\(Int(metalLayer.bounds.height))pt scale=\(metalLayer.contentsScale) gravity=\(metalLayer.contentsGravity.rawValue) native=\(width)x\(height)px\n".utf8))
+        }
+        renderDiagCount += 1
 
         // Keep the CVMetalTexture WRAPPERS (not just the MTLTextures) alive: the
         // MTLTexture does not retain its parent CVMetalTexture, and the texture's backing
@@ -106,6 +123,18 @@ public final class MetalVideoRenderer {
 
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else { return }
+        // Pin the viewport to the drawable's PIXEL size. The default viewport for a
+        // CAMetalLayer-backed render target resolves to the layer's POINT bounds (656×433),
+        // not the drawable texture's pixel size (1312×866) on a 2× display — so the full-size
+        // quad rendered into the top-left half of the drawable, the rest cleared black, then
+        // stretched to fill: the video landed in the top-left QUARTER of the pane ("nhỏ 1 góc"
+        // + half-scale). libghostty's renderer sets its own viewport, which is why the terminal
+        // never showed this. Setting it explicitly to the texture size makes the quad cover the
+        // whole drawable. (drawable.texture matches metalLayer.drawableSize.)
+        encoder.setViewport(MTLViewport(originX: 0, originY: 0,
+                                        width: Double(drawable.texture.width),
+                                        height: Double(drawable.texture.height),
+                                        znear: 0, zfar: 1))
         encoder.setRenderPipelineState(pipelineState)
         // ASPECT-FIT: the quad fills the whole drawable unless we shrink it to the video's
         // aspect ratio, which would otherwise STRETCH (distort) a landscape window into a
@@ -122,11 +151,18 @@ public final class MetalVideoRenderer {
             // path computes in POINTS — aspect ratio is scale-invariant so the fit is
             // identical either way. `fit` is the quad's per-axis half-extent scale =
             // displayed extent / full extent.
+            // `.fill` returns a rect LARGER than the drawable (size > dw/dh) → fit > 1 → the
+            // quad extends past NDC [-1,1] and the overflow is clipped by the viewport: a
+            // centred cover-crop. `.fit` returns a rect ≤ drawable → fit ≤ 1 → letterbox.
             let r = AspectFit.displayedVideoRect(
                 viewSize: VideoSize(width: dw, height: dh),
-                videoNativeSize: VideoSize(width: Double(width), height: Double(height)))
+                videoNativeSize: VideoSize(width: Double(width), height: Double(height)),
+                mode: contentMode)
             fit.x = Float(r.size.width / dw)
             fit.y = Float(r.size.height / dh)
+            if Self.renderDiag, renderDiagCount == 1 || renderDiagCount % 120 == 1 {
+                FileHandle.standardError.write(Data("Rwork[video.client]:   fit=\(fit.x)x\(fit.y) (rect=\(Int(r.size.width))x\(Int(r.size.height)) in dw×dh=\(Int(dw))x\(Int(dh)))\n".utf8))
+            }
         }
         encoder.setVertexBytes(&fit, length: MemoryLayout<SIMD2<Float>>.size, index: 0)
         // Zoom/pan as a UV crop: invZoom shrinks the sampled UV span (zoom in), pan recenters

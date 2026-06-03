@@ -5,6 +5,9 @@ import RworkInspector
 #if os(iOS)
 import UIKit   // UIDevice.current.userInterfaceIdiom — the per-device live-video cap signal at init
 #endif
+#if os(macOS)
+import AppKit  // NSApplication — AUTOMATION-ONLY window-front so an autoconnect launch goes live in one shot
+#endif
 
 /// The Rwork client app scene, shared by both Xcode app targets (ClientApp-macOS,
 /// ClientApp-iOS). The app targets reference this as their `@main` entry — see the
@@ -95,6 +98,18 @@ public struct RworkClientApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     handleScenePhase(phase)
                 }
+                #if os(macOS)
+                // AUTOMATION ONLY (env-gated): bring the window to front + make it key at launch so the
+                // NavigationSplitView detail subtree appears and the .remoteGUI pane's connect-on-appear
+                // trigger fires WITHOUT a manual front/Open click — so an autoconnect run (check-video.sh
+                // or an ssh-launched bundle) goes LIVE in one shot. A normal user launch has no
+                // RWORK_*_AUTOCONNECT_* env, so this never steals focus or alters the manual flow.
+                .task {
+                    guard Self.hasAutomationEnvironment() else { return }
+                    NSApplication.shared.activate(ignoringOtherApps: true)
+                    NSApplication.shared.windows.first?.makeKeyAndOrderFront(nil)
+                }
+                #endif
         }
         // The native command surface (docs/22 §5): a Pane + Tab menu on macOS, the hardware-keyboard
         // ⌘-hold HUD on iPadOS — both driven by the SAME ⌘/⌥-prefixed shortcuts as

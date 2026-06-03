@@ -85,7 +85,7 @@ final class VideoWindowPipeline {
             },
             applyCursor: { [weak compositor] update, placement in
                 Task { @MainActor in
-                    compositor?.apply(update, viewSize: placement.viewSize, videoNativeSize: placement.videoNativeSize, zoom: placement.zoom, pan: placement.pan)
+                    compositor?.apply(update, viewSize: placement.viewSize, videoNativeSize: placement.videoNativeSize, zoom: placement.zoom, pan: placement.pan, mode: placement.mode)
                 }
             },
             registerCursorShape: { [weak compositor] image, shapeID in
@@ -135,6 +135,11 @@ final class VideoWindowPipeline {
         if let layer = renderer?.metalLayer {
             let scale = layer.contentsScale > 0 ? layer.contentsScale : 1
             layer.drawableSize = CGSize(width: layerSize.width * scale, height: layerSize.height * scale)
+            if ProcessInfo.processInfo.environment["RWORK_VIDEO_DEBUG"] != nil {
+                // Proof the contentsScale fix took: on Retina this must read scale=2.0 and a
+                // drawable = 2× the point size. scale=1.0 here is the "nhỏ 1 góc" regression.
+                FileHandle.standardError.write(Data("Rwork[video.client]: layoutChanged layer=\(Int(layerSize.width))x\(Int(layerSize.height))pt contentsScale=\(scale) drawable=\(Int(layer.drawableSize.width))x\(Int(layer.drawableSize.height))px\n".utf8))
+            }
         }
         guard let session else { return }
         Task { await session.setLayerSize(layerSize) }
@@ -154,11 +159,31 @@ final class VideoWindowPipeline {
         }
     }
 
+    /// fit ↔ fill content mode, forwarded to the renderer (changes the quad's cover/contain
+    /// scale next vsync — the pacer re-presents the last frame so it applies live on a static
+    /// window) AND to the session, so the input encoder inverts — and the cursor overlay
+    /// tracks — the EXACT SAME displayed rect. Both must move together or a click in `.fill`
+    /// lands against the `.fit` letterbox rect.
+    func setContentMode(_ mode: VideoContentMode) {
+        renderer?.contentMode = mode
+        if let session {
+            Task { await session.setContentMode(mode) }
+        }
+    }
+
+    /// The current content mode the renderer is showing (so the backing view's toggle button
+    /// can reflect + flip it). Defaults to `.fit` before the renderer is up.
+    var contentMode: VideoContentMode { renderer?.contentMode ?? .fit }
+
     // MARK: Input forwarding
 
     func mouseMove(_ viewPoint: VideoPoint) {
         guard let session else { return }
         Task { await session.sendMouseMove(viewPoint: viewPoint) }
+    }
+    func mouseDrag(_ button: MouseButton, _ viewPoint: VideoPoint, _ clickCount: UInt8, _ modifiers: InputModifiers) {
+        guard let session else { return }
+        Task { await session.sendMouseDrag(button: button, viewPoint: viewPoint, clickCount: clickCount, modifiers: modifiers) }
     }
     func mouseDown(_ button: MouseButton, _ viewPoint: VideoPoint, _ clickCount: UInt8, _ modifiers: InputModifiers) {
         guard let session else { return }

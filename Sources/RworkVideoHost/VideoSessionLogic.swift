@@ -189,6 +189,58 @@ public struct InputDatagramRouter: Sendable {
     }
 }
 
+/// Pure button-balance bookkeeping for input injection (testable WITHOUT CGEvents).
+///
+/// The reorder fix (ordered inbound consumer) keeps a single interaction's down→drag→up in
+/// order, but it cannot conjure a `mouseUp` that the wire DROPPED or a flaky gesture never
+/// sent. A target app that received a `mouseDown` with no matching `mouseUp` stays stuck
+/// mid-selection, so the NEXT click "đã bắt đầu selection rồi". This tracks which buttons are
+/// logically HELD so a fresh `mouseDown` for an already-held button can emit a synthetic
+/// release FIRST — guaranteeing a click never begins inside a stuck selection. Only
+/// down/up mutate the held set; moves/drags/scroll/keys/text pass through unchanged.
+public struct InputButtonBalance: Sendable, Equatable {
+    public private(set) var held: Set<MouseButton> = []
+    public init() {}
+
+    /// What to do before injecting `event`.
+    public struct Plan: Equatable, Sendable {
+        /// Emit a synthetic release of THIS button before the real event (`nil` ⇒ none). Set
+        /// only when a `mouseDown` arrives for a button still marked held (a lost up).
+        public var preRelease: MouseButton?
+        /// SUPPRESS the event entirely — do NOT post it. Set for a `mouseUp` whose button is
+        /// NOT held: a duplicate of the client's loss-resilient 3× `mouseUp` (the first up
+        /// already released the button) or an up with no matching down. Posting it would be a
+        /// spurious extra `*MouseUp` into the target app (breaks the double-click coalescer /
+        /// custom WebKit/Electron tracking). This is what makes the wire redundancy truly
+        /// idempotent on the host: the FIRST up of the burst posts, the rest are dropped.
+        public var suppress: Bool
+        public init(preRelease: MouseButton? = nil, suppress: Bool = false) {
+            self.preRelease = preRelease
+            self.suppress = suppress
+        }
+    }
+
+    /// Folds `event` into the held set and returns the injection plan. A `mouseDown` for an
+    /// already-held button asks for a pre-release (then stays held — the fresh down owns it);
+    /// a `mouseUp` for a HELD button releases it (post it); a `mouseUp` for a button NOT held
+    /// is a redundant/duplicate up and is SUPPRESSED; everything else passes through.
+    public mutating func plan(for event: InputEvent) -> Plan {
+        switch event {
+        case .mouseDown(let button, _, _, _, _):
+            let stuck = held.contains(button)
+            held.insert(button)
+            return Plan(preRelease: stuck ? button : nil)
+        case .mouseUp(let button, _, _, _, _):
+            if held.remove(button) != nil {
+                return Plan()                  // first up for a held button — release it
+            }
+            return Plan(suppress: true)        // duplicate / orphan up — drop it (idempotent)
+        case .mouseMove, .mouseDrag, .scroll, .key, .text:
+            return Plan()
+        }
+    }
+}
+
 /// Routes a datagram received on the DEDICATED recovery channel (client→host loss
 /// recovery, doc 17 §3.6). Pure decision logic: decode the ``RecoveryMessage`` and
 /// decide the host action. Kept separate from ``InputDatagramRouter`` because recovery

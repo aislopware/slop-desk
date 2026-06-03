@@ -69,12 +69,13 @@ public final class ClientCursorCompositor {
         videoNativeSize: VideoSize,
         zoom: Double,
         pan: VideoPoint,
-        cursorSize: VideoSize
+        cursorSize: VideoSize,
+        mode: VideoContentMode = .fit
     ) -> VideoRect {
-        let tip = AspectFit.viewPoint(forHostPoint: update.position, viewSize: viewSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan)
+        let tip = AspectFit.viewPoint(forHostPoint: update.position, viewSize: viewSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan, mode: mode)
         // The hotspot is reported in host-window points; scale it into view points by the
         // displayed-rect's effective per-source-point scale (× zoom for the crop).
-        let r = AspectFit.displayedVideoRect(viewSize: viewSize, videoNativeSize: videoNativeSize)
+        let r = AspectFit.displayedVideoRect(viewSize: viewSize, videoNativeSize: videoNativeSize, mode: mode)
         let scaleX = videoNativeSize.width > 0 ? (r.size.width / videoNativeSize.width) * max(1, zoom) : 1
         let scaleY = videoNativeSize.height > 0 ? (r.size.height / videoNativeSize.height) * max(1, zoom) : 1
         return VideoRect(
@@ -94,10 +95,10 @@ public final class ClientCursorCompositor {
     /// Aspect-fit + zoom/pan-correct apply: places the overlay through the same forward
     /// render transform the input encoder inverts, so the cursor tracks where clicks land
     /// even when the video is letterboxed or (on iOS) zoomed/panned.
-    public func apply(_ update: CursorUpdate, viewSize: VideoSize, videoNativeSize: VideoSize, zoom: Double, pan: VideoPoint) {
+    public func apply(_ update: CursorUpdate, viewSize: VideoSize, videoNativeSize: VideoSize, zoom: Double, pan: VideoPoint, mode: VideoContentMode = .fit) {
         let size = applyShape(update)
         guard update.visible else { return }
-        let frame = Self.layerFrame(for: update, viewSize: viewSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan, cursorSize: size)
+        let frame = Self.layerFrame(for: update, viewSize: viewSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan, cursorSize: size, mode: mode)
         setLayerFrame(frame)
     }
 

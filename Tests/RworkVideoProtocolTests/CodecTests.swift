@@ -67,6 +67,8 @@ final class CodecTests: XCTestCase {
             .mouseMove(normalized: VideoPoint(x: 0.5, y: 0.25), tag: 0xDEADBEEF),
             .mouseDown(button: .left, normalized: VideoPoint(x: 0, y: 0), clickCount: 1, modifiers: [.command, .shift], tag: 1),
             .mouseUp(button: .right, normalized: VideoPoint(x: 1, y: 1), clickCount: 2, modifiers: [.control], tag: 2),
+            .mouseDrag(button: .left, normalized: VideoPoint(x: 0.4, y: 0.6), clickCount: 1, modifiers: [.shift], tag: 8),
+            .mouseDrag(button: .other, normalized: VideoPoint(x: 0.9, y: 0.1), clickCount: 2, modifiers: [], tag: 9),
             .scroll(dx: -3.5, dy: 12.0, normalized: VideoPoint(x: 0.3, y: 0.7), tag: 3),
             .key(keyCode: 36, down: true, modifiers: [.option, .function], tag: 4),  // Return
             .key(keyCode: 53, down: false, modifiers: [], tag: 5),                    // Escape
@@ -107,6 +109,7 @@ final class CodecTests: XCTestCase {
             .mouseMove(normalized: VideoPoint(x: .infinity, y: 0), tag: 1),
             .mouseDown(button: .left, normalized: VideoPoint(x: 0, y: -.infinity), clickCount: 1, modifiers: [], tag: 1),
             .mouseUp(button: .right, normalized: VideoPoint(x: .nan, y: .nan), clickCount: 1, modifiers: [], tag: 1),
+            .mouseDrag(button: .left, normalized: VideoPoint(x: .infinity, y: 0.5), clickCount: 1, modifiers: [], tag: 1),
         ]
         for event in nonFinite {
             XCTAssertThrowsError(try InputEvent.decode(event.encode()), "expected \(event) to be rejected") { error in

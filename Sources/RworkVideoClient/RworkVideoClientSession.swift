@@ -37,11 +37,40 @@ public actor RworkVideoClientSession {
     /// decode succeeds (OSLog `.info` is not persisted; a white client window is otherwise opaque).
     /// No-op in production.
     private static let debugStderr = ProcessInfo.processInfo.environment["RWORK_VIDEO_DEBUG"] != nil
+    /// Redundancy for the critical RELEASE edge (off in the `RWORK_INPUT_UNORDERED` A/B
+    /// baseline). Over plain UDP a dropped `mouseUp` strands the target app mid-selection;
+    /// we send the up a few times back-to-back so a single loss can't. Genuinely idempotent
+    /// on the host: button-balance posts the FIRST up (the one that releases the held button)
+    /// and SUPPRESSES the duplicates, so the target app never sees a spurious extra `*MouseUp`.
+    /// 1 in legacy mode, `redundantUpCount` else.
+    private static let redundantUpCount = ProcessInfo.processInfo.environment["RWORK_INPUT_UNORDERED"] == nil ? 3 : 1
     private var dbgMediaCount = 0
     private var dbgDecodeCount = 0
+    private var dbgPointerCount = 0
     nonisolated private func dbg(_ message: @autoclosure () -> String) {
         guard Self.debugStderr else { return }
         FileHandle.standardError.write(Data("Rwork[video.client]: \(message())\n".utf8))
+    }
+
+    /// Diagnostics for the input-coordinate path (`RWORK_VIDEO_DEBUG`): prints the view
+    /// point, the on-screen layer size, the aspect-fit NATIVE size, the resulting
+    /// displayed-video sub-rect, and the normalised 0..1 the host receives — so a "toạ độ
+    /// sai" / "không fill" report can be ROOT-CAUSED from the log instead of guessed
+    /// (does the video fill the pane? is the native size capture-pinned or geometry-
+    /// corrupted? does the click land where the user aimed?). Moves are sampled 1-in-30;
+    /// every button-down / drag / up is logged.
+    private func dbgPointer(_ kind: String, _ viewPoint: VideoPoint) {
+        guard Self.debugStderr else { return }
+        dbgPointerCount += 1
+        if kind == "move", dbgPointerCount % 30 != 0 { return }
+        let r = AspectFit.displayedVideoRect(viewSize: layerSize, videoNativeSize: decodedSize, mode: contentMode)
+        let n = InputEventEncoder.normalize(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: decodedSize, zoom: zoom, pan: pan, mode: contentMode)
+        dbg("\(kind) view=(\(Int(viewPoint.x)),\(Int(viewPoint.y))) "
+            + "layer=\(Int(layerSize.width))x\(Int(layerSize.height)) "
+            + "native=\(Int(decodedSize.width))x\(Int(decodedSize.height)) "
+            + "mode=\(contentMode) zoom=\(String(format: "%.2f", zoom)) "
+            + "fitRect=(\(Int(r.origin.x)),\(Int(r.origin.y)) \(Int(r.size.width))x\(Int(r.size.height))) "
+            + "→ norm=(\(String(format: "%.3f", n.x)),\(String(format: "%.3f", n.y)))")
     }
 
     /// GUI hand-off seams. The renderer / cursor compositor / display link are all
@@ -79,11 +108,13 @@ public actor RworkVideoClientSession {
         public var videoNativeSize: VideoSize
         public var zoom: Double
         public var pan: VideoPoint
-        public init(viewSize: VideoSize, videoNativeSize: VideoSize, zoom: Double, pan: VideoPoint) {
+        public var mode: VideoContentMode
+        public init(viewSize: VideoSize, videoNativeSize: VideoSize, zoom: Double, pan: VideoPoint, mode: VideoContentMode = .fit) {
             self.viewSize = viewSize
             self.videoNativeSize = videoNativeSize
             self.zoom = zoom
             self.pan = pan
+            self.mode = mode
         }
     }
 
@@ -110,6 +141,12 @@ public actor RworkVideoClientSession {
     /// via ``setZoom(_:pan:)`` (the pipeline calls both on every gesture).
     private var zoom: Double = 1
     private var pan: VideoPoint = VideoPoint(x: 0, y: 0)
+    /// `.fit` (letterbox — whole window, bars) or `.fill` (cover — no bars, edges cropped).
+    /// Both preserve aspect; the user toggles via the pane's fill button. Stored here so the
+    /// input encoder + cursor overlay invert the SAME displayed rect the renderer draws into
+    /// (kept in lock-step with the renderer via ``setContentMode(_:)`` — the pipeline calls
+    /// both). Default `.fit`.
+    private var contentMode: VideoContentMode = .fit
     /// The most recent host cursor position, re-applied whenever the scale changes so
     /// a layout/resize re-places the overlay without waiting for the next cursor packet.
     private var lastCursorUpdate: CursorUpdate?
@@ -176,6 +213,7 @@ public actor RworkVideoClientSession {
     /// re-applies the last cursor update so the overlay tracks the new layout.
     public func setLayerSize(_ size: VideoSize) {
         layerSize = size
+        dbg("setLayerSize → \(Int(size.width))x\(Int(size.height)) (native=\(Int(decodedSize.width))x\(Int(decodedSize.height)))")
         reapplyCursor()
     }
 
@@ -186,6 +224,16 @@ public actor RworkVideoClientSession {
     public func setZoom(_ zoom: Double, pan: VideoPoint) {
         self.zoom = max(1, zoom)
         self.pan = pan
+        reapplyCursor()
+    }
+
+    /// Stores the fit/fill content mode so the input encoder + cursor overlay invert the
+    /// EXACT SAME displayed rect the renderer draws into. The pipeline calls this in
+    /// lock-step with `renderer.contentMode` (both must move together or a click in `.fill`
+    /// would map against the `.fit` letterbox rect). Re-places the cursor for the new rect.
+    public func setContentMode(_ mode: VideoContentMode) {
+        contentMode = mode
+        dbg("setContentMode → \(mode)")
         reapplyCursor()
     }
 
@@ -292,19 +340,27 @@ public actor RworkVideoClientSession {
     }
 
     private func applyGeometry(_ message: WindowGeometryMessage) {
-        // Geometry move/resize affects the on-screen window the host view manages; the
-        // orchestrator forwards size changes into the decoded-size baseline so the
-        // cursor scale stays correct after a resize (a fresh IDR carries the new size).
+        // ⚠️ The video-native size (the aspect-fit denominator `normalize` and the renderer
+        // share) MUST equal the ACTUAL decoded frame size. That size is the capture size
+        // negotiated in the helloAck and is FIXED for the session: the host configures the
+        // SCStream once and does NOT reconfigure it when its window resizes — the frame
+        // keeps arriving at the same dimensions (the resized window is scaled into the same
+        // buffer). The renderer aspect-fits using `CVPixelBufferGetWidth/Height` (the fixed
+        // frame), so if we re-derive `decodedSize` from a window-resize geometry message the
+        // INPUT path letterboxes against a different aspect than the RENDER path → drag/click
+        // land on the wrong pixel and the video stops matching the pane ("toạ độ sai / không
+        // fill"). So geometry NEVER touches `decodedSize`; it stays capture-pinned. (Window
+        // move/resize still drives the host-side cursor/input bounds — handled host-side in
+        // `RworkVideoHostSession.onGeometry` — so absolute injection tracks the live window.)
+        let kind: String
         switch message {
-        case .resize(let size):
-            decodedSize = size
-            reapplyCursor()
-        case .bounds(let rect):
-            decodedSize = rect.size
-            reapplyCursor()
-        case .move, .title:
-            break
+        case .move: kind = "move"
+        case .resize: kind = "resize"
+        case .bounds: kind = "bounds"
+        case .title: kind = "title"
         }
+        dbg("geometry \(kind) — native size kept capture-pinned at "
+            + "\(Int(decodedSize.width))x\(Int(decodedSize.height)) (NOT re-derived from window geometry)")
     }
 
     // MARK: Inbound cursor (dedicated socket)
@@ -329,7 +385,7 @@ public actor RworkVideoClientSession {
         // Hand the overlay the full display geometry so it places itself through the same
         // aspect-fit + zoom/pan transform the input encoder inverts (hops to the main
         // actor inside the hook).
-        let placement = CursorPlacement(viewSize: layerSize, videoNativeSize: decodedSize, zoom: zoom, pan: pan)
+        let placement = CursorPlacement(viewSize: layerSize, videoNativeSize: decodedSize, zoom: zoom, pan: pan, mode: contentMode)
         gui.applyCursor(update, placement)
     }
 
@@ -364,19 +420,36 @@ public actor RworkVideoClientSession {
     /// negotiated `decodedSize` (host-window points) and the live `zoom`/`pan`, so a click
     /// lands on the host pixel under the cursor on screen.
     public func sendMouseMove(viewPoint: VideoPoint) {
-        sendInput(inputEncoder.mouseMove(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: decodedSize, zoom: zoom, pan: pan))
+        dbgPointer("move", viewPoint)
+        sendInput(inputEncoder.mouseMove(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: decodedSize, zoom: zoom, pan: pan, mode: contentMode))
     }
 
     public func sendMouseDown(button: MouseButton, viewPoint: VideoPoint, clickCount: UInt8, modifiers: InputModifiers) {
-        sendInput(inputEncoder.mouseDown(button: button, viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: decodedSize, clickCount: clickCount, modifiers: modifiers, zoom: zoom, pan: pan))
+        dbgPointer("down", viewPoint)
+        sendInput(inputEncoder.mouseDown(button: button, viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: decodedSize, clickCount: clickCount, modifiers: modifiers, zoom: zoom, pan: pan, mode: contentMode))
     }
 
     public func sendMouseUp(button: MouseButton, viewPoint: VideoPoint, clickCount: UInt8, modifiers: InputModifiers) {
-        sendInput(inputEncoder.mouseUp(button: button, viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: decodedSize, clickCount: clickCount, modifiers: modifiers, zoom: zoom, pan: pan))
+        dbgPointer("up", viewPoint)
+        // Build the up ONCE, then send it `redundantUpCount` times (fire-and-forget UDP): the
+        // release edge is the one event whose loss is catastrophic (a stuck selection), so it
+        // gets redundancy a lost mid-drag sample never needs. Same bytes/tag each time — the
+        // host posts the FIRST and button-balance SUPPRESSES the rest (the button is already
+        // released), so duplicates never become spurious extra `*MouseUp` events.
+        let up = inputEncoder.mouseUp(button: button, viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: decodedSize, clickCount: clickCount, modifiers: modifiers, zoom: zoom, pan: pan, mode: contentMode)
+        for _ in 0..<Self.redundantUpCount { sendInput(up) }
+    }
+
+    /// A drag move while a button is held (view `mouseDragged`/`rightMouseDragged`). Sent as an
+    /// explicit `.mouseDrag` so the host posts a `*MouseDragged` statelessly (no held-button
+    /// inference) — the fix for drag-select over the unreliable input channel.
+    public func sendMouseDrag(button: MouseButton, viewPoint: VideoPoint, clickCount: UInt8, modifiers: InputModifiers) {
+        dbgPointer("drag", viewPoint)
+        sendInput(inputEncoder.mouseDrag(button: button, viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: decodedSize, clickCount: clickCount, modifiers: modifiers, zoom: zoom, pan: pan, mode: contentMode))
     }
 
     public func sendScroll(dx: Double, dy: Double, viewPoint: VideoPoint) {
-        sendInput(inputEncoder.scroll(dx: dx, dy: dy, viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: decodedSize, zoom: zoom, pan: pan))
+        sendInput(inputEncoder.scroll(dx: dx, dy: dy, viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: decodedSize, zoom: zoom, pan: pan, mode: contentMode))
     }
 
     public func sendKey(keyCode: UInt16, down: Bool, modifiers: InputModifiers) {
@@ -424,6 +497,7 @@ public actor RworkVideoClientSession {
 
     private func startDecodePipeline(captureSize: VideoSize) {
         decodedSize = captureSize
+        dbg("decode pipeline up — native(capture)=\(Int(captureSize.width))x\(Int(captureSize.height)); this is the FIXED aspect-fit denominator for the session")
         // The decoder hands each decoded NV12 buffer to the pipeline-owned pacer (via
         // the GUI hook, most-recent-wins); the pacer renders it at the display link's
         // vsync. GUI-only — the decode path is never reached in a test.

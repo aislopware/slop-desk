@@ -45,46 +45,59 @@ public struct VideoRect: Equatable, Sendable {
     }
 }
 
-/// Aspect-fit geometry — the **single source of truth** for where the decoded video is
-/// actually drawn inside the layer (doc 17 §3.7). The Metal renderer ASPECT-FITS the
-/// frame (letterbox/pillarbox) so the video occupies only a centred sub-rect of the
-/// layer; both the renderer (`fit` quad scale) and the input/cursor mapping derive their
-/// geometry from this one function so render-forward and input-inverse can never drift.
+/// How the decoded video is scaled into the on-screen layer (doc 17 §3.7). BOTH modes
+/// PRESERVE the native aspect ratio — neither stretches/distorts:
+/// - `.fit` (default) letterboxes/pillarboxes: the WHOLE remote window is visible, with
+///   black bars on the longer axis when the pane's aspect differs.
+/// - `.fill` covers the pane: NO bars, the video is scaled up until it covers the whole
+///   pane and the overflowing axis is cropped by the viewport.
+/// The user toggles between them ("nút fill"); `zoom`/`pan` then navigate within either
+/// (e.g. pan to reach the cropped edges in `.fill`, or zoom in to read in `.fit`).
+public enum VideoContentMode: Sendable, Equatable {
+    case fit
+    case fill
+}
+
+/// Aspect geometry — the **single source of truth** for where the decoded video is
+/// actually drawn inside the layer (doc 17 §3.7). The Metal renderer scales the frame
+/// (letterbox in `.fit`, cover-crop in `.fill`) so the video occupies a centred rect of
+/// the layer; both the renderer (`fit` quad scale) and the input/cursor mapping derive
+/// their geometry from this one function so render-forward and input-inverse can never
+/// drift — including across a fit↔fill toggle.
 ///
 /// Pure + platform-free (lives in the protocol leaf) so it is unit-testable in isolation
 /// and usable from both `RworkVideoClient` (renderer + input encoder + cursor compositor).
 public enum AspectFit {
     /// The rect (origin + size) the displayed video occupies inside a `viewSize` layer,
-    /// preserving the video's native aspect ratio (centred, with letterbox/pillarbox
-    /// bars filling the remainder).
+    /// preserving the video's native aspect ratio. In `.fit` the rect is CONTAINED in the
+    /// view (centred, with letterbox/pillarbox bars). In `.fill` the rect COVERS the view
+    /// (centred, can exceed the view → negative origin / size > view; that overflow is the
+    /// crop). Either way the rect is the exact region the renderer maps the full texture
+    /// onto, and the region `normalize` inverts — so they always agree.
     ///
     /// MUST match `MetalVideoRenderer`'s `fit`-branch exactly: the renderer computes the
-    /// same comparison in PIXELS (drawableSize × video pixel size), but aspect ratio is
+    /// same ratios in PIXELS (drawableSize × video pixel size), but aspect ratio is
     /// scale-invariant, so the rect is identical whether measured in points or pixels.
     ///
     /// - Parameters:
     ///   - viewSize: the layer's size (points, or pixels — scale-invariant).
     ///   - videoNativeSize: the decoded video's native size (same unit family).
+    ///   - mode: `.fit` (contain, letterbox) or `.fill` (cover, crop). Default `.fit`.
     /// - Returns: the centred displayed-video rect. Falls back to the full `viewSize`
     ///   rect for any non-positive dimension (degenerate input is placed sensibly).
-    public static func displayedVideoRect(viewSize: VideoSize, videoNativeSize: VideoSize) -> VideoRect {
+    public static func displayedVideoRect(viewSize: VideoSize, videoNativeSize: VideoSize, mode: VideoContentMode = .fit) -> VideoRect {
         let vw = videoNativeSize.width, vh = videoNativeSize.height
         let Vw = viewSize.width, Vh = viewSize.height
         guard vw > 0, vh > 0, Vw > 0, Vh > 0 else {
             return VideoRect(x: 0, y: 0, width: max(0, Vw), height: max(0, Vh))
         }
-        let videoAspect = vw / vh
-        let viewAspect = Vw / Vh
-        let w: Double, h: Double
-        if videoAspect > viewAspect {
-            // Wider video → full width, bars top/bottom (matches renderer fit.y branch).
-            w = Vw
-            h = Vw / videoAspect
-        } else {
-            // Taller (or equal) video → full height, bars left/right (renderer fit.x branch).
-            w = Vh * videoAspect
-            h = Vh
-        }
+        // `.fit` scales to the SMALLER axis ratio (contain → the whole video sits inside,
+        // bars on the longer axis). `.fill` scales to the LARGER axis ratio (cover → the
+        // video fills the view, the longer axis overflows and is cropped). Both use a single
+        // uniform `scale`, so neither distorts the aspect.
+        let scaleX = Vw / vw, scaleY = Vh / vh
+        let scale = (mode == .fit) ? min(scaleX, scaleY) : max(scaleX, scaleY)
+        let w = vw * scale, h = vh * scale
         let ox = (Vw - w) / 2
         let oy = (Vh - h) / 2
         return VideoRect(x: ox, y: oy, width: w, height: h)
@@ -106,7 +119,8 @@ public enum AspectFit {
         viewSize: VideoSize,
         videoNativeSize: VideoSize,
         zoom: Double = 1,
-        pan: VideoPoint = VideoPoint(x: 0, y: 0)
+        pan: VideoPoint = VideoPoint(x: 0, y: 0),
+        mode: VideoContentMode = .fit
     ) -> VideoPoint {
         let su = videoNativeSize.width > 0 ? hostPoint.x / videoNativeSize.width : 0
         let sv = videoNativeSize.height > 0 ? hostPoint.y / videoNativeSize.height : 0
@@ -117,7 +131,7 @@ public enum AspectFit {
         let py = min(max(pan.y, -panLimit), panLimit)
         let du = (su - 0.5 - px) * z + 0.5
         let dv = (sv - 0.5 - py) * z + 0.5
-        let r = displayedVideoRect(viewSize: viewSize, videoNativeSize: videoNativeSize)
+        let r = displayedVideoRect(viewSize: viewSize, videoNativeSize: videoNativeSize, mode: mode)
         return VideoPoint(x: r.origin.x + du * r.size.width, y: r.origin.y + dv * r.size.height)
     }
 }

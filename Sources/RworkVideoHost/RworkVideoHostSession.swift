@@ -39,6 +39,17 @@ public actor RworkVideoHostSession {
     /// flow from `log show`. When enabled, the key lifecycle beats are mirrored to stderr so the
     /// gate can pinpoint where (if anywhere) the pipeline stalls. No-op in production.
     private static let debugStderr = ProcessInfo.processInfo.environment["RWORK_VIDEO_DEBUG"] != nil
+    /// Diagnostic A/B seam (`RWORK_INPUT_UNORDERED=1`): restores the OLD per-datagram
+    /// `Task { await receive }` fan-out, which raced inbound datagrams into the actor OUT of
+    /// arrival order (and let a queued `mouseUp` overtake its `mouseDown` through the
+    /// `await raiseTargetWindow()` suspension → inverted down/up → a button stuck down → the
+    /// next click landed inside a phantom selection). Left as a toggle so the ordering fix is
+    /// A/B-verifiable on ONE binary. Default unset ⇒ the ordered single-consumer pump below.
+    static let unorderedInput = ProcessInfo.processInfo.environment["RWORK_INPUT_UNORDERED"] != nil
+    /// Full per-event injection trace (`RWORK_INPUT_TRACE=1`): logs EVERY injected input event
+    /// with a monotonic sequence number (NOT sampled), so a loopback run can read the exact
+    /// injected ORDER — the ground truth for the reorder fix. No-op in production.
+    private static let inputTrace = ProcessInfo.processInfo.environment["RWORK_INPUT_TRACE"] != nil
     private var encodedFrameCount = 0
     nonisolated private func dbg(_ message: @autoclosure () -> String) {
         guard Self.debugStderr else { return }
@@ -69,6 +80,15 @@ public actor RworkVideoHostSession {
     /// Whether the next injected input event must raise+focus first.
     private var inputNeedsRaise = true
 
+    /// Ordered inbound pump — the input-reorder fix. The transport delivers datagrams in
+    /// strict arrival order on its serial receive queue; we yield every one into this
+    /// AsyncStream and drain it from a SINGLE consumer task, so `receive`/`inject` run in
+    /// arrival order and the next datagram is not pulled until the current one has fully
+    /// injected. This is what removes the inverted-down/up stuck-button race that the old
+    /// per-datagram `Task { await receive }` fan-out introduced.
+    private var inboundContinuation: AsyncStream<(VideoChannel, Data)>.Continuation?
+    private var inboundConsumer: Task<Void, Never>?
+
     /// - Parameters:
     ///   - window: the desktop-independent window to remote.
     ///   - transport: the UDP datagram transport (production: ``NWVideoDatagramTransport``).
@@ -88,15 +108,38 @@ public actor RworkVideoHostSession {
     /// only once a valid hello is accepted (so we never capture into the void).
     public func start() async throws {
         _ = stateMachine.start()
-        try await transport.start { [weak self] channel, data in
-            guard let self else { return }
-            Task { await self.receive(channel: channel, data: data) }
+        if Self.unorderedInput {
+            // LEGACY A/B path: one Task per datagram → races into the actor out of order.
+            try await transport.start { [weak self] channel, data in
+                guard let self else { return }
+                Task { await self.receive(channel: channel, data: data) }
+            }
+        } else {
+            // ORDERED path (default): a single consumer drains datagrams in arrival order.
+            let (stream, continuation) = AsyncStream.makeStream(of: (VideoChannel, Data).self)
+            inboundContinuation = continuation
+            inboundConsumer = Task { [weak self] in
+                for await (channel, data) in stream {
+                    guard let self else { break }
+                    await self.receive(channel: channel, data: data)
+                }
+            }
+            // `continuation.yield` is thread-safe and ORDER-PRESERVING; the transport already
+            // calls this on its serial receive queue, so arrival order is carried end-to-end.
+            try await transport.start { channel, data in
+                continuation.yield((channel, data))
+            }
         }
         log.info("video host session listening for client hello")
     }
 
     /// Tears down capture/encode/watchers/sockets.
     public func stop() async {
+        // End the ordered inbound pump first so no buffered datagram injects mid-teardown.
+        inboundContinuation?.finish()
+        inboundContinuation = nil
+        inboundConsumer?.cancel()
+        inboundConsumer = nil
         for effect in stateMachine.stop() { await apply(effect) }
         await teardownLiveComponents()
         await transport.stop()
@@ -158,12 +201,59 @@ public actor RworkVideoHostSession {
         // posted, else the first click of an interaction can land on the not-yet-frontmost
         // window. AWAIT the main-actor raise, then post — do not fire-and-forget the raise.
         if raiseFirst {
+            // Clear the latch BEFORE the main-actor hop. That hop is a SUSPENSION POINT that
+            // releases the actor, so the burst of `.mouseDrag`/`.mouseMove` datagrams behind a
+            // mouseDown interleaves here. With the latch left armed, each of them would also
+            // raise (thundering-herd of AX raises + app activations mid-drag, which can itself
+            // disrupt a selection); clearing it now means only this first event raises and the
+            // rest of the interaction injects straight through.
+            inputNeedsRaise = false
             await MainActor.run { injector.raiseTargetWindow() }
+            // The main-actor hop is a suspension point: a `stop()`/`bye` teardown can run here
+            // and nil the injector (and close the sockets). Re-check on the actor before posting
+            // so a buffered datagram cannot inject a stray, UNBALANCED event into the target app
+            // after the session was torn down.
+            guard self.injector != nil else { return }
         }
+        dbgInject(event)
         injector.inject(event)
-        // Latch policy: after the first injected event we no longer force a raise,
-        // until a mouse-up ends the interaction and re-arms it.
-        inputNeedsRaise = InputDatagramRouter.rearmRaiseAfter(event)
+        // A mouse-up ends the interaction → re-arm so the NEXT interaction raises+focuses.
+        if InputDatagramRouter.rearmRaiseAfter(event) { inputNeedsRaise = true }
+    }
+
+    /// Opt-in (`RWORK_VIDEO_DEBUG=1`) trace of the injected input stream, so a hardware run
+    /// can confirm drags flow as `.mouseDrag` (not phantom `.mouseMoved`) and see the
+    /// down/up framing. Pointer streams are high-rate, so moves/drags are SAMPLED (1-in-25)
+    /// to avoid flooding stderr and perturbing injection timing; button/key/scroll log every
+    /// event. No-op in production.
+    private var dbgInputCount = 0
+    private var injectTraceSeq = 0
+    private func dbgInject(_ event: InputEvent) {
+        if Self.inputTrace {
+            // GROUND TRUTH for the reorder fix: every injected event in strict order, numbered.
+            injectTraceSeq += 1
+            FileHandle.standardError.write(Data("rwork-videohostd[inject #\(injectTraceSeq)]: \(Self.inputName(event))\n".utf8))
+            return
+        }
+        guard Self.debugStderr else { return }
+        switch event {
+        case .mouseMove, .mouseDrag:
+            dbgInputCount += 1
+            if dbgInputCount % 25 == 1 { dbg("inject \(Self.inputName(event)) (pointer sample #\(dbgInputCount))") }
+        default:
+            dbg("inject \(Self.inputName(event))")
+        }
+    }
+    private static func inputName(_ event: InputEvent) -> String {
+        switch event {
+        case .mouseMove: return "mouseMove"
+        case .mouseDrag(let b, _, _, _, _): return "mouseDrag(\(b))"
+        case .mouseDown(let b, _, let c, _, _): return "mouseDown(\(b),clicks=\(c))"
+        case .mouseUp(let b, _, let c, _, _): return "mouseUp(\(b),clicks=\(c))"
+        case .scroll: return "scroll"
+        case .key(let kc, let down, _, _): return "key(\(kc),\(down ? "down" : "up"))"
+        case .text: return "text"
+        }
     }
 
     private func handleRecovery(_ data: Data) {

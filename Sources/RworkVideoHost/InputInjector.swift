@@ -35,13 +35,24 @@ public final class InputInjector: @unchecked Sendable {
     private let boundsLock = NSLock()
     /// The CGEventSource whose `userData` we stamp = self-inject filter tag.
     private let eventSource: CGEventSource?
-    /// Which mouse button (if any) is currently held. A move that arrives while a button
-    /// is down must be posted as a `*MouseDragged` event (the type macOS requires for
-    /// drag/selection) rather than `.mouseMoved`, which selection engines ignore. Guarded
-    /// by `buttonLock`: `inject()` is called serially from the host actor, but this type is
-    /// `@unchecked Sendable`, so the mutable state takes an explicit lock.
-    private var heldButton: MouseButton?
-    private let buttonLock = NSLock()
+
+    /// SAFETY button-balance (off in the `RWORK_INPUT_UNORDERED` A/B baseline so legacy still
+    /// reproduces the original stuck-button bug). On a `mouseDown` for an already-held button
+    /// it injects a synthetic release first, so a fresh click never starts inside a selection
+    /// stranded by a lost `mouseUp`. Pure decision lives in ``InputButtonBalance``; the lock
+    /// guards it (harmless insurance — in the ordered path injection is already serial).
+    private static let safetyRelease = ProcessInfo.processInfo.environment["RWORK_INPUT_UNORDERED"] == nil
+    private let balanceLock = NSLock()
+    private var balance = InputButtonBalance()
+
+    /// Test-only same-machine seam (`RWORK_VIDEO_INJECT_TO_PID=1`): deliver events straight to
+    /// the target PID via `postToPid` and SKIP the cursor warp, so a loopback host on the SAME
+    /// Mac does not hijack the global cursor away from the client window being driven (which
+    /// would fight an automated drag). PRODUCTION leaves this off — the remote user's real
+    /// cursor must track via the HID warp. Ordering/selection semantics are unchanged; only the
+    /// post tap + cursor move differ.
+    private static let injectToPid = ProcessInfo.processInfo.environment["RWORK_VIDEO_INJECT_TO_PID"] != nil
+    private static let inputTrace = ProcessInfo.processInfo.environment["RWORK_INPUT_TRACE"] != nil
 
     public init(pid: pid_t, windowID: CGWindowID, windowBoundsCG: VideoRect) {
         self.pid = pid
@@ -75,6 +86,14 @@ public final class InputInjector: @unchecked Sendable {
     @MainActor
     public func raiseTargetWindow() {
         let appEl = AXUIElementCreateApplication(pid)
+        // Cap blocking AX IPC. `raiseTargetWindow` runs on the main actor and the input
+        // consumer AWAITS it before injecting the mouseDown (activate-then-control), so a
+        // hung/modal/beachballing target app would otherwise head-of-line-stall the WHOLE
+        // ordered input stream for the framework default (~6s) and let pointer datagrams pile
+        // up unbounded. A short timeout makes each AX call fail fast instead (the raise is
+        // best-effort: a missed raise just means the click lands on the already-frontmost
+        // window) without changing injection ordering.
+        AXUIElementSetMessagingTimeout(appEl, 0.25)
         var windowsRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef) == .success,
               let axWindows = windowsRef as? [AXUIElement] else { return }
@@ -95,6 +114,25 @@ public final class InputInjector: @unchecked Sendable {
     /// Posts a remote input event. The window must already be raised (call
     /// ``raiseTargetWindow()`` for the first event of an interaction).
     public func inject(_ event: InputEvent) {
+        // SAFETY auto-release: clear a button left stuck by a lost/never-sent `mouseUp` BEFORE
+        // posting a fresh `mouseDown` on it, so a click never begins inside a phantom selection.
+        if Self.safetyRelease {
+            let plan = balanceLock.withLock { balance.plan(for: event) }
+            if let stuck = plan.preRelease, case .mouseDown(_, let n, _, let mods, let tag) = event {
+                if Self.inputTrace {
+                    FileHandle.standardError.write(Data("rwork-videohostd[inject]: SAFETY pre-release of stuck \(stuck) before mouseDown\n".utf8))
+                }
+                postMouseButton(button: stuck, normalized: n, down: false, clickCount: 1, modifiers: mods, tag: tag)
+            }
+            if plan.suppress {
+                // A duplicate up from the client's loss-resilient 3× send (button already
+                // released) — drop it so the host never posts a spurious extra *MouseUp.
+                if Self.inputTrace {
+                    FileHandle.standardError.write(Data("rwork-videohostd[inject]: suppressed duplicate mouseUp (button not held)\n".utf8))
+                }
+                return
+            }
+        }
         switch event {
         case .mouseMove(let n, let tag):
             postMouseMove(normalized: n, tag: tag)
@@ -102,6 +140,8 @@ public final class InputInjector: @unchecked Sendable {
             postMouseButton(button: button, normalized: n, down: true, clickCount: clickCount, modifiers: mods, tag: tag)
         case .mouseUp(let button, let n, let clickCount, let mods, let tag):
             postMouseButton(button: button, normalized: n, down: false, clickCount: clickCount, modifiers: mods, tag: tag)
+        case .mouseDrag(let button, let n, let clickCount, let mods, let tag):
+            postMouseDrag(button: button, normalized: n, clickCount: clickCount, modifiers: mods, tag: tag)
         case .scroll(let dx, let dy, _, let tag):
             postScroll(dx: dx, dy: dy, tag: tag)
         case .key(let keyCode, let down, let mods, let tag):
@@ -120,30 +160,53 @@ public final class InputInjector: @unchecked Sendable {
     /// event) is cancelled. Together with the suppression interval = 0 set in `init`, this
     /// makes warp-then-post safe so absolute positioning never eats the following event.
     private func warp(to pt: CGPoint) {
+        if Self.injectToPid { return }  // test seam: don't hijack the global cursor (same-machine loopback)
         CGWarpMouseCursorPosition(pt)
         CGAssociateMouseAndMouseCursorPosition(boolean_t(1))   // re-associate (true)
     }
 
     private func postMouseMove(normalized: VideoPoint, tag: UInt32) {
         let pt = target(normalized)
-        // Absolute move: warp the cursor, then post the move so apps reading deltas see it
-        // (doc 05 §1). If a button is held, this move is part of a drag → post the MATCHING
-        // `*MouseDragged` event, which is what selection/drag engines consume between
-        // mouseDown and mouseUp; a bare `.mouseMoved` mid-gesture is ignored (and can
-        // collapse a selection), which broke drag-select ("bôi không được").
+        // Absolute HOVER move: warp the cursor, then post `.mouseMoved` so apps reading
+        // deltas see it (doc 05 §1). A button-held drag is NEVER inferred here — the client
+        // sends an explicit `.mouseDrag` for that (see ``postMouseDrag``), so a move is
+        // always a pure hover. This is the fix for the former GAP D1: when the host inferred
+        // "is a button held?" from its own state, a lost `mouseUp` datagram left that state
+        // stuck, turning every later hover into a phantom `.leftMouseDragged` (runaway
+        // selection until the next click). Stateless = no phantom drag.
         warp(to: pt)
-        buttonLock.lock(); let held = heldButton; buttonLock.unlock()
-        let type: CGEventType
-        let cgButton: CGMouseButton
-        switch held {
-        case .left:  type = .leftMouseDragged;  cgButton = .left
-        case .right: type = .rightMouseDragged; cgButton = .right
-        case .other: type = .otherMouseDragged; cgButton = .center
-        case nil:    type = .mouseMoved;        cgButton = .left   // button ignored for moved
-        }
-        if let event = CGEvent(mouseEventSource: eventSource, mouseType: type, mouseCursorPosition: pt, mouseButton: cgButton) {
+        if let event = CGEvent(mouseEventSource: eventSource, mouseType: .mouseMoved, mouseCursorPosition: pt, mouseButton: .left) {
             stampAndPost(event, tag: tag)
         }
+    }
+
+    /// Posts a drag-move: the `*MouseDragged` matching the held `button`, at `pt`. STATELESS
+    /// — the CLIENT told us a button is held (its view reported `mouseDragged`, a distinct
+    /// callback from `mouseMoved`), so we never track held state on the host. A `*MouseDragged`
+    /// is the event type macOS selection/drag engines consume between mouseDown and mouseUp; a
+    /// bare `.mouseMoved` mid-gesture is ignored and can collapse a selection — which broke
+    /// drag-select ("bôi không được"). Statelessness also makes this wire-reorder-safe: over
+    /// plain UDP a drag can arrive before its `mouseDown`; the target app just ignores a
+    /// dragged with no active session, then anchors when the down lands and extends to the
+    /// final drag — so the selection range stays correct even if early drag samples are lost
+    /// or reordered.
+    private func postMouseDrag(button: MouseButton, normalized: VideoPoint, clickCount: UInt8, modifiers: InputModifiers, tag: UInt32) {
+        let pt = target(normalized)
+        warp(to: pt)
+        let (type, cgButton): (CGEventType, CGMouseButton)
+        switch button {
+        case .left:  (type, cgButton) = (.leftMouseDragged, .left)
+        case .right: (type, cgButton) = (.rightMouseDragged, .right)
+        case .other: (type, cgButton) = (.otherMouseDragged, .center)
+        }
+        guard let event = CGEvent(mouseEventSource: eventSource, mouseType: type, mouseCursorPosition: pt, mouseButton: cgButton) else { return }
+        // A real drag carries the originating click's clickState (1 = drag-select, 2 =
+        // word-by-word). A freshly-created dragged event defaults to clickState 0, which some
+        // selection engines treat as "not part of a drag" → nothing selects. Match the down:
+        // SAME value on the down, the drags, and the up (`postMouseButton` sets it too).
+        event.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, Int(clickCount))))
+        event.flags = cgFlags(modifiers)
+        stampAndPost(event, tag: tag)
     }
 
     private func postMouseButton(button: MouseButton, normalized: VideoPoint, down: Bool, clickCount: UInt8, modifiers: InputModifiers, tag: UInt32) {
@@ -165,10 +228,6 @@ public final class InputInjector: @unchecked Sendable {
         // clicks "didn't take" or landed wrong. (`mouseEventClickState`; Apple forum 685901.)
         event.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, Int(clickCount))))
         event.flags = cgFlags(modifiers)
-        // Track held-button state so an intervening move posts the matching `*MouseDragged`.
-        // Set it BEFORE posting so a move racing right behind a down sees the button as held
-        // (calls are serial from the actor; in-function ordering is the only concern).
-        buttonLock.lock(); heldButton = down ? button : nil; buttonLock.unlock()
         stampAndPost(event, tag: tag)
     }
 
@@ -198,7 +257,7 @@ public final class InputInjector: @unchecked Sendable {
     private func postKey(keyCode: UInt16, down: Bool, modifiers: InputModifiers, tag: UInt32) {
         guard let event = CGEvent(keyboardEventSource: eventSource, virtualKey: CGKeyCode(keyCode), keyDown: down) else { return }
         event.flags = cgFlags(modifiers)
-        stampAndPost(event, tag: tag)
+        postKeyboardEvent(event)
     }
 
     /// Unicode text injection — layout-independent, the robust text path (doc 05 §3).
@@ -219,21 +278,51 @@ public final class InputInjector: @unchecked Sendable {
         // (Return → newline-with-⌘, etc.). `postKey` already sets `flags` explicitly; only
         // `postText` left them at the source default, so clear them here on both edges.
         down.flags = []
-        stampAndPost(down, tag: tag)
+        postKeyboardEvent(down)
         // Bare key-up: NO keyboardSetUnicodeString (attaching it here would insert the
         // text a second time). Also modifier-free, matching the down.
         if let up = CGEvent(keyboardEventSource: eventSource, virtualKey: 0, keyDown: false) {
             up.flags = []
-            stampAndPost(up, tag: tag)
+            postKeyboardEvent(up)
         }
+    }
+
+    /// Posts a KEYBOARD event at the HID tap, deliberately WITHOUT stamping
+    /// `eventSourceUserData`. This is the one place that diverges from ``stampAndPost``.
+    ///
+    /// A host Vietnamese IME (the user runs **xkey** — xmannv/xkey) installs TWO event
+    /// taps: a HID tap (`.cghidEventTap`, head-insert) and a session tap
+    /// (`.cgSessionEventTap`, tail-append) that exists specifically to catch
+    /// remote-desktop-injected keystrokes. To avoid composing the same keystroke twice it
+    /// DEDUPES across the two taps using `eventSourceUserData`: the HID tap marks an event
+    /// it has handled so the session tap can skip it. A keystroke we post to the HID tap
+    /// carrying our own NONZERO self-inject `tag` defeats that dedup — xkey's session tap
+    /// re-processes it → DOUBLE Telex composition → garbage (empirically verified with
+    /// `scripts/inject-telex-probe.swift`: injecting "ddaa" WITH a nonzero userData yields
+    /// "daa"; with userData cleared it yields the correct "đâ"). Posting `userData = 0`
+    /// restores the dedup and the IME composes exactly once.
+    ///
+    /// Keys are safe to leave untagged: the self-inject filter exists only for the
+    /// `CursorSampler` / `WindowGeometryWatcher` feedback loop, which is driven by POINTER
+    /// and GEOMETRY events — a keystroke never moves the cursor or resizes the window, so it
+    /// can never feed back. Mouse/scroll events still go through ``stampAndPost`` (xkey only
+    /// taps keyboard events, so their tag is harmless to it and needed by our own watchers).
+    private func postKeyboardEvent(_ event: CGEvent) {
+        event.post(tap: .cghidEventTap)
     }
 
     /// Stamps the self-inject filter tag on `eventSourceUserData` then posts at the
     /// HID tap (doc 18 §A). The cursor/geometry watchers compare incoming NSEvent
-    /// `eventSourceUserData` to drop events we injected ourselves.
+    /// `eventSourceUserData` to drop events we injected ourselves. POINTER/SCROLL ONLY —
+    /// keyboard events use ``postKeyboardEvent`` (untagged) so the host IME's tap-dedup
+    /// is not defeated.
     private func stampAndPost(_ event: CGEvent, tag: UInt32) {
         event.setIntegerValueField(.eventSourceUserData, value: Int64(tag))
-        event.post(tap: .cghidEventTap)
+        if Self.injectToPid, pid != 0 {
+            event.postToPid(pid)   // test seam: deliver to the target app without moving the cursor
+        } else {
+            event.post(tap: .cghidEventTap)
+        }
     }
 
     private func cgFlags(_ modifiers: InputModifiers) -> CGEventFlags {

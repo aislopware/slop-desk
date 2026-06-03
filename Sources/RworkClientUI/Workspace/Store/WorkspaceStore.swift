@@ -175,6 +175,14 @@ public final class WorkspaceStore {
     /// Whether `id` is the focused pane of the active tab (the view's focus-ring decision).
     public func isFocused(_ id: PaneID) -> Bool { workspace.activeTab?.focusedPane == id }
 
+    /// Whether `id` is a leaf of the ACTIVE tab — i.e. genuinely on-screen (any pane of the active
+    /// tab is visible; a non-active tab's panes are not). A reliable visibility signal for the video
+    /// teardown decision, unlike SwiftUI's `.onDisappear`, which fires spuriously during the initial
+    /// NavigationSplitView layout settle even though the pane stays on screen (the autoconnect
+    /// connect bug). The debounced teardown re-checks this so a spurious disappear (still on the
+    /// active tab) is ignored and only a real tab switch (pane left the active tab) deactivates.
+    public func isPaneOnActiveTab(_ id: PaneID) -> Bool { workspace.activeTab?.root.contains(id) ?? false }
+
     /// All leaf ids across every tab (the reconcile diff domain). Pre-order within each tab.
     private func allLeafIDs() -> [PaneID] {
         workspace.tabs.flatMap { $0.root.allLeafIDs() }

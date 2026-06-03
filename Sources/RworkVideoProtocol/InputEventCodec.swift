@@ -33,6 +33,16 @@ public enum InputEvent: Equatable, Sendable {
     case mouseDown(button: MouseButton, normalized: VideoPoint, clickCount: UInt8, modifiers: InputModifiers, tag: UInt32)
     /// Mouse button up at a normalised window position.
     case mouseUp(button: MouseButton, normalized: VideoPoint, clickCount: UInt8, modifiers: InputModifiers, tag: UInt32)
+    /// Mouse drag (a button is HELD) to a normalised window position. The CLIENT sends
+    /// this explicitly when its view reports a `mouseDragged` (vs a `mouseMoved`), so the
+    /// host posts the matching `*MouseDragged` STATELESSLY — it never infers "is a button
+    /// held?" from host-side state. This is what makes drag-select ("bôi đen") correct: it
+    /// is wire-reorder-safe over UDP (a drag that arrives before its `mouseDown` is simply
+    /// ignored by the target app until the down anchors the selection) and it removes the
+    /// phantom-drag-after-a-lost-`mouseUp` class of bug (a `.mouseMove` is now ALWAYS a pure
+    /// hover). `clickCount` carries the originating click count so the dragged event's
+    /// clickState matches the down — selection engines key off it.
+    case mouseDrag(button: MouseButton, normalized: VideoPoint, clickCount: UInt8, modifiers: InputModifiers, tag: UInt32)
     /// Scroll wheel (pixel units). `dy`/`dx` are signed scroll deltas.
     case scroll(dx: Double, dy: Double, normalized: VideoPoint, tag: UInt32)
     /// Key down/up by host virtual keycode (for navigation / shortcuts; doc 05 §3).
@@ -48,6 +58,7 @@ public enum InputEvent: Equatable, Sendable {
         case .scroll: return 4
         case .key: return 5
         case .text: return 6
+        case .mouseDrag: return 7
         }
     }
 
@@ -57,6 +68,7 @@ public enum InputEvent: Equatable, Sendable {
         case .mouseMove(_, let tag),
              .mouseDown(_, _, _, _, let tag),
              .mouseUp(_, _, _, _, let tag),
+             .mouseDrag(_, _, _, _, let tag),
              .scroll(_, _, _, let tag),
              .key(_, _, _, let tag),
              .text(_, let tag):
@@ -71,7 +83,8 @@ public enum InputEvent: Equatable, Sendable {
         case .mouseMove(let n, let tag):
             out.appendBE(tag); out.appendBE(n.x); out.appendBE(n.y)
         case .mouseDown(let button, let n, let clickCount, let mods, let tag),
-             .mouseUp(let button, let n, let clickCount, let mods, let tag):
+             .mouseUp(let button, let n, let clickCount, let mods, let tag),
+             .mouseDrag(let button, let n, let clickCount, let mods, let tag):
             out.appendBE(tag); out.append(button.rawValue); out.append(clickCount); out.append(mods.rawValue)
             out.appendBE(n.x); out.appendBE(n.y)
         case .scroll(let dx, let dy, let n, let tag):
@@ -92,7 +105,7 @@ public enum InputEvent: Equatable, Sendable {
             let tag = try reader.readUInt32()
             let x = try reader.readFiniteFloat64("mouseMove.x"); let y = try reader.readFiniteFloat64("mouseMove.y")
             return .mouseMove(normalized: VideoPoint(x: x, y: y), tag: tag)
-        case 2, 3:
+        case 2, 3, 7:
             let tag = try reader.readUInt32()
             guard let button = MouseButton(rawValue: try reader.readUInt8()) else {
                 throw VideoProtocolError.malformed("unknown mouse button")
@@ -101,9 +114,11 @@ public enum InputEvent: Equatable, Sendable {
             let mods = InputModifiers(rawValue: try reader.readUInt8())
             let x = try reader.readFiniteFloat64("mouseButton.x"); let y = try reader.readFiniteFloat64("mouseButton.y")
             let n = VideoPoint(x: x, y: y)
-            return type == 2
-                ? .mouseDown(button: button, normalized: n, clickCount: clickCount, modifiers: mods, tag: tag)
-                : .mouseUp(button: button, normalized: n, clickCount: clickCount, modifiers: mods, tag: tag)
+            switch type {
+            case 2:  return .mouseDown(button: button, normalized: n, clickCount: clickCount, modifiers: mods, tag: tag)
+            case 3:  return .mouseUp(button: button, normalized: n, clickCount: clickCount, modifiers: mods, tag: tag)
+            default: return .mouseDrag(button: button, normalized: n, clickCount: clickCount, modifiers: mods, tag: tag)
+            }
         case 4:
             let tag = try reader.readUInt32()
             let dx = try reader.readFiniteFloat64("scroll.dx"); let dy = try reader.readFiniteFloat64("scroll.dy")

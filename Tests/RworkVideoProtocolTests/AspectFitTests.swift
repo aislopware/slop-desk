@@ -8,11 +8,11 @@ import XCTest
 /// exactly so render-forward and input-inverse can never drift.
 final class AspectFitTests: XCTestCase {
 
-    private func assertRect(_ r: VideoRect, _ x: Double, _ y: Double, _ w: Double, _ h: Double, _ file: StaticString = #filePath, _ line: UInt = #line) {
-        XCTAssertEqual(r.origin.x, x, accuracy: 1e-9, "x", file: file, line: line)
-        XCTAssertEqual(r.origin.y, y, accuracy: 1e-9, "y", file: file, line: line)
-        XCTAssertEqual(r.size.width, w, accuracy: 1e-9, "w", file: file, line: line)
-        XCTAssertEqual(r.size.height, h, accuracy: 1e-9, "h", file: file, line: line)
+    private func assertRect(_ r: VideoRect, _ x: Double, _ y: Double, _ w: Double, _ h: Double, accuracy: Double = 1e-9, _ file: StaticString = #filePath, _ line: UInt = #line) {
+        XCTAssertEqual(r.origin.x, x, accuracy: accuracy, "x", file: file, line: line)
+        XCTAssertEqual(r.origin.y, y, accuracy: accuracy, "y", file: file, line: line)
+        XCTAssertEqual(r.size.width, w, accuracy: accuracy, "w", file: file, line: line)
+        XCTAssertEqual(r.size.height, h, accuracy: accuracy, "h", file: file, line: line)
     }
 
     // MARK: displayedVideoRect
@@ -41,6 +41,51 @@ final class AspectFitTests: XCTestCase {
         assertRect(zeroVideo, 0, 0, 800, 600)
         let zeroView = AspectFit.displayedVideoRect(viewSize: VideoSize(width: 0, height: 0), videoNativeSize: VideoSize(width: 1920, height: 1080))
         assertRect(zeroView, 0, 0, 0, 0)
+    }
+
+    // MARK: displayedVideoRect — .fill (cover, crop-the-overflow)
+
+    func testFillWiderVideoCoversWithLeftRightCrop() {
+        // Same inputs as the .fit wider case, but .fill COVERS: scale = max(1600/1920, 1000/1080)
+        // = 1000/1080 ≈ 0.92593, so height = 1000 (fills), width = 1920·0.92593 = 1777.78
+        // (overflows), centred → origin x = (1600-1777.78)/2 = -88.89 (the crop).
+        let r = AspectFit.displayedVideoRect(viewSize: VideoSize(width: 1600, height: 1000), videoNativeSize: VideoSize(width: 1920, height: 1080), mode: .fill)
+        assertRect(r, -88.8888888889, 0, 1777.7777777778, 1000, accuracy: 1e-6)
+    }
+
+    func testFillTallerVideoCoversWithTopBottomCrop() {
+        // video 1000x1000 into 1600x1000: scale = max(1.6, 1.0) = 1.6 → 1600x1600 centred,
+        // origin y = (1000-1600)/2 = -300 (top+bottom crop), full width 1600.
+        let r = AspectFit.displayedVideoRect(viewSize: VideoSize(width: 1600, height: 1000), videoNativeSize: VideoSize(width: 1000, height: 1000), mode: .fill)
+        assertRect(r, 0, -300, 1600, 1600)
+    }
+
+    func testFillEqualAspectMatchesFit() {
+        // Equal aspect: min == max, so .fill and .fit are identical (no crop, no bars).
+        let fit = AspectFit.displayedVideoRect(viewSize: VideoSize(width: 800, height: 600), videoNativeSize: VideoSize(width: 1600, height: 1200), mode: .fit)
+        let fill = AspectFit.displayedVideoRect(viewSize: VideoSize(width: 800, height: 600), videoNativeSize: VideoSize(width: 1600, height: 1200), mode: .fill)
+        assertRect(fill, fit.origin.x, fit.origin.y, fit.size.width, fit.size.height)
+    }
+
+    func testDefaultModeIsFit() {
+        // The mode param defaults to .fit so every pre-existing caller is unchanged.
+        let def = AspectFit.displayedVideoRect(viewSize: VideoSize(width: 1600, height: 1000), videoNativeSize: VideoSize(width: 1920, height: 1080))
+        let fit = AspectFit.displayedVideoRect(viewSize: VideoSize(width: 1600, height: 1000), videoNativeSize: VideoSize(width: 1920, height: 1080), mode: .fit)
+        assertRect(def, fit.origin.x, fit.origin.y, fit.size.width, fit.size.height)
+    }
+
+    func testFillCoversTheWholeViewOnBothAxes() {
+        // The defining property of .fill: the displayed rect CONTAINS the view on both axes
+        // (origin ≤ 0 and far edge ≥ view extent) — i.e. no bars, the view is fully covered.
+        for (view, video) in [(VideoSize(width: 1600, height: 1000), VideoSize(width: 1920, height: 1080)),
+                              (VideoSize(width: 1600, height: 1000), VideoSize(width: 1000, height: 1000)),
+                              (VideoSize(width: 1080, height: 1920), VideoSize(width: 1920, height: 1080))] {
+            let r = AspectFit.displayedVideoRect(viewSize: view, videoNativeSize: video, mode: .fill)
+            XCTAssertLessThanOrEqual(r.origin.x, 1e-9)
+            XCTAssertLessThanOrEqual(r.origin.y, 1e-9)
+            XCTAssertGreaterThanOrEqual(r.origin.x + r.size.width, view.width - 1e-9)
+            XCTAssertGreaterThanOrEqual(r.origin.y + r.size.height, view.height - 1e-9)
+        }
     }
 
     // MARK: viewPoint forward transform (host point → view point)

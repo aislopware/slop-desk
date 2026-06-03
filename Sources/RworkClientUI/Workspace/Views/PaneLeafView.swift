@@ -430,6 +430,18 @@ private struct RemoteGUIPaneView: View {
     /// (configured but over-cap) per ``RemoteGUIDisplay``.
     @State private var admitted = false
 
+    /// Debounced video teardown (the autoconnect-connect fix). SwiftUI fires a SPURIOUS
+    /// `.onDisappear` on this pane during the initial NavigationSplitView layout settle — even
+    /// though the pane stays on screen. The battery "deactivate on disappear" optimization then
+    /// ran `model.close()` (active=nil) → the `VideoWindowView` was dismantled → its UDP session
+    /// `stop()`'d WHILE `session.start()` was mid-`await transport.start`, so `stateMachine.start()`
+    /// saw `.stopped` and produced ZERO effects → the `hello` was never sent → autoconnect never
+    /// connected. (The manual dial-in flow opens the video AFTER the shell has settled, so it never
+    /// saw the spurious disappear — which is why it always worked.) We DEFER the teardown by a short
+    /// delay and CANCEL it if the pane re-appears (or activates) in the meantime; only a disappear
+    /// that actually persists (a real tab switch) tears the decode stack down.
+    @State private var teardownTask: Task<Void, Never>?
+
     /// Whether the remote-window model parses to a complete endpoint (host/port/window all valid). A
     /// fresh user-created `.remoteGUI` pane is NOT configured (empty fields → `canOpen == false`). This
     /// reads the `@Observable` ``RemoteWindowModel`` fields, so it re-evaluates on the keystroke that
@@ -446,18 +458,18 @@ private struct RemoteGUIPaneView: View {
     var body: some View {
         Group {
             if let model = live.remoteWindow {
-                switch RemoteGUIDisplay.resolve(admitted: admitted, configured: configured, hasFreeSlot: hasFreeSlot) {
-                case .live:
-                    RemoteWindowPanel(model: model, showCloseButton: false)
-                case .entryForm:
-                    // Not yet configured (or configured with a slot still free): render the panel so its
-                    // entry FORM shows (model.active == nil ⇒ no decode stack). The user dials in
-                    // host/port here; admission is attempted on appear and reactively the instant the
-                    // endpoint becomes valid (the `configured` .onChange below), so the form does NOT
-                    // vanish before the pane goes live (BUG-A / F1).
-                    RemoteWindowPanel(model: model, showCloseButton: false)
-                case .gated:
+                // `.entryForm` and `.live` render the IDENTICAL `RemoteWindowPanel`; only `.gated`
+                // differs. They MUST share ONE stable SwiftUI identity — rendering the panel from two
+                // separate `switch` branches makes SwiftUI RECREATE the `VideoWindowView` when
+                // `admitted` flips `entryForm→live`, tearing down its just-built UDP session before the
+                // queued `hello` flushes (the synchronous cursor-prime survives, the hello does not), so
+                // the AUTOCONNECT path never connects. The panel itself shows the form vs. live video off
+                // `model.active`; admission only gates whether `open()` was allowed to run. (The manual
+                // dial-in flow stays in `.live` throughout, which is why it was never affected.)
+                if RemoteGUIDisplay.resolve(admitted: admitted, configured: configured, hasFreeSlot: hasFreeSlot) == .gated {
                     gatedPlaceholder
+                } else {
+                    RemoteWindowPanel(model: model, showCloseButton: false)
                 }
             } else {
                 Color.clear
@@ -466,15 +478,16 @@ private struct RemoteGUIPaneView: View {
         // Activate on appear (decode only the on-screen pane), deactivate on disappear (battery).
         // Routed through the store so `liveVideoCap` is enforced; the no-store preview path activates
         // directly. The store reads `isVideoActive` to count concurrent live video panes.
-        .onAppear { activate() }
-        .onDisappear {
-            if let store {
-                store.deactivateVideo(live.id)
-            } else {
-                live.setVideoActive(false)
-            }
-            admitted = false
-        }
+        .onAppear { cancelPendingTeardown(); activate() }
+        // Backstop for .onAppear: a configured (restored / autoconnect) pane is ALREADY configured at
+        // mount, so `.onChange(of: configured)` never fires, and `.onAppear` alone is unreliable — it is
+        // deferred until the NavigationSplitView detail subtree is actually displayed, so an autoconnect
+        // launch (and any launch where the window isn't front yet) sits on the form instead of going
+        // live. `.task` runs reliably on view-install; `activate()` is cap-checked + the `!admitted`
+        // guard makes the double-trigger idempotent (an unconfigured pane still no-ops → entry form, so
+        // the manual dial-in flow is unchanged). This is the one-shot autoconnect fix.
+        .task { cancelPendingTeardown(); if !admitted { activate() } }
+        .onDisappear { scheduleTeardown() }
         // F1 — a fresh pane's .onAppear ran while the model was still UNconfigured (`canOpen == false`),
         // so `activate()` never admitted it and there was no re-attempt once the user finished typing a
         // valid endpoint. Re-attempt admission the instant the model becomes configured: the keystroke
@@ -497,6 +510,41 @@ private struct RemoteGUIPaneView: View {
         } else {
             live.setVideoActive(true)
             admitted = live.isVideoActive
+        }
+    }
+
+    /// Cancels a pending debounced teardown — the pane re-appeared (or re-activated), so the
+    /// `.onDisappear` that scheduled it was spurious and the decode stack must stay up.
+    private func cancelPendingTeardown() {
+        teardownTask?.cancel()
+        teardownTask = nil
+    }
+
+    /// Schedules the video teardown after a short grace period instead of running it inline on
+    /// `.onDisappear`. A spurious initial-layout disappear is followed immediately by a re-appear
+    /// (or the `.task`) which cancels this; only a disappear that OUTLASTS the grace period (a real
+    /// tab switch / pane close) actually deactivates. This is the autoconnect-connect fix — the
+    /// inline teardown used to stop the session mid-`start()` so the hello was never sent.
+    private func scheduleTeardown() {
+        teardownTask?.cancel()
+        teardownTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled else { return }
+            // The disappear was SPURIOUS if the pane is still a leaf of the active tab (SwiftUI
+            // sent a lone `.onDisappear` during the initial layout settle but the pane never left
+            // the screen, and `.onAppear` does NOT re-fire to cancel us). Only a REAL disappear —
+            // the pane has left the active tab (a genuine tab switch / close) — actually tears down.
+            if let store, store.isPaneOnActiveTab(live.id) {
+                teardownTask = nil
+                return
+            }
+            if let store {
+                store.deactivateVideo(live.id)
+            } else {
+                live.setVideoActive(false)
+            }
+            admitted = false
+            teardownTask = nil
         }
     }
 
