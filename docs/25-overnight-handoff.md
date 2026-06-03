@@ -73,9 +73,23 @@ Working constraints this session (recorded so the rationale is clear):
 
 ---
 
-## 4. Audit (#13)
+## 4. Audit (#13) — `aa55aaa`
 
-See the audit-fix commit(s) on this branch and the closing session summary. (Adversarial find→refute→synthesize sweep across input / video / concurrency / protocol / UI; only refutation-surviving bugs were acted on, fixed headlessly where the fix is pure-logic, documented as hardware-pending otherwise.)
+Adversarial sweep (find → **refute** → synthesize, 23 agents) across input / video / concurrency / protocol / UI. **4 real bugs** survived refutation; **12 candidates refuted** (e.g. WireGuard's Poly1305 MAC makes corrupt-but-parseable datagrams impossible → corruption is a *lost* fragment the existing FEC/loss machinery already handles; the input-ordering claims misread MainActor-inherited Task isolation, which preserves submission order).
+
+| ID | Sev | Status | What |
+|----|-----|--------|------|
+| VIDEO-UI-1 | high | **fixed + tested** | Same-tick close+reopen stuck on "Video paused" — teardown freed the cap slot without re-bumping `videoPromotionGeneration`. Fix: bump at the teardown-completion site (gated on an actual release) + regression test. |
+| CONCURRENCY-HOST-1 | high | **fixed** (runtime hardware-pending) | **Reconnect after a clean `bye` silently refused** until daemon restart (pinned UDP flow slot never cleared — UDP has no FIN). *This is the root of the chronic "restart the host before each client launch."* Fix: `VideoDatagramTransport.resetClientFlow()`, called on `bye`. **Crash-without-bye still needs an idle-timeout reaper (follow-up).** |
+| VIDEO-CLIENT-1 | med | **fixed** | Hard decode failure only logged → pacer froze on the last good frame. Fix: `requestIDR()` in the generic decode catch (mirrors `awaitingKeyframe`). |
+| VIDEO-HOST-1 | high | **documented, not shipped** | Client-recovery + ~1s heartbeat IDR never fire on a **static** window (both below `guard status == .complete`; only `.idle` frames arrive) → a recovering/joining client freezes until the window changes. Correct fix = retain the last `CVPixelBuffer` + timer re-encode a forced IDR, but it depends on SCStream IOSurface/queue-depth runtime behaviour that can't be verified headlessly (a wrong retain could stall capture / emit a stale surface). Documented at `WindowCapturer.swift:142` + here for hardware-in-the-loop. |
+
+VIDEO-HOST-1 + VIDEO-CLIENT-1 **compound**: a single bad decode on a then-static window = indefinite freeze with input still live. Fix both together when bringing up VIDEO-HOST-1 on hardware.
+
+**Top remaining follow-ups (need the Mac Studio):**
+1. VIDEO-HOST-1 — forced/heartbeat IDR on a static window (retain-last-buffer + timer).
+2. CONCURRENCY-HOST-1 residual — idle-timeout reaper for a crash-without-`bye` (the `bye` reset only covers clean disconnects; a lost `bye` datagram or a crash still wedges the slot until the path errors).
+3. Resize Stage 0 latent note: `VideoSessionStateMachine.lastResizeEpoch` is not reset on a fresh `hello`-accept — reset it when the resize wiring (Stage 1+) lands, else a reconnected session would treat a low epoch as stale.
 
 ---
 
