@@ -80,13 +80,19 @@ public actor RworkVideoHostSession {
     /// Whether the next injected input event must raise+focus first.
     private var inputNeedsRaise = true
 
-    /// Ordered inbound pump — the input-reorder fix. The transport delivers datagrams in
-    /// strict arrival order on its serial receive queue; we yield every one into this
-    /// AsyncStream and drain it from a SINGLE consumer task, so `receive`/`inject` run in
-    /// arrival order and the next datagram is not pulled until the current one has fully
-    /// injected. This is what removes the inverted-down/up stuck-button race that the old
-    /// per-datagram `Task { await receive }` fan-out introduced.
-    private var inboundContinuation: AsyncStream<(VideoChannel, Data)>.Continuation?
+    /// Ordered + COALESCING inbound pump — the input-reorder fix AND the input-latency fix.
+    /// The transport delivers datagrams in strict arrival order on its serial receive queue; it
+    /// APPENDS each to `inboundQueue` synchronously (no actor hop, so arrival order is carried
+    /// end-to-end) and signals `inboundWakeup`. A SINGLE consumer task wakes, BATCH-DRAINS the
+    /// whole backlog, and `receiveBatch` collapses consecutive pointer-motion runs to their
+    /// latest (``InputMotionCoalescer``) before injecting. This both removes the inverted-down/up
+    /// stuck-button race the old per-datagram `Task { await receive }` fan-out introduced AND
+    /// stops a 150:1 motion-heavy flood from accruing multi-second lag by replaying every stale
+    /// position: when the consumer keeps up the batches are size ~1 (coalescing is a no-op); only
+    /// when it falls behind does a run collapse, bounding the lag to ~one injection. Control and
+    /// recovery datagrams ride the same FIFO and are never dropped or reordered.
+    private var inboundQueue: InboundQueue?
+    private var inboundWakeup: AsyncStream<Void>.Continuation?
     private var inboundConsumer: Task<Void, Never>?
 
     /// - Parameters:
@@ -115,19 +121,27 @@ public actor RworkVideoHostSession {
                 Task { await self.receive(channel: channel, data: data) }
             }
         } else {
-            // ORDERED path (default): a single consumer drains datagrams in arrival order.
-            let (stream, continuation) = AsyncStream.makeStream(of: (VideoChannel, Data).self)
-            inboundContinuation = continuation
+            // ORDERED + COALESCING path (default). A lock-protected queue (appended on the
+            // transport's serial receive queue, preserving arrival order) plus a coalesced wakeup
+            // signal; the single consumer batch-drains the backlog and `receiveBatch` collapses
+            // pointer-motion runs to their latest before injecting.
+            let queue = InboundQueue()
+            let (wakeups, wakeup) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+            inboundQueue = queue
+            inboundWakeup = wakeup
             inboundConsumer = Task { [weak self] in
-                for await (channel, data) in stream {
+                for await _ in wakeups {
                     guard let self else { break }
-                    await self.receive(channel: channel, data: data)
+                    let batch = queue.drainAll()
+                    if batch.isEmpty { continue }   // a coalesced wakeup an earlier drain already emptied
+                    await self.receiveBatch(batch)
                 }
             }
-            // `continuation.yield` is thread-safe and ORDER-PRESERVING; the transport already
-            // calls this on its serial receive queue, so arrival order is carried end-to-end.
+            // Enqueue THEN signal on the transport's serial receive queue, so the consumer always
+            // runs a drain after the last append (no lost wakeup). Append is O(1) and never blocks.
             try await transport.start { channel, data in
-                continuation.yield((channel, data))
+                queue.append(channel, data)
+                wakeup.yield()
             }
         }
         log.info("video host session listening for client hello")
@@ -135,11 +149,12 @@ public actor RworkVideoHostSession {
 
     /// Tears down capture/encode/watchers/sockets.
     public func stop() async {
-        // End the ordered inbound pump first so no buffered datagram injects mid-teardown.
-        inboundContinuation?.finish()
-        inboundContinuation = nil
+        // End the coalescing inbound pump first so no buffered datagram injects mid-teardown.
+        inboundWakeup?.finish()
+        inboundWakeup = nil
         inboundConsumer?.cancel()
         inboundConsumer = nil
+        inboundQueue = nil
         for effect in stateMachine.stop() { await apply(effect) }
         await teardownLiveComponents()
         await transport.stop()
@@ -159,6 +174,51 @@ public actor RworkVideoHostSession {
         case .video, .geometry, .cursor:
             // Host does not receive these (they are host→client). Ignore defensively.
             break
+        }
+    }
+
+    /// Processes a batch of inbound datagrams drained from the coalescing queue (the ordered
+    /// default path). Consecutive `.input` datagrams are decoded into a run and collapsed via
+    /// ``InputMotionCoalescer`` so only the LATEST of each motion run is injected; a control or
+    /// recovery datagram is a flush BOUNDARY — the pending input run injects first (in arrival
+    /// order), then the boundary is handled — so down/up/key ordering and ``InputButtonBalance``
+    /// are never disturbed.
+    private func receiveBatch(_ batch: [(VideoChannel, Data)]) async {
+        var inputRun: [InputEvent] = []
+        for (channel, data) in batch {
+            switch channel {
+            case .input:
+                // Gate on streaming (matches `InputDatagramRouter.route`) and decode here so the
+                // run can be coalesced. A malformed datagram is dropped, never crashes the receiver.
+                guard stateMachine.mediaFlowing else { continue }
+                do { inputRun.append(try InputEvent.decode(data)) }
+                catch { log.error("dropping input datagram: undecodable") }
+            case .control:
+                let run = inputRun; inputRun = []
+                await injectCoalesced(run)
+                await handleControl(data)
+            case .recovery:
+                let run = inputRun; inputRun = []
+                await injectCoalesced(run)
+                handleRecovery(data)
+            case .video, .geometry, .cursor:
+                // Host does not receive these (host→client). Ignore defensively.
+                break
+            }
+        }
+        await injectCoalesced(inputRun)
+    }
+
+    /// Collapses an arrival-ordered run of input events to its coalesced form and injects each,
+    /// reproducing the per-event raise latch the single-event path applied: a button-down raises
+    /// + focuses first (`alwaysRaises`), a coalesced motion run never does, and `inputNeedsRaise`
+    /// is advanced between events (mouse-up re-arms it). Motion is the only class collapsed, so
+    /// the raise/button-balance semantics for every down/up are byte-identical to the un-batched path.
+    private func injectCoalesced(_ run: [InputEvent]) async {
+        guard !run.isEmpty else { return }
+        for event in InputMotionCoalescer.coalesce(run) {
+            let raiseFirst = inputNeedsRaise || InputDatagramRouter.alwaysRaises(event)
+            await inject(event, raiseFirst: raiseFirst)
         }
     }
 
@@ -478,6 +538,31 @@ public actor RworkVideoHostSession {
         case .bounds(let r): return r
         case .move, .resize, .title: return geometryWatcher?.currentBoundsCG()
         }
+    }
+}
+
+/// Lock-protected FIFO of inbound datagrams feeding the host's coalescing consumer. The
+/// transport's serial receive queue APPENDS (synchronously, no actor hop — so arrival order is
+/// carried end-to-end); the single consumer task DRAINS the whole backlog per wakeup so the
+/// actor can collapse pointer-motion runs (``InputMotionCoalescer``). Replaces the prior
+/// unbounded `AsyncStream` of datagrams, whose strictly-serial per-event drain (three
+/// WindowServer round-trips per motion event) let a motion flood accrue multi-second lag.
+private final class InboundQueue: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [(VideoChannel, Data)] = []
+
+    /// Append one datagram. Called on the transport's serial receive queue; O(1), never blocks.
+    func append(_ channel: VideoChannel, _ data: Data) {
+        lock.lock(); items.append((channel, data)); lock.unlock()
+    }
+
+    /// Atomically take and clear the whole backlog (arrival order). An empty result means a
+    /// coalesced wakeup whose datagrams an earlier drain already consumed.
+    func drainAll() -> [(VideoChannel, Data)] {
+        lock.lock(); defer { lock.unlock() }
+        let out = items
+        items = []
+        return out
     }
 }
 #endif

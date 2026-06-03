@@ -241,6 +241,75 @@ public struct InputButtonBalance: Sendable, Equatable {
     }
 }
 
+/// Pure, order-preserving pointer-motion coalescer (the input-latency fix).
+///
+/// A remote pointer stream is ~99% motion: a real loopback trace was 1664 `mouseMove` +
+/// 163 `mouseDrag` against only 11 `mouseDown` (≈150:1). The host injects every event
+/// behind synchronous WindowServer IPC (`CGWarpMouseCursorPosition` +
+/// `CGAssociateMouseAndMouseCursorPosition` + `CGEvent.post`, three round-trips), so when
+/// the serial inbound consumer falls behind a flood it replays every STALE intermediate
+/// position in FIFO order — the cursor visibly crawls through old positions seconds behind
+/// the user ("delay vài giây").
+///
+/// This collapses each RUN of consecutive same-class motion events to its LATEST — the only
+/// position that still matters, because a hover/drag target is absolute — while passing every
+/// button / key / scroll / text event through UNCHANGED and NEVER reordering across one. It
+/// is the same latest-position rule TigerVNC (`Viewport` deferred pointer flush) and noVNC
+/// (`_handleMouseMove` + `_flushMouseMoveTimer`) use; here it is driven by drain-availability
+/// (the actor batch-drains the inbound queue and coalesces what piled up) rather than a
+/// wall-clock timer, so it is SELF-REGULATING: when the consumer keeps up the batches are
+/// size ~1 and it is a no-op; only when it falls behind does a run collapse, bounding the lag
+/// to roughly one injection regardless of flood. Pure ⇒ headlessly unit-testable beside
+/// ``InputButtonBalance`` / ``InputDatagramRouter`` (no CGEvent, no socket).
+public struct InputMotionCoalescer: Sendable {
+    /// The two coalescible motion classes. A hover-run and a drag-run NEVER merge: a class
+    /// change is a flush boundary, because a `.mouseDrag` carries a held button + clickState
+    /// the host posts as `*MouseDragged`, while a `.mouseMove` is a bare hover `*MouseMoved` —
+    /// collapsing across the boundary would drop the transition the target app needs.
+    private enum MotionClass: Equatable { case move, drag }
+
+    private static func motionClass(of event: InputEvent) -> MotionClass? {
+        switch event {
+        case .mouseMove: return .move
+        case .mouseDrag: return .drag
+        case .mouseDown, .mouseUp, .scroll, .key, .text: return nil
+        }
+    }
+
+    /// Collapse consecutive same-class motion runs in `batch` to their latest, preserving the
+    /// relative order of every non-motion (barrier) event and of motion vs barriers.
+    ///
+    /// INVARIANT (the correctness the ordered consumer won must not regress): a
+    /// `.mouseDown`/`.mouseUp`/`.key`/`.scroll`/`.text` is a hard barrier — any buffered motion
+    /// flushes BEFORE it, so a move that physically preceded a click is never emitted after the
+    /// click. That keeps down→drag→up framing, ``InputButtonBalance``, and the stateless-drag
+    /// contract intact (every down/up still reaches the injector exactly once, in order).
+    public static func coalesce(_ batch: [InputEvent]) -> [InputEvent] {
+        guard batch.count > 1 else { return batch }
+        var output: [InputEvent] = []
+        output.reserveCapacity(batch.count)
+        var pending: InputEvent?          // the latest buffered motion event in the current run
+        var pendingClass: MotionClass?    // its class (nil ⇔ pending is nil)
+        for event in batch {
+            if let cls = motionClass(of: event) {
+                if cls == pendingClass {
+                    pending = event                       // same run: keep only the latest
+                } else {
+                    if let p = pending { output.append(p) }   // class change: flush the old run
+                    pending = event
+                    pendingClass = cls
+                }
+            } else {
+                // Barrier: flush any buffered motion FIRST (order-preserving), then the barrier.
+                if let p = pending { output.append(p); pending = nil; pendingClass = nil }
+                output.append(event)
+            }
+        }
+        if let p = pending { output.append(p) }           // trailing motion run
+        return output
+    }
+}
+
 /// Routes a datagram received on the DEDICATED recovery channel (client→host loss
 /// recovery, doc 17 §3.6). Pure decision logic: decode the ``RecoveryMessage`` and
 /// decide the host action. Kept separate from ``InputDatagramRouter`` because recovery
