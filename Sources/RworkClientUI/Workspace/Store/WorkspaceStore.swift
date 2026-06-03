@@ -46,6 +46,18 @@ public final class WorkspaceStore {
     /// plain `Int` shape and is agnostic to how the number was chosen.
     public let liveVideoCap: Int
 
+    /// A monotonic nudge the view layer observes to RE-ATTEMPT video admission for gated panes (ITEM
+    /// #2). The store can never flip a pane's liveness itself — admission is **view-driven**: only an
+    /// on-screen pane decodes, via ``RemoteGUIPaneView``'s `.onAppear` → ``activateVideo(_:)``. So when
+    /// a slot frees (a video pane deactivated, or an active-video pane was closed), there is no one to
+    /// promote a queued-but-still-on-screen pane that was previously gated. This counter is bumped on
+    /// exactly those slot-freeing events; the gated leaves observe it via `.onChange` and re-call
+    /// `activateVideo` — which still flows through the cap, so the ceiling is never breached. Only the
+    /// store bumps it (`private(set)`), and the bump is GUARDED to real slot-freeing transitions so a
+    /// no-op deactivate / a non-video close never churns the view. Pure MainActor `Int` bookkeeping (no
+    /// new concurrency / Sendable surface).
+    public private(set) var videoPromotionGeneration: Int = 0
+
     /// Where the value tree is persisted (docs/22 §6). Injectable so tests point at a temp dir and a
     /// store built with `nil` persistence (the default for the FakePaneSession test seam) never
     /// touches disk. The app passes a real ``WorkspacePersistence``.
@@ -346,8 +358,16 @@ public final class WorkspaceStore {
     }
 
     /// Deactivates live video for pane `id` (the view's `.onDisappear`), freeing a cap slot.
+    ///
+    /// If this actually freed a LIVE slot (the pane was video-active), nudge ``videoPromotionGeneration``
+    /// so an on-screen pane that was previously gated re-attempts admission (ITEM #2). The `wasActive`
+    /// guard is load-bearing: a no-op deactivate (an already-idle / unknown / non-video pane) freed
+    /// nothing, so it must NOT churn the generation — otherwise an `.onDisappear` of a never-admitted
+    /// pane would spuriously re-trigger every gated sibling's retry for no gained slot.
     public func deactivateVideo(_ id: PaneID) {
+        let wasActive = registry[id]?.isVideoActive == true
         registry[id]?.setVideoActive(false)
+        if wasActive { videoPromotionGeneration &+= 1 }
     }
 
     // MARK: - Lifecycle fan-out (one site, AWAITED)
@@ -511,6 +531,12 @@ public final class WorkspaceStore {
             // `activateVideo` keeps counting it until its teardown task actually releases the resources.
             if orphan.kind == .remoteGUI && orphan.isVideoActive {
                 tearingDownVideo.insert(orphan.id)
+                // Closing an ACTIVE video pane is a slot-freeing event (ITEM #2): once this orphan's
+                // teardown releases its stack, a previously-gated on-screen sibling should re-attempt
+                // admission. Nudge here (the close path) so gated leaves observe it and retry; the
+                // retry still flows through `activateVideo`, which keeps counting `tearingDownVideo`
+                // until the real release — so the ceiling holds even though the nudge fires now.
+                videoPromotionGeneration &+= 1
             }
         }
         if !orphans.isEmpty {

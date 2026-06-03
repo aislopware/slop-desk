@@ -20,8 +20,11 @@ import Foundation
 /// - the first `liveVideoCap` `.remoteGUI` panes activate (`true`); the next is GATED (`false`) and
 ///   left inactive (the view shows the gated placeholder);
 /// - re-activating an already-active pane is an idempotent `true`;
-/// - `deactivateVideo` frees a slot, after which a previously-gated pane CAN activate — the store
-///   does NOT auto-promote a queued pane on free (activation is view-driven on appear, docs/22 §7);
+/// - `deactivateVideo` frees a slot, after which a previously-gated pane CAN activate. The store
+///   cannot flip a pane's `isVideoActive` itself (admission is view-driven on appear, docs/22 §7), but
+///   it DOES emit a reactive nudge (``WorkspaceStore/videoPromotionGeneration``, ITEM #2) on every
+///   slot-freeing event so the on-screen gated leaves observe it and re-attempt admission through the
+///   still-cap-checked `activateVideo`;
 /// - `terminal` / `claudeCode` panes are NEVER gated by the video cap (and never count against it):
 ///   `activateVideo` returns `false` for them because they are non-video, not because of the cap.
 @MainActor
@@ -130,9 +133,12 @@ final class LiveVideoCapTests: XCTestCase {
 
     // MARK: - Freeing a slot
 
-    /// `deactivateVideo` frees a slot; a previously-gated pane can then activate. The store does NOT
-    /// auto-promote the queued pane on free — it only becomes active when the view re-requests it
-    /// via `activateVideo` (docs/22 §7: activation is view-driven on appear).
+    /// `deactivateVideo` frees a slot; a previously-gated pane can then activate. The store does not
+    /// flip `isVideoActive` itself — it only becomes active when the view re-requests it via
+    /// `activateVideo` (docs/22 §7: activation is view-driven on appear). The store DOES bump
+    /// ``WorkspaceStore/videoPromotionGeneration`` here (ITEM #2) so an on-screen gated leaf observes the
+    /// freed slot and re-attempts; this test drives that re-attempt explicitly (the view's `.onChange`
+    /// is exercised by the dedicated promotion-generation tests below).
     func testDeactivateFreesSlotForPreviouslyGatedPane() {
         let (store, ids) = makeStoreWithRemoteGUILeaves(3, cap: 2)
         XCTAssertTrue(store.activateVideo(ids[0]))
@@ -142,9 +148,10 @@ final class LiveVideoCapTests: XCTestCase {
         // Free slot 0.
         store.deactivateVideo(ids[0])
         XCTAssertFalse(fake(store.handle(for: ids[0])).isVideoActive, "slot 0 freed")
-        // No auto-promotion: the previously-gated pane is still idle until it re-requests.
+        // The store never flips liveness on its own: the previously-gated pane stays idle until it
+        // re-requests admission (the promotion nudge only TRIGGERS that re-request in the view layer).
         XCTAssertFalse(fake(store.handle(for: ids[2])).isVideoActive,
-                       "store does not auto-promote a queued pane on free")
+                       "store does not flip isVideoActive itself — it only nudges the view to re-request")
 
         // The previously-gated pane now activates because a slot is free.
         XCTAssertTrue(store.activateVideo(ids[2]), "a freed slot admits the previously-gated pane")
@@ -439,5 +446,126 @@ final class LiveVideoCapTests: XCTestCase {
 
         // The single slot is genuinely free again — no stranded in-flight accounting.
         XCTAssertTrue(store.activateVideo(ids[1]), "after quiesce the cap-1 slot is fully free")
+    }
+
+    // MARK: - ITEM #2: reactive promotion-generation nudge on slot-freeing events
+
+    /// Deactivating a LIVE video pane bumps ``WorkspaceStore/videoPromotionGeneration`` exactly once, so
+    /// the view layer's `.onChange` re-attempts admission for a gated on-screen sibling (the store still
+    /// does NOT flip liveness — see ``testPromotionGenerationDoesNotItselfPromote``).
+    func testDeactivateBumpsPromotionGeneration() {
+        let (store, ids) = makeStoreWithRemoteGUILeaves(2, cap: 2)
+        XCTAssertTrue(store.activateVideo(ids[0]))
+        let before = store.videoPromotionGeneration
+
+        store.deactivateVideo(ids[0])
+        XCTAssertEqual(store.videoPromotionGeneration, before + 1,
+                       "deactivating a live video pane is a slot-freeing event ⇒ one promotion nudge")
+    }
+
+    /// Deactivating a pane that was NOT video-active is a no-op for liveness AND must NOT bump the
+    /// promotion generation (the `wasActive` guard): nothing freed, so re-triggering gated siblings'
+    /// retries would be wasted churn.
+    func testDeactivateInactivePaneDoesNotBumpPromotionGeneration() {
+        let (store, ids) = makeStoreWithRemoteGUILeaves(2, cap: 2)
+        // ids[1] is materialized IDLE — never activated.
+        XCTAssertFalse(store.handle(for: ids[1])!.isVideoActive)
+        let before = store.videoPromotionGeneration
+
+        store.deactivateVideo(ids[1])
+        XCTAssertEqual(store.videoPromotionGeneration, before,
+                       "a no-op deactivate freed nothing ⇒ no promotion nudge")
+
+        // A deactivate on an unknown id is likewise inert.
+        store.deactivateVideo(PaneID())
+        XCTAssertEqual(store.videoPromotionGeneration, before,
+                       "deactivating an unknown id frees nothing ⇒ no promotion nudge")
+    }
+
+    /// The promotion nudge is JUST a signal — bumping it (via a slot-freeing event) does NOT itself flip
+    /// any pane's `isVideoActive`. The store can never promote a pane on its own; the gated pane stays
+    /// idle until a view re-requests admission through `activateVideo` (the nudge only triggers that).
+    func testPromotionGenerationDoesNotItselfPromote() {
+        let (store, ids) = makeStoreWithRemoteGUILeaves(3, cap: 2)
+        XCTAssertTrue(store.activateVideo(ids[0]))
+        XCTAssertTrue(store.activateVideo(ids[1]))
+        XCTAssertFalse(store.activateVideo(ids[2]), "ids[2] gated while two are live")
+
+        let beforeGen = store.videoPromotionGeneration
+        store.deactivateVideo(ids[0])   // slot-freeing event → bumps the generation
+        XCTAssertGreaterThan(store.videoPromotionGeneration, beforeGen, "the nudge fired")
+
+        // The bump did NOT flip the gated pane: the store does not auto-promote, only the view does.
+        XCTAssertFalse(fake(store.handle(for: ids[2])).isVideoActive,
+                       "the promotion nudge does not itself activate any pane")
+        // And the just-deactivated pane is genuinely off.
+        XCTAssertFalse(fake(store.handle(for: ids[0])).isVideoActive)
+    }
+
+    /// Closing an ACTIVE video pane (reconcile orphan branch) is also a slot-freeing event, so it bumps
+    /// the promotion generation — so closing a live video pane nudges its gated siblings to retry (ITEM
+    /// #2). Closing a NON-active video pane frees no slot and must not bump.
+    func testClosingActiveVideoPaneBumpsPromotionGeneration() async {
+        let (store, ids) = makeStoreWithRemoteGUILeaves(3, cap: 2)
+        XCTAssertTrue(store.activateVideo(ids[0]))
+        XCTAssertTrue(store.activateVideo(ids[1]))
+        XCTAssertFalse(store.activateVideo(ids[2]), "ids[2] gated while two are live")
+
+        let before = store.videoPromotionGeneration
+        store.closePane(ids[0])         // ids[0] was video-active → orphan branch bumps the generation
+        XCTAssertEqual(store.videoPromotionGeneration, before + 1,
+                       "closing an active video pane is a slot-freeing event ⇒ one promotion nudge")
+        await store.quiesce()           // drain the orphan teardown so the next close is clean
+
+        // Closing a pane that was NEVER video-active frees nothing ⇒ no further bump.
+        let afterClose = store.videoPromotionGeneration
+        XCTAssertFalse(store.handle(for: ids[2])!.isVideoActive, "ids[2] was never admitted")
+        store.closePane(ids[2])
+        XCTAssertEqual(store.videoPromotionGeneration, afterClose,
+                       "closing a non-active video pane frees no slot ⇒ no promotion nudge")
+        await store.quiesce()
+    }
+
+    // MARK: - BUG-A: an unconfigured remote pane shows the entry form, not the cap placeholder
+
+    /// The PURE display decision (``RemoteGUIDisplay/resolve(admitted:configured:)``) distinguishes the
+    /// two false-activation reasons (BUG-A): an admitted pane is `.live`; an UNconfigured one shows the
+    /// `.entryForm` (so the user can enter host/port); only a CONFIGURED-but-refused pane shows `.gated`
+    /// (the cap-saturated placeholder).
+    func testRemoteGUIDisplayResolvesEntryFormWhenUnconfigured() {
+        // Admitted always wins (live video), regardless of configured state.
+        XCTAssertEqual(RemoteGUIDisplay.resolve(admitted: true, configured: true), .live)
+        XCTAssertEqual(RemoteGUIDisplay.resolve(admitted: true, configured: false), .live)
+        // Not admitted + not configured ⇒ entry form (BUG-A: no host/port yet, nothing to gate).
+        XCTAssertEqual(RemoteGUIDisplay.resolve(admitted: false, configured: false), .entryForm)
+        // Not admitted + configured ⇒ the cap-saturated placeholder.
+        XCTAssertEqual(RemoteGUIDisplay.resolve(admitted: false, configured: true), .gated)
+    }
+
+    /// A fresh `.remoteGUI` pane created with no video endpoint (New Tab/split → Remote Window) has an
+    /// UNconfigured ``RemoteWindowModel`` (`canOpen == false`), so even when the cap is saturated its
+    /// display resolves to `.entryForm` — NOT `.gated`. This is the BUG-A invariant: an unconfigured pane
+    /// can always reach its host/port form (it was previously stuck forever on the cap placeholder).
+    func testUnconfiguredRemoteGUIPaneIsNotCapGatedInDisplay() {
+        // Build a live (production) remoteGUI session with no video endpoint, mirroring Tab.make/split.
+        let session = WorkspaceStore.liveMakeSession()(PaneSpec(kind: .remoteGUI, title: "Remote window"))
+        let live = session as! LivePaneSession
+        XCTAssertNotNil(live.remoteWindow, "a remoteGUI session always has a RemoteWindowModel")
+        XCTAssertFalse(live.remoteWindow!.canOpen, "a fresh unconfigured model cannot open (empty fields)")
+
+        // Even un-admitted (cap saturated, activateVideo would return false), the display is the entry
+        // form because the model is not configured — never the cap placeholder.
+        XCTAssertEqual(RemoteGUIDisplay.resolve(admitted: false, configured: live.remoteWindow!.canOpen),
+                       .entryForm)
+
+        // Once the user dials in a valid endpoint, the model becomes configured, so an un-admitted pane
+        // would now correctly show the cap placeholder (cap is the real reason it cannot decode).
+        live.remoteWindow!.host = "host.example"
+        live.remoteWindow!.mediaPort = "9000"
+        live.remoteWindow!.cursorPort = "9001"
+        live.remoteWindow!.windowID = "42"
+        XCTAssertTrue(live.remoteWindow!.canOpen, "a fully-entered model can open")
+        XCTAssertEqual(RemoteGUIDisplay.resolve(admitted: false, configured: live.remoteWindow!.canOpen),
+                       .gated)
     }
 }
