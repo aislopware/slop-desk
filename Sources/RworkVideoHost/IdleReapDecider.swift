@@ -33,7 +33,7 @@ public struct IdleReapDecider<FlowID: Hashable & Sendable>: Sendable {
     }
 
     private var flows: [FlowID: Record] = [:]
-    /// Idle threshold in seconds (``KeepaliveGate/idleTimeout``, 30 s).
+    /// Idle threshold in seconds (``KeepaliveTiming/idleTimeout``, 30 s).
     public let idleTimeout: TimeInterval
 
     public init(idleTimeout: TimeInterval) { self.idleTimeout = idleTimeout }

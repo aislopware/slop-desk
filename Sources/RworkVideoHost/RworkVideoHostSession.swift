@@ -39,28 +39,10 @@ public actor RworkVideoHostSession {
     /// flow from `log show`. When enabled, the key lifecycle beats are mirrored to stderr so the
     /// gate can pinpoint where (if anywhere) the pipeline stalls. No-op in production.
     private static let debugStderr = ProcessInfo.processInfo.environment["RWORK_VIDEO_DEBUG"] != nil
-    /// Diagnostic A/B seam (`RWORK_INPUT_UNORDERED=1`): restores the OLD per-datagram
-    /// `Task { await receive }` fan-out, which raced inbound datagrams into the actor OUT of
-    /// arrival order (and let a queued `mouseUp` overtake its `mouseDown` through the
-    /// `await raiseTargetWindow()` suspension → inverted down/up → a button stuck down → the
-    /// next click landed inside a phantom selection). Left as a toggle so the ordering fix is
-    /// A/B-verifiable on ONE binary. Default unset ⇒ the ordered single-consumer pump below.
-    static let unorderedInput = ProcessInfo.processInfo.environment["RWORK_INPUT_UNORDERED"] != nil
     /// Full per-event injection trace (`RWORK_INPUT_TRACE=1`): logs EVERY injected input event
     /// with a monotonic sequence number (NOT sampled), so a loopback run can read the exact
     /// injected ORDER — the ground truth for the reorder fix. No-op in production.
     private static let inputTrace = ProcessInfo.processInfo.environment["RWORK_INPUT_TRACE"] != nil
-    /// In-session host-window-resize feature gate (`RWORK_VIDEO_RESIZE=1`, default OFF). When
-    /// OFF the byte path is identical to today: `resolveResizeSize` returns nil (the SM emits
-    /// no `.resizeCapture`), so `apply(.resizeCapture)` stays the inert no-op and no `resizeAck`
-    /// is ever sent. PATH A (AX resize of the REAL host window) only runs when this is set.
-    static let resizeEnabled: Bool = {
-        // Match the sibling RWORK_VIDEO_* gates' truthiness (1/true/yes/on, case-insensitive) so
-        // `=true` is not silently OFF while the other gates would be ON (audit consistency fix). `=1`
-        // (the documented form) still works; this only ADDS the missing truthy spellings.
-        let raw = ProcessInfo.processInfo.environment["RWORK_VIDEO_RESIZE"]?.lowercased()
-        return raw == "1" || raw == "true" || raw == "yes" || raw == "on"
-    }()
     private var encodedFrameCount = 0
     nonisolated private func dbg(_ message: @autoclosure () -> String) {
         guard Self.debugStderr else { return }
@@ -76,7 +58,6 @@ public actor RworkVideoHostSession {
     /// at low bitrate); raise it over LAN/NetBird where bandwidth is ample.
     private let bitrate: Int
     private let scheduler = VideoSendScheduler()
-    private let router = InputDatagramRouter()
     private let recoveryRouter = RecoveryDatagramRouter()
 
     private var stateMachine: VideoSessionStateMachine
@@ -141,35 +122,30 @@ public actor RworkVideoHostSession {
     /// only once a valid hello is accepted (so we never capture into the void).
     public func start() async throws {
         _ = stateMachine.start()
-        if Self.unorderedInput {
-            // LEGACY A/B path: one Task per datagram → races into the actor out of order.
-            try await transport.start { [weak self] channel, data in
-                guard let self else { return }
-                Task { await self.receive(channel: channel, data: data) }
+        // ORDERED + COALESCING inbound path. A lock-protected queue (appended on the transport's
+        // serial receive queue, preserving arrival order) plus a coalesced wakeup signal; the
+        // single consumer batch-drains the backlog and `receiveBatch` collapses pointer-motion
+        // runs to their latest before injecting. (This replaced a legacy per-datagram
+        // `Task { await receive }` fan-out that raced inbound datagrams into the actor OUT of
+        // arrival order — a queued `mouseUp` could overtake its `mouseDown` through the
+        // `await raiseTargetWindow()` suspension, inverting down/up and sticking a button down.)
+        let queue = InboundQueue()
+        let (wakeups, wakeup) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        inboundQueue = queue
+        inboundWakeup = wakeup
+        inboundConsumer = Task { [weak self] in
+            for await _ in wakeups {
+                guard let self else { break }
+                let batch = queue.drainAll()
+                if batch.isEmpty { continue }   // a coalesced wakeup an earlier drain already emptied
+                await self.receiveBatch(batch)
             }
-        } else {
-            // ORDERED + COALESCING path (default). A lock-protected queue (appended on the
-            // transport's serial receive queue, preserving arrival order) plus a coalesced wakeup
-            // signal; the single consumer batch-drains the backlog and `receiveBatch` collapses
-            // pointer-motion runs to their latest before injecting.
-            let queue = InboundQueue()
-            let (wakeups, wakeup) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
-            inboundQueue = queue
-            inboundWakeup = wakeup
-            inboundConsumer = Task { [weak self] in
-                for await _ in wakeups {
-                    guard let self else { break }
-                    let batch = queue.drainAll()
-                    if batch.isEmpty { continue }   // a coalesced wakeup an earlier drain already emptied
-                    await self.receiveBatch(batch)
-                }
-            }
-            // Enqueue THEN signal on the transport's serial receive queue, so the consumer always
-            // runs a drain after the last append (no lost wakeup). Append is O(1) and never blocks.
-            try await transport.start { channel, data in
-                queue.append(channel, data)
-                wakeup.yield()
-            }
+        }
+        // Enqueue THEN signal on the transport's serial receive queue, so the consumer always
+        // runs a drain after the last append (no lost wakeup). Append is O(1) and never blocks.
+        try await transport.start { channel, data in
+            queue.append(channel, data)
+            wakeup.yield()
         }
 
         // Ordered encoder-OUTPUT pump (FIX C). Mirrors the inbound pump: a lock-protected FIFO the
@@ -216,22 +192,8 @@ public actor RworkVideoHostSession {
 
     // MARK: Inbound datagram routing
 
-    private func receive(channel: VideoChannel, data: Data) async {
-        switch channel {
-        case .control:
-            await handleControl(data)
-        case .input:
-            await handleInput(data)
-        case .recovery:
-            handleRecovery(data)
-        case .video, .geometry, .cursor:
-            // Host does not receive these (they are host→client). Ignore defensively.
-            break
-        }
-    }
-
-    /// Processes a batch of inbound datagrams drained from the coalescing queue (the ordered
-    /// default path). Consecutive `.input` datagrams are decoded into a run and collapsed via
+    /// Processes a batch of inbound datagrams drained from the coalescing queue. Consecutive
+    /// `.input` datagrams are decoded into a run and collapsed via
     /// ``InputMotionCoalescer`` so only the LATEST of each motion run is injected; a control or
     /// recovery datagram is a flush BOUNDARY — the pending input run injects first (in arrival
     /// order), then the boundary is handled — so down/up/key ordering and ``InputButtonBalance``
@@ -293,9 +255,6 @@ public actor RworkVideoHostSession {
             _ = viewport // viewport informs client-side scaling; host captures native window pixels.
             return (w, h)
         }, resolveResizeSize: { [window] requestedWindowID, desired in
-            // GATE: with `RWORK_VIDEO_RESIZE` OFF, reject every resize (the SM then emits no
-            // `.resizeCapture`) so the path stays byte-identical to the fixed-size build.
-            guard Self.resizeEnabled else { return nil }
             // Accept only the session's window; sanity-clamp the desired POINT size into a
             // valid, non-zero, UInt16-safe range. This is a POLICY pre-clamp only — the AX
             // read-back in `apply(.resizeCapture)` is the AUTHORITATIVE achieved size (the
@@ -316,7 +275,7 @@ public actor RworkVideoHostSession {
         if case .bye = message { transport.resetClientFlow() }
     }
 
-    /// CONCURRENCY-HOST-1 crash-without-bye reaper hook (`RWORK_VIDEO_KEEPALIVE`). Handles a reaped
+    /// CONCURRENCY-HOST-1 crash-without-bye reaper hook. Handles a reaped
     /// (crashed / lost-bye) client EXACTLY like a clean `bye`: run the SM's bye effects (which
     /// include `.stopCapture` → the identity-guarded `teardownLiveComponents`), then free the pinned
     /// UDP flow LAST via `resetClientFlow()` — byte-for-byte the same order as `handleControl`'s bye
@@ -332,7 +291,7 @@ public actor RworkVideoHostSession {
     /// clean-bye path. There is deliberately NO second unconditional `teardownLiveComponents` — the
     /// SM `.bye` effect already tore down (identity-guarded); a redundant call re-opened the race.
     /// Wired as `Task { await session.handleReap() }` from `transport.onReap` (the only new async
-    /// work; inbound delivery stays inline). No-op when the gate is OFF (onReap is never set/called).
+    /// work; inbound delivery stays inline).
     /// Reaper TIMING is [MS-confirm]; the STRUCTURE mirrors the unit-tested clean-bye semantics.
     public func handleReap() async {
         let bounds = currentWindowBoundsCG()
@@ -340,18 +299,6 @@ public actor RworkVideoHostSession {
             await apply(effect)
         }
         transport.resetClientFlow()
-    }
-
-    private func handleInput(_ data: Data) async {
-        let decision = router.route(datagram: data, mediaFlowing: stateMachine.mediaFlowing, needsRaise: inputNeedsRaise)
-        switch decision {
-        case .inject(let event, let raiseFirst):
-            await inject(event, raiseFirst: raiseFirst)
-        case .drop(let reason):
-            log.error("dropping input datagram: \(reason)")
-        case .ignoreNotStreaming:
-            break
-        }
     }
 
     private func inject(_ event: InputEvent, raiseFirst: Bool) async {
@@ -455,7 +402,7 @@ public actor RworkVideoHostSession {
         }
     }
 
-    // MARK: In-session resize (PATH A — AX window resize; env-gated RWORK_VIDEO_RESIZE)
+    // MARK: In-session resize (PATH A — AX window resize)
 
     /// Performs the live in-session resize for a `.resizeCapture` effect (the SM already
     /// clamped + epoch-gated the request). PATH A: resize the REAL host window via the
@@ -477,12 +424,6 @@ public actor RworkVideoHostSession {
     ///      size actually arrives — `noteDecoded` / ``ResizeAdoption``), NOT on ack receipt.
     ///      Correctness rests on the client gate, not on send ordering.
     private func applyResize(width: UInt16, height: UInt16, epoch: UInt32) async {
-        guard Self.resizeEnabled else {
-            // Defence-in-depth: the SM only emits `.resizeCapture` when `resolveResizeSize`
-            // returned non-nil, which the gate already blocks when OFF. Stay inert regardless.
-            dbg("effect resizeCapture \(width)x\(height) epoch=\(epoch) — INERT (RWORK_VIDEO_RESIZE off)")
-            return
-        }
         // Must still be streaming with a live capturer/encoder to resize (a bye/stop could have
         // raced in before this effect ran). If not, drop the resize (no ack).
         guard stateMachine.mediaFlowing, let oldCapturer = capturer, let oldEncoder = encoder else {
@@ -569,7 +510,7 @@ public actor RworkVideoHostSession {
         // we install nothing and send no ack. Mirrors the pre-AX recheck + startLiveComponents'
         // post-await identity guard.
         //
-        // FIX #8 (rapid-double-resize epoch race, RWORK_INPUT_UNORDERED legacy seam): a newer
+        // FIX #8 (rapid-double-resize epoch race): a newer
         // resize request can commit a higher `lastResizeEpoch` in the SM while we are suspended.
         // Only the NEWEST epoch may install — abort a stale one (re-read the SM under actor
         // isolation: `epoch >= stateMachine.lastResizeEpoch`).

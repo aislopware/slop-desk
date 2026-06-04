@@ -100,8 +100,8 @@ public struct VideoClientStateMachine: Sendable {
             // old-size frames may still be queued after the ack). Acted on ONLY while streaming
             // (a stray/late ack after teardown is inert). The epoch is the host's echo of the
             // request that won; the actor does not re-validate it (the host already dropped
-            // stale epochs). With `RWORK_VIDEO_RESIZE` OFF the host never sends a resizeAck, so
-            // this branch is never reached on the fixed-size path.
+            // stale epochs). On a fixed-size session (the host AX-refuses a resize) no resizeAck
+            // is sent, so this branch is simply never reached.
             guard state == .streaming else { return [] }
             return [.updateCaptureSize(VideoSize(width: Double(cw), height: Double(ch)))]
         case .hello, .resizeRequest, .keepalive:

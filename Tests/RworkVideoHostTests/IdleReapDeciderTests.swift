@@ -85,12 +85,12 @@ final class IdleReapDeciderTests: XCTestCase {
     // 7. The gate threshold ÷ interval invariant ≥ 3 (RFC-minimum-safe ratio) — guards a future
     //    constant edit from making the host trigger-happy. The shipping ratio is 6× (30s / 5s).
     func testKeepaliveRatioInvariant() {
-        let ratio = KeepaliveGate.idleTimeout / KeepaliveGate.keepaliveInterval
+        let ratio = KeepaliveTiming.idleTimeout / KeepaliveTiming.keepaliveInterval
         XCTAssertGreaterThanOrEqual(ratio, 3,
                                     "idleTimeout must be ≥ 3× the keepalive interval (RFC 9000 §10.1.2 / WireGuard) so a burst loss can't false-reap")
-        XCTAssertEqual(KeepaliveGate.keepaliveInterval, 5)
-        XCTAssertEqual(KeepaliveGate.idleTimeout, 30)
-        XCTAssertEqual(KeepaliveGate.reaperTick, 5)
+        XCTAssertEqual(KeepaliveTiming.keepaliveInterval, 5)
+        XCTAssertEqual(KeepaliveTiming.idleTimeout, 30)
+        XCTAssertEqual(KeepaliveTiming.reaperTick, 5)
     }
 
     // 8. Record creation: a first-ever inbound creates the record stamped at `now`.

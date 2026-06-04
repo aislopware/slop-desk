@@ -240,11 +240,8 @@ Task {
             let bitrate = args.bitrateMbps * 1_000_000
             let mediaPort = args.mediaPort, cursorPort = args.cursorPort
 
-            // CONCURRENCY-HOST-1 mux analogue (`RWORK_VIDEO_KEEPALIVE`): non-nil idleTimeout only
-            // when the gate is ON ⇒ the shared transport arms the per-lane reaper; OFF ⇒ nil ⇒
-            // byte-identical (no decider, no timer, onReapLane never set/called).
-            let reapTimeout: TimeInterval? = KeepaliveGate.enabledFromEnvironment() ? KeepaliveGate.idleTimeout : nil
-            let mux = NWVideoMuxDatagramTransport(mediaPort: mediaPort, cursorPort: cursorPort, idleTimeout: reapTimeout)
+            // CONCURRENCY-HOST-1 mux analogue: the shared transport arms the per-lane reaper.
+            let mux = NWVideoMuxDatagramTransport(mediaPort: mediaPort, cursorPort: cursorPort)
             // One shared sink table both the registry (reads on dispatch) and the per-lane transports
             // (register synchronously inside session.start) use, so the triggering hello is delivered
             // the moment a lane is minted. The lane's retire hook is bound after the registry exists.
@@ -261,8 +258,8 @@ Task {
                 guard let w = live.first(where: { $0.windowID == requestedWindowID }) else {
                     throw VideoHostdError.muxNoWindow(requestedWindowID: requestedWindowID)
                 }
-                // ⚠️ FIX #7 (UN-coded, documented limitation — needs RWORK_VIDEO_MUX +
-                // RWORK_VIDEO_RESIZE both ON AND two panes naming the SAME windowID): each lane mints
+                // ⚠️ FIX #7 (UN-coded, documented limitation — needs RWORK_VIDEO_MUX ON AND two
+                // panes naming the SAME windowID): each lane mints
                 // its OWN session bound to this `windowID`. Two lanes on one windowID would each AX-
                 // resize the SAME real window on a resizeRequest, so concurrent resizes can fight
                 // (last write wins, capture/window aspect can briefly disagree). This atypical config
@@ -280,11 +277,8 @@ Task {
             }
             retireBox.bind { id in Task { await registry.retire(id) } }
             // CONCURRENCY-HOST-1: when the reaper reclaims a dead lane, retire it AND stop its session
-            // (capture/encode actually stops — the leak `retire` alone left). Set only when the gate
-            // armed the reaper; on the OFF path it stays nil + uncalled.
-            if reapTimeout != nil {
-                mux.onReapLane = { id in await registry.retireAndStop(id) }
-            }
+            // (capture/encode actually stops — the leak `retire` alone left).
+            mux.onReapLane = { id in await registry.retireAndStop(id) }
             holder.setMux(registry, mux)
             try await mux.start { channelID, channel, data in
                 // ORDERING (mirrors the OFF InboundQueue discipline): an ADMITTED lane's sink
@@ -327,18 +321,13 @@ Task {
         if effectiveScale < args.scale {
             log("clamping --scale \(args.scale) → \(effectiveScale) (host display backing scale; SCK pads, not upscales)")
         }
-        // CONCURRENCY-HOST-1 (`RWORK_VIDEO_KEEPALIVE`): pass a non-nil idleTimeout only when the gate
-        // is ON, so the transport constructs + arms the crash-without-bye reaper. OFF ⇒ nil ⇒
-        // byte-identical (no decider, no timer, onReap never set/called).
-        let reapTimeout: TimeInterval? = KeepaliveGate.enabledFromEnvironment() ? KeepaliveGate.idleTimeout : nil
-        let transport = NWVideoDatagramTransport(mediaPort: args.mediaPort, cursorPort: args.cursorPort, idleTimeout: reapTimeout)
+        // CONCURRENCY-HOST-1: the transport constructs + arms the crash-without-bye reaper.
+        let transport = NWVideoDatagramTransport(mediaPort: args.mediaPort, cursorPort: args.cursorPort)
         let session = RworkVideoHostSession(window: window, transport: transport, captureScale: effectiveScale, bitrate: args.bitrateMbps * 1_000_000)
         holder.set(session)
         // When the reaper reclaims the dead flow, mirror a bye's capture teardown on the session
         // (the only new async work). Weak ref so a racing stop()/exit can't keep it alive.
-        if reapTimeout != nil {
-            transport.onReap = { [weak session] in Task { await session?.handleReap() } }
-        }
+        transport.onReap = { [weak session] in Task { await session?.handleReap() } }
         try await session.start()
 
         log("serving window id=\(wid) '\(title)' [\(app)] "

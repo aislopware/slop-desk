@@ -36,12 +36,10 @@ public final class InputInjector: @unchecked Sendable {
     /// The CGEventSource whose `userData` we stamp = self-inject filter tag.
     private let eventSource: CGEventSource?
 
-    /// SAFETY button-balance (off in the `RWORK_INPUT_UNORDERED` A/B baseline so legacy still
-    /// reproduces the original stuck-button bug). On a `mouseDown` for an already-held button
-    /// it injects a synthetic release first, so a fresh click never starts inside a selection
-    /// stranded by a lost `mouseUp`. Pure decision lives in ``InputButtonBalance``; the lock
-    /// guards it (harmless insurance — in the ordered path injection is already serial).
-    private static let safetyRelease = ProcessInfo.processInfo.environment["RWORK_INPUT_UNORDERED"] == nil
+    /// SAFETY button-balance. On a `mouseDown` for an already-held button it injects a synthetic
+    /// release first, so a fresh click never starts inside a selection stranded by a lost
+    /// `mouseUp`. Pure decision lives in ``InputButtonBalance``; the lock guards it (harmless
+    /// insurance — in the ordered path injection is already serial).
     private let balanceLock = NSLock()
     private var balance = InputButtonBalance()
 
@@ -116,22 +114,20 @@ public final class InputInjector: @unchecked Sendable {
     public func inject(_ event: InputEvent) {
         // SAFETY auto-release: clear a button left stuck by a lost/never-sent `mouseUp` BEFORE
         // posting a fresh `mouseDown` on it, so a click never begins inside a phantom selection.
-        if Self.safetyRelease {
-            let plan = balanceLock.withLock { balance.plan(for: event) }
-            if let stuck = plan.preRelease, case .mouseDown(_, let n, _, let mods, let tag) = event {
-                if Self.inputTrace {
-                    FileHandle.standardError.write(Data("rwork-videohostd[inject]: SAFETY pre-release of stuck \(stuck) before mouseDown\n".utf8))
-                }
-                postMouseButton(button: stuck, normalized: n, down: false, clickCount: 1, modifiers: mods, tag: tag)
+        let plan = balanceLock.withLock { balance.plan(for: event) }
+        if let stuck = plan.preRelease, case .mouseDown(_, let n, _, let mods, let tag) = event {
+            if Self.inputTrace {
+                FileHandle.standardError.write(Data("rwork-videohostd[inject]: SAFETY pre-release of stuck \(stuck) before mouseDown\n".utf8))
             }
-            if plan.suppress {
-                // A duplicate up from the client's loss-resilient 3× send (button already
-                // released) — drop it so the host never posts a spurious extra *MouseUp.
-                if Self.inputTrace {
-                    FileHandle.standardError.write(Data("rwork-videohostd[inject]: suppressed duplicate mouseUp (button not held)\n".utf8))
-                }
-                return
+            postMouseButton(button: stuck, normalized: n, down: false, clickCount: 1, modifiers: mods, tag: tag)
+        }
+        if plan.suppress {
+            // A duplicate up from the client's loss-resilient 3× send (button already
+            // released) — drop it so the host never posts a spurious extra *MouseUp.
+            if Self.inputTrace {
+                FileHandle.standardError.write(Data("rwork-videohostd[inject]: suppressed duplicate mouseUp (button not held)\n".utf8))
             }
+            return
         }
         switch event {
         case .mouseMove(let n, let tag):

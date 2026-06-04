@@ -2,6 +2,8 @@
 
 Branch: **`feat/video-overnight`** (off `main`, **not pushed**). All work is committed; `main` is untouched and remains the stable fallback.
 
+> **Update (greenfield removal refactor):** the three self-contained video features below are now **ALWAYS ON** and their env-gates have been **removed** — `RWORK_VIDEO_STATICIDR` (static-window forced IDR), `RWORK_VIDEO_KEEPALIVE` (crash-without-bye keepalive + reaper), and `RWORK_VIDEO_RESIZE` (in-session resize) no longer exist as toggles; the feature paths are unconditional. The legacy `RWORK_INPUT_UNORDERED` A/B diagnostic path was also removed (ordered pump only). The gate enums `StaticIDRGate` / `KeepaliveGate` and their OFF-path tests are gone (keepalive timing constants moved to `KeepaliveTiming`; the pure deciders `StaticIDRDecider` / `IdleReapDecider` / the resize logic + their tests stay). Where the text below describes these as `RWORK_VIDEO_*=1` toggles or "default OFF", read it as the now-default, always-on behaviour. The **MUX** gates (`RWORK_VIDEO_MUX` / `RWORK_TCP_MUX`) and the debug/test seams (`RWORK_VIDEO_DEBUG` / `RWORK_INPUT_TRACE` / `RWORK_VIDEO_INJECT_TO_PID`) are unchanged.
+
 Working constraints this session (recorded so the rationale is clear):
 - The MacBook Pro was OFF; all testing was on the Mac Studio (loopback / synthetic / headless).
 - **No runtime GUI/hardware verification was possible autonomously** (TCC + a real unlocked GUI session are required for capture/inject/render; `kill`/`pkill` are permission-blocked here so a verification host daemon couldn't be spawned-and-cleaned). Every "passes" claim below is from a real `swift build` + `swift test --filter` run **in the main agent** (never a relayed sub-agent self-report); every feature's *runtime* is flagged hardware-pending where it applies.
@@ -28,7 +30,7 @@ Working constraints this session (recorded so the rationale is clear):
 - `InboundQueue` (lock-protected FIFO, appended on the transport serial queue, no actor hop) + a `bufferingNewest(1)` wakeup signal replace the unbounded datagram stream. The consumer batch-drains and coalesces — **self-regulating**: a no-op when keeping up (batch ~1), collapses runs only when injection falls behind, bounding lag to ~one injection regardless of flood.
 - Client `VideoWindowPipeline` `@MainActor` motion pump: coalesce motion to one send per video-frame interval; buttons flush-before-send.
 - Grounded in TigerVNC/noVNC `_flushMouseMoveTimer` latest-position rule + SE-0314.
-- Legacy `RWORK_INPUT_UNORDERED` A/B path untouched.
+- The legacy `RWORK_INPUT_UNORDERED` A/B path (per-datagram out-of-order fan-out) has since been REMOVED — the ordered single-consumer pump is now the only, unconditional inbound path.
 
 **Hardware feel-test (morning):** move/drag-select fast on the Mac Studio loopback (or MacBook over NetBird) and confirm the cursor tracks live with no multi-second lag. `RWORK_INPUT_TRACE=1` on the host will now show far fewer `inject #N mouseMove` lines (coalescing visible).
 
@@ -47,7 +49,7 @@ Working constraints this session (recorded so the rationale is clear):
 - **S2** SSH-style `WINDOW_ADJUST` per-channel backpressure (`FlowCreditPolicy` wired) + reconnect-as-channel-reopen with full-physical-reconnect fallback.
 - **S3** UDP video mux behind `RWORK_VIDEO_MUX`: client stamps channelID (= adopted `helloAck` streamID) on every datagram + filters inbound; host replaces the single-client pin (`NWVideoDatagramTransport`) with `VideoMuxRouter` dispatch + a `WindowSessionRegistry` so one daemon serves N windows on one port pair. Swap `FrameFragmentHeader` 15→19 bytes (bump video `version`). Runtime needs hardware (two-window HEVC decode).
 - **S4** `WorkspaceStore.liveVideoCap` counts decode stacks, not channel refs.
-- **S5** flip defaults ON after a hardware A/B confirms parity; keep the env var as an OFF escape hatch one release (like `RWORK_INPUT_UNORDERED`).
+- **S5** flip defaults ON after a hardware A/B confirms parity; keep the env var as an OFF escape hatch one release.
 - **Honest tradeoffs:** one TCP for N terminals = head-of-line blocking (mitigated by the CONTROL/DATA split + per-channel WINDOW_ADJUST + a fallback second connection above a pane threshold); one UDP for N video streams = shared congestion (mitigated by keeping cursor on its own socket + per-channel pacing; QUIC via `NWMultiplexGroup` is the forward-compatible upgrade, deliberately deferred).
 - **Known S0 follow-up for the wiring stage:** `MuxRoutingCore` opens a channel on `channelOpenAck` without checking the `accepted` flag — the IO layer must honor `accepted == false`.
 
@@ -107,12 +109,12 @@ All on `feat/video-overnight` (not pushed). Each feature: ultracode research→d
 
 | Feature | Commit | Flag (default OFF) | Headless proof |
 |---|---|---|---|
-| Resize host window PATH A | `e202c34` | `RWORK_VIDEO_RESIZE` | macOS+iOS build, 75 tests (incl. `ResizeAdoptionTests`) |
+| Resize host window PATH A | `e202c34` | **ALWAYS-ON** (gate removed, greenfield) | macOS+iOS build, `ResizeAdoptionTests` + resize SM/codec tests |
 | Mux Stage-0 accepted-flag fix | `cc636b9` | — (always on) | 56 mux tests |
 | TCP mux S1 | `566af72` | `RWORK_TCP_MUX` | macOS+iOS build, 71 tests (loopback + ordering guard + refcount + OFF-identity) |
 | UDP mux S3 | `6184915` | `RWORK_VIDEO_MUX` | macOS+iOS build, 47 tests (routing + registry + OFF-identity) |
-| VIDEO-HOST-1 static-window IDR (Session 3) | _this session_ | `RWORK_VIDEO_STATICIDR` | macOS+iOS build, 13 `StaticIDRDeciderTests` + 4 `StaticIDRGateTests` (pure decider/gate/PTS; the COPY+timer+SCStream interaction is hardware-only) |
-| CONCURRENCY-HOST-1 crash-without-bye reaper (Session 3) | _this session_ | `RWORK_VIDEO_KEEPALIVE` (both ends) | macOS+iOS build, 9 `IdleReapDeciderTests` + 4 `KeepaliveGateTests` + 4 `KeepaliveCodecTests` (pure decider/gate/codec; reaper timing + true crash recovery hardware-only) |
+| VIDEO-HOST-1 static-window IDR (Session 3) | _this session_ | **ALWAYS-ON** (gate removed, greenfield) | macOS+iOS build, 13 `StaticIDRDeciderTests` (the COPY+timer+SCStream interaction is hardware-only) |
+| CONCURRENCY-HOST-1 crash-without-bye reaper (Session 3) | _this session_ | **ALWAYS-ON** (gate removed, greenfield) | macOS+iOS build, 9 `IdleReapDeciderTests` + 4 `KeepaliveCodecTests` (reaper timing + true crash recovery hardware-only) |
 
 ### Resize PATH A test (`RWORK_VIDEO_RESIZE=1` on Rwork.app + rwork-videohostd)
 1. The host needs the **Accessibility** TCC grant (it already does for input). Stream a window.

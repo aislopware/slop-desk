@@ -62,15 +62,13 @@ public final class NWVideoDatagramTransport: VideoDatagramTransport, @unchecked 
     /// not stored+started (else it leaks — `stop()` already niled the slots).
     private var stopped = false
 
-    /// CONCURRENCY-HOST-1 crash-without-bye reaper (`RWORK_VIDEO_KEEPALIVE`). NON-nil ONLY when
-    /// the host gate is ON — `init` is given a non-nil `idleTimeout`. When nil, the stamp blocks
-    /// are skipped on a `nil` check, no timer is armed, and ``onReap`` stays nil and uncalled, so
-    /// the OFF path is byte-identical. Guarded by `lock` (the receive queues + the reaper timer
-    /// all run on `queue`, but the lock keeps the decider consistent with the slot state).
-    private var idleReaper: IdleReapDecider<SinglePin>?
-    /// The coarse reaper scan timer (``KeepaliveGate/reaperTick``). On `queue` (the serial receive
-    /// queue) so it never contends the receive loops. Nil unless the gate is ON. Cancelled under
-    /// `lock` in ``stop()`` before the slots are niled.
+    /// CONCURRENCY-HOST-1 crash-without-bye reaper (always on). Guarded by `lock` (the receive
+    /// queues + the reaper timer all run on `queue`, but the lock keeps the decider consistent
+    /// with the slot state).
+    private var idleReaper = IdleReapDecider<SinglePin>(idleTimeout: KeepaliveTiming.idleTimeout)
+    /// The coarse reaper scan timer (``KeepaliveTiming/reaperTick``). On `queue` (the serial receive
+    /// queue) so it never contends the receive loops. Cancelled under `lock` in ``stop()`` before
+    /// the slots are niled.
     private var reaperTimer: DispatchSourceTimer?
     /// Called when the reaper reclaims the single dead flow (the symmetric of a `bye`'s capture
     /// teardown). Set by ``RworkVideoHostSession`` to stop capture/encode; the ONLY new async work
@@ -84,16 +82,9 @@ public final class NWVideoDatagramTransport: VideoDatagramTransport, @unchecked 
         Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
     }
 
-    public convenience init(mediaPort: UInt16, cursorPort: UInt16) {
-        self.init(mediaPort: mediaPort, cursorPort: cursorPort, idleTimeout: nil)
-    }
-
-    /// - Parameter idleTimeout: when non-nil (the `RWORK_VIDEO_KEEPALIVE` host gate is ON), the
-    ///   crash-without-bye reaper is constructed + armed; nil ⇒ OFF, byte-identical to today.
-    public init(mediaPort: UInt16, cursorPort: UInt16, idleTimeout: TimeInterval?) {
+    public init(mediaPort: UInt16, cursorPort: UInt16) {
         self.mediaPort = NWEndpoint.Port(rawValue: mediaPort)!
         self.cursorPort = NWEndpoint.Port(rawValue: cursorPort)!
-        if let idleTimeout { self.idleReaper = IdleReapDecider<SinglePin>(idleTimeout: idleTimeout) }
     }
 
     public func start(onReceive: @escaping @Sendable (VideoChannel, Data) -> Void) async throws {
@@ -145,18 +136,15 @@ public final class NWVideoDatagramTransport: VideoDatagramTransport, @unchecked 
         cursor.start(queue: queue)
         self.cursorListener = cursor
 
-        // CONCURRENCY-HOST-1: arm the idle-timeout reaper ONLY when the gate constructed a decider.
-        // On `queue` (serial receive queue), so the scan never contends a receive loop. Each tick
-        // asks the PURE decider for dead flows; for the single pin that means reclaim the slot
-        // (`resetClientFlow`) + notify the session to stop capture (`onReap`). The OFF path never
-        // enters this branch (idleReaper == nil), so no timer is created.
-        if idleReaper != nil {
-            let timer = DispatchSource.makeTimerSource(queue: queue)
-            timer.schedule(deadline: .now() + KeepaliveGate.reaperTick, repeating: KeepaliveGate.reaperTick)
-            timer.setEventHandler { [weak self] in self?.runReaperTick() }
-            lock.withLock { reaperTimer = timer }
-            timer.resume()
-        }
+        // CONCURRENCY-HOST-1: arm the idle-timeout reaper. On `queue` (serial receive queue), so
+        // the scan never contends a receive loop. Each tick asks the PURE decider for dead flows;
+        // for the single pin that means reclaim the slot (`resetClientFlow`) + notify the session
+        // to stop capture (`onReap`).
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + KeepaliveTiming.reaperTick, repeating: KeepaliveTiming.reaperTick)
+        timer.setEventHandler { [weak self] in self?.runReaperTick() }
+        lock.withLock { reaperTimer = timer }
+        timer.resume()
 
         log.info("NWVideoDatagramTransport listening media=\(self.mediaPort.rawValue) cursor=\(self.cursorPort.rawValue)")
     }
@@ -173,9 +161,9 @@ public final class NWVideoDatagramTransport: VideoDatagramTransport, @unchecked 
     /// capture torn down (the streaming-but-dead race the reviewer caught). Keeping the pin until
     /// handleReap completes makes that race impossible.
     private func runReaperTick() {
-        let due: [SinglePin] = lock.withLock { idleReaper?.reap(now: Self.nowSeconds()) ?? [] }
+        let due: [SinglePin] = lock.withLock { idleReaper.reap(now: Self.nowSeconds()) }
         guard !due.isEmpty else { return }
-        lock.withLock { for id in due { idleReaper?.forget(id: id) } }
+        lock.withLock { for id in due { idleReaper.forget(id: id) } }
         onReap?()
     }
 
@@ -217,11 +205,9 @@ public final class NWVideoDatagramTransport: VideoDatagramTransport, @unchecked 
                     // type byte == 6: the framed media datagram is [tag][type][...], so the type byte
                     // sits at startIndex+1 — a cheap peek (no full decode; `handleControl`'s decode is
                     // untouched). Only flips `sawKeepalive` for a real keepalive; any inbound refreshes
-                    // `lastInbound`. Skipped entirely on the OFF path (idleReaper == nil).
-                    if self.idleReaper != nil {
-                        let isKA = channel == .control && data.count >= 2 && data[data.startIndex + 1] == 6
-                        self.lock.withLock { self.idleReaper?.noteInbound(id: .pin, now: Self.nowSeconds(), isKeepalive: isKA) }
-                    }
+                    // `lastInbound`.
+                    let isKA = channel == .control && data.count >= 2 && data[data.startIndex + 1] == 6
+                    self.lock.withLock { self.idleReaper.noteInbound(id: .pin, now: Self.nowSeconds(), isKeepalive: isKA) }
                     onReceive(channel, Data(data[(data.startIndex + 1)...]))
                 }
             }
@@ -255,10 +241,8 @@ public final class NWVideoDatagramTransport: VideoDatagramTransport, @unchecked 
             guard let self else { return }
             if let data, !data.isEmpty {
                 // A cursor prime is liveness too (refreshes lastInbound) but is NEVER a keepalive
-                // (those ride the control channel on the media socket). Skipped on the OFF path.
-                if self.idleReaper != nil {
-                    self.lock.withLock { self.idleReaper?.noteInbound(id: .pin, now: Self.nowSeconds(), isKeepalive: false) }
-                }
+                // (those ride the control channel on the media socket).
+                self.lock.withLock { self.idleReaper.noteInbound(id: .pin, now: Self.nowSeconds(), isKeepalive: false) }
                 onReceive(.cursor, data)
             }
             // Same transient-error survival as receiveMedia (BUG-L): re-arm on a per-datagram
@@ -326,8 +310,8 @@ public final class NWVideoDatagramTransport: VideoDatagramTransport, @unchecked 
             cursorConn?.cancel(); cursorConn = nil
             // Forget the reaper record too (clean bye OR reaper-driven): the freed-then-reused slot
             // must start a FRESH record (lastInbound stamped on its first datagram), else it would
-            // inherit a stale lastInbound and be reaped early. Idempotent / no-op on the OFF path.
-            idleReaper?.forget(id: .pin)
+            // inherit a stale lastInbound and be reaped early. Idempotent.
+            idleReaper.forget(id: .pin)
         }
     }
 }

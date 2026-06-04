@@ -49,7 +49,7 @@ final class VideoDecoderReuseTests: XCTestCase {
     /// FIX #3: on a HARD decode failure the session is invalidated; the next keyframe —
     /// even one whose VPS/SPS/PPS are BYTE-IDENTICAL to the dead session's — must
     /// reconfigure (rebuild a fresh `VTDecompressionSession`). Otherwise, on a fixed
-    /// capture size (RWORK_VIDEO_RESIZE OFF, default) the forced recovery IDR carries the
+    /// capture size the forced recovery IDR carries the
     /// same parameter sets, `needsReconfigure` returns false, and the malfunctioning
     /// session is reused forever — freezing the pane permanently.
     ///

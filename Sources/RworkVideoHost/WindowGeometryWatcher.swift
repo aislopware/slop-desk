@@ -111,7 +111,7 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         }
     }
 
-    /// PATH A in-session resize (host-window-resize feature, env-gated `RWORK_VIDEO_RESIZE`):
+    /// PATH A in-session resize (host-window-resize feature):
     /// resize the REAL tracked window to `desiredPoints` via the Accessibility API and return
     /// the size the window ACTUALLY adopted (points). The window may clamp to its own
     /// min/max — so the ACHIEVED size (read back from `kAXSizeAttribute`), not the requested

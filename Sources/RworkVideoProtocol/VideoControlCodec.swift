@@ -44,8 +44,8 @@ import Foundation
 /// type 6 keepalive:     (no body)
 /// ```
 ///
-/// Liveness keepalive (additive after the resize pair — CONCURRENCY-HOST-1 crash-without-bye,
-/// `RWORK_VIDEO_KEEPALIVE`): the client sends a zero-body `keepalive` on the control channel
+/// Liveness keepalive (additive after the resize pair — CONCURRENCY-HOST-1 crash-without-bye):
+/// the client sends a zero-body `keepalive` on the control channel
 /// every few seconds while streaming so the host's idle-timeout reaper can tell a live-but-quiet
 /// client (still alive, just not interacting) from a crashed one (truly silent → reapable). It is
 /// wire-safe in BOTH directions: a peer that does not recognise type 6 hits the decoder's `default`
@@ -66,7 +66,7 @@ public enum VideoControlMessage: Equatable, Sendable {
     /// Host → client: capture was re-sized to `captureWidth`×`captureHeight` for the
     /// request carrying `epoch` (the client re-bases its aspect-fit denominator on it).
     case resizeAck(captureWidth: UInt16, captureHeight: UInt16, epoch: UInt32)
-    /// Client → host: a zero-body liveness heartbeat (`RWORK_VIDEO_KEEPALIVE`). Sent every few
+    /// Client → host: a zero-body liveness heartbeat. Sent every few
     /// seconds while streaming so the host's idle-timeout reaper distinguishes a quiet-but-alive
     /// client from a crashed one. Inert to a peer that does not recognise type 6 (it drops it).
     case keepalive

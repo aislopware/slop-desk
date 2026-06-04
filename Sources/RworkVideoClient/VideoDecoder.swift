@@ -119,8 +119,8 @@ public final class VideoDecoder: @unchecked Sendable {
     /// Force-tears the live `VTDecompressionSession` down so the NEXT keyframe — even one
     /// whose VPS/SPS/PPS are byte-identical to the current ones — re-runs `configure()`
     /// and builds a FRESH session (FIX #3). Without this, a HARD decode failure on a
-    /// fixed-capture-size stream (the default — `RWORK_VIDEO_RESIZE` OFF) was
-    /// unrecoverable: the forced-recovery IDR carries byte-identical parameter sets, so
+    /// fixed-capture-size stream was unrecoverable: the forced-recovery IDR carries
+    /// byte-identical parameter sets, so
     /// `needsReconfigure` returned `false` and the SAME malfunctioning session was reused
     /// forever, freezing the pane permanently. The caller (``RworkVideoClientSession``'s
     /// decode `catch`) invokes this BEFORE `requestIDR()` so the next keyframe rebuilds.

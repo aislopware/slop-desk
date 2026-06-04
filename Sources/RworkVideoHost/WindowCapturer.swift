@@ -54,10 +54,9 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     private let keyframeLock = NSLock()
     private var pendingForcedKeyframe = false
 
-    // VIDEO-HOST-1 static-IDR (env-gated RWORK_VIDEO_STATICIDR, default OFF). All of these
-    // are touched ONLY on `frameQueue` (the SCStream callback queue + the timer queue are the
-    // same), or — for the latch — under `keyframeLock`. With the gate OFF none are ever used.
-    private let staticIDREnabled: Bool
+    // VIDEO-HOST-1 static-IDR (always on). All of these are touched ONLY on `frameQueue`
+    // (the SCStream callback queue + the timer queue are the same), or — for the latch —
+    // under `keyframeLock`.
     private var staticIDRDecider: StaticIDRDecider
     private var idrTimer: DispatchSourceTimer?
     private var cachedPixelBuffer: CVPixelBuffer?   // deep COPY, frameQueue-owned (see copyPixelBuffer)
@@ -113,11 +112,9 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     }
 
     public init(
-        frameHandler: @escaping FrameHandler,
-        staticIDREnabled: Bool = StaticIDRGate.enabledFromEnvironment()
+        frameHandler: @escaping FrameHandler
     ) {
         self.frameHandler = frameHandler
-        self.staticIDREnabled = staticIDREnabled
         self.staticIDRDecider = StaticIDRDecider(heartbeat: Self.heartbeatIDRInterval)
         super.init()
     }
@@ -167,35 +164,31 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         self.stream = stream
         log.info("WindowCapturer started for window \(window.windowID)")
 
-        // VIDEO-HOST-1 (gated ON only): a heartbeat timer on `frameQueue` so every tick is
-        // serialized against the SCStream callback — no lock needed for `cachedPixelBuffer` /
-        // the decider. On a static window (only `.idle` frames) this is the ONLY path that can
-        // produce an IDR for a joining / loss-recovering client.
-        if staticIDREnabled {
-            // Tick at half the heartbeat cadence: the decider only emits when >= heartbeat has
-            // elapsed, so sub-cadence ticks are cheap no-ops, but they halve the phase-misalignment
-            // penalty (worst-case effective heartbeat ~1.5s instead of ~2s) and the recovery-IDR
-            // latency on a static window (review finding, VIDEO-HOST-1).
-            let tick = Self.heartbeatIDRInterval / 2
-            let timer = DispatchSource.makeTimerSource(queue: frameQueue)
-            timer.schedule(deadline: .now() + tick, repeating: tick, leeway: .milliseconds(50))
-            timer.setEventHandler { [weak self] in self?.onIDRTimerTick() }
-            timer.resume()
-            self.idrTimer = timer
-        }
+        // VIDEO-HOST-1: a heartbeat timer on `frameQueue` so every tick is serialized against
+        // the SCStream callback — no lock needed for `cachedPixelBuffer` / the decider. On a
+        // static window (only `.idle` frames) this is the ONLY path that can produce an IDR for
+        // a joining / loss-recovering client.
+        //
+        // Tick at half the heartbeat cadence: the decider only emits when >= heartbeat has
+        // elapsed, so sub-cadence ticks are cheap no-ops, but they halve the phase-misalignment
+        // penalty (worst-case effective heartbeat ~1.5s instead of ~2s) and the recovery-IDR
+        // latency on a static window (review finding, VIDEO-HOST-1).
+        let tick = Self.heartbeatIDRInterval / 2
+        let timer = DispatchSource.makeTimerSource(queue: frameQueue)
+        timer.schedule(deadline: .now() + tick, repeating: tick, leeway: .milliseconds(50))
+        timer.setEventHandler { [weak self] in self?.onIDRTimerTick() }
+        timer.resume()
+        self.idrTimer = timer
     }
 
     public func stop() async {
         guard let stream else { return }
-        // VIDEO-HOST-1 (gated ON only): cancel the timer + release the cached copy on
-        // `frameQueue` (the timer's queue) BEFORE stopping capture, so no tick can race
-        // teardown. `cachedPixelBuffer = nil` is sufficient — ARC releases the managed copy;
-        // no manual CVPixelBufferRelease.
-        if staticIDREnabled {
-            frameQueue.sync {
-                idrTimer?.cancel(); idrTimer = nil
-                cachedPixelBuffer = nil
-            }
+        // VIDEO-HOST-1: cancel the timer + release the cached copy on `frameQueue` (the timer's
+        // queue) BEFORE stopping capture, so no tick can race teardown. `cachedPixelBuffer = nil`
+        // is sufficient — ARC releases the managed copy; no manual CVPixelBufferRelease.
+        frameQueue.sync {
+            idrTimer?.cancel(); idrTimer = nil
+            cachedPixelBuffer = nil
         }
         try? await stream.stopCapture()
         self.stream = nil
@@ -221,44 +214,35 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             // arrive, so the forced-keyframe latch (`takePendingForcedKeyframe`) AND the ~1s
             // heartbeat IDR — BOTH below this guard — never run, and a client that requests
             // loss-recovery (or joins) while the host window is unchanging gets no IDR and
-            // freezes on the last good frame. FIX (env-gated `RWORK_VIDEO_STATICIDR`, default
-            // OFF — see StaticIDRGate / StaticIDRDecider): when ON, `start()` arms a heartbeat
-            // timer on `frameQueue` that re-encodes the cached last-`.complete` COPY
+            // freezes on the last good frame. FIX (see StaticIDRDecider): `start()` arms a
+            // heartbeat timer on `frameQueue` that re-encodes the cached last-`.complete` COPY
             // (`copyPixelBuffer`) as a forced IDR via `onIDRTimerTick`, so the latch + heartbeat
-            // have a second drainer while the live path is quiet. With the gate OFF this `.idle`
-            // return is byte-identical to what ships today. The ON path needs Mac Studio bring-up
-            // (real GUI + TCC) — the SCStream IOSurface / queue-depth interaction is unobservable
-            // headlessly; only the pure decider/gate/PTS pieces are unit-tested.
+            // have a second drainer while the live path is quiet. The ON path needs Mac Studio
+            // bring-up (real GUI + TCC) — the SCStream IOSurface / queue-depth interaction is
+            // unobservable headlessly; only the pure decider/PTS pieces are unit-tested.
             return
         }
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
-        // `now` (computed here for both the existing heartbeat block and the static-IDR
-        // caching below — pure reordering of a local read with no side effect; OFF path value
-        // and behaviour unchanged).
+        // `now` (computed here for both the heartbeat block and the static-IDR caching below).
         let now = Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1_000_000_000.0
 
-        // VIDEO-HOST-1 (gated ON only): cache a deep COPY of this real frame so the timer can
-        // re-encode it as a forced IDR while the window is static, anchor the decider's live
-        // clock, and advance the synthetic-PTS high-water mark so a later synthetic frame stays
-        // strictly past every real frame (§5). All on `frameQueue`. >90% of frames are idle, so
-        // this copy lands only on the rare real frame that already pays for an encode.
-        let encodePTS: CMTime
-        if staticIDREnabled {
-            cachedPixelBuffer = Self.copyPixelBuffer(pixelBuffer)
-            staticIDRDecider.onCompleteFrame(now: now)
-            let pts90k = CMTimeConvertScale(pts, timescale: Self.ptsTimescale, method: .default)
-            // Clamp the value ACTUALLY handed to the encoder up to the high-water mark — not just
-            // the tracker — so a real frame can never reverse a prior synthetic IDR's PTS (the
-            // live session has AllowFrameReordering=false), and both paths feed VT a single uniform
-            // 90 kHz timescale (review finding, VIDEO-HOST-1 §5).
-            lastEmittedPTS = CMTimeMaximum(lastEmittedPTS, pts90k)
-            encodePTS = lastEmittedPTS
-        } else {
-            encodePTS = pts   // OFF path: byte-identical to today (native SCStream PTS).
-        }
+        // VIDEO-HOST-1: cache a deep COPY of this real frame so the timer can re-encode it as a
+        // forced IDR while the window is static, anchor the decider's live clock, and advance the
+        // synthetic-PTS high-water mark so a later synthetic frame stays strictly past every real
+        // frame (§5). All on `frameQueue`. >90% of frames are idle, so this copy lands only on the
+        // rare real frame that already pays for an encode.
+        cachedPixelBuffer = Self.copyPixelBuffer(pixelBuffer)
+        staticIDRDecider.onCompleteFrame(now: now)
+        let pts90k = CMTimeConvertScale(pts, timescale: Self.ptsTimescale, method: .default)
+        // Clamp the value ACTUALLY handed to the encoder up to the high-water mark — not just
+        // the tracker — so a real frame can never reverse a prior synthetic IDR's PTS (the
+        // live session has AllowFrameReordering=false), and both paths feed VT a single uniform
+        // 90 kHz timescale (review finding, VIDEO-HOST-1 §5).
+        lastEmittedPTS = CMTimeMaximum(lastEmittedPTS, pts90k)
+        let encodePTS = lastEmittedPTS
 
         // Heartbeat IDR ~1s, plus a forced keyframe on the very first delivered frame,
         // plus any client-requested IDR (loss recovery, doc 17 §3.6).
