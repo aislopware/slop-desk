@@ -28,6 +28,18 @@ final class RecoveryDatagramRouterTests: XCTestCase {
         XCTAssertEqual(decision, .ack(streamSeq: 0xCAFE_BABE))
     }
 
+    /// FIX B: a `requestCursorShape` on the recovery channel routes to a re-ship of that shape,
+    /// NOT a forced keyframe — the cursor self-heal must not trigger an expensive IDR.
+    func testRequestCursorShapeReships() {
+        let decision = router.route(datagram: RecoveryMessage.requestCursorShape(shapeID: 7).encode(), mediaFlowing: true)
+        XCTAssertEqual(decision, .reshipCursorShape(shapeID: 7))
+    }
+
+    func testRequestCursorShapeIgnoredWhenNotStreaming() {
+        let datagram = RecoveryMessage.requestCursorShape(shapeID: 1).encode()
+        XCTAssertEqual(router.route(datagram: datagram, mediaFlowing: false), .ignoreNotStreaming)
+    }
+
     func testDropsUndecodableDatagram() {
         let garbage = Data([0x7F, 0x00]) // unknown recovery type 0x7F
         guard case .drop = router.route(datagram: garbage, mediaFlowing: true) else {

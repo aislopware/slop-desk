@@ -3,6 +3,7 @@ import CoreGraphics
 import Network
 import RworkClient
 import RworkInspector
+import RworkTransport
 
 // MARK: - WorkspaceStore (the one @MainActor @Observable owner)
 
@@ -44,6 +45,17 @@ public final class WorkspaceStore {
     /// 2N-UDP / N-VTDecompression / N-CVDisplayLink ceiling). Injectable; default 2. The app now resolves
     /// it per device class via ``VideoCapPolicy`` (phone 1 / pad 2 / mac 3, ITEM #5); the store keeps the
     /// plain `Int` shape and is agnostic to how the number was chosen.
+    ///
+    /// ### UDP-mux (RWORK_VIDEO_MUX, Stage S3) interaction — cap is intentionally UNCHANGED
+    /// With the gate ON, same-host video panes SHARE one UDP flow (2 sockets/host instead of 2N), but
+    /// each pane STILL owns its own `VTDecompressionSession` + `CVDisplayLink` + Metal renderer — those
+    /// are NOT shared, only the UDP socket is. The dominant, scarce resources the cap exists to bound
+    /// (decode + composite, the "N-VTDecompression / N-CVDisplayLink" part of the ceiling) remain
+    /// strictly per-pane, so the per-pane cap stays CORRECT (it can never under-count live decoders).
+    /// The only term that weakens under mux is "2N-UDP" → "2-per-host", which only makes the cap more
+    /// conservative, never wrong. So the cap is kept per-pane (a per-host socket count would loosen
+    /// admission for no decode/composite headroom gain). The OFF path's cap behaviour is byte-identical
+    /// either way — this is a documentation note, not a behavioural change.
     public let liveVideoCap: Int
 
     /// A monotonic nudge the view layer observes to RE-ATTEMPT video admission for gated panes (ITEM
@@ -66,6 +78,23 @@ public final class WorkspaceStore {
     /// How long to coalesce a burst of mutations before writing the tree (docs/22 §6 "debounced on
     /// mutation"). One write per quiet period, not one per keystroke-driven split/resize.
     private let saveDebounce: Duration
+
+    /// FIX #4: how long to let a closed `.remoteGUI` pane's video stack ACTUALLY release before the
+    /// store frees its ``liveVideoCap`` slot. `teardown()` for a `.remoteGUI` pane sets
+    /// `RemoteWindowModel.active = nil`, which only triggers the SwiftUI dismantle of the
+    /// `VideoWindowView` → `VideoWindowPipeline.deactivate()` → a detached `session.stop()` that
+    /// closes the two UDP `NWConnection`s + `VTDecompressionSession` + display link. That real
+    /// release completes a few runloop turns AFTER `teardown()` returns, so freeing the slot the
+    /// instant `teardown()` returns can transiently admit a sibling while the old stack is still up
+    /// (cap+1 — no crash/leak, just a momentary over-commit). The pipeline now runs `stop()` as one
+    /// ordered task (`VideoWindowPipeline.awaitStopped()`), but it lives inside the SwiftUI-owned
+    /// AppKit view and is not reachable from the store for a direct `await`; so the store holds the
+    /// slot for this bounded settle past `teardown()` to cover the dismantle→stop lag. Injectable so
+    /// a test can set it to `.zero` for deterministic, sleep-free assertions. DEFAULT `.zero` = the
+    /// old free-immediately behaviour, so EVERY existing test + the OFF/terminal-only paths are
+    /// byte-identical (they never enter this gate); the PRODUCTION app opts in with a small window
+    /// (``RworkClientApp``). [MS-confirm] the real dismantle→stop lag on hardware.
+    private let videoTeardownSettle: Duration
 
     /// The pending debounced-save task. Cancelled + replaced on each mutation so only the last
     /// mutation in a burst actually writes; cancel-safe (a cancelled sleep simply returns).
@@ -149,13 +178,15 @@ public final class WorkspaceStore {
         makeSession: @escaping @MainActor (PaneSpec) -> any PaneSessionHandle,
         liveVideoCap: Int = 2,
         persistence: WorkspacePersistence? = nil,
-        saveDebounce: Duration = .milliseconds(600)
+        saveDebounce: Duration = .milliseconds(600),
+        videoTeardownSettle: Duration = .zero
     ) {
         self.workspace = restoring ?? .defaultWorkspace()
         self.makeSession = makeSession
         self.liveVideoCap = liveVideoCap
         self.persistence = persistence
         self.saveDebounce = saveDebounce
+        self.videoTeardownSettle = videoTeardownSettle
         reconcile()   // materialize idle sessions for the restored/default leaves
         savingEnabled = true   // arm debounced saves only AFTER the restore reconcile
     }
@@ -575,10 +606,30 @@ public final class WorkspaceStore {
             teardownTasks[id] = Task { @MainActor in
                 for orphan in orphans {
                     await orphan.teardown()
+                    // FIX #4: for a `.remoteGUI` orphan that was holding a live stack, `teardown()`
+                    // only KICKS OFF the release — it sets `RemoteWindowModel.active = nil`, and the
+                    // actual UDP/VTDecompression/display-link teardown happens a few runloop turns
+                    // later inside the SwiftUI dismantle → `VideoWindowPipeline.deactivate()` →
+                    // detached `session.stop()`. Hold the cap slot for `videoTeardownSettle` past
+                    // `teardown()` so a same-tick sibling cannot be admitted while the old stack is
+                    // still up (transient cap+1). Only entered for an id actually IN `tearingDownVideo`
+                    // (a `.remoteGUI` pane that was live) and only when a settle is configured, so the
+                    // terminal-only / `.zero`-settle paths are unaffected. The sleep is cancel-safe.
+                    if self.tearingDownVideo.contains(orphan.id), self.videoTeardownSettle > .zero {
+                        try? await Task.sleep(for: self.videoTeardownSettle)
+                    }
                     // The orphan's video resources are now released — stop counting it against the cap
                     // (ITEM #3). Serialized on the main actor with `activateVideo`'s read, so a
                     // same-tick reopen sees the slot freed only after the real release.
-                    self.tearingDownVideo.remove(orphan.id)
+                    if self.tearingDownVideo.remove(orphan.id) != nil {
+                        // COMPLETION-SITE nudge (VIDEO-UI-1): the close-time bump (`reconcile`, above)
+                        // fired while this slot was STILL counted against the cap, so a same-tick gated
+                        // reopen was refused and is now parked on the "Video paused" placeholder.
+                        // Removing the id here is the instant the slot ACTUALLY frees — nudge again so
+                        // that gated on-screen pane re-attempts admission now, instead of waiting for an
+                        // unrelated event (another deactivate / re-appear) to happen to nudge it.
+                        self.videoPromotionGeneration &+= 1
+                    }
                 }
                 self.teardownTasks.removeValue(forKey: id)
             }
@@ -761,10 +812,50 @@ public extension WorkspaceStore {
     ///     that function for the unproven-host guardrail).
     static func liveMakeSession(
         makeClient: @escaping @Sendable () -> RworkClient = { RworkClient() },
-        makeInspector: @escaping @MainActor (Endpoint) -> InspectorClient? = liveMakeInspector
+        makeInspector: @escaping @MainActor (Endpoint) -> InspectorClient? = liveMakeInspector,
+        muxRegistry: ConnectionRegistry? = nil
     ) -> @MainActor (PaneSpec) -> any PaneSessionHandle {
-        { spec in
-            LivePaneSession.make(spec, makeClient: makeClient, makeInspector: makeInspector)
+        // TCP-mux gate (RWORK_TCP_MUX): when a registry is supplied AND enabled, SWAP the client
+        // factory for one that backs each `RworkClient` with a logical channel over the per-host
+        // shared `MuxNWConnection` (refcounted by the registry) instead of a private one-TCP-pair
+        // `ClientTransport`. The OFF path is byte-identical: with `muxRegistry == nil` (or the gate
+        // unset) `effectiveMakeClient` is the caller's `{ RworkClient() }` UNCHANGED — the closure
+        // is the exact same value, so the construction site behaves precisely as before. This is the
+        // SOLE client-side gate; nothing on the per-message path or downstream (ConnectionViewModel,
+        // LivePaneSession, reconcile) is touched.
+        let effectiveMakeClient: @Sendable () -> RworkClient
+        if let muxRegistry, muxRegistry.isEnabled {
+            effectiveMakeClient = muxBackedClientFactory(registry: muxRegistry)
+        } else {
+            effectiveMakeClient = makeClient
+        }
+        return { spec in
+            LivePaneSession.make(spec, makeClient: effectiveMakeClient, makeInspector: makeInspector)
+        }
+    }
+
+    /// Builds a `@Sendable () -> RworkClient` whose clients route over the shared mux connection
+    /// pooled by `registry`. Each `RworkClient` is constructed with an injected `makeTransport` that
+    /// vends a fresh `MuxClientTransport` bound to the registry's acquire/release — so the channel is
+    /// opened on the shared connection at `connect()` and released (refcount--) at `close()`, with
+    /// the shared transport torn down only when the LAST pane's channel goes. The registry is
+    /// `@MainActor`; the transport's acquire/release closures hop onto the main actor to call it.
+    private static func muxBackedClientFactory(
+        registry: ConnectionRegistry
+    ) -> @Sendable () -> RworkClient {
+        { @Sendable in
+            RworkClient(makeTransport: {
+                MuxClientTransport(
+                    acquire: { host, port, sessionID, lastReceivedSeq in
+                        try await registry.acquire(
+                            host: host, port: port, sessionID: sessionID, lastReceivedSeq: lastReceivedSeq
+                        )
+                    },
+                    release: { host, port, channelID in
+                        await registry.release(host: host, port: port, channelID: channelID)
+                    }
+                )
+            })
         }
     }
 

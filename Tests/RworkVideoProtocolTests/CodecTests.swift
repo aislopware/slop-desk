@@ -34,6 +34,30 @@ final class CodecTests: XCTestCase {
         XCTAssertThrowsError(try CursorUpdate.decode(bytes))
     }
 
+    func testCursorUpdateRejectsNonFiniteFloatFields() {
+        // Symmetric to testInputEventRejectsNonFiniteFloatFields (host-bound): the CLIENT-bound cursor
+        // codec must also reject NaN/±inf. A non-finite position/hotspot off the wire would propagate
+        // NaN through the client's aspect-fit math into a CALayer frame → uncaught CALayerInvalidGeometry
+        // crash. Decode must throw .malformed so receiveCursor drops the single packet (audit FIX:
+        // cursor-NaN client crash). Encode/decode round-trips the raw IEEE-754 bits, so we can craft one.
+        let nonFinite: [CursorUpdate] = [
+            CursorUpdate(position: VideoPoint(x: .nan, y: 0), shapeID: 1, hotspot: VideoPoint(x: 0, y: 0)),
+            CursorUpdate(position: VideoPoint(x: 0, y: .infinity), shapeID: 1, hotspot: VideoPoint(x: 0, y: 0)),
+            CursorUpdate(position: VideoPoint(x: 0, y: 0), shapeID: 1, hotspot: VideoPoint(x: -.infinity, y: 0)),
+            CursorUpdate(position: VideoPoint(x: 0, y: 0), shapeID: 1, hotspot: VideoPoint(x: 0, y: .nan)),
+        ]
+        for update in nonFinite {
+            XCTAssertThrowsError(try CursorUpdate.decode(update.encode()), "expected \(update.position) to be rejected") { error in
+                guard let e = error as? VideoProtocolError, case .malformed = e else {
+                    return XCTFail("expected .malformed, got \(error)")
+                }
+            }
+        }
+        // A finite (even large/negative) position still decodes — only non-finite is rejected.
+        XCTAssertNoThrow(try CursorUpdate.decode(
+            CursorUpdate(position: VideoPoint(x: 1e9, y: -1e9), shapeID: 2, hotspot: VideoPoint(x: 8, y: 8)).encode()))
+    }
+
     // MARK: Window geometry
 
     func testWindowGeometryRoundTrip() throws {
@@ -137,6 +161,8 @@ final class CodecTests: XCTestCase {
             .ack(streamSeq: .max),
             .requestLTRRefresh(fromFrameID: 10, toFrameID: 14),
             .requestIDR,
+            .requestCursorShape(shapeID: 0),
+            .requestCursorShape(shapeID: .max),
         ]
         for message in cases {
             XCTAssertEqual(try RecoveryMessage.decode(message.encode()), message)

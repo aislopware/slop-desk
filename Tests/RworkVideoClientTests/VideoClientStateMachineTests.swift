@@ -89,6 +89,48 @@ final class VideoClientStateMachineTests: XCTestCase {
         XCTAssertEqual(effects, [.sendControl(.bye)])
     }
 
+    // MARK: In-session resize — resizeAck → updateCaptureSize effect
+
+    func testResizeAckWhileStreamingEmitsUpdateCaptureSize() {
+        var sm = makeSM()
+        _ = sm.start()
+        _ = sm.handleControl(.helloAck(accepted: true, streamID: 1, captureWidth: 800, captureHeight: 600, windowBoundsCG: VideoRect(x: 0, y: 0, width: 800, height: 600)))
+        XCTAssertEqual(sm.state, .streaming)
+
+        let ack = VideoControlMessage.resizeAck(captureWidth: 1280, captureHeight: 800, epoch: 3)
+        let effects = sm.handleControl(ack)
+        XCTAssertEqual(effects, [.updateCaptureSize(VideoSize(width: 1280, height: 800))],
+                       "a resizeAck while streaming stages the new capture size for frame-gated adoption")
+        XCTAssertEqual(sm.state, .streaming, "a resize does not change the session state")
+        XCTAssertTrue(sm.mediaFlowing)
+    }
+
+    func testResizeAckIgnoredWhenNotStreaming() {
+        // Before streaming (connecting): a stray resizeAck is inert (nothing to re-base yet).
+        var sm = makeSM()
+        _ = sm.start()
+        XCTAssertEqual(sm.state, .connecting)
+        XCTAssertTrue(sm.handleControl(.resizeAck(captureWidth: 1280, captureHeight: 800, epoch: 1)).isEmpty)
+
+        // After bye/stop: a late resizeAck must not resurrect anything.
+        var stopped = makeSM()
+        _ = stopped.start()
+        _ = stopped.handleControl(.helloAck(accepted: true, streamID: 1, captureWidth: 800, captureHeight: 600, windowBoundsCG: VideoRect(x: 0, y: 0, width: 800, height: 600)))
+        _ = stopped.handleControl(.bye)
+        XCTAssertEqual(stopped.state, .stopped)
+        XCTAssertTrue(stopped.handleControl(.resizeAck(captureWidth: 1280, captureHeight: 800, epoch: 1)).isEmpty)
+        XCTAssertEqual(stopped.state, .stopped)
+    }
+
+    func testResizeRequestNeverActedOnByClient() {
+        // The client never RECEIVES a resizeRequest (host→client only is resizeAck) — defensive.
+        var sm = makeSM()
+        _ = sm.start()
+        _ = sm.handleControl(.helloAck(accepted: true, streamID: 1, captureWidth: 800, captureHeight: 600, windowBoundsCG: VideoRect(x: 0, y: 0, width: 800, height: 600)))
+        XCTAssertTrue(sm.handleControl(.resizeRequest(desired: VideoSize(width: 1, height: 1), epoch: 1)).isEmpty)
+        XCTAssertEqual(sm.state, .streaming)
+    }
+
     func testClientIgnoresHelloAndStrayAckWhenNotConnecting() {
         var sm = makeSM()
         // Before start: a stray ack does nothing (still idle).

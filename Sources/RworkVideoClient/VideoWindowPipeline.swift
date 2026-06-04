@@ -26,12 +26,39 @@ import UIKit
 final class VideoWindowPipeline {
     private let log = Logger(subsystem: "rwork.video.client", category: "VideoWindowPipeline")
 
+    /// UDP-mux (Stage S3) injection point. `nil` ⇒ the OFF path: every pane builds its OWN
+    /// ``NWVideoClientTransport`` (15-byte header, one UDP flow per pane) — byte-identical to the
+    /// proven device-real iOS video cell. The app sets this ONCE at launch IFF `RWORK_VIDEO_MUX` is
+    /// ON (``VideoMuxGate``), so panes targeting the SAME host share ONE UDP flow via per-channelID
+    /// lanes (``VideoConnectionRegistry``). Read SOLELY at the per-pane transport construction site in
+    /// ``activate(view:videoLayer:connection:maxFrameRate:)`` — the gate lives at construction only,
+    /// so the OFF path never branches on it. The host's `NWVideoDatagramTransport` is gated on the
+    /// SAME env var; the 15↔19-byte wire is incompatible across the boundary, so both ends must agree
+    /// (a mixed pair misframes → the host's `VideoMuxRouter` rejects the unadmitted lane → clean drop).
+    static var sharedRegistry: VideoConnectionRegistry?
+
     private var renderer: MetalVideoRenderer?
     private var compositor: ClientCursorCompositor?
     private var pacer: FramePacer?
     private var session: RworkVideoClientSession?
     private var activeConnection: VideoWindowConnection?
     private var layerSize: VideoSize = VideoSize(width: 0, height: 0)
+
+    /// Client half of the input-latency fix: coalesce high-rate pointer motion to one send per
+    /// display-refresh interval (most-recent-wins), so a 60-120 Hz trackpad does not spawn a Task
+    /// per event and flood the wire + the session actor's mailbox. `pendingMotionSend` holds the
+    /// latest deferred move/drag; `motionPump` flushes it every `motionInterval`; any button /
+    /// scroll / key / text flushes it FIRST so a move that physically preceded a click is never
+    /// sent after it (noVNC `_flushMouseMoveTimer` / TigerVNC `pointerEventInterval`). The host
+    /// additionally coalesces whatever still arrives, so this is a bandwidth/CPU optimisation
+    /// layered on a correctness fix that already holds host-side.
+    /// The latest deferred move/drag as an `async` action (the actual `session.sendMouseMove/Drag`
+    /// await), NOT a fire-and-forget `Task`. Storing the bare async work lets a button event fold
+    /// the flush + the button into ONE ordered hop (`takePendingMotion()`), while the motion pump
+    /// still fire-and-forgets it on its own tick (`flushPendingMotion()`).
+    private var pendingMotionSend: (@Sendable () async -> Void)?
+    private var motionPump: Task<Void, Never>?
+    private var motionInterval: TimeInterval = 1.0 / 30.0
 
     #if os(macOS)
     typealias HostView = NSView
@@ -70,7 +97,22 @@ final class VideoWindowPipeline {
         // Initial viewport from the current layer size (≥1 so the hello carries a
         // sane size even before the first layout pass).
         let viewport = VideoSize(width: max(1, layerSize.width), height: max(1, layerSize.height))
-        let transport = NWVideoClientTransport(host: connection.host, mediaPort: connection.mediaPort, cursorPort: connection.cursorPort)
+        // UDP-mux gate (RWORK_VIDEO_MUX, default OFF): when a shared registry is injected AND enabled,
+        // vend a per-channelID lane on the host's ONE shared UDP flow (`VideoMuxClientTransport`);
+        // otherwise build the today-shaped per-pane `NWVideoClientTransport` (15-byte header, one flow
+        // per pane) — the OFF path is byte-identical (no registry consulted, no shared object). Both
+        // ends must agree on the flag; the wire is incompatible across the boundary.
+        let transport: any VideoClientTransport
+        if let registry = Self.sharedRegistry, registry.isEnabled {
+            let host = connection.host, mediaPort = connection.mediaPort, cursorPort = connection.cursorPort
+            transport = VideoMuxClientTransport(
+                host: host, mediaPort: mediaPort, cursorPort: cursorPort,
+                acquire: { await registry.acquire(host: host, mediaPort: mediaPort, cursorPort: cursorPort) },
+                release: { channelID in await registry.release(host: host, mediaPort: mediaPort, cursorPort: cursorPort, channelID: channelID) }
+            )
+        } else {
+            transport = NWVideoClientTransport(host: connection.host, mediaPort: connection.mediaPort, cursorPort: connection.cursorPort)
+        }
 
         // GUI hooks: each hops to the main actor to touch the (main-confined) pacer /
         // compositor. The orchestrator actor calls these from its own executor.
@@ -88,9 +130,9 @@ final class VideoWindowPipeline {
                     compositor?.apply(update, viewSize: placement.viewSize, videoNativeSize: placement.videoNativeSize, zoom: placement.zoom, pan: placement.pan, mode: placement.mode)
                 }
             },
-            registerCursorShape: { [weak compositor] image, shapeID in
+            registerCursorShape: { [weak compositor] image, logicalSize, shapeID in
                 let box = UnsafeTransfer(image)
-                Task { @MainActor in compositor?.registerShape(box.value, for: shapeID) }
+                Task { @MainActor in compositor?.registerShape(box.value, logicalSize: logicalSize, for: shapeID) }
             }
         )
 
@@ -107,10 +149,23 @@ final class VideoWindowPipeline {
         Task { try? await session.start() }
         let initialSize = layerSize
         Task { await session.setLayerSize(initialSize) }
+
+        // Drive the motion-coalescing pump at the same cadence as the video frame cap.
+        motionInterval = 1.0 / max(1, maxFrameRate)
+        startMotionPump()
     }
 
     /// Tears the pipeline + display link + sockets down (called on disappear/dismantle).
+    ///
+    /// `session.stop()` (which closes the two UDP `NWConnection`s, the `VTDecompressionSession`,
+    /// and the display link) is `async` and cannot be awaited here — this runs on SwiftUI's
+    /// synchronous `dismantleNSView`, so it is fire-and-forget. The cap-accounting owner
+    /// (``WorkspaceStore``) cannot reach this view-owned pipeline to await the real release, AND the
+    /// lag it must cover is the FULL close→SwiftUI-dismantle→deactivate→stop chain (not just stop),
+    /// so it holds the live-video slot for a small bounded `videoTeardownSettle` past teardown
+    /// instead (FIX #4). Over-holding fails safe (at worst a brief admission delay at the cap).
     func deactivate() {
+        stopMotionPump()
         pacer?.stop()
         if let session {
             Task { await session.stop() }
@@ -179,31 +234,82 @@ final class VideoWindowPipeline {
 
     func mouseMove(_ viewPoint: VideoPoint) {
         guard let session else { return }
-        Task { await session.sendMouseMove(viewPoint: viewPoint) }
+        // Coalesce: defer to the motion pump (most-recent-wins) instead of a Task per event. Stored
+        // as the bare async send so a following button can fold it into one ordered hop.
+        pendingMotionSend = { await session.sendMouseMove(viewPoint: viewPoint) }
     }
     func mouseDrag(_ button: MouseButton, _ viewPoint: VideoPoint, _ clickCount: UInt8, _ modifiers: InputModifiers) {
         guard let session else { return }
-        Task { await session.sendMouseDrag(button: button, viewPoint: viewPoint, clickCount: clickCount, modifiers: modifiers) }
+        pendingMotionSend = { await session.sendMouseDrag(button: button, viewPoint: viewPoint, clickCount: clickCount, modifiers: modifiers) }
     }
     func mouseDown(_ button: MouseButton, _ viewPoint: VideoPoint, _ clickCount: UInt8, _ modifiers: InputModifiers) {
         guard let session else { return }
-        Task { await session.sendMouseDown(button: button, viewPoint: viewPoint, clickCount: clickCount, modifiers: modifiers) }
+        // Fold the pending-motion flush + the button into ONE ordered actor hop so a move that is
+        // STILL PENDING at click time cannot be sent AFTER the click: two separate Tasks race onto
+        // the actor with no FIFO; one Task that awaits the move then the button preserves order.
+        // (Residual: if the ~motionInterval pump tick already took the move as its own fire-and-forget
+        // Task just before this click, the two can still race — best-effort. Strictly narrower than the
+        // pre-fix per-click race, and the host re-coalesces inbound by arrival order.)
+        let flush = takePendingMotion()   // captured at call time (most-recent-wins); nil ⇒ no move
+        Task { await flush?(); await session.sendMouseDown(button: button, viewPoint: viewPoint, clickCount: clickCount, modifiers: modifiers) }
     }
     func mouseUp(_ button: MouseButton, _ viewPoint: VideoPoint, _ clickCount: UInt8, _ modifiers: InputModifiers) {
         guard let session else { return }
-        Task { await session.sendMouseUp(button: button, viewPoint: viewPoint, clickCount: clickCount, modifiers: modifiers) }
+        let flush = takePendingMotion()   // the final drag sample must precede the release edge
+        Task { await flush?(); await session.sendMouseUp(button: button, viewPoint: viewPoint, clickCount: clickCount, modifiers: modifiers) }
     }
     func scroll(dx: Double, dy: Double, viewPoint: VideoPoint) {
         guard let session else { return }
-        Task { await session.sendScroll(dx: dx, dy: dy, viewPoint: viewPoint) }
+        let flush = takePendingMotion()
+        Task { await flush?(); await session.sendScroll(dx: dx, dy: dy, viewPoint: viewPoint) }
     }
     func key(keyCode: UInt16, down: Bool, modifiers: InputModifiers) {
         guard let session else { return }
-        Task { await session.sendKey(keyCode: keyCode, down: down, modifiers: modifiers) }
+        let flush = takePendingMotion()
+        Task { await flush?(); await session.sendKey(keyCode: keyCode, down: down, modifiers: modifiers) }
     }
     func text(_ string: String) {
         guard let session else { return }
-        Task { await session.sendText(string) }
+        let flush = takePendingMotion()
+        Task { await flush?(); await session.sendText(string) }
+    }
+
+    // MARK: Motion pump (client-side coalescing)
+
+    /// Starts the @MainActor pump that flushes the latest deferred pointer motion every
+    /// `motionInterval`. Idle ticks are a no-op (nothing pending). Restarted on each activate.
+    private func startMotionPump() {
+        motionPump?.cancel()
+        let interval = motionInterval
+        motionPump = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                self?.flushPendingMotion()
+            }
+        }
+    }
+
+    private func stopMotionPump() {
+        motionPump?.cancel()
+        motionPump = nil
+        pendingMotionSend = nil
+    }
+
+    /// Send the latest deferred pointer motion now (most-recent-wins), if any. Used by the motion
+    /// pump's own tick, where there is no following event to order against — fire-and-forget a Task.
+    private func flushPendingMotion() {
+        guard let send = takePendingMotion() else { return }
+        Task { await send() }
+    }
+
+    /// Hand back (and clear) the latest deferred pointer motion as a bare async action, WITHOUT
+    /// sending it. The caller (a button/scroll/key/text event) awaits this BEFORE its own send in
+    /// the SAME Task, so the flushed move and the button reach the actor in physical order — the
+    /// single-ordered-hop invariant the inbound path also follows (no Task-per-item race).
+    private func takePendingMotion() -> (@Sendable () async -> Void)? {
+        guard let send = pendingMotionSend else { return nil }
+        pendingMotionSend = nil
+        return send
     }
 }
 

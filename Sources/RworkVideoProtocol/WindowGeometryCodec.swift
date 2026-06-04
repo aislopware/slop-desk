@@ -49,14 +49,14 @@ public enum WindowGeometryMessage: Equatable, Sendable {
         let type = try reader.readUInt8()
         switch type {
         case 1:
-            let x = try reader.readFloat64(); let y = try reader.readFloat64()
+            let x = try reader.readFiniteFloat64("geometry.move.x"); let y = try reader.readFiniteFloat64("geometry.move.y")
             return .move(VideoPoint(x: x, y: y))
         case 2:
-            let w = try reader.readFloat64(); let h = try reader.readFloat64()
+            let w = try reader.readFiniteFloat64("geometry.resize.w"); let h = try reader.readFiniteFloat64("geometry.resize.h")
             return .resize(VideoSize(width: w, height: h))
         case 3:
-            let x = try reader.readFloat64(); let y = try reader.readFloat64()
-            let w = try reader.readFloat64(); let h = try reader.readFloat64()
+            let x = try reader.readFiniteFloat64("geometry.bounds.x"); let y = try reader.readFiniteFloat64("geometry.bounds.y")
+            let w = try reader.readFiniteFloat64("geometry.bounds.w"); let h = try reader.readFiniteFloat64("geometry.bounds.h")
             return .bounds(VideoRect(x: x, y: y, width: w, height: h))
         case 4:
             let bytes = reader.remaining()

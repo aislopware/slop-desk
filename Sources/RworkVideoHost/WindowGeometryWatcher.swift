@@ -111,6 +111,46 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         }
     }
 
+    /// PATH A in-session resize (host-window-resize feature, env-gated `RWORK_VIDEO_RESIZE`):
+    /// resize the REAL tracked window to `desiredPoints` via the Accessibility API and return
+    /// the size the window ACTUALLY adopted (points). The window may clamp to its own
+    /// min/max — so the ACHIEVED size (read back from `kAXSizeAttribute`), not the requested
+    /// size, is the source of truth for the SCStream/encoder reconfigure + the `resizeAck`.
+    ///
+    /// Returns `nil` (resize ABORTED, caller keeps the old encoder running, sends no ack) when:
+    /// the app/window cannot be looked up, or the window does not support a size write
+    /// (`kAXErrorAttributeUnsupported` on a fixed-size/sheet window) or the AX call cannot
+    /// complete (`kAXErrorCannotComplete` on a hung/modal app). NEVER crashes.
+    ///
+    /// ⚠️ **GUI-ONLY + TCC:** needs the Accessibility grant (same one the watcher/injector
+    /// already require). `AXUIElementSetMessagingTimeout` caps a hung target (mirrors
+    /// ``InputInjector/raiseTargetWindow()``) so a beachballing app fails fast instead of
+    /// stalling the resize path.
+    @MainActor
+    public func resizeWindow(toPoints desiredPoints: VideoSize) -> VideoSize? {
+        let appEl = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appEl, 0.25)
+        var windowsRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let axWindows = windowsRef as? [AXUIElement] else { return nil }
+        // Heuristic match the AX window to the tracked CGWindowID by frame (no public map —
+        // doc 05 §4), the same lookup ``axWindowFrame`` / the injector use.
+        guard let bounds = currentBoundsCG() else { return nil }
+        for axWindow in axWindows where axWindowFrame(axWindow) == bounds {
+            var size = CGSize(width: max(1, desiredPoints.width), height: max(1, desiredPoints.height))
+            guard let value = AXValueCreate(.cgSize, &size) else { return nil }
+            // WRITE the new size. Tolerate (do NOT crash on) unsupported/cannot-complete —
+            // a fixed-size window returns kAXErrorAttributeUnsupported; a hung app times out
+            // to kAXErrorCannotComplete. Either ⇒ abort the resize (return nil).
+            let setStatus = AXUIElementSetAttributeValue(axWindow, kAXSizeAttribute as CFString, value)
+            guard setStatus == .success else { return nil }
+            // READ BACK the achieved size — the window may have clamped to its own min/max.
+            // The achieved (not requested) size is the source of truth for the reconfigure.
+            return axWindowFrame(axWindow)?.size ?? desiredPoints
+        }
+        return nil
+    }
+
     @MainActor
     private func axWindowFrame(_ element: AXUIElement) -> VideoRect? {
         var posRef: CFTypeRef?

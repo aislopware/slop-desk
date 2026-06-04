@@ -23,7 +23,7 @@ public final class ClientCursorCompositor {
     /// The cursor overlay layer (caller adds it above the Metal layer).
     public let cursorLayer: CALayer
     /// Cached cursor shape bitmaps by shapeID (shipped once per new id, doc 17 §3.3).
-    private var shapeCache: [UInt16: CGImage] = [:]
+    private var shapeCache: [UInt16: (image: CGImage, logicalSize: VideoSize)] = [:]
     private var currentShapeID: UInt16?
 
     public init() {
@@ -34,8 +34,11 @@ public final class ClientCursorCompositor {
 
     /// Registers a cursor shape bitmap for a shapeID (the side path delivers these
     /// rarely; the hot ``apply(_:videoScale:)`` path is position-only).
-    public func registerShape(_ image: CGImage, for shapeID: UInt16) {
-        shapeCache[shapeID] = image
+    /// Registers a cursor shape bitmap + its LOGICAL point size for a shapeID. The overlay renders
+    /// at `logicalSize` (CALayer scales `contents` to the layer bounds), so a Retina or
+    /// MTU-downscaled bitmap shows at the cursor's TRUE size rather than its raw pixel dimensions.
+    public func registerShape(_ image: CGImage, logicalSize: VideoSize, for shapeID: UInt16) {
+        shapeCache[shapeID] = (image: image, logicalSize: logicalSize)
     }
 
     /// Computes where the cursor layer should sit, in the client view's coordinate
@@ -106,19 +109,31 @@ public final class ClientCursorCompositor {
     /// the current cursor bitmap size (points). Shared by both `apply` overloads.
     private func applyShape(_ update: CursorUpdate) -> VideoSize {
         cursorLayer.isHidden = !update.visible
-        if currentShapeID != update.shapeID, let image = shapeCache[update.shapeID] {
-            cursorLayer.contents = image
-            cursorLayer.bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        if currentShapeID != update.shapeID, let cached = shapeCache[update.shapeID] {
+            cursorLayer.contents = cached.image
+            // Size the layer by the LOGICAL point size (not the raw bitmap pixels) so the cursor
+            // renders at its true size — CALayer scales `contents` to these bounds. Fall back to the
+            // bitmap pixels only if the logical size is degenerate (<= 0).
+            let w = cached.logicalSize.width > 0 ? cached.logicalSize.width : Double(cached.image.width)
+            let h = cached.logicalSize.height > 0 ? cached.logicalSize.height : Double(cached.image.height)
+            cursorLayer.bounds = CGRect(x: 0, y: 0, width: w, height: h)
             currentShapeID = update.shapeID
         }
         return VideoSize(width: cursorLayer.bounds.width, height: cursorLayer.bounds.height)
     }
 
     private func setLayerFrame(_ frame: VideoRect) {
+        // Belt-and-suspenders: assigning a CALayer frame with a non-finite (NaN/±inf) component
+        // raises an uncaught CALayerInvalidGeometry exception that kills the process. The codec now
+        // rejects non-finite wire floats (readFiniteFloat64), so a malformed cursor datagram is
+        // dropped upstream; this guard also covers any NaN that could arise from degenerate
+        // aspect-fit math (e.g. a zero video/view dimension) — skip the update rather than crash.
+        let r = frame.cgRect
+        guard r.origin.x.isFinite, r.origin.y.isFinite, r.size.width.isFinite, r.size.height.isFinite else { return }
         // No implicit animation — the cursor must track at refresh, not tween.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        cursorLayer.frame = frame.cgRect
+        cursorLayer.frame = r
         CATransaction.commit()
     }
 }

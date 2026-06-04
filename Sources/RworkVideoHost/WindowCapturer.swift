@@ -54,6 +54,20 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     private let keyframeLock = NSLock()
     private var pendingForcedKeyframe = false
 
+    // VIDEO-HOST-1 static-IDR (env-gated RWORK_VIDEO_STATICIDR, default OFF). All of these
+    // are touched ONLY on `frameQueue` (the SCStream callback queue + the timer queue are the
+    // same), or — for the latch — under `keyframeLock`. With the gate OFF none are ever used.
+    private let staticIDREnabled: Bool
+    private var staticIDRDecider: StaticIDRDecider
+    private var idrTimer: DispatchSourceTimer?
+    private var cachedPixelBuffer: CVPixelBuffer?   // deep COPY, frameQueue-owned (see copyPixelBuffer)
+    /// Highest PTS handed to the encoder by EITHER path, in the 90 kHz synthetic timescale,
+    /// so a synthetic IDR is strictly monotonic and a later real frame never reverses it.
+    private var lastEmittedPTS: CMTime = .zero
+    /// Standard MPEG 90 kHz timescale for the monotonic synthetic-PTS counter (§5; Sunshine
+    /// "counter, not clock" discipline expressed in CMTime).
+    private static let ptsTimescale: CMTimeScale = 90_000
+
     /// Requests a forced IDR on the next captured frame (client loss-recovery →
     /// ``RecoveryMessage/requestIDR``). Thread-safe; called from the orchestrator actor.
     public func requestKeyframe() {
@@ -68,8 +82,43 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         return pending
     }
 
-    public init(frameHandler: @escaping FrameHandler) {
+    /// VIDEO-HOST-1 timer tick — runs on `frameQueue` (serialized against the SCStream
+    /// callback), so it reads `cachedPixelBuffer` + mutates `staticIDRDecider`/`lastEmittedPTS`
+    /// directly with no lock. Re-encodes the cached last-`.complete` buffer as a forced IDR
+    /// when the pure decider says the live path has gone quiet and a heartbeat/recovery is due.
+    /// The hand-off is the SAME synchronous `frameHandler` call as the live path — NO `Task`,
+    /// so FIFO + monotonic PTS w.r.t. real frames is preserved.
+    private func onIDRTimerTick() {
+        let now = Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1_000_000_000.0
+        let forced = takePendingForcedKeyframe()          // drain the SAME NSLock latch
+        guard staticIDRDecider.shouldReencode(now: now,
+                                              forcedLatched: forced,
+                                              hasRetainedBuffer: cachedPixelBuffer != nil),
+              let buf = cachedPixelBuffer else {
+            // If we drained `forced` but decided not to fire (quiet window — the live path
+            // will service it), DON'T lose the recovery request: re-latch it.
+            if forced { keyframeLock.lock(); pendingForcedKeyframe = true; keyframeLock.unlock() }
+            return
+        }
+        staticIDRDecider.recordSynthetic(now: now)
+        frameHandler(buf, syntheticPTS(), true)            // force IDR, same hand-off as live path
+    }
+
+    /// One 90 kHz tick past the last emitted PTS → strictly monotonic, collision-free with
+    /// any real frame (§5). frameQueue-owned.
+    private func syntheticPTS() -> CMTime {
+        let next = CMTimeAdd(lastEmittedPTS, CMTime(value: 1, timescale: Self.ptsTimescale))
+        lastEmittedPTS = next
+        return next
+    }
+
+    public init(
+        frameHandler: @escaping FrameHandler,
+        staticIDREnabled: Bool = StaticIDRGate.enabledFromEnvironment()
+    ) {
         self.frameHandler = frameHandler
+        self.staticIDREnabled = staticIDREnabled
+        self.staticIDRDecider = StaticIDRDecider(heartbeat: Self.heartbeatIDRInterval)
         super.init()
     }
 
@@ -117,10 +166,37 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         try await stream.startCapture()
         self.stream = stream
         log.info("WindowCapturer started for window \(window.windowID)")
+
+        // VIDEO-HOST-1 (gated ON only): a heartbeat timer on `frameQueue` so every tick is
+        // serialized against the SCStream callback — no lock needed for `cachedPixelBuffer` /
+        // the decider. On a static window (only `.idle` frames) this is the ONLY path that can
+        // produce an IDR for a joining / loss-recovering client.
+        if staticIDREnabled {
+            // Tick at half the heartbeat cadence: the decider only emits when >= heartbeat has
+            // elapsed, so sub-cadence ticks are cheap no-ops, but they halve the phase-misalignment
+            // penalty (worst-case effective heartbeat ~1.5s instead of ~2s) and the recovery-IDR
+            // latency on a static window (review finding, VIDEO-HOST-1).
+            let tick = Self.heartbeatIDRInterval / 2
+            let timer = DispatchSource.makeTimerSource(queue: frameQueue)
+            timer.schedule(deadline: .now() + tick, repeating: tick, leeway: .milliseconds(50))
+            timer.setEventHandler { [weak self] in self?.onIDRTimerTick() }
+            timer.resume()
+            self.idrTimer = timer
+        }
     }
 
     public func stop() async {
         guard let stream else { return }
+        // VIDEO-HOST-1 (gated ON only): cancel the timer + release the cached copy on
+        // `frameQueue` (the timer's queue) BEFORE stopping capture, so no tick can race
+        // teardown. `cachedPixelBuffer = nil` is sufficient — ARC releases the managed copy;
+        // no manual CVPixelBufferRelease.
+        if staticIDREnabled {
+            frameQueue.sync {
+                idrTimer?.cancel(); idrTimer = nil
+                cachedPixelBuffer = nil
+            }
+        }
         try? await stream.stopCapture()
         self.stream = nil
     }
@@ -140,16 +216,52 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             return
         }
         guard status == .complete else {
-            // .idle / .blank / .suspended / .started → nothing new to encode.
+            // .idle / .blank / .suspended / .started → no NEW pixels to encode, so skip.
+            // ⚠️ VIDEO-HOST-1 (audit — docs/25 §4): on a STATIC window only `.idle` frames
+            // arrive, so the forced-keyframe latch (`takePendingForcedKeyframe`) AND the ~1s
+            // heartbeat IDR — BOTH below this guard — never run, and a client that requests
+            // loss-recovery (or joins) while the host window is unchanging gets no IDR and
+            // freezes on the last good frame. FIX (env-gated `RWORK_VIDEO_STATICIDR`, default
+            // OFF — see StaticIDRGate / StaticIDRDecider): when ON, `start()` arms a heartbeat
+            // timer on `frameQueue` that re-encodes the cached last-`.complete` COPY
+            // (`copyPixelBuffer`) as a forced IDR via `onIDRTimerTick`, so the latch + heartbeat
+            // have a second drainer while the live path is quiet. With the gate OFF this `.idle`
+            // return is byte-identical to what ships today. The ON path needs Mac Studio bring-up
+            // (real GUI + TCC) — the SCStream IOSurface / queue-depth interaction is unobservable
+            // headlessly; only the pure decider/gate/PTS pieces are unit-tested.
             return
         }
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
+        // `now` (computed here for both the existing heartbeat block and the static-IDR
+        // caching below — pure reordering of a local read with no side effect; OFF path value
+        // and behaviour unchanged).
+        let now = Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1_000_000_000.0
+
+        // VIDEO-HOST-1 (gated ON only): cache a deep COPY of this real frame so the timer can
+        // re-encode it as a forced IDR while the window is static, anchor the decider's live
+        // clock, and advance the synthetic-PTS high-water mark so a later synthetic frame stays
+        // strictly past every real frame (§5). All on `frameQueue`. >90% of frames are idle, so
+        // this copy lands only on the rare real frame that already pays for an encode.
+        let encodePTS: CMTime
+        if staticIDREnabled {
+            cachedPixelBuffer = Self.copyPixelBuffer(pixelBuffer)
+            staticIDRDecider.onCompleteFrame(now: now)
+            let pts90k = CMTimeConvertScale(pts, timescale: Self.ptsTimescale, method: .default)
+            // Clamp the value ACTUALLY handed to the encoder up to the high-water mark — not just
+            // the tracker — so a real frame can never reverse a prior synthetic IDR's PTS (the
+            // live session has AllowFrameReordering=false), and both paths feed VT a single uniform
+            // 90 kHz timescale (review finding, VIDEO-HOST-1 §5).
+            lastEmittedPTS = CMTimeMaximum(lastEmittedPTS, pts90k)
+            encodePTS = lastEmittedPTS
+        } else {
+            encodePTS = pts   // OFF path: byte-identical to today (native SCStream PTS).
+        }
+
         // Heartbeat IDR ~1s, plus a forced keyframe on the very first delivered frame,
         // plus any client-requested IDR (loss recovery, doc 17 §3.6).
-        let now = Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1_000_000_000.0
         var forceKeyframe = takePendingForcedKeyframe()
         if !hasEmittedFirstFrame {
             forceKeyframe = true
@@ -165,13 +277,62 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // encoder for the duration of the encode; when this callback returns the
         // CMSampleBuffer (and its surface) is released — within the queue-depth
         // deadline minimumFrameInterval × (queueDepth − 1) (WWDC22 s10155).
-        frameHandler(pixelBuffer, pts, forceKeyframe)
+        frameHandler(pixelBuffer, encodePTS, forceKeyframe)
     }
 
     // MARK: SCStreamDelegate
 
     public func stream(_ stream: SCStream, didStopWithError error: Error) {
         log.error("SCStream stopped with error: \(error.localizedDescription)")
+    }
+
+    // MARK: VIDEO-HOST-1 pixel-buffer copy
+
+    /// Deep-copies an NV12 `CVPixelBuffer` into a fresh IOSurface-backed buffer the capturer
+    /// owns indefinitely, so the SCStream-delivered surface can be returned to the pool
+    /// immediately (queueDepth=3, WWDC22 s10155 — permanently retaining one would shrink the
+    /// live pool to 2 and risk a capture stall). Returns nil on alloc/lock failure (caller then
+    /// simply has no cached buffer → the decider returns false, no synthetic IDR — safe). The
+    /// copy is IOSurface-backed so the synthetic re-encode stays zero-copy into VT, like live.
+    private static func copyPixelBuffer(_ src: CVPixelBuffer) -> CVPixelBuffer? {
+        let w = CVPixelBufferGetWidth(src), h = CVPixelBufferGetHeight(src)
+        let fmt = CVPixelBufferGetPixelFormatType(src)
+        let attrs: [CFString: Any] = [
+            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary, // IOSurface-backed → VT zero-copy on re-encode
+            kCVPixelBufferMetalCompatibilityKey: true,
+        ]
+        var dst: CVPixelBuffer?
+        guard CVPixelBufferCreate(nil, w, h, fmt, attrs as CFDictionary, &dst) == kCVReturnSuccess,
+              let dst else { return nil }
+        // Propagate the source's color attachments (YCbCr matrix / primaries / transfer +
+        // chroma location): CVPixelBufferCreate yields a buffer with NONE, and VT derives the
+        // encoded color metadata from the input buffer — so without this the synthetic IDR would
+        // encode with default color and a decoding client could see a brief tone shift versus the
+        // surrounding live frames (review finding, VIDEO-HOST-1).
+        if let attachments = CVBufferCopyAttachments(src, .shouldPropagate) {
+            CVBufferSetAttachments(dst, attachments, .shouldPropagate)
+        }
+        CVPixelBufferLockBaseAddress(src, .readOnly)
+        CVPixelBufferLockBaseAddress(dst, [])
+        defer {
+            CVPixelBufferUnlockBaseAddress(dst, [])
+            CVPixelBufferUnlockBaseAddress(src, .readOnly)
+        }
+        let planes = CVPixelBufferGetPlaneCount(src)  // NV12 = 2 (Y, CbCr)
+        for p in 0..<planes {
+            guard let s = CVPixelBufferGetBaseAddressOfPlane(src, p),
+                  let d = CVPixelBufferGetBaseAddressOfPlane(dst, p) else { return nil }
+            let sb = CVPixelBufferGetBytesPerRowOfPlane(src, p)
+            let db = CVPixelBufferGetBytesPerRowOfPlane(dst, p)
+            let rows = CVPixelBufferGetHeightOfPlane(src, p)
+            if sb == db {
+                memcpy(d, s, sb * rows)
+            } else {                                  // stride mismatch → row-by-row
+                let copyBytes = min(sb, db)
+                for r in 0..<rows { memcpy(d + r * db, s + r * sb, copyBytes) }
+            }
+        }
+        return dst
     }
 }
 #endif

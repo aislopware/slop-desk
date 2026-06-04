@@ -50,4 +50,13 @@ public protocol VideoDatagramTransport: Sendable {
 
     /// Tears the sockets down.
     func stop() async
+
+    /// Frees the pinned client flow slots so the listener can RE-PIN a reconnecting client
+    /// (CONCURRENCY-HOST-1). Called when the session processes a client `bye`: UDP has no FIN,
+    /// so a clean disconnect never fails the host's pinned flow — without this the slot stayed
+    /// pinned forever and every reconnect (a fresh source port ⇒ a new 4-tuple) was silently
+    /// refused at the listener until the daemon was restarted. The LISTENERS stay up (only the
+    /// per-client flows are dropped); the next hello is accepted normally. Best-effort: a LOST
+    /// `bye` datagram won't trigger it — a crash-without-bye still needs an idle-timeout reaper.
+    func resetClientFlow()
 }

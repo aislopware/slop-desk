@@ -49,6 +49,22 @@ public final class VideoDecoder: @unchecked Sendable {
     /// first keyframe configures the session.
     private var currentParameterSets: HEVCParameterSets.ParameterSets?
 
+    /// Test seam (FIX #3): the parameter sets the live session is currently built from,
+    /// or `nil` if there is no session (e.g. after ``invalidateSession()``). Lets a unit
+    /// test assert the cache state — and therefore that the NEXT byte-identical keyframe
+    /// would reconfigure (`needsReconfigure(current: nil, ...) == true`) after a hard
+    /// failure — WITHOUT creating a real `VTDecompressionSession` or driving a decode.
+    var cachedParameterSetsForTesting: HEVCParameterSets.ParameterSets? { currentParameterSets }
+
+    /// Test seam (FIX #3): seeds the cached parameter sets WITHOUT building a real
+    /// `VTDecompressionSession`, so a unit test can model a healthy, configured decoder
+    /// and then verify that ``invalidateSession()`` (the hard-failure path) clears the
+    /// cache — forcing the next byte-identical keyframe to reconfigure. Never used in
+    /// production; the live path sets the cache only via a successful `configure`.
+    func seedCachedParameterSetsForTesting(_ sets: HEVCParameterSets.ParameterSets) {
+        currentParameterSets = sets
+    }
+
     public init(decodedFrameHandler: @escaping DecodedFrameHandler) {
         self.decodedFrameHandler = decodedFrameHandler
     }
@@ -98,6 +114,27 @@ public final class VideoDecoder: @unchecked Sendable {
         incoming: HEVCParameterSets.ParameterSets
     ) -> Bool {
         current != incoming
+    }
+
+    /// Force-tears the live `VTDecompressionSession` down so the NEXT keyframe — even one
+    /// whose VPS/SPS/PPS are byte-identical to the current ones — re-runs `configure()`
+    /// and builds a FRESH session (FIX #3). Without this, a HARD decode failure on a
+    /// fixed-capture-size stream (the default — `RWORK_VIDEO_RESIZE` OFF) was
+    /// unrecoverable: the forced-recovery IDR carries byte-identical parameter sets, so
+    /// `needsReconfigure` returned `false` and the SAME malfunctioning session was reused
+    /// forever, freezing the pane permanently. The caller (``RworkVideoClientSession``'s
+    /// decode `catch`) invokes this BEFORE `requestIDR()` so the next keyframe rebuilds.
+    ///
+    /// Clears `currentParameterSets` too, so the byte-identical recovery keyframe is seen
+    /// as a reconfigure (`current == nil` ⇒ `needsReconfigure == true`). This is ONLY
+    /// called on a decode FAILURE — the healthy heartbeat-IDR reuse path (BUG-I) keeps
+    /// the cached sets on a SUCCESSFUL decode and is untouched.
+    public func invalidateSession() {
+        if let session {
+            VTDecompressionSessionInvalidate(session)
+            self.session = nil
+        }
+        currentParameterSets = nil
     }
 
     /// Sets the format description and (re)creates the session. Must precede the first

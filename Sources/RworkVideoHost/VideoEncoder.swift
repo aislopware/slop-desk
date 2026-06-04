@@ -269,6 +269,18 @@ public final class VideoEncoder: @unchecked Sendable {
     /// Re-creates both sessions on a window resize (doc 18 §G — recreate on resize).
     /// The caller passes the new dimensions by constructing a fresh `VideoEncoder`.
 
+    /// Drains BOTH compression sessions, blocking until every in-flight frame's output
+    /// callback has fired (`VTCompressionSessionCompleteFrames` with an INVALID timestamp = the
+    /// documented "complete ALL pending frames" sentinel). Call this before dropping the OLD
+    /// encoder on a resize swap: without it the encoder is invalidated (by `deinit`) while frames
+    /// are still queued, silently dropping their already-encoded output (FFmpeg videotoolboxenc
+    /// CompleteFrames-before-invalidate pattern). Purely ADDITIVE — does NOT touch the hot
+    /// `encodeLive` path. Safe to call once; the sessions are not reused afterward.
+    public func completeFrames() {
+        if let liveSession { VTCompressionSessionCompleteFrames(liveSession, untilPresentationTimeStamp: .invalid) }
+        if let crispSession { VTCompressionSessionCompleteFrames(crispSession, untilPresentationTimeStamp: .invalid) }
+    }
+
     /// Sets a LATENCY-CRITICAL property and THROWS ``VideoEncoderError/propertyFailed(key:status:)``
     /// if it does not apply. Used for the proven low-latency rate-control keys
     /// (RealTime, AllowFrameReordering, AverageBitRate, DataRateLimits) where a silent

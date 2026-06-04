@@ -60,9 +60,31 @@ public actor HostTransport {
     /// reaper deterministically; production uses the real ``ContinuousClock``.
     private let clock: ContinuousClock
 
+    /// Whether the `RWORK_TCP_MUX` gate is ON. When OFF (default) a mux preamble (`0x03`/`0x04`)
+    /// falls through to the unknown-tag error exactly as before this feature existed — so the OFF
+    /// path is byte-identical and a mux client cannot accidentally talk to an un-gated host. Both
+    /// ends MUST agree on the flag (spec constraint #2). Resolved once at init.
+    let muxEnabled: Bool
+
     // New sessions are published here for the owner (WF-3) to attach a PTY to.
     private let sessionStream: AsyncStream<HostSessionTransport>
     private let sessionContinuation: AsyncStream<HostSessionTransport>.Continuation
+
+    // Accepted SHARED mux connections (CONTROL+DATA paired) published here for the mux relay owner.
+    private let muxConnectionStream: AsyncStream<MuxNWConnection>
+    private let muxConnectionContinuation: AsyncStream<MuxNWConnection>.Continuation
+
+    /// Half-paired mux connections: a mux CONTROL (or DATA) socket arrived and is awaiting its
+    /// partner with the same connectionID. Keyed by the preamble connectionID.
+    private struct PendingMuxLink {
+        let control: (any MuxByteLink)?
+        let data: (any MuxByteLink)?
+        /// When the FIRST of the pair arrived — the reaper expires a half-pair past
+        /// ``pendingDataTimeout`` so a partner that never shows (crash / NAT drop / hostile
+        /// CONTROL-only flood) cannot leak NWConnections unbounded.
+        let createdAt: ContinuousClock.Instant
+    }
+    private var pendingMux: [UUID: PendingMuxLink] = [:]
 
     /// Background task that periodically expires stale pending handshakes (started by
     /// ``start(port:)``, cancelled by ``stop()``). The deterministic test path calls
@@ -76,15 +98,35 @@ public actor HostTransport {
     ///     its DATA channel (default 15s).
     public init(
         handshakeTimeout: Duration = .seconds(10),
-        pendingDataTimeout: Duration = .seconds(15)
+        pendingDataTimeout: Duration = .seconds(15),
+        muxEnabled: Bool = HostTransport.muxEnabledFromEnvironment()
     ) {
         self.handshakeTimeout = handshakeTimeout
         self.pendingDataTimeout = pendingDataTimeout
+        self.muxEnabled = muxEnabled
         self.clock = ContinuousClock()
         var continuation: AsyncStream<HostSessionTransport>.Continuation!
         self.sessionStream = AsyncStream { continuation = $0 }
         self.sessionContinuation = continuation
+        var muxC: AsyncStream<MuxNWConnection>.Continuation!
+        self.muxConnectionStream = AsyncStream { muxC = $0 }
+        self.muxConnectionContinuation = muxC
     }
+
+    /// The `RWORK_TCP_MUX` gate value from `env` (same parsing as the client
+    /// ``ConnectionRegistry/muxEnabledFromEnvironment(_:)``). Default OFF.
+    public static func muxEnabledFromEnvironment(
+        _ env: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        guard let raw = env["RWORK_TCP_MUX"]?.lowercased() else { return false }
+        return raw == "1" || raw == "true" || raw == "yes" || raw == "on"
+    }
+
+    /// Newly-accepted SHARED mux connections (CONTROL+DATA paired into one ``MuxNWConnection``,
+    /// role `.host`, receive loops started). The mux relay owner (the host daemon, gated on the
+    /// same flag) consumes these, installs a per-channel-open handler, and spawns a PTY per channel.
+    /// Only ever yields when ``muxEnabled`` is ON.
+    public nonisolated var muxConnections_: AsyncStream<MuxNWConnection> { muxConnectionStream }
 
     /// Newly-accepted (NEW) sessions, each already associated (DATA + CONTROL) and
     /// ready to relay. A RETURNING_CLIENT reconnect rebinds the existing session
@@ -149,6 +191,7 @@ public actor HostTransport {
         listener?.cancel()
         listener = nil
         sessionContinuation.finish()
+        muxConnectionContinuation.finish()
     }
 
     /// Launches the periodic reaper loop. Idempotent (a prior task is cancelled first).
@@ -197,14 +240,21 @@ public actor HostTransport {
     /// a synthesized `now` so the behaviour is verified WITHOUT any wall-clock sleep.
     /// `internal` (not `public`) — it is a test/seam hook, not part of the daemon API.
     func reapExpiredPending(now: ContinuousClock.Instant) {
-        let expired = pending.filter { now - $0.value.createdAt > pendingDataTimeout }
-        guard !expired.isEmpty else { return }
-        for (id, entry) in expired {
+        for (id, entry) in pending.filter({ now - $0.value.createdAt > pendingDataTimeout }) {
             pending[id] = nil
             // Close on a detached actor-hop: `close()` cancels the NWConnection, which is
             // fine to fire-and-forget here (the entry is already removed, so no double
             // close, and a returning-client reuse can no longer race it).
             Task { await entry.control.close() }
+        }
+        // Same half-open hazard for shared-mux sockets: a CONTROL (or DATA) mux socket whose
+        // partner never arrives would leak its NWConnection forever (a hostile peer could open
+        // many CONTROL-only mux sockets with distinct connectionIDs as a DoS). Expire stale
+        // half-paired mux links past the same deadline, closing whichever side is parked.
+        for (id, entry) in pendingMux.filter({ now - $0.value.createdAt > pendingDataTimeout }) {
+            pendingMux[id] = nil
+            if let control = entry.control { Task { await control.close() } }
+            if let data = entry.data { Task { await data.close() } }
         }
     }
 
@@ -276,8 +326,57 @@ public actor HostTransport {
                 throw RworkTransportError.handshakeFailed("data preamble: bad sessionID")
             }
             try await associateData(connection, sessionID: sessionID)
+        case ChannelAssociation.muxControlTag where muxEnabled:
+            // Shared-mux CONTROL socket: read the pairing connectionID, then pair with its DATA peer.
+            let idBytes = try await connection.receiveExactly(ChannelAssociation.sessionIDByteCount)
+            guard let connectionID = UUID(dataBytesForAssociation: idBytes) else {
+                throw RworkTransportError.handshakeFailed("mux control preamble: bad connectionID")
+            }
+            associateMux(connection, connectionID: connectionID, isControl: true)
+        case ChannelAssociation.muxDataTag where muxEnabled:
+            let idBytes = try await connection.receiveExactly(ChannelAssociation.sessionIDByteCount)
+            guard let connectionID = UUID(dataBytesForAssociation: idBytes) else {
+                throw RworkTransportError.handshakeFailed("mux data preamble: bad connectionID")
+            }
+            associateMux(connection, connectionID: connectionID, isControl: false)
         default:
+            // A mux tag with the gate OFF lands here too (the `where muxEnabled` cases do not match)
+            // — byte-identical to the pre-mux host, which never knew these tags.
             throw RworkTransportError.handshakeFailed("unknown association tag \(String(describing: tag))")
+        }
+    }
+
+    /// Pairs the two physical mux sockets (CONTROL + DATA) that share `connectionID` into ONE
+    /// shared ``MuxNWConnection`` (role `.host`), starts its receive loops, and yields it on
+    /// ``muxConnections_`` for the gated mux relay owner. The first socket to arrive parks in
+    /// `pendingMux`; the second completes the pair. Gate-only path — never reached when OFF.
+    private func associateMux(_ connection: NWConnection, connectionID: UUID, isControl: Bool) {
+        let link = NWMuxByteLink(connection: connection, label: isControl ? "host.control" : "host.data")
+        let existing = pendingMux[connectionID]
+        let control = isControl ? link : existing?.control
+        let data = isControl ? existing?.data : link
+        if let control, let data {
+            pendingMux[connectionID] = nil
+            // Carry the wire `connectionID` onto the shared connection so the mux relay owner can
+            // namespace its per-channel sessions by (connectionID, channelID) — see
+            // `HostServer.muxSessions` / `MuxSessionKey`. Two distinct clients each allocate
+            // channelID 1 for their first pane, so a channelID-only key cross-resolved sessions.
+            // S2 sub-gate: the host reads `RWORK_TCP_MUX_FLOW` ONCE here (alongside the
+            // `RWORK_TCP_MUX` gate the handshake already enforced to reach this mux path). BOTH ends
+            // must agree; OFF → infinite window (byte-identical to S1).
+            let mux = MuxNWConnection(
+                role: .host,
+                controlLink: control,
+                dataLink: data,
+                connectionID: connectionID,
+                flowControl: MuxFlowControl.flowEnabledFromEnvironment()
+            )
+            Task {
+                await mux.start()
+                muxConnectionContinuation.yield(mux)
+            }
+        } else {
+            pendingMux[connectionID] = PendingMuxLink(control: control, data: data, createdAt: clock.now)
         }
     }
 

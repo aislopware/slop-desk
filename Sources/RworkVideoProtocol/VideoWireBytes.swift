@@ -78,6 +78,24 @@ struct VideoByteReader {
         return Double(bitPattern: bits)
     }
 
+    /// Reads a wire `Float64` and REJECTS non-finite values (NaN / ±infinity).
+    ///
+    /// Coordinates, sizes, bounds and hotspots arrive as raw IEEE-754 bit patterns off the
+    /// (WireGuard-encrypted but otherwise untrusted) UDP wire. A non-finite value is never a
+    /// legitimate geometry and is dangerous downstream in BOTH directions: the host's scroll
+    /// injector uses the trapping `Int32(Double)` initializer (fatal-errors on NaN/±inf), and the
+    /// CLIENT propagates NaN through the aspect-fit / cursor-placement math into a `CALayer` frame —
+    /// assigning a NaN layer geometry raises an uncaught `CALayerInvalidGeometry` exception that
+    /// kills the process. Treating a non-finite field as malformed lets the router DROP the single
+    /// packet (same contract as the reassembler / `InputDatagramRouter.route`) — a corrupt datagram
+    /// must never crash the receiver, host- OR client-bound. (Shared by every wire-float codec so
+    /// the host- and client-bound paths stay symmetric — see VIDEO cursor-NaN audit finding.)
+    mutating func readFiniteFloat64(_ field: String) throws -> Double {
+        let value = try readFloat64()
+        guard value.isFinite else { throw VideoProtocolError.malformed("non-finite \(field)") }
+        return value
+    }
+
     mutating func readBytes(_ count: Int) throws -> Data {
         guard count >= 0, bytesRemaining >= count else { throw VideoProtocolError.truncated }
         let start = data.startIndex + offset

@@ -1,0 +1,192 @@
+#if canImport(Network)
+import Foundation
+import Network
+import OSLog
+import RworkVideoProtocol
+
+/// The CLIENT half of the shared UDP flow (Stage S3): ONE media + ONE cursor
+/// `NWConnection` to a host, shared across all of that host's video panes and
+/// demultiplexed by a `UInt32` channelID (``VideoMuxHeaderCodec``).
+///
+/// This is the mirror of the host's ``NWVideoMuxDatagramTransport`` — and the
+/// channelID-stamping sibling of the today-shaped ``NWVideoClientTransport``. It is
+/// used ONLY when `RWORK_VIDEO_MUX` is ON (both ends must agree, ``VideoMuxGate``); the
+/// OFF path keeps the byte-identical 15-byte / single-flow ``NWVideoClientTransport``
+/// per pane.
+///
+/// ## Wire (must match the host)
+/// ```
+///   [UInt32 BE channelID][UInt8 channelTag][payload...]   (media socket, client→host)
+///   [UInt32 BE channelID][payload...]                     (cursor prime, client→host)
+/// ```
+/// Inbound host→client datagrams are channelID-prefixed too; this flow strips the
+/// channelID and routes the rest to the matching lane's sink, so a lost datagram or a
+/// sibling lane's teardown never disturbs other lanes (per-channel loss isolation).
+///
+/// ## HANG / SOCKET SAFETY
+/// Opens real `NWConnection` `.udp` flows — COMPILED + reviewed, NEVER instantiated in
+/// a test (like ``NWVideoClientTransport``). The pure framing it drives
+/// (``VideoMuxHeaderCodec``) + the registry's refcount logic ARE unit-tested.
+///
+/// `@unchecked Sendable` via the internal `NSLock` guarding the lane sink tables.
+public final class NWVideoMuxClientFlow: @unchecked Sendable {
+    private static func mediaSocket(for channel: VideoChannel) -> Bool { channel != .cursor }
+
+    private let log = Logger(subsystem: "rwork.video.client", category: "NWVideoMuxClientFlow")
+    private let mediaEndpoint: NWEndpoint
+    private let cursorEndpoint: NWEndpoint
+    private let queue = DispatchQueue(label: "rwork.video.client.transport.mux", qos: .userInteractive)
+
+    private let lock = NSLock()
+    private var mediaConn: NWConnection?
+    private var cursorConn: NWConnection?
+    /// channelID → (onMedia, onCursor) for the lane. A datagram is delivered only to its lane.
+    private var mediaSinks: [UInt32: @Sendable (VideoChannel, Data) -> Void] = [:]
+    private var cursorSinks: [UInt32: @Sendable (Data) -> Void] = [:]
+    private var started = false
+
+    private final class Liveness: @unchecked Sendable {
+        private let lock = NSLock()
+        private var alive = true
+        var isAlive: Bool { lock.withLock { alive } }
+        func markDead() { lock.withLock { alive = false } }
+    }
+
+    public init(host: String, mediaPort: UInt16, cursorPort: UInt16) {
+        let nwHost = NWEndpoint.Host(host)
+        self.mediaEndpoint = NWEndpoint.hostPort(host: nwHost, port: NWEndpoint.Port(rawValue: mediaPort)!)
+        self.cursorEndpoint = NWEndpoint.hostPort(host: nwHost, port: NWEndpoint.Port(rawValue: cursorPort)!)
+    }
+
+    /// Opens the shared media + cursor connections ONCE (idempotent). Subsequent lane opens reuse
+    /// them; only the registry's last-channel release tears them down.
+    public func startIfNeeded() {
+        lock.lock()
+        if started { lock.unlock(); return }
+        started = true
+        let params = NWParameters.udp
+        params.includePeerToPeer = false
+        let media = NWConnection(to: mediaEndpoint, using: params)
+        let cursor = NWConnection(to: cursorEndpoint, using: params)
+        mediaConn = media
+        cursorConn = cursor
+        lock.unlock()
+
+        let mediaLive = Liveness()
+        let cursorLive = Liveness()
+        media.stateUpdateHandler = { state in
+            switch state { case .failed, .cancelled: mediaLive.markDead(); default: break }
+        }
+        cursor.stateUpdateHandler = { state in
+            switch state { case .failed, .cancelled: cursorLive.markDead(); default: break }
+        }
+        media.start(queue: queue)
+        cursor.start(queue: queue)
+        receiveMedia(on: media, live: mediaLive)
+        receiveCursor(on: cursor, live: cursorLive)
+        log.info("NWVideoMuxClientFlow connected media=\(String(describing: self.mediaEndpoint)) cursor=\(String(describing: self.cursorEndpoint)) (shared)")
+    }
+
+    // MARK: - Lane registration (per channelID)
+
+    public func registerLane(channelID: UInt32, onMedia: @escaping @Sendable (VideoChannel, Data) -> Void, onCursor: @escaping @Sendable (Data) -> Void) {
+        lock.withLock {
+            mediaSinks[channelID] = onMedia
+            cursorSinks[channelID] = onCursor
+        }
+        // PRIME the cursor side-channel for this lane so the host learns the lane's cursor flow
+        // (the host accepts a cursor flow only on an inbound datagram; under mux the prime is
+        // channelID-prefixed so the host binds it to the right lane). Mirrors NWVideoClientTransport.
+        lock.lock(); let cursor = cursorConn; lock.unlock()
+        let prime = VideoMuxHeaderCodec.encode(channelID: channelID, payload: Data([0x00]))
+        cursor?.send(content: prime, completion: .contentProcessed { [weak self] error in
+            if let error { self?.log.error("mux cursor prime failed chan=\(channelID): \(String(describing: error))") }
+        })
+    }
+
+    public func unregisterLane(channelID: UInt32) {
+        lock.withLock {
+            mediaSinks.removeValue(forKey: channelID)
+            cursorSinks.removeValue(forKey: channelID)
+        }
+    }
+
+    /// Whether any lane is still live (the registry tears the flow down on 0).
+    public var laneCount: Int { lock.withLock { mediaSinks.count } }
+
+    // MARK: - Send (client → host, per channelID)
+
+    public func send(_ datagram: Data, on channel: VideoChannel, channelID: UInt32) {
+        // The client sends on the media socket only (control + input). A stray cursor send is
+        // dropped defensively, exactly like NWVideoClientTransport.
+        guard Self.mediaSocket(for: channel) else { return }
+        lock.lock(); let conn = mediaConn; lock.unlock()
+        guard let conn else { return }
+        var inner = Data(capacity: datagram.count + 1)
+        inner.append(channel.rawValue)
+        inner.append(datagram)
+        let framed = VideoMuxHeaderCodec.encode(channelID: channelID, payload: inner)
+        conn.send(content: framed, completion: .contentProcessed { [weak self] error in
+            if let error { self?.log.error("mux udp send failed channel=\(channel.rawValue) chan=\(channelID): \(String(describing: error))") }
+        })
+    }
+
+    // MARK: - Receive (host → client, demuxed by channelID)
+
+    private func receiveMedia(on conn: NWConnection, live: Liveness, consecutiveErrors: Int = 0) {
+        conn.receiveMessage { [weak self] data, _, _, error in
+            guard let self else { return }
+            if let data, let (channelID, rest) = try? VideoMuxHeaderCodec.decode(data), rest.count >= 1 {
+                let tag = rest[rest.startIndex]
+                if let channel = VideoChannel(rawValue: tag) {
+                    let payload = Data(rest[(rest.startIndex + 1)...])
+                    let sink = self.lock.withLock { self.mediaSinks[channelID] }
+                    sink?(channel, payload)   // a datagram for a closed/unknown lane is dropped (loss isolation)
+                }
+            }
+            guard UDPReceiveLoopPolicy.shouldRearm(connectionIsAlive: live.isAlive) else { return }
+            if let error {
+                self.log.error("mux media receive error (transient, backing off + re-arming if alive): \(String(describing: error))")
+                let next = consecutiveErrors + 1
+                self.queue.asyncAfter(deadline: .now() + UDPReceiveLoopPolicy.nextBackoff(consecutiveErrors: next)) { [weak self] in
+                    guard let self, live.isAlive else { return }
+                    self.receiveMedia(on: conn, live: live, consecutiveErrors: next)
+                }
+            } else {
+                self.receiveMedia(on: conn, live: live, consecutiveErrors: 0)
+            }
+        }
+    }
+
+    private func receiveCursor(on conn: NWConnection, live: Liveness, consecutiveErrors: Int = 0) {
+        conn.receiveMessage { [weak self] data, _, _, error in
+            guard let self else { return }
+            if let data, let (channelID, payload) = try? VideoMuxHeaderCodec.decode(data), !payload.isEmpty {
+                let sink = self.lock.withLock { self.cursorSinks[channelID] }
+                sink?(payload)
+            }
+            guard UDPReceiveLoopPolicy.shouldRearm(connectionIsAlive: live.isAlive) else { return }
+            if let error {
+                self.log.error("mux cursor receive error (transient, backing off + re-arming if alive): \(String(describing: error))")
+                let next = consecutiveErrors + 1
+                self.queue.asyncAfter(deadline: .now() + UDPReceiveLoopPolicy.nextBackoff(consecutiveErrors: next)) { [weak self] in
+                    guard let self, live.isAlive else { return }
+                    self.receiveCursor(on: conn, live: live, consecutiveErrors: next)
+                }
+            } else {
+                self.receiveCursor(on: conn, live: live, consecutiveErrors: 0)
+            }
+        }
+    }
+
+    public func close() {
+        lock.withLock {
+            mediaConn?.cancel(); mediaConn = nil
+            cursorConn?.cancel(); cursorConn = nil
+            mediaSinks.removeAll()
+            cursorSinks.removeAll()
+            started = false
+        }
+    }
+}
+#endif

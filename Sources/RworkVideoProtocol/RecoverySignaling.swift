@@ -26,12 +26,22 @@ public enum RecoveryMessage: Equatable, Sendable {
     /// frame: demand a forced IDR keyframe.
     case requestIDR
 
+    /// Re-request a cursor SHAPE bitmap the client is missing (doc 17 §3.3 self-heal). A
+    /// cursor shape is shipped over the cursor socket ONCE per `shapeID`; a lost (or
+    /// over-MTU, IP-fragment-lost) shape datagram would otherwise leave the overlay
+    /// permanently wrong/invisible for the whole session (the host strips the real cursor).
+    /// When a cursor POSITION update references a `shapeID` not in the client cache, the
+    /// client sends this on the EXISTING recovery channel (mirroring ``requestIDR``) and the
+    /// host re-emits that shape's bitmap. The cache re-insert is idempotent.
+    case requestCursorShape(shapeID: UInt16)
+
     /// On-wire message-type byte.
     public var messageType: UInt8 {
         switch self {
         case .ack: return 1
         case .requestLTRRefresh: return 2
         case .requestIDR: return 3
+        case .requestCursorShape: return 4
         }
     }
 
@@ -47,6 +57,8 @@ public enum RecoveryMessage: Equatable, Sendable {
             out.appendBE(toFrameID)
         case .requestIDR:
             break
+        case .requestCursorShape(let shapeID):
+            out.appendBE(shapeID)
         }
         return out
     }
@@ -65,6 +77,8 @@ public enum RecoveryMessage: Equatable, Sendable {
             return .requestLTRRefresh(fromFrameID: from, toFrameID: to)
         case 3:
             return .requestIDR
+        case 4:
+            return .requestCursorShape(shapeID: try reader.readUInt16())
         default:
             throw VideoProtocolError.malformed("unknown recovery message type \(type)")
         }

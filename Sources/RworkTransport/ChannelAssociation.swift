@@ -35,6 +35,13 @@ enum ChannelAssociation {
     static let controlTag: UInt8 = 0x01
     /// Discriminator byte for the DATA connection.
     static let dataTag: UInt8 = 0x02
+    /// Discriminator byte for a SHARED-MUX CONTROL connection (TCP-mux S1, behind `RWORK_TCP_MUX`).
+    /// Distinct from ``controlTag`` so a host whose gate is ON selects the ``MuxFrameDecoder`` path
+    /// for this connection. Both ends MUST agree on the flag (no mixed-mode handshake) — this tag is
+    /// the on-wire confirmation of that agreement, not a negotiation.
+    static let muxControlTag: UInt8 = 0x03
+    /// Discriminator byte for a SHARED-MUX DATA connection (TCP-mux S1).
+    static let muxDataTag: UInt8 = 0x04
     /// Length of a UUID on the wire (16 raw bytes), matching `RworkProtocol`.
     static let sessionIDByteCount = 16
 
@@ -47,6 +54,24 @@ enum ChannelAssociation {
     static func dataPreamble(sessionID: UUID) -> Data {
         var data = Data([dataTag])
         data.append(sessionID.associationBytes)
+        return data
+    }
+
+    /// Encodes the shared-mux CONTROL preamble (`[0x03][16-byte connectionID]`). The connectionID
+    /// pairs the two physical mux sockets (CONTROL + DATA) into ONE shared ``MuxNWConnection`` —
+    /// there is no per-session id here because a shared connection carries MANY sessions, each
+    /// minted/resumed per-channel via `channelOpen`, not at association.
+    static func muxControlPreamble(connectionID: UUID) -> Data {
+        var data = Data([muxControlTag])
+        data.append(connectionID.associationBytes)
+        return data
+    }
+
+    /// Encodes the shared-mux DATA preamble (`[0x04][16-byte connectionID]`), pairing it to the
+    /// CONTROL socket that carried the same connectionID.
+    static func muxDataPreamble(connectionID: UUID) -> Data {
+        var data = Data([muxDataTag])
+        data.append(connectionID.associationBytes)
         return data
     }
 }

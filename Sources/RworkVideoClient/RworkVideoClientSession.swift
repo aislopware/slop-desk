@@ -88,11 +88,11 @@ public actor RworkVideoClientSession {
         /// click actually lands.
         public var applyCursor: @Sendable (CursorUpdate, CursorPlacement) -> Void
         /// Register a cursor shape bitmap for its shapeID (shipped rarely, OOB).
-        public var registerCursorShape: @Sendable (CGImage, UInt16) -> Void
+        public var registerCursorShape: @Sendable (CGImage, VideoSize, UInt16) -> Void
         public init(
             submitDecodedFrame: @escaping @Sendable (CVImageBuffer) -> Void,
             applyCursor: @escaping @Sendable (CursorUpdate, CursorPlacement) -> Void,
-            registerCursorShape: @escaping @Sendable (CGImage, UInt16) -> Void
+            registerCursorShape: @escaping @Sendable (CGImage, VideoSize, UInt16) -> Void
         ) {
             self.submitDecodedFrame = submitDecodedFrame
             self.applyCursor = applyCursor
@@ -150,6 +150,60 @@ public actor RworkVideoClientSession {
     /// The most recent host cursor position, re-applied whenever the scale changes so
     /// a layout/resize re-places the overlay without waiting for the next cursor packet.
     private var lastCursorUpdate: CursorUpdate?
+    /// FIX B cursor-shape self-heal: decides when to re-request a shape bitmap the client is
+    /// missing (its one-shot shipment was lost / over-MTU). A position update referencing an
+    /// unknown shapeID triggers a `requestCursorShape` on the recovery channel; the decision is
+    /// debounced per id so the ~120 Hz position stream cannot flood the channel. Pure type.
+    private var shapeRequests = CursorShapeRequestTracker()
+
+    /// In-session host-window-resize feature gate (`RWORK_VIDEO_RESIZE=1`, default OFF). With
+    /// it OFF the client never sends a `resizeRequest` (so the host never resizes / acks) and
+    /// `decodedSize` keeps its existing one-shot capture-pinned behaviour — byte-identical to
+    /// the fixed-size build.
+    private static let resizeEnabled: Bool = {
+        // Match the sibling RWORK_VIDEO_* gates' truthiness (1/true/yes/on, case-insensitive); both
+        // ends must agree on the gate, so the client uses the same vocabulary as the host. `=1` (the
+        // documented form) still works — this only ADDS the missing truthy spellings.
+        let raw = ProcessInfo.processInfo.environment["RWORK_VIDEO_RESIZE"]?.lowercased()
+        return raw == "1" || raw == "true" || raw == "yes" || raw == "on"
+    }()
+    /// Liveness-keepalive feature gate (`RWORK_VIDEO_KEEPALIVE`, default OFF — the shared
+    /// ``KeepaliveGate``). With it OFF the client never constructs ``keepaliveTask`` and never
+    /// emits a `keepalive` datagram, so the path is byte-identical to today. With it ON a slow
+    /// (5 s) actor-owned timer sends a zero-body `keepalive` on the control channel while
+    /// streaming, so the host's idle-timeout reaper can tell a quiet-but-alive client from a
+    /// crashed one (CONCURRENCY-HOST-1 crash-without-bye). Read ONCE at construction.
+    private static let keepaliveEnabled = KeepaliveGate.enabledFromEnvironment()
+    /// The self-owned keepalive timer (NOT the 33 ms `motionPump` in `VideoWindowPipeline` —
+    /// that is far too fast + main-actor-bound). A separate, slow, actor-owned `Task`; cancelled
+    /// in ``stop()``. ⚠️ Timer firing is [MS-confirm] (real-clock glue); the reap DECISION it
+    /// feeds is covered by `IdleReapDeciderTests`. Nil unless the gate is ON.
+    private var keepaliveTask: Task<Void, Never>?
+    /// Client-side debounce coalescing a burst of layout callbacks (one per drag frame) to the
+    /// SETTLED surface size — one `resizeRequest` per settled size, monotonic epoch.
+    private var resizeDebounce = ResizeDebounce()
+    /// Wall-clock time the layer size last actually CHANGED (the debounce settle clock; the
+    /// actor measures `elapsedSinceLastChange`, the ``ResizeDebounce`` discipline).
+    private var lastSizeChangeTime = Date.distantPast
+    /// The last layer size seen, so a no-op layout pass (same size) does not reset the settle
+    /// clock (which would prevent the size from ever settling under repeated identical passes).
+    private var lastSeenSize: VideoSize?
+    /// The capture size the host acked for an in-session resize, staged until a decoded
+    /// `CVPixelBuffer` actually arrives at it (frame-gated adoption). `nil` ⇒ none pending.
+    private var pendingCaptureSize: VideoSize?
+    /// The pixel dims of the most recently decoded frame — the MAGNITUDE baseline for
+    /// frame-gated resize adoption (``ResizeAdoption/shouldAdopt(pending:decoded:previousDecoded:)``).
+    /// A genuinely new-size frame is the first whose pixel dims differ from the steady prior size;
+    /// an in-flight old-size frame matches the baseline and is rejected. Gated-path-only.
+    private var lastDecodedPixelSize: VideoSize?
+    /// One-shot settle timer for the resize debounce. ``maybeRequestResize(for:)`` is only ever
+    /// driven by event-based layout callbacks, and the FINAL drag frame re-arms the settle clock
+    /// with ~0 elapsed — so without this timer a settled size would NEVER be requested (no further
+    /// layout pass arrives to re-evaluate it). Armed whenever a change has not yet settled;
+    /// cancelled + rescheduled on each change (coalesce → one request per settled size); cancelled
+    /// on ``stop()``. ⚠️ Timer firing is [MS-confirm] (real-clock glue; the pure debounce decision
+    /// is covered by `ResizeDebounceTests`).
+    private var resizeSettleTask: Task<Void, Never>?
 
     /// Recovery bookkeeping: tracks the time of the FIRST outstanding LTR-refresh
     /// request in the current recovery episode (host time seconds), cleared once a
@@ -197,14 +251,42 @@ public actor RworkVideoClientSession {
             Task { await self.receiveCursor(data) }
         }
         for effect in stateMachine.start() { await apply(effect) }
+        if Self.keepaliveEnabled { startKeepalive() }
         log.info("video client session started; hello sent")
     }
 
     /// Sends a best-effort `bye`, tears the pipeline + sockets down.
     public func stop() async {
+        keepaliveTask?.cancel(); keepaliveTask = nil
+        resizeSettleTask?.cancel(); resizeSettleTask = nil
         for effect in stateMachine.stop() { await apply(effect) }
         await transport.stop()
         log.info("video client session stopped")
+    }
+
+    // MARK: Liveness keepalive (CONCURRENCY-HOST-1 crash-without-bye; RWORK_VIDEO_KEEPALIVE)
+
+    /// Starts the slow (``KeepaliveGate/keepaliveInterval``, 5 s) actor-owned keepalive timer.
+    /// Each tick sends a zero-body `keepalive` on the control channel WHILE STREAMING so the
+    /// host's idle-timeout reaper can distinguish a quiet-but-alive client from a crashed one.
+    /// Cancels any prior task (idempotent re-arm). Gated by ``keepaliveEnabled``.
+    private func startKeepalive() {
+        keepaliveTask?.cancel()
+        keepaliveTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(KeepaliveGate.keepaliveInterval * 1_000_000_000))
+                guard let self else { return }
+                await self.sendKeepaliveIfStreaming()
+            }
+        }
+    }
+
+    /// Sends one `keepalive` iff the session is streaming (mirrors the resize-debounce gate). A
+    /// pre-stream / torn-down session sends nothing — the heartbeat only matters while a flow is
+    /// live. On mux the lane transport stamps the channelID automatically (no surface change).
+    private func sendKeepaliveIfStreaming() {
+        guard stateMachine.mediaFlowing else { return }
+        transport.send(VideoControlMessage.keepalive.encode(), on: .control)
     }
 
     // MARK: Layout (called by the host view each layout pass)
@@ -215,6 +297,67 @@ public actor RworkVideoClientSession {
         layerSize = size
         dbg("setLayerSize → \(Int(size.width))x\(Int(size.height)) (native=\(Int(decodedSize.width))x\(Int(decodedSize.height)))")
         reapplyCursor()
+        maybeRequestResize(for: size)
+    }
+
+    /// Drives the in-session resize debounce on a layer-size change (env-gated). A real size
+    /// change re-arms the settle clock; once the size has been QUIET for the settle interval and
+    /// differs enough from the last request, emit exactly one `resizeRequest(desired, epoch)` on
+    /// the control channel (the existing `.sendControl` path). `noteRequested` is called ONLY
+    /// after acting, per the ``ResizeDebounce`` query/mutator discipline. No-op when
+    /// `RWORK_VIDEO_RESIZE` is OFF or the session is not streaming.
+    private func maybeRequestResize(for size: VideoSize) {
+        guard Self.resizeEnabled, stateMachine.mediaFlowing else { return }
+        // A real change re-arms the settle clock; an identical pass does not (so a size that
+        // stops changing can actually settle under repeated identical layout passes).
+        if lastSeenSize != size {
+            lastSeenSize = size
+            lastSizeChangeTime = Date()
+        }
+        // Try to emit NOW; if not yet settled, arm the settle timer so the SETTLED size is still
+        // requested even when the final drag frame re-armed the clock and no further layout
+        // callback arrives to re-evaluate it (the "resizeRequest never fires on a clean drag-end"
+        // fix). Each change cancels + reschedules → exactly one request per settled size.
+        if !attemptResizeEmit(size) { scheduleResizeSettle() }
+    }
+
+    /// Evaluates the debounce for `size` and emits a `resizeRequest` iff it has settled and
+    /// changed enough. Returns whether it emitted. `noteRequested` is called ONLY after deciding
+    /// to act, per the ``ResizeDebounce`` query/mutator discipline.
+    @discardableResult
+    private func attemptResizeEmit(_ size: VideoSize) -> Bool {
+        let elapsed = Date().timeIntervalSince(lastSizeChangeTime)
+        guard case .request(let settled) = resizeDebounce.decide(layerSize: size, elapsedSinceLastChange: elapsed) else {
+            return false
+        }
+        let epoch = resizeDebounce.noteRequested(settled)
+        dbg("resize: surface settled → resizeRequest \(Int(settled.width))x\(Int(settled.height)) epoch=\(epoch)")
+        transport.send(VideoControlMessage.resizeRequest(desired: settled, epoch: epoch).encode(), on: .control)
+        return true
+    }
+
+    /// Arms the one-shot settle timer: re-check `lastSeenSize` just after the surface should have
+    /// gone quiet. Cancels any prior pending timer (coalesce). See ``resizeSettleTask``.
+    private func scheduleResizeSettle() {
+        resizeSettleTask?.cancel()
+        let delay = resizeDebounce.settleInterval + 0.02   // re-check just after the surface goes quiet
+        resizeSettleTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            await self.resizeSettleFired()
+        }
+    }
+
+    /// The settle timer fired: emit the settled size if it is now quiet enough. Reschedules ONLY
+    /// while genuinely still mid-burst (a change raced in during the sleep — which itself would
+    /// have already rescheduled, so this is defensive); a `.hold` from a sub-`minDelta` wobble
+    /// does NOT reschedule (elapsed has passed the settle interval), so this can never busy-loop.
+    private func resizeSettleFired() {
+        resizeSettleTask = nil
+        guard Self.resizeEnabled, stateMachine.mediaFlowing, let size = lastSeenSize else { return }
+        if !attemptResizeEmit(size), Date().timeIntervalSince(lastSizeChangeTime) < resizeDebounce.settleInterval {
+            scheduleResizeSettle()
+        }
     }
 
     /// Stores the current VNC-style zoom/pan (iOS pinch/pan gestures) so the input
@@ -327,6 +470,25 @@ public actor RworkVideoClientSession {
         } catch {
             log.error("decode failed: \(String(describing: error))")
             dbg("DECODE FAILED: \(String(describing: error))")
+            // VIDEO-CLIENT-1: a hard decode failure (corrupt-but-complete AVCC / decoder
+            // malfunction — e.g. an FEC mis-recovery that passes the length check, or
+            // VTDecompressionSession returning kVTVideoDecoderMalfunctionErr) is NOT surfaced by
+            // the fragment-level reassembler — it reported the frame `.completed`, so the
+            // loss-driven recovery never armed. Re-anchor the stream by requesting an IDR, exactly
+            // like the `awaitingKeyframe` path above; otherwise the pacer re-presents the last good
+            // frame indefinitely (especially once the host window goes static and stops producing
+            // frames). Idempotent on the host — the escalation tracker dedups duplicate requests.
+            //
+            // FIX #3: a HARD failure can leave the VTDecompressionSession itself in a dead
+            // state. On a fixed capture size (RWORK_VIDEO_RESIZE OFF, the default) the forced
+            // recovery IDR carries BYTE-IDENTICAL VPS/SPS/PPS → needsReconfigure=false → the
+            // SAME malfunctioning session would be reused forever (pane frozen permanently).
+            // Force a session rebuild here so the next keyframe — even byte-identical — re-runs
+            // configure() against a FRESH session. Done BEFORE requestIDR() so the rebuild is in
+            // place by the time the recovery keyframe arrives. (The healthy heartbeat-IDR reuse
+            // path / BUG-I is untouched: only a decode FAILURE clears the cached parameter sets.)
+            decoder.invalidateSession()
+            requestIDR()
         }
     }
 
@@ -337,6 +499,38 @@ public actor RworkVideoClientSession {
             decodedSize = stateMachine.captureSize
             reapplyCursor()
         }
+    }
+
+    /// Called from the decoder's frame handler with the ACTUAL decoded `CVPixelBuffer`
+    /// dimensions (pixels). Frame-gated in-session-resize adoption: when a host resize has been
+    /// acked (`pendingCaptureSize` set) and a decoded frame finally arrives AT that size, adopt
+    /// it as the aspect-fit denominator (`decodedSize`) and re-place the cursor for the new
+    /// geometry. We compare against the BUFFER dims (not the ack) so an in-flight OLD-size frame
+    /// that arrives after the ack does NOT trip the adoption early (it would briefly mis-scale).
+    ///
+    /// `decodedSize` is in the SAME unit family the aspect-fit math uses (ratios are
+    /// scale-invariant), and the host clamps the achieved size to the wire UInt16 the ack
+    /// carries, so a per-axis rounding tolerance absorbs any capture-scale rounding between the
+    /// acked points and the decoded pixels. No-op when `RWORK_VIDEO_RESIZE` is OFF (nothing is
+    /// ever pending), so the fixed-size path is byte-identical.
+    private func noteDecoded(width: Double, height: Double) {
+        // Track the magnitude baseline FIRST (every decoded frame, gated path only) so the next
+        // frame can tell a genuinely-new size from an in-flight old-size one.
+        let decoded = VideoSize(width: width, height: height)
+        let previous = lastDecodedPixelSize
+        lastDecodedPixelSize = decoded
+        guard let pending = pendingCaptureSize else { return }
+        // Adopt only when the decoded buffer is the genuinely-NEW size (aspect match AND a real
+        // pixel-size change vs the prior frame) — an in-flight OLD-size frame queued behind the
+        // ack must not trip adoption early. Pure decision: ``ResizeAdoption/shouldAdopt``.
+        guard ResizeAdoption.shouldAdopt(pending: pending, decoded: decoded, previousDecoded: previous) else {
+            dbg("resize: decoded \(Int(width))x\(Int(height)) not yet the new size — old-size frames still in flight (pending \(Int(pending.width))x\(Int(pending.height)))")
+            return
+        }
+        decodedSize = pending
+        pendingCaptureSize = nil
+        dbg("resize: adopted decodedSize=\(Int(pending.width))x\(Int(pending.height)) (decoded buffer \(Int(width))x\(Int(height)) matched) → reapplying cursor")
+        reapplyCursor()
     }
 
     private func applyGeometry(_ message: WindowGeometryMessage) {
@@ -375,10 +569,24 @@ public actor RworkVideoClientSession {
         switch message {
         case .update(let update):
             lastCursorUpdate = update
+            // FIX B self-heal: a position update referencing a shapeID we never cached means its
+            // one-shot bitmap was lost (or never fit one datagram). Re-request it on the recovery
+            // channel (debounced per id) so the overlay can recover instead of staying wrong/
+            // invisible for the whole session. The applyCursor below is unchanged — it simply
+            // keeps the prior bitmap until the re-shipped one arrives.
+            maybeRequestCursorShape(update.shapeID)
             applyCursor(update)
         case .shape(let shape):
             registerCursorShape(shape)
         }
+    }
+
+    /// Sends a `requestCursorShape(shapeID)` on the recovery channel iff the shape is missing and
+    /// not recently requested (``CursorShapeRequestTracker``). No-op once the shape is cached.
+    private func maybeRequestCursorShape(_ shapeID: UInt16) {
+        guard shapeRequests.shouldRequest(shapeID: shapeID, now: FramePacer.currentHostTimeSeconds()) else { return }
+        dbg("cursor shape \(shapeID) missing — requesting re-ship on recovery channel")
+        transport.send(RecoveryMessage.requestCursorShape(shapeID: shapeID).encode(), on: .recovery)
     }
 
     private func applyCursor(_ update: CursorUpdate) {
@@ -398,9 +606,14 @@ public actor RworkVideoClientSession {
         // decode is cheap + safe (no window-server); only the layer wiring is GUI.
         guard let image = Self.decodePNG(shape.bitmap) else {
             log.error("failed to decode cursor shape \(shape.shapeID) PNG")
-            return
+            return   // do NOT mark arrived — leave the id re-requestable so a decode failure self-heals (review).
         }
-        gui.registerCursorShape(image, shape.shapeID)
+        // Mark arrived only AFTER a successful decode — the tracker then stops re-requesting.
+        shapeRequests.noteShapeArrived(shape.shapeID)
+        // Pass the LOGICAL point size so the overlay renders at the cursor's true size regardless of
+        // the bitmap's pixel resolution (a Retina or MTU-downscaled bitmap is scaled to fit), rather
+        // than rendering at the raw bitmap pixel dimensions (FIX B review).
+        gui.registerCursorShape(image, shape.size, shape.shapeID)
         // Re-apply the last position so the newly-registered shape shows immediately.
         reapplyCursor()
     }
@@ -492,6 +705,17 @@ public actor RworkVideoClientSession {
             startDecodePipeline(captureSize: captureSize)
         case .stopDecodePipeline:
             stopDecodePipeline()
+        case .updateCaptureSize(let size):
+            // The host acked an in-session resize. STAGE the new size; do NOT assign
+            // `decodedSize` yet — adopt it only when a decoded CVPixelBuffer actually arrives at
+            // it (frame-gated in `noteDecoded`), because in-flight old-size frames may still be
+            // queued behind the ack. The decoder auto-reconfigures on the new IDR's parameter
+            // sets; we only re-base the aspect-fit denominator once the new pixels land.
+            // Defence-in-depth: ignore a stray/mixed-version ack when the client gate is OFF (the
+            // OFF decoder never reads buffer dims, so it could never adopt — keep the state clean).
+            guard Self.resizeEnabled else { return }
+            pendingCaptureSize = size
+            dbg("resizeAck → pending capture size \(Int(size.width))x\(Int(size.height)) (adopt on matching decoded frame)")
         }
     }
 
@@ -502,7 +726,24 @@ public actor RworkVideoClientSession {
         // the GUI hook, most-recent-wins); the pacer renders it at the display link's
         // vsync. GUI-only — the decode path is never reached in a test.
         let submit = gui.submitDecodedFrame
-        let decoder = VideoDecoder { imageBuffer in submit(imageBuffer) }
+        let decoder: VideoDecoder
+        if Self.resizeEnabled {
+            // With the resize feature ON, also read the decoded buffer's ACTUAL pixel dimensions
+            // and hop them back to the actor (`noteDecoded`) so a frame-gated in-session-resize
+            // adoption fires when the first new-size frame lands (the ack's size matters only
+            // once the pixels match it). Reading width/height is a cheap, read-only CoreVideo
+            // query — no window-server. The per-frame hop exists ONLY on the gated path; OFF the
+            // handler is the byte-identical plain submit below.
+            decoder = VideoDecoder { [weak self] imageBuffer in
+                submit(imageBuffer)
+                guard let self else { return }
+                let w = Double(CVPixelBufferGetWidth(imageBuffer))
+                let h = Double(CVPixelBufferGetHeight(imageBuffer))
+                Task { await self.noteDecoded(width: w, height: h) }
+            }
+        } else {
+            decoder = VideoDecoder { imageBuffer in submit(imageBuffer) }
+        }
         self.decoder = decoder
         reapplyCursor()
         log.info("client decode pipeline up at capture \(captureSize.width, privacy: .public)x\(captureSize.height, privacy: .public)")

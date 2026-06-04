@@ -107,7 +107,13 @@ public actor RworkClient {
     // MARK: Internals
 
     private let ackInterval: Duration
-    private var transport: ClientTransport?
+    /// Factory for the session transport, injected so a pane can be backed by the
+    /// today-shaped one-TCP-pair ``ClientTransport`` (the default) OR — behind the
+    /// `RWORK_TCP_MUX` gate, supplied by ``WorkspaceStore/liveMakeSession`` — a logical channel
+    /// over a shared ``MuxNWConnection``. Defaulting to `{ ClientTransport() }` keeps the OFF
+    /// path byte-identical: the client allocates the exact same concrete transport it always did.
+    private let makeTransport: @Sendable () -> any ClientTransporting
+    private var transport: (any ClientTransporting)?
     private var inboundTask: Task<Void, Never>?
     private var ackTask: Task<Void, Never>?
     private var ackPending = false
@@ -128,8 +134,18 @@ public actor RworkClient {
     /// Held as `AnyObject` + a feeder closure so this target need not link RworkTerminal.
     private var surfaceFeed: (@Sendable (Data) -> Void)?
 
-    public init(ackInterval: Duration = RworkClient.defaultAckInterval) {
+    /// - Parameters:
+    ///   - ackInterval: how often the coalesced ack ticker may flush (correctness-independent).
+    ///   - makeTransport: the session-transport factory. Defaults to `{ ClientTransport() }` so a
+    ///     plain `RworkClient()` is byte-identical to before (the OFF path). The TCP-mux ON path
+    ///     injects a factory that vends a logical channel over a shared connection — gated solely
+    ///     at the `WorkspaceStore.liveMakeSession` construction site, never on the hot path.
+    public init(
+        ackInterval: Duration = RworkClient.defaultAckInterval,
+        makeTransport: @escaping @Sendable () -> any ClientTransporting = { ClientTransport() }
+    ) {
         self.ackInterval = ackInterval
+        self.makeTransport = makeTransport
         var outC: AsyncStream<Data>.Continuation!
         self.outputStream = AsyncStream(bufferingPolicy: .unbounded) { outC = $0 }
         self.outputContinuation = outC
@@ -167,7 +183,7 @@ public actor RworkClient {
         await teardownTransport()
         tearingDown = false
 
-        let transport = ClientTransport()
+        let transport = makeTransport()
         let resume = sessionID ?? WireMessage.newSessionID
         let lastSeq = highestContiguousSeq
         do {
@@ -220,7 +236,7 @@ public actor RworkClient {
 
     /// Pumps the transport's merged inbound stream: dedups + delivers `output`, surfaces
     /// title/bell/exit, and finishes (surfacing `.disconnected`) when the stream ends.
-    private func startInboundPump(_ transport: ClientTransport) {
+    private func startInboundPump(_ transport: any ClientTransporting) {
         let inbound = transport.inbound
         inboundTask = Task { [weak self] in
             guard let self else { return }

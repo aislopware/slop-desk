@@ -142,21 +142,3 @@ public enum InputEvent: Equatable, Sendable {
         }
     }
 }
-
-private extension VideoByteReader {
-    /// Reads a wire `Float64` and REJECTS non-finite values (NaN / ±infinity).
-    ///
-    /// Input coordinates and scroll deltas arrive as raw IEEE-754 bit patterns straight
-    /// off the (WireGuard-encrypted but otherwise untrusted) UDP wire. A non-finite value
-    /// here is never legitimate and is dangerous downstream: the host's scroll injector
-    /// converts the delta with the trapping `Int32(Double)` initializer (which fatal-errors
-    /// on NaN/±inf), and CG coordinate math propagates NaN into the cursor/geometry path. A
-    /// hostile peer must not be able to smuggle one through. Treating a non-finite field as
-    /// a malformed datagram lets the router DROP it — a corrupt single packet must never
-    /// crash the receiver (same contract as the reassembler / `InputDatagramRouter.route`).
-    mutating func readFiniteFloat64(_ field: String) throws -> Double {
-        let value = try readFloat64()
-        guard value.isFinite else { throw VideoProtocolError.malformed("non-finite \(field)") }
-        return value
-    }
-}

@@ -71,8 +71,8 @@ public struct CursorShapeMessage: Equatable, Sendable {
         let shapeID = try reader.readUInt16()
         let width = try reader.readUInt16()
         let height = try reader.readUInt16()
-        let hx = try reader.readFloat64()
-        let hy = try reader.readFloat64()
+        let hx = try reader.readFiniteFloat64("cursorShape.hotspot.x")
+        let hy = try reader.readFiniteFloat64("cursorShape.hotspot.y")
         let bitmapLength = try reader.readUInt32()
         let bitmap = try reader.readBytes(Int(bitmapLength))
         return CursorShapeMessage(

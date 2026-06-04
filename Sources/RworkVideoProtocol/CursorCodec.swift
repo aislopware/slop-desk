@@ -63,10 +63,13 @@ public struct CursorUpdate: Equatable, Sendable {
         }
         let shapeID = try reader.readUInt16()
         let visible = try reader.readUInt8() != 0
-        let x = try reader.readFloat64()
-        let y = try reader.readFloat64()
-        let hx = try reader.readFloat64()
-        let hy = try reader.readFloat64()
+        // Finite-checked: a non-finite position/hotspot off the wire would propagate NaN through the
+        // client's aspect-fit math into a CALayer frame → uncaught CALayerInvalidGeometry crash. A
+        // malformed datagram must be DROPPED, not fatal (symmetric to the host-bound InputEventCodec).
+        let x = try reader.readFiniteFloat64("cursor.x")
+        let y = try reader.readFiniteFloat64("cursor.y")
+        let hx = try reader.readFiniteFloat64("cursor.hotspot.x")
+        let hy = try reader.readFiniteFloat64("cursor.hotspot.y")
         return CursorUpdate(
             position: VideoPoint(x: x, y: y),
             shapeID: shapeID,

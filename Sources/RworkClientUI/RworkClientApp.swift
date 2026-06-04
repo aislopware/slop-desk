@@ -2,6 +2,7 @@
 import SwiftUI
 import RworkClient
 import RworkInspector
+import RworkTransport
 #if os(iOS)
 import UIKit   // UIDevice.current.userInterfaceIdiom — the per-device live-video cap signal at init
 #endif
@@ -71,14 +72,29 @@ public struct RworkClientApp: App {
         #else
         let liveVideoCap = VideoCapPolicy.cap(for: .phone)
         #endif
+        // TCP-mux gate (RWORK_TCP_MUX, default OFF): build the per-host shared-connection pool ONLY
+        // when the env flag is set. With the flag unset this is `nil`, so `liveMakeSession` keeps the
+        // exact `{ RworkClient() }` factory — the OFF path is byte-identical (no pool, no shared
+        // object). Both ends must agree on the flag: the host's decoder selection is gated on the
+        // same `RWORK_TCP_MUX`, and the wire (mux preamble + envelope framing) is incompatible across
+        // the boundary, so there is no mixed-mode handshake.
+        let muxRegistry: ConnectionRegistry? = ConnectionRegistry.muxEnabledFromEnvironment()
+            ? ConnectionRegistry(makeConnection: LiveMuxConnectionFactory.makeConnection)
+            : nil
         let store = WorkspaceStore(
             restoring: persistence?.load(),   // nil in automation ⇒ bootstrap replaces it anyway
             makeSession: WorkspaceStore.liveMakeSession(
                 makeClient: { RworkClient() },
-                makeInspector: WorkspaceStore.liveMakeInspector
+                makeInspector: WorkspaceStore.liveMakeInspector,
+                muxRegistry: muxRegistry
             ),
             liveVideoCap: liveVideoCap,
-            persistence: persistence
+            persistence: persistence,
+            // FIX #4: hold a closed `.remoteGUI` pane's cap slot briefly past `teardown()` so the
+            // SwiftUI dismantle → VideoWindowPipeline.deactivate() → detached session.stop() (which
+            // closes the 2 UDP NWConnections + VTDecompressionSession + display link) actually
+            // releases the stack before a same-tick sibling is admitted (avoids a transient cap+1).
+            videoTeardownSettle: .milliseconds(250)
         )
         // Automation seams (docs/22 §7): only when the env vars are present do we let the bootstrap
         // REPLACE the restored workspace with the autoconnect/video shape (a normal launch restores the

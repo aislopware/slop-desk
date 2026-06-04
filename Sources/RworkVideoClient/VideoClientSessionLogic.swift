@@ -55,6 +55,11 @@ public struct VideoClientStateMachine: Sendable {
         case startDecodePipeline(captureSize: VideoSize, windowBoundsCG: VideoRect)
         /// Tear the decode pipeline down.
         case stopDecodePipeline
+        /// The host acked an in-session resize: it adopted `size` as the new capture size.
+        /// The actor stages it as the PENDING capture size and adopts it as the aspect-fit
+        /// denominator (`decodedSize`) only once a decoded `CVPixelBuffer` actually arrives at
+        /// that size (in-flight old-size frames may still be in the queue after the ack).
+        case updateCaptureSize(VideoSize)
     }
 
     /// `start()` was called: send the hello, move to `.connecting`.
@@ -88,8 +93,20 @@ public struct VideoClientStateMachine: Sendable {
             guard state == .streaming || state == .connecting else { return [] }
             state = .stopped
             return [.stopDecodePipeline]
-        case .hello:
-            // The client never receives a hello.
+        case .resizeAck(let cw, let ch, _):
+            // The host adopted a new capture size for an in-session resize. Stage it as the
+            // pending capture size; the actor adopts it as the aspect-fit denominator only when
+            // a decoded CVPixelBuffer actually arrives at that size (frame-gated — in-flight
+            // old-size frames may still be queued after the ack). Acted on ONLY while streaming
+            // (a stray/late ack after teardown is inert). The epoch is the host's echo of the
+            // request that won; the actor does not re-validate it (the host already dropped
+            // stale epochs). With `RWORK_VIDEO_RESIZE` OFF the host never sends a resizeAck, so
+            // this branch is never reached on the fixed-size path.
+            guard state == .streaming else { return [] }
+            return [.updateCaptureSize(VideoSize(width: Double(cw), height: Double(ch)))]
+        case .hello, .resizeRequest, .keepalive:
+            // The client never receives a hello / resizeRequest / keepalive (all client→host) —
+            // defensive no-op.
             return []
         }
     }
@@ -129,6 +146,111 @@ public enum VideoScaleMath {
     public static func videoScale(layerSize: VideoSize, decodedSize: VideoSize) -> Double {
         guard decodedSize.width > 0 else { return 1.0 }
         return layerSize.width / decodedSize.width
+    }
+}
+
+/// Pure frame-gated resize-adoption decision (the client mirror of the host's
+/// ``SizeNegotiation``): after the host acks an in-session resize, the client must adopt the new
+/// size as its aspect-fit denominator (``decodedSize``) ONLY when a decoded `CVPixelBuffer` at
+/// the new size actually arrives — an in-flight OLD-size frame queued behind the ack must NOT
+/// trip adoption early (it would briefly mis-scale the cursor / `videoScale`). Two gates, both
+/// required; pure so the gating is unit-testable without a `VTDecompressionSession`.
+public enum ResizeAdoption {
+    /// Whether the just-decoded buffer is the genuinely-NEW size (adopt) rather than an
+    /// in-flight old-size frame (reject).
+    ///
+    /// - `pending`: the acked target size (host window POINTS).
+    /// - `decoded`: the just-decoded buffer dims (PIXELS = points × captureScale).
+    /// - `previousDecoded`: the prior decoded buffer dims (`nil` ⇒ first frame).
+    ///
+    /// Gate 1 — ASPECT: the decoded aspect matches the acked aspect. Rejects an old frame when
+    /// the resize CHANGED the aspect (the common freeform-drag case).
+    /// Gate 2 — MAGNITUDE: the decoded pixel size actually CHANGED from the previous decoded
+    /// frame. Rejects an old frame when the resize PRESERVED the aspect (a proportional resize),
+    /// where the aspect gate alone would adopt on the first identical-aspect old frame. The
+    /// client can't exact-match pixels↔points (no captureScale client-side), but the first
+    /// genuinely-new-size frame is the first whose dims differ from the steady old size.
+    ///
+    /// ⚠️ Residual: a rapid double-resize WITHIN the in-flight window can adopt the latest
+    /// `pending` on an intermediate-size frame (both gates pass: aspect matches + dims changed,
+    /// but to the intermediate size, not the final one). Rare; self-heals on the next IDR.
+    public static func shouldAdopt(pending: VideoSize, decoded: VideoSize, previousDecoded: VideoSize?) -> Bool {
+        guard pending.width > 0, pending.height > 0, decoded.width > 0, decoded.height > 0 else { return false }
+        let aspectMatches = abs(pending.width / pending.height - decoded.width / decoded.height) < 0.02
+        let sizeChanged = previousDecoded.map { abs(decoded.width - $0.width) >= 1 || abs(decoded.height - $0.height) >= 1 } ?? true
+        return aspectMatches && sizeChanged
+    }
+}
+
+/// Pure client-side debounce for the in-session resize feature (the platform-free mirror
+/// of ``LTREscalationTracker``'s pass-`now`-in discipline): the host view fires a layout
+/// callback on EVERY frame of a live window-drag, but the host should re-size capture only
+/// once per settled size — a flood of `resizeRequest`s mid-drag would thrash the
+/// AX-resize + SCStream reconfigure and pump epochs needlessly. This coalesces a burst to
+/// the size the surface SETTLES on: while the layer is still changing it `.hold`s; once it
+/// has been QUIET for `settleInterval` (and differs from the last requested size by at
+/// least `minDelta` on some axis) it emits `.request(settled)` exactly once. No timer / no
+/// Network — the caller passes the layer size + elapsed-since-last-change in — so the
+/// coalescing is unit-testable in isolation. The epoch counter is minted here so each
+/// emitted request carries a monotonic, host-droppable epoch.
+public struct ResizeDebounce: Sendable, Equatable {
+    /// The size of the last request the client actually EMITTED (`nil` ⇒ none yet — the
+    /// session is still at its hello-negotiated capture size). A new settled size is
+    /// compared against this to drop sub-`minDelta` jitter.
+    public private(set) var lastRequested: VideoSize?
+    /// The monotonic epoch of the last emitted request (0 ⇒ none emitted yet). The next
+    /// emitted request carries `lastEpoch + 1`.
+    public private(set) var lastEpoch: UInt32 = 0
+
+    /// Minimum per-axis change (points) below which a new settled size is treated as
+    /// jitter and dropped (no request) — prevents a 1px layout wobble re-sizing capture.
+    public let minDelta: Double
+    /// How long the layer size must be UNCHANGED before the burst is considered settled
+    /// and a request fires (seconds, elapsed-since-last-change passed in by the caller).
+    public let settleInterval: TimeInterval
+
+    public init(minDelta: Double = 8, settleInterval: TimeInterval = 0.2) {
+        self.minDelta = minDelta
+        self.settleInterval = settleInterval
+    }
+
+    /// The debounce decision for one layer-size sample.
+    public enum Decision: Equatable, Sendable {
+        /// The size has settled and differs enough — emit a `resizeRequest` for this size.
+        case request(VideoSize)
+        /// Still mid-burst (not yet quiet), or the settled size is within `minDelta` of the
+        /// last request — do nothing.
+        case hold
+    }
+
+    /// Decides whether `layerSize` should trigger a resize request, given how long the
+    /// layer has been at this size (`elapsedSinceLastChange`, passed in by the caller —
+    /// the actor measures it, exactly like ``LTREscalationTracker`` takes `now`). Pure
+    /// query: it does NOT mutate — call ``noteRequested(_:)`` after acting on `.request`.
+    public func decide(layerSize: VideoSize, elapsedSinceLastChange: TimeInterval) -> Decision {
+        // Still settling: the layer changed too recently to be the final size — coalesce.
+        guard elapsedSinceLastChange >= settleInterval else { return .hold }
+        // Quiet long enough — is this a meaningful change vs the last request we emitted?
+        guard changedEnough(from: lastRequested, to: layerSize) else { return .hold }
+        return .request(layerSize)
+    }
+
+    /// Records that a request for `size` was emitted: stores it as the new baseline and
+    /// advances the epoch. Returns the epoch the emitted request must carry. Call this
+    /// ONLY after acting on a `.request(size)` decision (mirrors
+    /// ``LTREscalationTracker/noteRequestSent(now:)`` being a separate mutator).
+    @discardableResult
+    public mutating func noteRequested(_ size: VideoSize) -> UInt32 {
+        lastRequested = size
+        lastEpoch &+= 1
+        return lastEpoch
+    }
+
+    /// Whether `to` differs from `from` by at least `minDelta` on some axis. A `nil`
+    /// baseline (no request yet) always counts as changed (the first settle always fires).
+    private func changedEnough(from: VideoSize?, to: VideoSize) -> Bool {
+        guard let from else { return true }
+        return abs(to.width - from.width) >= minDelta || abs(to.height - from.height) >= minDelta
     }
 }
 
@@ -273,5 +395,61 @@ public struct InputEventEncoder: Sendable {
 
     public mutating func text(_ string: String) -> InputEvent {
         .text(string, tag: takeTag())
+    }
+}
+
+/// Pure decider for the cursor-shape SELF-HEAL (FIX B). A cursor shape bitmap is shipped over
+/// the cursor socket ONCE per `shapeID`; a lost (or over-MTU, IP-fragment-lost) shape would
+/// otherwise leave the overlay permanently wrong/invisible for the whole session — the host
+/// strips the real cursor, so this overlay is the ONLY cursor the user sees.
+///
+/// When a cursor POSITION update references a `shapeID` the client has NOT cached, the client
+/// re-requests that shape on the EXISTING recovery channel (mirroring `requestIDR`). This type
+/// decides WHETHER to send such a request: only for an UNKNOWN id, and at most once per
+/// `reRequestInterval` so a steady stream of position updates referencing a still-missing id
+/// (the host's re-ship may itself be lost) does not flood the recovery channel. `noteShapeArrived`
+/// marks an id cached (idempotent re-insert) so its position updates stop triggering requests.
+///
+/// Pure value type — no transport, no clock (the caller passes `now`) — so the decision is
+/// headlessly unit-testable without a socket or a `CALayer`.
+public struct CursorShapeRequestTracker: Sendable, Equatable {
+    /// Shape ids the client has received the bitmap for (cached) — their position updates never
+    /// re-request. A received shape is recorded here even if it arrived before any position update.
+    private var knownShapeIDs: Set<UInt16> = []
+    /// Host time (seconds) of the last re-request PER missing shapeID, so a still-missing id is
+    /// re-requested at most once per ``reRequestInterval`` instead of on every ~120 Hz position
+    /// update. Cleared for an id once its shape arrives.
+    private var lastRequested: [UInt16: TimeInterval] = [:]
+
+    /// Minimum spacing between re-requests for the SAME missing shapeID (seconds). A few × RTT:
+    /// long enough that one re-ship has time to arrive, short enough to self-heal promptly.
+    public let reRequestInterval: TimeInterval
+
+    public init(reRequestInterval: TimeInterval = 0.5) {
+        self.reRequestInterval = reRequestInterval
+    }
+
+    /// A cursor shape bitmap arrived for `shapeID` — mark it cached (idempotent) and stop
+    /// re-requesting it.
+    public mutating func noteShapeArrived(_ shapeID: UInt16) {
+        knownShapeIDs.insert(shapeID)
+        lastRequested[shapeID] = nil
+    }
+
+    /// Whether the id is already cached (no request needed). Test/diagnostics seam.
+    public func isKnown(_ shapeID: UInt16) -> Bool { knownShapeIDs.contains(shapeID) }
+
+    /// A cursor POSITION update referenced `shapeID` at host time `now`. Returns `true` iff the
+    /// client should SEND a `requestCursorShape(shapeID)` now: the id is unknown AND no request
+    /// for it was sent within ``reRequestInterval``. Records the request time when it returns
+    /// `true` (so it is the query+mutator the caller acts on), so the next ~120 Hz update for the
+    /// same still-missing id does not immediately re-fire.
+    public mutating func shouldRequest(shapeID: UInt16, now: TimeInterval) -> Bool {
+        guard !knownShapeIDs.contains(shapeID) else { return false }
+        if let last = lastRequested[shapeID], now - last < reRequestInterval {
+            return false
+        }
+        lastRequested[shapeID] = now
+        return true
     }
 }

@@ -100,7 +100,7 @@ let package = Package(
         // Builds for macOS 26 + iOS 26 (the deployment floor — no fallback below that).
         .target(
             name: "RworkClientUI",
-            dependencies: ["RworkClient", "RworkInspector", "RworkClaudeCode", "RworkTerminal"]
+            dependencies: ["RworkClient", "RworkTransport", "RworkInspector", "RworkClaudeCode", "RworkTerminal"]
         ),
 
         // MARK: PATH 2 — GUI video path (Phase 4 / WF-9)
@@ -179,7 +179,7 @@ let package = Package(
         // triple build, not here.
         .testTarget(
             name: "RworkClientUITests",
-            dependencies: ["RworkClientUI", "RworkClient", "RworkHost", "RworkInspector", "RworkClaudeCode", "RworkTerminal"]
+            dependencies: ["RworkClientUI", "RworkClient", "RworkTransport", "RworkHost", "RworkInspector", "RworkClaudeCode", "RworkTerminal"]
         ),
         // WF-9 GUI video path: ONLY the PURE RworkVideoProtocol is unit-tested
         // (packetize/reassemble incl. fragment-loss → drop + recovery, FEC real
