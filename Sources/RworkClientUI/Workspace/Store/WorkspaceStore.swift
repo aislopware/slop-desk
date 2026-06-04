@@ -79,6 +79,23 @@ public final class WorkspaceStore {
     /// mutation"). One write per quiet period, not one per keystroke-driven split/resize.
     private let saveDebounce: Duration
 
+    /// FIX #4: how long to let a closed `.remoteGUI` pane's video stack ACTUALLY release before the
+    /// store frees its ``liveVideoCap`` slot. `teardown()` for a `.remoteGUI` pane sets
+    /// `RemoteWindowModel.active = nil`, which only triggers the SwiftUI dismantle of the
+    /// `VideoWindowView` → `VideoWindowPipeline.deactivate()` → a detached `session.stop()` that
+    /// closes the two UDP `NWConnection`s + `VTDecompressionSession` + display link. That real
+    /// release completes a few runloop turns AFTER `teardown()` returns, so freeing the slot the
+    /// instant `teardown()` returns can transiently admit a sibling while the old stack is still up
+    /// (cap+1 — no crash/leak, just a momentary over-commit). The pipeline now runs `stop()` as one
+    /// ordered task (`VideoWindowPipeline.awaitStopped()`), but it lives inside the SwiftUI-owned
+    /// AppKit view and is not reachable from the store for a direct `await`; so the store holds the
+    /// slot for this bounded settle past `teardown()` to cover the dismantle→stop lag. Injectable so
+    /// a test can set it to `.zero` for deterministic, sleep-free assertions. DEFAULT `.zero` = the
+    /// old free-immediately behaviour, so EVERY existing test + the OFF/terminal-only paths are
+    /// byte-identical (they never enter this gate); the PRODUCTION app opts in with a small window
+    /// (``RworkClientApp``). [MS-confirm] the real dismantle→stop lag on hardware.
+    private let videoTeardownSettle: Duration
+
     /// The pending debounced-save task. Cancelled + replaced on each mutation so only the last
     /// mutation in a burst actually writes; cancel-safe (a cancelled sleep simply returns).
     private var saveTask: Task<Void, Never>?
@@ -161,13 +178,15 @@ public final class WorkspaceStore {
         makeSession: @escaping @MainActor (PaneSpec) -> any PaneSessionHandle,
         liveVideoCap: Int = 2,
         persistence: WorkspacePersistence? = nil,
-        saveDebounce: Duration = .milliseconds(600)
+        saveDebounce: Duration = .milliseconds(600),
+        videoTeardownSettle: Duration = .zero
     ) {
         self.workspace = restoring ?? .defaultWorkspace()
         self.makeSession = makeSession
         self.liveVideoCap = liveVideoCap
         self.persistence = persistence
         self.saveDebounce = saveDebounce
+        self.videoTeardownSettle = videoTeardownSettle
         reconcile()   // materialize idle sessions for the restored/default leaves
         savingEnabled = true   // arm debounced saves only AFTER the restore reconcile
     }
@@ -587,6 +606,18 @@ public final class WorkspaceStore {
             teardownTasks[id] = Task { @MainActor in
                 for orphan in orphans {
                     await orphan.teardown()
+                    // FIX #4: for a `.remoteGUI` orphan that was holding a live stack, `teardown()`
+                    // only KICKS OFF the release — it sets `RemoteWindowModel.active = nil`, and the
+                    // actual UDP/VTDecompression/display-link teardown happens a few runloop turns
+                    // later inside the SwiftUI dismantle → `VideoWindowPipeline.deactivate()` →
+                    // detached `session.stop()`. Hold the cap slot for `videoTeardownSettle` past
+                    // `teardown()` so a same-tick sibling cannot be admitted while the old stack is
+                    // still up (transient cap+1). Only entered for an id actually IN `tearingDownVideo`
+                    // (a `.remoteGUI` pane that was live) and only when a settle is configured, so the
+                    // terminal-only / `.zero`-settle paths are unaffected. The sleep is cancel-safe.
+                    if self.tearingDownVideo.contains(orphan.id), self.videoTeardownSettle > .zero {
+                        try? await Task.sleep(for: self.videoTeardownSettle)
+                    }
                     // The orphan's video resources are now released — stop counting it against the cap
                     // (ITEM #3). Serialized on the main actor with `activateVideo`'s read, so a
                     // same-tick reopen sees the slot freed only after the real release.

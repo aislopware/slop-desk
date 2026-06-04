@@ -187,6 +187,91 @@ final class FECTests: XCTestCase {
         XCTAssertEqual(reassembler.nextDroppedFrame(), data0[0].header.frameID, "two-loss group is unrepairable → dropped immediately, grace does not apply")
     }
 
+    /// FIX #1 (empirically reproduced): the reassembler must NOT trust the lowest
+    /// observed parity `fragIndex` as the data boundary when an FEC scheme is present.
+    /// The packetizer assigns parity `fragIndex = trueDataCount + groupOrder`, so if the
+    /// GROUP-0 parity is lost and a LATER group's parity arrives first, the lowest
+    /// surviving parity fragIndex EXCEEDS the true dataCount. The old code set the
+    /// boundary to that inflated value, treating a real data fragment as parity → the
+    /// frame could never complete even though every data fragment eventually arrived.
+    ///
+    /// Repro: a 10-data-fragment frame (groupSize 5 → 2 parity groups) delivered as
+    /// data[0..8], then GROUP-1 parity (group-0 parity LOST), then data[9]. The frame
+    /// MUST complete (it previously returned nil forever — the inflated boundary treated
+    /// data[9] as parity). Here NO parity for the group containing the hole arrives until
+    /// data[9] itself does, so completion is by all-data-present, not FEC recovery.
+    func testFrameCompletesWhenGroup0ParityLostButAllDataArrives() throws {
+        let fec = XORParityFEC(groupSize: 5)
+        var packetizer = VideoPacketizer(fec: fec)
+        // Force EXACTLY 10 data fragments: 10 full-MTU payloads (the 10th carries the rest).
+        let frameBytes = NALUnit.join([Data((0 ..< (VideoPacketizer.maxPayloadSize * 9 + 17)).map { UInt8(truncatingIfNeeded: $0) })])
+        let fragments = packetizer.packetize(frame: frameBytes, keyframe: true)
+        let data = fragments.filter { !$0.header.flags.contains(.parity) }
+        let parity = fragments.filter { $0.header.flags.contains(.parity) }
+        XCTAssertEqual(data.count, 10, "frame must split into exactly 10 data fragments")
+        XCTAssertEqual(parity.count, 2, "10 data / groupSize 5 = 2 parity groups")
+
+        var reassembler = FrameReassembler(fec: fec)
+        var completed: ReassembledFrame?
+
+        // 1) data[0..3] arrive (group 0: 0..4) — withhold the group-0 member data[4] so the
+        //    GROUP-1 parity, when it lands, cannot prematurely "recover" anything (group 1
+        //    is whole-once-data[9]-arrives; group 0 still has a hole that group-1 parity
+        //    cannot touch). data[5..8] arrive too (group 1: 5..9, only data[9] withheld).
+        for fragment in data where fragment.header.fragIndex != 4 && fragment.header.fragIndex != 9 {
+            if case .completed(let f) = reassembler.ingest(fragment) { completed = f }
+        }
+        XCTAssertNil(completed, "still missing data[4] and data[9]")
+
+        // 2) GROUP-1 parity arrives FIRST (group-0 parity is LOST). With the OLD off-by-one
+        //    this shifted the boundary to fragIndex 11, so data[9] was treated as parity and
+        //    the frame could never assemble. Group 1 still has its data[9] hole AND no group-0
+        //    parity, so nothing completes yet — but the boundary must stay at 10.
+        if case .completed(let f) = reassembler.ingest(parity[1]) { completed = f }
+        // Group 1 hole (data[9]) IS repairable by parity[1] now → it recovers; group 0 still
+        // missing data[4] with no parity → frame stays incomplete.
+        XCTAssertNil(completed, "group-0 still missing data[4] (its parity was lost)")
+
+        // 3) data[4] AND data[9] finally arrive → ALL data present → frame MUST complete.
+        for fragment in data where fragment.header.fragIndex == 4 || fragment.header.fragIndex == 9 {
+            if case .completed(let f) = reassembler.ingest(fragment) { completed = f }
+        }
+        XCTAssertNotNil(completed, "all data arrived; lost group-0 parity must NOT wedge the frame")
+        XCTAssertEqual(completed?.avcc, frameBytes, "recovered frame matches original exactly")
+        XCTAssertNil(reassembler.nextDroppedFrame(), "a fully-arrived frame is never dropped")
+    }
+
+    /// FIX #1 companion: a SINGLE data loss in group 1, recovered by group-1 parity, while
+    /// the GROUP-0 parity is lost. The group-0 parity loss is irrelevant (group 0 has no
+    /// hole) and must NOT misalign the surviving group-1 parity. Keying parity by GROUP
+    /// ORDER means group-1 parity lands at slot 1 (where recover() expects it), not shifted.
+    func testGroup1DataLossRecoversWhenGroup0ParityLost() throws {
+        let fec = XORParityFEC(groupSize: 5)
+        var packetizer = VideoPacketizer(fec: fec)
+        let frameBytes = NALUnit.join([Data((0 ..< (VideoPacketizer.maxPayloadSize * 9 + 80)).map { UInt8(truncatingIfNeeded: $0) })])
+        let fragments = packetizer.packetize(frame: frameBytes, keyframe: true)
+        let data = fragments.filter { !$0.header.flags.contains(.parity) }
+        let parity = fragments.filter { $0.header.flags.contains(.parity) }
+        XCTAssertEqual(data.count, 10)
+        XCTAssertEqual(parity.count, 2)
+
+        var reassembler = FrameReassembler(fec: fec)
+        var completed: ReassembledFrame?
+
+        // All data EXCEPT data[7] (a hole in group 1: indices 5..9).
+        for fragment in data where fragment.header.fragIndex != 7 {
+            if case .completed(let f) = reassembler.ingest(fragment) { completed = f }
+        }
+        XCTAssertNil(completed, "group-1 still missing data[7]")
+
+        // GROUP-1 parity arrives; group-0 parity is LOST. The single group-1 hole must be
+        // recovered (parity correctly aligned at group order 1).
+        if case .completed(let f) = reassembler.ingest(parity[1]) { completed = f }
+        XCTAssertNotNil(completed, "group-1 parity must recover data[7] even with group-0 parity lost")
+        XCTAssertEqual(completed?.avcc, frameBytes, "recovered frame matches original exactly")
+        XCTAssertNil(reassembler.nextDroppedFrame())
+    }
+
     /// With FEC, losing a data fragment AND its group's parity is unrecoverable. With
     /// the reorder grace DISABLED (`fecReorderGrace: 0`, the old immediate-sweep
     /// behavior) the frame is dropped as soon as a newer frame arrives.

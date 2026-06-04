@@ -47,9 +47,18 @@ public struct FrameReassembler {
         var crisp: Bool
         /// Data-fragment payloads by `fragIndex` (the data range is `0 ..< dataCount`).
         var data: [UInt16: Data] = [:]
-        /// Parity-fragment payloads by their group order (0-based among parity frags).
+        /// Parity-fragment payloads keyed by their GROUP ORDER (0-based among parity
+        /// frags), NOT by raw `fragIndex`. The packetizer assigns parity
+        /// `fragIndex = trueDataCount + groupOrder`, so keying by group order means a
+        /// LOST group-0 parity never shifts the boundary or mis-maps a surviving
+        /// higher-group parity (FIX #1). The group order is recovered at ingest from the
+        /// fragCount-inverted dataCount: `groupOrder = fragIndex - invertedDataCount`.
         var parity: [Int: Data] = [:]
-        /// First parity fragment index (== number of data fragments) once known.
+        /// The observed parity boundary (lowest parity `fragIndex` seen). With an FEC
+        /// scheme this is recorded ONLY as a no-FEC fallback / cross-check; the
+        /// authoritative dataCount comes from the unambiguous fragCount inversion (FIX
+        /// #1) because a lost group-0 parity makes the lowest observed parity fragIndex
+        /// EXCEED the true dataCount. With no FEC there is no parity, so this stays `nil`.
         var dataCount: Int?
     }
 
@@ -122,11 +131,19 @@ public struct FrameReassembler {
         if fragment.header.flags.contains(.crisp) { entry.crisp = true }
 
         if fragment.header.flags.contains(.parity) {
-            // Parity index = its position past the data fragments.
-            // We learn dataCount from the lowest parity fragIndex seen.
             let pIndex = Int(fragment.header.fragIndex)
+            // Track the lowest observed parity fragIndex. With NO FEC scheme this is the
+            // only data-boundary signal we have. With an FEC scheme it is NOT trusted as
+            // the boundary (a lost group-0 parity makes the lowest survivor's fragIndex
+            // exceed the true dataCount); `resolvedDataCount` derives the boundary from
+            // the fragCount inversion instead and uses this only as a cross-check (FIX #1).
             entry.dataCount = min(entry.dataCount ?? pIndex, pIndex)
-            entry.parity[pIndex] = fragment.payload
+            // Key parity by GROUP ORDER (= fragIndex - dataCount), so a lost group-0
+            // parity does not shift the boundary or mis-map a surviving higher-group
+            // parity. Without FEC, fall back to the raw fragIndex (no inversion possible).
+            let dataBoundary = fec != nil ? invertedDataCount(fragCount: Int(entry.fragCount)) : pIndex
+            let groupOrder = max(0, pIndex - dataBoundary)
+            entry.parity[groupOrder] = fragment.payload
         } else {
             entry.data[fragment.header.fragIndex] = fragment.payload
         }
@@ -190,15 +207,15 @@ public struct FrameReassembler {
         guard dataCount > 0 else { return false }
         var index = 0
         var groupIndex = 0
-        let parityBase = dataCount
         var sawRepairableHole = false
         while index < dataCount {
             let upper = min(index + fec.groupSize, dataCount)
             let missing = (index ..< upper).filter { entry.data[UInt16($0)] == nil }.count
             if missing >= 2 { return false } // not parity-repairable: permanently hopeless
             if missing == 1 {
-                // A single hole repairable IFF its parity is still outstanding.
-                if entry.parity[parityBase + groupIndex] != nil { return false }
+                // A single hole repairable IFF its parity is still outstanding. Parity is
+                // keyed by GROUP ORDER (FIX #1), so this group's parity is `parity[groupIndex]`.
+                if entry.parity[groupIndex] != nil { return false }
                 sawRepairableHole = true
             }
             index += fec.groupSize
@@ -217,15 +234,27 @@ public struct FrameReassembler {
 
     /// Resolves how many of a frame's fragments are DATA (vs FEC parity).
     ///
-    /// Prefer the observed parity boundary (lowest parity `fragIndex` seen). If no
-    /// parity fragment has arrived yet but this reassembler has an FEC scheme, invert
-    /// `fragCount = dataCount + ceil(dataCount / groupSize)` to recover `dataCount`
-    /// from the total — so a frame whose only loss is its single parity fragment, or
-    /// whose data all arrived before any parity, still completes. With no FEC,
-    /// `dataCount == fragCount`.
+    /// With an FEC scheme present, ALWAYS derive `dataCount` from the unambiguous
+    /// fragCount inversion (`fragCount = dataCount + ceil(dataCount / groupSize)`), NOT
+    /// from the observed parity boundary (FIX #1): the packetizer assigns parity
+    /// `fragIndex = trueDataCount + groupOrder`, so if group-0 parity is LOST the lowest
+    /// surviving parity fragIndex EXCEEDS the true dataCount and would shift the boundary
+    /// — wedging an otherwise-recoverable frame (all data arrives, but the boundary is
+    /// off so a real data fragment is treated as parity). The inversion depends only on
+    /// the total `fragCount` (which every fragment carries), so it is correct regardless
+    /// of WHICH parity fragments survived. With no FEC, `dataCount == fragCount`.
     private func resolvedDataCount(_ entry: Pending) -> Int {
-        if let observed = entry.dataCount { return observed }
         let total = Int(entry.fragCount)
+        if fec != nil { return invertedDataCount(fragCount: total) }
+        // No FEC: every fragment is data (the observed boundary, if any, equals total).
+        return entry.dataCount ?? total
+    }
+
+    /// Inverts `fragCount = dataCount + ceil(dataCount / groupSize)` to recover the data
+    /// fragment count from the total, assuming the configured FEC group size. Monotonic
+    /// in `dataCount`, so a simple descending scan finds the unique solution. Returns
+    /// `fragCount` unchanged if there is no FEC scheme (no parity to subtract).
+    private func invertedDataCount(fragCount total: Int) -> Int {
         guard let fec else { return total }
         // Find d such that d + ceil(d / groupSize) == total. Monotonic in d.
         var d = total
@@ -254,7 +283,10 @@ public struct FrameReassembler {
 
         if dataFragments.contains(where: { $0 == nil }), let fec {
             let parityCount = Int(entry.fragCount) - dataCount
-            let parityFragments: [Data?] = (0 ..< max(0, parityCount)).map { entry.parity[dataCount + $0] }
+            // Parity is keyed by GROUP ORDER (FIX #1): group `g`'s parity is `parity[g]`,
+            // so a lost group-0 parity leaves slot 0 `nil` (the recover() contract) while
+            // a surviving group-1 parity is correctly at slot 1 — never shifted.
+            let parityFragments: [Data?] = (0 ..< max(0, parityCount)).map { entry.parity[$0] }
             dataFragments = fec.recover(dataFragments: dataFragments, parityFragments: parityFragments)
         }
 
@@ -278,12 +310,12 @@ public struct FrameReassembler {
         }
         var index = 0
         var groupIndex = 0
-        let parityBase = dataCount
         while index < dataCount {
             let upper = min(index + fec.groupSize, dataCount)
             let missing = (index ..< upper).filter { entry.data[UInt16($0)] == nil }.count
             if missing >= 2 { return false }
-            if missing == 1, entry.parity[parityBase + groupIndex] == nil { return false }
+            // Parity keyed by GROUP ORDER (FIX #1): this group's parity is `parity[groupIndex]`.
+            if missing == 1, entry.parity[groupIndex] == nil { return false }
             index += fec.groupSize
             groupIndex += 1
         }

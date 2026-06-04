@@ -89,7 +89,12 @@ public struct RworkClientApp: App {
                 muxRegistry: muxRegistry
             ),
             liveVideoCap: liveVideoCap,
-            persistence: persistence
+            persistence: persistence,
+            // FIX #4: hold a closed `.remoteGUI` pane's cap slot briefly past `teardown()` so the
+            // SwiftUI dismantle → VideoWindowPipeline.deactivate() → detached session.stop() (which
+            // closes the 2 UDP NWConnections + VTDecompressionSession + display link) actually
+            // releases the stack before a same-tick sibling is admitted (avoids a transient cap+1).
+            videoTeardownSettle: .milliseconds(250)
         )
         // Automation seams (docs/22 §7): only when the env vars are present do we let the bootstrap
         // REPLACE the restored workspace with the autoconnect/video shape (a normal launch restores the

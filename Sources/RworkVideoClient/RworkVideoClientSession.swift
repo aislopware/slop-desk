@@ -467,6 +467,16 @@ public actor RworkVideoClientSession {
             // like the `awaitingKeyframe` path above; otherwise the pacer re-presents the last good
             // frame indefinitely (especially once the host window goes static and stops producing
             // frames). Idempotent on the host — the escalation tracker dedups duplicate requests.
+            //
+            // FIX #3: a HARD failure can leave the VTDecompressionSession itself in a dead
+            // state. On a fixed capture size (RWORK_VIDEO_RESIZE OFF, the default) the forced
+            // recovery IDR carries BYTE-IDENTICAL VPS/SPS/PPS → needsReconfigure=false → the
+            // SAME malfunctioning session would be reused forever (pane frozen permanently).
+            // Force a session rebuild here so the next keyframe — even byte-identical — re-runs
+            // configure() against a FRESH session. Done BEFORE requestIDR() so the rebuild is in
+            // place by the time the recovery keyframe arrives. (The healthy heartbeat-IDR reuse
+            // path / BUG-I is untouched: only a decode FAILURE clears the cached parameter sets.)
+            decoder.invalidateSession()
             requestIDR()
         }
     }

@@ -50,13 +50,13 @@ final class LiveVideoCapTests: XCTestCase {
     /// single-remoteGUI-tab workspace (NOT `addTab`, which would leave the default terminal tab in
     /// the registry and contaminate the cap accounting). Each split adds exactly one new `.remoteGUI`
     /// session; reconcile materializes them all IDLE (none video-active yet).
-    private func makeStoreWithRemoteGUILeaves(_ n: Int, cap: Int) -> (store: WorkspaceStore, ids: [PaneID]) {
+    private func makeStoreWithRemoteGUILeaves(_ n: Int, cap: Int, videoTeardownSettle: Duration = .zero) -> (store: WorkspaceStore, ids: [PaneID]) {
         precondition(n >= 1)
         let rootID = PaneID()
         let spec = PaneSpec(kind: .remoteGUI, title: "Remote window")
         let tab = Tab(name: "Remote window", root: .leaf(rootID, spec), focusedPane: rootID)
         let ws = Workspace(tabs: [tab], activeTabID: tab.id)
-        let store = WorkspaceStore(restoring: ws, makeSession: { FakePaneSession($0) }, liveVideoCap: cap)
+        let store = WorkspaceStore(restoring: ws, makeSession: { FakePaneSession($0) }, liveVideoCap: cap, videoTeardownSettle: videoTeardownSettle)
 
         var ids = store.activeTab!.root.allLeafIDs()
         // Split the most-recently-added leaf to grow the tree to `n` remoteGUI leaves.
@@ -411,6 +411,54 @@ final class LiveVideoCapTests: XCTestCase {
                       "once the closed pane's teardown released its stack, the reopened pane admits")
         let activeIDs = Set(store.allSessions.filter { $0.isVideoActive }.map { $0.id })
         XCTAssertEqual(activeIDs, Set([ids[1], reopened]), "exactly cap=2 live; no overlap ever exceeded it")
+    }
+
+    /// FIX #4: with a non-zero `videoTeardownSettle`, a closed video pane's cap slot stays HELD for the
+    /// settle window PAST `teardown()`'s return — modelling the real SwiftUI dismantle →
+    /// VideoWindowPipeline.deactivate() → detached session.stop() lag (the slot must not free until the
+    /// UDP/VTDecompression/display-link stack is genuinely down). Here teardown returns immediately (no
+    /// gate), but the settle keeps `tearingDownVideo` holding the slot so a same-tick reopen is gated
+    /// until `quiesce()` drains past the settle. The DEFAULT settle is `.zero` (every other test), so
+    /// this gate is opt-in and changes nothing on the existing paths.
+    func testTeardownSettleHoldsSlotPastTeardownThenFrees() async {
+        let (store, ids) = makeStoreWithRemoteGUILeaves(2, cap: 2, videoTeardownSettle: .milliseconds(80))
+        XCTAssertTrue(store.activateVideo(ids[0]))
+        XCTAssertTrue(store.activateVideo(ids[1]), "cap=2 saturated")
+
+        // Close ids[0] (active) — teardown() returns immediately (no gate), but the settle holds its slot.
+        store.closePane(ids[0])
+        XCTAssertNil(store.handle(for: ids[0]), "closed pane gone from the registry synchronously")
+
+        // Same tick, open a replacement. It must be GATED while the closing pane's slot is still held by
+        // the settle (ids[1] live + ids[0] settling = cap of 2 occupied). Yield a few turns so teardown()
+        // has returned but the settle sleep is still in flight.
+        store.split(ids[1], axis: .horizontal, kind: .remoteGUI)
+        let reopened = store.activeTab!.root.allLeafIDs().first { $0 != ids[1] }!
+        await Task.yield()
+        XCTAssertFalse(store.activateVideo(reopened),
+                       "reopen gated during the teardown settle — the closing pane's stack is still settling")
+
+        // After quiesce() (which drains the teardown task INCLUDING its settle sleep), the slot frees.
+        await store.quiesce()
+        XCTAssertTrue(store.activateVideo(reopened),
+                      "once the settle elapsed and the stack released, the reopened pane admits")
+        let activeIDs = Set(store.allSessions.filter { $0.isVideoActive }.map { $0.id })
+        XCTAssertEqual(activeIDs, Set([ids[1], reopened]), "exactly cap=2 live; the ceiling was never exceeded")
+    }
+
+    /// FIX #4 negative control: with the DEFAULT `.zero` settle, behaviour is byte-identical to today —
+    /// a closed-active pane's slot frees as soon as `teardown()` returns (no settle hold). This pins
+    /// that the gate is a strict opt-in and does not perturb the existing `.zero`-settle paths.
+    func testZeroSettleFreesSlotImmediatelyAfterTeardown() async {
+        let (store, ids) = makeStoreWithRemoteGUILeaves(2, cap: 2) // default settle = .zero
+        XCTAssertTrue(store.activateVideo(ids[0]))
+        XCTAssertTrue(store.activateVideo(ids[1]))
+        store.closePane(ids[0])
+        store.split(ids[1], axis: .horizontal, kind: .remoteGUI)
+        let reopened = store.activeTab!.root.allLeafIDs().first { $0 != ids[1] }!
+        await store.quiesce() // no settle sleep — teardown completes promptly
+        XCTAssertTrue(store.activateVideo(reopened),
+                      "with .zero settle the freed slot admits the reopened pane (today's behaviour)")
     }
 
     /// An in-flight teardown of a NON-active (never video-activated) `.remoteGUI` pane must NOT gate the

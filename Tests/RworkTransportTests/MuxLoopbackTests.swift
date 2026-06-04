@@ -154,4 +154,43 @@ final class MuxLoopbackTests: XCTestCase {
         let hasLive = await client.hasLiveChannels
         XCTAssertTrue(hasLive, "B still live → connection must report live channels")
     }
+
+    // MARK: - FIX #2: clean peer channelClose drives the host close hook (PTY/fd teardown)
+
+    /// FIX #2: when the client cleanly closes a channel, the HOST's per-channel close hook must
+    /// fire with that channelID, so the host relay can shut its `MuxChannelSession` (close the PTY
+    /// + master fd). S1 has NO per-channel reconnect/resume, so a cleanly-closed channel's shell
+    /// must NOT be kept alive — without this hook, every cleanly-closed pane leaked its shell.
+    ///
+    /// Headless: drives a real host + client `MuxNWConnection` over in-memory links (no socket, no
+    /// PTY). The hook stands in for `HostServer.removeMuxSession`; here we assert it fires exactly
+    /// once with the right id, and that an UNCLOSED sibling channel does NOT trip it.
+    func testCleanChannelCloseFiresHostCloseHook() async throws {
+        let (clientControl, hostControl) = InMemoryMuxLink.pair()
+        let (clientData, hostData) = InMemoryMuxLink.pair()
+        let client = MuxNWConnection(role: .client, controlLink: clientControl, dataLink: clientData)
+        let host = MuxNWConnection(role: .host, controlLink: hostControl, dataLink: hostData)
+
+        // Collect every channelID the host close hook is invoked for (the production wiring maps
+        // this to removeMuxSession → MuxChannelSession.shutdown()).
+        actor Closed { var ids: [UInt32] = []; func add(_ id: UInt32) { ids.append(id) } }
+        let closed = Closed()
+        await host.setHostOpenHandler { _ in }            // accept opens (no echo needed here)
+        await host.setHostCloseHandler { id in Task { await closed.add(id) } }
+        await client.start()
+        await host.start()
+
+        let chA = try await client.openChannel(sessionID: UUID(), lastReceivedSeq: 0)
+        let chB = try await client.openChannel(sessionID: UUID(), lastReceivedSeq: 0)
+        try await Task.sleep(for: .milliseconds(50)) // host registers both opens
+
+        // Cleanly close ONLY channel A.
+        await client.closeChannel(chA.data.channelID)
+        try await Task.sleep(for: .milliseconds(50)) // let the close frame route on the host
+
+        let firedIDs = await closed.ids
+        XCTAssertEqual(firedIDs, [chA.data.channelID],
+                       "host close hook must fire exactly once, for the closed channel only (not the live sibling B)")
+        XCTAssertNotEqual(chA.data.channelID, chB.data.channelID)
+    }
 }

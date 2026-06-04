@@ -249,6 +249,14 @@ public actor MuxNWConnection {
                 let target = (link == .control) ? controlChannels.removeValue(forKey: channelID)
                                                  : dataChannels.removeValue(forKey: channelID)
                 if let target { await target.finish() }
+                // FIX #2: drive the host relay shutdown for a PEER channelClose. S1 has NO
+                // per-channel reconnect/resume, so a cleanly-closed channel's shell must NOT
+                // be kept alive — otherwise the PTY + master fd leak on every clean close.
+                // Keyed off the DATA link (symmetric to the DATA-link `hostOpenHandler` above) so
+                // it fires exactly ONCE per channel, AFTER both this link's sub-channel is
+                // finished. The host wiring maps this to `removeMuxSession(channelID)` →
+                // `MuxChannelSession.shutdown()`. No-op on the client (handler unset).
+                if role == .host, link == .data { hostCloseHandler?(channelID) }
             }
         case .dropUnknownChannel:
             break // stale / hostile frame — dropped, never a crash (router contract).
@@ -266,6 +274,17 @@ public actor MuxNWConnection {
         hostOpenHandler = handler
     }
 
+    /// Optional host hook (FIX #2): called when a PEER `channelClose` is routed on the DATA link,
+    /// AFTER the channel's sub-channels are finished, so the host relay can shut its per-channel
+    /// session (close the PTY + master fd). Set by the host wiring; unused on the client. Fires
+    /// exactly once per channel because the DATA-link entry is removed before this returns.
+    private var hostCloseHandler: (@Sendable (UInt32) -> Void)?
+
+    /// Installs the host's per-channel-close handler (shut session + free PTY/fd). Host-only.
+    public func setHostCloseHandler(_ handler: @escaping @Sendable (UInt32) -> Void) {
+        hostCloseHandler = handler
+    }
+
     /// Sends a `channelOpenAck` for `id` on the DATA link (host → client). Host-only.
     public func sendOpenAck(_ id: UInt32, accepted: Bool) async {
         let frame = MuxEnvelopeCodec.encode(.channelOpenAck(channelID: id, accepted: accepted))
@@ -279,6 +298,15 @@ public actor MuxNWConnection {
             // delivered frame, never racing ahead of in-flight data (which would drop the tail).
             if let error { await ch.finish(throwing: error) }
             else { await ch.finish() }
+        }
+        // FIX #2 (SECONDARY — crash/link-drop leak, the TCP-mux analogue of CONCURRENCY-HOST-1):
+        // when the whole shared DATA link drops WITHOUT a per-channel `channelClose` (peer crash /
+        // TCP reset), every channel riding it is dead and — since S1 has no per-channel
+        // reconnect/resume — its shell must be reaped. Drive the host close hook per channel here.
+        // Keyed off the DATA link (mirrors the open + the per-channel close above) so it fires once
+        // per channel; `removeMuxSession` is idempotent so any overlap with an `onExit` is harmless.
+        if role == .host, link == .data, let hostCloseHandler {
+            for id in channels.keys { hostCloseHandler(id) }
         }
     }
 }

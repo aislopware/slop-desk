@@ -365,6 +365,15 @@ public final class HostServer: @unchecked Sendable {
             guard let self else { return }
             self.spawnMuxChannel(open, on: connection)
         }
+        // FIX #2: a clean peer `channelClose` must tear the channel's PTY + master fd down. S1 has
+        // NO per-channel reconnect/resume, so a closed channel's shell must NOT be kept alive — the
+        // keep-alive `.bye` no-op in `MuxChannelSession` is for the link-survives case, not channel
+        // close. Without this, every cleanly-closed pane leaked its shell (the reaper covers only
+        // `sessions`, never `muxSessions`). `removeMuxSession` is idempotent with the `onExit` path,
+        // so a close that races the child's own exit is harmless (whichever runs first wins).
+        await connection.setHostCloseHandler { [weak self] channelID in
+            self?.removeMuxSession(channelID)
+        }
         onLog?("mux connection accepted (shared)")
     }
 

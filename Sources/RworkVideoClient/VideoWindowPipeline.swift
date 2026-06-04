@@ -156,6 +156,14 @@ final class VideoWindowPipeline {
     }
 
     /// Tears the pipeline + display link + sockets down (called on disappear/dismantle).
+    ///
+    /// `session.stop()` (which closes the two UDP `NWConnection`s, the `VTDecompressionSession`,
+    /// and the display link) is `async` and cannot be awaited here — this runs on SwiftUI's
+    /// synchronous `dismantleNSView`, so it is fire-and-forget. The cap-accounting owner
+    /// (``WorkspaceStore``) cannot reach this view-owned pipeline to await the real release, AND the
+    /// lag it must cover is the FULL close→SwiftUI-dismantle→deactivate→stop chain (not just stop),
+    /// so it holds the live-video slot for a small bounded `videoTeardownSettle` past teardown
+    /// instead (FIX #4). Over-holding fails safe (at worst a brief admission delay at the cap).
     func deactivate() {
         stopMotionPump()
         pacer?.stop()
