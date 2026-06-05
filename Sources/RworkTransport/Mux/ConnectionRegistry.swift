@@ -85,6 +85,18 @@ public final class ConnectionRegistry {
         // Reserve a refcount slot BEFORE the openChannel suspension so a concurrent last-channel
         // `release` cannot tear this connection down while we are mid-open (release checks
         // pendingAcquires). Mirrors the post-await in-place mutation discipline below.
+        //
+        // Create-or-fetch the entry FIRST (idempotent): a COALESCED first-acquire returns its
+        // connection via the `building` task (line ~119) WITHOUT creating the entry — only the build
+        // CREATOR stores `entries[key]` (line ~126). Awaiters of one `Task.value` are NOT guaranteed to
+        // resume in registration order, so a coalescer can reach this line BEFORE the creator runs that
+        // store, leaving `entries[key]` nil. The optional-chained `+= 1` would then SILENTLY NO-OP
+        // (under-count), but the matching `-= 1` (success/throw paths below) still runs → pendingAcquires
+        // goes NEGATIVE → the last-channel teardown guard `(pendingAcquires ?? 0) == 0` never holds → the
+        // shared connection (and both panes' sockets) leak FOREVER. Anchoring the reservation on a
+        // guaranteed-present entry closes the race; `Entry(connection:)` reuses the connection
+        // `sharedConnection` just returned (the same instance every coalescer shares).
+        if entries[key] == nil { entries[key] = Entry(connection: connection) }
         entries[key]?.pendingAcquires += 1
         let pair: (data: MuxSubChannel, control: MuxSubChannel)
         do {
@@ -114,7 +126,20 @@ public final class ConnectionRegistry {
     /// thereafter. Concurrent first acquisitions for the same endpoint await ONE shared build task
     /// (the `building` pool) so they never each construct a connection and orphan one.
     private func sharedConnection(host: String, port: UInt16, key: String) async throws -> MuxNWConnection {
-        if let existing = entries[key] { return existing.connection }
+        if let existing = entries[key] {
+            // Evict a DEAD pooled connection ([5]): a link drop (TCP RST / NetBird flap) leaves the
+            // shared `MuxNWConnection` unusable but NOT removed from the pool (a surviving sibling
+            // channel kept the entry), so a reconnecting pane would otherwise re-acquire the corpse and
+            // its `openChannel` would fail forever. If the pooled connection reports `isDead`, drop the
+            // entry + close it and fall through to build a FRESH one. A still-live connection is reused
+            // as before (the shared-connection invariant).
+            if await existing.connection.isDead {
+                entries.removeValue(forKey: key)
+                await existing.connection.close()
+            } else {
+                return existing.connection
+            }
+        }
         if let inFlight = building[key] {
             return try await inFlight.value      // a concurrent first-acquire is already building it
         }

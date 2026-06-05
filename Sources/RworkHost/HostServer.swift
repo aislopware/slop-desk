@@ -167,6 +167,17 @@ public final class HostServer: @unchecked Sendable {
     /// open.
     private func spawnMuxChannel(_ open: MuxChannelOpen, on connection: MuxNWConnection, connectionID: UUID) {
         let key = MuxSessionKey(connectionID: connectionID, channelID: open.channelID)
+        // Idempotency guard (defense-in-depth with the `isNewChannel` gate in `MuxNWConnection.route`):
+        // if a session already exists for this composite key, a duplicate/retransmitted `channelOpen`
+        // must NOT spawn a SECOND PTY and overwrite the live session in `muxSessions` (orphaning the
+        // first PTY + master fd + reaper thread). Re-ack idempotently and return.
+        lock.lock()
+        let alreadyLive = muxSessions[key] != nil
+        lock.unlock()
+        if alreadyLive {
+            Task { await connection.sendOpenAck(open.channelID, accepted: true) }
+            return
+        }
         let pty = PTYProcess()
         do {
             let argv0 = HostEnvironment.loginArgv0(forShell: shellPath)
@@ -225,7 +236,15 @@ public final class HostServer: @unchecked Sendable {
         // peer-close / child-exit race, so a second remove of the same key is a no-op and must
         // not re-emit an unchanged count).
         if session != nil { emitConnectionCount() }
-        session?.shutdown()
+        // shutdownDetached() (NOT shutdown()): this method is reached SYNCHRONOUSLY from the mux
+        // connection's receive loop for a peer `channelClose` / link drop (route/finishLink →
+        // hostCloseHandler → here). `shutdown()` blocks the caller up to ~0.5s (SIGTERM → wait →
+        // SIGKILL → wait → close; the full ~250ms escalation for an interactive shell that ignores
+        // SIGTERM), which would stall every OTHER pane riding the same shared connection and park a
+        // cooperative-pool thread. The map removal above is the cross-shut/double-shut guard, so the
+        // blocking PTY kill + fd close run off the receive loop. (The `onExit` reaper path also lands
+        // here with an already-dead child, where the detached shutdown is near-instant anyway.)
+        session?.shutdownDetached()
     }
 }
 

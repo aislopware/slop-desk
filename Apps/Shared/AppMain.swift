@@ -36,7 +36,9 @@ struct ClientAppMain {
         // shows the gated `BuildStatusPlaceholderView` (libghostty-only policy — no
         // fallback VT renderer).
         #if canImport(CGhostty)
-        TerminalRendererFactory.shared = { model in AnyView(GhosttyTerminalView(model: model)) }
+        TerminalRendererFactory.shared = { model, isFocused in
+            AnyView(GhosttyTerminalView(model: model, isFocused: isFocused))
+        }
         #endif
 
         // PATH 2 (GUI video path, doc 17 §3): register the production remote-GUI-window

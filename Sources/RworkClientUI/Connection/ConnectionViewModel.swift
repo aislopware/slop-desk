@@ -280,12 +280,22 @@ public final class ConnectionViewModel {
         // cooperative pool) is safe and bounded; an unreachable host now throws
         // `RworkTransportError.timedOut` here in ~`handshakeTimeout` and we surface `.failed` instead
         // of hanging at "connecting" forever.
+        // Start the reconnect supervisor BEFORE `connect()` so its subscription to `client.events`
+        // (registered eagerly in `manager.start`) is live before any drop. Starting it AFTER a
+        // successful connect (the old order) left a window in which a fast `.disconnected` was yielded
+        // to no subscriber and LOST — the pane then stuck at "reconnecting" with no retry ([6]). The
+        // supervisor only ACTS on a `.disconnected`; before/around connect there are none, so this is
+        // inert until a real drop. On an initial-connect failure there is no session to resume, so the
+        // supervisor is cancelled in the catch.
+        let supervisor = manager.start(host: host, port: port)
+        supervisorTask = supervisor
         do {
             try await client.connect(host: host, port: port)
             sessionID = await client.sessionID
             status = .connected
-            supervisorTask = manager.start(host: host, port: port)
         } catch {
+            supervisor.cancel()
+            supervisorTask = nil
             status = .failed(String(describing: error))
         }
     }

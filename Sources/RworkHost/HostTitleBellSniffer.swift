@@ -73,6 +73,11 @@ public final class HostTitleBellSniffer: @unchecked Sendable {
         /// Inside an OSC and the previous byte was `ESC` — waiting to see if it is the
         /// `\` that completes an `ST` terminator (`ESC \`), or a new sequence start.
         case oscEscape
+        /// An over-cap OSC is being DISCARDED: still INSIDE the OSC (so its terminator must
+        /// be consumed here, not re-parsed as ground), but no longer buffering. Bounded O(n).
+        case oscDiscard
+        /// Inside a discarded OSC and the previous byte was `ESC` (possible `ST`).
+        case oscDiscardEscape
     }
 
     private let lock = NSLock()
@@ -162,12 +167,38 @@ public final class HostTitleBellSniffer: @unchecked Sendable {
             default:
                 oscBuffer.append(byte)
                 if oscBuffer.count > Self.oscCap {
-                    // Overlong — not a title we care about; abandon and resync at ground.
-                    // (Worst case we drop one bogus/huge OSC; a real terminator or ESC
-                    // later re-syncs us. We never emit a partial title.)
+                    // Overlong — not a title we care about; abandon WITHOUT emitting a title.
+                    // Do NOT drop to `.ground` here: we are still INSIDE the OSC, so its real
+                    // terminator (BEL / ST) has not arrived yet. Dropping to ground would make
+                    // that terminator BEL be re-parsed as a spurious `.bell` (and any following
+                    // bytes misread). Switch to `.oscDiscard` to swallow the rest of the OSC —
+                    // including its terminator — byte-at-a-time (bounded, no buffering).
                     oscBuffer.removeAll(keepingCapacity: true)
-                    state = .ground
+                    state = .oscDiscard
                 }
+            }
+
+        case .oscDiscard:
+            // Discarding an over-cap OSC: consume bytes until its genuine terminator so the
+            // terminator can never leak into ground parsing. No buffering → still O(n)/bounded.
+            switch byte {
+            case Self.bel:
+                state = .ground
+            case Self.esc:
+                state = .oscDiscardEscape
+            default:
+                break // discarded payload byte
+            }
+
+        case .oscDiscardEscape:
+            if byte == Self.backslash {
+                state = .ground // `ESC \` = ST terminator of the discarded OSC.
+            } else {
+                // The `ESC` was not an ST terminator — it may introduce a NEW sequence. Re-enter
+                // `.escape` and re-classify this byte (mirror the `.oscEscape` stray-ESC fix;
+                // there is no title to finish since the OSC was discarded).
+                state = .escape
+                step(byte, into: &messages)
             }
 
         case .oscEscape:

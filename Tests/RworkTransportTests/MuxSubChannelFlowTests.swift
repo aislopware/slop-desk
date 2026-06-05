@@ -267,4 +267,33 @@ final class MuxSubChannelFlowTests: XCTestCase {
         await fulfillment(of: [threw], timeout: 2)
         _ = await sendTask.value
     }
+
+    /// Round-3 leak fix: a sender PARKED on an exhausted window must be woken by TASK CANCELLATION
+    /// (not only by a `windowAdjust` grant or `finish()`), so a teardown that merely `cancel()`s the
+    /// drain Task — e.g. `HostServer.stop()` → `MuxChannelSession.shutdown()`, which never `finish()`es
+    /// the sub-channel — does not leak the parked task + its retained actors forever.
+    func testCancelWhileBlockedWakesSenderInsteadOfLeaking() async throws {
+        let sink = Sink()
+        // 1 body byte ⇒ 6 wire bytes; window = 6 ⇒ the first send fits exactly, the next must block.
+        let ch = MuxSubChannel(channelID: 1, channel: .data, sendWindowBytes: 6) { _, inner in
+            sink.record(inner)
+        }
+        try await ch.send(WireMessage.input(Data("x".utf8)))   // exactly fills the 6-byte window
+        XCTAssertEqual(sink.count, 1)
+
+        let completed = expectation(description: "the blocked send completes when its Task is cancelled")
+        let sendTask = Task {
+            try? await ch.send(WireMessage.input(Data("y".utf8)))   // parks on the exhausted window
+            completed.fulfill()
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(sink.count, 1, "the second send must be SUSPENDED (window exhausted)")
+
+        // Cancelling the Task must WAKE the parked sender (cancellation-aware park) so it throws and the
+        // Task completes — instead of leaking. Without the fix, `completed` never fulfils (timeout).
+        sendTask.cancel()
+        await fulfillment(of: [completed], timeout: 2)
+        XCTAssertEqual(sink.count, 1, "the cancelled send did not write the frame (it threw out of the park)")
+        _ = await sendTask.value
+    }
 }

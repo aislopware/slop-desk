@@ -194,12 +194,32 @@ public final class TerminalInputResponderView: UIView {
     private let floatingCursor = FloatingCursorController()
     private lazy var accessoryBar = KeyboardAccessoryBar()
 
+    /// The repeater key: a modifier-INDEPENDENT PHYSICAL identity, carrying the modifier-laden press
+    /// as the encode payload. Equality/hash key on the identity ONLY (not the payload).
+    ///
+    /// Why: holding Ctrl+L starts a repeat keyed by that press; if the user releases the MODIFIER
+    /// BEFORE the letter, the letter's `pressesEnded` classifies as a PLAIN 'l' (control flag gone),
+    /// which — keyed by the full press — would NOT match the held Ctrl+L and the repeat would run
+    /// forever (a 20Hz control-code flood). `charactersIgnoringModifiers` ("l") is modifier-independent,
+    /// so keyDown(Ctrl+L) and keyUp(L) produce the SAME identity and the release stops the repeat.
+    private struct RepeatKey: Hashable {
+        let identity: String
+        let press: InputRouting.KeyPress
+        init(_ press: InputRouting.KeyPress) {
+            self.identity = (press.isSpecial ? "S:" : "C:") + press.charactersIgnoringModifiers
+            self.press = press
+        }
+        static func == (a: RepeatKey, b: RepeatKey) -> Bool { a.identity == b.identity }
+        func hash(into h: inout Hasher) { h.combine(identity) }
+    }
+
     /// Manual key-repeat for the hardware path: each fire re-encodes the held press to bytes.
-    /// Keyed by the classified press so last-key-wins / release work per the component contract.
-    private lazy var repeater = KeyRepeater<InputRouting.KeyPress>(
+    /// Keyed by ``RepeatKey`` (modifier-independent physical id) so last-key-wins / release work even
+    /// when a modifier is released before the letter (the runaway-repeat fix).
+    private lazy var repeater = KeyRepeater<RepeatKey>(
         scheduler: DispatchRepeatScheduler()
-    ) { [weak self] press in
-        guard let bytes = TerminalInputResponderView.encode(press) else { return }
+    ) { [weak self] key in
+        guard let bytes = TerminalInputResponderView.encode(key.press) else { return }
         // The scheduler fires on a background queue; hop to main for the SwiftUI/UIKit send.
         // `[weak self]` on the inner hop too: a fire already in flight when the view is torn
         // down must NOT deliver a stale byte through a half-dismantled view.
@@ -224,8 +244,8 @@ public final class TerminalInputResponderView: UIView {
         // it intercepts are fed into the repeater here (special keys + Ctrl/Alt combos).
         addSubview(proxy)
         proxy.onText = { [weak self] text in self?.onText?(text) }
-        proxy.onKeyPress = { [weak self] press in self?.repeater.keyDown(press) }
-        proxy.onKeyRelease = { [weak self] press in self?.repeater.keyUp(press) }
+        proxy.onKeyPress = { [weak self] press in self?.repeater.keyDown(RepeatKey(press)) }
+        proxy.onKeyRelease = { [weak self] press in self?.repeater.keyUp(RepeatKey(press)) }
         proxy.onFloatingCursorBegin = { [weak self] point in self?.floatingCursor.begin(at: point) }
         proxy.onFloatingCursorUpdate = { [weak self] point in self?.floatingCursor.update(at: point) }
         proxy.onFloatingCursorEnd = { [weak self] in self?.floatingCursor.end() }

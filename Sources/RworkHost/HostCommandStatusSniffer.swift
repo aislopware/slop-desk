@@ -72,6 +72,11 @@ public final class HostCommandStatusSniffer: @unchecked Sendable {
         /// Inside an OSC and the previous byte was `ESC` — waiting for the `\` of an `ST`
         /// terminator (`ESC \`), else a new sequence start.
         case oscEscape
+        /// An over-cap OSC being DISCARDED: still inside the OSC (consume its terminator here,
+        /// don't re-parse it in ground), no longer buffering. Bounded O(n).
+        case oscDiscard
+        /// Inside a discarded OSC and the previous byte was `ESC` (possible `ST`).
+        case oscDiscardEscape
     }
 
     private var state: State = .ground
@@ -140,9 +145,31 @@ public final class HostCommandStatusSniffer: @unchecked Sendable {
             default:
                 oscBuffer.append(byte)
                 if oscBuffer.count > Self.oscCap {
+                    // Overlong — abandon WITHOUT emitting a mark, but stay INSIDE the OSC so its
+                    // terminator (BEL / ST) is consumed by `.oscDiscard`, not re-parsed in ground
+                    // (where a following `133;C` could be misread). Bounded, no buffering.
                     oscBuffer.removeAll(keepingCapacity: true)
-                    state = .ground
+                    state = .oscDiscard
                 }
+            }
+
+        case .oscDiscard:
+            switch byte {
+            case Self.bel:
+                state = .ground
+            case Self.esc:
+                state = .oscDiscardEscape
+            default:
+                break // discarded payload byte
+            }
+
+        case .oscDiscardEscape:
+            if byte == Self.backslash {
+                state = .ground // `ESC \` = ST terminator of the discarded OSC.
+            } else {
+                // Stray ESC inside the discarded OSC — re-classify as a NEW sequence's introducer.
+                state = .escape
+                step(byte, into: &messages)
             }
 
         case .oscEscape:

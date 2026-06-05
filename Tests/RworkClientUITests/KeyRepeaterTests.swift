@@ -154,4 +154,37 @@ final class KeyRepeaterTests: XCTestCase {
         XCTAssertEqual(sink.count, 1)
         XCTAssertEqual(scheduler.pendingCount, 1, "still exactly one armed timer")
     }
+
+    /// Regression for the iOS modifier-release-first RUNAWAY repeat (round-2 [1]). The repeat key is a
+    /// modifier-INDEPENDENT physical identity carrying the modifier-laden press as payload (see
+    /// `TerminalInputHost.RepeatKey`). A `keyUp` whose PAYLOAD differs — the modifier was released
+    /// BEFORE the letter, so the letter's release classifies as a plain key — but whose IDENTITY
+    /// matches the held key MUST stop the repeat. Without identity-equality the held Ctrl+letter would
+    /// repeat forever (a 20Hz control-code flood). This proves the equality contract the fix relies on.
+    func testKeyUpMatchingByIdentityNotPayloadStopsRunawayRepeat() {
+        struct IdKey: Hashable {
+            let identity: String
+            let payload: String
+            static func == (a: IdKey, b: IdKey) -> Bool { a.identity == b.identity }
+            func hash(into h: inout Hasher) { h.combine(identity) }
+        }
+        let scheduler = ManualRepeatScheduler()
+        let sink = Sink()
+        let repeater = KeyRepeater<IdKey>(scheduler: scheduler) { sink.append($0.payload) }
+
+        // Hold "Ctrl+L": identity "l", payload encodes the control combo.
+        repeater.keyDown(IdKey(identity: "l", payload: "ctrl-l"))
+        XCTAssertEqual(sink.all, ["ctrl-l"])
+        scheduler.advance(by: .milliseconds(350))
+        XCTAssertEqual(sink.count, 2, "repeating the control combo")
+
+        // Modifier released first → the letter's keyUp arrives as a PLAIN "l" (different payload,
+        // SAME identity). It must stop the repeat.
+        repeater.keyUp(IdKey(identity: "l", payload: "plain-l"))
+        XCTAssertFalse(repeater.isRepeating, "keyUp matched by identity (not payload) must stop the repeat")
+
+        let after = sink.count
+        scheduler.advance(by: .milliseconds(500))
+        XCTAssertEqual(sink.count, after, "no runaway flood after the identity-matched release")
+    }
 }

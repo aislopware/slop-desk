@@ -416,6 +416,70 @@ final class PTYProcessTests: XCTestCase {
         XCTAssertNotNil(pty.waitExitCode(), "shutdown() must terminate+reap the live child on the destroy path")
     }
 
+    /// [0/1] `shutdownDetached()` must return to the CALLER immediately (it offloads the blocking
+    /// SIGTERM→wait→SIGKILL→wait→close to a background queue), while STILL terminating + reaping the
+    /// child and closing the master. The caller here stands in for the mux connection's receive loop:
+    /// blocking it (as the old inline `shutdown()` from `removeMuxSession` did) stalls every sibling
+    /// pane on the shared connection for up to ~0.25s on each pane close. An interactive `/bin/sh`
+    /// ignores SIGTERM, so `shutdown()` itself takes ~250ms — far longer than the caller-return ceiling.
+    func testShutdownDetachedReturnsImmediatelyAndStillReapsChild() throws {
+        let pty = PTYProcess()
+        try pty.spawn("/bin/sh", environment: curatedEnv())
+        let data = MuxSubChannel(channelID: 1, channel: .data) { _, _ in }
+        let control = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
+        let session = MuxChannelSession(channelID: 1, pty: pty, data: data, control: control)
+        session.startRelay()
+        Thread.sleep(forTimeInterval: 0.05)   // let the read loop park in a blocking read()
+
+        // The detached call must return WELL under shutdown()'s ~250ms SIGTERM→SIGKILL escalation.
+        let start = Date()
+        session.shutdownDetached()
+        let elapsed = Date().timeIntervalSince(start)
+        XCTAssertLessThan(elapsed, 0.05, "shutdownDetached() must NOT block the caller (the mux receive loop)")
+
+        // The detached teardown still completes: poll until the master is closed (its last step).
+        let deadline = Date().addingTimeInterval(3)
+        while pty.masterFD != -1, Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        XCTAssertEqual(pty.masterFD, -1, "the detached shutdown still closes the master fd")
+        XCTAssertNotNil(pty.waitExitCode(), "the detached shutdown still terminates + reaps the child")
+    }
+
+    /// RAPID OPEN/CLOSE CHURN — the "mở/đóng nhanh liên tục" path (open + close many panes fast).
+    /// Drives 250 full spawn → relay → shutdown cycles through the fork+login_tty path and asserts the
+    /// process's open-fd count does NOT grow — a per-cycle master-fd leak is the documented failure
+    /// (a long-running daemon hit `EMFILE` after ~250 sessions). Each cycle spawns a self-exiting shell
+    /// (so `shutdown()` reaps + closes deterministically and fast) through the SAME `MuxChannelSession`
+    /// relay (read loop + reaper thread + tasks) a real pane uses.
+    func testRapidSpawnShutdownChurnDoesNotLeakFDs() throws {
+        func openFDCount() -> Int {
+            (try? FileManager.default.contentsOfDirectory(atPath: "/dev/fd"))?.count ?? -1
+        }
+        func runOneCycle() throws {
+            let pty = PTYProcess()
+            try pty.spawn("/bin/sh", arguments: ["-c", "exit 0"], environment: curatedEnv())
+            let data = MuxSubChannel(channelID: 1, channel: .data) { _, _ in }
+            let control = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
+            let session = MuxChannelSession(channelID: 1, pty: pty, data: data, control: control)
+            session.startRelay()
+            session.shutdown()   // child already exited → reap + closeMaster is immediate + deterministic
+        }
+
+        // Warm up a few cycles so one-time allocations settle, THEN take the baseline.
+        for _ in 0..<3 { try runOneCycle() }
+        let baseline = openFDCount()
+        XCTAssertGreaterThan(baseline, 0, "could not read /dev/fd")
+
+        let cycles = 250
+        for _ in 0..<cycles { try runOneCycle() }
+        Thread.sleep(forTimeInterval: 0.2)   // let detached reaper threads finish
+
+        let after = openFDCount()
+        XCTAssertLessThanOrEqual(
+            after, baseline + 12,
+            "open fds grew from \(baseline) to \(after) across \(cycles) spawn/shutdown cycles — "
+                + "a master-fd (or slave-fd) leak in the fork+login_tty open/close path")
+    }
+
     func testCloseMasterIsIdempotent() throws {
         let pty = PTYProcess()
         try pty.spawn("/bin/sh", arguments: ["-c", "exit 0"], environment: curatedEnv())

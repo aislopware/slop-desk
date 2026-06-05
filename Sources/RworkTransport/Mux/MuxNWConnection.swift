@@ -67,6 +67,16 @@ public actor MuxNWConnection {
 
     private var receiveTasks: [Task<Void, Never>] = []
     private var closed = false
+    /// Set once a link dropped with a HARD error (TCP RST / NetBird flap / decode fault) in
+    /// ``finishLink(_:error:)``. Distinct from `closed` (the clean last-channel teardown via ``close()``):
+    /// a link-failed connection is dead but was never `close()`d, so without this flag it would linger in
+    /// the ``ConnectionRegistry`` pool and a reconnecting pane would re-acquire the corpse ([5]).
+    private var linkFailed = false
+
+    /// Whether this connection is unusable — either cleanly closed OR hard-link-failed. The registry
+    /// reads it (``ConnectionRegistry/sharedConnection(...)``) to evict a dead pooled connection instead
+    /// of handing it to a reconnecting pane, and ``openChannel(...)`` rejects an open on it.
+    public var isDead: Bool { closed || linkFailed }
 
     public init(
         role: Role,
@@ -105,7 +115,9 @@ public actor MuxNWConnection {
         guard role == .client else {
             throw RworkTransportError.invalidState("openChannel on a host mux connection")
         }
-        guard !closed else { throw RworkTransportError.notConnected("mux connection closed") }
+        // Reject an open on a dead connection — closed (clean teardown) OR link-failed (hard drop, [5]).
+        // A reconnecting pane must never open a channel on a corpse pooled by the registry.
+        guard !isDead else { throw RworkTransportError.notConnected("mux connection closed") }
         let id = allocator.allocate()
         let pair = registerChannels(id: id)
         dataTable.open(id)
@@ -263,10 +275,16 @@ public actor MuxNWConnection {
         // channel pair so subsequent data routes. (The router already advanced the table; we mirror
         // it into the dispatch tables here, allocating the sub-channels.)
         if role == .host, case let .channelOpen(id, sessionID, lastReceivedSeq, channelClass) = frame, link == .data {
-            if dataChannels[id] == nil { _ = registerChannels(id: id) }
+            // Fire the relay open hook ONLY for a NEWLY-registered channel. A DUPLICATE/retransmitted
+            // `channelOpen` for an already-live `id` must NOT re-invoke `hostOpenHandler` — that spawns
+            // a SECOND PTY and overwrites/orphans the first session in the owner's map (master-fd +
+            // child-process + reaper-thread leak, and a split input stream). The `id` is already
+            // registered, so its data/control still route; we just suppress the redundant open.
+            let isNewChannel = dataChannels[id] == nil
+            if isNewChannel { _ = registerChannels(id: id) }
             // Mirror the open into the control table too so control-link data for this id routes.
             controlTable.open(id)
-            if let dataCh = dataChannels[id], let controlCh = controlChannels[id] {
+            if isNewChannel, let dataCh = dataChannels[id], let controlCh = controlChannels[id] {
                 let open = MuxChannelOpen(
                     channelID: id,
                     sessionID: sessionID,
@@ -334,7 +352,13 @@ public actor MuxNWConnection {
                 // it fires exactly ONCE per channel, AFTER both this link's sub-channel is
                 // finished. The host wiring maps this to `removeMuxSession(channelID)` →
                 // `MuxChannelSession.shutdown()`. No-op on the client (handler unset).
-                if role == .host, link == .data { hostCloseHandler?(channelID) }
+                // If the handler is not installed YET (this close raced ahead of
+                // `setHostCloseHandler`), BUFFER it so the shell is reaped once the handler attaches —
+                // never dropped (which would leak the PTY + master fd).
+                if role == .host, link == .data {
+                    if let hostCloseHandler { hostCloseHandler(channelID) }
+                    else { pendingHostCloses.append(channelID) }
+                }
             }
         case .dropUnknownChannel:
             break // stale / hostile frame — dropped, never a crash (router contract).
@@ -368,9 +392,25 @@ public actor MuxNWConnection {
     /// exactly once per channel because the DATA-link entry is removed before this returns.
     private var hostCloseHandler: (@Sendable (UInt32) -> Void)?
 
-    /// Installs the host's per-channel-close handler (shut session + free PTY/fd). Host-only.
+    /// Channel closes (peer `channelClose` / link drop) routed on the DATA link BEFORE the relay owner
+    /// installed `hostCloseHandler`. SYMMETRIC to `pendingHostOpens`: the host installs the open handler
+    /// first, then the close handler (`HostServer.handleNewMuxConnection`), so a `channelClose` that
+    /// races into the gap — a client that opens then immediately closes a pane, or a link drop right
+    /// after accept — would otherwise hit a nil `hostCloseHandler` and be DROPPED, leaking that pane's
+    /// PTY + master fd forever (the open spawned a shell that nothing ever reaps). Drained in order by
+    /// `setHostCloseHandler`, AFTER the open handler has already replayed `pendingHostOpens` — so the
+    /// spawn always precedes its shutdown.
+    private var pendingHostCloses: [UInt32] = []
+
+    /// Installs the host's per-channel-close handler (shut session + free PTY/fd). Host-only. Replays
+    /// any closes that raced ahead of the install (queued in `pendingHostCloses`) in arrival order, so a
+    /// `channelClose` buffered before the owner wired up is never lost (no leaked shell).
     public func setHostCloseHandler(_ handler: @escaping @Sendable (UInt32) -> Void) {
         hostCloseHandler = handler
+        guard !pendingHostCloses.isEmpty else { return }
+        let queued = pendingHostCloses
+        pendingHostCloses.removeAll()
+        for channelID in queued { handler(channelID) }
     }
 
     /// Sends a `channelOpenAck` for `id` on the DATA link (host → client). Host-only.
@@ -391,6 +431,11 @@ public actor MuxNWConnection {
     }
 
     private func finishLink(_ link: Link, error: Error?) async {
+        // A non-nil error is a HARD link failure (TCP RST / NetBird flap / decode fault) — the whole
+        // physical connection is dead, distinct from a clean per-channel FIN (`error == nil`). Mark it
+        // so a reconnecting pane never re-acquires this corpse from the pool (`ConnectionRegistry`
+        // evicts a `isDead` entry; `openChannel` rejects reuse). See `linkFailed` / `isDead`. ([5])
+        if error != nil { linkFailed = true }
         let channels = (link == .control) ? controlChannels : dataChannels
         for ch in channels.values {
             // Await inline so the link's FIN/error finishes each sub-channel AFTER its last
@@ -404,8 +449,13 @@ public actor MuxNWConnection {
         // reconnect/resume — its shell must be reaped. Drive the host close hook per channel here.
         // Keyed off the DATA link (mirrors the open + the per-channel close above) so it fires once
         // per channel; `removeMuxSession` is idempotent so any overlap with an `onExit` is harmless.
-        if role == .host, link == .data, let hostCloseHandler {
-            for id in channels.keys { hostCloseHandler(id) }
+        // If the handler is not installed yet, buffer (symmetric to the per-channel close path).
+        if role == .host, link == .data {
+            if let hostCloseHandler {
+                for id in channels.keys { hostCloseHandler(id) }
+            } else {
+                pendingHostCloses.append(contentsOf: channels.keys)
+            }
         }
         // S2: the whole DATA link is gone — drop every channel's receive-window accounting. (The
         // send windows are torn down via each sub-channel's `finish()` above, which also wakes any

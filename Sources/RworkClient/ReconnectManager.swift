@@ -112,8 +112,15 @@ public final class ReconnectManager: Sendable {
         let onLog = self.onLog
         let onProgress = self.onProgress
         let onGaveUp = self.onGaveUp
+        // Subscribe to the event stream SYNCHRONOUSLY here — `EventBroadcaster.subscribe()` registers the
+        // child continuation eagerly at call time — so the subscription is live the instant `start()`
+        // returns, BEFORE the caller drives `connect()`. Evaluating `client.events` lazily inside the
+        // Task instead would leave a window between connect-success and the Task's first iteration in
+        // which a `.disconnected` (a fast drop) is yielded to no subscriber and LOST (the broadcaster is
+        // live-not-replay) — stranding the pane at "reconnecting" with no retry campaign ever running.
+        let events = client.events
         return Task {
-            for await event in client.events {
+            for await event in events {
                 guard case let .disconnected(reason) = event else { continue }
                 // A deliberate pause/close also yields `.disconnected`; only reconnect if
                 // the client still wants to be connected (not paused, not closed).

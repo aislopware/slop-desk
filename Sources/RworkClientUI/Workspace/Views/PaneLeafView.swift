@@ -67,9 +67,9 @@ struct PaneLeafView: View {
     private func content(for live: LivePaneSession) -> some View {
         switch live.kind {
         case .terminal:
-            TerminalPaneView(live: live, spec: spec, focusCoordinator: focusCoordinator)
+            TerminalPaneView(live: live, spec: spec, isFocused: isFocused, focusCoordinator: focusCoordinator)
         case .claudeCode:
-            ClaudeCodePaneView(live: live, spec: spec, focusCoordinator: focusCoordinator)
+            ClaudeCodePaneView(live: live, spec: spec, isFocused: isFocused, focusCoordinator: focusCoordinator)
         case .remoteGUI:
             RemoteGUIPaneView(live: live, store: store)
         }
@@ -149,6 +149,10 @@ private struct TerminalContentView: View {
     let live: LivePaneSession
     /// The pure intent — read for `spec.endpoint` to decide auto-connect vs. the connect form.
     let spec: PaneSpec
+    /// Whether this pane is the active tab's focused pane — threaded to the renderer so only the
+    /// focused pane takes the macOS keyboard first responder (unfocused split siblings keep repainting
+    /// but do not steal the keyboard).
+    var isFocused: Bool = true
     /// The single-focus arbiter forwarded to the iOS ``InputBarView`` → ``TerminalInputHost`` so the
     /// host registers under this pane's id (docs/22 §7). `nil` ⇒ direct-claim (compact / macOS).
     var focusCoordinator: PaneFocusCoordinator? = nil
@@ -216,7 +220,7 @@ private struct TerminalContentView: View {
         // (iOS soft-keyboard input is handled separately by TerminalInputHost, not this bar.)
         Group {
             if let terminalModel = live.terminalModel {
-                TerminalScreenView(model: terminalModel)
+                TerminalScreenView(model: terminalModel, isFocused: isFocused)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Color.clear
@@ -285,8 +289,11 @@ private struct TerminalContentView: View {
 private struct TerminalPaneView: View {
     let live: LivePaneSession
     let spec: PaneSpec
+    var isFocused: Bool = true
     var focusCoordinator: PaneFocusCoordinator? = nil
-    var body: some View { TerminalContentView(live: live, spec: spec, focusCoordinator: focusCoordinator) }
+    var body: some View {
+        TerminalContentView(live: live, spec: spec, isFocused: isFocused, focusCoordinator: focusCoordinator)
+    }
 }
 
 // MARK: - Claude Code composition (terminal + toggleable inspector)
@@ -302,6 +309,9 @@ private struct ClaudeCodePaneView: View {
     /// The pure intent — forwarded to ``TerminalContentView`` so a fresh Claude Code pane shows the
     /// connect form until it is dialed in (docs/22 WF6 new-pane connection flow).
     let spec: PaneSpec
+    /// Whether this pane is the active tab's focused pane (forwarded to the embedded terminal so the
+    /// renderer drives the macOS first responder from workspace intent).
+    var isFocused: Bool = true
     /// The single-focus arbiter forwarded to the embedded terminal composition (docs/22 §7).
     var focusCoordinator: PaneFocusCoordinator? = nil
     /// Per-pane VIEW state: whether the inspector is shown. Local to this leaf — lost on a true
@@ -325,7 +335,7 @@ private struct ClaudeCodePaneView: View {
     private var content: some View {
         #if os(macOS)
         HStack(spacing: 0) {
-            TerminalContentView(live: live, spec: spec, focusCoordinator: focusCoordinator)
+            TerminalContentView(live: live, spec: spec, isFocused: isFocused, focusCoordinator: focusCoordinator)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             if showInspector, let model = live.inspector {
                 Divider()
@@ -334,7 +344,7 @@ private struct ClaudeCodePaneView: View {
             }
         }
         #else
-        TerminalContentView(live: live, spec: spec, focusCoordinator: focusCoordinator)
+        TerminalContentView(live: live, spec: spec, isFocused: isFocused, focusCoordinator: focusCoordinator)
             .sheet(isPresented: $showInspector) {
                 if let model = live.inspector {
                     InspectorPanel(model: model)

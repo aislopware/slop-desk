@@ -166,15 +166,19 @@ public final class PTYProcess: @unchecked Sendable {
             _exit(127)
         }
 
+        // Capture fork()'s errno IMMEDIATELY, before any other syscall can overwrite it. The
+        // `close(slave)` below sets errno on ITS OWN failure (EINTR/EBADF), which would clobber the
+        // fork() errno we report on a fork() failure — so read it here, at the first opportunity.
+        let forkErrno = errno
+
         // ===== PARENT =====
         // Parent uses only the master; close the slave unconditionally.
         close(slave)
 
         guard childPID > 0 else {
-            // fork() failed: errno set; reclaim the master.
-            let err = errno
+            // fork() failed: reclaim the master and report fork()'s errno (captured pre-close above).
             close(master)
-            throw HostError.posix(err)
+            throw HostError.posix(forkErrno)
         }
 
         self.masterFD = master

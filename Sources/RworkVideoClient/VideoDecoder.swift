@@ -17,6 +17,14 @@ public enum VideoDecoderError: Error {
     case awaitingKeyframe
 }
 
+/// A tiny Sendable box so the `@Sendable` VideoToolbox output handler can surface the decode
+/// callback's `OSStatus` to the (synchronous) caller without an unsafe captured-`var` mutation.
+/// `@unchecked Sendable`: the synchronous `flags: []` decode runs the handler on the caller's thread
+/// before `VTDecompressionSessionDecodeFrame` returns, so the write-then-read never races.
+private final class DecodeStatusBox: @unchecked Sendable {
+    var value: OSStatus = noErr
+}
+
 /// Decodes reassembled HEVC frames with `VTDecompressionSession` (doc 04, doc 18 §F).
 ///
 /// ⚠️ **HANG-SAFETY:** decode was MEASURED safe (~0.9-1.1ms synchronous,
@@ -190,13 +198,27 @@ public final class VideoDecoder: @unchecked Sendable {
         guard let session, let formatDescription else { throw VideoDecoderError.awaitingKeyframe }
         let sampleBuffer = try makeSampleBuffer(avcc: frame.avcc, formatDescription: formatDescription)
         let handler = decodedFrameHandler
+        // Capture the CALLBACK status: VideoToolbox reports a decode error (e.g. -12909
+        // kVTVideoDecoderBadDataErr from an FEC mis-recovery that passed the length check, or
+        // kVTVideoDecoderMalfunctionErr) via the output callback's `status`, NOT the submission
+        // return value. The decode is SYNCHRONOUS (`flags: []`), so this callback runs on THIS thread
+        // before `VTDecompressionSessionDecodeFrame` returns — so reading `callbackStatus` after is
+        // race-free. Swallowing a callback error (the old `guard status == noErr … else { return }`)
+        // produced NO pixels and NO throw, so the caller's recovery (`invalidateSession` + `requestIDR`)
+        // never armed and the pane froze on the last good frame — exactly the packet-loss / FEC
+        // mis-recovery case. Surface it so the caller re-anchors the stream.
+        // A Sendable box for the callback status (the output handler is `@Sendable`; the decode is
+        // synchronous so the write-then-read is race-free, but the box keeps the capture Sendable-clean).
+        let callbackStatus = DecodeStatusBox()
         let status = VTDecompressionSessionDecodeFrame(
             session, sampleBuffer: sampleBuffer, flags: [], infoFlagsOut: nil
         ) { status, _, imageBuffer, _, _ in
-            guard status == noErr, let imageBuffer else { return }
+            if status != noErr { callbackStatus.value = status; return }
+            guard let imageBuffer else { return }
             handler(imageBuffer) // NV12 CVPixelBuffer → MetalVideoRenderer at vsync
         }
         guard status == noErr else { throw VideoDecoderError.decodeFailed(status) }
+        guard callbackStatus.value == noErr else { throw VideoDecoderError.decodeFailed(callbackStatus.value) }
     }
 
     /// Wraps AVCC bytes (length-prefixed NAL units — see RworkVideoProtocol.NALUnit)

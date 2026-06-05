@@ -240,6 +240,12 @@ final class MuxChannelSession: @unchecked Sendable {
         controlTask?.cancel()
         resizeDebounceTask?.cancel()
         exitTask?.cancel()
+        // `outputTask.cancel()` now GENUINELY unblocks a drain parked on an exhausted DATA credit
+        // window: `MuxSubChannel.awaitChunkCredit`'s park is cancellation-aware, so a cancelled sender
+        // wakes + throws and the task completes. Without that, the `HostServer.stop()` teardown — which
+        // does NOT route through `MuxNWConnection` (the only path that `finish()`es the sub-channels) —
+        // would leak the parked `outputTask` + its retained sub-channel actors (the long-lived menu-bar
+        // host accumulating one per affected channel on every Start/Stop).
         outputTask?.cancel()
         taskLock.unlock()
         // DESTROY-path child termination (see the doc comment): SIGTERM, then a bounded wait
@@ -252,6 +258,34 @@ final class MuxChannelSession: @unchecked Sendable {
             pty.waitUntilExited(timeout: 0.25)
         }
         pty.closeMaster()
+    }
+
+    /// A serial-safe BACKGROUND queue for the blocking ``shutdown()`` work, kept OFF the cooperative
+    /// thread pool / the mux connection's receive loop. `concurrent` so simultaneous channel teardowns
+    /// (a multi-pane link drop) tear down in parallel rather than ~0.5s × N serially.
+    static let teardownQueue = DispatchQueue(
+        label: "rwork.host.session-shutdown", qos: .utility, attributes: .concurrent)
+
+    /// NON-BLOCKING teardown: dispatches ``shutdown()`` to a background queue and returns IMMEDIATELY.
+    ///
+    /// ``shutdown()`` blocks the caller for up to ~0.5s (`SIGTERM` → bounded `Thread.sleep` wait →
+    /// `SIGKILL` → re-wait → `closeMaster`) — and for an INTERACTIVE shell, which IGNORES `SIGTERM`,
+    /// the common path is the full ~250ms `SIGKILL` escalation. The host reaches a channel teardown
+    /// SYNCHRONOUSLY from the mux connection's receive loop (a peer `channelClose` / link drop routes
+    /// `MuxNWConnection.route`/`finishLink` → `hostCloseHandler` → `HostServer.removeMuxSession`), so
+    /// blocking there would (a) stall EVERY OTHER pane riding the same shared connection for that whole
+    /// window — closing one pane freezes its siblings — and (b) park a cooperative-pool thread on
+    /// `Thread.sleep`. Offloading keeps the receive loop free; the caller has already removed the
+    /// session from its map (the cross-shut/double-shut guard), so the PTY kill + fd close are safe to
+    /// finish asynchronously. `shutdown()` is itself idempotent, so a detached double-call is harmless.
+    ///
+    /// `completion` fires on the teardown queue after `shutdown()` returns — used by
+    /// ``HostServer/stop()`` to await every detached teardown before the daemon exits.
+    func shutdownDetached(completion: (@Sendable () -> Void)? = nil) {
+        MuxChannelSession.teardownQueue.async { [self] in
+            shutdown()
+            completion?()
+        }
     }
 
     // MARK: - Resize micro-debounce (latest-wins; restores kernel SIGWINCH-coalescing for any client)

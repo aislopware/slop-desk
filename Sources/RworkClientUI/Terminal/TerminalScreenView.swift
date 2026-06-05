@@ -10,15 +10,21 @@ import SwiftUI
 /// the embedding scene (`RworkClientApp`) so this view can be reused inside the split layout.
 public struct TerminalScreenView: View {
     @State private var model: TerminalViewModel
+    /// The pane's workspace focus, threaded to the renderer so only the focused pane takes the macOS
+    /// keyboard first responder (a plain `let`, NOT `@State`, so a focus change re-renders and updates
+    /// the renderer; the model stays stable in `@State`). Defaults to `true` for the single-pane /
+    /// preview callers that do not thread focus.
+    private let isFocused: Bool
 
-    public init(model: TerminalViewModel) {
+    public init(model: TerminalViewModel, isFocused: Bool = true) {
         _model = State(initialValue: model)
+        self.isFocused = isFocused
     }
 
     public var body: some View {
         ZStack(alignment: .top) {
             // The renderer seam — production GhosttyTerminalView, or the placeholder.
-            TerminalRendererFactory.make(model: model)
+            TerminalRendererFactory.make(model: model, isFocused: isFocused)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             // Title / status strip.

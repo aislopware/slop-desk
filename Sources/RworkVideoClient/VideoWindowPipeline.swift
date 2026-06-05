@@ -57,6 +57,17 @@ final class VideoWindowPipeline {
     private var motionPump: Task<Void, Never>?
     private var motionInterval: TimeInterval = 1.0 / 30.0
 
+    /// SINGLE ordered outbound-input FIFO + its one consumer. Every input send (move/drag/down/up/
+    /// scroll/key/text) is ENQUEUED here synchronously on the @MainActor (no `await` between a
+    /// pending-move flush and the button that follows it), and a single consumer Task `await`s each
+    /// action in enqueue = physical order. This replaces the per-event `Task { await … }` shape, which
+    /// gave NO ordering guarantee: a `mouseDown` whose Task suspended on the pending-move flush let the
+    /// following `mouseUp` Task (no flush → no suspension) reach the session actor FIRST, so the host
+    /// received UP-before-DOWN → a suppressed up + a held-with-no-up down = a stuck button / phantom
+    /// selection (and the same race could invert keyDown/keyUp). One FIFO makes order race-free.
+    private var outboundContinuation: AsyncStream<@Sendable () async -> Void>.Continuation?
+    private var outboundConsumer: Task<Void, Never>?
+
     #if os(macOS)
     typealias HostView = NSView
     #elseif canImport(UIKit)
@@ -145,6 +156,8 @@ final class VideoWindowPipeline {
         let initialSize = layerSize
         Task { await session.setLayerSize(initialSize) }
 
+        // Bring up the single ordered outbound-input consumer before any input can be enqueued.
+        startOutboundConsumer()
         // Drive the motion-coalescing pump at the same cadence as the video frame cap.
         motionInterval = 1.0 / max(1, maxFrameRate)
         startMotionPump()
@@ -161,6 +174,7 @@ final class VideoWindowPipeline {
     /// instead (FIX #4). Over-holding fails safe (at worst a brief admission delay at the cap).
     func deactivate() {
         stopMotionPump()
+        stopOutboundConsumer()
         pacer?.stop()
         if let session {
             Task { await session.stop() }
@@ -239,34 +253,26 @@ final class VideoWindowPipeline {
     }
     func mouseDown(_ button: MouseButton, _ viewPoint: VideoPoint, _ clickCount: UInt8, _ modifiers: InputModifiers) {
         guard let session else { return }
-        // Fold the pending-motion flush + the button into ONE ordered actor hop so a move that is
-        // STILL PENDING at click time cannot be sent AFTER the click: two separate Tasks race onto
-        // the actor with no FIFO; one Task that awaits the move then the button preserves order.
-        // (Residual: if the ~motionInterval pump tick already took the move as its own fire-and-forget
-        // Task just before this click, the two can still race — best-effort. Strictly narrower than the
-        // pre-fix per-click race, and the host re-coalesces inbound by arrival order.)
-        let flush = takePendingMotion()   // captured at call time (most-recent-wins); nil ⇒ no move
-        Task { await flush?(); await session.sendMouseDown(button: button, viewPoint: viewPoint, clickCount: clickCount, modifiers: modifiers) }
+        // Flush any pending move, THEN the button — both enqueued onto the ONE ordered FIFO with no
+        // `await` between, so they reach the session actor in physical order (move, then down). The
+        // single consumer can never let a later event overtake this one (the old per-event-Task race).
+        submitFlushingMotion { await session.sendMouseDown(button: button, viewPoint: viewPoint, clickCount: clickCount, modifiers: modifiers) }
     }
     func mouseUp(_ button: MouseButton, _ viewPoint: VideoPoint, _ clickCount: UInt8, _ modifiers: InputModifiers) {
         guard let session else { return }
-        let flush = takePendingMotion()   // the final drag sample must precede the release edge
-        Task { await flush?(); await session.sendMouseUp(button: button, viewPoint: viewPoint, clickCount: clickCount, modifiers: modifiers) }
+        submitFlushingMotion { await session.sendMouseUp(button: button, viewPoint: viewPoint, clickCount: clickCount, modifiers: modifiers) }
     }
     func scroll(dx: Double, dy: Double, viewPoint: VideoPoint) {
         guard let session else { return }
-        let flush = takePendingMotion()
-        Task { await flush?(); await session.sendScroll(dx: dx, dy: dy, viewPoint: viewPoint) }
+        submitFlushingMotion { await session.sendScroll(dx: dx, dy: dy, viewPoint: viewPoint) }
     }
     func key(keyCode: UInt16, down: Bool, modifiers: InputModifiers) {
         guard let session else { return }
-        let flush = takePendingMotion()
-        Task { await flush?(); await session.sendKey(keyCode: keyCode, down: down, modifiers: modifiers) }
+        submitFlushingMotion { await session.sendKey(keyCode: keyCode, down: down, modifiers: modifiers) }
     }
     func text(_ string: String) {
         guard let session else { return }
-        let flush = takePendingMotion()
-        Task { await flush?(); await session.sendText(string) }
+        submitFlushingMotion { await session.sendText(string) }
     }
 
     // MARK: Motion pump (client-side coalescing)
@@ -291,10 +297,46 @@ final class VideoWindowPipeline {
     }
 
     /// Send the latest deferred pointer motion now (most-recent-wins), if any. Used by the motion
-    /// pump's own tick, where there is no following event to order against — fire-and-forget a Task.
+    /// pump's own tick — enqueued onto the SAME ordered FIFO so it can never be reordered against a
+    /// button/key event that races the tick (both run on the @MainActor; the FIFO holds their order).
     private func flushPendingMotion() {
         guard let send = takePendingMotion() else { return }
-        Task { await send() }
+        outboundContinuation?.yield(send)
+    }
+
+    // MARK: Ordered outbound-input FIFO
+
+    /// Brings up the single consumer that drains the outbound FIFO in enqueue order, awaiting each
+    /// send before the next. One consumer = strict in-order delivery to the session actor.
+    private func startOutboundConsumer() {
+        stopOutboundConsumer()
+        let stream = AsyncStream<@Sendable () async -> Void> { continuation in
+            self.outboundContinuation = continuation
+        }
+        outboundConsumer = Task { [weak self] in
+            for await action in stream {
+                if Task.isCancelled { break }
+                await action()
+            }
+            _ = self // keep the pipeline alive for the consumer's lifetime
+        }
+    }
+
+    private func stopOutboundConsumer() {
+        outboundContinuation?.finish()
+        outboundContinuation = nil
+        outboundConsumer?.cancel()
+        outboundConsumer = nil
+        pendingMotionSend = nil
+    }
+
+    /// Enqueues `action` onto the ordered FIFO, FIRST flushing any pending coalesced move so the move
+    /// always precedes the button/key/scroll that follows it (atomic on the @MainActor — no `await`
+    /// between the two yields, so nothing can interleave). This is the single ordered hop that
+    /// replaces the per-event Tasks (the up-before-down / keyDown-after-keyUp race fix).
+    private func submitFlushingMotion(_ action: @escaping @Sendable () async -> Void) {
+        if let move = takePendingMotion() { outboundContinuation?.yield(move) }
+        outboundContinuation?.yield(action)
     }
 
     /// Hand back (and clear) the latest deferred pointer motion as a bare async action, WITHOUT

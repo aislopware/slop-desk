@@ -67,6 +67,81 @@ final class ConnectionRegistryTests: XCTestCase {
         XCTAssertEqual(registry.sharedConnectionCount, 0, "the LAST channel closing tears the shared connection down")
         XCTAssertEqual(registry.channelCount(host: "h", port: 1), 0)
     }
+
+    /// [2] Two panes first-connecting to the SAME new host CONCURRENTLY must net `pendingAcquires` to
+    /// zero, so closing both later tears the shared connection down. Before the fix, a coalesced
+    /// first-acquire that resumed before the build creator stored the entry silently skipped its
+    /// `pendingAcquires += 1` (optional-chained no-op) but still ran the matching `-= 1`, driving the
+    /// count NEGATIVE so the last-channel teardown guard never held → the connection leaked forever.
+    /// Looped to make the resume-order race likely to surface a regression.
+    func testConcurrentFirstAcquireDoesNotLeakSharedConnection() async throws {
+        for _ in 0..<25 {
+            let (registry, _) = makeRegistry()
+            let id = UUID()
+            async let a = registry.acquire(host: "h", port: 1, sessionID: id, lastReceivedSeq: 0)
+            async let b = registry.acquire(host: "h", port: 1, sessionID: id, lastReceivedSeq: 0)
+            let (ra, rb) = try await (a, b)
+            XCTAssertEqual(registry.sharedConnectionCount, 1, "both concurrent first-acquires share ONE connection")
+
+            await registry.release(host: "h", port: 1, channelID: ra.channelID)
+            await registry.release(host: "h", port: 1, channelID: rb.channelID)
+            XCTAssertEqual(registry.sharedConnectionCount, 0,
+                           "after both panes close, the shared connection tears down (no pendingAcquires under-count leak)")
+        }
+    }
+
+    /// [5] After a HARD link drop (TCP RST / NetBird flap), a reconnecting pane must NOT re-acquire the
+    /// dead pooled connection — the registry evicts the corpse and builds a FRESH one. Before the fix,
+    /// `finishLink` did not mark the connection dead, so the still-pooled entry was handed back and the
+    /// reconnecting pane opened onto a dead link forever.
+    func testReconnectAfterHardLinkDropEvictsDeadConnectionAndBuildsFresh() async throws {
+        let made = MadeConnections()
+        let registry = ConnectionRegistry { _, _ in
+            let (cc, hc) = InMemoryMuxLink.pair()
+            let (cd, hd) = InMemoryMuxLink.pair()
+            let client = MuxNWConnection(role: .client, controlLink: cc, dataLink: cd)
+            let host = MuxNWConnection(role: .host, controlLink: hc, dataLink: hd)
+            await host.setHostOpenHandler { open in Task { await host.sendOpenAck(open.channelID, accepted: true) } }
+            await client.start()
+            await host.start()
+            made.record(client: client, clientData: cd)
+            return client
+        }
+
+        _ = try await registry.acquire(host: "h", port: 1, sessionID: UUID(), lastReceivedSeq: 0)
+        XCTAssertEqual(registry.sharedConnectionCount, 1)
+        XCTAssertEqual(made.count, 1)
+
+        // Hard link drop on the live shared connection.
+        made.lastClientData?.fail()
+        // Poll until the connection's receive loop has processed the failure (finishLink → isDead).
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if await (made.lastClient?.isDead ?? false) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let dead = await (made.lastClient?.isDead ?? false)
+        XCTAssertTrue(dead, "the link drop must mark the pooled connection dead")
+
+        // A reconnecting pane re-acquires: the dead entry is evicted and a FRESH connection is built.
+        _ = try await registry.acquire(host: "h", port: 1, sessionID: UUID(), lastReceivedSeq: 0)
+        XCTAssertEqual(made.count, 2, "the dead pooled connection was evicted and a fresh one built")
+        XCTAssertEqual(registry.sharedConnectionCount, 1, "exactly one live shared connection after the rebuild")
+    }
+}
+
+/// Captures the connections + their client-side DATA link a test factory builds, so a test can drive a
+/// hard link failure on the live one. `@MainActor` (the registry factory is `@MainActor`).
+@MainActor
+private final class MadeConnections {
+    private(set) var count = 0
+    private(set) var lastClient: MuxNWConnection?
+    private(set) var lastClientData: InMemoryMuxLink?
+    func record(client: MuxNWConnection, clientData: InMemoryMuxLink) {
+        count += 1
+        lastClient = client
+        lastClientData = clientData
+    }
 }
 
 /// A trivial thread-safe counter for the factory-invocation assertion.

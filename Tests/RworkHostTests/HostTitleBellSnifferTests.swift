@@ -217,6 +217,34 @@ final class HostTitleBellSnifferTests: XCTestCase {
         }
     }
 
+    /// REGRESSION: an over-cap OSC whose OWN terminator is a `BEL` must have that BEL consumed
+    /// as the (discarded) OSC's terminator — NOT re-parsed in ground as a phantom `.bell`. The
+    /// old code dropped to `.ground` AT the cap, so the terminator BEL fired a spurious bell
+    /// (and could misread following bytes). A following real title must still be detected.
+    func testOverlongOSCTerminatorBELIsNotAPhantomBell() {
+        let junk = String(repeating: "x", count: 5000)          // > 4096 cap
+        let bytes = Array("\(ESC)]2;\(junk)\(BEL)".utf8)         // over-cap OSC TERMINATED by BEL
+            + Array("\(ESC)]0;real\(BEL)".utf8)                  // then a valid title
+        let msgs = observeWhole(bytes)
+        XCTAssertFalse(msgs.contains(.bell), "an over-cap OSC's terminator BEL must not fire a phantom .bell")
+        XCTAssertEqual(msgs, [.title("real")], "no phantom bell; the following title is still detected")
+        assertForwardsUnchanged(bytes)
+        for size in [1, 3, 64, 4096, bytes.count] {
+            XCTAssertEqual(observeChunked(bytes, size: size), [.title("real")], "chunk size \(size)")
+        }
+    }
+
+    /// REGRESSION sibling: an over-cap OSC terminated by `ST` (`ESC \`) resyncs cleanly with no
+    /// phantom title/bell, and a following real title is detected.
+    func testOverlongOSCTerminatedBySTResyncs() {
+        let junk = String(repeating: "x", count: 5000)
+        let bytes = Array("\(ESC)]2;\(junk)\(ST)".utf8) + Array("\(ESC)]0;real\(BEL)".utf8)
+        let msgs = observeWhole(bytes)
+        XCTAssertFalse(msgs.contains(.bell))
+        XCTAssertEqual(msgs, [.title("real")])
+        assertForwardsUnchanged(bytes)
+    }
+
     // MARK: OSC 1 (icon name only) is ignored; other OSC ignored
 
     func testOSC1IconNameIgnored() {

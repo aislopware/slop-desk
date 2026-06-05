@@ -188,13 +188,25 @@ final class GhosttyApp {
 /// app injects via `TerminalRendererFactory.shared`.
 public struct GhosttyTerminalView: TerminalRenderingView {
     private let model: TerminalViewModel
+    /// The pane's workspace focus (active tab's `focusedPane`). Drives the macOS keyboard FIRST
+    /// RESPONDER — only the focused pane takes the keyboard — WITHOUT gating render-liveness (every
+    /// visible pane stays libghostty-focused so an unfocused split sibling keeps repainting its output).
+    private let isFocused: Bool
 
+    /// `TerminalRenderingView` conformance. Defaults `isFocused` to `true` (single-pane / preview).
     public init(model: TerminalViewModel) {
         self.model = model
+        self.isFocused = true
+    }
+
+    /// The workspace-aware initializer the app factory uses, carrying the pane's focus.
+    public init(model: TerminalViewModel, isFocused: Bool) {
+        self.model = model
+        self.isFocused = isFocused
     }
 
     public var body: some View {
-        GhosttyMetalLayerView(model: model)
+        GhosttyMetalLayerView(model: model, isFocused: isFocused)
             .accessibilityLabel(Text("Terminal"))
     }
 }
@@ -206,6 +218,8 @@ public struct GhosttyTerminalView: TerminalRenderingView {
 /// `NSViewRepresentable` host backing the `CAMetalLayer` that owns the `GhosttySurface`.
 struct GhosttyMetalLayerView: NSViewRepresentable {
     let model: TerminalViewModel
+    /// The pane's workspace focus — drives the keyboard first responder (see ``GhosttyLayerBackedView``).
+    var isFocused: Bool = true
 
     func makeNSView(context: Context) -> GhosttyLayerBackedView {
         let view = GhosttyLayerBackedView()
@@ -215,6 +229,7 @@ struct GhosttyMetalLayerView: NSViewRepresentable {
         // (detach-clobber). Just remember the model — the surface is created lazily once the view
         // enters a real window (`viewDidMoveToWindow`), so EXACTLY ONE surface exists per pane.
         view.model = model
+        view.isFocusedPane = isFocused
         return view
     }
 
@@ -223,6 +238,10 @@ struct GhosttyMetalLayerView: NSViewRepresentable {
         // Attach only on-window (idempotent). The off-window probe view never reaches here with a
         // window set, so it never calls `ghostty_surface_new`.
         if nsView.window != nil { nsView.attach(model: model) }
+        // Apply the workspace focus: only the focused pane takes the keyboard first responder. A focus
+        // change (Cmd-arrow / palette / click→store.focus) re-renders this representable with the new
+        // value, so focus follows workspace intent reactively — no pane steals the keyboard on mount.
+        nsView.isFocusedPane = isFocused
     }
 
     static func dismantleNSView(_ nsView: GhosttyLayerBackedView, coordinator: ()) {
@@ -253,6 +272,22 @@ final class GhosttyLayerBackedView: NSView {
     /// is the lifetime owner (the GUI owns it on main; `detach()`/`deinit` free it).
     private var surface: GhosttySurface?
     weak var model: TerminalViewModel?
+
+    /// Whether THIS pane is the workspace's focused pane (set by `GhosttyMetalLayerView`). Drives the
+    /// keyboard FIRST RESPONDER only — render-focus (`surface.setFocus(true)`) is kept ON for every
+    /// visible pane in `attach()` so an unfocused split sibling keeps repainting. On a change to `true`
+    /// the pane claims first responder; on `false` it does NOT resign (a sibling claiming FR resigns it).
+    var isFocusedPane: Bool = true {
+        didSet { if isFocusedPane != oldValue { applyKeyboardFocus() } }
+    }
+
+    /// Claims the keyboard first responder iff this is the focused pane and on-window. Never resigns
+    /// here (the sibling that becomes focused makes ITSELF first responder, which resigns this one) and
+    /// never touches `surface.setFocus` (render-focus stays on for repaint — the multi-pane fix).
+    private func applyKeyboardFocus() {
+        guard isFocusedPane, let window, window.firstResponder !== self else { return }
+        window.makeFirstResponder(self)
+    }
 
     /// Drives libghostty's renderer thread via `ghostty_surface_draw_now`. GATED on `presentTicks`:
     /// it presents only when there is something new, NOT every display frame. An UNCONDITIONAL
@@ -333,13 +368,14 @@ final class GhosttyLayerBackedView: NSView {
             if let model { attach(model: model) }
             startRenderTickIfNeeded()
             requestPresent(8)   // prime the initial glyph flush
-            // AUTO-FOCUS the terminal. CRITICAL for live repaint: an UNFOCUSED libghostty surface
-            // idles its renderer loop (no cursor-blink/animation wakeups) so it stops presenting and
-            // the screen FREEZES on the last frame — confirmed on hardware (a focused surface
-            // repaints, an unfocused one does not). Focusing also routes keystrokes straight to
-            // libghostty's encoder (`keyDown` → `surface.key`). Deferred so the window is key first.
+            // Claim the keyboard ONLY if this is the workspace's focused pane. In a multi-pane split
+            // every pane used to call `makeFirstResponder` on mount, so the LAST-mounted pane stole the
+            // keyboard regardless of `store.focusedPane` (focus-stealing bug). Render-liveness is
+            // SEPARATE: `attach()` keeps `surface.setFocus(true)` on every visible pane (an unfocused
+            // libghostty surface idles its renderer and freezes — hardware-confirmed), so unfocused
+            // split siblings still repaint; only the keyboard FR is gated. Deferred so the window is key.
             DispatchQueue.main.async { [weak self] in
-                guard let self, let window = self.window else { return }
+                guard let self, self.isFocusedPane, let window = self.window else { return }
                 window.makeFirstResponder(self)
             }
         } else {
@@ -480,7 +516,30 @@ final class GhosttyLayerBackedView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
-        // Route every key through libghostty's encoder (DECISIONS: never hand-roll VT).
+        // CTRL+<key> → LEGACY C0 control byte (the universal-interrupt fix). The host shell (oh-my-zsh
+        // / a plugin) enables the kitty keyboard protocol, which makes libghostty's encoder emit a
+        // CSI-u ESCAPE for Ctrl-C/Z/D/… (e.g. `^[[3;5u`) instead of the raw control byte. A remote
+        // FOREGROUND program that is NOT kitty-aware — a plain `sleep`/`cat`, or the shell between
+        // prompts — never sees `0x03`, so Ctrl-C cannot interrupt it (HARDWARE-CONFIRMED broken). The
+        // remote PTY is a SEPARATE process from this client terminal, so we cannot rely on the host
+        // popping the protocol per-command. macOS already resolves Ctrl+<key> to its C0 control
+        // character in `event.characters` (Ctrl-C → U+0003, Ctrl-[ → U+001B, Ctrl-Space → U+0000,
+        // Ctrl-? → U+007F), so for a control-modified key that yields a single C0/DEL scalar we send
+        // that raw byte directly — bypassing the kitty encoder — so interrupt/EOF/suspend + the C0
+        // line-editing keys always reach the host. Plain + non-control keys still go through libghostty
+        // unchanged (kitty stays available to the host for everything else). Cmd-combos are app
+        // shortcuts and are NOT intercepted here.
+        if event.modifierFlags.contains(.control),
+           !event.modifierFlags.contains(.command),
+           let chars = event.characters,
+           chars.unicodeScalars.count == 1,
+           let scalar = chars.unicodeScalars.first,
+           scalar.value < 0x20 || scalar.value == 0x7F {
+            model?.sendInput(Data(chars.utf8))
+            return
+        }
+
+        // Route every other key through libghostty's encoder (DECISIONS: never hand-roll VT).
         // ghostty_input_key_s (header 322): action / mods / keycode / text /
         // unshifted_codepoint / composing.
         var key = ghostty_input_key_s()
@@ -521,7 +580,12 @@ final class GhosttyLayerBackedView: NSView {
     }
 
     override func resignFirstResponder() -> Bool {
-        surface?.setFocus(false)
+        // DO NOT drop libghostty render-focus here. Losing the KEYBOARD first responder to a sibling
+        // pane must NOT idle this surface's renderer — an unfocused libghostty surface stops presenting
+        // and FREEZES on its last frame (hardware-confirmed), which is exactly the multi-pane
+        // "unfocused pane goes stale" bug. Render-focus is kept ON for every visible pane (set in
+        // `attach()`); only the keyboard moves to the newly-focused pane. (A pane truly leaving the
+        // screen is `detach()`'d, which closes the surface — so it never needs an unfocus here.)
         return super.resignFirstResponder()
     }
 
@@ -549,6 +613,9 @@ final class GhosttyLayerBackedView: NSView {
 /// `UIViewRepresentable` host backing the `CAMetalLayer` that owns the `GhosttySurface`.
 struct GhosttyMetalLayerView: UIViewRepresentable {
     let model: TerminalViewModel
+    /// Signature parity with the macOS sibling. iOS keyboard focus is owned by `TerminalInputHost`
+    /// (doc 17 §2.5), and every visible surface stays render-focused, so this is currently inert here.
+    var isFocused: Bool = true
 
     func makeUIView(context: Context) -> GhosttyLayerBackedView {
         let view = GhosttyLayerBackedView()

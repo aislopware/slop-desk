@@ -85,6 +85,16 @@ public final class IMEProxyTextView: UITextView, UITextViewDelegate {
     /// same authoritative path a hardware Backspace takes. We never call `super` (there is no
     /// document to mutate), so DEL is emitted exactly once.
     public override func deleteBackward() {
+        // During an active IME / Telex composition the document is NOT empty (the steady-state
+        // "always empty" assumption only holds at rest). A backspace there is meant to edit the
+        // MARKED TEXT — route it back to the text system (which mutates the composition and fires
+        // `textViewDidChange`, still withheld from `onText` until `markedTextRange == nil`), and
+        // emit NO DEL. Emitting a DEL byte here would both swallow the composition edit and send a
+        // spurious Delete to the host. Only emit the host DEL in the empty-document steady state.
+        if markedTextRange != nil {
+            super.deleteBackward()
+            return
+        }
         onKeyPress?(InputRouting.KeyPress(characters: "\u{7F}", isSpecial: true))
     }
 
@@ -109,32 +119,34 @@ public final class IMEProxyTextView: UITextView, UITextViewDelegate {
     }
 
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        var unhandled = Set<UIPress>()
-        for press in presses {
-            guard let key = press.key,
-                  let classified = Self.classify(key),
-                  InputRouting.routesToKeyEncoding(classified) else {
-                unhandled.insert(press)
-                continue
-            }
-            onKeyRelease?(classified)
-        }
-        if !unhandled.isEmpty { super.pressesEnded(unhandled, with: event) }
+        handlePressesEnded(presses) { unhandled in super.pressesEnded(unhandled, with: event) }
     }
 
     public override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        // Release every key-encoding press we may have been repeating; pass the rest on.
+        handlePressesEnded(presses) { unhandled in super.pressesCancelled(unhandled, with: event) }
+    }
+
+    /// Shared release path for `pressesEnded` / `pressesCancelled`. For ANY key that classifies to a
+    /// non-modifier press, ALWAYS surface a release — even one that no longer routes to key-encoding.
+    /// This is the runaway-repeat fix: when a modifier is released BEFORE its letter, the letter's
+    /// release classifies as a PLAIN key (control flag gone) and the old `routesToKeyEncoding` gate
+    /// dropped it, so a held Ctrl/Alt+letter repeat never stopped (a 20Hz control-code flood). The
+    /// owner's `KeyRepeater` ignores a release for a key it is not holding, so an unrelated release is
+    /// a harmless no-op. A non-key-encoding press is still handed to the text system (its keyDown went
+    /// to `super`), so plain-text key handling is unchanged.
+    private func handlePressesEnded(_ presses: Set<UIPress>, passUnhandled: (Set<UIPress>) -> Void) {
         var unhandled = Set<UIPress>()
         for press in presses {
-            guard let key = press.key,
-                  let classified = Self.classify(key),
-                  InputRouting.routesToKeyEncoding(classified) else {
+            guard let key = press.key, let classified = Self.classify(key) else {
                 unhandled.insert(press)
                 continue
             }
-            onKeyRelease?(classified)
+            onKeyRelease?(classified)   // ALWAYS attempt a release (repeater no-ops if not held)
+            if !InputRouting.routesToKeyEncoding(classified) {
+                unhandled.insert(press)  // plain text key — the text system handles its release too
+            }
         }
-        if !unhandled.isEmpty { super.pressesCancelled(unhandled, with: event) }
+        passUnhandled(unhandled)
     }
 
     /// Maps a UIKit `UIKey` into the platform-agnostic ``InputRouting/KeyPress``. Returns `nil`

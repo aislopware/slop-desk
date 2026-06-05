@@ -73,13 +73,19 @@ public struct BuildStatusPlaceholderView: TerminalRenderingView {
 @MainActor
 public final class TerminalRendererFactory {
     /// The app-registered factory (set once at launch). `nil` → use the placeholder.
-    public static var shared: ((TerminalViewModel) -> AnyView)?
+    ///
+    /// `isFocused` is the pane's workspace focus (the active tab's `focusedPane`). The production
+    /// renderer uses it to drive the macOS first responder from WORKSPACE INTENT — only the focused
+    /// pane takes the keyboard — instead of every pane stealing it on mount (the multi-pane
+    /// focus-stealing bug). It does NOT gate render-liveness: every visible pane stays render-focused so
+    /// an unfocused pane in a split keeps repainting its remote output.
+    public static var shared: ((TerminalViewModel, Bool) -> AnyView)?
 
     /// Builds the terminal rendering view: the registered production renderer if present,
-    /// else the BUILD-STATUS placeholder.
-    public static func make(model: TerminalViewModel) -> AnyView {
+    /// else the BUILD-STATUS placeholder. `isFocused` reflects the pane's workspace focus.
+    public static func make(model: TerminalViewModel, isFocused: Bool) -> AnyView {
         if let factory = shared {
-            return factory(model)
+            return factory(model, isFocused)
         }
         return AnyView(BuildStatusPlaceholderView(model: model))
     }

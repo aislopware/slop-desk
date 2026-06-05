@@ -44,4 +44,16 @@ final class InMemoryMuxLink: MuxByteLink, @unchecked Sendable {
         peerInbound?.finish()
         outbound.finish()
     }
+
+    /// Test-only: simulate a HARD link failure (TCP RST / NetBird flap) — finish the PEER's
+    /// `receiveChunks` with an error so the connected ``MuxNWConnection``'s receive loop lands in
+    /// `finishLink(error:)` (the path that marks the connection dead). Distinct from `close()`'s clean
+    /// finish (a per-channel FIN). `error` defaults to a generic transport error.
+    func fail(_ error: Error = InMemoryLinkError.dropped) {
+        peerInbound?.finish(throwing: error)
+        outbound.finish(throwing: error)
+    }
 }
+
+/// A generic error for ``InMemoryMuxLink/fail(_:)`` (a simulated hard link drop).
+enum InMemoryLinkError: Error { case dropped }

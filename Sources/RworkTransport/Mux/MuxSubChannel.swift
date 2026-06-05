@@ -171,6 +171,13 @@ public actor MuxSubChannel: MessageChannel {
     private func awaitChunkCredit(maxWanted: Int) async throws -> Int {
         while true {
             if finished { throw RworkTransportError.notConnected("mux channel closed") }
+            // A CANCELLED sender unblocks here. Without this, a drain Task parked on an exhausted window
+            // (below) could only be woken by a `windowAdjust` grant or `finish()` — so a teardown that
+            // merely `cancel()`s the drain Task (e.g. `HostServer.stop()` → `MuxChannelSession.shutdown`,
+            // which does NOT route through `MuxNWConnection.close()` and so never `finish()`es the
+            // sub-channel) would leak the parked task + its retained actors forever. The cancellation
+            // handler on the park below wakes us; this re-check then throws.
+            try Task.checkCancellation()
             let available = sendWindow!.remaining
             if available > 0 {
                 let take = min(available, maxWanted)
@@ -182,11 +189,22 @@ public actor MuxSubChannel: MessageChannel {
                 }
                 return take
             }
-            // Window exhausted (remaining == 0): park until a windowAdjust grants more, then retry.
-            // CONTROL frames are never here (flow OFF on control), so a windowAdjust / ack / bye can
-            // always flow and wake us — no deadlock.
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                blockedSenders.append(continuation)
+            // Window exhausted (remaining == 0): park until a windowAdjust grants more, `finish()`
+            // closes, OR this task is CANCELLED, then retry. CONTROL frames are never here (flow OFF on
+            // control), so a windowAdjust / ack / bye can always flow and wake us — no deadlock. The
+            // park is cancellation-aware: `onCancel` wakes every parked sender so a cancelled one
+            // re-loops and `Task.checkCancellation()` above throws (no leaked sender on teardown).
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    if Task.isCancelled {
+                        continuation.resume()   // already cancelled — do not park; re-check + throw above
+                    } else {
+                        blockedSenders.append(continuation)
+                    }
+                }
+            } onCancel: {
+                // Runs OFF the actor; hop in to wake the parked senders so the cancelled one proceeds.
+                Task { await self.wakeBlockedSenders() }
             }
         }
     }

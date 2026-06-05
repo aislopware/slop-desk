@@ -49,10 +49,18 @@ public final class VideoConnectionRegistry {
     }
 
     private var entries: [String: Entry] = [:]
-    /// Monotonic per-process channelID allocator. UDP lanes need only be unique per shared flow at a
-    /// time; a global monotonic counter trivially guarantees that and never reuses a retired id
-    /// within a process (reconnect-generation safety on the host's ``VideoMuxRouter``).
-    private var nextChannelID: UInt32 = 1
+    /// Monotonic channelID allocator, SEEDED from a per-process RANDOM base ([7]). UDP lanes need only
+    /// be unique per shared flow within a process — a monotonic counter guarantees that and never reuses
+    /// a retired id (reconnect-generation safety on the host's ``VideoMuxRouter``). But two DISTINCT
+    /// clients streaming the SAME host window each ran their own counter from 1, so both minted
+    /// `channelID == 1` for their first lane — and the host's per-channelID reply-flow maps
+    /// (`channelMediaConn` / `channelCursorConn`) are keyed by the BARE channelID, so the second client's
+    /// lane HIJACKED the first's video/cursor reply flow (stream theft). Seeding each process's counter
+    /// from a random base separates the two clients' id RANGES, so their lanes never collide on the host.
+    /// The base is masked well below `UInt32.max` so a long-lived client's `&+= 1` cannot wrap into a
+    /// sibling's range within any realistic session (a client opens far fewer than the ~0xF0000000
+    /// headroom of lanes). Still strictly monotonic within the process (the property the router needs).
+    private var nextChannelID: UInt32 = UInt32.random(in: 1...0x0FFF_FFFF)
 
     /// Builds a fresh shared flow for an endpoint. Injected so tests substitute an in-memory flow.
     private let makeFlow: @MainActor (_ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16) -> VideoMuxClientFlowing
