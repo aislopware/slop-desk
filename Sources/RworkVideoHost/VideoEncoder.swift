@@ -50,6 +50,10 @@ public final class VideoEncoder: @unchecked Sendable {
     public static let dataRateMaxBytes = bitrateBitsPerSecond / 8 // 1_500_000
     /// -12905 (XPC) create-race retry backoff, 50-100ms (doc 18 §G).
     public static let createRetryBackoffNanos: UInt64 = 75_000_000
+    /// §A1 (doc 26 §A) worst-case quantizer cap for the live session. HEVC QP range is
+    /// 1 (lossless) … 51 (coarsest); ~32 keeps screen-share text sharp while leaving the
+    /// encoder motion headroom. Best-effort: -12900/unsupported on some encoders → tolerated.
+    public static let maxAllowedFrameQP = 32
 
     /// Which session produced an output (carried to the packetizer's crisp flag).
     public enum Mode: Sendable { case live, crisp }
@@ -136,6 +140,19 @@ public final class VideoEncoder: @unchecked Sendable {
         // critical aborted the WHOLE encoder on such hardware, leaving PATH 2 unable to produce
         // a single frame — observed via check-video.sh's host diagnostics, 2026-06-02.)
         set(session, kVTCompressionPropertyKey_SpatialAdaptiveQPLevel, kVTQPModulationLevel_Disable as CFNumber)
+        // §A1 part 2 (doc 26 §A): cap the worst-case quantizer so text never smears under a
+        // bitrate-starved frame. With low-latency RC + a 12 Mbps DataRateLimits hard cap, a busy
+        // frame can otherwise blow its budget and the encoder coarsens QP → blurry glyph edges.
+        // MaxAllowedFrameQP tells the encoder to DROP a frame (or spend an extra IDR) rather than
+        // ship a frame above this QP — on a 24–30fps desktop a held-but-sharp frame beats a
+        // delivered-but-blurry one. QP ~32 (1=lossless..51=worst) keeps text crisp while leaving
+        // motion headroom; tune on hardware.
+        // BEST-EFFORT (NOT setCritical): kVTCompressionPropertyKey_MaxAllowedFrameQP is
+        // kVTPropertyNotSupportedErr/-12900 on some HEVC encoders — same -12900-prone family as
+        // SpatialAdaptiveQPLevel above; forcing it critical would abort the whole encoder on such
+        // hardware (the exact regression class the 2026-06-02 fix #1 guards against). The key
+        // exists on macOS 26; on older OSes it is simply tolerated as a no-op.
+        set(session, kVTCompressionPropertyKey_MaxAllowedFrameQP, Self.maxAllowedFrameQP as CFNumber)
         // ProfileLevel OMITTED for the low-latency session (doc 18 §E).
         // NOTE: do NOT query UsingHardwareAcceleratedVideoEncoder here — it returns
         // -12900 with low-latency on; HW is already gated by Require...=true above.
