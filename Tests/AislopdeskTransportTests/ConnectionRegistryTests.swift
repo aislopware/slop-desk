@@ -362,6 +362,9 @@ private final class GatedMuxLink: MuxByteLink, @unchecked Sendable {
         }
         try await inner.send(data)
     }
+    /// Pipelined sends bypass the gate (it exists to hold the AWAITED `openChannel` send
+    /// mid-flight; pipelined frames are not what this fixture gates).
+    func sendPipelined(_ data: Data) { inner.sendPipelined(data) }
     func openGate() {
         lock.lock(); opened = true; let w = waiters; waiters.removeAll(); lock.unlock()
         for c in w { c.resume() }

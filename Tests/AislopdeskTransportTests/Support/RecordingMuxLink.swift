@@ -30,6 +30,11 @@ final class RecordingMuxLink: MuxByteLink, @unchecked Sendable {
         try await underlying.send(data)
     }
 
+    func sendPipelined(_ data: Data) {
+        classify(data)
+        underlying.sendPipelined(data)
+    }
+
     /// Feeds `data` into the per-link frame decoder and counts `windowAdjust` frames. A malformed
     /// sequence (shouldn't happen — the owner writes whole frames) just stops counting; never fails.
     private func classify(_ data: Data) {

@@ -158,6 +158,23 @@ final class BlockingMuxLink: MuxByteLink, @unchecked Sendable {
             reader?.resume(returning: nil)
             for w in writers { w.resume() }
         }
+
+        /// SYNCHRONOUS enqueue bypassing capacity AND the gate — models `NWConnection`'s
+        /// internal send queue, which `sendPipelined` writes into without suspension (the
+        /// mux credit window, not the link, is what bounds pipelined in-flight bytes).
+        /// Hands off to a parked reader if one is waiting.
+        func enqueueUnbounded(_ data: Data) {
+            let waiter: CheckedContinuation<Data?, Never>? = locked {
+                if finished { return nil }
+                if buffer.isEmpty, let reader = readerWaiter {
+                    readerWaiter = nil
+                    return reader
+                }
+                buffer.append(data)
+                return nil
+            }
+            waiter?.resume(returning: data)
+        }
     }
 
     private let outPipe: Pipe   // this end's send → peer's receive
@@ -201,6 +218,14 @@ final class BlockingMuxLink: MuxByteLink, @unchecked Sendable {
 
     func send(_ data: Data) async throws {
         await outPipe.send(data)
+    }
+
+    /// Synchronous enqueue bypassing the capacity/gate (the `NWConnection`-internal-queue
+    /// model — see ``Pipe/enqueueUnbounded(_:)``). NOTE: this means the outbound GATE no
+    /// longer parks pipelined data sends; the FIX #2 deadlock the gate proved is now
+    /// structurally impossible (grant emission never suspends the receive loop).
+    func sendPipelined(_ data: Data) {
+        outPipe.enqueueUnbounded(data)
     }
 
     func close() async {

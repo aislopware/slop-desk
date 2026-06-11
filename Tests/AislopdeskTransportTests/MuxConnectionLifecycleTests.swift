@@ -160,11 +160,21 @@ final class MuxConnectionLifecycleTests: XCTestCase {
 
     /// A ``MuxByteLink`` whose `send()` always throws, but whose receive never errors — so the connection
     /// is NOT marked dead (openChannel's `guard !isDead` passes) and the send-failure cleanup path is hit.
+    /// `sendPipelined` follows the production contract: the failure surfaces on the LINK path
+    /// (receiveChunks finishes throwing), never to the caller.
     private final class SendFailingMuxLink: MuxByteLink, @unchecked Sendable {
         private let stream: AsyncThrowingStream<Data, Error>
-        init() { stream = AsyncThrowingStream { _ in } } // never yields / never finishes → link stays "alive"
+        private let continuation: AsyncThrowingStream<Data, Error>.Continuation
+        init() {
+            var c: AsyncThrowingStream<Data, Error>.Continuation!
+            stream = AsyncThrowingStream { c = $0 } // never yields → link stays "alive" until a pipelined failure
+            continuation = c
+        }
         var receiveChunks: AsyncThrowingStream<Data, Error> { stream }
         func send(_ data: Data) async throws { throw AislopdeskTransportError.notConnected("send failed (test)") }
+        func sendPipelined(_ data: Data) {
+            continuation.finish(throwing: AislopdeskTransportError.sendFailed("pipelined send failed (test)"))
+        }
         func close() async {}
     }
 

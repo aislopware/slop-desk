@@ -40,6 +40,12 @@ final class InMemoryMuxLink: MuxByteLink, @unchecked Sendable {
         peerInbound?.yield(data)
     }
 
+    /// Synchronous enqueue (the protocol contract — NEVER a Task hop, which would scramble
+    /// per-channel FIFO in the flood-order tests).
+    func sendPipelined(_ data: Data) {
+        peerInbound?.yield(data)
+    }
+
     func close() async {
         peerInbound?.finish()
         outbound.finish()

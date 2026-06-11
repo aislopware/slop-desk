@@ -3,17 +3,20 @@ import Foundation
 import AislopdeskProtocol
 @testable import AislopdeskHost
 
-/// WF-3 host-side title/bell sniffer tests. The sniffer observes the SAME outbound byte
-/// stream the host relays and emits `.title` (OSC 0/2) / `.bell` (standalone BEL) CONTROL
-/// messages — making wire types 21/22 actually fire end to end.
+/// The FUSED ``HostOutputSniffer`` test suite: every test from the two suites it replaces
+/// (`HostTitleBellSnifferTests` — 30 tests — and `HostCommandStatusSnifferTests` — 13
+/// tests), ported mechanically onto the fused machine, plus the PERMANENT
+/// chunking-invariance property test (`testChunkingInvarianceOracle`).
 ///
-/// The two crown-jewel properties:
+/// The crown-jewel properties carried over verbatim:
 ///   1. **Non-destructive** — feeding the stream and concatenating the chunks back yields
 ///      the original bytes UNCHANGED (the sniffer never consumes/strips a byte). Asserted
-///      in `assertForwardsUnchanged` on every test stream below.
+///      in `assertForwardsUnchanged` on every title-side test stream below.
 ///   2. **Split-boundary equivalence** — feeding the SAME stream chunked at every boundary
-///      (one byte at a time .. whole) produces identical control messages.
-final class HostTitleBellSnifferTests: XCTestCase {
+///      (one byte at a time .. whole) produces identical control messages. The standing
+///      oracle below additionally pins the fused fast path to the per-byte path forever
+///      (chunk-size-1 bypasses the memchr fast path entirely).
+final class HostOutputSnifferTests: XCTestCase {
 
     private let ESC = "\u{1B}"
     private let BEL = "\u{07}"
@@ -21,14 +24,36 @@ final class HostTitleBellSnifferTests: XCTestCase {
 
     // MARK: Helpers
 
+    // A test clock the sniffer reads on each `C`/`D`. `advance(_:)` moves it forward so a
+    // `C … D` pair has a known duration, no wall-clock sleep.
+    private final class TestClock: @unchecked Sendable {
+        private let lock = NSLock()
+        private var now = Date(timeIntervalSinceReferenceDate: 0)
+        func date() -> Date { lock.lock(); defer { lock.unlock() }; return now }
+        func advance(_ seconds: TimeInterval) { lock.lock(); now = now.addingTimeInterval(seconds); lock.unlock() }
+    }
+
+    private func bytes(_ s: String) -> [UInt8] { Array(s.utf8) }
+
+    /// OSC 133 ; <mark> BEL.
+    private func osc133(_ mark: String) -> [UInt8] { bytes("\u{1B}]133;\(mark)\u{07}") }
+
+    /// The `.commandStatus` subsequence (the fused sniffer may interleave titles/bells).
+    private func commandOnly(_ messages: [WireMessage]) -> [WireMessage] {
+        messages.filter {
+            if case .commandStatus = $0 { return true }
+            return false
+        }
+    }
+
     /// Feeds `bytes` to a fresh sniffer in one shot; returns all emitted control messages.
     private func observeWhole(_ bytes: [UInt8]) -> [WireMessage] {
-        HostTitleBellSniffer().observe(bytes)
+        HostOutputSniffer().observe(bytes)
     }
 
     /// Feeds `bytes` to a fresh sniffer split into chunks of `size`; returns all messages.
     private func observeChunked(_ bytes: [UInt8], size: Int) -> [WireMessage] {
-        let s = HostTitleBellSniffer()
+        let s = HostOutputSniffer()
         var out: [WireMessage] = []
         var i = 0
         while i < bytes.count {
@@ -43,12 +68,10 @@ final class HostTitleBellSnifferTests: XCTestCase {
     /// forwards each chunk's original bytes (the contract of the `onChunk` sink, which
     /// yields the UNCHANGED chunk regardless of what the sniffer detected) reconstructs the
     /// input byte-for-byte, at every chunk boundary. The sniffer only OBSERVES; it must
-    /// never alter the relayed bytes. We model the relay explicitly: the sniffer's
-    /// `observe` return value is discarded into the control side, while the raw chunk is
-    /// appended to the forwarded buffer.
+    /// never alter the relayed bytes.
     private func assertForwardsUnchanged(_ bytes: [UInt8], file: StaticString = #filePath, line: UInt = #line) {
         for size in 1...max(1, bytes.count) {
-            let s = HostTitleBellSniffer()
+            let s = HostOutputSniffer()
             var forwarded: [UInt8] = []
             var i = 0
             while i < bytes.count {
@@ -61,6 +84,52 @@ final class HostTitleBellSnifferTests: XCTestCase {
             XCTAssertEqual(forwarded, bytes, "relay altered bytes at chunk size \(size)", file: file, line: line)
         }
     }
+
+    // MARK: PERMANENT chunking-invariance oracle (fast path vs per-byte path)
+
+    /// STANDING ORACLE — keep forever. `observe(whole)` must equal the concatenation of
+    /// `observe` one byte at a time on the SAME machine state trajectory. Chunk-size-1
+    /// BYPASSES the memchr fast path (every chunk is a single byte, so the fast path can
+    /// never skip ahead), so this property permanently pins the fast path (which only
+    /// chooses WHICH bytes reach `step()`) to the per-byte transition table.
+    func testChunkingInvarianceOracle() {
+        let streams: [String] = [
+            // ground content + bells around escapes
+            "plain text, no sequences at all",
+            "\(BEL)a\(BEL)\(BEL)b",
+            // titles, both terminators, dedup, semicolons, empty
+            "\(ESC)]0;one\(BEL)\(ESC)]2;one\(BEL)\(ESC)]0;two\(ST)\(ESC)]2;\(BEL)\(ESC)]0;a;b;c\(BEL)",
+            // 133 marks: phantom D, A/B, C→D, ST-terminated
+            "\(ESC)]133;D;0\(BEL)\(ESC)]133;A\(BEL)\(ESC)]133;C\(BEL)out\(ESC)]133;D;1\(ST)",
+            // string sequences swallowing spoofs, then real sequences
+            "\(ESC)P\(ESC)]2;spoof\(BEL)\(ESC)X9\(BEL)\(ESC)_\(ESC)]133;C\(BEL)\(ESC)]2;real\(BEL)\(ESC)]133;C\(BEL)",
+            // stray ESC ends an OSC + introduces the next; ESC ESC; discard path (over-cap)
+            "\(ESC)]0;abc\(ESC)]2;next\(BEL)\(ESC)\(ESC)]0;dbl\(BEL)",
+            "\(ESC)]2;" + String(repeating: "x", count: 5000) + "\(BEL)\(BEL)\(ESC)]0;after\(BEL)",
+            "\(ESC)]133;" + String(repeating: "y", count: 700) + "\(ST)\(ESC)]133;C\(BEL)",
+            // partial sequence left hanging at the end (state carries past the last chunk)
+            "tail\(ESC)]0;par",
+        ]
+        for stream in streams {
+            let raw = bytes(stream)
+            // Whole vs one-byte-at-a-time — separate machines, same clock semantics (no
+            // clock advance mid-stream, so durations match trivially).
+            let whole = HostOutputSniffer().observe(raw)
+            let perByte = HostOutputSniffer()
+            var concatenated: [WireMessage] = []
+            for b in raw { concatenated += perByte.observe([b]) }
+            XCTAssertEqual(whole, concatenated, "fast path diverged from per-byte on: \(stream.debugDescription)")
+            // And a few intermediate chunk sizes for good measure.
+            for size in [2, 3, 7, 64] {
+                XCTAssertEqual(observeChunked(raw, size: size), whole,
+                               "chunk size \(size) diverged on: \(stream.debugDescription)")
+            }
+        }
+    }
+
+    // ============================================================================
+    // MARK: - Ported from HostTitleBellSnifferTests (30 tests)
+    // ============================================================================
 
     // MARK: OSC 0 + BEL terminator → .title
 
@@ -96,7 +165,7 @@ final class HostTitleBellSnifferTests: XCTestCase {
         let bytes = Array("\(ESC)]0;split title\(BEL)".utf8)
         // Split at every interior boundary: each split must still yield exactly one title.
         for cut in 1..<bytes.count {
-            let s = HostTitleBellSniffer()
+            let s = HostOutputSniffer()
             var out = s.observe(Array(bytes[0..<cut]))
             out.append(contentsOf: s.observe(Array(bytes[cut..<bytes.count])))
             XCTAssertEqual(out, [.title("split title")], "split at \(cut) diverged")
@@ -271,7 +340,8 @@ final class HostTitleBellSnifferTests: XCTestCase {
     }
 
     func testUnrelatedOSCIgnored() {
-        // OSC 8 (hyperlink), OSC 52 (clipboard), OSC 133 (prompt mark), OSC 4 (palette).
+        // OSC 8 (hyperlink), OSC 52 (clipboard), OSC 133;A (prompt mark — recognized by the
+        // fused grammar but A is deliberately NOT surfaced), OSC 4 (palette).
         let bytes =
             Array("\(ESC)]8;;https://example.com\(BEL)".utf8)
             + Array("\(ESC)]52;c;BASE64==\(BEL)".utf8)
@@ -289,7 +359,7 @@ final class HostTitleBellSnifferTests: XCTestCase {
     }
 
     func testEmptyTitleIsEmittedOnce() {
-        // `ESC]0; BEL` — an explicitly empty title (clears the title). Valid; emit "".
+        // `ESC]2; BEL` — an explicitly empty title (clears the title). Valid; emit "".
         let bytes = Array("\(ESC)]2;\(BEL)".utf8)
         XCTAssertEqual(observeWhole(bytes), [.title("")])
         assertForwardsUnchanged(bytes)
@@ -361,10 +431,198 @@ final class HostTitleBellSnifferTests: XCTestCase {
     // MARK: partial sequence at end of chunk never misfires
 
     func testPartialSequenceAtEndNeverMisfires() {
-        let s = HostTitleBellSniffer()
+        let s = HostOutputSniffer()
         // Feed a partial OSC; no title yet.
         XCTAssertEqual(s.observe(Array("\(ESC)]0;par".utf8)), [])
         // Complete it next chunk.
         XCTAssertEqual(s.observe(Array("tial\(BEL)".utf8)), [.title("partial")])
+    }
+
+    // ============================================================================
+    // MARK: - Ported from HostCommandStatusSnifferTests (13 tests)
+    // ============================================================================
+
+    // MARK: C → D: running then idle with measured duration + exit code
+
+    func testCStartedThenDFinishedWithExitAndDuration() {
+        let clock = TestClock()
+        let sniffer = HostOutputSniffer(clock: clock.date)
+
+        // C: command started → .running.
+        let onC = sniffer.observe(osc133("C"))
+        XCTAssertEqual(onC, [.commandStatus(.running)])
+
+        // 12 seconds elapse on the host clock between C and D.
+        clock.advance(12)
+
+        // D;0: command finished, exit 0 → .idle with the measured 12_000 ms.
+        let onD = sniffer.observe(osc133("D;0"))
+        XCTAssertEqual(onD, [.commandStatus(.idle(exitCode: 0, durationMS: 12_000))])
+    }
+
+    func testQuickCommandSubSecondDuration() {
+        let clock = TestClock()
+        let sniffer = HostOutputSniffer(clock: clock.date)
+        XCTAssertEqual(sniffer.observe(osc133("C")), [.commandStatus(.running)])
+        clock.advance(0.3) // 300 ms
+        XCTAssertEqual(sniffer.observe(osc133("D;0")),
+                       [.commandStatus(.idle(exitCode: 0, durationMS: 300))])
+    }
+
+    func testNonZeroExitCodeParsed() {
+        let clock = TestClock()
+        let sniffer = HostOutputSniffer(clock: clock.date)
+        _ = sniffer.observe(osc133("C"))
+        clock.advance(1)
+        XCTAssertEqual(sniffer.observe(osc133("D;130")),
+                       [.commandStatus(.idle(exitCode: 130, durationMS: 1_000))])
+    }
+
+    func testDWithoutExitCodeYieldsNilExit() {
+        let clock = TestClock()
+        let sniffer = HostOutputSniffer(clock: clock.date)
+        _ = sniffer.observe(osc133("C"))
+        clock.advance(2)
+        // Bare `D` (no exit field) → nil exit, 2_000 ms.
+        XCTAssertEqual(sniffer.observe(osc133("D")),
+                       [.commandStatus(.idle(exitCode: nil, durationMS: 2_000))])
+    }
+
+    func testDExtraKeyValueFieldsTolerated() {
+        let clock = TestClock()
+        let sniffer = HostOutputSniffer(clock: clock.date)
+        _ = sniffer.observe(osc133("C"))
+        clock.advance(1)
+        // iTerm2/FinalTerm sometimes append `;aid=...` etc. — the exit (field 2) still parses.
+        XCTAssertEqual(sniffer.observe(osc133("D;0;aid=123")),
+                       [.commandStatus(.idle(exitCode: 0, durationMS: 1_000))])
+    }
+
+    // MARK: D without a matching C is ignored (the first-prompt phantom)
+
+    func testDWithoutPrecedingCIsIgnored() {
+        let sniffer = HostOutputSniffer(clock: { Date() })
+        // The very first precmd emits D;0 for a command that never started — must be a no-op.
+        XCTAssertEqual(sniffer.observe(osc133("D;0")), [])
+    }
+
+    func testAandBmarksAreNotSurfaced() {
+        let sniffer = HostOutputSniffer(clock: { Date() })
+        XCTAssertEqual(sniffer.observe(osc133("A")), [], "prompt-start A is not a command status")
+        XCTAssertEqual(sniffer.observe(osc133("B")), [], "command-line-start B is not a command status")
+    }
+
+    // MARK: Full prompt cycle (A→C→D→A) yields exactly running then idle
+
+    func testFullPromptCycleYieldsRunningThenIdle() {
+        let clock = TestClock()
+        let sniffer = HostOutputSniffer(clock: clock.date)
+        var out: [WireMessage] = []
+        // precmd of an empty first prompt: D;0 (ignored) then A (ignored).
+        out += sniffer.observe(osc133("D;0"))
+        out += sniffer.observe(osc133("A"))
+        // user runs a command: preexec C.
+        out += sniffer.observe(osc133("C"))
+        clock.advance(11)
+        // command done: precmd D;0 then A.
+        out += sniffer.observe(osc133("D;0"))
+        out += sniffer.observe(osc133("A"))
+        XCTAssertEqual(out, [
+            .commandStatus(.running),
+            .commandStatus(.idle(exitCode: 0, durationMS: 11_000)),
+        ])
+    }
+
+    // MARK: Split-boundary equivalence — same events feeding one byte at a time
+
+    func testSplitAtEveryByteBoundaryProducesIdenticalEvents() {
+        // Build a stream with a full C → (advance) → D cycle. Because the duration is read from
+        // the clock at the moment each mark COMPLETES, advance the clock once between feeding the
+        // C bytes and the D bytes — identical to the whole-chunk case.
+        let cBytes = osc133("C")
+        let dBytes = osc133("D;7")
+
+        // Whole-chunk reference.
+        let refClock = TestClock()
+        let ref = HostOutputSniffer(clock: refClock.date)
+        var reference: [WireMessage] = []
+        reference += ref.observe(cBytes)
+        refClock.advance(5)
+        reference += ref.observe(dBytes)
+
+        // One byte at a time, with the SAME single advance between the two marks.
+        let splitClock = TestClock()
+        let split = HostOutputSniffer(clock: splitClock.date)
+        var got: [WireMessage] = []
+        for b in cBytes { got += split.observe([b]) }
+        splitClock.advance(5)
+        for b in dBytes { got += split.observe([b]) }
+
+        XCTAssertEqual(got, reference)
+        XCTAssertEqual(got, [
+            .commandStatus(.running),
+            .commandStatus(.idle(exitCode: 7, durationMS: 5_000)),
+        ])
+    }
+
+    // MARK: ST (ESC \) terminator works as well as BEL
+
+    func testSTTerminatorRecognized() {
+        let clock = TestClock()
+        let sniffer = HostOutputSniffer(clock: clock.date)
+        // ESC ] 133 ; C  ESC \   (ST instead of BEL)
+        let c = Array("\u{1B}]133;C\u{1B}\\".utf8)
+        XCTAssertEqual(sniffer.observe(c), [.commandStatus(.running)])
+        clock.advance(1)
+        let d = Array("\u{1B}]133;D;0\u{1B}\\".utf8)
+        XCTAssertEqual(sniffer.observe(d), [.commandStatus(.idle(exitCode: 0, durationMS: 1_000))])
+    }
+
+    // MARK: Interleaved with ordinary output + a title OSC (not a 133 mark)
+
+    func testIgnoresNon133OSCAndPlainContent() {
+        let clock = TestClock()
+        let sniffer = HostOutputSniffer(clock: clock.date)
+        // A title OSC (0;…) + plain prompt text → NO commandStatus. (FUSED-sniffer port
+        // note: the old command sniffer returned [] here; the fused machine of course also
+        // emits the `.title` — so the command-status assertion is the FILTERED subsequence,
+        // and the title emission is asserted alongside.)
+        let preamble = Array("\u{1B}]0;my title\u{07}user@host % ".utf8)
+        let onPreamble = sniffer.observe(preamble)
+        XCTAssertEqual(commandOnly(onPreamble), [])
+        XCTAssertEqual(onPreamble, [.title("my title")])
+        // Then a real C.
+        XCTAssertEqual(sniffer.observe(osc133("C")), [.commandStatus(.running)])
+    }
+
+    // MARK: Two commands back to back (state resets correctly)
+
+    func testTwoSequentialCommandsEachMeasuredIndependently() {
+        let clock = TestClock()
+        let sniffer = HostOutputSniffer(clock: clock.date)
+        // First command: 3s.
+        XCTAssertEqual(sniffer.observe(osc133("C")), [.commandStatus(.running)])
+        clock.advance(3)
+        XCTAssertEqual(sniffer.observe(osc133("D;0")),
+                       [.commandStatus(.idle(exitCode: 0, durationMS: 3_000))])
+        // Second command: 7s — runningSince must have been cleared + reset.
+        XCTAssertEqual(sniffer.observe(osc133("C")), [.commandStatus(.running)])
+        clock.advance(7)
+        XCTAssertEqual(sniffer.observe(osc133("D;1")),
+                       [.commandStatus(.idle(exitCode: 1, durationMS: 7_000))])
+    }
+
+    /// R9 #4 (security): a `133;C/D` mark embedded inside a DCS/APC string body must NOT produce a phantom
+    /// command-status — a conformant terminal swallows the string. So a hostile remote program cannot fake
+    /// a running/idle badge (with an attacker-chosen exit code + duration).
+    func testStringSequencesSwallowEmbeddedCommandStatus() {
+        let clock = TestClock()
+        let sniffer = HostOutputSniffer(clock: clock.date)
+        // `ESC P` (DCS) … embedded `ESC]133;C BEL` … `ESC \` (ST) → swallowed, no phantom .running.
+        let dcsSpoof = bytes("\u{1B}P\u{1B}]133;C\u{07}\u{1B}\\")
+        XCTAssertEqual(sniffer.observe(dcsSpoof), [], "an OSC 133 embedded in a DCS string must not fire a status")
+        // A REAL 133;C after the swallowed string still fires (clean resync).
+        XCTAssertEqual(sniffer.observe(osc133("C")), [.commandStatus(.running)],
+                       "a real mark after the swallowed string still fires")
     }
 }

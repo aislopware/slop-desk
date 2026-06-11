@@ -23,9 +23,13 @@ import Foundation
 /// `@unchecked Sendable`: all mutable state (`paused`, `stopped`) is guarded by the
 /// `NSCondition`'s lock; `fd` is immutable.
 public final class PTYReadLoop: @unchecked Sendable {
-    /// The chunk size for each `read()` — large enough to absorb a `cat`-a-big-file
-    /// burst in one syscall ([12] §1.2 uses 128 KiB).
-    public static let readChunkSize = 128 * 1024
+    /// The chunk size for each `read()`. 32 KiB: HALF the (latency-sized) bounded-queue
+    /// capacity (`MuxFlowControl.hostQueueCapacityBytes`, 64 KiB), so the gate's worst
+    /// overshoot is capacity + one read (~96 KiB) instead of capacity + 128 KiB — a
+    /// 128 KiB read against a 64 KiB bound would pause the loop on EVERY flood chunk and
+    /// half-defeat the latency sizing. Floods drain at the same throughput (the syscall
+    /// count rises, but the wire — not read(2) — is the bottleneck).
+    public static let readChunkSize = 32 * 1024
 
     private let fd: Int32
     private let onChunk: @Sendable (Data) -> Void

@@ -43,6 +43,24 @@ public final class NWMuxByteLink: MuxByteLink, @unchecked Sendable {
         }
     }
 
+    /// Hot-path send: enqueues on the `NWConnection` (FIFO with ``send(_:)``) and returns
+    /// immediately — no per-frame dispatch round trip. The awaited variant cost one
+    /// completion round trip through the connection's queue PER FRAME, which serialized
+    /// the host output drain at frames-per-dispatch-hop and bought nothing: ordering is
+    /// NWConnection's own FIFO, and in-flight bytes are bounded by the mux credit window
+    /// (debited BEFORE the send). A failure is routed into the SAME path a receive error
+    /// takes — finish the inbound stream throwing + cancel — so `MuxNWConnection.finishLink`
+    /// / reconnect fire exactly as today. Captures the continuation + connection directly
+    /// (not weak self) so an in-flight failure is never dropped; finish-after-finish is a
+    /// no-op and cancel is idempotent.
+    public func sendPipelined(_ data: Data) {
+        connection.send(content: data, completion: .contentProcessed { [chunkContinuation, connection] error in
+            guard let error else { return }
+            chunkContinuation.finish(throwing: AislopdeskTransportError.sendFailed(String(describing: error)))
+            connection.cancel()
+        })
+    }
+
     public func close() async {
         connection.cancel()
         chunkContinuation.finish()

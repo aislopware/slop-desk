@@ -163,9 +163,11 @@ public actor MuxNWConnection {
     /// inbound streams. Other channels on the shared connection are untouched.
     public func closeChannel(_ id: UInt32) async {
         let close = MuxEnvelopeCodec.encode(.channelClose(channelID: id))
-        // Best-effort: a failed close write means the shared link is already gone.
-        try? await dataLink.send(close)
-        try? await controlLink.send(close)
+        // Best-effort + pipelined: NWConnection FIFO guarantees the close follows any prior
+        // data; a failed write means the shared link is already gone (failure routes to the
+        // link path, same as the old try?-swallowed throw).
+        dataLink.sendPipelined(close)
+        controlLink.sendPipelined(close)
         dataTable.localClose(id)
         controlTable.localClose(id)
         // S2 CLEANUP (foot-gun #2): drop the channel's receive-window accounting and finish the
@@ -244,8 +246,14 @@ public actor MuxNWConnection {
         // DATA sub-channel ALWAYS carries the per-channel SEND window; the CONTROL sub-channel is
         // ALWAYS infinite (sendWindowBytes: nil) so resize/ack/bye/keepalive never block behind a
         // full data window (foot-gun #1/#3).
+        // DATA = the hot path (PTY output / input / exit): PIPELINED — enqueue in call order
+        // with no per-frame dispatch round trip; in-flight bytes are bounded by the credit
+        // window (debited before the send inside MuxSubChannel), and every data caller
+        // already `try?`s. CONTROL stays AWAITED: its send throws are load-bearing
+        // (AislopdeskClient.flushAckIfPending re-arms ackPending on a throw) and it is
+        // low-rate, so the round trip costs nothing.
         let dataCh = MuxSubChannel(channelID: id, channel: .data) { channelID, inner in
-            try await dataLink.send(MuxEnvelopeCodec.encode(.channelData(channelID: channelID, payload: inner)))
+            dataLink.sendPipelined(MuxEnvelopeCodec.encode(.channelData(channelID: channelID, payload: inner)))
         }
         let controlCh = MuxSubChannel(channelID: id, channel: .control, sendWindowBytes: nil) { channelID, inner in
             try await controlLink.send(MuxEnvelopeCodec.encode(.channelData(channelID: channelID, payload: inner)))
@@ -308,8 +316,10 @@ public actor MuxNWConnection {
         // Refuse a NEW over-cap open here and RETURN without advancing the table or registering anything.
         if role == .host, link == .data, case let .channelOpen(id, _, _, _) = frame,
            dataChannels[id] == nil, dataChannels.count >= MuxFlowControl.maxChannelsPerConnection {
+            // Pipelined: emitted from the receive loop — must never suspend it (same
+            // rationale as the windowAdjust grant below).
             let refusal = MuxEnvelopeCodec.encode(.channelOpenAck(channelID: id, accepted: false))
-            try? await dataLink.send(refusal)
+            dataLink.sendPipelined(refusal)
             return
         }
         // R11: a `channelOpen` is NEVER legitimate on the CONTROL link — the client always opens on the
@@ -404,9 +414,14 @@ public actor MuxNWConnection {
                 // arrived on (it matches on channelID, see the receipt block above), so routing it
                 // via CONTROL is transparent. Still INLINE on this actor so the grant decision cannot
                 // be reordered against the delivery that triggered it.
+                // PIPELINED grant emission: the awaited variant suspended the ONLY task
+                // draining this link's inbound on a control-socket write — the exact
+                // deadlock shape the FIX #2 link-split defends against. With a pipelined
+                // enqueue the grant can never block the receive loop, making that deadlock
+                // structurally impossible (not merely mitigated).
                 if link == .data, let grant = dataReceiveWindows[channelID]?.consume(consumed), grant > 0 {
                     let adjust = MuxEnvelopeCodec.encode(.windowAdjust(channelID: channelID, bytesToAdd: UInt32(grant)))
-                    try? await controlLink.send(adjust)
+                    controlLink.sendPipelined(adjust)
                 }
             }
         case let .lifecycle(channelID, newState):
@@ -519,7 +534,7 @@ public actor MuxNWConnection {
     /// Sends a `channelOpenAck` for `id` on the DATA link (host → client). Host-only.
     public func sendOpenAck(_ id: UInt32, accepted: Bool) async {
         let frame = MuxEnvelopeCodec.encode(.channelOpenAck(channelID: id, accepted: accepted))
-        try? await dataLink.send(frame)
+        dataLink.sendPipelined(frame)
     }
 
     /// Test seam: emits a `windowAdjust` for `channelID` on the CONTROL link — matching the FIX #2
@@ -530,7 +545,7 @@ public actor MuxNWConnection {
     /// byte-safe) when flow control is OFF, but only called by flow-on tests.
     func grantWindowForTest(channelID: UInt32, bytesToAdd: UInt32) async {
         let frame = MuxEnvelopeCodec.encode(.windowAdjust(channelID: channelID, bytesToAdd: bytesToAdd))
-        try? await controlLink.send(frame)
+        controlLink.sendPipelined(frame)
     }
 
     private func finishLink(_ link: Link, error: Error?) async {

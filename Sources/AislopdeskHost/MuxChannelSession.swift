@@ -49,9 +49,73 @@ final class MuxChannelSession: @unchecked Sendable {
     private var controlTask: Task<Void, Never>?
     private var exitTask: Task<Void, Never>?
     private var outputTask: Task<Void, Never>?
-    private var outputContinuation: AsyncStream<OutputItem>.Continuation?
+    /// Wake for the output FIFO drain. Read/written ONLY under `fifoLock` (producers run on
+    /// the read-loop thread + the exit task; `shutdown()` nils it — an unguarded optional
+    /// read would race the teardown).
+    private var outputWakeContinuation: AsyncStream<Void>.Continuation?
     private var readLoop: PTYReadLoop?
     private var started = false
+
+    /// The output FIFO: a lock-guarded deque (NOT an AsyncStream of items — iterators
+    /// cannot peek, and the drain needs to MERGE adjacent chunks). Producers append under
+    /// `fifoLock` then yield the bufferingNewest(1) wake; the single drain pops merged
+    /// frames until empty before re-parking (the proven ConnectionViewModel outQueue
+    /// discipline — append-then-yield, drain-until-empty, no lost wake, no Task-per-item).
+    private let fifoLock = NSLock()
+    private var outFIFO: [OutputItem] = []
+
+    /// Sniffed control messages awaiting their own sender. Split from the data drain so a
+    /// slow/stalled CONTROL socket (or per-redraw title churn) can never stall data sends —
+    /// data waited on control before this split. Per-channel control FIFO is preserved
+    /// (running→idle, successive titles); cross-socket order vs data was never guaranteed
+    /// (different TCP connections).
+    private let controlOutLock = NSLock()
+    private var controlOut: [WireMessage] = []
+    private var controlSendTask: Task<Void, Never>?
+    /// Wake for the control sender. Read/written ONLY under `controlOutLock` (same teardown
+    /// race as ``outputWakeContinuation``).
+    private var controlWakeContinuation: AsyncStream<Void>.Continuation?
+
+    /// One merged data frame popped off the FIFO by the drain. Internal (not private) so the
+    /// drain-merge tests can assert on popped frames via the `_…ForTesting` seams.
+    enum MergedFrame {
+        case output(bytes: Data, byteCount: Int, control: [WireMessage])
+        case exit(code: Int32)
+    }
+
+    /// Pops the next merged frame under `fifoLock`. `.exit` is a merge BARRIER (it must
+    /// stay strictly after the final tail chunks — the R5-rank-5 EOF-latch ordering).
+    /// Single-chunk fast path returns the chunk's `Data` UNCHANGED (zero added copy — the
+    /// interactive steady state stays byte-identical work); only a multi-chunk backlog
+    /// pays one concatenation, amortized by skipping N−1 seq/encode/envelope/send rounds.
+    func takeMergedFrame() -> MergedFrame? {
+        fifoLock.lock()
+        defer { fifoLock.unlock() }
+        guard let head = outFIFO.first else { return nil }
+        if case let .exit(code) = head {
+            outFIFO.removeFirst()
+            return .exit(code: code)
+        }
+        // Head is a chunk: pop it, then greedily absorb following chunks up to the cap.
+        guard case var .chunk(bytes, control) = head else { return nil }
+        outFIFO.removeFirst()
+        var byteCount = bytes.count
+        if case .chunk(let nextBytes, _)? = outFIFO.first,
+           byteCount + nextBytes.count <= MuxFlowControl.hostMergeCapBytes {
+            // Multi-chunk merge: one mutable accumulator, reserve once.
+            var merged = Data(capacity: min(MuxFlowControl.hostMergeCapBytes, byteCount + nextBytes.count))
+            merged.append(bytes)
+            while case .chunk(let more, let moreControl)? = outFIFO.first,
+                  byteCount + more.count <= MuxFlowControl.hostMergeCapBytes {
+                outFIFO.removeFirst()
+                merged.append(more)
+                byteCount += more.count
+                control.append(contentsOf: moreControl)
+            }
+            bytes = merged
+        }
+        return .output(bytes: bytes, byteCount: byteCount, control: control)
+    }
 
     /// EOF latch (R5 rank 5): set true by ``PTYReadLoop``'s `onEOF` once the read loop has drained the
     /// master to EOF — which, per the read-loop contract, happens only AFTER every buffered output chunk
@@ -132,45 +196,81 @@ final class MuxChannelSession: @unchecked Sendable {
         let control = self.control
         let masterFD = pty.masterFD
 
-        var continuationOut: AsyncStream<OutputItem>.Continuation!
-        let outputStream = AsyncStream<OutputItem>(bufferingPolicy: .unbounded) { continuationOut = $0 }
-        let continuation = continuationOut!
-        self.outputContinuation = continuation
+        let (outputWakeups, outputWake) =
+            AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        fifoLock.lock()
+        self.outputWakeContinuation = outputWake
+        fifoLock.unlock()
         outputTask = Task { [weak self] in
-            for await item in outputStream {
-                guard let self else { return }
-                switch item {
-                case let .chunk(bytes, controlMessages):
-                    let seq = self.nextSeq(for: bytes)
-                    // `data.send` SUSPENDS on the per-channel credit window, so a flooding channel
-                    // naturally slows here. After the write is accepted we dequeue the bytes and
-                    // resume the read loop if the FIFO drained below the bound.
-                    try? await data.send(.output(seq: seq, bytes: bytes))
-                    self.dequeueOutput(bytes.count)
-                    for message in controlMessages {
-                        try? await control.send(message)
+            for await _ in outputWakeups {
+                // Drain until empty BEFORE re-parking (bufferingNewest(1) holds at most one
+                // pending wake — a one-frame-per-wake drain would strand backlog).
+                while let frame = self?.takeMergedFrame() {
+                    guard let self else { return }
+                    switch frame {
+                    case let .output(bytes, byteCount, controlMessages):
+                        let seq = self.nextSeq(for: bytes)
+                        // `data.send` SUSPENDS on the per-channel credit window, so a flooding
+                        // channel naturally slows here. After the write is accepted we dequeue
+                        // the bytes and resume the read loop if the FIFO drained below the
+                        // bound — dequeue MUST stay post-send (the gate bounds
+                        // enqueued-not-yet-SENT; moving it to take-time would let the read
+                        // loop refill while a merged frame is still unsent).
+                        try? await data.send(.output(seq: seq, bytes: bytes))
+                        self.dequeueOutput(byteCount)
+                        // Hand sniffed control to its OWN sender: the data drain never awaits
+                        // the control socket (a stalled control link froze data before this).
+                        if !controlMessages.isEmpty { self.enqueueControl(controlMessages) }
+                    case let .exit(code):
+                        try? await data.send(.exit(code: code))
+                        self.signalExitSent()   // R13 #7: release the exit task's await so onExit can run
                     }
-                case let .exit(code):
-                    try? await data.send(.exit(code: code))
-                    self.signalExitSent()   // R13 #7: release the exit task's await so onExit can run
                 }
             }
         }
 
-        let sniffer = HostTitleBellSniffer()
-        let cmdSniffer = HostCommandStatusSniffer()
+        // CONTROL OUT: one serial sender for sniffed title/bell/commandStatus, FIFO per
+        // channel (the only ordering consumers rely on — they fold each type independently
+        // and cross-socket order vs data was already non-deterministic).
+        let (controlWakeups, controlWake) =
+            AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        controlOutLock.lock()
+        self.controlWakeContinuation = controlWake
+        controlOutLock.unlock()
+        controlSendTask = Task { [weak self] in
+            for await _ in controlWakeups {
+                while let batch = self?.takeControlBatch() {
+                    for message in batch {
+                        try? await control.send(message)
+                    }
+                }
+            }
+        }
+
+        let sniffer = HostOutputSniffer()
         let readLoop = PTYReadLoop(
             fd: masterFD,
             onChunk: { [weak self] chunk in
-                // Two non-destructive sniffers over the SAME chunk: title/bell + OSC 133
-                // command status. Both only OBSERVE; the bytes are forwarded unchanged below.
-                var controlMsgs = sniffer.observe(chunk)
-                controlMsgs += cmdSniffer.observe(chunk)
+                guard let self else { return }
+                // ONE fused non-destructive sniffer pass over the chunk (title/bell + OSC 133
+                // command status — formerly two copy-derived per-byte machines scanning every
+                // byte twice on this hot thread). It only OBSERVES; the bytes are forwarded
+                // unchanged below. Emission order is byte-faithful interleaved (the old
+                // grouped-per-sniffer order was already chunk-boundary-dependent; consumers
+                // fold each type independently).
+                let controlMsgs = sniffer.observe(chunk)
                 // Account the chunk in the bounded queue BEFORE enqueueing; if it pushes the FIFO
                 // to/over the bound, PAUSE the read loop so the kernel PTY buffer fills and
                 // backpressures the shell (the real flood fix).
-                self?.enqueueOutput(chunk.count)
-                continuation.yield(.chunk(bytes: chunk, control: controlMsgs))
+                self.enqueueOutput(chunk.count)
+                // Append-then-yield (no lost wake): the pending bufferingNewest(1) wake always
+                // observes a complete FIFO. The continuation is read under fifoLock (teardown
+                // nils it); yield happens OUTSIDE the lock (it may resume the drain inline).
+                self.fifoLock.lock()
+                self.outFIFO.append(.chunk(bytes: chunk, control: controlMsgs))
+                let wake = self.outputWakeContinuation
+                self.fifoLock.unlock()
+                wake?.yield(())
             },
             onEOF: { [weak self] in self?.signalEOFReached() }
         )
@@ -241,7 +341,7 @@ final class MuxChannelSession: @unchecked Sendable {
             // guarantees `.exit` follows the last `.chunk` (the FIFO + single sequential drain preserve
             // that order on the wire). Bounded so a wedged/paused read never hangs exit delivery forever.
             await self?.awaitEOFOrTimeout()
-            continuation.yield(.exit(code: code))
+            self?.enqueueExit(code: code)
             // R13 #7: wait until the drain actually SENT `.exit` on the wire before firing onExit (which
             // triggers shutdown → outputTask.cancel()). Otherwise teardown can cancel the drain before
             // the buffered exit code is flushed, dropping the clean exit status. Bounded + cancellation-
@@ -276,8 +376,18 @@ final class MuxChannelSession: @unchecked Sendable {
     func shutdown() {
         taskLock.lock()
         readLoop?.stop()
-        outputContinuation?.finish()
-        outputContinuation = nil
+        // Wake continuations are owned by their queue locks (producers on other threads read
+        // them under the same lock — see the property docs), NOT by taskLock.
+        fifoLock.lock()
+        outputWakeContinuation?.finish()
+        outputWakeContinuation = nil
+        fifoLock.unlock()
+        controlOutLock.lock()
+        controlWakeContinuation?.finish()
+        controlWakeContinuation = nil
+        controlOutLock.unlock()
+        controlSendTask?.cancel()
+        controlSendTask = nil
         inputTask?.cancel()
         controlTask?.cancel()
         exitTask?.cancel()
@@ -408,6 +518,38 @@ final class MuxChannelSession: @unchecked Sendable {
         outputGate?.dequeue(count)
     }
 
+    // MARK: - Output FIFO / control-out producers (append-then-yield; no lost wake)
+
+    /// Enqueues `.exit` on the output FIFO (the reaper path). `.exit` is a merge BARRIER in
+    /// ``takeMergedFrame()`` — it never coalesces with chunks, so it stays strictly after the
+    /// final output tail (the R5-rank-5 EOF-latch ordering).
+    private func enqueueExit(code: Int32) {
+        fifoLock.lock()
+        outFIFO.append(.exit(code: code))
+        let wake = outputWakeContinuation
+        fifoLock.unlock()
+        wake?.yield(())
+    }
+
+    /// Hands sniffed control messages to the dedicated control sender (FIFO per channel).
+    private func enqueueControl(_ messages: [WireMessage]) {
+        controlOutLock.lock()
+        controlOut.append(contentsOf: messages)
+        let wake = controlWakeContinuation
+        controlOutLock.unlock()
+        wake?.yield(())
+    }
+
+    /// Atomically takes the whole pending control batch; `nil` when empty (drain re-parks).
+    private func takeControlBatch() -> [WireMessage]? {
+        controlOutLock.lock()
+        defer { controlOutLock.unlock() }
+        guard !controlOut.isEmpty else { return nil }
+        let batch = controlOut
+        controlOut.removeAll(keepingCapacity: true)
+        return batch
+    }
+
     // MARK: - Per-channel replay bookkeeping (lock-guarded; the value type is not Sendable)
 
     private func nextSeq(for bytes: Data) -> Int64 {
@@ -511,6 +653,22 @@ final class MuxChannelSession: @unchecked Sendable {
     func _signalExitSentForTesting() { signalExitSent() }
     func _isExitSentForTesting() -> Bool { isExitSent() }
     func _awaitExitSentForTesting(timeout: Duration) async { await awaitExitSentOrTimeout(timeout) }
+
+    /// Drain-merge seams: drive the output FIFO + ``takeMergedFrame()`` (and the control-out
+    /// queue) WITHOUT a PTY or running drain, so merge/barrier/cap semantics are provable
+    /// headlessly. The enqueue paths mirror the production producers exactly (append under
+    /// the lock; the wake yield is a no-op pre-`startRelay` since the continuation is nil).
+    func _enqueueChunkForTesting(bytes: Data, control: [WireMessage] = []) {
+        enqueueOutput(bytes.count)
+        fifoLock.lock()
+        outFIFO.append(.chunk(bytes: bytes, control: control))
+        let wake = outputWakeContinuation
+        fifoLock.unlock()
+        wake?.yield(())
+    }
+    func _enqueueExitForTesting(code: Int32) { enqueueExit(code: code) }
+    func _enqueueControlForTesting(_ messages: [WireMessage]) { enqueueControl(messages) }
+    func _takeControlBatchForTesting() -> [WireMessage]? { takeControlBatch() }
 
     private static func writeAll(fd: Int32, data: Data) {
         #if canImport(Darwin)
