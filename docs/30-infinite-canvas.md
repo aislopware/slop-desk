@@ -29,7 +29,7 @@ Status: spec of record. Replaces the split-tiling workspace with a pan-only infi
 
 ## 2. Data model — exact Swift
 
-New file `Sources/RworkClientUI/Workspace/Domain/Canvas.swift`. `import Foundation` + `import CoreGraphics` only (Domain purity — no SwiftUI, no RworkClient — same as `LayoutSolver.swift`/`FocusResolver.swift`).
+New file `Sources/AislopdeskClientUI/Workspace/Domain/Canvas.swift`. `import Foundation` + `import CoreGraphics` only (Domain purity — no SwiftUI, no AislopdeskClient — same as `LayoutSolver.swift`/`FocusResolver.swift`).
 
 ```swift
 import Foundation
@@ -104,7 +104,7 @@ public extension Canvas {
 }
 ```
 
-### Change to `Tab` (`Sources/RworkClientUI/Workspace/Domain/Tab.swift`)
+### Change to `Tab` (`Sources/AislopdeskClientUI/Workspace/Domain/Tab.swift`)
 
 ```swift
 public struct Tab: Identifiable, Codable, Sendable, Equatable {
@@ -141,7 +141,7 @@ public extension Tab {
 
 ## 3. Pure ops
 
-New files `Sources/RworkClientUI/Workspace/Domain/Canvas+Ops.swift` (queries + mutations + camera/arrange) and `Sources/RworkClientUI/Workspace/Domain/CanvasGeometry.swift` (pure static geometry: resize/placement/screenRect/culling). All on `Canvas`, each returns a new value or a pure read.
+New files `Sources/AislopdeskClientUI/Workspace/Domain/Canvas+Ops.swift` (queries + mutations + camera/arrange) and `Sources/AislopdeskClientUI/Workspace/Domain/CanvasGeometry.swift` (pure static geometry: resize/placement/screenRect/culling). All on `Canvas`, each returns a new value or a pure read.
 
 ### Queries (drive reconcile + coupling — replace PaneNode reads)
 ```swift
@@ -248,7 +248,7 @@ public extension Canvas {
 ### 4.1 Codable for the new types
 `CanvasCamera`, `CanvasItem`, `Canvas` are flat (no recursion) → **synthesized `Codable` is safe** (`CGRect`/`CGPoint`/`CGSize` are Codable via CoreGraphics). The hand-written discriminated codec that `PaneNode+Codable` needed (recursive `indirect enum`) is no longer required.
 
-Add ONE defensive `init(from:)`/`encode(to:)` on `Canvas` in `Sources/RworkClientUI/Workspace/Domain/Canvas+Codable.swift` to enforce invariants on decode (mirroring `PaneNode+Codable`'s `children.count >= 2` guard), so corruption fails the decode → `load()` falls back cleanly:
+Add ONE defensive `init(from:)`/`encode(to:)` on `Canvas` in `Sources/AislopdeskClientUI/Workspace/Domain/Canvas+Codable.swift` to enforce invariants on decode (mirroring `PaneNode+Codable`'s `children.count >= 2` guard), so corruption fails the decode → `load()` falls back cleanly:
 
 ```swift
 extension Canvas {
@@ -291,10 +291,10 @@ Wire shape (stable, `.sortedKeys`):
 `Workspace.currentSchemaVersion = 2` (`Workspace.swift:36`).
 
 ### 4.3 Retaining legacy `PaneNode` (quarantined)
-`PaneNode.swift`, `PaneNode+Codable.swift`, `LayoutSolver.swift` are **moved to `Sources/RworkClientUI/Workspace/Legacy/`** and made `internal` (drop `public`). Referenced by **nothing** except the migration below. The structural mutation ops (`splitting`/`closing`/`settingFractions`) stay (they compile inside the legacy file) but are dead; only the decode + `allLeafIDs()` + `spec(for:)` + `LayoutSolver.solve` surface is exercised. Add a top-of-file doc: "LEGACY — v1 persistence decode + migration frame-seed ONLY; not used at runtime." `SplitAxis` (used by `DividerHandle`/`LayoutSolver`) stays with the legacy/solver code; `DividerHandle` moves to `Domain/SolvedLayout.swift` (it is part of `SolvedLayout`'s type, always `[]` now).
+`PaneNode.swift`, `PaneNode+Codable.swift`, `LayoutSolver.swift` are **moved to `Sources/AislopdeskClientUI/Workspace/Legacy/`** and made `internal` (drop `public`). Referenced by **nothing** except the migration below. The structural mutation ops (`splitting`/`closing`/`settingFractions`) stay (they compile inside the legacy file) but are dead; only the decode + `allLeafIDs()` + `spec(for:)` + `LayoutSolver.solve` surface is exercised. Add a top-of-file doc: "LEGACY — v1 persistence decode + migration frame-seed ONLY; not used at runtime." `SplitAxis` (used by `DividerHandle`/`LayoutSolver`) stays with the legacy/solver code; `DividerHandle` moves to `Domain/SolvedLayout.swift` (it is part of `SolvedLayout`'s type, always `[]` now).
 
 ### 4.4 The v1→v2 migration (pre-decode raw-JSON peek)
-New file `Sources/RworkClientUI/Workspace/Legacy/WorkspaceV1Migration.swift`:
+New file `Sources/AislopdeskClientUI/Workspace/Legacy/WorkspaceV1Migration.swift`:
 
 ```swift
 import Foundation
@@ -783,14 +783,14 @@ case .toggleZoom:         store.toggleZoom()
 ## 8. File-by-file plan
 
 **Create**
-- `Sources/RworkClientUI/Workspace/Domain/Canvas.swift` — `Canvas`, `CanvasItem`, `CanvasCamera` + metrics.
-- `Sources/RworkClientUI/Workspace/Domain/Canvas+Ops.swift` — queries + mutations + camera/arrange + `solvedLayout()`.
-- `Sources/RworkClientUI/Workspace/Domain/Canvas+Codable.swift` — defensive `init(from:)`/`encode(to:)` + `sanitize`.
-- `Sources/RworkClientUI/Workspace/Domain/CanvasGeometry.swift` — `ResizeAnchor`, `resizing`, `placement`, `screenRect`, `visibleItems`, `viewportMembers`.
-- `Sources/RworkClientUI/Workspace/Domain/SolvedLayout.swift` — `SolvedLayout` + `DividerHandle` (extracted from LayoutSolver so they survive the quarantine).
-- `Sources/RworkClientUI/Workspace/Legacy/WorkspaceV1Migration.swift` — pre-decode peek + legacy mirrors + reshape.
-- `Sources/RworkClientUI/Workspace/Views/CanvasView.swift` — pannable plane + `CanvasScrollCatcher` + recenter button + maximize branch.
-- `Sources/RworkClientUI/Workspace/Views/CanvasItemView.swift` — positioned pane + move/resize gestures + handles.
+- `Sources/AislopdeskClientUI/Workspace/Domain/Canvas.swift` — `Canvas`, `CanvasItem`, `CanvasCamera` + metrics.
+- `Sources/AislopdeskClientUI/Workspace/Domain/Canvas+Ops.swift` — queries + mutations + camera/arrange + `solvedLayout()`.
+- `Sources/AislopdeskClientUI/Workspace/Domain/Canvas+Codable.swift` — defensive `init(from:)`/`encode(to:)` + `sanitize`.
+- `Sources/AislopdeskClientUI/Workspace/Domain/CanvasGeometry.swift` — `ResizeAnchor`, `resizing`, `placement`, `screenRect`, `visibleItems`, `viewportMembers`.
+- `Sources/AislopdeskClientUI/Workspace/Domain/SolvedLayout.swift` — `SolvedLayout` + `DividerHandle` (extracted from LayoutSolver so they survive the quarantine).
+- `Sources/AislopdeskClientUI/Workspace/Legacy/WorkspaceV1Migration.swift` — pre-decode peek + legacy mirrors + reshape.
+- `Sources/AislopdeskClientUI/Workspace/Views/CanvasView.swift` — pannable plane + `CanvasScrollCatcher` + recenter button + maximize branch.
+- `Sources/AislopdeskClientUI/Workspace/Views/CanvasItemView.swift` — positioned pane + move/resize gestures + handles.
 - Tests: `CanvasOpsTests.swift`, `CanvasGeometryTests.swift`, `CanvasCullingTests.swift`, `WorkspaceV1MigrationTests.swift`, `CanvasFocusTests.swift`.
 
 **Modify**
@@ -871,7 +871,7 @@ case .toggleZoom:         store.toggleZoom()
 ---
 
 ### Source anchors (verified)
-`Sources/RworkClientUI/Workspace/Domain/{Tab.swift,Workspace.swift,LayoutSolver.swift,CompactLayoutResolver.swift,PaneNode.swift,PaneNode+Codable.swift}`, `Sources/RworkClientUI/Workspace/Store/{WorkspaceStore.swift,WorkspacePersistence.swift,WorkspaceSchemaMigration.swift,CommandInterpreter.swift}`, `Sources/RworkClientUI/Workspace/Views/{PaneTreeView.swift,SplitContainer.swift,PaneChromeView.swift,PaneCarouselView.swift,PaneLeafView.swift,WorkspaceRootView.swift,CommandPaletteView.swift,TabSidebarView.swift,WorkspaceCommands.swift}`, and the libghostty spine `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift` (`layout()` bounds×scale + `layer.bounds==view.bounds`; `mouseDown` y-flip) + `Sources/RworkClientUI/Terminal/TerminalViewModel.swift` (`sendResize` dedup).
+`Sources/AislopdeskClientUI/Workspace/Domain/{Tab.swift,Workspace.swift,LayoutSolver.swift,CompactLayoutResolver.swift,PaneNode.swift,PaneNode+Codable.swift}`, `Sources/AislopdeskClientUI/Workspace/Store/{WorkspaceStore.swift,WorkspacePersistence.swift,WorkspaceSchemaMigration.swift,CommandInterpreter.swift}`, `Sources/AislopdeskClientUI/Workspace/Views/{PaneTreeView.swift,SplitContainer.swift,PaneChromeView.swift,PaneCarouselView.swift,PaneLeafView.swift,WorkspaceRootView.swift,CommandPaletteView.swift,TabSidebarView.swift,WorkspaceCommands.swift}`, and the libghostty spine `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift` (`layout()` bounds×scale + `layer.bounds==view.bounds`; `mouseDown` y-flip) + `Sources/AislopdeskClientUI/Terminal/TerminalViewModel.swift` (`sendResize` dedup).
 
 ---
 

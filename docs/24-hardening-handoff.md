@@ -1,7 +1,7 @@
 # 24 — Code-Hardening Pass Handoff
 
 > **STATUS: CURRENT.** This records the autonomous code-hardening pass (2026-06-03) on branch
-> **`feat/rwork-code-hardening`** (15 commits over `main`), which resolved every deferred
+> **`feat/aislopdesk-code-hardening`** (15 commits over `main`), which resolved every deferred
 > followup from [`23-workspace-ui-handoff.md`](23-workspace-ui-handoff.md), the known video-host
 > reconnect bug, the missing host-side inspector serving, the flaky-test infra, and 12
 > adversarially-found bugs — all build- and unit-test-gated headlessly. The runtime/GUI/device
@@ -13,11 +13,11 @@
 
 - `swift build` and `swift build --build-tests` — **warning- and error-clean**.
 - `scripts/check-ios.sh` — **`** BUILD SUCCEEDED **` / iOS typecheck OK**.
-- **633 XCTest tests, 0 failures** across the HostServer-free suites: RworkClientUITests 281,
-  RworkVideoHostTests 58, RworkVideoClientTests 63, RworkInspectorTests 41, RworkHostTests 64,
-  RworkProtocolTests 24, RworkTransportTests 41, RworkClaudeCodeTests 58, HostServerE2EGuardTests 3.
-- The HostServer E2E suites (`RworkClientE2ETests`, `RworkReconnectE2ETests`,
-  `RworkReconnectSuppressionTests`) are **deliberately not run headlessly** (the documented
+- **633 XCTest tests, 0 failures** across the HostServer-free suites: AislopdeskClientUITests 281,
+  AislopdeskVideoHostTests 58, AislopdeskVideoClientTests 63, AislopdeskInspectorTests 41, AislopdeskHostTests 64,
+  AislopdeskProtocolTests 24, AislopdeskTransportTests 41, AislopdeskClaudeCodeTests 58, HostServerE2EGuardTests 3.
+- The HostServer E2E suites (`AislopdeskClientE2ETests`, `AislopdeskReconnectE2ETests`,
+  `AislopdeskReconnectSuppressionTests`) are **deliberately not run headlessly** (the documented
   pool-deadlock/wedge risk) but are now **CI-safe** — see #10. Run them in a controlled CI pass.
 
 ## What shipped — 10 deferred-followup specs
@@ -28,7 +28,7 @@
 | 2 | Reactive auto-promote of gated video panes | `WorkspaceStore.videoPromotionGeneration` nudge on slot-free; view re-attempts admission via `.onChange` | 4b566fe |
 | 3 | reconcile() ceiling protection | **NOT made async** (that ripples through 13 mutators + init + every view closure). Minimal-ripple: `tearingDownVideo: Set<PaneID>` counts in-flight `.remoteGUI` teardown against `liveVideoCap` so a same-tick close+reopen can't transiently exceed the ceiling | 80a7538 |
 | 4 | Keyboard-binding duplication | Menu `.keyboardShortcut`s **derived from `CommandInterpreter.defaultBindings`** via a `KeyChord→KeyboardShortcut` adapter (one source of truth); dropped the unused `clock` seam | efd2a93 |
-| 5 | Per-device `liveVideoCap` | `VideoCapPolicy` (phone 1 / pad 2 / mac 3), resolved **once at launch** in `RworkClientApp` (cap is a launch-time ceiling, not live-resizing) | 80a7538 |
+| 5 | Per-device `liveVideoCap` | `VideoCapPolicy` (phone 1 / pad 2 / mac 3), resolved **once at launch** in `AislopdeskClientApp` (cap is a launch-time ceiling, not live-resizing) | 80a7538 |
 | 6 | Outer-window compact breakpoint | macOS NSWindow-width reader feeds a `windowWidth` overload (`compactWindowWidthThreshold` 680); detail-width path keeps 460 byte-for-byte; iOS stays size-class-primary | 61c47bb |
 | 7 | Schema `migrate(from:to:)` seam | `WorkspaceSchemaMigration` step-table (identity / reject-newer / per-version upgrade); load() forward-migrates instead of discarding | 2782cfd |
 | 8 | Video-host reconnect-after-bye | SM `.bye` returns to re-armable `.listening` (only local `stop()` stays terminal) so a fresh `hello` re-arms capture with a new streamID | dc0d3fe |
@@ -83,5 +83,5 @@ Confirm on hardware (the runtime is the only thing left between this and end-use
 
 ## Merge
 
-The branch is committed, not pushed, not merged. Recommended: merge `feat/rwork-code-hardening` →
+The branch is committed, not pushed, not merged. Recommended: merge `feat/aislopdesk-code-hardening` →
 `main` (mirrors how the workspace-UI branch landed at `e7c9c43`), then schedule the hardware pass above.

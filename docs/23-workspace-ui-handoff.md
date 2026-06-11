@@ -113,22 +113,22 @@ iOS `UIResponder` glue need a window-server / device. **None of this is claimed 
 |-------|--------|----------------------------------|
 | **SwiftUI shell + views** | `Workspace/Views/*` (`WorkspaceRootView`, `TabSidebarView`, `PaneTreeView`, `SplitContainer`, `PaneChromeView`, `PaneLeafView`, `PaneCarouselView`, `WorkspaceCommands`, `FocusedValues+Workspace`, `CommandPaletteView`) | Views only lay out; not unit-tested (no HostServer-backed tests — pool-deadlock rule). Divider drag, zoom, focus affordance, sidebar reorder, carousel paging, palette presentation are **visually unverified**. |
 | **Rendered terminal surface across reshape** | `PaneLeafView` terminal composite + the `TerminalRendererFactory` seam (renderer is the gated libghostty `GhosttyTerminalView`, out-of-scope here) | The MODEL session survives tab switch / compact flip (registry-owned, `.id(PaneID)`). The **rendered `GhosttySurface` is currently rebuilt** on a branch-type flip / tab switch until surface ownership moves out of the transient view — see deferred followup #1/#3 below. Needs `scripts/check-macos.sh` to confirm prior output survives a tab A→B→A round trip. |
-| **Live PATH-2 video decode** | `PaneLeafView.RemoteGUIPaneView` → `RemoteWindowPanel` (the proven `RworkVideoClient` core) | Activation is routed through `store.activateVideo(live.id)` (cap-enforcing) and renders a gated "Video paused — too many live windows" placeholder over `liveVideoCap` (default 2). The **store policy is unit-tested via the FakePaneSession seam (`LiveVideoCapTests`)**, but the live decode (UDP / VTDecompression / Metal / CADisplayLink) is **only startable from a real unlocked GUI session with a capturing host** — see `scripts/check-video.sh` + the CGS_REQUIRE_INIT constraint below. |
+| **Live PATH-2 video decode** | `PaneLeafView.RemoteGUIPaneView` → `RemoteWindowPanel` (the proven `AislopdeskVideoClient` core) | Activation is routed through `store.activateVideo(live.id)` (cap-enforcing) and renders a gated "Video paused — too many live windows" placeholder over `liveVideoCap` (default 2). The **store policy is unit-tested via the FakePaneSession seam (`LiveVideoCapTests`)**, but the live decode (UDP / VTDecompression / Metal / CADisplayLink) is **only startable from a real unlocked GUI session with a capturing host** — see `scripts/check-video.sh` + the CGS_REQUIRE_INIT constraint below. |
 | **iOS first-responder / key-repeat / IME / floating-cursor** | `iOS/TerminalInputHost.swift`, `InputBarView.swift` (WF6 edits), `iOS/KeyRepeater`, `iOS/IMEProxyTextView`, `iOS/FloatingCursorController`, `iOS/KeyboardAccessoryBar` | Compiles for iOS (`scripts/check-ios.sh`); the underlying cadence/mapping logic is pure + macOS-unit-tested. On-device key-repeat under real presses, IME multi-stage composition, floating-cursor gesture, and the iPad-regular multi-pane first-responder hand-off (`PaneFocusCoordinator`) are **unverified** — needs a real device. |
 | **Live inspector second channel** | `PaneLeafView.ClaudeCodePaneView` → `InspectorPanel`; `LivePaneSession.subscribeInspector` | The subscribe/fold/resume-race LOGIC is unit-tested (loopback seam). But there is **no host-side inspector serving yet** — the live `NWConnection #2` JSONL stream from a real Claude-Code host is unverified end-to-end. |
-| **App shell + scenePhase** | `RworkClientApp.swift` (serialized scenePhase chain, WF7 #5), `Video/RemoteWindowPanel.swift` (showCloseButton) | The serialized iOS background→foreground pause/resume chain is iOS-isolated glue verified only via `check-ios.sh` compile + the store-level `ScenePhaseFanOutTests`; the actual app lifecycle transition on a device is unverified. |
+| **App shell + scenePhase** | `AislopdeskClientApp.swift` (serialized scenePhase chain, WF7 #5), `Video/RemoteWindowPanel.swift` (showCloseButton) | The serialized iOS background→foreground pause/resume chain is iOS-isolated glue verified only via `check-ios.sh` compile + the store-level `ScenePhaseFanOutTests`; the actual app lifecycle transition on a device is unverified. |
 
 ## Build & verify (exact commands)
 
 ```sh
 # 1. Headless build — all SwiftPM targets, warning + error clean
-swift build --package-path /Volumes/Lacie/Workspace/oss/rworkspace
+swift build --package-path /Volumes/Lacie/Workspace/oss/aislopdesk
 
 # 2. iOS-triple typecheck of the #if os(iOS) sources — must end "** BUILD SUCCEEDED **"
-cd /Volumes/Lacie/Workspace/oss/rworkspace && bash scripts/check-ios.sh
+cd /Volumes/Lacie/Workspace/oss/aislopdesk && bash scripts/check-ios.sh
 
 # 3. Full test suite — 595 XCTest, 0 failures (~23s)
-swift test --package-path /Volumes/Lacie/Workspace/oss/rworkspace
+swift test --package-path /Volumes/Lacie/Workspace/oss/aislopdesk
 ```
 
 The workspace UI views compile via `swift build` but the rendered terminal/video pipelines
@@ -144,7 +144,7 @@ reviewed" and "proven".
 1. **macOS GUI smoke — `scripts/check-macos.sh`.** Build the macOS `.app`, open it, drive
    it, `screencapture` a PNG, read the pixels. Verify: the sidebar renders tabs; a split
    produces two visible panes with a draggable divider; zoom full-bleeds one leaf; the
-   command palette opens. Run the terminal round trip with `--connect` + `RWORK_AUTOTYPE`
+   command palette opens. Run the terminal round trip with `--connect` + `AISLOPDESK_AUTOTYPE`
    (type → host exec → render, asserted by a host-side marker with a COMPUTED value, not just
    a live socket).
 2. **Terminal surface liveness across tab switch (the load-bearing check).** Type into tab

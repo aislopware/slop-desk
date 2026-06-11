@@ -1,6 +1,6 @@
-# libghostty — Rwork's ONLY terminal renderer
+# libghostty — Aislopdesk's ONLY terminal renderer
 
-Rwork renders the terminal with **libghostty and nothing else**: no SwiftTerm, no
+Aislopdesk renders the terminal with **libghostty and nothing else**: no SwiftTerm, no
 fallback path (see [`docs/DECISIONS.md`](../../docs/DECISIONS.md) → *Terminal
 renderer*). PATH 1 streams raw VT bytes from the host PTY to the client; libghostty
 parses + GPU-renders them in a Metal view. This directory is the build infra +
@@ -22,7 +22,7 @@ Swift binding for that renderer.
 | Pin | Value | Source of truth |
 |-----|-------|-----------------|
 | **Upstream** | `ghostty-org/ghostty` @ **`v1.3.1`** | canonical tag (2026-03-13); the reproducible base |
-| Fork delta | `daiimus/ghostty:ios-external-backend` (= v1.3.0 + external backend) | `patches/rwork-libghostty-on-v1.3.1.patch` |
+| Fork delta | `daiimus/ghostty:ios-external-backend` (= v1.3.0 + external backend) | `patches/aislopdesk-libghostty-on-v1.3.1.patch` |
 | Merge SHA (local) | `c38ee78…` | local merge of v1.3.1 + fork delta + 0001/0002 (not on any remote) |
 | **Zig** | `0.15.2` | the source's `build.zig.zon` `minimum_zig_version` (0.16 not adoptable — see below) |
 | Zig SHA-256 | `3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b` | `zig-aarch64-macos-0.15.2.tar.xz` |
@@ -30,12 +30,12 @@ Swift binding for that renderer.
 **2026-06-06 update — bumped ghostty 1.3.0 → 1.3.1.** The source is now canonical
 upstream **`v1.3.1`** with the daiimus external-backend fork delta merged on top
 (External.zig + the tmux control-mode viewer + search + the embedded C glue), plus the
-two rwork patches. The merge took ONE conflict (Surface.zig `io_backend` init block —
+two aislopdesk patches. The merge took ONE conflict (Surface.zig `io_backend` init block —
 resolved by keeping the fork's `uses_external` branching and porting v1.3.1's
 `working-directory` `.value()` change). The v1.3.1 embedded ABI change `read_clipboard_cb`
 `void → bool` was absorbed in the integration (`CGhostty/ghostty.h` + the Swift callback
 now returns `true` since we complete the request synchronously). The reproducible recipe
-is `git clone --branch v1.3.1` upstream + apply `patches/rwork-libghostty-on-v1.3.1.patch`
+is `git clone --branch v1.3.1` upstream + apply `patches/aislopdesk-libghostty-on-v1.3.1.patch`
 (+ 0001/0002); `build-libghostty.sh` does this automatically.
 
 ### Why this fork, directly (approach **(b)**)
@@ -164,9 +164,9 @@ PTY would — full VT fidelity, no second parser.
 ## External-IO data flow
 
 ```
-        host PTY (RworkHost)                          GUI app (WF-8) — main thread
+        host PTY (AislopdeskHost)                          GUI app (WF-8) — main thread
         ────────────────────                          ────────────────────────────
-  PTY output ──► WireMessage.output ──► TCP ──► RworkClient
+  PTY output ──► WireMessage.output ──► TCP ──► AislopdeskClient
                                                     │  (bg receive loop)
                                                     │  await MainActor.run { … }
                                                     ▼
@@ -181,11 +181,11 @@ PTY would — full VT fidelity, no second parser.
                                                     ▼  (synchronous, main thread)
                                           GhosttySurface.onWrite(Data)
                                                     │
-  host PTY stdin ◄── WireMessage.input ◄── TCP ◄── RworkClient.send(input)
+  host PTY stdin ◄── WireMessage.input ◄── TCP ◄── AislopdeskClient.send(input)
 
   resize ──► GhosttySurface.setSize(cols,rows)  (ghostty_surface_set_size — pixels)
                                                     │  + onResize(cols,rows)
-  host TIOCSWINSZ ◄── WireMessage.resize ◄── TCP ◄── RworkClient
+  host TIOCSWINSZ ◄── WireMessage.resize ◄── TCP ◄── AislopdeskClient
 ```
 
 - **Keys go through `ghostty_surface_key`** so Ghostty does the kitty/DECCKM
@@ -226,9 +226,9 @@ In the WF-8 GUI app's build settings / SwiftPM-via-Xcode target:
    `ThirdParty/ghostty/integration/CGhostty/module.modulemap` so `import CGhostty`
    resolves (the `link "ghostty"` directive ties it to the framework's binary).
 4. **Compile** `ThirdParty/ghostty/integration/GhosttySurface/GhosttySurface.swift`
-   as a member of the app target (it `import`s `RworkTerminal`, `RworkProtocol`,
-   `CGhostty`). It conforms to `RworkTerminal.TerminalSurface`, so the rest of the
-   client (`RworkClient`) drives it through the existing seam with no libghostty
+   as a member of the app target (it `import`s `AislopdeskTerminal`, `AislopdeskProtocol`,
+   `CGhostty`). It conforms to `AislopdeskTerminal.TerminalSurface`, so the rest of the
+   client (`AislopdeskClient`) drives it through the existing seam with no libghostty
    knowledge.
 
 The headless core never participates in any of the above.

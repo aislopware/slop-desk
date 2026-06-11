@@ -27,12 +27,12 @@ struct TCCRow: Identifiable, Sendable {
 /// macOS TCC permission preflight + deep-links for the host's GUI-video / remote-input features.
 ///
 /// Research §C1 (the "make-or-break" deliverable): every remote-desktop product lives or dies
-/// on getting **Screen Recording** (for `rwork-videohostd`'s screen capture) and
+/// on getting **Screen Recording** (for `aislopdesk-videohostd`'s screen capture) and
 /// **Accessibility** (for host CGEvent keyboard/mouse injection) granted. Both require an app
 /// restart and cannot be auto-granted, so the universal pattern is a checklist with a live
 /// status dot per permission and an "Enable…" button that deep-links to the exact pane.
 ///
-/// These are CHECKLIST-ONLY for the MVP — the actual video host (`rwork-videohostd`) is not
+/// These are CHECKLIST-ONLY for the MVP — the actual video host (`aislopdesk-videohostd`) is not
 /// wired into this app yet. The rows document and route the permissions the later video task
 /// will consume.
 enum TCC {

@@ -7,7 +7,7 @@
 	     NOT sandboxed (no com.apple.security.app-sandbox): the host forks the user's login
 	     shell via PTY fork/exec, and will later need Screen Recording / Accessibility (TCC)
 	     for the GUI-video + remote-input features — App Sandbox would block both. This
-	     mirrors rwork-hostd, which runs unsandboxed. -->
+	     mirrors aislopdesk-hostd, which runs unsandboxed. -->
 	<key>com.apple.security.network.server</key>
 	<true/>
 </dict>

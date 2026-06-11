@@ -1,7 +1,7 @@
 // swift-tools-version:6.2
 import PackageDescription
 
-// Rwork — terminal-first remote-coding for Apple platforms.
+// Aislopdesk — terminal-first remote-coding for Apple platforms.
 //
 // Headless-first layout (see docs/19-implementation-plan.md): the PATH 1 byte
 // pipeline (host PTY <-> TCP/TCP_NODELAY <-> client, with replay-buffer reconnect)
@@ -9,7 +9,7 @@ import PackageDescription
 //
 // Swift 6 tools default to the Swift 6 language mode (strict concurrency).
 let package = Package(
-    name: "Rwork",
+    name: "Aislopdesk",
     platforms: [
         // swift-tools-version:6.2 → PackageDescription 6.2, so the `.v26` enum is available
         // for the macOS 26 / iOS 26 floor (previously expressed via the string form under 6.0).
@@ -17,19 +17,19 @@ let package = Package(
         .iOS(.v26),
     ],
     products: [
-        .library(name: "RworkProtocol", targets: ["RworkProtocol"]),
-        .library(name: "RworkTransport", targets: ["RworkTransport"]),
-        .library(name: "RworkHost", targets: ["RworkHost"]),
-        .library(name: "RworkClient", targets: ["RworkClient"]),
-        .library(name: "RworkTerminal", targets: ["RworkTerminal"]),
-        .library(name: "RworkTTY", targets: ["RworkTTY"]),
-        .library(name: "RworkInspector", targets: ["RworkInspector"]),
-        .library(name: "RworkClaudeCode", targets: ["RworkClaudeCode"]),
-        .library(name: "RworkClientUI", targets: ["RworkClientUI"]),
+        .library(name: "AislopdeskProtocol", targets: ["AislopdeskProtocol"]),
+        .library(name: "AislopdeskTransport", targets: ["AislopdeskTransport"]),
+        .library(name: "AislopdeskHost", targets: ["AislopdeskHost"]),
+        .library(name: "AislopdeskClient", targets: ["AislopdeskClient"]),
+        .library(name: "AislopdeskTerminal", targets: ["AislopdeskTerminal"]),
+        .library(name: "AislopdeskTTY", targets: ["AislopdeskTTY"]),
+        .library(name: "AislopdeskInspector", targets: ["AislopdeskInspector"]),
+        .library(name: "AislopdeskClaudeCode", targets: ["AislopdeskClaudeCode"]),
+        .library(name: "AislopdeskClientUI", targets: ["AislopdeskClientUI"]),
         // PATH 2 (GUI video path, Phase 4 / WF-9).
-        .library(name: "RworkVideoProtocol", targets: ["RworkVideoProtocol"]),
-        .library(name: "RworkVideoHost", targets: ["RworkVideoHost"]),
-        .library(name: "RworkVideoClient", targets: ["RworkVideoClient"]),
+        .library(name: "AislopdeskVideoProtocol", targets: ["AislopdeskVideoProtocol"]),
+        .library(name: "AislopdeskVideoHost", targets: ["AislopdeskVideoHost"]),
+        .library(name: "AislopdeskVideoClient", targets: ["AislopdeskVideoClient"]),
     ],
     targets: [
         // MARK: Libraries
@@ -37,52 +37,52 @@ let package = Package(
         // Pure-Swift wire format: framing, MessageType, seq(Int64), Hello/Ack.
         // ZERO platform dependency (no Network/Darwin) so it builds for macOS + iOS
         // and is unit-testable in isolation.
-        .target(name: "RworkProtocol"),
+        .target(name: "AislopdeskProtocol"),
 
         // NWConnection + TCP_NODELAY, dual data/control channel, ET-style replay
         // buffer, reconnect handshake. (Implemented in WF-2.)
-        .target(name: "RworkTransport", dependencies: ["RworkProtocol"]),
+        .target(name: "AislopdeskTransport", dependencies: ["AislopdeskProtocol"]),
 
         // macOS host: PTY (openpty + posix_spawn createSession), session mgr,
         // no-buffer PTY<->transport relay, TIOCSWINSZ resize. (Implemented in WF-3.)
         // Also hosts the inspector's second-connection server (InspectorServer):
-        // RworkHost depends on RworkInspector for the wire types + replay log. This is
-        // acyclic — RworkInspector depends ONLY on RworkProtocol, never on RworkHost.
-        .target(name: "RworkHost", dependencies: ["RworkTransport", "RworkProtocol", "RworkInspector"]),
+        // AislopdeskHost depends on AislopdeskInspector for the wire types + replay log. This is
+        // acyclic — AislopdeskInspector depends ONLY on AislopdeskProtocol, never on AislopdeskHost.
+        .target(name: "AislopdeskHost", dependencies: ["AislopdeskTransport", "AislopdeskProtocol", "AislopdeskInspector"]),
 
         // Shared client: connection mgr, reconnect, input encoding. (WF-4.)
-        .target(name: "RworkClient", dependencies: ["RworkTransport", "RworkProtocol"]),
+        .target(name: "AislopdeskClient", dependencies: ["AislopdeskTransport", "AislopdeskProtocol"]),
 
         // TerminalSurface protocol + HeadlessTerminalSurface. The libghostty-backed
         // GhosttySurface lives in the GUI app target (WF-5) and conforms to the same
         // protocol.
-        .target(name: "RworkTerminal", dependencies: ["RworkProtocol"]),
+        .target(name: "AislopdeskTerminal", dependencies: ["AislopdeskProtocol"]),
 
         // Local-terminal raw-mode + termios save/restore + TIOCGWINSZ/TIOCSWINSZ helpers
         // for the interactive CLI. Split into a library so the save/restore + SIGWINCH
         // mapping logic is unit-testable (the executable target itself is not importable).
-        .target(name: "RworkTTY"),
+        .target(name: "AislopdeskTTY"),
 
         // Read-only structured inspector (WF-6). Tails Claude Code's JSONL transcript
         // (+ subagent files + hooks) on the host, models typed `InspectorEvent`s, and
         // streams them over a SECOND length-prefixed channel (NWConnection #2) to a
         // SwiftUI read-only client. INDEPENDENT of the terminal byte pipeline — it
-        // reuses only RworkProtocol's framing *style*, never the terminal WireMessage.
+        // reuses only AislopdeskProtocol's framing *style*, never the terminal WireMessage.
         // Read-only: it observes the transcript, it never drives the agent.
-        .target(name: "RworkInspector", dependencies: ["RworkProtocol"]),
+        .target(name: "AislopdeskInspector", dependencies: ["AislopdeskProtocol"]),
 
         // Cross-platform Claude Code integration LOGIC (WF-7): the terminal-mode sniffer
         // (DECSET/DECRST 1049 + OSC 133, robust to sequences split across chunk
         // boundaries), the input dedup ring (input-box B1 echo suppression), and the
         // input-box state machine (A shell / B1 TUI-compose). Pure Swift, no platform
         // dependency beyond Foundation — builds for macOS + iOS, fixture-tested. The host
-        // launch env + auth resolution live in RworkHost (macOS, the WF-7 seam).
-        .target(name: "RworkClaudeCode", dependencies: ["RworkProtocol"]),
+        // launch env + auth resolution live in AislopdeskHost (macOS, the WF-7 seam).
+        .target(name: "AislopdeskClaudeCode", dependencies: ["AislopdeskProtocol"]),
 
         // Cross-platform SwiftUI client UI (WF-8): the views + @MainActor @Observable
-        // view-models that bind the existing modules — RworkClient (byte pipeline +
-        // reconnect), RworkInspector (read-only structured panel), RworkClaudeCode
-        // (input-box A/B1 affordance), RworkTerminal (the renderer SEAM) — into a
+        // view-models that bind the existing modules — AislopdeskClient (byte pipeline +
+        // reconnect), AislopdeskInspector (read-only structured panel), AislopdeskClaudeCode
+        // (input-box A/B1 affordance), AislopdeskTerminal (the renderer SEAM) — into a
         // working client.
         //
         // The terminal pixels are a SEAM (`TerminalRenderingView`): production =
@@ -99,8 +99,8 @@ let package = Package(
         //
         // Builds for macOS 26 + iOS 26 (the deployment floor — no fallback below that).
         .target(
-            name: "RworkClientUI",
-            dependencies: ["RworkClient", "RworkTransport", "RworkInspector", "RworkClaudeCode", "RworkTerminal"]
+            name: "AislopdeskClientUI",
+            dependencies: ["AislopdeskClient", "AislopdeskTransport", "AislopdeskInspector", "AislopdeskClaudeCode", "AislopdeskTerminal"]
         ),
 
         // MARK: PATH 2 — GUI video path (Phase 4 / WF-9)
@@ -111,8 +111,8 @@ let package = Package(
         // window-geometry codec, coordinate-mapping math (multi-monitor Cocoa-flip +
         // Retina), and the client->host input-event codec. ZERO platform dependency
         // (no ScreenCaptureKit/VideoToolbox/AppKit) so it builds macOS + iOS and is
-        // fully unit-testable in isolation — same discipline as RworkProtocol.
-        .target(name: "RworkVideoProtocol"),
+        // fully unit-testable in isolation — same discipline as AislopdeskProtocol.
+        .target(name: "AislopdeskVideoProtocol"),
 
         // macOS-only host capture + encode + input injection. USES
         // ScreenCaptureKit / VideoToolbox / CoreGraphics / AppKit. COMPILED + code-
@@ -126,16 +126,16 @@ let package = Package(
         // run-loop / main-thread / retain contract. The classes link from the PUBLIC CoreGraphics
         // framework — only the headers are private (no dlopen, no entitlement).
         .target(
-            name: "CRworkVirtualDisplay",
-            path: "Sources/CRworkVirtualDisplay",
+            name: "CAislopdeskVirtualDisplay",
+            path: "Sources/CAislopdeskVirtualDisplay",
             publicHeadersPath: "include"
         ),
 
         .target(
-            name: "RworkVideoHost",
-            dependencies: ["RworkVideoProtocol", "CRworkVirtualDisplay"],
+            name: "AislopdeskVideoHost",
+            dependencies: ["AislopdeskVideoProtocol", "CAislopdeskVirtualDisplay"],
             // macOS-only: SCStream + VTCompressionSession + AX/CGEvent are macOS APIs.
-            // (RworkVideoProtocol stays cross-platform; only this host layer is gated.)
+            // (AislopdeskVideoProtocol stays cross-platform; only this host layer is gated.)
             swiftSettings: []
         ),
 
@@ -143,76 +143,76 @@ let package = Package(
         // VideoToolbox (decode) / Metal / CoreVideo / QuartzCore. COMPILED + reviewed;
         // decode is MEASURED-safe (~0.9-1.1ms synchronous) but to honour the hang-
         // safety rule NO VTDecompressionSession is instantiated in tests either.
-        .target(name: "RworkVideoClient", dependencies: ["RworkVideoProtocol"]),
+        .target(name: "AislopdeskVideoClient", dependencies: ["AislopdeskVideoProtocol"]),
 
         // MARK: Executables
 
-        // Headless host daemon (PTY + transport). Sources under Sources/rwork-hostd.
-        .executableTarget(name: "rwork-hostd", dependencies: ["RworkHost"]),
+        // Headless host daemon (PTY + transport). Sources under Sources/aislopdesk-hostd.
+        .executableTarget(name: "aislopdesk-hostd", dependencies: ["AislopdeskHost"]),
 
-        // Interactive remote terminal client. Sources under Sources/rwork-client.
-        .executableTarget(name: "rwork-client", dependencies: ["RworkClient", "RworkTransport", "RworkTerminal", "RworkTTY"]),
+        // Interactive remote terminal client. Sources under Sources/aislopdesk-client.
+        .executableTarget(name: "aislopdesk-client", dependencies: ["AislopdeskClient", "AislopdeskTransport", "AislopdeskTerminal", "AislopdeskTTY"]),
 
         // GUI video path (PATH 2) host daemon: enumerate shareable windows, bind the UDP
-        // media+cursor sockets, run `RworkVideoHostSession`. macOS-only at runtime
+        // media+cursor sockets, run `AislopdeskVideoHostSession`. macOS-only at runtime
         // (ScreenCaptureKit/VideoToolbox); the `main.swift` is `#if os(macOS)`-gated with a
         // clear non-macOS error. COMPILED + reviewed; live behaviour is GUI+TCC-gated.
-        .executableTarget(name: "rwork-videohostd", dependencies: ["RworkVideoHost", "RworkVideoProtocol"]),
+        .executableTarget(name: "aislopdesk-videohostd", dependencies: ["AislopdeskVideoHost", "AislopdeskVideoProtocol"]),
 
         // Headless closed-loop validation harness: synthetic CVPixelBuffer -> REAL HW
         // VideoEncoder -> VideoPacketizer (FEC tier + isLTR + hostSendTs) -> deterministic
         // fragment loss -> FrameReassembler (FEC recovery) -> REAL HW VideoDecoder, plus the
         // pure WF-1..WF-8 controllers driven on synthetic telemetry. Runs from a normal
         // (non-GUI, non-TCC) executable; its stdout IS the validation evidence. macOS-only.
-        .executableTarget(name: "rwork-loopback-validate", dependencies: ["RworkVideoHost", "RworkVideoClient", "RworkVideoProtocol"]),
+        .executableTarget(name: "aislopdesk-loopback-validate", dependencies: ["AislopdeskVideoHost", "AislopdeskVideoClient", "AislopdeskVideoProtocol"]),
 
         // Frame-cadence watcher: SCK desktopIndependentWindow capture of ANY window (foreground
         // or background) that logs per-frame arrival timestamps + content checksums and prints a
-        // stall histogram — the objective frame-level smoothness instrument (works on Rwork AND
+        // stall histogram — the objective frame-level smoothness instrument (works on Aislopdesk AND
         // Parsec windows alike). GUI+TCC-gated at runtime; no video file is written.
-        .executableTarget(name: "rwork-framewatch"),
+        .executableTarget(name: "aislopdesk-framewatch"),
 
         // MARK: Tests
-        .testTarget(name: "RworkProtocolTests", dependencies: ["RworkProtocol"]),
-        .testTarget(name: "RworkTransportTests", dependencies: ["RworkTransport"]),
-        .testTarget(name: "RworkHostTests", dependencies: ["RworkHost", "RworkInspector"]),
-        // RworkClientTests exercises the REAL PATH 1 e2e: a HostServer (RworkHost) +
-        // RworkClient over loopback, so it depends on RworkHost + RworkTTY too.
-        .testTarget(name: "RworkClientTests", dependencies: ["RworkClient", "RworkHost", "RworkTransport", "RworkTerminal", "RworkTTY"]),
+        .testTarget(name: "AislopdeskProtocolTests", dependencies: ["AislopdeskProtocol"]),
+        .testTarget(name: "AislopdeskTransportTests", dependencies: ["AislopdeskTransport"]),
+        .testTarget(name: "AislopdeskHostTests", dependencies: ["AislopdeskHost", "AislopdeskInspector"]),
+        // AislopdeskClientTests exercises the REAL PATH 1 e2e: a HostServer (AislopdeskHost) +
+        // AislopdeskClient over loopback, so it depends on AislopdeskHost + AislopdeskTTY too.
+        .testTarget(name: "AislopdeskClientTests", dependencies: ["AislopdeskClient", "AislopdeskHost", "AislopdeskTransport", "AislopdeskTerminal", "AislopdeskTTY"]),
         // Fixture-based tests for the inspector: JSONL parsing, tool-card pairing,
         // subagent tree, the append-follow tailer, transport round-trip, hook ingest.
         // The `Fixtures/` tree is read off disk via `#filePath` (see Fixtures.swift),
         // so it is excluded from the build rather than bundled as a resource.
         .testTarget(
-            name: "RworkInspectorTests",
-            dependencies: ["RworkInspector", "RworkProtocol"],
+            name: "AislopdeskInspectorTests",
+            dependencies: ["AislopdeskInspector", "AislopdeskProtocol"],
             exclude: ["Fixtures"]
         ),
-        // WF-7 logic: env/auth (RworkHost) + mode sniffer / dedup ring / input-box model
-        // (RworkClaudeCode). Byte-sequence + fixture based; the sniffer tests feed the
+        // WF-7 logic: env/auth (AislopdeskHost) + mode sniffer / dedup ring / input-box model
+        // (AislopdeskClaudeCode). Byte-sequence + fixture based; the sniffer tests feed the
         // SAME stream at adversarial split boundaries and assert identical results.
         .testTarget(
-            name: "RworkClaudeCodeTests",
-            dependencies: ["RworkClaudeCode", "RworkHost", "RworkProtocol"]
+            name: "AislopdeskClaudeCodeTests",
+            dependencies: ["AislopdeskClaudeCode", "AislopdeskHost", "AislopdeskProtocol"]
         ),
         // WF-8 client UI: the iOS table-stakes PURE logic (key-repeat cadence via an
         // injected scheduler, floating-cursor delta→arrow mapping, accessory-bar show/hide
-        // decision, IME-vs-key routing) + the view-model state transitions on RworkClient
+        // decision, IME-vs-key routing) + the view-model state transitions on AislopdeskClient
         // events (driven by an in-process stub client over loopback). Deterministic, runs
         // on macOS — the UIKit view wrappers are iOS-gated and typechecked via the iOS
         // triple build, not here.
         .testTarget(
-            name: "RworkClientUITests",
-            dependencies: ["RworkClientUI", "RworkClient", "RworkTransport", "RworkHost", "RworkInspector", "RworkClaudeCode", "RworkTerminal"]
+            name: "AislopdeskClientUITests",
+            dependencies: ["AislopdeskClientUI", "AislopdeskClient", "AislopdeskTransport", "AislopdeskHost", "AislopdeskInspector", "AislopdeskClaudeCode", "AislopdeskTerminal"]
         ),
-        // WF-9 GUI video path: ONLY the PURE RworkVideoProtocol is unit-tested
+        // WF-9 GUI video path: ONLY the PURE AislopdeskVideoProtocol is unit-tested
         // (packetize/reassemble incl. fragment-loss → drop + recovery, FEC real
         // single-loss recovery, cursor codec round-trip + <64B size, coordinate
         // mapping single/multi-monitor/Retina, window-geometry codec, input-event
         // codec). NO VideoToolbox / ScreenCaptureKit is instantiated anywhere here —
         // the host/client video code HANGS without a window-server + TCC session, so
         // it is COMPILED (swift build) + code-reviewed, never executed in a test.
-        .testTarget(name: "RworkVideoProtocolTests", dependencies: ["RworkVideoProtocol"]),
+        .testTarget(name: "AislopdeskVideoProtocolTests", dependencies: ["AislopdeskVideoProtocol"]),
         // WF-9 host orchestrator: ONLY the PURE host-session logic is unit-tested —
         // the session state machine (hello/helloAck/bye transitions + strict version
         // check), the input-datagram routing decisions (inject/drop/ignore + raise
@@ -220,7 +220,7 @@ let package = Package(
         // in-memory `VideoDatagramTransport` fake. NO SCStream / VTCompressionSession /
         // CGEvent / live UDP socket is instantiated here (the hang-safety rule): the
         // capture/encode/inject components are COMPILED + code-reviewed only.
-        .testTarget(name: "RworkVideoHostTests", dependencies: ["RworkVideoHost", "RworkVideoProtocol"]),
+        .testTarget(name: "AislopdeskVideoHostTests", dependencies: ["AislopdeskVideoHost", "AislopdeskVideoProtocol"]),
         // WF-9 client orchestrator: ONLY the PURE client-session logic is unit-tested —
         // the client state machine (hello/helloAck/bye transitions + accept/reject + the
         // idempotent duplicate ack), the videoScale math (layer/decoded ratio + cursor
@@ -231,6 +231,6 @@ let package = Package(
         // / Metal / CVDisplayLink / CADisplayLink / live UDP socket is instantiated here
         // (the hang-safety rule): the decode/render/display-link components are COMPILED +
         // code-reviewed only.
-        .testTarget(name: "RworkVideoClientTests", dependencies: ["RworkVideoClient", "RworkVideoProtocol"]),
+        .testTarget(name: "AislopdeskVideoClientTests", dependencies: ["AislopdeskVideoClient", "AislopdeskVideoProtocol"]),
     ]
 )

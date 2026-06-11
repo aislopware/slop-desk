@@ -13,13 +13,13 @@
 #   (default)    Build the committed PLACEHOLDER app, launch, assert alive, screenshot.
 #   --renderer   Wire in the libghostty renderer (enable-macos-renderer.sh), build, launch,
 #                assert alive, screenshot. Verifies the renderer app launches without crashing.
-#   --connect    --renderer PLUS a real END-TO-END render check: stand up `rwork-hostd` (a real
-#                PTY host daemon), launch the renderer app with RWORK_AUTOCONNECT_HOST/PORT set
+#   --connect    --renderer PLUS a real END-TO-END render check: stand up `aislopdesk-hostd` (a real
+#                PTY host daemon), launch the renderer app with AISLOPDESK_AUTOCONNECT_HOST/PORT set
 #                so it auto-connects on launch (no fragile UI automation — see
-#                RworkClientApp.autoConnectIfRequested), then assert the TCP session is
+#                AislopdeskClientApp.autoConnectIfRequested), then assert the TCP session is
 #                ESTABLISHED and the app survived, and screenshot the connected terminal so the
 #                glyphs libghostty rendered (shell/Starship prompt, ANSI colours, nerd-font
-#                icons) can be visually confirmed. ALSO drives the OUT path: RWORK_AUTOTYPE makes
+#                icons) can be visually confirmed. ALSO drives the OUT path: AISLOPDESK_AUTOTYPE makes
 #                the app auto-type a command through the real keystroke→host chain, and the gate
 #                asserts the remote shell EXECUTED it (a COMPUTED marker 42 written to a
 #                loopback file) — so this proves type→exec→render, not just a live socket.
@@ -41,8 +41,8 @@ SPEC="$REPO_ROOT/Apps/ClientApp-macOS/project.yml"
 PROJECT="$REPO_ROOT/Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj"
 WORK="$REPO_ROOT/.work/macos-verify"
 DD="$WORK/DerivedData"
-APP="$DD/Build/Products/Debug/Rwork.app"
-APP_BIN="$APP/Contents/MacOS/Rwork"
+APP="$DD/Build/Products/Debug/Aislopdesk.app"
+APP_BIN="$APP/Contents/MacOS/Aislopdesk"
 SHOT="$WORK/macos-shot.png"
 HOSTD_LOG="$WORK/hostd.log"
 CONNECT_PORT=47420          # uncommon fixed loopback port for the e2e host daemon
@@ -62,9 +62,9 @@ SETTLE=4
 
 mkdir -p "$WORK"
 
-# The macOS app and the iOS-Simulator app share the binary name "Rwork"; match ONLY the macOS
+# The macOS app and the iOS-Simulator app share the binary name "Aislopdesk"; match ONLY the macOS
 # build product path so we never touch the Simulator's process.
-APP_PROC_PAT="macos-verify/DerivedData.*MacOS/Rwork"
+APP_PROC_PAT="macos-verify/DerivedData.*MacOS/Aislopdesk"
 HOSTD_PID=""
 
 cleanup() {
@@ -88,7 +88,7 @@ else
 fi
 
 # ── 2. Build (unsigned / ad-hoc) ────────────────────────────────────────────────────────────
-echo "==> building Rwork.app (Debug, unsigned)"
+echo "==> building Aislopdesk.app (Debug, unsigned)"
 xcodebuild \
   -project "$PROJECT" \
   -scheme ClientApp-macOS \
@@ -101,29 +101,29 @@ echo "==> build OK: $APP"
 
 # ── 2b. (--connect) stand up the host daemon ────────────────────────────────────────────────
 if [[ "$CONNECT" == "1" ]]; then
-  echo "==> building + starting rwork-hostd on 127.0.0.1:$CONNECT_PORT"
-  ( cd "$REPO_ROOT" && swift build --product rwork-hostd >/dev/null )
+  echo "==> building + starting aislopdesk-hostd on 127.0.0.1:$CONNECT_PORT"
+  ( cd "$REPO_ROOT" && swift build --product aislopdesk-hostd >/dev/null )
   # Free the port if a prior run left a daemon behind.
-  pkill -f "rwork-hostd --port $CONNECT_PORT" 2>/dev/null || true
+  pkill -f "aislopdesk-hostd --port $CONNECT_PORT" 2>/dev/null || true
   sleep 0.5
-  "$REPO_ROOT/.build/debug/rwork-hostd" --port "$CONNECT_PORT" >"$HOSTD_LOG" 2>&1 &
+  "$REPO_ROOT/.build/debug/aislopdesk-hostd" --port "$CONNECT_PORT" >"$HOSTD_LOG" 2>&1 &
   HOSTD_PID=$!
   sleep 1
   if ! kill -0 "$HOSTD_PID" 2>/dev/null; then
-    echo "==> FAIL: rwork-hostd did not stay up; log:" >&2; cat "$HOSTD_LOG" >&2; exit 1
+    echo "==> FAIL: aislopdesk-hostd did not stay up; log:" >&2; cat "$HOSTD_LOG" >&2; exit 1
   fi
   echo "==> hostd up (pid $HOSTD_PID)"
 
   # OUT-path proof setup: a unique marker whose COMPUTED value (42) appears ONLY if the
   # remote shell actually EXECUTED the typed command — not if it merely echoed the literal
-  # keystrokes. The app's RWORK_AUTOTYPE seam pushes this through the real OUT path
-  # (terminal.sendInput → ordered drain → RworkClient.sendInput → host PTY). \$((6*7)) is
+  # keystrokes. The app's AISLOPDESK_AUTOTYPE seam pushes this through the real OUT path
+  # (terminal.sendInput → ordered drain → AislopdeskClient.sendInput → host PTY). \$((6*7)) is
   # escaped so THIS shell passes it literally; the REMOTE zsh computes 42 and writes the file.
   OUT_NONCE="$$_${RANDOM}"
   OUT_PROOF="$WORK/out-proof-$OUT_NONCE.txt"
-  OUT_EXPECT="RWORK_OUT_${OUT_NONCE}_42_END"
+  OUT_EXPECT="AISLOPDESK_OUT_${OUT_NONCE}_42_END"
   rm -f "$OUT_PROOF"
-  AUTOTYPE="echo RWORK_OUT_${OUT_NONCE}_\$((6*7))_END > '$OUT_PROOF'; echo RWORK_OUT_${OUT_NONCE}_\$((6*7))_END"
+  AUTOTYPE="echo AISLOPDESK_OUT_${OUT_NONCE}_\$((6*7))_END > '$OUT_PROOF'; echo AISLOPDESK_OUT_${OUT_NONCE}_\$((6*7))_END"
 fi
 
 # ── 3. Launch + poll for the macOS process ──────────────────────────────────────────────────
@@ -131,7 +131,7 @@ pkill -f "$APP_PROC_PAT" 2>/dev/null || true
 if [[ "$CONNECT" == "1" ]]; then
   # Launch the bundle's binary DIRECTLY (not via `open`) so the auto-connect env vars are
   # inherited — LaunchServices does not forward the shell environment.
-  RWORK_AUTOCONNECT_HOST=127.0.0.1 RWORK_AUTOCONNECT_PORT="$CONNECT_PORT" RWORK_AUTOTYPE="$AUTOTYPE" "$APP_BIN" >/dev/null 2>&1 &
+  AISLOPDESK_AUTOCONNECT_HOST=127.0.0.1 AISLOPDESK_AUTOCONNECT_PORT="$CONNECT_PORT" AISLOPDESK_AUTOTYPE="$AUTOTYPE" "$APP_BIN" >/dev/null 2>&1 &
 else
   open "$APP"
 fi

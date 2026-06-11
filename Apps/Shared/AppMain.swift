@@ -1,12 +1,12 @@
 import SwiftUI
-import RworkClientUI
-#if canImport(RworkVideoClient)
-import RworkVideoClient
+import AislopdeskClientUI
+#if canImport(AislopdeskVideoClient)
+import AislopdeskVideoClient
 #endif
 
 /// The `@main` entry for both Xcode app targets (ClientApp-macOS, ClientApp-iOS).
 ///
-/// The whole scene lives in the `RworkClientUI` SwiftPM library (`RworkClientApp`); this
+/// The whole scene lives in the `AislopdeskClientUI` SwiftPM library (`AislopdeskClientApp`); this
 /// shell only attaches `@main` and, when the libghostty xcframework is present, registers the
 /// production terminal renderer with ``TerminalRendererFactory``. Until the xcframework is
 /// built, no factory is registered and the BUILD-STATUS placeholder shows (libghostty-only
@@ -26,7 +26,7 @@ import RworkVideoClient
 struct ClientAppMain {
     static func main() {
         // PATH 1 (terminal, libghostty-only): register the production renderer. The
-        // cross-platform `RworkClientUI` library cannot reference `GhosttyTerminalView`
+        // cross-platform `AislopdeskClientUI` library cannot reference `GhosttyTerminalView`
         // (it would force linking `libghostty.xcframework` + the `CGhostty` clang module
         // into the headless `swift build`/tests), so the GUI app target injects it here.
         //
@@ -42,12 +42,12 @@ struct ClientAppMain {
         #endif
 
         // PATH 2 (GUI video path, doc 17 §3): register the production remote-GUI-window
-        // view. The cross-platform `RworkClientUI` library cannot reference
-        // `RworkVideoClient.VideoWindowView` directly (it would pull VideoToolbox + Metal
+        // view. The cross-platform `AislopdeskClientUI` library cannot reference
+        // `AislopdeskVideoClient.VideoWindowView` directly (it would pull VideoToolbox + Metal
         // into the headless `swift build`/tests), so the GUI app target — which links
-        // `RworkVideoClient` — injects it here at launch. With no registration the seam
+        // `AislopdeskVideoClient` — injects it here at launch. With no registration the seam
         // shows the gated `RemoteWindowPlaceholderView`.
-        #if canImport(RworkVideoClient)
+        #if canImport(AislopdeskVideoClient)
         VideoWindowFactory.shared = { descriptor, paneContext in
             // LIVE path when the descriptor carries a full endpoint (host + media/cursor
             // ports), entered via the Remote-window panel: build the VideoWindowConnection
@@ -55,8 +55,8 @@ struct ClientAppMain {
             // chrome-only initializer (no live decode) — the seam's preview/placeholder path.
             //
             // `paneContext` (active state + activate/canvas-scroll callbacks) is destructured into
-            // primitives here — `RworkVideoClient` cannot import `RworkClientUI` (the seam exists
-            // for exactly that reason), so the context type stays on the `RworkClientUI` side and
+            // primitives here — `AislopdeskVideoClient` cannot import `AislopdeskClientUI` (the seam exists
+            // for exactly that reason), so the context type stays on the `AislopdeskClientUI` side and
             // only its Bool + closures cross into `VideoWindowView`.
             if descriptor.hasEndpoint {
                 let connection = VideoWindowConnection(
@@ -75,7 +75,7 @@ struct ClientAppMain {
             return AnyView(VideoWindowView(title: descriptor.title))
         }
         // UDP-mux: install the per-host shared-flow registry on the video pipeline. Panes targeting the
-        // same host share ONE UDP flow (one flow per host, N panes); the host's `rwork-videohostd`
+        // same host share ONE UDP flow (one flow per host, N panes); the host's `aislopdesk-videohostd`
         // speaks the matching 19-byte channelID-prefixed wire — the only video wire there is now.
         MainActor.assumeIsolated { VideoMuxInstaller.install() }
 
@@ -96,6 +96,6 @@ struct ClientAppMain {
         }
         #endif
 
-        RworkClientApp.main()
+        AislopdeskClientApp.main()
     }
 }

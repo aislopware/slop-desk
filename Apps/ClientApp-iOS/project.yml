@@ -1,24 +1,24 @@
-# XcodeGen spec for the Rwork iOS client app.
+# XcodeGen spec for the Aislopdesk iOS client app.
 #
 # This project.yml is the SOURCE OF TRUTH; the generated `.xcodeproj` is gitignored
 # (regenerate with: `xcodegen generate --spec Apps/ClientApp-iOS/project.yml`).
 #
-# The app target depends on the LOCAL SwiftPM package product `RworkClientUI`, which carries
+# The app target depends on the LOCAL SwiftPM package product `AislopdeskClientUI`, which carries
 # the iOS UIKit native-feel table-stakes (KeyRepeater / IMEProxyTextView /
 # FloatingCursorController / KeyboardAccessoryBar — doc 17 §2.5). The `@main` entry is
-# `Apps/Shared/AppMain.swift` → `RworkClientApp`.
+# `Apps/Shared/AppMain.swift` → `AislopdeskClientApp`.
 #
 # The libghostty `GhosttyTerminalView` is added once the xcframework exists; until then the
 # BUILD-STATUS placeholder renders (libghostty-only policy, no fallback VT engine).
 name: ClientApp-iOS
 options:
-  bundleIdPrefix: com.rwork
+  bundleIdPrefix: com.aislopdesk
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
 
 packages:
-  Rwork:
+  Aislopdesk:
     path: ../..
 
 targets:
@@ -32,13 +32,13 @@ targets:
       # app target so `import CGhostty` resolves and `#if canImport(CGhostty)` flips true.
       - path: ../../ThirdParty/ghostty/integration/GhosttySurface
     dependencies:
-      - package: Rwork
-        product: RworkClientUI
+      - package: Aislopdesk
+        product: AislopdeskClientUI
       # PATH 2 (GUI video path): links the client decode/render/cursor pipeline so
       # AppMain can register VideoWindowFactory.shared with the real VideoWindowView.
       # Carries VideoToolbox/Metal — never instantiated in tests, only at GUI launch.
-      - package: Rwork
-        product: RworkVideoClient
+      - package: Aislopdesk
+        product: AislopdeskVideoClient
       # PATH 1 (libghostty renderer): the libghostty static binary (link-time `ghostty`
       # C-ABI symbols) as an xcframework. The UNIVERSAL build ships ios-arm64 (device) +
       # ios-arm64-simulator slices, both built on this host against the iOS 26.5 SDK; the
@@ -59,12 +59,12 @@ targets:
         CFBundleVersion: "1"
     # iOS apps are not App-Sandboxed via entitlement keys and have network access by
     # default; the byte pipeline pauses on background + resumes byte-exact on foreground
-    # (RworkClient.pause()/resume()), so no persistent background mode is declared. No
+    # (AislopdeskClient.pause()/resume()), so no persistent background mode is declared. No
     # custom entitlements needed for the standard client.
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.rwork.client.ios
-        PRODUCT_NAME: Rwork
+        PRODUCT_BUNDLE_IDENTIFIER: com.aislopdesk.client.ios
+        PRODUCT_NAME: Aislopdesk
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"

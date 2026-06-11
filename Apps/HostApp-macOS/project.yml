@@ -1,10 +1,10 @@
-# XcodeGen spec for the Rwork macOS HOST menu-bar app (issue #5, research §C / C1).
+# XcodeGen spec for the Aislopdesk macOS HOST menu-bar app (issue #5, research §C / C1).
 #
 # This project.yml is the SOURCE OF TRUTH; the generated `.xcodeproj` is gitignored
 # (regenerate with: `xcodegen generate --spec Apps/HostApp-macOS/project.yml`).
 #
 # A friendly menu-bar (MenuBarExtra) front-end over the EXISTING headless host daemons.
-# It runs the SAME terminal `HostServer` the `rwork-hostd` CLI runs, but IN-PROCESS on a
+# It runs the SAME terminal `HostServer` the `aislopdesk-hostd` CLI runs, but IN-PROCESS on a
 # background task with a Start/Stop toggle — no terminal / CLI knowledge required. The doc
 # frames this as a thin auth + observability shell (RustDesk CM-over-IPC model): the C1
 # TCC permission checklist (Screen Recording + Accessibility) lives here too, ready for the
@@ -12,17 +12,17 @@
 #
 # This spec MIRRORS Apps/ClientApp-macOS/project.yml, minus everything the host does not
 # need: no libghostty xcframework / CGhostty module / Metal-Carbon OTHER_LDFLAGS, no
-# RworkVideoClient. The host app links ONLY the `RworkHost` package product (in-process
+# AislopdeskVideoClient. The host app links ONLY the `AislopdeskHost` package product (in-process
 # terminal server). Fully ADDITIVE — ClientApp-macOS is untouched.
 name: HostApp-macOS
 options:
-  bundleIdPrefix: com.rwork
+  bundleIdPrefix: com.aislopdesk
   deploymentTarget:
     macOS: "26.0"
   createIntermediateGroups: true
 
 packages:
-  Rwork:
+  Aislopdesk:
     # The local SwiftPM package at the repo root (two levels up from this spec).
     path: ../..
 
@@ -37,8 +37,8 @@ targets:
     dependencies:
       # The ONLY package product the host app needs: the in-process terminal server
       # (HostServer + PTY relay + transport). No video, no libghostty.
-      - package: Rwork
-        product: RworkHost
+      - package: Aislopdesk
+        product: AislopdeskHost
     info:
       path: Info.plist
       properties:
@@ -55,20 +55,20 @@ targets:
         # network.client). NOT sandboxed: the host forks the user's login shell (PTY
         # fork/exec) and will later need Screen Recording / Accessibility (TCC) for the
         # GUI-video + remote-input features — App Sandbox would block both. Mirror
-        # rwork-hostd, which runs unsandboxed.
+        # aislopdesk-hostd, which runs unsandboxed.
         com.apple.security.network.server: true
     settings:
       base:
         # PIN the bundle ID: TCC grants are keyed by bundle ID (research §C1 gotcha) — a
         # drifting ID silently loses the Screen-Recording / Accessibility grants.
-        PRODUCT_BUNDLE_IDENTIFIER: com.rwork.host.macos
-        PRODUCT_NAME: RworkHost
-        # The app target links the SwiftPM library MODULE named `RworkHost`. Xcode derives a
+        PRODUCT_BUNDLE_IDENTIFIER: com.aislopdesk.host.macos
+        PRODUCT_NAME: AislopdeskHost
+        # The app target links the SwiftPM library MODULE named `AislopdeskHost`. Xcode derives a
         # target's Swift module name from PRODUCT_NAME by default, which would make the APP
-        # module also `RworkHost` and collide with the library (xcodebuild: "Multiple commands
-        # produce RworkHost.swiftmodule"). Pin a DISTINCT module name so the bundle stays
-        # RworkHost.app while the app code compiles as module `RworkHostApp`.
-        PRODUCT_MODULE_NAME: RworkHostApp
+        # module also `AislopdeskHost` and collide with the library (xcodebuild: "Multiple commands
+        # produce AislopdeskHost.swiftmodule"). Pin a DISTINCT module name so the bundle stays
+        # AislopdeskHost.app while the app code compiles as module `AislopdeskHostApp`.
+        PRODUCT_MODULE_NAME: AislopdeskHostApp
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"

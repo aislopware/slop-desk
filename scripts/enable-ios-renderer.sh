@@ -84,14 +84,14 @@ if "integration/GhosttySurface" not in text:
     text = text.replace(src_anchor, src_block, 1)
     changed = True
 
-# (b) dependencies: add the xcframework after the RworkVideoClient product dependency.
+# (b) dependencies: add the xcframework after the AislopdeskVideoClient product dependency.
 dep_anchor = (
-    "      - package: Rwork\n"
-    "        product: RworkVideoClient\n"
+    "      - package: Aislopdesk\n"
+    "        product: AislopdeskVideoClient\n"
 )
 dep_block = (
-    "      - package: Rwork\n"
-    "        product: RworkVideoClient\n"
+    "      - package: Aislopdesk\n"
+    "        product: AislopdeskVideoClient\n"
     "      # PATH 1 (libghostty renderer): the libghostty static binary (link-time `ghostty`\n"
     "      # C-ABI symbols) as an xcframework. The UNIVERSAL build ships ios-arm64 (device) +\n"
     "      # ios-arm64-simulator slices, both built on this host against the iOS 26.5 SDK; the\n"
@@ -101,7 +101,7 @@ dep_block = (
 )
 if "libghostty.xcframework" not in text:
     if dep_anchor not in text:
-        sys.exit("ERROR: could not find the RworkVideoClient dependency anchor in project.yml")
+        sys.exit("ERROR: could not find the AislopdeskVideoClient dependency anchor in project.yml")
     text = text.replace(dep_anchor, dep_block, 1)
     changed = True
 

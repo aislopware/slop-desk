@@ -15,8 +15,8 @@
 # to this terminal.
 #
 # WHAT IT PROVES on success:
-#   - rwork-videohostd captures a real on-screen window and HEVC-encodes it,
-#   - the client opens the live VideoWindowView (RWORK_VIDEO_AUTOCONNECT seam), connects both UDP
+#   - aislopdesk-videohostd captures a real on-screen window and HEVC-encodes it,
+#   - the client opens the live VideoWindowView (AISLOPDESK_VIDEO_AUTOCONNECT seam), connects both UDP
 #     channels, and the host streams frames (asserted via host TX throughput),
 #   - the client window screenshot shows the decoded remote pixels (visual confirmation).
 #
@@ -30,9 +30,9 @@ SPEC="$REPO_ROOT/Apps/ClientApp-macOS/project.yml"
 PROJECT="$REPO_ROOT/Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj"
 WORK="$REPO_ROOT/.work/video-verify"
 DD="$WORK/DD"
-APP="$DD/Build/Products/Debug/Rwork.app"
-APP_BIN="$APP/Contents/MacOS/Rwork"
-HOSTD="$REPO_ROOT/.build/debug/rwork-videohostd"
+APP="$DD/Build/Products/Debug/Aislopdesk.app"
+APP_BIN="$APP/Contents/MacOS/Aislopdesk"
+HOSTD="$REPO_ROOT/.build/debug/aislopdesk-videohostd"
 SHOT="$WORK/client-shot.png"
 HOSTLOG="$WORK/host.log"
 MEDIA_PORT=9000
@@ -47,7 +47,7 @@ esac
 
 mkdir -p "$WORK"
 HOSTD_PID=""
-APP_PROC_PAT="video-verify/DD.*MacOS/Rwork"
+APP_PROC_PAT="video-verify/DD.*MacOS/Aislopdesk"
 
 cleanup() {
   pkill -f "$APP_PROC_PAT" 2>/dev/null || true
@@ -55,9 +55,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ── 1. Build the host daemon + the client app (placeholder spec already links RworkVideoClient) ─
-echo "==> building rwork-videohostd"
-( cd "$REPO_ROOT" && swift build --product rwork-videohostd >/dev/null )
+# ── 1. Build the host daemon + the client app (placeholder spec already links AislopdeskVideoClient) ─
+echo "==> building aislopdesk-videohostd"
+( cd "$REPO_ROOT" && swift build --product aislopdesk-videohostd >/dev/null )
 echo "==> generating + building the client app"
 git -C "$REPO_ROOT" checkout -- "$SPEC" 2>/dev/null || true
 xcodegen generate --spec "$SPEC" >/dev/null
@@ -105,24 +105,24 @@ WTITLE="$(echo "$LISTING" | grep -E "id=$WID\b" | sed -E 's/.*id=[0-9]+ +//')"
 echo "==> serving window id=$WID ($WTITLE) on media:$MEDIA_PORT cursor:$CURSOR_PORT"
 
 # ── 3. Start the host ──────────────────────────────────────────────────────────────────────────
-pkill -f "rwork-videohostd --window-id $WID" 2>/dev/null || true
-RWORK_VIDEO_DEBUG=1 "$HOSTD" --window-id "$WID" --media-port "$MEDIA_PORT" --cursor-port "$CURSOR_PORT" >"$HOSTLOG" 2>&1 &
+pkill -f "aislopdesk-videohostd --window-id $WID" 2>/dev/null || true
+AISLOPDESK_VIDEO_DEBUG=1 "$HOSTD" --window-id "$WID" --media-port "$MEDIA_PORT" --cursor-port "$CURSOR_PORT" >"$HOSTLOG" 2>&1 &
 HOSTD_PID=$!
 sleep 1
 if ! kill -0 "$HOSTD_PID" 2>/dev/null; then
-  echo "==> FAIL: rwork-videohostd did not stay up; log:" >&2; cat "$HOSTLOG" >&2; exit 1
+  echo "==> FAIL: aislopdesk-videohostd did not stay up; log:" >&2; cat "$HOSTLOG" >&2; exit 1
 fi
 echo "==> host up (pid $HOSTD_PID)"
 
 # ── 4. Launch the client with the PATH 2 auto-open seam (capture its log) ───────────────────────
 pkill -f "$APP_PROC_PAT" 2>/dev/null || true
 CLIENTLOG="$WORK/client.log"
-RWORK_VIDEO_DEBUG=1 \
-RWORK_VIDEO_AUTOCONNECT_HOST=127.0.0.1 \
-RWORK_VIDEO_AUTOCONNECT_MEDIA_PORT="$MEDIA_PORT" \
-RWORK_VIDEO_AUTOCONNECT_CURSOR_PORT="$CURSOR_PORT" \
-RWORK_VIDEO_AUTOCONNECT_WINDOW_ID="$WID" \
-RWORK_VIDEO_AUTOCONNECT_TITLE="$WTITLE (remote)" \
+AISLOPDESK_VIDEO_DEBUG=1 \
+AISLOPDESK_VIDEO_AUTOCONNECT_HOST=127.0.0.1 \
+AISLOPDESK_VIDEO_AUTOCONNECT_MEDIA_PORT="$MEDIA_PORT" \
+AISLOPDESK_VIDEO_AUTOCONNECT_CURSOR_PORT="$CURSOR_PORT" \
+AISLOPDESK_VIDEO_AUTOCONNECT_WINDOW_ID="$WID" \
+AISLOPDESK_VIDEO_AUTOCONNECT_TITLE="$WTITLE (remote)" \
 "$APP_BIN" >"$CLIENTLOG" 2>&1 &
 PID=""
 for _ in $(seq 1 16); do PID="$(pgrep -f "$APP_PROC_PAT" | head -1 || true)"; [[ -n "$PID" ]] && break; sleep 0.5; done
@@ -147,10 +147,10 @@ sleep 5
 # ── 5b. Capture the host + client OSLog flow (diagnostics: where, if anywhere, it stalls) ──────
 OSLOG="$WORK/oslog.txt"
 {
-  echo "### host (rwork-videohostd) ###"
-  log show --last 60s --info --debug --predicate 'process == "rwork-videohostd"' --style compact 2>/dev/null
-  echo "### client (Rwork) — video subsystem ###"
-  log show --last 60s --info --debug --predicate 'process == "Rwork" AND subsystem BEGINSWITH "rwork.video"' --style compact 2>/dev/null
+  echo "### host (aislopdesk-videohostd) ###"
+  log show --last 60s --info --debug --predicate 'process == "aislopdesk-videohostd"' --style compact 2>/dev/null
+  echo "### client (Aislopdesk) — video subsystem ###"
+  log show --last 60s --info --debug --predicate 'process == "Aislopdesk" AND subsystem BEGINSWITH "aislopdesk.video"' --style compact 2>/dev/null
 } > "$OSLOG" 2>&1
 echo "==> OSLog flow → $OSLOG ($(wc -l < "$OSLOG") lines)"
 
@@ -160,7 +160,7 @@ echo "==> OSLog flow → $OSLOG ($(wc -l < "$OSLOG") lines)"
 # GOTCHA (2026-06-09, HW-learned): running `$HOSTD --list` here AGAIN — while the serving host's
 # SCStream is ACTIVE — hangs the enumeration. Never list-while-active: raise the client app and
 # take a full-screen grab instead (the client window is what we need to read anyway).
-osascript -e 'tell application "System Events" to set frontmost of first process whose name is "Rwork" to true' 2>/dev/null || true
+osascript -e 'tell application "System Events" to set frontmost of first process whose name is "Aislopdesk" to true' 2>/dev/null || true
 sleep 1
 screencapture -x "$SHOT"
 echo "==> screenshot (full screen; client raised) saved: $SHOT"

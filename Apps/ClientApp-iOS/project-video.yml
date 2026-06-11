@@ -1,17 +1,17 @@
 # Renderer-DISABLED iOS spec for the real-device GUI-video test (PATH 2 / ô ④).
 # Drops the libghostty renderer (the 566MB xcframework is not needed to verify video decode/
-# render) and keeps only RworkClientUI + RworkVideoClient. AppMain gates the renderer on
+# render) and keeps only AislopdeskClientUI + AislopdeskVideoClient. AppMain gates the renderer on
 # `#if canImport(CGhostty)`, so without CGhostty the terminal shows the placeholder while the
-# Remote-window video sheet (RworkVideoClient) works fully — which is all this test needs.
+# Remote-window video sheet (AislopdeskVideoClient) works fully — which is all this test needs.
 name: ClientApp-iOS
 options:
-  bundleIdPrefix: com.rwork
+  bundleIdPrefix: com.aislopdesk
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
 
 packages:
-  Rwork:
+  Aislopdesk:
     path: ../..
 
 targets:
@@ -21,10 +21,10 @@ targets:
     sources:
       - path: ../Shared
     dependencies:
-      - package: Rwork
-        product: RworkClientUI
-      - package: Rwork
-        product: RworkVideoClient
+      - package: Aislopdesk
+        product: AislopdeskClientUI
+      - package: Aislopdesk
+        product: AislopdeskVideoClient
     info:
       path: Info.plist
       properties:
@@ -39,8 +39,8 @@ targets:
         CFBundleVersion: "1"
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.rwork.client.ios
-        PRODUCT_NAME: Rwork
+        PRODUCT_BUNDLE_IDENTIFIER: com.aislopdesk.client.ios
+        PRODUCT_NAME: Aislopdesk
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"

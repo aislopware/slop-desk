@@ -1,4 +1,4 @@
-# 22 — Workspace UI Architecture (the Rwork multiplexer)
+# 22 — Workspace UI Architecture (the Aislopdesk multiplexer)
 
 Status: design, ready to implement.
 Floor: macOS 26 / iOS 26, Swift tools 6.0, Swift 6 language mode (strict concurrency).
@@ -17,18 +17,18 @@ the single-switch responsive projection (`CompactLayoutResolver`) from **mobile-
 
 Every judge flagged the same LOAD-BEARING fact, verified against the code:
 
-- `RworkClient` is a concrete `public actor` (`Sources/RworkClient/RworkClient.swift:42`) with
+- `AislopdeskClient` is a concrete `public actor` (`Sources/AislopdeskClient/AislopdeskClient.swift:42`) with
   `init(ackInterval:)`. There is **no protocol seam**.
-- `ConnectionViewModel.makeClient` is `@Sendable () -> RworkClient` — returns the *concrete* type
-  (`Sources/RworkClientUI/Connection/ConnectionViewModel.swift:54,82`).
-- `InputBarModel.submit/sendRaw/sendText` also take the concrete `RworkClient`.
+- `ConnectionViewModel.makeClient` is `@Sendable () -> AislopdeskClient` — returns the *concrete* type
+  (`Sources/AislopdeskClientUI/Connection/ConnectionViewModel.swift:54,82`).
+- `InputBarModel.submit/sendRaw/sendText` also take the concrete `AislopdeskClient`.
 - The only existing `ConnectionViewModel` test stands up a **real `HostServer`** — forbidden for new
   tests (project memory: pool deadlock).
 - The only genuine in-process no-network seam that exists today is
-  `LoopbackByteChannel.pair()` for the Inspector (`Sources/RworkInspector/InspectorChannel.swift:145`).
+  `LoopbackByteChannel.pair()` for the Inspector (`Sources/AislopdeskInspector/InspectorChannel.swift:145`).
 
-So the "inject a `FakeRworkClient` via `makeClient`" strategy that designs 2/3/4 assumed is **NOT
-constructible**. We do NOT introduce a protocol over `RworkClient` (that perturbs the proven core and
+So the "inject a `FakeAislopdeskClient` via `makeClient`" strategy that designs 2/3/4 assumed is **NOT
+constructible**. We do NOT introduce a protocol over `AislopdeskClient` (that perturbs the proven core and
 buys nothing the architecture needs). Instead we resolve it structurally — three layered facts make
 the whole new surface testable with zero `HostServer`:
 
@@ -40,18 +40,18 @@ the whole new surface testable with zero `HostServer`:
 2. **The store's session lifecycle is tested via a `makeSession` factory seam — NOT `makeClient`.**
    The injectable unit is the whole `PaneSession`, not the client inside it. `WorkspaceStore` is
    constructed with `makeSession: @MainActor (PaneSpec) -> any PaneSessionHandle`. Tests inject a
-   `FakePaneSession` that records `pause/resume/teardown` and never builds a real `RworkClient`. This
+   `FakePaneSession` that records `pause/resume/teardown` and never builds a real `AislopdeskClient`. This
    lets us assert reconcile correctness (`registry.keys == leafIDs`), teardown ordering, and
    scenePhase fan-out **without a single socket**. Production injects `LivePaneSession.make`, which
    builds the real `ConnectionViewModel` exactly as today.
 
-3. **`RworkClient()` is socket-free at construction.** `connect()` builds the transport lazily
-   (`RworkClient.swift:153`). So the few tests that want a *real un-connected* `LivePaneSession` can
+3. **`AislopdeskClient()` is socket-free at construction.** `connect()` builds the transport lazily
+   (`AislopdeskClient.swift:153`). So the few tests that want a *real un-connected* `LivePaneSession` can
    build one (no `HostServer`, no socket) and assert structural wiring — but the default and primary
    path is the `FakePaneSession`.
 
 `PaneSessionHandle` is a tiny protocol the **store** depends on (so it can be faked); it is NOT a
-protocol over `RworkClient` and does not touch the proven core. `LivePaneSession` conforms to it and
+protocol over `AislopdeskClient` and does not touch the proven core. `LivePaneSession` conforms to it and
 owns the real `ConnectionViewModel` verbatim.
 
 ```swift
@@ -130,7 +130,7 @@ registry never holds layout.
 ## 2. Data model (full Swift sketches)
 
 All pure-domain types are `Sendable + Codable + Equatable`, no `import SwiftUI`, no `import
-RworkClient`. They live under `Sources/RworkClientUI/Workspace/Domain/`.
+AislopdeskClient`. They live under `Sources/AislopdeskClientUI/Workspace/Domain/`.
 
 ```swift
 // ---- Identity ----
@@ -249,7 +249,7 @@ public enum CompactLayoutResolver {
     public var terminalModel: TerminalViewModel { connection.terminalModel }
 
     public static func make(_ spec: PaneSpec,
-                            makeClient: @escaping @Sendable () -> RworkClient,
+                            makeClient: @escaping @Sendable () -> AislopdeskClient,
                             makeInspector: @MainActor (Endpoint) -> InspectorClient?) -> LivePaneSession
 
     public func pause() async  { await connection.pause();  await inspector?.client?.pause()  } // (close+resub for inspector)
@@ -439,7 +439,7 @@ public func apply(_ c: WorkspaceCommand, to store: WorkspaceStore)
 
 The pure `Workspace` value type IS the format — already `Codable`. `WorkspaceStore` persists it
 (debounced on mutation + on `scenePhase == .background`) to
-`Application Support/Rwork/workspace.json` (app container on iOS); `SceneStorage("selectedTab")` holds
+`Application Support/Aislopdesk/workspace.json` (app container on iOS); `SceneStorage("selectedTab")` holds
 only the active `TabID` for fast scene restoration.
 
 - **Codable shape:** `Workspace { schemaVersion, tabs, activeTabID }`,
@@ -496,13 +496,13 @@ Every proven seam is CALLED, never reopened — re-parented from "one global" to
   `LivePaneSession`, constructed with the threaded `makeClient`. The store never reaches into the OUT
   stream or events loop; it only calls public `connect/disconnect/pause/resume`.
 - **App shell:** `Apps/Shared/AppMain.swift` is UNCHANGED — factory registration stays the single
-  launch-time site; it remains the ONLY importer of `CGhostty`/`RworkVideoClient`.
-  `RworkClientApp.swift` swaps its two `@State` vars for one `@State private var store:
+  launch-time site; it remains the ONLY importer of `CGhostty`/`AislopdeskVideoClient`.
+  `AislopdeskClientApp.swift` swaps its two `@State` vars for one `@State private var store:
   WorkspaceStore`, renders `WorkspaceRootView(store:)`, fans `handleScenePhase` over
   `store.allSessions` in an AWAITED `TaskGroup`, and migrates the automation seams (below).
 - **Automation seams (env var names unchanged so `check-macos.sh`/`check-video.sh` keep working):**
-  `RWORK_AUTOCONNECT_HOST/PORT/RWORK_AUTOTYPE` move into `WorkspaceStore.bootstrapFromEnvironment()`
-  targeting `tabs[0]`'s first leaf; `RWORK_VIDEO_AUTOCONNECT_*` migrate out of the retired
+  `AISLOPDESK_AUTOCONNECT_HOST/PORT/AISLOPDESK_AUTOTYPE` move into `WorkspaceStore.bootstrapFromEnvironment()`
+  targeting `tabs[0]`'s first leaf; `AISLOPDESK_VIDEO_AUTOCONNECT_*` migrate out of the retired
   `ClientRootView` into the same bootstrap. Re-run both runtime scripts from a real unlocked GUI
   session after migration — they are the only runtime proof.
 
@@ -530,7 +530,7 @@ mode (one mounted host) needs none of this. This surface is only typecheck-cover
 ## 8. Test strategy (NO HostServer)
 
 Honors the load-bearing constraint: ~85% of new logic is pure (no client), and the session layer is
-faked at the `PaneSessionHandle` boundary — never via a fake `RworkClient` (which is impossible) and
+faked at the `PaneSessionHandle` boundary — never via a fake `AislopdeskClient` (which is impossible) and
 never via a real `HostServer` (forbidden).
 
 ### Pure unit (plain XCTest, synchronous, no client, no async) — the bulk
@@ -578,7 +578,7 @@ No new `HostServer` instance is created.
 
 ## 9. File-by-file map
 
-### Create — pure domain (`Sources/RworkClientUI/Workspace/Domain/`)
+### Create — pure domain (`Sources/AislopdeskClientUI/Workspace/Domain/`)
 - `PaneNode.swift` — recursive enum + pure ops.
 - `PaneSpec.swift` — `PaneKind`, `Endpoint`, `VideoEndpoint`, `PaneSpec`.
 - `Tab.swift` — `Tab`, `TabID`, `PaneID`, `SplitAxis`, `FocusDirection`.
@@ -588,14 +588,14 @@ No new `HostServer` instance is created.
 - `FocusResolver.swift` — geometric neighbor + cycle.
 - `CompactLayoutResolver.swift` — pages / selectedIndex / swipe focus.
 
-### Create — store + commands (`Sources/RworkClientUI/Workspace/Store/`)
+### Create — store + commands (`Sources/AislopdeskClientUI/Workspace/Store/`)
 - `WorkspaceStore.swift` — store + registry + reconcile + bootstrapFromEnvironment.
 - `PaneSessionHandle.swift` — protocol + `LivePaneSession`.
 - `WorkspaceLayout.swift` — pure isCompact decision (size-class/width).
 - `WorkspacePersistence.swift` — debounced load/save.
 - `CommandInterpreter.swift` — pure command state machine + `WorkspaceCommand` + `apply`.
 
-### Create — views (`Sources/RworkClientUI/Workspace/Views/`)
+### Create — views (`Sources/AislopdeskClientUI/Workspace/Views/`)
 - `WorkspaceRootView.swift` — `NavigationSplitView` shell + the one responsive switch.
 - `TabSidebarView.swift` — native source-list rail (add/close/reorder/rename/status/kind glyphs).
 - `PaneTreeView.swift` — recursive walker.
@@ -606,22 +606,22 @@ No new `HostServer` instance is created.
 - `WorkspaceCommands.swift` — macOS/iPad `Commands` + `.keyboardShortcut`.
 - `FocusedValues+Workspace.swift` — `@FocusedValue` keys for store + focused pane.
 
-### Create — iOS glue (`Sources/RworkClientUI/iOS/`, `#if os(iOS)`)
+### Create — iOS glue (`Sources/AislopdeskClientUI/iOS/`, `#if os(iOS)`)
 - `FocusGenerationGuard.swift` — pure guard value type (macOS-testable).
 - `PaneFocusCoordinator.swift` — single-focus owner (resign-before-become).
 
 ### Modify
-- `Sources/RworkClientUI/RworkClientApp.swift` — one `@State store`; scenePhase fan-out (awaited
-  TaskGroup over `allSessions`); migrate `RWORK_AUTOCONNECT_*`/`RWORK_AUTOTYPE` to store pane-0.
-- `Sources/RworkClientUI/Video/RemoteWindowPanel.swift` — add `showCloseButton: Bool = false` init
+- `Sources/AislopdeskClientUI/AislopdeskClientApp.swift` — one `@State store`; scenePhase fan-out (awaited
+  TaskGroup over `allSessions`); migrate `AISLOPDESK_AUTOCONNECT_*`/`AISLOPDESK_AUTOTYPE` to store pane-0.
+- `Sources/AislopdeskClientUI/Video/RemoteWindowPanel.swift` — add `showCloseButton: Bool = false` init
   param; gate the Close row on it.
-- `Sources/RworkClientUI/ClientRootView.swift` — retire: role split into `PaneLeafView` +
-  `WorkspaceRootView`; migrate `RWORK_VIDEO_AUTOCONNECT_*` out. Keep as a thin shim or delete.
+- `Sources/AislopdeskClientUI/ClientRootView.swift` — retire: role split into `PaneLeafView` +
+  `WorkspaceRootView`; migrate `AISLOPDESK_VIDEO_AUTOCONNECT_*` out. Keep as a thin shim or delete.
 
 ### Unchanged (asserted)
 - `Apps/Shared/AppMain.swift` — factory registration stays the single launch-time site.
 
-### Tests (`Tests/RworkClientUITests/Workspace/`)
+### Tests (`Tests/AislopdeskClientUITests/Workspace/`)
 - `PaneNodeTests.swift`, `LayoutSolverTests.swift`, `FocusResolverTests.swift`,
   `CompactLayoutResolverTests.swift`, `FractionTests.swift`, `WorkspaceTests.swift`,
   `WorkspacePersistenceTests.swift`, `CommandInterpreterTests.swift`,
@@ -646,7 +646,7 @@ Depends on: WF2.
 
 ### WF4 — UI shell: sidebar + splits (regular width)
 `WorkspaceRootView` (`NavigationSplitView`), `TabSidebarView`, `PaneTreeView`, `SplitContainer`,
-`PaneChromeView`. Renders the tree, draggable dividers (throttled resize), zoom. `RworkClientApp`
+`PaneChromeView`. Renders the tree, draggable dividers (throttled resize), zoom. `AislopdeskClientApp`
 swap to one `@State store`; scenePhase fan-out. Typecheck + headless build + `check-macos.sh`.
 Depends on: WF3.
 
@@ -669,7 +669,7 @@ Depends on: WF5 (uses real content panes), WF2 (CommandInterpreter, CompactLayou
 ## 11. Resolved concerns (every judge point)
 
 1. **Concrete-actor / no fakeable client** → resolved by the `makeSession` factory seam +
-   `PaneSessionHandle` (store-level protocol, not over `RworkClient`) + socket-free `RworkClient()`
+   `PaneSessionHandle` (store-level protocol, not over `AislopdeskClient`) + socket-free `AislopdeskClient()`
    construction. No protocol over the proven core.
 2. **`.id(PaneID)` identity hazard** → explicit `.id` on every leaf host (terminal, video, input);
    PaneID stable for a session's lifetime; runtime-identity assertion in reconcile tests.

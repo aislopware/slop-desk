@@ -1,6 +1,6 @@
 // CGhostty — Clang module exposing the libghostty C-ABI to Swift.
 //
-// Renderer policy: libghostty is the ONLY terminal renderer for Rwork
+// Renderer policy: libghostty is the ONLY terminal renderer for Aislopdesk
 // (no SwiftTerm, no fallback — see docs/DECISIONS.md "Terminal renderer").
 //
 // This module is INTENTIONALLY OUTSIDE the default `swift build` graph (it is

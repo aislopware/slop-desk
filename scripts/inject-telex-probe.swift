@@ -1,8 +1,8 @@
 #!/usr/bin/env swift
 // inject-telex-probe.swift — Isolation diagnostic for the xkey (xmannv/xkey) Telex
-// composition bug in Rwork's remote-keyboard path.
+// composition bug in Aislopdesk's remote-keyboard path.
 //
-// WHY: Rwork forwards layout-level KEYCODES to the host and posts them as synthetic
+// WHY: Aislopdesk forwards layout-level KEYCODES to the host and posts them as synthetic
 // CGEvents, expecting the host's xkey IME to compose Vietnamese Telex server-side
 // (the "scancode mode" Parsec/VNC/Screen-Sharing use). On hardware a single double
 // ("dd"->"đ") composes but a full word miscomposes (e.g. injecting "ddaa" yields
@@ -20,7 +20,7 @@
 //   4. Paste back the TextEdit contents (the N lines). I map line -> variant.
 //
 // Single-variant form (for follow-up):  swift scripts/inject-telex-probe.swift <variant> [delayMs]
-//   variants: rwork | nouser | private | session | postpid   (see makeVariants)
+//   variants: aislopdesk | nouser | private | session | postpid   (see makeVariants)
 //
 // If NOTHING types: System Settings > Privacy & Security > Accessibility -> enable Terminal.
 
@@ -46,7 +46,7 @@ enum PostMode { case hid, session, pid }
 struct Variant {
     let name: String
     let stateID: CGEventSourceStateID?   // nil => CGEvent source = nil
-    let setUserData: Bool                 // stamp a nonzero (non-sentinel) tag like Rwork does
+    let setUserData: Bool                 // stamp a nonzero (non-sentinel) tag like Aislopdesk does
     let post: PostMode
     let delayMs: UInt32
 }
@@ -55,9 +55,9 @@ struct Variant {
 func makeVariants() -> [Variant] {
     [
         // current production path, at three paces (timing bisect):
-        Variant(name: "rwork@12  (hid + userData, .hidSystemState)",  stateID: .hidSystemState, setUserData: true,  post: .hid,     delayMs: 12),
-        Variant(name: "rwork@60",                                      stateID: .hidSystemState, setUserData: true,  post: .hid,     delayMs: 60),
-        Variant(name: "rwork@150",                                     stateID: .hidSystemState, setUserData: true,  post: .hid,     delayMs: 150),
+        Variant(name: "aislopdesk@12  (hid + userData, .hidSystemState)",  stateID: .hidSystemState, setUserData: true,  post: .hid,     delayMs: 12),
+        Variant(name: "aislopdesk@60",                                      stateID: .hidSystemState, setUserData: true,  post: .hid,     delayMs: 60),
+        Variant(name: "aislopdesk@150",                                     stateID: .hidSystemState, setUserData: true,  post: .hid,     delayMs: 150),
         // tap/source bisect at a settled pace (60ms):
         Variant(name: "session@60 (post .cgSessionEventTap)",          stateID: .hidSystemState, setUserData: true,  post: .session, delayMs: 60),
         Variant(name: "private@60 (.privateState source, no userData)",stateID: .privateState,   setUserData: false, post: .hid,     delayMs: 60),
@@ -140,7 +140,7 @@ if args.count > 1 && args[1] == "word" {
     }
     FileHandle.standardError.write(Data("done — read the \(variants.count) lines in TextEdit, map to the list above.\n".utf8))
 } else {
-    let name = args.count > 1 ? args[1] : "rwork"
+    let name = args.count > 1 ? args[1] : "aislopdesk"
     let delay = args.count > 2 ? (UInt32(args[2]) ?? 12) : 12
     let stateID: CGEventSourceStateID? = (name == "private") ? .privateState : (name == "nilsrc" ? nil : .hidSystemState)
     let post: PostMode = (name == "session") ? .session : (name == "postpid" ? .pid : .hid)

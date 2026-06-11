@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # build-libghostty.sh — reproducible, hermetic-ish build of libghostty.xcframework
-# for Rwork (the ONLY terminal renderer — libghostty-only, no SwiftTerm, no fallback).
+# for Aislopdesk (the ONLY terminal renderer — libghostty-only, no SwiftTerm, no fallback).
 #
 # WHAT IT DOES (idempotent, re-runnable with no manual cleanup):
 #   1. Download the PINNED Zig toolchain into ThirdParty/ghostty/.toolchain/ (gitignored),
@@ -85,9 +85,9 @@ set -euo pipefail
 # ─────────────────────────────────────────────────────────────────────────────
 # PINS — change deliberately; see ThirdParty/ghostty/README.md.
 # ─────────────────────────────────────────────────────────────────────────────
-# SOURCE = canonical upstream ghostty @ a pinned TAG + the rwork "fork-delta" patch
+# SOURCE = canonical upstream ghostty @ a pinned TAG + the aislopdesk "fork-delta" patch
 # (the daiimus external-backend fork: External.zig + tmux control-mode viewer + search + the
-# embedded C glue, rebased onto the tag) + rwork patches 0001/0002 (§2b). This is REPRODUCIBLE
+# embedded C glue, rebased onto the tag) + aislopdesk patches 0001/0002 (§2b). This is REPRODUCIBLE
 # against canonical upstream — no dependency on the daiimus fork remaining available at build
 # time. §2 uses an already-prepared .work/ghostty-src tree as-is when present (sentinel check),
 # else clones the tag and applies the fork-delta patch. See README "Chosen fork + pins".
@@ -122,7 +122,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLCHAIN_DIR="${SCRIPT_DIR}/.toolchain"
 WORK_DIR="${SCRIPT_DIR}/.work"
 SRC_DIR="${WORK_DIR}/ghostty-src"
-FORKDELTA_PATCH="${SCRIPT_DIR}/rwork-libghostty-on-v1.3.1.patch"   # fork delta vs upstream GHOSTTY_TAG
+FORKDELTA_PATCH="${SCRIPT_DIR}/aislopdesk-libghostty-on-v1.3.1.patch"   # fork delta vs upstream GHOSTTY_TAG
 ZIG_DIR="${TOOLCHAIN_DIR}/zig-${ZIG_ARCH}-macos-${ZIG_VERSION}"
 ZIG_BIN="${ZIG_DIR}/zig"
 ZIG_GLOBAL_CACHE="${WORK_DIR}/zig-global-cache"       # keep deps out of ~/.cache
@@ -268,7 +268,7 @@ log "preflight OK: zig ${ZIG_VERSION} links via the shim (SDK ${MACOS_SDK_SHIM_P
 #    external backend) AND the 0002 `queueWriteLocked` fix in Termio.zig. If both are
 #    present, USE THE TREE AS-IS (don't clobber a hand-prepared / mid-rebase tree).
 #    Otherwise clone the pinned upstream tag and apply the consolidated fork delta;
-#    §2b then layers the small ordered rwork patches (0001/0002).
+#    §2b then layers the small ordered aislopdesk patches (0001/0002).
 # ─────────────────────────────────────────────────────────────────────────────
 if [ -f "${SRC_DIR}/src/termio/External.zig" ] \
    && grep -q "queueWriteLocked" "${SRC_DIR}/src/termio/Termio.zig" 2>/dev/null; then
@@ -301,9 +301,9 @@ if grep -q "minimum_zig_version" "${SRC_DIR}/build.zig.zon"; then
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2b. Apply Rwork's local libghostty patches (idempotent).
+# 2b. Apply Aislopdesk's local libghostty patches (idempotent).
 #
-#   patches/0001-rwork-sync-updateframe-in-draw.patch — makes core Surface.draw()
+#   patches/0001-aislopdesk-sync-updateframe-in-draw.patch — makes core Surface.draw()
 #   run renderer.updateFrame() synchronously BEFORE drawFrame(), so a synchronous
 #   `ghostty_surface_draw` rebuilds the cell buffer on the CALLING (app) thread.
 #   Without it the only cell-rebuild path is the renderer thread's libxev `wakeup`

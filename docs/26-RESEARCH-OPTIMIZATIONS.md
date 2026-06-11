@@ -1,16 +1,16 @@
-# 26 — Rwork Optimization Report (cross-product research synthesis)
+# 26 — Aislopdesk Optimization Report (cross-product research synthesis)
 
 Synthesis of 5 parallel research dossiers (terminal-mux UX, remote-desktop video tech,
 host menu-bar GUI, connection resilience, dev-agent UX) into a single prioritized,
-de-duplicated optimization backlog for Rwork.
+de-duplicated optimization backlog for Aislopdesk.
 
-**Rwork recap.** Swift 6 self-hosted remote workspace = remote TERMINAL multiplexer
+**Aislopdesk recap.** Swift 6 self-hosted remote workspace = remote TERMINAL multiplexer
 (libghostty external backend, PTY on host, 1 TCP mux of logical channels) + GUI
 SCREEN-SHARE / remote-desktop (host HEVC via VideoToolbox, client HW-decode, 1 UDP mux,
 GUI path intentionally ~24–30 fps) over a NetBird/Tailscale 100.x overlay. Client =
 SwiftUI macOS + iOS (vertical tabs + tmux-style split panes; pane ∈ {terminal,
-claude-agent, remote-desktop-video}). Host = headless CLI daemons (`rwork-hostd`,
-`rwork-videohostd`); a menu-bar host GUI is wanted.
+claude-agent, remote-desktop-video}). Host = headless CLI daemons (`aislopdesk-hostd`,
+`aislopdesk-videohostd`); a menu-bar host GUI is wanted.
 
 Work-items: **(A)** GUI-video optimization · **(B)** modern client UX ·
 **(C)** host menu-bar server GUI · **(D)** connection resilience / connect-once / reconnect.
@@ -22,10 +22,10 @@ Work-items: **(A)** GUI-video optimization · **(B)** modern client UX ·
    99 / 777 escape sequences + client-side grid regex — libghostty already parses these.
    No new transport; only a **shell-integration bootstrap** (push terminfo + an rc
    snippet on first connect, kitty SSH-kitten style) + client UI rendering.
-2. **cmux and muxy are the same SwiftUI + libghostty stack as Rwork.** Treat their open
+2. **cmux and muxy are the same SwiftUI + libghostty stack as Aislopdesk.** Treat their open
    source (AGPL — read, don't copy verbatim) as a parts bin: `SidebarStatusEntry`,
    `TerminalNotificationStore`, `SessionWorkspaceSnapshot`, `surfaceIdToPanelId` map near-
-   directly onto Rwork's `WorkspaceStore` / `ConnectionViewModel` / `reconcile`.
+   directly onto Aislopdesk's `WorkspaceStore` / `ConnectionViewModel` / `reconcile`.
 
 A recurring design principle for **A** and **D** from Parsec/WebRTC: resolve every
 adaptive/recovery tie as **latency → frame-rate → quality**, and recover from loss with
@@ -35,7 +35,7 @@ adaptive/recovery tie as **latency → frame-rate → quality**, and recover fro
 
 ## (A) GUI-video optimization
 
-| # | Idea | Source(s) | Concrete Rwork change | Impact | Effort |
+| # | Idea | Source(s) | Concrete Aislopdesk change | Impact | Effort |
 |---|------|-----------|-----------------------|--------|--------|
 | A1 | Low-latency rate control + per-frame QP ceiling | Apple WWDC21 VideoToolbox | Create VT session with `EnableLowLatencyRateControl=true`; set `MaxAllowedFrameQP` so text never smears (drop frame instead) | H | S |
 | A2 | Per-frame Reed-Solomon FEC (~20% parity, off on IDR) | Sunshine/Moonlight | Add FEC shards inside UDP video mux; reconstruct from any `dataPackets`; disable on large IDR | H | M |
@@ -85,7 +85,7 @@ Pairs with A10 (schedule input+cursor ahead of bulk video in the mux).
 
 ## (B) modern client UX
 
-| # | Idea | Source(s) | Concrete Rwork change | Impact | Effort |
+| # | Idea | Source(s) | Concrete Aislopdesk change | Impact | Effort |
 |---|------|-----------|-----------------------|--------|--------|
 | B1 | Per-pane sidebar status (branch/cwd/ports/PR/notif) + 4-state activity dot | cmux/muxy/agent-deck/Conductor | Add `branch/cwd/shellState/ports/lastNotif` to `ConnectionViewModel`; host pushes `report_*` frames on control mux; sidebar renders sorted | H | M |
 | B2 | Command palette `Cmd+K` (host-switch, pane-jump, new-tab/split, workflows, reopen-tab; shows shortcuts) | wezterm/Warp/Raycast/Linear | New `CommandPaletteView` over `WorkspaceStore`; fuzzy + frecency; smart initial suggestions | H | M |
@@ -109,7 +109,7 @@ Pairs with A10 (schedule input+cursor ahead of bulk video in the mux).
 **B1 — Per-pane sidebar status + activity dot (~1 week; biggest "feels premium" win).**
 A pane should never be a blank rectangle. Steal cmux's `SidebarStatusEntry`
 (`{key, value, icon, color, url, priority, timestamp}`, sorted timestamp→priority→key) as
-a `RworkStatusEntry`. The host shell emits a tiny text protocol on the existing control mux
+a `AislopdeskStatusEntry`. The host shell emits a tiny text protocol on the existing control mux
 (wmux V1 verbatim is enough): `report_pwd`, `report_git_branch <branch> [dirty]`,
 `report_shell_state idle|running|interrupted`, `notify <text>` — pushed from a
 `PROMPT_COMMAND`/`precmd` hook (the rc snippet from B6). Because panes are *remote*, the
@@ -144,15 +144,15 @@ the core interaction for running many parallel agents — drain the queue by one
 
 ## (C) host menu-bar server GUI
 
-**Structural insight:** Rwork's daemon split already matches RustDesk's "Connection
+**Structural insight:** Aislopdesk's daemon split already matches RustDesk's "Connection
 Manager (separate process) talks to core over IPC" model. The menu-bar app is a **thin
 authorization + observability shell** over the existing daemons, not a rewrite. The only
 genuinely new engineering risk is macOS TCC permission onboarding.
 
-| # | Idea | Source(s) | Concrete Rwork change | Impact | Effort |
+| # | Idea | Source(s) | Concrete Aislopdesk change | Impact | Effort |
 |---|------|-----------|-----------------------|--------|--------|
 | C1 | TCC permission checklist (Screen Recording + Accessibility/Input Monitoring) with live dots, deep-links, quit&reopen | RustDesk/CRD/Screenpipe | Checklist rows: preflight `CG*ScreenCaptureAccess`/`AXIsProcessTrusted`; "Enable" deep-links to exact pane; relaunch-on-grant; red glyph when missing | Critical | M |
-| C2 | Local-socket control protocol (events/approve/deny/permission/disconnect/list) | RustDesk CM IPC | Unix socket from `rwork-hostd`/`rwork-videohostd`; control plane stays local-only (never over overlay) | H | S-M |
+| C2 | Local-socket control protocol (events/approve/deny/permission/disconnect/list) | RustDesk CM IPC | Unix socket from `aislopdesk-hostd`/`aislopdesk-videohostd`; control plane stays local-only (never over overlay) | H | S-M |
 | C3 | Incoming-connection approval: attended "Share now" (rotating code, TOFU allow-list, expiry+permission preset) + unattended (overlay-trusted / host password) | RustDesk/CRD/Sunshine/Parsec | Approve mode setting; prompt shows connType + peer name + overlay IP; TOFU device allow-list | H | M |
 | C4 | MenuBarExtra `.window` shell: This-Host + Start/Stop + client count + status dot | Tailscale/Ollama | SwiftUI popover (not `.menu`): color dots, scrollable searchable client list | H | S-M |
 | C5 | Live client list: per-client RTT/FPS, connType, per-session permission toggles (terminal r/o, video-only, kbd on/off) + disconnect | RustDesk CM | Per-session permission map (already aligns with per-pane model); revoke mid-session | M-H | M |
@@ -164,7 +164,7 @@ genuinely new engineering risk is macOS TCC permission onboarding.
 
 **C1 — TCC permission checklist (~3–5 days; critical — make-or-break).**
 Every product in this category lives or dies on getting **Screen Recording**
-(`rwork-videohostd`) + **Accessibility** (host CGEvent keyboard/mouse injection) granted —
+(`aislopdesk-videohostd`) + **Accessibility** (host CGEvent keyboard/mouse injection) granted —
 both require an app restart and cannot be auto-granted. Build the universal pattern: one row
 per permission with a live status dot and an "Enable" button that deep-links to the exact
 pane. Screen Recording: `CGPreflightScreenCaptureAccess()` /
@@ -172,7 +172,7 @@ pane. Screen Recording: `CGPreflightScreenCaptureAccess()` /
 `x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture`.
 Accessibility: `AXIsProcessTrusted()` /
 `AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt: true])`, deep-link
-`...?Privacy_Accessibility`. Gotchas to honor: **TCC is keyed by bundle ID** (Rwork's
+`...?Privacy_Accessibility`. Gotchas to honor: **TCC is keyed by bundle ID** (Aislopdesk's
 "build each product separately" + re-sign-for-lldb workflow will silently lose grants if the
 bundle ID drifts — pin it); **Screen Recording needs Quit & Reopen** (detect the grant flip
 and offer one-click relaunch); **re-preflight every launch** (grants go stale). Red menu-bar
@@ -183,35 +183,35 @@ Mirror RustDesk's CM-over-IPC. A local unix-domain socket carries a small contro
 `IncomingConnection{peerID, name, overlayIP, connType}`, `Approve/Deny`,
 `SetPermission{sessionID, perm, bool}`, `Disconnect{sessionID}`, `ConnectionList[...]`,
 plus per-client RTT/FPS telemetry (already measured). Prefer the socket over XPC because
-Rwork's daemons are already stream-shaped, it's headlessly testable like the existing E2E
+Aislopdesk's daemons are already stream-shaped, it's headlessly testable like the existing E2E
 suites (and avoids the HostServer-in-tests trap), and it keeps the **control plane local-
 only** (Sunshine's localhost-only principle) — never expose host *control* over the overlay,
-only the data planes. The only new daemon surface is a place in `rwork-hostd` to gate
+only the data planes. The only new daemon surface is a place in `aislopdesk-hostd` to gate
 session start on `authorized`. Handle "daemon not up yet" gracefully (show "Starting…",
 retry connect) — Login Items can launch before Launch Agents.
 
 **C3 — Connection approval model (~1 week; the core feature).**
 Frame it as Chrome Remote Desktop's two clear flows, not RustDesk's three-radio config:
 **Unattended** ("this is my own machine; my phone/laptop always reaches it" → set once /
-host password, legitimately default-on because Rwork is overlay-only 100.x) vs **Share now**
+host password, legitimately default-on because Aislopdesk is overlay-only 100.x) vs **Share now**
 (generate a short-lived rotating code a colleague enters once → TOFU device allow-list,
 optional expiry + permission preset). The approval prompt must show the **connection type**
 (terminal-mux channel vs video) + peer name + overlay IP so the user can't be surprised into
 granting a shell when they meant to share a screen. Store permissions **per-session** (not
 global) so two simultaneous clients can have different rights and keyboard can be revoked
 mid-session without dropping video — a differentiator most consumer tools lack and which
-aligns with Rwork's per-pane model.
+aligns with Aislopdesk's per-pane model.
 
 ---
 
 ## (D) connection resilience / connect-once / reconnect
 
-Rwork today has connect-once endpoint inheritance but **no dead-host timeout, no auto-
+Aislopdesk today has connect-once endpoint inheritance but **no dead-host timeout, no auto-
 reconnect, no session resumption after a drop**. sshx (`controller.rs`/`grpc.rs`) is the
 closest ready-made template — its shape (one persistent stream multiplexing many shells,
-each with a seqnum, plus reconnect) is ~1:1 with Rwork's mux.
+each with a seqnum, plus reconnect) is ~1:1 with Aislopdesk's mux.
 
-| # | Idea | Source(s) | Concrete Rwork change | Impact | Effort |
+| # | Idea | Source(s) | Concrete Aislopdesk change | Impact | Effort |
 |---|------|-----------|-----------------------|--------|--------|
 | D1 | Heartbeat + dead-host timeout + stateless Ping/Pong RTT | mosh/sshx | Client heartbeat 3s; `Ping(ts)`→`Pong(ts)` RTT; declare dead ~10–15s no packet; host reaps assoc ~40s | H | S |
 | D2 | Auto-reconnect loop, capped exponential backoff `2^min(retries,4)` (1→16s), reset if last fail >10s | sshx | Reconnect loop on the mux; never enter un-timed "connecting" (fixes the documented infinite-connecting wart) | H | S |
@@ -220,7 +220,7 @@ each with a seqnum, plus reconnect) is ~1:1 with Rwork's mux.
 | D5 | Host-side bounded scrollback restore on reattach | tmux/zellij | Per-pane scrollback ring on host; on RESUME ship it so client grid restores, not blank | H | M |
 | D6 | "Is the session still alive?" probe before reconnect + status overlay | Coder/Kilo | Probe host session existence before reconnect (else create new); visible "Reconnecting…" overlay; multi-stage hydration | H | M |
 | D7 | UDP video roaming (CID + PATH_CHALLENGE on highest-seq new addr) | mosh / QUIC RFC 9000 | Datagram carries session-CID + monotone seq; higher-seq from new addr ⇒ challenge ⇒ adopt | M-H | M |
-| D8 | Host-side live-session persistence + re-attach (Rwork's structural edge) | tmux/cmux/Warp gap | Host keeps PTYs/agents alive across client restart/roam/device-switch; client persists only intent tree | H | M |
+| D8 | Host-side live-session persistence + re-attach (Aislopdesk's structural edge) | tmux/cmux/Warp gap | Host keeps PTYs/agents alive across client restart/roam/device-switch; client persists only intent tree | H | M |
 | D9 | Page-diff streaming for scrollback resync on reconnect | ghostty native-SSH PoC | Stream only diffs of the terminal page model on reconnect, not full re-render | M-H | L |
 | D10 | Connection-quality UX (latency badge + direct/relayed + reconnect state) | sshx/Tailscale | Surface Ping RTT + overlay path type + reconnect state as a badge/banner | M-H | S |
 | D11 | Flow control / back-pressure on PTY producer | VS Code | Bound the per-channel buffer so `yes`-style floods can't unbounded-grow the mux | H | S-M |
@@ -252,13 +252,13 @@ existing `MuxNWConnection` open-before-handler buffer** (already solved) into th
 resend ring. Layer sshx's cheap **5s Sync map** (`{paneID→bytesDelivered}`) for buffer-
 trimming + gap detection, and a `contains_key` duplicate-pane guard in
 `WorkspaceStore.reconcile` to kill the duplicate-pane-on-reattach risk. Finally, keep a
-bounded **host-side scrollback ring per pane** (tmux model — Rwork ships bytes, so do NOT copy
+bounded **host-side scrollback ring per pane** (tmux model — Aislopdesk ships bytes, so do NOT copy
 mosh's drop-scrollback tradeoff) and ship it on RESUME so the client grid is restored, not
 blank.
 
 **D8 — Host-side live-session persistence + re-attach (~1 week; genuine differentiator).**
 Every competitor hits the same wall — layout restores, live processes don't (cmux, Warp,
-zellij-without-resurrection). Rwork is architecturally positioned to *win* because PTYs (and
+zellij-without-resurrection). Aislopdesk is architecturally positioned to *win* because PTYs (and
 agent processes) run on the host daemon, not the client. Make the host **not tear down PTYs on
 client disconnect**, persist only the **tree-of-intent** (tabs/panes/types/endpoints/cwd) on
 the client, and re-attach over the existing mux on launch (D3 handshake). This delivers the
@@ -269,20 +269,20 @@ shipped.
 
 ---
 
-## DO NOT bother (anti-recommendations for Rwork specifically)
+## DO NOT bother (anti-recommendations for Aislopdesk specifically)
 
-- **120/60 fps game-stream assumptions.** Rwork's GUI path is intentionally ~24–30 fps; do
+- **120/60 fps game-stream assumptions.** Aislopdesk's GUI path is intentionally ~24–30 fps; do
   not import 60/120 fps targets, frame-pacing for sub-frame latency, or game-stream bitrate
   budgets. Optimize for **text sharpness + clean loss recovery + cursor feel**, not raw fps.
 - **Reintroducing a separate input-bar / Warp-style real-editor input line.** Conflicts with
   shipping raw keystrokes to a remote PTY, and the input bar was explicitly *removed* to fix a
   focus/freeze bug (per MEMORY). Cherry-pick only block-scoped output copy via OSC 133.
-- **mosh-style drop-scrollback state-diff for the terminal.** Rwork ships *bytes* and renders
+- **mosh-style drop-scrollback state-diff for the terminal.** Aislopdesk ships *bytes* and renders
   via libghostty; copy tmux's bounded host-side scrollback (D5), not mosh's no-scrollback
   state-sync. (mosh's roaming and predictive-echo ideas *are* worth stealing — just not its
   state model for terminals.)
 - **Building your own NAT traversal / rendezvous + relay (RustDesk/DERP).** NetBird/Tailscale
-  already solve hole-punching and relay underneath Rwork. Only *surface* the path/latency
+  already solve hole-punching and relay underneath Aislopdesk. Only *surface* the path/latency
   signal (D10); don't reimplement DERP. Revisit only if dropping the overlay dependency
   becomes an explicit goal.
 - **Full QUIC transport rewrite (now).** Borrowing QUIC's Connection-ID + PATH_CHALLENGE

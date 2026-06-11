@@ -1,12 +1,12 @@
 //
 //  GhosttyTerminalView.swift
-//  Rwork — the SwiftUI host for the ONLY terminal renderer (libghostty-only).
+//  Aislopdesk — the SwiftUI host for the ONLY terminal renderer (libghostty-only).
 //
 //  ─────────────────────────────────────────────────────────────────────────────
 //  THIS FILE IS DELIBERATELY OUTSIDE THE DEFAULT `swift build` GRAPH.
 //  ─────────────────────────────────────────────────────────────────────────────
 //  It is the production `TerminalRenderingView` conformer named in
-//  `Sources/RworkClientUI/Terminal/TerminalRenderingView.swift` (the documented
+//  `Sources/AislopdeskClientUI/Terminal/TerminalRenderingView.swift` (the documented
 //  extension point). Like its sibling `GhosttySurface.swift` (same directory) it is
 //  NOT a member of any target in `/Package.swift`; it compiles only inside the
 //  macOS/iOS GUI app target (WF-8) which (a) links `libghostty.xcframework` and
@@ -53,7 +53,7 @@
 //  bytes via `onWrite`. This view routes them to `TerminalViewModel.sendInput(_:)`
 //  (and grid resizes via `onResize` → `sendResize`). The model funnels them through
 //  its `inputSink`/`resizeSink`, which the connection layer (`ConnectionViewModel`,
-//  which holds the live `RworkClient`) points at `RworkClient.sendInput`/`sendResize`
+//  which holds the live `AislopdeskClient`) points at `AislopdeskClient.sendInput`/`sendResize`
 //  on connect and clears on teardown. Going through the MODEL (not `model.surface
 //  .onWrite` directly) decouples view-attach timing from connect timing — whichever
 //  happens first, the sink is read at call time. NOW WIRED (was the remaining seam in
@@ -72,8 +72,8 @@
 
 import SwiftUI
 import QuartzCore          // CAMetalLayer
-import RworkTerminal       // TerminalSurface protocol
-import RworkClientUI       // TerminalRenderingView, TerminalViewModel
+import AislopdeskTerminal       // TerminalSurface protocol
+import AislopdeskClientUI       // TerminalRenderingView, TerminalViewModel
 import CGhostty            // the clang module over ghostty.h (link "ghostty")
 
 #if os(macOS)
@@ -89,9 +89,9 @@ import UIKit
 /// clipboard; `SELECTION` is a PRIVATE pasteboard (mirrors upstream `NSPasteboard.ghostty(_:)`) so
 /// libghostty's default-ON copy-on-select does NOT clobber the user's system clipboard on every
 /// drag-select — only an explicit Cmd-C / `copy_to_clipboard` (STANDARD) touches `.general`.
-@inline(__always) func rworkPasteboard(for location: ghostty_clipboard_e) -> NSPasteboard {
+@inline(__always) func aislopdeskPasteboard(for location: ghostty_clipboard_e) -> NSPasteboard {
     location == GHOSTTY_CLIPBOARD_SELECTION
-        ? NSPasteboard(name: NSPasteboard.Name("com.rwork.terminal.selection"))
+        ? NSPasteboard(name: NSPasteboard.Name("com.aislopdesk.terminal.selection"))
         : .general
 }
 #endif
@@ -149,12 +149,12 @@ final class GhosttyApp {
         //    NAMED themes like "Monokai Pro" resolve). Until that lands, keep the default config so the
         //    grid the GUI computes matches what libghostty renders. (The reported invisible
         //    zsh-autosuggestion was NOT a palette issue — it was the empty-HISTFILE shim bug, fixed in
-        //    RworkHost/ShellIntegration.swift.)
+        //    AislopdeskHost/ShellIntegration.swift.)
         let config = ghostty_config_new()
         ghostty_config_finalize(config)
 
         // 3. Runtime config (header 1073). The embedder must supply the callback set;
-        //    for Rwork's external-backend viewer the surface's own write/resize
+        //    for Aislopdesk's external-backend viewer the surface's own write/resize
         //    callbacks carry the data path, so these app-level runtime callbacks are
         //    minimal no-ops (wakeup just ticks the app; clipboard/close are stubs the
         //    GUI coordinator can later enrich). All fields zero-initialized first.
@@ -177,7 +177,7 @@ final class GhosttyApp {
         runtime.action_cb = { _, _, _ in false }
 
         // Clipboard callbacks — modeled on upstream `Ghostty.App.swift:324-405`. The `userdata`
-        // here is the SURFACE's userdata (libghostty passes it through), which rwork set to the
+        // here is the SURFACE's userdata (libghostty passes it through), which aislopdesk set to the
         // `GhosttySurface` in `GhosttySurface.init` (`config.userdata = passUnretained(self)`), so we
         // recover it via `Unmanaged<GhosttySurface>.fromOpaque(...).takeUnretainedValue()`. These fire
         // synchronously on the main thread from the surface's binding-action / OSC-52 path, so the
@@ -208,7 +208,7 @@ final class GhosttyApp {
                 // clipboard on every selection. Upstream maps SELECTION to a private pasteboard
                 // (NSPasteboard.ghostty(_:)); we mirror that. iOS has no selection clipboard.
                 #if os(macOS)
-                let pb = rworkPasteboard(for: location)
+                let pb = aislopdeskPasteboard(for: location)
                 let str = pb.string(forType: .string) ?? ""
                 #else
                 let str = (location == GHOSTTY_CLIPBOARD_SELECTION) ? "" : (UIPasteboard.general.string ?? "")
@@ -221,7 +221,7 @@ final class GhosttyApp {
         // CONFIRM-READ: libghostty reaches here when the access gate tripped on the FIRST completion —
         // an OSC-52 read (`clipboard-read = .ask`) or a paste of unsafe content
         // (`clipboard-paste-protection = true`). This is the embedder's APPROVE/DENY decision point;
-        // upstream posts a confirm-dialog Notification. rwork has no dialog, so it AUTO-APPROVES by
+        // upstream posts a confirm-dialog Notification. aislopdesk has no dialog, so it AUTO-APPROVES by
         // completing with `confirmed: true`. This is REQUIRED: completing with `confirmed: false` here
         // would re-trip the same gate → core re-invokes this callback → unbounded synchronous recursion
         // → stack-overflow crash (host OSC-52 read / multi-line paste would crash the whole client).
@@ -259,7 +259,7 @@ final class GhosttyApp {
             // (Cmd-C / copy_to_clipboard) writes the system clipboard. (iOS: no selection clipboard.)
             MainActor.assumeIsolated {
                 #if os(macOS)
-                let pb = rworkPasteboard(for: location)
+                let pb = aislopdeskPasteboard(for: location)
                 pb.declareTypes([.string], owner: nil)
                 pb.setString(text, forType: .string)
                 #else
@@ -280,7 +280,7 @@ final class GhosttyApp {
 
 // MARK: - GhosttyTerminalView (the TerminalRenderingView conformer)
 
-/// libghostty-backed terminal renderer — Rwork's production `TerminalRenderingView`.
+/// libghostty-backed terminal renderer — Aislopdesk's production `TerminalRenderingView`.
 ///
 /// It hosts a Metal-backed platform view (`CAMetalLayer`) that owns a `GhosttySurface`
 /// configured for the EXTERNAL backend. The data flow:
@@ -292,7 +292,7 @@ final class GhosttyApp {
 ///  * **OUT** (keystrokes → host PTY stdin): the view forwards platform key/text
 ///    events to `surface.key(_:)` / `surface.text(_:)`; libghostty encodes them and
 ///    emits the bytes via `surface.onWrite`, which the connection layer bridges to
-///    `RworkClient.sendInput` (documented seam — see file header + doc 21).
+///    `AislopdeskClient.sendInput` (documented seam — see file header + doc 21).
 ///  * **Resize**: layout changes convert the view's pixel size → cols/rows and call
 ///    `surface.setSize(cols:rows:)`; the surface mirrors the grid to the host via
 ///    `surface.onResize`.
@@ -513,7 +513,7 @@ final class GhosttyLayerBackedView: NSView {
                 rows: 24,
                 contentScale: Double(window?.backingScaleFactor ?? 2.0)
             )
-            // OUT path: encoded keystrokes → model input sink → live RworkClient.sendInput.
+            // OUT path: encoded keystrokes → model input sink → live AislopdeskClient.sendInput.
             s.onWrite = { [weak model] (data: Data) in model?.sendInput(data) }
             // Grid changes (font reflow) → model resize sink → host TIOCSWINSZ.
             s.onResize = { [weak model] (cols: UInt16, rows: UInt16) in model?.sendResize(cols: cols, rows: rows) }
@@ -532,7 +532,7 @@ final class GhosttyLayerBackedView: NSView {
 
     private func startRenderTickIfNeeded() {
         guard renderDisplayLink == nil, window != nil,
-              ProcessInfo.processInfo.environment["RWORK_NO_TICK"] == nil else { return }
+              ProcessInfo.processInfo.environment["AISLOPDESK_NO_TICK"] == nil else { return }
         let link = displayLink(target: self, selector: #selector(renderTick))
         link.add(to: .main, forMode: .common)
         renderDisplayLink = link
@@ -1016,8 +1016,8 @@ struct GhosttyMetalLayerView: UIViewRepresentable {
 /// A `UIView` whose `layerClass` is `CAMetalLayer`, owning the `GhosttySurface`.
 ///
 /// Physical-key + IME text forwarding on iOS is handled by the existing UIKit
-/// table-stakes host (`RworkClientUI.TerminalInputHost` — doc 17 §2.5), which already
-/// routes presses/IME to `RworkClient.sendInput`. This view focuses on hosting the
+/// table-stakes host (`AislopdeskClientUI.TerminalInputHost` — doc 17 §2.5), which already
+/// routes presses/IME to `AislopdeskClient.sendInput`. This view focuses on hosting the
 /// Metal layer + surface; the input-host integration is the documented follow-up seam.
 final class GhosttyLayerBackedView: UIView {
     override class var layerClass: AnyClass { CAMetalLayer.self }
@@ -1194,7 +1194,7 @@ final class GhosttyLayerBackedView: UIView {
                 rows: 24,
                 contentScale: Double(scale)
             )
-            // OUT path: libghostty-encoded keystrokes → model sink → live RworkClient.
+            // OUT path: libghostty-encoded keystrokes → model sink → live AislopdeskClient.
             // On iOS the physical-key/IME forwarding is owned by `TerminalInputHost`
             // (doc 17 §2.5), but routing onWrite here too is harmless+correct: it carries
             // whatever the surface itself encodes, and the model sink is the single funnel.

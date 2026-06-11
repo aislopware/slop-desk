@@ -1,9 +1,9 @@
-# 20 — Rwork wire protocol (PATH 1 terminal + PATH 2 GUI video)
+# 20 — Aislopdesk wire protocol (PATH 1 terminal + PATH 2 GUI video)
 
 > **STATUS: CURRENT.** §1–8 document the **PATH 1** terminal byte pipeline implemented in
-> `Sources/RworkProtocol` (WF-1) over TCP. **§9 documents the PATH 2 GUI video path** (WF-9):
-> a separate, plain-UDP protocol implemented in `Sources/RworkVideoProtocol` (pure, cross-
-> platform, unit-tested) and driven by `RworkVideoHost` / `RworkVideoClient`. PATH 2 is an
+> `Sources/AislopdeskProtocol` (WF-1) over TCP. **§9 documents the PATH 2 GUI video path** (WF-9):
+> a separate, plain-UDP protocol implemented in `Sources/AislopdeskVideoProtocol` (pure, cross-
+> platform, unit-tested) and driven by `AislopdeskVideoHost` / `AislopdeskVideoClient`. PATH 2 is an
 > entirely distinct protocol from PATH 1 — different transport (UDP vs TCP), different
 > message set, its own version constant — and does **not** share PATH 1's `WireMessage`,
 > `FrameDecoder`, or `Channel`.
@@ -29,7 +29,7 @@ must not delay a `resize`-ack or a disconnect intent. Putting control messages o
 TCP connection keeps them head-of-line-independent from output bursts.
 
 `TCP_NODELAY` is set on **both** sockets immediately after connect — this happens in
-`RworkTransport`, not in the protocol layer. (Nagle can add up to ~200 ms to single-keystroke
+`AislopdeskTransport`, not in the protocol layer. (Nagle can add up to ~200 ms to single-keystroke
 writes.) The framing and decoder are identical on both channels; `WireMessage.channel` is
 advisory metadata stating where each message is expected to travel.
 
@@ -43,8 +43,8 @@ Every message on either channel is a single length-prefixed frame:
 
 - `payloadLength` **excludes** the 4 prefix bytes — it counts only the payload.
 - `payload = [ UInt8 messageType ][ message body... ]`.
-- A `payloadLength` greater than **16 MiB** (`16 * 1024 * 1024`, `Rwork.maxFramePayloadLength`)
-  is rejected with `RworkError.frameTooLarge(_:)` — we never allocate or wait for an
+- A `payloadLength` greater than **16 MiB** (`16 * 1024 * 1024`, `Aislopdesk.maxFramePayloadLength`)
+  is rejected with `AislopdeskError.frameTooLarge(_:)` — we never allocate or wait for an
   implausibly large frame.
 
 The body uses **manual binary encoding**. The keystroke/output hot path must **not** use
@@ -92,7 +92,7 @@ UUIDs (`sessionID`) are sent as their **16 raw bytes** in canonical order (not a
 | 21 | `title`    | host → client | control | remaining bytes = UTF-8 window/title string |
 | 22 | `bell`     | host → client | control | (empty) |
 
-`protocolVersion` is currently **1** (`Rwork.protocolVersion`). There is **no version
+`protocolVersion` is currently **1** (`Aislopdesk.protocolVersion`). There is **no version
 negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` whose
 `protocolVersion` differs is rejected outright with a generic `handshakeFailed`
 (`HostTransport`); the host never offers or falls back to another version.
@@ -108,9 +108,9 @@ negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` who
 - **`helloAck.returningClient`** is decided **by the host** (see §5), not asserted by the
   client.
 - **`title`** payload must be valid UTF-8; a non-UTF-8 body decodes to
-  `RworkError.malformedBody`.
+  `AislopdeskError.malformedBody`.
 - **`title` (21) and `bell` (22) are PRODUCED by the host**, by a non-destructive OSC/BEL
-  sniffer (`HostTitleBellSniffer` in `RworkHost`, wired into `HostSession`'s output relay).
+  sniffer (`HostTitleBellSniffer` in `AislopdeskHost`, wired into `HostSession`'s output relay).
   As the host relays the raw PTY byte stream it ALSO observes a copy of those exact bytes
   and emits these control messages:
   - **`title`** ← **OSC 0** (`ESC ] 0 ; <text> <term>`, icon + window title) or **OSC 2**
@@ -126,14 +126,14 @@ negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` who
   byte-at-a-time state machine that holds partial state across read chunks, bounds the
   buffered OSC payload to defend against an unterminated/hostile OSC, and re-syncs on a stray
   `ESC` without swallowing the next sequence's introducer). The client surfaces both as
-  `RworkClient.Event.title` / `.bell` (and the `rwork-client` CLI / `TerminalViewModel`
+  `AislopdeskClient.Event.title` / `.bell` (and the `aislopdesk-client` CLI / `TerminalViewModel`
   consume them). These ride the head-of-line-independent CONTROL channel and are **not**
   sequenced/replayed.
 
 ## 5. Seq / ack / replay semantics
 
 The host assigns every `output` message a **monotonic `Int64` `seq` starting at 1** — a
-per-message index, not a byte count. The replay buffer (implemented in `RworkTransport`,
+per-message index, not a byte count. The replay buffer (implemented in `AislopdeskTransport`,
 WF-2) retains un-acked `output` messages so a reconnect is lossless:
 
 - The client sends `ack(seq)` carrying the **highest contiguous** seq it has durably
@@ -163,12 +163,12 @@ WF-2) retains un-acked `output` messages so a reconnect is lossless:
 This design is **functionally equivalent to Eternal Terminal's byte-level `BackedWriter`
 sequence number**, lifted from byte offsets to a per-message index. ET tags each chunk of PTY
 output with a monotonically increasing sequence and replays the tail after the last
-client-acknowledged sequence on reconnect (`recover(lastValidSeq)`); Rwork does the same at
+client-acknowledged sequence on reconnect (`recover(lastValidSeq)`); Aislopdesk does the same at
 the granularity of one `output` message. The reconnect handshake (`hello.lastReceivedSeq` →
 host replays `seq > lastReceivedSeq`) mirrors ET's reconnect path, minus the crypto handler,
 over plain TCP inside the WireGuard tunnel.
 
-## 6. Errors (`RworkError`)
+## 6. Errors (`AislopdeskError`)
 
 | Case | Meaning |
 |------|---------|
@@ -177,7 +177,7 @@ over plain TCP inside the WireGuard tunnel.
 | `unknownMessageType(UInt8)` | First payload byte is not a recognized type. |
 | `malformedBody(String)` | Right-length body with invalid contents (e.g. bad UTF-8 in `title`); reason string attached. |
 
-## 7. Public API (`RworkProtocol`)
+## 7. Public API (`AislopdeskProtocol`)
 
 - `enum Channel { case data, control }`
 - `enum WireMessage: Equatable, Sendable` — all cases above; `var messageType: UInt8`,
@@ -186,18 +186,18 @@ over plain TCP inside the WireGuard tunnel.
 - `struct FrameDecoder` — `init()`, `mutating func append(_ data: Data)`,
   `mutating func nextMessage() throws -> WireMessage?` (handles partial reads + multiple
   frames per append; **not** `Sendable`, lives inside one actor/task).
-- `enum RworkError: Error, Equatable, Sendable`.
-- `enum Rwork` namespace — `static let protocolVersion: UInt16 = 1`,
+- `enum AislopdeskError: Error, Equatable, Sendable`.
+- `enum Aislopdesk` namespace — `static let protocolVersion: UInt16 = 1`,
   `static let maxFramePayloadLength = 16 * 1024 * 1024`.
 
-`WireMessage`, `Channel`, and `RworkError` are `Sendable`; `FrameDecoder` is a non-`Sendable`
+`WireMessage`, `Channel`, and `AislopdeskError` are `Sendable`; `FrameDecoder` is a non-`Sendable`
 value type by design (it carries the receive buffer for a single connection/channel).
 
-## 8. Channel association & session handshake (WF-2, `RworkTransport`)
+## 8. Channel association & session handshake (WF-2, `AislopdeskTransport`)
 
 > This section documents how the two physical TCP connections of one session are tied
 > together and how the `hello`/`helloAck` handshake runs. It is implemented in
-> `RworkTransport` (`HostTransport` / `ClientTransport` / `ChannelAssociation`). It
+> `AislopdeskTransport` (`HostTransport` / `ClientTransport` / `ChannelAssociation`). It
 > does **not** change the framing (§2) or the message table (§4); the association
 > preamble is raw bytes the transport peels off *before* the first frame.
 
@@ -263,7 +263,7 @@ a DATA or CONTROL channel that finishes — whether by error *or* a clean FIN/ca
 half-close the host intends, so a clean finish is always a disconnect that reconnects
 (never a silent stall).
 
-### 8.4 `RworkTransport` public API (WF-2)
+### 8.4 `AislopdeskTransport` public API (WF-2)
 
 - `enum TransportParameters` — `static func makeTCP() -> NWParameters` (the single
   canonical params: `TCP_NODELAY` + keepalive, no app crypto, no interface pin).
@@ -288,9 +288,9 @@ half-close the host intends, so a clean finish is always a disconnect that recon
 
 # PATH 2 — GUI video transport (UDP)
 
-> **STATUS: CURRENT.** Documents the wire format implemented in `Sources/RworkVideoProtocol`
-> (WF-9) and the transport topology realized by `RworkVideoHost.NWVideoDatagramTransport` /
-> `RworkVideoClient.NWVideoClientTransport`. This is the secondary GUI video path (doc 17 §3,
+> **STATUS: CURRENT.** Documents the wire format implemented in `Sources/AislopdeskVideoProtocol`
+> (WF-9) and the transport topology realized by `AislopdeskVideoHost.NWVideoDatagramTransport` /
+> `AislopdeskVideoClient.NWVideoClientTransport`. This is the secondary GUI video path (doc 17 §3,
 > doc 18 measured spike config); it is **independent of PATH 1** — its own protocol over plain
 > UDP inside the WireGuard tunnel, with NO TCP, no `WireMessage`, no `FrameDecoder`.
 
@@ -302,9 +302,9 @@ with a client-side composited cursor and client→host CGEvent input injection. 
 **datagram-oriented** — there is no stream framing, no length prefix, no replay buffer. Loss is
 absorbed by FEC and, when unrecoverable, by client→host recovery requests (LTR refresh → IDR).
 
-`RworkVideoProtocol.version` is a **`UInt16`, currently `1`**, separate from PATH 1's
-`Rwork.protocolVersion`. There is **no negotiation**: the host accepts a `hello` only when
-`protocolVersion == RworkVideoProtocol.version` (strict, mirroring PATH 1 §4); any other value
+`AislopdeskVideoProtocol.version` is a **`UInt16`, currently `1`**, separate from PATH 1's
+`Aislopdesk.protocolVersion`. There is **no negotiation**: the host accepts a `hello` only when
+`protocolVersion == AislopdeskVideoProtocol.version` (strict, mirroring PATH 1 §4); any other value
 is rejected. All multi-byte integers are **big-endian**, exactly as PATH 1 (§3); the
 sub-pixel geometry/cursor/input fields are big-endian IEEE-754 `Float64`. Each codec serialises
 as `[UInt8 messageType][body…]` and is decoded defensively — a short or inconsistent **single
@@ -342,9 +342,9 @@ the encode/decode pipeline and from video-burst head-of-line blocking (doc 17 §
 > (mouseMove/Down/Up), so multiplexing them onto `input` would have the host mis-decode a recovery
 > request as a phantom mouse event. The dedicated tag removes that ambiguity (no discriminator byte).
 
-The enum is defined identically (byte-for-byte raw values) in both `RworkVideoHost` and
-`RworkVideoClient`; the client cannot depend on the macOS-only host module, so it carries its
-own copy. *(Candidate to hoist into `RworkVideoProtocol` so one definition is shared.)*
+The enum is defined identically (byte-for-byte raw values) in both `AislopdeskVideoHost` and
+`AislopdeskVideoClient`; the client cannot depend on the macOS-only host module, so it carries its
+own copy. *(Candidate to hoist into `AislopdeskVideoProtocol` so one definition is shared.)*
 
 ## 9.2 Session bring-up — `VideoControlMessage` (control channel)
 
