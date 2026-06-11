@@ -28,6 +28,12 @@ targets:
     platform: macOS
     sources:
       - path: ../Shared
+      # PATH 1 (libghostty renderer): the gated renderer host + binding. This directory
+      # carries BOTH GhosttySurface.swift (the @MainActor TerminalSurface binding over the
+      # CGhostty C ABI) and GhosttyTerminalView.swift (the TerminalRenderingView conformer).
+      # They are NOT members of any Package.swift target — they join THIS app target so
+      # `import CGhostty` resolves and `#if canImport(CGhostty)` flips true.
+      - path: ../../ThirdParty/ghostty/integration/GhosttySurface
     dependencies:
       - package: Rwork
         product: RworkClientUI
@@ -36,6 +42,12 @@ targets:
       # Carries VideoToolbox/Metal — never instantiated in tests, only at GUI launch.
       - package: Rwork
         product: RworkVideoClient
+      # PATH 1 (libghostty renderer): the libghostty static binary (the link-time
+      # `ghostty` C-ABI symbols) packaged as an xcframework, built ON this macOS-26.5 host
+      # by ThirdParty/ghostty/build-libghostty.sh. The universal build also ships iOS
+      # slices (see scripts/enable-ios-renderer.sh); this macOS target links the macOS slice.
+      - framework: ../../ThirdParty/ghostty/libghostty.xcframework
+        embed: true
     info:
       path: Info.plist
       properties:
@@ -60,5 +72,32 @@ targets:
         SWIFT_VERSION: "6.0"
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_STYLE: Automatic
+        # PATH 1 (libghostty renderer): point the Swift importer at the CGhostty clang
+        # module map (module.modulemap + vendored ghostty.h) so `import CGhostty` resolves
+        # and `#if canImport(CGhostty)` flips true → GhosttyTerminalView/GhosttySurface
+        # compile into this target and link against libghostty.xcframework.
+        SWIFT_INCLUDE_PATHS: $(SRCROOT)/../../ThirdParty/ghostty/integration/CGhostty
+        # libghostty.xcframework currently ships ONLY a macos-arm64 slice (built on this
+        # macOS-26.5 arm64 host; the x86_64/universal slice needs a separate build). Pin
+        # the macOS app to arm64 so the link resolves against that slice. (Apple-silicon
+        # is the target; Intel macOS is EOL for this project.)
+        ARCHS: arm64
+        ONLY_ACTIVE_ARCH: "NO"
+        # libghostty vendors C/C++ dependencies (Dear ImGui, spirv-cross, glslang,
+        # FreeType, sentry, oniguruma, …). The static lib references the C++ runtime and
+        # a handful of system frameworks (Carbon for TIS keyboard-layout APIs, CoreText/
+        # CoreGraphics for font rendering). Link them so the libghostty symbols resolve.
+        OTHER_LDFLAGS:
+          - -lc++
+          - -framework
+          - Carbon
+          - -framework
+          - CoreText
+          - -framework
+          - CoreGraphics
+          - -framework
+          - QuartzCore
+          - -framework
+          - Metal
         # Best-effort builds in CI / this environment run unsigned:
         #   xcodebuild build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO

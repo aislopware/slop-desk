@@ -308,7 +308,12 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // over a changed frame sooner WITHOUT raising the encode rate (delivery stays
         // content-driven; idle windows still deliver nothing). NOTE: `--fps 120` (raising BOTH)
         // measured WORSE glass-to-glass (+18ms p50) — only decouple the capture side.
-        let captureHz = ProcessInfo.processInfo.environment["RWORK_CAPTURE_HZ"].flatMap(Int.init).map { min(240, max(15, $0)) } ?? max(1, fps)
+        // DEFAULT 2× the encode fps since 2026-06-11 (HW-validated): at a 60Hz ceiling SCK's slot
+        // quantization beat against the source compositor's commit time ate ~3fps (framewatch: eff
+        // 57.2 → 60.0fps, p99 cadence 24.2 → 19.8ms) and the live host log showed 144-161 clustered
+        // ~30ms double-slot capture gaps per scroll session — ZERO after the raise (14.6k-frame
+        // user session). Capture-side only: encode fps (and thus bitrate) unchanged.
+        let captureHz = ProcessInfo.processInfo.environment["RWORK_CAPTURE_HZ"].flatMap(Int.init).map { min(240, max(15, $0)) } ?? min(240, max(1, fps) * 2)
         config.minimumFrameInterval = CMTime(value: 1, timescale: Int32(captureHz))
         config.queueDepth = 3                                               // 2-3 for low latency (doc 02 §3.1)
         config.width = width

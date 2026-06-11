@@ -187,7 +187,14 @@ public actor RworkVideoHostSession {
     /// sends tier 0 (the configured `fec.groupSize`, 5 in prod) → spare flag bits stay zero → the wire is
     /// byte-identical to the pre-WF-4 path. Needs telemetry reports to ever change tier (if the client
     /// sets `RWORK_NETSTATS=0` no reports arrive ⇒ the tier stays at the today-default tier 0, never OFF).
-    private static let adaptiveFECEnabled = ProcessInfo.processInfo.environment["RWORK_ADAPTIVE_FEC"] == "1"
+    // DEFAULT ON since 2026-06-11 (self-heal era): on a clean path (loss EWMA <0.2%) the tier
+    // relaxes g5→g10→OFF over ~2 reports — the standing 20% parity overhead is paid ONLY while
+    // loss actually exists. The ~1s one-step-per-report re-escalation window at loss onset is
+    // covered by RWORK_SELF_HEAL (any whole-frame loss self-heals ≤K frames with no round-trip)
+    // + client recovery + kfDup. Live-validated same day (tier walked 0→2→1=OFF on the real
+    // path; 14.6k-frame heavy-scroll session: 0 unrecovered, 0 IDR requests). `RWORK_ADAPTIVE_FEC=0`
+    // restores the static always-g5 tier.
+    private static let adaptiveFECEnabled = ProcessInfo.processInfo.environment["RWORK_ADAPTIVE_FEC"] != "0"
     /// WF-6 (#8) FULL-RANGE COLOR. DEFAULT OFF; enable with `RWORK_FULL_RANGE=1`. ONE flag flips ALL
     /// FOUR atomic points together: (1) the capturer's NV12 pixel-format variant, (2) the encoder's
     /// explicit BT.709 VUI keys, (3) the `helloAck.fullRange` byte the host sends, and — because the
@@ -688,7 +695,11 @@ public actor RworkVideoHostSession {
             // a real report → it can't move before there is loss data (inert when no reports arrive).
             // No-op unless `RWORK_ADAPTIVE_FEC=1` ⇒ the tier stays at the today-default tier 0.
             if Self.adaptiveFECEnabled {
-                currentFECTier = AdaptiveFECPolicy.tier(forLossRate: networkEstimate.lossRate, previousTier: currentFECTier)
+                let next = AdaptiveFECPolicy.tier(forLossRate: networkEstimate.lossRate, previousTier: currentFECTier)
+                if next != currentFECTier {
+                    dbg("adaptive-fec: tier \(currentFECTier) → \(next) (lossEWMA=\(String(format: "%.4f", networkEstimate.lossRate)))")
+                    currentFECTier = next
+                }
             }
             // WF-2 ADAPTIVE BITRATE: tick the AIMD controller on the freshly-folded estimate and
             // actuate a MATERIAL target change onto the live encoder. No-op unless `RWORK_ABR=1` (the
