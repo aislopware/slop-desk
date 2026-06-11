@@ -1,217 +1,217 @@
-# 14 — Tích hợp Claude Code (+ Warp, herdr)
+# 14 — Claude Code integration (+ Warp, herdr)
 
-> Kết quả workflow nghiên cứu (13-agent + adversarial verify). Use-case: chạy/điều khiển **Claude Code** (Anthropic CLI agent) qua remote-coding tool (terminal path libghostty/NetBird). Nguồn đầy đủ: [research/claude-code-warp-herdr-corpus.json](research/claude-code-warp-herdr-corpus.json).
+> Output of the research workflow (13 agents + adversarial verify). Use-case: running/controlling **Claude Code** (Anthropic CLI agent) through the remote-coding tool (libghostty/NetBird terminal path). Full sources: [research/claude-code-warp-herdr-corpus.json](research/claude-code-warp-herdr-corpus.json).
 >
-> *As-of: Claude Code v2.1.x (2026-06). Claim gắn version + flag undocumented → verify trên CC version đích.*
+> *As-of: Claude Code v2.1.x (2026-06). Claims tied to a version + undocumented flags → verify on the target CC version.*
 
 ## TL;DR
-- **Hosting Claude Code:** nó là native binary cần real PTY + alt-screen. **Bật fullscreen mode** (`CLAUDE_CODE_NO_FLICKER=1`) cho remote PTY. PTY bridge phải forward **nguyên vẹn** control sequences + kitty keyboard + SGR mouse + OSC 8/52/777 + bracketed paste; set `COLORTERM=truecolor` + `TERM=xterm-ghostty`. ⚠️ Nếu emit TERM custom → bắt buộc `CLAUDE_CODE_FORCE_SYNC_OUTPUT=1` (DEC 2026 bug). Image-paste qua OSC 5522 **chưa chạy** (Ghostty parse-only) → đừng ship, document limitation.
-- **Ô input ngoài (Warp-style) — ĐÃ CHỐT A+B1:** (A) shell input box + block mode (`COMMAND_FINISHED` callback + tự sniff `ESC[?1049h/l` để ẩn/hiện box); (B1) Claude Code giữ TUI + overlay compose-box ghi byte vào PTY (kiểu Ctrl-G của Warp). **KHÔNG làm B2 (SDK pane)** — structured view dùng read-only inspector [16]. Xem §"Ô input ngoài".
-- **Warp:** ô-input-ngoài = **GUI editor client-side, không gửi PTY tới khi Enter**; ẩn/hiện theo **DECSET 1049 (alt-screen)** mà Warp tự parse trong VT stream (KHÔNG phải raw-mode/termios). Block boundary: ta dùng **`GHOSTTY_ACTION_COMMAND_FINISHED`** callback (có exit_code+duration) — **KHÔNG cần OSC 133** (Warp cũng không dùng OSC 133; tự chèn còn làm Warp vỡ). ✅ **Input editor KHẢ THI trên stack ta** (xem §"Ô input ngoài" dưới). Đừng copy: GPU renderer / cloud orchestration của Warp.
-- **herdr** = [github.com/ogulcancelik/herdr](https://github.com/ogulcancelik/herdr) — "agent multiplexer" Rust, 3.6k★, AGPL+commercial, NDJSON-over-Unix-socket, native Claude Code. → **Tool của ta nên là FIRST-CLASS CLIENT** của herdr/orchestrators (speak NDJSON protocol, tránh AGPL bằng cách không embed binary), **KHÔNG build orchestration product riêng**. Giá trị của ta = PTY transport + render libghostty + mobile client.
+- **Hosting Claude Code:** it is a native binary that needs a real PTY + alt-screen. **Enable fullscreen mode** (`CLAUDE_CODE_NO_FLICKER=1`) for the remote PTY. The PTY bridge must forward control sequences + kitty keyboard + SGR mouse + OSC 8/52/777 + bracketed paste **untouched**; set `COLORTERM=truecolor` + `TERM=xterm-ghostty`. ⚠️ If you emit a custom TERM → `CLAUDE_CODE_FORCE_SYNC_OUTPUT=1` is mandatory (DEC 2026 bug). Image paste via OSC 5522 **does not work yet** (Ghostty is parse-only) → do not ship it, document the limitation.
+- **External input box (Warp-style) — DECIDED: A+B1:** (A) shell input box + block mode (`COMMAND_FINISHED` callback + self-sniffing `ESC[?1049h/l` to hide/show the box); (B1) Claude Code keeps its TUI + an overlay compose-box that writes bytes into the PTY (Warp's Ctrl-G style). **Do NOT build B2 (SDK pane)** — structured view uses the read-only inspector [16]. See §"External input box".
+- **Warp:** the external input box = **a client-side GUI editor, nothing is sent to the PTY until Enter**; it hides/shows based on **DECSET 1049 (alt-screen)** which Warp parses itself in the VT stream (NOT raw-mode/termios). Block boundary: we use the **`GHOSTTY_ACTION_COMMAND_FINISHED`** callback (has exit_code+duration) — **no OSC 133 needed** (Warp doesn't use OSC 133 either; injecting it even breaks Warp). ✅ **The input editor IS FEASIBLE on our stack** (see §"External input box" below). Don't copy: Warp's GPU renderer / cloud orchestration.
+- **herdr** = [github.com/ogulcancelik/herdr](https://github.com/ogulcancelik/herdr) — a Rust "agent multiplexer", 3.6k★, AGPL+commercial, NDJSON-over-Unix-socket, native Claude Code support. → **Our tool should be a FIRST-CLASS CLIENT** of herdr/orchestrators (speak the NDJSON protocol, avoid AGPL by not embedding the binary), **do NOT build our own orchestration product**. Our value = PTY transport + libghostty rendering + mobile client.
 
-## Quyết định đã chốt (+ open questions đã giải)
+## Decisions made (+ open questions resolved)
 
-**Quyết định 1 — `TERM = xterm-ghostty`** (native). Được kitty keyboard (Shift+Enter, Cmd+C, modifier combos) + DEC 2026 sync auto-detect. ⚠️ **Chấp nhận rủi ro bug paste #54700** (xterm-ghostty terminfo có thể làm multi-line paste mangle newline→Enter; bug "not planned"). **Mitigation:** theo dõi #54700; cân nhắc client-side paste handling (bracketed-paste wrap đúng cách) + cho user toggle về `xterm-256color` nếu gặp. (Nếu chạy CC trong **tmux** thì `CLAUDE_CODE_FORCE_SYNC_OUTPUT` vô hiệu — quyết định kiến trúc: chạy CC trực tiếp trong PTY, không lồng tmux trừ khi cần.)
+**Decision 1 — `TERM = xterm-ghostty`** (native). Gets kitty keyboard (Shift+Enter, Cmd+C, modifier combos) + DEC 2026 sync auto-detect. ⚠️ **Accepted risk: paste bug #54700** (the xterm-ghostty terminfo may mangle multi-line paste, newline→Enter; bug is "not planned"). **Mitigation:** track #54700; consider client-side paste handling (proper bracketed-paste wrapping) + let the user toggle back to `xterm-256color` if it bites. (If CC runs inside **tmux**, `CLAUDE_CODE_FORCE_SYNC_OUTPUT` is ineffective — architectural decision: run CC directly in the PTY, no tmux nesting unless required.)
 
-**Quyết định 2 — Auth = Subscription OAuth + `claude setup-token`** (token 1 năm cho host daemon headless). Interactive session **KHÔNG** ăn Agent SDK credit → coding hằng ngày không bị cap. ⚠️ **Refine từ prior-art ([15](15-prior-art-happy-happier.md)):** an toàn nhất là **reuse `~/.claude/.credentials.json`** (để `claude` login sẵn) thay vì tự chạy PKCE — vì scope `user:inference` (happy dùng) CHƯA xác nhận có cấp quota Pro/Max hay chỉ API-billed. Set `CLAUDE_CODE_ENTRYPOINT=remote_mobile` (non-SDK) khi spawn headless để session vẫn resume được từ terminal. ⚠️ **Lưu ý interaction:** nếu sau làm **SDK-driven agent pane (P1)** trên OAuth → `claude -p`/SDK **ăn Agent SDK credit** (từ 2026-06-15) **và** không dùng được `--bare` (bare cần API key). → SDK pane trên OAuth: bỏ `--bare`, hoặc dùng API key riêng chỉ cho pane đó.
+**Decision 2 — Auth = Subscription OAuth + `claude setup-token`** (1-year token for the headless host daemon). Interactive sessions do **NOT** consume Agent SDK credit → daily coding is not capped. ⚠️ **Refinement from prior art ([15](15-prior-art-happy-happier.md)):** the safest approach is to **reuse `~/.claude/.credentials.json`** (have `claude` logged in already) instead of running PKCE ourselves — because the `user:inference` scope (used by happy) is NOT confirmed to grant Pro/Max quota vs. API-billed only. Set `CLAUDE_CODE_ENTRYPOINT=remote_mobile` (non-SDK) when spawning headless so the session can still be resumed from a terminal. ⚠️ **Interaction note:** if we later build an **SDK-driven agent pane (P1)** on OAuth → `claude -p`/SDK **consumes Agent SDK credit** (from 2026-06-15) **and** `--bare` cannot be used (bare requires an API key). → SDK pane on OAuth: drop `--bare`, or use a dedicated API key just for that pane.
 
-**Open questions libghostty — ĐÃ GIẢI (đọc source):**
-- **Alt-screen (1049)**: ✅ chạy đúng qua external-backend (cùng VT parser) → fullscreen Claude Code OK.
-- **Parsed-stream vs pixels**: API **OPAQUE** — không có parsed stream/grid; có **action callbacks** (COMMAND_FINISHED/PWD/TITLE/PROGRESS) + `read_text` → **block/status UI qua callbacks**, không parse OSC raw.
-- **Kitty keyboard**: ✅ Ghostty tự encode qua `ghostty_surface_key()` → route mọi phím qua đó (KHÔNG dùng bypass path Lakr233). Phù hợp với lựa chọn `xterm-ghostty`.
-- **TCP split OSC**: ✅ chỉ cần buffering (VT parser stateful), không loss-recovery.
-- Chi tiết + spike còn lại: [12 open-questions](12-coding-profile.md), `research/resolve-open-questions-corpus.json`.
+**libghostty open questions — RESOLVED (read the source):**
+- **Alt-screen (1049)**: ✅ works correctly through the external backend (same VT parser) → fullscreen Claude Code OK.
+- **Parsed stream vs pixels**: the API is **OPAQUE** — no parsed stream/grid; there are **action callbacks** (COMMAND_FINISHED/PWD/TITLE/PROGRESS) + `read_text` → **block/status UI via callbacks**, no raw OSC parsing.
+- **Kitty keyboard**: ✅ Ghostty encodes it itself via `ghostty_surface_key()` → route every key through it (do NOT use the Lakr233 bypass path). Consistent with the `xterm-ghostty` choice.
+- **TCP-split OSC**: ✅ only buffering needed (the VT parser is stateful), no loss-recovery.
+- Details + remaining spikes: [12 open-questions](12-coding-profile.md), `research/resolve-open-questions-corpus.json`.
 
-## Ô input ngoài (Warp-style) — thiết kế cho stack ta
+## External input box (Warp-style) — design for our stack
 
-> Nguồn: `research/warp-input-box-corpus.json` (đọc source AGPL của Warp). **Cách Warp thực sự làm 2026:** ô input = GUI editor trong process Warp, key KHÔNG xuống PTY tới khi Enter; ẩn/hiện theo state machine `TerminalInputState` (AltScreen / InputEditor / LongRunningCommand) **driven bởi DECSET 1049/47** Warp tự parse — KHÔNG detect raw-mode/termios.
+> Source: `research/warp-input-box-corpus.json` (reading Warp's AGPL source). **How Warp actually does it in 2026:** the input box = a GUI editor inside the Warp process, keys do NOT reach the PTY until Enter; hide/show follows the `TerminalInputState` state machine (AltScreen / InputEditor / LongRunningCommand) **driven by DECSET 1049/47** that Warp parses itself — NOT raw-mode/termios detection.
 
-**A. Shell commands → ô input native + block mode — KHẢ THI (~2–4 tuần).**
-- Input box SwiftUI pinned bottom; Enter → ghi cả dòng xuống PTY master; output vẫn render trong ghostty surface phía trên.
-- Block boundary: dùng **`GHOSTTY_ACTION_COMMAND_FINISHED`** (exit_code+duration) từ `action_cb` — **không cần OSC 133**.
-- ⚠️ **BẮT BUỘC: sniff byte stream TRƯỚC khi feed ghostty** — quét ~6 sequence cố định `ESC[?1049h/l`, `ESC[?1047h/l`, `ESC[?47h/l`. Thấy `h` → `altScreenActive=true`, ẩn input box, forward phím raw (vim/btop/htop chiếm màn); thấy `l` → đảo lại. Đây **chính xác** cơ chế Warp; là parser nhỏ fixed-length, không cần full VT parse (~1–2 tuần sau A). Lý do phải tự sniff: **libghostty surface OPAQUE, không có action alt-screen** (`GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN` chỉ ở sub-lib `libghostty-vt`, không reach qua surface).
-- Khó: giấu echo shell để không đè input box (shell integration / quản echo); multi-line + history.
+**A. Shell commands → native input box + block mode — FEASIBLE (~2–4 weeks).**
+- SwiftUI input box pinned to the bottom; Enter → write the whole line to the PTY master; output still renders in the ghostty surface above.
+- Block boundary: use **`GHOSTTY_ACTION_COMMAND_FINISHED`** (exit_code+duration) from `action_cb` — **no OSC 133 needed**.
+- ⚠️ **MANDATORY: sniff the byte stream BEFORE feeding ghostty** — scan for ~6 fixed sequences `ESC[?1049h/l`, `ESC[?1047h/l`, `ESC[?47h/l`. On `h` → `altScreenActive=true`, hide the input box, forward keys raw (vim/btop/htop owns the screen); on `l` → flip back. This is **exactly** Warp's mechanism; it's a small fixed-length parser, no full VT parse needed (~1–2 weeks after A). Why we must sniff ourselves: **the libghostty surface is OPAQUE, there is no alt-screen action** (`GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN` only exists in the `libghostty-vt` sub-lib, not reachable through the surface).
+- Hard parts: hiding shell echo so it doesn't overwrite the input box (shell integration / echo management); multi-line + history.
 
-**B. Claude Code → ô input ngoài: hai đường (đây là chỗ CẦN QUYẾT).**
-> Sự thật: chạy `claude` trong Warp → vẫn là **TUI riêng của Claude Code**; Warp chỉ bọc footer + overlay Ctrl-G **ghi byte thẳng vào PTY** (DelayedEnter ~50ms). **Native input box + tool-call cards CHỈ có cho agent riêng của Warp (Oz), KHÔNG cho Claude Code CLI.** CC có 2 mode: classic (inline, không 1049) và **fullscreen (alt-screen, opt-in `/tui fullscreen`/`CLAUDE_CODE_NO_FLICKER=1`)**.
-- **B1 — overlay compose-box (kiểu Warp Ctrl-G):** giữ TUI của CC, thêm overlay native, submit = PTY write giả-gõ. **Rẻ** nhưng **fragile** (phải đúng lúc CC ở prompt; xung đột Shift+Tab/focus như bug Warp #9179/#9365). Không có cards native.
-- **B2 — SDK pane (kiểu Oz, "Warp-style thật"):** KHÔNG chạy TUI; drive CC qua `claude -p --output-format stream-json --include-partial-messages`, parse NDJSON (`assistant`/`text_delta`, `tool_use`, `tool_result`, `result`) → tool-call cards native + input box thật. **Đắt (~4–8 tuần — viết một frontend Claude Code)** nhưng đây mới là native input-box + cards. ⚠️ Billing: SDK metered riêng (Agent SDK credit) trên subscription; verify OAuth headless chạy trên remote host trước khi cam kết.
+**B. Claude Code → external input box: two routes (this is where a DECISION was needed).**
+> The truth: running `claude` inside Warp → it is still **Claude Code's own TUI**; Warp only wraps a footer + a Ctrl-G overlay that **writes bytes straight into the PTY** (DelayedEnter ~50ms). **The native input box + tool-call cards exist ONLY for Warp's own agent (Oz), NOT for the Claude Code CLI.** CC has 2 modes: classic (inline, no 1049) and **fullscreen (alt-screen, opt-in via `/tui fullscreen`/`CLAUDE_CODE_NO_FLICKER=1`)**.
+- **B1 — overlay compose-box (Warp Ctrl-G style):** keep CC's TUI, add a native overlay, submit = a PTY write that fakes typing. **Cheap** but **fragile** (must hit the moment CC is at its prompt; conflicts with Shift+Tab/focus like Warp bugs #9179/#9365). No native cards.
+- **B2 — SDK pane (Oz style, "true Warp-style"):** do NOT run the TUI; drive CC via `claude -p --output-format stream-json --include-partial-messages`, parse NDJSON (`assistant`/`text_delta`, `tool_use`, `tool_result`, `result`) → native tool-call cards + a real input box. **Expensive (~4–8 weeks — writing a Claude Code frontend)** but this is what a real native input-box + cards means. ⚠️ Billing: the SDK is metered separately (Agent SDK credit) on subscriptions; verify headless OAuth runs on the remote host before committing.
 
-**✅ ĐÃ CHỐT: A + B1** (shell input box + overlay compose-box cho Claude Code, giữ TUI). **KHÔNG làm B2 (SDK pane)** (best-only; structured view = read-only inspector [16], không drive agent). Phần B2 dưới chỉ giữ làm bối cảnh.
+**✅ DECIDED: A + B1** (shell input box + overlay compose-box for Claude Code, keeping the TUI). **Do NOT build B2 (SDK pane)** (best-only; structured view = read-only inspector [16], not driving the agent). The B2 section below is kept only as context.
 
-**Thực thi B1 (lưu ý để né bug kiểu Warp):**
-- Overlay compose-box native; submit = ghi byte vào PTY + **DelayedEnter** (text trước, `\r` sau ~50ms).
-- **Gate availability theo agent state:** detect `claude` đang chạy (command name) + dùng **Claude Code lifecycle hooks** (OSC 777 / `terminalSequence` — đã có ở doc này) để biết CC đang ở prompt/idle → chỉ bật overlay lúc đó (tránh chèn giữa lúc CC đang render/chạy tool).
-- **Đừng nuốt phím CC cần:** đặc biệt **Shift+Tab** (CC dùng để switch mode — bug Warp #9179) và focus/Esc. Overlay chỉ bắt phím khi nó đang focus; nhường lại cho TUI khi không.
-- Không có tool-call cards native (cards là việc của SDK pane — đã bỏ); overlay chỉ là lớp pre-compose rồi đổ text vào TUI. Structured view → read-only inspector [16].
-- ⚠️ **Duplicate prompt dedup (BẮT BUỘC, bài học Happy/Happier [15](15-prior-art-happy-happier.md)):** B1 phơi bày CẢ compose-box LẪN PTY cùng feed prompt → prompt vào transcript 2 lần. Giữ **dedup ring buffer (text + timestamp)**.
-- ⚠️ **stdin `O_NONBLOCK` (Happy #301):** `setBlocking(true)` xóa O_NONBLOCK libuv để lại trước khi spawn — nếu không TUI echo garbled / cursor nhân đôi.
+**Implementing B1 (notes to avoid Warp-style bugs):**
+- Native overlay compose-box; submit = write bytes into the PTY + **DelayedEnter** (text first, `\r` after ~50ms).
+- **Gate availability on agent state:** detect that `claude` is running (command name) + use **Claude Code lifecycle hooks** (OSC 777 / `terminalSequence` — already covered in this doc) to know when CC is at prompt/idle → only enable the overlay then (avoid injecting while CC is mid-render/running a tool).
+- **Don't swallow keys CC needs:** especially **Shift+Tab** (CC uses it to switch modes — Warp bug #9179) and focus/Esc. The overlay only captures keys while it has focus; yields back to the TUI otherwise.
+- No native tool-call cards (cards were the SDK pane's job — dropped); the overlay is just a pre-compose layer that pours text into the TUI. Structured view → read-only inspector [16].
+- ⚠️ **Duplicate-prompt dedup (MANDATORY, lesson from Happy/Happier [15](15-prior-art-happy-happier.md)):** B1 exposes BOTH the compose-box AND the PTY feeding prompts → the prompt enters the transcript twice. Keep a **dedup ring buffer (text + timestamp)**.
+- ⚠️ **stdin `O_NONBLOCK` (Happy #301):** `setBlocking(true)` to clear the O_NONBLOCK libuv leaves behind, before spawning — otherwise the TUI echoes garbled / the cursor doubles.
 
-**Test cần làm (không phải quyết định):** CC fullscreen đã thành default trên version đích chưa → `script -q /dev/null claude 2>&1 | xxd | grep "1049"` (thấy `\x1b[?1049h` = đang alt-screen). Quyết định này đổi việc parser alt-screen có bắt được CC interactive không.
-
----
-
-## Tích hợp Claude Code + Warp + HERDR cho remote-coding tool (libghostty/NetBird)
-
-Phân tích dưới đây dựa trên corpus đã adversarial-verified; các claim **refuted**/**uncertain** được đánh dấu ở từng chỗ load-bearing.
+**Test to run (not a decision):** has CC fullscreen become the default on the target version → `script -q /dev/null claude 2>&1 | xxd | grep "1049"` (seeing `\x1b[?1049h` = it is on the alt-screen). This determines whether the alt-screen parser will catch interactive CC.
 
 ---
 
-### 1. Tích hợp Claude Code: TUI requirements (+ vì sao KHÔNG đi SDK pane)
+## Integrating Claude Code + Warp + HERDR into the remote-coding tool (libghostty/NetBird)
 
-> **Quyết định: chạy TUI thật, KHÔNG drive qua Agent SDK (B2 bỏ).** Phân tích tier SDK dưới chỉ còn là bối cảnh.
+The analysis below is based on the adversarially verified corpus; **refuted**/**uncertain** claims are flagged at each load-bearing spot.
 
-#### 1.1. Claude Code là gì (về mặt terminal)
-Claude Code là một **native binary** (x64/ARM64, cài vào `~/.local/bin/claude`), KHÔNG phải Node.js TUI wrapper — npm chỉ là kênh phân phối ([code.claude.com/docs/en/setup](https://code.claude.com/docs/en/setup)). Nó cần một **real PTY** trên Unix (đọc terminal dimensions, emit escape sequences, dùng alt-screen). Đây là tin tốt cho kiến trúc của bạn: raw byte stream qua NetBird hoạt động *nếu* transport layer trung thành với PTY signals (SIGWINCH/`TIOCSWINSZ`) và không strip escape sequences.
+---
 
-Có **hai render mode**:
-- **Inline-scrollback (default)**: append vào scrollback của host terminal. Mode này có bug SIGWINCH nổi tiếng — mỗi resize ghi một frame mới mà không xóa frame cũ, flood scrollback ([issue #49086](https://github.com/anthropics/claude-code/issues/49086), [#20094](https://github.com/anthropics/claude-code/issues/20094)).
-- **Fullscreen alt-screen (opt-in)**: `CLAUDE_CODE_NO_FLICKER=1` hoặc `/tui fullscreen` (cần v2.1.89+) — dùng alternate screen buffer như vim, memory phẳng, ít byte/frame, thêm mouse support ([code.claude.com/docs/en/fullscreen](https://code.claude.com/docs/en/fullscreen)).
+### 1. Claude Code integration: TUI requirements (+ why NOT the SDK pane route)
 
-> **Với remote PTY ở bất kỳ latency non-trivial nào, fullscreen mode là mode đúng duy nhất.** Nó isolate redraw vào alt-screen và giảm byte/frame — trực tiếp giúp qua WireGuard. Bật mặc định.
+> **Decision: run the real TUI, do NOT drive via the Agent SDK (B2 dropped).** The SDK tier analysis below remains as context only.
 
-#### 1.2. TUI requirements — MUST support (theo thứ tự ưu tiên)
+#### 1.1. What Claude Code is (terminal-wise)
+Claude Code is a **native binary** (x64/ARM64, installed to `~/.local/bin/claude`), NOT a Node.js TUI wrapper — npm is only a distribution channel ([code.claude.com/docs/en/setup](https://code.claude.com/docs/en/setup)). It needs a **real PTY** on Unix (reads terminal dimensions, emits escape sequences, uses the alt-screen). That's good news for your architecture: a raw byte stream over NetBird works *if* the transport layer is faithful to PTY signals (SIGWINCH/`TIOCSWINSZ`) and doesn't strip escape sequences.
 
-| # | Yêu cầu | Lý do / nguồn |
+There are **two render modes**:
+- **Inline-scrollback (default)**: appends to the host terminal's scrollback. This mode has the well-known SIGWINCH bug — every resize writes a new frame without erasing the old one, flooding the scrollback ([issue #49086](https://github.com/anthropics/claude-code/issues/49086), [#20094](https://github.com/anthropics/claude-code/issues/20094)).
+- **Fullscreen alt-screen (opt-in)**: `CLAUDE_CODE_NO_FLICKER=1` or `/tui fullscreen` (needs v2.1.89+) — uses the alternate screen buffer like vim, flat memory, fewer bytes/frame, adds mouse support ([code.claude.com/docs/en/fullscreen](https://code.claude.com/docs/en/fullscreen)).
+
+> **For a remote PTY at any non-trivial latency, fullscreen mode is the only correct mode.** It isolates redraws to the alt-screen and reduces bytes/frame — directly helping over WireGuard. Enable it by default.
+
+#### 1.2. TUI requirements — MUST support (in priority order)
+
+| # | Requirement | Why / source |
 |---|---------|----------------|
-| 1 | **Propagate `COLORTERM=truecolor` vào PTY env** | UI elements (spinner, permission borders, diff bg, statusline) là hardcoded 24-bit ANSI. Remote shell thường không advertise COLORTERM → màu washed-out ([terminal-config](https://code.claude.com/docs/en/terminal-config), [#35806](https://github.com/anthropics/claude-code/issues/35806)) |
-| 2 | **Set `TERM=xterm-ghostty`** | Đây là TERM native của libghostty; bật kitty keyboard protocol cho client. ⚠️ Xem caveat DEC 2026 ở dưới |
-| 3 | **Forward kitty keyboard protocol reports nguyên vẹn** | Shift+Enter, Option+Enter, modifier combos phụ thuộc vào nó. Ctrl+J luôn chèn newline mọi terminal ([interactive-mode](https://code.claude.com/docs/en/interactive-mode)) |
-| 4 | **Bật fullscreen mode mặc định** (`CLAUDE_CODE_NO_FLICKER=1`) | Như trên |
-| 5 | **Forward SGR mouse tracking reports** | Fullscreen mode request mouse; click-to-position, click-expand tool results, drag-select → OSC 52 copy |
-| 6 | **Pass OSC 52 + OSC 8 nguyên vẹn** qua TCP byte stream | Clipboard copy + clickable hyperlinks. ĐỪNG rewrite/strip ([#21586](https://github.com/anthropics/claude-code/issues/21586), [fullscreen](https://code.claude.com/docs/en/fullscreen)) |
-| 7 | **Forward SIGWINCH + update PTY ioctl, debounce ~50ms** | Giảm flood redraw qua WireGuard |
-| 8 | **Forward Ctrl+C / Ctrl+D / Esc / double-Esc KHÔNG translate** | Chúng có hành vi Claude Code-specific (Esc = stop turn, double-Esc = rewind menu), không phải POSIX default ([interactive-mode](https://code.claude.com/docs/en/interactive-mode)) |
-| 9 | **Bracketed paste** (mode 2004) wrappers `ESC[200~`/`ESC[201~` | Paste >10.000 ký tự collapse thành `[Pasted text]` placeholder; `-p` mode cap stdin 10MB ([headless](https://code.claude.com/docs/en/headless)) |
+| 1 | **Propagate `COLORTERM=truecolor` into the PTY env** | UI elements (spinner, permission borders, diff bg, statusline) are hardcoded 24-bit ANSI. Remote shells usually don't advertise COLORTERM → washed-out colors ([terminal-config](https://code.claude.com/docs/en/terminal-config), [#35806](https://github.com/anthropics/claude-code/issues/35806)) |
+| 2 | **Set `TERM=xterm-ghostty`** | This is libghostty's native TERM; enables the kitty keyboard protocol for the client. ⚠️ See the DEC 2026 caveat below |
+| 3 | **Forward kitty keyboard protocol reports untouched** | Shift+Enter, Option+Enter, modifier combos depend on it. Ctrl+J always inserts a newline in every terminal ([interactive-mode](https://code.claude.com/docs/en/interactive-mode)) |
+| 4 | **Enable fullscreen mode by default** (`CLAUDE_CODE_NO_FLICKER=1`) | As above |
+| 5 | **Forward SGR mouse tracking reports** | Fullscreen mode requests mouse; click-to-position, click-expand tool results, drag-select → OSC 52 copy |
+| 6 | **Pass OSC 52 + OSC 8 untouched** through the TCP byte stream | Clipboard copy + clickable hyperlinks. Do NOT rewrite/strip ([#21586](https://github.com/anthropics/claude-code/issues/21586), [fullscreen](https://code.claude.com/docs/en/fullscreen)) |
+| 7 | **Forward SIGWINCH + update the PTY ioctl, debounce ~50ms** | Reduces redraw floods over WireGuard |
+| 8 | **Forward Ctrl+C / Ctrl+D / Esc / double-Esc WITHOUT translation** | They have Claude Code-specific behavior (Esc = stop turn, double-Esc = rewind menu), not POSIX defaults ([interactive-mode](https://code.claude.com/docs/en/interactive-mode)) |
+| 9 | **Bracketed paste** (mode 2004) wrappers `ESC[200~`/`ESC[201~` | Pastes >10,000 characters collapse into a `[Pasted text]` placeholder; `-p` mode caps stdin at 10MB ([headless](https://code.claude.com/docs/en/headless)) |
 
-#### 1.3. Hai caveat load-bearing (đã verify — đọc kỹ trước khi ship)
+#### 1.3. Two load-bearing caveats (verified — read carefully before shipping)
 
-- **⚠️ DEC 2026 synchronized output với `xterm-ghostty` — CONFIRMED là vấn đề.** Từ v2.1.110 Claude Code chuyển từ dynamic capability detection sang **hardcoded TERM allowlist**: chỉ gửi DEC 2026 khi TERM *đúng* là `xterm-ghostty` hoặc `xterm-kitty` ([#49584](https://github.com/anthropics/claude-code/issues/49584), [#55613](https://github.com/anthropics/claude-code/issues/55613)). Workaround `CLAUDE_CODE_FORCE_SYNC_OUTPUT=1` shipped ở v2.1.129 nhưng **root cause (allowlist thay vì DECRQM) vẫn chưa fix** tới v2.1.159. → **Nếu client của bạn emit một TERM value mới/custom, BẮT BUỘC set `CLAUDE_CODE_FORCE_SYNC_OUTPUT=1`.** Nếu giữ đúng `xterm-ghostty` thì OK natively, nhưng phải canh bug paste tokenization của terminfo `xterm-ghostty` ([#54700](https://github.com/anthropics/claude-code/issues/54700)) — nếu nó manifest, expose toggle về `xterm-256color` (sẽ tắt DEC 2026 nhưng tránh bug paste).
+- **⚠️ DEC 2026 synchronized output with `xterm-ghostty` — CONFIRMED to be a problem.** Since v2.1.110, Claude Code switched from dynamic capability detection to a **hardcoded TERM allowlist**: it only sends DEC 2026 when TERM is *exactly* `xterm-ghostty` or `xterm-kitty` ([#49584](https://github.com/anthropics/claude-code/issues/49584), [#55613](https://github.com/anthropics/claude-code/issues/55613)). The `CLAUDE_CODE_FORCE_SYNC_OUTPUT=1` workaround shipped in v2.1.129 but **the root cause (allowlist instead of DECRQM) remains unfixed** as of v2.1.159. → **If your client emits a new/custom TERM value, you MUST set `CLAUDE_CODE_FORCE_SYNC_OUTPUT=1`.** If you keep exactly `xterm-ghostty` it works natively, but watch the `xterm-ghostty` terminfo paste-tokenization bug ([#54700](https://github.com/anthropics/claude-code/issues/54700)) — if it manifests, expose a toggle back to `xterm-256color` (which disables DEC 2026 but avoids the paste bug).
 
-- **❌ Image paste qua OSC 5522 — REFUTED, KHÔNG ship.** Corpus ban đầu ghi "Ghostty PR in progress"; verdict adversarial cho thấy điều này SAI cả hai chiều: Ghostty PR #10560 đã **MERGED 16/02/2026 (ship trong 1.3.0)** nhưng **chỉ parse-only, KHÔNG implement hành vi** ([PR #10560](https://github.com/ghostty-org/ghostty/pull/10560), [1.3.0 release notes](https://ghostty.org/docs/install/release-notes/1-3-0)). Implementation thực sự được accept là [issue #10549](https://github.com/ghostty-org/ghostty/issues/10549) với comment "we can figure out how to impl this later" — **chưa có PR**. Claude Code issue #42712 KHÔNG verify được (GitHub trả ISSUE NOT FOUND). → **Đừng ship feature image-paste dựa vào OSC 5522 semantics của Ghostty: Ghostty sẽ silently parse nhưng bỏ qua.** Document đây là known limitation; workaround tạm: macOS native Ctrl+V (không Cmd+V), hoặc Kitty (full support).
+- **❌ Image paste via OSC 5522 — REFUTED, do NOT ship.** The original corpus said "Ghostty PR in progress"; the adversarial verdict shows this is WRONG in both directions: Ghostty PR #10560 was **MERGED 2026-02-16 (shipped in 1.3.0)** but is **parse-only, it does NOT implement the behavior** ([PR #10560](https://github.com/ghostty-org/ghostty/pull/10560), [1.3.0 release notes](https://ghostty.org/docs/install/release-notes/1-3-0)). The actually accepted implementation is [issue #10549](https://github.com/ghostty-org/ghostty/issues/10549) with the comment "we can figure out how to impl this later" — **no PR yet**. Claude Code issue #42712 could NOT be verified (GitHub returns ISSUE NOT FOUND). → **Don't ship an image-paste feature relying on Ghostty's OSC 5522 semantics: Ghostty will silently parse and ignore it.** Document it as a known limitation; interim workaround: macOS native Ctrl+V (not Cmd+V), or Kitty (full support).
 
-#### 1.4. Có nên đi sâu qua Agent SDK? — **CÓ, cho một dedicated pane riêng biệt.** (just-run-TUI vs SDK-driven)
+#### 1.4. Should we go deeper via the Agent SDK? — **YES, for a separate dedicated pane.** (just-run-TUI vs SDK-driven)
 
-Ba tier integration:
-- **Tier TUI (PTY passthrough)** — đầy đủ trải nghiệm interactive, nhưng pixel-push ANSI qua network nhạy latency. Issue [#20286](https://github.com/anthropics/claude-code/issues/20286) chứng minh ở ~500ms RTT permission dialog đến trễ 30+ phút (đó là VS Code serialization cụ thể; raw PTY của bạn không có bug đó, nhưng React renderer vẫn re-render mỗi token → nhiều small write → latency typing).
-- **Tier headless (`claude -p`)** — non-interactive, `--output-format stream-json` emit NDJSON events (text_delta, tool use, system/init), `--json-schema`, `--continue`/`--resume SESSION_ID`. ⚠️ `--bare` = `settingSources:[]` = **TẮT** skills/commands/CLAUDE.md/hooks → **đừng dùng nếu cần feature parity** (mặc định đã load hết) ([headless](https://code.claude.com/docs/en/headless)).
-- **Tier Agent SDK** (`@anthropic-ai/claude-agent-sdk` / `claude-agent-sdk`) — `query()` async generator yield typed messages; PreToolUse/PostToolUse hooks in-process; subagent definitions; MCP attachment; session resumption. TS SDK **bundle native binary làm optional dep** — không cần cài Claude Code riêng ([agent-sdk/overview](https://code.claude.com/docs/en/agent-sdk/overview)).
+Three integration tiers:
+- **TUI tier (PTY passthrough)** — the full interactive experience, but pushing ANSI pixels over the network is latency-sensitive. Issue [#20286](https://github.com/anthropics/claude-code/issues/20286) shows that at ~500ms RTT a permission dialog arrived 30+ minutes late (that's a VS Code-specific serialization issue; your raw PTY doesn't have that bug, but the React renderer still re-renders per token → many small writes → typing latency).
+- **Headless tier (`claude -p`)** — non-interactive, `--output-format stream-json` emits NDJSON events (text_delta, tool use, system/init), `--json-schema`, `--continue`/`--resume SESSION_ID`. ⚠️ `--bare` = `settingSources:[]` = **DISABLES** skills/commands/CLAUDE.md/hooks → **don't use it if you need feature parity** (the default already loads everything) ([headless](https://code.claude.com/docs/en/headless)).
+- **Agent SDK tier** (`@anthropic-ai/claude-agent-sdk` / `claude-agent-sdk`) — `query()` async generator yields typed messages; PreToolUse/PostToolUse hooks in-process; subagent definitions; MCP attachment; session resumption. The TS SDK **bundles the native binary as an optional dep** — no separate Claude Code install needed ([agent-sdk/overview](https://code.claude.com/docs/en/agent-sdk/overview)).
 
-> **Khuyến nghị kiến trúc lai:** giữ raw PTY path cho user muốn full TUI; **thêm SDK-driven agent pane** (SwiftUI native) cho structured interaction. SDK output là **JSON over stdout — tolerant với network buffering hơn nhiều so với raw ANSI**. Map: tool invocations → UI cards, text_delta → streaming pane, permission approval → native buttons, session cost/model → status bar.
+> **Hybrid architecture recommendation:** keep the raw PTY path for users who want the full TUI; **add an SDK-driven agent pane** (native SwiftUI) for structured interaction. SDK output is **JSON over stdout — far more tolerant of network buffering than raw ANSI**. Map: tool invocations → UI cards, text_delta → streaming pane, permission approval → native buttons, session cost/model → status bar.
 >
-> ⚠️ **CORRECTION quan trọng (feature parity — `research/sdk-feature-parity-corpus.json`):** **ĐỪNG dùng `--bare`** cho SDK pane nếu muốn giữ skills/custom-commands! `--bare` = `settingSources: []` = **tắt hết** `.claude/` config (skills, commands, CLAUDE.md, hooks, subagents). Mặc định (bỏ qua `settingSources`) SDK **load HẾT** (`["user","project","local"]`, khớp CLI) → **skills + custom slash commands chạy NGAY by default**. Chỉ cần `cwd` trỏ đúng project root. Xem §"Skills/slash trong SDK" dưới.
+> ⚠️ **Important CORRECTION (feature parity — `research/sdk-feature-parity-corpus.json`):** **do NOT use `--bare`** for the SDK pane if you want to keep skills/custom commands! `--bare` = `settingSources: []` = **disables all** `.claude/` config (skills, commands, CLAUDE.md, hooks, subagents). By default (omitting `settingSources`) the SDK **loads EVERYTHING** (`["user","project","local"]`, matching the CLI) → **skills + custom slash commands work IMMEDIATELY by default**. The only requirement: **`cwd` points at the project root**. See §"Skills/slash in the SDK" below.
 
-> **⚠️ Billing — CONFIRMED:** từ **15/06/2026**, `claude -p` và Agent SDK trên **subscription plan** rút từ "monthly Agent SDK credit" riêng ($20 Pro / $100 Max-5x / $200 Max-20x). **API-key auth (`ANTHROPIC_API_KEY`) KHÔNG bị ảnh hưởng** — pay-as-you-go như cũ ([support article 15036540](https://support.claude.com/en/articles/15036540)). → Nếu tool dùng API-key auth thì không sao; nếu OAuth/subscription, cảnh báo user.
+> **⚠️ Billing — CONFIRMED:** from **2026-06-15**, `claude -p` and the Agent SDK on **subscription plans** draw from a separate "monthly Agent SDK credit" ($20 Pro / $100 Max-5x / $200 Max-20x). **API-key auth (`ANTHROPIC_API_KEY`) is NOT affected** — pay-as-you-go as before ([support article 15036540](https://support.claude.com/en/articles/15036540)). → If the tool uses API-key auth there's no issue; if OAuth/subscription, warn the user.
 
 ---
 
-### 2. Warp terminal: học được gì — must-have vs nice-to-have vs đừng copy
+### 2. Warp terminal: what to learn — must-have vs nice-to-have vs don't copy
 
-#### 2.1. Insight cốt lõi
-Sức mạnh block model của Warp **đến hoàn toàn từ shell-integration signals, KHÔNG từ renderer**. Warp không phải PTY passthrough emulator: nó own input editor (buffer keystroke ở client, chỉ ghi PTY khi Enter), và group output thành typed blocks qua **injected shell hooks** (precmd/preexec) emit JSON metadata trong escape sequence ([how-warp-works](https://www.warp.dev/blog/how-warp-works), [block-model blog](https://www.warp.dev/blog/block-model-behind-warps-agentic-development-environment)).
+#### 2.1. Core insight
+The power of Warp's block model **comes entirely from shell-integration signals, NOT from the renderer**. Warp is not a PTY-passthrough emulator: it owns the input editor (buffers keystrokes on the client, only writes to the PTY on Enter), and groups output into typed blocks via **injected shell hooks** (precmd/preexec) emitting JSON metadata inside an escape sequence ([how-warp-works](https://www.warp.dev/blog/how-warp-works), [block-model blog](https://www.warp.dev/blog/block-model-behind-warps-agentic-development-environment)).
 
-> **⚠️ Đính chính protocol (CONFIRMED):** Warp dùng **DCS** (Device Control String, `\eP$f{JSON}\x9c`) làm primary protocol trên **macOS/Linux**, KHÔNG phải OSC 133. Trên **Windows** chuyển sang **custom OSC** vì ConPTY nuốt DCS ([building-warp-on-windows](https://www.warp.dev/blog/building-warp-on-windows)). Quan trọng: **Warp KHÔNG consume OSC 133** — inject OSC 133 markers còn *làm vỡ* render của Warp ([Warp #6718](https://github.com/warpdotdev/warp/issues/6718)). Warp đã open-source (28/04/2026, client AGPL v3 + UI crates MIT) nhưng **source Rust terminal emulation chưa có trong public tree** — protocol chỉ verify được từ docs/blog, không phải source.
+> **⚠️ Protocol correction (CONFIRMED):** Warp uses **DCS** (Device Control String, `\eP$f{JSON}\x9c`) as its primary protocol on **macOS/Linux**, NOT OSC 133. On **Windows** it switched to a **custom OSC** because ConPTY swallows DCS ([building-warp-on-windows](https://www.warp.dev/blog/building-warp-on-windows)). Importantly: **Warp does NOT consume OSC 133** — injecting OSC 133 markers even *breaks* Warp's rendering ([Warp #6718](https://github.com/warpdotdev/warp/issues/6718)). Warp went open-source (2026-04-28, client AGPL v3 + UI crates MIT) but **the Rust terminal-emulation source is not in the public tree yet** — the protocol is only verifiable from docs/blog, not source.
 
-Điểm mấu chốt cho bạn: bạn **không** dùng protocol DCS proprietary của Warp. Bạn dùng **OSC 133** (chuẩn mở: A=prompt start, B=command start, C=output begins, D=command finished + exit code) mà iTerm2/Ghostty/Kitty/WezTerm/Windows Terminal đều implement. **Ghostty (libghostty) đã implement OSC 133 sẵn** cho bash/zsh/fish/elvish/nushell. Có open issue xin Claude Code emit OSC 133 ([#22528](https://github.com/anthropics/claude-code/issues/22528)) — **nhưng Claude Code hiện CHƯA emit OSC 133** (claims_to_verify ghi nhận điều này; nhiều issue mở: #1465, #32635). Nghĩa là block detection sẽ áp dụng cho **shell commands** quanh/ngoài Claude Code, không phải nội bộ session Claude Code.
+The key point for you: you do **not** use Warp's proprietary DCS protocol. You use **OSC 133** (the open standard: A=prompt start, B=command start, C=output begins, D=command finished + exit code) which iTerm2/Ghostty/Kitty/WezTerm/Windows Terminal all implement. **Ghostty (libghostty) already implements OSC 133** for bash/zsh/fish/elvish/nushell. There is an open issue asking Claude Code to emit OSC 133 ([#22528](https://github.com/anthropics/claude-code/issues/22528)) — **but Claude Code does NOT emit OSC 133 today** (claims_to_verify records this; several open issues: #1465, #32635). Meaning block detection will apply to **shell commands** around/outside Claude Code, not inside a Claude Code session.
 
-#### 2.2. Phân loại transferable
+#### 2.2. Transferability classification
 
 **MUST-HAVE:**
-1. **OSC 133 shell-integration inject trên remote host** — vì PTY chạy qua NetBird TCP (P2P trực tiếp), escape sequences flow nguyên vẹn, **không cần side channel hay remote-server binary** (khác hẳn Warp SSH). Đây là enabling primitive cho block grouping, exit-code coloring, prompt-jump.
-2. **Claude Code lifecycle hooks kiểu `claude-code-warp`** — pattern: shell script hook 6 event (SessionStart, Stop, Notification, PermissionRequest, UserPromptSubmit, PostToolUse), emit OSC 777 → drive status pane "agent running / needs permission / done". ⚠️ **CONFIRMED nhưng partially outdated:** format `\033]777;notify;warp://cli-agent;<JSON>\007` đúng cho CC **< 2.1.141**; từ **CC ≥ 2.1.141** plugin chuyển sang field `terminalSequence` JSON trên stdout (vì Stop hook validator reject unknown field), bypass `/dev/tty`. **Implementation phải handle CẢ HAI path** ([warpdotdev/claude-code-warp](https://github.com/warpdotdev/claude-code-warp), `emit-terminal-sequence.sh`).
-3. **Bidirectional PTY fidelity gồm control sequences** (Ctrl+C/Z/D, arbitrary byte writes). Warp #1 Terminal-Bench (52%, claim self-reported — flag là **marketing claim**) chứng minh đây là capability quan trọng nhất cho agentic coding correctness; PTY drop/delay control sequence sẽ làm vỡ Claude Code giữa task ([full-terminal-use](https://docs.warp.dev/agent-platform/capabilities/full-terminal-use/)).
+1. **OSC 133 shell-integration injection on the remote host** — because the PTY runs over NetBird TCP (direct P2P), escape sequences flow intact, **no side channel or remote-server binary needed** (totally unlike Warp SSH). This is the enabling primitive for block grouping, exit-code coloring, prompt-jump.
+2. **Claude Code lifecycle hooks in the style of `claude-code-warp`** — pattern: a shell-script hook for 6 events (SessionStart, Stop, Notification, PermissionRequest, UserPromptSubmit, PostToolUse), emitting OSC 777 → drives a "agent running / needs permission / done" status pane. ⚠️ **CONFIRMED but partially outdated:** the `\033]777;notify;warp://cli-agent;<JSON>\007` format is correct for CC **< 2.1.141**; from **CC ≥ 2.1.141** the plugin switched to a `terminalSequence` JSON field on stdout (because the Stop hook validator rejects unknown fields), bypassing `/dev/tty`. **The implementation must handle BOTH paths** ([warpdotdev/claude-code-warp](https://github.com/warpdotdev/claude-code-warp), `emit-terminal-sequence.sh`).
+3. **Bidirectional PTY fidelity including control sequences** (Ctrl+C/Z/D, arbitrary byte writes). Warp's #1 Terminal-Bench (52%, a self-reported claim — flagged as a **marketing claim**) demonstrates this is the most important capability for agentic-coding correctness; a PTY that drops/delays control sequences will break Claude Code mid-task ([full-terminal-use](https://docs.warp.dev/agent-platform/capabilities/full-terminal-use/)).
 
-**NICE-TO-HAVE (để sau):**
-4. **Block-based UI** (height-indexed SumTree, GridStorage cho active + FlatStorage cho scrollback) — cần parse OSC 133 ở client renderer. Hữu ích cho navigation + AI context framing, nhưng **không bắt buộc** để chạy Claude Code.
-5. **MCP auto-discovery từ `~/.claude.json` / `.mcp.json`** — Warp đọc cùng config files của Claude Code, user đã config sẵn được integration free ([MCP docs](https://docs.warp.dev/agent-platform/capabilities/mcp/)). Trivial UX, no protocol work.
-6. **Rich-content blocks coexist với terminal blocks** trong cùng BlockList (zero-height hidden blocks để collapse) — pattern elegant, hợp với SDK structured event stream.
+**NICE-TO-HAVE (later):**
+4. **Block-based UI** (height-indexed SumTree, GridStorage for active + FlatStorage for scrollback) — requires parsing OSC 133 in the client renderer. Useful for navigation + AI context framing, but **not required** to run Claude Code.
+5. **MCP auto-discovery from `~/.claude.json` / `.mcp.json`** — Warp reads Claude Code's own config files, users who already configured them get the integration free ([MCP docs](https://docs.warp.dev/agent-platform/capabilities/mcp/)). Trivial UX, no protocol work.
+6. **Rich-content blocks coexisting with terminal blocks** in the same BlockList (zero-height hidden blocks for collapsing) — an elegant pattern, fits the SDK structured event stream.
 
-**KHÔNG NÊN COPY:**
-7. **Input editor của Warp** (buffered keystroke, multi-cursor) — incompatible với external-backend model của libghostty (render VT stream as-is). TUI input của Claude Code đã đủ.
-8. **GPU renderer / custom UI framework của Warp** — bạn đã có libghostty Metal rendering.
-9. **Oz cloud agent orchestration + Warp Drive cloud sync** — proprietary, out of scope cho P2P tool.
-
----
-
-### 3. HERDR là gì + landscape multi-agent orchestration
-
-#### 3.1. HERDR — CONFIRMED, định danh chính xác
-[github.com/ogulcancelik/herdr](https://github.com/ogulcancelik/herdr) (tác giả Oğulcan Çelik). "Agent multiplexer that lives in your terminal" — **terminal multiplexer Rust với agent awareness**, single binary. **3.6k stars, v0.6.6 (31/05/2026)** — cả hai số đều CONFIRMED qua live fetch. **Dual-license AGPL-3.0-or-later + commercial** (`hey@herdr.dev`) — CONFIRMED qua LICENSE file/Cargo.toml/nix ([herdr LICENSE](https://github.com/ogulcancelik/herdr/blob/main/LICENSE)). Chạy macOS/Linux, **không Windows** (phụ thuộc Unix socket).
-
-Nó KHÔNG phải Claude Code plugin/framework. Kiến trúc: **background server quản workspaces/tabs/panes mỗi cái backed bằng real vt100 PTY**; thin-client connect local hoặc qua SSH. State tracking 3 signal: **process detection + socket API reports + screen heuristics**. Native integrate Claude Code (hook-based), Codex, OpenCode, Hermes, Pi, Qoder. Socket API = **NDJSON over Unix domain socket, không auth** — agent có thể create/destroy pane, read output, send keystroke, report state (blocked/working/done/idle), wait other agents, spawn helpers. `HERDR_ENV=1` báo agent biết đang chạy trong herdr; `SKILL.md` dạy Claude Code self-orchestrate.
-
-> **⚠️ Lưu ý license load-bearing:** AGPL copyleft áp lên *software* herdr, KHÔNG lên *protocol*. Client Swift tự viết mà chỉ **speak NDJSON protocol** thì KHÔNG distribute herdr code → không tự động dính AGPL (protocol không copyrightable). AGPL chỉ trigger nếu: (a) ship binary herdr trong product, (b) link library herdr, (c) dùng source Rust của herdr. Commercial license (giá chưa công bố) giải quyết cả ba.
-
-> **Đính chính nhận dạng:** "Herd" ([joinherd.ai](https://joinherd.ai/)) và "AgentHerder" ([agentherder.com](https://agentherder.com/)) là **project KHÁC**, đừng nhầm với herdr. "herdctl" ([edspencer.net](https://edspencer.net/2026/1/29/herdctl-orchestration-claude-code)) là tool MIT khác, Node.js, Docker-based, build trên Agent SDK.
-
-#### 3.2. Landscape (universal pattern: git worktree isolation/agent + task queue + human review gate)
-
-- **Claude Code Agent Teams** (native, experimental, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, v2.1.32+): lead session spawn N teammate (mỗi cái full session riêng context), shared task list file-locked + mailbox. **⚠️ Split-pane mode CONFIRMED KHÔNG support Ghostty** (chỉ tmux hoặc iTerm2) ([agent-teams docs](https://code.claude.com/docs/en/agent-teams), [#24189](https://github.com/anthropics/claude-code/issues/24189) còn open). Blocker nằm ở phía Ghostty (thiếu stable CLI/IPC); [#26572](https://github.com/anthropics/claude-code/issues/26572) đề xuất `CustomPaneBackend` protocol (JSON-RPC 2.0/NDJSON) sẽ unblock — chưa có phản hồi Anthropic.
-- **Claude Squad** (smtg-ai, 7.7k★, Go, AGPL): tmux + worktree/agent, TUI dashboard.
-- **Conductor** (conductor.build, macOS GUI, free BYOK): worktree/agent, diff-first review, không cần tmux.
-- **Uzi** (devflowinc, Go, MIT): CLI `uzi prompt --agents claude:2,codex:1`, có `broadcast` + `checkpoint` cho sweep workloads.
-- **Claude Code Agent Farm** (Dicklesworthstone, Python): 20-50 agent qua tmux panes, file-lock coordination (shared tree, không worktree).
-- **Vibe Kanban** (Apache-2.0, community-maintained sau khi Bloop đóng cửa đầu 2026): Kanban-card-per-worktree.
-
-#### 3.3. Có nên cho tool host/manage một herd of agents? — **CÓ, nhưng chỉ làm transport+rendering layer, ĐỪNG build orchestration product.**
-
-Tool của bạn ở vị trí độc nhất để **host herd of Claude Code agents natively**, vì PTY-over-NetBird đã cung cấp core primitive mà tất cả tool kia build lên. Cơ hội cụ thể, theo thứ tự giá trị:
-1. **Git worktree per agent** — mọi tool nghiêm túc đều dùng. Host support create/list/switch worktree (trivial shell) + expose mỗi worktree là một PTY session trong UI.
-2. **Agent supervisor pane** (sidebar state blocked/working/done) — pattern chung của herdr/Claude Squad/Conductor. State detection dùng 3 signal như herdr: process detection + Claude Code hooks (Stop/TeammateIdle/TaskCompleted) + screen heuristics.
-3. **HERDR compatibility** — speak socket protocol NDJSON natively, để client macOS/iPad render workspace/tab/pane model của herdr bằng ghostty surface. Bạn thành **first-class client** thay vì SSH terminal thường.
-4. **Lấp gap Ghostty của Agent Teams** — vì Anthropic chưa support Ghostty split-pane, bạn có thể parse tmux pane-creation commands và translate sang multi-PTY model của mình; hoặc implement `CustomPaneBackend` (#26572) nếu nó land.
-5. **KHÔNG NÊN làm:** full git-worktree UI, Kanban board, multi-model routing layer. Đó là product layer của herdr/Conductor/Claude Squad. **Giá trị của bạn = PTY transport + rendering quality (libghostty) + mobile client.** Hãy là *PTY host tốt nhất* cho các orchestration tool này, không replicate chúng.
+**DO NOT COPY:**
+7. **Warp's input editor** (buffered keystrokes, multi-cursor) — incompatible with libghostty's external-backend model (renders the VT stream as-is). Claude Code's TUI input is sufficient.
+8. **Warp's GPU renderer / custom UI framework** — you already have libghostty Metal rendering.
+9. **Oz cloud-agent orchestration + Warp Drive cloud sync** — proprietary, out of scope for a P2P tool.
 
 ---
 
-### 4. KHUYẾN NGHỊ ROADMAP
+### 3. What HERDR is + the multi-agent orchestration landscape
 
-#### Bây giờ (P0 — để Claude Code chạy mượt qua network PTY)
-Đây là điều kiện đủ để Claude Code TUI hoạt động đúng — làm trước mọi thứ khác:
-1. Set env trong PTY: `COLORTERM=truecolor`, `TERM=xterm-ghostty`. Nếu emit TERM custom → **bắt buộc** `CLAUDE_CODE_FORCE_SYNC_OUTPUT=1` (DEC 2026 fix, CONFIRMED).
-2. Bật fullscreen mặc định: `CLAUDE_CODE_NO_FLICKER=1`.
-3. PTY bridge **bidirectional fidelity**: forward control sequences (Ctrl+C/D, Esc, double-Esc), kitty keyboard reports, SGR mouse, bracketed paste, OSC 8/52/777 **nguyên vẹn**. ĐỪNG strip/rewrite.
-4. SIGWINCH forward + ioctl update, **debounce ~50ms**.
-5. Document limitation: **image-paste qua remote PTY vỡ** (OSC 5522 chưa implement trong Ghostty — REFUTED claim "PR in progress"); workaround macOS Ctrl+V.
+#### 3.1. HERDR — CONFIRMED, exact identity
+[github.com/ogulcancelik/herdr](https://github.com/ogulcancelik/herdr) (author Oğulcan Çelik). "Agent multiplexer that lives in your terminal" — a **Rust terminal multiplexer with agent awareness**, single binary. **3.6k stars, v0.6.6 (2026-05-31)** — both numbers CONFIRMED via live fetch. **Dual-licensed AGPL-3.0-or-later + commercial** (`hey@herdr.dev`) — CONFIRMED via the LICENSE file/Cargo.toml/nix ([herdr LICENSE](https://github.com/ogulcancelik/herdr/blob/main/LICENSE)). Runs on macOS/Linux, **no Windows** (depends on Unix sockets).
 
-#### Sau (P1 — ô input ngoài Warp-style, ĐÃ CHỐT A+B1)
-6a. **A — shell input box + block mode:** SwiftUI input box pinned bottom; Enter→PTY; block boundary qua `GHOSTTY_ACTION_COMMAND_FINISHED`; **sniffer `ESC[?1049h/l`** trên feed stream để ẩn/hiện box (~2–4 tuần + 1–2 tuần sniffer). Xem §"Ô input ngoài".
-6b. **B1 — overlay compose-box cho Claude Code:** giữ TUI, overlay ghi PTY + DelayedEnter, gate theo lifecycle hooks, né nuốt Shift+Tab/focus.
-6c. **OSC 133** (tùy chọn, metadata giàu hơn) + lifecycle hooks → status pane.
-> **B2 (SDK-driven agent pane native) — KHÔNG làm.** TUI giữ 100% feature native; structured view = read-only inspector [16] (read-only, không phải interactive SDK pane).
-7. **OSC 133 shell-integration** inject trên remote host (libghostty đã parse sẵn) → block model cho shell commands quanh Claude Code: prompt-jump, exit-code coloring, per-block copy. Lưu ý Claude Code **chưa emit OSC 133 nội bộ** nên block grouping áp ngoài session.
-8. **Claude Code lifecycle hooks** (kiểu claude-code-warp, handle cả OSC 777 `/dev/tty` lẫn `terminalSequence` stdout path) → status pane.
+It is NOT a Claude Code plugin/framework. Architecture: a **background server managing workspaces/tabs/panes, each backed by a real vt100 PTY**; a thin client connects locally or over SSH. State tracking uses 3 signals: **process detection + socket API reports + screen heuristics**. Natively integrates Claude Code (hook-based), Codex, OpenCode, Hermes, Pi, Qoder. The socket API = **NDJSON over a Unix domain socket, no auth** — an agent can create/destroy panes, read output, send keystrokes, report state (blocked/working/done/idle), wait on other agents, spawn helpers. `HERDR_ENV=1` tells the agent it's running inside herdr; `SKILL.md` teaches Claude Code to self-orchestrate.
 
-#### Sau nữa (P2 — multi-agent / orchestration)
+> **⚠️ Load-bearing license note:** the AGPL copyleft applies to the herdr *software*, NOT the *protocol*. A self-written Swift client that only **speaks the NDJSON protocol** does NOT distribute herdr code → not automatically AGPL-bound (protocols aren't copyrightable). AGPL only triggers if you: (a) ship the herdr binary in the product, (b) link the herdr library, (c) use herdr's Rust source. The commercial license (price unpublished) resolves all three.
+
+> **Identity correction:** "Herd" ([joinherd.ai](https://joinherd.ai/)) and "AgentHerder" ([agentherder.com](https://agentherder.com/)) are **DIFFERENT projects**, don't confuse them with herdr. "herdctl" ([edspencer.net](https://edspencer.net/2026/1/29/herdctl-orchestration-claude-code)) is another MIT tool, Node.js, Docker-based, built on the Agent SDK.
+
+#### 3.2. Landscape (universal pattern: git-worktree isolation per agent + task queue + human review gate)
+
+- **Claude Code Agent Teams** (native, experimental, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, v2.1.32+): a lead session spawns N teammates (each a full session with its own context), a shared file-locked task list + mailbox. **⚠️ Split-pane mode CONFIRMED to NOT support Ghostty** (only tmux or iTerm2) ([agent-teams docs](https://code.claude.com/docs/en/agent-teams), [#24189](https://github.com/anthropics/claude-code/issues/24189) still open). The blocker is on Ghostty's side (no stable CLI/IPC); [#26572](https://github.com/anthropics/claude-code/issues/26572) proposes a `CustomPaneBackend` protocol (JSON-RPC 2.0/NDJSON) that would unblock it — no Anthropic response yet.
+- **Claude Squad** (smtg-ai, 7.7k★, Go, AGPL): tmux + worktree per agent, TUI dashboard.
+- **Conductor** (conductor.build, macOS GUI, free BYOK): worktree per agent, diff-first review, no tmux needed.
+- **Uzi** (devflowinc, Go, MIT): CLI `uzi prompt --agents claude:2,codex:1`, has `broadcast` + `checkpoint` for sweep workloads.
+- **Claude Code Agent Farm** (Dicklesworthstone, Python): 20-50 agents via tmux panes, file-lock coordination (shared tree, no worktrees).
+- **Vibe Kanban** (Apache-2.0, community-maintained after Bloop shut down in early 2026): Kanban-card-per-worktree.
+
+#### 3.3. Should the tool host/manage a herd of agents? — **YES, but only as the transport+rendering layer; do NOT build an orchestration product.**
+
+Your tool is uniquely positioned to **natively host a herd of Claude Code agents**, because PTY-over-NetBird already provides the core primitive every other tool builds on. Concrete opportunities, in order of value:
+1. **Git worktree per agent** — every serious tool uses it. Host supports create/list/switch worktree (trivial shell) + exposes each worktree as a PTY session in the UI.
+2. **Agent supervisor pane** (sidebar with blocked/working/done state) — the common pattern of herdr/Claude Squad/Conductor. State detection uses 3 signals like herdr: process detection + Claude Code hooks (Stop/TeammateIdle/TaskCompleted) + screen heuristics.
+3. **HERDR compatibility** — speak the NDJSON socket protocol natively, so the macOS/iPad client renders herdr's workspace/tab/pane model with ghostty surfaces. You become a **first-class client** instead of a plain SSH terminal.
+4. **Fill Agent Teams' Ghostty gap** — since Anthropic doesn't support Ghostty split panes, you can parse tmux pane-creation commands and translate them into your multi-PTY model; or implement `CustomPaneBackend` (#26572) if it lands.
+5. **Do NOT build:** a full git-worktree UI, a Kanban board, a multi-model routing layer. That is the product layer of herdr/Conductor/Claude Squad. **Your value = PTY transport + rendering quality (libghostty) + mobile client.** Be the *best PTY host* for those orchestration tools, don't replicate them.
+
+---
+
+### 4. ROADMAP RECOMMENDATIONS
+
+#### Now (P0 — so Claude Code runs smoothly over the network PTY)
+These are the sufficient conditions for the Claude Code TUI to work correctly — do them before anything else:
+1. Set env in the PTY: `COLORTERM=truecolor`, `TERM=xterm-ghostty`. If emitting a custom TERM → `CLAUDE_CODE_FORCE_SYNC_OUTPUT=1` is **mandatory** (DEC 2026 fix, CONFIRMED).
+2. Enable fullscreen by default: `CLAUDE_CODE_NO_FLICKER=1`.
+3. PTY bridge **bidirectional fidelity**: forward control sequences (Ctrl+C/D, Esc, double-Esc), kitty keyboard reports, SGR mouse, bracketed paste, OSC 8/52/777 **untouched**. Do NOT strip/rewrite.
+4. SIGWINCH forwarding + ioctl update, **debounce ~50ms**.
+5. Document the limitation: **image paste over a remote PTY is broken** (OSC 5522 not implemented in Ghostty — the "PR in progress" claim was REFUTED); workaround: macOS Ctrl+V.
+
+#### Next (P1 — Warp-style external input box, DECIDED A+B1)
+6a. **A — shell input box + block mode:** SwiftUI input box pinned to the bottom; Enter→PTY; block boundary via `GHOSTTY_ACTION_COMMAND_FINISHED`; an **`ESC[?1049h/l` sniffer** on the feed stream to hide/show the box (~2–4 weeks + 1–2 weeks for the sniffer). See §"External input box".
+6b. **B1 — overlay compose-box for Claude Code:** keep the TUI, overlay writes to the PTY + DelayedEnter, gated by lifecycle hooks, avoid swallowing Shift+Tab/focus.
+6c. **OSC 133** (optional, richer metadata) + lifecycle hooks → status pane.
+> **B2 (native SDK-driven agent pane) — NOT doing it.** The TUI keeps 100% of features natively; structured view = read-only inspector [16] (read-only, not an interactive SDK pane).
+7. **OSC 133 shell-integration** injection on the remote host (libghostty already parses it) → block model for shell commands around Claude Code: prompt-jump, exit-code coloring, per-block copy. Note that Claude Code **does not emit OSC 133 internally** so block grouping applies outside its session.
+8. **Claude Code lifecycle hooks** (claude-code-warp style, handling both the OSC 777 `/dev/tty` and the `terminalSequence` stdout path) → status pane.
+
+#### Later (P2 — multi-agent / orchestration)
 9. **Agent supervisor sidebar** + git-worktree-per-agent PTY sessions.
-10. **HERDR socket-protocol client** (NDJSON, tự viết — tránh AGPL bằng cách không embed binary/link library).
-11. Lấp **Ghostty split-pane gap** của Agent Teams (parse tmux commands hoặc impl CustomPaneBackend nếu #26572 land).
+10. **HERDR socket-protocol client** (NDJSON, self-written — avoid AGPL by not embedding the binary/linking the library).
+11. Fill Agent Teams' **Ghostty split-pane gap** (parse tmux commands or implement CustomPaneBackend if #26572 lands).
 
-#### Fit vào kiến trúc hybrid terminal+GUI
-- **Terminal path (PTY/NetBird/libghostty)**: P0 + P1.7/P1.8 — là backbone. Block model + OSC 133 sống ở client-side VT parser của libghostty's external-backend.
-- **GUI path (ScreenCaptureKit + VideoToolbox)**: orthogonal, dùng cho GUI windows; không đụng PTY layer.
-- **SDK pane (P1.6)** là *tier thứ ba* nằm cạnh hai path trên: không phải PTY, không phải video — là native SwiftUI consume JSON stream. Đây chính là chỗ "rich-content blocks" của Warp map vào, và là nơi multi-agent supervisor (P2) hiển thị state.
+#### Fit into the hybrid terminal+GUI architecture
+- **Terminal path (PTY/NetBird/libghostty)**: P0 + P1.7/P1.8 — the backbone. The block model + OSC 133 live in the client-side VT parser of libghostty's external backend.
+- **GUI path (ScreenCaptureKit + VideoToolbox)**: orthogonal, used for GUI windows; doesn't touch the PTY layer.
+- **The SDK pane (P1.6)** is a *third tier* next to the two paths above: not PTY, not video — native SwiftUI consuming a JSON stream. This is exactly where Warp's "rich-content blocks" map to, and where the multi-agent supervisor (P2) displays state.
 
-> ℹ️ **4 open question trên ĐÃ GIẢI** (turn sau) — xem [12 open-questions](12-coding-profile.md): alt-screen ✅ chạy; parsed-stream **opaque** (dùng action callbacks); kitty keyboard ✅ qua `ghostty_surface_key`; TCP chỉ cần buffering.
+> ℹ️ **The 4 open questions above are RESOLVED** (in a later turn) — see [12 open-questions](12-coding-profile.md): alt-screen ✅ works; parsed stream is **opaque** (use action callbacks); kitty keyboard ✅ via `ghostty_surface_key`; TCP only needs buffering.
 
-## Skills / slash commands — chạy native trong TUI
+## Skills / slash commands — run natively in the TUI
 
-> ℹ️ **B2 đã bỏ** → ta KHÔNG drive Claude Code qua SDK. TUI **chính là** Claude Code thật nên **skills + custom slash commands + mọi feature chạy native 100%**, không cần gì thêm. Phần phân tích SDK-parity dưới chỉ còn giá trị tham khảo (nếu sau này cân nhắc lại).
+> ℹ️ **B2 was dropped** → we do NOT drive Claude Code via the SDK. The TUI **is** the real Claude Code, so **skills + custom slash commands + every feature run 100% natively**, nothing extra needed. The SDK-parity analysis below is kept for reference only (in case it's reconsidered later).
 
-> Nguồn: `research/sdk-feature-parity-corpus.json`. Trả lời cho câu hỏi: structured-event UI (SDK) có support skills + custom slash command như TUI không?
+> Source: `research/sdk-feature-parity-corpus.json`. Answers the question: does a structured-event UI (SDK) support skills + custom slash commands like the TUI does?
 
-**CÓ — và gần như free.** ⚠️ **Đính chính giả định cũ:** SDK **load `.claude/` config by DEFAULT** (bỏ qua `settingSources` = `["user","project","local"]`, khớp CLI). **`--bare`/`settingSources:[]` mới là cái TẮT hết** — đừng dùng. Điều kiện duy nhất: **`cwd` trỏ đúng project root** (qua host process, không phải sandbox iOS).
+**YES — and nearly for free.** ⚠️ **Correction to the old assumption:** the SDK **loads `.claude/` config by DEFAULT** (omitting `settingSources` = `["user","project","local"]`, matching the CLI). **It is `--bare`/`settingSources:[]` that DISABLES everything** — don't use it. The only condition: **`cwd` points at the project root** (via the host process, not the iOS sandbox).
 
-| Feature | SDK | Cách |
+| Feature | SDK | How |
 |---------|-----|------|
-| Skills (`.claude/skills`, model-invoked) | ✅ default | `skills:'all'` (mặc định enabled). ⚠️ `allowed-tools` trong SKILL.md **bị bỏ qua** trong SDK → dùng `allowedTools` trên `query()` |
-| Custom slash (`.claude/commands/*.md`) | ✅ default | gửi `/cmd args` làm prompt; `$ARGUMENTS`/`$1`, `!\`bash\``, `@file` đều expand |
-| CLAUDE.md, subagents, MCP, hooks, plugins | ✅ default/config | auto khi settingSources default; hoặc programmatic |
-| `/compact`, `/clear` | ✅ | gửi như prompt (streaming, CC v2.1.117+) |
-| Autocomplete commands/skills | ✅ | đọc `slash_commands`/`skills`/`plugins` từ message `system/init` → native palette |
-| `@`-file-mentions | ❌ tui-only | SDK không expand → **native file picker** inject content vào prompt |
-| `/model` `/config` `/agents` `/permissions` `/diff` `/memory` `/resume`(picker) | ❌ tui-only | **làm native equivalent** (~15–20 control: model picker, permissions toggle, usage card, diff viewer, CLAUDE.md editor...) |
-| Agent teams, `/rewind` checkpoint | ❌ no SDK path | thay bằng programmatic subagents / session branching (`fork_session`) |
+| Skills (`.claude/skills`, model-invoked) | ✅ default | `skills:'all'` (enabled by default). ⚠️ `allowed-tools` in SKILL.md is **ignored** in the SDK → use `allowedTools` on `query()` |
+| Custom slash (`.claude/commands/*.md`) | ✅ default | send `/cmd args` as the prompt; `$ARGUMENTS`/`$1`, `!\`bash\``, `@file` all expand |
+| CLAUDE.md, subagents, MCP, hooks, plugins | ✅ default/config | automatic with default settingSources; or programmatic |
+| `/compact`, `/clear` | ✅ | send as a prompt (streaming, CC v2.1.117+) |
+| Autocomplete for commands/skills | ✅ | read `slash_commands`/`skills`/`plugins` from the `system/init` message → native palette |
+| `@`-file-mentions | ❌ tui-only | the SDK doesn't expand them → **native file picker** injects content into the prompt |
+| `/model` `/config` `/agents` `/permissions` `/diff` `/memory` `/resume`(picker) | ❌ tui-only | **build native equivalents** (~15–20 controls: model picker, permissions toggle, usage card, diff viewer, CLAUDE.md editor...) |
+| Agent teams, `/rewind` checkpoint | ❌ no SDK path | replace with programmatic subagents / session branching (`fork_session`) |
 
-**Kết luận:** **năng lực agent cốt lõi (skills, custom commands, subagents, MCP, hooks, CLAUDE.md) đạt parity FREE** trong structured UI; chi phí thêm = ~15–20 native UI cho **management chrome** (không phải năng lực agent); mất thật = agent teams + `/rewind` + visual grids. → **Structured iOS UI (B2) khả thi cho skills + custom commands** — củng cố lựa chọn structured cho iOS ([12 Phase 3](12-coding-profile.md)). **Desktop raw-PTY giữ 100% feature** (vì nó *là* TUI).
+**Conclusion:** **the core agent capabilities (skills, custom commands, subagents, MCP, hooks, CLAUDE.md) reach parity for FREE** in a structured UI; the extra cost = ~15–20 native UI pieces for **management chrome** (not agent capability); the real losses = agent teams + `/rewind` + visual grids. → **A structured iOS UI (B2) is feasible for skills + custom commands** — reinforcing the structured choice for iOS ([12 Phase 3](12-coding-profile.md)). **Desktop raw-PTY keeps 100% of features** (because it *is* the TUI).

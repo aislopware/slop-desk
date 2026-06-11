@@ -19,7 +19,7 @@ Nothing has been committed (you didn't ask). See the **pre-commit checklist** at
 | 3 | GUI video (remote desktop) | ✅ renders end-to-end | AislopdeskVideoHost/Client + §A optimizations |
 | 4 | Modern dev-friendly UX | ✅ shipped | per-pane status dots + Cmd-K command palette |
 | 5 | Host-side GUI (was CLI-only) | ✅ shipped | new `Apps/HostApp-macOS` menu-bar app |
-| 7 | Resize "vỡ" (char misalignment) | ✅ fixed | resize coalescing + **ctty fix** (below) |
+| 7 | Resize "broken" ("vỡ", char misalignment) | ✅ fixed | resize coalescing + **ctty fix** (below) |
 
 ### #1 Connect-once
 New tabs/panes auto-inherit the existing host connection and connect immediately — **no host:port re-prompt**. HW-verified: "+ New Tab" → second tab connects to the same host with a clean prompt.
@@ -43,7 +43,7 @@ New **`Apps/HostApp-macOS`** target → **`AislopdeskHost.app`** (LSUIElement me
 - ⚠️ cua **cannot actuate `MenuBarExtra .window` popover buttons** (not in an enumerable AX window) — verify host-start via the harness/CLI, not a cua GUI click. CLI host default port is **7420** (`HostdArguments`), the apps default to 7779.
 
 ### #7 Resize — size convergence + the deep repaint fix
-- **Size convergence (the "vỡ"/character-misalignment complaint):** latest-wins resize **coalescing** on the client OUT-path + a host-side micro-debounce (`MuxChannelSession`). HW-validated: after a fast drag, `stty size` matches the final window grid, scrollback reflows cleanly, no misalignment. (This disproves the "pty uses old console size" hypothesis — the PTY now converges to the final size.)
+- **Size convergence (the "broken" ("vỡ") / character-misalignment complaint):** latest-wins resize **coalescing** on the client OUT-path + a host-side micro-debounce (`MuxChannelSession`). HW-validated: after a fast drag, `stty size` matches the final window grid, scrollback reflows cleanly, no misalignment. (This disproves the "pty uses old console size" hypothesis — the PTY now converges to the final size.)
 - **Repaint (idle prompt blanked after resize):** initially deferred as cosmetic, then **root-caused and FIXED** — see the deep-bug section below.
 
 ---

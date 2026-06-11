@@ -1,26 +1,26 @@
-# 05 — Input Injection & Window Control (phần KHÓ NHẤT)
+# 05 — Input Injection & Window Control (the HARDEST part)
 
-> **STATUS: REFERENCE — GUI video-path (Phase 4).** Kiến trúc hiện hành: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
+> **STATUS: REFERENCE — GUI video-path (Phase 4).** Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-> ⚠️ **CHỈ áp dụng cho GUI video-path.** Trong kiến trúc hybrid ([12](12-coding-profile.md)), **terminal đi PTY text-path**: input = byte → PTY stdin → **không CGEvent, không TCC Accessibility, không activate-then-control, không AXUIElement↔CGWindowID matching**. Toàn bộ rủi ro injection dưới đây **biến mất cho terminal** (phần lớn workflow coding); chỉ còn áp dụng khi mirror cửa sổ GUI (VS Code/Xcode) ở Phase 4.
+> ⚠️ **ONLY applies to the GUI video-path.** In the hybrid architecture ([12](12-coding-profile.md)), **the terminal goes over the PTY text-path**: input = bytes → PTY stdin → **no CGEvent, no TCC Accessibility, no activate-then-control, no AXUIElement↔CGWindowID matching**. All of the injection risks below **disappear for the terminal** (the bulk of the coding workflow); they only apply when mirroring a GUI window (VS Code/Xcode) in Phase 4.
 >
-> **Correction (cần test):** keyboard inject qua `CGEventPostToPid` **được** Electron/VS Code text-area chấp nhận; chỉ **mouse** bị renderer IPC từ chối (cần SkyLight `SLEventPostToPid` private SPI).
+> **Correction (needs testing):** keyboard injection via `CGEventPostToPid` **is** accepted by Electron/VS Code text areas; only **mouse** is rejected by the renderer IPC (requires the SkyLight `SLEventPostToPid` private SPI).
 
-> Đây là rủi ro kỹ thuật lớn nhất của **GUI video-path**. Đọc kỹ phần "giới hạn" trước khi thiết kế.
+> This is the biggest technical risk of the **GUI video-path**. Read the "limitations" section carefully before designing.
 
-## 0. Kết luận thẳng thắn
+## 0. Blunt conclusion
 
-**Activate-then-control là mô hình ĐÚNG và gần như DUY NHẤT đáng tin trên macOS hiện đại.** Lý do:
+**Activate-then-control is the CORRECT and nearly the ONLY trustworthy model on modern macOS.** Reasons:
 
-1. **Không thể inject mouse vào cửa sổ nền một cách tin cậy.** macOS hit-test sự kiện chuột tổng hợp theo z-order cửa sổ dưới con trỏ — y hệt input vật lý. `CGEventPostToPid` đưa event vào queue của process, nhưng **AppKit bên trong vẫn hit-test** và cửa sổ không-frontmost thường không xử lý click.
-2. **Vì vậy phải raise/focus cửa sổ đích trước**, rồi mới post event → chính là mô hình đã chọn.
-3. **macOS 14 đổi activation thành cooperative/advisory** — hệ thống có thể từ chối, đặc biệt khi trigger bởi sự kiện mạng/timer (chính là case của remote control).
-4. **Không tương thích App Sandbox** → ship ngoài Mac App Store, Developer-ID + notarize.
-5. **Ưu tiên AX action (`AXPress`, set `AXValue`) hơn click tổng hợp** khi UI expose Accessibility — bỏ qua hit-test & focus, robust hơn nhiều.
+1. **You cannot reliably inject mouse events into a background window.** macOS hit-tests synthesized mouse events against the window z-order under the pointer — exactly like physical input. `CGEventPostToPid` puts the event into the process's queue, but **AppKit still hit-tests internally** and a non-frontmost window usually won't handle the click.
+2. **Therefore you must raise/focus the target window first**, then post the event → which is exactly the chosen model.
+3. **macOS 14 changed activation to cooperative/advisory** — the system can refuse, especially when triggered by network/timer events (which is precisely the remote-control case).
+4. **Incompatible with App Sandbox** → ship outside the Mac App Store, Developer-ID + notarize.
+5. **Prefer AX actions (`AXPress`, set `AXValue`) over synthesized clicks** when the UI exposes Accessibility — they bypass hit-testing & focus, far more robust.
 
 ---
 
-## 1. Tạo & post sự kiện CGEvent
+## 1. Creating & posting CGEvents
 
 ```swift
 let down = CGEvent(mouseEventSource: src, mouseType: .leftMouseDown, mouseCursorPosition: pt, mouseButton: .left)
@@ -30,111 +30,111 @@ let scr  = CGEvent(scrollWheelEvent2Source: src, units: .pixel, wheelCount: 2, w
 ```
 
 Gotchas:
-- **Drag** = `.leftMouseDown` → nhiều `.leftMouseDragged` → `.leftMouseUp`. Down→up ở 2 điểm KHÔNG phải drag.
-- **Double-click:** set `.mouseEventClickState = 2` trên cặp down/up thứ 2.
-- **Mouse moved/dragged:** nên set `.mouseEventDeltaX/Y` cho app/game đọc delta.
+- **Drag** = `.leftMouseDown` → many `.leftMouseDragged` → `.leftMouseUp`. Down→up at 2 points is NOT a drag.
+- **Double-click:** set `.mouseEventClickState = 2` on the second down/up pair.
+- **Mouse moved/dragged:** set `.mouseEventDeltaX/Y` for apps/games that read deltas.
 
-### Routing — điểm mấu chốt
+### Routing — the crux
 
-| Hàm | Routing | Target process? |
+| Function | Routing | Target process? |
 |-----|---------|-----------------|
-| `CGEventPost(.cghidEventTap)` | Tầng HID thấp nhất, di chuyển con trỏ thật, hit-test toàn cục | Không |
-| `CGEventPost(.cgSessionEventTap)` | Luồng session, vẫn hit-test toàn cục | Không |
-| `CGEventPostToPid(pid, e)` | Vào queue process cụ thể, **nhưng AppKit vẫn hit-test nội bộ** | Process, **không phải window** |
+| `CGEventPost(.cghidEventTap)` | Lowest HID layer, moves the real pointer, global hit-test | No |
+| `CGEventPost(.cgSessionEventTap)` | Session stream, still global hit-test | No |
+| `CGEventPostToPid(pid, e)` | Into a specific process's queue, **but AppKit still hit-tests internally** | Process, **not the window** |
 
-→ **Dùng `CGEventPostToPid(targetPid, e)` SAU khi raise** (ít xáo trộn con trỏ hệ thống). Nó **bổ trợ** activation, không thay thế.
+→ **Use `CGEventPostToPid(targetPid, e)` AFTER raising** (less disturbance of the system pointer). It **complements** activation, it does not replace it.
 
 ---
 
-## 2. Coordinate mapping (rất dễ sai)
+## 2. Coordinate mapping (very easy to get wrong)
 
-**Sự thật then chốt:** CGEvent mouse position và `kCGWindowBounds` **dùng CÙNG global "screen space": gốc top-left màn hình chính, +Y xuống dưới, đơn vị points.** → window rect dùng trực tiếp để click, **không cần flip Y**.
+**Key fact:** CGEvent mouse positions and `kCGWindowBounds` **use the SAME global "screen space": origin at the top-left of the main display, +Y downward, in points.** → the window rect can be used directly for clicks, **no Y-flip needed**.
 
-⚠️ **AppKit (`NSWindow.frame`/`NSScreen`) ngược chiều** (gốc bottom-left, +Y lên). Nếu trộn frame AppKit với điểm CGEvent → phải flip. **Giải pháp: ở nguyên CG/Quartz space đầu-cuối, không đụng frame AppKit.**
+⚠️ **AppKit (`NSWindow.frame`/`NSScreen`) is inverted** (origin bottom-left, +Y up). If you mix AppKit frames with CGEvent points → you must flip. **Solution: stay in CG/Quartz space end-to-end; never touch AppKit frames.**
 
 ```swift
-// remotePoint: tọa độ tương đối top-left cửa sổ (points)
+// remotePoint: coordinates relative to the window's top-left (points)
 let target = CGPoint(x: windowBounds.origin.x + remotePoint.x,
                      y: windowBounds.origin.y + remotePoint.y)
 ```
 
-- **Multi-monitor:** mặt phẳng liên tục; display bên trái/trên có tọa độ âm → tự đúng vì cộng window origin.
-- **Retina:** `kCGWindowBounds` & CGEvent đều là **points**, scale factor KHÔNG vào phép tính. CHỈ chia scale nếu client gửi tọa độ **pixel** từ frame ScreenCaptureKit (frame là pixel). **Đừng double-apply scale.**
-- Client nên gửi tọa độ **chuẩn hóa (0–1)** → nhân `windowBounds.width/height` → né hẳn mơ hồ pixel/point.
+- **Multi-monitor:** one continuous plane; displays to the left/above have negative coordinates → automatically correct since we add the window origin.
+- **Retina:** `kCGWindowBounds` & CGEvent are both in **points**; the scale factor does NOT enter the math. ONLY divide by scale if the client sends **pixel** coordinates from a ScreenCaptureKit frame (frames are in pixels). **Don't double-apply scale.**
+- The client should send **normalized (0–1)** coordinates → multiply by `windowBounds.width/height` → fully sidesteps the pixel/point ambiguity.
 
 ---
 
 ## 3. Keyboard
 
-- **Virtual keycode** (`virtualKey:keyDown:`): cho phím điều hướng/shortcut (mũi tên, Return, Tab, Esc, ⌘-keys). Keycode là **vị trí vật lý** → ký tự phụ thuộc layout của **host**. Set modifier: `event.flags = [.maskCommand, .maskShift]`.
-- **Unicode injection** (`event.keyboardSetUnicodeString(...)`): **cách robust để gửi text** — layout-independent, truyền đúng ký tự user gõ. Né hẳn vấn đề keycode-vs-layout và dead-key.
+- **Virtual keycodes** (`virtualKey:keyDown:`): for navigation keys/shortcuts (arrows, Return, Tab, Esc, ⌘-keys). A keycode is a **physical position** → the character depends on the **host's** layout. Set modifiers: `event.flags = [.maskCommand, .maskShift]`.
+- **Unicode injection** (`event.keyboardSetUnicodeString(...)`): **the robust way to send text** — layout-independent, delivers exactly the characters the user typed. Fully avoids the keycode-vs-layout and dead-key problems.
 
-**Chiến lược:** gửi **text dạng Unicode**, dùng **keycode chỉ cho shortcut/phím điều hướng**. (Một số game đọc keycode phần cứng, bỏ qua Unicode → fallback keycode.)
+**Strategy:** send **text as Unicode**, use **keycodes only for shortcuts/navigation keys**. (Some games read hardware keycodes and ignore Unicode → fall back to keycodes.)
 
 ---
 
-## 4. Raise một cửa sổ CỤ THỂ
+## 4. Raising a SPECIFIC window
 
-Activate *app* chỉ đưa key/main window lên — không nhất thiết đúng cửa sổ. Phải dùng AX:
+Activating an *app* only brings its key/main window forward — not necessarily the right window. You must use AX:
 
 ```swift
-let appEl = AXUIElementCreateApplication(pid)   // pid từ SCWindow.owningApplication.processID
+let appEl = AXUIElementCreateApplication(pid)   // pid from SCWindow.owningApplication.processID
 var v: CFTypeRef?
 AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &v)
 let axWindows = v as! [AXUIElement]
-let target = axWindows.first { /* match theo title / so frame với SCWindow.frame */ }!
+let target = axWindows.first { /* match by title / compare frame against SCWindow.frame */ }!
 
 AXUIElementPerformAction(target, kAXRaiseAction as CFString)
 AXUIElementSetAttributeValue(appEl, kAXMainWindowAttribute as CFString, target)
-NSRunningApplication(processIdentifier: pid)?.activate()   // xem caveat macOS 14 bên dưới
+NSRunningApplication(processIdentifier: pid)?.activate()   // see the macOS 14 caveat below
 ```
 
-> ⚠️ **Không có API public map `AXUIElement` ↔ `CGWindowID`.** Match cửa sổ là **heuristic** (title + so `kAXPositionAttribute`/`kAXSizeAttribute` với CG `frame`). Đây là điểm dễ vỡ thật sự của thiết kế "1 cửa sổ cụ thể" — phải code phòng thủ (nhiều title trùng, cửa sổ di chuyển giữa query và raise).
+> ⚠️ **There is no public API to map `AXUIElement` ↔ `CGWindowID`.** Window matching is a **heuristic** (title + comparing `kAXPositionAttribute`/`kAXSizeAttribute` against the CG `frame`). This is the genuinely fragile point of the "one specific window" design — code defensively (multiple windows with the same title, windows moving between query and raise).
 
-### Caveat macOS 14+ cooperative activation (quan trọng cho remote control)
+### macOS 14+ cooperative activation caveat (important for remote control)
 
-`activate(ignoringOtherApps:)` deprecated; `activate()` mới là **advisory** — hệ thống có thể từ chối. Report cộng đồng: **work khi trigger bởi user action, FAIL khi trigger bởi timer/network** — chính xác là case remote control (activate do sự kiện mạng đến).
+`activate(ignoringOtherApps:)` is deprecated; the new `activate()` is **advisory** — the system may refuse. Community reports: **works when triggered by a user action, FAILS when triggered by a timer/network** — exactly the remote-control case (activation driven by an incoming network event).
 
-Giảm thiểu:
-- `activateIgnoringOtherApps:` (deprecated) vẫn chạy ở macOS 14, mạnh hơn — chấp nhận warning.
-- `AXRaise` tự reorder cửa sổ ngay cả khi full app activation bị throttle → **kết hợp `AXRaise` + `activate()` là tin cậy nhất**.
-- **Phải test trên đúng version ship (14/15/26)** — chính sách activation siết liên tục.
+Mitigations:
+- `activateIgnoringOtherApps:` (deprecated) still works on macOS 14 and is stronger — accept the warning.
+- `AXRaise` reorders the window even when full app activation is throttled → **combining `AXRaise` + `activate()` is the most reliable**.
+- **Must test on the exact shipping versions (14/15/26)** — activation policy keeps tightening.
 
 ---
 
-## 5. Accessibility làm đường điều khiển chính (khi có thể)
+## 5. Accessibility as the primary control path (when possible)
 
-Khi control expose AX → điều khiển **trực tiếp**, không tổng hợp chuột/phím:
+When a control exposes AX → control it **directly**, without synthesizing mouse/keyboard:
 
 ```swift
-AXUIElementPerformAction(buttonEl, kAXPressAction as CFString)             // bấm nút
+AXUIElementPerformAction(buttonEl, kAXPressAction as CFString)             // press a button
 AXUIElementSetAttributeValue(fieldEl, kAXValueAttribute as CFString, "x")  // set text (layout-independent)
 AXUIElementSetAttributeValue(fieldEl, kAXFocusedAttribute as CFString, kCFBooleanTrue)
 ```
 
-**Robust hơn** vì không phụ thuộc vị trí con trỏ, z-order, hit-test, hay cửa sổ phải key.
+**More robust** because it doesn't depend on pointer position, z-order, hit-testing, or the window being key.
 
-**Giới hạn:** chỉ tốt như app target implement AX. UI vẽ tay, canvas, nhiều game, Electron/web, OpenGL/Metal view → expose rất ít → fallback CGEvent. AX cần **cùng quyền Accessibility** (không giảm permission footprint, chỉ tăng độ tin cậy).
+**Limitation:** only as good as the target app's AX implementation. Custom-drawn UI, canvases, many games, Electron/web, OpenGL/Metal views → expose very little → fall back to CGEvent. AX needs the **same Accessibility permission** (no smaller permission footprint, only higher reliability).
 
-**Hybrid khuyến nghị:** thử AX action cho control type biết trước; fallback activate-then-CGEvent cho phần còn lại (drag, vẽ tự do, game, view không expose).
-
----
-
-## 6. Kiến trúc đề xuất "activate-then-control, 1 cửa sổ/lần"
-
-1. **Enumerate** bằng ScreenCaptureKit; capture & stream `SCWindow` đã chọn. Giữ `windowID`, `owningApplication.processID`, `frame`.
-2. **Mỗi tương tác:** đọc lại frame (CG space), **raise cửa sổ cụ thể** (`AXRaise` + set main, rồi `activate()` — cân nhắc `activateIgnoringOtherApps:` nếu test thấy API mới drop activation từ mạng).
-3. **Map** tọa độ remote → global CG (cộng window origin; chuẩn hóa nếu stream là pixel; không flip Y).
-4. **Act:** ưu tiên **AX action** khi control expose; nếu không → **`CGEventPostToPid(pid, e)`**. Text gửi **Unicode**, keycode chỉ cho shortcut.
+**Recommended hybrid:** try AX actions for known control types; fall back to activate-then-CGEvent for everything else (drags, freehand drawing, games, views that expose nothing).
 
 ---
 
-## 7. Việc cho Phase 0 spike (KIỂM CHỨNG RỦI RO)
+## 6. Proposed architecture: "activate-then-control, 1 window at a time"
 
-- [ ] Lấy `pid` + `windowID` + `frame` từ `SCWindow`.
-- [ ] `AXRaise` đúng cửa sổ cụ thể của 1 app nhiều cửa sổ (test heuristic matching).
-- [ ] `CGEventPostToPid` click vào tọa độ map → verify click trúng đúng vị trí trong cửa sổ.
-- [ ] Test activation từ callback mạng (mô phỏng) trên macOS đích — đo tỉ lệ activate thành công.
-- [ ] Thử `AXPress` 1 nút chuẩn → so độ tin cậy với click tổng hợp.
+1. **Enumerate** with ScreenCaptureKit; capture & stream the selected `SCWindow`. Keep `windowID`, `owningApplication.processID`, `frame`.
+2. **On every interaction:** re-read the frame (CG space), **raise the specific window** (`AXRaise` + set main, then `activate()` — consider `activateIgnoringOtherApps:` if testing shows the new API drops network-triggered activations).
+3. **Map** remote coordinates → global CG (add the window origin; normalize if the stream is in pixels; no Y-flip).
+4. **Act:** prefer **AX actions** when the control exposes them; otherwise → **`CGEventPostToPid(pid, e)`**. Send text as **Unicode**, keycodes only for shortcuts.
 
-→ Nếu các mục này pass → mô hình khả thi. Nếu activation fail nhiều → cân nhắc fallback (xem [08-risks](08-risks-open-questions.md)).
+---
+
+## 7. Tasks for the Phase 0 spike (RISK VALIDATION)
+
+- [ ] Get `pid` + `windowID` + `frame` from `SCWindow`.
+- [ ] `AXRaise` the correct specific window of a multi-window app (test the matching heuristic).
+- [ ] `CGEventPostToPid` click at mapped coordinates → verify the click lands at the right spot in the window.
+- [ ] Test activation from a (simulated) network callback on the target macOS — measure the activation success rate.
+- [ ] Try `AXPress` on a standard button → compare reliability against synthesized clicks.
+
+→ If these items pass → the model is viable. If activation fails often → consider fallbacks (see [08-risks](08-risks-open-questions.md)).

@@ -1,56 +1,56 @@
-# 15 — Prior art: Happy & Happier (mobile/desktop cho Claude Code)
+# 15 — Prior art: Happy & Happier (mobile/desktop for Claude Code)
 
-> Đọc source thật `slopus/happy` + `happier-dev/happier` (clone verify). Đây là 2 dự án **đang ship** app mobile/desktop cho Claude Code — prior art trực tiếp. Nguồn: `research/happy-happier-corpus.json`.
+> Read the actual source of `slopus/happy` + `happier-dev/happier` (cloned and verified). These are the 2 **shipping** mobile/desktop apps for Claude Code — direct prior art. Source: `research/happy-happier-corpus.json`.
 
-## Phát hiện cốt lõi (làm thay đổi cách nghĩ)
+## Core finding (changes how to think about this)
 
-**Cả hai relay STRUCTURED events lên mobile, KHÔNG relay raw TUI.**
-- **Local mode:** spawn `claude` với `stdio: inherit` → full TUI hiện ở **terminal của host**, KHÔNG stream byte xuống mobile. fd 3 (pipe thứ 4) = side-channel bắt thinking-state.
-- **Mobile/remote:** dùng **official `@anthropic-ai/claude-agent-sdk`** (`query()`) → SDK tự spawn `claude --output-format stream-json`; mobile nhận **NDJSON events** (assistant/text_delta, tool_use, tool_result, result) + đọc **JSONL transcript** Claude ghi ra đĩa. Render **native UI (cards)**, KHÔNG phải terminal.
-- → **Họ kết luận mobile cần native UI, không phải raw ANSI terminal.** Đây là cách tiếp cận **SDK pane** — ta **KHÔNG làm** (best-only). Structured view của ta = **read-only inspector [16]** (đọc JSONL transcript, không drive agent).
+**Both relay STRUCTURED events to mobile, NOT raw TUI.**
+- **Local mode:** spawn `claude` with `stdio: inherit` → the full TUI appears in the **host's terminal**, NO byte stream goes down to mobile. fd 3 (the 4th pipe) = a side-channel capturing thinking-state.
+- **Mobile/remote:** uses the **official `@anthropic-ai/claude-agent-sdk`** (`query()`) → the SDK spawns `claude --output-format stream-json` itself; mobile receives **NDJSON events** (assistant/text_delta, tool_use, tool_result, result) + reads the **JSONL transcript** Claude writes to disk. Renders a **native UI (cards)**, NOT a terminal.
+- → **They concluded mobile needs a native UI, not a raw ANSI terminal.** That is the **SDK pane** approach — which we are **NOT doing** (best-only). Our structured view = the **read-only inspector [16]** (reads the JSONL transcript, does not drive the agent).
 
-## Cách móc vào Claude Code (tóm tắt)
+## How they hook into Claude Code (summary)
 
 | | slopus/happy | happier-dev/happier |
 |--|--------------|---------------------|
-| Hook local | `claude` + stdio inherit (TUI ở host) + fd3 thinking | giống hệt |
-| Hook remote/mobile | `@anthropic-ai/claude-agent-sdk` → stream-json | SDK + fallback `--print`; **ACP** cho codex/gemini/opencode/qwen/copilot/cursor |
-| Inject hook | `--settings` (SessionStart) + `--mcp-config` | **`--plugin-dir` (additive)** — tránh PATH wrapper nuốt `--settings` |
-| Parse hook payload | snake_case (+ một phần camel) | snake_case **+** camelCase (phòng schema drift) |
-| Permission từ mobile | MCP/RPC | `PermissionRequest` hook riêng |
-| Transport | Socket.IO/WSS relay (`cluster-fluster.com`), **bắt buộc, no P2P** | Socket.IO relay (`api.happier.dev`), self-host Docker, Tailscale Serve |
+| Local hook | `claude` + stdio inherit (TUI on host) + fd3 thinking | identical |
+| Remote/mobile hook | `@anthropic-ai/claude-agent-sdk` → stream-json | SDK + `--print` fallback; **ACP** for codex/gemini/opencode/qwen/copilot/cursor |
+| Hook injection | `--settings` (SessionStart) + `--mcp-config` | **`--plugin-dir` (additive)** — avoids PATH wrappers swallowing `--settings` |
+| Hook payload parsing | snake_case (+ partial camel) | snake_case **+** camelCase (defends against schema drift) |
+| Permissions from mobile | MCP/RPC | dedicated `PermissionRequest` hook |
+| Transport | Socket.IO/WSS relay (`cluster-fluster.com`), **mandatory, no P2P** | Socket.IO relay (`api.happier.dev`), self-host Docker, Tailscale Serve |
 | Encryption | **E2E** NaCl secretbox / AES-256-GCM dataKey | **E2E** X25519+XSalsa20-Poly1305 zero-knowledge |
-| Auth relay | NaCl keypair challenge → JWT (no password) | keypair + OAuth/OIDC/mTLS enterprise |
-| Auth Claude | PKCE OAuth scope `user:inference` (reuse subscription) | reuse `~/.claude/.credentials.json` per-profile |
+| Relay auth | NaCl keypair challenge → JWT (no password) | keypair + OAuth/OIDC/mTLS enterprise |
+| Claude auth | PKCE OAuth scope `user:inference` (reuses subscription) | reuses `~/.claude/.credentials.json` per-profile |
 | Client | Expo/RN + **Tauri** (+ Electron `codium`) | Expo/RN + Tauri |
 
-## Bài học NÊN mượn cho tool của ta
+## Lessons WORTH borrowing for our tool
 
-> ℹ️ Mục dưới là **observation từ prior-art**. Quyết định cuối (auth, transport, control-plane, dedup) = single source ở [DECISIONS.md](DECISIONS.md) + [14](14-claude-code-integration.md)/[13](13-netbird-transport.md).
+> ℹ️ The items below are **observations from prior art**. Final decisions (auth, transport, control-plane, dedup) = single source in [DECISIONS.md](DECISIONS.md) + [14](14-claude-code-integration.md)/[13](13-netbird-transport.md).
 
-1. **SessionStart hook để lấy session UUID + transcript path — dùng `--plugin-dir`, KHÔNG `--settings`.** Bài học production-hardened của happier: PATH wrapper (cmux...) âm thầm nuốt `--settings` (last-write-wins). Parse **cả** `session_id`/`sessionId` + `transcript_path`/`transcriptPath` (schema đã đổi giữa version). Cần dù ta relay PTY — để map resume/handoff (file-watch JSONL có race khi nhiều process cùng project dir).
-2. **Tách bạch 2 tầng credential:** auth transport (NetBird keypair / setup-token) độc lập auth Claude. **Auth Claude an toàn nhất: reuse `~/.claude/.credentials.json`** (để `claude` login sẵn) thay vì tự chạy PKCE — vì scope `user:inference` của happy CHƯA xác nhận có cấp quota Pro/Max hay chỉ API-billed (⚠️ liên quan quyết định auth ở [14](14-claude-code-integration.md)).
-3. **Session resume replay-safe:** dedup theo uuid (happy `sessionScanner`) + monotonic `seq` server-side → sau NetBird reconnect biết miss message nào.
-4. **Auth keypair challenge→token** (no password/email) cho machine registration — hợp setup-token flow.
-5. **Push notification + presence-suppression** ("Claude ready", suppress khi đang xem). **Dùng APNs/FCM thẳng từ host** (không Expo Push — privacy). → cần một **control plane nhẹ** (xem dưới).
-6. **tmux làm persistence layer** cho headless session (happier `startHappyHeadlessInTmux`) → libghostty client attach/detach, sống qua disconnect.
-7. **E2E encrypt app-layer** cho mọi metadata/transcript nếu sau thêm history/signaling server (NetBird đã lo byte path, nhưng store thì wrap key per-session).
+1. **SessionStart hook to obtain the session UUID + transcript path — use `--plugin-dir`, NOT `--settings`.** Happier's production-hardened lesson: PATH wrappers (cmux...) silently swallow `--settings` (last-write-wins). Parse **both** `session_id`/`sessionId` + `transcript_path`/`transcriptPath` (the schema has changed across versions). Needed even though we relay the PTY — to map resume/handoff (file-watching JSONL races when multiple processes share a project dir).
+2. **Keep the 2 credential layers separate:** transport auth (NetBird keypair / setup-token) is independent of Claude auth. **The safest Claude auth: reuse `~/.claude/.credentials.json`** (have `claude` logged in already) instead of running PKCE ourselves — because happy's `user:inference` scope is NOT yet confirmed to grant Pro/Max quota vs API-billed only (⚠️ relevant to the auth decision in [14](14-claude-code-integration.md)).
+3. **Replay-safe session resume:** dedupe by uuid (happy's `sessionScanner`) + a server-side monotonic `seq` → after a NetBird reconnect you know which messages were missed.
+4. **Keypair challenge→token auth** (no password/email) for machine registration — fits a setup-token flow.
+5. **Push notifications + presence suppression** ("Claude ready", suppressed while actively viewing). **Use APNs/FCM directly from the host** (not Expo Push — privacy). → needs a **lightweight control plane** (see below).
+6. **tmux as the persistence layer** for headless sessions (happier's `startHappyHeadlessInTmux`) → the libghostty client attaches/detaches, surviving disconnects.
+7. **E2E-encrypt the app layer** for all metadata/transcripts if a history/signaling server is added later (NetBird covers the byte path, but for storage wrap the key per-session).
 
-## Pitfall họ gặp — ta tránh
+## Pitfalls they hit — we avoid
 
-1. **stdin `O_NONBLOCK`** (happy #301): phải `setBlocking(true)` xóa O_NONBLOCK libuv để lại, nếu không TUI echo garbled / cursor nhân đôi. **Ta sẽ gặp y hệt** khi inherit/relay PTY.
-2. **`CLAUDE_CODE_ENTRYPOINT`:** SDK headless set `sdk-cli`/`sdk-ts` → `claude --resume` picker lọc bỏ. Set `CLAUDE_CODE_ENTRYPOINT=remote_mobile` (non-SDK) khi spawn để vẫn resume từ terminal được.
-3. **⚠️ Duplicate prompt forwarding:** khi có **CẢ compose-box (B1) LẪN PTY** cùng feed prompt → vào JSONL 2 lần. **Ta phơi bày cả hai đồng thời (đúng quyết định B1!) → BẮT BUỘC dedup ring buffer (text+timestamp).** Ghi nhận cho B1.
-4. **`--settings` non-composable** + **schema hook drift** → `--plugin-dir` + parse phòng thủ (đã nêu).
-5. **Orphan sidechain buffering** khi `Task` tool spawn subagent (message subagent đến trước parent) — vô hình trong PTY mode, nhưng nếu ta layer structured event lên iOS thì phải xử lý.
+1. **stdin `O_NONBLOCK`** (happy #301): must `setBlocking(true)` to clear the O_NONBLOCK left behind by libuv, otherwise the TUI echoes garbled / the cursor doubles. **We will hit exactly this** when inheriting/relaying the PTY.
+2. **`CLAUDE_CODE_ENTRYPOINT`:** the headless SDK sets `sdk-cli`/`sdk-ts` → the `claude --resume` picker filters those out. Set `CLAUDE_CODE_ENTRYPOINT=remote_mobile` (non-SDK) when spawning so the session remains resumable from a terminal.
+3. **⚠️ Duplicate prompt forwarding:** when **BOTH the compose box (B1) AND the PTY** feed prompts → they land in the JSONL twice. **We expose both simultaneously (per decision B1!) → a dedup ring buffer (text+timestamp) is MANDATORY.** Noted for B1.
+4. **`--settings` is non-composable** + **hook schema drift** → `--plugin-dir` + defensive parsing (covered above).
+5. **Orphan sidechain buffering** when the `Task` tool spawns a subagent (subagent messages arrive before the parent) — invisible in PTY mode, but if we layer structured events onto iOS we must handle it.
 
-## Ta làm KHÁC / TỐT HƠN
-1. **Full TUI fidelity qua libghostty** — họ KHÔNG stream TUI xuống mobile; ta relay raw PTY (`TERM=xterm-ghostty`) giữ nguyên màu/cursor/compose-box. Khác biệt bản chất.
-2. **P2P, không relay SPOF** — happy/happier chết nếu relay sập; NetBird P2P loại relay khỏi byte path (latency gần-zero, bớt 1 trust boundary).
-3. **Một codepath PTY duy nhất** thay vì 2 launcher (local TUI + remote SDK).
+## What we do DIFFERENTLY / BETTER
+1. **Full TUI fidelity via libghostty** — they do NOT stream the TUI to mobile; we relay the raw PTY (`TERM=xterm-ghostty`) preserving colors/cursor/compose-box. A fundamental difference.
+2. **P2P, no relay SPOF** — happy/happier die if their relay goes down; NetBird P2P removes the relay from the byte path (near-zero latency, one fewer trust boundary).
+3. **A single PTY codepath** instead of 2 launchers (local TUI + remote SDK).
 
-## ⚠️ 3 điểm cần cân nhắc (honest, có thể tinh chỉnh kiến trúc)
+## ⚠️ 3 points to weigh (honest; may adjust the architecture)
 
-1. **iOS: raw TUI vs structured-event layer.** Cả happy lẫn happier kết luận **mobile cần native UI, không phải raw ANSI** (pinch-zoom terminal trên màn nhỏ là tệ). → **Cân nhắc layer structured-event lên trên PTY cho iOS** (parse thêm event từ byte stream libghostty đã có — incremental), ta dùng **read-only inspector [16]** cho structured view (read-only, không drive) + **giữ libghostty TUI làm chính** (full fidelity) trên cả desktop lẫn iOS. (KHÔNG làm SDK-driven pane.)
-2. **Vẫn cần control plane nhẹ dù P2P.** NetBird lo byte path, NHƯNG **push notification** ("Claude cần input" khi app background) + **"host offline → queue prompt"** cần control plane. Đừng ảo tưởng P2P xóa 100% server — chỉ xóa relay khỏi *byte path*. (NetBird management server + APNs/FCM trực tiếp từ host có thể đủ.)
-3. **OAuth scope uncertainty** (mục 2 bài học) — ảnh hưởng quyết định auth doc 14.
+1. **iOS: raw TUI vs a structured-event layer.** Both happy and happier concluded that **mobile needs a native UI, not raw ANSI** (pinch-zooming a terminal on a small screen is bad). → **Consider layering structured events on top of the PTY for iOS** (parse additional events from the byte stream libghostty already has — incremental); we use the **read-only inspector [16]** for the structured view (read-only, doesn't drive) + **keep the libghostty TUI as primary** (full fidelity) on both desktop and iOS. (Do NOT build an SDK-driven pane.)
+2. **A lightweight control plane is still needed despite P2P.** NetBird covers the byte path, BUT **push notifications** ("Claude needs input" while the app is backgrounded) + **"host offline → queue the prompt"** need a control plane. Don't fantasize that P2P removes 100% of servers — it only removes the relay from the *byte path*. (The NetBird management server + APNs/FCM directly from the host may be enough.)
+3. **OAuth scope uncertainty** (lesson 2 above) — affects the auth decision in doc 14.

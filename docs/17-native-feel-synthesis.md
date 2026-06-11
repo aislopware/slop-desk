@@ -1,223 +1,223 @@
-# 17 — Best-solution synthesis: latency thấp nhất + cảm giác "máy thật" (TUI & GUI per-window)
+# 17 — Best-solution synthesis: lowest latency + "real machine" feel (TUI & GUI per-window)
 
-> **STATUS: CURRENT.** Tổng hợp từ nghiên cứu lại 7 "họ" giải pháp OSS + thương mại (15 agents, ~1.48M tokens) để chốt thiết kế **tốt nhất** cho 2 path, ưu tiên (a) latency thấp nhất và (b) cảm giác **như đang dùng máy local**, không phải remote. Corpus: [research/17-tui-gui-best-solution.json](research/17-tui-gui-best-solution.json). Quyết định rút ra đã đẩy vào [DECISIONS.md](DECISIONS.md); doc này là phần **why + cơ chế chi tiết**.
+> **STATUS: CURRENT.** Synthesized from re-researching 7 "families" of OSS + commercial solutions (15 agents, ~1.48M tokens) to lock in the **best** design for the 2 paths, prioritizing (a) lowest latency and (b) the feeling of **using a local machine**, not a remote one. Corpus: [research/17-tui-gui-best-solution.json](research/17-tui-gui-best-solution.json). The resulting decisions have been pushed into [DECISIONS.md](DECISIONS.md); this doc is the **why + detailed mechanics**.
 >
-> Triết lý xuyên suốt (xem [00](00-overview.md)): **một lựa chọn tốt nhất, không fallback.**
+> Guiding philosophy (see [00](00-overview.md)): **one best choice, no fallbacks.**
 
 ## TL;DR (headline)
 
-1. **PATH 1 (terminal) đã gần như local sẵn** ở RTT 5–20ms của NetBird. Raw VT byte-stream qua **plain TCP + `TCP_NODELAY`** + **libghostty external-IO** = full-fidelity, không round-trip protocol. **KHÔNG xây Mosh shadow-framebuffer predictor cho v1** (xem §2.4). Thêm: **dual data/control channel** + **ET-style replay buffer** để reconnect không mất byte.
-2. **PATH 2 (GUI per-window), quyết định đắt giá nhất = client-side cursor rendering**: tách con trỏ khỏi video, gửi vị trí+bitmap qua side-channel UDP riêng, composite trên client ở display-refresh → **pointer latency = RTT**, độc lập hoàn toàn với encode/decode. Đây là ranh giới giữa "feels remote" và "feels local".
-3. **PATH 2 text nét cho cửa sổ editor**: **lossy-first → lossless-upgrade** (encode quality ~0.65 gửi ngay, rồi re-encode dirty-rect bằng `kVTCompressionPropertyKey_Lossless` khi idle) — vừa nhanh vừa pixel-perfect khi user dừng đọc.
-4. **Rủi ro chưa giải của PATH 2** = **map toạ độ video-region của client → window/screen của host** cho CGEvent injection (Retina scaling + window moves). Phải spike trước khi commit PATH 2.
+1. **PATH 1 (terminal) is already nearly local** at NetBird's 5–20ms RTT. Raw VT byte-stream over **plain TCP + `TCP_NODELAY`** + **libghostty external-IO** = full fidelity, no protocol round-trips. **Do NOT build a Mosh shadow-framebuffer predictor for v1** (see §2.4). Add: **dual data/control channels** + an **ET-style replay buffer** so reconnects lose no bytes.
+2. **PATH 2 (GUI per-window), the highest-value decision = client-side cursor rendering**: split the pointer out of the video, send position+bitmap over a separate UDP side-channel, composite on the client at display-refresh → **pointer latency = RTT**, fully independent of encode/decode. This is the boundary between "feels remote" and "feels local".
+3. **PATH 2 sharp text for editor windows**: **lossy-first → lossless-upgrade** (encode at quality ~0.65 and send immediately, then re-encode the dirty-rect with `kVTCompressionPropertyKey_Lossless` when idle) — both fast and pixel-perfect once the user stops to read.
+4. **PATH 2's unresolved risk** = **mapping the client's video-region coordinates → the host's window/screen** for CGEvent injection (Retina scaling + window moves). Must spike before committing to PATH 2.
 
 ---
 
-## 1. Phương pháp & nguồn
+## 1. Method & sources
 
-Fan-out 7 họ, mỗi họ **survey → deep-dive verify** (đối chiếu source code/RFC/patent), rồi synthesis:
+Fan-out across 7 families, each **survey → deep-dive verify** (cross-checked against source code/RFCs/patents), then synthesis:
 
-| # | Họ | Cốt lõi rút ra |
+| # | Family | Core takeaway |
 |---|----|----------------|
 | 0 | Terminal/TUI protocols (Mosh, Eternal Terminal, tmux/zellij, WezTerm mux) | Mosh predictive echo + ET replay buffer + dual-channel |
-| 1 | iOS terminal clients (Blink, VVTerm, Geistty, SwiftTerm, Termius) | libghostty external-IO (fork thật) + UIKit native-feel table-stakes |
-| 2 | GUI thương mại (Parsec, Jump Fluid, Splashtop, AnyDesk, NoMachine NX) | VideoToolbox low-latency recipe + cursor side-channel (Parsec patent) |
-| 3 | GUI open-source (Moonlight/Sunshine, RustDesk, Chrome RD, Selkies) | **Client-side cursor** + LTR/FEC loss recovery + frame pacing |
+| 1 | iOS terminal clients (Blink, VVTerm, Geistty, SwiftTerm, Termius) | libghostty external-IO (a real fork) + UIKit native-feel table stakes |
+| 2 | Commercial GUI (Parsec, Jump Fluid, Splashtop, AnyDesk, NoMachine NX) | VideoToolbox low-latency recipe + cursor side-channel (Parsec patent) |
+| 3 | Open-source GUI (Moonlight/Sunshine, RustDesk, Chrome RD, Selkies) | **Client-side cursor** + LTR/FEC loss recovery + frame pacing |
 | 4 | Per-window remoting (RDP RemoteApp, X11, Xpra, waypipe, SCKit per-window) | **Lossy-first→lossless-upgrade** + idle-skip + window-geometry channel |
 | 5 | Apple-native (Sidecar, ARD High-Perf, ScreenCaptureKit, VideoToolbox) | 4-flag recipe + NV12 zero-copy + concurrent-session limit |
-| 6 | Feels-native cross-cut (prediction, cursor, jitter, pacing, FEC, coalescing) | Xếp hạng kỹ thuật theo impact (§4) |
+| 6 | Feels-native cross-cut (prediction, cursor, jitter, pacing, FEC, coalescing) | Technique ranking by impact (§4) |
 
-Mọi claim đã verify ngược về source. Các **correction** đáng chú ý (survey sai → đã sửa) nằm rải trong §2–§3 với chữ "⚠️".
-
----
-
-## 2. PATH 1 — Terminal: thiết kế tốt nhất
-
-### 2.1 Transport: raw TCP + `TCP_NODELAY` (bắt buộc) + dual channel
-
-- Raw PTY byte-stream qua **plain TCP** (đã chốt [13]). **ADD mới: bật `TCP_NODELAY` ngay sau `connect()`** trên mọi socket. Nagle gom các write 1-ký-tự có thể cộng **tới 200ms** vào echo — đây là omission duy nhất xuất hiện ở cả các stack terminal được khảo sát. Một dòng `setsockopt`, impact **cao**.
-- **Dual channel**: kênh data (PTY bytes) tách khỏi kênh control (`TIOCSWINSZ` resize + intent/disconnect). Bài học từ Zellij: một burst output của Claude Code không được làm trễ resize-ack. Effort thấp (kênh framed thứ 2 hoặc sub-stream multiplex).
-- **No-buffer relay** (bài học NoMachine NX): đừng chèn ring-buffer giữa `posix_spawn`→TCP write; relay lockless, thread relay đặt **`QOS_CLASS_USER_INTERACTIVE`**.
-
-### 2.2 Renderer: libghostty external-IO — sự thật về fork
-
-- `ghostty_surface_feed_data` / `ghostty_surface_set_write_callback` **KHÔNG có ở upstream Ghostty HEAD** (đã verify: `include/ghostty.h` 1208 dòng, không có 2 hàm này). Chỉ tồn tại ở fork:
-  - **`wiedymi/ghostty` branch `custom-io`** — VVTerm ship trên đây (`scripts/build.sh` clone đúng ref này).
-  - **`daiimus/ghostty` branch `ios-external-backend`** — Geistty ship trên đây; thêm `External.zig` (~379 dòng) + có resize callback + tests.
-- Quyết định ([12]/[DECISIONS]) **tự own minimal patch, ref `daiimus/External.zig`** vẫn đúng và nay được xác nhận là pattern **đã chứng minh trên 2 app iOS đang chạy**. `use_custom_io = true` chuyển termio backend từ `Exec.zig` (PTY) sang `External.zig` (không spawn shell local).
-- **Data IN**: bytes TCP đến → `ghostty_surface_feed_data(...)` → `ghostty_surface_refresh` + `ghostty_surface_draw` qua **coalescing `DispatchQueue.main.async` guard** (pattern `scheduleCustomIORedraw` của VVTerm). **Data OUT**: keypress → C write-callback (fire **synchronous trên main thread** từ key-encoder của Ghostty) → schedule `Task(.userInitiated)` ghi TCP.
-- ⚠️ **Spike threading bắt buộc**: `ghostty_surface_refresh/draw` có thể drive an toàn từ background TCP-receive thread, hay **mọi thứ phải funnel qua `@MainActor`**? (Geistty/VVTerm đều gọi feed trên `@MainActor`.) Quyết định coalescing-redraw + tính khả thi của fork phụ thuộc câu này.
-- Build XCFramework cần **Zig + Apple Silicon** lúc build → chi phí build-infra phải tính trước.
-
-### 2.3 Reconnect: ET-style replay buffer (chọn thay vì tmux)
-
-- **Eternal Terminal `BackedWriter`**: host giữ circular buffer **64MB** (`MAX_BACKUP_BYTES`, verified) các packet PTY output gắn **sequence number** đơn điệu. Client reconnect → gửi last-seq nó đã nhận → host `recover(lastValidSeq)` replay phần đuôi. **Lossless resume**, không cần UDP, không cần tmux phía host.
-- **Tại sao KHÔNG phụ thuộc tmux cho reconnect**: họ iOS đề xuất tmux cho session-persistence, nhưng làm reconnect *phụ thuộc* tmux = **dependency cứng** (host phải cài tmux + quản lý named session). Theo best-only, ta **own** replay buffer trong app → reconnect không cần tmux. (Process-survival thì dùng persistent daemon giữ master FD — [12 §6]; tmux vẫn là **tuỳ chọn v2** thuần tiện cho server-side scrollback + pane mapping, không bắt buộc.)
-- ⚠️ Spike: validate handshake reconnect qua một chu kỳ iOS background→foreground thật (gồm `beginBackgroundTask` suspend timing) để xác nhận resume byte-exact.
-
-### 2.4 Predictive echo: tại sao KHÔNG full Mosh (CHANGE) + glitch-caret (tuỳ chọn)
-
-Đây là kết luận quan trọng và **ngược trực giác**:
-
-- Mosh `PredictionEngine` (speculative local echo trên **shadow VT framebuffer**) là kỹ thuật kinh điển làm gõ "tức thì" trên link chậm (mosh.org: median SSH 503ms vs mosh gần như tức thì, EV-DO ~500ms RTT). Nhưng:
-  1. `ghostty_surface_t` là **`void*` opaque** (verified — không có hàm đọc cell ở C API). Muốn predict, **bắt buộc** dựng một **VT parser thứ 2** chạy song song giữ shadow framebuffer → gánh nặng maintenance + nguy cơ **desync** (parser kém hoàn chỉnh hơn libghostty → misprediction + snap giật).
-  2. Mosh **tự tắt prediction trong app full-screen** dùng cursor-positioning (vim/emacs/htop). **Claude Code TUI cũng dùng alt-screen + cursor-positioning** → prediction sẽ **OFF** ngay trong chính Claude Code. Lợi ích chỉ còn ở **bare shell prompt**.
-  3. Ở **adaptive mode**, Mosh **withhold prediction trên link nhanh** (SRTT_TRIGGER_HIGH=30ms → tương ứng raw SRTT ~60ms). NetBird 5–20ms RTT → prediction gần như luôn bị tắt theo thiết kế của chính Mosh.
-- ⚠️ Correction từ verify source (đừng để doc khác chép sai): ngưỡng underline gate trên **`send_interval`** (= `ceil(SRTT/2)` clamp [20,250]ms), **không** phải raw SRTT; `FLAG_TRIGGER_HIGH=80` ⇒ raw SRTT ~160ms. **CR (0x0d) CÓ gọi `become_tentative()`** (không bị loại trừ); chỉ CSI `C`/`D` (←/→) là predict, mọi CSI khác → tentative.
-- **Quyết định**: **không** xây full shadow-framebuffer predictor cho v1 — saving 5–20ms chỉ áp ở shell prompt không bõ desync-risk. **Tuỳ chọn rẻ (Phase 2)**: **glitch-window speculative caret** — chỉ theo dõi **cột cursor**, nhích caret mờ khi không có echo trong ~150–250ms ("đã nhận input" feedback lúc Claude Code stall) mà không cần shadow VT parser. 80% lợi ích với ~0 desync-risk.
-- ⚠️ Spike #1 (quyết định luôn việc trên): **đo echo-latency end-to-end thật trên NetBird mesh** (PTY relay → TCP → shell echo → libghostty render) ở cả 5ms và 20ms RTT. Một con số này quyết định predictor có bao giờ cần không.
-
-### 2.5 iOS native-feel: table stakes (ADD)
-
-Thiếu bất kỳ mục nào dưới đây là "chạy được" nhưng **không** giống app iOS native (verified từ Blink/VVTerm/SwiftTerm):
-
-- **Key-repeat = `DispatchSourceTimer`** thủ công: UIKit chỉ bắn `pressesBegan`/`pressesEnded` **một lần**, không tự repeat. Dùng delay đầu **350ms**, repeat **50ms** (20Hz) → bắn lại key event. Thiếu cái này, giữ arrow/Delete không lặp — phá pattern navigation phổ biến nhất.
-- **IME proxy = `UITextView` ẩn riêng**, KHÔNG implement `UITextInput` trên cùng view nhận `pressesBegan` (thứ tự responder không xác định → vỡ nhập **CJK**; Claude Code có user Nhật). Ctrl/Alt+letter route thẳng `ghostty_surface_key`; còn lại qua IME proxy → `ghostty_surface_text`.
-- **Floating cursor** (`updateFloatingCursor(at:)`): drag ngang > **5pt** → arrow ←/→ (SwiftTerm verified). Trên iPhone không hardware-keyboard, đây là **cách duy nhất** di chuyển cursor. (Lưu: SwiftTerm gate drag dọc chỉ trong alt-screen.)
-- **Accessory bar** (Ctrl/Esc/Tab/arrows) chỉ hiện khi software keyboard hiện (phát hiện hardware-kbd qua keyboard frame height < ~150pt).
-- iOS giết TCP vài giây sau background → đã giải bằng **ET replay buffer** (§2.3) + `beginBackgroundTask` (`MIN(backgroundTimeRemaining*0.9, 300s)`).
+Every claim was verified back to source. Notable **corrections** (survey was wrong → fixed) are scattered through §2–§3 marked with "⚠️".
 
 ---
 
-## 3. PATH 2 — GUI per-window: thiết kế tốt nhất (Phase 4)
+## 2. PATH 1 — Terminal: best design
 
-> PATH 2 là pipeline **tách hẳn** PATH 1 — đừng hợp nhất libghostty surface với video. (Bài học âm bản từ họ iOS: libghostty chỉ render cell-grid của chính nó.)
+### 2.1 Transport: raw TCP + `TCP_NODELAY` (mandatory) + dual channels
+
+- Raw PTY byte-stream over **plain TCP** (decided in [13]). **NEW ADD: enable `TCP_NODELAY` right after `connect()`** on every socket. Nagle coalescing of 1-character writes can add **up to 200ms** to echo — this is the single omission that showed up in every terminal stack surveyed. One `setsockopt` line, **high** impact.
+- **Dual channels**: the data channel (PTY bytes) separated from the control channel (`TIOCSWINSZ` resize + intent/disconnect). Lesson from Zellij: a Claude Code output burst must not delay the resize-ack. Low effort (a 2nd framed channel or sub-stream multiplexing).
+- **No-buffer relay** (lesson from NoMachine NX): don't insert a ring buffer between `posix_spawn`→TCP write; lockless relay, relay thread set to **`QOS_CLASS_USER_INTERACTIVE`**.
+
+### 2.2 Renderer: libghostty external-IO — the truth about the forks
+
+- `ghostty_surface_feed_data` / `ghostty_surface_set_write_callback` **do NOT exist at upstream Ghostty HEAD** (verified: `include/ghostty.h` is 1208 lines, neither function present). They only exist in forks:
+  - **`wiedymi/ghostty` branch `custom-io`** — VVTerm ships on this (`scripts/build.sh` clones exactly this ref).
+  - **`daiimus/ghostty` branch `ios-external-backend`** — Geistty ships on this; adds `External.zig` (~379 lines) + has a resize callback + tests.
+- The decision ([12]/[DECISIONS]) to **own a minimal patch, referencing `daiimus/External.zig`** remains correct and is now confirmed as a pattern **proven in 2 shipping iOS apps**. `use_custom_io = true` switches the termio backend from `Exec.zig` (PTY) to `External.zig` (no local shell spawn).
+- **Data IN**: incoming TCP bytes → `ghostty_surface_feed_data(...)` → `ghostty_surface_refresh` + `ghostty_surface_draw` via a **coalescing `DispatchQueue.main.async` guard** (VVTerm's `scheduleCustomIORedraw` pattern). **Data OUT**: keypress → C write-callback (fires **synchronously on the main thread** from Ghostty's key encoder) → schedule a `Task(.userInitiated)` to write to TCP.
+- ⚠️ **Mandatory threading spike**: can `ghostty_surface_refresh/draw` be safely driven from a background TCP-receive thread, or must **everything funnel through `@MainActor`**? (Geistty/VVTerm both call feed on `@MainActor`.) The coalescing-redraw decision + the fork's viability hinge on this answer.
+- Building the XCFramework requires **Zig + Apple Silicon** at build time → budget the build-infra cost upfront.
+
+### 2.3 Reconnect: ET-style replay buffer (chosen over tmux)
+
+- **Eternal Terminal `BackedWriter`**: the host keeps a **64MB** circular buffer (`MAX_BACKUP_BYTES`, verified) of PTY output packets tagged with a monotonic **sequence number**. Client reconnects → sends the last seq it received → host `recover(lastValidSeq)` replays the tail. **Lossless resume**, no UDP needed, no tmux on the host.
+- **Why NOT to depend on tmux for reconnect**: the iOS family suggests tmux for session persistence, but making reconnect *depend* on tmux = a **hard dependency** (host must install tmux + manage named sessions). Following best-only, we **own** the replay buffer inside the app → reconnect needs no tmux. (For process survival we use a persistent daemon holding the master FD — [12 §6]; tmux remains a purely convenient **v2 option** for server-side scrollback + pane mapping, not required.)
+- ⚠️ Spike: validate the reconnect handshake through a real iOS background→foreground cycle (including `beginBackgroundTask` suspend timing) to confirm byte-exact resume.
+
+### 2.4 Predictive echo: why NOT full Mosh (CHANGE) + glitch-caret (optional)
+
+This is an important and **counter-intuitive** conclusion:
+
+- Mosh's `PredictionEngine` (speculative local echo on a **shadow VT framebuffer**) is the classic technique making typing feel "instant" on slow links (mosh.org: median SSH 503ms vs mosh near-instant, EV-DO ~500ms RTT). But:
+  1. `ghostty_surface_t` is an **opaque `void*`** (verified — no cell-reading function in the C API). To predict, you **must** build a **2nd VT parser** running in parallel maintaining a shadow framebuffer → maintenance burden + **desync** risk (a parser less complete than libghostty → mispredictions + jarring snaps).
+  2. Mosh **disables prediction itself in full-screen apps** using cursor positioning (vim/emacs/htop). **Claude Code's TUI also uses alt-screen + cursor positioning** → prediction would be **OFF** inside Claude Code itself. The benefit only remains at a **bare shell prompt**.
+  3. In **adaptive mode**, Mosh **withholds prediction on fast links** (SRTT_TRIGGER_HIGH=30ms → corresponding to raw SRTT ~60ms). NetBird at 5–20ms RTT → prediction would be almost always off by Mosh's own design.
+- ⚠️ Correction from source verification (don't let other docs copy it wrong): the underline threshold gates on **`send_interval`** (= `ceil(SRTT/2)` clamped to [20,250]ms), **not** raw SRTT; `FLAG_TRIGGER_HIGH=80` ⇒ raw SRTT ~160ms. **CR (0x0d) DOES call `become_tentative()`** (it is not excluded); only CSI `C`/`D` (←/→) are predicted, every other CSI → tentative.
+- **Decision**: do **not** build a full shadow-framebuffer predictor for v1 — saving 5–20ms only at the shell prompt isn't worth the desync risk. **Cheap option (Phase 2)**: a **glitch-window speculative caret** — track only the **cursor column**, nudge a dim caret when no echo arrives within ~150–250ms ("input received" feedback while Claude Code stalls) without a shadow VT parser. 80% of the benefit at ~0 desync risk.
+- ⚠️ Spike #1 (also decides the above): **measure real end-to-end echo latency on the NetBird mesh** (PTY relay → TCP → shell echo → libghostty render) at both 5ms and 20ms RTT. This single number decides whether a predictor is ever needed.
+
+### 2.5 iOS native feel: table stakes (ADD)
+
+Missing any item below means it "works" but does **not** feel like a native iOS app (verified from Blink/VVTerm/SwiftTerm):
+
+- **Key-repeat = a manual `DispatchSourceTimer`**: UIKit only fires `pressesBegan`/`pressesEnded` **once**, no auto-repeat. Use an initial delay of **350ms**, repeat at **50ms** (20Hz) → re-fire the key event. Without this, holding arrow/Delete doesn't repeat — breaking the most common navigation pattern.
+- **IME proxy = a separate hidden `UITextView`**, do NOT implement `UITextInput` on the same view receiving `pressesBegan` (undefined responder ordering → breaks **CJK** input; Claude Code has Japanese users). Ctrl/Alt+letter routes straight to `ghostty_surface_key`; everything else through the IME proxy → `ghostty_surface_text`.
+- **Floating cursor** (`updateFloatingCursor(at:)`): horizontal drag > **5pt** → arrow ←/→ (SwiftTerm verified). On an iPhone without a hardware keyboard, this is the **only way** to move the cursor. (Note: SwiftTerm gates vertical drag to alt-screen only.)
+- **Accessory bar** (Ctrl/Esc/Tab/arrows) shown only when the software keyboard is visible (detect a hardware keyboard via keyboard frame height < ~150pt).
+- iOS kills TCP a few seconds after backgrounding → solved by the **ET replay buffer** (§2.3) + `beginBackgroundTask` (`MIN(backgroundTimeRemaining*0.9, 300s)`).
+
+---
+
+## 3. PATH 2 — GUI per-window: best design (Phase 4)
+
+> PATH 2 is a pipeline **fully separate** from PATH 1 — don't merge the libghostty surface with video. (A negative lesson from the iOS family: libghostty only renders its own cell grid.)
 
 ### 3.1 Capture: SCContentFilter(window:) + NV12 zero-copy + queueDepth
 
-- **`SCContentFilter(window:)`** per-window: trên macOS 14+ capture **backing store** của window → đúng kể cả khi bị che (verify trên OS đích).
-- **`pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange` (NV12)** → hand-off **zero-copy** sang `VTCompressionSession`, **tránh bước BGRA→NV12** (đường FFmpeg-wrapped như Lumen phải convert vì đi qua avcodec). ⚠️ Lumen thực ra dùng `32BGRA` + capture **virtual display** chứ không per-window — đừng chép mù config của Lumen.
-- **`showsCursor = false`** ở `SCStreamConfiguration` → cursor bị **loại khỏi frame** (đây là cách per-window-correct; **KHÔNG** dùng `CGDisplayHideCursor` system-wide). Là tiền đề cho client-side cursor (§3.3).
-- **queueDepth — tension thật, để spike, không chốt mù:**
-  - [11]/[12] (workflow latency 73-agent): default thực = **8**; dùng **2–3** cho latency thấp nhất (mỗi slot = 1 frame-interval latency tiềm năng).
-  - Workflow này: **5** (giá trị Sunshine/Apple-sample đã chứng minh); cho rằng "3 là minimum" là community-inference chưa verify.
-  - **Reconcile**: 5 là giá trị Sunshine tune cho **game-stream 60–120fps GPU tải nặng**. Profile của ta = **24–30fps, 1 window, phần lớn idle, HW HEVC ~5–18ms** → budget release `minimumFrameInterval × (queueDepth−1)` ở depth-3/30fps = 66ms ≫ 18ms encode → **giữ 2–3 cho latency thấp hơn**. ⚠️ Spike đo dưới GPU contention thật; nếu rớt frame thì nâng lên 5.
-- **Release constraint (verified WWDC22 s10155)**: phải release surface trong `minimumFrameInterval × (queueDepth−1)`; release `CMSampleBuffer` surface **ngay** sau khi đưa `CVPixelBuffer` cho encoder.
+- **`SCContentFilter(window:)`** per-window: on macOS 14+ it captures the window's **backing store** → correct even when occluded (verify on the target OS).
+- **`pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange` (NV12)** → **zero-copy** hand-off to `VTCompressionSession`, **avoiding the BGRA→NV12 step** (FFmpeg-wrapped paths like Lumen must convert because they go through avcodec). ⚠️ Lumen actually uses `32BGRA` + captures a **virtual display**, not per-window — don't blindly copy Lumen's config.
+- **`showsCursor = false`** on `SCStreamConfiguration` → the cursor is **excluded from the frame** (this is the per-window-correct way; do **NOT** use system-wide `CGDisplayHideCursor`). This is the prerequisite for the client-side cursor (§3.3).
+- **queueDepth — a real tension, spike it, don't lock it blindly:**
+  - [11]/[12] (the 73-agent latency workflow): actual default = **8**; use **2–3** for lowest latency (each slot = 1 frame-interval of potential latency).
+  - This workflow: **5** (the value Sunshine/Apple-sample proved); the claim "3 is the minimum" is unverified community inference.
+  - **Reconciliation**: 5 is the value Sunshine tuned for **60–120fps game-streaming under heavy GPU load**. Our profile = **24–30fps, 1 window, mostly idle, HW HEVC ~5–18ms** → the release budget `minimumFrameInterval × (queueDepth−1)` at depth-3/30fps = 66ms ≫ 18ms encode → **keep 2–3 for lower latency**. ⚠️ Spike under real GPU contention; if frames drop, raise to 5.
+- **Release constraint (verified WWDC22 s10155)**: surfaces must be released within `minimumFrameInterval × (queueDepth−1)`; release the `CMSampleBuffer` surface **immediately** after handing the `CVPixelBuffer` to the encoder.
 
 ### 3.2 Encode: VTCompressionSession 4-flag low-latency recipe (ADD/refine)
 
-Native `VTCompressionSession` (KHÔNG FFmpeg wrapper), HEVC 8-bit 4:2:0 (`kVTProfileLevel_HEVC_Main_AutoLevel`):
+Native `VTCompressionSession` (NOT an FFmpeg wrapper), HEVC 8-bit 4:2:0 (`kVTProfileLevel_HEVC_Main_AutoLevel`):
 
-- **Specification keys** (đặt trong dict lúc **tạo session**, không qua `SetProperty` — đây là cái bẫy phổ biến):
-  - `kVTVideoEncoderSpecification_EnableLowLatencyRateControl = true` — ✅ **verified hợp lệ cho HEVC trên Apple Silicon** (host của ta). (FFmpeg `videotoolboxenc.c`: `TARGET_CPU_ARM64 && AV_CODEC_ID_HEVC`.) Giải toả nghi vấn cũ "HEVC low-latency có khả dụng?".
-  - `kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder = true` — hard-fail thay vì âm thầm rớt về software.
-- **Property keys** (qua `VTSessionSetProperty`): `RealTime=true`, `ExpectedFrameRate=30`, `PrioritizeEncodingSpeedOverQuality=true` (đúng 4-flag recipe của Apple), `AllowFrameReordering=false` (no B-frame), `MaxKeyFrameInterval=INT_MAX` (IDR on-demand).
+- **Specification keys** (set in the dict at **session creation**, not via `SetProperty` — this is the common trap):
+  - `kVTVideoEncoderSpecification_EnableLowLatencyRateControl = true` — ✅ **verified valid for HEVC on Apple Silicon** (our host). (FFmpeg `videotoolboxenc.c`: `TARGET_CPU_ARM64 && AV_CODEC_ID_HEVC`.) Resolves the old doubt "is HEVC low-latency available?".
+  - `kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder = true` — hard-fail instead of silently dropping to software.
+- **Property keys** (via `VTSessionSetProperty`): `RealTime=true`, `ExpectedFrameRate=30`, `PrioritizeEncodingSpeedOverQuality=true` (exactly Apple's 4-flag recipe), `AllowFrameReordering=false` (no B-frames), `MaxKeyFrameInterval=INT_MAX` (IDR on-demand).
 - ⚠️ **Corrections vs doc 09/DECISIONS**:
-  - `MaxFrameDelayCount=0` và `AllowOpenGOP=false` mà ta đang liệt như "canonical SDK recipe" thực ra **không được verify là part của recipe SDK** — vô hại nhưng đừng claim là chuẩn Apple. Giữ như belt-and-suspenders, đánh dấu verify.
-  - **`EnableLowLatencyRateControl` cần target bitrate** (bitrate-based, không phải constant-quality). ✅ **ĐÃ GIẢI bằng đo ([18 §0]):** live frame dùng **low-latency-RC** (đo 7.5ms) — KHÔNG constant-quality (đo 24ms, quá chậm). Crisp-upgrade tách sang **Session B** `Quality=1.0` all-intra. Hết tension (2 session, mỗi cái 1 rate-controller).
-  - **KHÔNG set `max_ref_frames=1` cho H.264** (verified Sunshine `video.cpp`): trên Apple-Silicon VideoToolbox H.264, nó biến **mọi frame thành IDR** → bandwidth ~3×. HEVC không bị (an toàn). Bẫy nếu sau này thử H.264.
-  - **Đừng query `UsingHardwareAcceleratedVideoEncoder` khi low-latency mode bật** (trả -12900).
+  - `MaxFrameDelayCount=0` and `AllowOpenGOP=false`, which we listed as "canonical SDK recipe", are actually **not verified as part of the SDK recipe** — harmless, but don't claim they're the Apple standard. Keep as belt-and-suspenders, mark for verification.
+  - **`EnableLowLatencyRateControl` requires a target bitrate** (bitrate-based, not constant-quality). ✅ **RESOLVED by measurement ([18 §0]):** live frames use **low-latency-RC** (measured 7.5ms) — NOT constant-quality (measured 24ms, too slow). The crisp-upgrade moves to a separate **Session B** with `Quality=1.0` all-intra. Tension gone (2 sessions, one rate-controller each).
+  - **Do NOT set `max_ref_frames=1` for H.264** (verified in Sunshine `video.cpp`): on Apple Silicon VideoToolbox H.264 it turns **every frame into an IDR** → ~3× bandwidth. HEVC is unaffected (safe). A trap if H.264 is ever tried later.
+  - **Don't query `UsingHardwareAcceleratedVideoEncoder` while low-latency mode is on** (returns -12900).
 
-### 3.3 Client-side cursor rendering — kỹ thuật impact CAO NHẤT (ADD)
+### 3.3 Client-side cursor rendering — the HIGHEST-impact technique (ADD)
 
-Xác nhận **độc lập bởi 3 họ** (Parsec, Moonlight, Selkies). Là khác biệt đơn lẻ giữa "feels remote" và "feels local":
+Independently confirmed **by 3 families** (Parsec, Moonlight, Selkies). It is the single differentiator between "feels remote" and "feels local":
 
-1. Host: `showsCursor=false` (cursor không vào video) — §3.1.
-2. Host: sample `NSEvent` mouse position ~**120Hz**; gửi **position (CGPoint host-space) + shape (`NSCursor` image + hotspot)** qua **socket UDP riêng <64-byte**, **KHÔNG multiplex chung socket video** (nếu chung, video backpressure sẽ làm trễ cursor).
-3. Client: composite cursor là **Metal quad / `CALayer`** đè lên decoded frame, ở **display-refresh**.
-- ⟹ **Pointer latency = RTT thuần** (5–20ms), tách hoàn toàn khỏi encode/decode (thường 30–50ms).
-- ⚠️ Correction: patent Parsec đúng là **US 9,798,436** (survey ghi nhầm). moonlight-qt hiện chỉ toggle `SDL_ShowCursor()` chứ không có cursor-shape-over-side-channel riêng — pattern đầy đủ lấy từ **Selkies**.
-- ⚠️ Spike: xác nhận `showsCursor=false` **thực sự** loại cursor khỏi per-window `CMSampleBuffer` trên macOS đích (cursor có thể đã composite vào IOSurface).
+1. Host: `showsCursor=false` (cursor never enters the video) — §3.1.
+2. Host: sample the `NSEvent` mouse position at ~**120Hz**; send **position (host-space CGPoint) + shape (`NSCursor` image + hotspot)** over a **dedicated <64-byte UDP socket**, **NOT multiplexed onto the video socket** (if shared, video backpressure would delay the cursor).
+3. Client: composite the cursor as a **Metal quad / `CALayer`** on top of the decoded frame, at **display-refresh**.
+- ⟹ **Pointer latency = pure RTT** (5–20ms), fully decoupled from encode/decode (typically 30–50ms).
+- ⚠️ Correction: the Parsec patent is actually **US 9,798,436** (the survey had it wrong). moonlight-qt currently only toggles `SDL_ShowCursor()` and has no dedicated cursor-shape-over-side-channel — the full pattern comes from **Selkies**.
+- ⚠️ Spike: confirm `showsCursor=false` **actually** removes the cursor from the per-window `CMSampleBuffer` on the target macOS (the cursor may already be composited into the IOSurface).
 
-### 3.4 Lossy-first → lossless-upgrade — text nét cho editor (ADD)
+### 3.4 Lossy-first → lossless-upgrade — sharp text for editors (ADD)
 
-Giải bài toán "nhanh vs đọc được" cho coding (mở rộng quyết định "4:4:4 dropped, text nét chỉ qua PTY" — nay **GUI window cũng có text pixel-perfect** sau khi user dừng):
+Solves the "fast vs readable" problem for coding (extending the "4:4:4 dropped, sharp text only via PTY" decision — now **GUI windows also get pixel-perfect text** once the user stops):
 
-1. Mỗi `SCFrameStatus.complete`: encode bằng **Session A low-latency-RC** (KHÔNG constant-quality) gửi **ngay** → first-frame ~RTT. 📏 **Đo M1 Max ([18 §0]): low-latency-RC 7.5ms vs constant-quality 0.65 = 24ms** → live frame bắt buộc low-latency-RC.
-2. Tích luỹ **dirty-rect union**; start `DispatchSourceTimer` (GCD) delay **~200–600ms** = `max(batch_delay×5, 200ms)`. ⚠️ **KHÔNG phải 1000ms** — 1000ms là `LOCKED_BATCH_DELAY` của Xpra cho iconic/idle window, không phải refresh-timer.
-3. Frame mới đến trước khi timer fire → **cancel & reschedule** (logic `cancel_refresh_timer` của Xpra).
-4. Timer fire sau idle thật → re-encode dirty-union. **Cập nhật [18 E]: dùng SESSION RIÊNG (Session B)** all-intra `Quality=1.0`+`AllowTemporalCompression=false` (không nhồi vào session live — low-latency-RC cần bitrate, xung khắc constant-quality). Encode dạng **INTRA slice** → loss UDP của bản upgrade không corrupt decode state.
-5. **Window chrome** (title/scroll bar, height < ~40px) → luôn lossless ngay pass đầu.
-- ⚠️ Spike: xác nhận khả dụng `kVTCompressionPropertyKey_Lossless` + đo kích thước frame lossless cho window editor 1080p (để size UDP send-queue).
+1. On each `SCFrameStatus.complete`: encode with **Session A low-latency-RC** (NOT constant-quality) and send **immediately** → first frame ~RTT. 📏 **Measured on M1 Max ([18 §0]): low-latency-RC 7.5ms vs constant-quality 0.65 = 24ms** → live frames must use low-latency-RC.
+2. Accumulate the **dirty-rect union**; start a `DispatchSourceTimer` (GCD) with a **~200–600ms** delay = `max(batch_delay×5, 200ms)`. ⚠️ **NOT 1000ms** — 1000ms is Xpra's `LOCKED_BATCH_DELAY` for iconic/idle windows, not the refresh timer.
+3. A new frame arriving before the timer fires → **cancel & reschedule** (Xpra's `cancel_refresh_timer` logic).
+4. Timer fires after true idle → re-encode the dirty union. **Update [18 E]: use a SEPARATE SESSION (Session B)**, all-intra `Quality=1.0`+`AllowTemporalCompression=false` (don't cram it into the live session — low-latency-RC needs a bitrate, conflicting with constant-quality). Encode as an **INTRA slice** → UDP loss of the upgrade can't corrupt decode state.
+5. **Window chrome** (title/scroll bar, height < ~40px) → always lossless on the first pass.
+- ⚠️ Spike: confirm `kVTCompressionPropertyKey_Lossless` availability + measure lossless frame size for a 1080p editor window (to size the UDP send queue).
 
 ### 3.5 Idle-skip + damage tracking (refine)
 
-- Trong `didOutputSampleBuffer` đọc `SCStreamFrameInfo.status`; nếu `== .idle` → **return ngay** (không IOSurface, không encode, không send). Đây là **damage-check zero-cost** (tương đương X11 DAMAGE DeltaRectangles) và giữ **encoder slot trống** để frame thật kế tiếp (do keystroke) được HW ngay. >90% frame trong phiên coding là tĩnh.
-- Heartbeat **IDR ~mỗi 1s** trên window idle (để client reconnect/loss-recover bắt được frame).
+- In `didOutputSampleBuffer` read `SCStreamFrameInfo.status`; if `== .idle` → **return immediately** (no IOSurface, no encode, no send). This is the **zero-cost damage check** (equivalent to X11 DAMAGE DeltaRectangles) and keeps the **encoder slot free** so the next real frame (from a keystroke) gets HW immediately. >90% of frames in a coding session are static.
+- Heartbeat **IDR ~every 1s** on an idle window (so a reconnecting/loss-recovering client can catch a frame).
 
 ### 3.6 Transport + loss: UDP seq + FEC + LTR (refine)
 
-- Plain UDP qua NetBird (no DTLS/QUIC — WireGuard đã ChaCha20-Poly1305; inner-crypto thuần overhead). **4-byte sequence number/packet** cho ordering/loss-detect.
-- **Reed-Solomon FEC ~20% parity/frame** (default Sunshine).
-- **Ưu tiên LTR-frame recovery hơn forced-IDR**: `kVTCompressionPropertyKey_EnableLTR` + `ForceLTRRefresh` khi mất → tránh spike bandwidth/latency của keyframe. Cần **kênh ACK client→host** nhỏ (rẻ ở RTT của ta), fallback IDR sau timeout 2-RTT. ⚠️ Correction: hướng invalidation là **client→server** (client gửi RFI range; server mark ref-frame invalid).
-- Cap encode-queue **2–3 frame in-flight**; drop oldest; **không bao giờ** backpressure thread callback của SCKit.
+- Plain UDP over NetBird (no DTLS/QUIC — WireGuard is already ChaCha20-Poly1305; inner crypto is pure overhead). A **4-byte sequence number/packet** for ordering/loss detection.
+- **Reed-Solomon FEC at ~20% parity/frame** (Sunshine's default).
+- **Prefer LTR-frame recovery over forced IDR**: `kVTCompressionPropertyKey_EnableLTR` + `ForceLTRRefresh` on loss → avoids the keyframe's bandwidth/latency spike. Needs a small **client→host ACK channel** (cheap at our RTT), with an IDR fallback after a 2-RTT timeout. ⚠️ Correction: the invalidation direction is **client→server** (the client sends the RFI range; the server marks the ref frame invalid).
+- Cap the encode queue at **2–3 frames in flight**; drop oldest; **never** backpressure SCKit's callback thread.
 
-### 3.7 Frame pacing client (ADD)
+### 3.7 Client frame pacing (ADD)
 
-- Drive hiển thị client từ **`CADisplayLink` (VSync)**, KHÔNG từ decode-completion. Queue rỗng → **giữ last decoded frame** (Moonlight pacer: `TIMER_SLACK ~3ms`, time-critical thread). Late frame thì **skip**, không queue → tránh tích luỹ latency.
-- Decode session `RealTime=true`; **`CVMetalTextureCache`** zero-copy CVPixelBuffer→Metal; **`CAMetalLayer.maximumDrawableCount=2`** giữ display latency ~1 vsync.
-- ⚠️ Spike: đo decode latency `VTDecompressionSession` trên Apple-Silicon client thật — xác nhận **single-frame**, không bị âm thầm 2-frame-buffer (`RealTime=true` **không** đảm bảo điều này) → quyết định budget motion-to-photon 30fps có giữ được không.
+- Drive client display from **`CADisplayLink` (VSync)**, NOT from decode completion. Empty queue → **hold the last decoded frame** (Moonlight pacer: `TIMER_SLACK ~3ms`, time-critical thread). Late frames are **skipped**, not queued → avoids latency accumulation.
+- Decode session `RealTime=true`; **`CVMetalTextureCache`** for zero-copy CVPixelBuffer→Metal; **`CAMetalLayer.maximumDrawableCount=2`** keeps display latency ~1 vsync.
+- ⚠️ Spike: measure `VTDecompressionSession` decode latency on a real Apple Silicon client — confirm **single-frame**, no silent 2-frame buffering (`RealTime=true` does **not** guarantee this) → decides whether the 30fps motion-to-photon budget holds.
 
 ### 3.8 Window-geometry metadata channel (ADD)
 
-Kênh metadata **riêng** mang window **move/resize/title** → client `NSWindow` reposition **ngay, trước frame video kế**. Mọi giải pháp per-window remoting (RDP RemoteApp/RAIL, X11, Xpra) đều có. ⚠️ Correction RAIL (MS-RDPERP §1.3.2.5): move bằng chuột **không** gửi Client-Window-Move PDU — chỉ gửi mouse-button-up, server suy ra vị trí; PDU chỉ cần cho move bằng keyboard.
+A **dedicated** metadata channel carrying window **move/resize/title** → the client `NSWindow` repositions **immediately, before the next video frame**. Every per-window remoting solution (RDP RemoteApp/RAIL, X11, Xpra) has one. ⚠️ RAIL correction (MS-RDPERP §1.3.2.5): mouse-driven moves do **not** send a Client-Window-Move PDU — only the mouse-button-up is sent, the server infers the position; the PDU is only needed for keyboard-driven moves.
 
-### 3.9 Input: CGEvent + RỦI RO map toạ độ (KEEP + spike #1 của PATH 2)
+### 3.9 Input: CGEvent + coordinate-mapping RISK (KEEP + PATH 2 spike #1)
 
-- `CGEventPost(kCGHIDEventTap, ...)` cho click/key (cần Accessibility cấp trước launch; non-sandbox; ngoài MAS — đã chốt [06]). `CGWarpMouseCursorPosition` cho absolute move. **Tag mọi event bằng `eventSourceUserData`** để host filter event tự-inject (tránh loop).
-- **Mouse-move coalescing**: drain pending moves, cộng dồn delta, gửi 1 lần (pattern `SDL_PeepEvents` của Moonlight).
-- ✅ **Coordinate mapping = SOLVED ([18 B]):** `kCGWindowBounds`(top-left CG)→normalize→`postToPid` (cần TCC **"Post Event"**); fix multi-monitor bằng **flip sang Cocoa-space** (`primaryH − y − h`) trước `NSScreen.frame.intersection` để lấy đúng `backingScaleFactor`; window-move = AX `kAXWindowMovedNotification`(fire ở END) + poll `CGWindowListCopyWindowInfo` khi đang drag. Tag `eventSourceUserData` filter self-inject.
-- **Input nền:** quyết định **activate-then-control 1 cửa sổ/lần (phải focus)** → cửa sổ target thành frontmost → `CGEventPost` universal (mọi loại app), né SkyLight private-API. ([18 A])
+- `CGEventPost(kCGHIDEventTap, ...)` for clicks/keys (Accessibility must be granted before launch; non-sandboxed; outside MAS — decided in [06]). `CGWarpMouseCursorPosition` for absolute moves. **Tag every event with `eventSourceUserData`** so the host filters self-injected events (avoiding loops).
+- **Mouse-move coalescing**: drain pending moves, accumulate deltas, send once (Moonlight's `SDL_PeepEvents` pattern).
+- ✅ **Coordinate mapping = SOLVED ([18 B]):** `kCGWindowBounds` (CG top-left)→normalize→`postToPid` (needs the TCC **"Post Event"** permission); fix multi-monitor by **flipping to Cocoa space** (`primaryH − y − h`) before `NSScreen.frame.intersection` to get the correct `backingScaleFactor`; window-move = AX `kAXWindowMovedNotification` (fires at the END) + poll `CGWindowListCopyWindowInfo` during the drag. Tag `eventSourceUserData` to filter self-injection.
+- **Background input:** decided as **activate-then-control, 1 window at a time (must focus)** → the target window becomes frontmost → `CGEventPost` is universal (every kind of app), avoiding the SkyLight private API. ([18 A])
 
-### 3.10 Giới hạn số window đồng thời (ADD constraint)
+### 3.10 Concurrent window limit (ADD constraint)
 
-- **2–4 `VTCompressionSession` HEVC HW đồng thời** trên Apple Silicon trước khi rớt về software → **cận trên số window GUI remote đồng thời**. ⚠️ Spike benchmark con số chính xác trên hardware đích.
-- 1 `VTCompressionSession` per tracked window (giữ encoder-state qua frame; tránh bug per-buffer flicker của waypipe).
+- **2–4 simultaneous HEVC HW `VTCompressionSession`s** on Apple Silicon before dropping to software → the **upper bound on simultaneous remote GUI windows**. ⚠️ Spike to benchmark the exact number on the target hardware.
+- 1 `VTCompressionSession` per tracked window (keeps encoder state across frames; avoids waypipe's per-buffer flicker bug).
 
 ---
 
-## 4. Native-feel techniques — xếp theo impact
+## 4. Native-feel techniques — ranked by impact
 
-| Kỹ thuật | Path | Impact | Effort |
+| Technique | Path | Impact | Effort |
 |----------|------|--------|--------|
-| **Client-side cursor** (strip + side-channel UDP + composite ở refresh) | GUI | **Cao** — pointer = RTT, tách khỏi codec; ranh giới local/remote | Trung bình |
-| **`TCP_NODELAY`** mọi socket PATH 1 | TUI | **Cao** — Nagle có thể +200ms/keystroke | Trivial |
-| **libghostty external-IO** over raw TCP | TUI | **Cao** — full-fidelity, event-driven redraw, 0 round-trip | TB-cao (own fork) |
-| **`SCFrameStatus.idle` skip** + heartbeat IDR | GUI | **Cao** — >90% frame tĩnh; giữ encoder slot trống | Thấp |
-| **Lossy-first → lossless-upgrade** | GUI | **Cao** — nhanh + text pixel-perfect khi dừng | Trung bình |
-| **VideoToolbox 4-flag low-latency + NV12 zero-copy** | GUI | **Cao** — encode ~5–18ms, no reorder, no BGRA convert | Trung bình |
-| **ET replay buffer** reconnect | TUI | **Cao** — resume byte-exact qua iOS background | Trung bình |
-| **CADisplayLink pacing + show-last-frame** | GUI | TB-cao — hết judder, latency ~1 vsync | Thấp-TB |
-| **iOS UIKit table-stakes** (key-repeat/IME/floating-cursor/accessory) | TUI | TB-cao — "works" → "native iOS" | Trung bình |
-| **Dual data/control channel** | TUI | TB — burst output không trễ resize | Thấp |
-| **Glitch-window speculative caret** (cột cursor) | TUI | TB — feedback lúc stall, ~0 desync-risk | Thấp |
-| **LTR + ~20% Reed-Solomon FEC** thay forced-IDR | GUI | TB — tránh spike; near-irrelevant ở loss NetBird nhưng cost ~0, cứng WiFi | Trung bình |
-| **QoS `USER_INTERACTIVE`** thread PTY-relay & capture+encode | cả 2 | TB — giữ path latency-critical được schedule trước | Trivial |
+| **Client-side cursor** (strip + UDP side-channel + composite at refresh) | GUI | **High** — pointer = RTT, decoupled from codec; the local/remote boundary | Medium |
+| **`TCP_NODELAY`** on every PATH 1 socket | TUI | **High** — Nagle can add +200ms/keystroke | Trivial |
+| **libghostty external-IO** over raw TCP | TUI | **High** — full fidelity, event-driven redraw, 0 round-trips | Medium-high (own fork) |
+| **`SCFrameStatus.idle` skip** + heartbeat IDR | GUI | **High** — >90% of frames static; keeps the encoder slot free | Low |
+| **Lossy-first → lossless-upgrade** | GUI | **High** — fast + pixel-perfect text on pause | Medium |
+| **VideoToolbox 4-flag low-latency + NV12 zero-copy** | GUI | **High** — encode ~5–18ms, no reorder, no BGRA conversion | Medium |
+| **ET replay buffer** for reconnect | TUI | **High** — byte-exact resume through iOS backgrounding | Medium |
+| **CADisplayLink pacing + show-last-frame** | GUI | Medium-high — no judder, latency ~1 vsync | Low-medium |
+| **iOS UIKit table stakes** (key-repeat/IME/floating-cursor/accessory) | TUI | Medium-high — "works" → "native iOS" | Medium |
+| **Dual data/control channels** | TUI | Medium — output bursts don't delay resize | Low |
+| **Glitch-window speculative caret** (cursor column) | TUI | Medium — feedback during stalls, ~0 desync risk | Low |
+| **LTR + ~20% Reed-Solomon FEC** instead of forced IDR | GUI | Medium — avoids spikes; near-irrelevant at NetBird loss rates but ~0 cost, hardens WiFi | Medium |
+| **QoS `USER_INTERACTIVE`** on PTY-relay & capture+encode threads | both | Medium — keeps the latency-critical path scheduled first | Trivial |
 
 ---
 
-## 5. Gap analysis vs quyết định hiện tại
+## 5. Gap analysis vs current decisions
 
-> **KEEP** = đúng, giữ. **CHANGE** = sửa/làm rõ. **ADD** = bổ sung mới. (Đã đẩy vào [DECISIONS.md](DECISIONS.md).)
+> **KEEP** = correct, keep. **CHANGE** = fix/clarify. **ADD** = new addition. (Pushed into [DECISIONS.md](DECISIONS.md).)
 
 **PATH 1**
-- KEEP — raw VT byte qua plain TCP + libghostty; no app-crypto; input = byte→PTY stdin (né input-injection).
-- CHANGE — **không** xây full Mosh predictor cho v1 (opaque ghostty → duplicate parser; lợi ích chỉ ở shell prompt). Glitch-caret là tuỳ chọn Phase 2.
-- CHANGE — libghostty external-IO **chỉ có ở fork** (wiedymi `custom-io` / daiimus `ios-external-backend`); commit own patch là tracked dependency (đã đúng hướng).
-- ADD — `TCP_NODELAY`; ET 64MB seq replay-buffer (chọn thay tmux); dual data/control channel; QoS USER_INTERACTIVE relay; iOS UIKit table-stakes.
+- KEEP — raw VT bytes over plain TCP + libghostty; no app-level crypto; input = bytes→PTY stdin (avoiding input injection).
+- CHANGE — do **not** build the full Mosh predictor for v1 (opaque ghostty → duplicate parser; benefit only at the shell prompt). Glitch-caret is a Phase 2 option.
+- CHANGE — libghostty external-IO **exists only in forks** (wiedymi `custom-io` / daiimus `ios-external-backend`); committing to our own patch is a tracked dependency (already the right direction).
+- ADD — `TCP_NODELAY`; ET 64MB seq replay buffer (chosen over tmux); dual data/control channels; QoS USER_INTERACTIVE relay; iOS UIKit table stakes.
 
 **PATH 2**
-- KEEP — `SCContentFilter(window:)`; HEVC 8-bit 4:2:0; plain UDP; fps cap 24–30 + idle-skip; CGEvent injection (chấp nhận Accessibility/non-sandbox/ngoài-MAS).
-- CHANGE — **`EnableLowLatencyRateControl` MEASURED cho HEVC trên Apple Silicon** (7.5ms; CQ 24ms quá chậm → live = low-latency-RC, crisp = Session B). queueDepth: giữ **2–3** (latency) thay vì 5 của Sunshine, có spike.
-- ADD — client-side cursor (impact cao nhất); 4-flag recipe + RequireHWEncoder + NV12 zero-copy; lossy-first→lossless-upgrade; CADisplayLink pacing; LTR+FEC thay forced-IDR; window-geometry channel; coordinate-mapping là rủi ro #1; giới hạn 2–4 VTCompressionSession đồng thời.
+- KEEP — `SCContentFilter(window:)`; HEVC 8-bit 4:2:0; plain UDP; fps cap 24–30 + idle-skip; CGEvent injection (accepting Accessibility/non-sandbox/outside-MAS).
+- CHANGE — **`EnableLowLatencyRateControl` MEASURED for HEVC on Apple Silicon** (7.5ms; CQ 24ms too slow → live = low-latency-RC, crisp = Session B). queueDepth: keep **2–3** (latency) instead of Sunshine's 5, with a spike.
+- ADD — client-side cursor (highest impact); 4-flag recipe + RequireHWEncoder + NV12 zero-copy; lossy-first→lossless-upgrade; CADisplayLink pacing; LTR+FEC instead of forced IDR; window-geometry channel; coordinate mapping as risk #1; 2–4 concurrent VTCompressionSession limit.
 
 ---
 
-## 6. Open spikes → **phần lớn đã giải, xem [18](18-risk-resolutions.md)**
+## 6. Open spikes → **mostly resolved, see [18](18-risk-resolutions.md)**
 
-8 spike ở bản đầu đã được research ra cách giải + skeptic-verify ([18]): #2 threading, #3 coordinate, #7 reconnect, #8 rate-control = **SOLVED**; #5 cursor-strip, #4 decode, #6 concurrent-encoder = **BOUNDED** (spike có decision-rule). Còn lại **đo trên hardware** (Phase 4, đều kỳ vọng PASS):
+The 8 spikes in the first draft have been researched to solutions + skeptic-verified ([18]): #2 threading, #3 coordinate, #7 reconnect, #8 rate-control = **SOLVED**; #5 cursor-strip, #4 decode, #6 concurrent-encoder = **BOUNDED** (spikes with decision rules). What remains is **measurement on hardware** (Phase 4, all expected to PASS):
 
-1. **Echo-latency PATH 1 thật trên NetBird** ở 5ms & 20ms RTT → quyết định predictor có cần không. *(quan trọng nhất cho PATH 1; chưa giải vì cần đo)*
-2. **SPIKE F** decode→display p99 < 1 frame (33ms@30fps) trên client thật.
-3. **SPIKE G** N `VTCompressionSession` HW/chip @1080p/1440p → cận window đồng thời.
-4. **SPIKE D** `showsCursor=false` sạch cursor per-window (window on-screen).
+1. **Real PATH 1 echo latency on NetBird** at 5ms & 20ms RTT → decides whether a predictor is needed. *(most important for PATH 1; unresolved because it needs measurement)*
+2. **SPIKE F** decode→display p99 < 1 frame (33ms@30fps) on a real client.
+3. **SPIKE G** N HW `VTCompressionSession`s per chip @1080p/1440p → concurrent-window bound.
+4. **SPIKE D** `showsCursor=false` cleanly strips the per-window cursor (window on-screen).
 
-> **Rủi ro #1 cũ (CGEvent coordinate / input nền) đã hết:** quyết định **activate-then-control 1 cửa sổ/lần** ([18 A]) loại bỏ SkyLight private-API + Chromium-bg-fail + macOS 26 fragility.
+> **The old risk #1 (CGEvent coordinates / background input) is gone:** the **activate-then-control, 1 window at a time** decision ([18 A]) eliminates the SkyLight private API + the Chromium background failure + macOS 26 fragility.
 
 ---
 
-## 7. Nguồn
+## 7. Sources
 
-Corpus đầy đủ (7 họ × survey+deepdive + synthesis, kèm URL source/patent/RFC verified): **[research/17-tui-gui-best-solution.json](research/17-tui-gui-best-solution.json)**.
+Full corpus (7 families × survey+deepdive + synthesis, with verified source/patent/RFC URLs): **[research/17-tui-gui-best-solution.json](research/17-tui-gui-best-solution.json)**.
 
-Điểm tựa chính: Mosh `terminaloverlay.{h,cc}` + `transportsender`; Eternal Terminal `BackedWriter/BackedReader`; WezTerm `renderable.rs`; VVTerm + Geistty (libghostty external-IO thực chiến) + `wiedymi/daiimus ghostty` forks; Blink/SwiftTerm (iOS UIKit); Sunshine `video.cpp`/`sc_capture.m` + Moonlight `RtpVideoQueue`; Parsec patent US 9,798,436; Xpra auto-refresh; FFmpeg `videotoolboxenc.c`; WWDC22 s10155 (SCKit) + WWDC21 (VideoToolbox LTR).
+Main anchors: Mosh `terminaloverlay.{h,cc}` + `transportsender`; Eternal Terminal `BackedWriter/BackedReader`; WezTerm `renderable.rs`; VVTerm + Geistty (libghostty external-IO in production) + the `wiedymi/daiimus ghostty` forks; Blink/SwiftTerm (iOS UIKit); Sunshine `video.cpp`/`sc_capture.m` + Moonlight `RtpVideoQueue`; Parsec patent US 9,798,436; Xpra auto-refresh; FFmpeg `videotoolboxenc.c`; WWDC22 s10155 (SCKit) + WWDC21 (VideoToolbox LTR).

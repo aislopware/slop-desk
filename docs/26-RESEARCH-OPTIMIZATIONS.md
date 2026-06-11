@@ -126,7 +126,7 @@ workflow, jump to pane, change pane type, reopen closed tab*. Steal the design s
 **show each action's bound shortcut inline** (passive keymap teaching — wezterm/Warp),
 **smart initial suggestions** (recent hosts + recently-used panes + "next unread agent",
 not blank/alphabetical), **fuzzy + developer keywords + frecency** ranking (reuse the
-existing local-persist pattern à la `skills-lock.json`), and **nested action-on-result**
+existing local-persist pattern a la `skills-lock.json`), and **nested action-on-result**
 ("find host → connect / new terminal / new agent").
 
 **B3 — OSC notifications + jump-to-unread, unfocused-gated (~3–5 days).**

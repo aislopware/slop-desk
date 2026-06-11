@@ -1,92 +1,92 @@
-# 08 — Rủi ro & Câu hỏi mở
+# 08 — Risks & Open Questions
 
-> **STATUS: SUPERSEDED** — đã thay; xem [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
+> **STATUS: SUPERSEDED** — replaced; see [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-## 1. Rủi ro kỹ thuật (xếp theo mức độ)
+## 1. Technical risks (ranked by severity)
 
-> ⚠️ **R1/R2 (input injection) CHỈ áp dụng cho GUI video-path.** Terminal đi PTY text-path né hoàn toàn (input = byte → PTY stdin) — xem [12](12-coding-profile.md). Với profile coding (terminal-first), R1/R2 không còn là rủi ro chặn dự án.
+> ⚠️ **R1/R2 (input injection) ONLY apply to the GUI video-path.** The terminal goes over the PTY text-path and avoids them entirely (input = bytes → PTY stdin) — see [12](12-coding-profile.md). For the coding profile (terminal-first), R1/R2 are no longer project-blocking risks.
 
-### 🔴 R1 — Window-targeted input không hoàn hảo trên macOS *(chỉ GUI path)*
-- **Vấn đề:** không inject mouse tin cậy vào cửa sổ nền; không có API map `AXUIElement`↔`CGWindowID`; matching cửa sổ là heuristic.
-- **Ảnh hưởng:** click có thể trúng nhầm cửa sổ; matching sai khi nhiều cửa sổ cùng title.
-- **Giảm thiểu:** activate-then-control + ưu tiên AX action; verify ở Phase 0.4–0.5. Code phòng thủ khi match.
-- **Fallback nếu fail:** lùi về điều khiển **toàn app** (raise app, không cố raise đúng 1 cửa sổ), hoặc điều khiển **cả desktop** như chế độ phụ.
+### 🔴 R1 — Window-targeted input is imperfect on macOS *(GUI path only)*
+- **Problem:** no reliable mouse injection into background windows; no API to map `AXUIElement`↔`CGWindowID`; window matching is a heuristic.
+- **Impact:** clicks may land in the wrong window; matching can go wrong when multiple windows share a title.
+- **Mitigation:** activate-then-control + prefer AX actions; verify in Phase 0.4–0.5. Code defensively when matching.
+- **Fallback if it fails:** fall back to controlling the **whole app** (raise the app, don't try to raise one specific window), or control the **entire desktop** as a secondary mode.
 
-### 🔴 R2 — Cooperative activation macOS 14+ từ chối activate từ sự kiện mạng
-- **Vấn đề:** `activate()` advisory, hay fail khi trigger bởi network/timer — đúng case remote control.
-- **Giảm thiểu:** kết hợp `AXRaise` (tự reorder dù app activation throttle) + thử `activateIgnoringOtherApps:` (deprecated nhưng mạnh hơn).
-- **Cần:** **đo thực tế ở Phase 0.6** trên đúng version macOS sẽ ship (14/15/26).
+### 🔴 R2 — macOS 14+ cooperative activation refuses activation from network events
+- **Problem:** `activate()` is advisory and often fails when triggered by network/timer — exactly the remote-control case.
+- **Mitigation:** combine `AXRaise` (reorders windows even when app activation is throttled) + try `activateIgnoringOtherApps:` (deprecated but stronger).
+- **Needed:** **measure in practice in Phase 0.6** on the exact macOS versions to be shipped (14/15/26).
 
-### 🟡 R3 — Latency Wi-Fi cao/bursty
-- **Vấn đề:** Wi-Fi loss bursty + jitter phá mục tiêu 30–50ms.
-- **Giảm thiểu:** plain UDP over NetBird (QUIC dropped — WireGuard đã encrypt, [13]); FEC chỉ cân nhắc khi relayed. **(GUI video-path only, Phase 4.)**
+### 🟡 R3 — High/bursty Wi-Fi latency
+- **Problem:** bursty Wi-Fi loss + jitter break the 30–50ms target.
+- **Mitigation:** plain UDP over NetBird (QUIC dropped — WireGuard already encrypts, [13]); FEC considered only when relayed. **(GUI video-path only, Phase 4.)**
 
 ### 🟡 R4 — Keyboard layout / dead keys
-- **Vấn đề:** keycode phụ thuộc layout host; dead-key (´+e→é) khó.
-- **Giảm thiểu:** gửi text qua **Unicode injection** (layout-independent); keycode chỉ cho shortcut. Một số game bỏ qua Unicode → fallback keycode.
+- **Problem:** keycodes depend on the host layout; dead keys (´+e→é) are hard.
+- **Mitigation:** send text via **Unicode injection** (layout-independent); keycodes only for shortcuts. Some games ignore Unicode → keycode fallback.
 
-### 🟡 R4b — Text màu nhòe do chroma 4:2:0
-- **Vấn đề:** Apple HW encode không có 4:4:4 → text trên nền màu bị viền/bleeding. Đổi codec không sửa được.
-- **Giảm thiểu:** HEVC **10-bit** + capture resolution cao. Nếu chí mạng → software 4:4:4 "ultra text" tier (chấp nhận latency). Xem [09 §2](09-codec-choice.md).
+### 🟡 R4b — Colored-text blur due to 4:2:0 chroma
+- **Problem:** Apple HW encode has no 4:4:4 → text on colored backgrounds gets fringing/bleeding. Switching codecs doesn't fix it.
+- **Mitigation:** **10-bit** HEVC + higher capture resolution. If critical → a software 4:4:4 "ultra text" tier (accepting the latency). See [09 §2](09-codec-choice.md).
 
-### 🟢 R5 — AVSampleBufferDisplayLayer thêm latency
-- **Giảm thiểu:** bọc behind protocol `VideoRenderer`, chuyển Metal khi cần (Phase 4).
+### 🟢 R5 — AVSampleBufferDisplayLayer adds latency
+- **Mitigation:** wrap behind a `VideoRenderer` protocol, switch to Metal when needed (Phase 4).
 
-### 🟢 R6 — Pointer lifetime CMFormatDescription crash
-- **Giảm thiểu:** nest `withUnsafeBytes` / `withExtendedLifetime` đúng cách ([04 §1](04-client-decode-render.md)).
+### 🟢 R6 — CMFormatDescription pointer-lifetime crash
+- **Mitigation:** nest `withUnsafeBytes` / `withExtendedLifetime` correctly ([04 §1](04-client-decode-render.md)).
 
-### 🟡 R7 — VideoToolbox thiếu RFI-by-id & gradual intra-refresh
-- **Vấn đề:** không có `NvEncInvalidateRefFrames` hay periodic intra-refresh như NVENC.
-- **Giảm thiểu:** dùng **LTR ack workflow** (`EnableLTR`/`ForceLTRRefresh`) — tương đương về recovery, tránh keyframe spike. Verify tên symbol trên SDK đích. Xem [10 §1](10-latency-optimization.md).
-- **Rủi ro phụ:** nếu LTR symbol/behavior không như WWDC21 mô tả → fallback FEC + IDR-on-loss (vẫn chạy, chỉ kém mượt khi mất gói).
+### 🟡 R7 — VideoToolbox lacks RFI-by-id & gradual intra-refresh
+- **Problem:** no `NvEncInvalidateRefFrames` or periodic intra-refresh like NVENC.
+- **Mitigation:** use the **LTR ack workflow** (`EnableLTR`/`ForceLTRRefresh`) — equivalent recovery, avoids keyframe spikes. Verify the symbol names on the target SDK. See [10 §1](10-latency-optimization.md).
+- **Secondary risk:** if the LTR symbols/behavior don't match the WWDC21 description → fall back to FEC + IDR-on-loss (still works, just less smooth under packet loss).
 
-### ⭐ Cross-cutting note (không đánh số) — Compositor/vsync tail là latency ẩn lớn nhất phía client *(GUI path)*
-- **Giảm thiểu:** Metal overhead thấp + `displaySyncEnabled=false` (macOS) + present sát vsync. Xem [10 §9](10-latency-optimization.md).
+### ⭐ Cross-cutting note (unnumbered) — Compositor/vsync tail is the biggest hidden latency on the client *(GUI path)*
+- **Mitigation:** low Metal overhead + `displaySyncEnabled=false` (macOS) + present close to vsync. See [10 §9](10-latency-optimization.md).
 
-### 🟡 R8 — VRR/Adaptive-sync cần fullscreen, xung đột với mô hình 1 cửa sổ
-- **Vấn đề:** adaptive-sync scheduling yêu cầu cửa sổ fullscreen → client windowed KHÔNG hưởng lợi VRR (~3–8 ms).
-- **Giảm thiểu:** chấp nhận fixed-rate compositor cho windowed, HOẶC chế độ fullscreen tùy chọn ở client. Xem [11](11-absolute-latency.md).
+### 🟡 R8 — VRR/Adaptive-sync requires fullscreen, conflicting with the single-window model
+- **Problem:** adaptive-sync scheduling requires a fullscreen window → a windowed client gets NO VRR benefit (~3–8 ms).
+- **Mitigation:** accept a fixed-rate compositor for windowed mode, OR an optional fullscreen mode on the client. See [11](11-absolute-latency.md).
 
-### 🟢 R9 — NetBird relayed fallback (chấp nhận degraded, KHÔNG engineer)
-- **Quyết định:** thiết kế **giả định direct P2P**; nếu rớt relay (>80ms, do NAT hairpin/hard-NAT — cùng LAN không đảm bảo 100%) thì **chỉ surface + cảnh báo**, KHÔNG xây workaround (no mosh/SSP, no adaptive/FEC). Lưu ý: NetBird ≥ v0.69.0 đã có UPnP/NAT-PMP/PCP (đỡ rớt relay); Tailscale còn birthday-paradox cho symmetric NAT. Xem [13](13-netbird-transport.md).
-- **Giảm thiểu:** badge connection-type (`netbird status` P2P/Relayed) + cảnh báo user; nếu thực tế hay relay mới cân nhắc nâng cấp sau. Xem [13 §4](13-netbird-transport.md).
+### 🟢 R9 — NetBird relayed fallback (accept degraded, do NOT engineer for it)
+- **Decision:** design **assuming direct P2P**; if it falls back to relay (>80ms, due to NAT hairpin/hard-NAT — even same-LAN isn't 100% guaranteed) then **only surface + warn**, do NOT build workarounds (no mosh/SSP, no adaptive/FEC). Note: NetBird ≥ v0.69.0 has UPnP/NAT-PMP/PCP (fewer relay fallbacks); Tailscale still uses the birthday-paradox trick for symmetric NAT. See [13](13-netbird-transport.md).
+- **Mitigation:** connection-type badge (`netbird status` P2P/Relayed) + warn the user; only consider upgrades later if relaying turns out to be common in practice. See [13 §4](13-netbird-transport.md).
 
 ### 🟡 R10 — macOS 26 Tahoe decode/present latency regression
-- **Vấn đề:** Moonlight #1696 báo decode latency vọt (~20–80 ms) với CAMetalDisplayLink trên macOS 26; tắt Metal renderer → ~2.7 ms.
-- **Giảm thiểu:** **test trên macOS 26 target** trước khi tin floor; có thể cần fallback present path.
+- **Problem:** Moonlight #1696 reports decode latency spiking (~20–80 ms) with CAMetalDisplayLink on macOS 26; disabling the Metal renderer → ~2.7 ms.
+- **Mitigation:** **test on the macOS 26 target** before trusting the floor; a fallback present path may be needed.
 
-> 📋 **Nhiều correction & open-question đã được giải/cập nhật** trong [11-absolute-latency.md](11-absolute-latency.md) §"Verified API claims" (14 corrections + checklist Phase-0 đầy đủ). Đọc trước khi code.
+> 📋 **Many corrections & open questions have been resolved/updated** in [11-absolute-latency.md](11-absolute-latency.md) §"Verified API claims" (14 corrections + the full Phase-0 checklist). Read before coding.
 
 ---
 
-## 2. Câu hỏi mở (cần chốt)
+## 2. Open questions (to be decided)
 
-| # | Câu hỏi | Khuyến nghị mặc định |
+| # | Question | Recommended default |
 |---|---------|----------------------|
-| Q1 | Codec mặc định? | **HEVC Main 8-bit 4:2:0 + constant-quality** (Apple Silicon); 10-bit optional; 4:4:4 dropped; AV1/VVC không HW-encode. Xem [09](09-codec-choice.md) |
-| Q2 | Render Phase đầu? | **AVSampleBufferDisplayLayer** (nhanh lên hình), Metal ở Phase 4 |
-| Q3 | Transport mặc định? | **Plain UDP** (video) / **plain TCP** (terminal) over NetBird — QUIC dropped (WireGuard encrypt, [13]) |
-| Q4 | Có cần auth/pairing không? | **Nên có** PIN/QR dù LAN (tránh ai cùng mạng cũng điều khiển được) |
-| Q5 | Audio? | Để Phase 4 (per-window audio không có; audio ở mức app) |
-| Q6 | Nhiều cửa sổ đồng thời? | Phase 4; MVP 1 cửa sổ/phiên |
-| Q7 | Con trỏ trên client? | **Đã rõ:** loại khỏi video (`showsCursor=false`) + **vẽ client-side** từ kênh input (cảm giác tức thì). Xem [10 §7](10-latency-optimization.md) |
-| Q8 | macOS version ship tối thiểu? | 14+ (ảnh hưởng test activation R2) |
+| Q1 | Default codec? | **HEVC Main 8-bit 4:2:0 + constant-quality** (Apple Silicon); 10-bit optional; 4:4:4 dropped; AV1/VVC have no HW encode. See [09](09-codec-choice.md) |
+| Q2 | First-phase renderer? | **AVSampleBufferDisplayLayer** (fastest to pixels), Metal in Phase 4 |
+| Q3 | Default transport? | **Plain UDP** (video) / **plain TCP** (terminal) over NetBird — QUIC dropped (WireGuard encrypts, [13]) |
+| Q4 | Need auth/pairing? | **Should have** PIN/QR even on LAN (so not everyone on the network can take control) |
+| Q5 | Audio? | Defer to Phase 4 (no per-window audio; audio is app-level) |
+| Q6 | Multiple concurrent windows? | Phase 4; MVP is 1 window/session |
+| Q7 | Cursor on the client? | **Settled:** exclude from video (`showsCursor=false`) + **draw client-side** from the input channel (instant feel). See [10 §7](10-latency-optimization.md) |
+| Q8 | Minimum shipping macOS version? | 14+ (affects the R2 activation testing) |
 
 ---
 
-## 3. Giả định đang dựa vào (cần verify khi code)
+## 3. Assumptions we rely on (verify while coding)
 
-- `kAXPositionAttribute` (AX) == `kCGWindowBounds` (CG) cùng top-left/points — **đúng trong thực tế nhưng chưa thấy 1 trang Apple khẳng định verbatim**. Verify bằng print runtime trước khi tin cho click pixel-accurate.
-- Encode/decode latency Apple Silicon ~1–8ms — **đo lại Phase 0**.
-- LAN loss ~0 đủ để FEC thấp/không — **đo trên mạng thật**.
-- `SCStreamFrameStatus` khi minimize (`.suspended` vs ngừng emit) khác nhau giữa version macOS — reconcile với `SCWindow.isOnScreen`.
+- `kAXPositionAttribute` (AX) == `kCGWindowBounds` (CG), both top-left/points — **true in practice but no Apple page states it verbatim**. Verify with runtime prints before trusting it for pixel-accurate clicks.
+- Apple Silicon encode/decode latency ~1–8ms — **re-measure in Phase 0**.
+- LAN loss ~0 is enough for low/no FEC — **measure on the real network**.
+- `SCStreamFrameStatus` when minimized (`.suspended` vs. stopping emission) differs across macOS versions — reconcile with `SCWindow.isOnScreen`.
 
 ---
 
-## 4. Phi mục tiêu (rõ ràng KHÔNG làm, ít nhất giai đoạn đầu)
+## 4. Non-goals (explicitly NOT doing, at least initially)
 
-- ❌ App-level NAT traversal / custom relay — delegate cho **NetBird mesh** ([13]). Remote access đi qua NetBird (direct P2P assumed; relayed = degraded).
-- ❌ Host Windows/Linux (chỉ macOS).
-- ❌ Mac App Store (sandbox không tương thích — [06](06-permissions-distribution.md)).
-- ❌ Điều khiển nhiều cửa sổ nền đồng thời thật sự (giới hạn macOS — [05 §0](05-input-window-control.md)).
-- ❌ Per-window audio (macOS không hỗ trợ).
+- ❌ App-level NAT traversal / custom relay — delegated to the **NetBird mesh** ([13]). Remote access goes through NetBird (direct P2P assumed; relayed = degraded).
+- ❌ Windows/Linux host (macOS only).
+- ❌ Mac App Store (sandbox incompatible — [06](06-permissions-distribution.md)).
+- ❌ Truly controlling multiple background windows concurrently (macOS limitation — [05 §0](05-input-window-control.md)).
+- ❌ Per-window audio (macOS doesn't support it).

@@ -1,31 +1,31 @@
 # VideoToolbox de-risk harness — MEASURED results
 
-**Đo trên 2 máy thật (cùng NetBird mesh):**
+**Measured on 2 real machines (same NetBird mesh):**
 - **HOST: Apple M1 Max** · macOS 26.5 (25F71) · arm64 · Swift 6.3.2
-- **CLIENT: Apple M2 Pro** · macOS 26.5 · arm64 (máy sẽ là client; chạy harness trong Terminal.app GUI)
+- **CLIENT: Apple M2 Pro** · macOS 26.5 · arm64 (the machine that will be the client; harness run inside the Terminal.app GUI)
 
-Cả hai là Apple Silicon + macOS 26 (watch-item OS), nên số liệu trực tiếp load-bearing. *(Lưu ý: header in trong harness ghi cứng "M1 Max" — khi chạy trên M2 Pro số vẫn là của M2 Pro.)*
+Both are Apple Silicon + macOS 26 (the watch-item OS), so the numbers are directly load-bearing. *(Note: the header printed by the harness hard-codes "M1 Max" — when run on the M2 Pro the numbers are still the M2 Pro's.)*
 
-> ⚠️ **Cảnh báo môi trường:** harness encode HW VideoToolbox **TREO khi chạy qua SSH** (không có window-server session). **Phải chạy từ Terminal.app GUI.** Decode-only thì nhẹ session hơn, nhưng vẫn nên chạy GUI.
+> ⚠️ **Environment warning:** the HW VideoToolbox encode harness **HANGS when run over SSH** (no window-server session). **It must be run from the Terminal.app GUI.** Decode-only is less session-sensitive, but should still be run from the GUI.
 
 ## Cross-machine summary (host vs client)
 
-| Đo (1080p HEVC) | HOST M1 Max | CLIENT M2 Pro | Kết luận |
+| Measurement (1080p HEVC) | HOST M1 Max | CLIENT M2 Pro | Conclusion |
 |---|---|---|---|
-| **Decode latency** (synchronous, HW) | p99 **1.12ms** | p99 **0.92ms** | F PASS cả 2; client còn nhanh hơn |
+| **Decode latency** (synchronous, HW) | p99 **1.12ms** | p99 **0.92ms** | F PASS on both; client even faster |
 | **Low-latency-RC encode** | p50 **7.5ms** | p50 **6.9ms** | live frame OK |
-| **Constant-quality 0.65 encode** | p50 **24ms** | p50 **15.4ms** | vẫn ~2× LL-RC → live dùng LL-RC |
-| **Concurrent HW sessions** | **32** | **32** | non-issue cả 2 |
-| **NALU/CMSampleBuffer** | **1** | **1** | multi-NALU watch-item downgraded (2 máy) |
-| **`Lossless` property key** | -12900 | -12900 | không có; dùng Quality=1.0 all-intra |
+| **Constant-quality 0.65 encode** | p50 **24ms** | p50 **15.4ms** | still ~2× LL-RC → live uses LL-RC |
+| **Concurrent HW sessions** | **32** | **32** | non-issue on both |
+| **NALU/CMSampleBuffer** | **1** | **1** | multi-NALU watch-item downgraded (both machines) |
+| **`Lossless` property key** | -12900 | -12900 | not available; use Quality=1.0 all-intra |
 
 ## Network (NetBird mesh, host M1 Max ↔ client M2 Pro)
 
 - **RTT: min 8.5 / avg 11.1 / max 14.5ms, 0% loss, stddev 1.7ms** (20 pings).
-- **Connection type: P2P trực tiếp** (`netbird status -d`: Connection type P2P).
-- Đường mạng: local `192.168.100.240` ↔ remote **public `116.104.177.173`** → **P2P qua internet (NAT hole-punch), KHÔNG same-LAN**. → giả định "5–20ms direct P2P" validated trên điều kiện internet thật.
-- **App-level echo round-trip** (single-byte TCP ping-pong, `TCP_NODELAY`, `echolat.py`, 280 mẫu): **p50 9.2ms · p99 17.8ms · min 7.5ms** (max 139ms = 1 outlier lẻ — WiFi/scheduling blip). Khớp ping RTT.
-- → **PATH 1 echo đo thật ≈ 9ms điển hình, ~18ms p99** = feels-local tuyệt đối; **xác nhận KHÔNG cần Mosh predictor**. GUI target 40–80ms rất dư (9 network + 7 encode + 1 decode + vsync).
+- **Connection type: direct P2P** (`netbird status -d`: Connection type P2P).
+- Network path: local `192.168.100.240` ↔ remote **public `116.104.177.173`** → **P2P over the internet (NAT hole-punch), NOT same-LAN**. → the "5–20ms direct P2P" assumption is validated under real internet conditions.
+- **App-level echo round-trip** (single-byte TCP ping-pong, `TCP_NODELAY`, `echolat.py`, 280 samples): **p50 9.2ms · p99 17.8ms · min 7.5ms** (max 139ms = a single stray outlier — WiFi/scheduling blip). Matches the ping RTT.
+- → **PATH 1 echo measured ≈ 9ms typical, ~18ms p99** = absolutely feels-local; **confirms the Mosh predictor is NOT needed**. The 40–80ms GUI target has ample headroom (9 network + 7 encode + 1 decode + vsync).
 
 Reproduce:
 ```

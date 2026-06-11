@@ -728,7 +728,7 @@ public static func selectedIndex(for tab: Tab) -> Int {
 ### 6.8 HW-validation needs (cannot be headless; flag for the cua/Maestro pass — do not block merge)
 1. **macOS chrome-header `DragGesture` coexisting with libghostty body `mouseDown`** — text selection inside the terminal body still works with the canvas present (the single riskiest interaction). Fallback if it fails: shrink the move grip to a small dedicated drag glyph in the header.
 2. macOS `scrollWheel` natural-scroll direction/sign + momentum on a real trackpad vs Finder.
-3. Live resize drag driving `GhosttyLayerBackedView.layout()` without retearing ("vỡ") — same path as the patched window-resize, new trigger.
+3. Live resize drag driving `GhosttyLayerBackedView.layout()` without retearing (the "vỡ"/"broken" symptom) — same path as the patched window-resize, new trigger.
 4. Cull → re-mount of a **video** surface when panned off-viewport and back (activate/deactivate + cap re-admission); confirm terminals (kept mounted) repaint on pan-back with no flash.
 5. `.position` inside the explicitly-sized content `ZStack` lays out absolutely + `.clipped()` window behaves on both platforms.
 6. Off-viewport video pane frees its cap slot (the `isPaneVisible` guard) — pan a live `.remoteGUI` pane off-screen, confirm a gated sibling promotes.

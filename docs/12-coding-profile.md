@@ -1,316 +1,320 @@
-# 12 — Coding Profile: Kiến trúc Hybrid (terminal text-path + GUI video-path)
+# 12 — Coding Profile: Hybrid Architecture (terminal text-path + GUI video-path)
 
 > **STATUS: CURRENT** (deep-dive). Front door + decisions: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
-> Doc này gồm 4 phần: **A. Kiến trúc hybrid** (§1–7) · **B. Terminal text-streaming — thiết kế** · **C. GUI video path** (§1–8) · **D. Roadmap & cập nhật docs**.
+> This doc has 4 parts: **A. Hybrid architecture** (§1–7) · **B. Terminal text-streaming — design** · **C. GUI video path** (§1–8) · **D. Roadmap & docs updates**.
 
-> Kết quả workflow nghiên cứu (34-agent, 6 dimension + verify + gap-fill) cho use-case **coding hàng ngày**. Tài liệu này **thay thế giả định "mọi cửa sổ đều video"** của các doc trước. Raw corpus: [research/hybrid-research-corpus.json](research/hybrid-research-corpus.json).
+> Output of the research workflow (34 agents, 6 dimensions + verify + gap-fill) for the **daily coding** use-case. This document **replaces the "every window goes over video" assumption** of the earlier docs. Raw corpus: [research/hybrid-research-corpus.json](research/hybrid-research-corpus.json).
 
-## TL;DR — quyết định kiến trúc
+## TL;DR — architecture decision
 
-App chia **hai đường dữ liệu tách biệt**, route theo từng cửa sổ/tính năng:
+The app splits into **two separate data paths**, routed per window/feature:
 
-| | **Terminal text-path** (như SSH/mosh) | **GUI video-path** |
+| | **Terminal text-path** (like SSH/mosh) | **GUI video-path** |
 |--|---|---|
-| Dùng cho | shell / vim / tmux / CLI | VS Code, Xcode, browser, app GUI khác |
-| Host | spawn login shell trong PTY (`forkpty`), stream byte stream | ScreenCaptureKit capture 1 cửa sổ |
-| Client render | **libghostty** full surface (Metal GPU — VVTerm stack), nét tuyệt đối | VideoToolbox decode → Metal (4:2:0, mờ nhẹ — chấp nhận) |
-| Input | **byte → PTY stdin** | CGEvent/Accessibility inject |
-| Bandwidth idle | ~0 | ~0 (skip `.idle`) |
+| Used for | shell / vim / tmux / CLI | VS Code, Xcode, browser, other GUI apps |
+| Host | spawn login shell in a PTY (`forkpty`), stream the byte stream | ScreenCaptureKit captures 1 window |
+| Client render | **libghostty** full surface (Metal GPU — the VVTerm stack), absolutely crisp | VideoToolbox decode → Metal (4:2:0, slightly soft — accepted) |
+| Input | **bytes → PTY stdin** | CGEvent/Accessibility inject |
+| Idle bandwidth | ~0 | ~0 (skip `.idle`) |
 
-⭐ **Insight lớn nhất:** terminal-path **bỏ qua hoàn toàn vấn đề input-injection của macOS** (không CGEvent, không TCC Accessibility, không activate-then-control, không AXUIElement mapping) — input chỉ là byte ghi vào PTY. → Đây là lý do **làm terminal-path TRƯỚC**: đơn giản hơn, nét hơn, né sạch lớp rủi ro lớn nhất của dự án (R1/R2 trong [08](08-risks-open-questions.md)).
+⭐ **Biggest insight:** the terminal path **completely bypasses macOS's input-injection problem** (no CGEvent, no TCC Accessibility, no activate-then-control, no AXUIElement mapping) — input is just bytes written to the PTY. → This is why we **build the terminal path FIRST**: simpler, crisper, and it cleanly sidesteps the project's biggest risk layer (R1/R2 in [08](08-risks-open-questions.md)).
 
-> Bài học prior-art: VS Code Remote, JetBrains Gateway (bỏ Projector pixel-streaming), Blink Shell — **không ai pixel-mirror đường code**; semantic/text streaming thắng. Pixel chỉ là fallback cho GUI window.
+> Prior-art lesson: VS Code Remote, JetBrains Gateway (dropped Projector pixel-streaming), Blink Shell — **nobody pixel-mirrors the code path**; semantic/text streaming wins. Pixels are only a fallback for GUI windows.
 
-
----
-
-## Kiến trúc hybrid: terminal text-path + GUI video-path
-
-> **Re-scope quan trọng.** Tài liệu này thay thế giả định "mọi cửa sổ đều đi qua video" của [01-architecture.md](01-architecture.md). Thiết kế mới chia thành **hai đường dữ liệu tách biệt về bản chất**, định tuyến theo từng cửa sổ / từng tính năng. Use-case là **coding hàng ngày** trên LAN — nơi phần lớn nội dung là terminal/shell text, và GUI editor (VS Code, Xcode) chỉ là một phần.
 
 ---
 
-### 1. Hai đường, một insight trung tâm
+## Hybrid architecture: terminal text-path + GUI video-path
 
-Mọi công cụ remote-coding thành công đều hội tụ về cùng một nhận định: **semantic/text streaming thắng pixel streaming cho đường code, và pixel streaming chỉ giữ lại làm fallback cho GUI window** nơi không có lựa chọn semantic. JetBrains bỏ Projector (serialize lệnh vẽ AWT qua WebSocket) để chuyển sang RD protocol thin-client vì cách stream lệnh-vẽ vẫn latency cao hơn một protocol semantic chuyên dụng (JetBrains nói thẳng: Projector có "higher UI latency and significantly more network bandwidth"). Setup iPad→Mac tốt nhất hiện nay ghép Blink Shell (mosh/SSH) cho đường text + VS Code Server (Remote Tunnels / code-server) cho đường IDE — **không bên nào pixel-mirror cả** ([JetBrains Gateway blog](https://blog.jetbrains.com/blog/2021/12/03/dive-into-jetbrains-gateway/), [blink.sh](https://blink.sh/), [code.visualstudio.com/docs/remote/vscode-server](https://code.visualstudio.com/docs/remote/vscode-server)).
+> **Important re-scope.** This document replaces the "every window goes over video" assumption of [01-architecture.md](01-architecture.md). The new design splits into **two fundamentally separate data paths**, routed per window / per feature. The use-case is **daily coding** over LAN — where most content is terminal/shell text, and the GUI editor (VS Code, Xcode) is only one part.
 
-Kiến trúc hybrid của PaneCast phản chiếu chính xác điều đó:
+---
+
+### 1. Two paths, one central insight
+
+Every successful remote-coding tool converges on the same observation: **semantic/text streaming beats pixel streaming for the code path, and pixel streaming is kept only as a fallback for GUI windows** where no semantic option exists. JetBrains abandoned Projector (serializing AWT draw commands over WebSocket) in favor of the thin-client RD protocol because streaming draw commands still has higher latency than a dedicated semantic protocol (JetBrains says it outright: Projector has "higher UI latency and significantly more network bandwidth"). The best iPad→Mac setup today pairs Blink Shell (mosh/SSH) for the text path with VS Code Server (Remote Tunnels / code-server) for the IDE path — **neither side pixel-mirrors** ([JetBrains Gateway blog](https://blog.jetbrains.com/blog/2021/12/03/dive-into-jetbrains-gateway/), [blink.sh](https://blink.sh/), [code.visualstudio.com/docs/remote/vscode-server](https://code.visualstudio.com/docs/remote/vscode-server)).
+
+PaneCast's hybrid architecture mirrors exactly that:
 
 | | **TERMINAL text-path** | **GUI video-path** |
 |--|------------------------|--------------------|
-| Mô hình | App **sở hữu shell** như ssh/mosh: host spawn login shell trong PTY, stream byte stream (VT escape sequences) | Mirror 1 cửa sổ GUI: capture → encode → stream → decode |
-| Capture | `forkpty()` / `openpty()` từ `<util.h>` (Darwin) | `ScreenCaptureKit` per-window |
-| "Encode" | Không có — byte stream thô qua dây | `VideoToolbox` HEVC 4:2:0 (Media Engine) |
-| Render client | **libghostty** full surface (Metal GPU, patch tự-own) | `VTDecompressionSession` → Metal |
-| Input | **Byte ghi thẳng vào PTY stdin** | `CGEventPostToPid` / SkyLight SPI inject |
-| Bandwidth idle | ~0 (PTY không sinh byte khi shell rảnh) | ~0 (`SCFrameStatus.idle` → skip encode) |
-| Chất lượng text | **Sắc nét by construction** | 4:2:0 (mờ nhẹ, đã chấp nhận đánh đổi) |
+| Model | The app **owns the shell** like ssh/mosh: host spawns a login shell in a PTY, streams the byte stream (VT escape sequences) | Mirror 1 GUI window: capture → encode → stream → decode |
+| Capture | `forkpty()` / `openpty()` from `<util.h>` (Darwin) | `ScreenCaptureKit` per-window |
+| "Encode" | None — raw byte stream over the wire | `VideoToolbox` HEVC 4:2:0 (Media Engine) |
+| Client render | **libghostty** full surface (Metal GPU, self-owned patch) | `VTDecompressionSession` → Metal |
+| Input | **Bytes written straight to PTY stdin** | `CGEventPostToPid` / SkyLight SPI inject |
+| Idle bandwidth | ~0 (the PTY produces no bytes while the shell is idle) | ~0 (`SCFrameStatus.idle` → skip encode) |
+| Text quality | **Crisp by construction** | 4:2:0 (slightly soft, trade-off accepted) |
 
-**Insight cốt lõi — và là phần thắng kiến trúc lớn nhất:** đường terminal **bỏ qua hoàn toàn vấn đề input-injection của macOS**. Trên đường video, để gõ phím vào cửa sổ host phải synthesize CGEvent rồi `event.postToPid(pid)`, mà việc này:
+**Core insight — and the single biggest architectural win:** the terminal path **completely bypasses macOS's input-injection problem**. On the video path, typing a key into a host window requires synthesizing a CGEvent and calling `event.postToPid(pid)`, which:
 
-- Đòi quyền **Accessibility** (`kTCCServicePostEvent`) do user cấp thủ công trong System Settings, và **app host phải KHÔNG sandbox** thì Accessibility mới hoạt động đầy đủ.
-- **Fail im lặng với app Chromium/Electron** (VS Code renderer, Chrome, Slack) vì renderer IPC filter từ chối event tổng hợp thiếu telemetry phần cứng. Mouse bị từ chối chặt hơn keyboard; right-click trên web content bị ép thành left-click.
-- Với app canvas/game engine (Blender, Unity) buộc phải dùng **activate-then-control** (raise cửa sổ ~1 frame rồi trả focus) — phá vỡ lời hứa "không cướp focus" của host ([trycua: inside-macos-window-internals](https://github.com/trycua/cua/blob/main/blog/inside-macos-window-internals.md)).
+- Requires the **Accessibility** permission (`kTCCServicePostEvent`), granted manually by the user in System Settings, and the **host app must NOT be sandboxed** for Accessibility to work fully.
+- **Fails silently with Chromium/Electron apps** (VS Code renderer, Chrome, Slack) because the renderer IPC filter rejects synthetic events lacking hardware telemetry. Mouse is rejected more strictly than keyboard; right-click on web content gets coerced into left-click.
+- For canvas/game-engine apps (Blender, Unity) you are forced into **activate-then-control** (raise the window for ~1 frame, then hand focus back) — breaking the host's "never steal focus" promise ([trycua: inside-macos-window-internals](https://github.com/trycua/cua/blob/main/blog/inside-macos-window-internals.md)).
 
-Đường terminal làm input **biến mất hết các ràng buộc đó**: keystroke chỉ là byte ghi vào file descriptor PTY master qua socket — **không CGEvent, không TCC Accessibility, không activate-then-control, không AXUIElement mapping**. Đây không phải tối ưu runtime mà là quyết định kiến trúc loại bỏ một lớp rủi ro cả về kỹ thuật lẫn phân phối (Accessibility gần như buộc phải phân phối ngoài Mac App Store).
+The terminal path makes all of those constraints **disappear**: a keystroke is just bytes written to the PTY master file descriptor over a socket — **no CGEvent, no TCC Accessibility, no activate-then-control, no AXUIElement mapping**. This is not a runtime optimization but an architectural decision that removes an entire risk layer, both technical and distribution-related (Accessibility all but forces distribution outside the Mac App Store).
 
-> ⚠️ **Lưu ý quan trọng về "input bypass" (corpus, claim_to_verify đã được verify một phần):** việc bypass này nằm ở **CLIENT side không bao giờ inject vào host OS** — client chỉ gửi byte qua transport, host ghi byte vào PTY master fd. Cần xác nhận bằng prototype rằng **không** có lời gọi CGEvent/Accessibility nào trong đường xử lý phím của client (libghostty write-callback → `NWConnection`). Dễ kiểm chứng vì client chỉ phát byte ra `NWConnection`.
+> ⚠️ **Important note on the "input bypass" (corpus, claim_to_verify partially verified):** the bypass lies in the fact that the **CLIENT side never injects into the host OS** — the client only sends bytes over the transport; the host writes those bytes into the PTY master fd. A prototype must confirm there is **no** CGEvent/Accessibility call anywhere in the client's key-handling path (libghostty write-callback → `NWConnection`). Easy to verify, since the client only emits bytes to `NWConnection`.
 
 ---
 
-### 2. Sơ đồ kiến trúc hybrid
+### 2. Hybrid architecture diagram
 
 ```
-┌──────────────────────────────── HOST (macOS, non-sandboxed) ────────────────────────────────┐
-│                                                                                              │
-│   ╔══════════════ TERMINAL PATH (như SSH/mosh) ═══════════╗   ╔════ GUI VIDEO PATH ═════════╗│
-│   ║                                                       ║   ║                             ║│
-│   ║  forkpty()/openpty()  ┌────────────┐                  ║   ║  ┌───────────────┐          ║│
-│   ║  spawn login shell ──▶│ PTY master │                  ║   ║  │ScreenCaptureKit│ 1 window ║│
-│   ║   (-zsh, TERM=        │     fd      │                 ║   ║  │ desktopIndep.  │          ║│
-│   ║   xterm-ghostty,     └─────┬──────┘                  ║   ║  └───────┬───────┘          ║│
-│   ║   LANG=…UTF-8)              │ DispatchIO(.stream)     ║   ║  status==.complete?         ║│
-│   ║                             │ read 128KB              ║   ║          │ (skip .idle)      ║│
-│   ║  ioctl(TIOCSWINSZ)◀── resize│                         ║   ║          ▼                  ║│
-│   ║                             ▼                         ║   ║  ┌──────────────┐ NALU      ║│
-│   ║                      raw VT bytes                     ║   ║  │ VideoToolbox │ HEVC 4:2:0 ║│
-│   ║                             │                         ║   ║  │ HW encode    │ no B-frame ║│
-│   ╚═════════════════════════════│═════════════════════════╝   ║  └──────┬───────┘          ║│
-│         ▲ keystroke bytes        │                            ║         │                   ║│
-│         │ → PTY stdin            │                            ║  CGEvent/SkyLight inject◀── ║│
-│   ┌─────┴───────────────────────▼──────────────────────────────────────│───────────────────╝│
-│   │            TRANSPORT  (Network.framework NWListener)                 │                     │
-│   │   1-byte msg type (0=PTY data, 1=resize, …) + 4-byte len + payload   │   video = UDP/QUIC   │
-│   │   terminal = TCP byte relay (LAN: HOL blocking negligible)           │   (lossy, per [03])  │
-│   └──────────────────────────────────────│──────────────────────────────────────────────────┘│
-└─────────────────────────────────────────│───────────────────────────────────────────────────┘
-                                           │  LAN (<1ms RTT)
-┌──────────────────────── CLIENT (macOS / iOS / iPadOS) ──────────────────────────────────────┐
-│   ┌─────────────────────────────────────▼──────────────────────────────────────────────┐    │
-│   │                      TRANSPORT (NWConnection) + demux theo msg type                  │    │
-│   └──────────┬───────────────────────────────────────────────────────┬──────────────────┘    │
-│              │ raw VT bytes                                            │ NALU                  │
-│              ▼                                                         ▼                       │
-│   ┌──────────────────────┐                                  ┌──────────────────┐              │
-│   │ libghostty surface    │  feed_data()                    │ VTDecompression  │              │
-│   │  emulator (Metal)     │                                 │  → Metal render  │              │
-│   │  TerminalViewDelegate │ ── send(source:data:) ──┐       └──────────────────┘              │
-│   └──────────────────────┘   keystroke → bytes      │                                          │
-│              ▲                                       └──▶ gửi thẳng về PTY stdin (KHÔNG inject) │
-│              │ hardware/soft keyboard                                                           │
-│   ┌──────────┴───────────┐                          ┌──────────────────┐                       │
-│   │ Input (UIKey/NSEvent) │                          │ Mouse/touch input │──▶ inject vào host    │
-│   └──────────────────────┘                          └──────────────────┘    (chỉ đường video)  │
-└────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────── HOST (macOS, non-sandboxed) ────────────────────────────────────┐
+│                                                                                                    │
+│   ╔════════════ TERMINAL PATH (like SSH/mosh) ════════════╗    ╔══════ GUI VIDEO PATH ═══════╗     │
+│   ║                                                       ║    ║                             ║     │
+│   ║ forkpty()/openpty()  ┌────────────┐                   ║    ║ ┌────────────────┐          ║     │
+│   ║ spawn login shell ──▶│ PTY master │                   ║    ║ │ScreenCaptureKit│ 1 window ║     │
+│   ║  (-zsh, TERM=        │     fd     │                   ║    ║ │ desktopIndep.  │          ║     │
+│   ║  xterm-ghostty,      └─────┬──────┘                   ║    ║ └───────┬────────┘          ║     │
+│   ║  LANG=...UTF-8)            │ DispatchIO(.stream)      ║    ║ status==.complete?          ║     │
+│   ║                            │ read 128KB               ║    ║         │ (skip .idle)      ║     │
+│   ║ ioctl(TIOCSWINSZ)◀── resize│                          ║    ║         ▼                   ║     │
+│   ║                            ▼                          ║    ║ ┌──────────────┐ NALU       ║     │
+│   ║                     raw VT bytes                      ║    ║ │ VideoToolbox │ HEVC 4:2:0 ║     │
+│   ║                            │                          ║    ║ │ HW encode    │ no B-frame ║     │
+│   ║                            │                          ║    ║ └──────┬───────┘            ║     │
+│   ║                            │                          ║    ║        │                    ║     │
+│   ║                            │                          ║    ║ CGEvent/SkyLight inject◀──  ║     │
+│   ╚════════════════════════════│══════════════════════════╝    ╚════════│════════════════════╝     │
+│         ▲ keystroke bytes      │                                        │                          │
+│         │ → PTY stdin          │                                        │                          │
+│   ┌─────┴──────────────────────▼────────────────────────────────────────│──────────────────────┐   │
+│   │           TRANSPORT  (Network.framework NWListener)                 │                      │   │
+│   │ 1-byte msg type (0=PTY data, 1=resize, ...) + 4-byte len + payload  │ video = UDP/QUIC     │   │
+│   │ terminal = TCP byte relay (LAN: HOL blocking negligible)            │ (lossy, per [03])    │   │
+│   └─────────────────────────────────────────│──────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────│──────────────────────────────────────────────────────┘
+                                              │  LAN (<1ms RTT)
+┌────────────────────────────────── CLIENT (macOS / iOS / iPadOS) ───────────────────────────────────┐
+│   ┌─────────────────────────────────────────▼──────────────────────────────────────────────────┐   │
+│   │                        TRANSPORT (NWConnection) + demux by msg type                        │   │
+│   └──────────┬─────────────────────────────────────────────────────────┬───────────────────────┘   │
+│              │ raw VT bytes                                            │ NALU                      │
+│              ▼                                                         ▼                           │
+│   ┌────────────────────────┐                                 ┌──────────────────┐                  │
+│   │ libghostty surface     │ feed_data()                     │ VTDecompression  │                  │
+│   │  emulator (Metal)      │                                 │  → Metal render  │                  │
+│   │  TerminalViewDelegate  │ ── send(source:data:) ──┐       └──────────────────┘                  │
+│   └──────────┬─────────────┘  keystroke → bytes      │                                             │
+│              ▲                                       └──▶ straight to PTY stdin (NOT injected)     │
+│              │ hardware/soft keyboard                                                              │
+│   ┌──────────┴────────────┐                             ┌───────────────────┐                      │
+│   │ Input (UIKey/NSEvent) │                             │ Mouse/touch input │──▶ inject into host  │
+│   └───────────────────────┘                             └───────────────────┘ (video path only)    │
+│                                                                                                    │
+└────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### 3. Data flow chi tiết từng đường
+### 3. Detailed data flow for each path
 
-### 3.1 TERMINAL text-path (đường chính)
+### 3.1 TERMINAL text-path (the primary path)
 
-**Host PTY → byte stream → libghostty.** Host spawn login shell trong PTY, đọc master fd (DispatchIO), stream raw VT bytes; keystroke ghi thẳng PTY stdin; resize `TIOCSWINSZ`+SIGWINCH. **Chi tiết API đầy đủ** (forkpty vs `openpty`+`posix_spawn`, DispatchIO, env vars + IUTF8, các corpus-correction) **ở Part B §"Terminal text-streaming — thiết kế" §1 bên dưới** — single source, không lặp ở đây.
+**Host PTY → byte stream → libghostty.** The host spawns a login shell in a PTY, reads the master fd (DispatchIO), and streams raw VT bytes; keystrokes are written straight to PTY stdin; resize via `TIOCSWINSZ`+SIGWINCH. **Full API details** (forkpty vs `openpty`+`posix_spawn`, DispatchIO, env vars + IUTF8, the corpus corrections) are **in Part B §"Terminal text-streaming — design" §1 below** — single source, not repeated here.
 
-**Render client — libghostty (full surface) + external-backend patch TỰ OWN. [QUYẾT ĐỊNH ĐÃ CHỐT]**
-Dùng **libghostty** (engine Ghostty) cho cả macOS + iOS — render Ghostty-class (Metal GPU, VT fidelity cao nhất, Kitty graphics, ligatures). Đây là stack VVTerm (open source) + Moshi/Echo/RootShell đang chạy production trên iOS, **đúng 1:1 use-case của ta** (client không có local PTY, render byte stream từ mạng).
+**Client renderer — libghostty (full surface) + SELF-OWNED external-backend patch. [DECISION FINAL]**
+Use **libghostty** (the Ghostty engine) for both macOS + iOS — Ghostty-class rendering (Metal GPU, highest VT fidelity, Kitty graphics, ligatures). This is the stack VVTerm (open source) + Moshi/Echo/RootShell run in production on iOS, **a 1:1 match for our use-case** (the client has no local PTY; it renders a byte stream from the network).
 
-> 🔑 **Cách tích hợp đã chốt: TỰ OWN minimal external-backend patch — KHÔNG depend fork người khác.** Cân nhắc đã cân: research khuyến nghị path SwiftTerm-engine+own-renderer (mature, không lib non), NHƯNG ta ưu tiên **render Ghostty-class** nên giữ full libghostty và **tự sở hữu patch nhỏ** thay vì depend fork. Lý do bỏ "depend fork": cả hai fork external-IO đều **proven trong app shipping** ([17 §2.2] — VVTerm trên `wiedymi/ghostty:custom-io`, Geistty trên `daiimus/ghostty:ios-external-backend`) nhưng đều **bus-factor 1**; `wiedymi:custom-io` thiếu resize callback, `daiimus` có **External.zig + resize callback + tests** (→ reference tốt hơn). Tự own patch (ref daiimus) = kiểm soát rebase, không phụ thuộc người khác.
+> 🔑 **Integration approach (settled): SELF-OWN a minimal external-backend patch — do NOT depend on someone else's fork.** The trade-off was weighed: research recommended the SwiftTerm-engine+own-renderer path (mature, no immature lib), BUT we prioritize **Ghostty-class rendering**, so we keep full libghostty and **own a small patch ourselves** instead of depending on a fork. Why "depend on a fork" was rejected: both external-IO forks are **proven in shipping apps** ([17 §2.2] — VVTerm on `wiedymi/ghostty:custom-io`, Geistty on `daiimus/ghostty:ios-external-backend`) but both are **bus-factor 1**; `wiedymi:custom-io` lacks a resize callback, `daiimus` has **External.zig + resize callback + tests** (→ the better reference). Owning the patch (ref daiimus) = we control rebases, no dependence on anyone else.
 
-**Data path (theo VVTerm, đọc source xác nhận):** network bytes (NetBird/WireGuard TCP) → `ghostty_surface_feed_data()` → VT parse + Metal render của Ghostty; keystroke ra qua `ghostty_surface_set_write_callback` (`use_custom_io = true`) → ghi `NWConnection` → PTY stdin host. Resize qua surface API → host `ioctl(TIOCSWINSZ)`.
+**Data path (per VVTerm, confirmed by reading the source):** network bytes (NetBird/WireGuard TCP) → `ghostty_surface_feed_data()` → Ghostty's VT parse + Metal render; keystrokes go out via `ghostty_surface_set_write_callback` (`use_custom_io = true`) → write to `NWConnection` → PTY stdin on the host. Resize via the surface API → host `ioctl(TIOCSWINSZ)`.
 
-> ✅ **Quyết định (verdict LẬT từ SwiftTerm sang libghostty, đã verify 2026).** Ba phản đối cũ với libghostty đều đổ:
-> - **iOS proven production** — VVTerm (`vivy-company/vvterm`, đọc source: `ghostty_surface_new` trên `GHOSTTY_PLATFORM_IOS`, **full surface** không phải vt), Moshi (getmoshi.app, Ghostty 1.3.1), Echo, RootShell (`kitknox/rootshell`). Mitchell Hashimoto endorse.
-> - **full libghostty feed network bytes được** — qua external/custom-io backend (xem "cái giá" #1). "Giả định tự sở hữu PTY" chỉ đúng với upstream main.
-> - **chưa có tagged release** — vẫn đúng (tới Ghostty 1.3.1) nhưng KHÔNG block production.
-> - **Dùng FULL surface, KHÔNG vt + own renderer** (lấy luôn Metal renderer Ghostty; vt + own renderer là đường Spectty đang đi và *chưa xong*).
+> ✅ **Decision (verdict FLIPPED from SwiftTerm to libghostty, verified 2026).** All three old objections to libghostty have collapsed:
+> - **iOS proven in production** — VVTerm (`vivy-company/vvterm`, source read: `ghostty_surface_new` on `GHOSTTY_PLATFORM_IOS`, **full surface**, not vt), Moshi (getmoshi.app, Ghostty 1.3.1), Echo, RootShell (`kitknox/rootshell`). Mitchell Hashimoto endorses.
+> - **full libghostty CAN be fed network bytes** — via the external/custom-io backend (see "the price" #1). The "assumes it owns the PTY" objection is only true of upstream main.
+> - **no tagged release yet** — still true (as of Ghostty 1.3.1) but does NOT block production.
+> - **Use the FULL surface, NOT vt + own renderer** (take Ghostty's Metal renderer as-is; vt + own renderer is the road Spectty is on, and it is *not finished*).
 >
-> **Công thức tự-own patch (references, KHÔNG depend trực tiếp):**
-> 1. **Patch external-backend (tự maintain) — feed-external-bytes là patch-only** (upstream `ghostty-org/ghostty` chỉ spawn PTY; iOS không spawn process được nên BẮT BUỘC in-process patch). Reference thiết kế: **`daiimus/ghostty ios-external-backend`** (`External.zig` ~470 LOC — **hoàn chỉnh hơn**: có resize callback + unit test, có ARCHITECTURE.md) hơn là `wiedymi/ghostty custom-io` (~chục dòng delta, thiếu resize, frozen). API: `use_custom_io` / `GHOSTTY_BACKEND_EXTERNAL` + `ghostty_surface_set_write_callback` + `ghostty_surface_feed_data`. **Code delta thực nhỏ (~hàng trăm LOC)** → own + rebase được.
-> 2. **Swift wrapper (tự viết, ref Lakr233):** `Lakr233/libghostty-spm` có `InMemoryTerminalSession` (`write: (Data)->Void` + `receive(_ data: Data)` + UIKit input/IME/accessory/Metal display link) — **map đúng use-case ta** → dùng làm reference cho wrapper của mình, không depend.
-> 3. **Build từ Zig (tự dựng, ref Lakr233 `build.yml`):** `zig build -Demit-xcframework=true` (Zig 0.14+, Xcode 15+) → slices ios-arm64 / ios-arm64-sim / macos → vendor `GhosttyKit.xcframework`, **pin upstream Ghostty commit SHA**, re-apply patch khi bump. Build-time lock, không phải runtime risk.
-> 4. **Bọc sau protocol `TerminalRendering`** (`feed(bytes)` + `onOutboundBytes`) để cô lập binding C-ABI.
+> **Self-owned patch recipe (references, NOT direct dependencies):**
+> 1. **External-backend patch (self-maintained) — feeding external bytes is patch-only** (upstream `ghostty-org/ghostty` only spawns PTYs; iOS cannot spawn processes, so an in-process patch is MANDATORY). Design reference: **`daiimus/ghostty ios-external-backend`** (`External.zig` ~470 LOC — **more complete**: resize callback + unit tests, has an ARCHITECTURE.md) over `wiedymi/ghostty custom-io` (~a dozen lines of delta, no resize, frozen). API: `use_custom_io` / `GHOSTTY_BACKEND_EXTERNAL` + `ghostty_surface_set_write_callback` + `ghostty_surface_feed_data`. **The real code delta is small (~hundreds of LOC)** → ownable + rebasable.
+> 2. **Swift wrapper (self-written, ref Lakr233):** `Lakr233/libghostty-spm` has `InMemoryTerminalSession` (`write: (Data)->Void` + `receive(_ data: Data)` + UIKit input/IME/accessory/Metal display link) — **maps exactly to our use-case** → use as a reference for our own wrapper, do not depend on it.
+> 3. **Build from Zig (self-hosted, ref Lakr233 `build.yml`):** `zig build -Demit-xcframework=true` (Zig 0.14+, Xcode 15+) → slices ios-arm64 / ios-arm64-sim / macos → vendor `GhosttyKit.xcframework`, **pin the upstream Ghostty commit SHA**, re-apply the patch on bumps. A build-time lock, not a runtime risk.
+> 4. **Wrap behind a `TerminalRendering` protocol** (`feed(bytes)` + `onOutboundBytes`) to isolate the C-ABI binding.
 >
-> **Cái giá chấp nhận:** né được **bus factor** (ta own patch), NHƯNG vẫn gánh **ABI-instability tax** — libghostty C-ABI chưa có stable release (`vt.h`/`ghostty.h`: "not a general purpose embedding API yet"), nên mỗi Ghostty bump phải **rebase patch + verify ABI** + tự nuôi **Zig toolchain**. Effort: patch nhỏ + pipeline ~**1–3 engineer-weeks** ban đầu, rồi rebase theo giờ khi bump.
+> **The accepted price:** we dodge the **bus factor** (we own the patch), BUT we still carry the **ABI-instability tax** — the libghostty C-ABI has no stable release (`vt.h`/`ghostty.h`: "not a general purpose embedding API yet"), so every Ghostty bump means **rebase the patch + verify the ABI** + maintaining our own **Zig toolchain**. Effort: small patch + pipeline ~**1–3 engineer-weeks** up front, then hours per rebase on bumps.
 >
-> ✅ **Open questions ĐÃ GIẢI (đọc source, đã verify — `research/resolve-open-questions-corpus.json`):**
-> - (a) **Alt-screen (1049/smcup/rmcup) chạy ĐÚNG** qua external-backend — cả 3 feed function đều về cùng VT parser của Ghostty (`processOutput → terminal_stream.nextSlice`). → **fullscreen Claude Code OK.**
-> - (b) **API external-backend OPAQUE** — KHÔNG expose parsed escape-stream / cell grid / cursor cho host (`ghostty.h` chỉ có `read_text`/`read_selection` snapshot + **action callbacks**: `COMMAND_FINISHED`+exit_code+duration, `PWD`, `SET_TITLE`, `PROGRESS_REPORT`, `CELL_SIZE`). → **Block/status UI làm qua action callbacks**, KHÔNG parse OSC raw client-side. (`libghostty-vt` riêng *có* grid API nhưng không bắc cầu sang `ghostty_surface_t`.)
-> - (c) **Keyboard: Ghostty tự encode** qua `ghostty_surface_key()` (đọc live kitty_flags/DECCKM) → **route MỌI phím qua đó**; ⚠️ **KHÔNG dùng bypass path của Lakr233** (`TerminalHardwareKeyRouter` hardcode VT100 protocol-blind cho phím nav khi inMemory+no-modifier — sai với remote PTY đang ở kitty/DECCKM mode).
-> - (d) **TCP chỉ cần buffering đơn giản** — in-order lossless; escape sequence có thể split qua 2 read → VT parser stateful giữ state qua read (không cần seq/ACK/dedup/reorder).
-> - (g) **Thread-safety: feed từ I/O thread riêng, serialize per-surface** (`processOutput` acquire `renderer_state.mutex`; safe concurrent trên surface KHÁC nhau, KHÔNG cùng surface). `@MainActor` của VVTerm là convention, không bắt buộc.
-> - **Lakr233 `InMemoryTerminalSession`** = wrapper trên patch `0002-host-managed-io.patch` (`GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED` + `write_buffer` + `process_exit`) → **dùng làm reference cho patch của ta** (cạnh daiimus External.zig).
+> ✅ **Open questions RESOLVED (source read, verified — `research/resolve-open-questions-corpus.json`):**
+> - (a) **Alt-screen (1049/smcup/rmcup) works CORRECTLY** through the external backend — all 3 feed functions land in the same Ghostty VT parser (`processOutput → terminal_stream.nextSlice`). → **fullscreen Claude Code OK.**
+> - (b) **The external-backend API is OPAQUE** — it does NOT expose the parsed escape-stream / cell grid / cursor to the host app (`ghostty.h` only has `read_text`/`read_selection` snapshots + **action callbacks**: `COMMAND_FINISHED`+exit_code+duration, `PWD`, `SET_TITLE`, `PROGRESS_REPORT`, `CELL_SIZE`). → **Build block/status UI on action callbacks**, do NOT parse raw OSC client-side. (The separate `libghostty-vt` *does* have a grid API but it does not bridge to `ghostty_surface_t`.)
+> - (c) **Keyboard: Ghostty encodes keys itself** via `ghostty_surface_key()` (reads live kitty_flags/DECCKM) → **route EVERY key through it**; ⚠️ **do NOT use Lakr233's bypass path** (`TerminalHardwareKeyRouter` hardcodes protocol-blind VT100 for nav keys when inMemory+no-modifier — wrong for a remote PTY in kitty/DECCKM mode).
+> - (d) **TCP needs only simple buffering** — in-order lossless; an escape sequence may be split across 2 reads → the stateful VT parser holds state across reads (no need for seq/ACK/dedup/reorder).
+> - (g) **Thread-safety: feed from a dedicated I/O thread, serialized per surface** (`processOutput` acquires `renderer_state.mutex`; concurrent feeds are safe across DIFFERENT surfaces, NOT on the same surface). VVTerm's `@MainActor` is a convention, not a requirement.
+> - **Lakr233's `InMemoryTerminalSession`** = a wrapper over patch `0002-host-managed-io.patch` (`GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED` + `write_buffer` + `process_exit`) → **use as a reference for our patch** (alongside daiimus External.zig).
 >
-> 🔬 **Còn lại CHỈ SPIKE mới biết (đo trên device):** (e) binary-size XCFramework Metal renderer trên iOS; (f) shell-integration OSC 133 e2e qua network. Các spike codec ở [§5/§6](#5-cấu-hình-videotoolbox-cho-màn-hình-tĩnh) + checklist Phase 0 cuối doc.
+> 🔬 **What ONLY A SPIKE can answer (measure on device):** (e) binary size of the XCFramework Metal renderer on iOS; (f) shell-integration OSC 133 e2e over the network. Codec spikes are at [§5/§6](#5-videotoolbox-configuration-for-static-screens) + the Phase 0 checklist at the end of this doc.
 
-> ⚠️ **Threading với libghostty (verify trên device thật):** gọi `ghostty_surface_feed_data` từ network receive loop — xác nhận thread-safety mà VVTerm dùng (queue nào gọi feed; Ghostty tự quản render thread + Metal/IOSurface). *Caveat data-race `feed()` của SwiftTerm KHÔNG còn áp dụng* (đã đổi sang libghostty).
+> ⚠️ **Threading with libghostty (verify on a real device):** calling `ghostty_surface_feed_data` from the network receive loop — confirm the thread-safety pattern VVTerm relies on (which queue calls feed; Ghostty manages its own render thread + Metal/IOSurface). *The SwiftTerm `feed()` data-race caveat NO LONGER applies* (we switched to libghostty).
 
-**Scrollback:** PTY thô không có scrollback. Đơn giản nhất là **client-side**: libghostty surface giữ ring buffer các dòng → server **stateless byte relay**, zero cost. Nếu cần replay khi reconnect, giữ server-side ring buffer raw bytes (~1MB), đơn giản hơn nhiều so với mosh-style state sync.
+**Scrollback:** a raw PTY has no scrollback. Simplest is **client-side**: the libghostty surface keeps a ring buffer of lines → the server stays a **stateless byte relay**, zero cost. If replay-on-reconnect is needed, keep a server-side ring buffer of raw bytes (~1MB) — far simpler than mosh-style state sync.
 
-### 3.2 GUI video-path (fallback cho cửa sổ GUI)
+### 3.2 GUI video-path (fallback for GUI windows)
 
-GUI video-path = **fallback** cho cửa sổ GUI (VS Code/Xcode...). **Chi tiết** (capture per-window, idle-skip `SCFrameStatus.idle`, dirtyRects, encode HEVC 4:2:0 constant-quality + caveats) ở **Part C §"GUI video path"** bên dưới + [02](02-host-capture-encode.md)/[09](09-codec-choice.md). Input inject (CGEvent/SkyLight — **chỉ đường này**) ở [05](05-input-window-control.md).
+GUI video-path = **fallback** for GUI windows (VS Code/Xcode...). **Details** (per-window capture, idle-skip `SCFrameStatus.idle`, dirtyRects, HEVC 4:2:0 constant-quality encode + caveats) are in **Part C §"GUI video path"** below + [02](02-host-capture-encode.md)/[09](09-codec-choice.md). Input injection (CGEvent/SkyLight — **this path only**) is in [05](05-input-window-control.md).
 
 ---
 
-### 4. Định tuyến per-window: terminal-first
+### 4. Per-window routing: terminal-first
 
-**Khuyến nghị: lean terminal-first.** Lý do có cơ sở từ corpus:
+**Recommendation: lean terminal-first.** Corpus-backed reasons:
 
-- **Thị phần & workflow.** VS Code chiếm 75.9% IDE nhưng Vim/Neovim cộng lại ~38% usage (Stack Overflow 2025); workflow terminal-centric (Neovim + tmux, CLI, git, build system) **chiếm phần lớn coding hàng ngày** trên Mac từ xa. Đường terminal phục vụ trực tiếp khối này.
-- **Đường terminal là nửa mạnh hơn về mọi mặt:** sidestep input-injection, near-zero bandwidth, text sắc nét by construction, API sạch (`apple_support: native`, `difficulty: low`).
-- **Đường video là nửa khó hơn:** giữ nguyên toàn bộ phức tạp CGEvent/SkyLight, private SPI, rủi ro phân phối, 4:2:0 mờ.
+- **Market share & workflow.** VS Code holds 75.9% of IDE share but Vim/Neovim combined are ~38% usage (Stack Overflow 2025); terminal-centric workflows (Neovim + tmux, CLI, git, build systems) **account for most daily coding** on a remote Mac. The terminal path serves this bloc directly.
+- **The terminal path is the stronger half in every respect:** sidesteps input-injection, near-zero bandwidth, text crisp by construction, clean APIs (`apple_support: native`, `difficulty: low`).
+- **The video path is the harder half:** it retains all the CGEvent/SkyLight complexity, private SPIs, distribution risk, and 4:2:0 softness.
 
-**Thứ tự ship đề xuất:**
+**Proposed ship order:**
 
-1. **v1 — PTY shell trước.** Rủi ro thấp, API sạch, bandwidth tí hon. Một `NWConnection` TCP byte-relay + framing 1-byte type.
-2. **v2 — video mirroring làm tính năng phụ "mirror this window"**, khởi động on-demand qua window picker (giống `SCShareableContent` list — cách an toàn & tường minh nhất). Chấp nhận giới hạn CGEvent với fallback minh bạch cho cửa sổ non-terminal.
+1. **v1 — PTY shell first.** Low risk, clean APIs, tiny bandwidth. One `NWConnection` TCP byte relay + 1-byte-type framing.
+2. **v2 — video mirroring as a secondary "mirror this window" feature**, started on demand via a window picker (like the `SCShareableContent` list — the safest & most explicit approach). Accept the CGEvent limitations, with a transparent fallback for non-terminal windows.
 
-**Cách user kích hoạt** (open question, hướng đề xuất): user chọn từ window picker là phương án an toàn & rõ ràng nhất; tránh auto-detect cửa sổ vì phân loại "đây là terminal hay GUI editor" không có API tin cậy. Trường hợp **terminal nhúng trong GUI** (integrated terminal của VS Code, Xcode console) là một open question — không nên cố tách, để nguyên trong đường video của cửa sổ đó.
+**How the user activates it** (open question, proposed direction): picking from a window picker is the safest & clearest option; avoid auto-detecting windows, because classifying "is this a terminal or a GUI editor" has no reliable API. The **terminal embedded in a GUI** case (VS Code's integrated terminal, Xcode console) is an open question — don't try to split it out; leave it inside that window's video path.
 
 ---
 
-### 5. Wire protocol cho đường terminal
+### 5. Wire protocol for the terminal path
 
-Đường terminal **không cần** sự phức tạp của mosh SSP (state-diff UDP) trên LAN. Với LAN RTT <1ms và loss <0.01%, TCP head-of-line blocking là **negligible** — raw byte streaming qua TCP cho hiệu năng ngang ngửa với ít công sức hơn nhiều. (Mosh chỉ tối ưu cho WAN lossy; SEND_INTERVAL_MIN=20ms của nó cap server→client ở 50fps, vô nghĩa cho LAN.)
+The terminal path does **not** need the complexity of mosh SSP (state-diff UDP) on a LAN. With LAN RTT <1ms and loss <0.01%, TCP head-of-line blocking is **negligible** — raw byte streaming over TCP delivers equivalent performance for far less effort. (Mosh is only optimized for lossy WAN; its SEND_INTERVAL_MIN=20ms caps server→client at 50fps, meaningless on a LAN.)
 
-**Framing đề xuất (ttyd-style, sạch cho multiplexing resize):**
+**Proposed framing (ttyd-style, clean for multiplexing resize):**
 
 ```
-1-byte msg type  (0 = PTY data, 1 = resize, …)
+1-byte msg type  (0 = PTY data, 1 = resize, ...)
 4-byte big-endian payload length
-payload bytes (PTY data thô / {cols,rows} cho resize)
+payload bytes (raw PTY data / {cols,rows} for resize)
 ```
 
-`NWConnection(.tcp)` qua Network.framework: `NWListener` trên host, `NWConnection` trên client; manual 4-byte length framing hoặc `NWProtocolFramer`. **Không TLS tầng app** — WireGuard encrypt ([13]). Idle efficiency tuyệt vời: PTY master fd không sinh byte khi shell rảnh → không byte nào chảy.
+`NWConnection(.tcp)` over Network.framework: `NWListener` on the host, `NWConnection` on the client; manual 4-byte length framing or `NWProtocolFramer`. **No app-layer TLS** — WireGuard encrypts ([13]). Idle efficiency is excellent: the PTY master fd produces no bytes while the shell is idle → no bytes flow.
 
-> **Local echo / prediction — KHÔNG cần trên LAN (verdict: confirmed).** Mosh prediction engine ở chế độ Adaptive **hoàn toàn dormant** khi SRTT < ~60ms: `srtt_trigger` chỉ bật khi `send_interval > 30ms`, mà trên LAN `send_interval` clamp về sàn 20ms. Nếu sau này muốn instant echo, phải dùng `DisplayPreference = Always` chủ động (verify từ `terminaloverlay.cc:434` + `transportsender.h:49`). Với PTY-over-LAN round-trip 1–5ms, echo từ server tới trước khi user kịp nhận ra → **bỏ prediction cho v1**. Prediction engine là transport-agnostic (chứng minh bởi nosshtradamus chạy nó trên SSH/TCP) nên có thể thêm sau nếu cần cho Wi-Fi.
-
----
-
-### 6. App Sandbox — ràng buộc kiến trúc cứng
-
-**Host component bắt buộc KHÔNG sandbox.** App sandboxed **không thể** `forkpty()`/`execvp()` spawn login shell tùy ý — sandbox chặn exec process ngoài không khai báo trong entitlement, và không có entitlement nào whitelist shell tùy ý. Pattern Apple chấp nhận:
-
-1. **Non-sandboxed app qua Developer ID** (ngoài Mac App Store) — đa số dev tool (Xcode, VS Code, iTerm2, Terminal.app) đều không sandbox. **Đây là cách chuẩn cho công cụ dev** và gỡ mọi ràng buộc trên forkpty/PTY/socket.
-2. Hoặc non-sandboxed LaunchAgent/XPC helper giao tiếp với app sandboxed.
-
-Vì đường video cũng đã cần non-sandboxed cho Accessibility/CGEvent (xem [06](06-permissions-distribution.md)), quyết định "host = non-sandboxed Developer ID app" thống nhất cả hai đường. Client viewer (chỉ render + gửi byte) **có thể** lên Mac App Store.
+> **Local echo / prediction — NOT needed on LAN (verdict: confirmed).** Mosh's prediction engine in Adaptive mode is **completely dormant** when SRTT < ~60ms: `srtt_trigger` only turns on when `send_interval > 30ms`, and on LAN `send_interval` clamps to the 20ms floor. If we ever want instant echo, we must explicitly use `DisplayPreference = Always` (verified from `terminaloverlay.cc:434` + `transportsender.h:49`). With a PTY-over-LAN round-trip of 1–5ms, the server echo arrives before the user can notice → **drop prediction for v1**. The prediction engine is transport-agnostic (proven by nosshtradamus running it over SSH/TCP), so it can be added later if Wi-Fi needs it.
 
 ---
 
-### 7. Tổng kết & việc cho roadmap
+### 6. App Sandbox — a hard architectural constraint
 
-| Tiêu chí | Terminal path | Video path |
+**The host component must NOT be sandboxed.** A sandboxed app **cannot** `forkpty()`/`execvp()` an arbitrary login shell — the sandbox blocks exec of external processes not declared in entitlements, and no entitlement whitelists an arbitrary shell. Apple-accepted patterns:
+
+1. **A non-sandboxed app via Developer ID** (outside the Mac App Store) — most dev tools (Xcode, VS Code, iTerm2, Terminal.app) are not sandboxed. **This is the standard route for dev tools** and removes every constraint on forkpty/PTY/sockets.
+2. Or a non-sandboxed LaunchAgent/XPC helper talking to a sandboxed app.
+
+Since the video path already needs non-sandboxed for Accessibility/CGEvent (see [06](06-permissions-distribution.md)), the decision "host = non-sandboxed Developer ID app" unifies both paths. The client viewer (render + send bytes only) **can** ship on the Mac App Store.
+
+---
+
+### 7. Summary & work for the roadmap
+
+| Criterion | Terminal path | Video path |
 |----------|---------------|------------|
-| Input-injection problem | **Biến mất hoàn toàn** | Còn nguyên (CGEvent + SkyLight SPI) |
-| TCC permission | Không cần (chỉ network) | Accessibility + Screen Recording |
-| Sandbox | Phải non-sandbox (spawn shell) | Phải non-sandbox (Accessibility) |
-| Bandwidth idle | ~0 | ~0 (nếu guard `.complete`) |
-| Độ nét text | Sắc nét tuyệt đối | 4:2:0 mờ nhẹ (chấp nhận) |
-| Độ khó / rủi ro | low / native | medium / private SPI |
-| Thư viện chủ lực | **libghostty** (full surface, patch tự-own) + host PTY bridge | ScreenCaptureKit + VideoToolbox |
+| Input-injection problem | **Disappears entirely** | Remains in full (CGEvent + SkyLight SPI) |
+| TCC permission | None needed (network only) | Accessibility + Screen Recording |
+| Sandbox | Must be non-sandboxed (spawns a shell) | Must be non-sandboxed (Accessibility) |
+| Idle bandwidth | ~0 | ~0 (when guarding `.complete`) |
+| Text sharpness | Absolutely crisp | 4:2:0 slightly soft (accepted) |
+| Difficulty / risk | low / native | medium / private SPI |
+| Key library | **libghostty** (full surface, self-owned patch) + host PTY bridge | ScreenCaptureKit + VideoToolbox |
 
-**Việc cho Phase 1 (terminal-first):**
-- [ ] Host helper non-sandboxed: `openpty()` + `posix_spawn(POSIX_SPAWN_SETSID)` + `login_tty()`, setup env (`TERM`/`LANG`/`IUTF8`), `DispatchIO` read loop, `TIOCSWINSZ` resize.
-- [ ] Wire protocol 1-byte-type + 4-byte-len qua `NWConnection` TCP; resize message riêng.
-- [ ] Client: **libghostty** full surface — **patch external-backend tự maintain** (ref `daiimus/ghostty` External.zig), build `GhosttyKit.xcframework` (zig), vendor + pin upstream SHA; `ghostty_surface_feed_data` ← network, write-callback → PTY stdin host, resize → surface API.
-- [ ] Xác nhận bằng prototype: **không** có CGEvent/Accessibility call nào trong đường phím client.
-- [ ] (v2) Window picker để chọn cửa sổ GUI → kích hoạt video-path on-demand.
+**Work for Phase 1 (terminal-first):**
+- [ ] Non-sandboxed host helper: `openpty()` + `posix_spawn(POSIX_SPAWN_SETSID)` + `login_tty()`, env setup (`TERM`/`LANG`/`IUTF8`), `DispatchIO` read loop, `TIOCSWINSZ` resize.
+- [ ] Wire protocol: 1-byte type + 4-byte length over `NWConnection` TCP; separate resize message.
+- [ ] Client: **libghostty** full surface — **self-maintained external-backend patch** (ref `daiimus/ghostty` External.zig), build `GhosttyKit.xcframework` (zig), vendor + pin upstream SHA; `ghostty_surface_feed_data` ← network, write-callback → host PTY stdin, resize → surface API.
+- [ ] Confirm via prototype: **no** CGEvent/Accessibility call anywhere in the client key path.
+- [ ] (v2) Window picker to choose a GUI window → activate the video path on demand.
 
 ---
 
 
-## Terminal text-streaming (SSH/mosh-class) — thiết kế
+## Terminal text-streaming (SSH/mosh-class) — design
 
-Đây là **nửa mạnh hơn** của kiến trúc hybrid. Khác với GUI window path (ScreenCaptureKit → HEVC → CGEvent inject), terminal path **sở hữu shell** giống `ssh`/`mosh`: host spawn login shell trong một POSIX pseudo-terminal, stream **raw byte stream** (VT escape sequences) về client, và keystroke được ghi **thẳng vào PTY stdin**. Hệ quả kiến trúc lớn nhất: path này **né hoàn toàn giới hạn CGEvent/Accessibility injection của macOS** — input chỉ là bytes ghi vào một file descriptor, không có synthetic keyboard event, không cần TCC `kTCCServicePostEvent`, không activate-then-control. Text crisp by construction, bandwidth cực nhỏ (idle = 0 byte), không codec artifact.
+This is the **stronger half** of the hybrid architecture. Unlike the GUI window path (ScreenCaptureKit → HEVC → CGEvent inject), the terminal path **owns the shell** like `ssh`/`mosh`: the host spawns a login shell in a POSIX pseudo-terminal, streams the **raw byte stream** (VT escape sequences) to the client, and keystrokes are written **straight to PTY stdin**. The biggest architectural consequence: this path **entirely sidesteps macOS's CGEvent/Accessibility injection limits** — input is just bytes written to a file descriptor, no synthetic keyboard events, no TCC `kTCCServicePostEvent`, no activate-then-control. Text is crisp by construction, bandwidth is tiny (idle = 0 bytes), no codec artifacts.
 
 ---
 
 ### 1. Host PTY bridge — exact APIs
 
-#### 1.1 Cấp phát PTY: `forkpty()` vs `openpty()` + `posix_spawn`
+#### 1.1 PTY allocation: `forkpty()` vs `openpty()` + `posix_spawn`
 
-Có hai con đường, cả hai đều native Darwin (`<util.h>`):
+There are two routes, both native Darwin (`<util.h>`):
 
-**`forkpty()` — one-call PTY + fork + exec.** `forkpty(&master, NULL, NULL, &winsize)` atomically cấp phát cặp PTY, gọi `fork()`, gọi `login_tty()` ở child, trả về master FD ở parent; child `execvp()` login shell. Đây là path production của SwiftTerm (`Pty.swift` → `PseudoTerminalHelpers.fork(andExec:)`) — master FD trở thành kênh I/O hai chiều duy nhất cho toàn bộ terminal ([SwiftTerm/Pty.swift](https://github.com/migueldeicaza/SwiftTerm/blob/main/Sources/SwiftTerm/Pty.swift)).
+**`forkpty()` — one-call PTY + fork + exec.** `forkpty(&master, NULL, NULL, &winsize)` atomically allocates the PTY pair, calls `fork()`, calls `login_tty()` in the child, and returns the master FD in the parent; the child `execvp()`s the login shell. This is SwiftTerm's production path (`Pty.swift` → `PseudoTerminalHelpers.fork(andExec:)`) — the master FD becomes the single bidirectional I/O channel for the entire terminal ([SwiftTerm/Pty.swift](https://github.com/migueldeicaza/SwiftTerm/blob/main/Sources/SwiftTerm/Pty.swift)).
 
-> ⚠️ **CORRECTION — "forkpty() không an toàn từ Swift" (verified):** Claim này **directionally đúng nhưng bị nói quá**. Quinn (Apple DTS, [forum thread/747499](https://developer.apple.com/forums/thread/747499)) xác nhận: nguy hiểm thật sự là chạy code Swift/ObjC/libdispatch **trong child process sau fork() trước khi exec()** — ObjC runtime crash guard (`objc_initializeAfterForkError`, từ macOS 10.13) sẽ kill child nếu một `+initialize` đang chạy ở thread khác lúc fork. **Bản thân lời gọi `forkpty()` ở parent KHÔNG nguy hiểm.** SwiftTerm gọi `forkpty()` trực tiếp từ Swift trong production (Secure Shellfish, La Terminal, CodeEdit) không có crash, vì nó tuân thủ pattern fork-then-exec-immediately: chuẩn bị mọi C string bằng `strdup()` **trước** fork, rồi trong child chỉ gọi `chdir()` + `execve()` + `_exit()` — thuần POSIX, không có Swift runtime sau fork. Vấn đề này **không liên quan** đến Swift 5.9/6 concurrency model (actors/async-await); không có API mới nào nới lỏng ràng buộc. Để loại bỏ hoàn toàn class nguy hiểm, dùng path thứ hai.
+> ⚠️ **CORRECTION — "forkpty() is unsafe to call from Swift" (verified):** this claim is **directionally right but overstated**. Quinn (Apple DTS, [forum thread/747499](https://developer.apple.com/forums/thread/747499)) confirms: the real danger is running Swift/ObjC/libdispatch code **in the child process after fork() and before exec()** — the ObjC runtime crash guard (`objc_initializeAfterForkError`, since macOS 10.13) kills the child if a `+initialize` was running on another thread at fork time. **The `forkpty()` call itself, in the parent, is NOT dangerous.** SwiftTerm calls `forkpty()` directly from Swift in production (Secure Shellfish, La Terminal, CodeEdit) without crashes, because it follows the fork-then-exec-immediately pattern: prepare every C string with `strdup()` **before** the fork, then in the child only call `chdir()` + `execve()` + `_exit()` — pure POSIX, no Swift runtime after fork. This issue is **unrelated** to the Swift 5.9/6 concurrency model (actors/async-await); no new API relaxes the constraint. To eliminate the hazard class entirely, use the second route.
 
-**`openpty()` + `posix_spawn` — workaround được Apple khuyến nghị.** `openpty(&master, &slave, NULL, &termp, &winp)` cấp cặp PTY **không fork**; child launch qua `posix_spawn` với `posix_spawn_file_actions_t` redirect stdin/stdout/stderr về slave FD, `POSIX_SPAWN_SETSID` tạo session mới, và `login_tty(slave)` gọi trong pre-spawn configurator. Pattern này **không bao giờ gọi fork() từ Swift** nên loại bỏ hẳn ObjC runtime lock hazard — đây chính là điều LLVM sanitizer_common làm ([D65253](https://reviews.llvm.org/D65253)) và là hướng SwiftTerm đang migrate sang qua `swift-subprocess`.
+**`openpty()` + `posix_spawn` — the workaround Apple recommends.** `openpty(&master, &slave, NULL, &termp, &winp)` allocates the PTY pair **without forking**; the child is launched via `posix_spawn` with a `posix_spawn_file_actions_t` redirecting stdin/stdout/stderr to the slave FD, `POSIX_SPAWN_SETSID` creating a new session, and `login_tty(slave)` called in a pre-spawn configurator. This pattern **never calls fork() from Swift**, eliminating the ObjC runtime lock hazard altogether — it is exactly what LLVM sanitizer_common does ([D65253](https://reviews.llvm.org/D65253)) and the direction SwiftTerm is migrating toward via `swift-subprocess`.
 
-> ✅ **VERIFIED — `POSIX_SPAWN_SETSID` qua `preSpawnProcessConfigurator` là API production thật** trong `swiftlang/swift-subprocess` (lưu ý: repo canonical là `swiftlang/`, **không** phải `apple/swift-subprocess`). `PlatformOptions.preSpawnProcessConfigurator` là `public`, không guard, có test live (`testSubprocessPlatformOptionsProcessConfiguratorUpdateSpawnAttr`). Tuy nhiên trong **SwiftTerm hiện tại**, path Subprocess bị guard `#if false //canImport(Subprocess)` (5 chỗ trong `LocalProcess.swift`) → **chưa active**; default vẫn là `startProcessWithForkpty`.
+> ✅ **VERIFIED — `POSIX_SPAWN_SETSID` via `preSpawnProcessConfigurator` is a real production API** in `swiftlang/swift-subprocess` (note: the canonical repo is `swiftlang/`, **not** `apple/swift-subprocess`). `PlatformOptions.preSpawnProcessConfigurator` is `public`, unguarded, with a live test (`testSubprocessPlatformOptionsProcessConfiguratorUpdateSpawnAttr`). However, in **current SwiftTerm** the Subprocess path is guarded `#if false //canImport(Subprocess)` (5 places in `LocalProcess.swift`) → **not active yet**; the default is still `startProcessWithForkpty`.
 
-> ✅ **VERIFIED — `posix_openpt()` KHÔNG "broken" trên macOS** (claim bị refuted). Claim gốc gán nhầm thread (thực ra là [thread/734230](https://developer.apple.com/forums/thread/734230), không phải 688534) và mô tả sai. Sự thật: `posix_openpt()` hoạt động đầy đủ trên macOS 14/15; `openpty()` của Apple **gọi `posix_openpt()` bên trong** (Libc `util/pty.c:78`). Giới hạn thực tế **rất hẹp**: gọi `fcntl(masterFd, F_SETFL, O_NONBLOCK)` sẽ fail `EINVAL` **nếu slave chưa được open** — fix là open slave trước khi set non-blocking trên master. `openpty()` né được vì nó tự open slave.
+> ✅ **VERIFIED — `posix_openpt()` is NOT "broken" on macOS** (claim refuted). The original claim misattributed the thread (it is actually [thread/734230](https://developer.apple.com/forums/thread/734230), not 688534) and described it wrong. The truth: `posix_openpt()` works fully on macOS 14/15; Apple's `openpty()` **calls `posix_openpt()` internally** (Libc `util/pty.c:78`). The real limitation is **very narrow**: calling `fcntl(masterFd, F_SETFL, O_NONBLOCK)` fails with `EINVAL` **if the slave has not been opened yet** — the fix is to open the slave before setting non-blocking on the master. `openpty()` avoids it because it opens the slave itself.
 
-#### 1.2 Async read trên master FD: `DispatchIO`
+#### 1.2 Async reads on the master FD: `DispatchIO`
 
-Sau khi có master FD, wrap trong `DispatchIO(type: .stream, fileDescriptor: masterFd)`:
+Once you have the master FD, wrap it in `DispatchIO(type: .stream, fileDescriptor: masterFd)`:
 
 ```swift
 let io = DispatchIO(type: .stream, fileDescriptor: masterFd, queue: readQueue) { err in
-    close(masterFd)              // ⚠️ close trong cleanupHandler, KHÔNG trong deinit (tránh EV_VANISHED crash)
+    close(masterFd)              // ⚠️ close in the cleanupHandler, NOT in deinit (avoids the EV_VANISHED crash)
 }
 io.setLimit(lowWater: 1)
-io.setLimit(highWater: 131_072)  // 128 KB — hấp thụ burst lớn (cat file to)
-// chain read trong completion handler; coalesce theo timeslice 4ms trước khi dispatch lên transport
+io.setLimit(highWater: 131_072)  // 128 KB — absorbs large bursts (cat of a big file)
+// chain reads in the completion handler; coalesce on a 4ms timeslice before dispatching to the transport
 ```
 
-SwiftTerm dùng `pendingChunks` queue với **timeslice 4ms** (`pendingTimeSliceNs = 4_000_000`) để gộp burst, `readSize = 128*1024`, compact khi vượt `pendingChunkFlushThreshold = 32` chunks. Theo dõi shell exit không poll bằng `DispatchSource.makeProcessSource(identifier: shellPid, eventMask: .exit)` rồi `waitpid(shellPid, &n, WNOHANG)` ([SwiftTerm/LocalProcess.swift](https://github.com/migueldeicaza/SwiftTerm/blob/main/Sources/SwiftTerm/LocalProcess.swift)).
+SwiftTerm uses a `pendingChunks` queue with a **4ms timeslice** (`pendingTimeSliceNs = 4_000_000`) to coalesce bursts, `readSize = 128*1024`, compacting once past `pendingChunkFlushThreshold = 32` chunks. Track shell exit without polling via `DispatchSource.makeProcessSource(identifier: shellPid, eventMask: .exit)` then `waitpid(shellPid, &n, WNOHANG)` ([SwiftTerm/LocalProcess.swift](https://github.com/migueldeicaza/SwiftTerm/blob/main/Sources/SwiftTerm/LocalProcess.swift)).
 
 #### 1.3 Resize: `TIOCSWINSZ` + `SIGWINCH`
 
-Khi client báo kích thước mới, gọi `ioctl(masterFd, TIOCSWINSZ, &winsize)` trên master FD; kernel gửi `SIGWINCH` tới foreground process group, shell + vim/tmux re-query `TIOCGWINSZ` và reflow. Struct `winsize { ws_col, ws_row, ws_xpixel=0, ws_ypixel=0 }`. Trên macOS hằng `TIOCSWINSZ` typed là `Int32` (Linux cần cast `UInt`). Đây là điều SwiftTerm `setWinSize()` và mosh-server làm khi nhận `Resize` action ([SwiftTerm/Pty.swift:119](https://github.com/migueldeicaza/SwiftTerm/blob/main/Sources/SwiftTerm/Pty.swift), [mosh-server.cc](https://github.com/mobile-shell/mosh/blob/master/src/frontend/mosh-server.cc)). Bandwidth ~0 — resize là control event hiếm.
+When the client reports a new size, call `ioctl(masterFd, TIOCSWINSZ, &winsize)` on the master FD; the kernel sends `SIGWINCH` to the foreground process group, and the shell + vim/tmux re-query `TIOCGWINSZ` and reflow. Struct `winsize { ws_col, ws_row, ws_xpixel=0, ws_ypixel=0 }`. On macOS the `TIOCSWINSZ` constant is typed `Int32` (Linux needs a `UInt` cast). This is what SwiftTerm's `setWinSize()` and mosh-server do on receiving a `Resize` action ([SwiftTerm/Pty.swift:119](https://github.com/migueldeicaza/SwiftTerm/blob/main/Sources/SwiftTerm/Pty.swift), [mosh-server.cc](https://github.com/mobile-shell/mosh/blob/master/src/frontend/mosh-server.cc)). Bandwidth ~0 — resize is a rare control event.
 
-#### 1.4 Login shell setup — env vars bắt buộc
+#### 1.4 Login shell setup — required env vars
 
-Set trước `execvp` ở child:
+Set before `execvp` in the child:
 
-| Biến | Giá trị | Lý do |
+| Variable | Value | Reason |
 |------|---------|-------|
-| `TERM` | `xterm-ghostty` (fallback `xterm-256color` nếu gặp paste bug #54700 — xem [14]) | khớp libghostty client + kitty keyboard |
-| `LANG` | `en_US.UTF-8` | **critical** — thiếu thì vi/ncurses phát ISO 2022 sequences |
+| `TERM` | `xterm-ghostty` (fallback `xterm-256color` if paste bug #54700 shows up — see [14]) | matches the libghostty client + kitty keyboard |
+| `LANG` | `en_US.UTF-8` | **critical** — without it vi/ncurses emit ISO 2022 sequences |
 | `COLORTERM` | `truecolor` | true-color terminal |
-| `NCURSES_NO_UTF8_ACS` | `1` | ép ncurses dùng UTF-8 box-drawing thay vì VT100 line-drawing |
-| termios `c_iflag` | `\|= IUTF8` | backspace-over-multibyte đúng |
-| `argv[0]` | prepend `-` (vd `-zsh`) | login shell → source `.zprofile`/`.zshrc` |
+| `NCURSES_NO_UTF8_ACS` | `1` | forces ncurses to use UTF-8 box-drawing instead of VT100 line-drawing |
+| termios `c_iflag` | `\|= IUTF8` | correct backspace-over-multibyte |
+| `argv[0]` | prepend `-` (e.g. `-zsh`) | login shell → sources `.zprofile`/`.zshrc` |
 
-**KHÔNG** forward `PATH` mù từ server process. Mirror `LOGNAME/USER/HOME/DISPLAY` từ parent. Reference: `SwiftTerm.Terminal.getEnvironmentVariables()`; mosh thêm `unset STY` (chống GNU screen tưởng bị nested).
+Do **NOT** blindly forward `PATH` from the server process. Mirror `LOGNAME/USER/HOME/DISPLAY` from the parent. Reference: `SwiftTerm.Terminal.getEnvironmentVariables()`; mosh additionally does `unset STY` (so GNU screen doesn't think it is nested).
 
-> ✅ **VERIFIED — `IUTF8` có sẵn trên Darwin.** XNU `bsd/sys/termios.h:133` định nghĩa `IUTF8 = 0x00004000` dưới guard `#if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)` → hiện diện dưới mọi build non-strict-POSIX. Lưu ý: flag chỉ ảnh hưởng **canonical-mode VERASE**; trong raw PTY mode (terminal mode điển hình) nó vô tác dụng — nhưng vẫn nên set cho đúng.
+> ✅ **VERIFIED — `IUTF8` exists on Darwin.** XNU `bsd/sys/termios.h:133` defines `IUTF8 = 0x00004000` under the guard `#if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)` → present in any non-strict-POSIX build. Note: the flag only affects **canonical-mode VERASE**; in raw PTY mode (the typical terminal mode) it has no effect — but set it anyway for correctness.
 
-#### 1.5 App Sandbox — quyết định kiến trúc, không phải runtime
+#### 1.5 App Sandbox — an architecture decision, not a runtime one
 
-Một app sandboxed **không thể** `forkpty()`/`execvp()` shell tùy ý — sandbox chặn exec process không khai báo trong entitlements, và **không có entitlement nào** whitelist arbitrary shell. Các pattern được Apple chấp nhận:
+A sandboxed app **cannot** `forkpty()`/`execvp()` an arbitrary shell — the sandbox blocks exec of processes not declared in entitlements, and **no entitlement** whitelists an arbitrary shell. Apple-accepted patterns:
 
-1. **App non-sandboxed phân phối qua Developer ID** (ngoài Mac App Store) — chuẩn cho dev tool (Xcode, VS Code, iTerm2, Terminal.app đều **không** sandboxed). **Khuyến nghị cho host component.**
-2. LaunchDaemon/LaunchAgent helper non-sandboxed, giao tiếp với app sandboxed qua XPC hoặc local socket.
-3. Privileged helper qua `SMJobBless`/`SMAppService`.
+1. **A non-sandboxed app distributed via Developer ID** (outside the Mac App Store) — standard for dev tools (Xcode, VS Code, iTerm2, Terminal.app are all **not** sandboxed). **Recommended for the host component.**
+2. A non-sandboxed LaunchDaemon/LaunchAgent helper, talking to the sandboxed app over XPC or a local socket.
+3. A privileged helper via `SMJobBless`/`SMAppService`.
 
-Kết luận: **host component phải non-sandboxed**. Mac App Store distribution **không tương thích** với arbitrary shell spawning qua `forkpty`. Bật **Hardened Runtime** (`codesign -o runtime`) cho helper để chặn dylib injection (`DYLD_INSERT_LIBRARIES`); helper spawn PTY **không cần** entitlement đặc biệt — nhưng **không được** thêm `com.apple.security.cs.disable-library-validation`. Chạy shell **dưới logged-in user, không phải root**; shell binary cố định (`$SHELL` từ `/etc/passwd`), **không cho client chỉ định** path/env (bài học từ ET CVE GHSA-hxg8-4r3q-p9rv: client-supplied path đi vào privileged file op → escalation).
+Conclusion: **the host component must be non-sandboxed**. Mac App Store distribution is **incompatible** with arbitrary shell spawning via `forkpty`. Enable **Hardened Runtime** (`codesign -o runtime`) on the helper to block dylib injection (`DYLD_INSERT_LIBRARIES`); the PTY-spawning helper needs **no** special entitlement — but must **not** add `com.apple.security.cs.disable-library-validation`. Run the shell **as the logged-in user, not root**; pin the shell binary (`$SHELL` from `/etc/passwd`), and **never let the client specify** path/env (lesson from ET CVE GHSA-hxg8-4r3q-p9rv: a client-supplied path reaching a privileged file op → escalation).
 
 ---
 
-### 2. Transport — chọn reliable TCP, không mosh-SSP UDP
+### 2. Transport — choose reliable TCP, not mosh-SSP UDP
 
-Đây là quyết định kiến trúc trọng yếu và corpus rất rõ: **trên LAN, dùng plain TCP byte relay qua Network.framework. KHÔNG port mosh SSP.**
+This is a key architectural decision and the corpus is unambiguous: **on LAN, use a plain TCP byte relay over Network.framework. Do NOT port mosh SSP.**
 
 | | TCP byte relay (ET-style) | mosh SSP (UDP state-sync) |
 |--|---------------------------|---------------------------|
-| Đơn vị | raw PTY bytes verbatim | terminal **state diff** (framebuffer) |
-| Loss tolerance | TCP lo (LAN loss ~0) | idempotent datagram, bỏ qua loss |
-| Crypto | TLS 1.3 (CryptoKit/Security) sẵn | **AES-128-OCB3** |
-| Server emulator | **không cần** (stateless relay) | **phải chạy full emulator** (`Terminal::Complete`) |
-| Code | tối thiểu | phức tạp (state machine, fragmentation, fec) |
-| Phù hợp | **LAN <1ms RTT** | lossy WAN |
+| Unit | raw PTY bytes verbatim | terminal **state diff** (framebuffer) |
+| Loss tolerance | TCP handles it (LAN loss ~0) | idempotent datagrams, tolerates loss |
+| Crypto | TLS 1.3 (CryptoKit/Security) ready-made | **AES-128-OCB3** |
+| Server emulator | **not needed** (stateless relay) | **must run a full emulator** (`Terminal::Complete`) |
+| Code | minimal | complex (state machine, fragmentation, fec) |
+| Fit | **LAN <1ms RTT** | lossy WAN |
 
-Lý do dứt khoát: trên LAN, RTT điển hình **<1ms** và loss <0.01% → TCP head-of-line blocking **không đáng kể**, mosh-style frame-skipping **không cho lợi ích gì** so với TCP raw streaming, trong khi độ phức tạp implementation lớn hơn nhiều. Mosh SSP tối ưu cho 29% packet loss link (SSH 16.8s → SSP 0.33s, 50× — [mosh paper](https://mosh.org/mosh-paper.pdf)) — một tình huống **không tồn tại** trên LAN dây.
+The decisive reason: on LAN, typical RTT is **<1ms** with loss <0.01% → TCP head-of-line blocking is **insignificant**, mosh-style frame-skipping **buys nothing** over raw TCP streaming, while the implementation complexity is far higher. Mosh SSP is optimized for a 29% packet-loss link (SSH 16.8s → SSP 0.33s, 50× — [mosh paper](https://mosh.org/mosh-paper.pdf)) — a situation that **does not exist** on wired LAN.
 
-> ⚠️ **CORRECTION — AES-128-OCB không có trong CryptoKit** (verified, confirmed). Nếu vì lý do nào đó muốn port SSP, biết rằng CryptoKit **chỉ** expose `AES.GCM` và `ChaChaPoly`, **không** có `AES.OCB`. CommonCrypto cũng **không** expose OCB như một mode (không có `kCCModeOCB`). Ba lựa chọn: (1) port `ocb_internal.cc` của mosh dùng CommonCrypto chỉ làm raw AES block cipher backend (đúng cách mosh build trên macOS), (2) link OpenSSL riêng dùng `EVP_aes_128_ocb()`, hoặc (3) thay OCB bằng AES-GCM + CryptoKit native, chấp nhận wire-format khác mosh. Vì ta **không** dùng SSP, điểm này chỉ là cảnh báo — dùng **TLS 1.3 / AES-GCM native** trên TCP.
+> ⚠️ **CORRECTION — AES-128-OCB is not in CryptoKit** (verified, confirmed). If for some reason you wanted to port SSP, know that CryptoKit exposes **only** `AES.GCM` and `ChaChaPoly`, with **no** `AES.OCB`. CommonCrypto does **not** expose OCB as a mode either (no `kCCModeOCB`). Three options: (1) port mosh's `ocb_internal.cc` using CommonCrypto purely as the raw AES block-cipher backend (exactly how mosh builds on macOS), (2) link a separate OpenSSL and use `EVP_aes_128_ocb()`, or (3) replace OCB with AES-GCM + native CryptoKit, accepting a wire format different from mosh. Since we do **not** use SSP, this is only a warning — use native **TLS 1.3 / AES-GCM** over TCP.
 
 #### Wire protocol — type-prefix framing (ttyd-style)
 
-Đơn giản nhất cho LAN, gộp được resize cùng data:
+Simplest for LAN, and lets resize ride alongside data:
 
 ```
 [1-byte type] [4-byte big-endian length] [raw payload]
@@ -318,197 +322,197 @@ Lý do dứt khoát: trên LAN, RTT điển hình **<1ms** và loss <0.01% → T
   type 1 = resize {cols, rows}
 ```
 
-ttyd dùng đúng pattern này: server→client `'0'`=OUTPUT, client→server `'0'`=INPUT, `'1'`=RESIZE ([ttyd/protocol.c](https://github.com/tsl0922/ttyd/blob/main/src/protocol.c)). **Không JSON trên hot path** (terminal bytes). Transport là `NWConnection(.tcp)`: `NWListener` ở host, `NWConnection` ở client; framing thủ công 4-byte length hoặc `NWProtocolFramer`. SSH RFC 4254 channel model (multiplexing, flow-control window) là **overkill** cho LAN one-connection-per-session — chỉ mượn cấu trúc payload `window-change` (cols/rows uint32) nếu cần ([RFC 4254](https://datatracker.ietf.org/doc/html/rfc4254)).
+ttyd uses exactly this pattern: server→client `'0'`=OUTPUT, client→server `'0'`=INPUT, `'1'`=RESIZE ([ttyd/protocol.c](https://github.com/tsl0922/ttyd/blob/main/src/protocol.c)). **No JSON on the hot path** (terminal bytes). Transport is `NWConnection(.tcp)`: `NWListener` on the host, `NWConnection` on the client; manual 4-byte length framing or `NWProtocolFramer`. The SSH RFC 4254 channel model (multiplexing, flow-control windows) is **overkill** for LAN one-connection-per-session — borrow only the `window-change` payload structure (cols/rows uint32) if needed ([RFC 4254](https://datatracker.ietf.org/doc/html/rfc4254)).
 
-> 📋 **Claim cần verify khi implement:** `NWProtocolFramer` xử lý arbitrary byte sequences (không treat as text) và không có min-MTU constraint fragment keystroke nhỏ. Test trước khi cố định.
+> 📋 **Claim to verify during implementation:** `NWProtocolFramer` handles arbitrary byte sequences (not treated as text) and has no min-MTU constraint fragmenting small keystrokes. Test before locking in.
 
-Idle efficiency tự nhiên: master FD **không sinh byte khi shell idle** → 0 byte flow, không encode/decode. Đây là đòn bẩy hiệu năng quan trọng nhất cho coding tool (màn hình tĩnh phần lớn thời gian).
+Natural idle efficiency: the master FD **produces no bytes while the shell is idle** → 0 bytes flow, no encode/decode. This is the most important performance lever for a coding tool (the screen is static most of the time).
 
 ---
 
 ### 3. Mosh-style predictive local echo — ⏸️ DEFERRED (assume P2P)
 
-> ⏸️ **ĐÃ DEFER cho v1** (quyết định cuối: assume NetBird direct P2P ~1–5ms, drop prediction — xem [13 §4], Phase 5). Phần phân tích dưới giữ làm **reference** nếu sau này relay phổ biến.
+> ⏸️ **DEFERRED for v1** (final decision: assume NetBird direct P2P ~1–5ms, drop prediction — see [13 §4], Phase 5). The analysis below is kept as **reference** in case relays become common later.
 >
-> 🔎 **Cập nhật (xem [17 §2.4]):** lý do *không* làm full predictor mạnh hơn cả RTT-thấp: (1) `ghostty_surface_t` opaque → buộc dựng **VT parser thứ 2** giữ shadow-framebuffer (desync-risk); (2) **Claude Code TUI dùng alt-screen** → Mosh tự tắt prediction ở đó, lợi ích chỉ còn ở bare shell prompt. Thay thế rẻ Phase 2 = **glitch-window caret** (chỉ track cột cursor, không shadow parser).
+> 🔎 **Update (see [17 §2.4]):** the reasons *not* to build a full predictor go beyond low RTT: (1) `ghostty_surface_t` is opaque → it would force a **second VT parser** maintaining a shadow framebuffer (desync risk); (2) **the Claude Code TUI uses the alt-screen** → Mosh disables prediction there anyway, so the benefit shrinks to the bare shell prompt. The cheap Phase 2 substitute = a **glitch-window caret** (track only the cursor column, no shadow parser).
 
-Đây là kỹ thuật đáng port nhất từ mosh, **độc lập với transport**. Engine dự đoán kết quả keystroke và render **tức thì** (trước khi packet rời NIC), gạch chân `underline` cho ký tự chưa xác nhận, tự sửa khi server state thật về. Đánh giá gốc (USENIX ATC 2012, 40h / 9 986 keystrokes): **70% keystroke hiển thị tức thì** với confident prediction, chỉ **0.9%** cần within-RTT correction.
+This is the most port-worthy technique in mosh, **independent of transport**. The engine predicts the result of a keystroke and renders it **instantly** (before the packet leaves the NIC), `underline`s unconfirmed characters, and self-corrects when the real server state arrives. Original evaluation (USENIX ATC 2012, 40h / 9,986 keystrokes): **70% of keystrokes displayed instantly** with confident prediction, only **0.9%** needed within-RTT correction.
 
-#### Engine là portable logic, không phụ thuộc OS
+#### The engine is portable logic, not OS-dependent
 
-> ✅ **VERIFIED — PredictionEngine fully transport-agnostic.** `terminaloverlay.cc` **không** include bất kỳ class `Network::` nào. Engine chỉ cần **4 giá trị** inject qua plain setters: `local_frame_sent`, `local_frame_acked`, `local_frame_late_acked` (echo_ack từ remote state), `send_interval` (= `ceil(SRTT/2)` clamp `[20,250]`ms). nosshtradamus (thyth/nosshtradamus) đã chứng minh engine chạy trên **TCP/SSH** qua side-band ping reconstruct 4 biến này. Tức là: với TCP byte-stream của ta, chỉ cần maintain epoch counter + RTT estimate → engine chạy nguyên vẹn.
+> ✅ **VERIFIED — PredictionEngine fully transport-agnostic.** `terminaloverlay.cc` does **not** include any `Network::` class. The engine needs only **4 values** injected via plain setters: `local_frame_sent`, `local_frame_acked`, `local_frame_late_acked` (echo_ack from remote state), `send_interval` (= `ceil(SRTT/2)` clamped `[20,250]`ms). nosshtradamus (thyth/nosshtradamus) proved the engine runs over **TCP/SSH** using a side-band ping to reconstruct those 4 variables. Meaning: with our TCP byte stream, just maintain an epoch counter + RTT estimate → the engine runs unmodified.
 
-Cơ chế cốt lõi (`terminaloverlay.h/.cc`):
-- **`new_user_byte(byte)`**: ký tự printable ASCII (0x20–0x7e, width 1) → advance predicted cursor, lưu `ConditionalOverlayCell` tại `(row,col)`, tag `prediction_epoch` hiện tại.
-- **`apply(server_fb)`**: layer overlay lên server framebuffer trước khi compute display diff.
-- **Backspace (0x7f)**: decrement cursor.col, shift line trái (mỗi cell = cell bên phải), cell phải cùng đánh `unknown=true` (render underline).
-- **Epoch self-correction**: khi server-confirmed khác predicted, gọi `kill_epoch(tentative_until_epoch)` → xóa mọi prediction tentative của epoch đó, `become_tentative()` tăng `prediction_epoch`. Misprediction chỉ kill epoch hiện tại; prediction cũ đã confirmed giữ nguyên. **Control char (arrow, Escape) cũng gọi `become_tentative()`** vì không đoán được.
-- **Paste suppression**: nếu `bytes_read > 100` (bulk paste) → `reset()` toàn bộ prediction (tránh flicker khi shell/readline re-wrap).
+Core mechanics (`terminaloverlay.h/.cc`):
+- **`new_user_byte(byte)`**: a printable ASCII character (0x20–0x7e, width 1) → advance the predicted cursor, store a `ConditionalOverlayCell` at `(row,col)`, tagged with the current `prediction_epoch`.
+- **`apply(server_fb)`**: layer the overlay onto the server framebuffer before computing the display diff.
+- **Backspace (0x7f)**: decrement cursor.col, shift the line left (each cell = the cell to its right), the rightmost cell marked `unknown=true` (renders underlined).
+- **Epoch self-correction**: when the server-confirmed state differs from the prediction, call `kill_epoch(tentative_until_epoch)` → discard every tentative prediction of that epoch; `become_tentative()` increments `prediction_epoch`. A misprediction only kills the current epoch; older confirmed predictions stay. **Control chars (arrows, Escape) also call `become_tentative()`** because they cannot be predicted.
+- **Paste suppression**: if `bytes_read > 100` (bulk paste) → `reset()` all predictions (avoids flicker while the shell/readline re-wraps).
 
-#### ⚠️ CORRECTION quyết định cho LAN: dùng `DisplayPreference = Always`
+#### ⚠️ The decisive CORRECTION for LAN: use `DisplayPreference = Always`
 
-> ✅ **VERIFIED (confirmed) — Trên LAN, Adaptive mode cho ZERO local echo.** Trong `cull()`, `srtt_trigger` chỉ flip `true` khi `send_interval > SRTT_TRIGGER_HIGH=30ms` (strict). Mà `send_interval = max(ceil(SRTT/2), 20)` → với **bất kỳ SRTT < ~40ms**, `send_interval = 20ms`, **không** > 30 → trigger im. Với `display_preference == Adaptive`, `apply()` render khi `srtt_trigger || glitch_trigger`; cả hai false → **render rỗng**. Trigger chỉ bật khi SRTT ≥ ~61ms. **Kết luận:** trên LAN-direct (1–5ms) prediction gần như vô ích → **DEFER**. NẾU sau này relay phổ biến mới bật, khi đó set `DisplayPreference=Always`.
+> ✅ **VERIFIED (confirmed) — On LAN, Adaptive mode yields ZERO local echo.** In `cull()`, `srtt_trigger` only flips `true` when `send_interval > SRTT_TRIGGER_HIGH=30ms` (strict). And `send_interval = max(ceil(SRTT/2), 20)` → for **any SRTT < ~40ms**, `send_interval = 20ms`, which is **not** > 30 → the trigger stays silent. With `display_preference == Adaptive`, `apply()` renders when `srtt_trigger || glitch_trigger`; both false → **renders nothing**. The trigger only fires at SRTT ≥ ~61ms. **Conclusion:** on direct LAN (1–5ms) prediction is nearly useless → **DEFER**. IF relays become common later, enable it then with `DisplayPreference=Always`.
 
-Hằng số tham khảo (đã verify): `SRTT_TRIGGER_HIGH=30`, `SRTT_TRIGGER_LOW=20`, `FLAG_TRIGGER_HIGH=80`, `FLAG_TRIGGER_LOW=50`, `GLITCH_THRESHOLD=250ms`, `GLITCH_FLAG_THRESHOLD=5000ms`, `SEND_MINDELAY=8ms` (client set `set_send_delay(1)`=1ms), `SEND_INTERVAL_MIN=20ms`, paste suppression `>100` bytes.
+Reference constants (verified): `SRTT_TRIGGER_HIGH=30`, `SRTT_TRIGGER_LOW=20`, `FLAG_TRIGGER_HIGH=80`, `FLAG_TRIGGER_LOW=50`, `GLITCH_THRESHOLD=250ms`, `GLITCH_FLAG_THRESHOLD=5000ms`, `SEND_MINDELAY=8ms` (the client sets `set_send_delay(1)`=1ms), `SEND_INTERVAL_MIN=20ms`, paste suppression `>100` bytes.
 
-#### Hai lựa chọn implementation
+#### Two implementation options
 
-Engine `terminaloverlay.cc` ~750 dòng C++. Hai hướng: (a) **CGo/C interop** (như nosshtradamus dùng go-mosh) — tái dùng code đã battle-tested; (b) **port thuần Swift** — sạch hơn cho native app, tránh C bridge. Corpus không tìm thấy Swift port có sẵn → đây là implementation work thật. **Lưu ý:** vì libghostty opaque (không expose cell grid), full engine cần shadow VT parser riêng client-side — chính lý do **không** làm cho v1 ([17 §2.4]). Nếu Phase 2 cần, đây là điểm tích hợp.
+The `terminaloverlay.cc` engine is ~750 lines of C++. Two routes: (a) **CGo/C interop** (as nosshtradamus does with go-mosh) — reuse battle-tested code; (b) **a pure Swift port** — cleaner for a native app, avoids the C bridge. The corpus found no existing Swift port → this is real implementation work. **Note:** because libghostty is opaque (no cell-grid access), the full engine needs its own client-side shadow VT parser — exactly why we do **not** build it for v1 ([17 §2.4]). If Phase 2 needs it, this is the integration point.
 
 ---
 
 ### 4. Client renderer — libghostty (only)
 
-Renderer = **libghostty full surface**; quyết định + công thức patch external-backend đã ở §3.1 "Render client — libghostty". **KHÔNG dùng SwiftTerm** (triết lý best-only, no fallback). Wiring: `ghostty_surface_feed_data` ← network bytes; write-callback (`use_custom_io`) → PTY stdin; bọc sau protocol `TerminalRendering` để cô lập C-ABI. (SwiftTerm `Pty.swift`/`LocalProcess.swift` chỉ còn dùng làm *citation* cho POSIX PTY pattern ở Part B §1, không phải dependency.)
+Renderer = **libghostty full surface**; the decision + external-backend patch recipe live in §3.1 "Client renderer — libghostty". **Do NOT use SwiftTerm** (best-only philosophy, no fallback). Wiring: `ghostty_surface_feed_data` ← network bytes; write-callback (`use_custom_io`) → PTY stdin; wrap behind a `TerminalRendering` protocol to isolate the C-ABI. (SwiftTerm `Pty.swift`/`LocalProcess.swift` remain only as a *citation* for the POSIX PTY pattern in Part B §1, not a dependency.)
 
 ### 5. Resize / encoding / scrollback
 
 - **Resize**: client `sizeChanged` delegate → message type 1 → host `ioctl(masterFd, TIOCSWINSZ, &winsize)` → `SIGWINCH` (§1.3). Zero bandwidth.
-- **Encoding**: UTF-8 end-to-end. `LANG=en_US.UTF-8` + `IUTF8` + `NCURSES_NO_UTF8_ACS=1` (§1.4). libghostty xử lý grapheme cluster/emoji ở client.
-- **Scrollback**: **client-side only**. PTY raw **không có scrollback** — byte đã read là mất khỏi OS buffer. libghostty surface giữ scrollback nội bộ (cấu hình qua surface config). **Server stateless byte relay** → zero cost. Tùy chọn: server giữ **ET-style seq replay buffer** (§6, [17 §2.3]) cho reconnect.
+- **Encoding**: UTF-8 end-to-end. `LANG=en_US.UTF-8` + `IUTF8` + `NCURSES_NO_UTF8_ACS=1` (§1.4). libghostty handles grapheme clusters/emoji on the client.
+- **Scrollback**: **client-side only**. A raw PTY has **no scrollback** — bytes once read are gone from the OS buffer. The libghostty surface keeps scrollback internally (configured via the surface config). **The server is a stateless byte relay** → zero cost. Optional: the server keeps an **ET-style seq replay buffer** (§6, [17 §2.3]) for reconnect.
 
 ---
 
 ### 6. Reconnect / roaming
 
-#### ET-style packet-framed buffering — đúng cách
+#### ET-style packet-framed buffering — the right way
 
-Eternal Terminal `BackedWriter`/`BackedReader` là prior-art trực tiếp: buffer các **packet hoàn chỉnh** đánh `sequenceNumber` (deque, cap `MAX_BACKUP_BYTES = 64MB`). Reconnect: client gửi reader `sequenceNumber` trong `SequenceHeader` protobuf → server `recover(lastValidSeq)` tính số packet retransmit → đóng gói `CatchupBuffer` → cả hai `revive(newFd)`. **Đơn vị là packet hoàn chỉnh, không phải raw byte slice** → replay luôn bắt đầu ở packet boundary, **loại bỏ structural mid-escape-sequence truncation hazard** ([BackedWriter.cpp](https://github.com/MisterTea/EternalTerminal/blob/master/src/base/BackedWriter.cpp), [Connection.cpp:96-141](https://github.com/MisterTea/EternalTerminal/blob/master/src/base/Connection.cpp)). Reconnect overhead: ~1 RTT cho sequence exchange.
+Eternal Terminal's `BackedWriter`/`BackedReader` is the direct prior art: buffer **complete packets** tagged with a `sequenceNumber` (deque, capped at `MAX_BACKUP_BYTES = 64MB`). Reconnect: the client sends its reader `sequenceNumber` in a `SequenceHeader` protobuf → the server's `recover(lastValidSeq)` computes how many packets to retransmit → packs a `CatchupBuffer` → both sides `revive(newFd)`. **The unit is a complete packet, not a raw byte slice** → replay always starts on a packet boundary, **structurally eliminating the mid-escape-sequence truncation hazard** ([BackedWriter.cpp](https://github.com/MisterTea/EternalTerminal/blob/master/src/base/BackedWriter.cpp), [Connection.cpp:96-141](https://github.com/MisterTea/EternalTerminal/blob/master/src/base/Connection.cpp)). Reconnect overhead: ~1 RTT for the sequence exchange.
 
-> ⚠️ **Data-loss boundary cần xử lý:** ET `DISCONNECT_BUFFER_BYTES = 4MB` — khi disconnected và buffer vượt 4MB, `write()` trả `SKIPPED` (drop output mới). Với build dài chạy lúc client offline, output có thể mất. Cân nhắc tăng disconnect buffer (bounded by RAM) cho coding use-case.
+> ⚠️ **A data-loss boundary to handle:** ET `DISCONNECT_BUFFER_BYTES = 4MB` — while disconnected, once the buffer exceeds 4MB, `write()` returns `SKIPPED` (new output is dropped). For long builds running while the client is offline, output can be lost. Consider raising the disconnect buffer (bounded by RAM) for the coding use-case.
 
 #### Fallback raw-byte path: DECSTR prefix
 
-> Ta dùng **ET packet-framed buffering** (ở trên) làm đường chính — đây chỉ là ghi chú kỹ thuật cho trường hợp raw-byte replay.
+> We use **ET packet-framed buffering** (above) as the main path — this is only a technical note for the raw-byte replay case.
 
-Nếu **không** dùng packet framing mà replay raw VT bytes từ ring buffer, **feed `ESC [ ! p` (DECSTR, Soft Terminal Reset) vào `ghostty_surface_feed_data` trước khi replay tail**. DECSTR reset cursor visibility, insert/origin/autowrap mode, G0–G3, SGR, cursor home, scroll margin — đúng modal state gây corrupt khi replay mid-sequence. (libghostty opaque không có hàm `softReset()` riêng → đẩy chính các byte DECSTR vào stream; cùng VT parser của Ghostty xử lý.) DECSTR **không** loại bỏ hoàn toàn hazard nếu escape sequence straddle wrap point → kết hợp **sync-point marker** (host phát no-op DCS định kỳ, client scan marker cuối, discard trước đó). Vì đường chính là packet-framed (replay bắt đầu ở packet boundary), hazard này **không phát sinh** — đó là lý do chọn ET-style.
+If you do **not** use packet framing and instead replay raw VT bytes from a ring buffer, **feed `ESC [ ! p` (DECSTR, Soft Terminal Reset) into `ghostty_surface_feed_data` before replaying the tail**. DECSTR resets cursor visibility, insert/origin/autowrap modes, G0–G3, SGR, cursor home, scroll margins — exactly the modal state that gets corrupted by a mid-sequence replay. (Opaque libghostty has no dedicated `softReset()` function → push the DECSTR bytes themselves into the stream; Ghostty's own VT parser handles them.) DECSTR does **not** fully remove the hazard if an escape sequence straddles the wrap point → combine with a **sync-point marker** (the host periodically emits a no-op DCS; the client scans for the last marker and discards everything before it). Since the main path is packet-framed (replay starts on packet boundaries), this hazard **never arises** — which is why ET-style was chosen.
 
-#### Persistent PTY — sống sót mọi disconnect
+#### Persistent PTY — survives every disconnect
 
-PTY/shell phải sống độc lập với TCP connection: **helper process giữ master FD**, không phải per-client connection handler. Vì helper sở hữu master FD, đóng client socket **không** gây kernel gửi `SIGHUP` cho shell process group. Hai cách: (a) **host daemon persistent** (launchd `KeepAlive=true`) giữ `[UUID: PTYSession]`; (b) **tmux** (v2 upgrade) — server process giữ mọi master FD, session sống vô hạn, reconnect = `tmux -CC attach`, đồng thời cho server-side scrollback + window/pane mapping miễn phí (iTerm2 `TmuxGateway.m` ~884 dòng là reference). Thêm idle-kill timer cấu hình (vd 48h) để tránh tích lũy shell mồ côi.
+The PTY/shell must live independently of the TCP connection: a **helper process holds the master FD**, not a per-client connection handler. Because the helper owns the master FD, closing the client socket does **not** cause the kernel to send `SIGHUP` to the shell's process group. Two ways: (a) a **persistent host daemon** (launchd `KeepAlive=true`) holding `[UUID: PTYSession]`; (b) **tmux** (v2 upgrade) — the server process holds every master FD, sessions live indefinitely, reconnect = `tmux -CC attach`, and you also get server-side scrollback + window/pane mapping for free (iTerm2's `TmuxGateway.m`, ~884 lines, is the reference). Add a configurable idle-kill timer (e.g. 48h) to avoid accumulating orphaned shells.
 
 #### iOS lifecycle + roaming
 
-- **iOS background**: ~30s budget (`beginBackgroundTask`), socket bị OS reclaim khi suspend (TN2277). **KHÔNG cố giữ socket sống qua suspension.** Pattern đúng: scenePhase `.background` → `connection.cancel()` + mark disconnected; scenePhase `.active` → tạo `NWConnection` mới + ET sequence exchange resume. Brief network gap (không có app lifecycle event) → dựa `NWConnection` state `.waiting` với `waitingForConnectivity` tự advance về `.ready`.
-- **macOS host wake**: lid-close **ép sleep bất kể** `IOPMAssertion` type. Subscribe **`NSWorkspaceDidWakeNotification`** (NSWorkspace center, không phải defaultCenter) → re-listen `NWListener`, check `NWPathMonitor` trước khi accept. `NSActivityUserInitiated` chặn App Nap + idle sleep nhưng **không** chặn lid-close sleep. (📋 Verify: launchd KeepAlive daemon non-GUI có nhận `NSWorkspace` notification reliably không — cần CFRunLoop chạy.)
-- **macOS client Wi-Fi↔Ethernet roaming**: `NWPathMonitor.pathUpdateHandler` fire khi dock/undock; `NWConnection.viabilityUpdateHandler(false)` là signal cancel + tạo connection mới + sequence exchange. Vì `BackedWriter` buffer persist in-process (không gắn socket), catchup deliver output buffered ngay sau 1-RTT.
+- **iOS background**: ~30s budget (`beginBackgroundTask`); sockets are reclaimed by the OS on suspend (TN2277). **Do NOT try to keep the socket alive across suspension.** The right pattern: scenePhase `.background` → `connection.cancel()` + mark disconnected; scenePhase `.active` → create a new `NWConnection` + ET sequence-exchange resume. For a brief network gap (no app lifecycle event) → rely on the `NWConnection` `.waiting` state with `waitingForConnectivity` auto-advancing to `.ready`.
+- **macOS host wake**: lid-close **forces sleep regardless of** `IOPMAssertion` type. Subscribe to **`NSWorkspaceDidWakeNotification`** (the NSWorkspace notification center, not defaultCenter) → re-listen the `NWListener`, check `NWPathMonitor` before accepting. `NSActivityUserInitiated` blocks App Nap + idle sleep but does **not** block lid-close sleep. (📋 Verify: whether a non-GUI launchd KeepAlive daemon reliably receives `NSWorkspace` notifications — needs a running CFRunLoop.)
+- **macOS client Wi-Fi↔Ethernet roaming**: `NWPathMonitor.pathUpdateHandler` fires on dock/undock; `NWConnection.viabilityUpdateHandler(false)` is the signal to cancel + create a new connection + sequence exchange. Because the `BackedWriter` buffer persists in-process (not tied to a socket), catchup delivers the buffered output right after 1 RTT.
 
 ---
 
-### Tóm tắt khuyến nghị (implementation-ready)
+### Recommendation summary (implementation-ready)
 
-| Hạng mục | Quyết định |
+| Item | Decision |
 |----------|-----------|
-| PTY cấp phát | `openpty()` + `posix_spawn(POSIX_SPAWN_SETSID)` + `login_tty()` (tránh fork-in-Swift hazard); hoặc `forkpty()` với fork-then-exec-immediately strict |
-| Async I/O | `DispatchIO(.stream)` lowWater=1, highWater=128KB, close trong cleanupHandler |
+| PTY allocation | `openpty()` + `posix_spawn(POSIX_SPAWN_SETSID)` + `login_tty()` (avoids the fork-in-Swift hazard); or `forkpty()` with strict fork-then-exec-immediately |
+| Async I/O | `DispatchIO(.stream)` lowWater=1, highWater=128KB, close in the cleanupHandler |
 | Resize | `ioctl(TIOCSWINSZ)` → SIGWINCH |
-| Sandbox | host **non-sandboxed** Developer ID, Hardened Runtime, chạy as logged-in user |
-| Transport | **TCP** qua Network.framework, type-prefix framing (ttyd-style), **no app-layer TLS** (WireGuard encrypt, [13]). **KHÔNG mosh SSP/UDP** |
-| Local echo | ⏸️ DEFERRED (assume P2P; revisit chỉ khi relayed) |
-| Client emulator | **libghostty** full surface (patch tự-own, Metal GPU, ligature OK) — **không SwiftTerm** |
-| Scrollback | client-side (libghostty surface giữ scrollback nội bộ); server stateless + ET-style seq replay buffer cho reconnect ([17 §2.3]) |
-| Reconnect | ET packet-framed sequence buffer (64MB cap, lưu ý 4MB disconnect SKIPPED); persistent PTY helper (v1) → tmux `-CC` (v2) |
+| Sandbox | host **non-sandboxed** Developer ID, Hardened Runtime, runs as the logged-in user |
+| Transport | **TCP** over Network.framework, type-prefix framing (ttyd-style), **no app-layer TLS** (WireGuard encrypts, [13]). **NO mosh SSP/UDP** |
+| Local echo | ⏸️ DEFERRED (assume P2P; revisit only if relayed) |
+| Client emulator | **libghostty** full surface (self-owned patch, Metal GPU, ligatures OK) — **no SwiftTerm** |
+| Scrollback | client-side (the libghostty surface keeps scrollback internally); stateless server + ET-style seq replay buffer for reconnect ([17 §2.3]) |
+| Reconnect | ET packet-framed sequence buffer (64MB cap; mind the 4MB disconnect SKIPPED); persistent PTY helper (v1) → tmux `-CC` (v2) |
 | iOS/roaming | eager reconnect on scenePhase `.active`; `NWPathMonitor` + `NSWorkspaceDidWakeNotification` |
 
-Sources chính: [SwiftTerm Pty.swift / LocalProcess.swift / Terminal.swift / AppleTerminalView.swift](https://github.com/migueldeicaza/SwiftTerm), [mosh terminaloverlay.cc / transportsender-impl.h / network.cc](https://github.com/mobile-shell/mosh), [Eternal Terminal BackedWriter/BackedReader/Connection](https://github.com/MisterTea/EternalTerminal), [ttyd protocol.c](https://github.com/tsl0922/ttyd), [swiftlang/swift-subprocess](https://github.com/swiftlang/swift-subprocess), [nosshtradamus](https://github.com/thyth/nosshtradamus), Apple [Network.framework](https://developer.apple.com/documentation/network/nwconnection) / [forum thread 747499](https://developer.apple.com/forums/thread/747499) / [thread 734230](https://developer.apple.com/forums/thread/734230), XNU `bsd/sys/termios.h`.
+Primary sources: [SwiftTerm Pty.swift / LocalProcess.swift / Terminal.swift / AppleTerminalView.swift](https://github.com/migueldeicaza/SwiftTerm), [mosh terminaloverlay.cc / transportsender-impl.h / network.cc](https://github.com/mobile-shell/mosh), [Eternal Terminal BackedWriter/BackedReader/Connection](https://github.com/MisterTea/EternalTerminal), [ttyd protocol.c](https://github.com/tsl0922/ttyd), [swiftlang/swift-subprocess](https://github.com/swiftlang/swift-subprocess), [nosshtradamus](https://github.com/thyth/nosshtradamus), Apple [Network.framework](https://developer.apple.com/documentation/network/nwconnection) / [forum thread 747499](https://developer.apple.com/forums/thread/747499) / [thread 734230](https://developer.apple.com/forums/thread/734230), XNU `bsd/sys/termios.h`.
 
 ---
 
-## GUI video path (4:2:0 đủ tốt) — đơn giản hóa
+## GUI video path (4:2:0 is good enough) — simplified
 
-> Re-scope: yêu cầu "text crispness" đã được **bỏ** cho path video. Mọi cửa sổ GUI (VS Code, Xcode, browser…) đi qua **ScreenCaptureKit → VideoToolbox HEVC 4:2:0 → Network.framework → decode → Metal**. Path terminal (PTY text) gánh toàn bộ phần text "căng" nhất, nên codec video không còn phải gồng vì text. Tài liệu này thay thế tư duy "tối ưu motion-to-photon < 16ms" của các doc trước bằng tư duy **idle-efficiency + encode-on-change** cho màn hình gần như tĩnh.
+> Re-scope: the "text crispness" requirement has been **dropped** for the video path. Every GUI window (VS Code, Xcode, browser...) goes through **ScreenCaptureKit → VideoToolbox HEVC 4:2:0 → Network.framework → decode → Metal**. The terminal path (PTY text) carries all of the most demanding text, so the video codec no longer has to strain for text. This document replaces the "optimize motion-to-photon < 16ms" mindset of the earlier docs with an **idle-efficiency + encode-on-change** mindset for a mostly static screen.
 
 ---
 
 ### TL;DR (GUI video path)
 
-- **4:2:0 HEVC là đủ tốt** cho đọc code trong cửa sổ GUI. Luma (Y) giữ full resolution → cạnh glyph vẫn sắc; chỉ chroma (Cb/Cr) bị subsample → fringing màu nhẹ ở biên màu gắt. Với dark theme (chữ sáng trên nền tối) fringing càng ít lộ. (`claim_to_verify`: "tolerable" là đánh giá chủ quan, phải user-test ở đúng resolution/bitrate đích — xem §6.)
-- **4:4:4 bị bỏ hẳn**, không phải vì lười: **Apple HW encoder không có 4:4:4 cho HEVC**. Toàn bộ `kVTProfileLevel_HEVC_*` trong SDK (qua iOS/visionOS 26, 2025) chỉ có Main / Main10 / Main42210 / Monochrome / Monochrome10 — **không tồn tại** profile SCC hay 4:4:4 streaming. Đổi codec không sửa được; đây là giới hạn phần cứng, không phải lựa chọn cấu hình.
-- **Các đòn bẩy THẬT SỰ quan trọng giờ là idle-efficiency**, không phải latency: `SCFrameStatus.idle` (zero-encode khi tĩnh) + `dirtyRects` (encode vùng đổi) + `minimumFrameInterval` cap **~24–30 fps** (đủ dùng, giảm băng thông/latency/CPU) + CQ. Màn hình code phần lớn đứng yên → bitrate trung bình tiến gần 0 khi idle, chỉ burst khi gõ/scroll/compile.
+- **4:2:0 HEVC is good enough** for reading code in a GUI window. Luma (Y) keeps full resolution → glyph edges stay sharp; only chroma (Cb/Cr) is subsampled → slight color fringing at harsh color boundaries. With a dark theme (light text on a dark background) the fringing is even less visible. (`claim_to_verify`: "tolerable" is a subjective judgment; must be user-tested at the actual target resolution/bitrate — see §6.)
+- **4:4:4 is dropped outright**, and not out of laziness: **Apple's HW encoder has no 4:4:4 for HEVC**. The complete set of `kVTProfileLevel_HEVC_*` in the SDK (through iOS/visionOS 26, 2025) is only Main / Main10 / Main42210 / Monochrome / Monochrome10 — **no** SCC or 4:4:4 streaming profile exists. Switching codecs cannot fix it; this is a hardware limit, not a configuration choice.
+- **The levers that ACTUALLY matter now are about idle-efficiency**, not latency: `SCFrameStatus.idle` (zero encode when static) + `dirtyRects` (encode changed regions) + `minimumFrameInterval` capped at **~24–30 fps** (sufficient; cuts bandwidth/latency/CPU) + CQ. A code screen sits still most of the time → average bitrate approaches 0 when idle, bursting only on typing/scrolling/compiling.
 
 ---
 
-### 1. Vì sao 4:2:0 đủ tốt (và 4:4:4 bị bỏ)
+### 1. Why 4:2:0 is good enough (and 4:4:4 is dropped)
 
-### 1.1 Cơ chế: luma sắc, chroma mới subsample
+### 1.1 Mechanism: luma stays sharp, only chroma is subsampled
 
-ScreenCaptureKit capture frame ở `kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange` (NV12) — pixel format rẻ CPU nhất cho VideoToolbox HEVC. 4:2:0 chỉ giảm độ phân giải chroma theo cả ngang lẫn dọc; **kênh luma vẫn full resolution**, mà cạnh chữ (độ tương phản sáng/tối) sống chủ yếu ở luma. Hệ quả:
+ScreenCaptureKit captures frames as `kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange` (NV12) — the CPU-cheapest pixel format for VideoToolbox HEVC. 4:2:0 only reduces chroma resolution, both horizontally and vertically; **the luma channel remains full resolution**, and glyph edges (light/dark contrast) live mostly in luma. Consequences:
 
-- Text trắng/xám trên nền tối (VS Code Dark+, Xcode dark): gần như không thấy hại — biên do luma quyết định.
-- Text màu trên nền màu gắt (syntax highlight đỏ/xanh trên nền sáng): fringing chroma nhẹ, "mềm" hơn local display nhưng vẫn đọc thoải mái cho daily coding.
+- White/gray text on a dark background (VS Code Dark+, Xcode dark): virtually no visible harm — edges are decided by luma.
+- Colored text on a harshly colored background (red/green syntax highlighting on a light background): slight chroma fringing, "softer" than the local display but still comfortable to read for daily coding.
 
-Nguồn: ScreenCaptureKit pixel-format guidance (WWDC22 10155); so sánh codec screen-sharing (Microsoft Azure Virtual Desktop graphics-encoding docs).
+Sources: ScreenCaptureKit pixel-format guidance (WWDC22 10155); screen-sharing codec comparison (Microsoft Azure Virtual Desktop graphics-encoding docs).
 
-### 1.2 4:4:4 bị bỏ là vì phần cứng, không phải vì re-scope
+### 1.2 4:4:4 is dropped because of hardware, not because of the re-scope
 
-Đây là điểm cần nói rõ để không ai sau này định "bật lại 4:4:4 cho nét":
+This point needs to be explicit so nobody later tries to "turn 4:4:4 back on for sharpness":
 
-- **Đã verify (confidence: high):** danh sách đầy đủ `kVTProfileLevel_HEVC_*` trong `VTCompressionProperties.h` xuyên suốt mọi SDK từ macOS 10.13 / iOS 11 đến iOS/visionOS 26 (2025) chỉ gồm `Main_AutoLevel` (8-bit 4:2:0), `Main10_AutoLevel` (10-bit 4:2:0), `Main42210_AutoLevel` (10-bit 4:2:2), `Monochrome`, `Monochrome10`. **Không có** `kVTProfileLevel_HEVC_SCC_*` hay biến thể 4:4:4. FFmpeg `videotoolboxenc.c` cũng chỉ load đúng ba symbol HEVC encoder-facing đó. (Nguồn: VTCompressionProperties.h trong xybp888/iOS-SDKs; FFmpeg videotoolboxenc.c lines 122-197.)
-- **HEVC-SCC (palette mode, intra block copy) cũng không có** trên VideoToolbox — các công cụ tối ưu riêng cho screen content nằm ngoài cả API surface lẫn (suy ra) khối hardware. Đối thủ như Parsec/Moonlight coi 4:4:4 là đòn bẩy số 1 cho UI/text, nhưng họ bật được nhờ HW encode 4:4:4 của Intel/Nvidia — thứ Apple không có.
+- **Verified (confidence: high):** the complete list of `kVTProfileLevel_HEVC_*` in `VTCompressionProperties.h` across every SDK from macOS 10.13 / iOS 11 through iOS/visionOS 26 (2025) contains only `Main_AutoLevel` (8-bit 4:2:0), `Main10_AutoLevel` (10-bit 4:2:0), `Main42210_AutoLevel` (10-bit 4:2:2), `Monochrome`, `Monochrome10`. There is **no** `kVTProfileLevel_HEVC_SCC_*` or any 4:4:4 variant. FFmpeg's `videotoolboxenc.c` also loads exactly those three encoder-facing HEVC symbols. (Sources: VTCompressionProperties.h in xybp888/iOS-SDKs; FFmpeg videotoolboxenc.c lines 122-197.)
+- **HEVC-SCC (palette mode, intra block copy) is also absent** from VideoToolbox — the screen-content-specific tools sit outside both the API surface and (by inference) the hardware block. Competitors like Parsec/Moonlight treat 4:4:4 as the #1 lever for UI/text, but they can enable it thanks to Intel/Nvidia 4:4:4 HW encode — something Apple does not have.
 
-→ Vì path terminal đã gánh text căng nhất, **chấp nhận 4:2:0 cho GUI là quyết định kiến trúc đúng**, không phải compromise miễn cưỡng.
+→ Since the terminal path already carries the most demanding text, **accepting 4:2:0 for the GUI is the right architectural decision**, not a reluctant compromise.
 
 ---
 
-### 2. Đòn bẩy #1 — `SCFrameStatus.idle`: zero-encode khi tĩnh
+### 2. Lever #1 — `SCFrameStatus.idle`: zero encode when static
 
-Mỗi `CMSampleBuffer` ScreenCaptureKit giao kèm attachment `SCStreamFrameInfo`; key `.status` trả về `SCFrameStatus`. WWDC22 (session 10156) nói nguyên văn: *"An idle frame status means the video sample hasn't changed, so there's no new IOSurface."*
+Every `CMSampleBuffer` ScreenCaptureKit delivers carries an `SCStreamFrameInfo` attachment; the `.status` key returns an `SCFrameStatus`. WWDC22 (session 10156) says verbatim: *"An idle frame status means the video sample hasn't changed, so there's no new IOSurface."*
 
-Pattern bắt buộc — guard **trước** khi submit vào encode queue:
+The mandatory pattern — guard **before** submitting to the encode queue:
 
 ```swift
 guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, ...),
       let statusRaw = attachments.first?[SCStreamFrameInfo.status] as? Int,
       SCFrameStatus(rawValue: statusRaw) == .complete else {
-    return   // .idle / .blank / .suspended → bỏ, KHÔNG encode
+    return   // .idle / .blank / .suspended → drop, do NOT encode
 }
-// chỉ .complete mới có IOSurface mới → đưa vào VTCompressionSessionEncodeFrame
+// only .complete carries a new IOSurface → submit to VTCompressionSessionEncodeFrame
 ```
 
-**Lưu ý quan trọng (verdict: uncertain, confidence: medium):**
-- "Không có IOSurface mới" được Apple xác nhận. Nhưng **"zero GPU work / zero encode" KHÔNG phải thuộc tính của OS** — ScreenCaptureKit không tự encode; encode là việc của app. Idle = zero encode **chỉ khi** app áp guard `status == .complete` trước mọi lời gọi VideoToolbox. Đây chính là pattern Apple khuyến nghị trong sample code.
-- Callback **vẫn fire** cho frame idle (bằng chứng: sample code Apple dùng `guard status == .complete else { return }`; OBS route mọi callback không điều kiện rồi mới nil-check IOSurface). Do đó **đừng giả định** thread encode được tự sleep khi idle — nếu muốn ngủ thread encode để tiết kiệm pin, phải tự quản lý dựa trên việc đã lâu không có `.complete` (`open_question`: tần suất callback idle có đúng theo `minimumFrameInterval` hay bị suppress hẳn — Apple forum thread/718356 không rõ ràng).
+**Important caveats (verdict: uncertain, confidence: medium):**
+- "No new IOSurface" is Apple-confirmed. But **"zero GPU work / zero encode" is NOT an OS property** — ScreenCaptureKit does not encode anything itself; encoding is the app's job. Idle = zero encode **only if** the app applies the `status == .complete` guard before every VideoToolbox call. This is exactly the pattern Apple's sample code recommends.
+- The callback **still fires** for idle frames (evidence: Apple's sample code uses `guard status == .complete else { return }`; OBS routes every callback unconditionally and only then nil-checks the IOSurface). So **do not assume** the encode thread auto-sleeps when idle — if you want to sleep the encode thread to save battery, manage it yourself based on how long it has been since the last `.complete` (`open_question`: does the idle callback rate follow `minimumFrameInterval` or get suppressed entirely — Apple forum thread/718356 is unclear).
 
-Tác động: trong lúc đọc/suy nghĩ/debug, màn hình đứng yên hàng giây → bitrate encode+truyền **về 0** một cách tự nhiên, do OS phát tín hiệu idle trực tiếp, không cần timer/poll.
+Impact: while reading/thinking/debugging, the screen sits still for seconds at a time → encode+transmit bitrate **drops to 0** naturally, because the OS signals idle directly — no timers/polling needed.
 
 ---
 
-### 3. Đòn bẩy #2 — `dirtyRects`: encode-on-change theo vùng
+### 3. Lever #2 — `dirtyRects`: region-based encode-on-change
 
-`SCStreamFrameInfo.dirtyRects` (key `.dirtyRects`) trả `[CGRect]` trong toạ độ content, chỉ đúng các vùng đổi so với frame trước (cursor blink, một dòng code, gutter scroll…). WWDC22 (10155) khuyến nghị thẳng: *"use dirty rects to only encode and transmit the regions with new updates, and copy the updates onto the previous frame on the receiver side."*
+`SCStreamFrameInfo.dirtyRects` (key `.dirtyRects`) returns `[CGRect]` in content coordinates covering exactly the regions that changed since the previous frame (cursor blink, one line of code, a gutter scroll...). WWDC22 (10155) recommends it directly: *"use dirty rects to only encode and transmit the regions with new updates, and copy the updates onto the previous frame on the receiver side."*
 
-Hai pattern, chọn theo độ phức tạp chấp nhận được:
+Two patterns; choose by acceptable complexity:
 
-| Pattern | Cách làm | Đánh giá |
+| Pattern | How | Assessment |
 |---------|----------|----------|
-| **A — full-frame + gửi kèm dirtyRects** | Vẫn encode full frame bằng VideoToolbox, nhưng gửi kèm danh sách dirtyRects để receiver chỉ composite vùng đổi lên frame cũ đã cache | Đơn giản, hợp với VideoToolbox (encode nguyên frame). Khuyến nghị cho v1. |
-| **B — crop-encode chỉ vùng dirty** | Encode/truyền tile vùng đổi | Cần tiling / điều khiển macroblock ở mức VideoToolbox không expose → phức tạp. Hoãn. |
+| **A — full-frame + attached dirtyRects** | Still encode the full frame with VideoToolbox, but send the dirtyRects list along so the receiver composites only the changed regions onto its cached previous frame | Simple, fits VideoToolbox (whole-frame encode). Recommended for v1. |
+| **B — crop-encode only the dirty regions** | Encode/transmit tiles of the changed regions | Needs tiling / macroblock-level control that VideoToolbox does not expose → complex. Postponed. |
 
-Tác động: khi chỉ một pane đổi (autocomplete popup, scroll output build trong khi pane khác tĩnh), payload giảm mạnh. Kết hợp với idle-skip → bitrate trung bình cả phiên thấp xa peak.
+Impact: when only one pane changes (an autocomplete popup, build-output scroll while another pane is static), the payload drops sharply. Combined with idle-skip → the session-average bitrate sits far below peak.
 
-`open_question`: tỉ lệ dirty thực tế của một phiên coding (autocomplete, cursor blink, scroll) là bao nhiêu phần frame — quyết định liệu pattern B có đáng làm hơn full-frame VBR không. Cần đo thực tế.
+`open_question`: what fraction of a frame is actually dirty in a real coding session (autocomplete, cursor blink, scroll) — this decides whether pattern B is worth doing over full-frame VBR. Needs real measurement.
 
 ---
 
-### 4. Đòn bẩy #3 — variable / low fps
+### 4. Lever #3 — variable / low fps
 
-`SCStreamConfiguration.minimumFrameInterval` (CMTime) cap tốc độ giao frame. **Chốt: cap ~24–30 fps** (đủ mượt khi scroll/gõ, giảm băng thông/latency/CPU vs 60fps). (Apple WWDC22 10156 còn gợi ý 10fps cho text rất tĩnh — ta chọn 24–30 để scroll mượt hơn.)
+`SCStreamConfiguration.minimumFrameInterval` (CMTime) caps the frame delivery rate. **Decision: cap at ~24–30 fps** (smooth enough for scrolling/typing, cuts bandwidth/latency/CPU vs 60fps). (Apple's WWDC22 10156 even suggests 10fps for very static text — we pick 24–30 for smoother scrolling.)
 
 ```swift
-config.minimumFrameInterval = CMTime(value: 1, timescale: 30)   // cap ~30 fps; idle-skip giữ near-zero khi tĩnh
-config.queueDepth = 3                                            // default thực=8; dùng 2–3 cho latency thấp ([11]); release surface nhanh
+config.minimumFrameInterval = CMTime(value: 1, timescale: 30)   // cap ~30 fps; idle-skip keeps near-zero when static
+config.queueDepth = 3                                            // true default=8; use 2–3 for low latency ([11]); releases surfaces fast
 config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange  // NV12 4:2:0
 ```
 
-- Hai cơ chế bổ trợ nhau: **idle-skip** xử lý lúc tĩnh; **minimumFrameInterval** cap tốc độ lúc có chuyển động.
-- Với coding, **24–30 fps** là điểm cân bằng (mượt khi scroll, mà vẫn ~nửa băng thông/CPU của 60fps). Cap 30 + idle-skip = ≤30 encode/giây khi active, **0 khi nghỉ**.
-- `queueDepth`: frame phải được xử lý + release trong `minimumFrameInterval × (queueDepth − 1)` giây để không rớt frame. Trên `.idle` return ngay không giữ surface; trên `.complete` submit rồi release sau khi encoder đã nuốt pixel (VideoToolbox tự giữ internal).
+- The two mechanisms complement each other: **idle-skip** handles static periods; **minimumFrameInterval** caps the rate during motion.
+- For coding, **24–30 fps** is the balance point (smooth scrolling at ~half the bandwidth/CPU of 60fps). Cap 30 + idle-skip = ≤30 encodes/second when active, **0 at rest**.
+- `queueDepth`: a frame must be processed + released within `minimumFrameInterval × (queueDepth − 1)` seconds to avoid dropped frames. On `.idle` return immediately without holding the surface; on `.complete` submit, then release once the encoder has consumed the pixels (VideoToolbox retains internally).
 
 ---
 
-### 5. Cấu hình VideoToolbox cho màn hình tĩnh
+### 5. VideoToolbox configuration for static screens
 
-Giữ pipeline trên Apple Silicon Media Engine (encode HEVC chạy ngoài CPU P/E core → pin/nhiệt thấp, đúng tinh thần laptop coding tool):
+Keep the pipeline on the Apple Silicon Media Engine (HEVC encode runs off the P/E CPU cores → low battery/heat, true to the spirit of a laptop coding tool):
 
 ```swift
 // Encoder spec
@@ -517,204 +521,204 @@ kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder = kCFBooleanT
 // Properties
 kVTCompressionPropertyKey_ProfileLevel       = kVTProfileLevel_HEVC_Main_AutoLevel   // 4:2:0, auto level
 kVTCompressionPropertyKey_RealTime           = kCFBooleanTrue
-kVTCompressionPropertyKey_AllowFrameReordering = kCFBooleanFalse                      // P-frame only, không B-frame, không bubble lookahead
-kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration = 2.0                           // I-frame mỗi ~2s để repair lỗi, không phình keyframe
+kVTCompressionPropertyKey_AllowFrameReordering = kCFBooleanFalse                      // P-frames only, no B-frames, no lookahead bubble
+kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration = 2.0                           // an I-frame every ~2s for error repair, without keyframe bloat
 ```
 
-**Chọn chế độ rate control theo môi trường:**
+**Choose the rate-control mode by environment:**
 
-- **LAN (mặc định cho tool này): constant-quality** — `kVTCompressionPropertyKey_Quality = 0.6`. Dễ tune hơn bitrate+DataRateLimits: frame tĩnh sinh NALU rất nhỏ, burst (compile/scroll) tự lấy đủ bit. Trên LAN băng thông không phải nút thắt nên CQ là lựa chọn tự nhiên cho "near-zero khi idle, đủ bit khi active".
-  - **Đã verify (confidence: medium):** CQ chỉ có trên **Apple Silicon (macOS ARM64)**, không có trên Intel/T2. FFmpeg gate bằng `!TARGET_OS_IPHONE && TARGET_CPU_ARM64` với comment "constant quality only on Macs with Apple Silicon". Apple **không** document per-chip cho key này → **feature-detect / test thực tế**, có fallback sang bitrate mode cho Intel host.
-- **WAN / băng thông giới hạn (nếu sau này mở rộng):** `AverageBitRate` + `DataRateLimits` (CFArray `[peak_bytes, duration_seconds]` cho burst).
+- **LAN (the default for this tool): constant quality** — `kVTCompressionPropertyKey_Quality = 0.6`. Easier to tune than bitrate+DataRateLimits: static frames produce tiny NALUs, and bursts (compile/scroll) take all the bits they need. On LAN bandwidth is not the bottleneck, so CQ is the natural fit for "near-zero when idle, enough bits when active".
+  - **Verified (confidence: medium):** CQ exists only on **Apple Silicon (macOS ARM64)**, not on Intel/T2. FFmpeg gates it with `!TARGET_OS_IPHONE && TARGET_CPU_ARM64` and the comment "constant quality only on Macs with Apple Silicon". Apple does **not** document this key per-chip → **feature-detect / test in practice**, with a fallback to bitrate mode for Intel hosts.
+- **WAN / constrained bandwidth (if expanded later):** `AverageBitRate` + `DataRateLimits` (CFArray `[peak_bytes, duration_seconds]` for bursts).
 
-**Low-latency rate control với HEVC (verdict: uncertain — đừng coi là đảm bảo):**
-- `kVTVideoEncoderSpecification_EnableLowLatencyRateControl` **có bằng chứng thực nghiệm chạy với HEVC trên Apple Silicon** (FFmpeg patch merged commit d87210745e, 9/2025, gate `TARGET_CPU_ARM64`) — nhưng **Apple chưa document** HEVC cho key này; WWDC21 nói "supported video codec type in this mode is H.264". Header chỉ khai báo symbol available từ macOS 11.3 không kèm ràng buộc codec, cũng không xác nhận HEVC.
-- → Với re-scope này, low-latency mode **không còn là mục tiêu**: fps không phải goal, motion-to-photon < 16ms đã bị bỏ. Có thể bật cho HEVC-on-Apple-Silicon nếu test thấy ổn, nhưng **không phải feature load-bearing** nữa. `AllowFrameReordering=false` (loại B-frame) đã đủ cho input responsiveness ở mức cần.
+**Low-latency rate control with HEVC (verdict: uncertain — do not treat it as guaranteed):**
+- `kVTVideoEncoderSpecification_EnableLowLatencyRateControl` **has empirical evidence of working with HEVC on Apple Silicon** (FFmpeg patch merged, commit d87210745e, 9/2025, gated `TARGET_CPU_ARM64`) — but **Apple has not documented** HEVC for this key; WWDC21 says "supported video codec type in this mode is H.264". The header only declares the symbol available since macOS 11.3 with no codec constraint, and does not confirm HEVC either.
+- → Under this re-scope, low-latency mode is **no longer a goal**: fps is not a goal, motion-to-photon < 16ms was dropped. It can be enabled for HEVC-on-Apple-Silicon if testing shows it is fine, but it is **no longer a load-bearing feature**. `AllowFrameReordering=false` (eliminating B-frames) already suffices for the needed input responsiveness.
 
-`claim_to_verify`: `kVTCompressionPropertyKey_AllowTemporalCompression=false` (tắt inter-frame) cho HEVC có khiến VideoToolbox rớt về software encode không — WWDC21 minh hoạ pattern này cho H.264; chưa verify cho HEVC. Chỉ dùng nếu thật sự cần encode từng frame độc lập.
-
----
-
-### 6. Bar chất lượng tối thiểu để đọc code
-
-`open_question` chưa có số cứng từ nguồn — đây là khung suy ra từ hành vi HEVC VBR/CQ, **phải user-test ở đúng cấu hình đích**:
-
-- **Resolution:** capture per-window ở **backing resolution** của cửa sổ (`width/height = logical size × NSScreen.scaleFactor`), không hardcode 2×. Capture ở scale retina đầy đủ → mỗi glyph nhiều pixel chroma hơn → 4:2:0 đỡ hại. Capture đúng 1 cửa sổ (`SCContentFilter(desktopIndependentWindow:)`), không capture full desktop: cửa sổ 1920×1080 trên màn 2560×1440 đã giảm ~44% pixel cần encode.
-- **Bitrate (ước lượng, derived — không phải số đo Apple):** HEVC 4:2:0 1080p VBR cho cửa sổ code tĩnh ~ **0–50 kbps khi idle**, **~500 kbps–2 Mbps khi gõ/scroll tích cực**. Với CQ thì bitrate tự bám độ phức tạp nội dung, không cần đặt trần trên LAN.
-- **Câu hỏi mở cần đo:** bitrate tối thiểu để code 12pt trong VS Code Dark+ ở 2560×1440 (logical) còn đọc tốt khi render ở 1920×1200 trên iPad? **Không có số trong nguồn** — bench thực tế.
-
-So sánh tham chiếu: HEVC tiết kiệm ~25–50% bitrate so với H.264 ở chất lượng tương đương (Azure Virtual Desktop docs). Trên Apple Silicon, encode HEVC 1080p60 ~18ms/frame, capture overhead ~1.9% một CPU core ở 60fps (số Lumen/Sunshine fork + WWDC22; `claim_to_verify` vì là số bên thứ ba, biến thiên theo quality/complexity).
+`claim_to_verify`: does `kVTCompressionPropertyKey_AllowTemporalCompression=false` (disabling inter-frame) for HEVC make VideoToolbox fall back to software encode — WWDC21 demonstrates the pattern for H.264; unverified for HEVC. Use only if every frame truly must be encoded independently.
 
 ---
 
-### 7. Khác gì so với các doc latency-obsessed trước
+### 6. Minimum quality bar for reading code
 
-| Tư duy cũ (10-latency-optimization, 11-absolute-latency) | Tư duy mới (re-scope hybrid) |
+`open_question` with no hard numbers from the sources — this is a framework inferred from HEVC VBR/CQ behavior; it **must be user-tested at the actual target configuration**:
+
+- **Resolution:** capture per-window at the window's **backing resolution** (`width/height = logical size × NSScreen.scaleFactor`), don't hardcode 2×. Capturing at full retina scale → more chroma pixels per glyph → 4:2:0 hurts less. Capture exactly 1 window (`SCContentFilter(desktopIndependentWindow:)`), not the full desktop: a 1920×1080 window on a 2560×1440 display already cuts ~44% of the pixels to encode.
+- **Bitrate (estimate, derived — not Apple-measured numbers):** HEVC 4:2:0 1080p VBR for a static code window ~ **0–50 kbps when idle**, **~500 kbps–2 Mbps during active typing/scrolling**. With CQ, bitrate tracks content complexity automatically; no ceiling needed on LAN.
+- **Open question to measure:** the minimum bitrate at which 12pt code in VS Code Dark+ at 2560×1440 (logical) is still comfortably readable when rendered at 1920×1200 on an iPad? **No number in the sources** — bench it for real.
+
+Reference comparison: HEVC saves ~25–50% bitrate vs H.264 at equivalent quality (Azure Virtual Desktop docs). On Apple Silicon, HEVC 1080p60 encode takes ~18ms/frame, capture overhead ~1.9% of one CPU core at 60fps (Lumen/Sunshine-fork numbers + WWDC22; `claim_to_verify` since these are third-party numbers varying with quality/complexity).
+
+---
+
+### 7. How this differs from the earlier latency-obsessed docs
+
+| Old mindset (10-latency-optimization, 11-absolute-latency) | New mindset (hybrid re-scope) |
 |---|---|
-| Motion-to-photon < 16ms là mục tiêu hàng đầu | **Bị bỏ.** Màn hình code phần lớn tĩnh; responsiveness gõ/cursor lo bởi **path PTY/terminal** (bytes vào PTY stdin, không cần CGEvent), không phải path video |
-| fps cao (60/120 ProMotion) | **Cap ~24–30 fps** (đủ dùng, giảm băng thông/latency/CPU); ưu tiên **idle-efficiency** + encode-on-change |
-| 4:4:4 / độ nét text là đòn bẩy số 1 | **Bỏ hẳn 4:4:4** (HW không có). Text căng đi path terminal. 4:2:0 đủ tốt cho GUI |
-| Low-latency rate control là feature load-bearing | Hạ xuống "nice-to-have, uncertain cho HEVC". `AllowFrameReordering=false` đã đủ |
-| Tối ưu cho mọi frame | Tối ưu cho **đa số frame là idle**: `SCFrameStatus.idle` guard + `dirtyRects` là trung tâm |
+| Motion-to-photon < 16ms as the top goal | **Dropped.** The code screen is mostly static; typing/cursor responsiveness is handled by the **PTY/terminal path** (bytes into PTY stdin, no CGEvent needed), not the video path |
+| High fps (60/120 ProMotion) | **Cap at ~24–30 fps** (sufficient; cuts bandwidth/latency/CPU); prioritize **idle-efficiency** + encode-on-change |
+| 4:4:4 / text sharpness as lever #1 | **4:4:4 dropped outright** (no HW support). Demanding text goes via the terminal path. 4:2:0 is good enough for GUI |
+| Low-latency rate control as load-bearing | Demoted to "nice-to-have, uncertain for HEVC". `AllowFrameReordering=false` already suffices |
+| Optimize every frame | Optimize for **most frames being idle**: the `SCFrameStatus.idle` guard + `dirtyRects` are the center of gravity |
 
-Điểm bất biến vẫn giữ từ doc cũ: encode HW HEVC trên Apple Silicon Media Engine (pin/nhiệt thấp), capture per-window bằng `SCContentFilter(desktopIndependentWindow:)`, NV12 4:2:0 input, P-frame-only.
-
----
-
-### 8. Câu hỏi mở còn lại
-
-- `SCFrameStatus.idle` có giao callback đều theo `minimumFrameInterval` hay suppress hẳn? Ảnh hưởng việc có thể ngủ thread encode hay không (Apple forum thread/718356 mơ hồ).
-- VideoToolbox HEVC trên Apple Silicon có expose `kVTCompressionPropertyKey_ConstantBitRate` không, hay chỉ `AverageBitRate` + `DataRateLimits`? CBR hữu ích cho network buffer nhưng có thể hại idle-efficiency.
-- HEVC hardware decode trên iPad có thêm latency bù lại phần tiết kiệm encode phía Mac so với H.264 không? Kỳ vọng rất thấp nhưng không có số trong nguồn.
-- Fringing 4:2:0 trên dark-theme VS Code/Xcode có thật sự "tolerable" ở resolution/bitrate đích? **Đánh giá chủ quan — bắt buộc user-test.**
+The invariants kept from the old docs: HW HEVC encode on the Apple Silicon Media Engine (low battery/heat), per-window capture via `SCContentFilter(desktopIndependentWindow:)`, NV12 4:2:0 input, P-frames-only.
 
 ---
 
+### 8. Remaining open questions
+
+- Does `SCFrameStatus.idle` deliver callbacks steadily at `minimumFrameInterval`, or are they suppressed entirely? Affects whether the encode thread can sleep (Apple forum thread/718356 is ambiguous).
+- Does VideoToolbox HEVC on Apple Silicon expose `kVTCompressionPropertyKey_ConstantBitRate`, or only `AverageBitRate` + `DataRateLimits`? CBR helps network buffering but may hurt idle-efficiency.
+- Does HEVC hardware decode on iPad add latency that cancels the encode savings on the Mac side vs H.264? Expected to be very small, but no number in the sources.
+- Is 4:2:0 fringing on dark-theme VS Code/Xcode truly "tolerable" at the target resolution/bitrate? **Subjective judgment — user-test required.**
 
 ---
 
-## Roadmap & cập nhật docs cho kiến trúc hybrid
-
-> Section này ghi đè định hướng phase của [07-roadmap.md](07-roadmap.md) và đánh dấu phần over-engineering trong [05](05-input-window-control.md), [09](09-codec-choice.md), [11](11-absolute-latency.md) cho kiến trúc **hybrid** mới: **terminal path (PTY byte-stream như SSH/mosh, render bằng libghostty)** + **GUI window path (ScreenCaptureKit -> VideoToolbox HEVC 4:2:0)**. Tất cả claim dưới đây bám corpus đã verify; chỗ nào corpus đánh `refuted`/`uncertain` đều phản ánh thành correction/uncertainty.
 
 ---
 
-### 1. Xếp hạng kỹ thuật cho tool hybrid (đòn bẩy lớn nhất -> biên)
+## Roadmap & docs updates for the hybrid architecture
 
-Thứ tự = (giá trị mang lại cho coding daily) × (độ chắc chắn) ÷ (rủi ro + công sức). Cột "Apple" = mức hỗ trợ native theo corpus.
+> This section overrides the phase direction of [07-roadmap.md](07-roadmap.md) and flags the over-engineering in [05](05-input-window-control.md), [09](09-codec-choice.md), [11](11-absolute-latency.md) for the new **hybrid** architecture: **terminal path (PTY byte stream like SSH/mosh, rendered with libghostty)** + **GUI window path (ScreenCaptureKit -> VideoToolbox HEVC 4:2:0)**. Every claim below tracks the verified corpus; wherever the corpus marked something `refuted`/`uncertain`, that is reflected as a correction/uncertainty.
 
-| # | Kỹ thuật | Vì sao thắng lớn | Apple | Khó | Rủi ro |
+---
+
+### 1. Technique ranking for the hybrid tool (biggest levers -> marginal)
+
+Order = (value delivered for daily coding) × (certainty) ÷ (risk + effort). The "Apple" column = native support level per the corpus.
+
+| # | Technique | Why it wins big | Apple | Difficulty | Risk |
 |---|----------|-------------------|-------|-----|--------|
-| **1** | **PTY bridge text-path** (`forkpty()`/`openpty()` + DispatchIO + stream byte VT qua TCP, client render) | **Né hoàn toàn bài toán input injection của macOS**: keystroke chỉ là byte ghi vào PTY master fd — không CGEvent, không Accessibility, không activate-then-control, không TCC. Text nét **by construction** (không qua video codec). Idle near-zero (PTY tĩnh thì không có byte chảy). Bandwidth ~36–52 byte/keystroke. | native | thấp | thấp |
-| **2** | **libghostty làm client renderer** (full surface + **patch external-backend tự own**, ref daiimus External.zig; `ghostty_surface_feed_data` ← network, write-callback → host) | Render Ghostty-class: Metal GPU, VT fidelity cao nhất, Kitty graphics, ligatures. Proven trên iOS (VVTerm/Moshi). Giá: ~1–3 tuần dựng Zig build + own patch + vendor XCFramework. Bọc sau `TerminalRendering` để cô lập C-ABI. **Không fallback** (best-only — không SwiftTerm). | native (qua patch tự own) | **cao** | trung bình (ABI-instability tax + tự rebase patch; né được bus factor) |
-| **3** | **TCP stream transport qua Network.framework** (`NWConnection`/`NWListener` + framing 1-byte type + 4-byte big-endian length, kiểu ttyd) | Đơn giản nhất hợp LAN: RTT <1ms nên TCP head-of-line blocking không đáng kể; idle hiệu quả tuyệt đối (PTY không phát thì không byte nào chảy). Không cần SSP/UDP của mosh. | native | thấp | thấp |
-| **4** | **Persistent PTY qua helper process giữ master fd** (launchd agent `KeepAlive`, hoặc tmux) | Shell sống sót qua mọi lần client disconnect (iPad sleep, lid-close, Wi-Fi handoff). Vì master fd thuộc helper process — không thuộc TCP handler — đóng socket không gửi SIGHUP cho shell. | native | trung bình | trung bình |
-| **5** | **ET-style packet-framed ring buffer + sequence-number ACK catchup** (BackedWriter/BackedReader) | Reconnect liền mạch sau gián đoạn LAN. **Replay ở packet boundary** nên loại bỏ hẳn nguy cơ replay cắt giữa escape sequence (corrupt emulator). | partial | trung bình | trung bình |
-| **6** | **iOS eager-reconnect on foreground** (`scenePhase .active` -> tạo NWConnection mới + sequence exchange; **không** cố giữ socket sống qua suspension) | Đúng với thực tế iOS: socket bị OS thu hồi khi app suspend (~30s background budget). Coi reconnect là fast path bình thường, không phải recovery ngoại lệ. | native | trung bình | trung bình |
-| **7** | **Clipboard sync: OSC 52** cho terminal path (libghostty action callback OSC 52; SwiftTerm `clipboardCopy`/`clipboardRead` chỉ là *citation* cho cơ chế) | Copy host->client gần như miễn phí, nằm trong PTY byte stream. tmux/Neovim cấu hình emit OSC 52 sẵn. | native | thấp | trung bình (read = exfiltration, default-deny) |
-| **8** | **ScreenCaptureKit per-window + `SCFrameStatus.idle` skip + `dirtyRects`** (GUI video path) | Near-zero bandwidth khi màn hình tĩnh — đòn bẩy idle quan trọng nhất cho coding. `guard status == .complete` trước khi encode = zero encode work lúc idle. | native | trung bình | thấp |
-| **9** | **VideoToolbox HEVC 4:2:0, `AllowFrameReordering=false`, `RealTime=true`, quality-mode** (GUI path) | HW encode trên Media Engine (~0% CPU core), P-frame-only (no B-frame lookahead). 4:2:0 **chấp nhận được** vì text-crispness constraint đã bỏ. | native | trung bình | thấp |
-| **10** | **CGEvent/SkyLight input injection** (GUI video path) | Chỉ cần cho **GUI window**, không cho terminal. Giữ nguyên độ phức tạp activate-then-control + private SPI. | partial/unsupported | cao | **cao** (Electron mouse reject, private API, no MAS) |
-| **11** | **Mosh SSP + speculative local echo** (PredictionEngine) | **Trên LAN không cần.** Adaptive mode `srtt_trigger` chỉ bật khi `send_interval > 30ms`; LAN clamp ở 20ms -> local echo **dormant** (verified). Nếu vẫn muốn echo tức thì phải `DisplayPreference=Always`. Đòn bẩy biên cho LAN. | native (logic) | cao | trung bình |
+| **1** | **PTY bridge text-path** (`forkpty()`/`openpty()` + DispatchIO + VT byte stream over TCP, client render) | **Entirely sidesteps macOS's input-injection problem**: a keystroke is just bytes written to the PTY master fd — no CGEvent, no Accessibility, no activate-then-control, no TCC. Text crisp **by construction** (no video codec). Near-zero idle (a quiet PTY produces no byte flow). Bandwidth ~36–52 bytes/keystroke. | native | low | low |
+| **2** | **libghostty as the client renderer** (full surface + **self-owned external-backend patch**, ref daiimus External.zig; `ghostty_surface_feed_data` ← network, write-callback → host) | Ghostty-class rendering: Metal GPU, highest VT fidelity, Kitty graphics, ligatures. Proven on iOS (VVTerm/Moshi). Price: ~1–3 weeks standing up the Zig build + own patch + vendored XCFramework. Wrapped behind `TerminalRendering` to isolate the C-ABI. **No fallback** (best-only — no SwiftTerm). | native (via self-owned patch) | **high** | medium (ABI-instability tax + self-rebased patch; bus factor avoided) |
+| **3** | **TCP stream transport over Network.framework** (`NWConnection`/`NWListener` + 1-byte type + 4-byte big-endian length framing, ttyd-style) | The simplest fit for LAN: RTT <1ms so TCP head-of-line blocking is negligible; perfect idle efficiency (no PTY output → no bytes flow). No need for mosh's SSP/UDP. | native | low | low |
+| **4** | **Persistent PTY via a helper process holding the master fd** (launchd agent `KeepAlive`, or tmux) | The shell survives every client disconnect (iPad sleep, lid close, Wi-Fi handoff). Because the master fd belongs to the helper process — not the TCP handler — closing the socket sends no SIGHUP to the shell. | native | medium | medium |
+| **5** | **ET-style packet-framed ring buffer + sequence-number ACK catchup** (BackedWriter/BackedReader) | Seamless reconnect after LAN interruptions. **Replay on packet boundaries** structurally eliminates the risk of a replay cutting mid-escape-sequence (emulator corruption). | partial | medium | medium |
+| **6** | **iOS eager-reconnect on foreground** (`scenePhase .active` -> new NWConnection + sequence exchange; do **not** try to keep the socket alive across suspension) | Matches iOS reality: the OS reclaims sockets when the app suspends (~30s background budget). Treat reconnect as the normal fast path, not exceptional recovery. | native | medium | medium |
+| **7** | **Clipboard sync: OSC 52** for the terminal path (libghostty OSC 52 action callback; SwiftTerm `clipboardCopy`/`clipboardRead` only a *citation* for the mechanism) | Host->client copy is nearly free, riding inside the PTY byte stream. tmux/Neovim can be configured to emit OSC 52 today. | native | low | medium (read = exfiltration, default-deny) |
+| **8** | **ScreenCaptureKit per-window + `SCFrameStatus.idle` skip + `dirtyRects`** (GUI video path) | Near-zero bandwidth on a static screen — the most important idle lever for coding. `guard status == .complete` before encode = zero encode work when idle. | native | medium | low |
+| **9** | **VideoToolbox HEVC 4:2:0, `AllowFrameReordering=false`, `RealTime=true`, quality-mode** (GUI path) | HW encode on the Media Engine (~0% of a CPU core), P-frames-only (no B-frame lookahead). 4:2:0 is **acceptable** because the text-crispness constraint was dropped. | native | medium | low |
+| **10** | **CGEvent/SkyLight input injection** (GUI video path) | Needed only for **GUI windows**, not for the terminal. Retains the full activate-then-control + private SPI complexity. | partial/unsupported | high | **high** (Electron mouse reject, private API, no MAS) |
+| **11** | **Mosh SSP + speculative local echo** (PredictionEngine) | **Not needed on LAN.** Adaptive mode's `srtt_trigger` only fires when `send_interval > 30ms`; LAN clamps at 20ms -> local echo **dormant** (verified). Instant echo would require `DisplayPreference=Always`. A marginal lever for LAN. | native (logic) | high | medium |
 
-**Lưu ý uncertainty/correction bám corpus:**
-- `forkpty()` từ Swift **an toàn** nếu child gọi `execve()` ngay (fork-then-exec), parent chỉ nhận master fd — claim "unsafe to call from Swift" đã bị **refuted** ở mức call-site; nguy cơ thật chỉ khi chạy Swift/ObjC runtime trong child *trước* exec ([forums.swift.org/t/51457], [developer.apple.com/forums/thread/747499]). Workaround được Apple khuyến nghị: `openpty()` + `posix_spawn(POSIX_SPAWN_SETSID)` + `login_tty()` — đúng path mà SwiftTerm đang migrate (hiện guard `#if false //canImport(Subprocess)`).
-- `posix_openpt()` **không "broken"** trên macOS (claim refuted) — giới hạn thật chỉ là `fcntl(O_NONBLOCK)` trên master fd fails với EINVAL nếu chưa open slave; `openpty()` né được vì nó tự open slave ([apple-oss Libc/util/pty.c]).
-- HEVC + `EnableLowLatencyRateControl` trên Apple Silicon: **uncertain/empirical** — confirmed qua FFmpeg patch (`TARGET_CPU_ARM64`, commit d87210745e, 9/2025) nhưng **Apple không document HEVC** cho property này (WWDC21 nói H.264 only). Dùng được nhưng phải feature-detect runtime ([VTCompressionProperties.h]).
-
----
-
-### 2. "Do first" — shortlist khởi động
-
-Đây là tập tối thiểu để có một tool dùng được hàng ngày, rủi ro thấp nhất, giá trị cao nhất:
-
-1. **PTY bridge trên host** — `openpty()` + `posix_spawn` (login_tty, `POSIX_SPAWN_SETSID`), set env `TERM=xterm-ghostty`, `LANG=en_US.UTF-8`, `COLORTERM=truecolor`, `IUTF8` termios flag (confirmed có trên Darwin: `IUTF8 = 0x00004000` trong XNU `bsd/sys/termios.h`), prepend `-` vào argv[0] cho login shell. Đọc master fd bằng `DispatchIO(.stream, lowWater:1, highWater:131072)`.
-2. **Resize**: `ioctl(masterFd, TIOCSWINSZ, &winsize)` khi client báo size mới -> kernel gửi SIGWINCH (SwiftTerm `sizeChanged` delegate -> message resize -> host ioctl).
-3. **Transport**: `NWConnection`/`NWListener` TCP, framing 1-byte type (0=terminal data, 1=resize) + 4-byte length. **No app-layer TLS** — WireGuard encrypt; authorization qua NetBird ACL ([13]).
-4. **Client libghostty** (full surface + **patch external-backend tự own**, ref daiimus External.zig): `ghostty_surface_feed_data` ← NWConnection receive loop; write-callback (`use_custom_io=true`) -> NWConnection -> PTY stdin host. Build `GhosttyKit.xcframework` (zig), vendor + pin upstream SHA, re-apply patch khi bump. Bọc sau `TerminalRendering`. **Không fallback** (best-only — không SwiftTerm).
-5. **Persistent PTY**: host helper là launchd agent `KeepAlive=true` giữ tất cả master fd; PTY sống qua disconnect.
-6. **Reconnect tối thiểu**: iOS `scenePhase .active` -> reconnect; macOS client `NWPathMonitor.pathUpdateHandler` -> reconnect khi Wi-Fi↔Ethernet đổi.
-
-> ⚠️ **Threading caveat (load-bearing, từ corpus `uncertain` verdict):** `feed(byteArray:)` có doc nói "can be invoked from a background thread" **nhưng** `feedPrepare()` mutate `selection.active`/`search.invalidate()` và `queuePendingDisplay()` đọc-ghi `pendingDisplay: Bool` **không khóa** trên thread caller -> data race thật. Mitigation: hop về main queue trước khi gọi `feed()` từ network receive loop, hoặc serialize. Stress-test trước khi ship.
-
-> ℹ️ **Ligature:** libghostty (Ghostty) xử lý ligature đúng qua HarfBuzz shaping — không lệch cột.
+**Uncertainty/correction notes tracking the corpus:**
+- `forkpty()` from Swift is **safe** if the child calls `execve()` immediately (fork-then-exec) and the parent only takes the master fd — the "unsafe to call from Swift" claim has been **refuted** at the call-site level; the real hazard is only running the Swift/ObjC runtime in the child *before* exec ([forums.swift.org/t/51457], [developer.apple.com/forums/thread/747499]). Apple's recommended workaround: `openpty()` + `posix_spawn(POSIX_SPAWN_SETSID)` + `login_tty()` — exactly the path SwiftTerm is migrating to (currently guarded `#if false //canImport(Subprocess)`).
+- `posix_openpt()` is **not "broken"** on macOS (claim refuted) — the only real limitation is `fcntl(O_NONBLOCK)` on the master fd failing with EINVAL before the slave is opened; `openpty()` avoids it because it opens the slave itself ([apple-oss Libc/util/pty.c]).
+- HEVC + `EnableLowLatencyRateControl` on Apple Silicon: **uncertain/empirical** — confirmed via an FFmpeg patch (`TARGET_CPU_ARM64`, commit d87210745e, 9/2025) but **Apple does not document HEVC** for this property (WWDC21 says H.264 only). Usable, but feature-detect at runtime ([VTCompressionProperties.h]).
 
 ---
 
-### 3. Docs thay đổi thế nào
+### 2. "Do first" — bootstrap shortlist
 
-#### 3.1. [05-input-window-control.md] — rủi ro lớn nhất **biến mất cho terminal path**
+This is the minimal set for a daily-usable tool, with the lowest risk and highest value:
 
-Doc 05 mở đầu bằng câu "Đây là rủi ro kỹ thuật lớn nhất của dự án". Với hybrid, **điều này chỉ còn đúng cho GUI video path**:
+1. **PTY bridge on the host** — `openpty()` + `posix_spawn` (login_tty, `POSIX_SPAWN_SETSID`), set env `TERM=xterm-ghostty`, `LANG=en_US.UTF-8`, `COLORTERM=truecolor`, the `IUTF8` termios flag (confirmed present on Darwin: `IUTF8 = 0x00004000` in XNU `bsd/sys/termios.h`), prepend `-` to argv[0] for a login shell. Read the master fd with `DispatchIO(.stream, lowWater:1, highWater:131072)`.
+2. **Resize**: `ioctl(masterFd, TIOCSWINSZ, &winsize)` when the client reports a new size -> the kernel sends SIGWINCH (SwiftTerm `sizeChanged` delegate -> resize message -> host ioctl).
+3. **Transport**: `NWConnection`/`NWListener` TCP, 1-byte-type framing (0=terminal data, 1=resize) + 4-byte length. **No app-layer TLS** — WireGuard encrypts; authorization via NetBird ACL ([13]).
+4. **Client libghostty** (full surface + **self-owned external-backend patch**, ref daiimus External.zig): `ghostty_surface_feed_data` ← NWConnection receive loop; write-callback (`use_custom_io=true`) -> NWConnection -> host PTY stdin. Build `GhosttyKit.xcframework` (zig), vendor + pin upstream SHA, re-apply the patch on bumps. Wrap behind `TerminalRendering`. **No fallback** (best-only — no SwiftTerm).
+5. **Persistent PTY**: the host helper is a launchd agent with `KeepAlive=true` holding all master fds; PTYs survive disconnects.
+6. **Minimal reconnect**: iOS `scenePhase .active` -> reconnect; macOS client `NWPathMonitor.pathUpdateHandler` -> reconnect on Wi-Fi↔Ethernet changes.
 
-- **Terminal path không chạm CGEvent/AX/activate-then-control gì cả.** Input = byte ghi vào PTY master fd qua `DispatchIO.write`. Không cần TCC Accessibility, không `CGEventPostToPid`, không heuristic match `AXUIElement`↔`CGWindowID` (điểm "dễ vỡ thật sự" mà doc 05 §4 tự nhận), không caveat macOS 14 cooperative-activation (doc 05 §4 → "Caveat macOS 14+" — "FAIL khi trigger bởi timer/network" chính là case remote control). **Toàn bộ chuỗi rủi ro này bay đi cho phần lớn workflow coding (terminal/Neovim/tmux/git/build).**
-- **Hệ quả với Phase 0 gate:** các spike 0.4–0.6 trong [07-roadmap.md] (AXRaise đúng cửa sổ, CGEventPostToPid click trúng, đo tỉ lệ activate từ callback mạng) **không còn là gate chặn dự án**. Chúng tụt xuống thành điều kiện cho **GUI video path (phase sau)**, không phải điều kiện sống-còn của MVP.
-- **Việc cần làm với doc 05:** thêm banner đầu file "Áp dụng cho GUI window path; terminal path sidestep hoàn toàn injection — xem PTY bridge". Giữ nguyên nội dung kỹ thuật (vẫn đúng cho VS Code/Xcode window) nhưng hạ mức ưu tiên rủi ro.
-- **Electron correction (đã reflect trong [05] banner):** keyboard inject qua `CGEventPostToPid` được Electron/VS Code chấp nhận; chỉ **mouse** bị từ chối (cần SkyLight SPI) — test macOS 14/15.
+> ⚠️ **Threading caveat (load-bearing, from a corpus `uncertain` verdict):** `feed(byteArray:)` is documented as "can be invoked from a background thread", **but** `feedPrepare()` mutates `selection.active`/`search.invalidate()` and `queuePendingDisplay()` reads/writes `pendingDisplay: Bool` **without a lock** on the caller's thread -> a real data race. Mitigation: hop to the main queue before calling `feed()` from the network receive loop, or serialize. Stress-test before shipping.
 
-#### 3.2. [09-codec-choice.md] — bài toán 4:4:4 / text-crispness **bị drop hẳn**
-
-Doc 09 TL;DR hiện viết "Trần chất lượng text thật là chroma 4:2:0 ... đòn bẩy số 1 ... thứ Apple không có". Với hybrid, **đây không còn là vấn đề trung tâm**:
-
-- **Text crispness không còn là ưu tiên #1.** Toàn bộ text vốn stress codec nhất (terminal, code) **đi qua PTY path render bằng libghostty — nét tuyệt đối, không qua codec**. Video chỉ phục vụ GUI window (VS Code/Xcode editor view), nơi **4:2:0 HEVC chấp nhận được** (constraint đã nới).
-- **Over-engineering cần đánh dấu DROP trong doc 09:**
-  - §2 "Đòn bẩy khả dụng" mục 3 — **"Software encode 4:4:4 ultra-text tier"**: bỏ hoàn toàn. 4:4:4 problem dropped; không tối ưu cho nó nữa.
-  - §2 mục 1 — **HEVC 10-bit (Main 10) mặc định "để nét cạnh hơn"**: hạ xuống optional. Corpus xác nhận VideoToolbox không có HEVC-SCC (palette/intra-block-copy — claim `confirmed`: không tồn tại `kVTProfileLevel_HEVC_SCC_*` trong bất kỳ SDK nào). Với GUI path, **HEVC Main 8-bit 4:2:0** là đủ; 10-bit chỉ là tweak biên.
-  - **Khuyến nghị mới cho GUI path:** `kVTCompressionPropertyKey_Quality = 0.6` (constant-quality, **chỉ Apple Silicon macOS ARM64** — FFmpeg `vtenc_qscale_enabled()` gate `!TARGET_OS_IPHONE && TARGET_CPU_ARM64`, claim `confirmed`) + `pixelFormat = 420YpCbCr8BiPlanarVideoRange` + `minimumFrameInterval = CMTime(1, 30)` (cap ~24–30 fps — đủ dùng, giảm băng thông/CPU) thay vì tối ưu chroma.
-- **Việc cần làm với doc 09:** sửa TL;DR thành "GUI window path dùng HEVC 4:2:0 8-bit quality-mode; text-heavy content đi PTY path không qua codec". Phần codec so sánh (Parsec/Moonlight muốn 4:4:4) giữ làm bối cảnh lịch sử nhưng note rõ "không áp dụng cho hybrid vì text đã tách sang terminal path".
-
-#### 3.3. [11-absolute-latency.md] + [01 §5 latency budget] — floor <16ms / 120fps / vsync là **over-engineering**
-
-Doc 11 là "nghiên cứu sâu nhất (73-agent)" về **absolute latency floor**: floor 10–16ms @120fps ProMotion, hai stage dominant là capture-vsync + scanout-vsync, beam-racing, `CAMetalDisplayLink preferredFrameLatency=1`. Doc 01 §5 đặt mục tiêu "glass-to-glass ~30–50ms, 60fps". **Với hybrid coding profile, toàn bộ tầng tối ưu này là over-engineering cần hạ cấp:**
-
-- **Motion-to-photon <16ms không còn là goal.** README đã ghi coding chịu được 40–80ms. Vì vậy:
-  - **DROP**: theo đuổi floor 10–14ms, 120fps/ProMotion path (doc 11 budget @120fps; doc 01 §5 ghi chú "ProMotion 120Hz" — README cũng đã nói "120fps/ProMotion: bỏ").
-  - **DROP**: beam-racing, `CAMetalDisplayLink preferredFrameLatency=1`, slice/sub-frame pipelining (corpus xác nhận "Slice / sub-frame pipelining KHÔNG khả dụng qua public VideoToolbox API" — `refuted`, vốn đã nên bỏ).
-  - **DROP cho terminal path**: cả khái niệm vsync-dominant budget. **Latency terminal path = RTT mạng + PTY round-trip (~1–5ms LAN), KHÔNG có capture-vsync, không có scanout-coupling, không có encode/decode.** Mọi phân tích "capture compositor vsync + scanout vsync là hai khoản chi không nén được" của doc 11 **chỉ áp dụng cho GUI video path**.
-  - **fps không phải mục tiêu**: corpus correction "`minimumFrameInterval` macOS 15+ default âm thầm = 1/60" vẫn cần biết, nhưng cho GUI path ta **chủ động set THẤP** (10fps cho text content) thay vì cố đẩy 60/120. `(1/fps)×0.9` (OBS PR#11896), không `kCMTimeZero` (refuted).
-- **Giữ lại từ doc 11 (vẫn đúng, low-risk cho GUI path):** `queueDepth` default thực là 8 (không phải 3), `2` hợp lệ cho latency thấp; `AllowOpenGOP` default true -> set `false`; `MaxFrameDelayCount=0`; **tắt AWDL/`includePeerToPeer`** (gây spike 40–336ms — quan trọng cho GUI video trên Wi-Fi); idle-frame skip + dirtyRects.
-- **Việc cần làm với doc 11:** thêm banner "Toàn bộ floor analysis này áp dụng cho **GUI video path**. Terminal path (mặc định, Phase 1) có latency model hoàn toàn khác: dominated by network RTT, không vsync." Hạ doc 11 từ "nghiên cứu trung tâm" xuống "tham chiếu cho phase video sau".
-- **Việc cần làm với doc 01 §5:** tách latency budget thành 2 bảng: (a) **Terminal path** = keystroke -> PTY -> byte stream -> render, ~1–5ms LAN + local echo optional; (b) **GUI video path** = giữ bảng 6-stage hiện tại nhưng nới target lên 40–80ms, bỏ cột 120fps.
+> ℹ️ **Ligatures:** libghostty (Ghostty) handles ligatures correctly via HarfBuzz shaping — no column drift.
 
 ---
 
-### 4. Revised phased roadmap (ghi đè [07-roadmap.md])
+### 3. How the docs change
 
-Đảo ngược thứ tự: **terminal text-path là Phase 1** (đơn giản hơn + giá trị cao hơn + né bài toán injection khó nhất). GUI video path lùi về phase sau.
+#### 3.1. [05-input-window-control.md] — the biggest risk **disappears for the terminal path**
+
+Doc 05 opens with "This is the project's biggest technical risk". With hybrid, **that statement is now true only for the GUI video path**:
+
+- **The terminal path touches no CGEvent/AX/activate-then-control at all.** Input = bytes written to the PTY master fd via `DispatchIO.write`. No TCC Accessibility, no `CGEventPostToPid`, no `AXUIElement`↔`CGWindowID` matching heuristics (the "genuinely fragile" point doc 05 §4 admits itself), no macOS 14 cooperative-activation caveat (doc 05 §4 → "macOS 14+ caveat" — "FAILS when triggered by a timer/network" is exactly the remote-control case). **That entire risk chain vanishes for the bulk of the coding workflow (terminal/Neovim/tmux/git/build).**
+- **Consequence for the Phase 0 gate:** the 0.4–0.6 spikes in [07-roadmap.md] (AXRaise on the right window, CGEventPostToPid clicking accurately, measuring the activation rate from a network callback) **are no longer project-blocking gates**. They drop to prerequisites for the **GUI video path (a later phase)**, not survival conditions for the MVP.
+- **What to change in doc 05:** add a banner at the top of the file: "Applies to the GUI window path; the terminal path sidesteps injection entirely — see PTY bridge". Keep the technical content (still valid for VS Code/Xcode windows) but lower the risk priority.
+- **Electron correction (already reflected in the [05] banner):** keyboard injection via `CGEventPostToPid` IS accepted by Electron/VS Code; only the **mouse** is rejected (needs SkyLight SPI) — test on macOS 14/15.
+
+#### 3.2. [09-codec-choice.md] — the 4:4:4 / text-crispness problem is **dropped outright**
+
+Doc 09's TL;DR currently reads "The real text-quality ceiling is 4:2:0 chroma ... lever #1 ... the thing Apple does not have". With hybrid, **this is no longer the central problem**:
+
+- **Text crispness is no longer priority #1.** All the text that stresses a codec most (terminal, code) **goes via the PTY path rendered by libghostty — absolutely crisp, no codec involved**. Video only serves GUI windows (VS Code/Xcode editor views), where **4:2:0 HEVC is acceptable** (the constraint was relaxed).
+- **Over-engineering to mark as DROP in doc 09:**
+  - §2 "Available levers" item 3 — **"Software encode 4:4:4 ultra-text tier"**: drop entirely. The 4:4:4 problem is dropped; stop optimizing for it.
+  - §2 item 1 — **HEVC 10-bit (Main 10) by default "for sharper edges"**: demote to optional. The corpus confirms VideoToolbox has no HEVC-SCC (palette/intra-block-copy — claim `confirmed`: no `kVTProfileLevel_HEVC_SCC_*` exists in any SDK). For the GUI path, **HEVC Main 8-bit 4:2:0** is enough; 10-bit is a marginal tweak.
+  - **New recommendation for the GUI path:** `kVTCompressionPropertyKey_Quality = 0.6` (constant-quality, **Apple Silicon macOS ARM64 only** — FFmpeg `vtenc_qscale_enabled()` gates on `!TARGET_OS_IPHONE && TARGET_CPU_ARM64`, claim `confirmed`) + `pixelFormat = 420YpCbCr8BiPlanarVideoRange` + `minimumFrameInterval = CMTime(1, 30)` (cap ~24–30 fps — sufficient, cuts bandwidth/CPU) instead of optimizing chroma.
+- **What to change in doc 09:** rewrite the TL;DR as "the GUI window path uses HEVC 4:2:0 8-bit quality-mode; text-heavy content goes via the PTY path with no codec". Keep the codec comparison (Parsec/Moonlight wanting 4:4:4) as historical context, but note clearly "does not apply to hybrid because text moved to the terminal path".
+
+#### 3.3. [11-absolute-latency.md] + [01 §5 latency budget] — the <16ms floor / 120fps / vsync are **over-engineering**
+
+Doc 11 is the "deepest study (73 agents)" of the **absolute latency floor**: a 10–16ms floor @120fps ProMotion, the two dominant stages being capture-vsync + scanout-vsync, beam-racing, `CAMetalDisplayLink preferredFrameLatency=1`. Doc 01 §5 targets "glass-to-glass ~30–50ms, 60fps". **For the hybrid coding profile, this entire optimization layer is over-engineering to downgrade:**
+
+- **Motion-to-photon <16ms is no longer a goal.** The README already states coding tolerates 40–80ms. Therefore:
+  - **DROP**: chasing the 10–14ms floor, the 120fps/ProMotion path (doc 11's budget @120fps; doc 01 §5's "ProMotion 120Hz" note — the README already says "120fps/ProMotion: dropped").
+  - **DROP**: beam-racing, `CAMetalDisplayLink preferredFrameLatency=1`, slice/sub-frame pipelining (corpus confirms "Slice / sub-frame pipelining is NOT available through the public VideoToolbox API" — `refuted`, it should have been dropped anyway).
+  - **DROP for the terminal path**: the entire concept of a vsync-dominated budget. **Terminal-path latency = network RTT + PTY round-trip (~1–5ms LAN), with NO capture-vsync, no scanout coupling, no encode/decode.** All of doc 11's "compositor capture vsync + scanout vsync are the two incompressible costs" analysis **applies only to the GUI video path**.
+  - **fps is not a goal**: the corpus correction "`minimumFrameInterval` on macOS 15+ silently defaults to 1/60" is still worth knowing, but for the GUI path we deliberately set it **LOW** (10fps for text content) instead of pushing 60/120. `(1/fps)×0.9` (OBS PR#11896), not `kCMTimeZero` (refuted).
+- **Keep from doc 11 (still valid, low-risk for the GUI path):** `queueDepth`'s true default is 8 (not 3), and `2` is valid for low latency; `AllowOpenGOP` defaults to true -> set `false`; `MaxFrameDelayCount=0`; **disable AWDL/`includePeerToPeer`** (causes 40–336ms spikes — important for GUI video over Wi-Fi); idle-frame skip + dirtyRects.
+- **What to change in doc 11:** add the banner "This entire floor analysis applies to the **GUI video path**. The terminal path (the default, Phase 1) has a completely different latency model: dominated by network RTT, no vsync." Demote doc 11 from "central study" to "reference for the later video phase".
+- **What to change in doc 01 §5:** split the latency budget into 2 tables: (a) **Terminal path** = keystroke -> PTY -> byte stream -> render, ~1–5ms LAN + optional local echo; (b) **GUI video path** = keep the current 6-stage table but relax the target to 40–80ms and drop the 120fps column.
+
+---
+
+### 4. Revised phased roadmap (overrides [07-roadmap.md])
+
+Invert the order: **the terminal text-path is Phase 1** (simpler + higher value + dodges the hardest injection problem). The GUI video path moves to a later phase.
 
 ```
 Phase 1 (terminal PTY) ──▶ Phase 2 (persist+reconnect+clipboard) ──▶ Phase 3 (iOS client)
-   giá trị cao, rủi ro thấp        làm "dùng được hàng ngày"            mở rộng thiết bị
-                                                                          │
-                                            Phase 4 (GUI video) ◀─────────┘  ← rủi ro injection dồn về đây
+   high value, low risk        makes it "daily usable"                  device expansion
+                                                                            │
+                                            Phase 4 (GUI video) ◀───────────┘  <- injection risk concentrated here
                                             Phase 5 (security + polish)
 ```
 
-#### Phase 0 — Spike (đổi trọng tâm)
-Bỏ gate input-injection khỏi vị trí chặn dự án. Spike mới:
-- [ ] `openpty()` + `posix_spawn(createSession)` spawn login shell, đọc master fd qua DispatchIO, echo byte qua TCP — verify shell chạy, vim/tmux render box-drawing đúng (env `LANG`/`IUTF8`). (forkpty unsafe từ Swift — đã giải.)
-- [ ] **libghostty spike:** áp patch external-backend (ref daiimus External.zig / Lakr233 `0002-host-managed-io.patch`), build XCFramework, feed byte stream → render macOS + iOS device. Verify: fullscreen/alt-screen chạy, route key qua `ghostty_surface_key` (kitty/DECCKM đúng), action callbacks (COMMAND_FINISHED/PWD) bắn ra.
+#### Phase 0 — Spike (focus shifted)
+Remove the input-injection gate from its project-blocking position. New spikes:
+- [ ] `openpty()` + `posix_spawn(createSession)` spawn a login shell, read the master fd via DispatchIO, echo bytes over TCP — verify the shell runs and vim/tmux render box-drawing correctly (env `LANG`/`IUTF8`). (forkpty-unsafe-from-Swift — resolved.)
+- [ ] **libghostty spike:** apply the external-backend patch (ref daiimus External.zig / Lakr233 `0002-host-managed-io.patch`), build the XCFramework, feed a byte stream → render on macOS + an iOS device. Verify: fullscreen/alt-screen works, keys routed through `ghostty_surface_key` (kitty/DECCKM correct), action callbacks (COMMAND_FINISHED/PWD) fire.
 
-> 🔬 **Phase 0 — checklist SPIKE "phải đo trên device" (gate, không research được):**
-> - [ ] **binary-size** `GhosttyKit.xcframework` (Metal renderer) trên iOS — chấp nhận được không.
-> - [ ] **OSC 133 shell-integration e2e** qua network (host shell thật emit → action callback ở client).
-> - [ ] (codec, Phase 4) `AllowTemporalCompression=false` có ép HEVC software-encode không (nếu có → dùng `MaxKeyFrameInterval=1` như FFmpeg); `ConstantBitRate` HEVC khả dụng trên OS đích không (probe `VTSessionCopySupportedPropertyDictionary`, else fallback `AverageBitRate`+`DataRateLimits`); `ForceLTRRefresh` nhận `kCFBooleanTrue` hay `@(1)`.
-> - [ ] `mach_timebase` numer/denom trên M2/M3/M4 — **luôn gọi API, đừng hardcode 125/3**.
-> - [ ] (codec, Phase 4) bitrate tối thiểu cho text đọc được + fringing 4:2:0 "tolerable" — perceptual test trên display đích.
-> - [ ] `EnableLowLatencyRateControl` + HEVC + `EnableLTR` feature-detect runtime (`VTCopySupportedPropertyDictionaryForEncoder`).
+> 🔬 **Phase 0 — "must measure on device" SPIKE checklist (gates; cannot be researched):**
+> - [ ] **binary size** of `GhosttyKit.xcframework` (Metal renderer) on iOS — acceptable or not.
+> - [ ] **OSC 133 shell-integration e2e** over the network (a real host shell emits → action callback fires on the client).
+> - [ ] (codec, Phase 4) does `AllowTemporalCompression=false` force HEVC software encode (if so → use `MaxKeyFrameInterval=1` like FFmpeg); is `ConstantBitRate` for HEVC available on the target OS (probe `VTSessionCopySupportedPropertyDictionary`, else fall back to `AverageBitRate`+`DataRateLimits`); does `ForceLTRRefresh` take `kCFBooleanTrue` or `@(1)`.
+> - [ ] `mach_timebase` numer/denom on M2/M3/M4 — **always call the API, never hardcode 125/3**.
+> - [ ] (codec, Phase 4) minimum bitrate for readable text + whether 4:2:0 fringing is "tolerable" — perceptual test on the target display.
+> - [ ] `EnableLowLatencyRateControl` + HEVC + `EnableLTR` runtime feature-detect (`VTCopySupportedPropertyDictionaryForEncoder`).
 
-#### Phase 1 — Terminal MVP (Mac host -> Mac client), **thay cho "MVP video" cũ**
-- [ ] PTY bridge host: spawn shell, stream byte, `TIOCSWINSZ` resize.
-- [ ] Transport TCP framing (1-byte type + 4-byte length) qua Network.framework.
-- [ ] Client libghostty: full surface + **patch external-backend tự own** (XCFramework build), `feed_data` ← network / write-callback → host, bọc sau `TerminalRendering`. **Không fallback** (best-only).
-- [ ] Bonjour discovery host advertise / client list (giữ từ [03]).
-- [ ] **Done:** mở shell host trên client Mac, gõ + chạy vim/tmux/git mượt, text nét tuyệt đối, **không một dòng CGEvent/Accessibility**.
+#### Phase 1 — Terminal MVP (Mac host -> Mac client), **replacing the old "video MVP"**
+- [ ] PTY bridge host: spawn the shell, stream bytes, `TIOCSWINSZ` resize.
+- [ ] TCP transport framing (1-byte type + 4-byte length) over Network.framework.
+- [ ] libghostty client: full surface + **self-owned external-backend patch** (XCFramework build), `feed_data` ← network / write-callback → host, wrapped behind `TerminalRendering`. **No fallback** (best-only).
+- [ ] Bonjour discovery: host advertises / client lists (kept from [03]).
+- [ ] **Done:** open a host shell on a client Mac, type + run vim/tmux/git smoothly, absolutely crisp text, **not a single line of CGEvent/Accessibility**.
 
 #### Phase 2 — Persistence, reconnect, clipboard
-- [ ] Persistent PTY qua launchd agent giữ master fd (sống qua disconnect).
-- [ ] ET-style packet-framed ring buffer + sequence-number catchup (reconnect không corrupt; nếu giữ raw-byte ring buffer thì prefix DECSTR `ESC[!p` trước khi replay tail — `Terminal.softReset()`).
-- [ ] Reconnect: iOS `scenePhase`, macOS `NWPathMonitor`; host `NSWorkspaceDidWakeNotification` re-listen sau sleep.
-- [ ] Clipboard OSC 52 (copy host->client free; read default-deny + permission prompt). Paste client->host nên dùng **bracketed paste** (`ESC[200~`…`ESC[201~`) thay vì OSC 52 query để né freeze Neovim ~10s.
-- [ ] **Done:** session sống qua iPad sleep / lid-close / Wi-Fi handoff; copy-paste 2 chiều.
+- [ ] Persistent PTY via a launchd agent holding the master fd (survives disconnects).
+- [ ] ET-style packet-framed ring buffer + sequence-number catchup (corruption-free reconnect; if keeping a raw-byte ring buffer instead, prefix DECSTR `ESC[!p` before replaying the tail — `Terminal.softReset()`).
+- [ ] Reconnect: iOS `scenePhase`, macOS `NWPathMonitor`; host `NSWorkspaceDidWakeNotification` re-listen after sleep.
+- [ ] Clipboard OSC 52 (host->client copy free; read default-deny + permission prompt). Client->host paste should use **bracketed paste** (`ESC[200~`...`ESC[201~`) rather than an OSC 52 query, avoiding the ~10s Neovim freeze.
+- [ ] **Done:** sessions survive iPad sleep / lid close / Wi-Fi handoff; two-way copy-paste.
 
 #### Phase 3 — iOS / iPadOS client
-- [ ] libghostty surface trong UIView (iOS), soft keyboard + hardware keyboard -> PTY byte (Ghostty hỗ trợ Kitty keyboard protocol cho Neovim/Helix).
-- [ ] iOS clipboard: `UIPasteboard.changedNotification`, export `UIDocumentPickerViewController(forExporting:asCopy:true)`.
-- [ ] **iOS UX (đã chốt): libghostty TUI (như desktop) + read-only inspector [16] cho structured view.** KHÔNG làm SDK-driven pane (B2 bỏ). Inspector read-only đã cho native cards (tool/subagent/todo) mà không phải drive agent → giải bài toán "raw ANSI trên màn nhỏ" mà Happy/Happier nêu, nhưng không mất TUI fidelity.
-- [ ] **Done:** code từ iPad qua LAN, terminal đầy đủ.
+- [ ] libghostty surface in a UIView (iOS), soft keyboard + hardware keyboard -> PTY bytes (Ghostty supports the Kitty keyboard protocol for Neovim/Helix).
+- [ ] iOS clipboard: `UIPasteboard.changedNotification`, export via `UIDocumentPickerViewController(forExporting:asCopy:true)`.
+- [ ] **iOS UX (settled): libghostty TUI (same as desktop) + the read-only inspector [16] for a structured view.** Do NOT build SDK-driven panes (B2 dropped). The read-only inspector already provides native cards (tool/subagent/todo) without driving the agent → solves the "raw ANSI on a small screen" problem Happy/Happier raise, without losing TUI fidelity.
+- [ ] **Done:** code from an iPad over LAN, full terminal.
 
-#### Phase 4 — GUI video path (đẩy lùi tại đây — nơi tập trung mọi rủi ro injection)
-- [ ] ScreenCaptureKit per-window + idle skip + dirtyRects + HEVC 4:2:0 8-bit quality-mode (doc 09 mới).
-- [ ] VideoToolbox decode + Metal render (target 40–80ms, **không** 120fps/beam-racing — doc 11 hạ cấp).
-- [ ] Input injection cho GUI window: activate-then-control + `CGEventPostToPid` (keyboard) + SkyLight SPI (mouse Electron) — **đây mới là phần "khó nhất" của doc 05**, giờ là feature opt-in per-window, không phải nền tảng.
-- [ ] **Done:** "mirror this window" cho VS Code/Xcode khi cần GUI.
+#### Phase 4 — GUI video path (pushed back to here — where all the injection risk concentrates)
+- [ ] ScreenCaptureKit per-window + idle skip + dirtyRects + HEVC 4:2:0 8-bit quality-mode (new doc 09).
+- [ ] VideoToolbox decode + Metal render (target 40–80ms, **no** 120fps/beam-racing — doc 11 demoted).
+- [ ] Input injection for GUI windows: activate-then-control + `CGEventPostToPid` (keyboard) + SkyLight SPI (Electron mouse) — **this is the truly "hardest" part of doc 05**, now an opt-in per-window feature, not the foundation.
+- [ ] **Done:** "mirror this window" for VS Code/Xcode when GUI is needed.
 
 #### Phase 5 — Security & polish
-- [ ] **Security = dựa vào NetBird (WireGuard mesh), KHÔNG encrypt tầng app** — xem [13](13-netbird-transport.md). WireGuard đã lo E2E encryption + node auth; thêm TLS/QUIC-crypto là **thừa** (double-encrypt, latency vô ích). → **Bỏ** Network.framework TLS / CryptoKit ECDH ở tầng app.
-  - **Authorization** dùng **NetBird ACL** (deny-by-default, per-port): chỉ mở port app từ group client → group host. WireGuard auth *node*; ACL giới hạn *peer→port*.
-  - ⚠️ **NetBird mesh LÀ security boundary** (khác LAN trần): PTY=RCE bị giới hạn trong các peer đã authorize (bạn kiểm soát membership). Vẫn nên: app-level device-allowlist nhẹ + per-user nếu nhiều user chung máy (OIDC NetBird).
-- [ ] File transfer (NWProtocolFramer multiplex channel hoặc OSC 1337 cho file nhỏ).
-- [ ] Hardened Runtime + Developer-ID + notarize (host helper **không** sandbox được vì spawn shell — ship ngoài MAS).
-- [ ] ~~Speculative local echo~~ — **KHÔNG cần.** Assume NetBird direct P2P (~5–20ms, loss~0) → terminal = **TCP byte-stream + libghostty render, không mosh/SSP, không predictive echo**. Lợi ích SSP chỉ phát huy khi relayed mà ta **không engineer cho relay** ([13 §4](13-netbird-transport.md)).
+- [ ] **Security = rely on NetBird (WireGuard mesh), do NOT encrypt at the app layer** — see [13](13-netbird-transport.md). WireGuard already provides E2E encryption + node auth; adding TLS/QUIC-crypto would be **redundant** (double encryption, pointless latency). → **Drop** Network.framework TLS / CryptoKit ECDH at the app layer.
+  - **Authorization** uses **NetBird ACL** (deny-by-default, per-port): only open the app port from the client group → the host group. WireGuard authenticates the *node*; the ACL constrains *peer→port*.
+  - ⚠️ **The NetBird mesh IS the security boundary** (unlike a bare LAN): PTY=RCE is confined to authorized peers (you control membership). Still worth having: a light app-level device allowlist + per-user auth if multiple users share the machine (NetBird OIDC).
+- [ ] File transfer (NWProtocolFramer multiplexed channel, or OSC 1337 for small files).
+- [ ] Hardened Runtime + Developer ID + notarization (the host helper **cannot** be sandboxed since it spawns shells — ship outside MAS).
+- [ ] ~~Speculative local echo~~ — **NOT needed.** Assume NetBird direct P2P (~5–20ms, loss~0) → terminal = **TCP byte stream + libghostty render, no mosh/SSP, no predictive echo**. SSP's benefits only materialize when relayed, and we are **not engineering for relay** ([13 §4](13-netbird-transport.md)).
 
-**Lý do đảo phase (tóm tắt corpus):** terminal path (a) đơn giản hơn [video+injection] — chỉ byte stream, né input injection (renderer libghostty là công sức một lần); (b) giá trị cao hơn — coding daily là terminal/Neovim/tmux/git/build, đúng cái mọi tool prior-art (Blink, code-server, JetBrains Gateway bỏ Projector) hội tụ vào "semantic/text streaming thắng pixel streaming"; (c) né bài toán khó nhất — input injection. GUI video path là fallback cho window không có semantic alternative, đúng vị trí Phase 4.
+**Why the phases were inverted (corpus summary):** the terminal path is (a) simpler than [video+injection] — just a byte stream, sidestepping input injection (the libghostty renderer is a one-time effort); (b) higher value — daily coding is terminal/Neovim/tmux/git/build, exactly what every prior-art tool (Blink, code-server, JetBrains Gateway dropping Projector) converged on: "semantic/text streaming beats pixel streaming"; (c) it dodges the hardest problem — input injection. The GUI video path is the fallback for windows with no semantic alternative, exactly where Phase 4 places it.

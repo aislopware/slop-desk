@@ -1,14 +1,14 @@
 # 04 — Client: Decode + Render
 
-> **STATUS: REFERENCE — GUI video-path (Phase 4).** Kiến trúc hiện hành: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
+> **STATUS: REFERENCE — GUI video-path (Phase 4).** Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-Chạy trên **cả macOS và iOS/iPadOS** (share code). Pipeline: NALU nhận được → `VTDecompressionSession` → `CVPixelBuffer` → render Metal.
+Runs on **both macOS and iOS/iPadOS** (shared code). Pipeline: received NALU → `VTDecompressionSession` → `CVPixelBuffer` → Metal render.
 
 ---
 
-## 1. Dựng CMFormatDescription từ parameter sets
+## 1. Building a CMFormatDescription from parameter sets
 
-Phải có `CMVideoFormatDescription` trước khi tạo decode session. Build 1 lần từ parameter sets (strip start code Annex-B trước khi truyền vào).
+A `CMVideoFormatDescription` is required before creating the decode session. Build it once from the parameter sets (strip the Annex-B start codes before passing them in).
 
 ```swift
 // H.264 — SPS + PPS
@@ -24,15 +24,15 @@ CMVideoFormatDescriptionCreateFromHEVCParameterSets(
     nalUnitHeaderLength: 4, extensions: nil, formatDescriptionOut: &fmt)
 ```
 
-> ⚠️ **Pointer lifetime:** `Data.withUnsafeBytes` có scope. Phải giữ `Data` sống qua call (nest `withUnsafeBytes` trực tiếp hoặc `withExtendedLifetime`), nếu không crash khó tái hiện.
+> ⚠️ **Pointer lifetime:** `Data.withUnsafeBytes` is scoped. You must keep the `Data` alive across the call (nest `withUnsafeBytes` directly or use `withExtendedLifetime`), otherwise you get hard-to-reproduce crashes.
 
-Khi parameter sets đổi (đổi resolution) → build `CMVideoFormatDescription` mới + session mới. Check `VTDecompressionSessionCanAcceptFormatDescription` trước khi teardown.
+When the parameter sets change (resolution change) → build a new `CMVideoFormatDescription` + a new session. Check `VTDecompressionSessionCanAcceptFormatDescription` before tearing down.
 
 ---
 
-## 2. Ghép NALU → CMSampleBuffer (AVCC)
+## 2. Assembling NALUs → CMSampleBuffer (AVCC)
 
-VideoToolbox cần **AVCC** (length-prefix), không phải Annex-B. Nếu transport gửi Annex-B thì convert:
+VideoToolbox requires **AVCC** (length-prefixed), not Annex-B. If the transport sends Annex-B, convert:
 
 ```swift
 func annexBToAVCC(_ body: Data) -> Data {
@@ -41,7 +41,7 @@ func annexBToAVCC(_ body: Data) -> Data {
 }
 ```
 
-> ⚠️ **Multi-slice:** 1 frame có thể nhiều slice NALU. Gộp **tất cả** vào 1 `CMBlockBuffer` (`[len][nalu][len][nalu]...`), tạo 1 `CMSampleBuffer` với `sampleCount = 1`. Tách thành nhiều sample → render nửa frame, artifact.
+> ⚠️ **Multi-slice:** one frame can contain multiple slice NALUs. Combine **all of them** into a single `CMBlockBuffer` (`[len][nalu][len][nalu]...`) and create one `CMSampleBuffer` with `sampleCount = 1`. Splitting into multiple samples → half-rendered frames, artifacts.
 
 ```swift
 var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: pts, decodeTimeStamp: .invalid)
@@ -50,7 +50,7 @@ CMSampleBufferCreateReady(allocator: kCFAllocatorDefault, dataBuffer: blockBuffe
     sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sb)
 ```
 
-PTS: truyền PTS gốc của encoder kèm packet (flag `.valid` bắt buộc), hoặc dùng `CMClockGetTime(CMClockGetHostTimeClock())` lúc nhận.
+PTS: carry the encoder's original PTS with the packet (the `.valid` flag is mandatory), or use `CMClockGetTime(CMClockGetHostTimeClock())` at receive time.
 
 ---
 
@@ -59,7 +59,7 @@ PTS: truyền PTS gốc của encoder kèm packet (flag `.valid` bắt buộc), 
 ```swift
 var spec: [CFString: Any] = [:]
 #if os(macOS)
-spec[kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder] = true   // iOS luôn HW
+spec[kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder] = true   // iOS is always HW
 #endif
 let bufAttrs: [CFString: Any] = [
     kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, // NV12 native
@@ -71,113 +71,113 @@ VTDecompressionSessionCreate(allocator: kCFAllocatorDefault, formatDescription: 
 VTSessionSetProperty(session, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
 ```
 
-Decode (dùng output handler closure cho gọn):
+Decode (use the output-handler closure for brevity):
 
 ```swift
 VTDecompressionSessionDecodeFrameWithOutputHandler(
     session, sampleBuffer: sb,
-    flags: [.enableAsynchronousDecompression],   // KHÔNG enableTemporalProcessing (vì không B-frames)
+    flags: [.enableAsynchronousDecompression],   // NOT enableTemporalProcessing (no B-frames)
     infoFlagsOut: nil
 ) { status, info, imageBuffer, pts, _ in
     guard status == noErr, let px = imageBuffer else { return }
-    self.renderer.enqueue(px, pts: pts)   // return NHANH — callback block decoder
+    self.renderer.enqueue(px, pts: pts)   // return FAST — the callback blocks the decoder
 }
 ```
 
-**Latency levers:** `RealTime=true`, bỏ `enableTemporalProcessing` (bỏ reorder buffer), NV12 native + IOSurface (zero-copy), không làm việc nặng trong callback.
+**Latency levers:** `RealTime=true`, drop `enableTemporalProcessing` (removes the reorder buffer), NV12 native + IOSurface (zero-copy), no heavy work in the callback.
 
-### Xử lý lỗi decode
+### Decode error handling
 
-VideoToolbox không có API "request keyframe" — phải báo ngược về **host** qua control channel.
+VideoToolbox has no "request keyframe" API — you must signal back to the **host** over the control channel.
 
-| Mã lỗi | Ý nghĩa | Hành động |
+| Error code | Meaning | Action |
 |--------|---------|-----------|
-| `-12909` BadData | Bitstream hỏng | recreate session + request keyframe |
+| `-12909` BadData | Corrupt bitstream | recreate session + request keyframe |
 | `-12911` Malfunction | HW fault | recreate session |
-| `-12903` InvalidSession | Session chết | recreate + request keyframe |
-| `infoFlags` chứa `.frameDropped` | Decoder quá tải drop | request keyframe |
+| `-12903` InvalidSession | Session is dead | recreate + request keyframe |
+| `infoFlags` contains `.frameDropped` | Decoder overloaded, dropped frame | request keyframe |
 
-> iOS strict hơn macOS về bitstream corruption (macOS thường tự sửa). Handler phải robust cả hai.
+> iOS is stricter than macOS about bitstream corruption (macOS often self-corrects). The handler must be robust on both.
 
 ---
 
-## 4. Render — 2 lựa chọn
+## 4. Render — 2 options
 
-### Option A — CAMetalLayer + CVMetalTextureCache (latency thấp nhất, **khuyến nghị**)
+### Option A — CAMetalLayer + CVMetalTextureCache (lowest latency, **recommended**)
 
-`CVPixelBuffer` từ VideoToolbox backed bởi IOSurface → `CVMetalTextureCacheCreateTextureFromImage` map sang `MTLTexture` **zero-copy**.
+The `CVPixelBuffer` from VideoToolbox is backed by an IOSurface → `CVMetalTextureCacheCreateTextureFromImage` maps it to an `MTLTexture` **zero-copy**.
 
 ```swift
 metalLayer.device = device
 metalLayer.pixelFormat = .bgra8Unorm
 metalLayer.framebufferOnly = true
 #if os(macOS)
-metalLayer.displaySyncEnabled = false   // present ngay khi GPU xong, không chờ vsync (giảm tới 1 refresh)
+metalLayer.displaySyncEnabled = false   // present as soon as the GPU finishes, no vsync wait (saves up to 1 refresh)
 #endif
-metalLayer.maximumDrawableCount = 2     // 2 = latency thấp nhất (HỢP LỆ trên iOS — claim "không nên" đã refuted); xử lý nextDrawable nil
+metalLayer.maximumDrawableCount = 2     // 2 = lowest latency (VALID on iOS — the "shouldn't" claim was refuted); handle nextDrawable nil
 
-// Mỗi frame: tạo 2 texture (Y plane .r8Unorm, UV plane .rg8Unorm) từ NV12 → shader YCbCr→RGB → present
+// Per frame: create 2 textures (Y plane .r8Unorm, UV plane .rg8Unorm) from NV12 → YCbCr→RGB shader → present
 ```
 
-Shader fragment NV12→RGB (BT.601/709) — xem snippet trong research. iOS không có `displaySyncEnabled` (luôn present ở vsync; ProMotion 120Hz giúp giảm worst-case còn 8.3ms).
+NV12→RGB fragment shader (BT.601/709) — see the snippet in the research. iOS has no `displaySyncEnabled` (always presents at vsync; ProMotion 120Hz brings the worst case down to 8.3ms).
 
-### Option B — AVSampleBufferDisplayLayer (đơn giản nhất)
+### Option B — AVSampleBufferDisplayLayer (simplest)
 
-Nhận `CMSampleBuffer` trực tiếp (kể cả compressed — layer tự decode). Bắt buộc cho Picture-in-Picture trên iOS.
+Accepts a `CMSampleBuffer` directly (even compressed — the layer decodes by itself). Required for Picture-in-Picture on iOS.
 
 ```swift
-// Set controlTimebase TRƯỚC khi enqueue, dùng host clock để present ngay:
+// Set controlTimebase BEFORE enqueueing; use the host clock to present immediately:
 var tb: CMTimebase?
 CMTimebaseCreateWithSourceClock(allocator: kCFAllocatorDefault, sourceClock: CMClockGetHostTimeClock(), timebaseOut: &tb)
 CMTimebaseSetTime(tb!, time: CMClockGetTime(CMClockGetHostTimeClock())); CMTimebaseSetRate(tb!, rate: 1.0)
 displayLayer.controlTimebase = tb
-displayLayer.enqueue(sampleBuffer)   // hiển thị khi PTS <= timebase
+displayLayer.enqueue(sampleBuffer)   // displays when PTS <= timebase
 // poll displayLayer.status == .failed → flush()
 ```
 
-**So sánh:**
+**Comparison:**
 
 | | CAMetalLayer | AVSampleBufferDisplayLayer |
 |--|--------------|----------------------------|
-| Latency | Thấp nhất | +1–2 frame buffering (Moonlight-QT report) |
-| Độ phức tạp | Cao (shader, texture cache) | Rất thấp (1 call) |
-| PiP (iOS) | Không | Có |
-| Kiểm soát màu/effect | Toàn quyền | Hạn chế |
+| Latency | Lowest | +1–2 frames of buffering (Moonlight-QT report) |
+| Complexity | High (shader, texture cache) | Very low (1 call) |
+| PiP (iOS) | No | Yes |
+| Color/effect control | Full | Limited |
 
-**Quyết định:** dùng **AVSampleBufferDisplayLayer cho Phase 3 (lên hình nhanh)**, chuyển sang **Metal khi cần tối ưu latency** hoặc đo thấy chênh đáng kể. Bọc behind protocol `VideoRenderer` để hoán đổi.
+**Decision:** use **AVSampleBufferDisplayLayer for Phase 3 (fastest path to pixels on screen)**, switch to **Metal when latency optimization is needed** or when measurements show a meaningful gap. Wrap behind a `VideoRenderer` protocol so they're swappable.
 
 ---
 
 ## 4b. Frame pacing — render-on-arrival + Pacer
 
-Trên LAN, **mặc định render-on-arrival, KHÔNG jitter buffer** (xem [10 §2–3](10-latency-optimization.md)). Nếu thấy judder do lệch pha vsync, thêm Pacer kiểu Moonlight:
-- **2-queue + render thread riêng**, vsync tick bằng **`CVDisplayLink`** (macOS) / **`CADisplayLink`** (iOS) — thay cho `WaitForVBlank` của Windows.
-- Cap render-ahead **3 frame**; frame-drop theo lịch sử cửa sổ 500ms (drop mạnh nếu queue *liên tục* >1).
-- `AVSampleBufferDisplayLayer` tự pace qua PTS → path đơn giản; render Metal thì tự dựng CVDisplayLink source.
+On LAN, **default to render-on-arrival, NO jitter buffer** (see [10 §2–3](10-latency-optimization.md)). If judder appears due to vsync phase mismatch, add a Moonlight-style Pacer:
+- **2 queues + a dedicated render thread**, vsync tick via **`CVDisplayLink`** (macOS) / **`CADisplayLink`** (iOS) — replacing Windows' `WaitForVBlank`.
+- Cap render-ahead at **3 frames**; frame-drop based on a 500ms window history (drop aggressively if the queue is *continuously* >1).
+- `AVSampleBufferDisplayLayer` self-paces via PTS → simple path; for Metal rendering, build your own CVDisplayLink source.
 
-**CAMetalDisplayLink (macOS 14+/iOS 17+):** vsync tick chính xác; set `preferredFrameLatency = 1.0` (chỉ chấp nhận 1.0 hoặc 2.0; default iOS là 2 → set 1 tiết kiệm ~8–16 ms). **KHÔNG** giới hạn Apple Silicon (chạy mọi Mac macOS 14+). Render frame mới nhất ngay trước `targetTimestamp` (beam-racing).
+**CAMetalDisplayLink (macOS 14+/iOS 17+):** precise vsync tick; set `preferredFrameLatency = 1.0` (only 1.0 or 2.0 are accepted; iOS default is 2 → setting 1 saves ~8–16 ms). **NOT** limited to Apple Silicon (runs on every Mac with macOS 14+). Render the newest frame right before `targetTimestamp` (beam-racing).
 
-**LTR ack:** client phải báo frame nào nhận được về host (qua control channel) để host lái LTR recovery — xem [10 §1](10-latency-optimization.md).
+**LTR ack:** the client must report which frames it received back to the host (over the control channel) so the host can drive LTR recovery — see [10 §1](10-latency-optimization.md).
 
-> ⚠️ **VRR/Adaptive-sync cần FULLSCREEN (từ [11](11-absolute-latency.md)):** adaptive-sync scheduling (`presentDrawable:afterMinimumDuration:`) yêu cầu cửa sổ fullscreen → app client **windowed** KHÔNG hưởng lợi VRR. Mâu thuẫn với mô hình "1 cửa sổ"; cân nhắc chế độ fullscreen tùy chọn ở client nếu cần. Trên macOS đo `macOS 26 Tahoe` kỹ — có report decode/present latency regression với CAMetalDisplayLink.
+> ⚠️ **VRR/Adaptive-sync requires FULLSCREEN (from [11](11-absolute-latency.md)):** adaptive-sync scheduling (`presentDrawable:afterMinimumDuration:`) requires a fullscreen window → a **windowed** client app gets NO benefit from VRR. This conflicts with the "single window" model; consider an optional fullscreen mode on the client if needed. On macOS, test `macOS 26 Tahoe` carefully — there are reports of a decode/present latency regression with CAMetalDisplayLink.
 
-## 5. Khác biệt iOS vs macOS
+## 5. iOS vs macOS differences
 
 | | iOS/iPadOS | macOS |
 |--|-----------|-------|
-| HW decode | Luôn HW, không fallback | Có software fallback; HW opt-in |
-| `displaySyncEnabled` | Không có | Có (set false giảm latency) |
+| HW decode | Always HW, no fallback | Software fallback exists; HW is opt-in |
+| `displaySyncEnabled` | Not available | Available (set false to reduce latency) |
 | Bitstream tolerance | Strict | Lenient |
 | ProMotion 120Hz | iPhone 13 Pro+, iPad Pro M1+ | MacBook Pro/iMac 2023+ |
-| Simulator | Không HW decode (trừ M1+ Mac chạy sim) | HW đầy đủ |
+| Simulator | No HW decode (except sims on M1+ Macs) | Full HW |
 
 Capability check: `VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC)`.
 
 ---
 
-## 6. Việc cho Phase 1 & 3
+## 6. Tasks for Phase 1 & 3
 
-- [ ] (P1, macOS) Decode + render frame nhận từ host → lên hình.
-- [ ] Render behind protocol `VideoRenderer` (Metal + AVSampleBuffer impl).
-- [ ] (P3, iOS) Build `PaneCastClientKit` + render cho iOS, test trên device thật (Simulator không HW decode).
-- [ ] Đo glass-to-glass latency (timestamp host → hiển thị client).
+- [ ] (P1, macOS) Decode + render frames received from the host → pixels on screen.
+- [ ] Rendering behind a `VideoRenderer` protocol (Metal + AVSampleBuffer impls).
+- [ ] (P3, iOS) Build `PaneCastClientKit` + rendering for iOS, test on a real device (Simulator has no HW decode).
+- [ ] Measure glass-to-glass latency (host timestamp → client display).

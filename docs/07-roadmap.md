@@ -1,94 +1,94 @@
 # 07 — Roadmap
 
-> **STATUS: SUPERSEDED** — đã thay; xem [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
+> **STATUS: SUPERSEDED** — replaced; see [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-> ⚠️ **Đã được ghi đè** bởi [12 §"Revised phased roadmap"](12-coding-profile.md). Thứ tự mới cho kiến trúc hybrid: **terminal PTY text-path = Phase 1** (đơn giản hơn, giá trị cao hơn, né bài toán injection); GUI video path lùi về **Phase 4**. Phần dưới giữ làm tham chiếu chi tiết cho **GUI video-path**.
+> ⚠️ **Overridden** by [12 §"Revised phased roadmap"](12-coding-profile.md). New order for the hybrid architecture: **terminal PTY text-path = Phase 1** (simpler, higher value, sidesteps the injection problem); the GUI video path moves back to **Phase 4**. The content below is kept as a detailed reference for the **GUI video-path**.
 
-Nguyên tắc: **kiểm chứng rủi ro trước, đẹp sau.** Phase 0 dồn vào 2 điểm rủi ro cao nhất (input injection theo cửa sổ + latency encode/decode). Đừng đầu tư transport/UI trước khi Phase 0 pass.
+Principle: **validate the risks first, polish later.** Phase 0 concentrates on the 2 highest-risk areas (per-window input injection + encode/decode latency). Don't invest in transport/UI before Phase 0 passes.
 
 ---
 
-## Phase 0 — Spike kiểm chứng (BẮT BUỘC trước tiên)
+## Phase 0 — Validation spike (MANDATORY first)
 
-**Mục tiêu:** chứng minh không có rào cản kỹ thuật. Code throwaway, không cần đẹp.
+**Goal:** prove there are no technical blockers. Throwaway code, doesn't need to be pretty.
 
-| # | Việc | Doc | Done khi |
+| # | Task | Doc | Done when |
 |---|------|-----|----------|
-| 0.1 | Capture 1 cửa sổ qua SCKit, log fps + idle-frame skip | [02](02-host-capture-encode.md) | Thấy frame `.complete`, idle bị bỏ |
-| 0.2 | HW encode HEVC low-latency, **đo encode latency** | [02](02-host-capture-encode.md) | Có số ms/frame trên máy đích |
-| 0.2b | Verify symbol LTR (`EnableLTR`/`ForceLTRRefresh`) trên SDK đích | [10 §1](10-latency-optimization.md) | Xác nhận LTR API tồn tại & hoạt động |
-| 0.3 | Decode lại nội bộ host (encode→decode loop), hiển thị | [04](04-client-decode-render.md) | Cửa sổ hiện lại đúng |
-| 0.4 | `AXRaise` đúng cửa sổ cụ thể (app nhiều cửa sổ) | [05](05-input-window-control.md) | Cửa sổ đúng lên front |
-| 0.5 | `CGEventPostToPid` click theo tọa độ map | [05](05-input-window-control.md) | Click trúng vị trí trong cửa sổ |
-| 0.6 | Test activation từ callback mạng giả lập (macOS đích) | [05](05-input-window-control.md) | Đo tỉ lệ activate thành công |
+| 0.1 | Capture 1 window via SCKit, log fps + idle-frame skip | [02](02-host-capture-encode.md) | `.complete` frames observed, idle frames skipped |
+| 0.2 | HW-encode HEVC low-latency, **measure encode latency** | [02](02-host-capture-encode.md) | ms/frame numbers on the target machine |
+| 0.2b | Verify the LTR symbols (`EnableLTR`/`ForceLTRRefresh`) on the target SDK | [10 §1](10-latency-optimization.md) | Confirmed the LTR API exists & works |
+| 0.3 | Decode back locally on the host (encode→decode loop), display | [04](04-client-decode-render.md) | The window re-renders correctly |
+| 0.4 | `AXRaise` the correct specific window (multi-window app) | [05](05-input-window-control.md) | The right window comes to front |
+| 0.5 | `CGEventPostToPid` click at mapped coordinates | [05](05-input-window-control.md) | Click lands at the right spot in the window |
+| 0.6 | Test activation from a simulated network callback (target macOS) | [05](05-input-window-control.md) | Activation success rate measured |
 
-**Gate:** nếu 0.4–0.6 fail nhiều → dừng, xem lại mô hình ([08-risks](08-risks-open-questions.md)) trước khi tiếp.
+**Gate:** if 0.4–0.6 fail often → stop, revisit the model ([08-risks](08-risks-open-questions.md)) before continuing.
 
 ---
 
-## Phase 1 — MVP video Mac→Mac, 1 chiều, 1 cửa sổ
+## Phase 1 — Video MVP Mac→Mac, one-way, 1 window
 
-**Mục tiêu:** xem được 1 cửa sổ host trên 1 Mac client qua LAN.
+**Goal:** view 1 host window on 1 Mac client over LAN.
 
-- [ ] Scaffold SPM theo [01 §3](01-architecture.md#3-cấu-trúc-package-swift-package-manager).
-- [ ] `PaneCastCore`: packet format + packetizer/reassembler + unit test mất/đảo gói ([03 §4–5](03-transport-protocol.md)).
-- [ ] Bonjour discovery: host advertise, client liệt kê ([03 §1](03-transport-protocol.md)).
-- [ ] Pipeline đầy đủ: capture → encode → UDP → reassemble → decode → render.
-- [ ] Kênh control TCP `noDelay` + message recovery (LTR ack / request-IDR) ([03 §3](03-transport-protocol.md)).
-- [ ] Render-on-arrival hoặc Pacer (CVDisplayLink) ([10 §2](10-latency-optimization.md)).
-- [ ] **Instrument 6-stage latency** + timestamp host trong frame header ([10 §10](10-latency-optimization.md)).
+- [ ] SPM scaffold per [01 §3](01-architecture.md#3-package-structure-swift-package-manager).
+- [ ] `PaneCastCore`: packet format + packetizer/reassembler + unit tests for loss/reordering ([03 §4–5](03-transport-protocol.md)).
+- [ ] Bonjour discovery: host advertises, client lists ([03 §1](03-transport-protocol.md)).
+- [ ] Full pipeline: capture → encode → UDP → reassemble → decode → render.
+- [ ] TCP control channel with `noDelay` + recovery messages (LTR ack / request-IDR) ([03 §3](03-transport-protocol.md)).
+- [ ] Render-on-arrival or Pacer (CVDisplayLink) ([10 §2](10-latency-optimization.md)).
+- [ ] **Instrument 6-stage latency** + host timestamp in the frame header ([10 §10](10-latency-optimization.md)).
 - [ ] Window picker UI (host) + host list UI (client).
-- [ ] **Đo glass-to-glass latency.**
+- [ ] **Measure glass-to-glass latency.**
 
-**Done:** chọn cửa sổ trên host → thấy live trên client Mac, latency < 60ms LAN, mất gói tự recover (LTR, fallback keyframe).
-
----
-
-## Phase 2 — Input / điều khiển (Mac→Mac)
-
-**Mục tiêu:** điều khiển được cửa sổ từ client.
-
-- [ ] Client bắt chuột/phím/scroll trong view → gửi qua control channel (tọa độ chuẩn hóa 0–1).
-- [ ] Input: batch motion 1ms / button gửi ngay; con trỏ vẽ client-side ([10 §6–7](10-latency-optimization.md)).
-- [ ] Host: activate-then-control — raise + map tọa độ + `CGEventPostToPid` ([05](05-input-window-control.md)).
-- [ ] Text qua Unicode injection; shortcut qua keycode.
-- [ ] (Tùy chọn) AX action cho nút/text field chuẩn.
-- [ ] Xử lý drag, double-click, scroll.
-
-**Done:** điều khiển trơn tru 1 cửa sổ từ client Mac; gõ text + click + drag hoạt động.
+**Done:** pick a window on the host → see it live on the Mac client, latency < 60ms on LAN, packet loss self-recovers (LTR, keyframe fallback).
 
 ---
 
-## Phase 3 — Client iOS / iPadOS
+## Phase 2 — Input / control (Mac→Mac)
 
-**Mục tiêu:** xem & điều khiển từ iPhone/iPad.
+**Goal:** control the window from the client.
 
-- [ ] Build `PaneCastClientKit` + `PaneCastRender` cho iOS.
-- [ ] Render trên device thật (Simulator không HW decode).
-- [ ] Touch → input mapping: chế độ **trackpad** (relative) + **direct-touch** (absolute).
-- [ ] Bàn phím cứng + on-screen keyboard → Unicode injection.
-- [ ] iPad: hỗ trợ trackpad/pencil nếu có.
+- [ ] Client captures mouse/keyboard/scroll in the view → sends over the control channel (normalized 0–1 coordinates).
+- [ ] Input: batch motion at 1ms / send buttons immediately; cursor drawn client-side ([10 §6–7](10-latency-optimization.md)).
+- [ ] Host: activate-then-control — raise + map coordinates + `CGEventPostToPid` ([05](05-input-window-control.md)).
+- [ ] Text via Unicode injection; shortcuts via keycodes.
+- [ ] (Optional) AX actions for standard buttons/text fields.
+- [ ] Handle drag, double-click, scroll.
 
-**Done:** điều khiển cửa sổ Mac từ iPhone & iPad qua LAN.
-
----
-
-## Phase 4 — Polish & mở rộng
-
-- [ ] Nhiều cửa sổ / nhiều phiên đồng thời.
-- [ ] Reconnect tự động khi rớt mạng.
-- [ ] Adaptive bitrate theo loss/RTT ([03 §5](03-transport-protocol.md)).
-- [ ] Render Metal thay AVSampleBufferDisplayLayer nếu cần latency thấp hơn.
-- [ ] FEC adaptive cho Wi-Fi.
-- [ ] Audio (tùy chọn — SCKit capture audio ở mức app, không per-window).
-- [ ] Bảo mật/pairing: PIN/QR ghép thiết bị (LAN vẫn nên có auth).
-- [ ] Ký Developer-ID + notarize + auto-update ([06](06-permissions-distribution.md)).
+**Done:** smoothly control 1 window from the Mac client; typing text + clicking + dragging all work.
 
 ---
 
-## Thứ tự ưu tiên rút gọn
+## Phase 3 — iOS / iPadOS client
+
+**Goal:** view & control from iPhone/iPad.
+
+- [ ] Build `PaneCastClientKit` + `PaneCastRender` for iOS.
+- [ ] Render on a real device (Simulator has no HW decode).
+- [ ] Touch → input mapping: **trackpad** mode (relative) + **direct-touch** mode (absolute).
+- [ ] Hardware keyboard + on-screen keyboard → Unicode injection.
+- [ ] iPad: support trackpad/pencil if present.
+
+**Done:** control a Mac window from iPhone & iPad over LAN.
+
+---
+
+## Phase 4 — Polish & extensions
+
+- [ ] Multiple windows / multiple concurrent sessions.
+- [ ] Automatic reconnect on network drop.
+- [ ] Adaptive bitrate based on loss/RTT ([03 §5](03-transport-protocol.md)).
+- [ ] Metal rendering instead of AVSampleBufferDisplayLayer if lower latency is needed.
+- [ ] Adaptive FEC for Wi-Fi.
+- [ ] Audio (optional — SCKit captures audio at app level, not per-window).
+- [ ] Security/pairing: PIN/QR device pairing (LAN should still have auth).
+- [ ] Developer-ID signing + notarization + auto-update ([06](06-permissions-distribution.md)).
+
+---
+
+## Condensed priority order
 
 ```
-Phase 0 (spike) ──gate──▶ Phase 1 (video) ──▶ Phase 2 (input) ──▶ Phase 3 (iOS) ──▶ Phase 4 (polish)
-   rủi ro cao                  giá trị thấy được      cốt lõi          mở rộng         hoàn thiện
+Phase 0 (spike) ──gate──> Phase 1 (video) ──> Phase 2 (input) ──> Phase 3 (iOS) ──> Phase 4 (polish)
+   high risk               visible value        core               expansion          polish
 ```

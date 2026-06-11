@@ -1,39 +1,39 @@
 # 06 — Permissions, Entitlements & Distribution
 
-> **STATUS: REFERENCE — GUI video-path (Phase 4).** Kiến trúc hiện hành: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
+> **STATUS: REFERENCE — GUI video-path (Phase 4).** Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-## 1. Quyền cần thiết (Host macOS)
+## 1. Required permissions (macOS host)
 
-| Quyền (TCC) | Để làm gì | Bắt buộc? |
+| Permission (TCC) | Used for | Required? |
 |-------------|-----------|-----------|
-| **Screen Recording** | ScreenCaptureKit capture + đọc title/nội dung cửa sổ app khác | ✅ Bắt buộc |
-| **Accessibility** | Post event tới app khác + raise/control cửa sổ qua AX | ✅ Bắt buộc |
-| **Input Monitoring** | CHỈ nếu dùng `CGEventTap` để *quan sát* input cục bộ | ❌ Không cần để *post* event |
+| **Screen Recording** | ScreenCaptureKit capture + reading other apps' window titles/contents | ✅ Required |
+| **Accessibility** | Posting events to other apps + raising/controlling windows via AX | ✅ Required |
+| **Input Monitoring** | ONLY if using `CGEventTap` to *observe* local input | ❌ Not needed to *post* events |
 
-Client (Mac/iOS) chỉ cần **Local Network** (Bonjour) — xem [03](03-transport-protocol.md#1-discovery--bonjour-zero-config).
+The client (Mac/iOS) only needs **Local Network** (Bonjour) — see [03](03-transport-protocol.md#1-discovery--bonjour-zero-config).
 
 ## 2. Info.plist
 
 ```xml
 <!-- Host: Screen Recording -->
 <key>NSScreenCaptureUsageDescription</key>
-<string>PaneCast chia sẻ cửa sổ ứng dụng của bạn tới thiết bị đã ghép nối.</string>
+<string>PaneCast shares your application windows with paired devices.</string>
 
-<!-- Client + Host: Local Network (iOS 14+ bắt buộc, không có thì Bonjour im lặng) -->
+<!-- Client + Host: Local Network (mandatory on iOS 14+, without it Bonjour fails silently) -->
 <key>NSLocalNetworkUsageDescription</key>
-<string>PaneCast tìm và kết nối thiết bị trong cùng mạng nội bộ.</string>
+<string>PaneCast discovers and connects to devices on the same local network.</string>
 <key>NSBonjourServices</key>
 <array><string>_panecast._udp</string></array>
 ```
 
-> Thiếu `NSScreenCaptureUsageDescription` → process **bị kill** khi chạm SCKit lần đầu.
+> Missing `NSScreenCaptureUsageDescription` → the process is **killed** on first touch of SCKit.
 
-## 3. Detect & request quyền
+## 3. Detecting & requesting permissions
 
 ```swift
-// Accessibility — check không prompt:
+// Accessibility — check without prompting:
 let trusted = AXIsProcessTrusted()
-// Check + prompt (mở System Settings → Privacy → Accessibility):
+// Check + prompt (opens System Settings → Privacy → Accessibility):
 let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
 AXIsProcessTrustedWithOptions(opts)
 
@@ -41,34 +41,34 @@ AXIsProcessTrustedWithOptions(opts)
 if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
 ```
 
-- **Không thể cấp quyền bằng code** — user phải tự bật trong System Settings.
-- Quyền gắn theo **chữ ký code** — build unsigned/ad-hoc rebuild có thể mất grant.
-- **Poll `AXIsProcessTrusted()`** (hoặc theo dõi app reactivate) để biết khi user bật xong → cập nhật UI onboarding.
+- **Permissions cannot be granted programmatically** — the user must enable them in System Settings.
+- Grants are tied to the **code signature** — unsigned/ad-hoc rebuilds may lose the grant.
+- **Poll `AXIsProcessTrusted()`** (or watch for app reactivation) to know when the user has finished enabling → update the onboarding UI.
 
-## 4. Sandbox — dealbreaker (nêu rõ)
+## 4. Sandbox — dealbreaker (stated explicitly)
 
-- **App sandboxed KHÔNG thể có quyền Accessibility.** Sandbox bật → prompt không hiện, không add được trong Settings, `AXIsProcessTrusted()` luôn false. **Không có entitlement nào bật lại.**
-- Vì cốt lõi app là điều khiển app khác → **Sandbox tắt hoàn toàn.**
-- **Hệ quả: không lên Mac App Store** (App Store yêu cầu sandbox).
+- **A sandboxed app CANNOT obtain the Accessibility permission.** With sandbox on → the prompt never appears, it can't be added in Settings, `AXIsProcessTrusted()` is always false. **No entitlement re-enables it.**
+- Since the app's core purpose is controlling other apps → **Sandbox is fully disabled.**
+- **Consequence: no Mac App Store** (the App Store requires sandbox).
 
 ## 5. Hardened Runtime & Distribution
 
-- **Hardened Runtime** (cần cho notarize/Developer-ID) **OK** — không chặn post event/AX. Hardened runtime và sandbox độc lập nhau.
-- Thường **không cần** entitlement hardened-runtime đặc biệt chỉ để post CGEvent/dùng AX.
-- **Mô hình phân phối:** Developer-ID signed + **notarized**, ship ngoài App Store (DMG / trang web / Sparkle auto-update).
+- **Hardened Runtime** (required for notarization/Developer-ID) is **OK** — it does not block event posting/AX. Hardened runtime and sandbox are independent of each other.
+- Usually **no** special hardened-runtime entitlement is needed just to post CGEvents/use AX.
+- **Distribution model:** Developer-ID signed + **notarized**, shipped outside the App Store (DMG / website / Sparkle auto-update).
 
-## 6. Onboarding flow (đề xuất)
+## 6. Onboarding flow (proposed)
 
-1. Mở app → màn hình "Cần 2 quyền".
-2. Nút "Cấp Screen Recording" → `CGRequestScreenCaptureAccess()`.
-3. Nút "Cấp Accessibility" → `AXIsProcessTrustedWithOptions(prompt)` → deep-link Settings.
-4. Poll cả hai → khi đủ, chuyển sang màn hình chọn cửa sổ.
-5. Client iOS: lần kết nối LAN đầu → iOS tự prompt Local Network.
+1. Open the app → "2 permissions needed" screen.
+2. "Grant Screen Recording" button → `CGRequestScreenCaptureAccess()`.
+3. "Grant Accessibility" button → `AXIsProcessTrustedWithOptions(prompt)` → deep-link to Settings.
+4. Poll both → once both are granted, move to the window picker screen.
+5. iOS client: on the first LAN connection → iOS prompts for Local Network automatically.
 
-## 7. Checklist build
+## 7. Build checklist
 
-- [ ] `Info.plist`: 3 key trên.
-- [ ] Tắt App Sandbox (host).
-- [ ] Bật Hardened Runtime.
-- [ ] Ký Developer-ID + notarize cho host app.
-- [ ] Onboarding poll quyền + hướng dẫn từng bước.
+- [ ] `Info.plist`: the 3 keys above.
+- [ ] Disable App Sandbox (host).
+- [ ] Enable Hardened Runtime.
+- [ ] Developer-ID sign + notarize the host app.
+- [ ] Onboarding that polls permissions + step-by-step guidance.

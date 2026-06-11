@@ -1,32 +1,32 @@
-# 11 — Absolute Latency (nghiên cứu đa tầng sâu nhất)
+# 11 — Absolute Latency (deepest multi-layer research)
 
-> **STATUS: REFERENCE — GUI video-path (Phase 4).** Kiến trúc hiện hành: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
+> **STATUS: REFERENCE — GUI video-path (Phase 4).** Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-> ⚠️ **Floor analysis này CHỈ áp dụng cho GUI video-path** và phần lớn là **over-engineering cho profile coding** ([12](12-coding-profile.md)): motion-to-photon <16ms, 120fps/ProMotion, beam-racing → **DROP**. Terminal path latency = network RTT (~1–5ms LAN), không vsync. **Giữ lại các correction API** (queueDepth default 8, `AllowOpenGOP=false`, `MaxFrameDelayCount=0`, tắt AWDL, idle-skip/dirtyRects) — vẫn đúng cho GUI path. **Lưu ý NetBird ([13](13-netbird-transport.md)):** `serviceClass`/DSCP và `requiredInterfaceType=.wiredEthernet` trong doc này **KHÔNG áp dụng** (chạy trên WireGuard tunnel — DSCP bị zero, utun là `.other`).
+> ⚠️ **This floor analysis applies ONLY to the GUI video-path** and is largely **over-engineering for the coding profile** ([12](12-coding-profile.md)): motion-to-photon <16ms, 120fps/ProMotion, beam-racing → **DROP**. Terminal path latency = network RTT (~1–5ms LAN), no vsync. **Keep the API corrections** (queueDepth default 8, `AllowOpenGOP=false`, `MaxFrameDelayCount=0`, disable AWDL, idle-skip/dirtyRects) — still valid for the GUI path. **NetBird note ([13](13-netbird-transport.md)):** `serviceClass`/DSCP and `requiredInterfaceType=.wiredEthernet` in this doc **do NOT apply** (running over a WireGuard tunnel — DSCP gets zeroed, utun is `.other`).
 
-> Tổng hợp từ workflow **73-agent** (15 dimension + 14 gap + adversarial verify, ~6M tokens). Mục tiêu: **floor latency tuyệt đối** glass-to-glass cho stack Apple/LAN/per-window. Raw corpus đầy đủ: [research/latency-research-corpus.json](research/latency-research-corpus.json).
+> Synthesized from a **73-agent** workflow (15 dimensions + 14 gaps + adversarial verify, ~6M tokens). Goal: **absolute floor latency** glass-to-glass for the Apple/LAN/per-window stack. Full raw corpus: [research/latency-research-corpus.json](research/latency-research-corpus.json).
 
-## Tóm tắt floor (cần Phase-0 validate)
+## Floor summary (needs Phase-0 validation)
 
-| Kịch bản | Floor lý thuyết | Realistic |
+| Scenario | Theoretical floor | Realistic |
 |---|---:|---:|
 | 60fps, wired GigE | ~14 ms | ~22–26 ms |
-| 120fps, wired (ProMotion 2 đầu) | ~10 ms | ~14–16 ms |
-| 60fps, Wi-Fi 6/6E (light load) | — | +2–5 ms so với wired |
+| 120fps, wired (ProMotion both ends) | ~10 ms | ~14–16 ms |
+| 60fps, Wi-Fi 6/6E (light load) | — | +2–5 ms vs wired |
 | 120fps, Wi-Fi 6E (6GHz) | — | ~17–26 ms |
 
-Hai stage **dominant** là **capture (chờ compositor vsync ở host)** và **render + scanout (vsync ở client)** — network gần như biến mất trên wired GigE (one-way <0.1 ms). Mọi con số là **dẫn xuất**, chưa đo trên stack native Swift này → xem checklist Phase-0 ở cuối.
+The two **dominant** stages are **capture (waiting on the compositor vsync at the host)** and **render + scanout (vsync at the client)** — the network all but disappears on wired GigE (one-way <0.1 ms). Every number is **derived**, not yet measured on this native Swift stack → see the Phase-0 checklist at the end.
 
-> ⚠️ **CORRECTIONS quan trọng cho thiết kế cũ** (chi tiết ở §"Verified API claims"):
-> - `minimumFrameInterval`: **macOS 15+ default âm thầm = 1/60** (cap 60fps kể cả ProMotion) → **phải set tường minh**; dùng `(1/fps)×0.9` (OBS PR#11896), **KHÔNG** `kCMTimeZero` (refuted).
-> - `queueDepth`: default thực là **8** (không phải 3); **2 hợp lệ** cho latency thấp.
-> - HEVC: `AllowOpenGOP` mặc định **true** → **phải set `false`**; `MaxFrameDelayCount=0` ép one-in-one-out.
-> - Capture 10-bit: `'x420'` (`420YpCbCr10BiPlanarVideoRange`) **KHÔNG** được `SCStreamConfiguration` hỗ trợ; HDR cần **macOS 15 preset** hoặc `'xf44'` (4:4:4).
-> - **AWDL / peer-to-peer (`includePeerToPeer`) GÂY HẠI** cho video (spike 40–336 ms) → tắt; dùng AP ch44/149 hoặc băng 6GHz.
-> - **VRR / adaptive-sync cần fullscreen** → app single-window (windowed) KHÔNG hưởng lợi.
-> - **Slice / sub-frame pipelining KHÔNG khả dụng** qua public VideoToolbox API (output frame-granular) → bỏ khỏi thiết kế.
+> ⚠️ **Important CORRECTIONS to the old design** (details in §"Verified API claims"):
+> - `minimumFrameInterval`: **macOS 15+ silently defaults to 1/60** (caps at 60fps even on ProMotion) → **must set explicitly**; use `(1/fps)×0.9` (OBS PR#11896), **NOT** `kCMTimeZero` (refuted).
+> - `queueDepth`: the actual default is **8** (not 3); **2 is valid** for low latency.
+> - HEVC: `AllowOpenGOP` defaults to **true** → **must set `false`**; `MaxFrameDelayCount=0` forces one-in-one-out.
+> - 10-bit capture: `'x420'` (`420YpCbCr10BiPlanarVideoRange`) is **NOT** supported by `SCStreamConfiguration`; HDR requires a **macOS 15 preset** or `'xf44'` (4:4:4).
+> - **AWDL / peer-to-peer (`includePeerToPeer`) is HARMFUL** for video (40–336 ms spikes) → disable; use AP ch44/149 or the 6GHz band.
+> - **VRR / adaptive-sync requires fullscreen** → a single-window (windowed) app gets NO benefit.
+> - **Slice / sub-frame pipelining is NOT available** through the public VideoToolbox API (output is frame-granular) → drop from the design.
 
-## Mục lục
+## Table of contents
 - [Latency budget & theoretical floor](#latency-budget--theoretical-floor)
 - [Per-stage absolute-minimum configuration](#per-stage-absolute-minimum-configuration)
 - [Ranked techniques by latency impact](#ranked-techniques-by-latency-impact)
@@ -36,683 +36,683 @@ Hai stage **dominant** là **capture (chờ compositor vsync ở host)** và **r
 
 ## Latency budget & theoretical floor
 
-Phần này phân rã ngân sách glass-to-glass (G2G) thành từng stage rời rạc cho stack `ScreenCaptureKit -> VideoToolbox HEVC -> Network.framework UDP/QUIC -> VideoToolbox decode -> Metal/CAMetalLayer`. Mục tiêu là chỉ ra chính xác từng millisecond nằm ở đâu, stage nào chiếm ưu thế (dominant), và floor thực tế tuyệt đối có thể đạt trên Apple Silicon + LAN.
+This section decomposes the glass-to-glass (G2G) budget into discrete stages for the `ScreenCaptureKit -> VideoToolbox HEVC -> Network.framework UDP/QUIC -> VideoToolbox decode -> Metal/CAMetalLayer` stack. The goal is to show exactly where every millisecond goes, which stage dominates, and the absolute realistic floor achievable on Apple Silicon + LAN.
 
-Một số nguyên tắc nền tảng cần nắm trước khi đọc bảng:
+A few foundational principles to internalize before reading the tables:
 
-- **Vsync là sàn không thể nén ở hai đầu.** Capture phụ thuộc một chu kỳ WindowServer compositor vsync (8.33 ms @120Hz, 16.67 ms @60Hz); display phụ thuộc một chu kỳ scanout vsync ở client (trung bình nửa frame, worst-case một frame). Đây là hai khoản chi không thể loại bỏ bằng API, chỉ có thể giảm bằng cách nâng refresh rate.
-- **Trên wired LAN, network gần như biến mất khỏi ngân sách.** GigE serialization của một frame 1500-byte là ~12 µs; one-way LAN total < 0.1 ms. Network KHÔNG phải là dominant stage trên wired — pipeline bị chi phối bởi display timing ở cả hai đầu.
-- **Số overlay của Moonlight luôn báo THẤP hơn G2G thật.** Christoff Visser / Greendayle đo được Virtual Desktop báo thiếu ~40 ms so với motion-to-photon thực; overlay bắt được network+decode nhưng bỏ sót capture compositor delay, compositor buffering, và display scanout. Mọi con số "tự báo cáo" trong corpus đều phải hiểu là cận dưới.
+- **Vsync is an incompressible floor at both ends.** Capture depends on one WindowServer compositor vsync cycle (8.33 ms @120Hz, 16.67 ms @60Hz); display depends on one scanout vsync cycle at the client (half a frame on average, one frame worst-case). These are two costs no API can eliminate — they can only be reduced by raising the refresh rate.
+- **On wired LAN, the network all but disappears from the budget.** GigE serialization of one 1500-byte frame is ~12 µs; one-way LAN total < 0.1 ms. The network is NOT the dominant stage on wired — the pipeline is dominated by display timing at both ends.
+- **Moonlight's overlay numbers always read LOWER than the true G2G.** Christoff Visser / Greendayle measured Virtual Desktop under-reporting by ~40 ms versus true motion-to-photon; the overlay captures network+decode but misses capture compositor delay, compositor buffering, and display scanout. Every "self-reported" number in the corpus must be read as a lower bound.
 
 ---
 
-### Bảng quy ước & hằng số nền
+### Conventions & baseline constants
 
-| Hằng số | Giá trị | Nguồn |
+| Constant | Value | Source |
 |---|---|---|
-| Vsync period @60Hz | 16.67 ms | Định nghĩa (1/60) |
-| Vsync period @120Hz | 8.33 ms | Định nghĩa (1/120) |
-| Scanout contribution trung bình (nửa frame) | 8.3 ms @60Hz / 4.2 ms @120Hz | blurbusters.com (display-compositor-macos) |
-| GigE one-way LAN | < 0.1 ms | basicitnetworking / Cloudflare (~60 µs trên 10GbE localhost) |
+| Vsync period @60Hz | 16.67 ms | By definition (1/60) |
+| Vsync period @120Hz | 8.33 ms | By definition (1/120) |
+| Average scanout contribution (half frame) | 8.3 ms @60Hz / 4.2 ms @120Hz | blurbusters.com (display-compositor-macos) |
+| GigE one-way LAN | < 0.1 ms | basicitnetworking / Cloudflare (~60 µs on 10GbE localhost) |
 | Wi-Fi 6/6E one-way (light load) | 0.5–2.5 ms | routerhaus / Cudy (5GHz 5–15ms RTT; 6GHz 3–8ms RTT) |
-| mach tick Apple Silicon | 41.67 ns (numer=125, denom=3) | Eclectic Light, xác nhận M1; **claim_to_verify cho M2/M3/M4** |
+| mach tick Apple Silicon | 41.67 ns (numer=125, denom=3) | Eclectic Light, confirmed on M1; **claim_to_verify for M2/M3/M4** |
 
 ---
 
-### Budget @60fps — WIRED GigE (display 60Hz cả hai đầu)
+### Budget @60fps — WIRED GigE (60Hz display at both ends)
 
-| Stage | Floor | Realistic | Dominant? | Ghi chú & nguồn |
+| Stage | Floor | Realistic | Dominant? | Notes & sources |
 |---|---:|---:|:---:|---|
-| **Capture (SCK compositor vsync)** | 0 | ~16.67 ms | ◆ DOMINANT | Một chu kỳ WindowServer compositor; không nén được. CPU cost chỉ ~1.9% một core (WWDC22 10156). Đặt `minimumFrameInterval`, `queueDepth=3`, skip idle frames để tránh backlog. |
-| **Encode (VideoToolbox HEVC HW)** | ~3.3 ms | 15–18 ms | ◆ có thể dominant | HEVC ~18 ms/frame @1080p60 trên M4 (Lumen README, self-reported); H.264 ~15 ms. Ceiling lý thuyết ~3.3 ms từ throughput ~300fps @1080p — **nhưng đây là throughput, KHÔNG phải single-frame latency** (open question, chưa có số đo chính thức từ Apple). Vẫn nằm trong budget 16.67 ms. |
-| **Transmit (UDP/QUIC, wired)** | < 0.1 ms | < 0.5 ms | ✗ | Serialization ~12 µs/1500B + NIC + propagation. QUIC-TLS thêm AES-128-GCM ~6.5 µs/frame trên M1 (negligible). Plain UDP ~0 crypto. |
-| **Decode (VideoToolbox HEVC HW)** | ~1 ms | 1–3 ms | ✗ | M2 Mac 2–3 ms, drop tới 1.2 ms khi renderer không phải bottleneck (Moonlight #1249). M2 iPad ~1 ms (#1087, "felt" — chưa đo bằng Instruments). `flags=0` sync decode, không set `EnableTemporalProcessing`. |
-| **Render + vsync (Metal direct)** | 4.2 ms | 8.3–16.7 ms | ◆ DOMINANT | Scanout trung bình 8.3 ms, worst-case 16.67 ms @60Hz. Metal direct path (CVMetalTextureCache -> CAMetalLayer), KHÔNG dùng AVSampleBufferDisplayLayer (thêm ≥1 frame buffering, Moonlight #1885). `maximumDrawableCount=2` (hợp lệ trên iOS/iPadOS — refuted claim "không khuyến nghị"), `displaySyncEnabled` + `CAMetalDisplayLink preferredFrameLatency=1`. |
-| **TỔNG G2G video** | **~13 ms** | **~22–36 ms** | | Floor = 16.67 (capture) + 3.3 (encode ceiling) + 0.1 (net) + 1 (decode) + nhưng vì capture+render hai vsync chiếm phần lớn, floor thực tế ≈ **14 ms**; realistic ≈ **22 ms** |
+| **Capture (SCK compositor vsync)** | 0 | ~16.67 ms | ◆ DOMINANT | One WindowServer compositor cycle; incompressible. CPU cost is only ~1.9% of one core (WWDC22 10156). Set `minimumFrameInterval`, `queueDepth=3`, skip idle frames to avoid backlog. |
+| **Encode (VideoToolbox HEVC HW)** | ~3.3 ms | 15–18 ms | ◆ possibly dominant | HEVC ~18 ms/frame @1080p60 on M4 (Lumen README, self-reported); H.264 ~15 ms. Theoretical ceiling ~3.3 ms from ~300fps throughput @1080p — **but that is throughput, NOT single-frame latency** (open question, no official measurement from Apple). Still within the 16.67 ms budget. |
+| **Transmit (UDP/QUIC, wired)** | < 0.1 ms | < 0.5 ms | ✗ | Serialization ~12 µs/1500B + NIC + propagation. QUIC-TLS adds AES-128-GCM ~6.5 µs/frame on M1 (negligible). Plain UDP ~0 crypto. |
+| **Decode (VideoToolbox HEVC HW)** | ~1 ms | 1–3 ms | ✗ | M2 Mac 2–3 ms, drops to 1.2 ms when the renderer is not the bottleneck (Moonlight #1249). M2 iPad ~1 ms (#1087, "felt" — not measured with Instruments). `flags=0` sync decode, do not set `EnableTemporalProcessing`. |
+| **Render + vsync (Metal direct)** | 4.2 ms | 8.3–16.7 ms | ◆ DOMINANT | Average scanout 8.3 ms, worst-case 16.67 ms @60Hz. Metal direct path (CVMetalTextureCache -> CAMetalLayer), do NOT use AVSampleBufferDisplayLayer (adds ≥1 frame of buffering, Moonlight #1885). `maximumDrawableCount=2` (valid on iOS/iPadOS — the "not recommended" claim was refuted), `displaySyncEnabled` + `CAMetalDisplayLink preferredFrameLatency=1`. |
+| **TOTAL G2G video** | **~13 ms** | **~22–36 ms** | | Floor = 16.67 (capture) + 3.3 (encode ceiling) + 0.1 (net) + 1 (decode) + but since the capture+render vsync pair dominates, the practical floor ≈ **14 ms**; realistic ≈ **22 ms** |
 
-Realistic 22 ms khớp với corpus realworld-floor: "Theoretical glass-to-glass floor at 60fps wired Apple Silicon: ~14–26 ms (capture 1ms + encode 2–4ms + network <0.1ms + decode 1–3ms + display 8.3–16.7ms)".
+The realistic 22 ms matches the corpus realworld-floor: "Theoretical glass-to-glass floor at 60fps wired Apple Silicon: ~14–26 ms (capture 1ms + encode 2–4ms + network <0.1ms + decode 1–3ms + display 8.3–16.7ms)".
 
-> **Lưu ý quan trọng về capture stage:** Con số 16.67 ms cho capture giả định trường hợp xấu (pixel đổi ngay sau khi compositor vừa lấy frame). Trung bình là nửa vsync. Floor lý thuyết corpus dùng "1 ms capture" thực ra là *callback overhead* của SCK sau khi compositor đã composite — KHÔNG bao gồm thời gian chờ compositor vsync. Đây là điểm gây nhầm lẫn lớn nhất: vsync-to-callback latency của SCK trên Apple Silicon **chưa từng được Apple công bố** (open question quan trọng nhất của capture-floor dimension).
+> **Important note on the capture stage:** The 16.67 ms capture figure assumes the worst case (pixels change right after the compositor just grabbed a frame). The average is half a vsync. The corpus theoretical floor's "1 ms capture" is actually SCK's *callback overhead* after the compositor has already composited — it does NOT include the wait for the compositor vsync. This is the biggest source of confusion: SCK's vsync-to-callback latency on Apple Silicon **has never been published by Apple** (the most important open question of the capture-floor dimension).
 
 ---
 
-### Budget @120fps — WIRED GigE (display 120Hz/ProMotion cả hai đầu)
+### Budget @120fps — WIRED GigE (120Hz/ProMotion display at both ends)
 
-| Stage | Floor | Realistic | Dominant? | Ghi chú & nguồn |
+| Stage | Floor | Realistic | Dominant? | Notes & sources |
 |---|---:|---:|:---:|---|
-| **Capture (SCK compositor vsync)** | 0 | ~8.33 ms | ◆ DOMINANT | Một chu kỳ @120Hz. **PHẢI set `minimumFrameInterval` tường minh** — macOS 15+ default đã âm thầm đổi thành 1/60, cap capture ở 60fps ngay cả trên ProMotion (confirmed: macOS 14.5 SDK = default 0, macOS 15.5 SDK = default 1/60). OBS PR#11896 dùng `(1/target_fps × 0.9)`, KHÔNG dùng `kCMTimeZero` (claim "kCMTimeZero" đã bị refuted — header comment đó không tồn tại). |
-| **Encode (VideoToolbox HEVC HW)** | ~3.3 ms | 8–18 ms | ◆ DOMINANT (tight) | Budget chỉ còn 8.33 ms/frame. HEVC ~18 ms (Lumen M4) **vượt budget 120fps** → cần verify encode thực sự < 8.33 ms hoặc chấp nhận encode overlap nhiều frame. Đây là ràng buộc chặt nhất ở 120fps. |
-| **Transmit** | < 0.1 ms | < 0.5 ms | ✗ | Như trên. |
-| **Decode** | ~1 ms | 1–3 ms | ✗ | 2.37–2.69 ms trung bình M4 Pro với Metal renderer (Moonlight #1696). |
-| **Render + vsync (Metal direct)** | 4.2 ms (worst 8.33) | 4.2–8.3 ms | ◆ DOMINANT | Scanout nửa frame = 4.2 ms @120Hz. `CAMetalDisplayLink preferredFrameLatency=1` (chỉ 1.0 hoặc 2.0 hợp lệ — xác nhận từ SDK doc). Beam-racing: render frame mới nhất ngay trước `targetTimestamp`. |
-| **TỔNG G2G video** | **~10 ms** | **~14–16 ms** | | Floor corpus: "~10–16 ms (capture 1ms + encode 2–4ms + network <0.1ms + decode 1–3ms + display 4.2–8.3ms)" |
+| **Capture (SCK compositor vsync)** | 0 | ~8.33 ms | ◆ DOMINANT | One cycle @120Hz. **MUST set `minimumFrameInterval` explicitly** — the macOS 15+ default silently changed to 1/60, capping capture at 60fps even on ProMotion (confirmed: macOS 14.5 SDK = default 0, macOS 15.5 SDK = default 1/60). OBS PR#11896 uses `(1/target_fps × 0.9)`, NOT `kCMTimeZero` (the "kCMTimeZero" claim was refuted — that header comment does not exist). |
+| **Encode (VideoToolbox HEVC HW)** | ~3.3 ms | 8–18 ms | ◆ DOMINANT (tight) | Budget is only 8.33 ms/frame. HEVC ~18 ms (Lumen M4) **exceeds the 120fps budget** → need to verify encode is actually < 8.33 ms or accept encode overlapping multiple frames. This is the tightest constraint at 120fps. |
+| **Transmit** | < 0.1 ms | < 0.5 ms | ✗ | As above. |
+| **Decode** | ~1 ms | 1–3 ms | ✗ | 2.37–2.69 ms average on M4 Pro with the Metal renderer (Moonlight #1696). |
+| **Render + vsync (Metal direct)** | 4.2 ms (worst 8.33) | 4.2–8.3 ms | ◆ DOMINANT | Half-frame scanout = 4.2 ms @120Hz. `CAMetalDisplayLink preferredFrameLatency=1` (only 1.0 or 2.0 are valid — confirmed from the SDK doc). Beam-racing: render the latest frame just before `targetTimestamp`. |
+| **TOTAL G2G video** | **~10 ms** | **~14–16 ms** | | Corpus floor: "~10–16 ms (capture 1ms + encode 2–4ms + network <0.1ms + decode 1–3ms + display 4.2–8.3ms)" |
 
 ---
 
 ### Budget @60fps — Wi-Fi 6/6E (light load)
 
-| Stage | Realistic (Wi-Fi) | Δ so với wired | Ghi chú |
+| Stage | Realistic (Wi-Fi) | Δ vs wired | Notes |
 |---|---:|---:|---|
-| Capture | ~16.67 ms | 0 | Không đổi (host-side) |
-| Encode | 15–18 ms | 0 | Không đổi |
-| **Transmit** | **2–5 ms** | **+2–5 ms** | Wi-Fi 5GHz 5–15ms RTT → ~2.5–7.5ms one-way; 6GHz 3–8ms RTT → ~1.5–4ms one-way, jitter giảm ~80% (Cudy). **Bắt buộc `serviceClass=.interactiveVideo`** (→ AC_VI), bật WMM trên AP, KHÔNG bật `includePeerToPeer` (AWDL spike 40–336 ms). |
-| Decode | 1–3 ms | 0 | Không đổi (client-side) |
-| Render+vsync | 8.3–16.7 ms | 0 | Không đổi |
-| **TỔNG G2G video** | **~24–41 ms** | **+2–5 ms** | Wi-Fi thêm ~2–5 ms trong điều kiện lý tưởng |
+| Capture | ~16.67 ms | 0 | Unchanged (host-side) |
+| Encode | 15–18 ms | 0 | Unchanged |
+| **Transmit** | **2–5 ms** | **+2–5 ms** | Wi-Fi 5GHz 5–15ms RTT → ~2.5–7.5ms one-way; 6GHz 3–8ms RTT → ~1.5–4ms one-way, jitter down ~80% (Cudy). **`serviceClass=.interactiveVideo` is mandatory** (→ AC_VI), enable WMM on the AP, do NOT enable `includePeerToPeer` (AWDL 40–336 ms spikes). |
+| Decode | 1–3 ms | 0 | Unchanged (client-side) |
+| Render+vsync | 8.3–16.7 ms | 0 | Unchanged |
+| **TOTAL G2G video** | **~24–41 ms** | **+2–5 ms** | Wi-Fi adds ~2–5 ms under ideal conditions |
 
-> **Cảnh báo AWDL (latency bomb).** AWDL chạy ngầm trên mọi máy Apple, hop kênh ~mỗi 10–12s gây spike 50–200 ms (networkweather; Visser/RIPE91 đo 20ms ±25ms variance, RTT 3–90ms). **Mitigation bắt buộc:** cấu hình AP dùng AWDL social channel 5GHz ch44 hoặc ch149 (confirmed qua reverse-engineering OWL/Seemoo, Apple chưa xác nhận chính thức), hoặc dùng băng 6GHz. Nếu không, Wi-Fi budget có thể vọt lên +50–200 ms theo chu kỳ.
+> **AWDL warning (latency bomb).** AWDL runs in the background on every Apple machine, channel-hopping roughly every 10–12s and causing 50–200 ms spikes (networkweather; Visser/RIPE91 measured 20ms ±25ms variance, RTT 3–90ms). **Mandatory mitigation:** configure the AP to use the AWDL social channel, 5GHz ch44 or ch149 (confirmed via OWL/Seemoo reverse-engineering, never officially confirmed by Apple), or use the 6GHz band. Otherwise the Wi-Fi budget can periodically jump by +50–200 ms.
 
 ---
 
 ### Budget @120fps — Wi-Fi 6E (light load, 6GHz)
 
-| Stage | Realistic | Ghi chú |
+| Stage | Realistic | Notes |
 |---|---:|---|
-| Capture | ~8.33 ms | Cần `minimumFrameInterval` tường minh |
-| Encode | 8–18 ms | Ràng buộc chặt nhất ở 120fps |
-| Transmit | 1.5–4 ms | 6GHz ưu việt hơn 5GHz (không AWDL contention, kênh sạch) |
+| Capture | ~8.33 ms | Needs an explicit `minimumFrameInterval` |
+| Encode | 8–18 ms | Tightest constraint at 120fps |
+| Transmit | 1.5–4 ms | 6GHz beats 5GHz (no AWDL contention, clean channel) |
 | Decode | 1–3 ms | |
 | Render+vsync | 4.2–8.3 ms | |
-| **TỔNG G2G video** | **~17–26 ms** | 6GHz là lựa chọn Wi-Fi tốt nhất cho 120fps |
+| **TOTAL G2G video** | **~17–26 ms** | 6GHz is the best Wi-Fi option for 120fps |
 
 ---
 
-### Input-to-photon (vòng tròn đầy đủ điều khiển từ xa)
+### Input-to-photon (full remote-control round trip)
 
-Đây là chuỗi 6 stage khác với G2G video một chiều: client capture input → gửi → host inject → host display đổi → quay về client như video. Quan trọng nhất: **cursor cục bộ tách khỏi vòng video**.
+This is a 6-stage chain, distinct from one-way video G2G: client captures input → send → host injects → host display changes → returns to the client as video. Most important takeaway: **the local cursor is decoupled from the video loop**.
 
-| Stage | macOS host cursor | iOS touch client | Ghi chú & nguồn |
+| Stage | macOS host cursor | iOS touch client | Notes & sources |
 |---|---:|---:|---|
-| **1. Client input capture** | 1–3 ms (USB HID 1ms @1000Hz; passive CGEventTap +0.1–0.3ms) | 8–17 ms @120Hz (touch 240Hz HW, UIKit coalesce tới frame boundary) | iOS 120Hz touch-to-UIKit **chưa có số đo chính thức**; ước "8–17ms" bằng cách chia đôi 60Hz là *methodologically unsound* (DXOMARK đo iPhone 15 Pro Max ~67ms end-to-end, KHÔNG giảm một nửa so với 60Hz). Dùng `coalescedTouches`/`predictedTouches`. |
-| **2. Network send** | 0.05–0.2 ms wired | như trên | Gửi button event ngay, batch motion ~1ms cadence. |
-| **3. Host inject (CGEventPostToPid)** | 0.2–2 ms | — | KHÔNG phải "Mach IPC round-trip" như giả định ban đầu (refuted) — là CoreGraphics/WindowServer multi-hop injection, **chưa có benchmark Apple Silicon**. So sánh: XPC/UDS small-msg ~11µs trên Intel → đường full nhiều hop hơn. |
-| **4. Activate-then-control** | 0.1–0.3 ms (2 Mach msg, một lần/session) | — | `SLPSPostEventRecordTo` flip active state không raise window (tránh Space-switch 100–300ms). **Lưu ý:** trên macOS 14 hàm này có thể SIGABRT do `CGSEncodeEventRecord` serialize sai buffer fill 0xFF (paneru #123) — cần guard theo OS version. Tahoe 26: CGEventPost từ unsigned daemon bị chặn → cần code-sign hoặc DriverKit virtual HID. |
-| **5. Return video (host display→client)** | 3–15 ms | 3–15 ms | = toàn bộ pipeline encode→net→decode ở trên (không tính lại scanout hai lần). |
-| **6. Client display** | 8–13 ms @120Hz | 8–17 ms @120/60Hz | Như render+vsync ở trên. |
+| **1. Client input capture** | 1–3 ms (USB HID 1ms @1000Hz; passive CGEventTap +0.1–0.3ms) | 8–17 ms @120Hz (touch HW at 240Hz, UIKit coalesces to the frame boundary) | iOS 120Hz touch-to-UIKit **has no official measurement**; estimating "8–17ms" by halving the 60Hz figure is *methodologically unsound* (DXOMARK measured the iPhone 15 Pro Max at ~67ms end-to-end, NOT half the 60Hz value). Use `coalescedTouches`/`predictedTouches`. |
+| **2. Network send** | 0.05–0.2 ms wired | as above | Send button events immediately, batch motion at ~1ms cadence. |
+| **3. Host inject (CGEventPostToPid)** | 0.2–2 ms | — | NOT a "Mach IPC round-trip" as originally assumed (refuted) — it is a CoreGraphics/WindowServer multi-hop injection, **no Apple Silicon benchmark exists**. For comparison: XPC/UDS small-msg ~11µs on Intel → the full path has more hops. |
+| **4. Activate-then-control** | 0.1–0.3 ms (2 Mach msgs, once per session) | — | `SLPSPostEventRecordTo` flips the active state without raising the window (avoids the 100–300ms Space switch). **Note:** on macOS 14 this function can SIGABRT because `CGSEncodeEventRecord` mis-serializes a buffer filled with 0xFF (paneru #123) — needs an OS-version guard. Tahoe 26: CGEventPost from an unsigned daemon is blocked → needs code-signing or a DriverKit virtual HID. |
+| **5. Return video (host display→client)** | 3–15 ms | 3–15 ms | = the entire encode→net→decode pipeline above (without double-counting scanout). |
+| **6. Client display** | 8–13 ms @120Hz | 8–17 ms @120/60Hz | Same as render+vsync above. |
 
-**Kết quả input-to-photon:**
-- **KHÔNG có cursor cục bộ:** ~14–36 ms G2G (wired, 120Hz, không tính cursor) — khớp corpus.
-- **CÓ cursor overlay cục bộ:** cursor xuất hiện trong **~2–5 ms** (input capture + draw, từ kênh input chứ KHÔNG qua video roundtrip); xác nhận window update (frame video thể hiện kết quả) trong ~15–25 ms. **Đây là tối ưu giá trị cao nhất cho perceived responsiveness** — RDP/PCoIP/NoMachine đều làm vậy. Đặt `SCStreamConfiguration.showsCursor = false`, vẽ cursor client-side từ stream input.
+**Input-to-photon results:**
+- **WITHOUT a local cursor:** ~14–36 ms G2G (wired, 120Hz, cursor excluded) — matches the corpus.
+- **WITH a local cursor overlay:** the cursor appears in **~2–5 ms** (input capture + draw, fed from the input channel, NOT through the video round trip); the window-update confirmation (the video frame showing the result) arrives in ~15–25 ms. **This is the highest-value optimization for perceived responsiveness** — RDP/PCoIP/NoMachine all do it. Set `SCStreamConfiguration.showsCursor = false` and draw the cursor client-side from the input stream.
 
-Trên LAN RTT ~1ms < một frame period, **KHÔNG cần motion prediction/extrapolation** (chỉ dành cho WAN RTT > 20ms).
+On LAN, RTT ~1ms < one frame period, so **NO motion prediction/extrapolation is needed** (only for WAN RTT > 20ms).
 
 ---
 
-### Floor thực tế tuyệt đối & đối chiếu hệ thống thực
+### Absolute realistic floor & comparison against real systems
 
-**Floor lý thuyết Apple Silicon + wired LAN (Metal direct render, HEVC HW, low-latency mode):**
+**Theoretical floor, Apple Silicon + wired LAN (Metal direct render, HEVC HW, low-latency mode):**
 
-| Cấu hình | Floor G2G video | Realistic G2G video |
+| Configuration | Floor G2G video | Realistic G2G video |
 |---|---:|---:|
 | **120fps wired, display 120Hz** | **~10 ms** | **~14–16 ms** |
 | **60fps wired, display 60Hz** | **~14 ms** | **~22–26 ms** |
 | **120fps Wi-Fi 6E** | ~12 ms | ~17–26 ms |
 | **60fps Wi-Fi 6** | ~16 ms | ~24–41 ms |
 
-**Đâu là nơi mỗi millisecond đi:** Ở cả hai cấu hình wired, **hai stage vsync (capture compositor + display scanout) chiếm phần lớn floor** — khoảng 12.5 ms (@60Hz: 8.3+4.2 nếu tính trung bình, tới 33ms nếu cả hai worst-case) so với chỉ ~4 ms cho encode+decode kết hợp và < 0.5 ms cho network. **Encode là stage có thể dominant duy nhất mà ta kiểm soát được bằng API** (low-latency RC, no B-frames, MaxFrameDelayCount=0). Network gần như miễn phí trên wired. Kết luận: **muốn nén floor, phải nâng refresh rate (60→120Hz) chứ không phải tối ưu network** — chuyển 60→120Hz tiết kiệm ~8ms ở capture + ~4ms ở scanout = ~12ms.
+**Where every millisecond goes:** In both wired configurations, **the two vsync stages (capture compositor + display scanout) account for most of the floor** — about 12.5 ms (@60Hz: 8.3+4.2 on average, up to 33ms if both hit worst-case) versus only ~4 ms for encode+decode combined and < 0.5 ms for the network. **Encode is the only potentially-dominant stage we can control via API** (low-latency RC, no B-frames, MaxFrameDelayCount=0). The network is nearly free on wired. Conclusion: **to compress the floor, raise the refresh rate (60→120Hz), not the network** — moving 60→120Hz saves ~8ms in capture + ~4ms in scanout = ~12ms.
 
-**Đối chiếu hệ thống thực (số đo có nguồn):**
+**Comparison against real systems (sourced measurements):**
 
-| Hệ thống | Số công bố | Phạm vi đo | Đánh giá độ tin cậy |
+| System | Published figure | Measurement scope | Reliability assessment |
 |---|---:|---|---|
-| **Parsec** | 4–8 ms @240fps wired LAN | encode+transmit+decode **display-to-display**, KHÔNG gồm input injection, đo bằng camera 1000fps | Là demo stress-test cực hạn (Parsec khuyến nghị thực tế 60fps); KHÔNG phải full G2G. ~7ms overhead @60fps so với local. |
-| **Parsec encode** | NVENC H.264 median 5.8 ms | fleet median **mọi GPU Nvidia** (không riêng Pascal), 2018, KHÔNG phải benchmark có kiểm soát | Apple Silicon Media Engine encode latency **chưa có benchmark chính thức nào** |
-| **Moonlight + Sunshine** | ~10–20 ms total @60fps wired | community measured, overlay | Overlay báo thiếu — G2G thật cao hơn |
-| **Moonlight decode (Apple Silicon)** | M2 iPad ~1ms, M2 Mac 2–3ms | "felt"/overlay, không phải Instruments | M2 Mac 4–6ms qua FFmpeg+VT+AVSampleBufferDisplayLayer; xuống ~2.7ms với Metal |
-| **Lumen (Sunshine fork, M4)** | encode H.264 ~15ms / HEVC ~18ms @1080p60; 1ms encode-to-network | README self-reported, methodology không nêu | Con số encode self-reported, chưa độc lập kiểm chứng |
-| **ALVR (VR)** | target < 50ms motion-to-photon; thực tế 70–140ms wireless | đo Greendayle | Domain VR có thêm compositor+tracking; không trực tiếp so sánh được |
-| **NeSt-VR (paper)** | VF-RTT 4–5 ms Wi-Fi | đo, peer-reviewed | Chỉ stage transmission round-trip |
+| **Parsec** | 4–8 ms @240fps wired LAN | encode+transmit+decode **display-to-display**, does NOT include input injection, measured with a 1000fps camera | An extreme stress-test demo (Parsec recommends 60fps in practice); NOT full G2G. ~7ms overhead @60fps vs local. |
+| **Parsec encode** | NVENC H.264 median 5.8 ms | fleet median across **all Nvidia GPUs** (not just Pascal), 2018, NOT a controlled benchmark | Apple Silicon Media Engine encode latency **has no official benchmark at all** |
+| **Moonlight + Sunshine** | ~10–20 ms total @60fps wired | community measured, overlay | Overlay under-reports — true G2G is higher |
+| **Moonlight decode (Apple Silicon)** | M2 iPad ~1ms, M2 Mac 2–3ms | "felt"/overlay, not Instruments | M2 Mac 4–6ms via FFmpeg+VT+AVSampleBufferDisplayLayer; down to ~2.7ms with Metal |
+| **Lumen (Sunshine fork, M4)** | encode H.264 ~15ms / HEVC ~18ms @1080p60; 1ms encode-to-network | README self-reported, methodology not stated | Self-reported encode numbers, not independently verified |
+| **ALVR (VR)** | target < 50ms motion-to-photon; actual 70–140ms wireless | measured by Greendayle | The VR domain adds compositor+tracking; not directly comparable |
+| **NeSt-VR (paper)** | VF-RTT 4–5 ms Wi-Fi | measured, peer-reviewed | Transmission round-trip stage only |
 
 ---
 
-### Cảnh báo & điểm bất định cần ghi nhớ
+### Caveats & uncertainties to remember
 
-1. **macOS 26 Tahoe decode regression.** Moonlight #1696 báo decode latency vọt lên ~80ms trên Intel/macOS 26, ~20ms trên M4 với Metal renderer; tắt Metal renderer → ~2.7ms. Nguyên nhân nghi là CAMetalDisplayLink "presentation wait timed out" chứ không phải HW decode. **Phải test trên macOS 26 target trước khi tin floor ~14ms.**
+1. **macOS 26 Tahoe decode regression.** Moonlight #1696 reports decode latency jumping to ~80ms on Intel/macOS 26, ~20ms on M4 with the Metal renderer; disabling the Metal renderer → ~2.7ms. Suspected cause is CAMetalDisplayLink "presentation wait timed out", not HW decode. **Must test on the macOS 26 target before trusting the ~14ms floor.**
 
-2. **Encode single-frame latency là open question lớn nhất chưa giải.** Con số ~3.3ms ceiling là từ *throughput* (~300fps @1080p HEVC), KHÔNG phải latency một frame. Apple chưa công bố. Ở 120fps (budget 8.33ms) đây là ràng buộc có thể vỡ — cần đo thực tế trên target hardware bằng `CACurrentMediaTime()` trước `VTCompressionSessionEncodeFrame` và trong output handler.
+2. **Encode single-frame latency is the biggest unsolved open question.** The ~3.3ms ceiling comes from *throughput* (~300fps @1080p HEVC), NOT single-frame latency. Apple has not published one. At 120fps (8.33ms budget) this constraint can break — measure on the target hardware with `CACurrentMediaTime()` before `VTCompressionSessionEncodeFrame` and inside the output handler.
 
-3. **HEVC low-latency rate control trên Apple Silicon là empirical, KHÔNG documented.** `kVTVideoEncoderSpecification_EnableLowLatencyRateControl` được Apple document chỉ cho H.264 (WWDC21); HEVC support chỉ được xác nhận qua FFmpeg patch (`TARGET_CPU_ARM64`), không có bảo đảm chính thức. Query `kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder` trả `kVTPropertyNotSupportedErr` (-12900) trong low-latency mode — đây là API incompleteness, KHÔNG phải bằng chứng software fallback. Error gating thật cho thiếu HW là -12902.
+3. **HEVC low-latency rate control on Apple Silicon is empirical, NOT documented.** `kVTVideoEncoderSpecification_EnableLowLatencyRateControl` is documented by Apple for H.264 only (WWDC21); HEVC support is confirmed only via an FFmpeg patch (`TARGET_CPU_ARM64`), with no official guarantee. Querying `kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder` returns `kVTPropertyNotSupportedErr` (-12900) in low-latency mode — that is API incompleteness, NOT evidence of a software fallback. The real error gating for missing HW is -12902.
 
-4. **SCK capture vsync-to-callback latency chưa từng được đo công bố.** Toàn bộ stage capture (8.33/16.67 ms) là suy luận từ kiến trúc compositor, không phải số Apple. `SCStreamFrameInfoDisplayTime` cùng clock domain với `CACurrentMediaTime()` (cả hai gốc `mach_absolute_time` — confirmed), nhưng có forum report về negative latency (May 2025) có thể là bug stamping riêng, cần `mach_timebase_info` convert đúng.
+4. **SCK capture vsync-to-callback latency has never been publicly measured.** The entire capture stage (8.33/16.67 ms) is inferred from compositor architecture, not an Apple number. `SCStreamFrameInfoDisplayTime` shares a clock domain with `CACurrentMediaTime()` (both rooted in `mach_absolute_time` — confirmed), but there is a forum report of negative latency (May 2025) that may be a stamping bug of its own; convert correctly with `mach_timebase_info`.
 
-5. **AVSampleBufferDisplayLayer extra-frame buffering là quan sát macOS (GPU rời).** Δ "1+ frame" từ Moonlight #1885 đo trên Radeon Pro 580; **chưa có benchmark iOS** so sánh Metal vs AVSampleBufferDisplayLayer. Trên iOS Moonlight chỉ dùng AVSampleBufferDisplayLayer (không có Metal path để A/B). Dù vậy, khuyến nghị Metal direct vẫn đứng vững vì tránh được compositor queue.
+5. **AVSampleBufferDisplayLayer extra-frame buffering is a macOS observation (discrete GPU).** The "1+ frame" Δ from Moonlight #1885 was measured on a Radeon Pro 580; **no iOS benchmark** compares Metal vs AVSampleBufferDisplayLayer. On iOS, Moonlight only uses AVSampleBufferDisplayLayer (no Metal path to A/B). Even so, the Metal-direct recommendation stands because it bypasses the compositor queue.
 
-6. **`maximumDrawableCount=2` HỢP LỆ trên iOS/iPadOS** (claim "Apple không khuyến nghị" đã bị refuted — chỉ có cảnh báo `nextDrawable` trả nil cao hơn, áp dụng mọi nền tảng). Đây là lựa chọn đúng để tối thiểu G2G; cần xử lý nil drawable + drop frame.
+6. **`maximumDrawableCount=2` is VALID on iOS/iPadOS** (the "Apple does not recommend it" claim was refuted — there is only a warning that `nextDrawable` returns nil more often, which applies on every platform). It is the right choice for minimum G2G; handle nil drawables + drop frames.
 
 ---
 
 ## Per-stage absolute-minimum configuration
 
-Phần này liệt kê cấu hình **chính xác đến từng symbol** cho mỗi stage của pipeline glass-to-glass. Mỗi setting kèm rationale một dòng. Spelling của tất cả symbol VideoToolbox và ScreenCaptureKit dưới đây đã được verify trực tiếp từ `MacOSX.sdk` (Xcode đang cài: SCK `SCStream.h`, VT `VTCompressionProperties.h`). Symbol nào **chưa verify được** từ header sẽ được đánh dấu rõ ràng `[UNVERIFIED]`.
+This section lists the configuration **down to the exact symbol** for each stage of the glass-to-glass pipeline. Each setting comes with a one-line rationale. The spelling of every VideoToolbox and ScreenCaptureKit symbol below was verified directly against `MacOSX.sdk` (the installed Xcode: SCK `SCStream.h`, VT `VTCompressionProperties.h`). Any symbol that **could not be verified** from a header is explicitly marked `[UNVERIFIED]`.
 
-> Quy ước: `[VERIFIED-SDK]` = đã xác nhận từ header trên máy; `[VERIFIED-CORPUS]` = corpus xác nhận nhưng không tự kiểm header lần này; `[UNVERIFIED]` = chỉ có nguồn gián tiếp/cộng đồng, cần test runtime; `[PRIVATE]` = symbol private/undocumented, dùng có rủi ro.
+> Conventions: `[VERIFIED-SDK]` = confirmed from a header on this machine; `[VERIFIED-CORPUS]` = corpus-confirmed but the header was not re-checked this time; `[UNVERIFIED]` = indirect/community sources only, needs a runtime test; `[PRIVATE]` = private/undocumented symbol, use at your own risk.
 
 ---
 
 ### 1. Capture — ScreenCaptureKit
 
-Dùng `SCStream` với `SCContentFilter(desktopIndependentWindow:)`. Đây là đường capture single-window public duy nhất khả dụng trên macOS 14+ (CGDisplayStream / CGWindowListCreateImage đã obsoleted ở SDK macOS 15) [capture-floor].
+Use `SCStream` with `SCContentFilter(desktopIndependentWindow:)`. This is the only public single-window capture path available on macOS 14+ (CGDisplayStream / CGWindowListCreateImage were obsoleted in the macOS 15 SDK) [capture-floor].
 
-| Setting | Giá trị | Rationale |
+| Setting | Value | Rationale |
 |---|---|---|
-| `SCContentFilter(desktopIndependentWindow:)` `[VERIFIED-CORPUS]` | window mục tiêu | Filter chuyên cho single-window, display-independent, không composite các window khác → ít công việc trong WindowServer capture path. |
-| `config.minimumFrameInterval` `[VERIFIED-SDK]` (`SCStream.h:222`, type `CMTime`) | `CMTimeMake(1, targetFPS)` (vd `CMTimeMake(1, 120)`); **không** dùng float xấp xỉ | Trên macOS 15+ default **đã đổi thành 1/60** kể cả ProMotion → cap silent ở 60fps. **Đã verify (corpus, confirmed):** đặt giá trị này tường minh là bắt buộc. **Lưu ý correction quan trọng:** claim ban đầu rằng `kCMTimeZero` enable native refresh rate đã bị **REFUTED** — OBS PR #11896 thực tế dùng `target_frame_period × 0.9` (concrete CMTime), **không** dùng `kCMTimeZero`, và không có SDK header nào nói `kCMTimeZero` → native refresh. Khuyến nghị: đặt đúng `1/targetFPS`, hoặc `1/(targetFPS × 1.1)` (interval ngắn hơn ~10%) theo OBS empirical fix nếu thấy drop frame. `kCMTimeZero` là untested cho mục đích này. |
-| `config.queueDepth` `[VERIFIED-SDK]` (`SCStream.h:279`, type `NSInteger`) | `3` (cho LAN low-latency) | **Correction (corpus REFUTED claim "range 3–8, default 3"):** header thực tế nói **default = 8** và chỉ có giới hạn mềm trên `"should not exceed 8 frames"`, **không có** floor cứng = 3. Production code dùng `queueDepth=1` và `=2` thành công (daylight-mirror giảm 3→2 cắt P95 RTT 21.6→18.8ms). Mỗi surface thừa = thêm tối đa 1 frame-interval backlog. Deadline release IOSurface = `minimumFrameInterval × (queueDepth−1)`; ở 120fps queueDepth=3 → 16.7ms. Chọn 2–3 cho min latency nếu encode kịp deadline. |
-| `config.pixelFormat` `[VERIFIED-SDK]` (`SCStream.h:234`, type `OSType`) | `kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange` (`'420v'`) 8-bit | NV12 đi thẳng vào VideoToolbox HW encoder, **không** color-conversion pass. BGRA buộc 1 GPU blit (~0.5–2ms ở 4K). |
-| `config.pixelFormat` (HDR/10-bit) | **Correction:** dùng preset, **không** assign `'x420'` trực tiếp | **REFUTED:** `kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange` (`'x420'`, 4:2:0 video-range) **không** nằm trong danh sách pixelFormat được document của SCK. Header liệt kê đúng 6 giá trị, trong đó 10-bit YCbCr duy nhất là `'xf44'` (4:4:4 full-range). Đường HDR chính thức: dùng `SCStreamConfiguration` preset (`SCStreamConfigurationPresetCaptureHDRLocalDisplay`, macOS 15.0+ `[VERIFIED-SDK SCStream.h:194`]) — preset tự set `captureDynamicRange`, `pixelFormat`, `colorSpace`, `colorMatrix`. |
-| `config.showsCursor` `[VERIFIED-SDK]` (`SCStream.h:254`, `BOOL`) | `false` | Không composite cursor vào frame; client tự vẽ overlay cursor từ input stream (xem stage Input). |
-| `config.captureResolution` `[VERIFIED-SDK]` (`SCStream.h:325`, `SCCaptureResolutionType`, macOS 14.0+) | `.nominal` (= `SCCaptureResolutionNominal`) | Point resolution thay vì 2× Retina; trên 4K Retina giảm 4× pixel count → encode + memory bandwidth giảm tương ứng. |
-| `config.ignoreShadowsSingleWindow` `[VERIFIED-SDK]` (`SCStream.h:320`, `BOOL`, macOS 14.0+) | `true` | Strip window shadow composited bởi WindowServer → giảm bounding box capture. |
-| `config.captureDynamicRange` `[VERIFIED-SDK]` (`SCStream.h:370`, `SCCaptureDynamicRange`, macOS 15.0+) | `SCCaptureDynamicRangeSDR` (default) cho SDR | HDR chỉ Apple Silicon; để SDR khi stream SDR để tránh kích hoạt EDR pipeline downstream. |
-| `addStreamOutput(_:type:sampleHandlerQueue:)` `[VERIFIED-CORPUS]` | `DispatchQueue(label:..., qos: .userInteractive)` | Callback delivery priority cao, giảm scheduling jitter dưới tải. |
+| `SCContentFilter(desktopIndependentWindow:)` `[VERIFIED-CORPUS]` | target window | A filter specialized for single-window, display-independent capture that does not composite other windows → less work in the WindowServer capture path. |
+| `config.minimumFrameInterval` `[VERIFIED-SDK]` (`SCStream.h:222`, type `CMTime`) | `CMTimeMake(1, targetFPS)` (e.g. `CMTimeMake(1, 120)`); do **not** use a float approximation | On macOS 15+ the default **changed to 1/60** even on ProMotion → silent 60fps cap. **Verified (corpus, confirmed):** setting this value explicitly is mandatory. **Important correction:** the original claim that `kCMTimeZero` enables the native refresh rate was **REFUTED** — OBS PR #11896 actually uses `target_frame_period × 0.9` (a concrete CMTime), **not** `kCMTimeZero`, and no SDK header says `kCMTimeZero` → native refresh. Recommendation: set exactly `1/targetFPS`, or `1/(targetFPS × 1.1)` (an interval ~10% shorter) per the OBS empirical fix if you see dropped frames. `kCMTimeZero` is untested for this purpose. |
+| `config.queueDepth` `[VERIFIED-SDK]` (`SCStream.h:279`, type `NSInteger`) | `3` (for LAN low-latency) | **Correction (corpus REFUTED the claim "range 3–8, default 3"):** the header actually says **default = 8** with only a soft upper bound `"should not exceed 8 frames"`, and **no** hard floor of 3. Production code uses `queueDepth=1` and `=2` successfully (daylight-mirror's 3→2 cut P95 RTT 21.6→18.8ms). Each extra surface = up to 1 extra frame-interval of backlog. IOSurface release deadline = `minimumFrameInterval × (queueDepth−1)`; at 120fps queueDepth=3 → 16.7ms. Choose 2–3 for minimum latency if encode meets the deadline. |
+| `config.pixelFormat` `[VERIFIED-SDK]` (`SCStream.h:234`, type `OSType`) | `kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange` (`'420v'`) 8-bit | NV12 goes straight into the VideoToolbox HW encoder with **no** color-conversion pass. BGRA forces one GPU blit (~0.5–2ms at 4K). |
+| `config.pixelFormat` (HDR/10-bit) | **Correction:** use a preset, do **not** assign `'x420'` directly | **REFUTED:** `kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange` (`'x420'`, 4:2:0 video-range) is **not** in SCK's documented pixelFormat list. The header lists exactly 6 values, of which the only 10-bit YCbCr is `'xf44'` (4:4:4 full-range). The official HDR path: use an `SCStreamConfiguration` preset (`SCStreamConfigurationPresetCaptureHDRLocalDisplay`, macOS 15.0+ `[VERIFIED-SDK SCStream.h:194`]) — the preset sets `captureDynamicRange`, `pixelFormat`, `colorSpace`, `colorMatrix` itself. |
+| `config.showsCursor` `[VERIFIED-SDK]` (`SCStream.h:254`, `BOOL`) | `false` | Do not composite the cursor into the frame; the client draws its own cursor overlay from the input stream (see the Input stage). |
+| `config.captureResolution` `[VERIFIED-SDK]` (`SCStream.h:325`, `SCCaptureResolutionType`, macOS 14.0+) | `.nominal` (= `SCCaptureResolutionNominal`) | Point resolution instead of 2× Retina; on 4K Retina this cuts pixel count 4× → encode + memory bandwidth shrink accordingly. |
+| `config.ignoreShadowsSingleWindow` `[VERIFIED-SDK]` (`SCStream.h:320`, `BOOL`, macOS 14.0+) | `true` | Strips the WindowServer-composited window shadow → smaller capture bounding box. |
+| `config.captureDynamicRange` `[VERIFIED-SDK]` (`SCStream.h:370`, `SCCaptureDynamicRange`, macOS 15.0+) | `SCCaptureDynamicRangeSDR` (default) for SDR | HDR is Apple Silicon only; keep SDR when streaming SDR to avoid triggering the EDR pipeline downstream. |
+| `addStreamOutput(_:type:sampleHandlerQueue:)` `[VERIFIED-CORPUS]` | `DispatchQueue(label:..., qos: .userInteractive)` | High-priority callback delivery, less scheduling jitter under load. |
 
-**Trong callback `stream(_:didOutputSampleBuffer:of:)`:**
-- Đọc `SCStreamFrameInfoStatus` ngay đầu; chỉ xử lý khi `SCFrameStatusComplete`/`SCFrameStatusStarted`, return ngay với `SCFrameStatusIdle`/`Blank`/`Suspended` để tránh queue buildup từ idle callbacks.
-- Lấy capture timestamp từ attachment `SCStreamFrameInfoDisplayTime` `[VERIFIED-SDK SCStream.h:401`, macOS 12.3+] — **đây là mach_absolute_time ticks** (header `SCStream.h:398–399` ghi rõ "mach absolute time when the event occurred"). **Correction (corpus REFUTED):** `displayTime` **cùng clock domain** với `CACurrentMediaTime()` (cả hai đều dựa trên `mach_absolute_time()`); chỉ cần convert ticks → seconds qua `mach_timebase_info` (Apple Silicon: numer=125, denom=3), **không** cần cross-domain conversion.
-- `stream.synchronizationClock` `[VERIFIED-SDK SCStream.h:453`, `CMClockRef`, macOS 13.0+] để align DTS/PTS với encoder.
+**Inside the `stream(_:didOutputSampleBuffer:of:)` callback:**
+- Read `SCStreamFrameInfoStatus` first; only process `SCFrameStatusComplete`/`SCFrameStatusStarted`, return immediately on `SCFrameStatusIdle`/`Blank`/`Suspended` to avoid queue buildup from idle callbacks.
+- Take the capture timestamp from the `SCStreamFrameInfoDisplayTime` attachment `[VERIFIED-SDK SCStream.h:401`, macOS 12.3+] — **these are mach_absolute_time ticks** (header `SCStream.h:398–399` explicitly says "mach absolute time when the event occurred"). **Correction (corpus REFUTED):** `displayTime` is in the **same clock domain** as `CACurrentMediaTime()` (both based on `mach_absolute_time()`); just convert ticks → seconds via `mach_timebase_info` (Apple Silicon: numer=125, denom=3), **no** cross-domain conversion needed.
+- `stream.synchronizationClock` `[VERIFIED-SDK SCStream.h:453`, `CMClockRef`, macOS 13.0+] to align DTS/PTS with the encoder.
 
-> **Lưu ý load-bearing:** một pixel đổi trong app → IOSurface composited mà SCK thấy có floor không thể giảm = một chu kỳ vsync của WindowServer (8.33ms @120Hz, 16.67ms @60Hz). Đây **không** phải con số Apple công bố — suy ra từ kiến trúc compositing. Không có public path nào thấp hơn SCK trên macOS 14+.
+> **Load-bearing note:** a pixel changing in the app → the composited IOSurface that SCK sees has an irreducible floor = one WindowServer vsync cycle (8.33ms @120Hz, 16.67ms @60Hz). This is **not** an Apple-published number — it is inferred from the compositing architecture. There is no public path lower than SCK on macOS 14+.
 
 ---
 
 ### 2. Encode — VideoToolbox
 
-Codec mặc định project: HEVC Main 10, 4:2:0, no B-frames, infinite GOP + on-demand IDR, low-latency RC.
+Project default codec: HEVC Main 10, 4:2:0, no B-frames, infinite GOP + on-demand IDR, low-latency RC.
 
-**Trong `encoderSpecification` dict tại `VTCompressionSessionCreate` (đặt TRƯỚC khi tạo session, KHÔNG qua `VTSessionSetProperty`):**
+**In the `encoderSpecification` dict at `VTCompressionSessionCreate` (set BEFORE session creation, NOT via `VTSessionSetProperty`):**
 
-| Symbol | Giá trị | Rationale |
+| Symbol | Value | Rationale |
 |---|---|---|
-| `kVTVideoEncoderSpecification_EnableLowLatencyRateControl` `[VERIFIED-SDK VTCompressionProperties.h:1202`, macOS 11.3+] | `kCFBooleanTrue` | One-in-one-out pipeline, no frame reorder, faster RC. **Quan trọng (UNCERTAIN→corrected):** Apple **chỉ document H.264** cho key này (WWDC21 + header không nhắc HEVC). HEVC trên Apple Silicon hoạt động thực tế theo FFmpeg patch (gated `TARGET_CPU_ARM64 && AV_CODEC_ID_HEVC`, merged 2025) nhưng **không phải guarantee của Apple** — có rủi ro silent regression qua OS update. Verify runtime bằng `VTCopySupportedPropertyDictionaryForEncoder`. |
-| `kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder` `[VERIFIED-CORPUS]` | `kCFBooleanTrue` | Fail fast nếu không có Media Engine thay vì fallback software (chậm 5–20×). |
+| `kVTVideoEncoderSpecification_EnableLowLatencyRateControl` `[VERIFIED-SDK VTCompressionProperties.h:1202`, macOS 11.3+] | `kCFBooleanTrue` | One-in-one-out pipeline, no frame reorder, faster RC. **Important (UNCERTAIN→corrected):** Apple **documents H.264 only** for this key (WWDC21 + the header never mention HEVC). HEVC on Apple Silicon works in practice per the FFmpeg patch (gated `TARGET_CPU_ARM64 && AV_CODEC_ID_HEVC`, merged 2025) but it is **not an Apple guarantee** — there is a risk of silent regression through an OS update. Verify at runtime with `VTCopySupportedPropertyDictionaryForEncoder`. |
+| `kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder` `[VERIFIED-CORPUS]` | `kCFBooleanTrue` | Fail fast when no Media Engine is present instead of falling back to software (5–20× slower). |
 
-**Manual HEVC low-latency config (vì `EnableLowLatencyRateControl` chỉ document cho H.264) — qua `VTSessionSetProperty` sau khi tạo session:**
+**Manual HEVC low-latency config (because `EnableLowLatencyRateControl` is documented for H.264 only) — via `VTSessionSetProperty` after session creation:**
 
-| Symbol | Giá trị | Rationale |
+| Symbol | Value | Rationale |
 |---|---|---|
-| `kVTCompressionPropertyKey_RealTime` `[VERIFIED-CORPUS]` | `kCFBooleanTrue` | Không defer frame để batch optimize. |
-| `kVTCompressionPropertyKey_AllowFrameReordering` `[VERIFIED-CORPUS]` | `kCFBooleanFalse` | Tắt B-frames; bắt buộc cho LAN remote. |
-| `kVTCompressionPropertyKey_AllowOpenGOP` `[VERIFIED-SDK VTCompressionProperties.h:197`, macOS 10.14+] | `kCFBooleanFalse` | **HEVC mặc định `kCFBooleanTrue`** (header `:190–191` xác nhận, đã verify confirmed) → phải tắt tường minh để IDR là decodable độc lập, không cross-GOP dependency. |
-| `kVTCompressionPropertyKey_MaxFrameDelayCount` `[VERIFIED-SDK VTCompressionProperties.h:576`, macOS 10.8+] | `0` | **Correction (corpus REFUTED "0=default"):** default là `kVTUnlimitedFrameDelayCount = -1` (`enum` tại `:577`, đã verify), cho phép buffer tùy ý. Đặt `0` → frame N phải emit trước khi call encode frame N return = synchronous immediate emit. Câu "A value of zero implies default behavior" thuộc property **kế bên** `MaxH264SliceBytes` (`:586`), không phải property này. |
-| `kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality` `[VERIFIED-SDK VTCompressionProperties.h:324`, macOS 11.0+] | `kCFBooleanTrue` | HW encoder mặc định ưu tiên quality; đảo lại để giảm encode time (header `:62–65` liệt kê trong recipe ultra-low-latency). |
-| `kVTCompressionPropertyKey_MaxKeyFrameInterval` `[VERIFIED-CORPUS]` | giá trị rất lớn (`INT_MAX`) | Infinite GOP; IDR chỉ on-demand qua `kVTEncodeFrameOptionKey_ForceKeyFrame`. |
-| `kVTCompressionPropertyKey_ExpectedFrameRate` `[VERIFIED-CORPUS]` | target fps (60 hoặc 120) | Giúp encoder pre-config internal timing. |
-| `kVTCompressionPropertyKey_MaximumRealTimeFrameRate` `[VERIFIED-SDK VTCompressionProperties.h:668`, macOS 15.0+] | `120` | Hint peak burst rate để encoder không under-config pipeline cho burst. |
+| `kVTCompressionPropertyKey_RealTime` `[VERIFIED-CORPUS]` | `kCFBooleanTrue` | Do not defer frames for batch optimization. |
+| `kVTCompressionPropertyKey_AllowFrameReordering` `[VERIFIED-CORPUS]` | `kCFBooleanFalse` | Disable B-frames; mandatory for LAN remoting. |
+| `kVTCompressionPropertyKey_AllowOpenGOP` `[VERIFIED-SDK VTCompressionProperties.h:197`, macOS 10.14+] | `kCFBooleanFalse` | **HEVC defaults to `kCFBooleanTrue`** (header `:190–191` confirms, verified) → must disable explicitly so IDRs are independently decodable, with no cross-GOP dependency. |
+| `kVTCompressionPropertyKey_MaxFrameDelayCount` `[VERIFIED-SDK VTCompressionProperties.h:576`, macOS 10.8+] | `0` | **Correction (corpus REFUTED "0=default"):** the default is `kVTUnlimitedFrameDelayCount = -1` (`enum` at `:577`, verified), allowing arbitrary buffering. Setting `0` → frame N must be emitted before the encode call for frame N returns = synchronous immediate emit. The sentence "A value of zero implies default behavior" belongs to the **adjacent** property `MaxH264SliceBytes` (`:586`), not this one. |
+| `kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality` `[VERIFIED-SDK VTCompressionProperties.h:324`, macOS 11.0+] | `kCFBooleanTrue` | The HW encoder prioritizes quality by default; flip it to cut encode time (header `:62–65` lists it in the ultra-low-latency recipe). |
+| `kVTCompressionPropertyKey_MaxKeyFrameInterval` `[VERIFIED-CORPUS]` | a very large value (`INT_MAX`) | Infinite GOP; IDR only on demand via `kVTEncodeFrameOptionKey_ForceKeyFrame`. |
+| `kVTCompressionPropertyKey_ExpectedFrameRate` `[VERIFIED-CORPUS]` | target fps (60 or 120) | Helps the encoder pre-configure internal timing. |
+| `kVTCompressionPropertyKey_MaximumRealTimeFrameRate` `[VERIFIED-SDK VTCompressionProperties.h:668`, macOS 15.0+] | `120` | Hints the peak burst rate so the encoder does not under-configure the pipeline for bursts. |
 
-**Rate control (mutually-exclusive với low-latency mode):**
+**Rate control (mutually exclusive with low-latency mode):**
 
-| Symbol | Giá trị | Rationale |
+| Symbol | Value | Rationale |
 |---|---|---|
-| `kVTCompressionPropertyKey_AverageBitRate` `[VERIFIED-CORPUS]` | `<target_bps>` | Soft target; auto-bitrate **không** hỗ trợ trong low-latency mode. |
-| `kVTCompressionPropertyKey_DataRateLimits` `[VERIFIED-CORPUS]` | `[bytes, seconds]` | Hard cap chống burst overflow làm stall network. |
-| **KHÔNG đặt** `kVTCompressionPropertyKey_ConstantBitRate` | — | Mutually exclusive với `EnableLowLatencyRateControl` → `kVTPropertyNotSupportedErr`. |
-| `kVTCompressionPropertyKey_MaxAllowedFrameQP` `[VERIFIED-SDK VTCompressionProperties.h:1214`, macOS 12.0+] | `36–40` cho screen-share | Cap kích thước frame; QP ≤40 giữ text legible, chống IDR phình làm spike transmission. |
-| `kVTCompressionPropertyKey_SpatialAdaptiveQPLevel` `[VERIFIED-SDK VTCompressionProperties.h:1540`, **macOS 15.0+, macOS-only**] | `kVTQPModulationLevel_Disable` | Header `:1524` ghi rõ "ignored when EnableLowLatencyRateControl is set to true" — disable để đúng/không tốn thời gian phân tích QP. |
+| `kVTCompressionPropertyKey_AverageBitRate` `[VERIFIED-CORPUS]` | `<target_bps>` | Soft target; auto-bitrate is **not** supported in low-latency mode. |
+| `kVTCompressionPropertyKey_DataRateLimits` `[VERIFIED-CORPUS]` | `[bytes, seconds]` | Hard cap against burst overflow stalling the network. |
+| Do **NOT** set `kVTCompressionPropertyKey_ConstantBitRate` | — | Mutually exclusive with `EnableLowLatencyRateControl` → `kVTPropertyNotSupportedErr`. |
+| `kVTCompressionPropertyKey_MaxAllowedFrameQP` `[VERIFIED-SDK VTCompressionProperties.h:1214`, macOS 12.0+] | `36–40` for screen-share | Caps frame size; QP ≤40 keeps text legible and stops bloated IDRs from spiking transmission. |
+| `kVTCompressionPropertyKey_SpatialAdaptiveQPLevel` `[VERIFIED-SDK VTCompressionProperties.h:1540`, **macOS 15.0+, macOS-only**] | `kVTQPModulationLevel_Disable` | Header `:1524` explicitly says "ignored when EnableLowLatencyRateControl is set to true" — disable for correctness / to spend no time on QP analysis. |
 
-**LTR recovery (thay IDR định kỳ):**
+**LTR recovery (instead of periodic IDR):**
 
-| Symbol | Giá trị | Rationale |
+| Symbol | Value | Rationale |
 |---|---|---|
-| `kVTCompressionPropertyKey_EnableLTR` `[VERIFIED-SDK VTCompressionProperties.h:1247`, macOS 12.0+] | `kCFBooleanTrue` | LTR-P frame nhỏ hơn IDR nhiều → recovery rẻ hơn khi mất gói. Header **codec-agnostic** (không giới hạn H.264) → khả dụng với HEVC trên Apple Silicon (corpus REFUTED claim "chưa confirmed"). |
-| `kVTEncodeFrameOptionKey_ForceLTRRefresh` `[VERIFIED-SDK VTCompressionProperties.h:1277`] | xem rationale | **Mâu thuẫn trong chính header (confirmed):** type annotation ghi `// CFNumberRef, Optional` nhưng `@abstract` (`:1265`) nói "Set this option to kCFBooleanTrue". Runtime chưa rõ → **test cả `kCFBooleanTrue` lẫn `@(1)` (CFNumberRef)** để xác định cái nào encoder chấp nhận. |
-| `kVTEncodeFrameOptionKey_AcknowledgedLTRTokens` `[VERIFIED-CORPUS]` | CFArray CFNumberRef | Client feed-back token đã ACK trong per-frame options. |
+| `kVTCompressionPropertyKey_EnableLTR` `[VERIFIED-SDK VTCompressionProperties.h:1247`, macOS 12.0+] | `kCFBooleanTrue` | An LTR-P frame is much smaller than an IDR → cheaper recovery on packet loss. The header is **codec-agnostic** (not limited to H.264) → usable with HEVC on Apple Silicon (corpus REFUTED the "not yet confirmed" claim). |
+| `kVTEncodeFrameOptionKey_ForceLTRRefresh` `[VERIFIED-SDK VTCompressionProperties.h:1277`] | see rationale | **Contradiction within the header itself (confirmed):** the type annotation says `// CFNumberRef, Optional` but the `@abstract` (`:1265`) says "Set this option to kCFBooleanTrue". Runtime behavior unclear → **test both `kCFBooleanTrue` and `@(1)` (CFNumberRef)** to determine which one the encoder accepts. |
+| `kVTEncodeFrameOptionKey_AcknowledgedLTRTokens` `[VERIFIED-CORPUS]` | CFArray of CFNumberRef | Client feeds back ACKed tokens in the per-frame options. |
 
 **H.264 fallback only:**
 
-| Symbol | Giá trị | Rationale |
+| Symbol | Value | Rationale |
 |---|---|---|
-| `kVTCompressionPropertyKey_H264EntropyMode` `[VERIFIED-CORPUS]` | `kVTH264EntropyMode_CABAC` (với High profile) | CABAC ~7% better compression; trên HW decoder Apple Silicon chênh latency decode CABAC vs CAVLC là sub-ms. |
-| `kVTCompressionPropertyKey_MaxH264SliceBytes` `[VERIFIED-SDK VTCompressionProperties.h:588`, H.264-only, macOS 10.8+] | `~1300` (MTU-aligned) | Mỗi slice 1 packet UDP; **không có equivalent cho HEVC** trong VideoToolbox. |
+| `kVTCompressionPropertyKey_H264EntropyMode` `[VERIFIED-CORPUS]` | `kVTH264EntropyMode_CABAC` (with High profile) | CABAC ~7% better compression; on the Apple Silicon HW decoder the CABAC-vs-CAVLC decode latency delta is sub-ms. |
+| `kVTCompressionPropertyKey_MaxH264SliceBytes` `[VERIFIED-SDK VTCompressionProperties.h:588`, H.264-only, macOS 10.8+] | `~1300` (MTU-aligned) | One slice per UDP packet; **no HEVC equivalent** exists in VideoToolbox. |
 
-**Khởi tạo & pre-warm:**
-- `VTCompressionSessionPrepareToEncodeFrames(session)` `[VERIFIED-CORPUS]` — gọi MỘT lần sau set properties, trước frame đầu, để loại bỏ first-frame allocation spike (resource alloc, ref buffer, HW queue init).
-- macOS 26+: nếu có, dùng `kVTCompressionPreset_VideoConferencing` `[VERIFIED-SDK VTCompressionProperties.h:1606`, macOS 26.0+] — header `:1602` ghi rõ "requires setting kVTVideoEncoderSpecification_EnableLowLatencyRateControl to kCFBooleanTrue". Query qua `kVTCompressionPropertyKey_SupportedPresetDictionaries` trước khi apply.
+**Initialization & pre-warm:**
+- `VTCompressionSessionPrepareToEncodeFrames(session)` `[VERIFIED-CORPUS]` — call ONCE after setting properties, before the first frame, to eliminate the first-frame allocation spike (resource alloc, ref buffers, HW queue init).
+- macOS 26+: if available, use `kVTCompressionPreset_VideoConferencing` `[VERIFIED-SDK VTCompressionProperties.h:1606`, macOS 26.0+] — header `:1602` explicitly says "requires setting kVTVideoEncoderSpecification_EnableLowLatencyRateControl to kCFBooleanTrue". Query via `kVTCompressionPropertyKey_SupportedPresetDictionaries` before applying.
 
-> **Số đo (corpus, uncertain):** H.264 1080p60 ~15ms/frame, HEVC ~18ms/frame trên M4 (Lumen README — self-reported, methodology không rõ). Apple **không** công bố per-frame encode latency. WWDC21: "up to 100ms reduction" ở 720p30 là loại bỏ reorder buffer, **không** phải raw encode time.
+> **Measurements (corpus, uncertain):** H.264 1080p60 ~15ms/frame, HEVC ~18ms/frame on M4 (Lumen README — self-reported, methodology unclear). Apple does **not** publish per-frame encode latency. WWDC21: the "up to 100ms reduction" at 720p30 is from removing the reorder buffer, **not** raw encode time.
 
 ---
 
 ### 3. Transport — Network.framework + BSD sockets
 
-LAN-only, không NAT. Lựa chọn nền tảng: plain UDP cho video (encryption overhead ~0) hoặc QUIC datagram nếu Wi-Fi cần congestion control.
+LAN-only, no NAT. Foundational choice: plain UDP for video (~0 encryption overhead) or QUIC datagram if Wi-Fi needs congestion control.
 
 **Network.framework (`NWParameters`):**
 
-| Symbol | Giá trị | Rationale |
+| Symbol | Value | Rationale |
 |---|---|---|
-| `parameters.serviceClass = .interactiveVideo` `[VERIFIED-CORPUS]` | video flow | Map tới `NET_SERVICE_TYPE_VI` → Wi-Fi 802.11e **AC_VI** (UP 5). **Correction (corpus UNCERTAIN):** trên macOS đây **chỉ** set Wi-Fi L2 User Priority, **KHÔNG** set IP-header DSCP trừ khi interface có Cisco Fastlane (cần MDM). Public C enum `nw_service_class_interactive_video` = **2** (không phải `NET_SERVICE_TYPE_VI`=3); translation table là private. |
-| `parameters.serviceClass = .responsiveData` `[VERIFIED-CORPUS]` | input/control flow | Channel điều khiển độ trễ thấp riêng. |
-| `parameters.requiredInterfaceType = .wiredEthernet` `[VERIFIED-CORPUS]` ⚠️ **KHÔNG dùng trên NetBird** (utun=`.other`, sẽ hỏng — [13](13-netbird-transport.md)) | — | Pin Ethernet, tránh fallback cellular/Wi-Fi và Happy Eyeballs probing. |
-| `parameters.includePeerToPeer = false` `[VERIFIED-CORPUS]` (default) | — | **Không** bật `true`: kích hoạt AWDL → channel-hopping gây spike 40–336ms (DTS warning thread/751839). Hạ tầng Wi-Fi tốt hơn AWDL khi có. |
-| `parameters.multipathServiceType = .disabled` `[VERIFIED-CORPUS]` | — | Tránh path-probing trên single-interface LAN. |
-| `parameters.allowFastOpen = true` `[VERIFIED-CORPUS]` | — | Cho QUIC 0-RTT resumption khi reconnect; UDP không có handshake nên trivial. |
-| `connection.shouldCalculateReceiveTime = true` `[VERIFIED-CORPUS]` | — | Kernel receive timestamp (`NWProtocolIP.Metadata.receiveTime`) cho đo latency một chiều. |
+| `parameters.serviceClass = .interactiveVideo` `[VERIFIED-CORPUS]` | video flow | Maps to `NET_SERVICE_TYPE_VI` → Wi-Fi 802.11e **AC_VI** (UP 5). **Correction (corpus UNCERTAIN):** on macOS this **only** sets the Wi-Fi L2 User Priority, it does **NOT** set IP-header DSCP unless the interface has Cisco Fastlane (requires MDM). The public C enum `nw_service_class_interactive_video` = **2** (not `NET_SERVICE_TYPE_VI`=3); the translation table is private. |
+| `parameters.serviceClass = .responsiveData` `[VERIFIED-CORPUS]` | input/control flow | A separate low-latency control channel. |
+| `parameters.requiredInterfaceType = .wiredEthernet` `[VERIFIED-CORPUS]` ⚠️ do **NOT** use on NetBird (utun=`.other`, it will break — [13](13-netbird-transport.md)) | — | Pins Ethernet, avoiding cellular/Wi-Fi fallback and Happy Eyeballs probing. |
+| `parameters.includePeerToPeer = false` `[VERIFIED-CORPUS]` (default) | — | Do **not** set `true`: it activates AWDL → channel-hopping causes 40–336ms spikes (DTS warning thread/751839). Infrastructure Wi-Fi beats AWDL when available. |
+| `parameters.multipathServiceType = .disabled` `[VERIFIED-CORPUS]` | — | Avoids path-probing on a single-interface LAN. |
+| `parameters.allowFastOpen = true` `[VERIFIED-CORPUS]` | — | Enables QUIC 0-RTT resumption on reconnect; UDP has no handshake so it is trivial. |
+| `connection.shouldCalculateReceiveTime = true` `[VERIFIED-CORPUS]` | — | Kernel receive timestamp (`NWProtocolIP.Metadata.receiveTime`) for one-way latency measurement. |
 
-**QUIC datagram (nếu chọn QUIC, iOS 16+/macOS 13+):**
+**QUIC datagram (if QUIC is chosen, iOS 16+/macOS 13+):**
 
-| Symbol | Giá trị | Rationale |
+| Symbol | Value | Rationale |
 |---|---|---|
 | `NWProtocolQUIC.Options.isDatagram = true` `[VERIFIED-CORPUS]` | — | Unreliable datagram, congestion-aware. |
-| `quicOptions.maxDatagramFrameSize = 1200` `[VERIFIED-CORPUS]` | — | Dưới path MTU, tránh QUIC fragmenting. |
-| `quicOptions.idleTimeout = 30000` (ms) `[VERIFIED-CORPUS]` + keepalive | — | Giữ connection sống qua network blip ngắn → reconnect không tốn handshake. |
+| `quicOptions.maxDatagramFrameSize = 1200` `[VERIFIED-CORPUS]` | — | Below path MTU, avoids QUIC fragmenting. |
+| `quicOptions.idleTimeout = 30000` (ms) `[VERIFIED-CORPUS]` + keepalive | — | Keeps the connection alive through short network blips → reconnect costs no handshake. |
 
-**Per-packet & nhận:**
-- `NWProtocolIP.Metadata().serviceClass = .interactiveVideo` cho video datagram; `.signaling` cho IDR-request/control để tránh head-of-line queuing.
-- `NWProtocolIP.Metadata().ecn = .ect1` `[VERIFIED-CORPUS]` — ECT(1) là L4S codepoint (RFC 9331); chỉ có lợi nếu AP/switch có L4S AQM.
-- **Receive pattern (critical):** trong completion handler của `connection.receiveMessage(completion:)`, xử lý xong rồi **gọi lại `receiveMessage` (chain, không loop)** trên serial queue. `NWConnection.receiveMessage` chỉ giao **1 datagram/callback** (DTS confirmed thread/116500, 2019) — gọi trong loop tạo unbounded queued reads.
-- `connection.maximumDatagramSize` `[VERIFIED-CORPUS]` — query sau `.ready` (thường 1472 trên Ethernet); fragment slice ≤ giá trị này, IP fragmentation thêm 1–5ms jitter và gấp đôi loss probability.
+**Per-packet & receive:**
+- `NWProtocolIP.Metadata().serviceClass = .interactiveVideo` for video datagrams; `.signaling` for IDR-request/control to avoid head-of-line queuing.
+- `NWProtocolIP.Metadata().ecn = .ect1` `[VERIFIED-CORPUS]` — ECT(1) is the L4S codepoint (RFC 9331); only beneficial if the AP/switch has an L4S AQM.
+- **Receive pattern (critical):** inside the completion handler of `connection.receiveMessage(completion:)`, finish processing and then **call `receiveMessage` again (chain, not loop)** on a serial queue. `NWConnection.receiveMessage` delivers only **1 datagram per callback** (DTS confirmed, thread/116500, 2019) — calling it in a loop creates unbounded queued reads.
+- `connection.maximumDatagramSize` `[VERIFIED-CORPUS]` — query after `.ready` (typically 1472 on Ethernet); fragment slices ≤ this value, since IP fragmentation adds 1–5ms jitter and doubles the loss probability.
 
-**BSD socket path (nếu cần batch receive — `NWConnection` không có batch-receive):**
+**BSD socket path (if batch receive is needed — `NWConnection` has no batch-receive):**
 
-| Symbol | Giá trị | Rationale |
+| Symbol | Value | Rationale |
 |---|---|---|
-| `setsockopt(SOL_SOCKET, SO_NET_SERVICE_TYPE, NET_SERVICE_TYPE_VI)` `[VERIFIED-CORPUS]` (`=3`) | hoặc `NET_SERVICE_TYPE_RV`=5 | Wi-Fi AC_VI. `RV` (5) được XNU `socket.h` mô tả "Responsive Multimedia A/V — E.g. screen sharing". |
-| `setsockopt(IPPROTO_IP, IP_TOS, dscp<<2)` `[VERIFIED-CORPUS]` | AF41 = `34<<2` | **Đây là cách đáng tin cậy duy nhất set DSCP trên Ethernet** (corpus correction): kernel **không** zero-out user-set `ip_tos` trên non-Fastlane interface. `SO_NET_SERVICE_TYPE` một mình không set DSCP. |
-| `setsockopt(SOL_SOCKET, SO_NOSIGPIPE, 1)` `[VERIFIED-CORPUS]` (`=0x1022`) | — | macOS không có `MSG_NOSIGNAL`; bắt buộc tránh SIGPIPE giết process. |
-| `setsockopt(IPPROTO_IP, IP_BOUND_IF, if_nametoindex("en0"))` `[VERIFIED-CORPUS]` | — | Equivalent của Linux `SO_BINDTODEVICE`; pin wired NIC, tránh VPN/Wi-Fi routing. |
-| `sendmsg_x` (syscall 481) / `recvmsg_x` (syscall 480) `[PRIVATE, VERIFIED-CORPUS]` | `struct msghdr_x` array | Batch UDP, gộp N syscall → 1. **Stable & callable trên macOS 14+** (confirmed: syscall numbers trong public `usr/include/sys/syscall.h`, symbols exported từ `libSystem.B.tbd`). **PRIVATE:** `msghdr_x` chỉ ở `socket_private.h`, phải tự forward-declare. **macOS 13 hang bug → chỉ dùng macOS 14+.** |
+| `setsockopt(SOL_SOCKET, SO_NET_SERVICE_TYPE, NET_SERVICE_TYPE_VI)` `[VERIFIED-CORPUS]` (`=3`) | or `NET_SERVICE_TYPE_RV`=5 | Wi-Fi AC_VI. `RV` (5) is described in XNU `socket.h` as "Responsive Multimedia A/V — E.g. screen sharing". |
+| `setsockopt(IPPROTO_IP, IP_TOS, dscp<<2)` `[VERIFIED-CORPUS]` | AF41 = `34<<2` | **The only reliable way to set DSCP on Ethernet** (corpus correction): the kernel does **not** zero out a user-set `ip_tos` on non-Fastlane interfaces. `SO_NET_SERVICE_TYPE` alone does not set DSCP. |
+| `setsockopt(SOL_SOCKET, SO_NOSIGPIPE, 1)` `[VERIFIED-CORPUS]` (`=0x1022`) | — | macOS has no `MSG_NOSIGNAL`; mandatory to keep SIGPIPE from killing the process. |
+| `setsockopt(IPPROTO_IP, IP_BOUND_IF, if_nametoindex("en0"))` `[VERIFIED-CORPUS]` | — | Equivalent of Linux `SO_BINDTODEVICE`; pins the wired NIC, avoiding VPN/Wi-Fi routing. |
+| `sendmsg_x` (syscall 481) / `recvmsg_x` (syscall 480) `[PRIVATE, VERIFIED-CORPUS]` | `struct msghdr_x` array | Batch UDP, collapses N syscalls → 1. **Stable & callable on macOS 14+** (confirmed: syscall numbers are in the public `usr/include/sys/syscall.h`, symbols exported from `libSystem.B.tbd`). **PRIVATE:** `msghdr_x` exists only in `socket_private.h`, must forward-declare it yourself. **macOS 13 hang bug → only use on macOS 14+.** |
 
-> **Số đo:** Wired GigE one-way <0.1ms (1500-byte serialize ~12µs). Network.framework user-space path: ~30% ít CPU receive vs BSD socket (WWDC18 715) — **nhưng** trên **macOS 14** bị disable & fallback BSD socket khi built-in firewall **bật** (DTS confirmed 14.4.1); trên **macOS 15.3+** firewall không còn ép fallback (corpus correction). Verify bằng `sudo skywalkctl flow -n -P <pid>`.
+> **Measurements:** Wired GigE one-way <0.1ms (1500-byte serialize ~12µs). Network.framework user-space path: ~30% less receive CPU vs BSD sockets (WWDC18 715) — **but** on **macOS 14** it is disabled with a BSD-socket fallback when the built-in firewall is **on** (DTS confirmed on 14.4.1); on **macOS 15.3+** the firewall no longer forces the fallback (corpus correction). Verify with `sudo skywalkctl flow -n -P <pid>`.
 
 ---
 
 ### 4. Decode — VideoToolbox
 
-`VTDecompressionSession`, render thẳng ra Metal (xem stage Render), **không** qua đường internal-queue gây buffer.
+`VTDecompressionSession`, rendering straight to Metal (see the Render stage), **not** through any internal-queue path that adds buffering.
 
-| Symbol | Giá trị | Rationale |
+| Symbol | Value | Rationale |
 |---|---|---|
-| `VTDecompressionSessionDecodeFrame(..., flags: 0, ...)` `[VERIFIED-CORPUS]` | flags = `0` | Clear cả `kVTDecodeFrame_EnableAsynchronousDecompression` và `kVTDecodeFrame_EnableTemporalProcessing` → synchronous: callback fire trước khi call return, loại bỏ internal queue/reorder buffer. **Lưu ý (corpus uncertain):** HW decoder có thể dispatch nội bộ async và set `kVTDecodeInfo_Asynchronous` trong infoFlags callback dù caller thread vẫn block — đây là behavior chưa document, không phải vi phạm guarantee. |
-| **KHÔNG đặt** `kVTDecodeFrame_EnableTemporalProcessing` | — | Bit này cấp phép decoder delay callback để sort display-order → thêm pipeline depth dù stream không có B-frame. |
-| `kVTDecompressionPropertyKey_RealTime` `[VERIFIED-CORPUS]` | `kCFBooleanTrue` | Default = true (header confirmed unchanged tới macOS 26.5) nhưng đặt tường minh; QoS real-time cho decode pipeline. **KHÔNG** đặt đồng thời `kVTDecompressionPropertyKey_MaximizePowerEfficiency` (undefined behavior). |
-| `kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder` `[VERIFIED-CORPUS]` | `kCFBooleanTrue` (trong decoderSpecification dict) | Fail cứng thay vì silent software fallback (HEVC Main10 software >30ms). |
-| Verify sau create: `kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder` `[VERIFIED-CORPUS]` | == `kCFBooleanTrue` | Xác nhận Media Engine đang chạy. |
+| `VTDecompressionSessionDecodeFrame(..., flags: 0, ...)` `[VERIFIED-CORPUS]` | flags = `0` | Clears both `kVTDecodeFrame_EnableAsynchronousDecompression` and `kVTDecodeFrame_EnableTemporalProcessing` → synchronous: the callback fires before the call returns, eliminating the internal queue/reorder buffer. **Note (corpus uncertain):** the HW decoder may dispatch internally async and set `kVTDecodeInfo_Asynchronous` in the callback infoFlags while the caller thread still blocks — undocumented behavior, not a guarantee violation. |
+| Do **NOT** set `kVTDecodeFrame_EnableTemporalProcessing` | — | This bit licenses the decoder to delay callbacks for display-order sorting → extra pipeline depth even though the stream has no B-frames. |
+| `kVTDecompressionPropertyKey_RealTime` `[VERIFIED-CORPUS]` | `kCFBooleanTrue` | Default = true (header confirmed unchanged through macOS 26.5) but set it explicitly; real-time QoS for the decode pipeline. Do **NOT** set `kVTDecompressionPropertyKey_MaximizePowerEfficiency` at the same time (undefined behavior). |
+| `kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder` `[VERIFIED-CORPUS]` | `kCFBooleanTrue` (in the decoderSpecification dict) | Hard fail instead of a silent software fallback (HEVC Main10 in software is >30ms). |
+| Verify after create: `kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder` `[VERIFIED-CORPUS]` | == `kCFBooleanTrue` | Confirms the Media Engine is in use. |
 
 **imageBufferAttributes (destination):**
 
-| Key | Giá trị | Rationale |
+| Key | Value | Rationale |
 |---|---|---|
-| `kCVPixelBufferMetalCompatibilityKey` `[VERIFIED-CORPUS]` | `true` | Bắt buộc IOSurface-backed → zero-copy `CVMetalTextureCacheCreateTextureFromImage`. |
-| `kCVPixelBufferPoolMinimumBufferCountKey` `[VERIFIED-CORPUS]` | `3`–`6` | ALVR visionOS dùng 3 tối thiểu; đủ buffer in-flight chống pool exhaustion stall. |
-| pixel format | match decoder native (`420YpCbCr8...VideoRange` 8-bit / `420YpCbCr10BiPlanarVideoRange` 10-bit) | **KHÔNG** request format khác → tránh VT-internal conversion blit. **Correction:** copy/conversion là **Apple-documented** (WWDC14 session 513: format mismatch → "extra buffer copy"), không phải "undocumented". |
-| **KHÔNG đặt** `kCVPixelBufferPixelFormatTypeKey` (nếu nhắm visionOS) | — | ALVR ghi: "setting pixelFormat *at all* causes a copy to uncompressed MTLTexture buffer" trên visionOS 2. Trên macOS: chỉ format-incompatible mới trigger `VTPixelTransferSession` blit — chưa confirmed cho native-format request. |
+| `kCVPixelBufferMetalCompatibilityKey` `[VERIFIED-CORPUS]` | `true` | Forces IOSurface-backed buffers → zero-copy `CVMetalTextureCacheCreateTextureFromImage`. |
+| `kCVPixelBufferPoolMinimumBufferCountKey` `[VERIFIED-CORPUS]` | `3`–`6` | ALVR visionOS uses 3 minimum; enough in-flight buffers to prevent pool-exhaustion stalls. |
+| pixel format | match decoder native (`420YpCbCr8...VideoRange` 8-bit / `420YpCbCr10BiPlanarVideoRange` 10-bit) | Do **NOT** request another format → avoids a VT-internal conversion blit. **Correction:** the copy/conversion is **Apple-documented** (WWDC14 session 513: format mismatch → "extra buffer copy"), not "undocumented". |
+| Do **NOT** set `kCVPixelBufferPixelFormatTypeKey` (if targeting visionOS) | — | ALVR notes: "setting pixelFormat *at all* causes a copy to uncompressed MTLTexture buffer" on visionOS 2. On macOS: only a format-incompatible request triggers the `VTPixelTransferSession` blit — not confirmed for native-format requests. |
 
-**Encode-side bitstream để decode 1-in-1-out (set khi encode):**
-- H.264 SPS VUI: `bitstream_restriction_flag=1`, `num_reorder_frames=0`, `max_dec_frame_buffering=1`. Thiếu các field này, HW decoder Apple buffer 4 frame/keyframe với MAIN profile (W3C WebCodecs #732).
+**Encode-side bitstream for 1-in-1-out decode (set at encode time):**
+- H.264 SPS VUI: `bitstream_restriction_flag=1`, `num_reorder_frames=0`, `max_dec_frame_buffering=1`. Without these fields, Apple's HW decoder buffers 4 frames per keyframe with the MAIN profile (W3C WebCodecs #732).
 - HEVC SPS: `sps_max_num_reorder_pics[0]=0`.
 
-**Recovery:** lỗi decode → check `VTDecompressionSessionCanAcceptFormatDescription`; nếu OK, request IDR và giữ session sống (request IDR = 1 RTT LAN <1ms). **Tránh** teardown+recreate session (~30–100ms stall, corpus inferred — không phải Apple-published).
+**Recovery:** on a decode error → check `VTDecompressionSessionCanAcceptFormatDescription`; if OK, request an IDR and keep the session alive (an IDR request = 1 LAN RTT <1ms). **Avoid** session teardown+recreate (~30–100ms stall, corpus-inferred — not Apple-published).
 
-> **Số đo:** ~1–3ms HW decode trên M-series (Moonlight #1087/#1249). Regression macOS 26 Tahoe 80ms (#1696) là vấn đề render path (Metal/AVSampleBufferDisplayLayer presentation timeout), **không** phải HW decode engine.
+> **Measurements:** ~1–3ms HW decode on M-series (Moonlight #1087/#1249). The macOS 26 Tahoe 80ms regression (#1696) is a render-path issue (Metal/AVSampleBufferDisplayLayer presentation timeout), **not** the HW decode engine.
 
 ---
 
 ### 5. Render — Metal + display (macOS & iOS)
 
-**Dùng `CAMetalLayer` + `CVMetalTextureCache`, KHÔNG dùng `AVSampleBufferDisplayLayer`** cho đường low-latency (AVSBDL thêm ≥1 frame buffering, Moonlight #1885).
+**Use `CAMetalLayer` + `CVMetalTextureCache`, NOT `AVSampleBufferDisplayLayer`** for the low-latency path (AVSBDL adds ≥1 frame of buffering, Moonlight #1885).
 
 **macOS (`CAMetalLayer`):**
 
-| Symbol | Giá trị | Rationale |
+| Symbol | Value | Rationale |
 |---|---|---|
-| `CAMetalLayer.displaySyncEnabled = false` `[VERIFIED-CORPUS]` | (vsync-off) | Present ngay khi GPU xong, bỏ toàn bộ vsync wait (tới 16.7ms@60Hz); chấp nhận tearing. Hoặc `true` + `CAMetalDisplayLink` cho vsync-on low-latency. |
-| `CAMetalLayer.maximumDrawableCount = 2` `[VERIFIED-CORPUS]` | `2` (macOS) | **Correction (corpus REFUTED):** Apple **KHÔNG** nói "2 không khuyến nghị cho iOS" — ràng buộc duy nhất là giá trị ∈ {2,3}, áp dụng đồng đều mọi platform. 3 drawables → backlog 16–50ms; 2 → hội tụ ~16ms. Cảnh báo duy nhất từ Apple engineer: value 2 tăng khả năng `nextDrawable` trả nil. |
-| `CAMetalLayer.framebufferOnly = true` `[VERIFIED-CORPUS]` (default) | — | Cho phép lossless compression + compositor fast path. |
-| `CAMetalLayer.presentsWithTransaction = false` `[VERIFIED-CORPUS]` (default) | — | KHÔNG sync với CA transaction (thêm tới 1 CA frame); chỉ bật khi cần đồng bộ Metal + UIKit overlay. |
-| `CAMetalDisplayLink` `[VERIFIED-SDK QuartzCore header]` (macOS 14.0+ / iOS 17.0+) | thay CVDisplayLink | **Correction (corpus REFUTED):** header là `API_AVAILABLE(macos(14.0), ios(17.0), tvos(17.0))` — **KHÔNG** giới hạn Apple Silicon. Moonlight tự thêm guard `isAppleSilicon()` là lựa chọn riêng của họ, không phải yêu cầu API. |
-| `CAMetalDisplayLink.preferredFrameLatency = 1.0` `[VERIFIED-CORPUS]` | `1.0` | **Correction (corpus confirmed):** đơn vị là **frames** (Float); giá trị hợp lệ chỉ `1.0` hoặc `2.0`. `1.0` = 1 display cycle = min API cho phép. System có thể vượt latency yêu cầu (windowed macOS). |
-| `CAMetalDisplayLink.preferredFrameRateRange = CAFrameRateRangeMake(fps, fps, fps)` `[VERIFIED-CORPUS]` | lock stream fps | Chống ProMotion downclock gây jitter. |
-| `commandBuffer.waitUntilScheduled` (KHÔNG `waitUntilCompleted`) `[VERIFIED-CORPUS]` | — | `Completed` block tới khi pixel vào framebuffer (5–15ms stall trong direct mode); `scheduled` chỉ chờ submit (Zed 120fps blog). |
+| `CAMetalLayer.displaySyncEnabled = false` `[VERIFIED-CORPUS]` | (vsync-off) | Present as soon as the GPU finishes, dropping the entire vsync wait (up to 16.7ms@60Hz); accept tearing. Or `true` + `CAMetalDisplayLink` for vsync-on low-latency. |
+| `CAMetalLayer.maximumDrawableCount = 2` `[VERIFIED-CORPUS]` | `2` (macOS) | **Correction (corpus REFUTED):** Apple does **NOT** say "2 is not recommended on iOS" — the only constraint is value ∈ {2,3}, applied uniformly on every platform. 3 drawables → 16–50ms backlog; 2 → converges to ~16ms. The only warning from an Apple engineer: value 2 increases the chance `nextDrawable` returns nil. |
+| `CAMetalLayer.framebufferOnly = true` `[VERIFIED-CORPUS]` (default) | — | Enables lossless compression + the compositor fast path. |
+| `CAMetalLayer.presentsWithTransaction = false` `[VERIFIED-CORPUS]` (default) | — | Do NOT sync with the CA transaction (adds up to 1 CA frame); only enable when Metal must sync with a UIKit overlay. |
+| `CAMetalDisplayLink` `[VERIFIED-SDK QuartzCore header]` (macOS 14.0+ / iOS 17.0+) | replaces CVDisplayLink | **Correction (corpus REFUTED):** the header is `API_AVAILABLE(macos(14.0), ios(17.0), tvos(17.0))` — **NOT** restricted to Apple Silicon. Moonlight adding its own `isAppleSilicon()` guard was their own choice, not an API requirement. |
+| `CAMetalDisplayLink.preferredFrameLatency = 1.0` `[VERIFIED-CORPUS]` | `1.0` | **Correction (corpus confirmed):** the unit is **frames** (Float); valid values are only `1.0` or `2.0`. `1.0` = 1 display cycle = the API minimum. The system may exceed the requested latency (windowed macOS). |
+| `CAMetalDisplayLink.preferredFrameRateRange = CAFrameRateRangeMake(fps, fps, fps)` `[VERIFIED-CORPUS]` | lock to stream fps | Prevents ProMotion downclocking from causing jitter. |
+| `commandBuffer.waitUntilScheduled` (NOT `waitUntilCompleted`) `[VERIFIED-CORPUS]` | — | `Completed` blocks until pixels hit the framebuffer (5–15ms stall in direct mode); `scheduled` only waits for submission (Zed 120fps blog). |
 
 **iOS/iPadOS:**
 
-| Symbol | Giá trị | Rationale |
+| Symbol | Value | Rationale |
 |---|---|---|
-| Info.plist `CADisableMinimumFrameDurationOnPhone = true` `[VERIFIED-CORPUS]` | — | **Bắt buộc** unlock ProMotion 120Hz trên iPhone; thiếu → cap 60Hz dù gọi API. |
-| `CAMetalLayer.opaque = true` (= `CALayer.isOpaque`) `[VERIFIED-CORPUS]` | `true` | **Uncertain:** Flutter/Impeller đo presentation delay giảm 21–26ms → ~13ms, nhưng đây là **một** observation đơn lẻ, **không** phải Apple-documented guarantee; cơ chế là compositor skip alpha-blending. Đặt vì rẻ và an toàn. |
-| `CAMetalLayer.maximumDrawableCount = 2` `[VERIFIED-CORPUS]` | `2` | Min pipeline depth (xử lý nil drawable). Hợp lệ trên iOS (xem correction ở trên). |
-| `CAMetalDisplayLink.preferredFrameRateRange = CAFrameRateRange(minimum:60, maximum:60, preferred:60)` `[VERIFIED-CORPUS]` | cho stream 60fps trên client 120Hz | 60 chia chẵn 120 → mỗi frame double-pump 16.67ms, zero judder. **Tránh** preferred:120 cho stream 60fps (chỉ double-scan, tốn điện vô ích). |
-| `UIUpdateLink` `[VERIFIED-CORPUS]` (iOS 18+, UIKit path) | `requiresContinuousUpdates = true` | Low-latency mode cho UIKit-hosted; với pure Metal `CAMetalLayer` dùng `CAMetalDisplayLink`. |
+| Info.plist `CADisableMinimumFrameDurationOnPhone = true` `[VERIFIED-CORPUS]` | — | **Mandatory** to unlock ProMotion 120Hz on iPhone; without it → 60Hz cap regardless of API calls. |
+| `CAMetalLayer.opaque = true` (= `CALayer.isOpaque`) `[VERIFIED-CORPUS]` | `true` | **Uncertain:** Flutter/Impeller measured presentation delay dropping 21–26ms → ~13ms, but that is **one** isolated observation, **not** an Apple-documented guarantee; the mechanism is the compositor skipping alpha-blending. Set it because it is cheap and safe. |
+| `CAMetalLayer.maximumDrawableCount = 2` `[VERIFIED-CORPUS]` | `2` | Minimum pipeline depth (handle nil drawables). Valid on iOS (see the correction above). |
+| `CAMetalDisplayLink.preferredFrameRateRange = CAFrameRateRange(minimum:60, maximum:60, preferred:60)` `[VERIFIED-CORPUS]` | for a 60fps stream on a 120Hz client | 60 divides 120 evenly → every frame double-pumps at 16.67ms, zero judder. **Avoid** preferred:120 for a 60fps stream (only double-scans, wasting power). |
+| `UIUpdateLink` `[VERIFIED-CORPUS]` (iOS 18+, UIKit path) | `requiresContinuousUpdates = true` | Low-latency mode for UIKit-hosted content; with pure Metal `CAMetalLayer` use `CAMetalDisplayLink`. |
 
-**Zero-copy decode→render (cả 2 platform):**
-- `CVMetalTextureCacheCreate(nil, nil, device, nil, &cache)` một lần lúc startup.
-- Mỗi frame biplanar YCbCr: gọi `CVMetalTextureCacheCreateTextureFromImage` 2 lần — planeIndex 0 (`.r8Unorm` 8-bit / `.r16Unorm` 10-bit) cho Y; planeIndex 1 (`.rg8Unorm` / `.rg16Unorm`) cho CbCr. Cùng IOSurface, zero GPU copy.
-- Pin IOSurface khi GPU đang dùng: giữ strong ref `CVMetalTexture` trong `commandBuffer.addCompletedHandler` (CVMetalTextureCache quản use-count nội bộ), hoặc thủ công `IOSurfaceIncrementUseCount`/`Decrement`.
+**Zero-copy decode→render (both platforms):**
+- `CVMetalTextureCacheCreate(nil, nil, device, nil, &cache)` once at startup.
+- For each biplanar YCbCr frame: call `CVMetalTextureCacheCreateTextureFromImage` twice — planeIndex 0 (`.r8Unorm` 8-bit / `.r16Unorm` 10-bit) for Y; planeIndex 1 (`.rg8Unorm` / `.rg16Unorm`) for CbCr. Same IOSurface, zero GPU copy.
+- Pin the IOSurface while the GPU is using it: hold a strong `CVMetalTexture` ref inside `commandBuffer.addCompletedHandler` (CVMetalTextureCache manages use-counts internally), or manually `IOSurfaceIncrementUseCount`/`Decrement`.
 
-**Beam-racing pacing:** trong callback `CAMetalDisplayLink`, render **frame mới nhất** có sẵn (không chờ frame khớp đúng `targetTimestamp`), commit trước `targetTimestamp`. Moonlight tính `waitTimeMs = ((targetTimestamp − CACurrentMediaTime())*1000)/2` để chờ frame mới nhất tới sát deadline.
+**Beam-racing pacing:** in the `CAMetalDisplayLink` callback, render the **latest available frame** (do not wait for the frame matching `targetTimestamp` exactly), commit before `targetTimestamp`. Moonlight computes `waitTimeMs = ((targetTimestamp − CACurrentMediaTime())*1000)/2` to wait for the newest frame as close to the deadline as possible.
 
-**Color/EDR — bỏ compositor color-match pass:**
-- `CAMetalLayer.colorspace = nil` `[VERIFIED-CORPUS]` — pass-through, bỏ color-match pass (Apple WWDC16 605: "fastest approach"). Hoặc match `NSScreen.colorSpace` native (Chromium research: "no additional GPU power"). Đặt sRGB-tagged trên P3 display → "nontrivial-but-not-excessive" cost mỗi frame.
-- `CAMetalLayer.wantsExtendedDynamicRangeContent = false` `[VERIFIED-CORPUS]` cho SDR — tránh EDR processing pass (WWDC21 10161 "extra processing pass... increases latency and bandwidth"). Khả dụng iOS 16+.
-- `CAMetalLayer.edrMetadata = nil` — không gán `CAEDRMetadata` (thêm 1 compositor pass).
-- SDR path: `pixelFormat = .bgra8Unorm` (32 bit/px). HDR path: `.bgra10a2Unorm` (32 bit/px, bằng 8-bit) + PQ/HLG colorspace, **không** `.rgba16Float` (64 bit/px, gấp đôi bandwidth). Chỉ 2 format hỗ trợ EDR: `rgba16Float` và `bgra10a2Unorm`.
+**Color/EDR — skip the compositor color-match pass:**
+- `CAMetalLayer.colorspace = nil` `[VERIFIED-CORPUS]` — pass-through, skips the color-match pass (Apple WWDC16 605: "fastest approach"). Or match the native `NSScreen.colorSpace` (Chromium research: "no additional GPU power"). Setting sRGB-tagged on a P3 display → "nontrivial-but-not-excessive" cost per frame.
+- `CAMetalLayer.wantsExtendedDynamicRangeContent = false` `[VERIFIED-CORPUS]` for SDR — avoids the EDR processing pass (WWDC21 10161 "extra processing pass... increases latency and bandwidth"). Available iOS 16+.
+- `CAMetalLayer.edrMetadata = nil` — do not assign `CAEDRMetadata` (adds 1 compositor pass).
+- SDR path: `pixelFormat = .bgra8Unorm` (32 bit/px). HDR path: `.bgra10a2Unorm` (32 bit/px, same as 8-bit) + PQ/HLG colorspace, **not** `.rgba16Float` (64 bit/px, double the bandwidth). Only 2 formats support EDR: `rgba16Float` and `bgra10a2Unorm`.
 
-> **macOS yêu cầu fullscreen cho Adaptive Sync/VRR scheduling** (WWDC21 10147, confirmed): app single-window/windowed **không** hưởng VRR scheduling — chỉ fullscreen window (`NSFullScreenWindowMask`) mới qua được `NSScreen.minimumRefreshInterval/maximumRefreshInterval` path.
+> **macOS requires fullscreen for Adaptive Sync/VRR scheduling** (WWDC21 10147, confirmed): a single-window/windowed app gets **no** VRR scheduling — only a fullscreen window (`NSFullScreenWindowMask`) goes through the `NSScreen.minimumRefreshInterval/maximumRefreshInterval` path.
 
 ---
 
 ### 6. Input — CGEvent / Accessibility injection + local cursor
 
-Mô hình activate-then-control. Host inject input vào window đích không cần raise; client vẽ cursor local.
+Activate-then-control model. The host injects input into the target window without raising it; the client draws a local cursor.
 
-| Symbol / kỹ thuật | Cấu hình | Rationale |
+| Symbol / technique | Configuration | Rationale |
 |---|---|---|
-| **Local cursor overlay** `[VERIFIED-CORPUS]` | client vẽ cursor từ input stream, KHÔNG encode vào video | Cursor feedback ~0–2ms thay vì chờ video roundtrip ~15–25ms. Đây là tối ưu cảm nhận-độ-trễ giá trị nhất. Host: `config.showsCursor = false`. |
-| `CGEventPostToPid(pid, event)` `[VERIFIED-CORPUS]` (macOS 10.11+) | KHÔNG `CGEventPost` | Giao event thẳng tới PID đích, không vào global HID stream, không di chuyển system cursor, không cần window foreground. **Correction (corpus uncertain):** đây **không** phải "Mach IPC round-trip" thuần — route qua CoreGraphics→WindowServer→app event tap (≥2 hop). Latency thực trên Apple Silicon **chưa đo được** (không có benchmark public); ước tính 50–200µs là unsubstantiated. |
-| `SLPSPostEventRecordTo` `[PRIVATE, VERIFIED-CORPUS]` (SkyLight, dlopen/dlsym) | gọi 2 lần (PSN cũ + PSN đích) | Activate-without-raise: flip AppKit-active state cho input routing, tránh Space-switch 100–300ms. **Cảnh báo:** paneru #123 cho thấy SIGABRT trên macOS 14.2.1 — nhưng root cause là `CGSEncodeEventRecord` serialize buffer sai (0xFF fill → ObjC class pointer), **không** phải `SLPSPostEventRecordTo` bị restrict. Fix: skip `make_key_window()` trên macOS 14. Tahoe 26 chưa rõ. |
-| DriverKit virtual HID `[VERIFIED-CORPUS]` | `com.apple.developer.driverkit.userclient-access` entitlement | Inject ở IOHIDSystem layer (đường hardware thật), bypass `CGXSenderCanSynthesizeEvents()` gate. **Cần thiết trên macOS Tahoe 26**: unsigned daemon `CGEventPost` bị drop cho modifier+key combos → 2–3s input lag (input-leap #2367). |
-| `CGEventTap` `[VERIFIED-CORPUS]` (client capture) | `kCGHIDEventTap`, `kCGHeadInsertEventTap`, `kCGEventTapOptionListenOnly` | Passive tap ở HID level (sớm nhất trong userspace), không bị `tapDisabledByTimeout` (vì listen-only). QoS `.userInteractive` cho run loop. |
-| `kTCCServicePostEvent` + Accessibility | entitlement | Bắt buộc cho `CGEventPostToPid` trên macOS 14+. App **phải code-signed** (không bare daemon) để qua Tahoe 26 gate. |
+| **Local cursor overlay** `[VERIFIED-CORPUS]` | client draws the cursor from the input stream, NOT encoded into the video | Cursor feedback in ~0–2ms instead of waiting ~15–25ms for the video round trip. The highest-value perceived-latency optimization. Host: `config.showsCursor = false`. |
+| `CGEventPostToPid(pid, event)` `[VERIFIED-CORPUS]` (macOS 10.11+) | NOT `CGEventPost` | Delivers the event straight to the target PID, bypassing the global HID stream, without moving the system cursor or needing the window foregrounded. **Correction (corpus uncertain):** this is **not** a pure "Mach IPC round-trip" — it routes through CoreGraphics→WindowServer→app event tap (≥2 hops). Actual latency on Apple Silicon is **unmeasured** (no public benchmark); the 50–200µs estimate is unsubstantiated. |
+| `SLPSPostEventRecordTo` `[PRIVATE, VERIFIED-CORPUS]` (SkyLight, dlopen/dlsym) | call twice (old PSN + target PSN) | Activate-without-raise: flips the AppKit-active state for input routing, avoiding the 100–300ms Space switch. **Warning:** paneru #123 shows a SIGABRT on macOS 14.2.1 — but the root cause is `CGSEncodeEventRecord` mis-serializing a buffer (0xFF fill → ObjC class pointer), **not** `SLPSPostEventRecordTo` being restricted. Fix: skip `make_key_window()` on macOS 14. Tahoe 26 unclear. |
+| DriverKit virtual HID `[VERIFIED-CORPUS]` | `com.apple.developer.driverkit.userclient-access` entitlement | Injects at the IOHIDSystem layer (the real hardware path), bypassing the `CGXSenderCanSynthesizeEvents()` gate. **Required on macOS Tahoe 26**: an unsigned daemon's `CGEventPost` gets dropped for modifier+key combos → 2–3s input lag (input-leap #2367). |
+| `CGEventTap` `[VERIFIED-CORPUS]` (client capture) | `kCGHIDEventTap`, `kCGHeadInsertEventTap`, `kCGEventTapOptionListenOnly` | Passive tap at the HID level (earliest in userspace), immune to `tapDisabledByTimeout` (because listen-only). QoS `.userInteractive` for the run loop. |
+| `kTCCServicePostEvent` + Accessibility | entitlement | Required for `CGEventPostToPid` on macOS 14+. The app **must be code-signed** (no bare daemon) to pass the Tahoe 26 gate. |
 
-**Protocol input:**
-- Button/key event: gửi **ngay** (zero queuing), datagram riêng.
-- Motion event: batch ở cadence 1ms (khớp USB HID 1000Hz polling). KHÔNG batch button với motion.
-- iOS touch: `event.coalescedTouches(for:)` `[VERIFIED-CORPUS]` lấy hết sample 240Hz/120Hz; gửi tất cả thay vì sample cuối. `event.predictedTouches(for:)` cho extrapolation.
-- **KHÔNG** motion prediction trên LAN: RTT <1 frame (8.3ms@120Hz) → prediction tốn complexity, lợi ~0ms. Local cursor overlay đã loại bỏ visual lag.
+**Input protocol:**
+- Button/key events: send **immediately** (zero queuing), in their own datagram.
+- Motion events: batch at a 1ms cadence (matching USB HID 1000Hz polling). Do NOT batch buttons with motion.
+- iOS touch: `event.coalescedTouches(for:)` `[VERIFIED-CORPUS]` collects all 240Hz/120Hz samples; send them all instead of just the last sample. `event.predictedTouches(for:)` for extrapolation.
+- **NO** motion prediction on LAN: RTT <1 frame (8.3ms@120Hz) → prediction costs complexity for ~0ms gain. The local cursor overlay already removes visual lag.
 
 ---
 
 ### 7. Threading — RT scheduling (Apple Silicon)
 
-Ba cơ chế chồng nhau; với Apple Silicon **os_workgroup là cơ chế chính** cho guaranteed P-core scheduling.
+Three overlapping mechanisms; on Apple Silicon **os_workgroup is the primary mechanism** for guaranteed P-core scheduling.
 
-| Symbol / API | Cấu hình | Rationale |
+| Symbol / API | Configuration | Rationale |
 |---|---|---|
-| `thread_policy_set(..., THREAD_TIME_CONSTRAINT_POLICY, ...)` `[VERIFIED-CORPUS]` | `period`, `computation`, `constraint`, `preemptible` ở mach ticks | Đưa thread vào kernel RT band, bypass QoS decay. 60fps: `period=16_666_666ns × denom/numer`, `computation=period/2`, `constraint=period×0.85`, `preemptible=1`. Convert ns→ticks bằng `mach_timebase_info` (Apple Silicon numer=125, denom=3). **Phải gọi TRƯỚC `os_workgroup_join`.** |
-| `os_workgroup_interval_create("...", OS_CLOCK_MACH_ABSOLUTE_TIME, NULL)` `[VERIFIED-CORPUS]` | + `os_workgroup_interval_start/finish` mỗi frame | Báo deadline cho performance controller → giữ P-cluster active giữa các frame, chống off-ramp+on-ramp tần số. **PREREQUISITE confirmed:** thread join phải có `THREAD_TIME_CONSTRAINT_POLICY` trước, nếu không `EINVAL` ("thread is not realtime") — **chỉ áp dụng cho workgroup type `WORK_INTERVAL_TYPE_COREAUDIO`**; workgroup type khác EINVAL chỉ nghĩa "cancelled". |
-| `pthread_attr_setschedpolicy(SCHED_RR)` + priority `47–48` `[VERIFIED-CORPUS]` | chỉ render/encode thread | Chống priority decay; **không tương thích QoS** (opt-out vĩnh viễn). Chỉ dùng cho thread có time window cố định, không chạy 100% liên tục. |
-| `DispatchQueue(qos: .userInteractive)` `[VERIFIED-CORPUS]` | SCK callback queue, VT callback queue | P-core preference + priority inheritance. Đủ làm baseline; combine với `THREAD_TIME_CONSTRAINT_POLICY` cho thread critical nhất. |
-| `mach_wait_until(deadline)` `[VERIFIED-CORPUS]` | KHÔNG `usleep()` trên RT thread | **Correction (corpus uncertain):** con số "<600µs 99.9%" thực ra từ một comment GitHub micropython #8621 (hardware không rõ), **không** phải Apple forum thread/120403; Apple TN2169 chỉ đặt soft floor 500µs trên máy idle. Trên Apple Silicon thread mặc định rơi vào E-core → cần affinity/workgroup. |
-| `os_unfair_lock` `[VERIFIED-CORPUS]` | thay `dispatch_semaphore` cho cross-thread signaling | Tham gia QoS priority inheritance (boost low-QoS holder); semaphore không donate priority. |
-| **KHÔNG** `yield()`/`sched_yield()` `[VERIFIED-CORPUS]` | — | **Confirmed (XNU source):** tank priority về 0 (DEPRESSPRI=MINPRI=0), defer tới 10ms. **Áp dụng cả SCHED_RR** (= TH_MODE_FIXED, không miễn trừ). Một yield trên hot thread = blow frame deadline. |
-| **KHÔNG** `THREAD_AFFINITY_POLICY` trên Apple Silicon `[VERIFIED-CORPUS]` | — | Trả `KERN_NOT_SUPPORTED` (46) trên ARM. Dùng workgroup + RT policy để steer P-core thay vì pin core. |
+| `thread_policy_set(..., THREAD_TIME_CONSTRAINT_POLICY, ...)` `[VERIFIED-CORPUS]` | `period`, `computation`, `constraint`, `preemptible` in mach ticks | Puts the thread into the kernel RT band, bypassing QoS decay. 60fps: `period=16_666_666ns × denom/numer`, `computation=period/2`, `constraint=period×0.85`, `preemptible=1`. Convert ns→ticks with `mach_timebase_info` (Apple Silicon numer=125, denom=3). **Must be called BEFORE `os_workgroup_join`.** |
+| `os_workgroup_interval_create("...", OS_CLOCK_MACH_ABSOLUTE_TIME, NULL)` `[VERIFIED-CORPUS]` | + `os_workgroup_interval_start/finish` every frame | Reports deadlines to the performance controller → keeps the P-cluster active between frames, preventing frequency off-ramp+on-ramp. **PREREQUISITE confirmed:** the joining thread must already have `THREAD_TIME_CONSTRAINT_POLICY`, otherwise `EINVAL` ("thread is not realtime") — **applies only to workgroup type `WORK_INTERVAL_TYPE_COREAUDIO`**; for other workgroup types EINVAL just means "cancelled". |
+| `pthread_attr_setschedpolicy(SCHED_RR)` + priority `47–48` `[VERIFIED-CORPUS]` | render/encode threads only | Prevents priority decay; **incompatible with QoS** (a permanent opt-out). Only for threads with a fixed time window, not 100%-continuous ones. |
+| `DispatchQueue(qos: .userInteractive)` `[VERIFIED-CORPUS]` | SCK callback queue, VT callback queue | P-core preference + priority inheritance. Sufficient as a baseline; combine with `THREAD_TIME_CONSTRAINT_POLICY` for the most critical threads. |
+| `mach_wait_until(deadline)` `[VERIFIED-CORPUS]` | NOT `usleep()` on RT threads | **Correction (corpus uncertain):** the "<600µs 99.9%" figure actually comes from a GitHub comment, micropython #8621 (hardware unknown), **not** Apple forum thread/120403; Apple TN2169 only sets a 500µs soft floor on an idle machine. On Apple Silicon, default threads land on E-cores → need affinity/workgroup. |
+| `os_unfair_lock` `[VERIFIED-CORPUS]` | instead of `dispatch_semaphore` for cross-thread signaling | Participates in QoS priority inheritance (boosts a low-QoS holder); semaphores do not donate priority. |
+| **NO** `yield()`/`sched_yield()` `[VERIFIED-CORPUS]` | — | **Confirmed (XNU source):** tanks priority to 0 (DEPRESSPRI=MINPRI=0), defers up to 10ms. **Applies to SCHED_RR too** (= TH_MODE_FIXED, no exemption). One yield on a hot thread = blown frame deadline. |
+| **NO** `THREAD_AFFINITY_POLICY` on Apple Silicon `[VERIFIED-CORPUS]` | — | Returns `KERN_NOT_SUPPORTED` (46) on ARM. Use workgroups + RT policy to steer onto P-cores instead of pinning cores. |
 
-**Swift caveat `[VERIFIED-CORPUS]`:** tránh Swift trên RT hot path — CoW mutation, `swift_beginAccess` exclusivity check (16-byte heap alloc), nested function capture, thrown error đều có thể alloc → stall RT thread. Viết inner loop bằng C/ObjC hoặc allocation-free Swift.
+**Swift caveat `[VERIFIED-CORPUS]`:** avoid Swift on the RT hot path — CoW mutation, the `swift_beginAccess` exclusivity check (16-byte heap alloc), nested function captures, and thrown errors can all allocate → stalling the RT thread. Write the inner loop in C/ObjC or allocation-free Swift.
 
-> **Không có public os_workgroup riêng cho ScreenCaptureKit hoặc VideoToolbox** (chỉ có audio workgroup qua `kAudioDevicePropertyIOThreadOSWorkgroup`). Pipeline video tự tạo interval workgroup riêng.
+> **There is no dedicated public os_workgroup for ScreenCaptureKit or VideoToolbox** (only the audio workgroup via `kAudioDevicePropertyIOThreadOSWorkgroup`). The video pipeline creates its own interval workgroup.
 
 ---
 
 ### 8. Memory — zero-copy (Apple Silicon unified memory)
 
-Toàn pipeline SCK→VT encode→network→VT decode→Metal giữ zero-copy vì mọi stage thao tác cùng IOSurface vật lý.
+The whole SCK→VT encode→network→VT decode→Metal pipeline stays zero-copy because every stage operates on the same physical IOSurface.
 
-| Kỹ thuật | Cấu hình | Rationale |
+| Technique | Configuration | Rationale |
 |---|---|---|
-| SCK → encoder zero-copy `[VERIFIED-CORPUS]` | `CMSampleBufferGetImageBuffer()` → thẳng vào `VTCompressionSessionEncodeFrame` | IOSurface từ SCK là cùng memory HW encoder DMA. **Bắt buộc** pixelFormat YCbCr (`'420v'`/10-bit) khớp encoder; BGRA buộc conversion pass (WWDC22 "let VideoToolbox handle encoding without color space conversion step"). |
-| `VTCompressionSessionGetPixelBufferPool()` `[VERIFIED-CORPUS]` | nếu cần GPU pre-process trước encode | Pool vend buffer đúng format + IOSurface config encoder mong đợi → không conversion. |
-| Decoder → Metal zero-copy `[VERIFIED-CORPUS]` | `kCVPixelBufferMetalCompatibilityKey: true` + `CVMetalTextureCacheCreateTextureFromImage` | IOSurface decoder ghi = MTLTexture shader đọc; trên unified memory không PCIe copy. |
-| **TRÁNH** `CVPixelBufferCreateWithBytes`/`CreateWithPlanarBytes` `[VERIFIED-CORPUS]` | — | Tạo CPU-memory-only buffer **không** IOSurface-backed (QA1781 confirmed) → CVMetalTextureCache fail, buộc copy. Luôn dùng pool với `kCVPixelBufferIOSurfacePropertiesKey: [:]`. |
-| `autoreleasepool { }` `[VERIFIED-CORPUS]` | bọc toàn body SCK callback + VT decode handler | Obj-C object (CMSampleBuffer, CVMetalTexture, NSData) tích lũy trên dispatch queue pool, drain burst gây pause 5–30ms (forum thread/725744). |
-| `DispatchData(bytesNoCopy:count:deallocator:)` `[VERIFIED-CORPUS]` | thay `Data(bytes:count:)` cho `NWConnection.send` | `Data` init always copy; `DispatchData` no-copy với custom deallocator release CMSampleBuffer ref. **Uncertain:** chưa rõ Network.framework có copy nội bộ vào kernel send buffer hay không. |
-| Pool sizing `[VERIFIED-CORPUS]` | ≥4–6 buffer (2 frame encoder pipelining + 1 Metal render) | Tránh `kCVReturnWouldExceedAllocationThreshold` → CPU stall chờ buffer = 1 frame period. |
+| SCK → encoder zero-copy `[VERIFIED-CORPUS]` | `CMSampleBufferGetImageBuffer()` → straight into `VTCompressionSessionEncodeFrame` | The IOSurface from SCK is the same memory the HW encoder DMAs. The YCbCr pixelFormat (`'420v'`/10-bit) **must** match the encoder; BGRA forces a conversion pass (WWDC22 "let VideoToolbox handle encoding without color space conversion step"). |
+| `VTCompressionSessionGetPixelBufferPool()` `[VERIFIED-CORPUS]` | if GPU pre-processing is needed before encode | The pool vends buffers in exactly the format + IOSurface config the encoder expects → no conversion. |
+| Decoder → Metal zero-copy `[VERIFIED-CORPUS]` | `kCVPixelBufferMetalCompatibilityKey: true` + `CVMetalTextureCacheCreateTextureFromImage` | The IOSurface the decoder writes = the MTLTexture the shader reads; on unified memory there is no PCIe copy. |
+| **AVOID** `CVPixelBufferCreateWithBytes`/`CreateWithPlanarBytes` `[VERIFIED-CORPUS]` | — | Creates a CPU-memory-only buffer that is **not** IOSurface-backed (QA1781 confirmed) → CVMetalTextureCache fails, forcing a copy. Always use a pool with `kCVPixelBufferIOSurfacePropertiesKey: [:]`. |
+| `autoreleasepool { }` `[VERIFIED-CORPUS]` | wrap the entire SCK callback body + VT decode handler | Obj-C objects (CMSampleBuffer, CVMetalTexture, NSData) accumulate in the dispatch queue's pool; burst drains cause 5–30ms pauses (forum thread/725744). |
+| `DispatchData(bytesNoCopy:count:deallocator:)` `[VERIFIED-CORPUS]` | instead of `Data(bytes:count:)` for `NWConnection.send` | The `Data` init always copies; `DispatchData` is no-copy with a custom deallocator releasing the CMSampleBuffer ref. **Uncertain:** whether Network.framework copies internally into the kernel send buffer is unclear. |
+| Pool sizing `[VERIFIED-CORPUS]` | ≥4–6 buffers (2 frames of encoder pipelining + 1 Metal render) | Avoids `kCVReturnWouldExceedAllocationThreshold` → a CPU stall waiting for a buffer = 1 frame period. |
 
-**Private symbol (rủi ro cao):**
-- `MTLPixelFormatYCBCR8_420_2P = 500`, `MTLPixelFormatYCBCR10_420_2P = 505` `[PRIVATE]` — single-plane YCbCr texture binding, bỏ matrix-multiply trong shader. **Confirmed là Apple-internal SPI** (WebKit define dưới `#else` của `USE(APPLE_INTERNAL_SDK)`, ALVR label "private"). Raw value 500 đúng. **macOS availability KHÔNG confirmed** từ public source (chỉ có circumstantial: MTLTools.framework string table, CMImaging/NRFV4 dylib). MoltenVK map Vulkan YCbCr → `MTLPixelFormat::Invalid` trên macOS. Dùng = SPI không guarantee qua OS version.
+**Private symbols (high risk):**
+- `MTLPixelFormatYCBCR8_420_2P = 500`, `MTLPixelFormatYCBCR10_420_2P = 505` `[PRIVATE]` — single-plane YCbCr texture binding, dropping the matrix-multiply in the shader. **Confirmed Apple-internal SPI** (WebKit defines it under the `#else` of `USE(APPLE_INTERNAL_SDK)`, ALVR labels it "private"). Raw value 500 is correct. **macOS availability is NOT confirmed** from public sources (only circumstantial: MTLTools.framework string table, CMImaging/NRFV4 dylib). MoltenVK maps Vulkan YCbCr → `MTLPixelFormat::Invalid` on macOS. Using it = SPI with no guarantee across OS versions.
 
 ---
 
-### Tóm tắt ngân sách glass-to-glass (wired LAN, Apple Silicon)
+### Glass-to-glass budget summary (wired LAN, Apple Silicon)
 
 | Stage | 120 fps | 60 fps |
 |---|---|---|
-| Capture (1 vsync compositor floor) | ~8.3ms | ~16.7ms |
-| Encode (HEVC HW, corpus-uncertain) | ~2–4ms (Apple chưa công bố per-frame) | ~2–4ms |
+| Capture (1 compositor vsync floor) | ~8.3ms | ~16.7ms |
+| Encode (HEVC HW, corpus-uncertain) | ~2–4ms (Apple has not published per-frame) | ~2–4ms |
 | Network (wired GigE one-way) | <0.1ms | <0.1ms |
 | Decode (HW Media Engine) | ~1–3ms | ~1–3ms |
 | Render + display scanout (avg half-frame) | ~4.2ms (Metal direct) | ~8.3ms |
-| **Floor thực tế (corpus)** | **~14–16ms** | **~22–26ms** |
+| **Realistic floor (corpus)** | **~14–16ms** | **~22–26ms** |
 
-Wi-Fi 6/6E thêm 1–3ms (lý tưởng) tới 2–5ms (thực tế). Cursor qua local overlay: feedback ~2–5ms độc lập với pipeline video. Các con số encode/decode đánh dấu **uncertain** vì Apple không công bố per-frame latency chính thức; nguồn duy nhất là self-reported (Lumen) hoặc community (Moonlight).
+Wi-Fi 6/6E adds 1–3ms (ideal) to 2–5ms (realistic). Cursor via local overlay: ~2–5ms feedback independent of the video pipeline. The encode/decode numbers are marked **uncertain** because Apple publishes no official per-frame latency; the only sources are self-reported (Lumen) or community (Moonlight).
 
 ---
 
 ## Ranked techniques by latency impact
 
-Bảng dưới đây xếp hạng tất cả các đòn bẩy giảm latency từ **win lớn nhất → cận biên**, dựa trên toàn bộ corpus. Cột "est. ms saved / impact" lấy số liệu đo được/dẫn nguồn khi có; khi corpus chỉ mô tả định tính, đã ghi rõ. Cột "risk" phản ánh các phán quyết adversarial (refuted/uncertain) trong corpus — các claim đã bị bác bỏ hoặc còn nghi ngờ được đánh dấu rõ ràng.
+The table below ranks every latency-reduction lever from **biggest win → marginal**, based on the entire corpus. The "est. ms saved / impact" column uses measured/sourced figures when available; where the corpus is only qualitative, that is stated. The "risk" column reflects the adversarial verdicts (refuted/uncertain) in the corpus — refuted or still-doubtful claims are clearly flagged.
 
-> Quy ước: ms tiết kiệm phụ thuộc mạnh vào frame rate và điểm vận hành. Trừ khi ghi rõ, số liệu ở 60 fps (frame = 16.67 ms) / 120 fps (frame = 8.33 ms).
+> Convention: ms saved depends heavily on frame rate and operating point. Unless stated otherwise, figures are at 60 fps (frame = 16.67 ms) / 120 fps (frame = 8.33 ms).
 
 | # | Technique | Est. ms saved / impact | Apple support | Difficulty | Risk |
 |---|-----------|------------------------|---------------|------------|------|
-| 1 | **Low-latency rate control encode** — `kVTVideoEncoderSpecification_EnableLowLatencyRateControl` (H.264) + manual HEVC config (`AllowFrameReordering=false`, `AllowOpenGOP=false`, `MaxFrameDelayCount=0`, `RealTime=true`) | **~100 ms** ở 720p30 so với default buffering mode (WWDC21 session 10158) — chủ yếu từ loại bỏ frame reordering/B-frame reorder buffers | native (H.264); HEVC **empirically functional** trên Apple Silicon | low | **MED** — HEVC support do FFmpeg patch (commit d87210745e, gated `TARGET_CPU_ARM64`) chứng minh, **KHÔNG** phải Apple documentation; WWDC21 chỉ nói H.264. SDK header không có codec restriction. Rủi ro silent regression qua OS update. `kVTPropertyNotSupportedErr (-12900)` khi query HW-accel là API incompleteness, KHÔNG phải bằng chứng software fallback (galad87, forum 751291) |
-| 2 | **Wired Gigabit Ethernet thay vì Wi-Fi** | **2–30 ms** loại bỏ overhead + toàn bộ Wi-Fi jitter; wired one-way <0.1 ms vs Wi-Fi 6/6E 0.5–2 ms (typical), spike 4–20 ms khi nhiễu | native | low | **LOW** — vật lý link-layer; không có downside ngoài yêu cầu cáp |
-| 3 | **Client-side cursor overlay** (vẽ cursor từ input channel, KHÔNG encode vào video; `SCStreamConfiguration.showsCursor=false`) | **~15–25 ms** cho phản hồi thị giác cursor trên LAN (loại bỏ toàn bộ video round-trip cho cursor); cursor xuất hiện ~0–2 ms sau input vs ~17–30 ms qua video | native | medium | **LOW** — RDP/PCoIP/NoMachine đều làm vậy; cần out-of-band cursor-shape sharing |
-| 4 | **Metal direct render thay vì AVSampleBufferDisplayLayer** (client) — `CVMetalTextureCacheCreateTextureFromImage` → `CAMetalLayer` | **8–33 ms** (1–2 frame buffering); ở 120 Hz là ≥8.3 ms, 60 Hz ≥16.7 ms (Moonlight #1885) | native | medium | **MED** — bằng chứng định tính ("one or more extra frames"), đo trên macOS dGPU (Radeon Pro 580); **chưa có benchmark iOS** Metal-vs-AVSBDL và Moonlight-iOS không có Metal fallback (corpus uncertain). Trên Apple Silicon unified memory không có GPU copy penalty nên lợi ích càng rõ |
-| 5 | **120fps / ProMotion end-to-end** (host `minimumFrameInterval=1/120` + client `CAMetalDisplayLink` 120 Hz) | **~8.3 ms** giảm worst-case vsync wait (16.67→8.33 ms); cộng ~4 ms average capture-to-encode | native | low–medium | **MED** — yêu cầu host display 120 Hz (M1 Pro/Max+) VÀ encode hoàn tất trong 8.3 ms hoặc SCK drop frame. macOS 15 đổi default `minimumFrameInterval` thầm lặng thành 1/60 (confirmed); phải set explicit. Lưu ý: dùng `1/target_fps × 0.9` (OBS PR#11896) — **KHÔNG dùng `kCMTimeZero`** (claim đó bị refuted: OBS không dùng kCMTimeZero, không có SDK header xác nhận) |
-| 6 | **Avoid AVSampleBufferDisplayLayer audio synchronizer** / dùng PTS-based fire-and-forget AV sync | **~1000 ms** tránh buffering của `AVSampleBufferRenderSynchronizer` (~1 s buffer ahead) | native | medium | **LOW** — nếu vô tình dùng synchronizer mode sẽ phá toàn bộ video latency work. Số ~1 s là community-reported, chưa có Apple official figure (claim_to_verify) |
-| 7 | **VideoToolbox HW decode + verify** (`RequireHardwareAcceleratedVideoDecoder=true`, `RealTime=true`) | **5–17 ms** (HW ~1–3 ms vs SW 8–20 ms); HEVC Main10 SW fallback >30 ms | native | low | **LOW** — `flags=0` synchronous completion **confirmed** trong SDK header (không phân biệt HW/SW). `RealTime` default đã là true (confirmed qua macOS 26.5) nhưng nên set explicit; KHÔNG set cùng `MaximizePowerEfficiency` (undefined behavior) |
-| 8 | **Display drop policy "always-newest"** (Moonlight pacer: cap 3 frames, drop oldest-first mỗi vsync, target 1) | **8.3–25 ms** (mỗi frame thừa trong queue = 1 frame interval; backlog 3 frame = 25 ms ở 120 fps) | native | medium | **LOW** — verified trong moonlight-qt pacer.cpp |
-| 9 | **THREAD_TIME_CONSTRAINT_POLICY + os_workgroup cho hot threads** | Tránh **5–20 ms** scheduler-induced stall; thay usleep variance 500–5000 µs bằng `mach_wait_until` <600 µs (99.9%) | native | medium | **MED** — `os_workgroup_join` cần RT policy trước (EINVAL "not realtime" **confirmed** nhưng chỉ với `WORK_INTERVAL_TYPE_COREAUDIO`). Số "<600 µs 99.9%" là **misattributed** (từ micropython issue #8621, hardware unspecified, không phải Apple forum 120403) và chưa reproduce trên Apple Silicon (uncertain). `yield()` tank priority về 0 tới 10 ms — **confirmed** áp dụng cả SCHED_RR. Swift heap allocations có thể stall RT thread |
-| 10 | **SCK queueDepth tuning** (=3 cho min latency capture-side; cân nhắc 5 nếu GPU load spike) | Tránh backlog **lên tới 116 ms** (queueDepth=8 default ở 60 fps); với =3 max backlog 16.6 ms | native | low | **LOW** — "3–8 strict range" là **refuted**: default thực là **8** (không phải 3), không có minimum documented; queueDepth=1/2 chạy được trong production. "3" chỉ là conservative community default từ nhầm lẫn với CGDisplayStream cũ |
-| 11 | **SCK `420v` YCbCr pixel format thay vì BGRA** (zero-copy vào VideoToolbox) | **~0.5–3 ms** loại bỏ một GPU color-conversion pass ở 4K | native | low | **LOW** — WWDC22 confirmed "lowest CPU cost"; loại bỏ một full DRAM round-trip |
-| 12 | **Zero-copy IOSurface end-to-end** (SCK→VT→VT→Metal, không memcpy; `kCVPixelBufferMetalCompatibilityKey`) | **15–60 µs/frame** copy tránh được; + tránh deferred autorelease spike 5–30 ms (autoreleasepool wrapping) | native | low–medium | **LOW** — WWDC21: 62% bandwidth reduction. Lưu ý: **KHÔNG set `kCVPixelBufferPixelFormatTypeKey`** trên decode imageBufferAttributes nếu khớp native format (mismatch trigger VTPixelTransferSession copy — confirmed via WWDC14 session 513). Hành vi visionOS 2 "set pixelFormat at all = copy" **chưa confirm trên macOS 14+** (uncertain) |
-| 13 | **Opus RESTRICTED_LOWDELAY 5ms frame** (audio) | **~15 ms** so với Opus 20ms default (7.5 ms vs 22.5 ms algorithmic delay) | partial (libopus, không native) | medium | **LOW** — Sunshine dùng chính config này. Hoặc PCM trên LAN = 0 ms codec delay (~3.1 Mbit/s stereo, trivial trên wired) |
-| 14 | **CoreAudio HAL buffer reduction** (`kAudioDevicePropertyBufferFrameSize=64–128`) | **~8 ms** (512→128 frames: 10.67→2.67 ms; →64: 1.33 ms) | native | medium | **LOW** — phải set trước khi allocate render resources; min phụ thuộc driver |
-| 15 | **LTR recovery thay vì full IDR** (`EnableLTR`, `ForceLTRRefresh`) | **30–100 ms** tránh được mỗi recovery (LTR-P nhỏ hơn IDR 10–30×, không bandwidth spike) | native | medium | **MED** — `EnableLTR` codec-agnostic, HEVC+LTR trên Apple Silicon **confirmed khả thi** (SDK header không restrict, FFmpeg ARM64 path). `ForceLTRRefresh` type mâu thuẫn nội bộ trong header: annotation nói `CFNumberRef`, doc comment nói `kCFBooleanTrue` — phải test cả hai ở runtime (confirmed inconsistency) |
-| 16 | **Skip idle frames + dirtyRects** (SCK) | **high** — tránh encoder queue buildup từ idle callbacks; dirtyRects giảm encode time cho partial updates | native | low–medium | **LOW** |
-| 17 | **`maximumDrawableCount=2`** (giảm pipeline depth) | **8–34 ms** (count=3 cho 16–50 ms variable latency; count=2 hội tụ ~8–16 ms) | native | low–medium | **LOW** — "không khuyến nghị cho iOS/iPadOS" là **refuted**: Apple chỉ giới hạn range [2,3], không có prohibition iOS-specific. Trade-off thực: `nextDrawable` có thể trả nil → cần frame-drop logic |
-| 18 | **NWParameters `requiredInterfaceType` + `includePeerToPeer=false`** (pin LAN, tránh path eval) | Tránh **50–200 ms** path-evaluation + tránh **40–336 ms** AWDL spike | native | low | **LOW** — đảm bảo không fallback cellular/AWDL |
-| 19 | **serviceClass = .interactiveVideo** (Wi-Fi WMM AC_VI) | **~10× jitter** trên Wi-Fi congested (AC_BE ~67 ms → AC_VI/VO ~7 ms); marginal khi light load | native | low | **MED** — chỉ set Wi-Fi 802.11e UP, **KHÔNG** set IP-header DSCP trừ Fastlane network (confirmed). Wired LAN dùng `IP_TOS` setsockopt trực tiếp nếu cần DSCP. `nw_service_class_interactive_video=2` ≠ `NET_SERVICE_TYPE_VI=3` (namespace khác, mapping private) |
-| 20 | **Beat-frequency rate exact-match** (host display = client refresh, ví dụ cả hai 60.000 Hz) | **0–16.67 ms** oscillation (60 Hz) loại bỏ; beat period 60.000 vs 59.94 ≈ 16.7 s | native | medium | **MED** — yêu cầu force host display đúng 60.000 Hz (không 59.951); EDID có thể map nominal 60 thành 59.951 |
-| 21 | **VTCompressionSessionPrepareToEncodeFrames** (pre-warm) + giữ session sống qua reconnect | First-frame: tránh init spike (ước 1–10 ms); reconnect: tránh **30–100 ms** session rebuild | native | low | **MED** — số first-frame spike chưa có public measurement (open question); 30–100 ms rebuild là inferred, chưa Apple-documented |
-| 22 | **CAMetalDisplayLink `preferredFrameLatency=1`** | **~8–16 ms** (default là 2 frame trên iOS) | native | low | **LOW** — confirmed: chỉ chấp nhận 1.0 hoặc 2.0; system có thể vượt khi cần (windowed macOS). `CAMetalDisplayLink` **KHÔNG** giới hạn Apple Silicon (refuted: chỉ `@available(macOS 14)`; Moonlight tự thêm `isAppleSilicon()` guard) |
-| 23 | **CAMetalLayer.opaque=true** (client) | **~8–13 ms** (21–26 ms → 13 ms, Flutter/Impeller #134959) | native | low | **HIGH-uncertainty** — số 13 ms là **single profiling observation**, không reproducible baseline; Flutter giải pháp thực là custom IOSurface layer (PR #48226), không phải flag này. `opaque` là CALayer property (skip alpha-blending), Apple không document latency guarantee |
-| 24 | **`displaySyncEnabled=false`** (vsync-off, tearing) | **8.3–16.7 ms** (loại bỏ toàn bộ vsync wait) | native | low | **MED** — gây tearing trên non-adaptive-sync display; cân nhắc adaptive sync (fullscreen) thay thế |
-| 25 | **CAMetalLayer.colorspace = nil** (bypass color-match compositor pass) | **sub-frame, non-zero** (Apple: "fastest approach"; định tính "nontrivial-but-not-excessive" GPU cost mỗi frame nếu mismatch) | native | low | **LOW** — không có Apple ms figure; trade-off: raw color trên P3 display. Hoặc match display native colorspace |
-| 26 | **Disable EDR cho SDR streams** (`wantsExtendedDynamicRangeContent=false`) | **sub-frame** — WWDC21 10161: EDR tone mapping "involves an extra processing pass... increases latency and bandwidth" | native | low | **LOW** — không có ms figure; FP16 buffer 2× bandwidth vs bgra10a2 |
-| 27 | **Adaptive sync (VRR) fullscreen** (`presentDrawable:afterMinimumDuration:`) | **3–8 ms** average trên 120 Hz adaptive display | native | medium | **MED** — **fullscreen là hard requirement** (WWDC21 10147 confirmed; Apple Support 102144 im lặng vì nói về OS-level feature, không phải app API). Single-window/windowed app KHÔNG hưởng lợi VRR scheduling |
-| 28 | **kCMSampleAttachmentKey_DisplayImmediately** (nếu buộc dùng AVSampleBufferDisplayLayer) | Bound display latency ~1 scan period thay vì 1–3 frame accumulate | native | low | **MED** — hành vi "bypass all enqueued frames" từ forum 14212, chưa confirm trên macOS 14+ dưới sustained load (claim_to_verify) |
-| 29 | **QUIC keepalive + 0-RTT resumption** (reconnect cold path) | **2–5 ms** (1-RTT LAN) hoặc **0 ms** (0-RTT/keepalive); tránh re-handshake | native | medium | **MED** — `allowFastOpen` confirmed cho TCP path; **QUIC 0-RTT property trong NWProtocolQUIC chưa verify** (claim_to_verify). 0-RTT không có forward secrecy, replay-susceptible (chấp nhận được cho control) |
-| 30 | **sendmsg_x / recvmsg_x batch UDP** (raw socket) | **high throughput**, medium per-frame; gộp N syscall → 1 | partial (PRIVATE syscall) | medium | **MED** — syscall 480/481 **confirmed stable** macOS 14+ Apple Silicon; symbols exported từ libSystem; nhưng PRIVATE (msghdr_x chỉ trong socket_private.h, phải tự forward-declare). **macOS 13 hang** — chỉ dùng macOS 14+ |
-| 31 | **Pre-trigger Local Network permission** (onboarding) | Tránh **vài giây** blocking trên first cold launch (iOS 14+ privacy gate) | native | low | **LOW** — correctness/cold-path fix, không phải steady-state |
-| 32 | **Slice-based encoding / sub-frame pipelining** | **~10–12 ms** (Haivision; lý thuyết (N-1)/N × encode_time) — **NHƯNG không khả thi qua public VideoToolbox API** | **unsupported** (VideoToolbox = frame granularity) | exotic | **HIGH** — VideoToolbox output là **frame-granular**, callback 1 lần/frame. `MaxH264SliceBytes` chỉ H.264, không sub-frame callback. `kVTCompressionPropertyKey_NumberOfSlices`/`NumberOfSubFrameSections` là **private symbols** (confirmed tồn tại trong .tbd iOS 9.3–26.x) nhưng KHÔNG có public header, KHÔNG có call-site nào, hành vi khi gọi **hoàn toàn unknown** (uncertain). Manual NAL-split sau callback chỉ tiết kiệm ~0.1–1 ms trên LAN |
-| 33 | **AES-128-GCM encryption (nếu cần)** vs ChaCha20 | Chọn AES-GCM: **~10 µs/frame** tiết kiệm vs ChaCha20 (4.6 GB/s vs 1.75 GB/s trên M1); AES toàn bộ **<0.1 ms/frame** = negligible | native (QUIC TLS 1.3 tự chọn AES-GCM) | low | **LOW** — QUIC luôn encrypted (không tắt được). Dùng CryptoKit không OpenSSL. Số throughput từ OpenSSL benchmark; coreCrypto internal chưa public-benchmarked (claim_to_verify) |
-| 34 | **AWDL peer-to-peer (`includePeerToPeer=true`)** cho video stream | **NEGATIVE** — thêm 40–336 ms RTT spike chu kỳ ~5 s; AWDL channel-hop 50–200 ms mỗi 10–12 s | partial | low | **HIGH** — Apple DTS: P2P Wi-Fi "hundreds of ms"; infrastructure Wi-Fi tốt hơn. **TRÁNH cho video.** Wi-Fi Aware `WAPerformanceMode.realtime` chỉ iOS/iPadOS 26 (`@available(macOS, unavailable)` confirmed), cần entitlement |
-| 35 | **DriverKit virtual HID injection** (vs CGEventPostToPid) | Tránh **2–3 s lag** macOS Tahoe 26 (CGEventPost từ unsigned daemon bị block); latency = physical HW path | native (cần entitlement) | exotic | **MED** — số "physical HW path latency" là Karabiner claim, chưa có measured comparison. Đơn giản hơn: dùng signed app + `kTCCServicePostEvent` |
-| 36 | **CABAC vs CAVLC, profile selection, MaxH264SliceBytes MTU-align** | **marginal** (~7% bitrate CABAC; slice MTU-align ~1–3 ms) | native | low | **LOW** — trên Apple Silicon HW decoder, CABAC/CAVLC diff sub-ms; HEVC bắt buộc CABAC |
-| 37 | **`preferNoChecksum`, batch send, BSD checksum offload** | **marginal** (~1–5 µs/packet; ~0 với HW offload) | native | low | **LOW** |
-| 38 | **HEVC tiles / WPP control** | **N/A** — không có API surface | **unsupported** | exotic | **N/A** — Media Engine xử lý nội bộ; không có `kVTCompressionPropertyKey` cho tiles/WPP |
-| 39 | **DPDK / kernel-bypass** | **N/A** trên macOS/iOS | **unsupported** | exotic | **N/A** — SIP + entitlement model chặn userspace NIC; NEPacketTunnelProvider chậm hơn, không nhanh hơn |
-| 40 | **RFC 9150 integrity-only ciphers** | **~3 µs/frame** lý thuyết | **unsupported** (QUIC chỉ AEAD) | exotic | **N/A** — không áp dụng cho QUIC/Network.framework |
+| 1 | **Low-latency rate control encode** — `kVTVideoEncoderSpecification_EnableLowLatencyRateControl` (H.264) + manual HEVC config (`AllowFrameReordering=false`, `AllowOpenGOP=false`, `MaxFrameDelayCount=0`, `RealTime=true`) | **~100 ms** at 720p30 vs the default buffering mode (WWDC21 session 10158) — mostly from removing frame reordering/B-frame reorder buffers | native (H.264); HEVC **empirically functional** on Apple Silicon | low | **MED** — HEVC support is demonstrated by an FFmpeg patch (commit d87210745e, gated `TARGET_CPU_ARM64`), **NOT** Apple documentation; WWDC21 mentions H.264 only. The SDK header has no codec restriction. Risk of silent regression through an OS update. `kVTPropertyNotSupportedErr (-12900)` when querying HW-accel is API incompleteness, NOT evidence of a software fallback (galad87, forum 751291) |
+| 2 | **Wired Gigabit Ethernet instead of Wi-Fi** | **2–30 ms** of overhead removed + all Wi-Fi jitter; wired one-way <0.1 ms vs Wi-Fi 6/6E 0.5–2 ms (typical), 4–20 ms spikes under interference | native | low | **LOW** — link-layer physics; no downside beyond requiring a cable |
+| 3 | **Client-side cursor overlay** (draw the cursor from the input channel, NOT encoded into video; `SCStreamConfiguration.showsCursor=false`) | **~15–25 ms** for visual cursor feedback on LAN (removes the entire video round-trip for the cursor); cursor appears ~0–2 ms after input vs ~17–30 ms via video | native | medium | **LOW** — RDP/PCoIP/NoMachine all do this; needs out-of-band cursor-shape sharing |
+| 4 | **Metal direct render instead of AVSampleBufferDisplayLayer** (client) — `CVMetalTextureCacheCreateTextureFromImage` → `CAMetalLayer` | **8–33 ms** (1–2 frames of buffering); ≥8.3 ms at 120 Hz, ≥16.7 ms at 60 Hz (Moonlight #1885) | native | medium | **MED** — qualitative evidence ("one or more extra frames"), measured on a macOS dGPU (Radeon Pro 580); **no iOS benchmark** of Metal-vs-AVSBDL and Moonlight-iOS has no Metal fallback (corpus uncertain). On Apple Silicon unified memory there is no GPU copy penalty, so the benefit is even clearer |
+| 5 | **120fps / ProMotion end-to-end** (host `minimumFrameInterval=1/120` + client `CAMetalDisplayLink` 120 Hz) | **~8.3 ms** lower worst-case vsync wait (16.67→8.33 ms); plus ~4 ms average capture-to-encode | native | low–medium | **MED** — requires a 120 Hz host display (M1 Pro/Max+) AND encode completing within 8.3 ms or SCK drops frames. macOS 15 silently changed the default `minimumFrameInterval` to 1/60 (confirmed); must set explicitly. Note: use `1/target_fps × 0.9` (OBS PR#11896) — do **NOT** use `kCMTimeZero` (that claim was refuted: OBS does not use kCMTimeZero, no SDK header confirms it) |
+| 6 | **Avoid AVSampleBufferDisplayLayer audio synchronizer** / use PTS-based fire-and-forget AV sync | **~1000 ms** of `AVSampleBufferRenderSynchronizer` buffering avoided (~1 s buffer ahead) | native | medium | **LOW** — accidentally using synchronizer mode would destroy all the video latency work. The ~1 s figure is community-reported, no official Apple figure (claim_to_verify) |
+| 7 | **VideoToolbox HW decode + verify** (`RequireHardwareAcceleratedVideoDecoder=true`, `RealTime=true`) | **5–17 ms** (HW ~1–3 ms vs SW 8–20 ms); HEVC Main10 SW fallback >30 ms | native | low | **LOW** — `flags=0` synchronous completion is **confirmed** in the SDK header (no HW/SW distinction). `RealTime` already defaults to true (confirmed through macOS 26.5) but should be set explicitly; do NOT set together with `MaximizePowerEfficiency` (undefined behavior) |
+| 8 | **Display drop policy "always-newest"** (Moonlight pacer: cap 3 frames, drop oldest-first every vsync, target 1) | **8.3–25 ms** (each extra queued frame = 1 frame interval; a 3-frame backlog = 25 ms at 120 fps) | native | medium | **LOW** — verified in moonlight-qt pacer.cpp |
+| 9 | **THREAD_TIME_CONSTRAINT_POLICY + os_workgroup for hot threads** | Avoids **5–20 ms** scheduler-induced stalls; replaces usleep's 500–5000 µs variance with `mach_wait_until` <600 µs (99.9%) | native | medium | **MED** — `os_workgroup_join` requires the RT policy first (EINVAL "not realtime" **confirmed** but only for `WORK_INTERVAL_TYPE_COREAUDIO`). The "<600 µs 99.9%" figure is **misattributed** (from micropython issue #8621, hardware unspecified, not Apple forum 120403) and not reproduced on Apple Silicon (uncertain). `yield()` tanks priority to 0 for up to 10 ms — **confirmed** to apply to SCHED_RR too. Swift heap allocations can stall the RT thread |
+| 10 | **SCK queueDepth tuning** (=3 for min capture-side latency; consider 5 on GPU load spikes) | Avoids backlog of **up to 116 ms** (queueDepth=8 default at 60 fps); with =3, max backlog 16.6 ms | native | low | **LOW** — the "3–8 strict range" is **refuted**: the real default is **8** (not 3), no documented minimum; queueDepth=1/2 run in production. "3" is just a conservative community default born of confusion with the old CGDisplayStream |
+| 11 | **SCK `420v` YCbCr pixel format instead of BGRA** (zero-copy into VideoToolbox) | **~0.5–3 ms** by removing one GPU color-conversion pass at 4K | native | low | **LOW** — WWDC22 confirmed "lowest CPU cost"; removes a full DRAM round-trip |
+| 12 | **Zero-copy IOSurface end-to-end** (SCK→VT→VT→Metal, no memcpy; `kCVPixelBufferMetalCompatibilityKey`) | **15–60 µs/frame** of copying avoided; + avoids 5–30 ms deferred-autorelease spikes (autoreleasepool wrapping) | native | low–medium | **LOW** — WWDC21: 62% bandwidth reduction. Note: do **NOT set `kCVPixelBufferPixelFormatTypeKey`** in the decode imageBufferAttributes when it matches the native format (a mismatch triggers a VTPixelTransferSession copy — confirmed via WWDC14 session 513). The visionOS 2 behavior "set pixelFormat at all = copy" is **not confirmed on macOS 14+** (uncertain) |
+| 13 | **Opus RESTRICTED_LOWDELAY 5ms frames** (audio) | **~15 ms** vs the Opus 20ms default (7.5 ms vs 22.5 ms algorithmic delay) | partial (libopus, not native) | medium | **LOW** — Sunshine uses exactly this config. Or PCM on LAN = 0 ms codec delay (~3.1 Mbit/s stereo, trivial on wired) |
+| 14 | **CoreAudio HAL buffer reduction** (`kAudioDevicePropertyBufferFrameSize=64–128`) | **~8 ms** (512→128 frames: 10.67→2.67 ms; →64: 1.33 ms) | native | medium | **LOW** — must be set before allocating render resources; the minimum is driver-dependent |
+| 15 | **LTR recovery instead of full IDR** (`EnableLTR`, `ForceLTRRefresh`) | **30–100 ms** avoided per recovery (LTR-P is 10–30× smaller than an IDR, no bandwidth spike) | native | medium | **MED** — `EnableLTR` is codec-agnostic, HEVC+LTR on Apple Silicon **confirmed feasible** (SDK header has no restriction, FFmpeg ARM64 path). `ForceLTRRefresh` has an internally contradictory type in the header: the annotation says `CFNumberRef`, the doc comment says `kCFBooleanTrue` — must test both at runtime (confirmed inconsistency) |
+| 16 | **Skip idle frames + dirtyRects** (SCK) | **high** — avoids encoder queue buildup from idle callbacks; dirtyRects cuts encode time for partial updates | native | low–medium | **LOW** |
+| 17 | **`maximumDrawableCount=2`** (lower pipeline depth) | **8–34 ms** (count=3 gives 16–50 ms variable latency; count=2 converges to ~8–16 ms) | native | low–medium | **LOW** — "not recommended for iOS/iPadOS" is **refuted**: Apple only constrains the range to [2,3], no iOS-specific prohibition. The real trade-off: `nextDrawable` may return nil → needs frame-drop logic |
+| 18 | **NWParameters `requiredInterfaceType` + `includePeerToPeer=false`** (pin LAN, avoid path eval) | Avoids **50–200 ms** path evaluation + avoids **40–336 ms** AWDL spikes | native | low | **LOW** — guarantees no cellular/AWDL fallback |
+| 19 | **serviceClass = .interactiveVideo** (Wi-Fi WMM AC_VI) | **~10× jitter** on congested Wi-Fi (AC_BE ~67 ms → AC_VI/VO ~7 ms); marginal under light load | native | low | **MED** — only sets Wi-Fi 802.11e UP, does **NOT** set IP-header DSCP except on Fastlane networks (confirmed). On wired LAN use the `IP_TOS` setsockopt directly if DSCP is needed. `nw_service_class_interactive_video=2` ≠ `NET_SERVICE_TYPE_VI=3` (different namespaces, private mapping) |
+| 20 | **Beat-frequency exact rate match** (host display = client refresh, e.g. both at 60.000 Hz) | **0–16.67 ms** oscillation (60 Hz) eliminated; beat period of 60.000 vs 59.94 ≈ 16.7 s | native | medium | **MED** — requires forcing the host display to exactly 60.000 Hz (not 59.951); EDID may map nominal 60 to 59.951 |
+| 21 | **VTCompressionSessionPrepareToEncodeFrames** (pre-warm) + keep the session alive across reconnects | First frame: avoids the init spike (est. 1–10 ms); reconnect: avoids a **30–100 ms** session rebuild | native | low | **MED** — the first-frame spike has no public measurement (open question); the 30–100 ms rebuild is inferred, not Apple-documented |
+| 22 | **CAMetalDisplayLink `preferredFrameLatency=1`** | **~8–16 ms** (the default is 2 frames on iOS) | native | low | **LOW** — confirmed: only accepts 1.0 or 2.0; the system may exceed it when needed (windowed macOS). `CAMetalDisplayLink` is **NOT** restricted to Apple Silicon (refuted: only `@available(macOS 14)`; Moonlight added its own `isAppleSilicon()` guard) |
+| 23 | **CAMetalLayer.opaque=true** (client) | **~8–13 ms** (21–26 ms → 13 ms, Flutter/Impeller #134959) | native | low | **HIGH-uncertainty** — the 13 ms figure is a **single profiling observation**, no reproducible baseline; Flutter's real fix was a custom IOSurface layer (PR #48226), not this flag. `opaque` is a CALayer property (skips alpha-blending); Apple documents no latency guarantee |
+| 24 | **`displaySyncEnabled=false`** (vsync-off, tearing) | **8.3–16.7 ms** (removes the entire vsync wait) | native | low | **MED** — causes tearing on non-adaptive-sync displays; consider adaptive sync (fullscreen) instead |
+| 25 | **CAMetalLayer.colorspace = nil** (bypass the compositor color-match pass) | **sub-frame, non-zero** (Apple: "fastest approach"; qualitatively a "nontrivial-but-not-excessive" GPU cost per frame on mismatch) | native | low | **LOW** — no Apple ms figure; trade-off: raw color on a P3 display. Or match the display's native colorspace |
+| 26 | **Disable EDR for SDR streams** (`wantsExtendedDynamicRangeContent=false`) | **sub-frame** — WWDC21 10161: EDR tone mapping "involves an extra processing pass... increases latency and bandwidth" | native | low | **LOW** — no ms figure; an FP16 buffer is 2× the bandwidth vs bgra10a2 |
+| 27 | **Adaptive sync (VRR) fullscreen** (`presentDrawable:afterMinimumDuration:`) | **3–8 ms** average on a 120 Hz adaptive display | native | medium | **MED** — **fullscreen is a hard requirement** (WWDC21 10147 confirmed; Apple Support 102144 is silent because it covers the OS-level feature, not the app API). Single-window/windowed apps get NO VRR scheduling benefit |
+| 28 | **kCMSampleAttachmentKey_DisplayImmediately** (if forced to use AVSampleBufferDisplayLayer) | Bounds display latency to ~1 scan period instead of accumulating 1–3 frames | native | low | **MED** — the "bypass all enqueued frames" behavior comes from forum 14212, not confirmed on macOS 14+ under sustained load (claim_to_verify) |
+| 29 | **QUIC keepalive + 0-RTT resumption** (reconnect cold path) | **2–5 ms** (1-RTT LAN) or **0 ms** (0-RTT/keepalive); avoids the re-handshake | native | medium | **MED** — `allowFastOpen` confirmed for the TCP path; **the QUIC 0-RTT property in NWProtocolQUIC is unverified** (claim_to_verify). 0-RTT has no forward secrecy and is replay-susceptible (acceptable for control) |
+| 30 | **sendmsg_x / recvmsg_x batch UDP** (raw socket) | **high throughput**, medium per-frame; collapses N syscalls → 1 | partial (PRIVATE syscall) | medium | **MED** — syscalls 480/481 **confirmed stable** on macOS 14+ Apple Silicon; symbols exported from libSystem; but PRIVATE (msghdr_x only in socket_private.h, must forward-declare yourself). **macOS 13 hang** — only use on macOS 14+ |
+| 31 | **Pre-trigger Local Network permission** (onboarding) | Avoids **several seconds** of blocking on first cold launch (iOS 14+ privacy gate) | native | low | **LOW** — a correctness/cold-path fix, not steady-state |
+| 32 | **Slice-based encoding / sub-frame pipelining** | **~10–12 ms** (Haivision; theoretical (N-1)/N × encode_time) — **BUT not feasible via the public VideoToolbox API** | **unsupported** (VideoToolbox = frame granularity) | exotic | **HIGH** — VideoToolbox output is **frame-granular**, one callback per frame. `MaxH264SliceBytes` is H.264-only, no sub-frame callback. `kVTCompressionPropertyKey_NumberOfSlices`/`NumberOfSubFrameSections` are **private symbols** (confirmed present in .tbd, iOS 9.3–26.x) but have NO public header, NO call sites anywhere, and **completely unknown** behavior when invoked (uncertain). Manual NAL-splitting after the callback only saves ~0.1–1 ms on LAN |
+| 33 | **AES-128-GCM encryption (if needed)** vs ChaCha20 | Pick AES-GCM: **~10 µs/frame** saved vs ChaCha20 (4.6 GB/s vs 1.75 GB/s on M1); AES total **<0.1 ms/frame** = negligible | native (QUIC TLS 1.3 picks AES-GCM itself) | low | **LOW** — QUIC is always encrypted (cannot be disabled). Use CryptoKit, not OpenSSL. Throughput numbers are from OpenSSL benchmarks; Apple's internal corecrypto is not publicly benchmarked (claim_to_verify) |
+| 34 | **AWDL peer-to-peer (`includePeerToPeer=true`)** for the video stream | **NEGATIVE** — adds 40–336 ms RTT spikes on a ~5 s cycle; AWDL channel-hop 50–200 ms every 10–12 s | partial | low | **HIGH** — Apple DTS: P2P Wi-Fi "hundreds of ms"; infrastructure Wi-Fi is better. **AVOID for video.** Wi-Fi Aware `WAPerformanceMode.realtime` is iOS/iPadOS 26 only (`@available(macOS, unavailable)` confirmed), requires an entitlement |
+| 35 | **DriverKit virtual HID injection** (vs CGEventPostToPid) | Avoids the **2–3 s lag** on macOS Tahoe 26 (CGEventPost from an unsigned daemon is blocked); latency = the physical HW path | native (entitlement required) | exotic | **MED** — the "physical HW path latency" figure is a Karabiner claim with no measured comparison. Simpler: use a signed app + `kTCCServicePostEvent` |
+| 36 | **CABAC vs CAVLC, profile selection, MaxH264SliceBytes MTU-align** | **marginal** (~7% bitrate for CABAC; slice MTU-align ~1–3 ms) | native | low | **LOW** — on the Apple Silicon HW decoder the CABAC/CAVLC diff is sub-ms; HEVC mandates CABAC |
+| 37 | **`preferNoChecksum`, batch send, BSD checksum offload** | **marginal** (~1–5 µs/packet; ~0 with HW offload) | native | low | **LOW** |
+| 38 | **HEVC tiles / WPP control** | **N/A** — no API surface | **unsupported** | exotic | **N/A** — the Media Engine handles it internally; no `kVTCompressionPropertyKey` for tiles/WPP |
+| 39 | **DPDK / kernel-bypass** | **N/A** on macOS/iOS | **unsupported** | exotic | **N/A** — SIP + the entitlement model block userspace NIC access; NEPacketTunnelProvider is slower, not faster |
+| 40 | **RFC 9150 integrity-only ciphers** | **~3 µs/frame** theoretical | **unsupported** (QUIC is AEAD-only) | exotic | **N/A** — not applicable to QUIC/Network.framework |
 
 ---
 
 ### Do these first (highest leverage, lowest risk)
 
-Theo thứ tự ưu tiên triển khai cho stack mục tiêu (macOS host → macOS/iOS client, LAN, Apple Silicon):
+In implementation-priority order for the target stack (macOS host → macOS/iOS client, LAN, Apple Silicon):
 
-1. **Wired Gigabit Ethernet** (#2) — nền tảng. Sub-0.1 ms one-way, zero jitter. ⚠️ Trên **NetBird** KHÔNG pin `requiredInterfaceType = .wiredEthernet` (utun=`.other` → hỏng); để mặc định, routing table tự lái 100.64/10 ([13](13-netbird-transport.md)). Giữ `includePeerToPeer = false`.
-2. **Low-latency encode config** (#1) — `EnableLowLatencyRateControl` cho H.264; với HEVC set thủ công `RealTime=true`, `AllowFrameReordering=false`, `AllowOpenGOP=false`, `MaxFrameDelayCount=0`, `PrioritizeEncodingSpeedOverQuality=true`, `MaxKeyFrameInterval=INT_MAX`. **Verify HEVC support ở runtime** qua `VTCopySupportedPropertyDictionaryForEncoder` (vì Apple chỉ document H.264).
+1. **Wired Gigabit Ethernet** (#2) — the foundation. Sub-0.1 ms one-way, zero jitter. ⚠️ On **NetBird** do NOT pin `requiredInterfaceType = .wiredEthernet` (utun=`.other` → breaks); leave the default, the routing table steers 100.64/10 itself ([13](13-netbird-transport.md)). Keep `includePeerToPeer = false`.
+2. **Low-latency encode config** (#1) — `EnableLowLatencyRateControl` for H.264; for HEVC manually set `RealTime=true`, `AllowFrameReordering=false`, `AllowOpenGOP=false`, `MaxFrameDelayCount=0`, `PrioritizeEncodingSpeedOverQuality=true`, `MaxKeyFrameInterval=INT_MAX`. **Verify HEVC support at runtime** via `VTCopySupportedPropertyDictionaryForEncoder` (since Apple documents H.264 only).
 3. **HW decode + verify** (#7) — `RequireHardwareAcceleratedVideoDecoder=true`, `flags=0` synchronous, `RealTime=true`, verify `UsingHardwareAcceleratedVideoDecoder`.
-4. **Metal direct render path** (#4) — `CVMetalTextureCacheCreateTextureFromImage` → `CAMetalLayer`, tránh AVSampleBufferDisplayLayer. Đây là điểm phân biệt lớn so với Moonlight trên macOS.
-5. **Client-side cursor overlay** (#3) — `showsCursor=false`, vẽ cursor local. Đòn bẩy "perceived responsiveness" lớn nhất; cursor cảm giác tức thì.
-6. **Zero-copy IOSurface + `420v` pixel format** (#11, #12) — xuyên suốt pipeline; bọc per-frame callback trong `autoreleasepool {}`.
-7. **Display drop policy "always-newest"** (#8) + **queueDepth=3** (#10) + **maximumDrawableCount=2** (#17) — chính sách queue zero-depth, drop oldest-first mỗi vsync.
-8. **120fps/ProMotion nếu cả hai đầu hỗ trợ** (#5) — dùng `1/target_fps × 0.9` cho `minimumFrameInterval`, KHÔNG `kCMTimeZero`. Set explicit để tránh macOS 15 cap 1/60.
-9. **RT threads cho capture/encode/network** (#9) — `THREAD_TIME_CONSTRAINT_POLICY` + `mach_wait_until`; QoS `.userInteractive`; tránh `yield()`; viết hot path bằng C/ObjC nếu Swift allocation gây stall.
-10. **Audio: Opus 5ms hoặc PCM + HAL buffer 64–128 frames + PTS fire-and-forget sync** (#13, #14, #6) — tuyệt đối tránh `AVSampleBufferRenderSynchronizer`.
+4. **Metal direct render path** (#4) — `CVMetalTextureCacheCreateTextureFromImage` → `CAMetalLayer`, avoid AVSampleBufferDisplayLayer. This is the big differentiator vs Moonlight on macOS.
+5. **Client-side cursor overlay** (#3) — `showsCursor=false`, draw the cursor locally. The biggest "perceived responsiveness" lever; the cursor feels instant.
+6. **Zero-copy IOSurface + `420v` pixel format** (#11, #12) — throughout the pipeline; wrap per-frame callbacks in `autoreleasepool {}`.
+7. **Display drop policy "always-newest"** (#8) + **queueDepth=3** (#10) + **maximumDrawableCount=2** (#17) — zero-depth queue policy, drop oldest-first every vsync.
+8. **120fps/ProMotion if both ends support it** (#5) — use `1/target_fps × 0.9` for `minimumFrameInterval`, NOT `kCMTimeZero`. Set explicitly to dodge the macOS 15 1/60 cap.
+9. **RT threads for capture/encode/network** (#9) — `THREAD_TIME_CONSTRAINT_POLICY` + `mach_wait_until`; QoS `.userInteractive`; avoid `yield()`; write the hot path in C/ObjC if Swift allocations cause stalls.
+10. **Audio: Opus 5ms or PCM + HAL buffer 64–128 frames + PTS fire-and-forget sync** (#13, #14, #6) — absolutely avoid `AVSampleBufferRenderSynchronizer`.
 
 ---
 
 ### Diminishing returns / probably skip
 
-- **Slice/sub-frame pipelining** (#32) — **skip**. Không khả thi qua public VideoToolbox API (frame-granular output, confirmed). Private symbols `NumberOfSlices`/`NumberOfSubFrameSections` tồn tại nhưng hành vi unknown và rủi ro. Manual NAL-split sau callback chỉ ~0.1–1 ms trên LAN — không đáng độ phức tạp.
-- **AWDL peer-to-peer cho video** (#34) — **skip, harmful**. Thêm latency thay vì giảm. Dùng infrastructure Wi-Fi/Ethernet.
-- **HEVC tiles/WPP, DPDK kernel-bypass, RFC 9150 ciphers** (#38, #39, #40) — **skip**. Không có API surface trên Apple platforms.
-- **CAMetalLayer.opaque=true** (#23) — **thử nhưng đừng tin số**. Số 13 ms là single observation chưa reproducible; set nó (rẻ, an toàn) nhưng đừng kỳ vọng guarantee.
-- **DriverKit virtual HID** (#35) — **skip ban đầu**, chỉ cần nếu macOS Tahoe 26 chặn `CGEventPostToPid` cho use-case cụ thể. Signed app + `kTCCServicePostEvent` đủ cho hầu hết.
-- **Adaptive sync/VRR** (#27) — **skip cho single-window windowed app**. VRR scheduling yêu cầu fullscreen (confirmed); app chia sẻ một cửa sổ thường không fullscreen nên không hưởng lợi.
-- **DSCP marking qua serviceClass trên wired LAN** (#19) — **marginal trên wired**. Chỉ set Wi-Fi UP, không IP DSCP trừ Fastlane. Đáng làm cho Wi-Fi multi-client; gần như vô nghĩa trên dedicated wired LAN.
-- **Encryption tuning ChaCha vs AES** (#33) — **negligible** trên Apple Silicon (<0.1 ms/frame với AES-GCM HW). Chỉ cần đảm bảo không vô tình chọn ChaCha20; QUIC tự lo. Trên LAN cô lập vật lý, cân nhắc plaintext video + encrypted control channel (Moonlight model).
-- **`preferNoChecksum`, batch send micro-opts** (#37) — **marginal** với HW checksum offload hiện đại.
+- **Slice/sub-frame pipelining** (#32) — **skip**. Not feasible via the public VideoToolbox API (frame-granular output, confirmed). The private symbols `NumberOfSlices`/`NumberOfSubFrameSections` exist but their behavior is unknown and risky. Manual NAL-splitting after the callback is only ~0.1–1 ms on LAN — not worth the complexity.
+- **AWDL peer-to-peer for video** (#34) — **skip, harmful**. Adds latency instead of reducing it. Use infrastructure Wi-Fi/Ethernet.
+- **HEVC tiles/WPP, DPDK kernel-bypass, RFC 9150 ciphers** (#38, #39, #40) — **skip**. No API surface on Apple platforms.
+- **CAMetalLayer.opaque=true** (#23) — **try it but do not trust the number**. The 13 ms figure is a single non-reproducible observation; set it (cheap, safe) but expect no guarantee.
+- **DriverKit virtual HID** (#35) — **skip initially**, only needed if macOS Tahoe 26 blocks `CGEventPostToPid` for the specific use case. A signed app + `kTCCServicePostEvent` is enough for most.
+- **Adaptive sync/VRR** (#27) — **skip for a single-window windowed app**. VRR scheduling requires fullscreen (confirmed); a window-sharing app is usually not fullscreen, so no benefit.
+- **DSCP marking via serviceClass on wired LAN** (#19) — **marginal on wired**. Only sets Wi-Fi UP, no IP DSCP except Fastlane. Worth it for multi-client Wi-Fi; nearly meaningless on a dedicated wired LAN.
+- **Encryption tuning ChaCha vs AES** (#33) — **negligible** on Apple Silicon (<0.1 ms/frame with HW AES-GCM). Just make sure ChaCha20 is not accidentally chosen; QUIC handles it. On a physically isolated LAN, consider plaintext video + an encrypted control channel (the Moonlight model).
+- **`preferNoChecksum`, batch send micro-opts** (#37) — **marginal** with modern HW checksum offload.
 
-> **Lưu ý đo lường xuyên suốt:** overlay latency của các streamer (Moonlight stats, Virtual Desktop indicator) **under-report ~40 ms** vì bỏ qua capture delay, compositor buffering, và display scanout (Greendayle). Dùng LED+photodiode rig (~21 ns resolution) hoặc 240/1000 fps camera để đo glass-to-glass thực; nếu tổng các stage software lệch >1 ms so với hardware measurement thì có bug clock/instrumentation.
+> **Cross-cutting measurement note:** the latency overlays of streamers (Moonlight stats, the Virtual Desktop indicator) **under-report by ~40 ms** because they skip capture delay, compositor buffering, and display scanout (Greendayle). Use an LED+photodiode rig (~21 ns resolution) or a 240/1000 fps camera to measure true glass-to-glass; if the sum of software stages deviates >1 ms from the hardware measurement, there is a clock/instrumentation bug.
 
 ---
 
 ## Verified API claims, corrections & Phase-0 validation list
 
-Phần này hợp nhất toàn bộ các phán quyết kiểm chứng đối kháng (adversarial verification) trong corpus thành một nguồn sự thật duy nhất cho khâu thiết kế. Mọi claim "load-bearing" — tức claim mà nếu sai sẽ làm hỏng kiến trúc hoặc thổi phồng/đánh giá sai ngân sách latency — đều được gắn verdict (`confirmed` / `refuted` / `uncertain`), confidence, và phát biểu đã sửa. **Quy tắc vàng: bất kỳ dòng nào có verdict `refuted` hoặc `uncertain` đều KHÔNG được phép là giả định cứng trong thiết kế — nó phải đi vào Phase-0 spike để xác nhận bằng đo đạc trên phần cứng mục tiêu (Apple Silicon, macOS 14+).**
+This section consolidates all the adversarial-verification verdicts in the corpus into a single source of truth for the design phase. Every "load-bearing" claim — one that, if wrong, would break the architecture or inflate/misjudge the latency budget — carries a verdict (`confirmed` / `refuted` / `uncertain`), a confidence level, and a corrected statement. **Golden rule: any line with a `refuted` or `uncertain` verdict must NOT be a hard assumption in the design — it must go into a Phase-0 spike to be confirmed by measurement on the target hardware (Apple Silicon, macOS 14+).**
 
-### 1. Bảng tổng hợp verdict (load-bearing API claims)
+### 1. Verdict summary tables (load-bearing API claims)
 
 #### 1.1 Capture — ScreenCaptureKit
 
-| # | Claim gốc | Verdict | Confidence | Phát biểu đã sửa / cần dùng |
+| # | Original claim | Verdict | Confidence | Corrected statement / what to use |
 |---|---|---|---|---|
-| C1 | `minimumFrameInterval = kCMTimeZero` bật native refresh delivery; SDK header nói vậy; OBS PR #11896 chứng minh | **refuted** | high | `kCMTimeZero` KHÔNG được OBS dùng và KHÔNG có header Apple nào nói vậy. OBS PR #11896 đặt `minimumFrameInterval = (1/target_fps) × 0.9` — một `CMTime` cụ thể, ngắn hơn ~10% so với chu kỳ frame, KHÔNG phải zero. Lý do: đặt đúng nghịch đảo fps làm rớt frame ([OBS PR #11896](https://github.com/obsproject/obs-studio/pull/11896)). **Thiết kế phải dùng giá trị 0.9× rõ ràng, không dùng kCMTimeZero.** |
-| C2 | Default `minimumFrameInterval` đổi thành `1/60` trong macOS 15 (kể cả ProMotion) | **confirmed** | high | Đúng. SDK header diff: macOS 14.5 nói default = 0 (unthrottled); macOS 15.5 nói default = `1/60`. Apple đã cập nhật docstring header (nhưng không ghi trong release notes). Để capture ở native refresh phải set `minimumFrameInterval` rõ ràng ([macos-sdk diff](https://sourcegraph.com/github.com/alexey-lysiuk/macos-sdk), [OBS #11778](https://github.com/obsproject/obs-studio/issues/11778)). |
-| C3 | `queueDepth` hợp lệ strictly 3–8, default 3 | **refuted** | high | Default là **8** (không phải 3). Header chỉ nói "should not exceed 8" (trần mềm) — KHÔNG có sàn cứng 3. Giá trị 1 và 2 chạy thành công trong nhiều project shipping (daylight-mirror giảm 3→2: P95 RTT 21.6ms→18.8ms). "3" là default của API cũ CGDisplayStream, bị nhầm. **Dùng queueDepth=2 cho latency tối thiểu là hợp lệ; 3 là mức bảo thủ.** ([SCStream.h:273-276](https://developer.apple.com/documentation/screencapturekit/scstreamconfiguration/queuedepth)) |
-| C4 | `SCStreamFrameInfoDisplayTime` cùng clock domain với `CACurrentMediaTime()` (mach_absolute_time) | **confirmed** | high | Đúng. SCStream.h xác nhận đây là "mach absolute time"; `CACurrentMediaTime()` = `mach_absolute_time()` đổi sang giây. KHÔNG cần đổi domain — chỉ cần đổi đơn vị ticks→giây qua `mach_timebase_info`. Lỗi "negative latency" trên forum là bug runtime/PTS riêng, không phải mismatch domain ([SCStream.h:399](https://developer.apple.com/forums/thread/785046)). |
+| C1 | `minimumFrameInterval = kCMTimeZero` enables native-refresh delivery; the SDK header says so; OBS PR #11896 proves it | **refuted** | high | `kCMTimeZero` is NOT used by OBS and NO Apple header says so. OBS PR #11896 sets `minimumFrameInterval = (1/target_fps) × 0.9` — a concrete `CMTime`, ~10% shorter than the frame period, NOT zero. Reason: setting the exact fps reciprocal drops frames ([OBS PR #11896](https://github.com/obsproject/obs-studio/pull/11896)). **The design must use the explicit 0.9× value, not kCMTimeZero.** |
+| C2 | The default `minimumFrameInterval` changed to `1/60` in macOS 15 (even on ProMotion) | **confirmed** | high | Correct. SDK header diff: macOS 14.5 says default = 0 (unthrottled); macOS 15.5 says default = `1/60`. Apple updated the header docstring (but never noted it in release notes). To capture at native refresh, `minimumFrameInterval` must be set explicitly ([macos-sdk diff](https://sourcegraph.com/github.com/alexey-lysiuk/macos-sdk), [OBS #11778](https://github.com/obsproject/obs-studio/issues/11778)). |
+| C3 | `queueDepth` is strictly valid 3–8, default 3 | **refuted** | high | The default is **8** (not 3). The header only says "should not exceed 8" (a soft ceiling) — there is NO hard floor of 3. Values 1 and 2 run successfully in multiple shipping projects (daylight-mirror's 3→2: P95 RTT 21.6ms→18.8ms). "3" is the default of the old CGDisplayStream API, mistakenly carried over. **queueDepth=2 for minimum latency is valid; 3 is the conservative setting.** ([SCStream.h:273-276](https://developer.apple.com/documentation/screencapturekit/scstreamconfiguration/queuedepth)) |
+| C4 | `SCStreamFrameInfoDisplayTime` shares a clock domain with `CACurrentMediaTime()` (mach_absolute_time) | **confirmed** | high | Correct. SCStream.h confirms it is "mach absolute time"; `CACurrentMediaTime()` = `mach_absolute_time()` converted to seconds. NO domain conversion needed — just a ticks→seconds unit conversion via `mach_timebase_info`. The "negative latency" forum report is a separate runtime/PTS bug, not a domain mismatch ([SCStream.h:399](https://developer.apple.com/forums/thread/785046)). |
 
 #### 1.2 Encode — VideoToolbox
 
-| # | Claim gốc | Verdict | Confidence | Phát biểu đã sửa / cần dùng |
+| # | Original claim | Verdict | Confidence | Corrected statement / what to use |
 |---|---|---|---|---|
-| E1 | `kVTVideoEncoderSpecification_EnableLowLatencyRateControl` hoạt động với HEVC trên Apple Silicon, "được xác nhận bởi SDK comment" | **uncertain** → (chi tiết hơn ở E2) | high | Câu "SDK comment nói vậy" là SAI. Câu "supported only for H.264 on Intel… both on Apple Silicon" đến từ **commit message của tác giả FFmpeg (Cameron Gutman)**, KHÔNG phải header Apple. Doc chính thức của Apple (WWDC21) chỉ nói H.264. HEVC + low-latency RC chạy trên Apple Silicon theo bằng chứng thực nghiệm FFmpeg (PR #20453, gate `TARGET_CPU_ARM64`), nhưng **không có đảm bảo từ Apple** ([WWDC21 10158](https://developer.apple.com/videos/play/wwdc2021/10158/), [FFmpeg](https://www.mail-archive.com/ffmpeg-devel@ffmpeg.org/msg185545.html)). |
-| E2 | Header SDK macOS 26.5 vẫn ghi "supported video codec type: H.264" | **refuted** | high | Header KHÔNG chứa cụm "supported video codec type: H.264" ở bất kỳ phiên bản nào (15.4 hay 26.5) — docblock của constant này hoàn toàn codec-agnostic. Cụm đó chỉ có trong transcript WWDC21. HEVC chạy được trên ARM64 theo FFmpeg. **Phải xác nhận runtime; rủi ro silent regression qua các bản OS.** |
-| E3 | `kVTCompressionPropertyKey_EnableLTR` chưa rõ có chạy với HEVC low-latency không (WWDC chỉ demo H.264) | **refuted** | high | Header EnableLTR (macOS 12.0/iOS 15.0) hoàn toàn không hạn chế codec. FFmpeg production code xác nhận HEVC low-latency RC chạy trên ARM64 và EnableLTR áp dụng trong cùng session path. **HEVC + EnableLowLatencyRateControl + EnableLTR là tổ hợp khả thi cho macOS 14+/Apple Silicon**, nhưng nên validate runtime qua `VTCopySupportedPropertyDictionaryForEncoder`. |
-| E4 | `kVTEncodeFrameOptionKey_ForceLTRRefresh` là `CFNumberRef` (không phải CFBoolean như WWDC nói) | **confirmed** | high | Đúng. Annotation inline trong header ghi `// CFNumberRef, Optional`, NHƯNG `@abstract` cùng header lại nói "Set this option to kCFBooleanTrue" — **mâu thuẫn nội bộ header Apple.** Runtime chưa được giải quyết bởi header. **Phải test cả `kCFBooleanTrue` và `@(1)` (CFNumberRef) ở runtime để biết encoder chấp nhận cái nào** ([VTCompressionProperties.h:1265-1277](https://developer.apple.com/videos/play/wwdc2021/10158/)). |
-| E5 | `kVTCompressionPropertyKey_MaxFrameDelayCount = 0` nghĩa là "default behavior / no limit" | **refuted** | high | SAI — không có câu "value of zero implies default behavior" trong block MaxFrameDelayCount (câu đó thuộc property kế bên `MaxH264SliceBytes`). Theo công thức header: M=0 ⇒ "trước khi encode frame N trả về, frame N phải đã được phát ra" = **emit đồng bộ/ngay lập tức**. Default no-limit là `kVTUnlimitedFrameDelayCount = -1`, không phải 0. **Set `MaxFrameDelayCount = 0` để cưỡng chế one-in-one-out.** |
-| E6 | `kVTCompressionPropertyKey_AllowOpenGOP` default = `kCFBooleanTrue` cho HEVC | **confirmed** | high | Đúng và không đổi qua macOS 15.4→26.5/iOS. **HEVC mặc định cho phép Open-GOP — PHẢI set `false` rõ ràng** cho recovery IDR sạch (single-window streaming cần mỗi IDR độc lập decode được) ([VTCompressionProperties.h:186-197](https://developer.apple.com/documentation/videotoolbox/kvtcompressionpropertykey_allowopengop)). |
+| E1 | `kVTVideoEncoderSpecification_EnableLowLatencyRateControl` works with HEVC on Apple Silicon, "confirmed by an SDK comment" | **uncertain** → (more detail at E2) | high | The "an SDK comment says so" part is WRONG. The sentence "supported only for H.264 on Intel… both on Apple Silicon" comes from an **FFmpeg author's commit message (Cameron Gutman)**, NOT an Apple header. Apple's official doc (WWDC21) mentions H.264 only. HEVC + low-latency RC runs on Apple Silicon per FFmpeg's empirical evidence (PR #20453, gated `TARGET_CPU_ARM64`), but **with no guarantee from Apple** ([WWDC21 10158](https://developer.apple.com/videos/play/wwdc2021/10158/), [FFmpeg](https://www.mail-archive.com/ffmpeg-devel@ffmpeg.org/msg185545.html)). |
+| E2 | The macOS 26.5 SDK header still says "supported video codec type: H.264" | **refuted** | high | The header does NOT contain the phrase "supported video codec type: H.264" in any version (15.4 or 26.5) — the constant's docblock is entirely codec-agnostic. That phrase exists only in the WWDC21 transcript. HEVC works on ARM64 per FFmpeg. **Must confirm at runtime; risk of silent regression across OS releases.** |
+| E3 | Whether `kVTCompressionPropertyKey_EnableLTR` works with HEVC low-latency is unclear (WWDC demoed H.264 only) | **refuted** | high | The EnableLTR header (macOS 12.0/iOS 15.0) has no codec restriction whatsoever. FFmpeg production code confirms HEVC low-latency RC runs on ARM64 and EnableLTR applies in the same session path. **HEVC + EnableLowLatencyRateControl + EnableLTR is a viable combination for macOS 14+/Apple Silicon**, but validate at runtime via `VTCopySupportedPropertyDictionaryForEncoder`. |
+| E4 | `kVTEncodeFrameOptionKey_ForceLTRRefresh` is a `CFNumberRef` (not CFBoolean as WWDC said) | **confirmed** | high | Correct. The inline annotation in the header says `// CFNumberRef, Optional`, BUT the `@abstract` in the same header says "Set this option to kCFBooleanTrue" — **an internal contradiction in Apple's header.** The runtime behavior is not resolved by the header. **Must test both `kCFBooleanTrue` and `@(1)` (CFNumberRef) at runtime to learn which one the encoder accepts** ([VTCompressionProperties.h:1265-1277](https://developer.apple.com/videos/play/wwdc2021/10158/)). |
+| E5 | `kVTCompressionPropertyKey_MaxFrameDelayCount = 0` means "default behavior / no limit" | **refuted** | high | WRONG — there is no "value of zero implies default behavior" sentence in the MaxFrameDelayCount block (that sentence belongs to the adjacent `MaxH264SliceBytes` property). Per the header's formula: M=0 ⇒ "before the encode call for frame N returns, frame N must have been emitted" = **synchronous/immediate emit**. The no-limit default is `kVTUnlimitedFrameDelayCount = -1`, not 0. **Set `MaxFrameDelayCount = 0` to force one-in-one-out.** |
+| E6 | `kVTCompressionPropertyKey_AllowOpenGOP` defaults to `kCFBooleanTrue` for HEVC | **confirmed** | high | Correct and unchanged from macOS 15.4→26.5/iOS. **HEVC allows Open-GOP by default — MUST set `false` explicitly** for clean IDR recovery (single-window streaming needs every IDR to be independently decodable) ([VTCompressionProperties.h:186-197](https://developer.apple.com/documentation/videotoolbox/kvtcompressionpropertykey_allowopengop)). |
 
 #### 1.3 Slice-pipelining (private symbols)
 
-| # | Claim gốc | Verdict | Confidence | Phát biểu đã sửa / cần dùng |
+| # | Original claim | Verdict | Confidence | Corrected statement / what to use |
 |---|---|---|---|---|
-| S1 | `kVTCompressionPropertyKey_NumberOfSlices` tồn tại và "set được mà không crash" | **uncertain** | high | Symbol tồn tại trong .tbd từ iOS 9.3→26.x (CONFIRMED), nhưng là **PRIVATE** — không có khai báo trong header công khai. Câu "set được mà không crash" KHÔNG có bằng chứng nào; hành vi khi truyền vào `VTSessionSetProperty` (ignore/lỗi/crash) là **unknown**. Không dùng trong thiết kế trừ khi spike xác nhận. |
-| S2 | `kVTCompressionPropertyKey_NumberOfSubFrameSections` có hiệu ứng quan sát được | **uncertain** | high | Symbol thật, exported từ iOS 13→26.5, nhưng không có header/doc/call-site OSS nào. Hiệu ứng khi set là unknown — không thể bác bỏ là "vô tác dụng" nhưng cũng không có bằng chứng nó hoạt động. **Bỏ khỏi thiết kế chính.** |
-| S3 | `kVTSampleAttachmentKey_SliceAttachments` / `SliceDataLength` xuất hiện trong attachment dict output | **uncertain** | high | Là symbol PRIVATE đã export (resolve thành string "SliceAttachments"/"SliceDataLength"), nhưng KHÔNG có trong header công khai và **không xác nhận được runtime có populate hay không.** Không dựa vào để làm manual NAL splitting. **Kết luận kiến trúc: VideoToolbox output ở mức frame-granular; true sub-frame pipelining kiểu NVENC KHÔNG khả dụng qua public API — bỏ tiles/WPP/slice-callback khỏi thiết kế.** |
+| S1 | `kVTCompressionPropertyKey_NumberOfSlices` exists and "can be set without crashing" | **uncertain** | high | The symbol exists in the .tbd from iOS 9.3→26.x (CONFIRMED), but it is **PRIVATE** — no declaration in any public header. The "can be set without crashing" part has NO evidence; the behavior when passed to `VTSessionSetProperty` (ignore/error/crash) is **unknown**. Do not use in the design unless a spike confirms it. |
+| S2 | `kVTCompressionPropertyKey_NumberOfSubFrameSections` has an observable effect | **uncertain** | high | A real symbol, exported from iOS 13→26.5, but with no header/doc/OSS call site anywhere. Its effect when set is unknown — cannot be refuted as "no-op" but there is also no evidence it works. **Drop from the main design.** |
+| S3 | `kVTSampleAttachmentKey_SliceAttachments` / `SliceDataLength` appear in the output attachment dict | **uncertain** | high | They are exported PRIVATE symbols (resolving to the strings "SliceAttachments"/"SliceDataLength"), but they are NOT in any public header and **whether the runtime populates them is unconfirmed.** Do not rely on them for manual NAL splitting. **Architectural conclusion: VideoToolbox output is frame-granular; true NVENC-style sub-frame pipelining is NOT available via the public API — drop tiles/WPP/slice-callbacks from the design.** |
 
 #### 1.4 Decode — VideoToolbox
 
-| # | Claim gốc | Verdict | Confidence | Phát biểu đã sửa / cần dùng |
+| # | Original claim | Verdict | Confidence | Corrected statement / what to use |
 |---|---|---|---|---|
-| D1 | `kVTDecompressionPropertyKey_RealTime` default = `kCFBooleanTrue` | **confirmed** | high | Đúng, verbatim trong header 15.4 & 26.5: "default is true; setting NULL ≡ kCFBooleanTrue". Đây là **hint, không phải hợp đồng** — vẫn nên set rõ ràng. **Không được set đồng thời `MaximizePowerEfficiency` (undefined behavior).** |
-| D2 | `flags = 0` đảm bảo decode đồng bộ; nhưng forum 19046 nói vẫn có thể async với `kVTDecodeInfo_Asynchronous` | **uncertain** | medium | Đảm bảo header ("callback gọi xong trước khi DecodeFrame trả về") là CONFIRMED, áp dụng cho cả HW/SW. Phần claim về forum 19046 KHÔNG xác minh được (403). HW decoder Apple Silicon có thể dispatch nội bộ async và set `kVTDecodeInfo_Asynchronous` trong infoFlags của callback **trong khi thread gọi vẫn bị block** — khả dĩ về kiến trúc nhưng không có nguồn xác nhận. **Dùng flags=0 cho đồng bộ; nếu pipeline CPU work song song thì dùng async + semaphore.** |
-| D3 | Set pixel format không khớp trong `destinationImageBufferAttributes` gây extra copy (nhưng "không được Apple ghi rõ") | **refuted** | high | Apple ĐÃ ghi rõ — WWDC14 Session 513: yêu cầu format không phải native (vd BGRA khi decoder xuất YUV) "force an extra buffer copy". Phỏng đoán "unified memory có thể tối ưu hóa cái này" là **không có bằng chứng** — unified memory bỏ PCIe transfer chứ KHÔNG bỏ chi phí compute của conversion. **Phải khớp format native decoder (`420YpCbCr8BiPlanarVideoRange` 8-bit / `420YpCbCr10BiPlanarVideoRange` 10-bit).** |
+| D1 | `kVTDecompressionPropertyKey_RealTime` defaults to `kCFBooleanTrue` | **confirmed** | high | Correct, verbatim in the 15.4 & 26.5 headers: "default is true; setting NULL ≡ kCFBooleanTrue". It is a **hint, not a contract** — still set it explicitly. **Must not be set together with `MaximizePowerEfficiency` (undefined behavior).** |
+| D2 | `flags = 0` guarantees synchronous decode; but forum 19046 says it can still be async with `kVTDecodeInfo_Asynchronous` | **uncertain** | medium | The header guarantee ("the callback completes before DecodeFrame returns") is CONFIRMED, for both HW/SW. The forum-19046 part could NOT be verified (403). The Apple Silicon HW decoder may dispatch internally async and set `kVTDecodeInfo_Asynchronous` in the callback infoFlags **while the calling thread still blocks** — architecturally plausible but unconfirmed by any source. **Use flags=0 for synchronous; if pipelining CPU work in parallel, use async + semaphore.** |
+| D3 | Setting a mismatched pixel format in `destinationImageBufferAttributes` causes an extra copy (but "Apple never documented it") | **refuted** | high | Apple DID document it — WWDC14 Session 513: requesting a non-native format (e.g. BGRA when the decoder outputs YUV) will "force an extra buffer copy". The speculation that "unified memory might optimize this away" has **no evidence** — unified memory removes the PCIe transfer, NOT the compute cost of conversion. **Must match the decoder's native format (`420YpCbCr8BiPlanarVideoRange` 8-bit / `420YpCbCr10BiPlanarVideoRange` 10-bit).** |
 
 #### 1.5 Display / Compositor (macOS + iOS)
 
-| # | Claim gốc | Verdict | Confidence | Phát biểu đã sửa / cần dùng |
+| # | Original claim | Verdict | Confidence | Corrected statement / what to use |
 |---|---|---|---|---|
-| DP1 | `CAMetalDisplayLink` chỉ chạy Apple Silicon | **refuted** | high | Header khai báo `API_AVAILABLE(macos(14.0), ios(17.0), tvos(17.0))` — **KHÔNG có giới hạn Apple Silicon.** Chạy trên mọi Mac macOS 14+ (Intel hay AS). Guard `isAppleSilicon()` là lựa chọn riêng của Moonlight (lý do ProMotion frame-pacing), KHÔNG phải yêu cầu Apple. |
-| DP2 | `CAMetalDisplayLink.preferredFrameLatency = 1.0` nghĩa là 1 display cycle | **confirmed** | high | Đúng — đơn vị là **frames**; 1.0 = một display cycle = mức tối thiểu API cho phép. **Chỉ chấp nhận giá trị 1.0 và 2.0** (Apple đánh dấu Important). Hệ thống có thể vượt mức yêu cầu (windowed macOS). Set = 1.0 cho streaming. |
-| DP3 | Adaptive sync yêu cầu fullscreen (WWDC21) nhưng Apple Support 102144 không nhắc | **confirmed** | high | Cả hai vế đúng. WWDC21 session 10147 yêu cầu cửa sổ fullscreen (NSFullScreenWindowMask) cho Adaptive-Sync *scheduling* APIs; Support 102144 chỉ mô tả bật ở mức OS. **Hệ quả cho app single-window: app KHÔNG fullscreen sẽ KHÔNG được hưởng VRR scheduling — windowed fallback về fixed-rate compositor path.** |
-| DP4 | `maximumDrawableCount = 2` "không được khuyến nghị cho iOS/iPadOS" (theo Apple) | **refuted** | high | Apple KHÔNG có guidance "not recommended for iOS/iPadOS". Ràng buộc duy nhất là giá trị ∈ {2,3}. Cảnh báo duy nhất từ engineer: count=2 tăng khả năng `nextDrawable` trả nil (drop frame) — trung lập nền tảng. **`maximumDrawableCount = 2` được hỗ trợ đầy đủ trên iOS/iPadOS và là lựa chọn đúng cho latency tối thiểu (kèm xử lý nil).** |
-| DP5 | `CAMetalLayer.opaque = true` giảm presentation latency xuống ~13ms trên ProMotion | **uncertain** | high | Con số ~13ms là 1 lần đo profiling đơn lẻ của 1 engineer Flutter (issue #134959), không tái lập, không phải đặc tính được Apple đảm bảo. `opaque` kế thừa từ `CALayer.isOpaque`; Apple chỉ ghi nó cho phép bỏ alpha-blending. **Set isOpaque=true là rẻ và hợp lý, nhưng đừng coi "13ms" là số ngân sách — phải tự đo.** |
-| DP6 | AVSampleBufferDisplayLayer thêm "1+ frame" buffering so với Metal trên iOS | **uncertain** | medium | Con số "1+ frame" đến từ báo cáo *chủ quan* trên **macOS** (discrete GPU, Moonlight #1885), KHÔNG phải đo trên iOS. Khác biệt kiến trúc compositor (macOS WindowServer vs iOS backboardd) khiến không chắc chuyển sang iOS. **Thiết kế chọn Metal-direct path để loại bỏ rủi ro; nếu dùng AVSampleBufferDisplayLayer phải set `kCMSampleAttachmentKey_DisplayImmediately = true` và đo so sánh trong spike.** |
+| DP1 | `CAMetalDisplayLink` runs on Apple Silicon only | **refuted** | high | The header declares `API_AVAILABLE(macos(14.0), ios(17.0), tvos(17.0))` — **NO Apple Silicon restriction.** Runs on every Mac on macOS 14+ (Intel or AS). The `isAppleSilicon()` guard is Moonlight's own choice (ProMotion frame-pacing reasons), NOT an Apple requirement. |
+| DP2 | `CAMetalDisplayLink.preferredFrameLatency = 1.0` means 1 display cycle | **confirmed** | high | Correct — the unit is **frames**; 1.0 = one display cycle = the API minimum. **Only the values 1.0 and 2.0 are accepted** (Apple marks this Important). The system may exceed the requested level (windowed macOS). Set = 1.0 for streaming. |
+| DP3 | Adaptive sync requires fullscreen (WWDC21) but Apple Support 102144 never mentions it | **confirmed** | high | Both halves are true. WWDC21 session 10147 requires a fullscreen window (NSFullScreenWindowMask) for the Adaptive-Sync *scheduling* APIs; Support 102144 only describes enabling it at the OS level. **Consequence for a single-window app: a NON-fullscreen app gets NO VRR scheduling — windowed falls back to the fixed-rate compositor path.** |
+| DP4 | `maximumDrawableCount = 2` is "not recommended for iOS/iPadOS" (per Apple) | **refuted** | high | Apple has NO "not recommended for iOS/iPadOS" guidance. The only constraint is value ∈ {2,3}. The only engineer warning: count=2 increases the chance `nextDrawable` returns nil (frame drop) — platform-neutral. **`maximumDrawableCount = 2` is fully supported on iOS/iPadOS and is the right choice for minimum latency (with nil handling).** |
+| DP5 | `CAMetalLayer.opaque = true` cuts presentation latency to ~13ms on ProMotion | **uncertain** | high | The ~13ms figure is one isolated profiling measurement by one Flutter engineer (issue #134959), not reproduced, not an Apple-guaranteed property. `opaque` inherits from `CALayer.isOpaque`; Apple only documents that it allows skipping alpha-blending. **Setting isOpaque=true is cheap and sensible, but do not treat "13ms" as a budget number — measure it yourself.** |
+| DP6 | AVSampleBufferDisplayLayer adds "1+ frame" of buffering vs Metal on iOS | **uncertain** | medium | The "1+ frame" figure comes from a *subjective* report on **macOS** (discrete GPU, Moonlight #1885), NOT a measurement on iOS. Compositor architecture differences (macOS WindowServer vs iOS backboardd) make the transfer to iOS uncertain. **The design picks the Metal-direct path to eliminate the risk; if AVSampleBufferDisplayLayer is used, set `kCMSampleAttachmentKey_DisplayImmediately = true` and measure the comparison in a spike.** |
 
 #### 1.6 Transport — Network.framework / BSD sockets / Wi-Fi QoS
 
-| # | Claim gốc | Verdict | Confidence | Phát biểu đã sửa / cần dùng |
+| # | Original claim | Verdict | Confidence | Corrected statement / what to use |
 |---|---|---|---|---|
-| N1 | `serviceClass = .interactiveVideo` map sang `NET_SERVICE_TYPE_VI`; swiftinterface xác nhận; mô tả "inelastic flow, constant packet rate" | **uncertain** | medium | Mapping *cấu trúc hợp lý* nhưng KHÔNG xác minh được từ nguồn công khai (translation table nằm trong code Network.framework đóng). swiftinterface chỉ show tên case, KHÔNG show integer. Có enum C riêng `nw_service_class_interactive_video = 2` (≠ `NET_SERVICE_TYPE_VI = 3`). Mô tả "inelastic/constant packet rate" là của VO (voice), SAI — VI thực ra là "elastic flow, constant packet interval, variable rate". **Vẫn dùng `.interactiveVideo` cho video flow, nhưng đừng coi mapping integer là chắc chắn.** |
-| N2 | `SO_NET_SERVICE_TYPE` set Wi-Fi 802.11e UP nhưng KHÔNG set IP-header DSCP trên macOS hiện đại | **confirmed** | high | Đúng cho Ethernet thường và Wi-Fi non-Fastlane. Cơ chế là gating theo `IFEF_QOSMARKING_ENABLED` (chỉ bật bởi Cisco Fastlane), KHÔNG phải regression theo version. **Quan trọng: để ghi DSCP trên LAN/Ethernet phải dùng `IP_TOS`/`IPV6_TCLASS` setsockopt trực tiếp** — kernel KHÔNG zero ip_tos do user set trên non-Fastlane interface. Trên Fastlane Wi-Fi, IP_TOS bị bỏ qua. |
-| N3 | Network.framework user-space networking (Skywalk/flowsw, zero-copy) active macOS 12+ khi firewall tắt | **uncertain** | medium | (1) Điều kiện firewall **theo version**: macOS 14 firewall bật ⇒ fallback BSD sockets; macOS 15.3+ firewall không còn ép fallback. (2) "Zero-copy" là từ không chính xác — Apple mô tả là path tránh BSD socket qua channel objects, không gọi "zero-copy". (3) Firewall KHÔNG phải trigger duy nhất — iCloud Private Relay và NE VPN cũng fallback. **Verify bằng `sudo skywalkctl flow -n -P <pid>` trên máy mục tiêu.** |
-| N4 | `sendmsg_x` (481) / `recvmsg_x` (480) ổn định và gọi được trên macOS 14+ Apple Silicon | **confirmed** | high | Đúng. Số syscall ổn định 10.10→26.5 SDK, symbol export từ libSystem, có trong public `syscall.h`. "PRIVATE" chỉ nghĩa struct `msghdr_x` nằm trong `socket_private.h` (phải tự forward-declare) và không có man page. **macOS 13 có bug hang ⇒ qualifier "macOS 14+" là load-bearing và chính xác** ([xnu syscalls.master:734-740](https://github.com/oven-sh/bun/blob/main/src/analytics/lib.rs)). |
-| N5 | `net_qos_policy_restricted` default = 0 ⇒ mọi app được Wi-Fi L2 AC_VI marking không cần MDM | **refuted** | high | Default = 0 (CONFIRMED) nhưng ý nghĩa bị hiểu sai. restricted=0 chỉ *cho phép* socket nâng QoS khi nó *yêu cầu rõ ràng* service type cao; default traffic class là `SO_TC_BE` (AC_BE), KHÔNG tự lên AC_VI. App không set service type ⇒ ở AC_BE. **Phải set `.interactiveVideo`/`NET_SERVICE_TYPE_VI` rõ ràng để lên AC_VI.** |
-| N6 | QUIC datagram TLS encryption overhead trên LAN ~0.1–0.5ms | **uncertain** | high | Con số là ước lượng tổng overhead xử lý user-space QUIC, KHÔNG phải "TLS encryption overhead". Chi phí AES-GCM thuần trên Apple Silicon là **sub-microsecond** (<0.001ms cho gói 1400 byte ở 4–11 GB/s HW-accel). Overhead chủ đạo là user-space packet processing, không phải cipher. **Phải tự benchmark NWConnection QUIC datagram vs plain UDP trên stack này.** |
+| N1 | `serviceClass = .interactiveVideo` maps to `NET_SERVICE_TYPE_VI`; the swiftinterface confirms it; described as "inelastic flow, constant packet rate" | **uncertain** | medium | The mapping is *structurally plausible* but NOT verifiable from public sources (the translation table lives in closed Network.framework code). The swiftinterface only shows case names, NOT integers. There is a separate C enum `nw_service_class_interactive_video = 2` (≠ `NET_SERVICE_TYPE_VI = 3`). The "inelastic/constant packet rate" description belongs to VO (voice) and is WRONG — VI is actually "elastic flow, constant packet interval, variable rate". **Still use `.interactiveVideo` for the video flow, but do not treat the integer mapping as certain.** |
+| N2 | `SO_NET_SERVICE_TYPE` sets the Wi-Fi 802.11e UP but does NOT set IP-header DSCP on modern macOS | **confirmed** | high | Correct for ordinary Ethernet and non-Fastlane Wi-Fi. The mechanism is gating on `IFEF_QOSMARKING_ENABLED` (enabled only by Cisco Fastlane), NOT a version regression. **Important: to write DSCP on LAN/Ethernet you must use the `IP_TOS`/`IPV6_TCLASS` setsockopt directly** — the kernel does NOT zero a user-set ip_tos on non-Fastlane interfaces. On Fastlane Wi-Fi, IP_TOS is ignored. |
+| N3 | Network.framework user-space networking (Skywalk/flowsw, zero-copy) is active on macOS 12+ when the firewall is off | **uncertain** | medium | (1) The firewall condition is **version-dependent**: macOS 14 with firewall on ⇒ BSD-socket fallback; macOS 15.3+ firewall no longer forces the fallback. (2) "Zero-copy" is imprecise — Apple describes it as a path that avoids BSD sockets via channel objects, never calls it "zero-copy". (3) The firewall is NOT the only trigger — iCloud Private Relay and NE VPNs also cause fallback. **Verify with `sudo skywalkctl flow -n -P <pid>` on the target machine.** |
+| N4 | `sendmsg_x` (481) / `recvmsg_x` (480) are stable and callable on macOS 14+ Apple Silicon | **confirmed** | high | Correct. Syscall numbers are stable across the 10.10→26.5 SDKs, symbols exported from libSystem, present in the public `syscall.h`. "PRIVATE" only means the `msghdr_x` struct lives in `socket_private.h` (must forward-declare it yourself) and there is no man page. **macOS 13 has a hang bug ⇒ the "macOS 14+" qualifier is load-bearing and accurate** ([xnu syscalls.master:734-740](https://github.com/oven-sh/bun/blob/main/src/analytics/lib.rs)). |
+| N5 | `net_qos_policy_restricted` default = 0 ⇒ every app gets Wi-Fi L2 AC_VI marking without MDM | **refuted** | high | Default = 0 (CONFIRMED) but the meaning was misunderstood. restricted=0 merely *permits* a socket to raise QoS when it *explicitly requests* a higher service type; the default traffic class is `SO_TC_BE` (AC_BE), it does NOT auto-promote to AC_VI. An app that sets no service type ⇒ stays at AC_BE. **Must explicitly set `.interactiveVideo`/`NET_SERVICE_TYPE_VI` to get AC_VI.** |
+| N6 | QUIC datagram TLS encryption overhead on LAN is ~0.1–0.5ms | **uncertain** | high | The figure is an estimate of total user-space QUIC processing overhead, NOT "TLS encryption overhead". Pure AES-GCM cost on Apple Silicon is **sub-microsecond** (<0.001ms for a 1400-byte packet at 4–11 GB/s HW-accel). The dominant overhead is user-space packet processing, not the cipher. **Must benchmark NWConnection QUIC datagram vs plain UDP on this stack yourself.** |
 
 #### 1.7 Realtime threads / scheduling
 
-| # | Claim gốc | Verdict | Confidence | Phát biểu đã sửa / cần dùng |
+| # | Original claim | Verdict | Confidence | Corrected statement / what to use |
 |---|---|---|---|---|
-| RT1 | `os_workgroup_join` trả EINVAL = "thread is not realtime" (phải set THREAD_TIME_CONSTRAINT_POLICY trước) | **confirmed** | high | Đúng, **nhưng giới hạn phạm vi**: chỉ áp dụng cho workgroup loại `WORK_INTERVAL_TYPE_COREAUDIO` (CoreAudio HAL workgroup). Với workgroup khác, EINVAL chỉ nghĩa "workgroup đã cancelled". Kernel check: `sched_mode != TH_MODE_REALTIME && saved_mode != TH_MODE_REALTIME`. Documentation gap là thật ([xnu work_interval.c:679-685](https://developer.apple.com/forums/thread/697874)). |
-| RT2 | `mach_wait_until` trên RT thread < 600µs ở 99.9% (nguồn: forum thread/120403) | **uncertain** | high | **Sai nguồn**: con số đến từ comment không chính thức của @dlech trong micropython issue #8621 (hardware unspecified), KHÔNG phải forum 120403. Apple TN2169 chỉ nói sàn mềm 500µs trên máy idle, không cam kết percentile. Trên Apple Silicon còn nghi ngờ thêm vì thread mặc định rơi xuống E-core. **Phải tự đo với P-core affinity / Audio Workgroup enrollment.** |
-| RT3 | `yield()`/`sched_yield()` tụt priority về 0 tới 10ms | **confirmed** | high | Đúng. XNU: `sched_yield()` → `swtch_pri(0)` → `thread_depress_abstime(1 × std_quantum)`; std_quantum=10ms ở 100Hz; DEPRESSPRI=MINPRI=0. **Áp dụng cả SCHED_RR (TH_MODE_FIXED) — không có exemption.** 10ms là cận trên (có thể được reschedule sớm hơn nếu hệ thống nhẹ tải). **Cấm tuyệt đối `yield()` trên hot media thread; dùng `mach_wait_until`.** |
+| RT1 | `os_workgroup_join` returns EINVAL = "thread is not realtime" (must set THREAD_TIME_CONSTRAINT_POLICY first) | **confirmed** | high | Correct, **but scope-limited**: it applies only to workgroups of type `WORK_INTERVAL_TYPE_COREAUDIO` (the CoreAudio HAL workgroup). For other workgroups, EINVAL just means "workgroup was cancelled". Kernel check: `sched_mode != TH_MODE_REALTIME && saved_mode != TH_MODE_REALTIME`. The documentation gap is real ([xnu work_interval.c:679-685](https://developer.apple.com/forums/thread/697874)). |
+| RT2 | `mach_wait_until` on an RT thread is < 600µs at 99.9% (source: forum thread/120403) | **uncertain** | high | **Wrong source**: the figure comes from an informal comment by @dlech in micropython issue #8621 (hardware unspecified), NOT forum 120403. Apple TN2169 only states a 500µs soft floor on an idle machine, with no percentile commitment. On Apple Silicon there is extra doubt because default threads land on E-cores. **Must measure yourself with P-core affinity / Audio Workgroup enrollment.** |
+| RT3 | `yield()`/`sched_yield()` drops priority to 0 for up to 10ms | **confirmed** | high | Correct. XNU: `sched_yield()` → `swtch_pri(0)` → `thread_depress_abstime(1 × std_quantum)`; std_quantum=10ms at 100Hz; DEPRESSPRI=MINPRI=0. **Applies to SCHED_RR too (TH_MODE_FIXED) — no exemption.** 10ms is the upper bound (may be rescheduled sooner on a lightly loaded system). **Absolutely ban `yield()` on hot media threads; use `mach_wait_until`.** |
 
 #### 1.8 Zero-copy / memory
 
-| # | Claim gốc | Verdict | Confidence | Phát biểu đã sửa / cần dùng |
+| # | Original claim | Verdict | Confidence | Corrected statement / what to use |
 |---|---|---|---|---|
-| Z1 | `SCStreamConfiguration.pixelFormat` hỗ trợ `kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange` ('x420') cho window capture macOS 14+ | **refuted** | high | Format 10-bit YCbCr được header liệt kê là **'xf44' (4:4:4 full-range)**, KHÔNG phải 'x420' (4:2:0 video-range). 'x420' không có trong danh sách supported. HDR APIs (`captureDynamicRange`, `Preset`) yêu cầu **macOS 15.0**, không phải 14.0. **Cho 10-bit HDR dùng `SCStreamConfiguration(preset: .captureHDRStreamLocalDisplay)` (macOS 15+); gán trực tiếp 'x420' là undocumented.** |
-| Z2 | Set `kCVPixelBufferPixelFormatTypeKey` trong VTDecompressionSession gây copy blit trên macOS (ALVR comment nói visionOS 2) | **uncertain** | medium | ALVR comment chỉ nói **visionOS 2** ("setting pixelFormat at all causes a copy"). Trên macOS, header xác nhận copy (qua `VTPixelTransferSession`) chỉ khi format **không tương thích** với native decoder output — KHÔNG phải vô điều kiện. Hành vi visionOS 2 (copy ngay cả với native format) có áp dụng cho macOS 14+ không thì chưa rõ. **Spike: thử omit pixelFormat key, để decoder xuất native, đo.** |
-| Z3 | Private `MTLPixelFormatYCBCR8_420_2P = 500` (và họ hàng) khả dụng trên macOS 14+ Apple Silicon | **uncertain** | high | Giá trị raw 500 CONFIRMED; là **SPI nội bộ Apple** (WebKit định nghĩa dưới `#else of #if USE(APPLE_INTERNAL_SDK)`). KHÔNG có trong public enum, không có `API_AVAILABLE`. MoltenVK map các format YCbCr tương ứng về `Invalid` trên macOS. **Đây là undocumented SPI không có đảm bảo OS-version — chỉ dùng như tối ưu tùy chọn, có fallback shader 2-plane.** |
+| Z1 | `SCStreamConfiguration.pixelFormat` supports `kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange` ('x420') for window capture on macOS 14+ | **refuted** | high | The 10-bit YCbCr format the header lists is **'xf44' (4:4:4 full-range)**, NOT 'x420' (4:2:0 video-range). 'x420' is not in the supported list. The HDR APIs (`captureDynamicRange`, `Preset`) require **macOS 15.0**, not 14.0. **For 10-bit HDR use `SCStreamConfiguration(preset: .captureHDRStreamLocalDisplay)` (macOS 15+); assigning 'x420' directly is undocumented.** |
+| Z2 | Setting `kCVPixelBufferPixelFormatTypeKey` in VTDecompressionSession causes a copy blit on macOS (the ALVR comment says visionOS 2) | **uncertain** | medium | The ALVR comment only covers **visionOS 2** ("setting pixelFormat at all causes a copy"). On macOS, the header confirms a copy (via `VTPixelTransferSession`) only when the format is **incompatible** with the native decoder output — NOT unconditionally. Whether the visionOS 2 behavior (copy even with the native format) applies to macOS 14+ is unclear. **Spike: try omitting the pixelFormat key, let the decoder output native, measure.** |
+| Z3 | The private `MTLPixelFormatYCBCR8_420_2P = 500` (and siblings) are available on macOS 14+ Apple Silicon | **uncertain** | high | The raw value 500 is CONFIRMED; it is **Apple-internal SPI** (WebKit defines it under the `#else` of `#if USE(APPLE_INTERNAL_SDK)`). NOT in the public enum, no `API_AVAILABLE`. MoltenVK maps the corresponding YCbCr formats to `Invalid` on macOS. **This is undocumented SPI with no OS-version guarantee — use only as an optional optimization with a 2-plane shader fallback.** |
 
 #### 1.9 Wi-Fi / AWDL
 
-| # | Claim gốc | Verdict | Confidence | Phát biểu đã sửa / cần dùng |
+| # | Original claim | Verdict | Confidence | Corrected statement / what to use |
 |---|---|---|---|---|
-| W1 | AWDL social channels 5GHz là ch 44 và ch 149 | **confirmed** | high | Đúng (ch 6 ở 2.4GHz, ch 44/149 ở 5GHz), từ reverse-engineering (Seemoo Lab, OWL). Apple chưa xác nhận chính thức. **Cấu hình AP dùng ch 44/149 để loại spike AWDL 50–200ms.** |
-| W2 | Wi-Fi Aware (`WAPerformanceMode.realtime`) KHÔNG có trên macOS 26 | **confirmed** | high | Đúng — header swiftinterface macOS 26.4 có `@available(macOS, unavailable)` rõ ràng (compile-time). Subsystem chạy nội bộ (daemon wifip2pd) nhưng không expose API cho dev macOS. **Wi-Fi Aware chỉ dùng cho client iOS/iPadOS 26+, không cho macOS.** |
+| W1 | The AWDL 5GHz social channels are ch 44 and ch 149 | **confirmed** | high | Correct (ch 6 on 2.4GHz, ch 44/149 on 5GHz), from reverse-engineering (Seemoo Lab, OWL). Never officially confirmed by Apple. **Configure the AP to use ch 44/149 to eliminate the 50–200ms AWDL spikes.** |
+| W2 | Wi-Fi Aware (`WAPerformanceMode.realtime`) does NOT exist on macOS 26 | **confirmed** | high | Correct — the macOS 26.4 swiftinterface header has an explicit `@available(macOS, unavailable)` (compile-time). The subsystem runs internally (the wifip2pd daemon) but exposes no API to macOS devs. **Wi-Fi Aware is for iOS/iPadOS 26+ clients only, not macOS.** |
 
-### 2. CORRECTIONS đối với thiết kế trước đây của dự án
+### 2. CORRECTIONS to the project's earlier design
 
-Đây là các điểm trong corpus/stack mô tả ban đầu **mâu thuẫn với verdict** và phải sửa trước khi code:
+These are the points where the corpus/original stack description **contradicts a verdict** and must be fixed before coding:
 
-1. **`minimumFrameInterval = kCMTimeZero` (C1, refuted).** Project context và summary capture-floor đề xuất `kCMTimeZero`. **SỬA:** dùng `config.minimumFrameInterval = CMTimeMake(1, targetFPS * 110/100)` (ngắn hơn ~10% theo OBS PR #11896). `kCMTimeZero` không được chứng minh và không có trong code OBS.
+1. **`minimumFrameInterval = kCMTimeZero` (C1, refuted).** The project context and the capture-floor summary proposed `kCMTimeZero`. **FIX:** use `config.minimumFrameInterval = CMTimeMake(1, targetFPS * 110/100)` (~10% shorter per OBS PR #11896). `kCMTimeZero` is unproven and absent from the OBS code.
 
-2. **`queueDepth` "minimum 3" (C3, refuted).** Nhiều technique trong corpus ghi "3 là minimum". **SỬA:** default thực là 8; sàn cứng không tồn tại; `queueDepth = 2` hợp lệ và cho latency thấp hơn (kèm xử lý IOSurface release nhanh). Dùng 2 hoặc 3 tùy đo đạc deadline release.
+2. **`queueDepth` "minimum 3" (C3, refuted).** Several corpus techniques say "3 is the minimum". **FIX:** the real default is 8; no hard floor exists; `queueDepth = 2` is valid and gives lower latency (with fast IOSurface release handling). Use 2 or 3 depending on measured release deadlines.
 
-3. **`EnableLowLatencyRateControl` + HEVC "được SDK xác nhận" (E1/E2, refuted/uncertain).** **SỬA:** coi đây là hành vi *thực nghiệm* chỉ trên Apple Silicon (bằng chứng FFmpeg), KHÔNG phải đảm bảo Apple. Thiết kế phải có code-path dò runtime (`VTCopySupportedPropertyDictionaryForEncoder`) và fallback cấu hình HEVC low-latency thủ công (E3/E5/E6). Cảnh báo: `kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder` trả `kVTPropertyNotSupportedErr (-12900)` trong low-latency mode — đây KHÔNG phải bằng chứng mất HW accel; lỗi gating HW thật là `-12902`.
+3. **`EnableLowLatencyRateControl` + HEVC "confirmed by the SDK" (E1/E2, refuted/uncertain).** **FIX:** treat this as *empirical* behavior on Apple Silicon only (FFmpeg evidence), NOT an Apple guarantee. The design must have a runtime-probing code path (`VTCopySupportedPropertyDictionaryForEncoder`) and a manual HEVC low-latency config fallback (E3/E5/E6). Warning: `kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder` returns `kVTPropertyNotSupportedErr (-12900)` in low-latency mode — that is NOT evidence of lost HW accel; the real missing-HW gating error is `-12902`.
 
-4. **`ForceLTRRefresh` type (E4, confirmed mâu thuẫn nội bộ).** **SỬA:** header tự mâu thuẫn (annotation `CFNumberRef` vs abstract `kCFBooleanTrue`). Code phải thử cả hai và chọn cái encoder chấp nhận ở runtime — không hardcode một loại.
+4. **`ForceLTRRefresh` type (E4, confirmed internal contradiction).** **FIX:** the header contradicts itself (annotation `CFNumberRef` vs abstract `kCFBooleanTrue`). Code must try both and pick whichever the encoder accepts at runtime — do not hardcode one type.
 
-5. **`MaxFrameDelayCount = 0` ý nghĩa (E5, refuted).** **SỬA:** 0 = emit đồng bộ one-in-one-out (đúng cho low-latency), KHÔNG phải "default/no-limit". Đây thực ra là điều ta MUỐN — chỉ cần đảm bảo không hiểu nhầm thành "để encoder tự do buffer".
+5. **The meaning of `MaxFrameDelayCount = 0` (E5, refuted).** **FIX:** 0 = synchronous one-in-one-out emit (correct for low-latency), NOT "default/no-limit". This is actually what we WANT — just make sure it is not misread as "let the encoder buffer freely".
 
-6. **`AllowOpenGOP` cho HEVC (E6, confirmed).** **SỬA:** HEVC mặc định `true` — PHẢI set `false` rõ ràng. Nếu thiết kế cũ giả định "GOP đóng mặc định", đó là sai.
+6. **`AllowOpenGOP` for HEVC (E6, confirmed).** **FIX:** HEVC defaults to `true` — MUST set `false` explicitly. If the old design assumed "closed GOP by default", that was wrong.
 
-7. **Slice-pipelining/tiles/WPP (S1–S3, uncertain).** **SỬA:** loại bỏ kỳ vọng sub-frame pipelining kiểu NVENC. VideoToolbox output ở mức frame-granular; các private symbol không đáng tin. Cơ chế song song duy nhất khả dụng là **inter-frame pipelining** (capture N+1 song song transmit/decode N).
+7. **Slice-pipelining/tiles/WPP (S1–S3, uncertain).** **FIX:** drop the expectation of NVENC-style sub-frame pipelining. VideoToolbox output is frame-granular; the private symbols are untrustworthy. The only available parallelism is **inter-frame pipelining** (capture N+1 in parallel with transmit/decode of N).
 
-8. **Pixel format decode mismatch (D3, refuted "unified memory tự tối ưu").** **SỬA:** phải khớp format native decoder; KHÔNG được giả định unified memory loại bỏ chi phí conversion. Không set `kCVPixelBufferPixelFormatTypeKey` khác native.
+8. **Decode pixel-format mismatch (D3, "unified memory optimizes it away" refuted).** **FIX:** must match the decoder's native format; do NOT assume unified memory removes the conversion cost. Do not set `kCVPixelBufferPixelFormatTypeKey` to anything non-native.
 
-9. **DSCP qua `SO_NET_SERVICE_TYPE` (N2, confirmed).** **SỬA:** trên LAN/Ethernet, để ghi DSCP IP-header phải dùng `IP_TOS`/`IPV6_TCLASS` trực tiếp; `SO_NET_SERVICE_TYPE`/`.interactiveVideo` chỉ điều khiển Wi-Fi L2 UP. Dùng cả hai (L2 qua serviceClass, L3 qua IP_TOS) nếu cần priority trên switch managed.
+9. **DSCP via `SO_NET_SERVICE_TYPE` (N2, confirmed).** **FIX:** on LAN/Ethernet, writing IP-header DSCP requires `IP_TOS`/`IPV6_TCLASS` directly; `SO_NET_SERVICE_TYPE`/`.interactiveVideo` only controls Wi-Fi L2 UP. Use both (L2 via serviceClass, L3 via IP_TOS) if priority on a managed switch is needed.
 
-10. **AC_VI "tự động không cần MDM" (N5, refuted).** **SỬA:** phải set service type rõ ràng; default là AC_BE. `net_qos_policy_restricted=0` chỉ *cho phép*, không *tự nâng*.
+10. **AC_VI "automatic without MDM" (N5, refuted).** **FIX:** must set the service type explicitly; the default is AC_BE. `net_qos_policy_restricted=0` only *permits*, it does not *auto-promote*.
 
-11. **`maximumDrawableCount=2` "không nên dùng trên iOS" (DP4, refuted).** **SỬA:** dùng 2 trên cả macOS lẫn iOS cho latency tối thiểu (xử lý nil drawable). Lưu ý: Moonlight/Apple DTS khuyến nghị 3 trên macOS để tránh starvation — đây là trade-off cần đo trong spike, không phải cấm.
+11. **`maximumDrawableCount=2` "should not be used on iOS" (DP4, refuted).** **FIX:** use 2 on both macOS and iOS for minimum latency (handle nil drawables). Note: Moonlight/Apple DTS recommend 3 on macOS to avoid starvation — that is a trade-off to measure in a spike, not a prohibition.
 
-12. **`CAMetalDisplayLink` "chỉ Apple Silicon" (DP1, refuted).** **SỬA:** không gate theo `isAppleSilicon()` nếu chỉ vì lo API không có — nó có trên mọi Mac macOS 14+. Chỉ gate nếu có lý do ProMotion-specific.
+12. **`CAMetalDisplayLink` "Apple Silicon only" (DP1, refuted).** **FIX:** do not gate on `isAppleSilicon()` just out of fear the API is missing — it exists on every Mac on macOS 14+. Only gate for ProMotion-specific reasons.
 
-13. **10-bit capture format (Z1, refuted).** **SỬA:** không gán `kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange` ('x420') vào `SCStreamConfiguration.pixelFormat`. Cho 10-bit HDR dùng `SCStreamConfiguration(preset:)` (macOS 15+) hoặc 'xf44' (4:4:4). Lưu ý: HDR capture cần **macOS 15.0**, không phải 14.0 — điều chỉnh ma trận OS support.
+13. **10-bit capture format (Z1, refuted).** **FIX:** do not assign `kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange` ('x420') to `SCStreamConfiguration.pixelFormat`. For 10-bit HDR use `SCStreamConfiguration(preset:)` (macOS 15+) or 'xf44' (4:4:4). Note: HDR capture requires **macOS 15.0**, not 14.0 — adjust the OS-support matrix.
 
-14. **Adaptive sync (DP3, confirmed).** **SỬA:** app single-window (không fullscreen) KHÔNG hưởng VRR scheduling. Nếu cần VRR phải fullscreen — mâu thuẫn với differentiator "single window". Quyết định kiến trúc: hoặc chấp nhận fixed-rate compositor cho windowed, hoặc cung cấp chế độ fullscreen tùy chọn ở client.
+14. **Adaptive sync (DP3, confirmed).** **FIX:** a single-window (non-fullscreen) app gets NO VRR scheduling. If VRR is needed, fullscreen is required — conflicting with the "single window" differentiator. Architecture decision: either accept the fixed-rate compositor for windowed, or offer an optional fullscreen mode on the client.
 
-### 3. Phase-0 spike — checklist xác nhận thực nghiệm (BẮT BUỘC)
+### 3. Phase-0 spike — empirical validation checklist (MANDATORY)
 
-Mọi mục `refuted`/`uncertain` ở trên đều phải được đóng lại bằng đo đạc trên phần cứng mục tiêu (host: Apple Silicon Mac macOS 14 + macOS 15 + nếu có macOS 26; client: macOS + iPhone/iPad 120Hz ProMotion). Đo bằng clock thống nhất `clock_gettime_nsec_np(CLOCK_UPTIME_RAW)` và `mach_timebase_info` (Apple Silicon: numer=125, denom=3 — **xác nhận trên M2/M3/M4 vì chỉ M1 được đo công khai**).
+Every `refuted`/`uncertain` item above must be closed by measurement on the target hardware (host: Apple Silicon Mac on macOS 14 + macOS 15 + macOS 26 if available; client: macOS + iPhone/iPad 120Hz ProMotion). Measure with the unified clock `clock_gettime_nsec_np(CLOCK_UPTIME_RAW)` and `mach_timebase_info` (Apple Silicon: numer=125, denom=3 — **confirm on M2/M3/M4 since only M1 was publicly measured**).
 
 **A. Capture (ScreenCaptureKit)**
-- [ ] **C1/C2 — minimumFrameInterval:** Trên ProMotion 120Hz, đo fps thực giao với (a) default (kỳ vọng 60), (b) `1/120`, (c) `(1/120)×0.9`, (d) `kCMTimeZero`. *Đo:* đếm callback `complete` trong 10s qua testufo-style content. *Pass:* tìm giá trị cho ≥115 fps ổn định không drop.
-- [ ] **C3 — queueDepth:** Thử queueDepth = 1, 2, 3. *Đo:* tỉ lệ drop frame + latency capture→encode-submit khi encoder bận. Xác nhận deadline release `minimumFrameInterval × (queueDepth−1)` đạt được với VT HW encode. *Pass:* chọn giá trị nhỏ nhất không gây stall.
-- [ ] **C4 — displayTime clock:** So `SCStreamFrameInfoDisplayTime` (đổi ticks→ns qua mach_timebase) với `CACurrentMediaTime()*1e9` cùng frame. *Pass:* chênh lệch dương, hợp lý (~vài ms), không âm. Nếu âm ⇒ điều tra bug PTS riêng.
-- [ ] **Z1 — pixel format:** Liệt kê format thực `SCStreamConfiguration` chấp nhận; thử '420v' (8-bit), 'xf44' (10-bit), và preset HDR (macOS 15+). *Đo:* xác nhận IOSurface backing + không có conversion pass thừa khi feed thẳng vào VT encoder.
+- [ ] **C1/C2 — minimumFrameInterval:** On ProMotion 120Hz, measure the actual delivered fps with (a) the default (expect 60), (b) `1/120`, (c) `(1/120)×0.9`, (d) `kCMTimeZero`. *Measure:* count `complete` callbacks over 10s on testufo-style content. *Pass:* find the value giving a stable ≥115 fps with no drops.
+- [ ] **C3 — queueDepth:** Try queueDepth = 1, 2, 3. *Measure:* frame-drop rate + capture→encode-submit latency while the encoder is busy. Confirm the release deadline `minimumFrameInterval × (queueDepth−1)` is met with VT HW encode. *Pass:* pick the smallest value that does not stall.
+- [ ] **C4 — displayTime clock:** Compare `SCStreamFrameInfoDisplayTime` (ticks→ns via mach_timebase) against `CACurrentMediaTime()*1e9` for the same frame. *Pass:* a positive, reasonable delta (~a few ms), never negative. If negative ⇒ investigate as a separate PTS bug.
+- [ ] **Z1 — pixel format:** Enumerate the formats `SCStreamConfiguration` actually accepts; try '420v' (8-bit), 'xf44' (10-bit), and the HDR preset (macOS 15+). *Measure:* confirm IOSurface backing + no extra conversion pass when feeding straight into the VT encoder.
 
 **B. Encode (VideoToolbox HEVC)**
-- [ ] **E1/E2 — HEVC low-latency RC:** Tạo VTCompressionSession HEVC với `EnableLowLatencyRateControl=true`; gọi `VTCopySupportedPropertyDictionaryForEncoder`. *Đo:* session tạo thành công, HW engine engage (đối chiếu Activity Monitor GPU 0%, đo per-frame encode time). *Pass:* HEVC 1080p60 & 4K60 encode < frame budget; nếu fail ⇒ kích hoạt fallback config thủ công (E3/E5/E6).
-- [ ] **E4 — ForceLTRRefresh type:** Gửi LTR refresh bằng `kCFBooleanTrue` rồi bằng `@(1)` (CFNumberRef). *Đo:* output frame có phải LTR-P (nhỏ hơn IDR) không, có lỗi không. *Pass:* xác định đúng loại encoder chấp nhận.
-- [ ] **E3 — EnableLTR + HEVC:** Bật EnableLTR trên HEVC low-latency session, chạy vòng ACK token. *Pass:* nhận `RequireLTRAcknowledgementToken` trên output, ForceLTRRefresh tạo LTR-P thay vì IDR.
-- [ ] **Per-frame encode latency (open question):** Đo `encode_done_ns − encode_submit_ns` cho HEVC Main10 ở 1080p/4K @ 60/120fps. *Mục tiêu:* xác lập số thật cho ngân sách (ceiling lý thuyết ~3.3ms/1080p chỉ là throughput, không phải latency).
-- [ ] **First-IDR spike:** Đo frame đầu CÓ và KHÔNG có `VTCompressionSessionPrepareToEncodeFrames`. *Pass:* lượng hóa penalty cold-start (corpus: chưa có số public).
+- [ ] **E1/E2 — HEVC low-latency RC:** Create an HEVC VTCompressionSession with `EnableLowLatencyRateControl=true`; call `VTCopySupportedPropertyDictionaryForEncoder`. *Measure:* session creation succeeds, the HW engine engages (cross-check Activity Monitor GPU 0%, measure per-frame encode time). *Pass:* HEVC 1080p60 & 4K60 encode < frame budget; on failure ⇒ activate the manual fallback config (E3/E5/E6).
+- [ ] **E4 — ForceLTRRefresh type:** Send an LTR refresh with `kCFBooleanTrue` and then with `@(1)` (CFNumberRef). *Measure:* whether the output frame is an LTR-P (smaller than IDR), whether there are errors. *Pass:* determine which type the encoder accepts.
+- [ ] **E3 — EnableLTR + HEVC:** Enable EnableLTR on an HEVC low-latency session, run the ACK-token loop. *Pass:* receive `RequireLTRAcknowledgementToken` on output, ForceLTRRefresh produces an LTR-P instead of an IDR.
+- [ ] **Per-frame encode latency (open question):** Measure `encode_done_ns − encode_submit_ns` for HEVC Main10 at 1080p/4K @ 60/120fps. *Goal:* establish the real budget numbers (the ~3.3ms/1080p theoretical ceiling is throughput, not latency).
+- [ ] **First-IDR spike:** Measure the first frame WITH and WITHOUT `VTCompressionSessionPrepareToEncodeFrames`. *Pass:* quantify the cold-start penalty (corpus: no public number).
 
 **C. Decode + Render**
-- [ ] **D2 — flags=0 sync:** Đo `decode_done − decode_submit` với flags=0; kiểm `kVTDecodeInfo_Asynchronous` trong infoFlags callback. *Pass:* xác nhận callback fire trước khi DecodeFrame trả về; ghi nhận có async-internal hay không.
-- [ ] **D3 / Z2 — destination pixel format:** So 3 cấu hình: (a) omit pixelFormat key, (b) set native `420YpCbCr10BiPlanarVideoRange`, (c) set BGRA. *Đo:* decode latency + GPU blit pass (Instruments). *Pass:* chọn cấu hình không có extra copy trên macOS 14+.
-- [ ] **DP6 — AVSampleBufferDisplayLayer vs Metal:** A/B trên cả macOS và iOS client: VTDecompressionSession→CVMetalTextureCache→CAMetalLayer vs AVSampleBufferDisplayLayer (với `DisplayImmediately=true`). *Đo:* glass-to-glass bằng camera tốc độ cao (240fps/1000fps) hoặc photodiode rig. *Pass:* xác định path nào thấp hơn, bằng bao nhiêu ms — KHÔNG dựa vào "1+ frame" suy đoán.
-- [ ] **Z3 — private YCbCr MTLPixelFormat:** Thử map decoded 10-bit buffer sang `MTLPixelFormat(rawValue:505)`. *Pass:* hoạt động ⇒ dùng như tối ưu tùy chọn; fail ⇒ fallback 2-plane r16Unorm/rg16Unorm shader. **Không phụ thuộc kiến trúc vào symbol này.**
-- [ ] **DP5 — opaque:** Đo presentation latency với `isOpaque` true vs false trên ProMotion. *Pass:* xác nhận hướng cải thiện (không kỳ vọng đúng "13ms").
+- [ ] **D2 — flags=0 sync:** Measure `decode_done − decode_submit` with flags=0; check `kVTDecodeInfo_Asynchronous` in the callback infoFlags. *Pass:* confirm the callback fires before DecodeFrame returns; record whether there is internal async.
+- [ ] **D3 / Z2 — destination pixel format:** Compare 3 configs: (a) omit the pixelFormat key, (b) set native `420YpCbCr10BiPlanarVideoRange`, (c) set BGRA. *Measure:* decode latency + GPU blit pass (Instruments). *Pass:* pick the config with no extra copy on macOS 14+.
+- [ ] **DP6 — AVSampleBufferDisplayLayer vs Metal:** A/B on both macOS and iOS clients: VTDecompressionSession→CVMetalTextureCache→CAMetalLayer vs AVSampleBufferDisplayLayer (with `DisplayImmediately=true`). *Measure:* glass-to-glass with a high-speed camera (240fps/1000fps) or a photodiode rig. *Pass:* determine which path is lower and by how many ms — do NOT rely on the speculated "1+ frame".
+- [ ] **Z3 — private YCbCr MTLPixelFormat:** Try mapping a decoded 10-bit buffer to `MTLPixelFormat(rawValue:505)`. *Pass:* works ⇒ use as an optional optimization; fails ⇒ fall back to the 2-plane r16Unorm/rg16Unorm shader. **Do not architecturally depend on this symbol.**
+- [ ] **DP5 — opaque:** Measure presentation latency with `isOpaque` true vs false on ProMotion. *Pass:* confirm the direction of improvement (do not expect exactly "13ms").
 
 **D. Transport**
-- [ ] **N3 — user-space networking:** Chạy `sudo skywalkctl flow -n -P <pid>` với firewall ON/OFF trên macOS 14 VÀ 15. *Pass:* xác nhận flowsw entries; ghi nhận điều kiện fallback (firewall/Private Relay/VPN).
-- [ ] **N4 — sendmsg_x/recvmsg_x:** Forward-declare `msghdr_x`, gọi `sendmsg_x(fd, msgs, N, 0)` batch. *Đo:* số syscall giảm N lần, throughput. *Pass:* chạy không crash trên macOS 14+ AS; so với per-packet sendmsg.
-- [ ] **N6 — QUIC vs UDP overhead:** Microbench NWConnection QUIC datagram send-to-send vs plain UDP send-to-send trên LAN wired, gói ~1400B. *Đo:* delta ns/gói bằng Instruments System Trace. *Pass:* lượng hóa overhead thật (corpus chỉ ước lượng).
-- [ ] **N1/N5 — QoS marking thực tế:** Set `.interactiveVideo` + `IP_TOS=AF41<<2`; bắt gói bằng Wireshark trên LAN. *Đo:* DSCP byte trong IP header (kỳ vọng 0 cho SO_NET_SERVICE_TYPE alone; non-zero cho IP_TOS); xác nhận Wi-Fi AC_VI qua air capture nếu có. *Pass:* hiểu chính xác cơ chế nào set cái gì.
+- [ ] **N3 — user-space networking:** Run `sudo skywalkctl flow -n -P <pid>` with firewall ON/OFF on macOS 14 AND 15. *Pass:* confirm flowsw entries; record the fallback conditions (firewall/Private Relay/VPN).
+- [ ] **N4 — sendmsg_x/recvmsg_x:** Forward-declare `msghdr_x`, call `sendmsg_x(fd, msgs, N, 0)` in batch. *Measure:* syscall count drops N×, throughput. *Pass:* runs without crashing on macOS 14+ AS; compare against per-packet sendmsg.
+- [ ] **N6 — QUIC vs UDP overhead:** Microbench NWConnection QUIC datagram send-to-send vs plain UDP send-to-send on wired LAN, ~1400B packets. *Measure:* the ns/packet delta with Instruments System Trace. *Pass:* quantify the real overhead (the corpus only estimates).
+- [ ] **N1/N5 — actual QoS marking:** Set `.interactiveVideo` + `IP_TOS=AF41<<2`; capture packets with Wireshark on the LAN. *Measure:* the DSCP byte in the IP header (expect 0 for SO_NET_SERVICE_TYPE alone; non-zero for IP_TOS); confirm Wi-Fi AC_VI via air capture if available. *Pass:* understand exactly which mechanism sets what.
 
 **E. Realtime threads / scheduling**
-- [ ] **RT1 — os_workgroup_join EINVAL:** Thử join CoreAudio workgroup KHÔNG set THREAD_TIME_CONSTRAINT_POLICY (kỳ vọng EINVAL) rồi CÓ set (kỳ vọng OK). *Pass:* xác nhận thứ tự bắt buộc; xác định workgroup video custom có cần điều kiện này không.
-- [ ] **RT2 — mach_wait_until jitter:** Đo wakeup jitter trên RT thread (THREAD_TIME_CONSTRAINT_POLICY) CÓ và KHÔNG có os_workgroup_interval, với và không với P-core enrollment. *Pass:* lập phân phối p50/p99/p99.9 thật trên M-series (đừng tin "600µs").
-- [ ] **DVFS ramp (open question):** Đo P-core frequency ramp time trên chip mục tiêu (M2/M3/M4) qua IOReport CPU Performance States residency. *Pass:* xác nhận ~70ms (M1) còn đúng hay ngắn hơn; quyết định có cần os_workgroup_interval keep-warm không.
+- [ ] **RT1 — os_workgroup_join EINVAL:** Try joining the CoreAudio workgroup WITHOUT setting THREAD_TIME_CONSTRAINT_POLICY (expect EINVAL) and then WITH it (expect OK). *Pass:* confirm the required ordering; determine whether a custom video workgroup needs this condition.
+- [ ] **RT2 — mach_wait_until jitter:** Measure wakeup jitter on an RT thread (THREAD_TIME_CONSTRAINT_POLICY) WITH and WITHOUT os_workgroup_interval, with and without P-core enrollment. *Pass:* build the real p50/p99/p99.9 distribution on M-series (do not trust "600µs").
+- [ ] **DVFS ramp (open question):** Measure the P-core frequency ramp time on the target chips (M2/M3/M4) via IOReport CPU Performance States residency. *Pass:* confirm whether ~70ms (M1) still holds or is shorter; decide whether os_workgroup_interval keep-warm is needed.
 
-**F. Clock-sync & ground-truth (xuyên suốt)**
-- [ ] **mach_timebase numer/denom:** Đọc trên mọi chip mục tiêu. *Pass:* xác nhận 125/3 (M1) đồng nhất qua M2/M3/M4.
-- [ ] **NWProtocolIP.Metadata.receiveTime epoch:** Đã xác nhận corpus là **CLOCK_MONOTONIC_RAW** (tăng cả khi sleep), KHÁC `CLOCK_UPTIME_RAW`/`mach_absolute_time`. *Spike:* tính offset đồng thời lúc startup và refresh khi wake-from-sleep. *Pass:* one-way latency không âm, ổn định.
-- [ ] **Ground-truth glass-to-glass:** Dựng photodiode + LED rig (Raspberry Pi Pico, ~20ns resolution) hoặc camera 240/1000fps. *Pass:* tổng các stage software đo được khớp hardware trong ±1ms; nếu lệch >1ms ⇒ có bug clock/instrument.
-- [ ] **Overlay underreport warning:** Đối chiếu số overlay nội bộ với ground-truth. *Pass:* biết overlay thiếu bao nhiêu (capture delay + compositor + scanout).
+**F. Clock-sync & ground-truth (cross-cutting)**
+- [ ] **mach_timebase numer/denom:** Read on every target chip. *Pass:* confirm 125/3 (M1) is consistent across M2/M3/M4.
+- [ ] **NWProtocolIP.Metadata.receiveTime epoch:** Corpus already confirmed it is **CLOCK_MONOTONIC_RAW** (advances during sleep), DIFFERENT from `CLOCK_UPTIME_RAW`/`mach_absolute_time`. *Spike:* compute the simultaneous offset at startup and refresh on wake-from-sleep. *Pass:* one-way latency is non-negative and stable.
+- [ ] **Ground-truth glass-to-glass:** Build a photodiode + LED rig (Raspberry Pi Pico, ~20ns resolution) or use a 240/1000fps camera. *Pass:* the sum of measured software stages matches hardware within ±1ms; if off by >1ms ⇒ a clock/instrumentation bug exists.
+- [ ] **Overlay underreport warning:** Cross-check the internal overlay numbers against ground truth. *Pass:* know exactly how much the overlay misses (capture delay + compositor + scanout).
 
 **G. Display phase / beat-frequency**
-- [ ] **Host display rate exactness:** Đọc rate thực host display (kỳ vọng phát hiện 59.951/59.94 vs 60.000). *Pass:* nếu lệch ⇒ ép `CGDisplaySetDisplayMode` khớp client rate để loại beat (~17–20s period).
-- [ ] **DP2 — preferredFrameLatency:** Xác nhận chỉ 1.0/2.0 hợp lệ; đo latency drawable pipeline ở 1.0 vs 2.0. *Pass:* set 1.0 cho streaming.
+- [ ] **Host display rate exactness:** Read the host display's true rate (expect to detect 59.951/59.94 vs 60.000). *Pass:* if off ⇒ force `CGDisplaySetDisplayMode` to match the client rate to eliminate the beat (~17–20s period).
+- [ ] **DP2 — preferredFrameLatency:** Confirm only 1.0/2.0 are valid; measure drawable-pipeline latency at 1.0 vs 2.0. *Pass:* set 1.0 for streaming.
 
-**Tiêu chí thoát Phase 0:** mọi hàng `refuted`/`uncertain` trong Bảng §1 đã chuyển thành `confirmed`/`refuted` *có số đo*, và pipeline glass-to-glass thực nghiệm (qua ground-truth rig) nằm trong ngưỡng kỳ vọng (~14–16ms @120fps wired, ~22–26ms @60fps wired — các con số này cũng cần validate, vì phần lớn là dẫn xuất chứ chưa đo trên stack native Swift này).
+**Phase-0 exit criteria:** every `refuted`/`uncertain` row in the §1 tables has been converted to `confirmed`/`refuted` *with measurements*, and the empirical glass-to-glass pipeline (via the ground-truth rig) sits within the expected band (~14–16ms @120fps wired, ~22–26ms @60fps wired — these numbers also need validation, since most are derived rather than measured on this native Swift stack).

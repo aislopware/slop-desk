@@ -1,85 +1,85 @@
 # 03 — Transport, Discovery & Protocol
 
-> **STATUS: REFERENCE — GUI video-path (Phase 4).** Kiến trúc hiện hành: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
+> **STATUS: REFERENCE — GUI video-path (Phase 4).** Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-Tất cả dùng **Network.framework** (native, không libwebrtc). Ba phần: discovery (Bonjour), transport (UDP/QUIC), và packet format.
+Everything uses **Network.framework** (native, no libwebrtc). Three parts: discovery (Bonjour), transport (UDP/QUIC), and the packet format.
 
 ---
 
 ## 1. Discovery — Bonjour zero-config
 
-> ⚠️ **Bonjour CHỈ chạy cùng LAN vật lý** — KHÔNG đi qua NetBird mesh (WireGuard không forward multicast). Peer qua mesh: dùng **NetBird DNS (`host.netbird.cloud`)** / IP `100.64/10` / NetBird API. App nên hỗ trợ cả hai: Bonjour cho same-LAN, nhập/chọn NetBird hostname cho remote. Chi tiết [13](13-netbird-transport.md).
+> ⚠️ **Bonjour ONLY works on the same physical LAN** — it does NOT traverse the NetBird mesh (WireGuard doesn't forward multicast). For peers across the mesh: use **NetBird DNS (`host.netbird.cloud`)** / `100.64/10` IPs / the NetBird API. The app should support both: Bonjour for same-LAN, entering/picking a NetBird hostname for remote. Details in [13](13-netbird-transport.md).
 
 ### Host advertise (`NWListener`)
 
 ```swift
-let listener = try NWListener(using: params)   // port tự cấp; đọc lại từ .port
+let listener = try NWListener(using: params)   // port auto-assigned; read it back from .port
 var txt = NWTXTRecord()
 txt["v"] = "1"; txt["codec"] = "hevc"; txt["res"] = "3840x2160"
-listener.service = NWListener.Service(name: "Phòng khách Mac",
+listener.service = NWListener.Service(name: "Living Room Mac",
                                       type: "_panecast._udp", domain: nil, txtRecord: txt)
-listener.serviceRegistrationUpdateHandler = { change in /* tên thực sau khi resolve va chạm */ }
-listener.newConnectionHandler = { conn in /* accept, start trên queue */ }
+listener.serviceRegistrationUpdateHandler = { change in /* actual name after collision resolution */ }
+listener.newConnectionHandler = { conn in /* accept, start on a queue */ }
 listener.start(queue: .main)
 ```
 
 ### Client discover (`NWBrowser`)
 
-Dùng `.bonjourWithTXTRecord` để lọc theo codec/version **trước khi** connect:
+Use `.bonjourWithTXTRecord` to filter by codec/version **before** connecting:
 
 ```swift
 let browser = NWBrowser(for: .bonjourWithTXTRecord(type: "_panecast._udp", domain: nil), using: .udp)
 browser.browseResultsChangedHandler = { results, _ in
     for r in results {
-        if case let .bonjour(txt) = r.metadata { _ = txt["codec"] }   // check trước connect
-        // r.endpoint dùng trực tiếp — không cần resolve IP/port thủ công
+        if case let .bonjour(txt) = r.metadata { _ = txt["codec"] }   // check before connecting
+        // use r.endpoint directly — no manual IP/port resolution needed
     }
 }
 browser.start(queue: .main)
 // Connect: NWConnection(to: result.endpoint, using: params)
 ```
 
-> 📋 **Info.plist bắt buộc** (iOS 14+ nếu không sẽ im lặng không tìm thấy): `NSLocalNetworkUsageDescription` + `NSBonjourServices = ["_panecast._udp"]`.
+> 📋 **Required Info.plist entries** (iOS 14+; otherwise discovery silently finds nothing): `NSLocalNetworkUsageDescription` + `NSBonjourServices = ["_panecast._udp"]`.
 
 ---
 
-## 2. Transport — chọn UDP hay QUIC
+## 2. Transport — choosing UDP vs QUIC
 
-| | UDP thuần | QUIC datagram | QUIC stream |
+| | Plain UDP | QUIC datagram | QUIC stream |
 |--|-----------|---------------|-------------|
-| Reliability | Không (đúng ý cho video) | Không (như UDP) | Có + ordered (**HOL blocking — tệ cho video**) |
-| Congestion control | Tự xây | **Có sẵn, phản ứng RTT/loss** | Có sẵn |
-| Encryption | Tự lo | TLS 1.3 sẵn | TLS 1.3 sẵn |
+| Reliability | None (exactly what video wants) | None (like UDP) | Yes + ordered (**HOL blocking — bad for video**) |
+| Congestion control | Build your own | **Built-in, reacts to RTT/loss** | Built-in |
+| Encryption | Roll your own | TLS 1.3 built-in | TLS 1.3 built-in |
 | Min OS | iOS 12 | iOS 16 / Ventura | iOS 15 |
-| Overhead | Zero handshake | 1-RTT (hoặc 0-RTT) | — |
+| Overhead | Zero handshake | 1-RTT (or 0-RTT) | — |
 
-> ⚠️ **Transport chạy TRÊN NetBird (WireGuard mesh)** — xem [13-netbird-transport.md](13-netbird-transport.md). Điều này ghi đè nhiều khuyến nghị dưới: encryption đã có ở tầng VPN (bỏ TLS/QUIC-crypto), interface là `utun` (`.other` — KHÔNG pin `.wiredEthernet`), `serviceClass` vô tác dụng qua tunnel, Bonjour không qua mesh. Đọc doc 13 trước.
+> ⚠️ **The transport runs ON TOP OF NetBird (WireGuard mesh)** — see [13-netbird-transport.md](13-netbird-transport.md). This overrides several recommendations below: encryption already exists at the VPN layer (drop TLS/QUIC-crypto), the interface is `utun` (`.other` — do NOT pin `.wiredEthernet`), `serviceClass` has no effect through the tunnel, Bonjour doesn't cross the mesh. Read doc 13 first.
 
-**Khuyến nghị (đã cập nhật cho NetBird):**
-- **Video → UDP thuần.** WireGuard đã encrypt → **bỏ QUIC** (lý do dùng QUIC chủ yếu là TLS + congestion; TLS thừa, congestion tự làm adaptive). Loss/jitter tùy tier: direct P2P ~0 (như LAN), relayed thì cần adaptive/FEC.
-- **Terminal → TCP thuần** (không TLS). Framing 1-byte type + 4-byte len.
+**Recommendation (updated for NetBird):**
+- **Video → plain UDP.** WireGuard already encrypts → **drop QUIC** (the main reasons for QUIC are TLS + congestion control; TLS is redundant, and we do congestion adaptively ourselves). Loss/jitter depends on the tier: direct P2P ~0 (LAN-like), relayed needs adaptive/FEC.
+- **Terminal → plain TCP** (no TLS). Framing: 1-byte type + 4-byte length.
 
-### NWParameters → single source ở [13 §2]
+### NWParameters → single source in [13 §2]
 
-> **Recipe `NWParameters` đầy đủ (utun KHÔNG pin `.wiredEthernet`; `serviceClass`/DSCP vô tác dụng qua tunnel; plain UDP/TCP — bỏ QUIC; `includePeerToPeer=false`) = single source ở [13-netbird-transport.md §2](13-netbird-transport.md).** Không lặp recipe ở đây để tránh drift.
+> **The full `NWParameters` recipe (utun: do NOT pin `.wiredEthernet`; `serviceClass`/DSCP are no-ops through the tunnel; plain UDP/TCP — no QUIC; `includePeerToPeer=false`) = single source in [13-netbird-transport.md §2](13-netbird-transport.md).** Not repeating the recipe here to avoid drift.
 
 ### MTU & fragmentation
 
-- `NWConnection.maximumDatagramSize` ≈ 1472 (Ethernet) — trần để IP **không** fragment.
-- **Không bao giờ để IP layer fragment** datagram realtime: mất 1 fragment = mất cả datagram, IP stack không có context để recover.
-- Target payload **~1200 byte** (chừa biên cho Wi-Fi/IPv6/VPN).
-- Keyframe nặng hàng chục–trăm KB → **fragment ở tầng app** thành N datagram, ghép lại theo frameID.
+- `NWConnection.maximumDatagramSize` ≈ 1472 (Ethernet) — the ceiling at which IP does **not** fragment.
+- **Never let the IP layer fragment** a realtime datagram: losing 1 fragment loses the whole datagram, and the IP stack has no context to recover.
+- Target payload **~1200 bytes** (margin for Wi-Fi/IPv6/VPN).
+- Keyframes weigh tens–hundreds of KB → **fragment at the app layer** into N datagrams, reassembled by frameID.
 
 ---
 
-## 3. Kênh control (input) — reliable, riêng biệt
+## 3. Control (input) channel — reliable, separate
 
-Input event (chuột/phím) nhỏ và **không được mất**. **Tách riêng kênh reliable**, không ghép chung kênh video lossy:
+Input events (mouse/keyboard) are small and **must not be lost**. **Use a separate reliable channel**; don't mix them into the lossy video channel:
 
-> ⭐ **Quy tắc input (từ Moonlight, port trực tiếp):** batch mouse/pen motion cửa sổ **1ms** (nghịch lý: *giảm* latency vì chống xếp hàng trong stack reliable); **button/key down/up KHÔNG bao giờ batch** — gửi ngay. Timestamp + sequence mọi input. Kênh này cũng tải **vị trí con trỏ** để client vẽ cursor overlay (xem [10 §6–7](10-latency-optimization.md)).
+> ⭐ **Input rules (from Moonlight, ported directly):** batch mouse/pen motion in a **1ms** window (paradoxically this *reduces* latency, because it prevents queueing inside the reliable stack); **button/key down/up are NEVER batched** — send immediately. Timestamp + sequence every input. This channel also carries the **cursor position** so the client can draw the cursor overlay (see [10 §6–7](10-latency-optimization.md)).
 
-- **Cleanest:** `NWConnection` thứ 2 qua **TCP `noDelay = true`** (tắt Nagle → mỗi phím gửi ngay), port riêng.
-- **Nếu video dùng QUIC:** mở **QUIC reliable stream** cho control trên cùng connection, video đi qua QUIC datagram → 1 handshake, 1 connection mã hóa, reliable/unreliable tách tự nhiên.
+- **Cleanest:** a second `NWConnection` over **TCP `noDelay = true`** (disables Nagle → every keypress sent immediately), separate port.
+- **If video uses QUIC:** open a **QUIC reliable stream** for control on the same connection, with video over QUIC datagrams → 1 handshake, 1 encrypted connection, reliable/unreliable separated naturally.
 
 ```swift
 var tcp = NWProtocolTCP.Options()
@@ -91,60 +91,60 @@ controlParams.serviceClass = .signaling
 
 ---
 
-## 4. Packet format (Moonlight-style, đơn giản hóa)
+## 4. Packet format (Moonlight-style, simplified)
 
-Một header/datagram, big-endian:
+One header per datagram, big-endian:
 
 ```
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-| ver |  type |     flags     |          (reserved)           |  type: 0=video 1=fec 2=control-ack
+| ver |  type   |     flags     |           (reserved)          |  type: 0=video 1=fec 2=control-ack
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+  flags: SOF=1 EOF=2 KEY=4
-|                          frameID (u32)                       |
+|                         frameID (u32)                         |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|        fragIndex (u16)         |       fragCount (u16)         |
+|        fragIndex (u16)        |        fragCount (u16)        |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                  streamSeq (u32) — phát hiện mất gói           |
+|                streamSeq (u32) — loss detection               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                      payload (≤ ~1200 byte)                   |
+|                    payload (≤ ~1200 bytes)                    |
 ```
 
-- `frameID`: tăng mỗi frame. `KEY` flag bật ở IDR.
-- `fragIndex`/`fragCount`: fragment 1 frame. `EOF` (hoặc `fragIndex==fragCount-1`) đánh dấu fragment cuối.
-- `streamSeq`: tăng đơn điệu trên **mọi** datagram → thiếu 1 số = mất 1 fragment, phát hiện tức thì.
+- `frameID`: increments per frame. The `KEY` flag is set on IDRs.
+- `fragIndex`/`fragCount`: fragmenting one frame. `EOF` (or `fragIndex==fragCount-1`) marks the last fragment.
+- `streamSeq`: monotonically increasing across **all** datagrams → one missing number = one lost fragment, detected instantly.
 
 ---
 
-## 5. Loss handling — không jitter buffer lớn
+## 5. Loss handling — no large jitter buffer
 
-Chiến lược Moonlight (`VideoDepacketizer.c`). Receiver theo dõi `nextFrameNumber` + `lastStreamSeq`:
+Moonlight's strategy (`VideoDepacketizer.c`). The receiver tracks `nextFrameNumber` + `lastStreamSeq`:
 
-1. **Gap trong `streamSeq`** → frame hỏng → `dropFrame`, set `nextFrameNumber = frameID+1`, **request IDR** (KHÔNG retransmit).
-2. **Cả frame thiếu** (frameID nhảy vượt) → drop partial, chờ frame sạch tiếp theo.
-3. **Fragment cũ** (frameID < nextFrameNumber) → bỏ im lặng.
+1. **Gap in `streamSeq`** → corrupt frame → `dropFrame`, set `nextFrameNumber = frameID+1`, **request an IDR** (do NOT retransmit).
+2. **Whole frame missing** (frameID jumps ahead) → drop the partial, wait for the next clean frame.
+3. **Stale fragment** (frameID < nextFrameNumber) → drop silently.
 
-Request recovery đi qua **kênh control reliable**. Buffer giới hạn ~1 frame → không tích lũy latency.
+Recovery requests go over the **reliable control channel**. Buffer limited to ~1 frame → no latency accumulation.
 
-> ⭐ **Recovery ưu tiên LTR, không phải keyframe.** VideoToolbox hỗ trợ Long-Term Reference: client ack frame nhận được, khi mất gói host phát LTR-P nhỏ predict từ LTR đã-ack (tránh "keyframe spike" 5–20×). Chỉ force IDR khi không còn LTR ack. Đây là sửa đổi quan trọng so với bản đầu — chi tiết [10 §1](10-latency-optimization.md). Thêm: **speculative loss detection** (đoán mất gói trước khi frame kế đến) tiết kiệm 1 frame-time.
+> ⭐ **Recovery prefers LTR, not keyframes.** VideoToolbox supports Long-Term Reference: the client acks the frames it received; on packet loss the host emits a small LTR-P predicted from an already-acked LTR (avoiding the 5–20× "keyframe spike"). Only force an IDR when no acked LTR remains. This is an important revision over the first draft — details in [10 §1](10-latency-optimization.md). Additionally: **speculative loss detection** (guessing a loss before the next frame arrives) saves one frame-time.
 
-### FEC vs retransmit trên LAN
+### FEC vs retransmit on LAN
 
-- **Retransmit (ARQ):** tốn 1 RTT → stutter nhìn thấy. **Tránh cho video.**
-- **FEC (Reed-Solomon):** recover loss zero added latency, đổi lấy bandwidth.
-- **Khuyến nghị LAN dây:** FEC thấp/không (0–10%), dựa vào drop-frame→request-keyframe. **Wi-Fi:** FEC ~15–20%, adaptive theo loss đo được qua control channel.
-- ARQ retransmit **chỉ dùng cho kênh control** (đó là mục đích của nó).
+- **Retransmit (ARQ):** costs 1 RTT → visible stutter. **Avoid for video.**
+- **FEC (Reed-Solomon):** recovers loss with zero added latency, in exchange for bandwidth.
+- **Wired-LAN recommendation:** low/no FEC (0–10%), rely on drop-frame→request-keyframe. **Wi-Fi:** FEC ~15–20%, adaptive based on loss measured over the control channel.
+- ARQ retransmission is **only for the control channel** (that's what it's for).
 
 ### Pacing
 
-- Đừng "bắn" toàn bộ fragment keyframe trong 1 microburst → tràn buffer switch, gây loss ngay cả trên LAN. Trải đều fragment qua frame interval (token/interval pacer đơn giản).
-- Couple bitrate encoder với loss/RTT đo từ control channel: loss tăng → giảm bitrate / tăng FEC; sạch → ramp lên.
+- Don't "blast" all of a keyframe's fragments in one microburst → it overflows switch buffers, causing loss even on LAN. Spread the fragments across the frame interval (a simple token/interval pacer).
+- Couple the encoder bitrate to loss/RTT measured from the control channel: loss rises → lower the bitrate / raise FEC; clean → ramp back up.
 
 ---
 
-## 6. Việc cho Phase 1
+## 6. Phase 1 tasks
 
-- [ ] `NWListener`/`NWBrowser` discovery Mac↔Mac, hiển thị danh sách host.
-- [ ] Packetizer + reassembler theo format §4, có unit test mất/đảo gói.
-- [ ] Gửi keyframe (nhiều fragment) + delta frame end-to-end.
-- [ ] Kênh control TCP `noDelay` + message `request-keyframe`.
+- [ ] `NWListener`/`NWBrowser` Mac↔Mac discovery, show the host list.
+- [ ] Packetizer + reassembler per the §4 format, with unit tests for packet loss/reordering.
+- [ ] Send a keyframe (multiple fragments) + delta frames end-to-end.
+- [ ] TCP `noDelay` control channel + a `request-keyframe` message.
