@@ -63,6 +63,12 @@ public enum WireMessage: Equatable, Sendable {
     /// Client is leaving cleanly (empty body).
     case bye
 
+    /// Application-layer RTT probe (client → host, CONTROL channel). `timestampMS` is the
+    /// CLIENT's monotonic clock — the host echoes it back verbatim in ``pong(timestampMS:)``
+    /// (stateless responder), so only the client ever interprets it. Drives the per-pane
+    /// smoothed-RTT estimate (typing-lag attribution; the future predictive-echo gate).
+    case ping(timestampMS: UInt64)
+
     // MARK: CONTROL channel, host -> client
 
     /// Handshake reply. `sessionID` is the authoritative session id (echoes the
@@ -83,6 +89,12 @@ public enum WireMessage: Equatable, Sendable {
     /// (like `title`/`bell`) so a flood of PTY `output` on the DATA channel cannot delay a
     /// `running`/`idle` status — the whole point of the two-channel design.
     case commandStatus(CommandStatus)
+
+    /// RTT probe reply (host → client, CONTROL channel): the client's ``ping(timestampMS:)``
+    /// timestamp echoed verbatim. Riding CONTROL (unwindowed, fast-draining) means the
+    /// probe measures the network + host control-loop — never a DATA-window stall — so the
+    /// estimate stays honest under an output flood.
+    case pong(timestampMS: UInt64)
 
     /// The semantic state of the foreground command in a pane's shell (from OSC 133).
     public enum CommandStatus: Equatable, Sendable {
@@ -105,10 +117,12 @@ public enum WireMessage: Equatable, Sendable {
         case .resize: return 11
         case .ack: return 12
         case .bye: return 13
+        case .ping: return 14
         case .helloAck: return 20
         case .title: return 21
         case .bell: return 22
         case .commandStatus: return 23
+        case .pong: return 24
         }
     }
 
@@ -117,7 +131,7 @@ public enum WireMessage: Equatable, Sendable {
         switch self {
         case .output, .exit, .input:
             return .data
-        case .hello, .resize, .ack, .bye, .helloAck, .title, .bell, .commandStatus:
+        case .hello, .resize, .ack, .bye, .ping, .helloAck, .title, .bell, .commandStatus, .pong:
             return .control
         }
     }

@@ -39,6 +39,8 @@ public protocol ClientTransporting: Sendable {
     func sendAck(seq: Int64) async throws
     /// Sends a clean `bye`.
     func sendBye() async throws
+    /// Sends an RTT probe (`ping`) on the control channel. Default no-op (fakes).
+    func sendPing(timestampMS: UInt64) async throws
 
     /// Reports that the consumer actually CONSUMED `wireBytes` of data-class inbound
     /// (`output`/`exit`) — drives the mux receive-window re-grant (credit-at-consumption).
@@ -52,4 +54,6 @@ public protocol ClientTransporting: Sendable {
 extension ClientTransporting {
     /// Default no-op: only windowed transports (the mux) account consumption.
     public func noteOutputConsumed(wireBytes: Int) async {}
+    /// Default no-op: only the mux transport carries the RTT probe.
+    public func sendPing(timestampMS: UInt64) async throws {}
 }

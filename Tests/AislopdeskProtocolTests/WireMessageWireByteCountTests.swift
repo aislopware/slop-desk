@@ -27,6 +27,8 @@ final class WireMessageWireByteCountTests: XCTestCase {
             .resize(cols: 80, rows: 24, pxWidth: 0, pxHeight: 0),
             .ack(seq: 7),
             .bye,
+            .ping(timestampMS: 0), .ping(timestampMS: UInt64.max),
+            .pong(timestampMS: 12_345),
             .helloAck(sessionID: UUID(), resumeFromSeq: 3, returningClient: true),
             .helloAck(sessionID: UUID(), resumeFromSeq: 0, returningClient: false),
             .title(""),

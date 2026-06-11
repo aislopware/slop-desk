@@ -33,6 +33,11 @@ public final class ConnectionViewModel {
     // MARK: Observable status
 
     public private(set) var status: Status = .disconnected
+
+    /// Smoothed app-layer RTT to this pane's host in milliseconds (`nil` until the first
+    /// ping/pong completes). Fed by the client's 3s control-channel probe — the latency
+    /// badge / typing-lag attribution datum (docs/26 D1/D10).
+    public private(set) var latencyMS: Double?
     public private(set) var sessionID: UUID?
     /// Last log line from the reconnect supervisor (surfaced in the UI for diagnostics).
     public private(set) var lastLog: String?
@@ -504,6 +509,8 @@ public final class ConnectionViewModel {
                 )
                 #endif
             }
+        case let .rtt(milliseconds):
+            self.latencyMS = milliseconds
         case .title, .bell:
             break
         }

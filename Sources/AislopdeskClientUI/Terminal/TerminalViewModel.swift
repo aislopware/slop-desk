@@ -419,6 +419,9 @@ public final class TerminalViewModel {
             self.sessionID = sessionID
             self.lastResumeSeq = resumeFromSeq
             connectionStatus = .connected
+        case .rtt:
+            // Folded by ConnectionViewModel (latencyMS) — no terminal-model state.
+            break
         }
     }
 

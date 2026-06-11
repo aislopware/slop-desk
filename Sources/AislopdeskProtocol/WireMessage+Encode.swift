@@ -49,6 +49,12 @@ extension WireMessage {
         case .bye:
             break // empty body
 
+        case let .ping(timestampMS):
+            frame.appendBE(timestampMS)
+
+        case let .pong(timestampMS):
+            frame.appendBE(timestampMS)
+
         case let .helloAck(sessionID, resumeFromSeq, returningClient):
             frame.append(sessionID.dataBytes)
             frame.appendBE(resumeFromSeq)
@@ -104,6 +110,7 @@ extension WireMessage {
         case .resize: body = 8                                        // 4 × UInt16
         case .ack: body = 8                                           // seq Int64
         case .bye: body = 0
+        case .ping, .pong: body = 8                                   // timestampMS UInt64
         case .helloAck: body = Self.sessionIDByteCount + 8 + 1        // UUID + Int64 + Bool
         case let .title(string): body = string.utf8.count
         case .bell: body = 0

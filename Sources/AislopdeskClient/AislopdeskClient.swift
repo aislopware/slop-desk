@@ -62,6 +62,10 @@ public actor AislopdeskClient {
         /// The remote child process exited with `code`. Terminal — ``output`` finishes
         /// right after this is surfaced.
         case exit(code: Int32)
+        /// A fresh smoothed app-layer RTT sample (EWMA over ping/pong on the CONTROL
+        /// channel). Surfaced so the chrome can show a latency badge and lag can be
+        /// attributed (network RTT vs host stall vs client render).
+        case rtt(milliseconds: Double)
         /// The transport dropped (network loss / clean close). ``ReconnectManager``
         /// reacts to this; surfaced for diagnostics.
         case disconnected(reason: String)
@@ -73,6 +77,15 @@ public actor AislopdeskClient {
     /// depend on this value (we never ack an undelivered seq); it only bounds how stale
     /// the host's view of our progress can get.
     public static let defaultAckInterval: Duration = .milliseconds(50)
+
+    /// RTT probe cadence (docs/26 D1). 3s: cheap (one 14-byte control frame each way) yet
+    /// fresh enough for a latency badge / typing-lag attribution.
+    public static let pingInterval: Duration = .seconds(3)
+
+    /// EWMA-smoothed app-layer RTT in milliseconds (`nil` until the first pong). α = 0.25
+    /// (≈ TCP SRTT's 1/8–1/4 family): responsive to weather changes without flapping on
+    /// one outlier.
+    public private(set) var smoothedRTTMS: Double?
 
     // MARK: Surfaced streams
 
@@ -156,6 +169,7 @@ public actor AislopdeskClient {
     private var transport: (any ClientTransporting)?
     private var inboundTask: Task<Void, Never>?
     private var ackTask: Task<Void, Never>?
+    private var pingTask: Task<Void, Never>?
     private var ackPending = false
     private var closed = false
     private var paused = false
@@ -329,6 +343,7 @@ public actor AislopdeskClient {
 
         startInboundPump(transport)
         startAckTicker()
+        startPingTicker()
     }
 
     /// Pumps the transport's merged inbound stream: dedups + delivers `output`, surfaces
@@ -381,11 +396,26 @@ public actor AislopdeskClient {
             eventBroadcaster.yield(.bell)
         case let .commandStatus(status):
             eventBroadcaster.yield(.commandStatus(status))
+        case let .pong(timestampMS):
+            recordPong(sentAtMS: timestampMS)
         default:
             // input/hello/resize/ack/bye/helloAck never arrive on the client inbound.
             // Ignore defensively.
             break
         }
+    }
+
+    /// Folds one pong into the smoothed RTT (EWMA α=0.25) and broadcasts the fresh value.
+    /// The timestamp is OUR monotonic clock echoed verbatim, so the math never involves
+    /// the host's clock. A stale pong from before a suspend can yield a huge sample; the
+    /// EWMA absorbs it (and the next samples correct it).
+    private func recordPong(sentAtMS: UInt64) {
+        let nowMS = DispatchTime.now().uptimeNanoseconds / 1_000_000
+        guard nowMS >= sentAtMS else { return }
+        let sample = Double(nowMS - sentAtMS)
+        let smoothed = smoothedRTTMS.map { $0 * 0.75 + sample * 0.25 } ?? sample
+        smoothedRTTMS = smoothed
+        eventBroadcaster.yield(.rtt(milliseconds: smoothed))
     }
 
     /// The dedup + contiguous-tracking core. Drops any `output` already delivered
@@ -448,6 +478,28 @@ public actor AislopdeskClient {
                 await self.flushAckIfPending()
             }
         }
+    }
+
+    /// Starts (or restarts) the RTT probe ticker: one `ping(now)` on the CONTROL channel
+    /// every ``pingInterval``. Best-effort (`try?`) — a dropped probe just skips a sample.
+    /// Re-created per connect so it always targets the live transport; cancelled on
+    /// teardown/close beside the ack ticker.
+    private func startPingTicker() {
+        pingTask?.cancel()
+        let interval = Self.pingInterval
+        pingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: interval)
+                guard let self else { return }
+                await self.sendPingProbe()
+            }
+        }
+    }
+
+    private func sendPingProbe() async {
+        guard let transport else { return }
+        let nowMS = DispatchTime.now().uptimeNanoseconds / 1_000_000
+        try? await transport.sendPing(timestampMS: nowMS)
     }
 
     private func flushAckIfPending() async {
@@ -549,8 +601,10 @@ public actor AislopdeskClient {
         let oldInbound = inboundTask
         inboundTask?.cancel()
         ackTask?.cancel()
+        pingTask?.cancel()
         inboundTask = nil
         ackTask = nil
+        pingTask = nil
         await transport?.close()
         transport = nil
         // Drain the old inbound pump to completion. `close()` above finished the old

@@ -337,6 +337,12 @@ final class MuxChannelSession: @unchecked Sendable {
                         self.acknowledge(upTo: seq)
                     case .bye:
                         self.flushPendingResize() // client leaving cleanly: never strand a size at teardown.
+                    case let .ping(timestampMS):
+                        // Stateless RTT probe: echo the client's timestamp back on the
+                        // control sender (FIFO, never blocks behind data). Deliberately NO
+                        // flushPendingResize — a periodic ping must not defeat the resize
+                        // micro-debounce, and a ping orders against nothing.
+                        self.enqueueControl([.pong(timestampMS: timestampMS)])
                     default:
                         self.flushPendingResize()
                     }

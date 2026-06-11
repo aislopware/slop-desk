@@ -46,6 +46,9 @@ extension WireMessage {
         case 13: // bye
             return .bye
 
+        case 14: // ping
+            return .ping(timestampMS: try reader.readUInt64())
+
         case 20: // helloAck
             let idBytes = try reader.readBytes(sessionIDByteCount)
             let resumeFromSeq = try reader.readInt64()
@@ -82,6 +85,9 @@ extension WireMessage {
             default:
                 throw AislopdeskError.malformedBody("commandStatus: invalid tag \(tag)")
             }
+
+        case 24: // pong
+            return .pong(timestampMS: try reader.readUInt64())
 
         default:
             throw AislopdeskError.unknownMessageType(type)

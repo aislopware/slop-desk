@@ -73,6 +73,13 @@ final class WireMessageRoundTripTests: XCTestCase {
         XCTAssertEqual(try roundTrip(.bye), .bye)
     }
 
+    func testPingPongRoundTrip() throws {
+        for ts: UInt64 in [0, 1, 1_749_700_000_123, UInt64.max] {
+            XCTAssertEqual(try roundTrip(.ping(timestampMS: ts)), .ping(timestampMS: ts))
+            XCTAssertEqual(try roundTrip(.pong(timestampMS: ts)), .pong(timestampMS: ts))
+        }
+    }
+
     func testHelloAckRoundTrip() throws {
         let cases: [WireMessage] = [
             .helloAck(sessionID: UUID(), resumeFromSeq: 1, returningClient: true),
@@ -138,11 +145,13 @@ final class WireMessageRoundTripTests: XCTestCase {
         XCTAssertEqual(WireMessage.resize(cols: 0, rows: 0, pxWidth: 0, pxHeight: 0).messageType, 11)
         XCTAssertEqual(WireMessage.ack(seq: 0).messageType, 12)
         XCTAssertEqual(WireMessage.bye.messageType, 13)
+        XCTAssertEqual(WireMessage.ping(timestampMS: 0).messageType, 14)
         XCTAssertEqual(WireMessage.helloAck(sessionID: UUID(), resumeFromSeq: 0, returningClient: false).messageType, 20)
         XCTAssertEqual(WireMessage.title("").messageType, 21)
         XCTAssertEqual(WireMessage.bell.messageType, 22)
         XCTAssertEqual(WireMessage.commandStatus(.running).messageType, 23)
         XCTAssertEqual(WireMessage.commandStatus(.idle(exitCode: 0, durationMS: 0)).messageType, 23)
+        XCTAssertEqual(WireMessage.pong(timestampMS: 0).messageType, 24)
     }
 
     func testChannelAssignment() {
@@ -153,6 +162,8 @@ final class WireMessageRoundTripTests: XCTestCase {
         XCTAssertEqual(WireMessage.bye.channel, .control)
         XCTAssertEqual(WireMessage.bell.channel, .control)
         XCTAssertEqual(WireMessage.commandStatus(.running).channel, .control)
+        XCTAssertEqual(WireMessage.ping(timestampMS: 0).channel, .control)
+        XCTAssertEqual(WireMessage.pong(timestampMS: 0).channel, .control)
     }
 
     // MARK: Decode error paths (complete-but-invalid frames)

@@ -328,6 +328,10 @@ Task {
                 stderrLine("disconnected: \(reason) — reconnecting…")
             case let .reconnected(sid, seq):
                 stderrLine("reconnected (session \(sid.uuidString), resumed from seq \(seq))")
+            case .rtt:
+                // Smoothed-RTT samples are a GUI affordance (latency badge); the raw-mode
+                // CLI surfaces nothing (a periodic stderr line would smear the screen).
+                break
             }
         }
     }

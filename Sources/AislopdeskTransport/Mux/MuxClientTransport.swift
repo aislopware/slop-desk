@@ -119,6 +119,10 @@ public actor MuxClientTransport: ClientTransporting {
         try await requireControl().send(.bye)
     }
 
+    public func sendPing(timestampMS: UInt64) async throws {
+        try await requireControl().send(.ping(timestampMS: timestampMS))
+    }
+
     public func close() async {
         for task in forwarders { task.cancel() }
         forwarders.removeAll()
