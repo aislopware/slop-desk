@@ -375,6 +375,12 @@ struct PaneMenuView: View {
                         pasteRecentMenu(into: remote)
                     }
                 }
+                // RESIZE TO NATIVE: snap a manually-resized remote pane back to its crisp 1:1 stream size.
+                if store.hasNativeSize(id) {
+                    row("Resize to Native Stream Size", systemImage: "arrow.up.left.and.down.right.magnifyingglass") {
+                        store.resizeToNativeSize(id)
+                    }
+                }
             }
             renameRow
 

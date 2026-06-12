@@ -609,10 +609,31 @@ public final class WorkspaceStore {
               let frame = workspace.canvas.frame(of: id) else { return }
         let dw = target.width - current.width
         let dh = target.height - current.height
+        // Cache the FRAME size at which this pane renders the stream 1:1, so "Resize to Native Stream
+        // Size" can restore it after the user has manually resized away. nativeFrame = currentFrame +
+        // (nativeContent − currentContent); the chrome inset rides along (constant), no constant needed.
+        nativeFrameSize[id] = CGSize(width: frame.width + dw, height: frame.height + dh)
         guard abs(dw) >= 0.5 || abs(dh) >= 0.5 else { return }
         let snapped = CGRect(origin: frame.origin,
                              size: CGSize(width: frame.width + dw, height: frame.height + dh))
         workspace.canvas = workspace.canvas.resizing(id, to: snapped)
+        reconcile()
+    }
+
+    /// The pane frame size at which each `.remoteGUI` pane renders its stream pixel-for-pixel, cached
+    /// from the last ``snapPaneToContentSize`` report. Drives "Resize to Native Stream Size".
+    private var nativeFrameSize: [PaneID: CGSize] = [:]
+
+    /// Whether a native stream size is known for pane `id` (the menu item's enabled state).
+    public func hasNativeSize(_ id: PaneID) -> Bool { nativeFrameSize[id] != nil }
+
+    /// Resizes pane `id` to the cached native stream frame size (origin pinned), so a manually-resized
+    /// remote pane snaps back to a crisp 1:1 render. No-op if no native size is known or it's maximized.
+    public func resizeToNativeSize(_ id: PaneID) {
+        guard workspace.maximizedPane != id,
+              let size = nativeFrameSize[id],
+              let frame = workspace.canvas.frame(of: id) else { return }
+        workspace.canvas = workspace.canvas.resizing(id, to: CGRect(origin: frame.origin, size: size))
         reconcile()
     }
 
