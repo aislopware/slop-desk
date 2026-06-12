@@ -81,15 +81,22 @@ public struct RemotePaneContext {
     /// with no fractional-scaling blur. `nil` (the standalone default) ⇒ no pane to snap; the
     /// video session then keeps its legacy connect-time host-follow negotiation instead.
     public var onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)?
+    /// PASTE AS KEYSTROKES: the live video view publishes a key-injection closure here once its
+    /// session exists (and `nil` on teardown), so the pane's "Paste as Keystrokes" action can drive
+    /// the SAME secure-input-aware key path the keyboard uses (virtual-HID under SEI). The closure is
+    /// `(keyCode, down, shift)`. `nil` (the standalone default) ⇒ no canvas to receive the sink.
+    public var onKeyInjectorReady: ((((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?) -> Void)?
 
     public init(isActive: Bool = true,
                 onActivate: @escaping () -> Void = {},
                 onCanvasScroll: @escaping (CGSize) -> Void = { _ in },
-                onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)? = nil) {
+                onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)? = nil,
+                onKeyInjectorReady: ((((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?) -> Void)? = nil) {
         self.isActive = isActive
         self.onActivate = onActivate
         self.onCanvasScroll = onCanvasScroll
         self.onStreamNativeSize = onStreamNativeSize
+        self.onKeyInjectorReady = onKeyInjectorReady
     }
 
     /// The standalone default (no canvas around it): always active, no-op callbacks — for previews / sheet

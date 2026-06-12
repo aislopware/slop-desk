@@ -578,6 +578,12 @@ private struct RemoteGUIPaneView: View {
                 // changed (host-side resize). Grow/shrink the pane by the VIDEO-CONTENT delta so
                 // the stream renders pixel-for-pixel — the chrome inset rides along untouched.
                 store?.snapPaneToContentSize(id, target: target, current: current)
+            },
+            onKeyInjectorReady: { [weak model = live.remoteWindow] injector in
+                // PASTE AS KEYSTROKES: the live video view hands us its key-injection closure when its
+                // session comes up (and nil on teardown). Park it on the pane's model so the pill's
+                // "Paste as Keystrokes" can drive the secure-input-aware key path.
+                model?.keyInjector = injector
             }
         )
     }

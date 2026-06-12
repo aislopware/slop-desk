@@ -43,16 +43,58 @@ public final class RemoteWindowModel {
     /// non-nil ⇒ the live ``VideoWindowFactory`` view is shown.
     public private(set) var active: RemoteWindowDescriptor?
 
+    // MARK: Paste as Keystrokes (virtual-HID typing into secure fields)
+
+    /// The live key-injection sink the gated ``VideoWindowView`` publishes (via
+    /// ``RemotePaneContext/onKeyInjectorReady``) once its session exists, and clears (`nil`) on
+    /// teardown. Each call drives the host's per-event input path, which routes to the virtual-HID
+    /// keyboard under Secure Event Input — so this types into `sudo` / SecurityAgent password fields
+    /// where the unicode `.text` path is OS-dropped. `(keyCode, down, shift)`.
+    public var keyInjector: ((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?
+
+    /// Whether a paste-as-keystrokes is possible right now: streaming AND a live key sink is wired.
+    public var canPasteKeystrokes: Bool { active != nil && keyInjector != nil }
+
+    /// The in-flight paste (cancelled if a new one starts or the pane tears down).
+    private var pasteTask: Task<Void, Never>?
+    /// Per-character pacing — slow enough that a secure field's focus/IME keeps up, fast enough to
+    /// feel instant for a password. Injectable for deterministic tests (`.zero`).
+    private let pasteInterval: Duration
+
+    /// Replays `text` as individual key events over the live ``keyInjector`` (US-QWERTY; unmappable
+    /// characters are skipped). Down+up per stroke, Shift folded into both edges, paced by
+    /// ``pasteInterval``. NEVER logs the payload — it is frequently a password. No-op when no sink is
+    /// wired or the text is empty. Returns the encode result so the caller can surface "skipped N".
+    @discardableResult
+    public func pasteAsKeystrokes(_ text: String) -> KeystrokeReplay.Encoded {
+        let encoded = KeystrokeReplay.encode(text)
+        guard let injector = keyInjector, !encoded.strokes.isEmpty else { return encoded }
+        pasteTask?.cancel()
+        let interval = pasteInterval
+        let strokes = encoded.strokes
+        pasteTask = Task { @MainActor in
+            for stroke in strokes {
+                if Task.isCancelled { return }
+                injector(stroke.keyCode, true, stroke.shift)
+                injector(stroke.keyCode, false, stroke.shift)
+                if interval > .zero { try? await Task.sleep(for: interval) }
+            }
+        }
+        return encoded
+    }
+
     public init(
         target: @escaping @MainActor () -> ConnectionTarget = { .default },
         windowID: String = "",
         title: String = "Remote window",
-        appName: String = ""
+        appName: String = "",
+        pasteInterval: Duration = .milliseconds(6)
     ) {
         self.target = target
         self.windowID = windowID
         self.title = title
         self.appName = appName
+        self.pasteInterval = pasteInterval
     }
 
     // MARK: Discovery (picker)

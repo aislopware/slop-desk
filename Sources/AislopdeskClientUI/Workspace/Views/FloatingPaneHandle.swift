@@ -364,6 +364,13 @@ struct PaneMenuView: View {
                 row("Change Window…", systemImage: "macwindow.on.rectangle") {
                     remote.close()
                 }
+                // PASTE AS KEYSTROKES: type the clipboard into the remote window as HID key events —
+                // works in sudo / SecurityAgent password fields where normal paste is OS-dropped.
+                if remote.canPasteKeystrokes {
+                    row("Paste as Keystrokes", systemImage: "keyboard") {
+                        pasteAsKeystrokes(into: remote)
+                    }
+                }
             }
             renameRow
 
@@ -462,6 +469,16 @@ struct PaneMenuView: View {
             store.updateSpec(id) { $0.title = trimmed }
         }
         renaming = false
+    }
+
+    /// Reads the local clipboard and replays it into `remote` as HID keystrokes (the secure-field
+    /// typing path). The payload is read here and handed straight to the model — it is NEVER logged
+    /// or stored anywhere observable (it is frequently a password).
+    private func pasteAsKeystrokes(into remote: RemoteWindowModel) {
+        #if os(macOS)
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
+        remote.pasteAsKeystrokes(text)
+        #endif
     }
 
     // MARK: Sections

@@ -81,6 +81,10 @@ public struct VideoWindowView: View {
     /// `nil` ⇒ standalone window (no pane to snap) → the session keeps the legacy connect-time
     /// host-follow negotiation instead.
     let onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)?
+    /// PASTE AS KEYSTROKES: the backing view publishes a key-injection closure here once it exists
+    /// (and `nil` on teardown), routed to `pipeline.key(...)` — the same secure-input-aware path the
+    /// keyboard uses. `(keyCode, down, shift)`. `nil` ⇒ no canvas wants the sink (preview/standalone).
+    let onKeyInjectorReady: ((((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?) -> Void)?
 
     /// The existing seam signature (title-only): renders the Metal-backed view chrome
     /// without a live connection. Kept so `VideoWindowFactory` callers compile.
@@ -91,6 +95,7 @@ public struct VideoWindowView: View {
         self.onActivate = {}
         self.onCanvasScroll = { _ in }
         self.onStreamNativeSize = nil
+        self.onKeyInjectorReady = nil
     }
 
     /// Live remote-window view: brings up the orchestrator against `connection`. `isActive` /
@@ -100,13 +105,15 @@ public struct VideoWindowView: View {
                 isActive: Bool = true,
                 onActivate: @escaping () -> Void = {},
                 onCanvasScroll: @escaping (CGSize) -> Void = { _ in },
-                onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)? = nil) {
+                onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)? = nil,
+                onKeyInjectorReady: ((((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?) -> Void)? = nil) {
         self.title = title
         self.connection = connection
         self.isActive = isActive
         self.onActivate = onActivate
         self.onCanvasScroll = onCanvasScroll
         self.onStreamNativeSize = onStreamNativeSize
+        self.onKeyInjectorReady = onKeyInjectorReady
     }
 
     /// Owns the control bridge for this view's lifetime; the backing view wires its closures.
@@ -116,7 +123,7 @@ public struct VideoWindowView: View {
         ZStack(alignment: .bottomTrailing) {
             MetalVideoLayerView(connection: connection, controls: controls,
                                 isActive: isActive, onActivate: onActivate, onCanvasScroll: onCanvasScroll,
-                                onStreamNativeSize: onStreamNativeSize)
+                                onStreamNativeSize: onStreamNativeSize, onKeyInjectorReady: onKeyInjectorReady)
                 // FILL THE PANE. Without this the bare representable does not claim the
                 // ZStack's space, so the `.bottomTrailing` alignment pins the Metal view as a
                 // small island in the BOTTOM-RIGHT corner (the "nhỏ 1 góc" bug) — and clicks
@@ -174,6 +181,7 @@ struct MetalVideoLayerView: NSViewRepresentable {
     var onActivate: () -> Void = {}
     var onCanvasScroll: (CGSize) -> Void = { _ in }
     var onStreamNativeSize: ((CGSize, CGSize) -> Void)? = nil
+    var onKeyInjectorReady: ((((UInt16, Bool, Bool) -> Void)?) -> Void)? = nil
 
     func makeNSView(context: Context) -> MetalLayerBackedView {
         let view = MetalLayerBackedView()
@@ -183,6 +191,11 @@ struct MetalVideoLayerView: NSViewRepresentable {
         view.onCanvasScroll = onCanvasScroll
         view.onStreamNativeSize = onStreamNativeSize   // before activate — its nil-ness picks snap vs host-follow
         view.activate(connection: connection)
+        // PASTE AS KEYSTROKES: publish a key-injection sink routed to THIS view's pipeline (the
+        // `pipeline.key` guard no-ops until the session is up, so publishing now is safe). The
+        // backing view clears it on `deactivate`.
+        view.onKeyInjectorReady = onKeyInjectorReady
+        view.publishKeyInjector()
         // BUG-2 probe: a recreate (makeNSView) on focus change — vs an in-place updateNSView — would reset
         // isActive to its `true` default mid-stream; logging it distinguishes "stale Bool" from "recreate".
         videoViewDbg("makeNSView (CREATED) isActive=\(isActive)")
@@ -235,6 +248,19 @@ final class MetalLayerBackedView: NSView {
     /// representable BEFORE ``activate(connection:)`` — its nil-ness picks pane-follows-stream
     /// vs the legacy connect-time host-follow when the session's GUI hooks are built.
     var onStreamNativeSize: ((CGSize, CGSize) -> Void)?
+    /// PASTE AS KEYSTROKES: the canvas publishes a key-injection sink through this (and `nil` on
+    /// teardown), so the pane's "Paste as Keystrokes" can drive `pipeline.key(...)` — the same
+    /// secure-input-aware key path the keyboard uses. Set by the representable before `activate`.
+    var onKeyInjectorReady: ((((UInt16, Bool, Bool) -> Void)?) -> Void)?
+
+    /// Hands the canvas a key-injection closure routed to THIS view's pipeline (Shift folded into the
+    /// modifiers; `pipeline.key` no-ops until the session is up). Idempotent — safe to call on every
+    /// render; the sink captures `self` weakly so a torn-down view injects nothing.
+    func publishKeyInjector() {
+        onKeyInjectorReady?({ [weak self] keyCode, down, shift in
+            self?.pipeline.key(keyCode: keyCode, down: down, modifiers: shift ? .shift : [])
+        })
+    }
 
     // ── Local view navigation (macOS): pinch-zoom (+ pan-when-zoomed) via the RESPONDER
     //    `magnify`/`scrollWheel` methods — NOT gesture recognizers. A recognizer on this
@@ -280,6 +306,7 @@ final class MetalLayerBackedView: NSView {
     func deactivate() {
         if pointerInside { NSCursor.arrow.set() }   // restore the arrow before the pipeline tears down
         pointerInside = false
+        onKeyInjectorReady?(nil)   // PASTE AS KEYSTROKES: drop the stale sink before teardown
         pipeline.deactivate()
     }
 

@@ -70,7 +70,8 @@ struct ClientAppMain {
                     isActive: paneContext.isActive,
                     onActivate: paneContext.onActivate,
                     onCanvasScroll: paneContext.onCanvasScroll,
-                    onStreamNativeSize: paneContext.onStreamNativeSize))
+                    onStreamNativeSize: paneContext.onStreamNativeSize,
+                    onKeyInjectorReady: paneContext.onKeyInjectorReady))
             }
             return AnyView(VideoWindowView(title: descriptor.title))
         }
