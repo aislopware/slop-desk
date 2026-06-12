@@ -372,6 +372,32 @@ public final class WorkspaceStore {
         reconcile()
     }
 
+    /// Duplicates pane `id`: a NEW pane with a COPY of its spec — title, kind, and a committed video
+    /// endpoint all come along, so duplicating a bound remote-window pane yields a second pane
+    /// pre-bound to the same host window (admission still flows through ``liveVideoCap`` at
+    /// activation) — cascaded beside the original at the SAME size, in the same group, focused.
+    /// Ephemeral (auto-managed) panes don't duplicate. Returns the new id.
+    @discardableResult
+    public func duplicatePane(_ id: PaneID) -> PaneID? {
+        guard let item = workspace.canvas.item(id), !item.spec.kind.isEphemeral else { return nil }
+        let (canvas, newID) = workspace.canvas.adding(
+            item.spec, near: id, viewport: lastViewport, size: item.frame.size
+        )
+        workspace.canvas = canvas
+        workspace.focusedPane = newID
+        if workspace.maximizedPane != nil { workspace.maximizedPane = nil }
+        if let group = item.groupID {
+            workspace.canvas = workspace.canvas.assigning(newID, toGroup: group)
+        }
+        // In-view guarantee, mirroring addPane.
+        let visible = CGRect(origin: workspace.canvas.camera.origin, size: lastViewport)
+        if let f = workspace.canvas.frame(of: newID), !visible.contains(CGPoint(x: f.midX, y: f.midY)) {
+            workspace.canvas = workspace.canvas.centered(on: newID, viewport: lastViewport)
+        }
+        reconcile()
+        return newID
+    }
+
     // MARK: - Close undo (single slot) + busy-shell close guard
 
     /// Everything needed to bring the most recently closed pane back as it was: its spec (incl. a
@@ -1332,8 +1358,12 @@ public extension WorkspaceStore {
 @MainActor
 public func apply(_ command: WorkspaceCommand, to store: WorkspaceStore) {
     switch command {
-    case .newPane:
-        store.addPane(kind: .terminal)
+    case let .newPane(kind):
+        store.addPane(kind: kind)
+    case .duplicatePane:
+        if let pane = store.focusedPane {
+            store.duplicatePane(pane)
+        }
     case .tidy:
         store.tidyCanvas()
     case .centerFocusedPane:

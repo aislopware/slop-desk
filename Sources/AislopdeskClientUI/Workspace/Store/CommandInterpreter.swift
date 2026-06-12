@@ -8,7 +8,8 @@ import Foundation
 /// (`.contextMenu`, swipe) emit the same cases. Keeping it a value type makes the chord → command
 /// mapping fully unit-testable with no view.
 public enum WorkspaceCommand: Sendable, Equatable {
-    case newPane                   // ⌘T   — add a pane to the single canvas
+    case newPane(PaneKind)         // ⌘N/⌘T terminal, ⇧⌘N claudeCode, ⌥⌘N remoteGUI
+    case duplicatePane             // ⌘D   — copy the focused pane's spec (incl. endpoint) beside it
     case tidy                      // ⇧⌘D  — pack panes into a grid
     case centerFocusedPane         // ⌥⌘C  — centre the camera on the focused pane (the pan-only "recenter")
     case centerAll                 // ⌥⇧⌘C — centre the camera on the bounding box of ALL panes
@@ -98,6 +99,38 @@ public final class CommandInterpreter {
     public func feed(_ chord: KeyChord) -> WorkspaceCommand? {
         bindings[chord]
     }
+
+    /// Every default chord bound to `command`, in a DETERMINISTIC display order (fewest modifiers
+    /// first, ties broken lexicographically). A command may carry more than one chord (⌘N and the
+    /// ⌘T alias both make a terminal pane); the old `first { $0.value == command }` reverse lookup
+    /// was dictionary-order nondeterministic the moment that became true — every shortcut-display
+    /// site (menu items, palette hints) goes through this instead. `[0]` is the canonical chord.
+    public static func defaultChords(for command: WorkspaceCommand) -> [KeyChord] {
+        defaultBindings
+            .filter { $0.value == command }
+            .map(\.key)
+            .sorted { a, b in
+                let (ma, mb) = (a.modifiers.rawValue.nonzeroBitCount, b.modifiers.rawValue.nonzeroBitCount)
+                if ma != mb { return ma < mb }
+                return describe(a) < describe(b)
+            }
+    }
+
+    /// A pure, stable textual form for the deterministic sort above (NOT a display string — the
+    /// palette owns glyph rendering).
+    private static func describe(_ chord: KeyChord) -> String {
+        let key: String
+        switch chord.key {
+        case let .character(c): key = String(c)
+        case .tab: key = "\u{F700}tab"
+        case .return: key = "\u{F700}return"
+        case .leftArrow: key = "\u{F700}left"
+        case .rightArrow: key = "\u{F700}right"
+        case .upArrow: key = "\u{F700}up"
+        case .downArrow: key = "\u{F700}down"
+        }
+        return "\(chord.modifiers.rawValue)-\(key)"
+    }
 }
 
 // MARK: - Default bindings
@@ -109,8 +142,20 @@ public extension CommandInterpreter {
     static var defaultBindings: [KeyChord: WorkspaceCommand] {
         var map: [KeyChord: WorkspaceCommand] = [:]
 
-        // Canvas: ⌘T = new pane (the freed "new tab" chord, intuitive for "new"), ⇧⌘D = tidy into a grid.
-        map[KeyChord(character: "t", [.command])] = .newPane
+        // New pane, per kind. ⌘N is the macOS-native "new" (the File menu replaces the default
+        // New-Window item, so ⌘N makes a pane instead of an unwanted second window); ⌘T survives as
+        // the muscle-memory alias (the freed "new tab" chord — carried by the Pane-menu item).
+        // ⇧⌘N / ⌥⌘N create the other kinds directly — every prior path was Terminal-only.
+        map[KeyChord(character: "n", [.command])] = .newPane(.terminal)
+        map[KeyChord(character: "t", [.command])] = .newPane(.terminal)
+        map[KeyChord(character: "n", [.command, .shift])] = .newPane(.claudeCode)
+        map[KeyChord(character: "n", [.command, .option])] = .newPane(.remoteGUI)
+
+        // Duplicate the focused pane (spec + endpoint + group, cascaded beside it): ⌘D — the Finder
+        // duplicate idiom. (⇧⌘D = tidy, unchanged.)
+        map[KeyChord(character: "d", [.command])] = .duplicatePane
+
+        // ⇧⌘D = tidy into a grid.
         map[KeyChord(character: "d", [.command, .shift])] = .tidy
 
         // Close the focused pane: ⌘W. Reopen the last closed pane: ⇧⌘T (the browser idiom, sitting

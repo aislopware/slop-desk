@@ -37,6 +37,17 @@ public struct WorkspaceCommands: Commands {
     public init() {}
 
     public var body: some Commands {
+        // REPLACE the default File > New Window (⌘N): in a one-window canvas app a second window is
+        // never what ⌘N means — it now creates panes, per kind. ⌘N mirrors ⌘T (the Pane-menu alias)
+        // for terminals; ⇧⌘N / ⌥⌘N create the other kinds directly (every prior creation path was
+        // Terminal-only).
+        CommandGroup(replacing: .newItem) {
+            commandButton("New Terminal Pane", .newPane(.terminal))
+            commandButton("New Claude Code Pane", .newPane(.claudeCode))
+            commandButton("New Remote Window Pane", .newPane(.remoteGUI))
+            Divider()
+            commandButton("Duplicate Pane", .duplicatePane)
+        }
         // Surface the ⌘K command palette as a VISIBLE menu item in the View menu (it was a hidden
         // background button — the chord worked but nothing advertised it). Routed through the focused
         // scene's toggle so it targets the key window; disabled when no workspace window is key.
@@ -62,7 +73,14 @@ public struct WorkspaceCommands: Commands {
 
     @ViewBuilder
     private var paneMenu: some View {
-        commandButton("New Pane", .newPane)
+        // "New Pane" carries the ⌘T ALIAS explicitly — the canonical ⌘N chord lives on the File-menu
+        // "New Terminal Pane" item, and the same chord on two items would be ambiguous to AppKit.
+        // `CommandInterpreterTests` pins ⌘T → `.newPane(.terminal)` in the table so this cannot drift.
+        Button("New Pane") {
+            if let store { apply(.newPane(.terminal), to: store) }
+        }
+        .disabled(store == nil)
+        .modifier(OptionalShortcut(KeyChord(character: "t", [.command]).shortcut))
         commandButton("New Group", .newGroup)
 
         Divider()
@@ -110,10 +128,11 @@ public struct WorkspaceCommands: Commands {
         .modifier(OptionalShortcut(Self.shortcut(for: command)))
     }
 
-    /// Reverse-looks-up the default chord bound to `command` and converts it to a native
-    /// `KeyboardShortcut`; `nil` when `command` has no default binding.
+    /// Reverse-looks-up the CANONICAL default chord bound to `command` (deterministic — see
+    /// ``CommandInterpreter/defaultChords(for:)``; a command may carry alias chords) and converts it
+    /// to a native `KeyboardShortcut`; `nil` when `command` has no default binding.
     private static func shortcut(for command: WorkspaceCommand) -> KeyboardShortcut? {
-        CommandInterpreter.defaultBindings.first { $0.value == command }?.key.shortcut
+        CommandInterpreter.defaultChords(for: command).first?.shortcut
     }
 }
 

@@ -431,7 +431,10 @@ struct CommandPaletteView: View {
     /// though its store effect is a UI affordance (the command layer treats it as a no-op marker,
     /// docs/22 §5).
     nonisolated static let commandCatalog: [CatalogItem] = [
-        CatalogItem(command: .newPane, title: "New Pane", symbol: "plus.rectangle"),
+        CatalogItem(command: .newPane(.terminal), title: "New Terminal Pane", symbol: "plus.rectangle"),
+        CatalogItem(command: .newPane(.claudeCode), title: "New Claude Code Pane", symbol: "sparkles.rectangle.stack"),
+        CatalogItem(command: .newPane(.remoteGUI), title: "New Remote Window Pane", symbol: "macwindow.badge.plus"),
+        CatalogItem(command: .duplicatePane, title: "Duplicate Pane", symbol: "plus.square.on.square"),
         CatalogItem(command: .newGroup, title: "New Group", symbol: "square.on.square.dashed"),
         CatalogItem(command: .tidy, title: "Tidy Layout", symbol: "square.grid.2x2"),
         CatalogItem(command: .centerFocusedPane, title: "Center on Pane", symbol: "scope"),
@@ -460,9 +463,9 @@ struct CommandPaletteView: View {
     /// `@MainActor` ``CommandInterpreter``). Always called from the main-actor-isolated entry builders.
     @MainActor
     static func shortcutHint(for command: WorkspaceCommand) -> String? {
-        guard let chord = CommandInterpreter.defaultBindings.first(where: { $0.value == command })?.key else {
-            return nil
-        }
+        // The CANONICAL chord (deterministic; a command may carry alias chords — ⌘N/⌘T both make a
+        // terminal pane, and the hint must not flap with dictionary order).
+        guard let chord = CommandInterpreter.defaultChords(for: command).first else { return nil }
         return render(chord)
     }
 

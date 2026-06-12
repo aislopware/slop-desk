@@ -49,7 +49,7 @@ final class CommandRoutingTests: XCTestCase {
         XCTAssertEqual(paneIDs(store).count, 1, "default workspace = one pane")
         let original = store.workspace.focusedPane
 
-        apply(.newPane, to: store)
+        apply(.newPane(.terminal), to: store)
 
         let ids = paneIDs(store)
         XCTAssertEqual(ids.count, 2, "newPane adds exactly one pane")
@@ -62,8 +62,8 @@ final class CommandRoutingTests: XCTestCase {
     /// `apply(.tidy)` packs the canvas into a non-overlapping grid (pane count + sessions unchanged).
     func testApplyTidyArrangesWithoutChangingPaneSet() {
         let store = makeStore()
-        apply(.newPane, to: store)
-        apply(.newPane, to: store)                          // three panes
+        apply(.newPane(.terminal), to: store)
+        apply(.newPane(.terminal), to: store)                          // three panes
         XCTAssertEqual(paneIDs(store).count, 3)
 
         apply(.tidy, to: store)
@@ -83,7 +83,7 @@ final class CommandRoutingTests: XCTestCase {
     /// `apply(.centerFocusedPane)` only moves the camera (no pane-set / focus change).
     func testApplyCenterFocusedPaneMovesOnlyCamera() {
         let store = makeStore()
-        apply(.newPane, to: store)
+        apply(.newPane(.terminal), to: store)
         let focused = store.workspace.focusedPane
         let panesBefore = paneIDs(store)
 
@@ -96,8 +96,8 @@ final class CommandRoutingTests: XCTestCase {
     /// `apply(.centerAll)` only moves the camera (no pane-set / focus change).
     func testApplyCenterAllMovesOnlyCamera() {
         let store = makeStore()
-        apply(.newPane, to: store)
-        apply(.newPane, to: store)                          // three panes spread across the canvas
+        apply(.newPane(.terminal), to: store)
+        apply(.newPane(.terminal), to: store)                          // three panes spread across the canvas
         let focused = store.workspace.focusedPane
         let panesBefore = paneIDs(store)
 
@@ -112,7 +112,7 @@ final class CommandRoutingTests: XCTestCase {
     /// `apply(.closePane)` removes the focused pane from a multi-pane canvas and re-points focus.
     func testApplyClosePaneRemovesFocusedPane() {
         let store = makeStore()
-        apply(.newPane, to: store)                          // two panes, the new one focused
+        apply(.newPane(.terminal), to: store)                          // two panes, the new one focused
         XCTAssertEqual(paneIDs(store).count, 2)
         let closing = store.workspace.focusedPane
 
@@ -145,7 +145,7 @@ final class CommandRoutingTests: XCTestCase {
     /// `addGroup` → `assignPane` → `renameGroup` → `removeGroup` (members survive ungrouped).
     func testGroupArithmeticAssignsRenamesAndRemoves() {
         let store = makeStore()
-        apply(.newPane, to: store)                          // two panes on the canvas
+        apply(.newPane(.terminal), to: store)                          // two panes on the canvas
         let ids = paneIDs(store)
         let pane = ids[0]
 
@@ -183,7 +183,7 @@ final class CommandRoutingTests: XCTestCase {
     /// `centerOnGroup` only moves the camera onto the group's bounding box (no pane-set / focus change).
     func testCenterOnGroupMovesOnlyCamera() {
         let store = makeStore()
-        apply(.newPane, to: store)
+        apply(.newPane(.terminal), to: store)
         let ids = paneIDs(store)
         let groupID = store.addGroup(name: "G")
         store.assignPane(ids[1], toGroup: groupID)
@@ -200,7 +200,7 @@ final class CommandRoutingTests: XCTestCase {
 
     func testApplyFocusDirectionMovesGeometrically() {
         let store = makeStore()
-        apply(.newPane, to: store)                          // two panes
+        apply(.newPane(.terminal), to: store)                          // two panes
         let ids = paneIDs(store)                            // z-order: [original, new]
         let left = ids[0], right = ids[1]
         reportTwoPaneLayout(store, left: left, right: right)
@@ -217,7 +217,7 @@ final class CommandRoutingTests: XCTestCase {
 
     func testApplyFocusDirectionNoopWithoutSolvedLayout() {
         let store = makeStore()
-        apply(.newPane, to: store)
+        apply(.newPane(.terminal), to: store)
         let focusedBefore = store.workspace.focusedPane
 
         apply(.focus(.left), to: store)                     // no updateSolvedLayout called
@@ -229,7 +229,7 @@ final class CommandRoutingTests: XCTestCase {
 
     func testApplyCycleFocusWrapsThroughPanes() {
         let store = makeStore()
-        apply(.newPane, to: store)
+        apply(.newPane(.terminal), to: store)
         let ids = paneIDs(store)                            // [a, b]
         let a = ids[0], b = ids[1]
         store.focus(a)

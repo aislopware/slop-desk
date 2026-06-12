@@ -35,7 +35,7 @@ final class CommandInterpreterTests: XCTestCase {
 
         let expected: [(KeyChord, WorkspaceCommand)] = [
             // Canvas: new pane / tidy.
-            (KeyChord(character: "t", [.command]),                 .newPane),
+            (KeyChord(character: "t", [.command]),                 .newPane(.terminal)),
             (KeyChord(character: "d", [.command, .shift]),         .tidy),
             // Centre camera on the focused pane / on all panes.
             (KeyChord(character: "c", [.option, .command]),        .centerFocusedPane),
@@ -76,7 +76,7 @@ final class CommandInterpreterTests: XCTestCase {
             KeyChord(character: "t", [.command]),
             "the convenience init lower-cases the base key — case is not part of identity"
         )
-        XCTAssertEqual(interpreter.feed(KeyChord(character: "T", [.command])), .newPane)
+        XCTAssertEqual(interpreter.feed(KeyChord(character: "T", [.command])), .newPane(.terminal))
         // Tidy requires an EXPLICIT .shift, not an upper-case char.
         XCTAssertEqual(interpreter.feed(KeyChord(character: "D", [.command, .shift])), .tidy)
         XCTAssertEqual(
@@ -109,7 +109,7 @@ final class CommandInterpreterTests: XCTestCase {
     /// live); the old chord stops resolving and the new chord resolves to the remapped command.
     func testRebindingViaMutableBindingsTakesEffect() {
         let interpreter = CommandInterpreter()
-        XCTAssertEqual(interpreter.feed(KeyChord(character: "t", [.command])), .newPane)
+        XCTAssertEqual(interpreter.feed(KeyChord(character: "t", [.command])), .newPane(.terminal))
 
         // Remap ⌘T to newGroup and drop the old meaning.
         interpreter.bindings[KeyChord(character: "t", [.command])] = .newGroup

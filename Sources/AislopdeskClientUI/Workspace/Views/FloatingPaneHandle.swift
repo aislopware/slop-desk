@@ -362,6 +362,10 @@ struct PaneMenuView: View {
             Divider().padding(.vertical, 4)
 
             newPaneRow
+            // Duplicate THIS pane (not the focused one): spec + endpoint + group + size come along.
+            row("Duplicate Pane", systemImage: "plus.square.on.square") {
+                store.duplicatePane(id)
+            }
             groupSection
 
             Divider().padding(.vertical, 4)
