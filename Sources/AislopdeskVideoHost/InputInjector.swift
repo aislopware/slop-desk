@@ -68,6 +68,13 @@ public final class InputInjector: @unchecked Sendable {
     /// post tap + cursor move differ.
     private static let injectToPid = ProcessInfo.processInfo.environment["AISLOPDESK_VIDEO_INJECT_TO_PID"] != nil
     private static let inputTrace = ProcessInfo.processInfo.environment["AISLOPDESK_INPUT_TRACE"] != nil
+    /// VIRTUAL-HID keyboard (`AISLOPDESK_VIRTUAL_HID=1`): route key events through aislopdesk-hid-bridge
+    /// (a DriverKit virtual keyboard) instead of `CGEvent`, so they reach a SecurityAgent password field
+    /// that Secure Event Input would otherwise block. Opt-in: the operator must run the bridge (see
+    /// hid-bridge/ + scripts/setup-virtual-hid.sh). Mouse/scroll stay on CGEvent (SEI is keyboard-only).
+    private static let virtualHIDEnabled = ProcessInfo.processInfo.environment["AISLOPDESK_VIRTUAL_HID"] == "1"
+    /// The virtual-HID sender, when enabled (else `nil` → the CGEvent path is unchanged). Per-session.
+    private let virtualHID: VirtualHIDKeyboardClient?
     /// Scroll gain multiplier (`AISLOPDESK_SCROLL_GAIN`, default 1.0 = byte-identical pass-through).
     /// The client forwards macOS's already-accelerated trackpad deltas 1:1 and the coalescer never
     /// merges or drops a scroll, so distance parity with a local gesture holds at 1.0 — this knob
@@ -83,6 +90,7 @@ public final class InputInjector: @unchecked Sendable {
         self.pid = pid
         self.windowID = windowID
         self.windowBoundsCG = windowBoundsCG
+        self.virtualHID = Self.virtualHIDEnabled ? VirtualHIDKeyboardClient() : nil
         self.eventSource = CGEventSource(stateID: .hidSystemState)
         if let eventSource {
             // Default local-events suppression interval is 0.25s: after a posted (or warped)
@@ -306,6 +314,10 @@ public final class InputInjector: @unchecked Sendable {
     }
 
     private func postKey(keyCode: UInt16, down: Bool, modifiers: InputModifiers, tag: UInt32) {
+        // VIRTUAL-HID mode: send via the DriverKit virtual keyboard (reaches SecurityAgent secure fields).
+        // A mapped key is fully handled here — do NOT also post a CGEvent (would double-type). An UNMAPPED
+        // key (send returns false) falls through to CGEvent so nothing is silently dropped.
+        if let virtualHID, virtualHID.send(keyCode: keyCode, down: down, modifiers: modifiers) { return }
         guard let event = CGEvent(keyboardEventSource: eventSource, virtualKey: CGKeyCode(keyCode), keyDown: down) else { return }
         event.flags = cgFlags(modifiers)
         postKeyboardEvent(event)

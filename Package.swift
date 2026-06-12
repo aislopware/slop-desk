@@ -179,6 +179,11 @@ let package = Package(
         // by pane scaling. GUI+TCC-gated at runtime.
         .executableTarget(name: "aislopdesk-capture-probe", dependencies: ["AislopdeskVideoHost"]),
 
+        // Virtual-HID probe: drives the REAL `VirtualHIDKeyboardClient` (videohostd's virtual-HID
+        // keyboard path) to type through aislopdesk-hid-bridge, verifying the host→bridge→virtual-keyboard
+        // chain reaches even a SecurityAgent secure field. Run the bridge (sudo) first.
+        .executableTarget(name: "aislopdesk-hid-probe", dependencies: ["AislopdeskVideoHost", "AislopdeskVideoProtocol"]),
+
         // MARK: Tests
         .testTarget(name: "AislopdeskProtocolTests", dependencies: ["AislopdeskProtocol"]),
         .testTarget(name: "AislopdeskTransportTests", dependencies: ["AislopdeskTransport"]),
