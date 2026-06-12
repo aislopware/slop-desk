@@ -116,8 +116,13 @@ struct CanvasItemView: View {
 
     private var isFocused: Bool { store.isFocused(item.id) }
 
-    /// The borderless pane's corner rounding (the macOS floating-window look without a border).
-    private static let cornerRadius: CGFloat = 6
+    /// The pane's corner rounding — matches a plain (toolbar-less) Tahoe window: NSThemeFrame
+    /// reports 16 for titled windows and 26 for unified-toolbar ones (measured on macOS 26.5),
+    /// and a pane has no toolbar.
+    private static let cornerRadius: CGFloat = 16
+    /// Breathing room between the border stroke and the content — at radius 16 the corner curve
+    /// intrudes ~5pt diagonally, so anything less lets glyphs touch the stroke or get corner-clipped.
+    private static let contentPadding: CGFloat = 10
     /// Below this travel a pill gesture is a CLICK; past it, a latched MOVE (touch jitter needs more).
     #if os(macOS)
     private static let dragDeadZone: CGFloat = 4
@@ -154,7 +159,8 @@ struct CanvasItemView: View {
         )
         // Maximized: inset the content below the pill so the terminal's FIRST ROW (where the prompt
         // lives) is never occluded by it. Geometry-only (same view identity — guardrail 2 safe).
-        .padding(.top, maximized ? 34 : 0)
+        .padding(.top, maximized ? 34 : Self.contentPadding)
+        .padding([.horizontal, .bottom], Self.contentPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .frame(width: shown.width, height: shown.height)   // resize previews live (intended reflow)
         #if os(macOS)
@@ -166,16 +172,22 @@ struct CanvasItemView: View {
         .background { ScrollPanForwarder(store: store) }
         #endif
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
-        // The pane's only remaining "chrome": a soft drop shadow that separates the borderless pane
-        // from the canvas (stronger on the focused pane — the key-window idiom, and a focus cue now
-        // that the ring border is gone). Drawn on a STATIC rounded rect BEHIND the content — never
-        // `.shadow` on the live terminal/video layer itself, which would add an offscreen shadow pass
-        // to every 60fps repaint.
+        // A soft drop shadow that separates the pane from the canvas (stronger on the focused pane —
+        // the key-window idiom, and the primary focus cue). Drawn on a STATIC rounded rect BEHIND
+        // the content — never `.shadow` on the live terminal/video layer itself, which would add an
+        // offscreen shadow pass to every 60fps repaint.
         .background {
             RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
                 .fill(.background)
                 .shadow(color: .black.opacity(isFocused ? 0.30 : 0.15),
                         radius: isFocused ? 20 : 8, x: 0, y: isFocused ? 6 : 2)
+        }
+        // The pane border: a hairline stroke on the clip shape (the header stays gone — the pill is
+        // the only other chrome). Hit-testing off so it never steals the grips' edge slivers.
+        .overlay {
+            RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+                .strokeBorder(.separator, lineWidth: 1)
+                .allowsHitTesting(false)
         }
         // Terminal connection failure dims the (stale) body into a big "click to reconnect" target.
         // Declared BEFORE the grips + pill: the perimeter must keep RESIZING a dead pane (the grips
