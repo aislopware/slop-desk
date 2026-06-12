@@ -362,6 +362,21 @@ public actor AislopdeskVideoHostSession {
     /// Whether the next injected input event must raise+focus first.
     private var inputNeedsRaise = true
 
+    /// DIALOG-EXPAND state (host-only feature; armed only when the window is VD-parked AND the
+    /// feature env is on). The current capture region in GLOBAL points: `nil` ⇒ the plain window
+    /// frame; non-nil ⇒ a union (window ∪ an attached file-open/print dialog) so the dialog shows in
+    /// full and is clickable. ``onAssociatedUnion`` drives transitions; the input/cursor mapping
+    /// origin tracks this rect so clicks land in the dialog area. See [[CaptureRegionMath]].
+    private var dialogExpandArmed = false
+    private var captureRegionGlobal: CGRect?
+    /// Monotonic epoch for host-initiated capture-region `resizeAck`s (distinct space from the
+    /// client-driven resize epoch; the client does not re-validate ack epochs).
+    private var captureRegionEpoch: UInt32 = 1 << 24
+    /// Re-entrancy guard so overlapping union polls can't launch concurrent region rebuilds.
+    private var captureRegionRebuilding = false
+    /// Feature gate: default ON when display-anchored (VD-parked); `AISLOPDESK_DIALOG_EXPAND=0` disables.
+    static let dialogExpandEnabled = ProcessInfo.processInfo.environment["AISLOPDESK_DIALOG_EXPAND"] != "0"
+
     /// Ordered + COALESCING inbound pump — the input-reorder fix AND the input-latency fix.
     /// The transport delivers datagrams in strict arrival order on its serial receive queue; it
     /// APPENDS each to `inboundQueue` synchronously (no actor hop, so arrival order is carried
@@ -1330,6 +1345,18 @@ public actor AislopdeskVideoHostSession {
             Task { await self.onGeometry(message) }
         }
         self.geometryWatcher = geometryWatcher
+        // DIALOG-EXPAND: arm the union poll only when the window is VD-parked (display-anchored
+        // capture — the feature relies on includeChildWindows compositing the dialog) and the
+        // feature env is on. The handler hops onto the actor; ``onAssociatedUnion`` decides whether
+        // the union differs from the live region enough to rebuild.
+        dialogExpandArmed = (captureSizeOverride != nil) && Self.dialogExpandEnabled
+        captureRegionGlobal = nil   // a fresh/reused session starts captured at the plain window frame
+        if dialogExpandArmed {
+            geometryWatcher.setAssociatedUnionHandler { [weak self] unionGlobal in
+                guard let self else { return }
+                Task { await self.onAssociatedUnion(unionGlobal) }
+            }
+        }
 
         // Cursor sampler → hot position datagrams (+ OOB shape bitmaps, shipped once
         // per new shapeID by the sampler itself). Both go on the dedicated cursor
@@ -1623,6 +1650,111 @@ public actor AislopdeskVideoHostSession {
             }
         }
         transport.send(scheduler.scheduleGeometry(message).bytes, on: .geometry)
+    }
+
+    /// DIALOG-EXPAND: the geometry watcher detected the capture-region union (window ∪ attached
+    /// dialog) change. Decide whether to retarget the capture region: expand when a dialog overhangs
+    /// the window, contract back to the window frame when it closes. Each transition is an encoder
+    /// rebuild + IDR, so it is hysteresis-gated (the watcher only fires past `shouldRetarget`, and we
+    /// re-check vs the LIVE region here — the watcher's baseline can lag a rebuild).
+    private func onAssociatedUnion(_ unionGlobal: CGRect) async {
+        guard dialogExpandArmed, stateMachine.mediaFlowing, !captureRegionRebuilding else { return }
+        let windowFrame = currentWindowBoundsCG().cgRect
+        // The "natural" region is the window frame; a union strictly larger than it (a dialog
+        // overhangs) expands, otherwise we want the plain window frame back.
+        let desired = unionGlobal.contains(windowFrame) && unionGlobal != windowFrame ? unionGlobal : windowFrame
+        let current = captureRegionGlobal ?? windowFrame
+        guard CaptureRegionMath.shouldRetarget(current: current, desired: desired) else { return }
+        // Contracting back to (approximately) the window frame ⇒ clear the override; else expand.
+        let target: CGRect? = CaptureRegionMath.shouldRetarget(current: desired, desired: windowFrame) ? desired : nil
+        await applyCaptureRegion(target)
+    }
+
+    /// DIALOG-EXPAND rebuild: re-point the capture at `regionGlobal` (nil ⇒ the plain window frame)
+    /// WITHOUT AX-resizing the window. Mirrors ``applyResize`` steps b–d (build new encoder, swap the
+    /// capturer with a region override, ack) but skips the AX window resize (step a) — the window is
+    /// untouched; only the captured RECT and the input/cursor mapping origin move. The client adopts
+    /// the new size frame-gated and grows the pane for free (see the resize-path ack contract).
+    private func applyCaptureRegion(_ regionGlobal: CGRect?) async {
+        guard stateMachine.mediaFlowing, let oldCapturer = capturer, let oldEncoder = encoder,
+              !captureRegionRebuilding else { return }
+        captureRegionRebuilding = true
+        defer { captureRegionRebuilding = false }
+
+        // Resolve the target region: explicit union, or the live window frame for a contract.
+        let windowFrame = currentWindowBoundsCG().cgRect
+        let region = regionGlobal ?? windowFrame
+        // Display under the region centre (the VD); needed for the display-local sourceRect.
+        var did = CGDirectDisplayID(0); var count: UInt32 = 0
+        let center = CGPoint(x: region.midX, y: region.midY)
+        guard CGGetDisplaysWithPoint(center, 1, &did, &count) == .success, count > 0 else {
+            dbg("dialog-expand: no display under region centre — skipped"); return
+        }
+        let db = CGDisplayBounds(did)
+        let override: WindowCapturer.CaptureRegionOverride? = regionGlobal.map {
+            WindowCapturer.CaptureRegionOverride(
+                displayID: did,
+                displayLocalRect: CGRect(x: $0.minX - db.minX, y: $0.minY - db.minY, width: $0.width, height: $0.height),
+                globalRect: $0)
+        }
+        let pointW = max(1, Int(region.width.rounded())), pointH = max(1, Int(region.height.rounded()))
+        let pixelWidth = max(1, Int((Double(pointW) * captureScale).rounded()))
+        let pixelHeight = max(1, Int((Double(pointH) * captureScale).rounded()))
+        captureRegionEpoch &+= 1
+        let epoch = captureRegionEpoch
+
+        // b. New encoder at the region pixel size (abort cleanly on failure — keep the old one).
+        let ceiling = LiveBitratePolicy.targetBitrate(pixelWidth: pixelWidth, pixelHeight: pixelHeight, fps: fps, floor: bitrate)
+        let newEncoder = VideoEncoder(width: pixelWidth, height: pixelHeight, bitrate: ceiling, fps: fps, fullRange: Self.fullRange, ltrEnabled: Self.ltrEnabled, outputHandler: makeEncoderOutputHandler())
+        do { try newEncoder.createLiveSession() } catch {
+            log.error("dialog-expand encoder create failed: \(String(describing: error)) — keeping old"); return
+        }
+        // c. New capturer bound to the new encoder, with the region override.
+        let logCallback = log
+        let newCapturer = WindowCapturer(fps: fps, captureScale: captureScale, fullRange: Self.fullRange, preferDisplayAnchored: captureSizeOverride != nil) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
+            do {
+                if ltrRefresh { try newEncoder.encodeLiveLTRRefresh(pixelBuffer: pixelBuffer, presentationTime: pts) }
+                else if crisp { try newEncoder.encodeLiveCrispKeyframe(pixelBuffer: pixelBuffer, presentationTime: pts) }
+                else if compact { try newEncoder.encodeCompactKeyframe(pixelBuffer: pixelBuffer, presentationTime: pts) }
+                else { try newEncoder.encodeLive(pixelBuffer: pixelBuffer, presentationTime: pts, forceKeyframe: forceKeyframe) }
+            } catch { logCallback.error("dialog-expand encode failed: \(String(describing: error))") }
+        }
+        await oldCapturer.stop()
+        oldEncoder.completeFrames()
+        // Supersede guard (mirrors applyResize FIX #1): a bye/stop/resize raced our suspension.
+        guard stateMachine.mediaFlowing, capturer === oldCapturer, encoder === oldEncoder else {
+            dbg("dialog-expand: superseded during oldCapturer.stop — aborting install"); return
+        }
+        self.encoder = newEncoder
+        seedCongestionController(ceiling: ceiling)
+        resetLTRForNewEncoder()
+        self.capturer = newCapturer
+        if Self.fpsGovernorEnabled, governedFps != fps {
+            newCapturer.setGovernedFPS(governedFps); newEncoder.setExpectedFrameRate(governedFps)
+        }
+        // Re-origin the input + cursor mapping to the captured region so a click in the dialog area
+        // (which may sit left/above the window) maps to the correct GLOBAL point. Contracting back
+        // to the window frame restores the window-origin mapping. (CursorSampler `visible` also keys
+        // off this rect's size, so the cursor stays reported while over the dialog.)
+        let mapRect = VideoRect(x: region.minX, y: region.minY, width: region.width, height: region.height)
+        injector?.updateWindowBounds(mapRect)
+        cursorSampler?.updateWindowBounds(mapRect)
+        captureRegionGlobal = regionGlobal
+        let captureWindow = window
+        do {
+            nonisolated(unsafe) let w = captureWindow
+            try await newCapturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight, region: override)
+            dbg("dialog-expand: capture region \(regionGlobal == nil ? "→ window frame" : "→ union") \(pointW)x\(pointH)pt (\(pixelWidth)x\(pixelHeight)px) epoch=\(epoch)")
+        } catch {
+            log.error("dialog-expand capturer start failed: \(String(describing: error))")
+            if capturer === newCapturer { capturer = nil; encoder = nil }
+            return
+        }
+        guard self.capturer === newCapturer else {
+            dbg("dialog-expand: superseded during start — tearing down orphan"); await newCapturer.stop(); return
+        }
+        await apply(.sendControl(.resizeAck(captureWidth: UInt16(min(Double(UInt16.max), Double(pointW))),
+                                            captureHeight: UInt16(min(Double(UInt16.max), Double(pointH))), epoch: epoch)))
     }
 
     private func onCursorUpdate(_ update: CursorUpdate) {

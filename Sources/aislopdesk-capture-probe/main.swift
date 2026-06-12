@@ -27,6 +27,7 @@ _ = NSApplication.shared   // CGS connection — SCStream trips CGS_REQUIRE_INIT
 func eprint(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
 
 var titleQuery: String?
+var windowIDArg: UInt32?
 var seconds = 20.0
 var outDir = "/tmp/capture-probe"
 var maxHz = 4.0
@@ -35,6 +36,7 @@ var args = Array(CommandLine.arguments.dropFirst()).makeIterator()
 while let a = args.next() {
     switch a {
     case "--title": titleQuery = args.next()
+    case "--window-id": windowIDArg = args.next().flatMap { UInt32($0) }
     case "--seconds": seconds = args.next().flatMap(Double.init) ?? 20.0
     case "--out": outDir = args.next() ?? outDir
     case "--max-hz": maxHz = args.next().flatMap(Double.init) ?? 4.0
@@ -52,11 +54,21 @@ let task = Task {
             }
             exit(0)
         }
-        guard let needle = titleQuery else { eprint("need --title <substring> (or --list)"); exit(1) }
-        guard let window = content.windows
-            .filter({ ($0.title ?? "").localizedCaseInsensitiveContains(needle) || ($0.owningApplication?.applicationName ?? "").localizedCaseInsensitiveContains(needle) })
-            .max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
-            eprint("no window matching '\(needle)'"); exit(1)
+        let window: SCWindow
+        if let wid = windowIDArg {
+            guard let w = content.windows.first(where: { $0.windowID == wid }) else {
+                eprint("no window with id \(wid)"); exit(1)
+            }
+            window = w
+        } else if let needle = titleQuery {
+            guard let w = content.windows
+                .filter({ ($0.title ?? "").localizedCaseInsensitiveContains(needle) || ($0.owningApplication?.applicationName ?? "").localizedCaseInsensitiveContains(needle) })
+                .max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
+                eprint("no window matching '\(needle)'"); exit(1)
+            }
+            window = w
+        } else {
+            eprint("need --window-id <N> or --title <substring> (or --list)"); exit(1)
         }
         let scale = 1.0   // point-resolution capture: pixel offsets in dumps == point offsets
         let pixelW = Int(window.frame.width * scale), pixelH = Int(window.frame.height * scale)

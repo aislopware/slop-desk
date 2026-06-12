@@ -33,10 +33,30 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
     private var lastBounds: VideoRect?
     private var lastTitle: String?
 
+    /// DIALOG-EXPAND (host-only): when set, every Nth drag poll enumerates the on-screen windows IN
+    /// FRONT of the tracked window, computes the capture region = window ∪ any attached same-pid
+    /// panel (a file-open dialog the OS attributes to the app's pid), and fires this handler with the
+    /// GLOBAL-point union whenever it changes beyond hysteresis. Off (nil) ⇒ zero extra work. The
+    /// union math is in ``CaptureRegionMath`` (pure + unit-tested); this method only feeds it the
+    /// `CGWindowListCopyWindowInfo` snapshot. queue-confined.
+    public typealias UnionHandler = @Sendable (CGRect) -> Void
+    private var associatedUnionHandler: UnionHandler?
+    private var lastUnionEmitted: CGRect = .null
+    private var unionPollCounter = 0
+    /// Enumerate the union every `unionPollDivider`-th drag poll (~6 Hz at the 30 Hz drag cadence) —
+    /// a dialog open/close is a discrete event, not a per-frame one, so 6 Hz is ample and cheap.
+    private static let unionPollDivider = 5
+
     public init(windowID: CGWindowID, pid: pid_t, geometryHandler: @escaping GeometryHandler) {
         self.windowID = windowID
         self.pid = pid
         self.geometryHandler = geometryHandler
+    }
+
+    /// Arm the DIALOG-EXPAND union poll. Call BEFORE ``startDragPolling`` (the handler is read on the
+    /// poll queue). Passing nil disarms.
+    public func setAssociatedUnionHandler(_ handler: UnionHandler?) {
+        associatedUnionHandler = handler
     }
 
     /// Reads the window's current bounds via `CGWindowListCopyWindowInfo`
@@ -85,6 +105,43 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         case (false, true): geometryHandler(.resize(bounds.size))
         case (false, false): break
         }
+        // DIALOG-EXPAND: throttled union enumeration (only when armed).
+        if associatedUnionHandler != nil {
+            unionPollCounter += 1
+            if unionPollCounter % Self.unionPollDivider == 0 { pollAssociatedUnion(targetFrameVR: bounds) }
+        }
+    }
+
+    /// Enumerate windows IN FRONT of the tracked window, compute the capture-region union via
+    /// ``CaptureRegionMath``, and fire the union handler when it changes beyond hysteresis. queue-
+    /// confined (called from ``pollOnce``). The display is the one under the window centre.
+    private func pollAssociatedUnion(targetFrameVR: VideoRect) {
+        guard let handler = associatedUnionHandler else { return }
+        let targetFrame = CGRect(x: targetFrameVR.origin.x, y: targetFrameVR.origin.y,
+                                 width: targetFrameVR.size.width, height: targetFrameVR.size.height)
+        // Display under the window centre (the VD in the real deployment).
+        let center = CGPoint(x: targetFrame.midX, y: targetFrame.midY)
+        var did = CGDirectDisplayID(0); var count: UInt32 = 0
+        guard CGGetDisplaysWithPoint(center, 1, &did, &count) == .success, count > 0 else { return }
+        let displayBounds = CGDisplayBounds(did)
+        guard let all = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else { return }
+        // CGWindowList is FRONT-to-back: take the slice strictly in front of the tracked window.
+        var inFront: [CaptureRegionMath.WindowSnapshot] = []
+        for w in all {
+            let wid = (w[kCGWindowNumber as String] as? UInt32) ?? 0
+            if wid == windowID { break }   // reached the tracked window — the rest are behind it
+            guard let bd = w[kCGWindowBounds as String] as? [String: Any],
+                  let r = CGRect(dictionaryRepresentation: bd as CFDictionary) else { continue }
+            let ownerPID = Int32((w[kCGWindowOwnerPID as String] as? Int) ?? -1)
+            let layer = (w[kCGWindowLayer as String] as? Int) ?? Int.min
+            inFront.append(.init(windowID: wid, ownerPID: ownerPID, layer: layer, frame: r))
+        }
+        let union = CaptureRegionMath.unionRegion(targetFrame: targetFrame, targetWindowID: UInt32(windowID),
+                                                  targetPID: Int32(pid), windowsInFront: inFront, displayBounds: displayBounds)
+        let baseline = lastUnionEmitted.isNull ? targetFrame : lastUnionEmitted
+        guard CaptureRegionMath.shouldRetarget(current: baseline, desired: union) else { return }
+        lastUnionEmitted = union
+        handler(union)
     }
 
     /// Emits a title change if the window's title differs from the last seen value.

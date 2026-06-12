@@ -471,31 +471,63 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// the crop is a FIXED display-local rect, so a window MOVE makes it stale — the session feeds
     /// geometry-watcher moves to ``updateDisplayAnchoredOrigin(windowFrameCG:)`` to re-anchor.
     /// Guarded by `anchorLock` (set on start's executor, read from the session actor's geometry path).
-    private struct DisplayAnchor { let displayBounds: CGRect; let config: SCStreamConfiguration }
+    private struct DisplayAnchor { let displayBounds: CGRect; let config: SCStreamConfiguration; let isUnion: Bool }
     private var displayAnchor: DisplayAnchor?
     private let anchorLock = NSLock()
+
+    /// An explicit display-anchored capture region (the DIALOG-EXPAND feature): when set, the crop
+    /// is `displayLocalRect` (points) on `displayID` instead of the live window frame, so the
+    /// captured surface spans the window ∪ its associated dialog. `globalRect` is the same region in
+    /// global points — the session uses it to re-origin the input/cursor mapping into the dialog
+    /// area. Built by ``CaptureRegionMath`` and threaded through ``start(window:pixelWidth:pixelHeight:region:)``.
+    public struct CaptureRegionOverride: Sendable {
+        public let displayID: CGDirectDisplayID
+        public let displayLocalRect: CGRect
+        public let globalRect: CGRect
+        public init(displayID: CGDirectDisplayID, displayLocalRect: CGRect, globalRect: CGRect) {
+            self.displayID = displayID; self.displayLocalRect = displayLocalRect; self.globalRect = globalRect
+        }
+    }
 
     /// Starts capturing the given window at an explicit PIXEL size (`pixelWidth`×`pixelHeight`).
     /// Passing the window's backing-pixel size (points × display scale) captures at native
     /// Retina resolution — sharp text — instead of the soft point-resolution default. ⚠️
     /// Requires a window-server + Screen-Recording TCC session — NEVER call from a test.
-    public func start(window: SCWindow, pixelWidth: Int, pixelHeight: Int) async throws {
+    ///
+    /// `region` (DIALOG-EXPAND): when non-nil, the display-anchored crop is pinned to that explicit
+    /// union rect (window ∪ dialog) instead of the live window frame — `pixelWidth`/`pixelHeight`
+    /// must already match `region.globalRect.size × captureScale`. nil ⇒ the normal window-frame crop.
+    public func start(window: SCWindow, pixelWidth: Int, pixelHeight: Int, region: CaptureRegionOverride? = nil) async throws {
         let config = Self.makeConfiguration(width: pixelWidth, height: pixelHeight, fps: fps, captureScale: captureScale, fullRange: fullRange)
         var filter = Self.makeFilter(window: window)
-        let mode = Self.resolveCaptureMode(envValue: ProcessInfo.processInfo.environment["AISLOPDESK_DISPLAY_CAPTURE"],
-                                           preferDisplayAnchored: preferDisplayAnchored)
+        // A union region only makes sense in the display-including mode (it relies on
+        // includeChildWindows compositing the dialog); force that mode when a region is supplied.
+        let mode: CaptureMode = region != nil ? .displayIncluding
+            : Self.resolveCaptureMode(envValue: ProcessInfo.processInfo.environment["AISLOPDESK_DISPLAY_CAPTURE"],
+                                      preferDisplayAnchored: preferDisplayAnchored)
         if mode != .window {
             // Re-resolve the SCWindow by id: the mint flow AX-moves the window onto the VD AFTER
             // the `window` passed here was enumerated, so its `.frame` is the PRE-move one — the
             // display-local crop must come from the live (post-move) frame.
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             let liveWindow = content.windows.first(where: { $0.windowID == window.windowID }) ?? window
-            let center = CGPoint(x: liveWindow.frame.midX, y: liveWindow.frame.midY)
-            if let display = content.displays.first(where: { CGDisplayBounds($0.displayID).contains(center) }) {
+            // Region override carries its own display; else pick the display under the window centre.
+            let display: SCDisplay?
+            if let region {
+                display = content.displays.first(where: { $0.displayID == region.displayID })
+            } else {
+                let center = CGPoint(x: liveWindow.frame.midX, y: liveWindow.frame.midY)
+                display = content.displays.first(where: { CGDisplayBounds($0.displayID).contains(center) })
+            }
+            if let display {
                 let db = CGDisplayBounds(display.displayID)
-                config.sourceRect = CGRect(x: liveWindow.frame.minX - db.minX, y: liveWindow.frame.minY - db.minY,
-                                           width: Double(pixelWidth) / max(1.0, captureScale),
-                                           height: Double(pixelHeight) / max(1.0, captureScale))
+                if let region {
+                    config.sourceRect = region.displayLocalRect
+                } else {
+                    config.sourceRect = CGRect(x: liveWindow.frame.minX - db.minX, y: liveWindow.frame.minY - db.minY,
+                                               width: Double(pixelWidth) / max(1.0, captureScale),
+                                               height: Double(pixelHeight) / max(1.0, captureScale))
+                }
                 switch mode {
                 case .displayExcluding:
                     filter = SCContentFilter(display: display, excludingWindows: [])
@@ -505,8 +537,8 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
                 case .window:
                     break
                 }
-                anchorLock.withLock { displayAnchor = DisplayAnchor(displayBounds: db, config: config) }
-                log.notice("capture mode \(String(describing: mode)): display \(display.displayID) sourceRect \(Int(config.sourceRect.origin.x)),\(Int(config.sourceRect.origin.y)) \(Int(config.sourceRect.width))x\(Int(config.sourceRect.height))pt")
+                anchorLock.withLock { displayAnchor = DisplayAnchor(displayBounds: db, config: config, isUnion: region != nil) }
+                log.notice("capture mode \(String(describing: mode))\(region != nil ? " [union]" : ""): display \(display.displayID) sourceRect \(Int(config.sourceRect.origin.x)),\(Int(config.sourceRect.origin.y)) \(Int(config.sourceRect.width))x\(Int(config.sourceRect.height))pt")
             } else {
                 log.error("display-anchored capture: no display contains window center — falling back to window filter")
             }
@@ -541,6 +573,9 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     public func updateDisplayAnchoredOrigin(windowFrameCG frame: CGRect) async {
         let anchor = anchorLock.withLock { displayAnchor }
         guard let anchor, let stream else { return }
+        // In union mode the crop spans window ∪ dialog and is owned by the session's union poller —
+        // a plain window-frame re-origin would drop the dialog. Skip; the poller re-targets instead.
+        guard !anchor.isUnion else { return }
         let newOrigin = CGPoint(x: frame.minX - anchor.displayBounds.minX,
                                 y: frame.minY - anchor.displayBounds.minY)
         let current = anchor.config.sourceRect.origin
