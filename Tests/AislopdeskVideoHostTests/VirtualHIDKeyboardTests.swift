@@ -104,5 +104,19 @@ final class VirtualHIDKeyboardTests: XCTestCase {
     func testReleaseAllReportIsZero() {
         XCTAssertEqual(HIDKeyboardState().releaseAllReport(), [0, 0, 0, 0, 0, 0, 0, 0])
     }
+
+    // MARK: backend routing (virtual HID ONLY while secure input is active)
+
+    func testBackendUsesVirtualHIDOnlyWhenSecureAndAvailable() {
+        // The whole point of the conditional routing: HID only when a secure field is up.
+        XCTAssertEqual(InputInjector.keyboardBackend(virtualHIDAvailable: true, secureInputActive: true), .virtualHID)
+        XCTAssertEqual(InputInjector.keyboardBackend(virtualHIDAvailable: true, secureInputActive: false), .cgEvent)
+    }
+
+    func testBackendFallsBackToCGEventWhenHIDUnavailable() {
+        // No bridge/virtual keyboard configured → always CGEvent, even inside a secure field.
+        XCTAssertEqual(InputInjector.keyboardBackend(virtualHIDAvailable: false, secureInputActive: true), .cgEvent)
+        XCTAssertEqual(InputInjector.keyboardBackend(virtualHIDAvailable: false, secureInputActive: false), .cgEvent)
+    }
 }
 #endif
