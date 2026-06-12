@@ -31,7 +31,7 @@ final class WorkspaceTests: XCTestCase {
     func testDefaultWorkspaceIsOneFocusedTerminalPane() {
         let ws = Workspace.defaultWorkspace()
         XCTAssertEqual(ws.schemaVersion, Workspace.currentSchemaVersion)
-        XCTAssertEqual(ws.schemaVersion, 5)   // 5: VideoEndpoint.appName (pane rebind)
+        XCTAssertEqual(ws.schemaVersion, 6)   // 6: Workspace.bookmarks (viewport bookmarks)
 
         // A single terminal pane on the canvas, focused, not maximized, ungrouped.
         XCTAssertEqual(ws.canvas.itemCount, 1)

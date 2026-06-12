@@ -99,8 +99,10 @@ final class CommandInterpreterTests: XCTestCase {
         XCTAssertNil(interpreter.feed(KeyChord(character: "t", [.control])), "⌃T is not a workspace chord")
         // A named key with no binding.
         XCTAssertNil(interpreter.feed(KeyChord(.return)))
-        // A digit chord is not bound (⌘1…⌘9 tab-select is gone).
-        XCTAssertNil(interpreter.feed(KeyChord(character: "1", [.command])))
+        // ⌘1…⌘9 now recall viewport bookmarks (tab-select is gone; BookmarkTests pins all nine
+        // slots) — a digit with the WRONG modifiers stays unbound.
+        XCTAssertEqual(interpreter.feed(KeyChord(character: "1", [.command])), .recallBookmark(1))
+        XCTAssertNil(interpreter.feed(KeyChord(character: "1", [.control])))
     }
 
     // MARK: - Rebinding

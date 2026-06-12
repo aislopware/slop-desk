@@ -40,6 +40,9 @@ public struct Workspace: Codable, Sendable, Equatable {
     /// the old per-pane `PaneSpec.endpoint`. Persisted so the connect-gate prefills the last-used host;
     /// `nil` until the user first connects (the gate then shows ``ConnectionTarget/default``).
     public var connection: ConnectionTarget?
+    /// Viewport bookmarks by slot (1–9): ⇧⌘n saves, ⌘n recalls — the single-key spatial jumps of the
+    /// daily loop (terminal → browser pane → Claude pane) on a pan-only canvas.
+    public var bookmarks: [Int: CanvasBookmark]
 
     public init(
         schemaVersion: Int = Workspace.currentSchemaVersion,
@@ -47,7 +50,8 @@ public struct Workspace: Codable, Sendable, Equatable {
         focusedPane: PaneID?,
         maximizedPane: PaneID? = nil,
         groups: [PaneGroup] = [],
-        connection: ConnectionTarget? = nil
+        connection: ConnectionTarget? = nil,
+        bookmarks: [Int: CanvasBookmark] = [:]
     ) {
         self.schemaVersion = schemaVersion
         self.canvas = canvas
@@ -55,6 +59,25 @@ public struct Workspace: Codable, Sendable, Equatable {
         self.maximizedPane = maximizedPane
         self.groups = groups
         self.connection = connection
+        self.bookmarks = bookmarks
+    }
+}
+
+// MARK: - CanvasBookmark (a saved viewport jump)
+
+/// One saved viewport bookmark: the FOCUSED PANE at save time plus the raw camera origin. Recall
+/// prefers following the pane when it still exists (live panes relocate — a raw coordinate goes
+/// stale the moment the pane is dragged); the camera origin is the fallback when the pane is gone.
+/// `name` (the pane's title at save time) labels the menu items.
+public struct CanvasBookmark: Codable, Sendable, Equatable {
+    public var pane: PaneID?
+    public var cameraOrigin: CGPoint
+    public var name: String
+
+    public init(pane: PaneID?, cameraOrigin: CGPoint, name: String) {
+        self.pane = pane
+        self.cameraOrigin = cameraOrigin
+        self.name = name
     }
 }
 
@@ -65,7 +88,8 @@ public extension Workspace {
     /// higher/unrecognized version — or any older on-disk shape that no longer decodes — falls back to
     /// ``defaultWorkspace()``. Single-user project: there is no backward-compatibility path by design.
     /// 5 (2026-06-12): `VideoEndpoint` gained `appName` (pane rebind by app+title).
-    static let currentSchemaVersion = 5
+    /// 6 (2026-06-12): ``Workspace/bookmarks`` (viewport bookmarks, ⇧⌘n/⌘n).
+    static let currentSchemaVersion = 6
 
     /// The fresh-launch / decode-failure fallback: one terminal pane at the origin, focused, ungrouped.
     static func defaultWorkspace() -> Workspace {

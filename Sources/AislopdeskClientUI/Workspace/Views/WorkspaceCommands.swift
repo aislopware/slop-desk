@@ -110,6 +110,29 @@ public struct WorkspaceCommands: Commands {
         commandButton("Reconnect Pane", .reconnectPane)
         commandButton("Close Pane", .closePane)
         commandButton("Reopen Closed Pane", .reopenClosedPane)
+
+        Divider()
+
+        // Viewport bookmarks: recall items are titled with the LIVE bookmark name (the focused
+        // pane's title at save time) and disabled while their slot is empty; save items always
+        // overwrite. The chords (⌘n / ⇧⌘n) derive from the bindings table like every other item.
+        Menu("Bookmarks") {
+            ForEach(1..<10, id: \.self) { n in
+                Button(store?.workspace.bookmarks[n].map { "Go to \($0.name)" } ?? "Go to Bookmark \(n)") {
+                    if let store { apply(.recallBookmark(n), to: store) }
+                }
+                .disabled(store?.workspace.bookmarks[n] == nil)
+                .modifier(OptionalShortcut(Self.shortcut(for: .recallBookmark(n))))
+            }
+            Divider()
+            ForEach(1..<10, id: \.self) { n in
+                Button("Save Bookmark \(n)") {
+                    if let store { apply(.saveBookmark(n), to: store) }
+                }
+                .disabled(store == nil)
+                .modifier(OptionalShortcut(Self.shortcut(for: .saveBookmark(n))))
+            }
+        }
     }
 
     // MARK: - Item builder

@@ -700,6 +700,41 @@ public final class WorkspaceStore {
         reconcile()
     }
 
+    // MARK: - Viewport bookmarks (⇧⌘1–9 save, ⌘1–9 recall)
+
+    /// Saves the current viewport into bookmark `slot` (1–9), named after the focused pane. The
+    /// in-flight scroll pan is committed FIRST so the saved camera is what the user actually sees,
+    /// not the last committed position. Records the focused pane as the recall anchor (see
+    /// ``CanvasBookmark``).
+    public func saveBookmark(_ slot: Int) {
+        guard (1...9).contains(slot) else { return }
+        commitScrollPan()
+        let name = workspace.focusedPane
+            .flatMap { workspace.canvas.spec(for: $0)?.title }
+            ?? "Bookmark \(slot)"
+        workspace.bookmarks[slot] = CanvasBookmark(
+            pane: workspace.focusedPane,
+            cameraOrigin: workspace.canvas.camera.origin,
+            name: name
+        )
+        reconcile()   // metadata-only (leaf set unchanged) — reconcile just persists
+    }
+
+    /// Recalls bookmark `slot`: when its anchor pane is still on the canvas, FOLLOW it (focus +
+    /// centre — live panes relocate; the raw coordinate goes stale); otherwise restore the saved
+    /// camera origin. No-op for an empty slot.
+    public func recallBookmark(_ slot: Int) {
+        guard let bookmark = workspace.bookmarks[slot] else { return }
+        if let pane = bookmark.pane, workspace.canvas.contains(pane) {
+            focus(pane)
+            centerOnPane(pane)
+        } else {
+            discardLiveScroll()
+            workspace.canvas = workspace.canvas.camera(CanvasCamera(origin: bookmark.cameraOrigin))
+            reconcile()
+        }
+    }
+
     // MARK: - Viewport reporting (for placement / centring / video-cap visibility)
 
     /// The canvas view reports its current viewport size so the store can place / centre / tidy panes
@@ -1407,5 +1442,9 @@ public func apply(_ command: WorkspaceCommand, to store: WorkspaceStore) {
         if let pane = store.focusedPane {
             store.reconnect(pane)
         }
+    case let .saveBookmark(slot):
+        store.saveBookmark(slot)
+    case let .recallBookmark(slot):
+        store.recallBookmark(slot)
     }
 }

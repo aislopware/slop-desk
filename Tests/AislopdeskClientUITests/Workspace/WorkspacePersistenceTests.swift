@@ -90,7 +90,7 @@ final class WorkspacePersistenceTests: XCTestCase {
         XCTAssertEqual(restored.canvas.camera.origin, CGPoint(x: -50, y: 120), "camera pan survives")
         XCTAssertEqual(restored.canvas.frame(of: pA), CGRect(x: -120, y: 40, width: 700, height: 460), "item frame survives")
         XCTAssertEqual(restored.schemaVersion, Workspace.currentSchemaVersion)
-        XCTAssertEqual(restored.schemaVersion, 5)   // 5: VideoEndpoint.appName (pane rebind)
+        XCTAssertEqual(restored.schemaVersion, 6)   // 6: Workspace.bookmarks (viewport bookmarks)
         XCTAssertEqual(restored.connection,
                        ConnectionTarget(host: "10.0.0.9", port: 7420, mediaPort: 9000, cursorPort: 9001),
                        "the app-global connection target round-trips")

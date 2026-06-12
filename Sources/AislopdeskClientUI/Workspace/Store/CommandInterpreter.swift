@@ -21,6 +21,8 @@ public enum WorkspaceCommand: Sendable, Equatable {
     case toggleZoom                // ⇧⌘↩  — maximize the focused pane to the viewport
     case renamePane                // ⌘R   — rename the focused pane
     case reconnectPane             // ⇧⌘R — re-dial the focused pane (primary failure recovery)
+    case saveBookmark(Int)         // ⇧⌘1–9 — save the viewport as bookmark n
+    case recallBookmark(Int)       // ⌘1–9  — jump back to bookmark n
 }
 
 // MARK: - Key chords
@@ -190,6 +192,14 @@ public extension CommandInterpreter {
         // Reconnect the focused pane: ⇧⌘R. The primary failure-recovery command was palette-only;
         // a chord makes it learnable and surfaces its glyph in the menu + palette automatically.
         map[KeyChord(character: "r", [.command, .shift])] = .reconnectPane
+
+        // Viewport bookmarks: ⇧⌘n saves the current viewport into slot n, ⌘n jumps back — the
+        // single-key spatial loop a pan-only canvas needs (no tabs ever claimed ⌘1–9 here).
+        for n in 1...9 {
+            let digit = Character("\(n)")
+            map[KeyChord(character: digit, [.command, .shift])] = .saveBookmark(n)
+            map[KeyChord(character: digit, [.command])] = .recallBookmark(n)
+        }
 
         return map
     }
