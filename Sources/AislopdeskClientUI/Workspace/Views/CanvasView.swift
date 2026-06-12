@@ -70,6 +70,13 @@ struct CanvasView: View {
             .overlay(alignment: .bottomTrailing) { if !store.overviewActive { recenterButton(viewport: geo.size) } }
             .overlay { if store.overviewActive { overviewLayer(viewport: geo.size) } }
             .animation(.easeInOut(duration: 0.2), value: store.overviewActive)
+            // The Recenter button's `.transition(.opacity)` had no driver, so it popped. Key a fade to
+            // its visibility predicate. The committed camera (not the live drag offset) feeds
+            // `needsRecenter`, so a live pan doesn't churn this — it flips once on commit.
+            .animation(.easeInOut(duration: 0.18),
+                       value: store.workspace.maximizedPane == nil
+                           && !canvas.items.isEmpty
+                           && canvas.needsRecenter(viewport: geo.size))
             .onAppear { report(geo.size, camera: canvas.camera) }
             .onChange(of: geo.size) { _, s in report(s, camera: canvas.camera) }
             .onChange(of: canvas) { _, _ in report(geo.size, camera: canvas.camera) }
@@ -119,6 +126,10 @@ struct CanvasView: View {
                 CanvasItemView(item: item, store: store, coordSpace: Self.coordSpace,
                                viewportSize: viewport,
                                displaySize: isMax ? maxSize : nil)
+                    // Lifecycle transition: a new pane scales+fades IN, a closed one scales+fades OUT.
+                    // Fires ONLY inside the item-id-keyed animation below (a real add/remove), never on
+                    // pan-culling (the cull changes `visible`, not the full id list → no transaction).
+                    .transition(.scale(scale: 0.92, anchor: .center).combined(with: .opacity))
                     .position(x: pos.x, y: pos.y)
                     // Maximized pane on top of everything; otherwise the focused pane renders above the
                     // rest (the pane you are interacting with is on top; the dragged pane is usually the
@@ -134,6 +145,13 @@ struct CanvasView: View {
         // Explicit size so `.position` lays out absolutely; off-frame items are NOT clipped here (the
         // outer GeometryReader `.clipped()` clips the viewport), so panned-in panes appear.
         .frame(width: viewport.width, height: viewport.height, alignment: .topLeading)
+        // LIFECYCLE ANIMATION (value-scoped, drag-safe): an animation transaction fires ONLY when the
+        // canvas's FULL pane-id list changes (a real add / close), so the item transitions above play
+        // then. It is keyed to `canvas.items` ids — NOT the culled `visible` list — so a pan (which
+        // changes `visible` via culling) creates NO transaction and stays instant; and it is applied
+        // here, INSIDE the camera `.offset` below, so the camera pan/drag is never animated by it.
+        // Maximize changes per-item geometry, not the id list, so it stays instant too.
+        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: canvas.items.map(\.id))
         // The ONLY camera application (rigid). `livePan` = a live background DRAG (view @State); the store's
         // `liveCameraOffset` = a live trackpad/wheel SCROLL pan that has not yet committed (BUG-2/BUG-1
         // freeze fix) — both are visual-only, folded into `camera.origin` on commit with no jump.
