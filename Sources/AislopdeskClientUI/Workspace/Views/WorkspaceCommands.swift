@@ -94,14 +94,16 @@ public struct WorkspaceCommands: Commands {
 
     @ViewBuilder
     private var paneMenu: some View {
-        // "New Pane" carries the ⌘T ALIAS explicitly — the canonical ⌘N chord lives on the File-menu
-        // "New Terminal Pane" item, and the same chord on two items would be ambiguous to AppKit.
-        // `CommandInterpreterTests` pins ⌘T → `.newPane(.terminal)` in the table so this cannot drift.
+        // "New Pane" creates a terminal pane (the Pane-menu twin of File ▸ New Terminal Pane). It carries
+        // NO explicit chord: ⌘T maps to `.newPane(.terminal)` in the bindings table, so the File-menu
+        // "New Terminal Pane" item ALREADY shows + owns ⌘T (table-derived). Declaring ⌘T here too put the
+        // same key-equivalent on two visible menu items, which AppKit arbitrates by dispatching to one and
+        // leaving the other's ⌘T glyph a decoy. (The stale prior comment claimed ⌘N lived on the File item,
+        // but ⌘N now maps to `.newPaneDefault`.) `CommandInterpreterTests` pins ⌘T → `.newPane(.terminal)`.
         Button("New Pane") {
             if let store { apply(.newPane(.terminal), to: store) }
         }
         .disabled(store == nil)
-        .modifier(OptionalShortcut(KeyChord(character: "t", [.command]).shortcut))
         commandButton("New Group", .newGroup)
         // Explicit "Group Selected Panes" — disabled until ≥1 pane is multi-selected (⌃⌘G also groups the
         // selection when there is one). Carries the ⌥⌘G hint from the bindings table like every other item.
