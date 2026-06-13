@@ -11,12 +11,13 @@
 
 use aislopdesk_ffi::{
     aisd_bytes_free, aisd_frame_decoder_append, aisd_frame_decoder_free, aisd_frame_decoder_new,
-    aisd_frame_decoder_next, aisd_seq_distance, aisd_wire_message_encode, aisd_wire_message_free,
-    AisdBytes, AisdWireMessage, AISD_EMPTY, AISD_ERR_FRAME_TOO_LARGE, AISD_ERR_INVALID_ARGUMENT,
-    AISD_ERR_MALFORMED, AISD_ERR_NULL, AISD_ERR_TRUNCATED, AISD_ERR_UNKNOWN_TYPE, AISD_OK,
-    AISD_WIRE_ACK, AISD_WIRE_BELL, AISD_WIRE_BYE, AISD_WIRE_COMMAND_STATUS, AISD_WIRE_EXIT,
-    AISD_WIRE_HELLO, AISD_WIRE_HELLO_ACK, AISD_WIRE_INPUT, AISD_WIRE_NOTIFICATION,
-    AISD_WIRE_OUTPUT, AISD_WIRE_PING, AISD_WIRE_PONG, AISD_WIRE_RESIZE, AISD_WIRE_TITLE,
+    aisd_frame_decoder_next, aisd_seq_distance, aisd_wire_message_decode, aisd_wire_message_encode,
+    aisd_wire_message_free, AisdBytes, AisdWireMessage, AISD_EMPTY, AISD_ERR_FRAME_TOO_LARGE,
+    AISD_ERR_INVALID_ARGUMENT, AISD_ERR_MALFORMED, AISD_ERR_NULL, AISD_ERR_TRUNCATED,
+    AISD_ERR_UNKNOWN_TYPE, AISD_OK, AISD_WIRE_ACK, AISD_WIRE_BELL, AISD_WIRE_BYE,
+    AISD_WIRE_COMMAND_STATUS, AISD_WIRE_EXIT, AISD_WIRE_HELLO, AISD_WIRE_HELLO_ACK,
+    AISD_WIRE_INPUT, AISD_WIRE_NOTIFICATION, AISD_WIRE_OUTPUT, AISD_WIRE_PING, AISD_WIRE_PONG,
+    AISD_WIRE_RESIZE, AISD_WIRE_TITLE,
 };
 
 /// A zeroed message — every field default, both buffers empty.
@@ -484,5 +485,70 @@ fn null_pointers_are_rejected_not_dereferenced() {
         aisd_frame_decoder_free(core::ptr::null_mut());
         aisd_wire_message_free(core::ptr::null_mut());
         aisd_bytes_free(AisdBytes::EMPTY);
+    }
+}
+
+// ---- Single-payload decode (aisd_wire_message_decode) -------------------------------------
+
+#[test]
+fn decode_single_payload_matches_encode() {
+    unsafe {
+        let payload = b"\x1b[2J hi \xf0\x9f\x9a\x80";
+        let msg = AisdWireMessage {
+            tag: AISD_WIRE_OUTPUT,
+            seq: 42,
+            data: borrow(payload),
+            ..base()
+        };
+        // Encode a full frame, then strip the 4-byte length prefix to get the bare payload
+        // (the single-payload decode is the de-framed counterpart of the streaming decoder).
+        let mut frame = AisdBytes::EMPTY;
+        assert_eq!(aisd_wire_message_encode(&msg, &mut frame), AISD_OK);
+        let frame_bytes = view(frame);
+        let body = &frame_bytes[4..];
+
+        let mut out = base();
+        assert_eq!(
+            aisd_wire_message_decode(body.as_ptr(), body.len(), &mut out),
+            AISD_OK
+        );
+        assert_eq!(out.tag, AISD_WIRE_OUTPUT);
+        assert_eq!(out.seq, 42);
+        assert_eq!(view(out.data), payload);
+
+        aisd_wire_message_free(&mut out);
+        aisd_bytes_free(frame);
+    }
+}
+
+#[test]
+fn decode_reports_errors_and_null_guards() {
+    unsafe {
+        let mut out = base();
+        // Unknown type byte.
+        assert_eq!(
+            aisd_wire_message_decode([0xFFu8].as_ptr(), 1, &mut out),
+            AISD_ERR_UNKNOWN_TYPE
+        );
+        // Type 2 (exit) needs a 4-byte code; one body byte => truncated.
+        let short = [2u8, 0u8];
+        assert_eq!(
+            aisd_wire_message_decode(short.as_ptr(), short.len(), &mut out),
+            AISD_ERR_TRUNCATED
+        );
+        // Empty payload has no type byte => truncated (null+len0 is allowed input).
+        assert_eq!(
+            aisd_wire_message_decode(core::ptr::null(), 0, &mut out),
+            AISD_ERR_TRUNCATED
+        );
+        // Null guards.
+        assert_eq!(
+            aisd_wire_message_decode(core::ptr::null(), 1, &mut out),
+            AISD_ERR_NULL
+        );
+        assert_eq!(
+            aisd_wire_message_decode([1u8].as_ptr(), 1, core::ptr::null_mut()),
+            AISD_ERR_NULL
+        );
     }
 }

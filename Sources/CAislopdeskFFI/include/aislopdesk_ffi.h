@@ -102,6 +102,16 @@ typedef struct AisdWireMessage {
  */
 AisdStatus aisd_wire_message_encode(const AisdWireMessage *msg, AisdBytes *out);
 
+/*
+ * Decode a single complete payload ([type byte][body...], WITHOUT the 4-byte length prefix
+ * — framing is the caller's job) into `*out`. The de-framed counterpart of the streaming
+ * decoder, for callers that buffer/de-frame the stream themselves and only want the protocol
+ * body parsed by the shared codec. On AISD_OK, `*out` owns buffers (release with
+ * `aisd_wire_message_free`). `payload` may be NULL only when `len == 0`. Returns
+ * AISD_ERR_NULL, AISD_ERR_TRUNCATED, AISD_ERR_UNKNOWN_TYPE, or AISD_ERR_MALFORMED on failure.
+ */
+AisdStatus aisd_wire_message_decode(const uint8_t *payload, size_t len, AisdWireMessage *out);
+
 /* Release the owned buffers inside a decoded message (its `data`/`data2`). Idempotent. */
 void aisd_wire_message_free(AisdWireMessage *msg);
 

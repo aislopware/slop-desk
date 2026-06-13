@@ -8,7 +8,20 @@ extension WireMessage {
     ///   requires, ``AislopdeskError/unknownMessageType(_:)`` for an unrecognized type
     ///   byte, or ``AislopdeskError/malformedBody(_:)`` for a right-length-but-invalid
     ///   body (e.g. bad UTF-8).
+    ///
+    /// Delegates to the Rust `aislopdesk-core` codec via the FFI (``RustFFI/decodePayload(_:)``),
+    /// the single source of truth shared with the Android client — behaviour-identical to
+    /// ``decodeNative(payload:)`` (re-proven through the wrapper by `RustWireParityTests`). A
+    /// large bulk payload stays on the native decoder, where Rust's extra FFI copies would
+    /// regress the flood path (see ``RustFFI/payloadThreshold``).
     static func decode(payload: Data) throws -> WireMessage {
+        if payload.count > RustFFI.payloadThreshold { return try decodeNative(payload: payload) }
+        return try RustFFI.decodePayload(payload)
+    }
+
+    /// The native Swift payload decoder. Retained as the differential/benchmark baseline;
+    /// ``decode(payload:)`` is the production entry point and routes through Rust.
+    static func decodeNative(payload: Data) throws -> WireMessage {
         var reader = BigEndianReader(payload)
         let type = try reader.readUInt8()
 

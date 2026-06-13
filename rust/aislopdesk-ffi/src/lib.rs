@@ -431,6 +431,44 @@ pub unsafe extern "C" fn aisd_wire_message_encode(
     }
 }
 
+/// Decodes a single complete payload (`[type byte][body…]`, WITHOUT the 4-byte length
+/// prefix — framing is the caller's job) into `*out`.
+///
+/// This mirrors the safe core's [`WireMessage::decode`]; it is the counterpart to
+/// [`aisd_wire_message_encode`] for callers that already de-frame the stream themselves
+/// (e.g. a Swift `FrameDecoder` keeping its hardened buffering) and only want the protocol
+/// body parsed by the shared Rust codec. On [`AISD_OK`], `*out` owns buffers — release with
+/// [`aisd_wire_message_free`]. `payload` may be null only when `len == 0`.
+///
+/// # Safety
+/// `out` must be a writable [`AisdWireMessage`]; if `len != 0`, `payload` must point to at
+/// least `len` readable bytes. On a non-[`AISD_OK`] return `*out` is left untouched; on
+/// [`AISD_OK`] it is overwritten as raw output without freeing prior contents (see
+/// [`aisd_frame_decoder_next`]).
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn aisd_wire_message_decode(
+    payload: *const u8,
+    len: usize,
+    out: *mut AisdWireMessage,
+) -> AisdStatus {
+    if out.is_null() || (payload.is_null() && len != 0) {
+        return AISD_ERR_NULL;
+    }
+    let slice = if len == 0 {
+        &[][..]
+    } else {
+        core::slice::from_raw_parts(payload, len)
+    };
+    match WireMessage::decode(slice) {
+        Ok(message) => {
+            out.write(wire_message_to_c(&message));
+            AISD_OK
+        }
+        Err(error) => status_for_error(&error),
+    }
+}
+
 /// Releases the owned buffers inside an [`AisdWireMessage`] (its `data` / `data2`) and
 /// resets them to empty. Idempotent: safe to call twice; the struct itself is caller-owned.
 ///

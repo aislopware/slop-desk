@@ -12,7 +12,32 @@ extension WireMessage {
     ///
     /// `payloadLength` counts `messageType` + `body` and excludes the 4 prefix
     /// bytes — exactly what ``FrameDecoder`` expects.
+    ///
+    /// Delegates to the Rust `aislopdesk-core` codec via the FFI (``RustFFI/encodeFrame(_:)``),
+    /// the single source of truth shared with the Android client — byte-identical to
+    /// ``encodeNative()`` (proven by golden vectors and re-proven through the wrapper by
+    /// `RustWireParityTests`). Large bulk `.output`/`.input` payloads stay on the native
+    /// zero-copy encoder, where Rust's extra FFI copies would regress the flood path (see
+    /// ``RustFFI/payloadThreshold``); the common case + all control traffic use the faster Rust path.
     public func encode() -> Data {
+        if exceedsRustCodecThreshold { return encodeNative() }
+        return RustFFI.encodeFrame(self)
+    }
+
+    /// True for the bulk DATA variants (`.output`/`.input`) whose payload is large enough that
+    /// the Rust codec's extra FFI buffer copies would regress the native zero-copy path.
+    private var exceedsRustCodecThreshold: Bool {
+        switch self {
+        case let .output(_, bytes): return bytes.count > RustFFI.payloadThreshold
+        case let .input(bytes): return bytes.count > RustFFI.payloadThreshold
+        default: return false
+        }
+    }
+
+    /// The native Swift frame encoder. Retained as the differential/benchmark baseline and as
+    /// the safety fallback inside ``RustFFI/encodeFrame(_:)``; ``encode()`` is the production
+    /// entry point and routes through Rust.
+    func encodeNative() -> Data {
         // Build the whole frame in ONE buffer: a 4-byte length placeholder, then [messageType][body…],
         // then BACK-PATCH the prefix with the payload length. This avoids an intermediate `body` Data
         // and the extra whole-payload copy it forced — notably the up-to-128 KiB `.output` payload under
