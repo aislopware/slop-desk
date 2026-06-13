@@ -2294,5 +2294,11 @@ public func apply(_ command: WorkspaceCommand, to store: WorkspaceStore) {
         store.recallBookmark(slot)
     case .manageSnippets:
         store.requestSnippetManager()
+    case let .align(edge):
+        store.alignPanes(to: edge)
+    case let .distribute(horizontal):
+        store.distributePanes(horizontal: horizontal)
+    case .saveLayout:
+        store.requestSaveLayout()
     }
 }

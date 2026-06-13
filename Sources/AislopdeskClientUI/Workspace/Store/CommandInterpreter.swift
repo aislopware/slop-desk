@@ -28,6 +28,9 @@ public enum WorkspaceCommand: Sendable, Equatable {
     case saveBookmark(Int)         // ⇧⌘1–9 — save the viewport as bookmark n
     case recallBookmark(Int)       // ⌘1–9  — jump back to bookmark n
     case manageSnippets            // open the snippet manager (create / edit / delete command macros)
+    case align(AlignEdge)          // align the Arrange targets (selection ≥2, else all) to an edge/centre
+    case distribute(horizontal: Bool) // even-space the Arrange targets horizontally / vertically
+    case saveLayout                // open the "Save Current Layout…" prompt
 }
 
 public extension WorkspaceCommand {

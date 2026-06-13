@@ -61,6 +61,42 @@ final class CommandPaletteEntriesTests: XCTestCase {
         }
     }
 
+    // MARK: - Catalog covers the formerly menu-only verbs (align / distribute / save-layout)
+
+    func testCatalogContainsArrangeAndSaveLayoutCommands() {
+        let commands = CommandPaletteView.commandCatalog.map(\.command)
+        XCTAssertTrue(commands.contains(.saveLayout), "Save Current Layout… runnable from ⌘K")
+        XCTAssertTrue(commands.contains(.align(.left)), "Align Left runnable from ⌘K")
+        XCTAssertTrue(commands.contains(.align(.centerVertical)))
+        XCTAssertTrue(commands.contains(.distribute(horizontal: true)))
+        XCTAssertTrue(commands.contains(.distribute(horizontal: false)))
+        // All six align edges are present.
+        for edge in AlignEdge.allCases {
+            XCTAssertTrue(commands.contains(.align(edge)), "Align \(edge) is in the catalog")
+        }
+    }
+
+    // MARK: - Bookmark recall entries (jump to a named viewport from ⌘K)
+
+    func testBookmarkEntriesAppearForSavedBookmarks() {
+        let pane = PaneID()
+        let store = WorkspaceStore(
+            restoring: Workspace(canvas: Canvas(items: [
+                CanvasItem(id: pane, spec: PaneSpec(kind: .terminal, title: "p"),
+                           frame: CGRect(x: 0, y: 0, width: 160, height: 120), z: 0)
+            ]), focusedPane: pane),
+            makeSession: { FakePaneSession($0) }, liveVideoCap: 5)
+        store.saveBookmark(3)   // names it after the focused pane's title
+        let entries = CommandPaletteView.buildBookmarkEntries(workspace: store.workspace)
+        XCTAssertTrue(entries.map(\.title).contains { $0.hasPrefix("Go to ") },
+                      "a saved bookmark surfaces a 'Go to …' row")
+        // And it carries the recall command for that slot.
+        let entry = entries.first { $0.id == "bookmark.3" }
+        XCTAssertNotNil(entry)
+        if case let .command(cmd) = entry?.kind { XCTAssertEqual(cmd, .recallBookmark(3)) }
+        else { XCTFail("bookmark entry must carry .recallBookmark") }
+    }
+
     // MARK: - buildPaneEntries
 
     /// Every pane on the canvas yields exactly one jump-to-pane entry carrying its `PaneID`, titled by

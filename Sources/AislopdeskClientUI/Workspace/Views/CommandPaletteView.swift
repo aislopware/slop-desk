@@ -299,9 +299,9 @@ struct CommandPaletteView: View {
         let (scope, stripped) = Self.parseScope(raw)
         let all: [Entry]
         switch scope {
-        case .all:        all = commandEntries + layoutEntries + snippetEntries + groupEntries + paneEntries + hostWindowEntries
+        case .all:        all = commandEntries + layoutEntries + snippetEntries + groupEntries + paneEntries + bookmarkEntries + hostWindowEntries
         case .commands:   all = commandEntries + layoutEntries + snippetEntries
-        case .panes:      all = groupEntries + paneEntries
+        case .panes:      all = groupEntries + paneEntries + bookmarkEntries
         case .hostWindows: all = hostWindowEntries
         }
         let trimmed = stripped
@@ -382,6 +382,28 @@ struct CommandPaletteView: View {
                 subtitle: "Recent",
                 symbol: item.symbol,
                 shortcutHint: Self.shortcutHint(for: item.command)
+            )
+        }
+    }
+
+    /// One "go to bookmark" entry per saved viewport bookmark, in slot order. Selecting one recalls the
+    /// bookmark (pans the camera back / re-focuses its pane) via the same `.recallBookmark` command the
+    /// ⌘1–9 chords run. Lets a named viewport be reached by name from ⌘K, not just by its digit.
+    private var bookmarkEntries: [Entry] { Self.buildBookmarkEntries(workspace: store.workspace) }
+
+    /// Pure builder for the bookmark recall entries (factored out so it is unit-testable without a view).
+    /// `@MainActor` because `shortcutHint` reads the main-actor `defaultBindings` table.
+    @MainActor static func buildBookmarkEntries(workspace: Workspace) -> [Entry] {
+        workspace.bookmarks.keys.sorted().compactMap { slot -> Entry? in
+            guard let bm = workspace.bookmarks[slot] else { return nil }
+            return Entry(
+                id: "bookmark.\(slot)",
+                kind: .command(.recallBookmark(slot)),
+                title: "Go to \(bm.name)",
+                subtitle: "Bookmark \(slot)",
+                symbol: "bookmark",
+                shortcutHint: Self.shortcutHint(for: .recallBookmark(slot)),
+                keywords: "bookmark viewport jump go to \(slot)"
             )
         }
     }
@@ -607,6 +629,17 @@ struct CommandPaletteView: View {
         CatalogItem(command: .focus(.up), title: "Focus Up", symbol: "arrow.up", keywords: "move navigate"),
         CatalogItem(command: .focus(.down), title: "Focus Down", symbol: "arrow.down", keywords: "move navigate"),
         CatalogItem(command: .manageSnippets, title: "Manage Snippets…", symbol: "scroll", keywords: "macro send keys library edit create snippet"),
+        CatalogItem(command: .saveLayout, title: "Save Current Layout…", symbol: "rectangle.badge.plus", keywords: "layout preset workspace snapshot save"),
+        // Align + distribute (the Arrange ops) — previously menu-bar-only. They act on the multi-selection
+        // (≥2 selected) else all panes, exactly like Pane ▸ Arrange.
+        CatalogItem(command: .align(.left), title: "Align Left", symbol: "align.horizontal.left", keywords: "arrange edge"),
+        CatalogItem(command: .align(.right), title: "Align Right", symbol: "align.horizontal.right", keywords: "arrange edge"),
+        CatalogItem(command: .align(.top), title: "Align Top", symbol: "align.vertical.top", keywords: "arrange edge"),
+        CatalogItem(command: .align(.bottom), title: "Align Bottom", symbol: "align.vertical.bottom", keywords: "arrange edge"),
+        CatalogItem(command: .align(.centerHorizontal), title: "Align Center Horizontally", symbol: "align.horizontal.center", keywords: "arrange centre middle"),
+        CatalogItem(command: .align(.centerVertical), title: "Align Center Vertically", symbol: "align.vertical.center", keywords: "arrange centre middle"),
+        CatalogItem(command: .distribute(horizontal: true), title: "Distribute Horizontally", symbol: "arrow.left.and.right", keywords: "arrange even space spread"),
+        CatalogItem(command: .distribute(horizontal: false), title: "Distribute Vertically", symbol: "arrow.up.and.down", keywords: "arrange even space spread"),
     ]
 
     // MARK: - Shortcut hint rendering (chord → glyph string)

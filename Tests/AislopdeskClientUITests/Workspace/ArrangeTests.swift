@@ -108,6 +108,41 @@ final class ArrangeTests: XCTestCase {
         XCTAssertEqual(store.workspace.canvas.frame(of: c)!.minX, 300, accuracy: eps, "unselected pane untouched")
     }
 
+    // MARK: - Command routing (align / distribute / save-layout reachable from ⌘K + menu)
+
+    func testApplyAlignCommandRoutesToAlignPanes() {
+        let a = PaneID(), b = PaneID()
+        let store = makeStore(restoring: Workspace(canvas: Canvas(items: [
+            item(a, CGRect(x: 100, y: 0, width: 160, height: 120)),
+            item(b, CGRect(x: 40, y: 300, width: 160, height: 120)),
+        ]), focusedPane: a))
+        store.setSelection([a, b])
+        apply(.align(.left), to: store)
+        XCTAssertEqual(store.workspace.canvas.frame(of: a)!.minX, 40, accuracy: eps)
+        XCTAssertEqual(store.workspace.canvas.frame(of: b)!.minX, 40, accuracy: eps)
+    }
+
+    func testApplyDistributeCommandRoutesToDistribute() {
+        let a = PaneID(), b = PaneID(), c = PaneID()
+        let store = makeStore(restoring: Workspace(canvas: Canvas(items: [
+            item(a, CGRect(x: 0, y: 0, width: 160, height: 120)),
+            item(b, CGRect(x: 200, y: 0, width: 160, height: 120)),     // crammed; distribute re-spaces it
+            item(c, CGRect(x: 1000, y: 0, width: 160, height: 120)),
+        ]), focusedPane: a))
+        store.setSelection([a, b, c])
+        apply(.distribute(horizontal: true), to: store)
+        // Equal gaps: a stays at 0, c stays at its right edge; b's gap to a equals c's gap to b.
+        let fa = store.workspace.canvas.frame(of: a)!, fb = store.workspace.canvas.frame(of: b)!, fc = store.workspace.canvas.frame(of: c)!
+        XCTAssertEqual(fb.minX - fa.maxX, fc.minX - fb.maxX, accuracy: 1e-3, "distribute equalised the horizontal gaps")
+    }
+
+    func testApplySaveLayoutOpensTheSavePrompt() {
+        let store = makeStore()
+        XCTAssertFalse(store.pendingSaveLayout)
+        apply(.saveLayout, to: store)
+        XCTAssertTrue(store.pendingSaveLayout, "the command opens the Save Current Layout… prompt")
+    }
+
     func testToggleAndClearSelection() {
         let a = PaneID(), b = PaneID()
         let store = makeStore(restoring: Workspace(canvas: Canvas(items: [

@@ -178,7 +178,7 @@ public extension Canvas {
 // MARK: - Arrange: align + distribute (pure)
 
 /// Which edge/centre the panes are aligned to.
-public enum AlignEdge: Sendable, CaseIterable { case left, right, top, bottom, centerHorizontal, centerVertical }
+public enum AlignEdge: Sendable, CaseIterable, Equatable { case left, right, top, bottom, centerHorizontal, centerVertical }
 
 public extension Canvas {
     /// Aligns the panes named by `ids` to the shared edge/centre of THEIR bounding box (Figma's
