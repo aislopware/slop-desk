@@ -99,6 +99,13 @@ public struct WorkspaceCommands: Commands {
         .disabled(store == nil)
         .modifier(OptionalShortcut(KeyChord(character: "t", [.command]).shortcut))
         commandButton("New Group", .newGroup)
+        // Explicit "Group Selected Panes" — disabled until ≥1 pane is multi-selected (⌃⌘G also groups the
+        // selection when there is one). Carries the ⌥⌘G hint from the bindings table like every other item.
+        Button("Group Selected Panes") {
+            store?.groupSelection()
+        }
+        .disabled(store == nil || (store?.selectedPanes.isEmpty ?? true))
+        .modifier(OptionalShortcut(Self.shortcut(for: .groupSelection)))
 
         Divider()
 

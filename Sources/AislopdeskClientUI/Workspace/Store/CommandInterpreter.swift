@@ -16,7 +16,8 @@ public enum WorkspaceCommand: Sendable, Equatable {
     case centerAll                 // ⌥⇧⌘C — centre the camera on the bounding box of ALL panes
     case closePane                 // ⌘W
     case reopenClosedPane          // ⇧⌘T  — restore the last closed pane (browser "reopen tab" idiom)
-    case newGroup                  // ⌃⌘G  — create a new (empty) pane group
+    case newGroup                  // ⌃⌘G  — group the selection (≥1 selected), else a new empty group
+    case groupSelection            // ⌥⌘G  — group the current multi-selection into a new group
     case focus(FocusDirection)     // ⌥⌘←/→/↑/↓
     case cycleFocus(forward: Bool) // ⌘] (forward) / ⌘[ (back)
     case toggleZoom                // ⇧⌘↩  — maximize the focused pane to the viewport
@@ -185,8 +186,11 @@ public extension CommandInterpreter {
         map[KeyChord(character: "w", [.command])] = .closePane
         map[KeyChord(character: "t", [.command, .shift])] = .reopenClosedPane
 
-        // New group: ⌃⌘G (groups organize panes in the sidebar + draw a labeled box on the canvas).
+        // New group: ⌃⌘G (groups organize panes in the sidebar + draw a labeled box on the canvas). It is
+        // context-sensitive in `apply`: with a multi-selection it groups the selection, else makes an empty
+        // group. ⌥⌘G is the explicit "Group Selected Panes" (no-op without a selection).
         map[KeyChord(character: "g", [.control, .command])] = .newGroup
+        map[KeyChord(character: "g", [.option, .command])] = .groupSelection
 
         // Geometric focus move: ⌥⌘ + arrows.
         map[KeyChord(.leftArrow, [.option, .command])] = .focus(.left)

@@ -126,8 +126,9 @@ final class CommandRoutingTests: XCTestCase {
 
     // MARK: - Groups: lifecycle
 
-    /// `apply(.newGroup)` appends a new (empty) group; the pane set / focus / registry are untouched
-    /// (a group is metadata, not a pane).
+    /// `apply(.newGroup)` with NOTHING selected appends a new EMPTY group; the pane set / focus /
+    /// registry are untouched (a group is metadata, not a pane). With a selection it groups it instead
+    /// (see `testApplyNewGroupGroupsTheSelection`).
     func testApplyNewGroupAddsGroupWithoutTouchingPanes() {
         let store = makeStore()
         XCTAssertTrue(store.workspace.groups.isEmpty, "default workspace has no groups")
@@ -138,7 +139,59 @@ final class CommandRoutingTests: XCTestCase {
 
         XCTAssertEqual(store.workspace.groups.count, 1, "newGroup appended a group")
         XCTAssertEqual(paneIDs(store), panesBefore, "newGroup must not change the pane set")
+        XCTAssertTrue(store.workspace.groups.first.map { store.workspace.canvas.ids(inGroup: $0.id).isEmpty } ?? false,
+                      "with no selection the group is empty")
         XCTAssertEqual(store.allSessions.count, sessionsBefore, "newGroup must not touch the registry")
+    }
+
+    /// `apply(.newGroup)` WITH a multi-selection groups the selection into one new group (the common
+    /// intent) instead of the old invisible empty-group dead-end.
+    func testApplyNewGroupGroupsTheSelection() {
+        let store = makeStore()
+        apply(.newPane(.terminal), to: store)                 // two panes
+        let ids = paneIDs(store)
+        store.setSelection(Set(ids))
+
+        apply(.newGroup, to: store)
+
+        XCTAssertEqual(store.workspace.groups.count, 1)
+        let gid = store.workspace.groups[0].id
+        XCTAssertEqual(Set(store.workspace.canvas.ids(inGroup: gid)), Set(ids), "every selected pane joined the group")
+        XCTAssertTrue(store.selectedPanes.isEmpty, "the transient selection is cleared after grouping")
+    }
+
+    /// `groupSelection()` assigns every selected pane (in canvas order) to one new group and clears the
+    /// selection; the pane set + registry are untouched (grouping is metadata).
+    func testGroupSelectionAssignsAllSelectedAndClearsSelection() {
+        let store = makeStore()
+        apply(.newPane(.terminal), to: store)
+        apply(.newPane(.terminal), to: store)                 // three panes
+        let ids = paneIDs(store)
+        let sessionsBefore = store.allSessions.count
+        store.setSelection([ids[0], ids[2]])                  // two of three
+
+        let gid = store.groupSelection(name: "G")
+
+        XCTAssertNotNil(gid)
+        XCTAssertEqual(Set(store.workspace.canvas.ids(inGroup: gid!)), Set([ids[0], ids[2]]))
+        XCTAssertNil(store.workspace.group(ofPane: ids[1]), "the unselected pane stays ungrouped")
+        XCTAssertTrue(store.selectedPanes.isEmpty)
+        XCTAssertEqual(paneIDs(store), ids, "grouping never changes the pane set")
+        XCTAssertEqual(store.allSessions.count, sessionsBefore, "grouping never touches the registry")
+    }
+
+    func testGroupSelectionNoopWithEmptySelection() {
+        let store = makeStore()
+        XCTAssertNil(store.groupSelection(), "no selection → nil, no group created")
+        XCTAssertTrue(store.workspace.groups.isEmpty)
+        apply(.groupSelection, to: store)                     // also a no-op via the command
+        XCTAssertTrue(store.workspace.groups.isEmpty)
+    }
+
+    func testGroupChordsAreBound() {
+        let interp = CommandInterpreter()
+        XCTAssertEqual(interp.feed(KeyChord(character: "g", [.control, .command])), .newGroup)
+        XCTAssertEqual(interp.feed(KeyChord(character: "g", [.option, .command])), .groupSelection)
     }
 
     /// The pure group arithmetic the sidebar / store funnel through:

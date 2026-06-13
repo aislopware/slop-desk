@@ -314,6 +314,26 @@ public final class WorkspaceStore {
         reconcile()
     }
 
+    /// Turns the current multi-selection into a NEW group in one mutation — the "Group Selected Panes"
+    /// action (⌥⌘G, and ⌃⌘G when ≥1 pane is selected). Until this existed the only group-creation path
+    /// made an EMPTY group (no bounding box, invisible on the canvas), so grouping N panes meant
+    /// create-empty + Move-to-Group N times. Members are assigned in deterministic canvas order; the
+    /// transient pane-selection is cleared (the panes now read as a group). Returns the new group id, or
+    /// `nil` when nothing is selected (a no-op — the caller falls back to an empty group if it wants one).
+    @discardableResult
+    public func groupSelection(name: String = "Group") -> PaneGroupID? {
+        let ids = workspace.canvas.allIDs().filter { selectedPanes.contains($0) }
+        guard !ids.isEmpty else { return nil }
+        var next = workspace
+        let (afterAdd, gid) = next.addingGroup(name: name)
+        next = afterAdd
+        for id in ids { next = next.assigning(pane: id, toGroup: gid) }
+        workspace = next
+        clearSelection()
+        reconcile()
+        return gid
+    }
+
     /// Reorders groups (sidebar `onMove`). Pure reorder; leaf set unchanged.
     public func moveGroup(from source: IndexSet, to destination: Int) {
         workspace = workspace.movingGroup(from: source, to: destination)
@@ -2234,8 +2254,16 @@ public func apply(_ command: WorkspaceCommand, to store: WorkspaceStore) {
     case .reopenClosedPane:
         store.reopenClosedPane()
     case .newGroup:
-        // Create an empty group; the user assigns panes via the sidebar context menu / drag.
-        store.addGroup(name: "Group")
+        // Context-sensitive: a multi-selection becomes a group (the common intent — no more invisible
+        // empty-group dead-end); with nothing selected, make an empty group to populate later.
+        if store.selectedPanes.isEmpty {
+            store.addGroup(name: "Group")
+        } else {
+            store.groupSelection(name: "Group")
+        }
+    case .groupSelection:
+        // Explicit "Group Selected Panes" — a no-op when nothing is selected.
+        store.groupSelection(name: "Group")
     case let .focus(direction):
         store.move(direction)
     case let .cycleFocus(forward):

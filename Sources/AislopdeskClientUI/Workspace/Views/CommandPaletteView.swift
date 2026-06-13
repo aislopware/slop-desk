@@ -577,6 +577,7 @@ struct CommandPaletteView: View {
         CatalogItem(command: .newPane(.remoteGUI), title: "New Remote Window Pane", symbol: "macwindow.badge.plus"),
         CatalogItem(command: .duplicatePane, title: "Duplicate Pane", symbol: "plus.square.on.square"),
         CatalogItem(command: .newGroup, title: "New Group", symbol: "square.on.square.dashed"),
+        CatalogItem(command: .groupSelection, title: "Group Selected Panes", symbol: "square.stack.3d.up"),
         CatalogItem(command: .tidy, title: "Tidy Layout", symbol: "square.grid.2x2"),
         CatalogItem(command: .centerFocusedPane, title: "Center on Pane", symbol: "scope"),
         CatalogItem(command: .centerAll, title: "Center on All", symbol: "dot.scope"),
