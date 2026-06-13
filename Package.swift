@@ -1,5 +1,12 @@
 // swift-tools-version:6.2
+import Foundation
 import PackageDescription
+
+// Absolute path to this package's root, computed from the manifest's own location at
+// evaluation time. Used to make the Rust staticlib search path (`-L`) absolute so it resolves
+// in BOTH `swift build` (CWD = package root) AND an Xcode app build (CWD = DerivedData), where
+// a relative `-Lrust/target/release` is not found. Portable: recomputes if the repo moves.
+let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 
 // Aislopdesk — terminal-first remote-coding for Apple platforms.
 //
@@ -48,7 +55,7 @@ let package = Package(
             path: "Sources/CAislopdeskFFI",
             publicHeadersPath: "include",
             linkerSettings: [
-                .unsafeFlags(["-Lrust/target/release", "-laislopdesk_ffi"])
+                .unsafeFlags(["-L\(packageRoot)/rust/target/release", "-laislopdesk_ffi"])
             ]
         ),
 
