@@ -30,6 +30,37 @@ final class CommandPaletteEntriesTests: XCTestCase {
         XCTAssertNil(CommandPaletteView.fuzzyScore(query: "xyz", in: "Reconnect Pane"))
     }
 
+    // MARK: - Keyword aliases (the verbs people actually type)
+
+    /// The fuzzy haystack for a catalog command, mirroring `commandEntries` (title + keywords; commands
+    /// have no subtitle).
+    private func haystack(_ command: WorkspaceCommand) -> String {
+        let item = CommandPaletteView.commandCatalog.first { $0.command == command }!
+        return [item.title, item.keywords].compactMap { $0 }.joined(separator: " ")
+    }
+
+    func testKeywordAliasesMatchCommonVerbs() {
+        // None of these verbs appear in the command TITLE — they only resolve via the keyword synonyms.
+        XCTAssertNotNil(CommandPaletteView.fuzzyScore(query: "sync", in: haystack(.toggleBroadcast)),
+                        "'sync' finds Broadcast Input")
+        XCTAssertNotNil(CommandPaletteView.fuzzyScore(query: "fullscreen", in: haystack(.toggleZoom)),
+                        "'fullscreen' finds Maximize Pane")
+        XCTAssertNotNil(CommandPaletteView.fuzzyScore(query: "split", in: haystack(.newPane(.terminal))),
+                        "'split' finds New Terminal Pane")
+        XCTAssertNotNil(CommandPaletteView.fuzzyScore(query: "mission control", in: haystack(.toggleOverview)),
+                        "'mission control' finds Overview")
+        XCTAssertNotNil(CommandPaletteView.fuzzyScore(query: "recenter", in: haystack(.centerAll)),
+                        "'recenter' finds Center on All")
+    }
+
+    func testEveryCatalogCommandHasKeywords() {
+        // Keyword synonyms are the discoverability layer; a command with none is a silent gap.
+        for item in CommandPaletteView.commandCatalog {
+            XCTAssertNotNil(item.keywords, "\(item.title) is missing fuzzy keyword aliases")
+            XCTAssertFalse(item.keywords?.isEmpty ?? true, "\(item.title) has empty keyword aliases")
+        }
+    }
+
     // MARK: - buildPaneEntries
 
     /// Every pane on the canvas yields exactly one jump-to-pane entry carrying its `PaneID`, titled by

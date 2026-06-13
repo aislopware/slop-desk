@@ -342,7 +342,8 @@ struct CommandPaletteView: View {
                 kind: .command(item.command),
                 title: item.title,
                 symbol: item.symbol,
-                shortcutHint: Self.shortcutHint(for: item.command)
+                shortcutHint: Self.shortcutHint(for: item.command),
+                keywords: item.keywords
             )
         }
     }
@@ -563,6 +564,17 @@ struct CommandPaletteView: View {
         let command: WorkspaceCommand
         let title: String
         let symbol: String
+        /// Extra, non-displayed synonyms folded into the fuzzy haystack so the verbs people actually type
+        /// — "sync"/"fullscreen"/"split"/"mission control"/"recenter" — find the right command even though
+        /// none appear in the title. Never rendered.
+        let keywords: String?
+
+        init(command: WorkspaceCommand, title: String, symbol: String, keywords: String? = nil) {
+            self.command = command
+            self.title = title
+            self.symbol = symbol
+            self.keywords = keywords
+        }
     }
 
     /// Every palette-runnable ``WorkspaceCommand``, titled with an SF Symbol, in a sensible discovery
@@ -572,29 +584,29 @@ struct CommandPaletteView: View {
     /// though its store effect is a UI affordance (the command layer treats it as a no-op marker,
     /// docs/22 §5).
     nonisolated static let commandCatalog: [CatalogItem] = [
-        CatalogItem(command: .newPane(.terminal), title: "New Terminal Pane", symbol: "plus.rectangle"),
-        CatalogItem(command: .newPane(.claudeCode), title: "New Claude Code Pane", symbol: "sparkles.rectangle.stack"),
-        CatalogItem(command: .newPane(.remoteGUI), title: "New Remote Window Pane", symbol: "macwindow.badge.plus"),
-        CatalogItem(command: .duplicatePane, title: "Duplicate Pane", symbol: "plus.square.on.square"),
-        CatalogItem(command: .newGroup, title: "New Group", symbol: "square.on.square.dashed"),
-        CatalogItem(command: .groupSelection, title: "Group Selected Panes", symbol: "square.stack.3d.up"),
-        CatalogItem(command: .tidy, title: "Tidy Layout", symbol: "square.grid.2x2"),
-        CatalogItem(command: .centerFocusedPane, title: "Center on Pane", symbol: "scope"),
-        CatalogItem(command: .centerAll, title: "Center on All", symbol: "dot.scope"),
-        CatalogItem(command: .toggleZoom, title: "Maximize Pane", symbol: "arrow.up.left.and.arrow.down.right"),
-        CatalogItem(command: .toggleOverview, title: "Overview", symbol: "rectangle.grid.2x2"),
-        CatalogItem(command: .toggleBroadcast, title: "Broadcast Input", symbol: "dot.radiowaves.left.and.right"),
-        CatalogItem(command: .renamePane, title: "Rename Pane", symbol: "pencil"),
-        CatalogItem(command: .reconnectPane, title: "Reconnect Pane", symbol: "arrow.clockwise"),
-        CatalogItem(command: .closePane, title: "Close Pane", symbol: "xmark"),
-        CatalogItem(command: .reopenClosedPane, title: "Reopen Closed Pane", symbol: "arrow.uturn.backward"),
-        CatalogItem(command: .cycleFocus(forward: true), title: "Focus Next Pane", symbol: "arrow.forward.square"),
-        CatalogItem(command: .cycleFocus(forward: false), title: "Focus Previous Pane", symbol: "arrow.backward.square"),
-        CatalogItem(command: .focus(.left), title: "Focus Left", symbol: "arrow.left"),
-        CatalogItem(command: .focus(.right), title: "Focus Right", symbol: "arrow.right"),
-        CatalogItem(command: .focus(.up), title: "Focus Up", symbol: "arrow.up"),
-        CatalogItem(command: .focus(.down), title: "Focus Down", symbol: "arrow.down"),
-        CatalogItem(command: .manageSnippets, title: "Manage Snippets…", symbol: "scroll"),
+        CatalogItem(command: .newPane(.terminal), title: "New Terminal Pane", symbol: "plus.rectangle", keywords: "split window shell add open create"),
+        CatalogItem(command: .newPane(.claudeCode), title: "New Claude Code Pane", symbol: "sparkles.rectangle.stack", keywords: "split ai assistant add open create"),
+        CatalogItem(command: .newPane(.remoteGUI), title: "New Remote Window Pane", symbol: "macwindow.badge.plus", keywords: "split video screen share desktop add open create"),
+        CatalogItem(command: .duplicatePane, title: "Duplicate Pane", symbol: "plus.square.on.square", keywords: "copy clone"),
+        CatalogItem(command: .newGroup, title: "New Group", symbol: "square.on.square.dashed", keywords: "cluster organize folder"),
+        CatalogItem(command: .groupSelection, title: "Group Selected Panes", symbol: "square.stack.3d.up", keywords: "cluster combine merge organize selection"),
+        CatalogItem(command: .tidy, title: "Tidy Layout", symbol: "square.grid.2x2", keywords: "arrange pack grid clean up organize auto layout"),
+        CatalogItem(command: .centerFocusedPane, title: "Center on Pane", symbol: "scope", keywords: "recenter focus jump go to camera"),
+        CatalogItem(command: .centerAll, title: "Center on All", symbol: "dot.scope", keywords: "recenter fit zoom out frame everything camera"),
+        CatalogItem(command: .toggleZoom, title: "Maximize Pane", symbol: "arrow.up.left.and.arrow.down.right", keywords: "fullscreen full screen zoom expand enlarge"),
+        CatalogItem(command: .toggleOverview, title: "Overview", symbol: "rectangle.grid.2x2", keywords: "mission control fit all zoom out birdseye exposé show all panes"),
+        CatalogItem(command: .toggleBroadcast, title: "Broadcast Input", symbol: "dot.radiowaves.left.and.right", keywords: "sync synchronize panes tmux mirror type everywhere"),
+        CatalogItem(command: .renamePane, title: "Rename Pane", symbol: "pencil", keywords: "title label"),
+        CatalogItem(command: .reconnectPane, title: "Reconnect Pane", symbol: "arrow.clockwise", keywords: "redial retry reconnect reopen recover refresh"),
+        CatalogItem(command: .closePane, title: "Close Pane", symbol: "xmark", keywords: "quit kill end terminate remove"),
+        CatalogItem(command: .reopenClosedPane, title: "Reopen Closed Pane", symbol: "arrow.uturn.backward", keywords: "restore undo close reopen tab"),
+        CatalogItem(command: .cycleFocus(forward: true), title: "Focus Next Pane", symbol: "arrow.forward.square", keywords: "cycle next tab switch"),
+        CatalogItem(command: .cycleFocus(forward: false), title: "Focus Previous Pane", symbol: "arrow.backward.square", keywords: "cycle previous prev tab switch"),
+        CatalogItem(command: .focus(.left), title: "Focus Left", symbol: "arrow.left", keywords: "move navigate"),
+        CatalogItem(command: .focus(.right), title: "Focus Right", symbol: "arrow.right", keywords: "move navigate"),
+        CatalogItem(command: .focus(.up), title: "Focus Up", symbol: "arrow.up", keywords: "move navigate"),
+        CatalogItem(command: .focus(.down), title: "Focus Down", symbol: "arrow.down", keywords: "move navigate"),
+        CatalogItem(command: .manageSnippets, title: "Manage Snippets…", symbol: "scroll", keywords: "macro send keys library edit create snippet"),
     ]
 
     // MARK: - Shortcut hint rendering (chord → glyph string)
