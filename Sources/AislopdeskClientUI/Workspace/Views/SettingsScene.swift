@@ -20,6 +20,7 @@ public enum SettingsKey {
     public static let systemDialogPanes = "features.systemDialogPanes"
     public static let autoSwitchLayouts = "features.autoSwitchLayouts"
     public static let redactSecrets = "features.redactSecrets"
+    public static let recordClipboardHistory = "features.recordClipboardHistory"
 
     /// Whether a layout with a trigger app auto-switches when that app launches on the host (default
     /// ON — assigning a trigger is itself the opt-in). Read at fire-time.
@@ -52,6 +53,14 @@ public enum SettingsKey {
     /// by default; the escape hatch is for someone who genuinely wants raw titles). Read at fire-time.
     public static var redactSecretsEnabled: Bool {
         UserDefaults.standard.object(forKey: redactSecrets) as? Bool ?? true
+    }
+    /// Whether copied text is archived into the clipboard-history ring that backs the pill's "Paste
+    /// Recent" submenu (default ON). Turn it OFF to stop the monitor from retaining any copied string —
+    /// the privacy escape hatch for someone who copies secrets to paste into sudo/SSH prompts. Read at
+    /// fire-time so a settings change applies live; existing entries are cleared from the pill's "Clear
+    /// History".
+    public static var recordClipboardHistoryEnabled: Bool {
+        UserDefaults.standard.object(forKey: recordClipboardHistory) as? Bool ?? true
     }
     /// The default kind for a generic "New Pane" (toolbar primary action / empty state), default
     /// `.terminal`. Per-kind shortcuts (⇧⌘N / ⌥⌘N) are unaffected.
@@ -135,6 +144,7 @@ private struct AdvancedSettingsTab: View {
     @AppStorage(SettingsKey.systemDialogPanes) private var systemDialogPanes = true
     @AppStorage(SettingsKey.autoSwitchLayouts) private var autoSwitchLayouts = true
     @AppStorage(SettingsKey.redactSecrets) private var redactSecrets = true
+    @AppStorage(SettingsKey.recordClipboardHistory) private var recordClipboard = true
 
     var body: some View {
         Form {
@@ -149,8 +159,11 @@ private struct AdvancedSettingsTab: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Privacy") {
-                Toggle("Redact secrets in titles & notifications", isOn: $redactSecrets)
-                Text("Masks likely access keys, bearer tokens and `PASSWORD=…` out of window titles and notification banners before they reach the sidebar or Notification Center.")
+                Toggle("Redact secrets in titles, notifications & clipboard previews", isOn: $redactSecrets)
+                Text("Masks likely access keys, bearer tokens and `PASSWORD=…` out of window titles, notification banners, and the “Paste Recent” menu previews before they’re shown.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Record clipboard history (for Paste Recent)", isOn: $recordClipboard)
+                Text("Keeps a short ring of recently-copied text for the pill’s “Paste Recent”. Turn off to stop retaining any copied string; clear existing entries from that menu’s “Clear History”.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

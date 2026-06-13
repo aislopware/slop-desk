@@ -1209,8 +1209,11 @@ public final class WorkspaceStore {
     public static let clipboardRingCap = 20
 
     /// Records `text` at the front of the ring (deduped — a repeat moves to front), capped at
-    /// ``clipboardRingCap``. Skips empty/whitespace. Pure ring bookkeeping.
+    /// ``clipboardRingCap``. Skips empty/whitespace, and skips everything when the user has turned OFF
+    /// clipboard-history recording (Settings ▸ Advanced ▸ Privacy) — the single chokepoint, so a copied
+    /// secret is never retained when recording is disabled. Read at fire-time so the toggle applies live.
     public func recordClip(_ text: String) {
+        guard SettingsKey.recordClipboardHistoryEnabled else { return }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         clipboardRing.removeAll { $0 == text }
         clipboardRing.insert(text, at: 0)

@@ -554,7 +554,7 @@ struct PaneMenuView: View {
     private func pasteRecentMenu(into remote: RemoteWindowModel) -> some View {
         Menu {
             ForEach(Array(store.clipboardRing.enumerated()), id: \.offset) { _, clip in
-                Button(Self.clipPreview(clip)) {
+                Button(Self.clipPreview(clip, redact: SettingsKey.redactSecretsEnabled)) {
                     isPresented = false
                     deliverPaste(clip, into: remote)
                 }
@@ -568,10 +568,14 @@ struct PaneMenuView: View {
         .padding(.horizontal, 2)
     }
 
-    /// A one-line, length-capped preview of a clip for a menu row (whitespace collapsed; never the
-    /// whole payload).
-    private static func clipPreview(_ clip: String) -> String {
-        let oneLine = clip.split(whereSeparator: \.isNewline).joined(separator: " ")
+    /// A one-line, length-capped preview of a clip for a menu row (whitespace collapsed; never the whole
+    /// payload). When `redact`, likely secrets (access keys, bearer tokens, `PASSWORD=…`) are masked
+    /// FIRST — so a copied credential isn't shown in plaintext in the "Paste Recent" menu (where it could
+    /// be shoulder-surfed / screen-recorded) even though the stored clip stays usable for the paste.
+    /// Internal (not private) so the redaction behaviour is unit-testable.
+    static func clipPreview(_ clip: String, redact: Bool) -> String {
+        let source = redact ? SecretRedactor.redact(clip) : clip
+        let oneLine = source.split(whereSeparator: \.isNewline).joined(separator: " ")
         let trimmed = oneLine.trimmingCharacters(in: .whitespaces)
         return trimmed.count > 40 ? String(trimmed.prefix(40)) + "…" : trimmed
     }

@@ -42,6 +42,31 @@ final class ClipboardRingTests: XCTestCase {
         XCTAssertTrue(store.clipboardRing.isEmpty)
     }
 
+    // MARK: - Privacy: don't-record toggle + redacted previews
+
+    func testRecordClipRespectsTheHistoryToggle() {
+        let store = makeStore()
+        let key = SettingsKey.recordClipboardHistory
+        UserDefaults.standard.set(false, forKey: key)
+        defer { UserDefaults.standard.removeObject(forKey: key) }   // restore default (ON) for other tests
+        store.recordClip("a copied secret")
+        XCTAssertTrue(store.clipboardRing.isEmpty, "recording disabled → nothing is retained")
+        UserDefaults.standard.set(true, forKey: key)
+        store.recordClip("ok")
+        XCTAssertEqual(store.clipboardRing, ["ok"], "re-enabling resumes recording")
+    }
+
+    func testClipPreviewMasksSecretsWhenRedacting() {
+        // The pill's "Paste Recent" rows must not display a copied credential in plaintext.
+        let secret = "PASSWORD=hunter2secretvalue"
+        let masked = PaneMenuView.clipPreview(secret, redact: true)
+        XCTAssertTrue(masked.contains(SecretRedactor.mask), "the secret value is masked in the preview")
+        XCTAssertFalse(masked.contains("hunter2secretvalue"), "the raw secret never reaches the menu row")
+        // With redaction off the preview is the raw (truncated) text — the stored clip is unchanged either way.
+        let raw = PaneMenuView.clipPreview(secret, redact: false)
+        XCTAssertTrue(raw.contains("hunter2secretvalue"))
+    }
+
     #if os(macOS)
     func testMonitorPollCapturesNewClipsOnly() {
         let store = makeStore()
