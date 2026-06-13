@@ -1,5 +1,6 @@
 import XCTest
 import AislopdeskTransport
+import AislopdeskClient
 @testable import AislopdeskClientUI
 
 /// Pins ``ConnectionPresenter`` (raw transport payloads → actionable copy) and the gate's recent-hosts
@@ -14,6 +15,15 @@ import AislopdeskTransport
 ///   through an injected scratch `UserDefaults` suite.
 @MainActor
 final class ConnectionPresenterTests: XCTestCase {
+
+    // MARK: - Reconnect cap is a single source of truth
+
+    func testReconnectCapMirrorsTheOneConstant() {
+        // The displayed "attempt N of M" cap and the per-pane transport campaign length must be the SAME
+        // number, or the UI lies (it once showed "of 20" while the per-pane campaign ran to 30).
+        XCTAssertEqual(ConnectionPresenter.maxReconnectAttempts, ReconnectManager.maxReconnectAttempts,
+                       "ConnectionPresenter must mirror ReconnectManager's give-up ceiling")
+    }
 
     // MARK: - friendlyFailure mapping
 

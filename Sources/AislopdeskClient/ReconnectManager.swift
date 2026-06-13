@@ -145,10 +145,15 @@ public final class ReconnectManager: Sendable {
         }
     }
 
-    /// Maximum number of reconnect attempts in a single campaign before giving up.
-    /// With the default backoff (initial 250ms, max 2s, multiplier 2.0) this amounts to roughly
-    /// 60s of wall-clock time: 250+500+1000+2000+2000+… ≈ 58s for 30 attempts.
-    static let maxReconnectAttempts = 30
+    /// Maximum number of reconnect attempts in a single campaign before giving up — the SINGLE source of
+    /// truth for the give-up ceiling. The app-global supervisor (`AppConnection`) and the UI's
+    /// "attempt N of M" copy (`ConnectionPresenter.maxReconnectAttempts`) both mirror this value, so the
+    /// per-pane transport campaign and the displayed cap can never diverge (they used to: 30 here vs a
+    /// displayed 20, so a per-pane campaign would render an impossible "attempt 25 of 20"). It lives here,
+    /// in the lower module, because `ConnectionPresenter` (upper) can read down but not vice-versa.
+    /// With the default backoff (initial 250ms, max 2s, multiplier 2.0) this is roughly 35s of wall-clock:
+    /// 250+500+1000+2000+… ≈ 35s for 20 attempts.
+    public static let maxReconnectAttempts = 20
 
     /// One reconnect campaign: retry `connect` with exponential backoff until it succeeds, the
     /// task is cancelled, or the attempt cap (``maxReconnectAttempts``) is exhausted. On

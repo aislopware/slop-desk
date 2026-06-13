@@ -1,4 +1,5 @@
 import Foundation
+import AislopdeskClient
 
 // MARK: - ConnectionPresenter (raw transport state → human, actionable copy)
 
@@ -11,9 +12,11 @@ import Foundation
 ///
 /// A `nonisolated` enum of pure functions — fully unit-testable, no view, no actor.
 public enum ConnectionPresenter {
-    /// The supervisor's give-up ceiling (``AppConnection`` consumes this constant — the presenter owns
-    /// it so "attempt N of M" can never drift from the real campaign length).
-    public static let maxReconnectAttempts = 20
+    /// The supervisor's give-up ceiling, mirrored from ``ReconnectManager/maxReconnectAttempts`` (the
+    /// single source of truth, in the lower module) so "attempt N of M" can never drift from EITHER the
+    /// app-global supervisor (``AppConnection``, which reads this) or the per-pane transport campaign
+    /// (``ReconnectManager``, which owns it). One constant — change it once, everyone follows.
+    public static let maxReconnectAttempts = ReconnectManager.maxReconnectAttempts
 
     /// Maps a raw transport failure payload to an actionable message. Substring-matched (the payloads
     /// are `String(describing:)` dumps with no stable structure); unknown payloads pass through
