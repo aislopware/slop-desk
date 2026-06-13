@@ -209,6 +209,11 @@ public extension Canvas {
     /// Distributes the panes named by `ids` so the GAPS between adjacent panes along `horizontal`/
     /// vertical are equal (Figma's distribute-spacing). The two extreme panes stay put; the interior
     /// ones move. No-op for fewer than 3 targets (nothing interior to redistribute).
+    ///
+    /// When the panes are collectively WIDER than their spread (the sum of sizes exceeds the extremes'
+    /// span) the ideal even gap is NEGATIVE — which would silently OVERLAP the panes. The gap is clamped
+    /// to ≥ 0 in that case, so the panes pack flush (edge-to-edge) instead of overlapping, consistent
+    /// with the canvas's non-overlap ethos; the trailing extreme then shifts rather than staying put.
     func distributing(_ ids: [PaneID], horizontal: Bool) -> Canvas {
         let targets = items.filter { ids.contains($0.id) }
         guard targets.count >= 3 else { return self }
@@ -220,7 +225,8 @@ public extension Canvas {
             ? (sorted.last!.frame.maxX - sorted.first!.frame.minX)
             : (sorted.last!.frame.maxY - sorted.first!.frame.minY)
         let sumSizes = sorted.reduce(CGFloat(0)) { $0 + (horizontal ? $1.frame.width : $1.frame.height) }
-        let gap = (span - sumSizes) / CGFloat(sorted.count - 1)
+        // Clamp to ≥ 0: a negative gap (panes wider than their span) would overlap them silently.
+        let gap = max(0, (span - sumSizes) / CGFloat(sorted.count - 1))
         // Place each from the first's leading edge, cursor advancing by size + gap.
         var cursor = horizontal ? sorted.first!.frame.minX : sorted.first!.frame.minY
         var newOrigin: [PaneID: CGFloat] = [:]

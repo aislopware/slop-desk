@@ -81,6 +81,25 @@ final class ArrangeTests: XCTestCase {
         XCTAssertEqual(canvas.distributing([a, b], horizontal: true).frame(of: b)!.minX, 500, accuracy: eps)
     }
 
+    func testDistributeClampsNegativeGapSoPanesNeverOverlap() {
+        // Panes collectively WIDER than their span ⇒ the ideal even gap is negative. The old code placed
+        // them overlapping; the clamp packs them flush (gap 0) instead. Widths ≥ minItemSize so sanitize
+        // doesn't resize the math out from under us.
+        let a = PaneID(), b = PaneID(), c = PaneID()
+        let canvas = Canvas(items: [
+            item(a, CGRect(x: 0,   y: 0, width: 200, height: 120)),   // 0..200
+            item(b, CGRect(x: 50,  y: 0, width: 200, height: 120)),
+            item(c, CGRect(x: 100, y: 0, width: 200, height: 120)),   // span = 300, sumWidths = 600
+        ])
+        let out = canvas.distributing([a, b, c], horizontal: true)
+        let fa = out.frame(of: a)!, fb = out.frame(of: b)!, fc = out.frame(of: c)!
+        XCTAssertGreaterThanOrEqual(fb.minX, fa.maxX - eps, "b must not overlap a")
+        XCTAssertGreaterThanOrEqual(fc.minX, fb.maxX - eps, "c must not overlap b")
+        // Flush packing: the clamped gap is exactly 0.
+        XCTAssertEqual(fb.minX - fa.maxX, 0, accuracy: 1e-3)
+        XCTAssertEqual(fc.minX - fb.maxX, 0, accuracy: 1e-3)
+    }
+
     // MARK: - Store targeting + selection
 
     func testArrangeTargetsAllWhenNoSelection() {
