@@ -152,7 +152,7 @@ let package = Package(
 
         .target(
             name: "AislopdeskVideoHost",
-            dependencies: ["AislopdeskVideoProtocol", "CAislopdeskVirtualDisplay"],
+            dependencies: ["AislopdeskVideoProtocol", "CAislopdeskVirtualDisplay", "CAislopdeskFFI"],
             // macOS-only: SCStream + VTCompressionSession + AX/CGEvent are macOS APIs.
             // (AislopdeskVideoProtocol stays cross-platform; only this host layer is gated.)
             swiftSettings: []

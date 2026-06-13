@@ -35,17 +35,25 @@ public enum LiveBitratePolicy {
     }()
 
     /// Absolute lower bound so a tiny window never starves the encoder (matches `VideoEncoder.init`'s
-    /// own `max(1_000_000, …)` clamp).
-    public static let minimumBitrate = 1_000_000
+    /// own `max(1_000_000, …)` clamp). Sourced from the Rust core (`aisd_live_bitrate_minimum`) so
+    /// the constant has one source of truth across platforms.
+    public static let minimumBitrate = RustVideoHostFFI.liveBitrateMinimum()
 
     /// Resolution-aware target bitrate (bits/sec) for an encoder of `pixelWidth × pixelHeight` at
     /// `fps`. Never below `floor` (the configured `--bitrate`, so an explicit higher cap is honoured)
     /// and never below ``minimumBitrate``.
+    ///
+    /// Delegates the arithmetic to the Rust `aislopdesk-core` policy (`aisd_live_bitrate_target`),
+    /// the single source of truth shared with the Android host — byte-identical to the former
+    /// native computation (pinned by `LiveBitratePolicyTests`). The env-resolved
+    /// ``bitsPerPixelPerFrame`` density stays Swift-side and is passed in, keeping the core env-free.
     public static func targetBitrate(pixelWidth: Int, pixelHeight: Int, fps: Int, floor: Int) -> Int {
-        let px = max(1, pixelWidth)
-        let py = max(1, pixelHeight)
-        let rate = max(1, fps)
-        let resolution = Int((Double(px) * Double(py) * Double(rate) * bitsPerPixelPerFrame).rounded())
-        return max(max(minimumBitrate, floor), resolution)
+        RustVideoHostFFI.liveBitrateTarget(
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight,
+            fps: fps,
+            floor: floor,
+            bitsPerPixel: bitsPerPixelPerFrame
+        )
     }
 }

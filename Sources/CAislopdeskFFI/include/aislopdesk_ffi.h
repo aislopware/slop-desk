@@ -135,6 +135,23 @@ AisdStatus aisd_frame_decoder_append(AisdFrameDecoder *decoder, const uint8_t *d
  */
 AisdStatus aisd_frame_decoder_next(AisdFrameDecoder *decoder, AisdWireMessage *out);
 
+/* ==== Video path =================================================================== *
+ * Scalar realtime policies + small-buffer codecs from aislopdesk-core's video modules.
+ * Same memory/error contract as above. Pure scalar functions take no pointers and never
+ * fail. (Implemented in src/video.rs.)
+ */
+
+/* ---- live_bitrate_policy (pure scalar) -------------------------------------------- */
+
+/* Resolution-aware target bitrate (bits/sec) for pixel_width x pixel_height at fps, never
+ * below floor or the minimum. The caller resolves bits_per_pixel (e.g. from AISLOPDESK_BPP)
+ * so the core stays environment-free. */
+int64_t aisd_live_bitrate_target(int64_t pixel_width, int64_t pixel_height, int64_t fps,
+                                 int64_t floor, double bits_per_pixel);
+
+/* The absolute minimum live bitrate (bits/sec). */
+int64_t aisd_live_bitrate_minimum(void);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

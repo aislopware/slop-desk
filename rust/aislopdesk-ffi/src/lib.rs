@@ -33,6 +33,11 @@ use aislopdesk_core::terminal::{
     CommandStatus, FrameDecoder, SessionId, TerminalProtocolError, WireMessage,
 };
 
+/// The video-path C ABI (codecs + scalar policies), kept in its own module so this file
+/// stays the shared-infrastructure + terminal hub. Reuses [`AisdBytes`] / [`AisdStatus`] /
+/// the byte helpers below.
+pub mod video;
+
 // ---------------------------------------------------------------------------------------
 // Status codes
 // ---------------------------------------------------------------------------------------
@@ -91,7 +96,7 @@ impl AisdBytes {
 
 /// Moves a `Vec<u8>` across the boundary as an owned [`AisdBytes`]. An empty vec becomes
 /// [`AisdBytes::EMPTY`] (no allocation leaked, free is a no-op).
-fn bytes_from_vec(mut v: Vec<u8>) -> AisdBytes {
+pub(crate) fn bytes_from_vec(mut v: Vec<u8>) -> AisdBytes {
     if v.is_empty() {
         return AisdBytes::EMPTY;
     }
@@ -107,7 +112,7 @@ fn bytes_from_vec(mut v: Vec<u8>) -> AisdBytes {
 ///
 /// # Safety
 /// `b` must be a buffer previously produced by this crate and not yet freed.
-unsafe fn drop_bytes(b: AisdBytes) {
+pub(crate) unsafe fn drop_bytes(b: AisdBytes) {
     if !b.ptr.is_null() {
         drop(Vec::from_raw_parts(b.ptr, b.len, b.cap));
     }
@@ -118,7 +123,7 @@ unsafe fn drop_bytes(b: AisdBytes) {
 ///
 /// # Safety
 /// If `b.len != 0` then `b.ptr` must point to at least `b.len` readable bytes.
-unsafe fn copy_in(b: AisdBytes) -> Vec<u8> {
+pub(crate) unsafe fn copy_in(b: AisdBytes) -> Vec<u8> {
     if b.ptr.is_null() || b.len == 0 {
         Vec::new()
     } else {
