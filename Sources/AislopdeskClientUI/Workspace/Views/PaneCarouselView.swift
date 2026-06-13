@@ -103,7 +103,9 @@ struct PaneCarouselView: View {
             // tear down or rewire the live session backing this page.
             .id(page.id)
             #if os(macOS)
-            .tabItem { Text(spec.title) }
+            // The LIVE, redacted title (OSC 0/2 + secret-redaction) like the pill/sidebar — not the
+            // stale, unredacted spec.title (which also leaked secrets in window titles to this tab).
+            .tabItem { Text(PanePresentation.displayTitle(store.handle(for: page.id), spec: spec)) }
             #endif
         }
     }
@@ -158,9 +160,11 @@ struct PaneCarouselView: View {
         .background(.bar)
     }
 
-    /// The title of the focused pane (or a neutral fallback), for the compact top bar.
+    /// The title of the focused pane (or a neutral fallback), for the compact top bar — the LIVE,
+    /// redacted title (matching the pill/sidebar), not the stale, unredacted spec.title.
     private var focusedTitle: String {
-        store.workspace.focusedPane.flatMap { canvas.spec(for: $0)?.title } ?? "Panes"
+        guard let id = store.workspace.focusedPane, let spec = canvas.spec(for: id) else { return "Panes" }
+        return PanePresentation.displayTitle(store.handle(for: id), spec: spec)
     }
 
     /// The `+` affordance: add a new pane of a chosen kind to the canvas (adds a swipe page).

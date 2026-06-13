@@ -46,6 +46,15 @@ final class ReviewFixTests: XCTestCase {
                        "bookmark name resolves through displayTitle (live title when present, else spec)")
     }
 
+    /// displayTitle (now used by the carousel tab + top bar, not just the pill/sidebar) masks secrets,
+    /// so a secret in the OSC/window title never leaks into ANY title surface.
+    func testDisplayTitleRedactsSecretsAcrossEveryTitleSurface() {
+        let spec = PaneSpec(kind: .terminal, title: "PASSWORD=hunter2secretvalue")
+        let shown = PanePresentation.displayTitle(nil, spec: spec)
+        XCTAssertTrue(shown.contains(SecretRedactor.mask), "the title is redacted")
+        XCTAssertFalse(shown.contains("hunter2secretvalue"), "the raw secret never reaches a title surface")
+    }
+
     // MARK: - F3: notification rate limiter (pure)
 
     func testRateLimiterAllowsBurstThenThrottles() {
