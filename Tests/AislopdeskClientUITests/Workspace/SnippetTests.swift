@@ -182,6 +182,42 @@ final class SnippetTests: XCTestCase {
         XCTAssertNil(st.pendingSnippetRun)
     }
 
+    // MARK: - Run Last Snippet (⌥⌘R re-fire)
+
+    func testRunLastSnippetReFiresTheMostRecentLaunch() {
+        let a = term(0)
+        let st = store([a], focus: a.id)
+        let s = st.addSnippet(name: "u", body: "uptime<Enter>")
+        XCTAssertEqual(st.runLastSnippet(), .unknown, "nothing launched yet → graceful no-op")
+        XCTAssertEqual(bytes(st, a.id), [])
+
+        st.beginRunSnippet(s.id)                       // launch records lastRanSnippetID
+        XCTAssertEqual(st.lastRanSnippetID, s.id)
+        XCTAssertEqual(st.runLastSnippet(), .ran(1), "⌥⌘R re-fires the last snippet")
+        XCTAssertEqual(bytes(st, a.id), [Array("uptime".utf8) + [0x0D], Array("uptime".utf8) + [0x0D]],
+                       "the macro was sent twice (the launch + the re-fire)")
+    }
+
+    func testRunLastSnippetRePromptsForAParameterizedSnippet() {
+        let a = term(0)
+        let st = store([a], focus: a.id)
+        let s = st.addSnippet(name: "ssh", body: "ssh {{host}}<Enter>")
+        st.beginRunSnippet(s.id)                       // arms the value sheet, records lastRan
+        st.clearSnippetRunRequest()
+        XCTAssertEqual(st.runLastSnippet(), .needsValues(["host"]), "re-firing a parameterized macro re-prompts")
+        XCTAssertEqual(bytes(st, a.id), [], "no literal {{host}} is sent")
+    }
+
+    func testDeletingTheLastSnippetClearsTheReFireTarget() {
+        let a = term(0)
+        let st = store([a], focus: a.id)
+        let s = st.addSnippet(name: "u", body: "uptime<Enter>")
+        st.beginRunSnippet(s.id)
+        st.deleteSnippet(s.id)
+        XCTAssertNil(st.lastRanSnippetID, "⌥⌘R no longer points at a dead snippet")
+        XCTAssertEqual(st.runLastSnippet(), .unknown, "and re-firing is a graceful no-op")
+    }
+
     func testClearSnippetRunRequestDisarms() {
         let a = term(0)
         let st = store([a], focus: a.id)

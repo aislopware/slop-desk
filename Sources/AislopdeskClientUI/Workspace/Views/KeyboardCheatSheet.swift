@@ -65,6 +65,7 @@ enum KeyboardCheatSheet {
             (.toggleBroadcast, "Broadcast input"),
             (.saveLayout, "Save current layout"),
             (.manageSnippets, "Manage snippets"),
+            (.runLastSnippet, "Run last snippet"),
         ]),
     ]
 

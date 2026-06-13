@@ -1079,6 +1079,7 @@ public final class WorkspaceStore {
     /// Deletes a snippet. No-op for an unknown id.
     public func deleteSnippet(_ id: UUID) {
         workspace.snippets.removeAll { $0.id == id }
+        if lastRanSnippetID == id { lastRanSnippetID = nil }   // don't leave ⌥⌘R pointing at a dead snippet
         reconcile()
     }
 
@@ -1243,10 +1244,25 @@ public final class WorkspaceStore {
     @discardableResult
     public func beginRunSnippet(_ id: UUID) -> SnippetRunOutcome {
         guard let snippet = workspace.snippets.first(where: { $0.id == id }) else { return .unknown }
+        lastRanSnippetID = id   // remember the launch so ⌥⌘R can re-fire it without ⌘K
         let slots = snippet.placeholders
         guard !slots.isEmpty else { return .ran(runSnippet(id)) }
         pendingSnippetRun = id
         return .needsValues(slots)
+    }
+
+    /// The most-recently-launched snippet (via ``beginRunSnippet(_:)``), so ⌥⌘R can re-fire it. Session
+    /// state (not persisted). Cleared if that snippet is deleted.
+    public private(set) var lastRanSnippetID: UUID?
+
+    /// Re-runs the most-recently-launched snippet (⌥⌘R) — the "repeat my last macro" power chord, so a
+    /// `deploy` / `tmux attach` you fire all day costs one keystroke after the first ⌘K launch. Routes
+    /// through ``beginRunSnippet(_:)`` so a parameterized snippet re-prompts for values. A graceful no-op
+    /// (`.unknown`) when nothing has been run yet or the last snippet was since deleted.
+    @discardableResult
+    public func runLastSnippet() -> SnippetRunOutcome {
+        guard let id = lastRanSnippetID else { return .unknown }
+        return beginRunSnippet(id)
     }
 
     /// Dismisses the placeholder value-entry sheet (Cancel, or after a successful run).
@@ -2393,6 +2409,8 @@ public func apply(_ command: WorkspaceCommand, to store: WorkspaceStore) {
         store.recallBookmark(slot)
     case .manageSnippets:
         store.requestSnippetManager()
+    case .runLastSnippet:
+        store.runLastSnippet()
     case let .align(edge):
         store.alignPanes(to: edge)
     case let .distribute(horizontal):
