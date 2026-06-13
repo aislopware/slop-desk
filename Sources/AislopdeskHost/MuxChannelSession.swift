@@ -582,8 +582,12 @@ final class MuxChannelSession: @unchecked Sendable {
     /// a shed title/pong is replaced/refreshed by the next one naturally).
     private func enqueueControl(_ messages: [WireMessage]) {
         controlOutLock.lock()
-        if controlOut.count < Self.maxControlOutQueued {
-            controlOut.append(contentsOf: messages)
+        // Slot-limited append: a merged frame can carry MULTIPLE sniffed control messages, so a bulk
+        // `append(contentsOf:)` guarded only by `count < cap` would land at `cap + (K-1)` — overshooting
+        // the bound the comment promises. Take only the free slots so the queue never exceeds the cap.
+        let free = Self.maxControlOutQueued - controlOut.count
+        if free > 0 {
+            controlOut.append(contentsOf: messages.prefix(free))
         }
         let wake = controlWakeContinuation
         controlOutLock.unlock()
@@ -725,6 +729,7 @@ final class MuxChannelSession: @unchecked Sendable {
     func _enqueueExitForTesting(code: Int32) { enqueueExit(code: code) }
     func _enqueueControlForTesting(_ messages: [WireMessage]) { enqueueControl(messages) }
     func _takeControlBatchForTesting() -> [WireMessage]? { takeControlBatch() }
+    static var maxControlOutQueuedForTesting: Int { maxControlOutQueued }
 
     private static func writeAll(fd: Int32, data: Data) {
         #if canImport(Darwin)

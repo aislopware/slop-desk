@@ -134,4 +134,17 @@ final class MuxChannelSessionDrainMergeTests: XCTestCase {
                        "control messages drain in exact enqueue order (running before its idle)")
         XCTAssertNil(session._takeControlBatchForTesting(), "empty queue → nil (drain re-parks)")
     }
+
+    func testControlQueueNeverExceedsTheBoundOnABulkBatch() {
+        // A merged frame can carry MULTIPLE sniffed control messages, so a bulk enqueue that lands the
+        // queue ONE-UNDER the cap must not overshoot: the slot-limited append takes only the free slots.
+        let session = makeSession()
+        let cap = MuxChannelSession.maxControlOutQueuedForTesting
+        // Fill to cap-1.
+        session._enqueueControlForTesting(Array(repeating: .title("x"), count: cap - 1))
+        // A 5-element batch at count==cap-1 would naively land at cap+4 — must clamp to exactly cap.
+        session._enqueueControlForTesting(Array(repeating: .commandStatus(.running), count: 5))
+        XCTAssertEqual(session._takeControlBatchForTesting()?.count, cap,
+                       "the control queue is clamped to the cap, never cap+(K-1)")
+    }
 }
