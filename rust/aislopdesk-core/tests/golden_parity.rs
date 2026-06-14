@@ -16,6 +16,7 @@ use aislopdesk_core::fec::{FecScheme, XorParityFec};
 use aislopdesk_core::fps_governor::FpsGovernor;
 use aislopdesk_core::fragment::{Flags, FrameFragment, FrameFragmentHeader};
 use aislopdesk_core::geometry::{VideoPoint, VideoRect, VideoSize};
+use aislopdesk_core::host_output_sniffer::HostOutputSniffer;
 use aislopdesk_core::input_event::{InputEvent, InputModifiers, MouseButton};
 use aislopdesk_core::input_motion_coalescer::InputMotionCoalescer;
 use aislopdesk_core::mux_header::{video_mux_header, MuxFrameFragmentHeader};
@@ -33,6 +34,7 @@ use aislopdesk_core::udp_receive_loop_policy::UDPReceiveLoopPolicy;
 use aislopdesk_core::video_control::{SystemDialogSummary, VideoControlMessage, WindowSummary};
 use aislopdesk_core::video_session::SizeNegotiation;
 use aislopdesk_core::virtual_display_geometry::{self, VirtualDisplayGeometry};
+use aislopdesk_core::virtual_hid_keyboard::{self, HIDKeyboardState};
 use aislopdesk_core::window_geometry::WindowGeometryMessage;
 use aislopdesk_core::window_placement;
 use aislopdesk_core::ycbcr::{self, ColorRange};
@@ -1254,5 +1256,119 @@ fn input_motion_coalesce_parity() {
             .map(|v| v.as_str().unwrap().to_owned())
             .collect();
         assert_eq!(got, expected, "inputMotionCoalesce/{}", strv(r, "name"));
+    }
+}
+
+// ----- VirtualHIDKeyboard (boot-keyboard report parity) -----
+//
+// Replays the Swift `VirtualHIDKeyboard` / `HIDKeyboardState` golden vectors: the
+// keycode→HID-usage table over the full vk byte range, the modifier byte for every
+// `InputModifiers` raw-bit combination, the boot-report layout, and a scripted
+// `HIDKeyboardState` transcript comparing each returned report's bytes (never the internal
+// pressed set).
+
+#[test]
+fn vhid_hid_usage_parity() {
+    let root = load();
+    for r in section(&root, "vhidHidUsage") {
+        let vk = u16v(r, "vk");
+        let got = virtual_hid_keyboard::hid_usage(vk);
+        let expected = if r["usage"].is_null() {
+            None
+        } else {
+            Some(u8v(r, "usage"))
+        };
+        assert_eq!(got, expected, "hidUsage vk={vk:#06x}");
+    }
+}
+
+#[test]
+fn vhid_modifier_byte_parity() {
+    let root = load();
+    for r in section(&root, "vhidModifierByte") {
+        let raw = u8v(r, "raw");
+        let got = virtual_hid_keyboard::modifier_byte(InputModifiers(raw));
+        assert_eq!(got, u8v(r, "modByte"), "modifierByte raw={raw}");
+    }
+}
+
+#[test]
+fn vhid_boot_report_parity() {
+    let root = load();
+    for r in section(&root, "vhidBootReport") {
+        let keys = hexv(r, "keysHex");
+        let got = virtual_hid_keyboard::boot_report(u8v(r, "modifiers"), &keys);
+        assert_hex(
+            &format!("vhidBootReport/{}", strv(r, "name")),
+            &got,
+            strv(r, "hex"),
+        );
+    }
+}
+
+#[test]
+fn vhid_state_transcript_parity() {
+    let root = load();
+    // One HIDKeyboardState driven through the SAME op stream the Swift dumper recorded; each
+    // step compares only the returned report bytes (or `None` ⇒ a `null` reportHex).
+    let mut s = HIDKeyboardState::new();
+    for (i, op) in section(&root, "vhidStateTranscript").iter().enumerate() {
+        let got: Option<Vec<u8>> = match strv(op, "op") {
+            "apply" => s.apply(
+                u16v(op, "vk"),
+                boolv(op, "down"),
+                InputModifiers(u8v(op, "mods")),
+            ),
+            "releaseAll" => Some(s.release_all()),
+            "releaseAllReport" => Some(s.release_all_report()),
+            other => panic!("unknown vhid transcript op {other}"),
+        };
+        match (got, &op["reportHex"]) {
+            (Some(report), expected) => {
+                assert_eq!(
+                    to_hex(&report),
+                    expected.as_str().unwrap_or_else(|| panic!(
+                        "vhid transcript step {i}: Rust returned a report but Swift dumped null"
+                    )),
+                    "vhid transcript step {i} ({})",
+                    strv(op, "op")
+                );
+            }
+            (None, expected) => assert!(
+                expected.is_null(),
+                "vhid transcript step {i}: Rust returned None but Swift dumped {expected:?}"
+            ),
+        }
+    }
+}
+
+// ----- HostOutputSniffer (outbound-PTY control-message parity) -----
+//
+// Each scenario replays its scripted (chunk, now_ms) steps on a fresh sniffer and asserts the
+// encoded WireMessage hex array matches the Swift sniffer's, in byte order. The Swift dumper
+// drove a deterministic scripted clock so the OSC 133 C→D duration equals `now_ms - start`.
+
+#[test]
+fn host_output_sniffer_parity() {
+    let root = load();
+    for scenario in section(&root, "hostOutputSniffer") {
+        let name = strv(scenario, "name");
+        let mut s = HostOutputSniffer::new();
+        for (i, step) in scenario["steps"].as_array().unwrap().iter().enumerate() {
+            let input = hexv(step, "inputHex");
+            let now_ms = u64v(step, "nowMs");
+            let got: Vec<String> = s
+                .observe(&input, now_ms)
+                .iter()
+                .map(|m| to_hex(&m.encode()))
+                .collect();
+            let expected: Vec<String> = step["messagesHex"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_owned())
+                .collect();
+            assert_eq!(got, expected, "hostOutputSniffer/{name} step {i}");
+        }
     }
 }

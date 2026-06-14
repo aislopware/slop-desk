@@ -1243,6 +1243,320 @@
       "streamSeq" : 4294967295
     }
   ],
+  "hostOutputSniffer" : [
+    {
+      "name" : "plainText",
+      "steps" : [
+        {
+          "inputHex" : "68656c6c6f20776f726c642c206e6f2073657175656e6365730a",
+          "messagesHex" : [
+
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "osc0Title",
+      "steps" : [
+        {
+          "inputHex" : "1b5d303b6d79207469746c6507",
+          "messagesHex" : [
+            "00000009156d79207469746c65"
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "osc2TitleST",
+      "steps" : [
+        {
+          "inputHex" : "1b5d323be7aa97e58fa320c2b720636166c3a920f09f9a801b5c",
+          "messagesHex" : [
+            "0000001515e7aa97e58fa320c2b720636166c3a920f09f9a80"
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "groundBell",
+      "steps" : [
+        {
+          "inputHex" : "61626307646566",
+          "messagesHex" : [
+            "0000000116"
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "commandRunning",
+      "steps" : [
+        {
+          "inputHex" : "1b5d3133333b4307",
+          "messagesHex" : [
+            "000000021700"
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "commandCycleAcrossChunks",
+      "steps" : [
+        {
+          "inputHex" : "1b5d3133333b4307",
+          "messagesHex" : [
+            "000000021700"
+          ],
+          "nowMs" : 0
+        },
+        {
+          "inputHex" : "6275696c64696e67e280a60a",
+          "messagesHex" : [
+
+          ],
+          "nowMs" : 5000
+        },
+        {
+          "inputHex" : "1b5d3133333b443b3007",
+          "messagesHex" : [
+            "0000000b1701010000000000002ee0"
+          ],
+          "nowMs" : 12000
+        }
+      ]
+    },
+    {
+      "name" : "commandNonZeroExit",
+      "steps" : [
+        {
+          "inputHex" : "1b5d3133333b4307",
+          "messagesHex" : [
+            "000000021700"
+          ],
+          "nowMs" : 1000
+        },
+        {
+          "inputHex" : "1b5d3133333b443b31333007",
+          "messagesHex" : [
+            "0000000b1701010000008200000dac"
+          ],
+          "nowMs" : 4500
+        }
+      ]
+    },
+    {
+      "name" : "commandMarkSplitAcrossChunks",
+      "steps" : [
+        {
+          "inputHex" : "1b5d3133333b",
+          "messagesHex" : [
+
+          ],
+          "nowMs" : 0
+        },
+        {
+          "inputHex" : "4307",
+          "messagesHex" : [
+            "000000021700"
+          ],
+          "nowMs" : 0
+        },
+        {
+          "inputHex" : "1b5d3133333b443b37",
+          "messagesHex" : [
+
+          ],
+          "nowMs" : 8000
+        },
+        {
+          "inputHex" : "07",
+          "messagesHex" : [
+            "0000000b1701010000000700001f40"
+          ],
+          "nowMs" : 8000
+        }
+      ]
+    },
+    {
+      "name" : "danglingDIgnored",
+      "steps" : [
+        {
+          "inputHex" : "1b5d3133333b443b3007",
+          "messagesHex" : [
+
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "osc9Notification",
+      "steps" : [
+        {
+          "inputHex" : "1b5d393b6275696c6420646f6e6520e29c8507",
+          "messagesHex" : [
+            "000000111900006275696c6420646f6e6520e29c85"
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "osc9ProgressIgnored",
+      "steps" : [
+        {
+          "inputHex" : "1b5d393b343b313b353007",
+          "messagesHex" : [
+
+          ],
+          "nowMs" : 0
+        },
+        {
+          "inputHex" : "1b5d393b34322074657374732070617373656407",
+          "messagesHex" : [
+            "00000012190000343220746573747320706173736564"
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "osc777Notification",
+      "steps" : [
+        {
+          "inputHex" : "1b5d3737373b6e6f746966793b43493b616c6c20677265656e3b20646f6e6507",
+          "messagesHex" : [
+            "000000141900024349616c6c20677265656e3b20646f6e65"
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "osc777NonNotifyIgnored",
+      "steps" : [
+        {
+          "inputHex" : "1b5d3737373b707265636d643b7807",
+          "messagesHex" : [
+
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "titleSplitAcrossChunks",
+      "steps" : [
+        {
+          "inputHex" : "1b5d303b73706c6974207469",
+          "messagesHex" : [
+
+          ],
+          "nowMs" : 0
+        },
+        {
+          "inputHex" : "746c6507",
+          "messagesHex" : [
+            "0000000c1573706c6974207469746c65"
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "consecutiveIdenticalTitlesDedup",
+      "steps" : [
+        {
+          "inputHex" : "1b5d303b73616d65071b5d323b73616d65071b5d303b73616d6507",
+          "messagesHex" : [
+            "000000051573616d65"
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "differentTitlesNotDeduped",
+      "steps" : [
+        {
+          "inputHex" : "1b5d303b6f6e65071b5d323b74776f071b5d303b6f6e6507",
+          "messagesHex" : [
+            "00000004156f6e65",
+            "000000041574776f",
+            "00000004156f6e65"
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "invalidUtf8Title",
+      "steps" : [
+        {
+          "inputHex" : "1b5d303bfffe07",
+          "messagesHex" : [
+            "0000000115"
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "invalidUtf8Ps",
+      "steps" : [
+        {
+          "inputHex" : "1b5dff3b7807",
+          "messagesHex" : [
+
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "stringSequencesSwallowed",
+      "steps" : [
+        {
+          "inputHex" : "1b507107",
+          "messagesHex" : [
+
+          ],
+          "nowMs" : 0
+        },
+        {
+          "inputHex" : "1b5f1b5d323b70776e6564071b5c",
+          "messagesHex" : [
+
+          ],
+          "nowMs" : 0
+        },
+        {
+          "inputHex" : "1b5e6a756e6b071b5d323b7265616c07",
+          "messagesHex" : [
+            "00000005157265616c"
+          ],
+          "nowMs" : 0
+        }
+      ]
+    },
+    {
+      "name" : "unrelatedOscIgnored",
+      "steps" : [
+        {
+          "inputHex" : "1b5d313b69636f6e6e616d65071b5d383b3b68747470733a2f2f6578616d706c652e636f6d071b5d35323b633b4241534536343d3d07",
+          "messagesHex" : [
+
+          ],
+          "nowMs" : 0
+        }
+      ]
+    }
+  ],
   "inputEvent" : [
     {
       "hex" : "010000002a3fd00000000000003fe8000000000000",
@@ -3042,6 +3356,1493 @@
         4633641066610819072,
         4629137466983448576
       ]
+    }
+  ],
+  "vhidBootReport" : [
+    {
+      "hex" : "0000000000000000",
+      "keysHex" : "",
+      "modifiers" : 0,
+      "name" : "zeroKeys"
+    },
+    {
+      "hex" : "0200040000000000",
+      "keysHex" : "04",
+      "modifiers" : 2,
+      "name" : "oneKeyWithShift"
+    },
+    {
+      "hex" : "0a00040506070809",
+      "keysHex" : "040506070809",
+      "modifiers" : 10,
+      "name" : "sixKeys"
+    },
+    {
+      "hex" : "0f00010101010101",
+      "keysHex" : "0405060708090a",
+      "modifiers" : 15,
+      "name" : "sevenKeysRollOver"
+    },
+    {
+      "hex" : "0000040810000000",
+      "keysHex" : "100408",
+      "modifiers" : 0,
+      "name" : "unsortedKeys"
+    },
+    {
+      "hex" : "0100010101010101",
+      "keysHex" : "0102030405060708",
+      "modifiers" : 1,
+      "name" : "rollOverKeepsModifier"
+    }
+  ],
+  "vhidHidUsage" : [
+    {
+      "usage" : 4,
+      "vk" : 0
+    },
+    {
+      "usage" : 22,
+      "vk" : 1
+    },
+    {
+      "usage" : 7,
+      "vk" : 2
+    },
+    {
+      "usage" : 9,
+      "vk" : 3
+    },
+    {
+      "usage" : 11,
+      "vk" : 4
+    },
+    {
+      "usage" : 10,
+      "vk" : 5
+    },
+    {
+      "usage" : 29,
+      "vk" : 6
+    },
+    {
+      "usage" : 27,
+      "vk" : 7
+    },
+    {
+      "usage" : 6,
+      "vk" : 8
+    },
+    {
+      "usage" : 25,
+      "vk" : 9
+    },
+    {
+      "usage" : null,
+      "vk" : 10
+    },
+    {
+      "usage" : 5,
+      "vk" : 11
+    },
+    {
+      "usage" : 20,
+      "vk" : 12
+    },
+    {
+      "usage" : 26,
+      "vk" : 13
+    },
+    {
+      "usage" : 8,
+      "vk" : 14
+    },
+    {
+      "usage" : 21,
+      "vk" : 15
+    },
+    {
+      "usage" : 28,
+      "vk" : 16
+    },
+    {
+      "usage" : 23,
+      "vk" : 17
+    },
+    {
+      "usage" : 30,
+      "vk" : 18
+    },
+    {
+      "usage" : 31,
+      "vk" : 19
+    },
+    {
+      "usage" : 32,
+      "vk" : 20
+    },
+    {
+      "usage" : 33,
+      "vk" : 21
+    },
+    {
+      "usage" : 35,
+      "vk" : 22
+    },
+    {
+      "usage" : 34,
+      "vk" : 23
+    },
+    {
+      "usage" : 46,
+      "vk" : 24
+    },
+    {
+      "usage" : 38,
+      "vk" : 25
+    },
+    {
+      "usage" : 36,
+      "vk" : 26
+    },
+    {
+      "usage" : 45,
+      "vk" : 27
+    },
+    {
+      "usage" : 37,
+      "vk" : 28
+    },
+    {
+      "usage" : 39,
+      "vk" : 29
+    },
+    {
+      "usage" : 48,
+      "vk" : 30
+    },
+    {
+      "usage" : 18,
+      "vk" : 31
+    },
+    {
+      "usage" : 24,
+      "vk" : 32
+    },
+    {
+      "usage" : 47,
+      "vk" : 33
+    },
+    {
+      "usage" : 12,
+      "vk" : 34
+    },
+    {
+      "usage" : 19,
+      "vk" : 35
+    },
+    {
+      "usage" : 40,
+      "vk" : 36
+    },
+    {
+      "usage" : 15,
+      "vk" : 37
+    },
+    {
+      "usage" : 13,
+      "vk" : 38
+    },
+    {
+      "usage" : 52,
+      "vk" : 39
+    },
+    {
+      "usage" : 14,
+      "vk" : 40
+    },
+    {
+      "usage" : 51,
+      "vk" : 41
+    },
+    {
+      "usage" : 49,
+      "vk" : 42
+    },
+    {
+      "usage" : 54,
+      "vk" : 43
+    },
+    {
+      "usage" : 56,
+      "vk" : 44
+    },
+    {
+      "usage" : 17,
+      "vk" : 45
+    },
+    {
+      "usage" : 16,
+      "vk" : 46
+    },
+    {
+      "usage" : 55,
+      "vk" : 47
+    },
+    {
+      "usage" : 43,
+      "vk" : 48
+    },
+    {
+      "usage" : 44,
+      "vk" : 49
+    },
+    {
+      "usage" : 53,
+      "vk" : 50
+    },
+    {
+      "usage" : 42,
+      "vk" : 51
+    },
+    {
+      "usage" : null,
+      "vk" : 52
+    },
+    {
+      "usage" : 41,
+      "vk" : 53
+    },
+    {
+      "usage" : null,
+      "vk" : 54
+    },
+    {
+      "usage" : null,
+      "vk" : 55
+    },
+    {
+      "usage" : null,
+      "vk" : 56
+    },
+    {
+      "usage" : null,
+      "vk" : 57
+    },
+    {
+      "usage" : null,
+      "vk" : 58
+    },
+    {
+      "usage" : null,
+      "vk" : 59
+    },
+    {
+      "usage" : null,
+      "vk" : 60
+    },
+    {
+      "usage" : null,
+      "vk" : 61
+    },
+    {
+      "usage" : null,
+      "vk" : 62
+    },
+    {
+      "usage" : null,
+      "vk" : 63
+    },
+    {
+      "usage" : null,
+      "vk" : 64
+    },
+    {
+      "usage" : null,
+      "vk" : 65
+    },
+    {
+      "usage" : null,
+      "vk" : 66
+    },
+    {
+      "usage" : null,
+      "vk" : 67
+    },
+    {
+      "usage" : null,
+      "vk" : 68
+    },
+    {
+      "usage" : null,
+      "vk" : 69
+    },
+    {
+      "usage" : null,
+      "vk" : 70
+    },
+    {
+      "usage" : null,
+      "vk" : 71
+    },
+    {
+      "usage" : null,
+      "vk" : 72
+    },
+    {
+      "usage" : null,
+      "vk" : 73
+    },
+    {
+      "usage" : null,
+      "vk" : 74
+    },
+    {
+      "usage" : null,
+      "vk" : 75
+    },
+    {
+      "usage" : null,
+      "vk" : 76
+    },
+    {
+      "usage" : null,
+      "vk" : 77
+    },
+    {
+      "usage" : null,
+      "vk" : 78
+    },
+    {
+      "usage" : null,
+      "vk" : 79
+    },
+    {
+      "usage" : null,
+      "vk" : 80
+    },
+    {
+      "usage" : null,
+      "vk" : 81
+    },
+    {
+      "usage" : null,
+      "vk" : 82
+    },
+    {
+      "usage" : null,
+      "vk" : 83
+    },
+    {
+      "usage" : null,
+      "vk" : 84
+    },
+    {
+      "usage" : null,
+      "vk" : 85
+    },
+    {
+      "usage" : null,
+      "vk" : 86
+    },
+    {
+      "usage" : null,
+      "vk" : 87
+    },
+    {
+      "usage" : null,
+      "vk" : 88
+    },
+    {
+      "usage" : null,
+      "vk" : 89
+    },
+    {
+      "usage" : null,
+      "vk" : 90
+    },
+    {
+      "usage" : null,
+      "vk" : 91
+    },
+    {
+      "usage" : null,
+      "vk" : 92
+    },
+    {
+      "usage" : null,
+      "vk" : 93
+    },
+    {
+      "usage" : null,
+      "vk" : 94
+    },
+    {
+      "usage" : null,
+      "vk" : 95
+    },
+    {
+      "usage" : 62,
+      "vk" : 96
+    },
+    {
+      "usage" : 63,
+      "vk" : 97
+    },
+    {
+      "usage" : 64,
+      "vk" : 98
+    },
+    {
+      "usage" : 60,
+      "vk" : 99
+    },
+    {
+      "usage" : 65,
+      "vk" : 100
+    },
+    {
+      "usage" : 66,
+      "vk" : 101
+    },
+    {
+      "usage" : null,
+      "vk" : 102
+    },
+    {
+      "usage" : 68,
+      "vk" : 103
+    },
+    {
+      "usage" : null,
+      "vk" : 104
+    },
+    {
+      "usage" : null,
+      "vk" : 105
+    },
+    {
+      "usage" : null,
+      "vk" : 106
+    },
+    {
+      "usage" : null,
+      "vk" : 107
+    },
+    {
+      "usage" : null,
+      "vk" : 108
+    },
+    {
+      "usage" : 67,
+      "vk" : 109
+    },
+    {
+      "usage" : null,
+      "vk" : 110
+    },
+    {
+      "usage" : 69,
+      "vk" : 111
+    },
+    {
+      "usage" : null,
+      "vk" : 112
+    },
+    {
+      "usage" : null,
+      "vk" : 113
+    },
+    {
+      "usage" : null,
+      "vk" : 114
+    },
+    {
+      "usage" : 74,
+      "vk" : 115
+    },
+    {
+      "usage" : 75,
+      "vk" : 116
+    },
+    {
+      "usage" : 76,
+      "vk" : 117
+    },
+    {
+      "usage" : 61,
+      "vk" : 118
+    },
+    {
+      "usage" : 77,
+      "vk" : 119
+    },
+    {
+      "usage" : 59,
+      "vk" : 120
+    },
+    {
+      "usage" : 78,
+      "vk" : 121
+    },
+    {
+      "usage" : 58,
+      "vk" : 122
+    },
+    {
+      "usage" : 80,
+      "vk" : 123
+    },
+    {
+      "usage" : 79,
+      "vk" : 124
+    },
+    {
+      "usage" : 81,
+      "vk" : 125
+    },
+    {
+      "usage" : 82,
+      "vk" : 126
+    },
+    {
+      "usage" : null,
+      "vk" : 127
+    },
+    {
+      "usage" : null,
+      "vk" : 128
+    },
+    {
+      "usage" : null,
+      "vk" : 129
+    },
+    {
+      "usage" : null,
+      "vk" : 130
+    },
+    {
+      "usage" : null,
+      "vk" : 131
+    },
+    {
+      "usage" : null,
+      "vk" : 132
+    },
+    {
+      "usage" : null,
+      "vk" : 133
+    },
+    {
+      "usage" : null,
+      "vk" : 134
+    },
+    {
+      "usage" : null,
+      "vk" : 135
+    },
+    {
+      "usage" : null,
+      "vk" : 136
+    },
+    {
+      "usage" : null,
+      "vk" : 137
+    },
+    {
+      "usage" : null,
+      "vk" : 138
+    },
+    {
+      "usage" : null,
+      "vk" : 139
+    },
+    {
+      "usage" : null,
+      "vk" : 140
+    },
+    {
+      "usage" : null,
+      "vk" : 141
+    },
+    {
+      "usage" : null,
+      "vk" : 142
+    },
+    {
+      "usage" : null,
+      "vk" : 143
+    },
+    {
+      "usage" : null,
+      "vk" : 144
+    },
+    {
+      "usage" : null,
+      "vk" : 145
+    },
+    {
+      "usage" : null,
+      "vk" : 146
+    },
+    {
+      "usage" : null,
+      "vk" : 147
+    },
+    {
+      "usage" : null,
+      "vk" : 148
+    },
+    {
+      "usage" : null,
+      "vk" : 149
+    },
+    {
+      "usage" : null,
+      "vk" : 150
+    },
+    {
+      "usage" : null,
+      "vk" : 151
+    },
+    {
+      "usage" : null,
+      "vk" : 152
+    },
+    {
+      "usage" : null,
+      "vk" : 153
+    },
+    {
+      "usage" : null,
+      "vk" : 154
+    },
+    {
+      "usage" : null,
+      "vk" : 155
+    },
+    {
+      "usage" : null,
+      "vk" : 156
+    },
+    {
+      "usage" : null,
+      "vk" : 157
+    },
+    {
+      "usage" : null,
+      "vk" : 158
+    },
+    {
+      "usage" : null,
+      "vk" : 159
+    },
+    {
+      "usage" : null,
+      "vk" : 160
+    },
+    {
+      "usage" : null,
+      "vk" : 161
+    },
+    {
+      "usage" : null,
+      "vk" : 162
+    },
+    {
+      "usage" : null,
+      "vk" : 163
+    },
+    {
+      "usage" : null,
+      "vk" : 164
+    },
+    {
+      "usage" : null,
+      "vk" : 165
+    },
+    {
+      "usage" : null,
+      "vk" : 166
+    },
+    {
+      "usage" : null,
+      "vk" : 167
+    },
+    {
+      "usage" : null,
+      "vk" : 168
+    },
+    {
+      "usage" : null,
+      "vk" : 169
+    },
+    {
+      "usage" : null,
+      "vk" : 170
+    },
+    {
+      "usage" : null,
+      "vk" : 171
+    },
+    {
+      "usage" : null,
+      "vk" : 172
+    },
+    {
+      "usage" : null,
+      "vk" : 173
+    },
+    {
+      "usage" : null,
+      "vk" : 174
+    },
+    {
+      "usage" : null,
+      "vk" : 175
+    },
+    {
+      "usage" : null,
+      "vk" : 176
+    },
+    {
+      "usage" : null,
+      "vk" : 177
+    },
+    {
+      "usage" : null,
+      "vk" : 178
+    },
+    {
+      "usage" : null,
+      "vk" : 179
+    },
+    {
+      "usage" : null,
+      "vk" : 180
+    },
+    {
+      "usage" : null,
+      "vk" : 181
+    },
+    {
+      "usage" : null,
+      "vk" : 182
+    },
+    {
+      "usage" : null,
+      "vk" : 183
+    },
+    {
+      "usage" : null,
+      "vk" : 184
+    },
+    {
+      "usage" : null,
+      "vk" : 185
+    },
+    {
+      "usage" : null,
+      "vk" : 186
+    },
+    {
+      "usage" : null,
+      "vk" : 187
+    },
+    {
+      "usage" : null,
+      "vk" : 188
+    },
+    {
+      "usage" : null,
+      "vk" : 189
+    },
+    {
+      "usage" : null,
+      "vk" : 190
+    },
+    {
+      "usage" : null,
+      "vk" : 191
+    },
+    {
+      "usage" : null,
+      "vk" : 192
+    },
+    {
+      "usage" : null,
+      "vk" : 193
+    },
+    {
+      "usage" : null,
+      "vk" : 194
+    },
+    {
+      "usage" : null,
+      "vk" : 195
+    },
+    {
+      "usage" : null,
+      "vk" : 196
+    },
+    {
+      "usage" : null,
+      "vk" : 197
+    },
+    {
+      "usage" : null,
+      "vk" : 198
+    },
+    {
+      "usage" : null,
+      "vk" : 199
+    },
+    {
+      "usage" : null,
+      "vk" : 200
+    },
+    {
+      "usage" : null,
+      "vk" : 201
+    },
+    {
+      "usage" : null,
+      "vk" : 202
+    },
+    {
+      "usage" : null,
+      "vk" : 203
+    },
+    {
+      "usage" : null,
+      "vk" : 204
+    },
+    {
+      "usage" : null,
+      "vk" : 205
+    },
+    {
+      "usage" : null,
+      "vk" : 206
+    },
+    {
+      "usage" : null,
+      "vk" : 207
+    },
+    {
+      "usage" : null,
+      "vk" : 208
+    },
+    {
+      "usage" : null,
+      "vk" : 209
+    },
+    {
+      "usage" : null,
+      "vk" : 210
+    },
+    {
+      "usage" : null,
+      "vk" : 211
+    },
+    {
+      "usage" : null,
+      "vk" : 212
+    },
+    {
+      "usage" : null,
+      "vk" : 213
+    },
+    {
+      "usage" : null,
+      "vk" : 214
+    },
+    {
+      "usage" : null,
+      "vk" : 215
+    },
+    {
+      "usage" : null,
+      "vk" : 216
+    },
+    {
+      "usage" : null,
+      "vk" : 217
+    },
+    {
+      "usage" : null,
+      "vk" : 218
+    },
+    {
+      "usage" : null,
+      "vk" : 219
+    },
+    {
+      "usage" : null,
+      "vk" : 220
+    },
+    {
+      "usage" : null,
+      "vk" : 221
+    },
+    {
+      "usage" : null,
+      "vk" : 222
+    },
+    {
+      "usage" : null,
+      "vk" : 223
+    },
+    {
+      "usage" : null,
+      "vk" : 224
+    },
+    {
+      "usage" : null,
+      "vk" : 225
+    },
+    {
+      "usage" : null,
+      "vk" : 226
+    },
+    {
+      "usage" : null,
+      "vk" : 227
+    },
+    {
+      "usage" : null,
+      "vk" : 228
+    },
+    {
+      "usage" : null,
+      "vk" : 229
+    },
+    {
+      "usage" : null,
+      "vk" : 230
+    },
+    {
+      "usage" : null,
+      "vk" : 231
+    },
+    {
+      "usage" : null,
+      "vk" : 232
+    },
+    {
+      "usage" : null,
+      "vk" : 233
+    },
+    {
+      "usage" : null,
+      "vk" : 234
+    },
+    {
+      "usage" : null,
+      "vk" : 235
+    },
+    {
+      "usage" : null,
+      "vk" : 236
+    },
+    {
+      "usage" : null,
+      "vk" : 237
+    },
+    {
+      "usage" : null,
+      "vk" : 238
+    },
+    {
+      "usage" : null,
+      "vk" : 239
+    },
+    {
+      "usage" : null,
+      "vk" : 240
+    },
+    {
+      "usage" : null,
+      "vk" : 241
+    },
+    {
+      "usage" : null,
+      "vk" : 242
+    },
+    {
+      "usage" : null,
+      "vk" : 243
+    },
+    {
+      "usage" : null,
+      "vk" : 244
+    },
+    {
+      "usage" : null,
+      "vk" : 245
+    },
+    {
+      "usage" : null,
+      "vk" : 246
+    },
+    {
+      "usage" : null,
+      "vk" : 247
+    },
+    {
+      "usage" : null,
+      "vk" : 248
+    },
+    {
+      "usage" : null,
+      "vk" : 249
+    },
+    {
+      "usage" : null,
+      "vk" : 250
+    },
+    {
+      "usage" : null,
+      "vk" : 251
+    },
+    {
+      "usage" : null,
+      "vk" : 252
+    },
+    {
+      "usage" : null,
+      "vk" : 253
+    },
+    {
+      "usage" : null,
+      "vk" : 254
+    },
+    {
+      "usage" : null,
+      "vk" : 255
+    }
+  ],
+  "vhidModifierByte" : [
+    {
+      "modByte" : 0,
+      "raw" : 0
+    },
+    {
+      "modByte" : 2,
+      "raw" : 1
+    },
+    {
+      "modByte" : 1,
+      "raw" : 2
+    },
+    {
+      "modByte" : 3,
+      "raw" : 3
+    },
+    {
+      "modByte" : 4,
+      "raw" : 4
+    },
+    {
+      "modByte" : 6,
+      "raw" : 5
+    },
+    {
+      "modByte" : 5,
+      "raw" : 6
+    },
+    {
+      "modByte" : 7,
+      "raw" : 7
+    },
+    {
+      "modByte" : 8,
+      "raw" : 8
+    },
+    {
+      "modByte" : 10,
+      "raw" : 9
+    },
+    {
+      "modByte" : 9,
+      "raw" : 10
+    },
+    {
+      "modByte" : 11,
+      "raw" : 11
+    },
+    {
+      "modByte" : 12,
+      "raw" : 12
+    },
+    {
+      "modByte" : 14,
+      "raw" : 13
+    },
+    {
+      "modByte" : 13,
+      "raw" : 14
+    },
+    {
+      "modByte" : 15,
+      "raw" : 15
+    },
+    {
+      "modByte" : 0,
+      "raw" : 16
+    },
+    {
+      "modByte" : 2,
+      "raw" : 17
+    },
+    {
+      "modByte" : 1,
+      "raw" : 18
+    },
+    {
+      "modByte" : 3,
+      "raw" : 19
+    },
+    {
+      "modByte" : 4,
+      "raw" : 20
+    },
+    {
+      "modByte" : 6,
+      "raw" : 21
+    },
+    {
+      "modByte" : 5,
+      "raw" : 22
+    },
+    {
+      "modByte" : 7,
+      "raw" : 23
+    },
+    {
+      "modByte" : 8,
+      "raw" : 24
+    },
+    {
+      "modByte" : 10,
+      "raw" : 25
+    },
+    {
+      "modByte" : 9,
+      "raw" : 26
+    },
+    {
+      "modByte" : 11,
+      "raw" : 27
+    },
+    {
+      "modByte" : 12,
+      "raw" : 28
+    },
+    {
+      "modByte" : 14,
+      "raw" : 29
+    },
+    {
+      "modByte" : 13,
+      "raw" : 30
+    },
+    {
+      "modByte" : 15,
+      "raw" : 31
+    },
+    {
+      "modByte" : 0,
+      "raw" : 32
+    },
+    {
+      "modByte" : 2,
+      "raw" : 33
+    },
+    {
+      "modByte" : 1,
+      "raw" : 34
+    },
+    {
+      "modByte" : 3,
+      "raw" : 35
+    },
+    {
+      "modByte" : 4,
+      "raw" : 36
+    },
+    {
+      "modByte" : 6,
+      "raw" : 37
+    },
+    {
+      "modByte" : 5,
+      "raw" : 38
+    },
+    {
+      "modByte" : 7,
+      "raw" : 39
+    },
+    {
+      "modByte" : 8,
+      "raw" : 40
+    },
+    {
+      "modByte" : 10,
+      "raw" : 41
+    },
+    {
+      "modByte" : 9,
+      "raw" : 42
+    },
+    {
+      "modByte" : 11,
+      "raw" : 43
+    },
+    {
+      "modByte" : 12,
+      "raw" : 44
+    },
+    {
+      "modByte" : 14,
+      "raw" : 45
+    },
+    {
+      "modByte" : 13,
+      "raw" : 46
+    },
+    {
+      "modByte" : 15,
+      "raw" : 47
+    },
+    {
+      "modByte" : 0,
+      "raw" : 48
+    },
+    {
+      "modByte" : 2,
+      "raw" : 49
+    },
+    {
+      "modByte" : 1,
+      "raw" : 50
+    },
+    {
+      "modByte" : 3,
+      "raw" : 51
+    },
+    {
+      "modByte" : 4,
+      "raw" : 52
+    },
+    {
+      "modByte" : 6,
+      "raw" : 53
+    },
+    {
+      "modByte" : 5,
+      "raw" : 54
+    },
+    {
+      "modByte" : 7,
+      "raw" : 55
+    },
+    {
+      "modByte" : 8,
+      "raw" : 56
+    },
+    {
+      "modByte" : 10,
+      "raw" : 57
+    },
+    {
+      "modByte" : 9,
+      "raw" : 58
+    },
+    {
+      "modByte" : 11,
+      "raw" : 59
+    },
+    {
+      "modByte" : 12,
+      "raw" : 60
+    },
+    {
+      "modByte" : 14,
+      "raw" : 61
+    },
+    {
+      "modByte" : 13,
+      "raw" : 62
+    },
+    {
+      "modByte" : 15,
+      "raw" : 63
+    }
+  ],
+  "vhidStateTranscript" : [
+    {
+      "down" : true,
+      "mods" : 1,
+      "op" : "apply",
+      "reportHex" : "0200000000000000",
+      "vk" : 56
+    },
+    {
+      "down" : true,
+      "mods" : 1,
+      "op" : "apply",
+      "reportHex" : "0200040000000000",
+      "vk" : 0
+    },
+    {
+      "down" : false,
+      "mods" : 1,
+      "op" : "apply",
+      "reportHex" : "0200000000000000",
+      "vk" : 0
+    },
+    {
+      "down" : false,
+      "mods" : 0,
+      "op" : "apply",
+      "reportHex" : "0000000000000000",
+      "vk" : 56
+    },
+    {
+      "down" : true,
+      "mods" : 0,
+      "op" : "apply",
+      "reportHex" : "0000050000000000",
+      "vk" : 11
+    },
+    {
+      "down" : true,
+      "mods" : 0,
+      "op" : "apply",
+      "reportHex" : "0000050600000000",
+      "vk" : 8
+    },
+    {
+      "down" : true,
+      "mods" : 0,
+      "op" : "apply",
+      "reportHex" : null,
+      "vk" : 65535
+    },
+    {
+      "op" : "releaseAllReport",
+      "reportHex" : "0000000000000000"
+    },
+    {
+      "down" : true,
+      "mods" : 8,
+      "op" : "apply",
+      "reportHex" : "080005061b000000",
+      "vk" : 7
+    },
+    {
+      "op" : "releaseAll",
+      "reportHex" : "0000000000000000"
+    },
+    {
+      "down" : true,
+      "mods" : 0,
+      "op" : "apply",
+      "reportHex" : "00001d0000000000",
+      "vk" : 6
+    },
+    {
+      "down" : true,
+      "mods" : 0,
+      "op" : "apply",
+      "reportHex" : "00001d0000000000",
+      "vk" : 6
+    },
+    {
+      "down" : false,
+      "mods" : 0,
+      "op" : "apply",
+      "reportHex" : "0000000000000000",
+      "vk" : 6
+    },
+    {
+      "down" : false,
+      "mods" : 0,
+      "op" : "apply",
+      "reportHex" : "0000000000000000",
+      "vk" : 2
+    },
+    {
+      "down" : true,
+      "mods" : 48,
+      "op" : "apply",
+      "reportHex" : "00001e0000000000",
+      "vk" : 18
+    },
+    {
+      "down" : true,
+      "mods" : 8,
+      "op" : "apply",
+      "reportHex" : "08001e0000000000",
+      "vk" : 55
+    },
+    {
+      "op" : "releaseAll",
+      "reportHex" : "0000000000000000"
+    },
+    {
+      "down" : true,
+      "mods" : 0,
+      "op" : "apply",
+      "reportHex" : "0000040000000000",
+      "vk" : 0
+    },
+    {
+      "down" : true,
+      "mods" : 0,
+      "op" : "apply",
+      "reportHex" : "0000041600000000",
+      "vk" : 1
+    },
+    {
+      "down" : true,
+      "mods" : 0,
+      "op" : "apply",
+      "reportHex" : "0000040716000000",
+      "vk" : 2
+    },
+    {
+      "down" : true,
+      "mods" : 0,
+      "op" : "apply",
+      "reportHex" : "0000040709160000",
+      "vk" : 3
+    },
+    {
+      "down" : true,
+      "mods" : 0,
+      "op" : "apply",
+      "reportHex" : "00000407090b1600",
+      "vk" : 4
+    },
+    {
+      "down" : true,
+      "mods" : 0,
+      "op" : "apply",
+      "reportHex" : "00000407090a0b16",
+      "vk" : 5
+    },
+    {
+      "down" : true,
+      "mods" : 0,
+      "op" : "apply",
+      "reportHex" : "0000010101010101",
+      "vk" : 6
+    },
+    {
+      "op" : "releaseAll",
+      "reportHex" : "0000000000000000"
     }
   ],
   "videoControl" : [

@@ -243,6 +243,7 @@ let package = Package(
             name: "aislopdesk-corevectors",
             dependencies: [
                 "AislopdeskProtocol",
+                "AislopdeskHost",
                 "AislopdeskVideoProtocol",
                 "AislopdeskVideoHost",
                 "AislopdeskVideoClient",

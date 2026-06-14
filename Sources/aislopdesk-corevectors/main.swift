@@ -1,3 +1,4 @@
+import AislopdeskHost // HostOutputSniffer (outbound-PTY control-message sniffer)
 import AislopdeskProtocol // WireMessage, MuxEnvelopeCodec (terminal/PTY path)
 import AislopdeskVideoClient // TrendlineEstimator, OwdLateDetector, PacerDepthPolicy
 import AislopdeskVideoHost // NetworkEstimate, FPSGovernor (pure controllers)
@@ -1594,6 +1595,228 @@ root["inputMotionCoalesce"] = [
     imcRecord("dragKeepsLatestButton", [imcDrag(0.1, .left), imcDrag(0.2, .right)]),
     imcRecord("alternatingMoveDrag", [imcMove(0.1), imcDrag(0.2), imcMove(0.3), imcDrag(0.4), imcMove(0.5)]),
     imcRecord("adjacentBarriers", [imcDown(.right), imcUp(.right), imcKey(1), imcScroll(1.0), imcText("x")]),
+]
+
+// MARK: - VirtualHIDKeyboard (boot-keyboard report parity)
+
+//
+// `VirtualHIDKeyboard` maps macOS virtual keycodes → USB HID Keyboard/Keypad usages and folds
+// key down/up events into 8-byte boot-protocol reports (the dext input). The Rust port replays
+// these byte-for-byte: the keycode→usage table, the modifier byte for every `InputModifiers`
+// raw-bit combination, the boot-report layout (sort + 6-key ErrorRollOver), and a scripted
+// `HIDKeyboardState` transcript comparing each returned report (only the bytes — never the
+// internal pressed set — cross the boundary).
+
+// MARK: hidUsage over the full vk byte range 0x00…0xFF
+
+func vhidUsageRecord(_ vk: UInt16) -> [String: Any] {
+    ["vk": vk, "usage": VirtualHIDKeyboard.hidUsage(forVirtualKey: vk).map { $0 as Any } ?? NSNull()]
+}
+
+root["vhidHidUsage"] = (0...0xFF).map { vhidUsageRecord(UInt16($0)) }
+
+// MARK: modifierByte over every InputModifiers raw-bit combination 0…63
+
+// Wire bits: shift 1<<0, control 1<<1, option 1<<2, command 1<<3, capsLock 1<<4, function 1<<5.
+func vhidModByteRecord(_ raw: UInt8) -> [String: Any] {
+    ["raw": raw, "modByte": VirtualHIDKeyboard.modifierByte(InputModifiers(rawValue: raw))]
+}
+
+root["vhidModifierByte"] = (0...63).map { vhidModByteRecord(UInt8($0)) }
+
+// MARK: bootReport — representative (modifiers, keys) shapes
+
+func vhidBootRecord(_ name: String, modifiers: UInt8, keys: [UInt8]) -> [String: Any] {
+    [
+        "name": name,
+        "modifiers": modifiers,
+        "keysHex": hex(keys),
+        "hex": hex(VirtualHIDKeyboard.bootReport(modifiers: modifiers, keys: keys)),
+    ]
+}
+
+root["vhidBootReport"] = [
+    vhidBootRecord("zeroKeys", modifiers: 0, keys: []),
+    vhidBootRecord("oneKeyWithShift", modifiers: 0x02, keys: [0x04]),
+    vhidBootRecord("sixKeys", modifiers: 0x0A, keys: [0x04, 0x05, 0x06, 0x07, 0x08, 0x09]),
+    vhidBootRecord("sevenKeysRollOver", modifiers: 0x0F, keys: [0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A]),
+    vhidBootRecord("unsortedKeys", modifiers: 0, keys: [0x10, 0x04, 0x08]),
+    vhidBootRecord("rollOverKeepsModifier", modifiers: 0x01, keys: [1, 2, 3, 4, 5, 6, 7, 8]),
+]
+
+// MARK: HIDKeyboardState — scripted transcript (compare returned report bytes only)
+
+func vhidTranscript() -> [[String: Any]] {
+    var s = HIDKeyboardState()
+    var out: [[String: Any]] = []
+    func apply(_ vk: UInt16, _ down: Bool, _ rawMods: UInt8) {
+        let r = s.apply(virtualKey: vk, down: down, modifiers: InputModifiers(rawValue: rawMods))
+        out.append([
+            "op": "apply",
+            "vk": vk,
+            "down": down,
+            "mods": rawMods,
+            "reportHex": r.map { hex($0) as Any } ?? NSNull(),
+        ])
+    }
+    func releaseAll() { out.append(["op": "releaseAll", "reportHex": hex(s.releaseAll())]) }
+    func releaseAllReport() { out.append(["op": "releaseAllReport", "reportHex": hex(s.releaseAllReport())]) }
+
+    // Type "A": shift down, 'a' down (→ 'A'), 'a' up, shift up.
+    apply(0x38, true, 0x01)
+    apply(0x00, true, 0x01)
+    apply(0x00, false, 0x01)
+    apply(0x38, false, 0x00)
+    // Hold two regular keys concurrently ('b' then 'c').
+    apply(0x0B, true, 0x00)
+    apply(0x08, true, 0x00)
+    // Unmapped key → nil report.
+    apply(0xFFFF, true, 0x00)
+    // Pure all-zero report — must NOT clear the folded press state.
+    releaseAllReport()
+    // A regular key with the Command modifier (modifier byte carries it, key array keeps b/c/x).
+    apply(0x07, true, 0x08)
+    // Teardown: clears pressed AND ships the all-zero report.
+    releaseAll()
+    // After releaseAll, the next key must carry ONLY itself (no phantom re-assertion).
+    apply(0x06, true, 0x00)
+    apply(0x06, true, 0x00) // autorepeat down on a held key re-emits the same report
+    apply(0x06, false, 0x00)
+    // Release of a key that was never pressed still emits (the `changed` flag is discarded).
+    apply(0x02, false, 0x00)
+    // capsLock + function modifiers do NOT affect the modifier byte (case comes via shift).
+    apply(0x12, true, 0x30)
+    // A modifier KEY while a regular key is held re-emits the full state (byte + key array).
+    apply(0x37, true, 0x08)
+    releaseAll()
+    // Drive past the 6-key boot limit → ErrorRollOver on the 7th held key.
+    apply(0x00, true, 0x00) // a  → 0x04
+    apply(0x01, true, 0x00) // s  → 0x16
+    apply(0x02, true, 0x00) // d  → 0x07
+    apply(0x03, true, 0x00) // f  → 0x09
+    apply(0x04, true, 0x00) // h  → 0x0B
+    apply(0x05, true, 0x00) // g  → 0x0A (six keys held — verbatim, no rollover)
+    apply(0x06, true, 0x00) // z  → seventh key → ErrorRollOver
+    releaseAll()
+    return out
+}
+
+root["vhidStateTranscript"] = vhidTranscript()
+
+// MARK: - HostOutputSniffer (outbound-PTY control-message parity)
+
+//
+// `HostOutputSniffer` is a byte-at-a-time terminal-output state machine that emits inline
+// host→client control `WireMessage`s (title / bell / commandStatus / notification). The Rust
+// port replays each scripted (chunk, now_ms) step on a fresh sniffer and compares the encoded
+// message hex array. The Swift sniffer's wall-clock is a DETERMINISTIC scripted clock (never
+// `Date()`): each step pins the clock to a fixed reference date + nowMs/1000 seconds, so the
+// C→D duration the Swift `durationMS` measures equals the integer `now_ms - start` the Rust
+// port computes — to the millisecond.
+
+/// A deterministic, advanceable wall-clock for `HostOutputSniffer`. `date()` returns a fixed
+/// reference instant plus the currently-set `nowMs` (read when a 133;C / 133;D mark completes),
+/// so a C at `nowMs = c` and a D at `nowMs = d` yield exactly `d - c` ms of duration.
+final class ScriptedClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var nowMs: UInt64 = 0
+    private let reference = Date(timeIntervalSinceReferenceDate: 0)
+
+    func set(_ ms: UInt64) {
+        lock.lock()
+        defer { lock.unlock() }
+        nowMs = ms
+    }
+
+    func date() -> Date {
+        lock.lock()
+        defer { lock.unlock() }
+        return reference.addingTimeInterval(Double(nowMs) / 1000.0)
+    }
+}
+
+func snifferScenario(_ name: String, _ steps: [(bytes: [UInt8], nowMs: UInt64)]) -> [String: Any] {
+    let clock = ScriptedClock()
+    let sniffer = HostOutputSniffer(clock: { clock.date() })
+    var outSteps: [[String: Any]] = []
+    for step in steps {
+        clock.set(step.nowMs)
+        let messages = sniffer.observe(Data(step.bytes))
+        outSteps.append([
+            "inputHex": hex(step.bytes),
+            "nowMs": step.nowMs,
+            "messagesHex": messages.map { hex($0.encode()) },
+        ])
+    }
+    return ["name": name, "steps": outSteps]
+}
+
+// Control bytes + small builders for terminal escape sequences.
+let escByte: UInt8 = 0x1B
+let belByte: UInt8 = 0x07
+func esc(_ s: String) -> [UInt8] { [escByte] + Array(s.utf8) }
+func oscBEL(_ body: String) -> [UInt8] { esc("]" + body) + [belByte] }
+func oscST(_ body: String) -> [UInt8] { esc("]" + body) + esc("\\") }
+
+root["hostOutputSniffer"] = [
+    snifferScenario("plainText", [(bytes: Array("hello world, no sequences\n".utf8), nowMs: 0)]),
+    snifferScenario("osc0Title", [(bytes: oscBEL("0;my title"), nowMs: 0)]),
+    snifferScenario("osc2TitleST", [(bytes: oscST("2;窗口 · café 🚀"), nowMs: 0)]),
+    snifferScenario("groundBell", [(bytes: Array("abc".utf8) + [belByte] + Array("def".utf8), nowMs: 0)]),
+    snifferScenario("commandRunning", [(bytes: oscBEL("133;C"), nowMs: 0)]),
+    // C at t=0, idle output at t=5000, D;0 at t=12000 → idle(exit 0, duration 12000ms across chunks).
+    snifferScenario("commandCycleAcrossChunks", [
+        (bytes: oscBEL("133;C"), nowMs: 0),
+        (bytes: Array("building…\n".utf8), nowMs: 5000),
+        (bytes: oscBEL("133;D;0"), nowMs: 12000),
+    ]),
+    // Non-zero exit + non-zero duration (C at 1000, D;130 at 4500 → 3500ms).
+    snifferScenario("commandNonZeroExit", [
+        (bytes: oscBEL("133;C"), nowMs: 1000),
+        (bytes: oscBEL("133;D;130"), nowMs: 4500),
+    ]),
+    // The 133 mark + its duration measured ACROSS chunk splits (proves cross-chunk parser + clock).
+    snifferScenario("commandMarkSplitAcrossChunks", [
+        (bytes: esc("]133;"), nowMs: 0),
+        (bytes: Array("C".utf8) + [belByte], nowMs: 0),
+        (bytes: esc("]133;D;7"), nowMs: 8000),
+        (bytes: [belByte], nowMs: 8000),
+    ]),
+    // A `D` with no matching `C` is ignored (first-prompt phantom).
+    snifferScenario("danglingDIgnored", [(bytes: oscBEL("133;D;0"), nowMs: 0)]),
+    snifferScenario("osc9Notification", [(bytes: oscBEL("9;build done ✅"), nowMs: 0)]),
+    snifferScenario("osc9ProgressIgnored", [
+        (bytes: oscBEL("9;4;1;50"), nowMs: 0),
+        (bytes: oscBEL("9;42 tests passed"), nowMs: 0),
+    ]),
+    snifferScenario("osc777Notification", [(bytes: oscBEL("777;notify;CI;all green; done"), nowMs: 0)]),
+    snifferScenario("osc777NonNotifyIgnored", [(bytes: oscBEL("777;precmd;x"), nowMs: 0)]),
+    // A whole OSC 0 title SPLIT across two observe() chunks (proves cross-chunk parser state).
+    snifferScenario("titleSplitAcrossChunks", [
+        (bytes: esc("]0;split ti"), nowMs: 0),
+        (bytes: Array("tle".utf8) + [belByte], nowMs: 0),
+    ]),
+    // Consecutive identical titles (OSC 0 then OSC 2 then OSC 0) → deduped to one.
+    snifferScenario("consecutiveIdenticalTitlesDedup", [
+        (bytes: oscBEL("0;same") + oscBEL("2;same") + oscBEL("0;same"), nowMs: 0),
+    ]),
+    snifferScenario("differentTitlesNotDeduped", [
+        (bytes: oscBEL("0;one") + oscBEL("2;two") + oscBEL("0;one"), nowMs: 0),
+    ]),
+    // Invalid UTF-8 in the title payload → String(bytes:encoding:.utf8) ?? "" → empty title.
+    snifferScenario("invalidUtf8Title", [(bytes: esc("]0;") + [0xFF, 0xFE] + [belByte], nowMs: 0)]),
+    // Invalid UTF-8 in the Ps prefix → ps decodes to "" → default branch → nothing.
+    snifferScenario("invalidUtf8Ps", [(bytes: esc("]") + [0xFF] + Array(";x".utf8) + [belByte], nowMs: 0)]),
+    // DCS/SOS/PM/APC string sequences are swallowed (no spoofed bell/title/status); a real OSC after fires.
+    snifferScenario("stringSequencesSwallowed", [
+        (bytes: esc("Pq") + [belByte], nowMs: 0), // DCS body + embedded BEL → swallowed
+        (bytes: esc("_") + oscBEL("2;pwned") + esc("\\"), nowMs: 0), // APC swallows an embedded title
+        (bytes: esc("^junk") + [belByte] + oscBEL("2;real"), nowMs: 0), // PM swallowed, then a real title
+    ]),
+    // OSC 1 (icon name) and other unrelated OSCs are ignored.
+    snifferScenario("unrelatedOscIgnored", [
+        (bytes: oscBEL("1;iconname") + oscBEL("8;;https://example.com") + oscBEL("52;c;BASE64=="), nowMs: 0),
+    ]),
 ]
 
 // MARK: emit
