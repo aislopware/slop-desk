@@ -57,6 +57,10 @@ disabled_rules:
   - vertical_whitespace_closing_braces      # swiftformat: blankLinesAtEndOfScope
   - vertical_whitespace_opening_braces      # swiftformat: blankLinesAtStartOfScope
   - let_var_whitespace                      # swiftformat owns blank-line policy
+  - multiline_call_arguments                # swiftformat: wrapArguments owns call wrapping
+  - opening_brace                           # swiftformat: wrapMultilineStatementBraces puts `{` on its
+                                            # own line after a wrapped condition — opening_brace fights it
+  - statement_position                      # swiftformat: elseOnSameLine owns else/catch placement
 
   # ---- Contradicts another ENABLED rule or the formatter's `--self remove` ----
   - explicit_self                           # opposite of swiftformat --self remove + redundant_self
@@ -75,6 +79,7 @@ disabled_rules:
   - sorted_enum_cases                       # reordering enum cases can change raw values
   - conditional_returns_on_newline          # style churn
   - one_declaration_per_file                # one type per file — incompatible with this layout
+  - discouraged_default_parameter           # anti-idiom: default parameters are good Swift
   - prefixed_toplevel_constant              # Hungarian `k`-prefix constants
   - no_grouping_extension                   # bans same-file extension grouping (used intentionally)
   - file_header                             # no enforced header (swiftformat --header ignore)
