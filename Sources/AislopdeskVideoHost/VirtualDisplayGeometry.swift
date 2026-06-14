@@ -50,4 +50,40 @@ public struct VirtualDisplayGeometry: Equatable, Sendable {
         )
     }
 }
+
+/// PURE display-placement / chip-capability arithmetic for the virtual display. No CoreGraphics IPC
+/// — separated from ``VirtualDisplay`` so the layout + limit decisions are headlessly unit-testable.
+public enum VirtualDisplayPlanner {
+    /// The VD's global origin: flush to the RIGHT of the rightmost existing display, at y = 0. Placing
+    /// it past every real display guarantees it never overlaps one — macOS resolves an overlap by
+    /// reflowing displays, which corrupts the user's real multi-monitor arrangement. On a
+    /// single-display host the rightmost edge IS the main display's width, so this reduces to the
+    /// historical `(mainWidth, 0)`. `existingDisplays` are the online displays' global bounds.
+    public static func originToRight(of existingDisplays: [CGRect]) -> CGPoint {
+        let maxX = existingDisplays.map(\.maxX).max() ?? 0
+        return CGPoint(x: maxX, y: 0)
+    }
+
+    /// CGVirtualDisplay maximum horizontal framebuffer pixels for the running chip, from the
+    /// `machdep.cpu.brand_string`. A Pro/Max/Ultra die has the larger display-pipe budget (7680); a
+    /// base "Apple M…" die is 6144. Intel / unknown → 7680 (permissive — an over-budget create still
+    /// fails safe via the `displayID == 0` guard, falling back to 1×). Pure + unit-tested; the live
+    /// `sysctl` read lives in the daemon.
+    public static func chipPixelLimit(cpuBrand: String) -> Int {
+        let s = cpuBrand.lowercased()
+        if s.contains("pro") || s.contains("max") || s.contains("ultra") { return 7680 }
+        if s.contains("apple m") { return 6144 } // plain base M-series (M1/M2/M3/M4…)
+        return 7680
+    }
+
+    /// The refresh-rate modes to advertise for a VD driven at `fps`. WindowServer composites a
+    /// VD-parked window at most at the VD's refresh, so a window at `--fps 90` needs a ≥90 Hz mode or
+    /// capture is silently capped at 60. Always include 60 + 30 (the safe baseline) and `fps` when it
+    /// exceeds 60; deduped + descending. Pure + unit-tested.
+    public static func refreshRates(fps: Int) -> [Double] {
+        var rates = [60.0, 30.0]
+        if fps > 60 { rates.append(Double(fps)) }
+        return Array(Set(rates)).sorted(by: >)
+    }
+}
 #endif

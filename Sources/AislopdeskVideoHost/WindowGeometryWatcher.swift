@@ -165,10 +165,10 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         var windowsRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef) == .success,
               let axWindows = windowsRef as? [AXUIElement] else { return }
-        // Heuristic match by position/size to the tracked CGWindowID (no public
-        // AXUIElement <-> CGWindowID map — doc 05 §4).
-        guard let bounds = currentBoundsCG() else { return }
-        for axWindow in axWindows where axWindowFrame(axWindow) == bounds {
+        // Match the EXACT window by CGWindowID via ``axWindowID(of:)`` (robust even when several
+        // windows share a frame, e.g. panes stacked at one origin on the shared VD). The old
+        // frame-equality heuristic bound the WRONG window in that case.
+        for axWindow in axWindows where axWindowID(of: axWindow) == windowID {
             var titleRef: CFTypeRef?
             if AXUIElementCopyAttributeValue(axWindow, kAXTitleAttribute as CFString, &titleRef) == .success,
                let title = titleRef as? String, title != lastTitle
@@ -203,10 +203,10 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         var windowsRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef) == .success,
               let axWindows = windowsRef as? [AXUIElement] else { return nil }
-        // Heuristic match the AX window to the tracked CGWindowID by frame (no public map —
-        // doc 05 §4), the same lookup ``axWindowFrame`` / the injector use.
-        guard let bounds = currentBoundsCG() else { return nil }
-        for axWindow in axWindows where axWindowFrame(axWindow) == bounds {
+        // Match the EXACT window by CGWindowID via ``axWindowID(of:)`` (robust even when several
+        // windows share a frame — the prior frame-equality lookup could resize the WRONG window
+        // when panes are stacked at one origin on the shared VD).
+        for axWindow in axWindows where axWindowID(of: axWindow) == windowID {
             var size = CGSize(width: max(1, desiredPoints.width), height: max(1, desiredPoints.height))
             guard let value = AXValueCreate(.cgSize, &size) else { return nil }
             // WRITE the new size. Tolerate (do NOT crash on) unsupported/cannot-complete —

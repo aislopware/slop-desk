@@ -351,6 +351,11 @@ public actor AislopdeskVideoHostSession {
     /// size (no over-crop, no input desync). `nil` ⇒ no VD move happened ⇒ size from `window.frame`
     /// as before (default-path behaviour unchanged).
     private let captureSizeOverride: VideoSize?
+    /// Upper bound (POINTS) for a client-driven in-session resize, set by the daemon to the VD's point
+    /// size when the window is parked on the VD (feature #1). A resize larger than the VD framebuffer
+    /// would push the capture crop past the display → over-crop / soft capture, so the resize target
+    /// is clamped to this. `nil` ⇒ no VD parking ⇒ only the UInt16 wire limit applies (unchanged).
+    private let resizePointLimit: VideoSize?
     /// Live-encoder target bitrate (bits/sec). Higher = crisper text (HEVC softens glyph edges
     /// at low bitrate); raise it over LAN/NetBird where bandwidth is ample.
     private let bitrate: Int
@@ -443,6 +448,7 @@ public actor AislopdeskVideoHostSession {
         fec: FECScheme? = XORParityFEC(),
         captureScale: Double = 2.0,
         captureSizeOverride: VideoSize? = nil,
+        resizePointLimit: VideoSize? = nil,
         bitrate: Int = VideoEncoder.bitrateBitsPerSecond,
         fps: Int = 60,
     ) {
@@ -450,6 +456,7 @@ public actor AislopdeskVideoHostSession {
         self.transport = transport
         self.captureScale = max(1.0, captureScale)
         self.captureSizeOverride = captureSizeOverride
+        self.resizePointLimit = resizePointLimit
         self.bitrate = bitrate
         self.fps = max(1, fps)
         governedFps = max(1, fps)
@@ -666,17 +673,19 @@ public actor AislopdeskVideoHostSession {
                 _ = viewport // viewport informs client-side scaling; host captures native window pixels.
                 return (w, h)
             },
-            resolveResizeSize: { [window] requestedWindowID, desired in
+            resolveResizeSize: { [window, resizePointLimit] requestedWindowID, desired in
                 // Accept only the session's window; sanity-clamp the desired POINT size into a
-                // valid, non-zero, UInt16-safe range. This is a POLICY pre-clamp only — the AX
-                // read-back in `apply(.resizeCapture)` is the AUTHORITATIVE achieved size (the
-                // window may further clamp to its own min/max). Min 1×1; max ceilinged at the
-                // UInt16 wire limit (the clamp already enforces it).
+                // valid, non-zero range. This is a POLICY pre-clamp only — the AX read-back in
+                // `apply(.resizeCapture)` is the AUTHORITATIVE achieved size (the window may further
+                // clamp to its own min/max). Min 1×1; max is the VD point bounds when the window is
+                // parked on the VD (so a resize can't push the crop past the framebuffer), else the
+                // UInt16 wire limit.
                 guard requestedWindowID == UInt32(window.windowID) else { return nil }
+                let maxSize = resizePointLimit ?? VideoSize(width: Double(UInt16.max), height: Double(UInt16.max))
                 return SizeNegotiation.clamp(
                     desired: desired,
                     min: VideoSize(width: 1, height: 1),
-                    max: VideoSize(width: Double(UInt16.max), height: Double(UInt16.max)),
+                    max: maxSize,
                 )
             },
         )

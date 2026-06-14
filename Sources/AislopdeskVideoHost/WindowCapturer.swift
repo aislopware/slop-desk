@@ -377,13 +377,14 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
 
     /// Builds the MEASURED-config `SCStreamConfiguration` for a single window.
     ///
-    /// `width`/`height` are the window's POINT dimensions. Capture is point-resolution
-    /// by design: the negotiated `captureWidth`/`captureHeight` (the `helloAck`), the
-    /// `SCStreamConfiguration` size, and therefore the decoded `CVPixelBuffer` size all
-    /// agree in points, so the client's `VideoScaleMath` denominator and cursor
-    /// placement stay correct without a separate pixel-scale axis. (On a Retina host
-    /// this means remoted windows render at point resolution, not backing pixels — a
-    /// quality trade chosen for a single, consistent capture-size source of truth.)
+    /// ⚠️ `width`/`height` are PIXEL dimensions (window points × `captureScale`) — they become
+    /// `config.width`/`config.height` directly, and `sourceRect` is derived back in POINTS by
+    /// dividing by `captureScale`. So at `captureScale = 2` (the VD-parked path) the buffer is the
+    /// window's Retina backing size and the crop is the window's point rect (contentScale = 2 → sharp).
+    /// At `captureScale = 1` (the default / off-VD path) pixels == points. The `helloAck`
+    /// captureWidth/Height and the cursor mapping stay in POINTS (= pixels / captureScale), so the
+    /// client's `VideoScaleMath` denominator is correct. A caller passing POINTS here with
+    /// `captureScale = 2` would crop only the top-left quarter — pass PIXELS.
     public static func makeConfiguration(
         width: Int,
         height: Int,
@@ -529,6 +530,13 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
 
     private var displayAnchor: DisplayAnchor?
     private let anchorLock = NSLock()
+    /// Serialize + coalesce display-anchor re-origins. The session fires a fresh `Task` per geometry
+    /// message, so without this several could read/mutate the shared `DisplayAnchor.config` and call
+    /// `updateConfiguration` on one SCStream concurrently (a check-then-act race + torn config writes).
+    /// `reanchorInFlight` admits exactly one driver; newer frames overwrite `reanchorPending` so the
+    /// driver always converges to the LATEST position. Guarded by `anchorLock`.
+    private var reanchorInFlight = false
+    private var reanchorPending: CGRect?
 
     /// An explicit display-anchored capture region (the DIALOG-EXPAND feature): when set, the crop
     /// is `displayLocalRect` (points) on `displayID` instead of the live window frame, so the
@@ -651,6 +659,32 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// lands mid-GOP as a whole-frame delta, so force a keyframe right after for a clean re-anchor.
     /// Rare + user-driven (a title-bar drag), never per-frame.
     public func updateDisplayAnchoredOrigin(windowFrameCG frame: CGRect) async {
+        // Coalesce + serialize: record the latest frame, and only the FIRST caller becomes the driver
+        // that applies updates — overlapping callers just hand off their frame and return. The driver
+        // loops until no newer frame is pending, so we always converge to the latest position without
+        // racing on the shared `DisplayAnchor.config` or issuing concurrent `updateConfiguration`s.
+        let shouldDrive = anchorLock.withLock { () -> Bool in
+            reanchorPending = frame
+            if reanchorInFlight { return false }
+            reanchorInFlight = true
+            return true
+        }
+        guard shouldDrive else { return }
+        while true {
+            let next: CGRect? = anchorLock.withLock {
+                let pending = reanchorPending
+                reanchorPending = nil
+                if pending == nil { reanchorInFlight = false }
+                return pending
+            }
+            guard let f = next else { break }
+            await applyReanchor(windowFrameCG: f)
+        }
+    }
+
+    /// The actual single-threaded re-anchor (only ever run by the `updateDisplayAnchoredOrigin`
+    /// driver, so the shared `DisplayAnchor.config` mutation + `updateConfiguration` are race-free).
+    private func applyReanchor(windowFrameCG frame: CGRect) async {
         let anchor = anchorLock.withLock { displayAnchor }
         guard let anchor, let stream else { return }
         // In union mode the crop spans window ∪ dialog and is owned by the session's union poller —

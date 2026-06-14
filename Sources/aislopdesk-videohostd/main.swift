@@ -155,6 +155,54 @@ func log(_ message: String) {
     FileHandle.standardError.write(Data("\(program): \(message)\n".utf8))
 }
 
+/// The CPU brand string (`machdep.cpu.brand_string`, e.g. "Apple M2 Max") — feeds
+/// ``VirtualDisplayPlanner/chipPixelLimit(cpuBrand:)`` so the VD framebuffer limit matches the
+/// running chip class instead of a hardcoded default. Empty on failure (→ permissive 7680 fallback).
+@Sendable
+func cpuBrandString() -> String {
+    var size = 0
+    guard sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0) == 0, size > 0 else { return "" }
+    var buf = [UInt8](repeating: 0, count: size)
+    guard sysctlbyname("machdep.cpu.brand_string", &buf, &size, nil, 0) == 0 else { return "" }
+    return String(bytes: buf.prefix(while: { $0 != 0 }), encoding: .utf8) ?? ""
+}
+
+/// Resolve a pane's capture placement (feature #1): PARK its window on the LIVE virtual display
+/// (captured at the VD's real backing scale → sharp) or fall back to 1× in place. The VD is
+/// re-queried per mint so a WindowServer-terminated VD (displayID cleared) cleanly degrades. Returns
+/// the capture scale, the authoritative post-move POINT size (`nil` ⇒ 1× window frame), and the
+/// resize upper-bound (the VD point size while parked; `nil` off-VD).
+@Sendable
+func resolvePaneCapture(
+    channelID: UInt32,
+    requestedWindowID: UInt32,
+    processID: pid_t?,
+    holder: Holder,
+    parkingManager: WindowParkingManager,
+    fallbackScale: Double,
+    vdPointWidth: Int,
+    vdPointHeight: Int,
+) async -> (captureScale: Double, sizeOverride: VideoSize?, resizeLimit: VideoSize?) {
+    let (liveVDID, liveVDScale): (CGDirectDisplayID, Int) = await MainActor.run {
+        guard let vd = holder.currentVirtualDisplay() else { return (CGDirectDisplayID(0), 1) }
+        return (vd.displayID, vd.scale)
+    }
+    guard liveVDID != 0, let movePid = processID,
+          let achieved = await parkingManager.park(
+              channelID: channelID, windowID: requestedWindowID, pid: movePid, displayID: liveVDID,
+          )
+    else {
+        if liveVDID != 0 { log("mux: could not move window \(requestedWindowID) onto the VD — capturing at 1×") }
+        return (fallbackScale, nil, nil)
+    }
+    // Capture scale tracks the VD's REAL backing scale (single source of truth — no duplicated `2.0`).
+    return (
+        Double(max(1, liveVDScale)),
+        VideoSize(width: Double(achieved.width), height: Double(achieved.height)),
+        VideoSize(width: Double(vdPointWidth), height: Double(vdPointHeight)),
+    )
+}
+
 // Live ScreenCaptureKit capture needs a window-server connection. A bare command-line binary
 // never establishes one, so `SCStream.startCapture()` aborts with
 // `Assertion failed: (did_initialize), CGS_REQUIRE_INIT` — even though `SCShareableContent`
@@ -298,6 +346,7 @@ final class Holder: @unchecked Sendable {
     private var registry: VideoMuxSessionRegistry?
     private var mux: NWVideoMuxDatagramTransport?
     private var virtualDisplay: VirtualDisplay? // feature #1: held for daemon lifetime (ARC owns the CGVirtualDisplay)
+    private var parkingManager: WindowParkingManager? // feature #1: restores parked windows on close/shutdown/VD-death
     func setMux(_ r: VideoMuxSessionRegistry, _ m: NWVideoMuxDatagramTransport) { lock.lock()
         registry = r
         mux = m
@@ -320,9 +369,31 @@ final class Holder: @unchecked Sendable {
         defer { lock.unlock() }
         return virtualDisplay
     }
+
+    func setParkingManager(_ pm: WindowParkingManager) { lock.lock()
+        parkingManager = pm
+        lock.unlock()
+    }
+
+    func currentParkingManager() -> WindowParkingManager? { lock.lock()
+        defer { lock.unlock() }
+        return parkingManager
+    }
 }
 
 let holder = Holder()
+
+/// One-way latch flipped at the START of the SIGINT drain so the registry's mint factory rejects any
+/// hello that lands AFTER teardown begins — closing the FB17797423 window where a fresh SCStream
+/// could be minted onto the VD between `stopAll()` and `vd.destroy()`.
+final class ShutdownGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var down = false
+    func close() { lock.withLock { down = true } }
+    var isClosed: Bool { lock.withLock { down } }
+}
+
+let shutdownGate = ShutdownGate()
 
 // A one-shot latch so a second SIGINT during the async shutdown does not spawn a second teardown Task
 // that calls `exit(0)` again (two concurrent libc `exit()` calls are UB). R16 HOSTD-1.
@@ -340,18 +411,25 @@ final class VideoShutdownLatch: @unchecked Sendable {
 
 let videoShutdownLatch = VideoShutdownLatch()
 
-signal(SIGINT, SIG_IGN)
-let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-sigint.setEventHandler {
-    guard videoShutdownLatch.tryFire() else { return } // ignore repeated Ctrl-C during the async drain
-    log("SIGINT — shutting down")
+/// Orderly shutdown drain — shared by every termination signal so parked windows are ALWAYS restored
+/// (not only on Ctrl-C). The latch makes it run exactly once even if several signals arrive (or one
+/// repeats during the async drain).
+@Sendable
+func performGracefulShutdown(_ signalName: String) {
+    guard videoShutdownLatch.tryFire() else { return }
+    log("\(signalName) — shutting down")
+    shutdownGate.close() // reject any hello that lands during the drain (no new mint onto the VD)
     Task {
         if let (registry, mux) = holder.currentMux() {
             await registry.stopAll()
             await mux.stop()
         }
-        // Tear the virtual display down AFTER all SCStreams stopped (FB17797423: never release the
-        // VD while a stream targets it). ARC dealloc unregisters it from WindowServer.
+        // Restore every parked window to its original display/size BEFORE the VD is destroyed (the
+        // original display must still exist). Then tear the VD down AFTER all SCStreams stopped
+        // (FB17797423: never release the VD while a stream targets it). ARC dealloc unregisters it.
+        if let pm = holder.currentParkingManager() {
+            await pm.restoreAll()
+        }
         if let vd = holder.currentVirtualDisplay() {
             await MainActor.run { vd.destroy() }
         }
@@ -359,7 +437,21 @@ sigint.setEventHandler {
     }
 }
 
-sigint.resume()
+// Handle every graceful-termination signal the daemon can receive: SIGINT (Ctrl-C), SIGTERM (the
+// default `kill` / launchd / `scripts/check-video.sh` stop) and SIGHUP (controlling terminal closed —
+// the foreground `.command` launcher's quit). All funnel through the one-shot drain so windows parked
+// on the VD are restored on the COMMON stop paths, not just Ctrl-C. SIGKILL stays uncatchable; its
+// stranded windows are then recovered by the `.forAppOnly` arrangement revert + next-launch hygiene.
+let signalSources: [DispatchSourceSignal] = [(SIGINT, "SIGINT"), (SIGTERM, "SIGTERM"), (SIGHUP, "SIGHUP")]
+    .map { sig, name in
+        signal(sig, SIG_IGN)
+        let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+        src.setEventHandler { performGracefulShutdown(name) }
+        src.resume()
+        return src
+    }
+
+_ = signalSources // held for the process lifetime (a released DispatchSource stops firing)
 
 /// Daemon-side errors surfaced from the UDP-mux mint factory (a thrown error drops the triggering
 /// datagram; the lane is never created, sibling lanes are untouched).
@@ -444,25 +536,46 @@ Task {
         // ── Feature #1: optional HiDPI 2× virtual display ────────────────────────────────────────
         // Created ONCE and SHARED across panes (held by `holder` for the daemon lifetime — recreating
         // it mid-session risks the SCK FB17797423 wrong-framebuffer bug). Each remoted window is then
-        // moved onto it (per-mint, below) so it renders at REAL Retina 2× backing → razor-sharp text,
-        // versus the soft point-resolution upscale on the 1× host display. ANY failure (private API
-        // absent, WindowServer refusal, pixel-limit) leaves `vdDisplayID == 0` → capture stays at the
-        // existing 1× `effectiveScale`. Never crashes.
+        // moved onto it (per-mint, below) via the `WindowParkingManager` so it renders at REAL Retina
+        // 2× backing → razor-sharp text, versus the soft point-resolution upscale on the 1× host
+        // display. The manager remembers each window's original frame and restores it on pane close /
+        // shutdown / VD termination. ANY failure (private API absent, WindowServer refusal,
+        // pixel-limit) leaves the VD displayID at 0 → capture stays at the existing 1× `effectiveScale`.
+        // Never crashes.
         let virtualDisplay = await MainActor.run { VirtualDisplay() }
         holder.setVirtualDisplay(virtualDisplay)
-        var vdID: CGDirectDisplayID = 0
+        let parkingManager = await MainActor.run { WindowParkingManager() }
+        holder.setParkingManager(parkingManager)
         if args.virtualDisplay {
-            let geo = VirtualDisplayGeometry(pointWidth: args.vdPointWidth, pointHeight: args.vdPointHeight, scale: 2)
-            if let id = await virtualDisplay.create(geo) {
-                vdID = id
+            // Detect the chip's framebuffer pixel limit so an oversized VD is refused up front
+            // (rather than after a multi-second applySettings stall) on base M-series chips.
+            let chipLimit = VirtualDisplayPlanner.chipPixelLimit(cpuBrand: cpuBrandString())
+            let geo = VirtualDisplayGeometry(
+                pointWidth: args.vdPointWidth,
+                pointHeight: args.vdPointHeight,
+                scale: 2,
+                maxHorizontalPixels: chipLimit,
+            )
+            if let id = await virtualDisplay.create(geo, fps: args.fps) {
+                // Recover gracefully if WindowServer later tears the VD down: restore parked windows.
+                // New mints re-query the (now-cleared) displayID and fall back to 1× automatically.
+                await MainActor.run {
+                    virtualDisplay.onTerminated = {
+                        Task { @MainActor in parkingManager.restoreAll() }
+                    }
+                }
                 log(
-                    "virtual display ONLINE id=\(id) (\(args.vdPointWidth)x\(args.vdPointHeight)pt @2× → \(geo.pixelWidth)x\(geo.pixelHeight)px) — windows will be moved onto it for sharp capture",
+                    "virtual display ONLINE id=\(id) (\(args.vdPointWidth)x\(args.vdPointHeight)pt @2× → \(geo.pixelWidth)x\(geo.pixelHeight)px, chip-limit \(chipLimit)px) — windows will be moved onto it for sharp capture",
                 )
+                if args.fps > 60 {
+                    log(
+                        "note: --fps \(args.fps) exceeds 60; the VD advertises a \(args.fps)Hz mode but the encoder fps is the real cap",
+                    )
+                }
             } else {
                 log("virtual display unavailable — falling back to 1× real-display capture")
             }
         }
-        let vdDisplayID = vdID // immutable capture for the mint closure
 
         // CONCURRENCY-HOST-1 mux analogue: the shared transport arms the per-lane reaper.
         let mux = NWVideoMuxDatagramTransport(mediaPort: mediaPort, cursorPort: cursorPort)
@@ -478,6 +591,12 @@ Task {
         }) { channelID, hello in
             guard case let .hello(_, requestedWindowID, _) = hello else {
                 throw VideoHostdError.muxNoWindow(requestedWindowID: 0)
+            }
+            // Reject mints once shutdown has begun: a hello landing between `stopAll()` and
+            // `vd.destroy()` would otherwise mint a fresh SCStream onto a VD about to be torn down
+            // (FB17797423). The client retries under a fresh channelID against the next daemon.
+            guard !shutdownGate.isClosed else {
+                throw VideoHostdError.muxNoWindow(requestedWindowID: requestedWindowID)
             }
             // Re-enumerate live windows for THIS hello (a pane may open long after launch).
             let live = try await shareableWindows()
@@ -495,45 +614,54 @@ Task {
                 sinkTable: sinkTable,
                 onRetire: { id in retireBox.retire(id) },
             )
-            // Feature #1: if the VD is up, move THIS window onto it (AX) and capture at 2× real
-            // backing. The move returns the ACHIEVED post-move point size (a window larger than the VD
-            // is resized down) — thread it in as the authoritative capture/helloAck size so the
-            // SCStream + the client's input mapping use the new size, not the stale SCWindow.frame.
-            // If the move fails (fixed-size/hung app/AX denied) fall back to 1× for this pane — the
-            // window simply stays where it is and still streams. Per-pane so two panes can each be
-            // moved onto the shared VD.
-            let paneCaptureScale: Double
-            var paneSizeOverride: VideoSize?
-            if vdDisplayID != 0, let movePid = w.owningApplication?.processID,
-               let achieved = await WindowPlacement.moveWindowOntoDisplay(
-                   windowID: requestedWindowID,
-                   pid: movePid,
-                   displayID: vdDisplayID,
-               )
-            {
-                paneCaptureScale = 2.0
-                paneSizeOverride = VideoSize(width: Double(achieved.width), height: Double(achieved.height))
-            } else {
-                paneCaptureScale = effectiveScale
-                if vdDisplayID !=
-                    0 { log("mux: could not move window \(requestedWindowID) onto the VD — capturing at 1×") }
-            }
+            // Feature #1: PARK this window on the VD (AX move via the parking manager, which remembers
+            // the original frame for restore) and capture at the VD's real backing scale; falls back
+            // to 1× in place if the VD is down/terminated or the move fails. See `resolvePaneCapture`.
+            let placement = await resolvePaneCapture(
+                channelID: channelID,
+                requestedWindowID: requestedWindowID,
+                processID: w.owningApplication?.processID,
+                holder: holder,
+                parkingManager: parkingManager,
+                fallbackScale: effectiveScale,
+                vdPointWidth: args.vdPointWidth,
+                vdPointHeight: args.vdPointHeight,
+            )
             let session = AislopdeskVideoHostSession(
                 window: w,
                 transport: lane,
-                captureScale: paneCaptureScale,
-                captureSizeOverride: paneSizeOverride,
+                captureScale: placement.captureScale,
+                captureSizeOverride: placement.sizeOverride,
+                resizePointLimit: placement.resizeLimit,
                 bitrate: bitrate,
                 fps: args.fps,
             )
-            try await session.start()
+            do {
+                try await session.start()
+            } catch {
+                // start() failed AFTER the park — undo it so the window isn't left stranded on the VD
+                // (the registry's mint-failure path can't reach the parking manager).
+                await parkingManager.unpark(channelID: channelID)
+                throw error
+            }
+            // A SIGINT/SIGTERM that closed the gate DURING start() must not leave a fresh SCStream on a
+            // VD about to be destroyed (FB17797423). Stop + unpark + reject so the client re-mints later.
+            if shutdownGate.isClosed {
+                await session.stop()
+                await parkingManager.unpark(channelID: channelID)
+                throw VideoHostdError.muxNoWindow(requestedWindowID: requestedWindowID)
+            }
             log("mux: minted session chan=\(channelID) window-id=\(requestedWindowID) over shared flow")
             return session
         }
-        retireBox.bind { id in Task { await registry.retire(id) } }
+        retireBox.bind { id in Task { await registry.retire(id)
+            await parkingManager.unpark(channelID: id) // restore the window when its last pane closes
+        } }
         // CONCURRENCY-HOST-1: when the reaper reclaims a dead lane, retire it AND stop its session
-        // (capture/encode actually stops — the leak `retire` alone left).
-        mux.onReapLane = { id in await registry.retireAndStop(id) }
+        // (capture/encode actually stops — the leak `retire` alone left), then restore its window.
+        mux.onReapLane = { id in await registry.retireAndStop(id)
+            await parkingManager.unpark(channelID: id)
+        }
         holder.setMux(registry, mux)
         // Coalesces concurrent listWindows answers per channelID (so a lossy/looping client can't pile up
         // SCShareableContent enumerations — the discovery mirror of the registry's `minting` dedup).

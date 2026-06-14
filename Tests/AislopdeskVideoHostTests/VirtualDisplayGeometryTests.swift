@@ -99,5 +99,88 @@ final class VirtualDisplayGeometryTests: XCTestCase {
         XCTAssertFalse(p.needsResize)
         XCTAssertEqual(p.size, CGSize(width: 1920, height: 1080))
     }
+
+    // MARK: WindowPlacementMath.fits
+
+    // A window that fits (≤ bounds, with ½-pt tolerance) passes; one that overhangs either axis fails.
+    func testFitsWithinBounds() {
+        let vd = CGRect(x: 3840, y: 0, width: 1920, height: 1080)
+        XCTAssertTrue(WindowPlacementMath.fits(CGSize(width: 1920, height: 1080), within: vd)) // exact
+        XCTAssertTrue(WindowPlacementMath.fits(CGSize(width: 1200, height: 800), within: vd)) // smaller
+        XCTAssertTrue(WindowPlacementMath.fits(CGSize(width: 1920.4, height: 1080), within: vd)) // within tol
+        XCTAssertFalse(WindowPlacementMath.fits(CGSize(width: 1921, height: 1080), within: vd)) // width over
+        XCTAssertFalse(WindowPlacementMath.fits(CGSize(width: 1920, height: 1200), within: vd)) // height over
+    }
+
+    // MARK: VirtualDisplayPlanner.originToRight
+
+    // Single display: the VD lands flush to the right of it (the historical (mainWidth, 0)).
+    func testOriginToRightSingleDisplay() {
+        let o = VirtualDisplayPlanner.originToRight(of: [CGRect(x: 0, y: 0, width: 1920, height: 1080)])
+        XCTAssertEqual(o, CGPoint(x: 1920, y: 0))
+    }
+
+    // Multi-display: the VD lands past the RIGHTMOST edge (never overlapping a secondary monitor).
+    func testOriginToRightMultiDisplay() {
+        let displays = [
+            CGRect(x: 0, y: 0, width: 1920, height: 1080), // main
+            CGRect(x: 1920, y: 0, width: 2560, height: 1440), // secondary to the right
+        ]
+        // rightmost maxX = 1920 + 2560 = 4480
+        XCTAssertEqual(VirtualDisplayPlanner.originToRight(of: displays), CGPoint(x: 4480, y: 0))
+    }
+
+    // No displays (degenerate): origin (0,0) — never negative/NaN.
+    func testOriginToRightEmpty() {
+        XCTAssertEqual(VirtualDisplayPlanner.originToRight(of: []), .zero)
+    }
+
+    // A display LEFT of the origin (negative X) still resolves the rightmost edge correctly.
+    func testOriginToRightWithNegativeDisplay() {
+        let displays = [
+            CGRect(x: -1440, y: 0, width: 1440, height: 900), // to the LEFT of main
+            CGRect(x: 0, y: 0, width: 1920, height: 1080), // main
+        ]
+        XCTAssertEqual(VirtualDisplayPlanner.originToRight(of: displays), CGPoint(x: 1920, y: 0))
+    }
+
+    // The rightmost display is NOT the last array element → proves we take max(maxX), not last.maxX.
+    func testOriginToRightRightmostNotLast() {
+        let displays = [
+            CGRect(x: 0, y: 0, width: 1920, height: 1080), // main
+            CGRect(x: 5000, y: 0, width: 1000, height: 1080), // rightmost (maxX 6000), but not last
+            CGRect(x: 1920, y: 0, width: 800, height: 1080), // last element (maxX 2720)
+        ]
+        XCTAssertEqual(VirtualDisplayPlanner.originToRight(of: displays), CGPoint(x: 6000, y: 0))
+    }
+
+    // MARK: VirtualDisplayPlanner.chipPixelLimit
+
+    // Base M-series (all generations) = 6144; Pro/Max/Ultra = 7680; Intel/unknown → permissive 7680.
+    func testChipPixelLimit() {
+        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Apple M1"), 6144)
+        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Apple M2"), 6144)
+        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Apple M3"), 6144) // base M3 is 6144, NOT 7680
+        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Apple M4"), 6144) // base M4 is 6144
+        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Apple M2 Pro"), 7680)
+        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Apple M3 Max"), 7680)
+        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Apple M2 Ultra"), 7680)
+        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Intel(R) Core(TM) i9"), 7680)
+        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: ""), 7680)
+    }
+
+    // MARK: VirtualDisplayPlanner.refreshRates
+
+    // At 60fps: just the 60/30 baseline (descending, deduped).
+    func testRefreshRatesDefault() {
+        XCTAssertEqual(VirtualDisplayPlanner.refreshRates(fps: 60), [60, 30])
+        XCTAssertEqual(VirtualDisplayPlanner.refreshRates(fps: 30), [60, 30])
+    }
+
+    // Above 60fps: add the fps mode so a VD-parked window can be composited that fast.
+    func testRefreshRatesHighFPS() {
+        XCTAssertEqual(VirtualDisplayPlanner.refreshRates(fps: 90), [90, 60, 30])
+        XCTAssertEqual(VirtualDisplayPlanner.refreshRates(fps: 120), [120, 60, 30])
+    }
 }
 #endif
