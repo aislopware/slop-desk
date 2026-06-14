@@ -23,7 +23,8 @@ import OSLog
 /// - EVERY failure returns nil → caller falls back to 1× capture. NEVER crashes.
 ///
 /// HW-GATED: needs a window server + a run loop; not exercised in tests (the pure pixel/point math
-/// is in ``VirtualDisplayGeometry`` / ``VirtualDisplayPlanner``, which ARE unit-tested).
+/// lives in the Rust core `aislopdesk_core::virtual_display_geometry`, reached via the C ABI, and
+/// is unit-tested there).
 @preconcurrency
 @MainActor
 public final class VirtualDisplay {
@@ -46,7 +47,7 @@ public final class VirtualDisplay {
     /// OS, WindowServer refusal, applySettings timeout/failure, displayID stayed 0, pixel-limit
     /// exceeded) — the caller then falls back to 1× real-display capture.
     public func create(
-        _ geometry: VirtualDisplayGeometry,
+        _ geometry: VDGeometry,
         name: String = "Aislopdesk Remote",
         fps: Int = 60,
     ) async -> CGDirectDisplayID? {
@@ -64,7 +65,7 @@ public final class VirtualDisplay {
         // overlap a real display. On a single-display host this reduces to today's behaviour: pin
         // main at (0,0), VD at (mainWidth, 0).
         let physicalDisplays = Self.onlineDisplayBounds()
-        let vdOrigin = VirtualDisplayPlanner.originToRight(of: physicalDisplays.map(\.bounds))
+        let vdOrigin = RustVideoHostFFI.vdOriginToRight(of: physicalDisplays.map(\.bounds))
 
         let desc = CGVirtualDisplayDescriptor()
         desc.vendorID = 0xEEEE // arbitrary NON-ZERO (a zero vendorID → initWithDescriptor: nil)
@@ -102,7 +103,7 @@ public final class VirtualDisplay {
 
         let settings = CGVirtualDisplaySettings()
         settings.hiDPI = (geometry.scale >= 2) ? 1 : 0 // 1 = 2× Retina backing
-        settings.modes = VirtualDisplayPlanner.refreshRates(fps: fps).map {
+        settings.modes = RustVideoHostFFI.vdRefreshRates(fps: fps).map {
             CGVirtualDisplayMode(width: UInt(geometry.pointWidth), height: UInt(geometry.pointHeight), refreshRate: $0)
         }
 

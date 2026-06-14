@@ -385,7 +385,7 @@ public actor AislopdeskVideoHostSession {
     /// feature env is on). The current capture region in GLOBAL points: `nil` ⇒ the plain window
     /// frame; non-nil ⇒ a union (window ∪ an attached file-open/print dialog) so the dialog shows in
     /// full and is clickable. ``onAssociatedUnion`` drives transitions; the input/cursor mapping
-    /// origin tracks this rect so clicks land in the dialog area. See [[CaptureRegionMath]].
+    /// origin tracks this rect so clicks land in the dialog area (capture-region math in the Rust core).
     private var dialogExpandArmed = false
     private var captureRegionGlobal: CGRect?
     /// Monotonic epoch for host-initiated capture-region `resizeAck`s (distinct space from the
@@ -1869,7 +1869,7 @@ public actor AislopdeskVideoHostSession {
         // union-sized stream (clicks/cursor in the dialog area map to the wrong absolute point). The union
         // poll (onAssociatedUnion → applyCaptureRegion) re-applies the correct mapping as things move.
         if let bounds = boundsFromGeometry(message) {
-            if CaptureRegionMath.shouldReoriginToWindowOnGeometry(activeRegionGlobal: captureRegionGlobal) {
+            if RustVideoHostFFI.captureReoriginOnGeometry(activeRegionGlobal: captureRegionGlobal) {
                 cursorSampler?.updateWindowBounds(bounds)
                 injector?.updateWindowBounds(bounds)
             }
@@ -1901,9 +1901,10 @@ public actor AislopdeskVideoHostSession {
         // overhangs) expands, otherwise we want the plain window frame back.
         let desired = unionGlobal.contains(windowFrame) && unionGlobal != windowFrame ? unionGlobal : windowFrame
         let current = captureRegionGlobal ?? windowFrame
-        guard CaptureRegionMath.shouldRetarget(current: current, desired: desired) else { return }
+        guard RustVideoHostFFI.captureShouldRetarget(current: current, desired: desired) else { return }
         // Contracting back to (approximately) the window frame ⇒ clear the override; else expand.
-        let target: CGRect? = CaptureRegionMath.shouldRetarget(current: desired, desired: windowFrame) ? desired : nil
+        let target: CGRect? = RustVideoHostFFI
+            .captureShouldRetarget(current: desired, desired: windowFrame) ? desired : nil
         await applyCaptureRegion(target)
     }
 

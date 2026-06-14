@@ -1,7 +1,7 @@
 //! Pure capture-region geometry for the host DIALOG-EXPAND feature.
 //!
-//! The canonical `CaptureRegionMath` logic; the native Swift shell keeps a copy
-//! (`Sources/AislopdeskVideoHost/CaptureRegionMath.swift`) that tracks this (golden parity).
+//! The canonical capture-region logic; the macOS host shell calls it over the C ABI
+//! (`RustVideoHostFFI.capture*`) from `WindowGeometryWatcher` and the host session.
 //!
 //! Decides the capture region = target window frame ∪ any associated panel windows (a
 //! file-open / print / share dialog the OS attaches to the window), clamped to the
@@ -35,7 +35,7 @@ pub const DEFAULT_MIN_OVERLAP_FRACTION: f64 = 0.30;
 pub const DEFAULT_MIN_DELTA: f64 = 8.0;
 
 /// One on-screen window, as read from `CGWindowListCopyWindowInfo` (CG top-left points).
-/// The Swift shell's `CaptureRegionMath.WindowSnapshot` mirrors this.
+/// The host shell marshals each `CGWindowList` row into this over the C ABI.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowSnapshot {
     /// `kCGWindowNumber` (Swift `UInt32`).
@@ -185,7 +185,7 @@ mod tests {
         VideoRect::xywh(x, y, w, h)
     }
 
-    // ----- CaptureRegionMath cases (the Swift `CaptureRegionMathTests` suite cross-checks the same) -----
+    // ----- capture-region cases (the host `CaptureRegionMathTests` suite drives these via the FFI) -----
 
     /// `testNoDialogReturnsWindowFrame`: no associated windows → just the (clamped) frame.
     #[test]

@@ -549,8 +549,8 @@ Task {
         if args.virtualDisplay {
             // Detect the chip's framebuffer pixel limit so an oversized VD is refused up front
             // (rather than after a multi-second applySettings stall) on base M-series chips.
-            let chipLimit = VirtualDisplayPlanner.chipPixelLimit(cpuBrand: cpuBrandString())
-            let geo = VirtualDisplayGeometry(
+            let chipLimit = RustVideoHostFFI.vdChipPixelLimit(cpuBrand: cpuBrandString())
+            let geo = RustVideoHostFFI.vdGeometry(
                 pointWidth: args.vdPointWidth,
                 pointHeight: args.vdPointHeight,
                 scale: 2,

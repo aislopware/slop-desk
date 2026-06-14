@@ -37,8 +37,8 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
     /// FRONT of the tracked window, computes the capture region = window ∪ any attached same-pid
     /// panel (a file-open dialog the OS attributes to the app's pid), and fires this handler with the
     /// GLOBAL-point union whenever it changes beyond hysteresis. Off (nil) ⇒ zero extra work. The
-    /// union math is in ``CaptureRegionMath`` (pure + unit-tested); this method only feeds it the
-    /// `CGWindowListCopyWindowInfo` snapshot. queue-confined.
+    /// union math lives in the Rust core (`aislopdesk_core::capture_region`, via the C ABI); this
+    /// method only feeds it the `CGWindowListCopyWindowInfo` snapshot. queue-confined.
     public typealias UnionHandler = @Sendable (CGRect) -> Void
     private var associatedUnionHandler: UnionHandler?
     private var lastUnionEmitted: CGRect = .null
@@ -113,9 +113,9 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         }
     }
 
-    /// Enumerate windows IN FRONT of the tracked window, compute the capture-region union via
-    /// ``CaptureRegionMath``, and fire the union handler when it changes beyond hysteresis. queue-
-    /// confined (called from ``pollOnce``). The display is the one under the window centre.
+    /// Enumerate windows IN FRONT of the tracked window, compute the capture-region union via the
+    /// Rust core (`aislopdesk_core::capture_region`), and fire the union handler when it changes
+    /// beyond hysteresis. queue-confined (called from ``pollOnce``). Display = the one under centre.
     private func pollAssociatedUnion(targetFrameVR: VideoRect) {
         guard let handler = associatedUnionHandler else { return }
         let targetFrame = CGRect(
@@ -133,17 +133,17 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         guard let all = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
         else { return }
         // CGWindowList is FRONT-to-back: take the slice strictly in front of the tracked window.
-        var inFront: [CaptureRegionMath.WindowSnapshot] = []
+        var inFront: [CaptureWindow] = []
         for w in all {
             let wid = (w[kCGWindowNumber as String] as? UInt32) ?? 0
             if wid == windowID { break } // reached the tracked window — the rest are behind it
             guard let bd = w[kCGWindowBounds as String] as? [String: Any],
                   let r = CGRect(dictionaryRepresentation: bd as CFDictionary) else { continue }
             let ownerPID = Int32((w[kCGWindowOwnerPID as String] as? Int) ?? -1)
-            let layer = (w[kCGWindowLayer as String] as? Int) ?? Int.min
-            inFront.append(.init(windowID: wid, ownerPID: ownerPID, layer: layer, frame: r))
+            let layer = Int64((w[kCGWindowLayer as String] as? Int) ?? Int.min)
+            inFront.append(CaptureWindow(windowID: wid, ownerPID: ownerPID, layer: layer, frame: r))
         }
-        let union = CaptureRegionMath.unionRegion(
+        let union = RustVideoHostFFI.captureUnionRegion(
             targetFrame: targetFrame,
             targetWindowID: UInt32(windowID),
             targetPID: Int32(pid),
@@ -151,7 +151,7 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
             displayBounds: displayBounds,
         )
         let baseline = lastUnionEmitted.isNull ? targetFrame : lastUnionEmitted
-        guard CaptureRegionMath.shouldRetarget(current: baseline, desired: union) else { return }
+        guard RustVideoHostFFI.captureShouldRetarget(current: baseline, desired: union) else { return }
         lastUnionEmitted = union
         handler(union)
     }

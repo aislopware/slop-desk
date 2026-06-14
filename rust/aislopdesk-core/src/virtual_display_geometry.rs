@@ -1,15 +1,14 @@
 //! Pure point<->pixel<->millimeter arithmetic + display-placement / chip-capability
 //! math for a `HiDPI` virtual display.
 //!
-//! The canonical `VirtualDisplayGeometry` / `VirtualDisplayPlanner` logic. The native
-//! Swift shell keeps a copy (`AislopdeskVideoHost/VirtualDisplayGeometry.swift`) that
-//! tracks this (golden parity).
+//! The canonical virtual-display geometry + planner logic. The macOS host shell calls it
+//! over the C ABI (`RustVideoHostFFI.vd*`) from its VD-creation path.
 //!
 //! No CoreGraphics, no IPC, no private API: just the math that decides the VD's POINT
 //! mode size, the PIXEL framebuffer, `sizeInMillimeters` (target PPI), global origin,
 //! per-chip pixel ceiling, and advertised refresh-rate modes. The `golden_parity`
-//! integration test proves the Swift shell tracks this (float outputs compared as IEEE
-//! bit patterns; integer/bool outputs compared exactly).
+//! integration test pins these outputs against the frozen corpus (float outputs compared
+//! as IEEE bit patterns; integer/bool outputs compared exactly).
 //!
 //! The `HiDPI` rule (from the `CGVirtualDisplay` research / `FreeDisplay` / force-hidpi /
 //! Chromium): mode width/height are POINTS; `maxPixelsWide/High = points × scale`;
@@ -19,7 +18,7 @@
 
 use crate::geometry::{VideoPoint, VideoRect, VideoSize};
 
-/// The Swift shell's `VirtualDisplayGeometry` mirrors this (an `Equatable, Sendable` value type).
+/// A virtual-display geometry value (reached from the host shell over the C ABI).
 ///
 /// Swift `Int` is 64-bit on the targets, so all integer fields are `i64` to preserve
 /// the same overflow domain for `point_width * scale`.
@@ -43,12 +42,10 @@ impl VirtualDisplayGeometry {
     /// Swift `sizeInMillimeters` default `targetPPI = 163`.
     pub const DEFAULT_TARGET_PPI: f64 = 163.0;
 
-    /// The Swift shell's `init(pointWidth:pointHeight:scale:maxHorizontalPixels:)` mirrors
-    /// this: clamps every field to a minimum of 1 via `max(1, …)`.
+    /// Builds a geometry, clamping every field to a minimum of 1 via `max(1, …)`.
     ///
-    /// Swift exposes `scale` and `maxHorizontalPixels` as default arguments
-    /// ([`Self::DEFAULT_SCALE`] / [`Self::DEFAULT_MAX_HORIZONTAL_PIXELS`]); pass those
-    /// constants to reproduce a Swift call that omitted them.
+    /// The host shell's FFI wrapper exposes `scale` and `maxHorizontalPixels` as default
+    /// arguments ([`Self::DEFAULT_SCALE`] / [`Self::DEFAULT_MAX_HORIZONTAL_PIXELS`]).
     #[must_use]
     pub fn new(
         point_width: i64,
@@ -106,7 +103,7 @@ impl VirtualDisplayGeometry {
     }
 }
 
-// ----- `VirtualDisplayPlanner` logic (a stateless namespace; the Swift shell mirrors it). -----
+// ----- VD planner logic (a stateless namespace; the host shell calls it over the C ABI). -----
 // Follows the crate convention of free functions for stateless namespaces
 // (cf. `nal_unit::join`, `coordinate_mapping::window_point`, `mux_header::encode`).
 

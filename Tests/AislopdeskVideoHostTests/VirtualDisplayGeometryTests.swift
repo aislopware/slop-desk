@@ -7,11 +7,11 @@ import XCTest
 /// private API — safe headless. The live VD creation / AX move are HW-gated (window server + TCC)
 /// and not unit-tested; this covers the arithmetic that decides the mode/descriptor/placement.
 final class VirtualDisplayGeometryTests: XCTestCase {
-    // MARK: VirtualDisplayGeometry
+    // MARK: virtual display geometry (Rust core via FFI)
 
     // 2× HiDPI: a 1920×1080-POINT display is backed by 3840×2160 PIXELS.
     func testTwoXBackingPixels() {
-        let g = VirtualDisplayGeometry(pointWidth: 1920, pointHeight: 1080, scale: 2)
+        let g = RustVideoHostFFI.vdGeometry(pointWidth: 1920, pointHeight: 1080, scale: 2)
         XCTAssertEqual(g.pixelWidth, 3840)
         XCTAssertEqual(g.pixelHeight, 2160)
         XCTAssertFalse(g.exceedsPixelLimit, "3840 < 7680 chip limit")
@@ -19,7 +19,7 @@ final class VirtualDisplayGeometryTests: XCTestCase {
 
     // 1× (scale 1): pixels == points (the fallback / non-HiDPI case).
     func testOneXBacking() {
-        let g = VirtualDisplayGeometry(pointWidth: 1440, pointHeight: 900, scale: 1)
+        let g = RustVideoHostFFI.vdGeometry(pointWidth: 1440, pointHeight: 900, scale: 1)
         XCTAssertEqual(g.pixelWidth, 1440)
         XCTAssertEqual(g.pixelHeight, 900)
     }
@@ -27,19 +27,29 @@ final class VirtualDisplayGeometryTests: XCTestCase {
     // The chip horizontal pixel limit gates oversized framebuffers (default 7680, Studio Ultra).
     func testExceedsPixelLimit() {
         // 3840 points × 2 = 7680 px → exactly the limit, NOT exceeding.
-        XCTAssertFalse(VirtualDisplayGeometry(pointWidth: 3840, pointHeight: 2160, scale: 2).exceedsPixelLimit)
+        XCTAssertFalse(RustVideoHostFFI.vdGeometry(pointWidth: 3840, pointHeight: 2160, scale: 2).exceedsPixelLimit)
         // 3841 points × 2 = 7682 px → over the limit.
-        XCTAssertTrue(VirtualDisplayGeometry(pointWidth: 3841, pointHeight: 2160, scale: 2).exceedsPixelLimit)
+        XCTAssertTrue(RustVideoHostFFI.vdGeometry(pointWidth: 3841, pointHeight: 2160, scale: 2).exceedsPixelLimit)
         // Base-M chip limit 6144: 3072×2 = 6144 ok; 3200×2 = 6400 over.
-        XCTAssertFalse(VirtualDisplayGeometry(pointWidth: 3072, pointHeight: 1920, scale: 2, maxHorizontalPixels: 6144)
-            .exceedsPixelLimit)
-        XCTAssertTrue(VirtualDisplayGeometry(pointWidth: 3200, pointHeight: 1800, scale: 2, maxHorizontalPixels: 6144)
-            .exceedsPixelLimit)
+        XCTAssertFalse(RustVideoHostFFI.vdGeometry(
+            pointWidth: 3072,
+            pointHeight: 1920,
+            scale: 2,
+            maxHorizontalPixels: 6144,
+        )
+        .exceedsPixelLimit)
+        XCTAssertTrue(RustVideoHostFFI.vdGeometry(
+            pointWidth: 3200,
+            pointHeight: 1800,
+            scale: 2,
+            maxHorizontalPixels: 6144,
+        )
+        .exceedsPixelLimit)
     }
 
     // sizeInMillimeters derives from the PIXEL dims at the target PPI (so the reported density matches).
     func testSizeInMillimeters() {
-        let g = VirtualDisplayGeometry(pointWidth: 1920, pointHeight: 1080, scale: 2)
+        let g = RustVideoHostFFI.vdGeometry(pointWidth: 1920, pointHeight: 1080, scale: 2)
         let mm = g.sizeInMillimeters(targetPPI: 163)
         // 3840 px / 163 PPI × 25.4 ≈ 598.5 mm ; 2160 / 163 × 25.4 ≈ 336.6 mm
         XCTAssertEqual(mm.width, 3840.0 / 163.0 * 25.4, accuracy: 0.01)
@@ -49,7 +59,7 @@ final class VirtualDisplayGeometryTests: XCTestCase {
 
     // Degenerate inputs are clamped to ≥1 (never zero/negative → never a div-by-zero or bad descriptor).
     func testDegenerateInputsClamped() {
-        let g = VirtualDisplayGeometry(pointWidth: 0, pointHeight: -5, scale: 0)
+        let g = RustVideoHostFFI.vdGeometry(pointWidth: 0, pointHeight: -5, scale: 0)
         XCTAssertEqual(g.pointWidth, 1)
         XCTAssertEqual(g.pointHeight, 1)
         XCTAssertEqual(g.scale, 1)
@@ -112,11 +122,11 @@ final class VirtualDisplayGeometryTests: XCTestCase {
         XCTAssertFalse(RustVideoHostFFI.windowFits(CGSize(width: 1920, height: 1200), within: vd)) // height over
     }
 
-    // MARK: VirtualDisplayPlanner.originToRight
+    // MARK: RustVideoHostFFI.vdOriginToRight
 
     // Single display: the VD lands flush to the right of it (the historical (mainWidth, 0)).
     func testOriginToRightSingleDisplay() {
-        let o = VirtualDisplayPlanner.originToRight(of: [CGRect(x: 0, y: 0, width: 1920, height: 1080)])
+        let o = RustVideoHostFFI.vdOriginToRight(of: [CGRect(x: 0, y: 0, width: 1920, height: 1080)])
         XCTAssertEqual(o, CGPoint(x: 1920, y: 0))
     }
 
@@ -127,12 +137,12 @@ final class VirtualDisplayGeometryTests: XCTestCase {
             CGRect(x: 1920, y: 0, width: 2560, height: 1440), // secondary to the right
         ]
         // rightmost maxX = 1920 + 2560 = 4480
-        XCTAssertEqual(VirtualDisplayPlanner.originToRight(of: displays), CGPoint(x: 4480, y: 0))
+        XCTAssertEqual(RustVideoHostFFI.vdOriginToRight(of: displays), CGPoint(x: 4480, y: 0))
     }
 
     // No displays (degenerate): origin (0,0) — never negative/NaN.
     func testOriginToRightEmpty() {
-        XCTAssertEqual(VirtualDisplayPlanner.originToRight(of: []), .zero)
+        XCTAssertEqual(RustVideoHostFFI.vdOriginToRight(of: []), .zero)
     }
 
     // A display LEFT of the origin (negative X) still resolves the rightmost edge correctly.
@@ -141,7 +151,7 @@ final class VirtualDisplayGeometryTests: XCTestCase {
             CGRect(x: -1440, y: 0, width: 1440, height: 900), // to the LEFT of main
             CGRect(x: 0, y: 0, width: 1920, height: 1080), // main
         ]
-        XCTAssertEqual(VirtualDisplayPlanner.originToRight(of: displays), CGPoint(x: 1920, y: 0))
+        XCTAssertEqual(RustVideoHostFFI.vdOriginToRight(of: displays), CGPoint(x: 1920, y: 0))
     }
 
     // The rightmost display is NOT the last array element → proves we take max(maxX), not last.maxX.
@@ -151,36 +161,36 @@ final class VirtualDisplayGeometryTests: XCTestCase {
             CGRect(x: 5000, y: 0, width: 1000, height: 1080), // rightmost (maxX 6000), but not last
             CGRect(x: 1920, y: 0, width: 800, height: 1080), // last element (maxX 2720)
         ]
-        XCTAssertEqual(VirtualDisplayPlanner.originToRight(of: displays), CGPoint(x: 6000, y: 0))
+        XCTAssertEqual(RustVideoHostFFI.vdOriginToRight(of: displays), CGPoint(x: 6000, y: 0))
     }
 
-    // MARK: VirtualDisplayPlanner.chipPixelLimit
+    // MARK: RustVideoHostFFI.vdChipPixelLimit
 
     // Base M-series (all generations) = 6144; Pro/Max/Ultra = 7680; Intel/unknown → permissive 7680.
     func testChipPixelLimit() {
-        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Apple M1"), 6144)
-        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Apple M2"), 6144)
-        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Apple M3"), 6144) // base M3 is 6144, NOT 7680
-        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Apple M4"), 6144) // base M4 is 6144
-        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Apple M2 Pro"), 7680)
-        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Apple M3 Max"), 7680)
-        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Apple M2 Ultra"), 7680)
-        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: "Intel(R) Core(TM) i9"), 7680)
-        XCTAssertEqual(VirtualDisplayPlanner.chipPixelLimit(cpuBrand: ""), 7680)
+        XCTAssertEqual(RustVideoHostFFI.vdChipPixelLimit(cpuBrand: "Apple M1"), 6144)
+        XCTAssertEqual(RustVideoHostFFI.vdChipPixelLimit(cpuBrand: "Apple M2"), 6144)
+        XCTAssertEqual(RustVideoHostFFI.vdChipPixelLimit(cpuBrand: "Apple M3"), 6144) // base M3 is 6144, NOT 7680
+        XCTAssertEqual(RustVideoHostFFI.vdChipPixelLimit(cpuBrand: "Apple M4"), 6144) // base M4 is 6144
+        XCTAssertEqual(RustVideoHostFFI.vdChipPixelLimit(cpuBrand: "Apple M2 Pro"), 7680)
+        XCTAssertEqual(RustVideoHostFFI.vdChipPixelLimit(cpuBrand: "Apple M3 Max"), 7680)
+        XCTAssertEqual(RustVideoHostFFI.vdChipPixelLimit(cpuBrand: "Apple M2 Ultra"), 7680)
+        XCTAssertEqual(RustVideoHostFFI.vdChipPixelLimit(cpuBrand: "Intel(R) Core(TM) i9"), 7680)
+        XCTAssertEqual(RustVideoHostFFI.vdChipPixelLimit(cpuBrand: ""), 7680)
     }
 
-    // MARK: VirtualDisplayPlanner.refreshRates
+    // MARK: RustVideoHostFFI.vdRefreshRates
 
     // At 60fps: just the 60/30 baseline (descending, deduped).
     func testRefreshRatesDefault() {
-        XCTAssertEqual(VirtualDisplayPlanner.refreshRates(fps: 60), [60, 30])
-        XCTAssertEqual(VirtualDisplayPlanner.refreshRates(fps: 30), [60, 30])
+        XCTAssertEqual(RustVideoHostFFI.vdRefreshRates(fps: 60), [60, 30])
+        XCTAssertEqual(RustVideoHostFFI.vdRefreshRates(fps: 30), [60, 30])
     }
 
     // Above 60fps: add the fps mode so a VD-parked window can be composited that fast.
     func testRefreshRatesHighFPS() {
-        XCTAssertEqual(VirtualDisplayPlanner.refreshRates(fps: 90), [90, 60, 30])
-        XCTAssertEqual(VirtualDisplayPlanner.refreshRates(fps: 120), [120, 60, 30])
+        XCTAssertEqual(RustVideoHostFFI.vdRefreshRates(fps: 90), [90, 60, 30])
+        XCTAssertEqual(RustVideoHostFFI.vdRefreshRates(fps: 120), [120, 60, 30])
     }
 }
 #endif

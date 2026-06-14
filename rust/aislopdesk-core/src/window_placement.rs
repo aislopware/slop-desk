@@ -1,8 +1,9 @@
 //! Pure window-placement arithmetic.
 //!
-//! The canonical `WindowPlacementMath` logic (`Sources/AislopdeskVideoHost/WindowPlacement.swift`,
-//! the `#if os(macOS)` file). Only the PURE math lives here; the surrounding `WindowPlacement`
-//! enum is Accessibility (AX) side-effect code and is intentionally NOT portable to this core.
+//! The canonical window-placement logic; the macOS host shell calls it over the C ABI
+//! (`RustVideoHostFFI.windowPlacement`/`windowFits`) from its VD-park path. Only the PURE
+//! math lives here; the host's `WindowPlacement` enum (Accessibility side effects) stays in
+//! Swift and is intentionally NOT portable to this core.
 //!
 //! Feature #1 (`HiDPI` virtual-display parking): decide where/how to move a window
 //! fully onto a display. [`placement`] clamps the window DOWN to the display bounds
@@ -99,7 +100,7 @@ mod tests {
     use super::*;
     use crate::geometry::{VideoPoint, VideoRect, VideoSize};
 
-    // ---- placement and fits cases (the Swift `VirtualDisplayGeometryTests` suite cross-checks the same) ----
+    // ---- placement and fits cases (the host `VirtualDisplayGeometryTests` suite drives these via the FFI) ----
 
     /// `testPlacementFitsNoResize`: a window smaller than the display is not resized
     /// and is placed at the display origin.

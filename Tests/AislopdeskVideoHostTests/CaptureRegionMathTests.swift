@@ -3,10 +3,11 @@ import CoreGraphics
 import XCTest
 @testable import AislopdeskVideoHost
 
-/// `CaptureRegionMath` — the pure union/hysteresis logic behind DIALOG-EXPAND (a file-open dialog
-/// larger than the streamed window expands the capture region so it shows in full + is clickable).
+/// The capture-region union/hysteresis logic behind DIALOG-EXPAND (a file-open dialog larger than
+/// the streamed window expands the capture region so it shows in full + is clickable), exercised
+/// through the Rust core via the C-ABI wrappers.
 final class CaptureRegionMathTests: XCTestCase {
-    private typealias Snap = CaptureRegionMath.WindowSnapshot
+    private typealias Snap = CaptureWindow
     private let display = CGRect(x: 0, y: 0, width: 1920, height: 1080)
     private let target = CGRect(x: 120, y: 120, width: 700, height: 500) // streamed window
     private let targetWID: UInt32 = 1783
@@ -14,7 +15,7 @@ final class CaptureRegionMathTests: XCTestCase {
 
     // No associated windows → region is just the (clamped) window frame.
     func testNoDialogReturnsWindowFrame() {
-        let r = CaptureRegionMath.unionRegion(
+        let r = RustVideoHostFFI.captureUnionRegion(
             targetFrame: target,
             targetWindowID: targetWID,
             targetPID: pid,
@@ -32,7 +33,7 @@ final class CaptureRegionMathTests: XCTestCase {
             layer: 0,
             frame: CGRect(x: 30, y: 203, width: 880, height: 448),
         )
-        let r = CaptureRegionMath.unionRegion(
+        let r = RustVideoHostFFI.captureUnionRegion(
             targetFrame: target,
             targetWindowID: targetWID,
             targetPID: pid,
@@ -46,7 +47,7 @@ final class CaptureRegionMathTests: XCTestCase {
     // A different app's window overlapping the target must NOT join the union (no bleed-into-region).
     func testOtherAppWindowIgnored() {
         let slack = Snap(windowID: 57, ownerPID: 388, layer: 0, frame: CGRect(x: 0, y: 0, width: 1400, height: 900))
-        let r = CaptureRegionMath.unionRegion(
+        let r = RustVideoHostFFI.captureUnionRegion(
             targetFrame: target,
             targetWindowID: targetWID,
             targetPID: pid,
@@ -59,7 +60,7 @@ final class CaptureRegionMathTests: XCTestCase {
     // The target window itself appearing in the list must not self-union (no-op).
     func testTargetWindowItselfIgnored() {
         let selfSnap = Snap(windowID: targetWID, ownerPID: pid, layer: 0, frame: target)
-        let r = CaptureRegionMath.unionRegion(
+        let r = RustVideoHostFFI.captureUnionRegion(
             targetFrame: target,
             targetWindowID: targetWID,
             targetPID: pid,
@@ -77,7 +78,7 @@ final class CaptureRegionMathTests: XCTestCase {
             layer: 25,
             frame: CGRect(x: 100, y: 100, width: 900, height: 700),
         )
-        let r = CaptureRegionMath.unionRegion(
+        let r = RustVideoHostFFI.captureUnionRegion(
             targetFrame: target,
             targetWindowID: targetWID,
             targetPID: pid,
@@ -96,7 +97,7 @@ final class CaptureRegionMathTests: XCTestCase {
             layer: 0,
             frame: CGRect(x: 815, y: 120, width: 600, height: 500),
         )
-        let r = CaptureRegionMath.unionRegion(
+        let r = RustVideoHostFFI.captureUnionRegion(
             targetFrame: target,
             targetWindowID: targetWID,
             targetPID: pid,
@@ -116,7 +117,7 @@ final class CaptureRegionMathTests: XCTestCase {
             layer: 0,
             frame: CGRect(x: -90, y: 100, width: 880, height: 448),
         )
-        let r = CaptureRegionMath.unionRegion(
+        let r = RustVideoHostFFI.captureUnionRegion(
             targetFrame: leftEdgeTarget,
             targetWindowID: targetWID,
             targetPID: pid,
@@ -130,8 +131,8 @@ final class CaptureRegionMathTests: XCTestCase {
     // Hysteresis: a sub-threshold drift does not retarget; a real expansion does.
     func testShouldRetargetHysteresis() {
         let a = CGRect(x: 120, y: 120, width: 700, height: 500)
-        XCTAssertFalse(CaptureRegionMath.shouldRetarget(current: a, desired: a.insetBy(dx: -3, dy: -3)))
-        XCTAssertTrue(CaptureRegionMath.shouldRetarget(
+        XCTAssertFalse(RustVideoHostFFI.captureShouldRetarget(current: a, desired: a.insetBy(dx: -3, dy: -3)))
+        XCTAssertTrue(RustVideoHostFFI.captureShouldRetarget(
             current: a,
             desired: CGRect(x: 30, y: 120, width: 880, height: 531),
         ))
@@ -143,12 +144,12 @@ final class CaptureRegionMathTests: XCTestCase {
     // stream (clicks/cursor in the dialog overhang map to the wrong absolute point).
     func testGeometryReoriginSkippedWhileCaptureRegionExpanded() {
         XCTAssertTrue(
-            CaptureRegionMath.shouldReoriginToWindowOnGeometry(activeRegionGlobal: nil),
+            RustVideoHostFFI.captureReoriginOnGeometry(activeRegionGlobal: nil),
             "no active region → a window move re-origins the input/cursor mapping",
         )
         let union = CGRect(x: 20, y: 70, width: 880, height: 560)
         XCTAssertFalse(
-            CaptureRegionMath.shouldReoriginToWindowOnGeometry(activeRegionGlobal: union),
+            RustVideoHostFFI.captureReoriginOnGeometry(activeRegionGlobal: union),
             "dialog-expand active → do NOT revert the mapping to the plain window frame",
         )
     }

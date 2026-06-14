@@ -268,6 +268,73 @@ AisdPlacement aisd_window_placement(double window_w, double window_h, AisdRect d
  * Pure; never fails. */
 uint8_t aisd_window_fits(double size_w, double size_h, AisdRect bounds);
 
+/* ---- virtual_display_geometry (pure scalar; VD creation path) --------------------- */
+
+/* A virtual-display geometry: clamped input fields + derived pixel dims + chip-limit check. */
+typedef struct AisdVDGeometry {
+    int64_t point_width;
+    int64_t point_height;
+    int64_t scale;
+    int64_t max_horizontal_pixels;
+    int64_t pixel_width;          /* point_width * scale */
+    int64_t pixel_height;         /* point_height * scale */
+    uint8_t exceeds_pixel_limit;  /* 1 = pixel_width over the chip ceiling */
+} AisdVDGeometry;
+
+/* A physical millimetre size (width, height) for a VD descriptor. */
+typedef struct AisdVDMillimeters {
+    double width;
+    double height;
+} AisdVDMillimeters;
+
+/* Build a (clamped) VD geometry and return its derived scalar fields. Pure; never fails. */
+AisdVDGeometry aisd_vd_geometry(int64_t point_width, int64_t point_height,
+                                int64_t scale, int64_t max_horizontal_pixels);
+
+/* Physical mm size for a pixel_width × pixel_height display at target_ppi (non-finite / <1 ppi
+ * clamps to 1.0). Pure; never fails. */
+AisdVDMillimeters aisd_vd_size_in_millimeters(int64_t pixel_width, int64_t pixel_height,
+                                              double target_ppi);
+
+/* VD global origin flush right of the rightmost existing display (maxX, 0); (0,0) when none.
+ * displays is borrowed (may be NULL iff display_count == 0). Pure; never fails. */
+AisdPoint aisd_vd_origin_to_right(const AisdRect *displays, size_t display_count);
+
+/* Chip horizontal pixel ceiling from a CPU brand C string (Pro/Max/Ultra → 7680, base Apple
+ * M → 6144, else 7680). cpu_brand may be NULL (→ default). Pure; never fails. */
+int64_t aisd_vd_chip_pixel_limit(const char *cpu_brand);
+
+/* Write the descending refresh-rate modes for a VD at `fps` into `rates` (capacity slots) and
+ * return the count (always 2 or 3). Writes nothing if rates is NULL or capacity < count. */
+size_t aisd_vd_refresh_rates(int64_t fps, double *rates, size_t capacity);
+
+/* ---- capture_region (pure, flat-struct; dialog-expand capture math) --------------- */
+
+/* One CGWindowList row for capture-region math (window_id, owner_pid, layer, global frame). */
+typedef struct AisdCaptureWindowSnapshot {
+    uint32_t window_id;
+    int32_t  owner_pid;
+    int64_t  layer;
+    AisdRect frame;
+} AisdCaptureWindowSnapshot;
+
+/* The capture union region: target window ∪ qualifying same-pid panels in front, clamped to
+ * the display. windows_in_front is borrowed (NULL ok iff windows_count == 0). Pass 0.30 for
+ * min_overlap_fraction (the default). Pure; never fails. */
+AisdRect aisd_capture_union_region(AisdRect target_frame, uint32_t target_window_id,
+                                   int32_t target_pid,
+                                   const AisdCaptureWindowSnapshot *windows_in_front,
+                                   size_t windows_count, AisdRect display_bounds,
+                                   double min_overlap_fraction);
+
+/* Hysteresis gate: 1 if |desired - current| > min_delta on any edge, else 0. Pass 8.0 for the
+ * default min_delta. Pure; never fails. */
+uint8_t aisd_capture_should_retarget(AisdRect current, AisdRect desired, double min_delta);
+
+/* Whether a geometry change should re-origin capture to the plain window frame: 1 when no union
+ * region is active (active_region_is_null != 0), else 0. Pure; never fails. */
+uint8_t aisd_capture_reorigin_on_geometry(uint8_t active_region_is_null);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

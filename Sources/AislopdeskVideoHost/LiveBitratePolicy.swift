@@ -15,8 +15,7 @@ import Foundation
 /// bandwidth is ample, so the resolution-derived value wins for any window from ~1080p up.
 ///
 /// Pure Int/Double arithmetic — unit-tested. (The `VideoEncoder` it feeds is HW-gated and never
-/// instantiated in a test; this keeps the bitrate decision headlessly verifiable, mirroring
-/// ``VirtualDisplayGeometry`` / ``StaticIDRDecider``.)
+/// instantiated in a test; this keeps the bitrate decision headlessly verifiable.)
 public enum LiveBitratePolicy {
     /// Bits per pixel per frame. 0.15 ≈ the proven-good density bumped a notch for motion headroom:
     /// 1920·1080·60·0.15 ≈ 18.7 Mbps at 1080p60, scaling to ≈45 Mbps at a 2816×1778@60 HiDPI window.
