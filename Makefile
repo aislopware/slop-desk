@@ -54,7 +54,7 @@ fix: fmt ## Format + apply all safe lint autofixes
 lint: lint-swift lint-rust lint-shell lint-python ## Run every linter strictly
 
 lint-swift: ## SwiftFormat --lint + SwiftLint --strict
-	swiftformat --lint $(SWIFT_PATHS)
+	swiftformat $(SWIFT_PATHS) --lint
 	swiftlint --strict --quiet
 
 lint-rust: ## rustfmt --check + clippy -D warnings + cargo-deny + cargo-machete

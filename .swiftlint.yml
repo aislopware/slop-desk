@@ -140,9 +140,6 @@ disabled_rules:
 # Correctness / consistency — keep STRICT (these stay at error/default and are
 # enforced to zero by `swiftlint --strict`).
 
-trailing_comma:
-  mandatory_comma: true        # agree with swiftformat `--trailing-commas always`
-
 identifier_name:
   # Scoped sanely: the single-char math/loop locals and the 2-char codec/geometry/
   # domain vocab are idiomatic here AND mirror the Rust core's intentional short names
