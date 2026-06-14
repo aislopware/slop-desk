@@ -28,9 +28,9 @@ extension WireMessage {
     /// the Rust codec's extra FFI buffer copies would regress the native zero-copy path.
     private var exceedsRustCodecThreshold: Bool {
         switch self {
-        case let .output(_, bytes): return bytes.count > RustFFI.payloadThreshold
-        case let .input(bytes): return bytes.count > RustFFI.payloadThreshold
-        default: return false
+        case let .output(_, bytes): bytes.count > RustFFI.payloadThreshold
+        case let .input(bytes): bytes.count > RustFFI.payloadThreshold
+        default: false
         }
     }
 
@@ -111,9 +111,9 @@ extension WireMessage {
                 frame.append(0)
             case let .idle(exitCode, durationMS):
                 frame.append(1)
-                frame.append(exitCode != nil ? 1 : 0)   // hasExit
-                frame.appendBE(exitCode ?? 0)            // Int32 BE (0 when absent)
-                frame.appendBE(durationMS)               // UInt32 BE
+                frame.append(exitCode != nil ? 1 : 0) // hasExit
+                frame.appendBE(exitCode ?? 0) // Int32 BE (0 when absent)
+                frame.appendBE(durationMS) // UInt32 BE
             }
         }
 
@@ -121,7 +121,7 @@ extension WireMessage {
         // value the old `UInt32(body.count)` carried.
         let payloadLength = UInt32(frame.count - 4)
         let s = frame.startIndex
-        frame[s]     = UInt8(truncatingIfNeeded: payloadLength >> 24)
+        frame[s] = UInt8(truncatingIfNeeded: payloadLength >> 24)
         frame[s + 1] = UInt8(truncatingIfNeeded: payloadLength >> 16)
         frame[s + 2] = UInt8(truncatingIfNeeded: payloadLength >> 8)
         frame[s + 3] = UInt8(truncatingIfNeeded: payloadLength)
@@ -152,34 +152,36 @@ extension WireMessage {
     }
 }
 
-extension WireMessage {
+public extension WireMessage {
     /// The exact number of bytes ``encode()`` produces for this message, computed WITHOUT
     /// building the frame (no payload copy). Used by the receive-side flow-control
     /// crediting: the consumer credits `wireByteCount` per consumed message, which matches
     /// the sender's per-frame debit exactly (`.channelData` chunking partitions inner
     /// frames, so the chunk payloads of one frame sum to this). Pinned to `encode().count`
     /// for every variant by `WireMessageWireByteCountTests`.
-    public var wireByteCount: Int {
-        let body: Int
-        switch self {
-        case let .output(_, bytes): body = 8 + bytes.count            // seq Int64 + payload
-        case .exit: body = 4                                          // code Int32
-        case let .input(bytes): body = bytes.count
-        case .hello: body = 2 + Self.sessionIDByteCount + 8           // UInt16 + UUID + Int64
-        case .resize: body = 8                                        // 4 × UInt16
-        case .ack: body = 8                                           // seq Int64
-        case .bye: body = 0
-        case .ping, .pong: body = 8                                   // timestampMS UInt64
-        case .helloAck: body = Self.sessionIDByteCount + 8 + 1        // UUID + Int64 + Bool
-        case let .title(string): body = string.utf8.count
-        case let .notification(title, bodyText): body = 2 + Self.clampedNotificationTitle(title).utf8.count + bodyText.utf8.count  // UInt16 len + (clamped) title + body
-        case .bell: body = 0
-        case let .commandStatus(status):
-            switch status {
-            case .running: body = 1                                   // tag
-            case .idle: body = 1 + 1 + 4 + 4                          // tag + hasExit + Int32 + UInt32
+    var wireByteCount: Int {
+        let body: Int =
+            switch self {
+            case let .output(_, bytes): 8 + bytes.count // seq Int64 + payload
+            case .exit: 4 // code Int32
+            case let .input(bytes): bytes.count
+            case .hello: 2 + Self.sessionIDByteCount + 8 // UInt16 + UUID + Int64
+            case .resize: 8 // 4 × UInt16
+            case .ack: 8 // seq Int64
+            case .bye: 0
+            case .ping,
+                 .pong: 8 // timestampMS UInt64
+            case .helloAck: Self.sessionIDByteCount + 8 + 1 // UUID + Int64 + Bool
+            case let .title(string): string.utf8.count
+            case let .notification(title, bodyText): 2 + Self.clampedNotificationTitle(title).utf8.count + bodyText.utf8
+                .count // UInt16 len + (clamped) title + body
+            case .bell: 0
+            case let .commandStatus(status):
+                switch status {
+                case .running: 1 // tag
+                case .idle: 1 + 1 + 4 + 4 // tag + hasExit + Int32 + UInt32
+                }
             }
-        }
         // 4-byte length prefix + 1 type byte + body (see encode()).
         return 4 + 1 + body
     }

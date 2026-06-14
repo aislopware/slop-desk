@@ -4,7 +4,6 @@ import XCTest
 /// Streaming-splitter tests for `MuxFrameDecoder` — the direct analogue of
 /// `FrameDecoderTests` one layer up (mux envelopes instead of WireMessage frames).
 final class MuxFrameDecoderTests: XCTestCase {
-
     /// Three distinct mux frames spanning all the body shapes, used by the framing tests.
     private let frames: [MuxFrame] = [
         .channelOpen(channelID: 1, sessionID: UUID(), lastReceivedSeq: 7, channelClass: 0),
@@ -71,7 +70,7 @@ final class MuxFrameDecoderTests: XCTestCase {
 
     func testPartialChannelIDPrefixBufferedThenCompletes() throws {
         // Prefix fully present, but the channelID field only partly arrived: still wait.
-        let frame = MuxFrame.channelClose(channelID: 0x11223344)
+        let frame = MuxFrame.channelClose(channelID: 0x1122_3344)
         let bytes = MuxEnvelopeCodec.encode(frame)
         // prefix(4) + 2 of the 4 channelID bytes = 6 bytes buffered.
         let cut = 6

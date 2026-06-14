@@ -1,12 +1,11 @@
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoClient
-import AislopdeskVideoProtocol
 
 /// PURE HEVC parameter-set extraction: walk the length-prefixed NAL units of an AVCC
 /// keyframe and pull out VPS(32)/SPS(33)/PPS(34), and detect an IDR slice (19/20). NO
 /// VideoToolbox — the format-description build is the GUI-only step.
 final class HEVCParameterSetsTests: XCTestCase {
-
     /// Builds a single NAL-unit payload whose HEVC `nal_unit_type` is `type`, followed
     /// by `extra` filler bytes. HEVC NAL header byte 0 = `forbidden(1) type(6) hi(1)`,
     /// so `type` sits in bits 1..6: `firstByte = type << 1`.

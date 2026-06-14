@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskProtocol
+import Foundation
 
 /// A non-rendering ``TerminalSurface`` that simply accumulates the bytes fed to it.
 ///
@@ -54,9 +54,10 @@ public final class HeadlessTerminalSurface: TerminalSurface, @unchecked Sendable
         withLock { buffer }
     }
 
-    /// The output decoded as UTF-8 (lossy), for convenience in tests / CLI display.
+    /// The output decoded as UTF-8 (empty when the bytes are not valid UTF-8), for convenience in
+    /// tests / CLI display.
     public var text: String {
-        String(decoding: output, as: UTF8.self)
+        String(bytes: output, encoding: .utf8) ?? ""
     }
 
     /// Current grid size.

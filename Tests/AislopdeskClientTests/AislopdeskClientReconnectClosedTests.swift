@@ -1,7 +1,7 @@
-import XCTest
-import Foundation
 import AislopdeskProtocol
 import AislopdeskTransport
+import Foundation
+import XCTest
 @testable import AislopdeskClient
 
 /// R15 #1 regression: ``ReconnectManager`` must never run a reconnect campaign against a CLOSED client.
@@ -14,7 +14,6 @@ import AislopdeskTransport
 /// `maxReconnectAttempts` of `connect`-after-close throws, finally firing a spurious `onGaveUp`.
 /// The fix gates the campaign on `isClosed` as well.
 final class AislopdeskClientReconnectClosedTests: XCTestCase {
-
     /// `reconnectLoop()` bails IMMEDIATELY when the client is already closed: no connect attempt
     /// (each would throw `invalidState("connect after close")`), no give-up.
     func testReconnectLoopBailsImmediatelyOnClosedClient() async {
@@ -31,17 +30,17 @@ final class AislopdeskClientReconnectClosedTests: XCTestCase {
             backoff: .init(initial: .milliseconds(1), maximum: .milliseconds(2), multiplier: 2.0),
             onLog: { logs.append($0) },
             onProgress: { _, _ in },
-            onGaveUp: { gaveUp.set() }
+            onGaveUp: { gaveUp.set() },
         )
 
         XCTAssertFalse(gaveUp.value, "a closed client must not run a doomed campaign to give-up")
         XCTAssertFalse(
             logs.lines.contains { $0.contains("failed") },
-            "no connect attempt should be made against a closed client"
+            "no connect attempt should be made against a closed client",
         )
         XCTAssertFalse(
             logs.lines.contains { $0.contains("gave up") },
-            "no give-up line for a deliberately-closed client"
+            "no give-up line for a deliberately-closed client",
         )
     }
 
@@ -55,11 +54,11 @@ final class AislopdeskClientReconnectClosedTests: XCTestCase {
             backoff: .init(initial: .milliseconds(1), maximum: .milliseconds(2), multiplier: 2.0),
             onLog: { logs.append($0) },
             onProgress: { _, _ in },
-            onGaveUp: { }
+            onGaveUp: {},
         )
         XCTAssertTrue(
             logs.lines.contains { $0.contains("resumed") },
-            "an open client reconnects on the first attempt (the isClosed/isPaused guard must not block it)"
+            "an open client reconnects on the first attempt (the isClosed/isPaused guard must not block it)",
         )
         await client.close()
     }
@@ -95,29 +94,50 @@ final class AislopdeskClientReconnectClosedTests: XCTestCase {
             continuation = c
         }
 
-        func connect(host: String, port: UInt16, resume: UUID, lastReceivedSeq: Int64, handshakeTimeout: Duration) async throws {
+        func connect(
+            host _: String,
+            port _: UInt16,
+            resume: UUID,
+            lastReceivedSeq: Int64,
+            handshakeTimeout _: Duration,
+        ) {
             _sessionID = (resume == WireMessage.newSessionID) ? UUID() : resume
             _resumeFromSeq = lastReceivedSeq
             _returningClient = (resume != WireMessage.newSessionID)
         }
-        func sendInput(_ bytes: Data) async throws {}
-        func sendResize(cols: UInt16, rows: UInt16, pxWidth: UInt16, pxHeight: UInt16) async throws {}
-        func sendAck(seq: Int64) async throws {}
-        func sendBye() async throws {}
-        func close() async { continuation.finish() }
+
+        func sendInput(_: Data) {}
+        func sendResize(cols _: UInt16, rows _: UInt16, pxWidth _: UInt16, pxHeight _: UInt16) {}
+        func sendAck(seq _: Int64) {}
+        func sendBye() {}
+        func close() { continuation.finish() }
     }
 
     private final class LineCollector: @unchecked Sendable {
         private let lock = NSLock()
         private var _lines: [String] = []
-        func append(_ s: String) { lock.lock(); _lines.append(s); lock.unlock() }
-        var lines: [String] { lock.lock(); defer { lock.unlock() }; return _lines }
+        func append(_ s: String) { lock.lock()
+            _lines.append(s)
+            lock.unlock()
+        }
+
+        var lines: [String] { lock.lock()
+            defer { lock.unlock() }
+            return _lines
+        }
     }
 
     private final class FlagBox: @unchecked Sendable {
         private let lock = NSLock()
         private var _value = false
-        func set() { lock.lock(); _value = true; lock.unlock() }
-        var value: Bool { lock.lock(); defer { lock.unlock() }; return _value }
+        func set() { lock.lock()
+            _value = true
+            lock.unlock()
+        }
+
+        var value: Bool { lock.lock()
+            defer { lock.unlock() }
+            return _value
+        }
     }
 }

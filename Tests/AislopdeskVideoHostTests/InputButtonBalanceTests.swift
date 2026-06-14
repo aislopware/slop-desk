@@ -1,6 +1,6 @@
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoHost
-import AislopdeskVideoProtocol
 
 /// PURE button-balance bookkeeping. Verifies the safety auto-release decision (emit a
 /// synthetic up before a down on an already-held button) WITHOUT an `InputInjector` /
@@ -8,9 +8,27 @@ import AislopdeskVideoProtocol
 /// would otherwise leave the target app stuck mid-selection.
 final class InputButtonBalanceTests: XCTestCase {
     private let n = VideoPoint(x: 0.5, y: 0.5)
-    private func down(_ b: MouseButton) -> InputEvent { .mouseDown(button: b, normalized: n, clickCount: 1, modifiers: [], tag: 0) }
-    private func up(_ b: MouseButton) -> InputEvent { .mouseUp(button: b, normalized: n, clickCount: 1, modifiers: [], tag: 0) }
-    private func drag(_ b: MouseButton) -> InputEvent { .mouseDrag(button: b, normalized: n, clickCount: 1, modifiers: [], tag: 0) }
+    private func down(_ b: MouseButton) -> InputEvent { .mouseDown(
+        button: b,
+        normalized: n,
+        clickCount: 1,
+        modifiers: [],
+        tag: 0,
+    ) }
+    private func up(_ b: MouseButton) -> InputEvent { .mouseUp(
+        button: b,
+        normalized: n,
+        clickCount: 1,
+        modifiers: [],
+        tag: 0,
+    ) }
+    private func drag(_ b: MouseButton) -> InputEvent { .mouseDrag(
+        button: b,
+        normalized: n,
+        clickCount: 1,
+        modifiers: [],
+        tag: 0,
+    ) }
 
     func testCleanClickNeverPreReleases() {
         var bal = InputButtonBalance()
@@ -72,10 +90,13 @@ final class InputButtonBalanceTests: XCTestCase {
     func testDownPostFirstUpThenRedundantSuppressedDoesNotStickButton() {
         var bal = InputButtonBalance()
         _ = bal.plan(for: down(.left))
-        XCTAssertFalse(bal.plan(for: up(.left)).suppress)   // released
-        XCTAssertTrue(bal.plan(for: up(.left)).suppress)    // duplicate dropped
+        XCTAssertFalse(bal.plan(for: up(.left)).suppress) // released
+        XCTAssertTrue(bal.plan(for: up(.left)).suppress) // duplicate dropped
         // A fresh click after the redundant ups is clean — the button was released by the first up.
-        XCTAssertNil(bal.plan(for: down(.left)).preRelease, "fresh click does not pre-release — duplicates did not leave it held")
+        XCTAssertNil(
+            bal.plan(for: down(.left)).preRelease,
+            "fresh click does not pre-release — duplicates did not leave it held",
+        )
     }
 
     func testMovesScrollKeysTextDoNotChangeHeld() {

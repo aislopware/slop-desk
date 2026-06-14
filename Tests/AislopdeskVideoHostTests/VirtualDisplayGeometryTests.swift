@@ -1,13 +1,12 @@
 #if os(macOS)
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskVideoHost
 
 /// PURE point↔pixel↔mm math for the HiDPI virtual display (feature #1). No CoreGraphics IPC, no
 /// private API — safe headless. The live VD creation / AX move are HW-gated (window server + TCC)
 /// and not unit-tested; this covers the arithmetic that decides the mode/descriptor/placement.
 final class VirtualDisplayGeometryTests: XCTestCase {
-
     // MARK: VirtualDisplayGeometry
 
     // 2× HiDPI: a 1920×1080-POINT display is backed by 3840×2160 PIXELS.
@@ -32,8 +31,10 @@ final class VirtualDisplayGeometryTests: XCTestCase {
         // 3841 points × 2 = 7682 px → over the limit.
         XCTAssertTrue(VirtualDisplayGeometry(pointWidth: 3841, pointHeight: 2160, scale: 2).exceedsPixelLimit)
         // Base-M chip limit 6144: 3072×2 = 6144 ok; 3200×2 = 6400 over.
-        XCTAssertFalse(VirtualDisplayGeometry(pointWidth: 3072, pointHeight: 1920, scale: 2, maxHorizontalPixels: 6144).exceedsPixelLimit)
-        XCTAssertTrue(VirtualDisplayGeometry(pointWidth: 3200, pointHeight: 1800, scale: 2, maxHorizontalPixels: 6144).exceedsPixelLimit)
+        XCTAssertFalse(VirtualDisplayGeometry(pointWidth: 3072, pointHeight: 1920, scale: 2, maxHorizontalPixels: 6144)
+            .exceedsPixelLimit)
+        XCTAssertTrue(VirtualDisplayGeometry(pointWidth: 3200, pointHeight: 1800, scale: 2, maxHorizontalPixels: 6144)
+            .exceedsPixelLimit)
     }
 
     // sizeInMillimeters derives from the PIXEL dims at the target PPI (so the reported density matches).
@@ -61,7 +62,8 @@ final class VirtualDisplayGeometryTests: XCTestCase {
     func testPlacementFitsNoResize() {
         let p = WindowPlacementMath.placement(
             windowSize: CGSize(width: 1200, height: 800),
-            displayBounds: CGRect(x: 3840, y: 0, width: 1920, height: 1080))
+            displayBounds: CGRect(x: 3840, y: 0, width: 1920, height: 1080),
+        )
         XCTAssertEqual(p.origin, CGPoint(x: 3840, y: 0))
         XCTAssertEqual(p.size, CGSize(width: 1200, height: 800))
         XCTAssertFalse(p.needsResize)
@@ -71,7 +73,8 @@ final class VirtualDisplayGeometryTests: XCTestCase {
     func testPlacementClampsOversizedWidth() {
         let p = WindowPlacementMath.placement(
             windowSize: CGSize(width: 2400, height: 900),
-            displayBounds: CGRect(x: 0, y: 0, width: 1920, height: 1080))
+            displayBounds: CGRect(x: 0, y: 0, width: 1920, height: 1080),
+        )
         XCTAssertEqual(p.size, CGSize(width: 1920, height: 900))
         XCTAssertTrue(p.needsResize)
     }
@@ -80,7 +83,8 @@ final class VirtualDisplayGeometryTests: XCTestCase {
     func testPlacementClampsBothAxes() {
         let p = WindowPlacementMath.placement(
             windowSize: CGSize(width: 4000, height: 3000),
-            displayBounds: CGRect(x: 100, y: 50, width: 1920, height: 1080))
+            displayBounds: CGRect(x: 100, y: 50, width: 1920, height: 1080),
+        )
         XCTAssertEqual(p.origin, CGPoint(x: 100, y: 50))
         XCTAssertEqual(p.size, CGSize(width: 1920, height: 1080))
         XCTAssertTrue(p.needsResize)
@@ -90,7 +94,8 @@ final class VirtualDisplayGeometryTests: XCTestCase {
     func testPlacementExactSizeNoResize() {
         let p = WindowPlacementMath.placement(
             windowSize: CGSize(width: 1920, height: 1080),
-            displayBounds: CGRect(x: 0, y: 0, width: 1920, height: 1080))
+            displayBounds: CGRect(x: 0, y: 0, width: 1920, height: 1080),
+        )
         XCTAssertFalse(p.needsResize)
         XCTAssertEqual(p.size, CGSize(width: 1920, height: 1080))
     }

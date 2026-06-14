@@ -43,7 +43,6 @@ import Foundation
 ///   this round — the safe auto-fallback above is the deliverable. See kitty's
 ///   `kittens/ssh` terminfo-bootstrap for the reference implementation.
 public enum TerminfoResolver {
-
     /// The pure decision: given what was *requested*, whether the request was an *explicit*
     /// operator override, and whether the host can resolve `xterm-ghostty`, return the
     /// `TERM` to actually advertise.
@@ -66,8 +65,8 @@ public enum TerminfoResolver {
     ///   caller can log it — gated — exactly once at session start).
     public static func effectiveTerm(
         requested: ClaudeCodeProfile.Term,
-        explicitOverride: Bool,
-        isGhosttyResolvable: Bool
+        explicitOverride _: Bool,
+        isGhosttyResolvable: Bool,
     ) -> (term: ClaudeCodeProfile.Term, fellBack: Bool) {
         // An explicit operator choice of xterm-256color is authoritative — never re-probe,
         // never "fall back" (there is nothing to fall back FROM). This is the `--xterm256`
@@ -100,7 +99,7 @@ public enum TerminfoResolver {
     public static func resolve(
         requested: ClaudeCodeProfile.Term,
         explicitOverride: Bool,
-        probe: GhosttyTerminfoProbe = .live
+        probe: GhosttyTerminfoProbe = .live,
     ) -> (term: ClaudeCodeProfile.Term, fellBack: Bool) {
         // Short-circuit: an explicit `.xterm256` needs no probe at all (we'd discard the
         // result anyway). Avoids spawning `infocmp` / stat'ing dirs for nothing.
@@ -111,7 +110,7 @@ public enum TerminfoResolver {
         return effectiveTerm(
             requested: requested,
             explicitOverride: explicitOverride,
-            isGhosttyResolvable: resolvable
+            isGhosttyResolvable: resolvable,
         )
     }
 }
@@ -126,6 +125,7 @@ public struct GhosttyTerminfoProbe: Sendable {
     /// Returns `true` iff the host can resolve `xterm-ghostty`.
     public let isGhosttyResolvable: @Sendable () -> Bool
 
+    @preconcurrency
     public init(isGhosttyResolvable: @escaping @Sendable () -> Bool) {
         self.isGhosttyResolvable = isGhosttyResolvable
     }
@@ -141,10 +141,10 @@ public struct GhosttyTerminfoProbe: Sendable {
     /// 2. If the directory probe is inconclusive, run `/usr/bin/infocmp xterm-ghostty`
     ///    and treat **exit status 0** as resolvable. `infocmp` consults the same database
     ///    ncurses will, so its verdict matches what the spawned TUI apps will see.
-    public static let live = GhosttyTerminfoProbe {
+    public static let live = Self {
         liveProbe(
             term: "xterm-ghostty",
-            environment: ProcessInfo.processInfo.environment
+            environment: ProcessInfo.processInfo.environment,
         )
     }
 
@@ -156,7 +156,7 @@ public struct GhosttyTerminfoProbe: Sendable {
         term: String,
         environment: [String: String],
         fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
-        infocmpExitStatus: (String) -> Int32? = GhosttyTerminfoProbe.runInfocmp
+        infocmpExitStatus: (String) -> Int32? = Self.runInfocmp,
     ) -> Bool {
         // 1. Direct terminfo-database search (pure stat, no subprocess).
         if terminfoEntryExists(term: term, environment: environment, fileExists: fileExists) {
@@ -180,7 +180,7 @@ public struct GhosttyTerminfoProbe: Sendable {
     static func terminfoEntryExists(
         term: String,
         environment: [String: String],
-        fileExists: (String) -> Bool
+        fileExists: (String) -> Bool,
     ) -> Bool {
         guard let first = term.first else { return false }
         let firstChar = String(first)
@@ -188,10 +188,10 @@ public struct GhosttyTerminfoProbe: Sendable {
 
         for base in searchDirectories(environment: environment) {
             for sub in [firstChar, hexDir] {
-                let candidate = (base as NSString)
-                    .appendingPathComponent(sub)
-                    .appending("/")
-                    .appending(term)
+                // `appendingPathComponent`-equivalent join: avoid a doubled slash when `base`
+                // already ends in one, and preserve relative bases verbatim (env dirs may be relative).
+                let baseWithSub = base.hasSuffix("/") ? base + sub : base + "/" + sub
+                let candidate = baseWithSub + "/" + term
                 if fileExists(candidate) { return true }
             }
         }
@@ -208,13 +208,15 @@ public struct GhosttyTerminfoProbe: Sendable {
             dirs.append(ti)
         }
         if let home = environment["HOME"], !home.isEmpty {
-            dirs.append((home as NSString).appendingPathComponent(".terminfo"))
+            dirs.append(home.hasSuffix("/") ? home + ".terminfo" : home + "/.terminfo")
         }
         if let tiDirs = environment["TERMINFO_DIRS"], !tiDirs.isEmpty {
-            for element in tiDirs.split(separator: ":", omittingEmptySubsequences: false) {
-                // An empty element in TERMINFO_DIRS means "the compiled-in default location";
-                // we approximate that with the system dirs appended below, so skip the blank.
-                if !element.isEmpty { dirs.append(String(element)) }
+            // An empty element in TERMINFO_DIRS means "the compiled-in default location";
+            // we approximate that with the system dirs appended below, so skip the blank.
+            for element in tiDirs.split(separator: ":", omittingEmptySubsequences: false)
+                where !element.isEmpty
+            {
+                dirs.append(String(element))
             }
         }
         // Conventional system locations (present on macOS + most Linux).

@@ -66,7 +66,7 @@ final class TailerTests: XCTestCase {
         _ tailer: TranscriptTailer,
         count: Int,
         producing: @escaping @Sendable () async -> Void,
-        timeout: Duration = .seconds(5)
+        timeout: Duration = .seconds(5),
     ) async -> [TranscriptLine] {
         let stream = tailer.lines()
 
@@ -109,7 +109,10 @@ final class TailerTests: XCTestCase {
         let lines = await collect(tailer, count: 3, producing: {
             try? await Task.sleep(for: .milliseconds(60))
             // A burst.
-            try? Self.append(#"{"type":"user","uuid":"2","message":{"role":"user","content":"second"}}"# + "\n", to: url)
+            try? Self.append(
+                #"{"type":"user","uuid":"2","message":{"role":"user","content":"second"}}"# + "\n",
+                to: url,
+            )
             try? await Task.sleep(for: .milliseconds(60))
             // A line written WITHOUT its newline first...
             try? Self.append(#"{"type":"user","uuid":"3","message":{"role":"user","content":"third"}}"#, to: url)
@@ -141,7 +144,9 @@ final class TailerTests: XCTestCase {
             // Rotate: remove the old file and create a FRESH (different inode) one whose
             // first line, on its own, already exceeds the old byte count.
             try? FileManager.default.removeItem(at: url)
-            let newFirst = #"{"type":"user","uuid":"new1","message":{"role":"user","content":"a longer first line of the rotated file"}}"# + "\n"
+            let newFirst =
+                #"{"type":"user","uuid":"new1","message":{"role":"user","content":"a longer first line of the rotated file"}}"# +
+                "\n"
             FileManager.default.createFile(atPath: url.path, contents: Data(newFirst.utf8))
             try? await Task.sleep(for: .milliseconds(80))
             try? Self.append(#"{"type":"user","uuid":"new2","message":{"role":"user","content":"y"}}"# + "\n", to: url)
@@ -152,11 +157,14 @@ final class TailerTests: XCTestCase {
             return nil
         }
         // The rotated file's PREFIX line ("new1") must not be lost.
-        XCTAssertEqual(uuids, ["old", "new1", "new2"],
-                       "rotation to a same-or-larger file resets via inode identity; no prefix lost")
+        XCTAssertEqual(
+            uuids,
+            ["old", "new1", "new2"],
+            "rotation to a same-or-larger file resets via inode identity; no prefix lost",
+        )
     }
 
-    func testTailerToleratesMissingFileThenAppears() async throws {
+    func testTailerToleratesMissingFileThenAppears() async {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("aislopdesk-late-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }

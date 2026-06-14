@@ -4,7 +4,6 @@ import XCTest
 /// Drop-until-anchor admission (decode-fail cascade fix, 2026-06-12). Pure value type —
 /// the wrap-aware sequence discipline mirrors `LTREscalationTracker`.
 final class DecodeGateTests: XCTestCase {
-
     // MARK: Open gate
 
     func testOpenSubmitsEverything() {
@@ -48,7 +47,7 @@ final class DecodeGateTests: XCTestCase {
     func testLossOrderIrrelevantForMinMax() {
         var g = DecodeGate()
         g.noteLoss(frameID: 210)
-        g.noteLoss(frameID: 200)   // older loss reported later (drain order)
+        g.noteLoss(frameID: 200) // older loss reported later (drain order)
         XCTAssertEqual(g.minLostFrameID, 200)
         XCTAssertEqual(g.maxLostFrameID, 210)
     }
@@ -105,12 +104,15 @@ final class DecodeGateTests: XCTestCase {
         dead.noteLoss(frameID: 100)
         dead.noteHardDecodeFailure()
         XCTAssertEqual(dead.mode, .needKeyframe)
-        dead.noteDecodeSucceeded(frameID: 90, keyframe: true)   // a stale keyframe rebuilds the session
+        dead.noteDecodeSucceeded(frameID: 90, keyframe: true) // a stale keyframe rebuilds the session
         XCTAssertEqual(dead.mode, .needKeyframe, "rebuilt-empty DPB → only a keyframe can re-anchor")
         XCTAssertEqual(dead.verdict(frameID: 101, keyframe: false, ackedAnchored: false), .drop)
-        XCTAssertEqual(dead.verdict(frameID: 102, keyframe: false, ackedAnchored: true), .drop,
-                       "a stale acked-LTR refresh must NOT be admitted against a freshly-rebuilt session")
-        dead.noteDecodeSucceeded(frameID: 101, keyframe: true)  // a keyframe past the loss fully re-anchors
+        XCTAssertEqual(
+            dead.verdict(frameID: 102, keyframe: false, ackedAnchored: true),
+            .drop,
+            "a stale acked-LTR refresh must NOT be admitted against a freshly-rebuilt session",
+        )
+        dead.noteDecodeSucceeded(frameID: 101, keyframe: true) // a keyframe past the loss fully re-anchors
         XCTAssertEqual(dead.mode, .open)
     }
 

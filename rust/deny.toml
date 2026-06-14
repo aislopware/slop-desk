@@ -1,0 +1,50 @@
+# cargo-deny — supply-chain / license / advisory gate for the Rust workspace.
+# The core is deliberately ZERO-dependency, so today this mostly future-proofs
+# against dependency creep: any new dep must clear advisories, licenses and bans.
+# Run: `cargo deny --manifest-path rust/Cargo.toml check` (or `make lint-rust`).
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+# Fail on ANY security advisory or unmaintained crate. No ignores today.
+ignore = []
+
+[bans]
+# A realtime media path must not silently carry two copies of a crate.
+multiple-versions = "deny"
+wildcards = "deny"
+allow-wildcard-paths = true # path deps inside the workspace are fine
+# highlight the worst offender when a duplicate sneaks in
+highlight = "all"
+
+[licenses]
+version = 2
+# Permissive licenses we accept for any future dependency. The workspace's OWN
+# crates are private (`publish = false`, license = "UNLICENSED") and are skipped
+# via `private.ignore` below — cargo-deny does not evaluate their license text.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "CC0-1.0",
+]
+confidence-threshold = 0.9
+# The allow-list above is a forward-looking permissive set; with a 0-dependency
+# workspace most entries match nothing yet — don't warn about that.
+unused-allowed-license = "allow"
+
+[licenses.private]
+ignore = true # don't license-check our own publish=false crates
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

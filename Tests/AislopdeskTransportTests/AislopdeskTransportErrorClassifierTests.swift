@@ -1,5 +1,5 @@
-import XCTest
 import Foundation
+import XCTest
 @testable import AislopdeskTransport
 
 /// R15 #6 regression: the EADDRINUSE classifier the host-app uses to say "Port N is already in use"
@@ -7,10 +7,10 @@ import Foundation
 /// a different errno like 148, a buffer size like 1048576). The errno is matched only as a
 /// digit-bounded standalone token, plus the canonical "in use" phrase.
 final class AislopdeskTransportErrorClassifierTests: XCTestCase {
-
     func testCanonicalAddressInUsePhraseMatches() {
         XCTAssertTrue(AislopdeskTransportError.listenerDetailIndicatesAddressInUse("Address already in use"))
-        XCTAssertTrue(AislopdeskTransportError.listenerDetailIndicatesAddressInUse("POSIXErrorCode: Address already in use"))
+        XCTAssertTrue(AislopdeskTransportError
+            .listenerDetailIndicatesAddressInUse("POSIXErrorCode: Address already in use"))
         XCTAssertTrue(AislopdeskTransportError.listenerDetailIndicatesAddressInUse("address already IN USE"))
     }
 
@@ -55,12 +55,15 @@ final class AislopdeskTransportErrorClassifierTests: XCTestCase {
 /// before its network came up would false-fail. This pins the pure decision (`HostTransport` wires its
 /// `.waiting` handler to it) without standing up a real `NWListener`.
 final class WaitingBindConflictClassifierTests: XCTestCase {
-
     func testEADDRINUSEIsFatalInWaiting() {
-        XCTAssertTrue(AislopdeskTransportError.waitingErrnoIsFatalBindConflict(EADDRINUSE),
-                      "a stuck .waiting on EADDRINUSE never auto-recovers → surface it immediately")
-        XCTAssertTrue(AislopdeskTransportError.waitingErrnoIsFatalBindConflict(48),
-                      "EADDRINUSE is errno 48")
+        XCTAssertTrue(
+            AislopdeskTransportError.waitingErrnoIsFatalBindConflict(EADDRINUSE),
+            "a stuck .waiting on EADDRINUSE never auto-recovers → surface it immediately",
+        )
+        XCTAssertTrue(
+            AislopdeskTransportError.waitingErrnoIsFatalBindConflict(48),
+            "EADDRINUSE is errno 48",
+        )
     }
 
     func testTransientNetworkErrnosKeepWaiting() {
@@ -68,11 +71,15 @@ final class WaitingBindConflictClassifierTests: XCTestCase {
         // from. Misclassifying ANY of them as fatal would false-fail a host that merely started before
         // its network path was up. None may be treated as a fatal bind conflict.
         for errno in [ENETDOWN, ENETUNREACH, ETIMEDOUT, EAGAIN, ECONNREFUSED, EHOSTUNREACH, ENOTCONN] {
-            XCTAssertFalse(AislopdeskTransportError.waitingErrnoIsFatalBindConflict(errno),
-                           "transient waiting errno \(errno) must keep waiting, not fail")
+            XCTAssertFalse(
+                AislopdeskTransportError.waitingErrnoIsFatalBindConflict(errno),
+                "transient waiting errno \(errno) must keep waiting, not fail",
+            )
         }
-        XCTAssertFalse(AislopdeskTransportError.waitingErrnoIsFatalBindConflict(0),
-                       "errno 0 (no error) is not a bind conflict")
+        XCTAssertFalse(
+            AislopdeskTransportError.waitingErrnoIsFatalBindConflict(0),
+            "errno 0 (no error) is not a bind conflict",
+        )
     }
 
     /// The detail string a fatal-in-waiting EADDRINUSE produces (`String(describing:)` of the NWError)
@@ -80,6 +87,7 @@ final class WaitingBindConflictClassifierTests: XCTestCase {
     /// in use" rather than a generic message. (Guards the wiring contract between the two helpers.)
     func testFatalWaitingDetailClassifiesAsAddressInUse() {
         XCTAssertTrue(AislopdeskTransportError.listenerDetailIndicatesAddressInUse("Address already in use"))
-        XCTAssertTrue(AislopdeskTransportError.listenerDetailIndicatesAddressInUse("POSIXErrorCode(rawValue: 48): Address already in use"))
+        XCTAssertTrue(AislopdeskTransportError
+            .listenerDetailIndicatesAddressInUse("POSIXErrorCode(rawValue: 48): Address already in use"))
     }
 }

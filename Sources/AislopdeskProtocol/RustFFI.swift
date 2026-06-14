@@ -151,7 +151,7 @@ enum RustFFI {
             return .hello(
                 protocolVersion: m.protocol_version,
                 sessionID: sessionID(from: m),
-                lastReceivedSeq: m.last_received_seq
+                lastReceivedSeq: m.last_received_seq,
             )
         case 11:
             return .resize(cols: m.cols, rows: m.rows, pxWidth: m.px_width, pxHeight: m.px_height)
@@ -165,7 +165,7 @@ enum RustFFI {
             return .helloAck(
                 sessionID: sessionID(from: m),
                 resumeFromSeq: m.resume_from_seq,
-                returningClient: m.returning_client != 0
+                returningClient: m.returning_client != 0,
             )
         case 21:
             return .title(stringFrom(m.data))
@@ -194,7 +194,11 @@ enum RustFFI {
     private static func withBorrowedBytes<R>(_ data: Data?, _ body: (AisdBytes) -> R) -> R {
         guard let data, !data.isEmpty else { return body(AisdBytes()) }
         return data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> R in
-            let base = raw.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            guard let baseAddress = raw.baseAddress else {
+                // Unreachable: `data` is guarded non-empty above, so its buffer has a base address.
+                preconditionFailure("RustFFI: non-empty Data has a nil baseAddress")
+            }
+            let base = baseAddress.assumingMemoryBound(to: UInt8.self)
             return body(AisdBytes(ptr: UnsafeMutablePointer(mutating: base), len: raw.count, cap: 0))
         }
     }

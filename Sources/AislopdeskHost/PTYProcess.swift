@@ -1,6 +1,6 @@
+import AislopdeskProtocol
 import Darwin
 import Foundation
-import AislopdeskProtocol
 
 /// A child process attached to a pseudo-terminal (PTY) on the macOS host.
 ///
@@ -89,7 +89,7 @@ public final class PTYProcess: @unchecked Sendable {
         environment: [String: String],
         argv0: String? = nil,
         cols: UInt16 = 80,
-        rows: UInt16 = 24
+        rows: UInt16 = 24,
     ) throws {
         precondition(masterFD == -1, "PTYProcess.spawn called twice")
 
@@ -117,7 +117,7 @@ public final class PTYProcess: @unchecked Sendable {
         // setBlocking(true): clear O_NONBLOCK on the master before spawn (Happy #301).
         // The slave is already open (openpty opened it), so this never hits the
         // posix_openpt EINVAL caveat from [12] §1.1.
-        PTYProcess.setBlocking(master)
+        Self.setBlocking(master)
 
         // --- Build ALL C strings in the PARENT, before fork() ---
         // The forked child must do NO Swift-runtime work (no allocation/ARC) before execve,
@@ -152,7 +152,7 @@ public final class PTYProcess: @unchecked Sendable {
         // Swift-runtime work before `execve` (only `login_tty`/`close`/`execve`/`_exit`), so
         // running in a forked child is safe here (the `DECISIONS.md` forkpty caveat is about
         // running the Swift/ObjC runtime in the child, which we do not).
-        let childPID = PTYProcess.rawFork()
+        let childPID = Self.rawFork()
         if childPID == 0 {
             // ===== CHILD: raw syscalls only, no Swift runtime. =====
             // login_tty(slave) atomically: setsid(); ioctl(slave, TIOCSCTTY, 0);
@@ -181,8 +181,8 @@ public final class PTYProcess: @unchecked Sendable {
             throw HostError.posix(forkErrno)
         }
 
-        self.masterFD = master
-        self.pid = childPID
+        masterFD = master
+        pid = childPID
         startReaper(pid: childPID)
     }
 
@@ -192,21 +192,21 @@ public final class PTYProcess: @unchecked Sendable {
         withUnsafeMutableBytes(of: &term.c_cc) { raw in
             let cc = raw.bindMemory(to: cc_t.self)
             func set(_ index: Int32, _ value: Int32) { cc[Int(index)] = cc_t(value) }
-            set(VEOF, 4)       // ^D
+            set(VEOF, 4) // ^D
             set(VEOL, 0xFF)
             set(VEOL2, 0xFF)
-            set(VERASE, 0x7F)  // DEL
-            set(VWERASE, 23)   // ^W
-            set(VKILL, 21)     // ^U
-            set(VREPRINT, 18)  // ^R
-            set(VINTR, 3)      // ^C
-            set(VQUIT, 28)     // ^\
-            set(VSUSP, 26)     // ^Z
-            set(VDSUSP, 25)    // ^Y
-            set(VSTART, 17)    // ^Q
-            set(VSTOP, 19)     // ^S
-            set(VLNEXT, 22)    // ^V
-            set(VDISCARD, 15)  // ^O
+            set(VERASE, 0x7F) // DEL
+            set(VWERASE, 23) // ^W
+            set(VKILL, 21) // ^U
+            set(VREPRINT, 18) // ^R
+            set(VINTR, 3) // ^C
+            set(VQUIT, 28) // ^\
+            set(VSUSP, 26) // ^Z
+            set(VDSUSP, 25) // ^Y
+            set(VSTART, 17) // ^Q
+            set(VSTOP, 19) // ^S
+            set(VLNEXT, 22) // ^V
+            set(VDISCARD, 15) // ^O
             set(VMIN, 1)
             set(VTIME, 0)
         }
@@ -232,11 +232,12 @@ public final class PTYProcess: @unchecked Sendable {
     /// via `dlsym(RTLD_DEFAULT, "fork")` and cached.
     private typealias ForkFn = @convention(c) () -> pid_t
     private static let rawForkFn: ForkFn = {
-        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2 /* RTLD_DEFAULT */), "fork") else {
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2 /* RTLD_DEFAULT */ ), "fork") else {
             fatalError("PTYProcess: could not resolve fork(2)")
         }
         return unsafeBitCast(sym, to: ForkFn.self)
     }()
+
     private static func rawFork() -> pid_t { rawForkFn() }
 
     // MARK: Resize
@@ -343,7 +344,8 @@ public final class PTYProcess: @unchecked Sendable {
     /// Non-blocking peek at the exit code, or `nil` if the child is still running /
     /// not yet reaped. (Retained for diagnostics / the WF-3 seam contract.)
     public func waitExitCode() -> Int32? {
-        exitLock.lock(); defer { exitLock.unlock() }
+        exitLock.lock()
+        defer { exitLock.unlock() }
         return exitCode
     }
 
@@ -357,30 +359,34 @@ public final class PTYProcess: @unchecked Sendable {
             var reapedOK = false
             while true {
                 let r = waitpid(pid, &status, 0)
-                if r == pid { reapedOK = true; break }   // success: `status` is a real wait status
-                if r == -1 && errno != EINTR { break }   // failure (e.g. ECHILD: child already reaped)
+                if r == pid { reapedOK = true
+                    break
+                } // success: `status` is a real wait status
+                if r == -1, errno != EINTR { break } // failure (e.g. ECHILD: child already reaped)
             }
-            let code: Int32
-            if !reapedOK {
-                // waitpid FAILED — `status` was never written (still 0), so the prior code decoded it
-                // as a clean `exit 0`, masking the abnormal condition (the wire `exit(code:0)` would
-                // lie that a vanished/double-reaped child exited gracefully). Report a sentinel instead
-                // so the client sees an abnormal termination. (128+SIGKILL=137, the "killed" convention.)
-                code = 128 + SIGKILL
-            } else if (status & 0o177) == 0 {
-                // WIFEXITED: high byte is the exit status.
-                code = (status >> 8) & 0xFF
-            } else {
-                // WIFSIGNALED: report 128 + signal (shell convention).
-                code = 128 + (status & 0o177)
-            }
+            let code: Int32 =
+                if !reapedOK {
+                    // waitpid FAILED — `status` was never written (still 0), so the prior code decoded it
+                    // as a clean `exit 0`, masking the abnormal condition (the wire `exit(code:0)` would
+                    // lie that a vanished/double-reaped child exited gracefully). Report a sentinel instead
+                    // so the client sees an abnormal termination. (128+SIGKILL=137, the "killed" convention.)
+                    128 + SIGKILL
+                } else if (status & 0o177) == 0 {
+                    // WIFEXITED: high byte is the exit status.
+                    (status >> 8) & 0xFF
+                } else {
+                    // WIFSIGNALED: report 128 + signal (shell convention).
+                    128 + (status & 0o177)
+                }
             self?.completeExit(code: code)
         }
     }
 
     private func completeExit(code: Int32) {
         exitLock.lock()
-        guard !reaped else { exitLock.unlock(); return }
+        guard !reaped else { exitLock.unlock()
+            return
+        }
         reaped = true
         exitCode = code
         let waiters = exitWaiters

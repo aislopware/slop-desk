@@ -9,14 +9,15 @@ final class AdaptivePaceGapTests: XCTestCase {
     // 8 fragments × 1200 bytes = 9600 bytes = 76,800 bits per chunk.
     private let chunkFragments = 8
     private let datagramSize = 1200
-    private let floor: UInt64 = 200_000        // 0.2ms
-    private let ceil: UInt64 = 40_000_000      // 40ms
+    private let floor: UInt64 = 200_000 // 0.2ms
+    private let ceil: UInt64 = 40_000_000 // 40ms
 
     private func gap(_ bps: Int) -> UInt64 {
         AislopdeskVideoHostSession.adaptivePaceGapNanos(
             targetBps: bps, fallbackBps: 12_000_000,
             chunkFragments: chunkFragments, datagramSize: datagramSize,
-            floorNanos: floor, ceilNanos: ceil)
+            floorNanos: floor, ceilNanos: ceil,
+        )
     }
 
     func testTwelveMbpsGivesAboutSixPointFourMs() {
@@ -56,7 +57,8 @@ final class AdaptivePaceGapTests: XCTestCase {
         AislopdeskVideoHostSession.adaptivePaceGapNanos(
             targetBps: bps, fallbackBps: 12_000_000,
             chunkFragments: chunkFragments, datagramSize: datagramSize,
-            floorNanos: floor, ceilNanos: ceil, rateMultiplier: k)
+            floorNanos: floor, ceilNanos: ceil, rateMultiplier: k,
+        )
     }
 
     func testMultiplierScalesTheGapDown() {

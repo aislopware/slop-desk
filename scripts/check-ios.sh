@@ -13,16 +13,16 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJECT="$REPO_ROOT/Apps/ClientApp-iOS/ClientApp-iOS.xcodeproj"
+PROJECT="${REPO_ROOT}/Apps/ClientApp-iOS/ClientApp-iOS.xcodeproj"
 DEST='generic/platform=iOS Simulator'
 
 build() {
   local scheme="$1"
-  echo "==> iOS-triple build: $scheme"
+  echo "==> iOS-triple build: ${scheme}"
   xcodebuild \
-    -project "$PROJECT" \
-    -scheme "$scheme" \
-    -destination "$DEST" \
+    -project "${PROJECT}" \
+    -scheme "${scheme}" \
+    -destination "${DEST}" \
     CODE_SIGNING_ALLOWED=NO \
     build
 }
@@ -34,7 +34,7 @@ build "ClientApp-iOS"
 # Belt-and-suspenders: the AislopdeskClientUI scheme is exposed by the project (it carries the iOS
 # table-stakes). Build it directly too if present, so the library's iOS slice is checked on its
 # own, independent of the app target's other dependencies.
-if xcodebuild -project "$PROJECT" -list 2>/dev/null | grep -qx '        AislopdeskClientUI'; then
+if xcodebuild -project "${PROJECT}" -list 2> /dev/null | grep -qx '        AislopdeskClientUI'; then
   build "AislopdeskClientUI"
 fi
 

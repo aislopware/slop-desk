@@ -2,7 +2,6 @@ import XCTest
 @testable import AislopdeskProtocol
 
 final class FrameDecoderTests: XCTestCase {
-
     /// Three distinct messages across both channels, used by the framing tests.
     private let messages: [WireMessage] = [
         .output(seq: 7, bytes: Data("partial-read test ✅".utf8)),
@@ -76,7 +75,7 @@ final class FrameDecoderTests: XCTestCase {
 
     func testLargeMultiKBPayloadRoundTrips() throws {
         // Exercise large-payload framing well beyond the few-byte bodies elsewhere.
-        let big = Data((0 ..< (256 * 1024)).map { UInt8($0 & 0xFF) }) // 256 KiB
+        let big = Data((0..<(256 * 1024)).map { UInt8($0 & 0xFF) }) // 256 KiB
         let message = WireMessage.output(seq: 99, bytes: big)
 
         var decoder = FrameDecoder()
@@ -113,7 +112,7 @@ final class FrameDecoderTests: XCTestCase {
         XCTAssertNil(try decoder.nextMessage())
 
         // Supplying the final byte completes the frame.
-        decoder.append(Data([full.last!]))
+        try decoder.append(Data([XCTUnwrap(full.last)]))
         XCTAssertEqual(try decoder.nextMessage(), .exit(code: 256))
     }
 

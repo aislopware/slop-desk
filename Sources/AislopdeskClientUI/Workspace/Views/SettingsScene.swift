@@ -12,7 +12,7 @@ public enum SettingsKey {
     public static let snapGrid = "canvas.snapGrid"
     public static let showGrid = "canvas.showGrid"
     public static let nonOverlap = "canvas.nonOverlap"
-    public static let defaultPaneKindKey = "canvas.defaultPaneKind"   // PaneKind.rawValue
+    public static let defaultPaneKindKey = "canvas.defaultPaneKind" // PaneKind.rawValue
     // Notifications
     public static let oscNotifications = "notifications.osc"
     public static let longCommandNotifications = "notifications.longCommand"
@@ -32,21 +32,25 @@ public enum SettingsKey {
     public static var oscNotificationsEnabled: Bool {
         UserDefaults.standard.object(forKey: oscNotifications) as? Bool ?? true
     }
+
     /// Whether the long-command completion notification should post (default ON). Read at fire-time.
     public static var longCommandNotificationsEnabled: Bool {
         UserDefaults.standard.object(forKey: longCommandNotifications) as? Bool ?? true
     }
+
     /// Whether the system-dialog monitor should auto-spawn dialog panes (default ON). The
     /// `AISLOPDESK_SYSTEM_DIALOG_PANES` env var still overrides for tests (`0` off / `force` on).
     public static var systemDialogPanesEnabled: Bool {
         UserDefaults.standard.object(forKey: systemDialogPanes) as? Bool ?? true
     }
+
     /// Whether to mask likely secrets (access keys, bearer tokens, `PASSWORD=…`) out of window titles and
     /// notification bodies before they reach the sidebar/pill/Notification Center (default ON — security
     /// by default; the escape hatch is for someone who genuinely wants raw titles). Read at fire-time.
     public static var redactSecretsEnabled: Bool {
         UserDefaults.standard.object(forKey: redactSecrets) as? Bool ?? true
     }
+
     /// Whether copied text is archived into the clipboard-history ring that backs the pill's "Paste
     /// Recent" submenu (default ON). Turn it OFF to stop the monitor from retaining any copied string —
     /// the privacy escape hatch for someone who copies secrets to paste into sudo/SSH prompts. Read at
@@ -55,6 +59,7 @@ public enum SettingsKey {
     public static var recordClipboardHistoryEnabled: Bool {
         UserDefaults.standard.object(forKey: recordClipboardHistory) as? Bool ?? true
     }
+
     /// The default kind for a generic "New Pane" (toolbar primary action / empty state), default
     /// `.terminal`. Per-kind shortcuts (⇧⌘N / ⌥⌘N) are unaffected.
     public static var defaultPaneKind: PaneKind {
@@ -97,8 +102,13 @@ private struct CanvasSettingsTab: View {
                 Toggle("Snap to grid", isOn: $snapGrid)
                 Toggle("Show grid", isOn: $showGrid)
                 Toggle("Keep windows & groups from overlapping", isOn: $nonOverlap)
-                Text("Dragging a window slides it flush along its neighbours; dropping it into a cluster parts them to make room. Hold ⌘ while dragging to bypass snapping & overlap for one move.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(
+                    """
+                    Dragging a window slides it flush along its neighbours; dropping it into a cluster parts them to make room. \
+                    Hold ⌘ while dragging to bypass snapping & overlap for one move.
+                    """,
+                )
+                .font(.caption).foregroundStyle(.secondary)
             }
             Section("New panes") {
                 Picker("Default new pane", selection: $defaultKind) {
@@ -123,8 +133,13 @@ private struct NotificationSettingsTab: View {
         Form {
             Section("Desktop notifications") {
                 Toggle("Explicit notifications (OSC 9 / 777)", isOn: $osc)
-                Text("A remote command can post a notification on demand, e.g. `printf '\\e]9;done\\e\\\\'`. Click it to jump to the pane.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(
+                    """
+                    A remote command can post a notification on demand, e.g. \
+                    `printf '\\e]9;done\\e\\\\'`. Click it to jump to the pane.
+                    """,
+                )
+                .font(.caption).foregroundStyle(.secondary)
                 Toggle("Long-running command finished (~10s+)", isOn: $longCommand)
             }
         }
@@ -143,21 +158,41 @@ private struct AdvancedSettingsTab: View {
         Form {
             Section("System dialogs") {
                 Toggle("Show system password dialogs in their own pane", isOn: $systemDialogPanes)
-                Text("A SecurityAgent / sudo prompt on the host auto-spawns an ephemeral pane (and an attention beacon if it lands off-screen). Type into it with Paste as Keystrokes.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(
+                    """
+                    A SecurityAgent / sudo prompt on the host auto-spawns an ephemeral pane \
+                    (and an attention beacon if it lands off-screen). Type into it with Paste as Keystrokes.
+                    """,
+                )
+                .font(.caption).foregroundStyle(.secondary)
             }
             Section("Layouts") {
                 Toggle("Auto-switch layout on host app launch", isOn: $autoSwitchLayouts)
-                Text("A saved layout with a trigger app switches in automatically when that app first opens a window on the host (set the trigger when you save a layout).")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(
+                    """
+                    A saved layout with a trigger app switches in automatically when that app first opens a window \
+                    on the host (set the trigger when you save a layout).
+                    """,
+                )
+                .font(.caption).foregroundStyle(.secondary)
             }
             Section("Privacy") {
                 Toggle("Redact secrets in titles, notifications & clipboard previews", isOn: $redactSecrets)
-                Text("Masks likely access keys, bearer tokens and `PASSWORD=…` out of window titles, notification banners, and the “Paste Recent” menu previews before they’re shown.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(
+                    """
+                    Masks likely access keys, bearer tokens and `PASSWORD=…` out of window titles, \
+                    notification banners, and the “Paste Recent” menu previews before they’re shown.
+                    """,
+                )
+                .font(.caption).foregroundStyle(.secondary)
                 Toggle("Record clipboard history (for Paste Recent)", isOn: $recordClipboard)
-                Text("Keeps a short ring of recently-copied text for the pill’s “Paste Recent”. Turn off to stop retaining any copied string; clear existing entries from that menu’s “Clear History”.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(
+                    """
+                    Keeps a short ring of recently-copied text for the pill’s “Paste Recent”. \
+                    Turn off to stop retaining any copied string; clear existing entries from that menu’s “Clear History”.
+                    """,
+                )
+                .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

@@ -340,7 +340,7 @@ impl LiveCongestionController {
     /// Applies a decrease and arms the hold-downs — but ONLY when the target actually LOWERS
     /// `current` (a no-op at the floor must not keep extending the hold-down). A queue-corroborated
     /// decrease additionally records the landed-on rate as the knee.
-    fn decrease(&mut self, next: i64, queue_corroborated: bool) {
+    const fn decrease(&mut self, next: i64, queue_corroborated: bool) {
         if next < self.current {
             self.current = next;
             self.hold_until_tick = self.ticks + HOLD_TICKS;
@@ -372,12 +372,10 @@ mod tests {
         let mut est = NetworkEstimate::new();
         let unrecovered = (loss_samples * 1000.0).round() as u32;
         for _ in 0..folds.max(1) {
+            est.fold(Some(50), 1000, unrecovered, 100);
             if rtt_congested {
-                est.fold(Some(50), 1000, unrecovered, 100);
                 est.fold(Some(50), 1000, unrecovered, 200);
                 est.fold(Some(500), 1000, unrecovered, 9000);
-            } else {
-                est.fold(Some(50), 1000, unrecovered, 100);
             }
         }
         est
@@ -388,10 +386,10 @@ mod tests {
         floor: Option<i64>,
         gradient: bool,
     ) -> LiveCongestionController {
-        let mut ctrl = match floor {
-            Some(f) => LiveCongestionController::with_floor(ceiling, f, gradient),
-            None => LiveCongestionController::with_gradient_cut(ceiling, gradient),
-        };
+        let mut ctrl = floor.map_or_else(
+            || LiveCongestionController::with_gradient_cut(ceiling, gradient),
+            |f| LiveCongestionController::with_floor(ceiling, f, gradient),
+        );
         let clean = estimate(0.0, 1, false);
         for _ in 0..WARMUP_TICKS {
             let _ = ctrl.on_report(&clean);

@@ -3,19 +3,22 @@ import XCTest
 
 /// Encodes a message, feeds the resulting frame bytes through a fresh `FrameDecoder`,
 /// and returns the decoded message — the canonical round-trip helper.
-private func roundTrip(_ message: WireMessage, file: StaticString = #filePath, line: UInt = #line) throws -> WireMessage? {
+private func roundTrip(
+    _ message: WireMessage,
+    file _: StaticString = #filePath,
+    line _: UInt = #line,
+) throws -> WireMessage? {
     var decoder = FrameDecoder()
     decoder.append(message.encode())
     return try decoder.nextMessage()
 }
 
 final class WireMessageRoundTripTests: XCTestCase {
-
     func testOutputRoundTripRepresentativeAndBoundary() throws {
         let cases: [WireMessage] = [
             .output(seq: 1, bytes: Data("hello".utf8)),
-            .output(seq: Int64.max, bytes: Data()),                 // empty payload, max seq
-            .output(seq: 42, bytes: Data([0x1b, 0x5b, 0x32, 0x4a])), // ESC [ 2 J
+            .output(seq: Int64.max, bytes: Data()), // empty payload, max seq
+            .output(seq: 42, bytes: Data([0x1B, 0x5B, 0x32, 0x4A])), // ESC [ 2 J
         ]
         for message in cases {
             XCTAssertEqual(try roundTrip(message), message)
@@ -31,9 +34,9 @@ final class WireMessageRoundTripTests: XCTestCase {
 
     func testInputRoundTrip() throws {
         let cases: [WireMessage] = [
-            .input(Data()),                                  // empty
+            .input(Data()), // empty
             .input(Data("ls -la\n".utf8)),
-            .input(Data([0x00, 0xff, 0x80, 0x7f])),          // arbitrary bytes incl NUL & high bit
+            .input(Data([0x00, 0xFF, 0x80, 0x7F])), // arbitrary bytes incl NUL & high bit
         ]
         for message in cases {
             XCTAssertEqual(try roundTrip(message), message)
@@ -42,7 +45,11 @@ final class WireMessageRoundTripTests: XCTestCase {
 
     func testHelloRoundTripNewAndResumeSessions() throws {
         let cases: [WireMessage] = [
-            .hello(protocolVersion: Aislopdesk.protocolVersion, sessionID: WireMessage.newSessionID, lastReceivedSeq: 0),
+            .hello(
+                protocolVersion: Aislopdesk.protocolVersion,
+                sessionID: WireMessage.newSessionID,
+                lastReceivedSeq: 0,
+            ),
             .hello(protocolVersion: 1, sessionID: UUID(), lastReceivedSeq: Int64.max),
             .hello(protocolVersion: UInt16.max, sessionID: UUID(), lastReceivedSeq: -1),
         ]
@@ -93,10 +100,10 @@ final class WireMessageRoundTripTests: XCTestCase {
 
     func testTitleRoundTripIncludingCJKAndEmoji() throws {
         let cases: [WireMessage] = [
-            .title(""),                          // empty
+            .title(""), // empty
             .title("zsh — ~/project"),
-            .title("日本語タイトル"),               // CJK
-            .title("build ✅ done 🚀 — café"),    // multi-byte emoji + accent
+            .title("日本語タイトル"), // CJK
+            .title("build ✅ done 🚀 — café"), // multi-byte emoji + accent
         ]
         for message in cases {
             XCTAssertEqual(try roundTrip(message), message)
@@ -109,10 +116,10 @@ final class WireMessageRoundTripTests: XCTestCase {
 
     func testNotificationRoundTripIncludingEmptyTitleAndUnicode() throws {
         let cases: [WireMessage] = [
-            .notification(title: "", body: "build done"),                    // OSC 9: no title
-            .notification(title: "CI", body: "all green ✅"),                 // OSC 777: title + body
-            .notification(title: "日本語", body: "完了 🚀"),                   // multi-byte both fields
-            .notification(title: "only title", body: ""),                    // empty body
+            .notification(title: "", body: "build done"), // OSC 9: no title
+            .notification(title: "CI", body: "all green ✅"), // OSC 777: title + body
+            .notification(title: "日本語", body: "完了 🚀"), // multi-byte both fields
+            .notification(title: "only title", body: ""), // empty body
             .notification(title: "semis;in;title", body: "and;in;body;too"), // length-prefix beats delimiters
         ]
         for message in cases {
@@ -124,8 +131,10 @@ final class WireMessageRoundTripTests: XCTestCase {
         // A >64KiB title would wrap the UInt16 length field and mis-split title/body. The encoder clamps
         // the title to the field's limit so the body is NEVER corrupted (encode/decode stay symmetric).
         let body = "the body must survive intact — ✅"
-        let decoded = try roundTrip(.notification(title: String(repeating: "T", count: 70_000), body: body))
-        guard case let .notification(dTitle, dBody)? = decoded else { return XCTFail("not a notification") }
+        let decoded = try roundTrip(.notification(title: String(repeating: "T", count: 70000), body: body))
+        guard case let .notification(dTitle, dBody)? = decoded else { XCTFail("not a notification")
+            return
+        }
         XCTAssertEqual(dBody, body, "the body is never corrupted by an overlong title (the wrap bug)")
         XCTAssertLessThanOrEqual(Data(dTitle.utf8).count, Int(UInt16.max), "title clamped to the UInt16 length limit")
         XCTAssertTrue(dTitle.allSatisfy { $0 == "T" }, "the clamped title is a valid prefix of the original")
@@ -134,12 +143,12 @@ final class WireMessageRoundTripTests: XCTestCase {
     func testCommandStatusRoundTrip() throws {
         let cases: [WireMessage] = [
             .commandStatus(.running),
-            .commandStatus(.idle(exitCode: 0, durationMS: 12_000)),
+            .commandStatus(.idle(exitCode: 0, durationMS: 12000)),
             .commandStatus(.idle(exitCode: 1, durationMS: 300)),
             .commandStatus(.idle(exitCode: 130, durationMS: 0)),
-            .commandStatus(.idle(exitCode: -1, durationMS: 1)),          // negative exit preserved
+            .commandStatus(.idle(exitCode: -1, durationMS: 1)), // negative exit preserved
             .commandStatus(.idle(exitCode: Int32.min, durationMS: UInt32.max)), // boundary
-            .commandStatus(.idle(exitCode: nil, durationMS: 5_000)),     // unreported exit (nil)
+            .commandStatus(.idle(exitCode: nil, durationMS: 5000)), // unreported exit (nil)
         ]
         for message in cases {
             XCTAssertEqual(try roundTrip(message), message)
@@ -170,7 +179,10 @@ final class WireMessageRoundTripTests: XCTestCase {
         XCTAssertEqual(WireMessage.ack(seq: 0).messageType, 12)
         XCTAssertEqual(WireMessage.bye.messageType, 13)
         XCTAssertEqual(WireMessage.ping(timestampMS: 0).messageType, 14)
-        XCTAssertEqual(WireMessage.helloAck(sessionID: UUID(), resumeFromSeq: 0, returningClient: false).messageType, 20)
+        XCTAssertEqual(
+            WireMessage.helloAck(sessionID: UUID(), resumeFromSeq: 0, returningClient: false).messageType,
+            20,
+        )
         XCTAssertEqual(WireMessage.title("").messageType, 21)
         XCTAssertEqual(WireMessage.bell.messageType, 22)
         XCTAssertEqual(WireMessage.commandStatus(.running).messageType, 23)
@@ -198,8 +210,8 @@ final class WireMessageRoundTripTests: XCTestCase {
     func testCompleteFrameWithShortBodyThrowsTruncated() {
         // exit (type 2) needs a 4-byte Int32 code; supply only the type byte.
         var exitFrame = Data()
-        exitFrame.appendBE(UInt32(1))        // payloadLength = 1 (just the type byte)
-        exitFrame.append(2)                  // type = exit, missing 4 code bytes
+        exitFrame.appendBE(UInt32(1)) // payloadLength = 1 (just the type byte)
+        exitFrame.append(2) // type = exit, missing 4 code bytes
         var exitDecoder = FrameDecoder()
         exitDecoder.append(exitFrame)
         XCTAssertThrowsError(try exitDecoder.nextMessage()) { error in

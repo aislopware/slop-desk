@@ -1,11 +1,11 @@
 #if canImport(Metal) && canImport(QuartzCore)
+import AislopdeskVideoProtocol
+import CoreVideo
 import Foundation
 import Metal
-import CoreVideo
-import QuartzCore
 import OSLog
+import QuartzCore
 import simd
-import AislopdeskVideoProtocol
 
 /// Zero-copy NV12 → RGB Metal renderer for decoded frames (doc 04, doc 17 §3.7).
 ///
@@ -25,6 +25,7 @@ import AislopdeskVideoProtocol
 ///
 /// `@MainActor`-isolated: it owns + presents to a `CAMetalLayer`, which is main-thread
 /// state. The frame pacer renders through a main-actor hop each vsync.
+@preconcurrency
 @MainActor
 public final class MetalVideoRenderer {
     private let log = Logger(subsystem: "aislopdesk.video.client", category: "MetalVideoRenderer")
@@ -57,7 +58,8 @@ public final class MetalVideoRenderer {
 
     public init?(metalLayer: CAMetalLayer) {
         guard let device = metalLayer.device ?? MTLCreateSystemDefaultDevice(),
-              let commandQueue = device.makeCommandQueue() else {
+              let commandQueue = device.makeCommandQueue()
+        else {
             return nil
         }
         self.device = device
@@ -81,7 +83,8 @@ public final class MetalVideoRenderer {
 
         guard let library = try? device.makeLibrary(source: Self.shaderSource, options: nil),
               let vertexFunction = library.makeFunction(name: "aislopdesk_video_vertex"),
-              let fragmentFunction = library.makeFunction(name: "aislopdesk_video_fragment") else {
+              let fragmentFunction = library.makeFunction(name: "aislopdesk_video_fragment")
+        else {
             return nil
         }
         let descriptor = MTLRenderPipelineDescriptor()
@@ -95,7 +98,7 @@ public final class MetalVideoRenderer {
 
         var cache: CVMetalTextureCache?
         CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
-        self.textureCache = cache
+        textureCache = cache
     }
 
     /// Draws one NV12 `CVPixelBuffer`. Called at vsync by ``FramePacer`` with the
@@ -114,8 +117,14 @@ public final class MetalVideoRenderer {
         // actually allocated, not the requested drawableSize), layer bounds (pt), contentsScale,
         // gravity, native px. The "half-size top-left" symptom means drawable.texture ≠
         // bounds×scale or gravity isn't resize. Logged on frame 1 + every 120 frames.
-        if Self.renderDiag, renderDiagCount == 0 || renderDiagCount % 120 == 0 {
-            FileHandle.standardError.write(Data("Aislopdesk[video.client]: RENDER#\(renderDiagCount) drawable.tex=\(drawable.texture.width)x\(drawable.texture.height)px drawableSize=\(Int(metalLayer.drawableSize.width))x\(Int(metalLayer.drawableSize.height)) layer.bounds=\(Int(metalLayer.bounds.width))x\(Int(metalLayer.bounds.height))pt scale=\(metalLayer.contentsScale) gravity=\(metalLayer.contentsGravity.rawValue) native=\(width)x\(height)px\n".utf8))
+        if Self.renderDiag, renderDiagCount == 0 || renderDiagCount.isMultiple(of: 120) {
+            FileHandle.standardError
+                .write(
+                    Data(
+                        "Aislopdesk[video.client]: RENDER#\(renderDiagCount) drawable.tex=\(drawable.texture.width)x\(drawable.texture.height)px drawableSize=\(Int(metalLayer.drawableSize.width))x\(Int(metalLayer.drawableSize.height)) layer.bounds=\(Int(metalLayer.bounds.width))x\(Int(metalLayer.bounds.height))pt scale=\(metalLayer.contentsScale) gravity=\(metalLayer.contentsGravity.rawValue) native=\(width)x\(height)px\n"
+                            .utf8,
+                    ),
+                )
         }
         renderDiagCount += 1
 
@@ -126,10 +135,25 @@ public final class MetalVideoRenderer {
         // is a use-after-free → green/garbage frames or a GPU fault (classic
         // CVMetalTextureCache pitfall). We hold both wrappers until the command buffer
         // completes (see `addCompletedHandler` below).
-        guard let lumaCV = makeTexture(pixelBuffer, cache: textureCache, planeIndex: 0, pixelFormat: .r8Unorm, width: width, height: height),
-              let chromaCV = makeTexture(pixelBuffer, cache: textureCache, planeIndex: 1, pixelFormat: .rg8Unorm, width: width / 2, height: height / 2),
-              let lumaTexture = CVMetalTextureGetTexture(lumaCV),
-              let chromaTexture = CVMetalTextureGetTexture(chromaCV) else {
+        guard let lumaCV = makeTexture(
+            pixelBuffer,
+            cache: textureCache,
+            planeIndex: 0,
+            pixelFormat: .r8Unorm,
+            width: width,
+            height: height,
+        ),
+            let chromaCV = makeTexture(
+                pixelBuffer,
+                cache: textureCache,
+                planeIndex: 1,
+                pixelFormat: .rg8Unorm,
+                width: width / 2,
+                height: height / 2,
+            ),
+            let lumaTexture = CVMetalTextureGetTexture(lumaCV),
+            let chromaTexture = CVMetalTextureGetTexture(chromaCV)
+        else {
             return
         }
 
@@ -149,10 +173,14 @@ public final class MetalVideoRenderer {
         // + half-scale). libghostty's renderer sets its own viewport, which is why the terminal
         // never showed this. Setting it explicitly to the texture size makes the quad cover the
         // whole drawable. (drawable.texture matches metalLayer.drawableSize.)
-        encoder.setViewport(MTLViewport(originX: 0, originY: 0,
-                                        width: Double(drawable.texture.width),
-                                        height: Double(drawable.texture.height),
-                                        znear: 0, zfar: 1))
+        encoder.setViewport(MTLViewport(
+            originX: 0,
+            originY: 0,
+            width: Double(drawable.texture.width),
+            height: Double(drawable.texture.height),
+            znear: 0,
+            zfar: 1,
+        ))
         encoder.setRenderPipelineState(pipelineState)
         // ASPECT-FIT: the quad fills the whole drawable unless we shrink it to the video's
         // aspect ratio, which would otherwise STRETCH (distort) a landscape window into a
@@ -175,11 +203,18 @@ public final class MetalVideoRenderer {
             let r = AspectFit.displayedVideoRect(
                 viewSize: VideoSize(width: dw, height: dh),
                 videoNativeSize: VideoSize(width: Double(width), height: Double(height)),
-                mode: contentMode)
+                mode: contentMode,
+            )
             fit.x = Float(r.size.width / dw)
             fit.y = Float(r.size.height / dh)
             if Self.renderDiag, renderDiagCount == 1 || renderDiagCount % 120 == 1 {
-                FileHandle.standardError.write(Data("Aislopdesk[video.client]:   fit=\(fit.x)x\(fit.y) (rect=\(Int(r.size.width))x\(Int(r.size.height)) in dw×dh=\(Int(dw))x\(Int(dh)))\n".utf8))
+                FileHandle.standardError
+                    .write(
+                        Data(
+                            "Aislopdesk[video.client]:   fit=\(fit.x)x\(fit.y) (rect=\(Int(r.size.width))x\(Int(r.size.height)) in dw×dh=\(Int(dw))x\(Int(dh)))\n"
+                                .utf8,
+                        ),
+                    )
             }
         }
         encoder.setVertexBytes(&fit, length: MemoryLayout<SIMD2<Float>>.size, index: 0)
@@ -199,7 +234,8 @@ public final class MetalVideoRenderer {
         let coeffs = YCbCrConversion.coefficients(colorRange)
         var ycbcr = YCbCrCoeffsUniform(
             c0: SIMD4<Float>(coeffs.lumaScale, coeffs.lumaBias, coeffs.chromaBias, coeffs.crToR),
-            c1: SIMD4<Float>(coeffs.cbToG, coeffs.crToG, coeffs.cbToB, 0))
+            c1: SIMD4<Float>(coeffs.cbToG, coeffs.crToG, coeffs.cbToB, 0),
+        )
         encoder.setFragmentBytes(&ycbcr, length: MemoryLayout<YCbCrCoeffsUniform>.stride, index: 1)
         encoder.setFragmentTexture(lumaTexture, index: 0)
         encoder.setFragmentTexture(chromaTexture, index: 1)
@@ -223,11 +259,18 @@ public final class MetalVideoRenderer {
         CVMetalTextureCacheFlush(textureCache, 0)
     }
 
-    private func makeTexture(_ pixelBuffer: CVPixelBuffer, cache: CVMetalTextureCache, planeIndex: Int, pixelFormat: MTLPixelFormat, width: Int, height: Int) -> CVMetalTexture? {
+    private func makeTexture(
+        _ pixelBuffer: CVPixelBuffer,
+        cache: CVMetalTextureCache,
+        planeIndex: Int,
+        pixelFormat: MTLPixelFormat,
+        width: Int,
+        height: Int,
+    ) -> CVMetalTexture? {
         var cvTexture: CVMetalTexture?
         let status = CVMetalTextureCacheCreateTextureFromImage(
             kCFAllocatorDefault, cache, pixelBuffer, nil,
-            pixelFormat, width, height, planeIndex, &cvTexture
+            pixelFormat, width, height, planeIndex, &cvTexture,
         )
         guard status == kCVReturnSuccess, let cvTexture else { return nil }
         return cvTexture

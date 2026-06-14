@@ -24,13 +24,13 @@ pub struct BigEndianReader<'a> {
 impl<'a> BigEndianReader<'a> {
     /// Wraps a slice for reading.
     #[must_use]
-    pub fn new(data: &'a [u8]) -> Self {
+    pub const fn new(data: &'a [u8]) -> Self {
         Self { data, offset: 0 }
     }
 
     /// Bytes not yet consumed.
     #[must_use]
-    pub fn bytes_remaining(&self) -> usize {
+    pub const fn bytes_remaining(&self) -> usize {
         self.data.len() - self.offset
     }
 

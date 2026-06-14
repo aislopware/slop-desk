@@ -111,7 +111,7 @@ struct SnippetManagerView: View {
             Section("Name") {
                 TextField("Name", text: Binding(
                     get: { selected?.name ?? "" },
-                    set: { store.updateSnippet(snippet.id, name: $0, body: selected?.body ?? "") }
+                    set: { store.updateSnippet(snippet.id, name: $0, body: selected?.body ?? "") },
                 ))
                 #if os(iOS)
                 .textInputAutocapitalization(.never)
@@ -121,16 +121,19 @@ struct SnippetManagerView: View {
             Section("Command") {
                 TextEditor(text: Binding(
                     get: { selected?.body ?? "" },
-                    set: { store.updateSnippet(snippet.id, name: selected?.name ?? "", body: $0) }
+                    set: { store.updateSnippet(snippet.id, name: selected?.name ?? "", body: $0) },
                 ))
                 .font(.system(.body, design: .monospaced))
                 .frame(minHeight: 90)
                 #if os(iOS)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
                 #endif
-                Text("Use `{{name}}` for values you fill at run time, and `<Enter>` / `<Tab>` / `<Esc>` / `<C-c>` / `<Up>` … for control keys.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(
+                    "Use `{{name}}` for values you fill at run time, and `<Enter>` / `<Tab>` / "
+                        + "`<Esc>` / `<C-c>` / `<Up>` … for control keys.",
+                )
+                .font(.caption).foregroundStyle(.secondary)
             }
             if !placeholders.isEmpty {
                 Section("Placeholders") {

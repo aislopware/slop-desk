@@ -5,16 +5,24 @@ import XCTest
 /// closure records into a locked recorder; pacing gaps are kept small and assertions use generous
 /// tolerances + polling so the tests are timing-robust on a loaded CI box.
 final class VideoSendLaneTests: XCTestCase {
-
     private final class SendRecorder: @unchecked Sendable {
         private let lock = NSLock()
         private var entries: [(bytes: Data, channel: VideoChannel, at: TimeInterval)] = []
         func record(_ bytes: Data, _ channel: VideoChannel) {
-            lock.lock(); entries.append((bytes, channel, ProcessInfo.processInfo.systemUptime)); lock.unlock()
+            lock.lock()
+            entries.append((bytes, channel, ProcessInfo.processInfo.systemUptime))
+            lock.unlock()
         }
-        var count: Int { lock.lock(); defer { lock.unlock() }; return entries.count }
+
+        var count: Int { lock.lock()
+            defer { lock.unlock() }
+            return entries.count
+        }
+
         var all: [(bytes: Data, channel: VideoChannel, at: TimeInterval)] {
-            lock.lock(); defer { lock.unlock() }; return entries
+            lock.lock()
+            defer { lock.unlock() }
+            return entries
         }
     }
 
@@ -75,7 +83,7 @@ final class VideoSendLaneTests: XCTestCase {
         // Job A: 16 chunks of 1 × 25ms gap ≈ 375ms total. Job B queued behind it.
         lane.enqueue(VideoSendLane.Job(outgoings: outgoings(1, count: 16), gapNanos: 25_000_000, chunkFragments: 1))
         lane.enqueue(VideoSendLane.Job(outgoings: outgoings(2, count: 4), gapNanos: 0, chunkFragments: 8))
-        await waitForCount(recorder, 2, deadline: 0.5)   // job A is mid-pace
+        await waitForCount(recorder, 2, deadline: 0.5) // job A is mid-pace
         lane.flush()
         let countAtFlush = recorder.count
         try? await Task.sleep(nanoseconds: 200_000_000)
@@ -101,8 +109,12 @@ final class VideoSendLaneTests: XCTestCase {
         let lane = makeLane(recorder)
         defer { lane.close() }
         lane.enqueue(VideoSendLane.Job(outgoings: outgoings(1, count: 3), gapNanos: 0, chunkFragments: 8))
-        lane.enqueue(VideoSendLane.Job(outgoings: outgoings(1, count: 3), gapNanos: 0, chunkFragments: 8,
-                                       leadingDelayNanos: 60_000_000))
+        lane.enqueue(VideoSendLane.Job(
+            outgoings: outgoings(1, count: 3),
+            gapNanos: 0,
+            chunkFragments: 8,
+            leadingDelayNanos: 60_000_000,
+        ))
         await waitForCount(recorder, 6)
         let sent = recorder.all
         XCTAssertEqual(sent.count, 6)

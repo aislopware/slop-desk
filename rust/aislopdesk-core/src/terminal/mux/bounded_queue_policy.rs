@@ -29,19 +29,19 @@ impl BoundedQueuePolicy {
 
     /// The high-water mark in bytes.
     #[must_use]
-    pub fn capacity(&self) -> i64 {
+    pub const fn capacity(&self) -> i64 {
         self.capacity
     }
 
     /// Bytes currently enqueued and not yet sent.
     #[must_use]
-    pub fn outstanding(&self) -> i64 {
+    pub const fn outstanding(&self) -> i64 {
         self.outstanding
     }
 
     /// Whether the producer should be PAUSED right now (queue at/over capacity).
     #[must_use]
-    pub fn is_full(&self) -> bool {
+    pub const fn is_full(&self) -> bool {
         self.outstanding >= self.capacity
     }
 

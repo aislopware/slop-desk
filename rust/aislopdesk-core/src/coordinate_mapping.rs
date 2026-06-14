@@ -50,7 +50,9 @@ pub fn cg_rect_to_cocoa(cg_rect: VideoRect, primary_height: f64) -> VideoRect {
 }
 
 /// Picks the screen a window lives on (largest overlap) and returns its
-/// `backing_scale_factor`, or `None` if it overlaps no known screen. The window rect
+/// `backing_scale_factor`, or `None` if it overlaps no known screen.
+///
+/// The window rect
 /// (CG top-left) is flipped into Cocoa space first, then intersected with each screen.
 /// On an exact-area tie the earlier screen in `screens` wins (strictly-greater compare).
 #[must_use]

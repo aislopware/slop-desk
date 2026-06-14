@@ -6,13 +6,12 @@ import XCTest
 /// takes the LIVE `VideoWindowView(title:connection:)` path). No video frameworks involved.
 @MainActor
 final class RemoteWindowModelTests: XCTestCase {
-
     /// The host + UDP ports now come from the app-global ``ConnectionTarget``; only the windowID is
     /// per-pane, so `canOpen` is purely "is the window id parseable".
     private let target = ConnectionTarget(host: "h.local", port: 7420, mediaPort: 9000, cursorPort: 9001)
 
     func testCanOpenRequiresWindowID() {
-        let m = RemoteWindowModel(target: { self.target })   // empty windowID
+        let m = RemoteWindowModel(target: { self.target }) // empty windowID
         XCTAssertFalse(m.canOpen)
         m.windowID = "12345"
         XCTAssertTrue(m.canOpen, "a valid window id ⇒ can open (host/ports come from the app target)")
@@ -28,7 +27,9 @@ final class RemoteWindowModelTests: XCTestCase {
     func testOpenBuildsDescriptorFromAppTarget() {
         let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
         m.open()
-        guard let d = m.active else { return XCTFail("open() should set active") }
+        guard let d = m.active else { XCTFail("open() should set active")
+            return
+        }
         XCTAssertEqual(d.windowID, 42)
         XCTAssertEqual(d.host, "h.local", "host comes from the app target")
         XCTAssertEqual(d.mediaPort, 9000)
@@ -96,7 +97,9 @@ final class RemoteWindowModelTests: XCTestCase {
             RemoteWindowSummary(windowID: 464, appName: "Ghostty", title: "", width: 1408, height: 889),
         ]
         RemoteWindowDiscovery.shared = { host, media, cursor in
-            XCTAssertEqual(host, "h.local"); XCTAssertEqual(media, 9000); XCTAssertEqual(cursor, 9001)
+            XCTAssertEqual(host, "h.local")
+            XCTAssertEqual(media, 9000)
+            XCTAssertEqual(cursor, 9001)
             return rows
         }
         let m = RemoteWindowModel(target: { self.target })
@@ -127,8 +130,11 @@ final class RemoteWindowModelTests: XCTestCase {
         m.onEndpointCommitted = { committed = $0 }
         m.pick(RemoteWindowSummary(windowID: 42, appName: "Safari", title: "Apple", width: 100, height: 50))
         m.open()
-        XCTAssertEqual(committed, VideoEndpoint(windowID: 42, title: "Apple", appName: "Safari"),
-                       "open() persists the binding (app+title travel with the id)")
+        XCTAssertEqual(
+            committed,
+            VideoEndpoint(windowID: 42, title: "Apple", appName: "Safari"),
+            "open() persists the binding (app+title travel with the id)",
+        )
     }
 
     func testRevalidateKeepsLiveBinding() async {
@@ -191,10 +197,28 @@ final class RemoteWindowModelTests: XCTestCase {
 @MainActor
 final class RemoteWindowFilterTests: XCTestCase {
     private let windows = [
-        RemoteWindowSummary(windowID: 1, appName: "Google Chrome", title: "Claude — research", width: 1800, height: 943),
+        RemoteWindowSummary(
+            windowID: 1,
+            appName: "Google Chrome",
+            title: "Claude — research",
+            width: 1800,
+            height: 943,
+        ),
         RemoteWindowSummary(windowID: 2, appName: "Ghostty", title: "", width: 1408, height: 889),
-        RemoteWindowSummary(windowID: 3, appName: "Xcode", title: "Aislopdesk — WorkspaceStore.swift", width: 1600, height: 1000),
-        RemoteWindowSummary(windowID: 4, appName: "Google Chrome", title: "GitHub — aislopdesk", width: 1280, height: 800),
+        RemoteWindowSummary(
+            windowID: 3,
+            appName: "Xcode",
+            title: "Aislopdesk — WorkspaceStore.swift",
+            width: 1600,
+            height: 1000,
+        ),
+        RemoteWindowSummary(
+            windowID: 4,
+            appName: "Google Chrome",
+            title: "GitHub — aislopdesk",
+            width: 1280,
+            height: 800,
+        ),
     ]
 
     func testEmptyQueryReturnsAll() {
@@ -205,8 +229,11 @@ final class RemoteWindowFilterTests: XCTestCase {
     func testMatchesTitleAndAppNameCaseInsensitively() {
         XCTAssertEqual(RemoteWindowModel.filtered(windows, query: "claude").map(\.windowID), [1])
         XCTAssertEqual(RemoteWindowModel.filtered(windows, query: "CHROME").map(\.windowID), [1, 4])
-        XCTAssertEqual(RemoteWindowModel.filtered(windows, query: "ghostty").map(\.windowID), [2],
-                       "an empty title still matches via the app name")
+        XCTAssertEqual(
+            RemoteWindowModel.filtered(windows, query: "ghostty").map(\.windowID),
+            [2],
+            "an empty title still matches via the app name",
+        )
     }
 
     func testMultiTokenIsANDAcrossTitleAndApp() {

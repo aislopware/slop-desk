@@ -30,7 +30,9 @@ pub use wire_message::{Channel, CommandStatus, WireMessage};
 /// `Aislopdesk.protocolVersion`.
 pub const PROTOCOL_VERSION: u16 = 1;
 
-/// Maximum accepted frame payload size: 16 MiB. A length prefix larger than this is
+/// Maximum accepted frame payload size: 16 MiB.
+///
+/// A length prefix larger than this is
 /// rejected with [`TerminalProtocolError::FrameTooLarge`] rather than buffered — it almost
 /// certainly means a corrupt or hostile stream. Mirrors Swift
 /// `Aislopdesk.maxFramePayloadLength`.

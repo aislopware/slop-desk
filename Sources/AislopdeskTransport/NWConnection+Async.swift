@@ -1,6 +1,6 @@
+import AislopdeskProtocol
 import Foundation
 import Network
-import AislopdeskProtocol
 
 /// Async bridges over the raw `NWConnection` callback API, used only during the
 /// pre-framing association/handshake phase (reading the fixed-size preamble and
@@ -23,7 +23,8 @@ extension NWConnection {
             let lock = NSLock()
             var resumed = false
             func tryResume(_ body: () -> Void) {
-                lock.lock(); defer { lock.unlock() }
+                lock.lock()
+                defer { lock.unlock() }
                 guard !resumed else { return }
                 resumed = true
                 body()
@@ -38,7 +39,8 @@ extension NWConnection {
                         box.tryResume { continuation.resume() }
                     case let .failed(error):
                         box.tryResume {
-                            continuation.resume(throwing: AislopdeskTransportError.connectionFailed(String(describing: error)))
+                            continuation
+                                .resume(throwing: AislopdeskTransportError.connectionFailed(String(describing: error)))
                         }
                     case .cancelled:
                         box.tryResume {
@@ -97,7 +99,8 @@ extension NWConnection {
                     return
                 }
                 if isComplete {
-                    continuation.resume(throwing: AislopdeskTransportError.connectionFailed("peer closed during preamble"))
+                    continuation
+                        .resume(throwing: AislopdeskTransportError.connectionFailed("peer closed during preamble"))
                     return
                 }
                 // Short read without completion shouldn't happen given min==count, but be safe.

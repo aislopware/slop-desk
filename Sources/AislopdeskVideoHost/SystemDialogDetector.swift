@@ -1,6 +1,6 @@
 #if os(macOS)
-import Foundation
 import CoreGraphics
+import Foundation
 
 /// Pure, unit-tested classifier behind the "show system popups/prompts in their own pane" feature.
 ///
@@ -29,7 +29,14 @@ public enum SystemDialogDetector {
         public var isOnScreen: Bool
         public var title: String
         public var frame: CGRect
-        public init(windowID: UInt32, ownerName: String, bundleID: String, isOnScreen: Bool, title: String, frame: CGRect) {
+        public init(
+            windowID: UInt32,
+            ownerName: String,
+            bundleID: String,
+            isOnScreen: Bool,
+            title: String,
+            frame: CGRect,
+        ) {
             self.windowID = windowID
             self.ownerName = ownerName
             self.bundleID = bundleID
@@ -80,8 +87,14 @@ public enum SystemDialogDetector {
         let isSystem = isSecure || systemBundleIDs.contains(w.bundleID) || systemOwnerNames.contains(w.ownerName)
         guard isSystem else { return nil }
         let label = w.ownerName.isEmpty ? w.bundleID : w.ownerName
-        return Dialog(windowID: w.windowID, owner: label, title: w.title,
-                      width: width, height: height, isSecure: isSecure)
+        return Dialog(
+            windowID: w.windowID,
+            owner: label,
+            title: w.title,
+            width: width,
+            height: height,
+            isSecure: isSecure,
+        )
     }
 
     /// Classify a whole snapshot into the system dialogs to surface (order preserved).

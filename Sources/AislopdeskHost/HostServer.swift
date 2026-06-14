@@ -1,13 +1,13 @@
-import Foundation
 import AislopdeskProtocol
 import AislopdeskTransport
+import Foundation
 
 /// The host daemon: owns the ``HostTransport`` (`NWListener`), accepts shared-mux connections, and
 /// spawns a fresh login shell + per-channel relay for every channel a client opens on them.
 ///
 /// ## Lifecycle
 /// `start()` brings up the listener and starts consuming newly-accepted shared mux connections; for
-/// each ``MuxNWConnection`` yielded on `HostTransport.muxConnections_` it installs a
+/// each ``MuxNWConnection`` yielded on `HostTransport.muxConnections` it installs a
 /// per-channel-open handler. Every `channelOpen` the client sends mints a PTY + per-channel relay
 /// (``MuxChannelSession``) and acks. `stop()` cancels the listener and shuts every channel down.
 ///
@@ -104,12 +104,12 @@ public final class HostServer: @unchecked Sendable {
     public init(
         port: UInt16,
         shellPath: String? = nil,
-        launchMode: LaunchMode = .shell
+        launchMode: LaunchMode = .shell,
     ) {
         self.port = port
         self.shellPath = shellPath ?? HostEnvironment.loginShell()
         self.launchMode = launchMode
-        self.transport = HostTransport()
+        transport = HostTransport()
     }
 
     /// The port the listener actually bound to (resolved after ``start()``).
@@ -135,7 +135,7 @@ public final class HostServer: @unchecked Sendable {
         Task.detached(priority: .utility) { [weak self] in
             _ = self?.resolveEffectiveTerm(requested: .ghostty, explicitOverride: false)
         }
-        let muxStream = transport.muxConnections_
+        let muxStream = transport.muxConnections
         muxAcceptTask = Task { [weak self] in
             for await muxConnection in muxStream {
                 await self?.handleNewMuxConnection(muxConnection)
@@ -177,7 +177,9 @@ public final class HostServer: @unchecked Sendable {
 
     /// Synchronously sets the `stopping` flag (NSLock is unavailable from the async `stop()` directly).
     private func markStopping() {
-        lock.lock(); stopping = true; lock.unlock()
+        lock.lock()
+        stopping = true
+        lock.unlock()
     }
 
     /// Synchronously removes and returns every live mux channel session (no `await` across the lock).
@@ -204,13 +206,16 @@ public final class HostServer: @unchecked Sendable {
     /// Synchronously retains an accepted connection (NSLock is unavailable from the async
     /// `handleNewMuxConnection` directly — same discipline as ``markStopping()``).
     private func retainMuxConnection(_ id: UUID, _ connection: MuxNWConnection) {
-        lock.lock(); muxConnections[id] = connection; lock.unlock()
+        lock.lock()
+        muxConnections[id] = connection
+        lock.unlock()
     }
 
     /// Looks up a retained accepted connection by id — the open handler resolves the connection HERE
     /// (the map's strong ref) instead of capturing it strongly, which would form a retain cycle.
     private func muxConnection(for id: UUID) -> MuxNWConnection? {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return muxConnections[id]
     }
 
@@ -238,7 +243,8 @@ public final class HostServer: @unchecked Sendable {
 
     /// Snapshot of the live connection ids carrying channels (diagnostics / tests).
     public func liveSessionIDs() -> [UUID] {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return Array(Set(muxSessions.keys.map(\.connectionID)))
     }
 
@@ -268,8 +274,8 @@ public final class HostServer: @unchecked Sendable {
             // Resolve the connection from the retention map by id rather than CAPTURING it strongly — a
             // strong capture forms a connection → hostOpenHandler → connection retain cycle (R5 rank 3).
             Task.detached(priority: .userInitiated) { [weak self] in
-                guard let self, let conn = self.muxConnection(for: connectionID) else { return }
-                self.spawnMuxChannel(open, on: conn, connectionID: connectionID)
+                guard let self, let conn = muxConnection(for: connectionID) else { return }
+                spawnMuxChannel(open, on: conn, connectionID: connectionID)
             }
         }
         // FIX #2: a clean peer `channelClose` must tear the channel's PTY + master fd down. There is
@@ -328,11 +334,11 @@ public final class HostServer: @unchecked Sendable {
                 // plain-shell default is `xterm-ghostty`, but on a host that cannot resolve
                 // that entry we auto-fall back to `xterm-256color` (#54700) so vim/htop/less/
                 // tmux/top don't degrade. No explicit override exists on the plain-shell path.
-                let term = self.resolveEffectiveTerm(requested: .ghostty, explicitOverride: false)
+                let term = resolveEffectiveTerm(requested: .ghostty, explicitOverride: false)
                 var env = HostEnvironment.curated(term: term.rawValue)
                 if let overrides = ShellIntegration.makeEnvironmentOverrides(
                     parent: ProcessInfo.processInfo.environment,
-                    shellPath: shellPath
+                    shellPath: shellPath,
                 ) {
                     for (key, value) in overrides { env[key] = value }
                     // The shim's ZDOTDIR override IS the generated `aislopdesk-zdotdir-*` dir — track it so the
@@ -340,14 +346,14 @@ public final class HostServer: @unchecked Sendable {
                     shimDir = overrides["ZDOTDIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
                 }
                 try pty.spawn(shellPath, environment: env, argv0: argv0)
-            case .claudeCode(let profile):
+            case let .claudeCode(profile):
                 // Audit #17: same terminfo bootstrap for the Claude path. An explicit
                 // `--xterm256` (`profile.term == .xterm256`) is an operator override and WINS —
                 // the resolver keeps it untouched; only a `.ghostty` request that the host
                 // cannot resolve auto-falls back.
-                let term = self.resolveEffectiveTerm(
+                let term = resolveEffectiveTerm(
                     requested: profile.term,
-                    explicitOverride: profile.term == .xterm256
+                    explicitOverride: profile.term == .xterm256,
                 )
                 var resolvedProfile = profile
                 resolvedProfile.term = term
@@ -355,7 +361,7 @@ public final class HostServer: @unchecked Sendable {
                     shellPath,
                     arguments: resolvedProfile.loginShellArguments(),
                     environment: resolvedProfile.environment(),
-                    argv0: argv0
+                    argv0: argv0,
                 )
             }
         } catch {
@@ -375,7 +381,7 @@ public final class HostServer: @unchecked Sendable {
             pty: pty,
             data: open.data,
             control: open.control,
-            shimDir: shimDir
+            shimDir: shimDir,
         )
         // The shell-exit reaper closes over the SAME composite key so it only removes THIS
         // connection's session (idempotent with the peer-close `setHostCloseHandler` path).
@@ -410,31 +416,35 @@ public final class HostServer: @unchecked Sendable {
     /// explicitly chose `xterm-256color`, nothing is logged.
     private func resolveEffectiveTerm(
         requested: ClaudeCodeProfile.Term,
-        explicitOverride: Bool
+        explicitOverride: Bool,
     ) -> ClaudeCodeProfile.Term {
         // Cache by (requested, explicitOverride): the host terminfo state is stable for the session,
         // so resolve (and possibly spawn infocmp) at most once per key, not on every channel-open.
         let key = "\(requested.rawValue)|\(explicitOverride)"
         lock.lock()
-        if let cached = resolvedTermCache[key] { lock.unlock(); return cached }
+        if let cached = resolvedTermCache[key] { lock.unlock()
+            return cached
+        }
         lock.unlock()
 
         let result = TerminfoResolver.resolve(
             requested: requested,
-            explicitOverride: explicitOverride
+            explicitOverride: explicitOverride,
         )
 
         // Store under lock; the FIRST writer logs the fallback (a concurrent first-open that already
         // cached wins and we return its value without a duplicate log).
         lock.lock()
-        if let cached = resolvedTermCache[key] { lock.unlock(); return cached }
+        if let cached = resolvedTermCache[key] { lock.unlock()
+            return cached
+        }
         resolvedTermCache[key] = result.term
         lock.unlock()
 
         if result.fellBack {
             onLog?(
                 "TERM: host cannot resolve '\(requested.rawValue)' terminfo entry; "
-                    + "falling back to '\(result.term.rawValue)' (#54700) so TUI apps work"
+                    + "falling back to '\(result.term.rawValue)' (#54700) so TUI apps work",
             )
         }
         return result.term

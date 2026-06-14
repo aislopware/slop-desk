@@ -1,5 +1,4 @@
 import XCTest
-
 @testable import AislopdeskProtocol
 
 /// Proves the Rust `aislopdesk-ffi` staticlib links into the Swift build and its C ABI is

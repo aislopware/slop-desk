@@ -1,0 +1,10 @@
+# Clippy tunables for the configurable lints (the lint LEVELS live in Cargo.toml's
+# [workspace.lints.clippy]). These thresholds are guardrails against future bloat in
+# the realtime core; the current code is within them.
+cognitive-complexity-threshold = 25
+too-many-arguments-threshold = 8
+type-complexity-threshold = 250
+too-many-lines-threshold = 150
+# Internal portable core — no external API stability contract to preserve, so let
+# clippy suggest signature-improving changes freely.
+avoid-breaking-exported-api = false

@@ -1,6 +1,6 @@
-import XCTest
-import Foundation
 import AislopdeskClient
+import Foundation
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Glitch-caret predictive-echo v1 (docs/12 §B → docs/17 §2.4, docs/31 #3): the gate
@@ -10,7 +10,6 @@ import AislopdeskClient
 /// clears. All headless — the caret's only observable output is `glitchCaretVisible`.
 @MainActor
 final class GlitchCaretTests: XCTestCase {
-
     private let a = Data([UInt8(ascii: "a")])
     private let backspace = Data([0x7F])
     private let carriageReturn = Data([0x0D])
@@ -19,23 +18,23 @@ final class GlitchCaretTests: XCTestCase {
     /// (the echo would win the race otherwise) + a short test expiry.
     private func makeModel(
         mode: TerminalViewModel.GlitchCaretMode = .forced,
-        expiryMS: Int = 60_000
+        expiryMS: Int = 60000,
     ) -> TerminalViewModel {
         let model = TerminalViewModel()
         model.glitchCaretMode = mode
         model.glitchWindow = .milliseconds(0)
         model.glitchExpiry = .milliseconds(expiryMS)
-        model.handle(.reconnected(sessionID: UUID(), resumeFromSeq: 0))   // → .connected
+        model.handle(.reconnected(sessionID: UUID(), resumeFromSeq: 0)) // → .connected
         return model
     }
 
     /// Polls the main actor until `condition` holds or the timeout lapses.
     private func waitUntil(
-        timeoutMS: Int = 2_000,
-        _ condition: () -> Bool
+        timeoutMS: Int = 2000,
+        _ condition: () -> Bool,
     ) async -> Bool {
         var elapsed = 0
-        while !condition() && elapsed < timeoutMS {
+        while !condition(), elapsed < timeoutMS {
             try? await Task.sleep(for: .milliseconds(10))
             elapsed += 10
         }
@@ -47,7 +46,7 @@ final class GlitchCaretTests: XCTestCase {
         _ model: TerminalViewModel,
         _ message: String,
         file: StaticString = #filePath,
-        line: UInt = #line
+        line: UInt = #line,
     ) async {
         _ = await waitUntil(timeoutMS: 150) { model.glitchCaretVisible }
         XCTAssertFalse(model.glitchCaretVisible, message, file: file, line: line)
@@ -61,7 +60,7 @@ final class GlitchCaretTests: XCTestCase {
         let shown = await waitUntil { model.glitchCaretVisible }
         XCTAssertTrue(shown, "printable keystroke with no echo shows the caret after the window")
 
-        model.ingestOutput(Data("a".utf8))   // the echo (any output) is the ground truth
+        model.ingestOutput(Data("a".utf8)) // the echo (any output) is the ground truth
         XCTAssertFalse(model.glitchCaretVisible, "ANY ingest hides the caret synchronously")
 
         // Re-arms cleanly for the next keystroke.
@@ -77,7 +76,7 @@ final class GlitchCaretTests: XCTestCase {
     }
 
     func testNotConnectedNeverShows() async {
-        let model = TerminalViewModel()   // .idle — never connected
+        let model = TerminalViewModel() // .idle — never connected
         model.glitchCaretMode = .forced
         model.glitchWindow = .milliseconds(0)
         model.sendInput(a)
@@ -118,11 +117,11 @@ final class GlitchCaretTests: XCTestCase {
 
     func testAltScreenSuppressesCaret() async {
         let model = makeModel()
-        model.ingestOutput(Data("\u{1B}[?1049h".utf8))   // vim/Claude Code enters alt-screen
+        model.ingestOutput(Data("\u{1B}[?1049h".utf8)) // vim/Claude Code enters alt-screen
         model.sendInput(a)
         await assertStaysHidden(model, "alt-screen TUIs own their echo — caret off")
 
-        model.ingestOutput(Data("\u{1B}[?1049l".utf8))   // back to the shell prompt
+        model.ingestOutput(Data("\u{1B}[?1049l".utf8)) // back to the shell prompt
         model.sendInput(a)
         let rearmed = await waitUntil { model.glitchCaretVisible }
         XCTAssertTrue(rearmed, "shellPrompt — armed again")
@@ -132,7 +131,7 @@ final class GlitchCaretTests: XCTestCase {
 
     func testBackspaceRetiresPendingKeystroke() async {
         let model = makeModel()
-        model.glitchWindow = .milliseconds(40)   // give the BS time to retire the 'a'
+        model.glitchWindow = .milliseconds(40) // give the BS time to retire the 'a'
         model.sendInput(a)
         model.sendInput(backspace)
         await assertStaysHidden(model, "backspace retired the only pending keystroke")
@@ -169,10 +168,10 @@ final class GlitchCaretTests: XCTestCase {
 
     func testDropWhileInAltScreenDoesNotDisarmTheNewSession() async {
         let model = makeModel()
-        model.ingestOutput(Data("\u{1B}[?1049h".utf8))   // old session: inside vim
-        model.markReconnecting()                          // link drops while in alt-screen
+        model.ingestOutput(Data("\u{1B}[?1049h".utf8)) // old session: inside vim
+        model.markReconnecting() // link drops while in alt-screen
         model.handle(.reconnected(sessionID: UUID(), resumeFromSeq: 0))
-        model.ingestOutput(Data("fresh shell $ ".utf8))   // new session: plain prompt
+        model.ingestOutput(Data("fresh shell $ ".utf8)) // new session: plain prompt
         model.sendInput(a)
         let shown = await waitUntil { model.glitchCaretVisible }
         XCTAssertTrue(shown, "the dead session's .altScreen latch must not survive the reconnect")
@@ -180,7 +179,7 @@ final class GlitchCaretTests: XCTestCase {
 
     func testDropMidStringSequenceDoesNotSwallowNewSessionMarkers() async {
         let model = makeModel()
-        model.ingestOutput(Data("\u{1B}Punterminated dcs body".utf8))   // drop mid-DCS
+        model.ingestOutput(Data("\u{1B}Punterminated dcs body".utf8)) // drop mid-DCS
         model.markReconnecting()
         model.handle(.reconnected(sessionID: UUID(), resumeFromSeq: 0))
         // The new session autostarts a TUI: the tracker must SEE this alt-screen enter

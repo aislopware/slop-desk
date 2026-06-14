@@ -26,7 +26,7 @@ public struct ConnectionTarget: Codable, Sendable, Equatable {
         host: String = "127.0.0.1",
         port: UInt16 = 7420,
         mediaPort: UInt16 = 9000,
-        cursorPort: UInt16 = 9001
+        cursorPort: UInt16 = 9001,
     ) {
         self.host = host
         self.port = port
@@ -36,5 +36,5 @@ public struct ConnectionTarget: Codable, Sendable, Equatable {
 
     /// The default target: the local host on the conventional ports. Used as the connect-gate's prefill
     /// when nothing has been persisted yet.
-    public static let `default` = ConnectionTarget()
+    public static let `default` = Self()
 }

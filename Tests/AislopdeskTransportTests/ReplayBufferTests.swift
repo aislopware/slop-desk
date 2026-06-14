@@ -1,10 +1,9 @@
-import XCTest
 import AislopdeskProtocol
+import XCTest
 @testable import AislopdeskTransport
 
 /// Exhaustive unit tests for the pure ``ReplayBuffer`` logic (no networking).
 final class ReplayBufferTests: XCTestCase {
-
     // MARK: Constants / contract
 
     func testCapsAreContractValues() {
@@ -203,15 +202,15 @@ final class ReplayBufferTests: XCTestCase {
     func testShouldPauseDrainHonorsInstanceCaps() {
         var buf = ReplayBuffer(maxBackupBytes: 100, offlineGateBytes: 40)
         XCTAssertFalse(buf.shouldPauseDrain)
-        buf.append(bytes: Data(count: 50))      // retained 50 < 100, online → no pause
+        buf.append(bytes: Data(count: 50)) // retained 50 < 100, online → no pause
         XCTAssertFalse(buf.shouldPauseDrain)
         buf.isClientOnline = false
         XCTAssertTrue(buf.shouldPauseDrain, "offline + retained(50) ≥ offlineGate(40) → pause")
         buf.isClientOnline = true
         XCTAssertFalse(buf.shouldPauseDrain, "back online, retained(50) < maxBackup(100) → no pause")
-        buf.append(bytes: Data(count: 60))      // retained 110 ≥ 100 → online slow-consumer pause
+        buf.append(bytes: Data(count: 60)) // retained 110 ≥ 100 → online slow-consumer pause
         XCTAssertTrue(buf.shouldPauseDrain, "online: retained(110) ≥ maxBackup(100) → pause regardless of online")
-        buf.ack(upTo: buf.highestSeq)           // release all → retained 0
+        buf.ack(upTo: buf.highestSeq) // release all → retained 0
         XCTAssertFalse(buf.shouldPauseDrain, "ack released the backlog → resume")
         // The public statics remain the production contract values (unchanged by the instance caps).
         XCTAssertEqual(ReplayBuffer.maxBackupBytes, 64 * 1024 * 1024)

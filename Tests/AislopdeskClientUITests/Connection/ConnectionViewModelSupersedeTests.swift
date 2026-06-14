@@ -1,7 +1,7 @@
-import XCTest
-import Foundation
 import AislopdeskProtocol
 import AislopdeskTransport
+import Foundation
+import XCTest
 @testable import AislopdeskClient
 @testable import AislopdeskClientUI
 
@@ -13,7 +13,6 @@ import AislopdeskTransport
 /// post-await writes. Looped to shake the interleaving.
 @MainActor
 final class ConnectionViewModelSupersedeTests: XCTestCase {
-
     /// A `disconnect()` landing while `connect()` is suspended in the handshake must leave the pane
     /// `.disconnected`, never `.connected`.
     func testDisconnectDuringInflightConnectStaysDisconnected() async {
@@ -21,16 +20,19 @@ final class ConnectionViewModelSupersedeTests: XCTestCase {
             let rec = GateRecorder()
             let vm = ConnectionViewModel(
                 terminal: TerminalViewModel(), target: { ConnectionTarget(host: "h", port: 1) },
-                makeClient: { AislopdeskClient(makeTransport: { rec.makeTransport() }) }
+                makeClient: { AislopdeskClient(makeTransport: { rec.makeTransport() }) },
             )
             let connectTask = Task { await vm.connect() }
-            await rec.waitForStarted(1)        // connect() is suspended in the handshake gate
-            await vm.disconnect()              // the user closes the pane mid-handshake
-            await rec.releaseAll()             // let the handshake complete + connect() resume
+            await rec.waitForStarted(1) // connect() is suspended in the handshake gate
+            await vm.disconnect() // the user closes the pane mid-handshake
+            await rec.releaseAll() // let the handshake complete + connect() resume
             await connectTask.value
 
-            XCTAssertEqual(vm.status, .disconnected,
-                           "a disconnect during the in-flight connect must NOT be whitewashed to .connected")
+            XCTAssertEqual(
+                vm.status,
+                .disconnected,
+                "a disconnect during the in-flight connect must NOT be whitewashed to .connected",
+            )
         }
     }
 
@@ -40,14 +42,17 @@ final class ConnectionViewModelSupersedeTests: XCTestCase {
     func testLateReconnectedAfterDisconnectStaysDisconnected() async {
         let vm = ConnectionViewModel(
             terminal: TerminalViewModel(), target: { ConnectionTarget(host: "h", port: 1) },
-            makeClient: { AislopdeskClient(makeTransport: { fatalError("never connected in this test") }) }
+            makeClient: { AislopdeskClient(makeTransport: { fatalError("never connected in this test") }) },
         )
-        await vm.disconnect()   // deliberatelyClosed = true; status = .disconnected (never connected)
+        await vm.disconnect() // deliberatelyClosed = true; status = .disconnected (never connected)
         XCTAssertEqual(vm.status, .disconnected)
 
         vm.foldEventForTesting(.reconnected(sessionID: UUID(), resumeFromSeq: 0))
-        XCTAssertEqual(vm.status, .disconnected,
-                       "a late .reconnected after a deliberate disconnect must not flip the pane to .connected")
+        XCTAssertEqual(
+            vm.status,
+            .disconnected,
+            "a late .reconnected after a deliberate disconnect must not flip the pane to .connected",
+        )
     }
 
     // MARK: - Gated client transport (connect suspends until released)
@@ -69,20 +74,35 @@ final class ConnectionViewModelSupersedeTests: XCTestCase {
             inbound = AsyncThrowingStream { c = $0 }
             continuation = c
         }
-        func connect(host: String, port: UInt16, resume: UUID, lastReceivedSeq: Int64, handshakeTimeout: Duration) async throws {
-            if released { _sessionID = UUID(); return }
+
+        func connect(
+            host _: String,
+            port _: UInt16,
+            resume _: UUID,
+            lastReceivedSeq _: Int64,
+            handshakeTimeout _: Duration,
+        ) async throws {
+            if released { _sessionID = UUID()
+                return
+            }
             try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
                 self.gate = c
                 onStarted()
             }
             _sessionID = UUID()
         }
-        func release() { released = true; if let c = gate { gate = nil; c.resume() } }
-        func sendInput(_ bytes: Data) async throws {}
-        func sendResize(cols: UInt16, rows: UInt16, pxWidth: UInt16, pxHeight: UInt16) async throws {}
-        func sendAck(seq: Int64) async throws {}
-        func sendBye() async throws {}
-        func close() async { continuation.finish() }
+
+        func release() { released = true
+            if let c = gate { gate = nil
+                c.resume()
+            }
+        }
+
+        func sendInput(_: Data) {}
+        func sendResize(cols _: UInt16, rows _: UInt16, pxWidth _: UInt16, pxHeight _: UInt16) {}
+        func sendAck(seq _: Int64) {}
+        func sendBye() {}
+        func close() { continuation.finish() }
     }
 
     private final class GateRecorder: @unchecked Sendable {
@@ -92,16 +112,30 @@ final class ConnectionViewModelSupersedeTests: XCTestCase {
         func makeTransport() -> GatedTransport {
             let t = GatedTransport(onStarted: { [weak self] in
                 guard let self else { return }
-                self.lock.lock(); self.startedCount += 1; self.lock.unlock()
+                lock.lock()
+                startedCount += 1
+                lock.unlock()
             })
-            lock.lock(); transports.append(t); lock.unlock()
+            lock.lock()
+            transports.append(t)
+            lock.unlock()
             return t
         }
-        private func started() -> Int { lock.lock(); defer { lock.unlock() }; return startedCount }
-        private func snapshot() -> [GatedTransport] { lock.lock(); defer { lock.unlock() }; return transports }
+
+        private func started() -> Int { lock.lock()
+            defer { lock.unlock() }
+            return startedCount
+        }
+
+        private func snapshot() -> [GatedTransport] { lock.lock()
+            defer { lock.unlock() }
+            return transports
+        }
+
         func waitForStarted(_ n: Int) async {
             while started() < n { try? await Task.sleep(for: .milliseconds(2)) }
         }
+
         func releaseAll() async { for t in snapshot() { await t.release() } }
     }
 }

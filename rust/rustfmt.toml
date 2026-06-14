@@ -1,0 +1,16 @@
+# rustfmt — canonical formatting for the portable Rust core.
+#
+# STABLE channel only (rust-toolchain.toml pins `stable`): every option below is
+# stabilised, so `cargo fmt` runs clean with no "unstable option" warnings. The
+# richer niceties (imports_granularity, group_imports, wrap_comments,
+# format_code_in_doc_comments, error_on_line_overflow) are nightly-only — run
+# `make fmt-rust-nightly` to apply those opportunistically; they are NOT required
+# for `cargo fmt --check` to pass on the pinned stable toolchain.
+edition = "2021"
+max_width = 100
+newline_style = "Unix"
+use_field_init_shorthand = true
+use_try_shorthand = true
+reorder_imports = true
+reorder_modules = true
+merge_derives = true

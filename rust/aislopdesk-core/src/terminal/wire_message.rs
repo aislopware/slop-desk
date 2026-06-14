@@ -137,7 +137,7 @@ pub enum WireMessage {
 impl WireMessage {
     /// The on-wire message-type byte for this case.
     #[must_use]
-    pub fn message_type(&self) -> u8 {
+    pub const fn message_type(&self) -> u8 {
         match self {
             Self::Output { .. } => 1,
             Self::Exit { .. } => 2,
@@ -158,7 +158,7 @@ impl WireMessage {
 
     /// The channel this message is expected to travel on (advisory; see [`Channel`]).
     #[must_use]
-    pub fn channel(&self) -> Channel {
+    pub const fn channel(&self) -> Channel {
         match self {
             Self::Output { .. } | Self::Exit { .. } | Self::Input(_) => Channel::Data,
             Self::Hello { .. }
@@ -297,7 +297,7 @@ impl WireMessage {
     /// requires, [`TerminalProtocolError::UnknownMessageType`] for an unrecognized type
     /// byte, or [`TerminalProtocolError::MalformedBody`] for a right-length-but-invalid
     /// body (e.g. bad UTF-8).
-    pub fn decode(payload: &[u8]) -> Result<WireMessage> {
+    pub fn decode(payload: &[u8]) -> Result<Self> {
         let mut reader = BigEndianReader::new(payload);
         let type_byte = reader.read_u8()?;
 
@@ -391,7 +391,9 @@ impl WireMessage {
 }
 
 /// A notification title whose UTF-8 fits the wire's `u16` length field (≤ 65535 bytes),
-/// clamped at a `char` boundary so it stays valid UTF-8. Identity for any sane title (the
+/// clamped at a `char` boundary so it stays valid UTF-8.
+///
+/// Identity for any sane title (the
 /// only producer caps the OSC at 1 KiB); only an absurd >64 KiB title is shortened —
 /// preventing the length field from wrapping and corrupting the body.
 ///

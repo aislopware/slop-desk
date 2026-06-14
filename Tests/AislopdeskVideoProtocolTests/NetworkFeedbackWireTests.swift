@@ -5,11 +5,11 @@ import XCTest
 /// `hostSendTsMillis` the host stamps on every video fragment. Pure (no transport, no
 /// VideoToolbox). A malformed/short datagram must DROP (throw), never crash.
 final class NetworkFeedbackWireTests: XCTestCase {
-
     private func makeFragment(ts: UInt32, payload: Data) -> FrameFragment {
         let header = FrameFragmentHeader(
             streamSeq: 0x0102_0304, frameID: 0x0506_0708, fragIndex: 7, fragCount: 9,
-            flags: [.keyframe, .crisp], payloadLength: UInt16(payload.count), hostSendTsMillis: ts)
+            flags: [.keyframe, .crisp], payloadLength: UInt16(payload.count), hostSendTsMillis: ts,
+        )
         return FrameFragment(header: header, payload: payload)
     }
 
@@ -52,11 +52,11 @@ final class NetworkFeedbackWireTests: XCTestCase {
     /// The packetizer stamps the SAME ts on every fragment (data + parity) of one frame.
     func testPacketizerStampsAllFragments() {
         var packetizer = VideoPacketizer(fec: XORParityFEC())
-        let frame = Data((0 ..< (VideoPacketizer.maxPayloadSize * 2 + 10)).map { UInt8(truncatingIfNeeded: $0) })
-        let fragments = packetizer.packetize(frame: frame, keyframe: true, crisp: false, hostSendTsMillis: 424242)
+        let frame = Data((0..<(VideoPacketizer.maxPayloadSize * 2 + 10)).map { UInt8(truncatingIfNeeded: $0) })
+        let fragments = packetizer.packetize(frame: frame, keyframe: true, crisp: false, hostSendTsMillis: 424_242)
         XCTAssertGreaterThan(fragments.count, 1, "multi-fragment frame (incl. parity)")
         for fragment in fragments {
-            XCTAssertEqual(fragment.header.hostSendTsMillis, 424242)
+            XCTAssertEqual(fragment.header.hostSendTsMillis, 424_242)
         }
     }
 
@@ -70,13 +70,13 @@ final class NetworkFeedbackWireTests: XCTestCase {
     // MARK: recoveredViaFEC (the fecRecovered telemetry numerator)
 
     /// A frame that arrives WHOLE (no hole) is not FEC-recovered.
-    func testWholeFrameNotMarkedFECRecovered() throws {
+    func testWholeFrameNotMarkedFECRecovered() {
         var packetizer = VideoPacketizer(fec: XORParityFEC())
         let fragments = packetizer.packetize(frame: Data([1, 2, 3, 4]), keyframe: true)
         var reassembler = FrameReassembler(fec: XORParityFEC())
         var completed: ReassembledFrame?
         for fragment in fragments {
-            if case .completed(let f) = reassembler.ingest(fragment) { completed = f }
+            if case let .completed(f) = reassembler.ingest(fragment) { completed = f }
         }
         XCTAssertNotNil(completed)
         XCTAssertFalse(completed?.recoveredViaFEC ?? true, "a frame received whole was not FEC-recovered")
@@ -84,10 +84,11 @@ final class NetworkFeedbackWireTests: XCTestCase {
 
     /// A single-data-loss frame completed by its parity is marked `recoveredViaFEC` (drives the
     /// client's windowed `fecRecovered` counter).
-    func testFECRecoveredFrameIsMarked() throws {
+    func testFECRecoveredFrameIsMarked() {
         let fec = XORParityFEC(groupSize: 5)
         var packetizer = VideoPacketizer(fec: fec)
-        let frameBytes = NALUnit.join([Data((0 ..< (VideoPacketizer.maxPayloadSize * 2 + 100)).map { UInt8(truncatingIfNeeded: $0) })])
+        let frameBytes = NALUnit
+            .join([Data((0..<(VideoPacketizer.maxPayloadSize * 2 + 100)).map { UInt8(truncatingIfNeeded: $0) })])
         let fragments = packetizer.packetize(frame: frameBytes, keyframe: true)
         let data = fragments.filter { !$0.header.flags.contains(.parity) }
         let parity = fragments.filter { $0.header.flags.contains(.parity) }
@@ -98,10 +99,10 @@ final class NetworkFeedbackWireTests: XCTestCase {
         var completed: ReassembledFrame?
         // Drop the FIRST data fragment, deliver the rest + the parity → XOR recovers the hole.
         for fragment in data.dropFirst() {
-            if case .completed(let f) = reassembler.ingest(fragment) { completed = f }
+            if case let .completed(f) = reassembler.ingest(fragment) { completed = f }
         }
         for fragment in parity {
-            if case .completed(let f) = reassembler.ingest(fragment) { completed = f }
+            if case let .completed(f) = reassembler.ingest(fragment) { completed = f }
         }
         XCTAssertNotNil(completed)
         XCTAssertEqual(completed?.avcc, frameBytes, "recovered bytes match the original exactly")

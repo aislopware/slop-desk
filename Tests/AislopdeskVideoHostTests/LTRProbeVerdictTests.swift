@@ -7,7 +7,6 @@ import XCTest
 /// ONLY the pure `interpretLTRProbe` status→verdict logic that turns the captured OSStatus values
 /// into the single-word verdict logged on the Mac Studio host.
 final class LTRProbeVerdictTests: XCTestCase {
-
     // EnableLTR never reached (session-create or pixel-buffer alloc failed first) → unknown (re-run).
     func testEnableNotReachedIsUnknown() {
         XCTAssertEqual(VideoEncoder.interpretLTRProbe(enableStatus: nil), .unknown)
@@ -24,7 +23,8 @@ final class LTRProbeVerdictTests: XCTestCase {
     func testKeyframeEncodeFailureIsUnsupported() {
         XCTAssertEqual(
             VideoEncoder.interpretLTRProbe(enableStatus: noErr, keyframeEncodeStatus: -12909),
-            .unsupported)
+            .unsupported,
+        )
     }
 
     // EnableLTR + the documented kCFBooleanTrue ForceLTRRefresh form took AND a real LTR frame carried
@@ -33,8 +33,10 @@ final class LTRProbeVerdictTests: XCTestCase {
         XCTAssertEqual(
             VideoEncoder.interpretLTRProbe(
                 enableStatus: noErr, keyframeEncodeStatus: noErr,
-                forceLTRBooleanStatus: noErr, sawAckToken: true),
-            .supported)
+                forceLTRBooleanStatus: noErr, sawAckToken: true,
+            ),
+            .supported,
+        )
     }
 
     // API accepted the documented form but NO LTR ack-token was emitted → ambiguous, NOT supported.
@@ -43,8 +45,10 @@ final class LTRProbeVerdictTests: XCTestCase {
         XCTAssertEqual(
             VideoEncoder.interpretLTRProbe(
                 enableStatus: noErr, keyframeEncodeStatus: noErr,
-                forceLTRBooleanStatus: noErr, sawAckToken: false),
-            .ambiguous)
+                forceLTRBooleanStatus: noErr, sawAckToken: false,
+            ),
+            .ambiguous,
+        )
     }
 
     // Boolean form rejected but the CFNumber retry took → ambiguous (non-documented form), regardless
@@ -53,8 +57,10 @@ final class LTRProbeVerdictTests: XCTestCase {
         XCTAssertEqual(
             VideoEncoder.interpretLTRProbe(
                 enableStatus: noErr, keyframeEncodeStatus: noErr,
-                forceLTRBooleanStatus: -12902, forceLTRNumberStatus: noErr, sawAckToken: true),
-            .ambiguous)
+                forceLTRBooleanStatus: -12902, forceLTRNumberStatus: noErr, sawAckToken: true,
+            ),
+            .ambiguous,
+        )
     }
 
     // Both ForceLTRRefresh forms rejected → unsupported (keep the compact-IDR fallback).
@@ -62,8 +68,10 @@ final class LTRProbeVerdictTests: XCTestCase {
         XCTAssertEqual(
             VideoEncoder.interpretLTRProbe(
                 enableStatus: noErr, keyframeEncodeStatus: noErr,
-                forceLTRBooleanStatus: -12902, forceLTRNumberStatus: -12902),
-            .unsupported)
+                forceLTRBooleanStatus: -12902, forceLTRNumberStatus: -12902,
+            ),
+            .unsupported,
+        )
     }
 
     // Boolean form rejected and the CFNumber retry was NOT attempted (nil) → unsupported.
@@ -71,8 +79,10 @@ final class LTRProbeVerdictTests: XCTestCase {
         XCTAssertEqual(
             VideoEncoder.interpretLTRProbe(
                 enableStatus: noErr, keyframeEncodeStatus: noErr,
-                forceLTRBooleanStatus: -12902, forceLTRNumberStatus: nil),
-            .unsupported)
+                forceLTRBooleanStatus: -12902, forceLTRNumberStatus: nil,
+            ),
+            .unsupported,
+        )
     }
 
     // Defaults: a bare `enableStatus: noErr` (later statuses default to noErr, sawAckToken defaults

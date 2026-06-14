@@ -20,7 +20,7 @@ public final class FloatingCursorController {
     public var onArrows: (([UInt8]) -> Void)?
 
     public init(threshold: Double = 5.0) {
-        self.mapping = FloatingCursorMapping(threshold: threshold)
+        mapping = FloatingCursorMapping(threshold: threshold)
     }
 
     /// Begin a floating-cursor gesture at `point`.
@@ -32,7 +32,9 @@ public final class FloatingCursorController {
     /// Update with the latest floating-cursor `point`; emits arrow bytes for any whole 5pt
     /// horizontal steps crossed since the last update.
     public func update(at point: CGPoint) {
-        guard let last = lastPoint else { begin(at: point); return }
+        guard let last = lastPoint else { begin(at: point)
+            return
+        }
         let deltaX = Double(point.x - last.x)
         lastPoint = point
         let arrows = mapping.feed(deltaX: deltaX)

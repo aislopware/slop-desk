@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins the load-bearing **reconcile** contract of ``WorkspaceStore`` (docs/22 §2.3, §8): the diff
@@ -31,7 +31,6 @@ import CoreGraphics
 /// (the teardown fan-out is awaited via `quiesce()`); everything else is synchronous.
 @MainActor
 final class WorkspaceStoreReconcileTests: XCTestCase {
-
     // MARK: - Fixtures
 
     /// Builds a store with the ``FakePaneSession`` seam (NEVER a real client/host). `restoring` lets a
@@ -40,7 +39,7 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         WorkspaceStore(
             restoring: restoring,
             makeSession: { FakePaneSession($0) },
-            liveVideoCap: liveVideoCap
+            liveVideoCap: liveVideoCap,
         )
     }
 
@@ -53,7 +52,7 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
     /// The set of ids the registry currently holds, surfaced via the only public registry windows
     /// (`allSessions` — order unspecified, hence a Set).
     private func registryIDs(_ store: WorkspaceStore) -> Set<PaneID> {
-        Set(store.allSessions.map { $0.id })
+        Set(store.allSessions.map(\.id))
     }
 
     /// The fake handle for `id` (downcast for the recorded-lifecycle accessors), or `nil`.
@@ -67,11 +66,17 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         _ store: WorkspaceStore,
         _ message: String = "",
         file: StaticString = #filePath,
-        line: UInt = #line
+        line: UInt = #line,
     ) {
         let panes = Set(paneIDs(store))
         XCTAssertEqual(registryIDs(store), panes, "registry.keys != canvas.allIDs() \(message)", file: file, line: line)
-        XCTAssertEqual(store.allSessions.count, panes.count, "registry has duplicate/extra handles \(message)", file: file, line: line)
+        XCTAssertEqual(
+            store.allSessions.count,
+            panes.count,
+            "registry has duplicate/extra handles \(message)",
+            file: file,
+            line: line,
+        )
         for id in panes {
             let handle = store.handle(for: id)
             XCTAssertNotNil(handle, "no handle for pane \(id) \(message)", file: file, line: line)
@@ -93,7 +98,11 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         XCTAssertEqual(handle?.kind, .terminal, "the materialized session mirrors the pane spec kind")
         XCTAssertEqual(handle?.id, pane, "init adopted the pane id")
         // adopt() is the first thing reconcile does to a fresh handle → first recorded event.
-        XCTAssertEqual(handle?.events.first, .adopt(pane), "reconcile re-points identity via adopt(id:) at materialization")
+        XCTAssertEqual(
+            handle?.events.first,
+            .adopt(pane),
+            "reconcile re-points identity via adopt(id:) at materialization",
+        )
     }
 
     /// Restoring a multi-pane canvas materializes EVERY pane at init (shape + intent only —
@@ -102,10 +111,12 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         // Three panes on one canvas: two terminals and a claudeCode.
         let a0 = PaneID(), a1 = PaneID(), b0 = PaneID()
         let restored = Workspace.make(
-            panes: [(a0, PaneSpec(kind: .terminal, title: "a0")),
-                    (a1, PaneSpec(kind: .terminal, title: "a1")),
-                    (b0, PaneSpec(kind: .claudeCode, title: "b0"))],
-            focused: a0
+            panes: [
+                (a0, PaneSpec(kind: .terminal, title: "a0")),
+                (a1, PaneSpec(kind: .terminal, title: "a1")),
+                (b0, PaneSpec(kind: .claudeCode, title: "b0")),
+            ],
+            focused: a0,
         )
 
         let store = makeStore(restoring: restored)
@@ -139,7 +150,7 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
 
     /// addPane preserves the existing pane's identity (no churn), focuses the new pane, and tears down
     /// nothing.
-    func testSplitMaterializesExactlyOneNewLeafAndKeepsOriginal() async {
+    func testSplitMaterializesExactlyOneNewLeafAndKeepsOriginal() async throws {
         let store = makeStore()
         let original = paneIDs(store)[0]
         let originalHandle = fake(store, original)
@@ -156,8 +167,12 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         // Exactly one new key, focused, and never torn down.
         let newPane = panes.first { $0 != original }
         XCTAssertNotNil(newPane, "a new pane id appeared")
-        XCTAssertEqual(fake(store, newPane!)?.events.first, .adopt(newPane!), "new handle adopted the new pane id")
-        XCTAssertTrue(store.isFocused(newPane!), "addPane() focuses the new pane")
+        XCTAssertEqual(
+            try fake(store, XCTUnwrap(newPane))?.events.first,
+            try .adopt(XCTUnwrap(newPane)),
+            "new handle adopted the new pane id",
+        )
+        XCTAssertTrue(try store.isFocused(XCTUnwrap(newPane)), "addPane() focuses the new pane")
 
         await store.quiesce()
         XCTAssertEqual(originalHandle?.teardownCount, 0, "the surviving original pane is never torn down by an addPane")
@@ -165,13 +180,13 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
 
     /// Two successive addPanes grow the canvas to three panes: the registry tracks all three and only
     /// ever materializes the two genuinely-new ones.
-    func testRepeatedSameAxisSplitMaterializesEachNewLeafOnce() async {
+    func testRepeatedSameAxisSplitMaterializesEachNewLeafOnce() async throws {
         let store = makeStore()
         let l0 = paneIDs(store)[0]
 
         store.addPane(kind: .terminal)
         let afterFirst = Set(paneIDs(store))
-        let l1 = afterFirst.subtracting([l0]).first!
+        let l1 = try XCTUnwrap(afterFirst.subtracting([l0]).first)
         assertInvariant(store, "after first addPane")
 
         store.addPane(kind: .terminal)
@@ -183,22 +198,26 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         await store.quiesce()
         XCTAssertEqual(fake(store, l0)?.teardownCount, 0)
         XCTAssertEqual(fake(store, l1)?.teardownCount, 0)
-        let l2 = Set(afterSecond).subtracting([l0, l1]).first!
-        XCTAssertEqual(fake(store, l2)?.events.first, .adopt(l2), "only the genuinely-new pane is materialized + adopted")
+        let l2 = try XCTUnwrap(Set(afterSecond).subtracting([l0, l1]).first)
+        XCTAssertEqual(
+            fake(store, l2)?.events.first,
+            .adopt(l2),
+            "only the genuinely-new pane is materialized + adopted",
+        )
     }
 
     // MARK: - closePane tears down the orphan EXACTLY ONCE and removes it
 
     /// Closing a non-last pane removes its key from the registry SYNCHRONOUSLY (the invariant holds on
     /// return), and after `quiesce()` the orphan's `teardown()` has run EXACTLY ONCE.
-    func testClosePaneRemovesKeySynchronouslyAndTearsDownExactlyOnce() async {
+    func testClosePaneRemovesKeySynchronouslyAndTearsDownExactlyOnce() async throws {
         let store = makeStore()
         let original = paneIDs(store)[0]
         store.addPane(kind: .terminal)
         let panes = paneIDs(store)
-        let victim = panes.first { $0 != original }!
+        let victim = try XCTUnwrap(panes.first { $0 != original })
         let survivor = original
-        let victimHandle = fake(store, victim)!
+        let victimHandle = try XCTUnwrap(fake(store, victim))
 
         store.closePane(victim)
 
@@ -219,10 +238,10 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
 
     /// Closing the LAST pane of the canvas empties the workspace: the registry drains to empty and
     /// that one session is torn down once.
-    func testCloseLastLeafEmptiesRegistry() async {
+    func testCloseLastLeafEmptiesRegistry() async throws {
         let store = makeStore()
         let only = paneIDs(store)[0]
-        let onlyHandle = fake(store, only)!
+        let onlyHandle = try XCTUnwrap(fake(store, only))
 
         store.closePane(only)
 
@@ -238,19 +257,21 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
     // MARK: - closing multiple panes tears down each session once
 
     /// Closing several panes in turn tears down EACH session exactly once, leaving the survivor intact.
-    func testCloseTabTearsDownAllItsSessions() async {
+    func testCloseTabTearsDownAllItsSessions() async throws {
         // Three panes on one canvas; close two and keep one.
         let a0 = PaneID(), a1 = PaneID(), b0 = PaneID()
         let store = makeStore(restoring: Workspace.make(
-            panes: [(a0, PaneSpec(kind: .terminal, title: "a0")),
-                    (a1, PaneSpec(kind: .terminal, title: "a1")),
-                    (b0, PaneSpec(kind: .terminal, title: "b0"))],
-            focused: a0
+            panes: [
+                (a0, PaneSpec(kind: .terminal, title: "a0")),
+                (a1, PaneSpec(kind: .terminal, title: "a1")),
+                (b0, PaneSpec(kind: .terminal, title: "b0")),
+            ],
+            focused: a0,
         ))
 
-        let a0Handle = fake(store, a0)!
-        let a1Handle = fake(store, a1)!
-        let b0Handle = fake(store, b0)!
+        let a0Handle = try XCTUnwrap(fake(store, a0))
+        let a1Handle = try XCTUnwrap(fake(store, a1))
+        let b0Handle = try XCTUnwrap(fake(store, b0))
 
         store.closePane(a0)
         store.closePane(a1)
@@ -272,7 +293,7 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
 
     /// `addPane(inGroup:)` adds a fresh pane inside an existing group and materializes its session —
     /// exactly one new key, the rest of the registry unchanged, and the new pane is a group member.
-    func testAddTabMaterializesItsLeaf() {
+    func testAddTabMaterializesItsLeaf() throws {
         let store = makeStore()
         let before = registryIDs(store)
         let group = store.addGroup(name: "Work")
@@ -285,11 +306,13 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         XCTAssertTrue(before.isSubset(of: after), "existing sessions are untouched")
         assertInvariant(store, "after addPane(inGroup:)")
 
-        let newPane = after.subtracting(before).first!
+        let newPane = try XCTUnwrap(after.subtracting(before).first)
         XCTAssertEqual(fake(store, newPane)?.kind, .claudeCode, "new pane materialized with its kind")
         XCTAssertEqual(store.workspace.group(ofPane: newPane)?.id, group, "the new pane joined the group")
-        XCTAssertTrue(store.workspace.canvas.ids(inGroup: group).contains(newPane),
-                      "the canvas tags the new pane with the group")
+        XCTAssertTrue(
+            store.workspace.canvas.ids(inGroup: group).contains(newPane),
+            "the canvas tags the new pane with the group",
+        )
     }
 
     // MARK: - Group arithmetic is pure metadata — registry untouched (add/rename/remove/assign/move)
@@ -352,10 +375,12 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         let g1 = PaneID(), g2 = PaneID()
         let group = PaneGroup(name: "Cluster")
         let store = makeStore(restoring: Workspace.make(
-            panes: [(g1, PaneSpec(kind: .terminal, title: "g1")),
-                    (g2, PaneSpec(kind: .terminal, title: "g2"))],
+            panes: [
+                (g1, PaneSpec(kind: .terminal, title: "g1")),
+                (g2, PaneSpec(kind: .terminal, title: "g2")),
+            ],
             focused: g1,
-            groups: [group]
+            groups: [group],
         ))
         store.assignPane(g1, toGroup: group.id)
         store.assignPane(g2, toGroup: group.id)
@@ -363,8 +388,11 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
 
         store.centerOnGroup(group.id)
 
-        XCTAssertEqual(Set(store.allSessions.map { ObjectIdentifier($0) }), Set(before),
-                       "centerOnGroup is a camera pan — registry untouched")
+        XCTAssertEqual(
+            Set(store.allSessions.map { ObjectIdentifier($0) }),
+            Set(before),
+            "centerOnGroup is a camera pan — registry untouched",
+        )
         assertInvariant(store, "after centerOnGroup")
     }
 
@@ -412,8 +440,10 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         let handleBefore = store.handle(for: panes[0]) as AnyObject
         store.updateSpec(panes[0]) { $0.title = "renamed" }
         assertInvariant(store, "updateSpec")
-        XCTAssertTrue(handleBefore === (store.handle(for: panes[0]) as AnyObject),
-                      "updateSpec does NOT rebuild the live session under the user")
+        XCTAssertTrue(
+            handleBefore === (store.handle(for: panes[0]) as AnyObject),
+            "updateSpec does NOT rebuild the live session under the user",
+        )
 
         // moveGroup (reorder — pane set unchanged)
         store.moveGroup(from: IndexSet(integer: 0), to: 0)
@@ -453,21 +483,29 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         store.assignPane(pane, toGroup: group) // already in this group → no-op-shaped
 
         let after = store.allSessions.map { ObjectIdentifier($0) }
-        XCTAssertEqual(Set(before), Set(after), "re-assigning to the same group materializes nothing new and tears nothing down")
+        XCTAssertEqual(
+            Set(before),
+            Set(after),
+            "re-assigning to the same group materializes nothing new and tears nothing down",
+        )
         XCTAssertEqual(store.allSessions.count, before.count)
         assertInvariant(store, "after re-assigning to the same group")
 
         await store.quiesce()
         for handle in store.allSessions {
-            XCTAssertEqual((handle as? FakePaneSession)?.teardownCount, 0, "no spurious teardown on a no-op-shaped mutation")
+            XCTAssertEqual(
+                (handle as? FakePaneSession)?.teardownCount,
+                0,
+                "no spurious teardown on a no-op-shaped mutation",
+            )
         }
     }
 
     /// Focusing the already-focused pane is likewise a no-op for the registry: the pane set is
     /// unchanged, so reconcile materializes nothing and tears nothing down.
-    func testFocusingAlreadyFocusedPaneDoesNotChangeRegistry() async {
+    func testFocusingAlreadyFocusedPaneDoesNotChangeRegistry() async throws {
         let store = makeStore()
-        let focused = store.focusedPane!
+        let focused = try XCTUnwrap(store.focusedPane)
         let handleBefore = store.handle(for: focused) as AnyObject
 
         store.focus(focused) // already focused → no-op-shaped
@@ -496,11 +534,15 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         XCTAssertFalse(WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, width: 1200), "wide → regular")
         // The breakpoint is a DETAIL-area width: the macOS minimum window's detail (~500pt with the
         // ideal sidebar) must resolve REGULAR, not compact — the threshold (460) sits below it.
-        XCTAssertFalse(WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, width: 500),
-                       "macOS min-window detail (~500pt) → regular")
+        XCTAssertFalse(
+            WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, width: 500),
+            "macOS min-window detail (~500pt) → regular",
+        )
         // The size-class path is unchanged: an iPhone-class detail is compact regardless of width.
-        XCTAssertTrue(WorkspaceLayout.isCompact(horizontalSizeClassCompact: true, width: 500),
-                      "size-class compact → compact even at 500pt")
+        XCTAssertTrue(
+            WorkspaceLayout.isCompact(horizontalSizeClassCompact: true, width: 500),
+            "size-class compact → compact even at 500pt",
+        )
 
         // A regular-mode solved layout, then a compact-mode (empty-frames) one — the view→store report.
         let panes = paneIDs(store)
@@ -508,17 +550,24 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
             frames: [
                 panes[0]: CGRect(x: 0, y: 0, width: 600, height: 400),
                 panes[1]: CGRect(x: 600, y: 0, width: 600, height: 400),
-            ]
+            ],
         )
         store.updateSolvedLayout(regular)
         assertInvariant(store, "after reporting regular layout")
-        XCTAssertEqual(Set(store.allSessions.map { ObjectIdentifier($0) }), Set(before), "regular layout report changed no sessions")
+        XCTAssertEqual(
+            Set(store.allSessions.map { ObjectIdentifier($0) }),
+            Set(before),
+            "regular layout report changed no sessions",
+        )
 
         let compact = SolvedLayout.empty // compact carousel solves no multi-pane rects
         store.updateSolvedLayout(compact)
         assertInvariant(store, "after reporting compact layout")
-        XCTAssertEqual(Set(store.allSessions.map { ObjectIdentifier($0) }), Set(before),
-                       "a compact↔regular projection flip is view-only — registry untouched")
+        XCTAssertEqual(
+            Set(store.allSessions.map { ObjectIdentifier($0) }),
+            Set(before),
+            "a compact↔regular projection flip is view-only — registry untouched",
+        )
 
         await store.quiesce()
         for handle in store.allSessions {
@@ -533,11 +582,13 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
     func testClosingMultiLeafTabTearsDownEachOrphanExactlyOnce() async {
         let a0 = PaneID(), a1 = PaneID(), a2 = PaneID(), b0 = PaneID()
         let store = makeStore(restoring: Workspace.make(
-            panes: [(a0, PaneSpec(kind: .terminal, title: "a0")),
-                    (a1, PaneSpec(kind: .terminal, title: "a1")),
-                    (a2, PaneSpec(kind: .terminal, title: "a2")),
-                    (b0, PaneSpec(kind: .terminal, title: "b0"))],
-            focused: a0
+            panes: [
+                (a0, PaneSpec(kind: .terminal, title: "a0")),
+                (a1, PaneSpec(kind: .terminal, title: "a1")),
+                (a2, PaneSpec(kind: .terminal, title: "a2")),
+                (b0, PaneSpec(kind: .terminal, title: "b0")),
+            ],
+            focused: a0,
         ))
 
         let handles = [a0, a1, a2].map { fake(store, $0)! }
@@ -549,8 +600,11 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         await store.quiesce()
         for (i, handle) in handles.enumerated() {
             XCTAssertEqual(handle.teardownCount, 1, "orphan a\(i) torn down exactly once")
-            XCTAssertEqual(handle.events, [.adopt(handle.id), .teardown],
-                           "orphan a\(i) recorded only adopt-then-teardown (no spurious lifecycle calls)")
+            XCTAssertEqual(
+                handle.events,
+                [.adopt(handle.id), .teardown],
+                "orphan a\(i) recorded only adopt-then-teardown (no spurious lifecycle calls)",
+            )
         }
         XCTAssertEqual(fake(store, b0)?.teardownCount, 0, "the survivor was never torn down")
     }
@@ -562,7 +616,7 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
     /// SYNCHRONOUSLY (the invariant `registry.keys == canvas.allIDs()` holds the instant `closePane`
     /// returns) even while its teardown — and hence its in-flight cap slot — is still parked. The cap
     /// accounting must never leak into or perturb the registry/pane-set invariant.
-    func testInFlightVideoAccountingDoesNotPerturbRegistryInvariant() async {
+    func testInFlightVideoAccountingDoesNotPerturbRegistryInvariant() async throws {
         // A single remoteGUI canvas grown to two panes.
         let rootID = PaneID()
         let spec = PaneSpec(kind: .remoteGUI, title: "Remote window")
@@ -574,7 +628,7 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
 
         // Park the close-victim's teardown so its in-flight cap slot is held across the assertions.
         let gate = FakeTeardownGate()
-        fake(store, ids[0])!.teardownGate = gate
+        fake(store, ids[0])?.teardownGate = gate
         XCTAssertTrue(store.activateVideo(ids[0]), "ids[0] holds a live video stack")
 
         store.closePane(ids[0])
@@ -588,7 +642,7 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         gate.release()
         await store.quiesce()
         assertInvariant(store, "registry invariant holds after the in-flight teardown completes")
-        XCTAssertEqual(fake(store, ids[1])!.teardownCount, 0, "the survivor was never torn down")
+        XCTAssertEqual(try XCTUnwrap(fake(store, ids[1])?.teardownCount), 0, "the survivor was never torn down")
     }
 
     // MARK: - quiesce awaits a teardown task spawned DURING its own drain (BUG-J)
@@ -599,19 +653,21 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
     /// task), then — while it is suspended — close a SECOND pane (spawning a new teardown task), release
     /// the gate, and confirm BOTH teardowns completed once `quiesce()` returns. A single-snapshot drain
     /// would have dropped the second task.
-    func testQuiesceAwaitsTeardownSpawnedDuringDrain() async {
+    func testQuiesceAwaitsTeardownSpawnedDuringDrain() async throws {
         // Three terminal panes on one canvas so we can close two of them independently and keep a survivor.
         let a0 = PaneID(), a1 = PaneID(), a2 = PaneID()
         let store = makeStore(restoring: Workspace.make(
-            panes: [(a0, PaneSpec(kind: .terminal, title: "a0")),
-                    (a1, PaneSpec(kind: .terminal, title: "a1")),
-                    (a2, PaneSpec(kind: .terminal, title: "a2"))],
-            focused: a0
+            panes: [
+                (a0, PaneSpec(kind: .terminal, title: "a0")),
+                (a1, PaneSpec(kind: .terminal, title: "a1")),
+                (a2, PaneSpec(kind: .terminal, title: "a2")),
+            ],
+            focused: a0,
         ))
         let gate0 = FakeTeardownGate()
-        let h0 = fake(store, a0)!
-        let h1 = fake(store, a1)!
-        h0.teardownGate = gate0    // the first close's teardown will park here
+        let h0 = try XCTUnwrap(fake(store, a0))
+        let h1 = try XCTUnwrap(fake(store, a1))
+        h0.teardownGate = gate0 // the first close's teardown will park here
 
         // First close → spawns teardown task #1, which parks on gate0.
         store.closePane(a0)
@@ -637,8 +693,11 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         await quiesced.value
 
         XCTAssertEqual(h0.teardownCount, 1, "the gated first teardown ran exactly once")
-        XCTAssertEqual(h1.teardownCount, 1,
-                       "the teardown spawned DURING quiesce's drain was still awaited (BUG-J fixpoint loop)")
+        XCTAssertEqual(
+            h1.teardownCount,
+            1,
+            "the teardown spawned DURING quiesce's drain was still awaited (BUG-J fixpoint loop)",
+        )
         // After the fixpoint loop, nothing is pending: a second quiesce is a no-op.
         await store.quiesce()
         XCTAssertEqual(h0.teardownCount, 1)
@@ -652,7 +711,7 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
     /// the `waitUntil` used by `ScenePhaseFanOutTests` / the connection tests.
     private func waitUntil(
         timeout: Duration = .seconds(5),
-        _ predicate: @MainActor () -> Bool
+        _ predicate: @MainActor () -> Bool,
     ) async -> Bool {
         let start = ContinuousClock.now
         while ContinuousClock.now - start < timeout {

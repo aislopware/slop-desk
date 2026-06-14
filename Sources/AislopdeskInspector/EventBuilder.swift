@@ -27,7 +27,7 @@ public struct EventBuilder {
     /// Cap on each held-out-of-order ``pendingResults`` map. A `tool_result` whose
     /// `tool_use` never arrives (truncated/corrupt transcript, or an adversarial feed of
     /// orphan results) would otherwise be retained forever; we evict oldest past the cap.
-    static let pendingResultCap = 4_096
+    static let pendingResultCap = 4096
 
     /// Cap on the number of distinct SUBAGENT ids retained (R17 INSP-LEAK-1, the host analogue of the
     /// client's R13 #4 ``InspectorViewModel`` agent cap). The per-subagent maps below (`subagents`,
@@ -36,8 +36,8 @@ public struct EventBuilder {
     /// transcript declaring many distinct subagent ids) grew them for the host's whole lifetime. Once
     /// past ``maxAgents`` the oldest agents are dropped to ``agentRetainTarget`` in one batch, removing
     /// all of their per-agent state together.
-    static let maxAgents = 2_000
-    static let agentRetainTarget = 1_500
+    static let maxAgents = 2000
+    static let agentRetainTarget = 1500
 
     /// Dedup keys already processed (doc 16 `processedMessageKeys`). Keyed by line
     /// uuid (main) or `sidechain:<agentID>:<uuid>` so a re-read tail never double-emits.
@@ -85,15 +85,15 @@ public struct EventBuilder {
     public mutating func ingest(line: TranscriptLine) -> [InspectorEvent] {
         switch line {
         case let .user(user):
-            return ingestUser(user, agentID: nil)
+            ingestUser(user, agentID: nil)
         case let .assistant(assistant):
-            return ingestAssistant(assistant, agentID: nil)
+            ingestAssistant(assistant, agentID: nil)
         case let .meta(meta):
-            return ingestMeta(meta)
+            ingestMeta(meta)
         case .ignored:
-            return []
+            []
         case let .unknown(raw):
-            return [.unknownLine(raw: raw)]
+            [.unknownLine(raw: raw)]
         }
     }
 
@@ -102,13 +102,14 @@ public struct EventBuilder {
     public mutating func ingestSubagent(line: TranscriptLine, agentID: String) -> [InspectorEvent] {
         switch line {
         case let .user(user):
-            return ingestUser(user, agentID: agentID)
+            ingestUser(user, agentID: agentID)
         case let .assistant(assistant):
-            return ingestAssistant(assistant, agentID: agentID)
-        case .meta, .ignored:
-            return []
+            ingestAssistant(assistant, agentID: agentID)
+        case .meta,
+             .ignored:
+            []
         case let .unknown(raw):
-            return [.unknownLine(raw: raw)]
+            [.unknownLine(raw: raw)]
         }
     }
 
@@ -202,7 +203,7 @@ public struct EventBuilder {
             events.append(.thinking(ThinkingMarker(
                 isPlaceholder: thinking.isPlaceholder,
                 signature: thinking.signature,
-                text: thinking.text
+                text: thinking.text,
             )))
         }
         if let text = assistant.text, !text.isEmpty {
@@ -238,7 +239,7 @@ public struct EventBuilder {
             let card = ToolCard(
                 id: use.id, name: use.name, input: use.input,
                 output: pending.content,
-                status: pending.isError ? .errored : .completed
+                status: pending.isError ? .errored : .completed,
             )
             return cardEvent(card, agentID: agentID)
         }

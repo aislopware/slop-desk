@@ -148,7 +148,7 @@ public struct SubagentNode: Sendable, Equatable, Codable {
         agentType: String? = nil,
         description: String? = nil,
         status: Status = .running,
-        lastAssistantMessage: String? = nil
+        lastAssistantMessage: String? = nil,
     ) {
         self.id = id
         self.parentID = parentID

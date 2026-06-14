@@ -58,8 +58,8 @@ public actor InspectorReplayLog {
 
     /// Production: 50k retained, dropping to 37.5k on overflow (generous for a diagnostic session).
     public init() {
-        self.maxRetained = 50_000
-        self.retainTarget = 37_500
+        maxRetained = 50000
+        retainTarget = 37500
     }
 
     /// Test-only seam: a tiny retention window so the retention-drop / truncation-marker path
@@ -171,7 +171,7 @@ public actor InspectorReplayLog {
         // Build the stream and attach the continuation in the SAME atomic actor step as
         // the snapshot above — between `snapshot` being read and `subscribers[id]` being
         // set, the actor does not suspend, so no `append` can interleave.
-        let stream = AsyncStream<InspectorEvent> { continuation in
+        return AsyncStream<InspectorEvent> { continuation in
             for event in snapshot {
                 continuation.yield(event)
             }
@@ -181,7 +181,6 @@ public actor InspectorReplayLog {
             }
             subscribers[id] = continuation
         }
-        return stream
     }
 
     /// Detaches a subscriber (its stream terminated). No-op if already gone.

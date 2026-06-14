@@ -24,7 +24,7 @@ public struct BoundedQueuePolicy: Sendable, Equatable {
     /// Creates a queue policy with `capacity` bytes of buffering (clamped non-negative).
     public init(capacity: Int) {
         self.capacity = max(0, capacity)
-        self.outstanding = 0
+        outstanding = 0
     }
 
     /// Whether the producer should be PAUSED right now (queue at/over capacity).

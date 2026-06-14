@@ -1,6 +1,6 @@
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoClient
-import AislopdeskVideoProtocol
 
 /// FIX B (cursor-shape self-heal): pure decision for re-requesting a missing cursor shape.
 ///
@@ -10,7 +10,6 @@ import AislopdeskVideoProtocol
 /// it on the recovery channel — but at most once per `reRequestInterval` so the ~120 Hz position
 /// stream never floods the channel. No socket, no clock (the caller passes `now`).
 final class CursorShapeRequestTrackerTests: XCTestCase {
-
     func testUnknownShapeTriggersExactlyOneRequestThenDebounces() {
         var t = CursorShapeRequestTracker(reRequestInterval: 0.5)
         // First sighting of an unknown id at t=0 → request.
@@ -32,8 +31,8 @@ final class CursorShapeRequestTrackerTests: XCTestCase {
 
     func testArrivalStopsFurtherRequests() {
         var t = CursorShapeRequestTracker(reRequestInterval: 0.5)
-        XCTAssertTrue(t.shouldRequest(shapeID: 3, now: 0))      // missing → request
-        t.noteShapeArrived(3)                                  // re-ship lands
+        XCTAssertTrue(t.shouldRequest(shapeID: 3, now: 0)) // missing → request
+        t.noteShapeArrived(3) // re-ship lands
         XCTAssertTrue(t.isKnown(3))
         // Even well past the debounce window, a now-cached shape must not re-request.
         XCTAssertFalse(t.shouldRequest(shapeID: 3, now: 5))

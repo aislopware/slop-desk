@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Tests for ``FocusResolver`` — geometric, tmux-style focus movement resolved against the
@@ -16,7 +16,6 @@ import CoreGraphics
 ///   wrapping. For pre-order cycling, call `cycle(allLeafIDs(), …)` directly.
 /// - `cycle(_:from:forward:)` returns an **optional** (nil if `from` absent / list empty).
 final class FocusResolverTests: XCTestCase {
-
     // MARK: - Helpers
 
     private func layout(_ pairs: [(PaneID, CGRect)]) -> SolvedLayout {
@@ -31,7 +30,7 @@ final class FocusResolverTests: XCTestCase {
     func testHorizontalPairLeftRight() {
         let l = PaneID(), r = PaneID()
         let solved = layout([
-            (l, CGRect(x: 0,   y: 0, width: 400, height: 600)),
+            (l, CGRect(x: 0, y: 0, width: 400, height: 600)),
             (r, CGRect(x: 400, y: 0, width: 400, height: 600)),
         ])
 
@@ -50,7 +49,7 @@ final class FocusResolverTests: XCTestCase {
     func testVerticalPairUpDown() {
         let top = PaneID(), bottom = PaneID()
         let solved = layout([
-            (top,    CGRect(x: 0, y: 0,   width: 800, height: 300)),
+            (top, CGRect(x: 0, y: 0, width: 800, height: 300)),
             (bottom, CGRect(x: 0, y: 300, width: 800, height: 300)),
         ])
 
@@ -58,7 +57,10 @@ final class FocusResolverTests: XCTestCase {
         XCTAssertEqual(FocusResolver.neighbor(of: bottom, .up, in: solved), top, "up == smaller y")
         XCTAssertNil(FocusResolver.neighbor(of: top, .up, in: solved), "top edge")
         XCTAssertNil(FocusResolver.neighbor(of: bottom, .down, in: solved), "bottom edge")
-        XCTAssertNil(FocusResolver.neighbor(of: top, .left, in: solved), "full-width panes have no left/right neighbour")
+        XCTAssertNil(
+            FocusResolver.neighbor(of: top, .left, in: solved),
+            "full-width panes have no left/right neighbour",
+        )
     }
 
     // MARK: - Cross-axis overlap gating (disjoint panes are skipped)
@@ -73,9 +75,9 @@ final class FocusResolverTests: XCTestCase {
     func testCrossAxisOverlapGatesCandidates() {
         let a = PaneID(), b = PaneID(), c = PaneID()
         let solved = layout([
-            (a, CGRect(x: 0,   y: 0,   width: 400, height: 300)),
-            (b, CGRect(x: 400, y: 0,   width: 400, height: 600)),
-            (c, CGRect(x: 0,   y: 300, width: 400, height: 300)),
+            (a, CGRect(x: 0, y: 0, width: 400, height: 300)),
+            (b, CGRect(x: 400, y: 0, width: 400, height: 600)),
+            (c, CGRect(x: 0, y: 300, width: 400, height: 300)),
         ])
 
         XCTAssertEqual(FocusResolver.neighbor(of: a, .right, in: solved), b, "right of top-left → tall right pane")
@@ -97,12 +99,15 @@ final class FocusResolverTests: XCTestCase {
     func testTieBreakPrefersMoreOverlapOverDistance() {
         let s = PaneID(), big = PaneID(), small = PaneID()
         let solved = layout([
-            (s,     CGRect(x: 0,   y: 0,   width: 400, height: 400)),  // S spans y 0..400
-            (small, CGRect(x: 400, y: 0,   width: 150, height: 100)),  // overlaps only y 0..100, nearer
-            (big,   CGRect(x: 600, y: 0,   width: 150, height: 400)),  // overlaps y 0..400, farther
+            (s, CGRect(x: 0, y: 0, width: 400, height: 400)), // S spans y 0..400
+            (small, CGRect(x: 400, y: 0, width: 150, height: 100)), // overlaps only y 0..100, nearer
+            (big, CGRect(x: 600, y: 0, width: 150, height: 400)), // overlaps y 0..400, farther
         ])
-        XCTAssertEqual(FocusResolver.neighbor(of: s, .right, in: solved), big,
-                       "more cross-axis overlap wins over a nearer but lesser-overlap pane")
+        XCTAssertEqual(
+            FocusResolver.neighbor(of: s, .right, in: solved),
+            big,
+            "more cross-axis overlap wins over a nearer but lesser-overlap pane",
+        )
     }
 
     /// With overlap tied, the NEARER pane wins. Source S on the left; two right candidates that
@@ -111,12 +116,15 @@ final class FocusResolverTests: XCTestCase {
     func testTieBreakPrefersNearerWhenOverlapEqual() {
         let s = PaneID(), near = PaneID(), far = PaneID()
         let solved = layout([
-            (s,    CGRect(x: 0,   y: 0, width: 400, height: 400)),
-            (near, CGRect(x: 400, y: 0, width: 150, height: 400)),  // abuts S, full overlap
-            (far,  CGRect(x: 600, y: 0, width: 150, height: 400)),  // farther, full overlap
+            (s, CGRect(x: 0, y: 0, width: 400, height: 400)),
+            (near, CGRect(x: 400, y: 0, width: 150, height: 400)), // abuts S, full overlap
+            (far, CGRect(x: 600, y: 0, width: 150, height: 400)), // farther, full overlap
         ])
-        XCTAssertEqual(FocusResolver.neighbor(of: s, .right, in: solved), near,
-                       "equal overlap → nearer pane wins")
+        XCTAssertEqual(
+            FocusResolver.neighbor(of: s, .right, in: solved),
+            near,
+            "equal overlap → nearer pane wins",
+        )
     }
 
     // MARK: - "Strictly on the requested side" gating
@@ -127,7 +135,7 @@ final class FocusResolverTests: XCTestCase {
         let s = PaneID(), t = PaneID()
         let solved = layout([
             (s, CGRect(x: 400, y: 0, width: 400, height: 600)),
-            (t, CGRect(x: 0,   y: 0, width: 400, height: 600)),  // entirely to the left
+            (t, CGRect(x: 0, y: 0, width: 400, height: 600)), // entirely to the left
         ])
         XCTAssertNil(FocusResolver.neighbor(of: s, .right, in: solved), "a left pane is never a right neighbour")
         XCTAssertEqual(FocusResolver.neighbor(of: s, .left, in: solved), t, "…but it IS the left neighbour")
@@ -168,9 +176,9 @@ final class FocusResolverTests: XCTestCase {
     func testNextPreviousReadingOrderWraps() {
         let a = PaneID(), b = PaneID(), c = PaneID()
         let solved = layout([
-            (a, CGRect(x: 0,   y: 0,   width: 400, height: 300)),
-            (b, CGRect(x: 400, y: 0,   width: 400, height: 300)),
-            (c, CGRect(x: 0,   y: 300, width: 800, height: 300)),
+            (a, CGRect(x: 0, y: 0, width: 400, height: 300)),
+            (b, CGRect(x: 400, y: 0, width: 400, height: 300)),
+            (c, CGRect(x: 0, y: 300, width: 800, height: 300)),
         ])
 
         // forward: A → B → C → A
@@ -231,14 +239,20 @@ final class FocusResolverTests: XCTestCase {
         // reading-order sort can only tie-break on the stable id. Without that tie-break the comparator
         // returned "equal" and the stable sort preserved the Dictionary's per-process-randomized iteration
         // order, so ⌘]/⌘[ could visit coincident panes in a different order each launch.
-        let ids = (1...8).map { pid($0) }                       // ascending by uuidString
+        let ids = (1...8).map { pid($0) } // ascending by uuidString
         let frame = CGRect(x: 100, y: 100, width: 300, height: 200)
         let solved = layout(ids.map { ($0, frame) })
         for i in ids.indices {
-            XCTAssertEqual(FocusResolver.neighbor(of: ids[i], .next, in: solved), ids[(i + 1) % ids.count],
-                           "next cycles coincident panes in ascending-id order, deterministically")
-            XCTAssertEqual(FocusResolver.neighbor(of: ids[i], .previous, in: solved),
-                           ids[(i - 1 + ids.count) % ids.count], "previous is the exact inverse")
+            XCTAssertEqual(
+                FocusResolver.neighbor(of: ids[i], .next, in: solved),
+                ids[(i + 1) % ids.count],
+                "next cycles coincident panes in ascending-id order, deterministically",
+            )
+            XCTAssertEqual(
+                FocusResolver.neighbor(of: ids[i], .previous, in: solved),
+                ids[(i - 1 + ids.count) % ids.count],
+                "previous is the exact inverse",
+            )
         }
     }
 
@@ -249,10 +263,12 @@ final class FocusResolverTests: XCTestCase {
         let source = pid(1000)
         let rightStack = (1...8).map { pid($0) }
         let srcRect = CGRect(x: 0, y: 0, width: 200, height: 200)
-        let candRect = CGRect(x: 400, y: 0, width: 200, height: 200)   // all to the right, all the same rect
+        let candRect = CGRect(x: 400, y: 0, width: 200, height: 200) // all to the right, all the same rect
         let solved = layout([(source, srcRect)] + rightStack.map { ($0, candRect) })
-        XCTAssertEqual(FocusResolver.neighbor(of: source, .right, in: solved),
-                       rightStack.min(by: { $0.raw.uuidString < $1.raw.uuidString }),
-                       "an exact directional tie resolves to the smallest id, deterministically")
+        XCTAssertEqual(
+            FocusResolver.neighbor(of: source, .right, in: solved),
+            rightStack.min(by: { $0.raw.uuidString < $1.raw.uuidString }),
+            "an exact directional tie resolves to the smallest id, deterministically",
+        )
     }
 }

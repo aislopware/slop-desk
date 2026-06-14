@@ -1,7 +1,7 @@
 #if canImport(QuartzCore)
+import AislopdeskVideoProtocol
 import Foundation
 import QuartzCore
-import AislopdeskVideoProtocol
 #if os(macOS)
 import AppKit
 #endif
@@ -21,6 +21,7 @@ import AppKit
 /// `@MainActor`-isolated: it mutates a `CALayer`, which must be touched on the main
 /// thread. The orchestrator actor talks to it through main-actor-hops (the position
 /// path) so the hot cursor update lands on the layer at refresh.
+@preconcurrency
 @MainActor
 public final class ClientCursorCompositor {
     /// The cursor overlay layer (caller adds it above the Metal layer).
@@ -78,7 +79,11 @@ public final class ClientCursorCompositor {
     ///   - videoScale: client-view-points per host-window-point (1.0 when the remote
     ///     window is displayed 1:1). The hotspot is subtracted so the cursor's
     ///     "tip" lands on the reported position.
-    nonisolated public static func layerFrame(for update: CursorUpdate, videoScale: Double, cursorSize: VideoSize) -> VideoRect {
+    public nonisolated static func layerFrame(
+        for update: CursorUpdate,
+        videoScale: Double,
+        cursorSize: VideoSize,
+    ) -> VideoRect {
         let x = update.position.x * videoScale - update.hotspot.x
         let y = update.position.y * videoScale - update.hotspot.y
         return VideoRect(x: x, y: y, width: cursorSize.width, height: cursorSize.height)
@@ -93,16 +98,23 @@ public final class ClientCursorCompositor {
     /// Supersedes the scalar ``layerFrame(for:videoScale:cursorSize:)`` (which assumed the
     /// video fills the layer from origin) on the live path; the scalar form is retained as
     /// the underlying math primitive + for the 1:1 fast case.
-    nonisolated public static func layerFrame(
+    public nonisolated static func layerFrame(
         for update: CursorUpdate,
         viewSize: VideoSize,
         videoNativeSize: VideoSize,
         zoom: Double,
         pan: VideoPoint,
         cursorSize: VideoSize,
-        mode: VideoContentMode = .fit
+        mode: VideoContentMode = .fit,
     ) -> VideoRect {
-        let tip = AspectFit.viewPoint(forHostPoint: update.position, viewSize: viewSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan, mode: mode)
+        let tip = AspectFit.viewPoint(
+            forHostPoint: update.position,
+            viewSize: viewSize,
+            videoNativeSize: videoNativeSize,
+            zoom: zoom,
+            pan: pan,
+            mode: mode,
+        )
         // The hotspot is reported in host-window points; scale it into view points by the
         // displayed-rect's effective per-source-point scale (× zoom for the crop).
         let r = AspectFit.displayedVideoRect(viewSize: viewSize, videoNativeSize: videoNativeSize, mode: mode)
@@ -111,7 +123,8 @@ public final class ClientCursorCompositor {
         return VideoRect(
             x: tip.x - update.hotspot.x * scaleX,
             y: tip.y - update.hotspot.y * scaleY,
-            width: cursorSize.width, height: cursorSize.height)
+            width: cursorSize.width, height: cursorSize.height,
+        )
     }
 
     /// Applies a cursor update to the overlay layer at display-refresh.
@@ -125,10 +138,25 @@ public final class ClientCursorCompositor {
     /// Aspect-fit + zoom/pan-correct apply: places the overlay through the same forward
     /// render transform the input encoder inverts, so the cursor tracks where clicks land
     /// even when the video is letterboxed or (on iOS) zoomed/panned.
-    public func apply(_ update: CursorUpdate, viewSize: VideoSize, videoNativeSize: VideoSize, zoom: Double, pan: VideoPoint, mode: VideoContentMode = .fit) {
+    public func apply(
+        _ update: CursorUpdate,
+        viewSize: VideoSize,
+        videoNativeSize: VideoSize,
+        zoom: Double,
+        pan: VideoPoint,
+        mode: VideoContentMode = .fit,
+    ) {
         let size = applyShape(update)
         guard update.visible else { return }
-        let frame = Self.layerFrame(for: update, viewSize: viewSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan, cursorSize: size, mode: mode)
+        let frame = Self.layerFrame(
+            for: update,
+            viewSize: viewSize,
+            videoNativeSize: videoNativeSize,
+            zoom: zoom,
+            pan: pan,
+            cursorSize: size,
+            mode: mode,
+        )
         setLayerFrame(frame)
     }
 
@@ -154,7 +182,7 @@ public final class ClientCursorCompositor {
     /// layer-backed `NSView` uses for its sublayers (`y' = parentHeight - y - height`). Pure so
     /// the flip is unit-tested without a `CALayer`. iOS `UIView` layers are top-left and never
     /// call this (the placement frame is used as-is).
-    nonisolated public static func bottomLeftOriginY(topLeftY: Double, height: Double, parentHeight: Double) -> Double {
+    public nonisolated static func bottomLeftOriginY(topLeftY: Double, height: Double, parentHeight: Double) -> Double {
         parentHeight - topLeftY - height
     }
 
@@ -178,7 +206,11 @@ public final class ClientCursorCompositor {
         // (Reads the live parent bounds in POINTS — the sublayer frame is in the parent's point
         // space, not the pixel `drawableSize`.) iOS `UIView` layers are already top-left → no flip.
         if let parentHeight = cursorLayer.superlayer?.bounds.height, parentHeight > 0 {
-            placed.origin.y = Self.bottomLeftOriginY(topLeftY: r.origin.y, height: r.size.height, parentHeight: parentHeight)
+            placed.origin.y = Self.bottomLeftOriginY(
+                topLeftY: r.origin.y,
+                height: r.size.height,
+                parentHeight: parentHeight,
+            )
         }
         #endif
         // No implicit animation — the cursor must track at refresh, not tween.

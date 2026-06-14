@@ -19,7 +19,7 @@ use aislopdesk_core::live_bitrate_policy;
 use aislopdesk_core::recovery_policy::RecoveryPolicy;
 
 /// Maps a core video decode error to its boundary status code (shared by the video codecs).
-pub(crate) fn status_for_video_error(error: &VideoProtocolError) -> AisdStatus {
+pub(crate) const fn status_for_video_error(error: &VideoProtocolError) -> AisdStatus {
     match error {
         VideoProtocolError::Truncated => AISD_ERR_TRUNCATED,
         VideoProtocolError::Malformed(_) => AISD_ERR_MALFORMED,
@@ -30,7 +30,7 @@ pub(crate) fn status_for_video_error(error: &VideoProtocolError) -> AisdStatus {
 ///
 /// # Safety
 /// If `len != 0`, `data` must point to at least `len` readable bytes.
-pub(crate) unsafe fn slice_in<'a>(data: *const u8, len: usize) -> &'a [u8] {
+pub(crate) const unsafe fn slice_in<'a>(data: *const u8, len: usize) -> &'a [u8] {
     if len == 0 {
         &[]
     } else {
@@ -64,7 +64,7 @@ pub extern "C" fn aisd_live_bitrate_target(
 /// Wraps [`live_bitrate_policy::MINIMUM_BITRATE`].
 #[must_use]
 #[no_mangle]
-pub extern "C" fn aisd_live_bitrate_minimum() -> i64 {
+pub const extern "C" fn aisd_live_bitrate_minimum() -> i64 {
     live_bitrate_policy::MINIMUM_BITRATE
 }
 
@@ -90,7 +90,9 @@ pub struct AisdCursorUpdate {
     pub hotspot_y: f64,
 }
 
-/// Encodes a cursor update into its fixed 36-byte wire form. On [`AISD_OK`], `*out` owns the
+/// Encodes a cursor update into its fixed 36-byte wire form.
+///
+/// On [`AISD_OK`], `*out` owns the
 /// buffer — release with [`crate::aisd_bytes_free`]. Wraps [`CursorUpdate::encode`]; cannot
 /// fail except for a null `out`.
 ///
@@ -120,7 +122,9 @@ pub unsafe extern "C" fn aisd_cursor_update_encode(
     AISD_OK
 }
 
-/// Decodes a cursor update into `*out`. Wraps [`CursorUpdate::decode`]: rejects a wrong type
+/// Decodes a cursor update into `*out`.
+///
+/// Wraps [`CursorUpdate::decode`]: rejects a wrong type
 /// byte or non-finite coordinate ([`AISD_ERR_MALFORMED`]) and a short body
 /// ([`AISD_ERR_TRUNCATED`]). `data` may be null only when `len == 0`.
 ///
@@ -158,6 +162,7 @@ pub unsafe extern "C" fn aisd_cursor_update_decode(
 // ---------------------------------------------------------------------------------------
 
 /// Tier-decision state for the dwell-gated adaptive-FEC variant, flattened for the C ABI.
+///
 /// Mirrors [`adaptive_fec::TierState`] field-for-field (`#[repr(C)]`, same field order). Crosses
 /// by value in both directions.
 #[repr(C)]
@@ -183,11 +188,13 @@ impl From<adaptive_fec::TierState> for AisdTierState {
 
 impl From<AisdTierState> for adaptive_fec::TierState {
     fn from(s: AisdTierState) -> Self {
-        adaptive_fec::TierState::new(s.tier, s.relax_streak, s.sticky_relax_remaining)
+        Self::new(s.tier, s.relax_streak, s.sticky_relax_remaining)
     }
 }
 
-/// Maps a wire tier to the FEC group size both ends must use. Wraps
+/// Maps a wire tier to the FEC group size both ends must use.
+///
+/// Wraps
 /// [`adaptive_fec::group_size`]. Returns `1` and writes the group size to `*out` for a parity
 /// tier; returns `0` for the OFF (no-parity) tier (leaving `*out` untouched — treat as nil).
 /// TOTAL over every `tier` (unknown → `default_group_size`, never traps). A null `out` returns
@@ -197,7 +204,7 @@ impl From<AisdTierState> for adaptive_fec::TierState {
 /// `out`, if non-null, must be a writable `usize` pointer.
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn aisd_adaptive_fec_group_size(
+pub const unsafe extern "C" fn aisd_adaptive_fec_group_size(
     tier: u8,
     default_group_size: usize,
     out: *mut usize,
@@ -215,7 +222,9 @@ pub unsafe extern "C" fn aisd_adaptive_fec_group_size(
 }
 
 /// Picks the next wire tier from the EWMA `loss` and the `previous_tier` (the plain decider;
-/// the production host uses [`aisd_adaptive_fec_next_tier_state`]). Wraps [`adaptive_fec::tier`].
+/// the production host uses [`aisd_adaptive_fec_next_tier_state`]).
+///
+/// Wraps [`adaptive_fec::tier`].
 /// `allow_off` is the OFF-tier escape hatch resolved by the caller from `AISLOPDESK_FEC_ALLOW_OFF`
 /// (read `!= 0`), keeping the core environment-free.
 #[must_use]
@@ -224,7 +233,9 @@ pub extern "C" fn aisd_adaptive_fec_tier(loss: f64, previous_tier: u8, allow_off
     adaptive_fec::tier(loss, previous_tier, allow_off != 0)
 }
 
-/// Dwell-gated tier step — the production entry point. Wraps [`adaptive_fec::next_tier_state`]:
+/// Dwell-gated tier step — the production entry point.
+///
+/// Wraps [`adaptive_fec::next_tier_state`]:
 /// escalation is immediate (one step, resets the relax streak); relaxation is counted across
 /// consecutive relax-demanding reports and applied at the effective dwell (doubled while a
 /// sticky window from a recent unrecovered loss is open). Returns the next state by value.
@@ -344,7 +355,9 @@ pub extern "C" fn aisd_coord_cg_rect_to_cocoa(cg_rect: AisdRect, primary_height:
 }
 
 /// Picks the screen a window lives on (largest overlap) and writes its `backing_scale_factor`
-/// to `*out_scale`. Wraps [`coordinate_mapping::backing_scale_factor`]. Returns [`AISD_OK`]
+/// to `*out_scale`.
+///
+/// Wraps [`coordinate_mapping::backing_scale_factor`]. Returns [`AISD_OK`]
 /// (overlap; `*out_scale` written), [`AISD_EMPTY`] (no overlap; `*out_scale` untouched), or
 /// [`AISD_ERR_NULL`] if `out_scale` is null, or `screens` is null while `screen_count != 0`.
 /// `screens` is borrowed for the call only.
@@ -372,17 +385,15 @@ pub unsafe extern "C" fn aisd_coord_backing_scale_factor(
             .map(|s| s.to_core())
             .collect()
     };
-    match coordinate_mapping::backing_scale_factor(
+    coordinate_mapping::backing_scale_factor(
         window_bounds_cg.to_core(),
         &core_screens,
         primary_height,
-    ) {
-        Some(scale) => {
-            out_scale.write(scale);
-            AISD_OK
-        }
-        None => AISD_EMPTY,
-    }
+    )
+    .map_or(AISD_EMPTY, |scale| {
+        out_scale.write(scale);
+        AISD_OK
+    })
 }
 
 /// Pixel path: divide by `backing_scale_factor` to get points, then add the window origin.
@@ -405,9 +416,13 @@ pub extern "C" fn aisd_coord_window_point_from_pixel(
 // recovery_policy — pure, scalar (per gated frame on the client recovery clock)
 // ---------------------------------------------------------------------------------------
 
-/// Whether the client should escalate a stalled LTR-refresh recovery to a forced IDR, given
+/// Whether the client should escalate a stalled LTR-refresh recovery to a forced IDR,
+///
+/// given
 /// the configured policy multiples, time since the first request, the RTT estimate, and
-/// whether it is observing loss. Wraps [`RecoveryPolicy::should_escalate_to_idr`].
+/// whether it is observing loss.
+///
+/// Wraps [`RecoveryPolicy::should_escalate_to_idr`].
 ///
 /// `observing_loss` crosses as a byte read `!= 0`. The lossy escalation floor (`lossy_floor_s`,
 /// from `AISLOPDESK_ESCALATION_FLOOR_MS`) is resolved by the caller and passed in, keeping the

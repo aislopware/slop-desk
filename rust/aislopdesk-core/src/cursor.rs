@@ -46,7 +46,7 @@ impl CursorUpdate {
 
     /// Parses a cursor update. Rejects a wrong type byte or a non-finite coordinate
     /// (which would propagate `NaN` into client layer geometry and crash).
-    pub fn decode(data: &[u8]) -> Result<CursorUpdate> {
+    pub fn decode(data: &[u8]) -> Result<Self> {
         let mut r = ByteReader::new(data);
         let kind = r.read_u8()?;
         if kind != Self::MESSAGE_TYPE {
@@ -60,7 +60,7 @@ impl CursorUpdate {
         let y = r.read_finite_f64("cursor.y")?;
         let hx = r.read_finite_f64("cursor.hotspot.x")?;
         let hy = r.read_finite_f64("cursor.hotspot.y")?;
-        Ok(CursorUpdate {
+        Ok(Self {
             position: VideoPoint::new(x, y),
             shape_id,
             hotspot: VideoPoint::new(hx, hy),
@@ -109,7 +109,7 @@ impl CursorShapeMessage {
     }
 
     /// Parses a cursor shape message.
-    pub fn decode(data: &[u8]) -> Result<CursorShapeMessage> {
+    pub fn decode(data: &[u8]) -> Result<Self> {
         let mut r = ByteReader::new(data);
         let kind = r.read_u8()?;
         if kind != Self::MESSAGE_TYPE {
@@ -124,7 +124,7 @@ impl CursorShapeMessage {
         let hy = r.read_finite_f64("cursorShape.hotspot.y")?;
         let bitmap_len = r.read_u32()?;
         let bitmap = r.read_bytes(bitmap_len as usize)?.to_vec();
-        Ok(CursorShapeMessage {
+        Ok(Self {
             shape_id,
             size: VideoSize::new(f64::from(width), f64::from(height)),
             hotspot: VideoPoint::new(hx, hy),
@@ -161,7 +161,7 @@ impl CursorChannelMessage {
     }
 
     /// Routes a received cursor datagram by its leading type byte.
-    pub fn decode(data: &[u8]) -> Result<CursorChannelMessage> {
+    pub fn decode(data: &[u8]) -> Result<Self> {
         match data.first() {
             None => Err(VideoProtocolError::Truncated),
             Some(&CursorUpdate::MESSAGE_TYPE) => Ok(Self::Update(CursorUpdate::decode(data)?)),

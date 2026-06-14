@@ -1,6 +1,6 @@
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoClient
-import AislopdeskVideoProtocol
 
 /// PURE received-media routing: a media datagram is decoded into a typed value by the
 /// channel it arrived on; control is always processed, video/geometry only while
@@ -9,7 +9,14 @@ final class ReceivedDatagramRouterTests: XCTestCase {
     private let router = ReceivedDatagramRouter()
 
     func testControlIsAlwaysDecodedEvenBeforeStreaming() {
-        let ack = VideoControlMessage.helloAck(accepted: true, streamID: 1, captureWidth: 800, captureHeight: 600, windowBoundsCG: VideoRect(x: 0, y: 0, width: 800, height: 600), fullRange: false)
+        let ack = VideoControlMessage.helloAck(
+            accepted: true,
+            streamID: 1,
+            captureWidth: 800,
+            captureHeight: 600,
+            windowBoundsCG: VideoRect(x: 0, y: 0, width: 800, height: 600),
+            fullRange: false,
+        )
         let routed = router.route(channel: .control, data: ack.encode(), mediaFlowing: false)
         XCTAssertEqual(routed, .control(ack))
     }
@@ -25,7 +32,9 @@ final class ReceivedDatagramRouterTests: XCTestCase {
         var packetizer = VideoPacketizer()
         let frags = packetizer.packetize(frame: NALUnit.join([Data([1, 2, 3, 4])]), keyframe: true)
         let routed = router.route(channel: .video, data: frags[0].encode(), mediaFlowing: true)
-        guard case .videoFragment(let f) = routed else { return XCTFail("expected videoFragment, got \(routed)") }
+        guard case let .videoFragment(f) = routed else { XCTFail("expected videoFragment, got \(routed)")
+            return
+        }
         XCTAssertEqual(f, try FrameFragment.decode(frags[0].encode()))
     }
 

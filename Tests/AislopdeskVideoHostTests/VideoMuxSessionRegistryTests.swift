@@ -1,7 +1,7 @@
 #if os(macOS)
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoHost
-import AislopdeskVideoProtocol
 
 /// PURE dispatch-decision + bookkeeping for the daemon's per-channel session registry (Stage S3).
 ///
@@ -12,18 +12,21 @@ import AislopdeskVideoProtocol
 /// sink-table register/retire bookkeeping that makes the §2 asymmetry (two panes, two windows, one
 /// flow) work. The mint factory injected here is never invoked by `decide`.
 final class VideoMuxSessionRegistryTests: XCTestCase {
-
     /// A registry whose mint factory FAILS the test if ever called from a `decide`-only path.
     private func makeRegistry(_ table: VideoMuxSinkTable = VideoMuxSinkTable()) -> VideoMuxSessionRegistry {
         VideoMuxSessionRegistry(sinkTable: table) { _, _ in
-            throw VideoMuxSessionRegistryTests.MintNotExpected()
+            throw Self.MintNotExpected()
         }
     }
+
     private struct MintNotExpected: Error {}
 
     private func hello(windowID: UInt32) -> Data {
-        VideoControlMessage.hello(protocolVersion: AislopdeskVideoProtocol.version, requestedWindowID: windowID,
-                                  viewport: VideoSize(width: 100, height: 100)).encode()
+        VideoControlMessage.hello(
+            protocolVersion: AislopdeskVideoProtocol.version,
+            requestedWindowID: windowID,
+            viewport: VideoSize(width: 100, height: 100),
+        ).encode()
     }
 
     func testFirstHelloForNewChannelDecidesMint() async {
@@ -101,7 +104,7 @@ final class VideoMuxSessionRegistryTests: XCTestCase {
         let table = VideoMuxSinkTable()
         let forgotten = IDRecorder()
         let registry = VideoMuxSessionRegistry(sinkTable: table, forgetLane: { forgotten.append($0) }) { _, _ in
-            throw MintNotExpected()   // simulate the window-gone / malformed-hello mint failure
+            throw MintNotExpected() // simulate the window-gone / malformed-hello mint failure
         }
         await registry.dispatch(channelID: 9, channel: .control, data: hello(windowID: 404))
         XCTAssertEqual(forgotten.all, [9], "a failed mint must forget the lane so its flow does not leak")
@@ -113,7 +116,8 @@ final class VideoMuxSessionRegistryTests: XCTestCase {
     func testSinkTableRoutesEachChannelToItsOwnSink() {
         // The shared sink table is the demux: each channelID's datagrams go to ITS sink only.
         let table = VideoMuxSinkTable()
-        let a = Recorder(); let b = Recorder()
+        let a = Recorder()
+        let b = Recorder()
         table.register(1) { _, d in a.append(d) }
         table.register(2) { _, d in b.append(d) }
         table.sink(1)?(.video, Data([0x01]))

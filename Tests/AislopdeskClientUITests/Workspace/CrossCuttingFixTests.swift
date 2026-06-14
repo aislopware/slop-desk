@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins the four cross-cutting state-lifecycle fixes (2026-06-13 cross-cutting hunt): a whole-canvas swap
@@ -8,28 +8,37 @@ import CoreGraphics
 /// identical merge must content-dedup instead of growing the snippet/preset library.
 @MainActor
 final class CrossCuttingFixTests: XCTestCase {
-
     private func store(_ items: [CanvasItem], focus: PaneID) -> WorkspaceStore {
-        WorkspaceStore(restoring: Workspace(canvas: Canvas(items: items), focusedPane: focus),
-                       makeSession: { FakePaneSession($0) }, liveVideoCap: 5)
+        WorkspaceStore(
+            restoring: Workspace(canvas: Canvas(items: items), focusedPane: focus),
+            makeSession: { FakePaneSession($0) },
+            liveVideoCap: 5,
+        )
     }
+
     private func term(_ x: CGFloat, _ title: String = "t") -> CanvasItem {
-        CanvasItem(id: PaneID(), spec: PaneSpec(kind: .terminal, title: title),
-                   frame: CGRect(x: x, y: 0, width: 300, height: 200), z: 0)
+        CanvasItem(
+            id: PaneID(),
+            spec: PaneSpec(kind: .terminal, title: title),
+            frame: CGRect(x: x, y: 0, width: 300, height: 200),
+            z: 0,
+        )
     }
 
     func testSwitchToPresetClearsStaleBookmarks() {
         let a = term(0)
         let st = store([a], focus: a.id)
         st.saveLayoutPreset(name: "p")
-        st.saveBookmark(1)                       // a bookmark anchored to a pane of THIS layout
+        st.saveBookmark(1) // a bookmark anchored to a pane of THIS layout
         XCTAssertNotNil(st.workspace.bookmarks[1], "precondition: a bookmark exists")
         st.switchToLayoutPreset(name: "p")
-        XCTAssertTrue(st.workspace.bookmarks.isEmpty,
-                      "a layout switch clears bookmarks (they anchor to the old canvas + frame)")
+        XCTAssertTrue(
+            st.workspace.bookmarks.isEmpty,
+            "a layout switch clears bookmarks (they anchor to the old canvas + frame)",
+        )
     }
 
-    func testSwitchAndImportReplaceClearTheCloseUndo() {
+    func testSwitchAndImportReplaceClearTheCloseUndo() throws {
         // switch path
         let a = term(0), b = term(400)
         let st = store([a, b], focus: a.id)
@@ -44,7 +53,7 @@ final class CrossCuttingFixTests: XCTestCase {
         let src = store([term(0, "alpha")], focus: PaneID())
         let data = src.exportWorkspaceData()
         let dst = store([term(0), term(400, "z")], focus: PaneID())
-        dst.closePane(dst.workspace.canvas.allIDs().last!)
+        try dst.closePane(XCTUnwrap(dst.workspace.canvas.allIDs().last))
         XCTAssertNotNil(dst.recentlyClosed)
         XCTAssertTrue(dst.importWorkspace(data, mode: .replace))
         XCTAssertNil(dst.recentlyClosed, "import-replace clears the close-undo")
@@ -73,7 +82,7 @@ final class CrossCuttingFixTests: XCTestCase {
         XCTAssertEqual(snippetsAfterFirst, 1)
         XCTAssertEqual(presetsAfterFirst, 1)
 
-        XCTAssertTrue(dst.importWorkspace(data, mode: .mergeAppend))   // identical re-merge
+        XCTAssertTrue(dst.importWorkspace(data, mode: .mergeAppend)) // identical re-merge
         XCTAssertEqual(dst.snippets.count, snippetsAfterFirst, "content-identical snippet is not re-added")
         XCTAssertEqual(dst.workspace.layoutPresets.count, presetsAfterFirst, "content-identical preset is not re-added")
     }

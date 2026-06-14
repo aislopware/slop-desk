@@ -1,5 +1,5 @@
-import XCTest
 import AislopdeskProtocol
+import XCTest
 @testable import AislopdeskTransport
 
 /// Framing + per-channel-delivery tests for ``MuxSubChannel`` in isolation (no shared connection).
@@ -8,7 +8,6 @@ import AislopdeskProtocol
 /// payload fed to ``MuxSubChannel/deliver(payload:)`` reassembles whole inner ``WireMessage``s
 /// (including a frame split across two payloads).
 final class MuxSubChannelTests: XCTestCase {
-
     func testSendFramesInnerWireMessageAndStampsChannelID() async throws {
         let captured = Captured()
         let channel = MuxSubChannel(channelID: 7, channel: .data) { id, inner in
@@ -65,7 +64,14 @@ private final class Captured: @unchecked Sendable {
     private var id: UInt32 = 0
     private var inner = Data()
     func record(id: UInt32, inner: Data) {
-        lock.lock(); self.id = id; self.inner = inner; lock.unlock()
+        lock.lock()
+        self.id = id
+        self.inner = inner
+        lock.unlock()
     }
-    var value: (UInt32, Data) { lock.lock(); defer { lock.unlock() }; return (id, inner) }
+
+    var value: (UInt32, Data) { lock.lock()
+        defer { lock.unlock() }
+        return (id, inner)
+    }
 }

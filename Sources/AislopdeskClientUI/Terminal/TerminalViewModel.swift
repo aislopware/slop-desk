@@ -1,7 +1,7 @@
-import Foundation
-import AislopdeskClient
 import AislopdeskClaudeCode
+import AislopdeskClient
 import AislopdeskTerminal
+import Foundation
 
 /// The terminal screen's view-model: it consumes a ``AislopdeskClient``'s `output` byte stream +
 /// `events` and projects connection / title / exit / byte-count state for the SwiftUI views.
@@ -15,6 +15,7 @@ import AislopdeskTerminal
 ///
 /// `@MainActor` so it is safe to mutate from SwiftUI and to drive a `@MainActor`
 /// `GhosttySurface`; `@Observable` so the views update automatically.
+@preconcurrency
 @MainActor
 @Observable
 public final class TerminalViewModel {
@@ -29,12 +30,12 @@ public final class TerminalViewModel {
 
         public var label: String {
             switch self {
-            case .idle: return "idle"
-            case .connecting: return "connecting"
-            case .connected: return "connected"
-            case .reconnecting: return "reconnecting"
-            case .disconnected: return "disconnected"
-            case .exited(let code): return "exited(\(code))"
+            case .idle: "idle"
+            case .connecting: "connecting"
+            case .connected: "connected"
+            case .reconnecting: "reconnecting"
+            case .disconnected: "disconnected"
+            case let .exited(code): "exited(\(code))"
             }
         }
 
@@ -46,7 +47,9 @@ public final class TerminalViewModel {
     /// `.connected` AND either `.idle` (at the prompt) or `.running` (a command is executing).
     /// Kept as a separate flag — not folded into ``ConnectionStatus`` — so the connection colour
     /// (green) and the running cue (amber pulse) can both show at once.
-    public enum ShellActivity: Sendable, Equatable { case idle; case running }
+    public enum ShellActivity: Sendable, Equatable { case idle
+        case running
+    }
 
     // MARK: Observable state
 
@@ -249,9 +252,9 @@ public final class TerminalViewModel {
 
     private static func glitchCaretModeFromEnv() -> GlitchCaretMode {
         switch ProcessInfo.processInfo.environment["AISLOPDESK_GLITCH_CARET"] {
-        case "force": return .forced
-        case .some(let value) where !value.isEmpty && value != "0": return .rttGated
-        default: return .off
+        case "force": .forced
+        case let .some(value) where !value.isEmpty && value != "0": .rttGated
+        default: .off
         }
     }
 
@@ -308,10 +311,10 @@ public final class TerminalViewModel {
                 pendingEchoCount = max(0, pendingEchoCount - 1)
                 if pendingEchoCount == 0 { clearGlitchCaret() }
             default:
-                clearGlitchCaret()   // CR, Ctrl-*, ESC — a state change we won't model
+                clearGlitchCaret() // CR, Ctrl-*, ESC — a state change we won't model
             }
         } else {
-            clearGlitchCaret()       // paste / IME / encoded escape sequence
+            clearGlitchCaret() // paste / IME / encoded escape sequence
         }
     }
 
@@ -361,7 +364,7 @@ public final class TerminalViewModel {
     /// Coalesces consecutive duplicates (same cols/rows) so libghostty's double-emit per
     /// layout pass forwards at most one resize.
     public func sendResize(cols: UInt16, rows: UInt16) {
-        pendingSize = (cols, rows)        // record the latest grid even if not connected yet
+        pendingSize = (cols, rows) // record the latest grid even if not connected yet
         deliverResizeIfNeeded()
     }
 
@@ -634,7 +637,7 @@ public final class TerminalViewModel {
             // dead pane (HW-confirmed). Clear it — a terminated shell runs nothing. (Mirrors
             // `markReconnecting`, which already clears this stale state on a drop.)
             shellActivity = .idle
-            clearGlitchCaret()   // no host left to echo — drop the nudge immediately
+            clearGlitchCaret() // no host left to echo — drop the nudge immediately
         case let .disconnected(reason):
             // A drop while we still want to be connected reads as "reconnecting" (the
             // ReconnectManager is retrying); the ConnectionViewModel owns the authoritative
@@ -646,7 +649,7 @@ public final class TerminalViewModel {
             clearGlitchCaret()
         case let .reconnected(sessionID, resumeFromSeq):
             self.sessionID = sessionID
-            self.lastResumeSeq = resumeFromSeq
+            lastResumeSeq = resumeFromSeq
             connectionStatus = .connected
         case let .rtt(milliseconds):
             // ConnectionViewModel owns the badge's latencyMS; the pane-local mirror feeds
@@ -671,8 +674,8 @@ public final class TerminalViewModel {
         // The reconnect will bring a FRESH host shell (no mux resume) — arm the one-shot wipe so the
         // next output clears the dead session's screen/scrollback before painting the new prompt.
         pendingFreshSessionReset = true
-        sessionEpoch += 1    // in-hand batches taken from the dead session stop painting
-        clearGlitchCaret()   // keystrokes in flight died with the old session
+        sessionEpoch += 1 // in-hand batches taken from the dead session stop painting
+        clearGlitchCaret() // keystrokes in flight died with the old session
         // The dead session's terminal MODE is a lie for the fresh shell (a drop inside
         // vim leaves .altScreen latched and would disarm the caret for the entire new
         // session; a drop mid-DCS would swallow the new session's markers).
@@ -691,11 +694,11 @@ public final class TerminalViewModel {
         title = nil
         bytesReceived = 0
         bellPending = false
-        shellActivity = .idle  // a fresh session is idle until its first command runs
+        shellActivity = .idle // a fresh session is idle until its first command runs
         lastCommand = nil
         lastResumeSeq = 0
-        lastSentSize = nil   // a fresh session must re-assert its grid size
-        ring.removeAll()     // stale scrollback must not survive into a new session
+        lastSentSize = nil // a fresh session must re-assert its grid size
+        ring.removeAll() // stale scrollback must not survive into a new session
         ringByteCount = 0
         // Arm the one-shot fresh-session wipe, exactly like markReconnecting(). The surface is ALWAYS
         // mounted (TerminalScreenView is an overlay, never an if/else content swap), so a deliberate
@@ -706,6 +709,6 @@ public final class TerminalViewModel {
         pendingFreshSessionReset = true
         sessionEpoch += 1
         clearGlitchCaret()
-        glitchModeTracker.reset()  // same session-boundary truth as markReconnecting()
+        glitchModeTracker.reset() // same session-boundary truth as markReconnecting()
     }
 }

@@ -67,26 +67,26 @@ struct VideoByteReader {
     mutating func readUInt8() throws -> UInt8 { try nextByte() }
 
     mutating func readUInt16() throws -> UInt16 {
-        let b0 = UInt16(try nextByte())
-        let b1 = UInt16(try nextByte())
+        let b0 = try UInt16(nextByte())
+        let b1 = try UInt16(nextByte())
         return (b0 << 8) | b1
     }
 
     mutating func readUInt32() throws -> UInt32 {
         var value: UInt32 = 0
-        for _ in 0 ..< 4 { value = (value << 8) | UInt32(try nextByte()) }
+        for _ in 0..<4 { value = try (value << 8) | UInt32(nextByte()) }
         return value
     }
 
     mutating func readInt32() throws -> Int32 {
-        Int32(bitPattern: try readUInt32())
+        try Int32(bitPattern: readUInt32())
     }
 
     /// Reads a big-endian `Float64` (IEEE 754 bit pattern). Used by the coordinate /
     /// cursor / geometry channels, which carry sub-pixel `Double`s.
     mutating func readFloat64() throws -> Double {
         var bits: UInt64 = 0
-        for _ in 0 ..< 8 { bits = (bits << 8) | UInt64(try nextByte()) }
+        for _ in 0..<8 { bits = try (bits << 8) | UInt64(nextByte()) }
         return Double(bitPattern: bits)
     }
 
@@ -111,7 +111,7 @@ struct VideoByteReader {
     mutating func readBytes(_ count: Int) throws -> Data {
         guard count >= 0, bytesRemaining >= count else { throw VideoProtocolError.truncated }
         let start = data.startIndex + offset
-        let slice = data[start ..< start + count]
+        let slice = data[start..<start + count]
         offset += count
         return Data(slice)
     }
@@ -127,8 +127,13 @@ struct VideoByteReader {
     /// length, so a corrupt/oversized prefix DROPS the datagram rather than over-reading or crashing.
     /// Invalid UTF-8 decodes lossily (a remote window title must never crash the receiver).
     mutating func readLengthPrefixed() throws -> String {
-        let len = Int(try readUInt16())
+        let len = try Int(readUInt16())
         let bytes = try readBytes(len)
+        // Lossy UTF-8 decode is the documented contract (a remote window title must never crash the
+        // receiver) and matches the Rust core's `String::from_utf8_lossy` for byte/bit parity. The failable
+        // `String(bytes:encoding:)` the lint rule prefers returns nil on invalid UTF-8, which would diverge
+        // from that parity, so the lossy initializer is kept on purpose.
+        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: bytes, as: UTF8.self)
     }
 }

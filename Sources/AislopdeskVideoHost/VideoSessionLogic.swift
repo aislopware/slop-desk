@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskVideoProtocol
+import Foundation
 
 // Pure, platform-free session logic for the host video orchestrator. NO
 // ScreenCaptureKit / VideoToolbox / Network — exactly the discipline of
@@ -95,13 +95,20 @@ public struct VideoSessionStateMachine: Sendable {
         _ message: VideoControlMessage,
         windowBoundsCG: VideoRect,
         resolveCaptureSize: (_ requestedWindowID: UInt32, _ viewport: VideoSize) -> (UInt16, UInt16)?,
-        resolveResizeSize: (_ windowID: UInt32, _ desired: VideoSize) -> (UInt16, UInt16)? = { _, _ in nil }
+        resolveResizeSize: (_ windowID: UInt32, _ desired: VideoSize) -> (UInt16, UInt16)? = { _, _ in nil },
     ) -> [Effect] {
         switch message {
-        case .hello(let version, let requestedWindowID, let viewport):
+        case let .hello(version, requestedWindowID, viewport):
             // Strict version check — no fallback (doc 20 §4 discipline).
             guard version == AislopdeskVideoProtocol.version else {
-                return [.sendControl(.helloAck(accepted: false, streamID: 0, captureWidth: 0, captureHeight: 0, windowBoundsCG: windowBoundsCG, fullRange: false))]
+                return [.sendControl(.helloAck(
+                    accepted: false,
+                    streamID: 0,
+                    captureWidth: 0,
+                    captureHeight: 0,
+                    windowBoundsCG: windowBoundsCG,
+                    fullRange: false,
+                ))]
             }
             // Only accept a hello while listening; ignore a duplicate once streaming
             // (idempotent — the client may retransmit the unreliable hello).
@@ -109,12 +116,26 @@ public struct VideoSessionStateMachine: Sendable {
                 if state == .streaming, requestedWindowID == windowID {
                     // Re-ack an in-flight duplicate so a lost ack is recovered, but do
                     // NOT restart capture.
-                    return [.sendControl(.helloAck(accepted: true, streamID: lastStreamID, captureWidth: captureWidth, captureHeight: captureHeight, windowBoundsCG: windowBoundsCG, fullRange: fullRange))]
+                    return [.sendControl(.helloAck(
+                        accepted: true,
+                        streamID: lastStreamID,
+                        captureWidth: captureWidth,
+                        captureHeight: captureHeight,
+                        windowBoundsCG: windowBoundsCG,
+                        fullRange: fullRange,
+                    ))]
                 }
                 return []
             }
             guard let (w, h) = resolveCaptureSize(requestedWindowID, viewport) else {
-                return [.sendControl(.helloAck(accepted: false, streamID: 0, captureWidth: 0, captureHeight: 0, windowBoundsCG: windowBoundsCG, fullRange: false))]
+                return [.sendControl(.helloAck(
+                    accepted: false,
+                    streamID: 0,
+                    captureWidth: 0,
+                    captureHeight: 0,
+                    windowBoundsCG: windowBoundsCG,
+                    fullRange: false,
+                ))]
             }
             let streamID = nextStreamID
             nextStreamID &+= 1
@@ -130,7 +151,14 @@ public struct VideoSessionStateMachine: Sendable {
             lastResizeEpoch = 0
             state = .streaming
             return [
-                .sendControl(.helloAck(accepted: true, streamID: streamID, captureWidth: w, captureHeight: h, windowBoundsCG: windowBoundsCG, fullRange: fullRange)),
+                .sendControl(.helloAck(
+                    accepted: true,
+                    streamID: streamID,
+                    captureWidth: w,
+                    captureHeight: h,
+                    windowBoundsCG: windowBoundsCG,
+                    fullRange: fullRange,
+                )),
                 .startCapture(windowID: requestedWindowID, width: w, height: h),
             ]
         case .bye:
@@ -144,7 +172,7 @@ public struct VideoSessionStateMachine: Sendable {
             guard state == .streaming || state == .listening else { return [] }
             state = .listening
             return wasStreaming ? [.stopCapture] : []
-        case .resizeRequest(let desired, let epoch):
+        case let .resizeRequest(desired, epoch):
             // In-session resize: accept ONLY while streaming. A request that arrives while
             // listening/stopped (no live capture) is ignored — there is nothing to re-size.
             // A stale/dup epoch (≤ the last applied) is dropped so a UDP reorder/retransmit
@@ -162,17 +190,23 @@ public struct VideoSessionStateMachine: Sendable {
             // Same session (same streamID, same window) — only the capture geometry
             // changes. The actor performs the live resize and sends the resizeAck.
             return [.resizeCapture(width: w, height: h, epoch: epoch)]
-        case .helloAck, .resizeAck, .streamCadence:
+        case .helloAck,
+             .resizeAck,
+             .streamCadence:
             // Host never receives a helloAck/resizeAck/streamCadence (all host→client) — defensive no-op.
             return []
-        case .keepalive, .focusWindow:
+        case .keepalive,
+             .focusWindow:
             // `keepalive` (CONCURRENCY-HOST-1) carries NO state-machine semantics — its only effect
             // is the transport-level `lastInbound` stamp the reaper reads. `focusWindow` (the
             // raise-the-focused-pane's-window model) is actioned at the ACTOR level
             // (``AislopdeskVideoHostSession/handleControl`` raises the captured window) and likewise has
             // no SM/capture-state effect. Both are defensive no-ops here (no effects).
             return []
-        case .listWindows, .windowList, .listSystemDialogs, .systemDialogList:
+        case .listWindows,
+             .windowList,
+             .listSystemDialogs,
+             .systemDialogList:
             // Window-list AND system-dialog-list discovery are answered at the DAEMON level (session-less,
             // no capture mint) and never reach a session's state machine — defensive no-op here.
             // `windowList`/`systemDialogList` are host→client and never arrive at the host at all.
@@ -210,8 +244,10 @@ public enum SizeNegotiation {
     /// itself is floored at 1 and the max ceilinged at `UInt16.max` so a degenerate
     /// (zero / out-of-range) policy can never yield 0 or overflow.
     public static func clamp(desired: VideoSize, min minSize: VideoSize, max maxSize: VideoSize) -> (UInt16, UInt16) {
-        (clampAxis(desired.width, min: minSize.width, max: maxSize.width),
-         clampAxis(desired.height, min: minSize.height, max: maxSize.height))
+        (
+            clampAxis(desired.width, min: minSize.width, max: maxSize.width),
+            clampAxis(desired.height, min: minSize.height, max: maxSize.height),
+        )
     }
 
     private static func clampAxis(_ value: Double, min lo: Double, max hi: Double) -> UInt16 {
@@ -331,7 +367,7 @@ public enum InputInjectorRaisePolicy {
     /// a genuinely-backgrounded window still raises.
     public static func shouldRaise(frontmostPID: pid_t?, targetPID: pid_t, firstInteraction: Bool) -> Bool {
         if firstInteraction { return true }
-        guard let frontmostPID else { return true }   // unknown frontmost → raise to be safe
+        guard let frontmostPID else { return true } // unknown frontmost → raise to be safe
         return frontmostPID != targetPID
     }
 }
@@ -373,16 +409,20 @@ public struct InputButtonBalance: Sendable, Equatable {
     /// is a redundant/duplicate up and is SUPPRESSED; everything else passes through.
     public mutating func plan(for event: InputEvent) -> Plan {
         switch event {
-        case .mouseDown(let button, _, _, _, _):
+        case let .mouseDown(button, _, _, _, _):
             let stuck = held.contains(button)
             held.insert(button)
             return Plan(preRelease: stuck ? button : nil)
-        case .mouseUp(let button, _, _, _, _):
+        case let .mouseUp(button, _, _, _, _):
             if held.remove(button) != nil {
-                return Plan()                  // first up for a held button — release it
+                return Plan() // first up for a held button — release it
             }
-            return Plan(suppress: true)        // duplicate / orphan up — drop it (idempotent)
-        case .mouseMove, .mouseDrag, .scroll, .key, .text:
+            return Plan(suppress: true) // duplicate / orphan up — drop it (idempotent)
+        case .mouseMove,
+             .mouseDrag,
+             .scroll,
+             .key,
+             .text:
             return Plan()
         }
     }
@@ -417,9 +457,13 @@ public struct InputMotionCoalescer: Sendable {
 
     private static func motionClass(of event: InputEvent) -> MotionClass? {
         switch event {
-        case .mouseMove: return .move
-        case .mouseDrag: return .drag
-        case .mouseDown, .mouseUp, .scroll, .key, .text: return nil
+        case .mouseMove: .move
+        case .mouseDrag: .drag
+        case .mouseDown,
+             .mouseUp,
+             .scroll,
+             .key,
+             .text: nil
         }
     }
 
@@ -435,24 +479,27 @@ public struct InputMotionCoalescer: Sendable {
         guard batch.count > 1 else { return batch }
         var output: [InputEvent] = []
         output.reserveCapacity(batch.count)
-        var pending: InputEvent?          // the latest buffered motion event in the current run
-        var pendingClass: MotionClass?    // its class (nil ⇔ pending is nil)
+        var pending: InputEvent? // the latest buffered motion event in the current run
+        var pendingClass: MotionClass? // its class (nil ⇔ pending is nil)
         for event in batch {
             if let cls = motionClass(of: event) {
                 if cls == pendingClass {
-                    pending = event                       // same run: keep only the latest
+                    pending = event // same run: keep only the latest
                 } else {
-                    if let p = pending { output.append(p) }   // class change: flush the old run
+                    if let p = pending { output.append(p) } // class change: flush the old run
                     pending = event
                     pendingClass = cls
                 }
             } else {
                 // Barrier: flush any buffered motion FIRST (order-preserving), then the barrier.
-                if let p = pending { output.append(p); pending = nil; pendingClass = nil }
+                if let p = pending { output.append(p)
+                    pending = nil
+                    pendingClass = nil
+                }
                 output.append(event)
             }
         }
-        if let p = pending { output.append(p) }           // trailing motion run
+        if let p = pending { output.append(p) } // trailing motion run
         return output
     }
 }
@@ -511,23 +558,23 @@ public struct RecoveryDatagramRouter: Sendable {
             return .drop(reason: "undecodable recovery datagram")
         }
         switch message {
-        case .requestIDR(let lastDecoded):
+        case let .requestIDR(lastDecoded):
             // The guaranteed-recovery escalation: ALWAYS a real IDR (a keyframe unconditionally
             // re-anchors a client that lost frames). Never an LTR refresh. The wire sentinel
             // ("nothing decoded yet") maps to nil here so the actor's policy gets a clean Optional.
             return .forceKeyframe(lastDecodedFrameID:
                 lastDecoded == RecoveryMessage.noFrameDecodedSentinel ? nil : lastDecoded)
-        case .requestLTRRefresh(_, _, let lastDecoded):
+        case let .requestLTRRefresh(_, _, lastDecoded):
             // WF-8: defer the LTR-refresh-vs-IDR choice to the actor (it owns the runtime acked-token
             // state + the AISLOPDESK_LTR gate). With LTR off the actor folds this to a real IDR — today's
             // behaviour exactly. Same sentinel→nil mapping as `.requestIDR`.
             return .refreshLTR(lastDecodedFrameID:
                 lastDecoded == RecoveryMessage.noFrameDecodedSentinel ? nil : lastDecoded)
-        case .ack(let streamSeq):
+        case let .ack(streamSeq):
             return .ack(streamSeq: streamSeq)
-        case .requestCursorShape(let shapeID):
+        case let .requestCursorShape(shapeID):
             return .reshipCursorShape(shapeID: shapeID)
-        case .networkStats(let report):
+        case let .networkStats(report):
             return .networkStats(report)
         }
     }
@@ -573,7 +620,7 @@ public struct NetworkEstimate: Sendable, Equatable {
     /// The RAW (un-smoothed) RTT sample of the MOST RECENT fold — the gradient cut's fresh LEVEL
     /// corroboration (the queue NOW, no EWMA lag, no streak). EXPLICITLY `nil` when that report's
     /// sample was rejected (freshness contract: corroboration may only use THIS report's evidence).
-    public private(set) var lastRTTSampleMillis: Double? = nil
+    public private(set) var lastRTTSampleMillis: Double?
 
     /// Last folded jitter sample (µs) for the rising-trend comparison.
     private var lastOWDJitterMicros: UInt32 = 0
@@ -590,7 +637,7 @@ public struct NetworkEstimate: Sendable, Equatable {
     /// (the baseline drifts up by this fraction of the gap each fold when the new sample is higher).
     public static let minRTTDecay: Double = 0.01
     /// RTT samples above this (ms) are implausible — dropped rather than poisoning the EWMA.
-    public static let maxPlausibleRTTMillis = 60_000
+    public static let maxPlausibleRTTMillis = 60000
 
     /// PURE wrap-safe host-clock RTT (ms), or `nil` to REJECT the sample. Total over all `UInt32`
     /// inputs — the `Int32(bitPattern:)` subtraction cannot trap. Rejects when telemetry is off
@@ -612,15 +659,22 @@ public struct NetworkEstimate: Sendable, Equatable {
     /// update but still folds loss + jitter (so disabling the RTT loop never blinds the rest).
     /// Component 3: the trend params are DEFAULTED so pre-trend call sites (and tests) fold
     /// byte-identically — state 0 reads "normal" and the gradient fields stay inert.
-    public mutating func fold(rttMillis: Int?, framesReceived: UInt32, unrecovered: UInt32, owdJitterMicros: UInt32,
-                              owdTrendState: UInt8 = 0, owdTrendModifiedMilli: Int32 = 0) {
+    public mutating func fold(
+        rttMillis: Int?,
+        framesReceived: UInt32,
+        unrecovered: UInt32,
+        owdJitterMicros: UInt32,
+        owdTrendState: UInt8 = 0,
+        owdTrendModifiedMilli: Int32 = 0,
+    ) {
         // Freshness contract (gradient corroboration): the raw sample is per-fold, nil on reject.
         lastRTTSampleMillis = rttMillis.map(Double.init)
         owdTrendOverusing = owdTrendState == 1
         owdTrendModified = Double(owdTrendModifiedMilli) / 1000
         if let rtt = rttMillis {
             let sample = Double(rtt)
-            smoothedRTTMillis = smoothedRTTMillis == 0 ? sample : (smoothedRTTMillis * (1 - Self.rttAlpha) + sample * Self.rttAlpha)
+            smoothedRTTMillis = smoothedRTTMillis == 0 ? sample :
+                (smoothedRTTMillis * (1 - Self.rttAlpha) + sample * Self.rttAlpha)
             if sample < minRTTMillis {
                 minRTTMillis = sample
             } else if minRTTMillis.isFinite {
@@ -695,7 +749,7 @@ public struct StaticIDRDecider: Sendable, Equatable {
         // already serviced faster by the live `.complete` latch drain — the timer is the
         // fallback only when the live path has gone quiet, so the quiet window gates forced too.)
         let sinceComplete = now - lastCompleteEncode
-        if lastCompleteEncode != 0 && sinceComplete < quietWindow { return false }
+        if lastCompleteEncode != 0, sinceComplete < quietWindow { return false }
         // Recovery request always wins once the live path is quiet (latency-critical: a client
         // is frozen). Fire regardless of heartbeat phase.
         if forcedLatched { return true }

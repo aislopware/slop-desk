@@ -5,16 +5,18 @@ import XCTest
 /// submitted as a degenerate zero-length sample buffer (which fails the decode and drives a
 /// needless invalidateSession + IDR recovery churn). The triage is pure — no VideoToolbox.
 final class FrameDecodabilityTests: XCTestCase {
-
     func testNonEmptyDeltaIsDecodable() {
         XCTAssertEqual(FrameDecodability.classify(keyframe: false, byteCount: 1), .decodable)
         XCTAssertEqual(FrameDecodability.classify(keyframe: false, byteCount: 4096), .decodable)
     }
 
     func testNonEmptyKeyframeIsDecodable() {
-        XCTAssertEqual(FrameDecodability.classify(keyframe: true, byteCount: 1), .decodable,
-                       "a real (non-empty) keyframe decodes normally — only the zero-byte case is special")
-        XCTAssertEqual(FrameDecodability.classify(keyframe: true, byteCount: 65_536), .decodable)
+        XCTAssertEqual(
+            FrameDecodability.classify(keyframe: true, byteCount: 1),
+            .decodable,
+            "a real (non-empty) keyframe decodes normally — only the zero-byte case is special",
+        )
+        XCTAssertEqual(FrameDecodability.classify(keyframe: true, byteCount: 65536), .decodable)
     }
 
     func testEmptyDeltaDropsSilently() {

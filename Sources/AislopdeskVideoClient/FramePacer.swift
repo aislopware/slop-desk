@@ -1,8 +1,8 @@
 #if canImport(QuartzCore) && canImport(CoreVideo)
-import Foundation
 import CoreVideo
-import QuartzCore
+import Foundation
 import OSLog
+import QuartzCore
 #if os(macOS)
 import AppKit
 #elseif canImport(UIKit)
@@ -141,6 +141,7 @@ public final class FramePacer: @unchecked Sendable {
     private let presentOnArrival: Bool
 
     // MARK: DEADLINE PACER (2026-06-10, the Parsec-smoothness research round)
+
     //
     // Both prior modes schedule presentation off ARRIVAL events (drain-on-vsync, or
     // present-on-decode), so network jitter passes straight into inter-presentation intervals —
@@ -177,8 +178,10 @@ public final class FramePacer: @unchecked Sendable {
     private final class DisplayLinkProxy: NSObject {
         let pacer: FramePacer
         init(_ pacer: FramePacer) { self.pacer = pacer }
-        @objc func step() { pacer.tick() }
+        @objc
+        func step() { pacer.tick() }
     }
+
     private var proxy: DisplayLinkProxy?
     #endif
 
@@ -195,14 +198,23 @@ public final class FramePacer: @unchecked Sendable {
     /// unchanged frame.
     private var needsRedisplay = false
 
-    public init(maxFrameRate: Double = 60.0, targetDepth: Int = 2, maxDepth: Int = 5, adaptiveJitter: Bool = false, presentOnArrival: Bool = true,
-                adaptiveDepth: Bool = false, depthPolicyConfig: PacerDepthPolicy.Config = .init(),
-                deadlineMode: Bool = false, contentFps: Double = 60.0, playoutDelayMs: Double = 20.0,
-                renderCallback: @escaping RenderCallback) {
+    public init(
+        maxFrameRate: Double = 60.0,
+        targetDepth: Int = 2,
+        maxDepth: Int = 5,
+        adaptiveJitter: Bool = false,
+        presentOnArrival: Bool = true,
+        adaptiveDepth: Bool = false,
+        depthPolicyConfig: PacerDepthPolicy.Config = .init(),
+        deadlineMode: Bool = false,
+        contentFps: Double = 60.0,
+        playoutDelayMs: Double = 20.0,
+        renderCallback: @escaping RenderCallback,
+    ) {
         self.presentOnArrival = presentOnArrival
         self.deadlineMode = deadlineMode
-        self.contentIntervalSec = 1.0 / max(1.0, contentFps)
-        self.playoutDelaySec = min(200.0, max(0.0, playoutDelayMs)) / 1000.0
+        contentIntervalSec = 1.0 / max(1.0, contentFps)
+        playoutDelaySec = min(200.0, max(0.0, playoutDelayMs)) / 1000.0
         self.maxFrameRate = maxFrameRate
         let clampedTarget = max(1, targetDepth)
         let clampedMax = max(clampedTarget, maxDepth)
@@ -215,24 +227,44 @@ public final class FramePacer: @unchecked Sendable {
         self.adaptiveJitter = resolvedAdaptiveJitter
         // v2 depth ACTION only at the depth-1 arrival-mode default (manual depth ≥ 2 and deadline
         // mode keep the policy telemetry-only).
-        self.adaptiveDepthV2 = adaptiveDepth && clampedTarget == 1 && !deadlineMode
-        self.depthPolicy = PacerDepthPolicy(config: depthPolicyConfig, adaptEnabled: adaptiveDepth && clampedTarget == 1 && !deadlineMode)
+        adaptiveDepthV2 = adaptiveDepth && clampedTarget == 1 && !deadlineMode
+        depthPolicy = PacerDepthPolicy(
+            config: depthPolicyConfig,
+            adaptEnabled: adaptiveDepth && clampedTarget == 1 && !deadlineMode,
+        )
         // OFF ⇒ liveDepth stays == targetDepth forever (controller nil, never consulted) ⇒
         // the fixed-depth path is byte-identical to before this feature.
-        self.liveDepth = clampedTarget
+        liveDepth = clampedTarget
         // The controller's fps is its seconds→frames conversion UNIT and it is the CONTENT fps —
         // the SAME unit ``setContentFps(_:)`` rebases with. Constructing with `maxFrameRate` (the
         // display tick rate, e.g. 120) made the unit FLIP to content fps (60) on the first
         // `streamCadence` rebase, halving every depth recommendation mid-session.
-        self.controller = resolvedAdaptiveJitter
-            ? AdaptiveJitterController(minDepth: 1, maxDepth: clampedMax, fps: max(1.0, contentFps), initialDepth: clampedTarget)
+        controller = resolvedAdaptiveJitter
+            ? AdaptiveJitterController(
+                minDepth: 1,
+                maxDepth: clampedMax,
+                fps: max(1.0, contentFps),
+                initialDepth: clampedTarget,
+            )
             : nil
         self.renderCallback = renderCallback
         if Self.dbgEnabled {
-            if adaptiveJitter && adaptiveDepth {
-                FileHandle.standardError.write(Data("Aislopdesk[video.client]: ADAPTIVE_JITTER (v1) forced OFF — ADAPTIVE_DEPTH (v2) owns liveDepth\n".utf8))
+            if adaptiveJitter, adaptiveDepth {
+                FileHandle.standardError
+                    .write(
+                        Data(
+                            "Aislopdesk[video.client]: ADAPTIVE_JITTER (v1) forced OFF — ADAPTIVE_DEPTH (v2) owns liveDepth\n"
+                                .utf8,
+                        ),
+                    )
             }
-            FileHandle.standardError.write(Data("Aislopdesk[video.client]: pacer up — tick=\(Int(maxFrameRate))Hz depth=\(clampedTarget) adaptive=\(resolvedAdaptiveJitter) adaptiveDepthV2=\(adaptiveDepthV2) presentOnArrival=\(presentOnArrival) mode=\(deadlineMode ? "deadline(playout=\(Int(playoutDelaySec * 1000))ms)" : "arrival")\n".utf8))
+            FileHandle.standardError
+                .write(
+                    Data(
+                        "Aislopdesk[video.client]: pacer up — tick=\(Int(maxFrameRate))Hz depth=\(clampedTarget) adaptive=\(resolvedAdaptiveJitter) adaptiveDepthV2=\(adaptiveDepthV2) presentOnArrival=\(presentOnArrival) mode=\(deadlineMode ? "deadline(playout=\(Int(playoutDelaySec * 1000))ms)" : "arrival")\n"
+                            .utf8,
+                    ),
+                )
         }
     }
 
@@ -249,10 +281,14 @@ public final class FramePacer: @unchecked Sendable {
     func submitForTest(_ frame: CVImageBuffer, now: Double) {
         if deadlineMode {
             lock.lock()
-            depthPolicy.noteArrival(now)   // telemetry parity (depth action never engages in deadline mode)
-            let deadline = Self.deadlineForArrival(arrival: now, lastDeadline: lastPresentDeadline,
-                                                   interval: contentIntervalSec, playoutDelay: playoutDelaySec)
-            pendingFrame = frame          // latest-wins: a post-stall bunch shows the newest
+            depthPolicy.noteArrival(now) // telemetry parity (depth action never engages in deadline mode)
+            let deadline = Self.deadlineForArrival(
+                arrival: now,
+                lastDeadline: lastPresentDeadline,
+                interval: contentIntervalSec,
+                playoutDelay: playoutDelaySec,
+            )
+            pendingFrame = frame // latest-wins: a post-stall bunch shows the newest
             pendingDeadline = deadline
             pendingSubmittedAt = now
             lock.unlock()
@@ -274,8 +310,11 @@ public final class FramePacer: @unchecked Sendable {
             jitter.note(arrival: now)
             let before = liveDepth
             let jitterMs = jitter.jitterSeconds * 1000
+            // `controller` is a value-type with a MUTATING method on an optional stored property;
+            // `guard let` would mutate a COPY and silently drop the depth update. adaptiveJitter ⇒ non-nil.
+            // swiftlint:disable:next force_unwrapping
             liveDepth = controller!.noteFrame(jitterSeconds: jitter.jitterSeconds)
-            if Self.dbgEnabled && liveDepth != before {
+            if Self.dbgEnabled, liveDepth != before {
                 depthChangeLine = "Aislopdesk[video.client]: jitter depth \(before)→\(liveDepth) (arrival jitter \(String(format: "%.1f", jitterMs))ms)\n"
             }
         }
@@ -288,10 +327,12 @@ public final class FramePacer: @unchecked Sendable {
         // ACTED on after unlock: the present itself must run on the main actor (render path),
         // so hop there and run the no-throttle present. The hop is sub-ms exactly when this
         // fires (sparse content ⇒ idle main loop).
-        let presentNow = Self.shouldPresentOnArrival(enabled: presentOnArrival,
-                                                     queueWasEmpty: queueWasEmpty,
-                                                     queueCount: queue.count,
-                                                     liveDepth: liveDepth)
+        let presentNow = Self.shouldPresentOnArrival(
+            enabled: presentOnArrival,
+            queueWasEmpty: queueWasEmpty,
+            queueCount: queue.count,
+            liveDepth: liveDepth,
+        )
         lock.unlock()
         if let depthChangeLine {
             FileHandle.standardError.write(Data(depthChangeLine.utf8))
@@ -344,7 +385,8 @@ public final class FramePacer: @unchecked Sendable {
     /// NetworkStats report. Lock-guarded and synchronous — callable straight from the session actor
     /// with no main hop (the pacer is `@unchecked Sendable` with its own lock).
     public func drainTelemetry() -> PacerTelemetrySnapshot {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         let (late, gaps) = depthPolicy.drainCounters()
         return PacerTelemetrySnapshot(lateFrames: late, presentGaps: gaps, depth: UInt32(max(0, liveDepth)))
     }
@@ -363,8 +405,12 @@ public final class FramePacer: @unchecked Sendable {
     /// requirement is safe: a second present inside one vsync slot is simply queued to the
     /// next refresh by Core Animation (exactly when the tick would have shown it), and the
     /// present still consumes the cadence slot so the link tick right after is throttled.
-    public static func shouldPresentOnArrival(enabled: Bool, queueWasEmpty: Bool,
-                                              queueCount: Int, liveDepth: Int) -> Bool {
+    public static func shouldPresentOnArrival(
+        enabled: Bool,
+        queueWasEmpty: Bool,
+        queueCount: Int,
+        liveDepth: Int,
+    ) -> Bool {
         enabled && queueWasEmpty && queueCount >= liveDepth
     }
 
@@ -403,8 +449,12 @@ public final class FramePacer: @unchecked Sendable {
         lock.lock()
         contentIntervalSec = 1.0 / max(1.0, fps)
         if adaptiveJitter, let c = controller {
-            controller = AdaptiveJitterController(minDepth: 1, maxDepth: maxDepth, fps: max(1.0, fps),
-                                                  initialDepth: c.targetDepth)
+            controller = AdaptiveJitterController(
+                minDepth: 1,
+                maxDepth: maxDepth,
+                fps: max(1.0, fps),
+                initialDepth: c.targetDepth,
+            )
         }
         // Component 4: pin the v2 policy's expected interval to the announced cadence — an INSTANT
         // late-threshold rebase (no ~8-arrival estimator transient, no false late at the
@@ -428,7 +478,8 @@ public final class FramePacer: @unchecked Sendable {
         // the same write-after-unlock discipline as `depthChangeLine` in ``submitForTest``.
         var depthChangeLine: String?
         defer { if let depthChangeLine { FileHandle.standardError.write(Data(depthChangeLine.utf8)) } }
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         // NOTE: all depth reads below use `liveDepth` (== targetDepth when adaptive is off, so
         // this path is unchanged; the controller's live recommendation when on).
         if !primed {
@@ -436,7 +487,9 @@ public final class FramePacer: @unchecked Sendable {
             // jitter slack BEFORE steady presentation. Re-entered after a sustained dry spell (below),
             // so the slack is rebuilt ahead of every stop→scroll resume — not just once per session.
             // This also resets underflowRun to 0, which the transient-dip discriminator below relies on.
-            if queue.count >= liveDepth { primed = true; underflowRun = 0 } else { return lastShownFrame }
+            if queue.count >= liveDepth { primed = true
+                underflowRun = 0
+            } else { return lastShownFrame }
         }
         // Homeostasis: never carry MORE than liveDepth frames — drop the OLDEST excess so steady-state
         // depth (hence added latency) settles at ≈ liveDepth/fps instead of ratcheting up to maxDepth
@@ -460,11 +513,14 @@ public final class FramePacer: @unchecked Sendable {
             depthPolicy.notePresent(now)
             if adaptiveDepthV2, let line = applyPolicyDepthLocked() { depthChangeLine = line }
             if Self.dbgEnabled { dbgNoteHold(since: submittedAt, now: now) }
-            if adaptiveJitter && wasTransientDip {
+            if adaptiveJitter, wasTransientDip {
                 let before = liveDepth
+                // Mutating value-type method on the optional stored property — see noteFrame above.
+                // swiftlint:disable:next force_unwrapping
                 liveDepth = controller!.noteUnderrun()
-                if Self.dbgEnabled && liveDepth != before {
-                    FileHandle.standardError.write(Data("Aislopdesk[video.client]: jitter depth \(before)→\(liveDepth) (underrun)\n".utf8))
+                if Self.dbgEnabled, liveDepth != before {
+                    FileHandle.standardError
+                        .write(Data("Aislopdesk[video.client]: jitter depth \(before)→\(liveDepth) (underrun)\n".utf8))
                 }
             }
             return next
@@ -499,13 +555,19 @@ public final class FramePacer: @unchecked Sendable {
 
     /// TEST SEAM (also useful under `AISLOPDESK_VIDEO_DEBUG`): the live presentation depth, read
     /// under ``lock``. With adaptive off this always equals ``targetDepth``.
-    var currentDepth: Int { lock.lock(); defer { lock.unlock() }; return liveDepth }
+    var currentDepth: Int { lock.lock()
+        defer { lock.unlock() }
+        return liveDepth
+    }
 
     /// TEST SEAM: the adaptive v1 controller's fps — its seconds→frames conversion UNIT. Pinned to
     /// the CONTENT fps at construction AND after a ``setContentFps(_:)`` rebase (never the display
     /// tick rate, which would flip the unit on the first `streamCadence` message). nil when
     /// adaptive is off. Read under ``lock``.
-    var controllerFpsForTest: Double? { lock.lock(); defer { lock.unlock() }; return controller?.fps }
+    var controllerFpsForTest: Double? { lock.lock()
+        defer { lock.unlock() }
+        return controller?.fps
+    }
 
     /// Debug-only (called under ``lock``): fold one frame's REAL pacer hold (submit → first
     /// present) and emit a ~2s-windowed `p50/p90/max` stderr line. This is the ground-truth
@@ -517,7 +579,8 @@ public final class FramePacer: @unchecked Sendable {
         // itself (one content interval at 60fps is 16.7ms; >28ms means a frame slot went empty).
         // Read against stages 1-4 to see which segment created the hole.
         if dbgLastPresentAt > 0, now - dbgLastPresentAt > 0.028 {
-            FileHandle.standardError.write(Data("Aislopdesk[video.client]: present gap \(Int((now - dbgLastPresentAt) * 1000))ms\n".utf8))
+            FileHandle.standardError
+                .write(Data("Aislopdesk[video.client]: present gap \(Int((now - dbgLastPresentAt) * 1000))ms\n".utf8))
         }
         dbgLastPresentAt = now
         dbgHolds.append(now - submittedAt)
@@ -538,14 +601,17 @@ public final class FramePacer: @unchecked Sendable {
             // Deadline path: the schedule IS the cadence — no shouldRender cap (presents are
             // ≤ content fps by construction: one pending slot, deadlines spaced ≥ interval).
             lock.lock()
-            let due = pendingFrame != nil && Self.deadlineDue(deadline: pendingDeadline, now: hostTimeSeconds,
-                                                              halfTick: 0.5 / max(1.0, maxFrameRate))
+            let due = pendingFrame != nil && Self.deadlineDue(
+                deadline: pendingDeadline,
+                now: hostTimeSeconds,
+                halfTick: 0.5 / max(1.0, maxFrameRate),
+            )
             let frame = due ? pendingFrame : nil
             let submittedAt = pendingSubmittedAt
             if due {
-                lastPresentDeadline = pendingDeadline   // advance by the SCHEDULE, not by `now`
+                lastPresentDeadline = pendingDeadline // advance by the SCHEDULE, not by `now`
                 pendingFrame = nil
-                depthPolicy.notePresent(hostTimeSeconds)   // component 4: telemetry only in deadline mode
+                depthPolicy.notePresent(hostTimeSeconds) // component 4: telemetry only in deadline mode
                 if Self.dbgEnabled { dbgNoteHold(since: submittedAt, now: hostTimeSeconds) }
             }
             lock.unlock()
@@ -572,8 +638,12 @@ public final class FramePacer: @unchecked Sendable {
     /// modulate presentation spacing. STALL CATCH-UP: when the rhythm has fallen more than one
     /// interval behind the arrival (a 50-150ms network stall just ended), re-anchor at
     /// `arrival + playoutDelay` instead of fast-forwarding through the backlog.
-    public static func deadlineForArrival(arrival: Double, lastDeadline: Double,
-                                          interval: Double, playoutDelay: Double) -> Double {
+    public static func deadlineForArrival(
+        arrival: Double,
+        lastDeadline: Double,
+        interval: Double,
+        playoutDelay: Double,
+    ) -> Double {
         guard lastDeadline > 0 else { return arrival + playoutDelay }
         let next = lastDeadline + interval
         if next < arrival - interval { return arrival + playoutDelay }
@@ -628,6 +698,7 @@ public final class FramePacer: @unchecked Sendable {
     /// from a test. `@MainActor`: `NSView.displayLink(target:selector:)` is main-actor
     /// API and the returned `CADisplayLink` is main-confined; the pipeline calls this on
     /// the main actor.
+    @preconcurrency
     @MainActor
     public func start(view: NSView) {
         guard displayLink == nil else { return }
@@ -638,12 +709,14 @@ public final class FramePacer: @unchecked Sendable {
         link.add(to: .main, forMode: .common)
         displayLink = link
     }
+
     #elseif canImport(UIKit)
     /// Starts the `CADisplayLink` driving ``tick()`` at the display's refresh rate,
     /// capped to ``maxFrameRate`` via the throttle in ``tick()``. `view` is accepted for
     /// signature parity with the macOS path (and so the link's screen could be derived
     /// later); iOS constructs the `CADisplayLink` directly.
     /// ⚠️ GUI-only — needs a run loop + a screen; NEVER called from a test.
+    @preconcurrency
     @MainActor
     public func start(view: UIView) {
         guard displayLink == nil else { return }
@@ -663,10 +736,15 @@ public final class FramePacer: @unchecked Sendable {
     /// just lets the OS pace the link efficiently.
     @MainActor
     private func configureCadence(_ link: CADisplayLink) {
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 15, maximum: Float(maxFrameRate), preferred: Float(maxFrameRate))
+        link.preferredFrameRateRange = CAFrameRateRange(
+            minimum: 15,
+            maximum: Float(maxFrameRate),
+            preferred: Float(maxFrameRate),
+        )
     }
 
     /// Stops + releases the display link. `@MainActor`: the link is main-confined.
+    @preconcurrency
     @MainActor
     public func stop() {
         displayLink?.invalidate()

@@ -37,7 +37,7 @@ public struct HostdArguments: Sendable, Equatable {
         shell: String?,
         launchMode: HostServer.LaunchMode,
         inspectorEnabled: Bool = false,
-        transcriptPath: String? = nil
+        transcriptPath: String? = nil,
     ) {
         self.port = port
         self.shell = shell
@@ -54,7 +54,7 @@ public struct HostdArguments: Sendable, Equatable {
     /// Parses a full argv (including `argv[0]`, which is dropped). Returns `nil` for
     /// `--help`/`-h`, a missing flag value, or an unknown flag — the caller then prints
     /// ``usage(programName:)`` and exits non-zero.
-    public static func parse(_ args: [String]) -> HostdArguments? {
+    public static func parse(_ args: [String]) -> Self? {
         var port: UInt16 = 7420
         var shell: String?
         var claude = false
@@ -65,10 +65,12 @@ public struct HostdArguments: Sendable, Equatable {
         var iterator = args.dropFirst().makeIterator()
         while let arg = iterator.next() {
             switch arg {
-            case "--port", "-p":
+            case "--port",
+                 "-p":
                 guard let value = iterator.next(), let p = UInt16(value) else { return nil }
                 port = p
-            case "--shell", "-s":
+            case "--shell",
+                 "-s":
                 guard let value = iterator.next() else { return nil }
                 shell = value
             case "--claude":
@@ -80,7 +82,8 @@ public struct HostdArguments: Sendable, Equatable {
             case "--transcript":
                 guard let value = iterator.next() else { return nil }
                 transcript = value
-            case "--help", "-h":
+            case "--help",
+                 "-h":
                 return nil
             default:
                 return nil
@@ -102,12 +105,12 @@ public struct HostdArguments: Sendable, Equatable {
         // `claude` session), OR implied by `--transcript` (a path to tail).
         let inspectorEnabled = inspector || claude || (transcript != nil)
 
-        return HostdArguments(
+        return Self(
             port: port,
             shell: shell,
             launchMode: launchMode,
             inspectorEnabled: inspectorEnabled,
-            transcriptPath: transcript
+            transcriptPath: transcript,
         )
     }
 }

@@ -27,12 +27,12 @@
 import Foundation
 
 #if os(macOS)
-import VideoToolbox
-import CoreMedia
-import CoreVideo
+import AislopdeskVideoClient
 import AislopdeskVideoHost
 import AislopdeskVideoProtocol
-import AislopdeskVideoClient
+import CoreMedia
+import CoreVideo
+import VideoToolbox
 
 // MARK: - Sinks / counters (Sendable boxes for the @Sendable encoder/decoder handlers)
 
@@ -40,14 +40,25 @@ import AislopdeskVideoClient
 /// VideoToolbox's own queue; `completeFrames()` drains all pending callbacks before we read. NSLock
 /// keeps it race-clean even though the harness is otherwise single-threaded.
 final class FrameSink: @unchecked Sendable {
-    struct Item { let avcc: Data; let keyframe: Bool; let ltr: Int64? }
+    struct Item { let avcc: Data
+        let keyframe: Bool
+        let ltr: Int64?
+    }
+
     private let lock = NSLock()
     private var items: [Item] = []
     func append(avcc: Data, keyframe: Bool, ltr: Int64?) {
-        lock.lock(); items.append(Item(avcc: avcc, keyframe: keyframe, ltr: ltr)); lock.unlock()
+        lock.lock()
+        items.append(Item(avcc: avcc, keyframe: keyframe, ltr: ltr))
+        lock.unlock()
     }
+
     func drain() -> [Item] {
-        lock.lock(); let out = items; items.removeAll(); lock.unlock(); return out
+        lock.lock()
+        let out = items
+        items.removeAll()
+        lock.unlock()
+        return out
     }
 }
 
@@ -93,17 +104,23 @@ enum LossModel {
 /// (0 when the tier is OFF / no parity). `frameLocalIndex` is the position of this fragment in its
 /// frame's WIRE transmission list (after any interleave) — used by `.wireBurst` to model an
 /// adjacent-datagram burst loss; `globalIndex` is the scenario-global wire position for `.everyN`.
-func shouldDrop(frag: FrameFragment, globalIndex: Int, frameLocalIndex: Int, model: LossModel, tierGroupSize: Int) -> Bool {
+func shouldDrop(
+    frag: FrameFragment,
+    globalIndex: Int,
+    frameLocalIndex: Int,
+    model: LossModel,
+    tierGroupSize: Int,
+) -> Bool {
     switch model {
     case .none:
         return false
-    case .everyN(let n):
+    case let .everyN(n):
         return n > 0 && globalIndex != 0 && globalIndex % n == 0
-    case .firstPerGroup(let k):
+    case let .firstPerGroup(k):
         if frag.header.flags.contains(.parity) { return false }
         let g = tierGroupSize <= 0 ? Int.max : tierGroupSize
         return Int(frag.header.fragIndex) % g < k
-    case .wireBurst(let start, let len):
+    case let .wireBurst(start, len):
         return frameLocalIndex >= start && frameLocalIndex < start + len
     }
 }
@@ -121,7 +138,8 @@ func makePixelBuffer(width: Int, height: Int, fullRange: Bool) -> CVPixelBuffer?
         : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
     let status = CVPixelBufferCreate(
         kCFAllocatorDefault, width, height, fmt,
-        [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pb)
+        [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pb,
+    )
     guard status == kCVReturnSuccess else { return nil }
     return pb
 }
@@ -149,7 +167,7 @@ func fillFrame(_ pb: CVPixelBuffer, _ i: Int) {
                 let cell = ((x >> 4) & 1) ^ yband
                 let grad = (x &+ y &+ i &* 4) & 0x3F
                 var lum: Int = cell == 0 ? (50 + grad) : (190 - grad)
-                if abs(x - bx) < 40 && abs(y - by) < 40 { lum = 235 }
+                if abs(x - bx) < 40, abs(y - by) < 40 { lum = 235 }
                 row[x] = UInt8(lum & 0xFF)
             }
         }
@@ -175,14 +193,21 @@ func fillFrame(_ pb: CVPixelBuffer, _ i: Int) {
 
 func tierDesc(_ tier: UInt8) -> String {
     switch AdaptiveFECPolicy.groupSize(forTier: tier, default: 5) {
-    case nil: return "OFF"
-    case .some(let g): return "g\(g)"
+    case nil: "OFF"
+    case let .some(g): "g\(g)"
     }
 }
 
 // MARK: - The closed loop (one scenario)
 
-func runScenario(name: String, frames: Int, tier: UInt8, loss: LossModel, fullRange: Bool = false, interleave: Bool = false) -> ScenarioStats {
+func runScenario(
+    name: String,
+    frames: Int,
+    tier: UInt8,
+    loss: LossModel,
+    fullRange: Bool = false,
+    interleave: Bool = false,
+) -> ScenarioStats {
     var stats = ScenarioStats(name: name)
     let sink = FrameSink()
     let decodedCounter = Counter()
@@ -191,7 +216,8 @@ func runScenario(name: String, frames: Int, tier: UInt8, loss: LossModel, fullRa
     do {
         enc = VideoEncoder(
             width: kWidth, height: kHeight, fps: kFPS, fullRange: fullRange, ltrEnabled: false,
-            outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) })
+            outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) },
+        )
         try enc.createLiveSession()
     } catch {
         print("  [\(name)] ENCODER CREATE FAILED: \(error)")
@@ -221,7 +247,8 @@ func runScenario(name: String, frames: Int, tier: UInt8, loss: LossModel, fullRa
             try enc.encodeLive(
                 pixelBuffer: pb,
                 presentationTime: CMTime(value: Int64(i), timescale: Int32(kFPS)),
-                forceKeyframe: force)
+                forceKeyframe: force,
+            )
         } catch {
             // A frame the encoder could not fit under the hard rate cap is dropped (no output) — count
             // nothing and continue; never crash the harness.
@@ -235,7 +262,8 @@ func runScenario(name: String, frames: Int, tier: UInt8, loss: LossModel, fullRa
             _ = pk.peekNextFrameID
             let packetized = pk.packetize(
                 frame: out.avcc, keyframe: out.keyframe,
-                hostSendTsMillis: hostTs, fecTier: tier, isLTR: false)
+                hostSendTsMillis: hostTs, fecTier: tier, isLTR: false,
+            )
             hostTs &+= 16 // ~60fps monotonic ms stamp (cosmetic here; controllers drive RTT separately)
 
             // Mirror the LIVE host: when AISLOPDESK_INTERLEAVE is on, transmission is reordered column-major
@@ -247,16 +275,24 @@ func runScenario(name: String, frames: Int, tier: UInt8, loss: LossModel, fullRa
 
             for (frameLocalIndex, frag) in frags.enumerated() {
                 stats.fragmentsSent += 1
-                let drop = shouldDrop(frag: frag, globalIndex: globalFrag, frameLocalIndex: frameLocalIndex, model: loss, tierGroupSize: tierGroupSize)
+                let drop = shouldDrop(
+                    frag: frag,
+                    globalIndex: globalFrag,
+                    frameLocalIndex: frameLocalIndex,
+                    model: loss,
+                    tierGroupSize: tierGroupSize,
+                )
                 globalFrag += 1
-                if drop { stats.fragmentsDropped += 1; continue }
+                if drop { stats.fragmentsDropped += 1
+                    continue
+                }
 
                 // Wire round-trip the survivor through the real fragment codec.
                 let wire = frag.encode()
                 guard let parsed = try? FrameFragment.decode(wire) else { continue }
 
                 switch ra.ingest(parsed) {
-                case .completed(let f):
+                case let .completed(f):
                     stats.reassembled += 1
                     if f.recoveredViaFEC { stats.fecRecovered += 1 }
                     do {
@@ -269,7 +305,8 @@ func runScenario(name: String, frames: Int, tier: UInt8, loss: LossModel, fullRa
                 case .dropped:
                     stats.framesDropped += 1
                     recoveryPending = true
-                case .incomplete, .stale:
+                case .incomplete,
+                     .stale:
                     break
                 }
                 while ra.nextDroppedFrame() != nil {
@@ -301,7 +338,8 @@ func runLTRHWScenario(frames: Int) -> ScenarioStats {
     do {
         enc = VideoEncoder(
             width: kWidth, height: kHeight, fps: kFPS, ltrEnabled: true,
-            outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) })
+            outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) },
+        )
         try enc.createLiveSession()
     } catch {
         print("  LTR encoder create FAILED: \(error)")
@@ -316,23 +354,26 @@ func runLTRHWScenario(frames: Int) -> ScenarioStats {
 
     var hostTs: UInt32 = 1
     var ltrFramesSeen = 0
-    var lastAckedToken: Int64? = nil
+    var lastAckedToken: Int64?
 
     func processOutputs() {
         for out in sink.drain() {
             stats.encoded += 1
             let frameID = pk.peekNextFrameID
             let isLTRFrame = (out.ltr != nil)
-            if isLTRFrame { ltrFramesSeen += 1; ltrCtl.recordLTRFrame(frameID: frameID, token: out.ltr!) }
+            if isLTRFrame { ltrFramesSeen += 1
+                ltrCtl.recordLTRFrame(frameID: frameID, token: out.ltr!)
+            }
             let frags = pk.packetize(
                 frame: out.avcc, keyframe: out.keyframe,
-                hostSendTsMillis: hostTs, fecTier: 0, isLTR: isLTRFrame)
+                hostSendTsMillis: hostTs, fecTier: 0, isLTR: isLTRFrame,
+            )
             hostTs &+= 16
             for frag in frags {
                 stats.fragmentsSent += 1
                 let wire = frag.encode()
                 guard let parsed = try? FrameFragment.decode(wire) else { continue }
-                if case .completed(let f) = ra.ingest(parsed) {
+                if case let .completed(f) = ra.ingest(parsed) {
                     stats.reassembled += 1
                     if f.recoveredViaFEC { stats.fecRecovered += 1 }
                     do {
@@ -351,9 +392,15 @@ func runLTRHWScenario(frames: Int) -> ScenarioStats {
 
     // Seed: a forced keyframe SEEDS an LTR reference (carries RequireLTRAcknowledgementToken on HW
     // that supports it). recoveryDecision must be .idr until a token is acked.
-    print("  recoveryDecision(.ltrRefresh) BEFORE any ack: \(ltrCtl.recoveryDecision(request: .ltrRefresh, hasEnableLTR: true))")
+    print(
+        "  recoveryDecision(.ltrRefresh) BEFORE any ack: \(ltrCtl.recoveryDecision(request: .ltrRefresh, hasEnableLTR: true))",
+    )
     fillFrame(pb, 0)
-    try? enc.encodeLive(pixelBuffer: pb, presentationTime: CMTime(value: 0, timescale: Int32(kFPS)), forceKeyframe: true)
+    try? enc.encodeLive(
+        pixelBuffer: pb,
+        presentationTime: CMTime(value: 0, timescale: Int32(kFPS)),
+        forceKeyframe: true,
+    )
     enc.completeFrames()
     processOutputs() // records + (on successful decode) acks the keyframe's LTR token, stages it
 
@@ -364,13 +411,19 @@ func runLTRHWScenario(frames: Int) -> ScenarioStats {
             + "RequireLTRAcknowledgementToken (VT will fall back to IDR on a refresh; still decodable)")
     }
     print("  hasAckedToken after keyframe decode+ack: \(ltrCtl.hasAckedToken)")
-    print("  recoveryDecision(.ltrRefresh) AFTER ack: \(ltrCtl.recoveryDecision(request: .ltrRefresh, hasEnableLTR: true))")
+    print(
+        "  recoveryDecision(.ltrRefresh) AFTER ack: \(ltrCtl.recoveryDecision(request: .ltrRefresh, hasEnableLTR: true))",
+    )
 
     // A few normal live deltas to build stream depth.
     let deltas = max(2, frames - 2)
     for i in 1..<deltas {
         fillFrame(pb, i)
-        try? enc.encodeLive(pixelBuffer: pb, presentationTime: CMTime(value: Int64(i), timescale: Int32(kFPS)), forceKeyframe: false)
+        try? enc.encodeLive(
+            pixelBuffer: pb,
+            presentationTime: CMTime(value: Int64(i), timescale: Int32(kFPS)),
+            forceKeyframe: false,
+        )
         enc.completeFrames()
         processOutputs()
     }
@@ -379,7 +432,10 @@ func runLTRHWScenario(frames: Int) -> ScenarioStats {
     // an IDR. Either way it must produce a decodable frame.
     let beforeDecoded = decodedCounter.value
     fillFrame(pb, frames - 1)
-    try? enc.encodeLiveLTRRefresh(pixelBuffer: pb, presentationTime: CMTime(value: Int64(frames - 1), timescale: Int32(kFPS)))
+    try? enc.encodeLiveLTRRefresh(
+        pixelBuffer: pb,
+        presentationTime: CMTime(value: Int64(frames - 1), timescale: Int32(kFPS)),
+    )
     enc.completeFrames()
     processOutputs()
     print("  encodeLiveLTRRefresh produced a decodable frame: \(decodedCounter.value > beforeDecoded ? "YES" : "NO")")
@@ -421,7 +477,7 @@ func fillFrameLowMotion(_ pb: CVPixelBuffer, _ i: Int) {
                 let cell = ((x >> 4) & 1) ^ yband
                 let grad = (x &+ y) & 0x3F
                 var lum: Int = cell == 0 ? (50 + grad) : (190 - grad)
-                if abs(x - bx) < 40 && abs(y - by) < 40 { lum = 235 }
+                if abs(x - bx) < 40, abs(y - by) < 40 { lum = 235 }
                 row[x] = UInt8(lum & 0xFF)
             }
         }
@@ -448,7 +504,7 @@ func expectedLumaLowMotion(x: Int, y: Int, frame i: Int, w: Int, h: Int) -> Int 
     let cell = ((x >> 4) & 1) ^ ((y >> 4) & 1)
     let grad = (x &+ y) & 0x3F
     var lum: Int = cell == 0 ? (50 + grad) : (190 - grad)
-    if abs(x - bx) < 40 && abs(y - by) < 40 { lum = 235 }
+    if abs(x - bx) < 40, abs(y - by) < 40 { lum = 235 }
     return lum & 0xFF
 }
 
@@ -462,7 +518,7 @@ func expectedLuma(x: Int, y: Int, frame i: Int, w: Int, h: Int) -> Int {
     let cell = ((x >> 4) & 1) ^ ((y >> 4) & 1)
     let grad = (x &+ y &+ i &* 4) & 0x3F
     var lum: Int = cell == 0 ? (50 + grad) : (190 - grad)
-    if abs(x - bx) < 40 && abs(y - by) < 40 { lum = 235 }
+    if abs(x - bx) < 40, abs(y - by) < 40 { lum = 235 }
     return lum & 0xFF
 }
 
@@ -472,8 +528,8 @@ func expectedLuma(x: Int, y: Int, frame i: Int, w: Int, h: Int) -> Int {
 final class MADBox: @unchecked Sendable {
     private let lock = NSLock()
     var sourceIndex = 0
-    var dropRecent = false           // a whole-frame wire loss happened within the last 3 frames
-    var lowMotion = false            // verify against the low-motion content formula instead
+    var dropRecent = false // a whole-frame wire loss happened within the last 3 frames
+    var lowMotion = false // verify against the low-motion content formula instead
     private(set) var sumMAD = 0.0
     private(set) var count = 0
     private(set) var maxMAD = 0.0
@@ -487,7 +543,11 @@ final class MADBox: @unchecked Sendable {
         let ptr = base.assumingMemoryBound(to: UInt8.self)
         let stride = CVPixelBufferGetBytesPerRowOfPlane(pb, 0)
         let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
-        lock.lock(); let i = sourceIndex; let recent = dropRecent; let lowM = lowMotion; lock.unlock()
+        lock.lock()
+        let i = sourceIndex
+        let recent = dropRecent
+        let lowM = lowMotion
+        lock.unlock()
         var sum = 0, n = 0
         var y = 2
         while y < h {
@@ -506,9 +566,10 @@ final class MADBox: @unchecked Sendable {
         guard n > 0 else { return }
         let mad = Double(sum) / Double(n)
         lock.lock()
-        sumMAD += mad; count += 1
+        sumMAD += mad
+        count += 1
         if mad > maxMAD { maxMAD = mad }
-        if recent && mad > postDropMaxMAD { postDropMaxMAD = mad }
+        if recent, mad > postDropMaxMAD { postDropMaxMAD = mad }
         lock.unlock()
     }
 }
@@ -542,15 +603,29 @@ struct AckRefArmResult {
 /// one `encodeLiveLTRRefresh` every `refreshEvery` frames (the WF-8 recovery shape) — sizes of those
 /// refresh frames land in `refreshBytesTotal` (P-sized ⇒ genuine LTR reference; intra-sized ⇒ VT's
 /// "LTR refresh" is just a coarse intra and the LTR API never yields real long-term P references).
-func runAckRefArm(name: String, frames: Int, ackRef: Bool, ackLagFrames: Int, dropEveryN: Int, recoverOnFail: Bool, neverAck: Bool = false, verbose: Bool = false, lowMotion: Bool = false, refreshEvery: Int = 0, dropFrames: Set<Int> = []) -> AckRefArmResult {
-    var r = AckRefArmResult(); r.name = name
+func runAckRefArm(
+    name: String,
+    frames: Int,
+    ackRef: Bool,
+    ackLagFrames: Int,
+    dropEveryN: Int,
+    recoverOnFail: Bool,
+    neverAck: Bool = false,
+    verbose: Bool = false,
+    lowMotion: Bool = false,
+    refreshEvery: Int = 0,
+    dropFrames: Set<Int> = [],
+) -> AckRefArmResult {
+    var r = AckRefArmResult()
+    r.name = name
     let sink = FrameSink()
     let decodedCounter = Counter()
     let enc: VideoEncoder
     do {
         enc = VideoEncoder(
             width: kWidth, height: kHeight, fps: kFPS, ltrEnabled: ackRef,
-            outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) })
+            outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) },
+        )
         try enc.createLiveSession()
     } catch {
         print("  [\(name)] ENCODER CREATE FAILED: \(error)")
@@ -561,7 +636,9 @@ func runAckRefArm(name: String, frames: Int, ackRef: Bool, ackLagFrames: Int, dr
     var ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
     let mad = MADBox()
     mad.lowMotion = lowMotion
-    let dec = VideoDecoder(decodedFrameHandler: { img in decodedCounter.value += 1; mad.measure(img) })
+    let dec = VideoDecoder(decodedFrameHandler: { img in decodedCounter.value += 1
+        mad.measure(img)
+    })
     var ltrCtl = LTRController()
     guard let pb = makePixelBuffer(width: kWidth, height: kHeight, fullRange: false) else { return r }
 
@@ -573,7 +650,7 @@ func runAckRefArm(name: String, frames: Int, ackRef: Bool, ackLagFrames: Int, dr
 
     for i in 0..<frames {
         // Deliver acks whose simulated round-trip elapsed (BEFORE this encode — an arriving datagram).
-        if ackRef && !neverAck {
+        if ackRef, !neverAck {
             for a in pendingAcks where a.dueAtFrame <= i {
                 if let tok = ltrCtl.ackFrame(frameID: a.frameID) { enc.stageAcknowledgedToken(tok) }
             }
@@ -583,15 +660,22 @@ func runAckRefArm(name: String, frames: Int, ackRef: Bool, ackLagFrames: Int, dr
         if lowMotion { fillFrameLowMotion(pb, i) } else { fillFrame(pb, i) }
         let force = (i == 0) || recoveryPending
         recoveryPending = false
-        if force && i > 0 { r.recoveryIDRs += 1 }
+        if force, i > 0 { r.recoveryIDRs += 1 }
         let isRefreshFrame = ackRef && !force
             && (refreshEvery == 0 || (i > 0 && i % refreshEvery == 0))
         do {
             if isRefreshFrame {
                 // Per-frame (refreshEvery==0) or sparse (every N) ForceLTRRefresh.
-                try enc.encodeLiveLTRRefresh(pixelBuffer: pb, presentationTime: CMTime(value: Int64(i), timescale: Int32(kFPS)))
+                try enc.encodeLiveLTRRefresh(
+                    pixelBuffer: pb,
+                    presentationTime: CMTime(value: Int64(i), timescale: Int32(kFPS)),
+                )
             } else {
-                try enc.encodeLive(pixelBuffer: pb, presentationTime: CMTime(value: Int64(i), timescale: Int32(kFPS)), forceKeyframe: force)
+                try enc.encodeLive(
+                    pixelBuffer: pb,
+                    presentationTime: CMTime(value: Int64(i), timescale: Int32(kFPS)),
+                    forceKeyframe: force,
+                )
             }
         } catch { continue }
         enc.completeFrames()
@@ -608,30 +692,46 @@ func runAckRefArm(name: String, frames: Int, ackRef: Bool, ackLagFrames: Int, dr
         } else {
             dropThisFrame = dropEveryN > 0 && i > 0 && (i % dropEveryN == dropEveryN / 2)
         }
-        if dropThisFrame { r.framesDroppedOnWire += 1; lastDropIndex = i }
+        if dropThisFrame { r.framesDroppedOnWire += 1
+            lastDropIndex = i
+        }
 
         for out in sink.drain() {
             r.encoded += 1
-            if out.keyframe { r.keyframes += 1; r.kfBytesTotal += out.avcc.count } else { r.deltaBytesTotal += out.avcc.count; r.deltaCount += 1 }
-            if isRefreshFrame && refreshEvery > 0 {
-                r.refreshBytesTotal += out.avcc.count; r.refreshCount += 1
-                if verbose { print("    refresh@\(i) kf=\(out.keyframe) ltrTok=\(out.ltr.map(String.init) ?? "-") bytes=\(out.avcc.count)") }
+            if out.keyframe { r.keyframes += 1
+                r.kfBytesTotal += out.avcc.count
+            } else { r.deltaBytesTotal += out.avcc.count
+                r.deltaCount += 1
             }
-            if verbose && r.encoded <= 12 {
-                print("    f#\(r.encoded - 1) kf=\(out.keyframe) ltrTok=\(out.ltr.map(String.init) ?? "-") bytes=\(out.avcc.count)")
+            if isRefreshFrame, refreshEvery > 0 {
+                r.refreshBytesTotal += out.avcc.count
+                r.refreshCount += 1
+                if verbose {
+                    print(
+                        "    refresh@\(i) kf=\(out.keyframe) ltrTok=\(out.ltr.map(String.init) ?? "-") bytes=\(out.avcc.count)",
+                    )
+                }
+            }
+            if verbose, r.encoded <= 12 {
+                print(
+                    "    f#\(r.encoded - 1) kf=\(out.keyframe) ltrTok=\(out.ltr.map(String.init) ?? "-") bytes=\(out.avcc.count)",
+                )
             }
             let frameID = pk.peekNextFrameID
             let isLTRFrame = (out.ltr != nil)
-            if isLTRFrame { r.ltrTokenFrames += 1; ltrCtl.recordLTRFrame(frameID: frameID, token: out.ltr!) }
+            if isLTRFrame { r.ltrTokenFrames += 1
+                ltrCtl.recordLTRFrame(frameID: frameID, token: out.ltr!)
+            }
             let frags = pk.packetize(
                 frame: out.avcc, keyframe: out.keyframe,
-                hostSendTsMillis: hostTs, fecTier: 0, isLTR: isLTRFrame)
+                hostSendTsMillis: hostTs, fecTier: 0, isLTR: isLTRFrame,
+            )
             hostTs &+= 16
             if dropThisFrame { continue } // lost on the wire: never reassembled, never decoded, never acked
             for frag in frags {
                 let wire = frag.encode()
                 guard let parsed = try? FrameFragment.decode(wire) else { continue }
-                if case .completed(let f) = ra.ingest(parsed) {
+                if case let .completed(f) = ra.ingest(parsed) {
                     do {
                         mad.sourceIndex = i
                         mad.dropRecent = (i - lastDropIndex) <= 3
@@ -650,7 +750,9 @@ func runAckRefArm(name: String, frames: Int, ackRef: Bool, ackLagFrames: Int, dr
         while ra.nextDroppedFrame() != nil {} // whole-frame loss is intentional here — drain bookkeeping
     }
     enc.completeFrames()
-    r.avgMAD = mad.avgMAD; r.maxMAD = mad.maxMAD; r.postDropMaxMAD = mad.postDropMaxMAD
+    r.avgMAD = mad.avgMAD
+    r.maxMAD = mad.maxMAD
+    r.postDropMaxMAD = mad.postDropMaxMAD
     print("  [\(name)] enc=\(r.encoded) kf=\(r.keyframes) ltrTok=\(r.ltrTokenFrames) "
         + "avgALL=\(r.avgFrameBytes)B framesLost=\(r.framesDroppedOnWire) "
         + "decodeOK=\(r.decodeOK) decodeFail=\(r.decodeFail) recoveryIDRs=\(r.recoveryIDRs) "
@@ -668,49 +770,171 @@ func runAckRefArm(name: String, frames: Int, ackRef: Bool, ackLagFrames: Int, dr
 ///       (decodeFail==0, recoveryIDRs==0), where the baseline P-chain breaks?
 func runAckRefProbe(frames: Int) {
     print("=== ACK-REF probe :: per-frame ForceLTRRefresh (Parsec ack-referenced encoding) on REAL HW ===")
-    print("    \(frames) frames/arm, whole-frame wire loss 1/13 (~7.7%), ack lag in FRAMES (60fps ⇒ 2≈33ms RTT, 6≈100ms)\n")
+    print(
+        "    \(frames) frames/arm, whole-frame wire loss 1/13 (~7.7%), ack lag in FRAMES (60fps ⇒ 2≈33ms RTT, 6≈100ms)\n",
+    )
 
-    let base     = runAckRefArm(name: "A base P-chain    clean          ", frames: frames, ackRef: false, ackLagFrames: 0, dropEveryN: 0,  recoverOnFail: true)
-    let baseLoss = runAckRefArm(name: "B base P-chain    drop1/13 +rec  ", frames: frames, ackRef: false, ackLagFrames: 0, dropEveryN: 13, recoverOnFail: true)
-    let ackClean = runAckRefArm(name: "C ack-ref lag2    clean          ", frames: frames, ackRef: true,  ackLagFrames: 2, dropEveryN: 0,  recoverOnFail: true, verbose: true)
-    let ackLoss  = runAckRefArm(name: "D ack-ref lag2    drop1/13 NOrec ", frames: frames, ackRef: true, ackLagFrames: 2, dropEveryN: 13, recoverOnFail: false)
-    let ackLag6  = runAckRefArm(name: "E ack-ref lag6    clean          ", frames: frames, ackRef: true,  ackLagFrames: 6, dropEveryN: 0,  recoverOnFail: true)
+    let base = runAckRefArm(
+        name: "A base P-chain    clean          ",
+        frames: frames,
+        ackRef: false,
+        ackLagFrames: 0,
+        dropEveryN: 0,
+        recoverOnFail: true,
+    )
+    let baseLoss = runAckRefArm(
+        name: "B base P-chain    drop1/13 +rec  ",
+        frames: frames,
+        ackRef: false,
+        ackLagFrames: 0,
+        dropEveryN: 13,
+        recoverOnFail: true,
+    )
+    let ackClean = runAckRefArm(
+        name: "C ack-ref lag2    clean          ",
+        frames: frames,
+        ackRef: true,
+        ackLagFrames: 2,
+        dropEveryN: 0,
+        recoverOnFail: true,
+        verbose: true,
+    )
+    let ackLoss = runAckRefArm(
+        name: "D ack-ref lag2    drop1/13 NOrec ",
+        frames: frames,
+        ackRef: true,
+        ackLagFrames: 2,
+        dropEveryN: 13,
+        recoverOnFail: false,
+    )
+    let ackLag6 = runAckRefArm(
+        name: "E ack-ref lag6    clean          ",
+        frames: frames,
+        ackRef: true,
+        ackLagFrames: 6,
+        dropEveryN: 0,
+        recoverOnFail: true,
+    )
     // ADVERSARIAL: drop only TOKEN (LTR) frames — i%16==8 is always even = the observed token cadence.
     // If VT references the previous LTR UNCONDITIONALLY (ignoring acks), losing an LTR frame must
     // corrupt its dependents → postDrop MAD spikes (or decode fails). If VT honours acks, the next
     // refresh references an OLDER acked LTR and the picture stays clean.
-    let ackTokLoss = runAckRefArm(name: "F ack-ref lag2    dropTOKEN NOrec", frames: frames, ackRef: true, ackLagFrames: 2, dropEveryN: 16, recoverOnFail: false)
+    let ackTokLoss = runAckRefArm(
+        name: "F ack-ref lag2    dropTOKEN NOrec",
+        frames: frames,
+        ackRef: true,
+        ackLagFrames: 2,
+        dropEveryN: 16,
+        recoverOnFail: false,
+    )
     // NO acks ever: per VT's contract every ForceLTRRefresh without an acked LTR should fall back
     // to IDR (or reference only its internal always-safe anchor). Distinguishes ack-driven from
     // ack-ignored behaviour when byte sizes are compared against C/E.
-    let ackNever = runAckRefArm(name: "G ack-ref NO-acks drop1/13 NOrec ", frames: frames, ackRef: true, ackLagFrames: 2, dropEveryN: 13, recoverOnFail: false, neverAck: true)
+    let ackNever = runAckRefArm(
+        name: "G ack-ref NO-acks drop1/13 NOrec ",
+        frames: frames,
+        ackRef: true,
+        ackLagFrames: 2,
+        dropEveryN: 13,
+        recoverOnFail: false,
+        neverAck: true,
+    )
     // BURST: 4 consecutive whole frames die every 24 (≥2 adjacent token/LTR frames lost together) —
     // the worst case for an internal older-LTR reference policy. If even this stays pixel-clean the
     // healing envelope covers the real path's measured burst shape.
-    let ackBurst = runAckRefArm(name: "H ack-ref lag2    BURST4/24 NOrec", frames: frames, ackRef: true, ackLagFrames: 2, dropEveryN: -4, recoverOnFail: false)
+    let ackBurst = runAckRefArm(
+        name: "H ack-ref lag2    BURST4/24 NOrec",
+        frames: frames,
+        ackRef: true,
+        ackLagFrames: 2,
+        dropEveryN: -4,
+        recoverOnFail: false,
+    )
     // Find the healing HORIZON: 8 consecutive lost frames (133ms outage). If this breaks, the client's
     // existing loss-recovery (refresh/IDR request) remains the backstop for outages past the horizon.
-    let ackBurst8 = runAckRefArm(name: "I ack-ref lag2    BURST8/24 NOrec", frames: frames, ackRef: true, ackLagFrames: 2, dropEveryN: -8, recoverOnFail: false)
+    let ackBurst8 = runAckRefArm(
+        name: "I ack-ref lag2    BURST8/24 NOrec",
+        frames: frames,
+        ackRef: true,
+        ackLagFrames: 2,
+        dropEveryN: -8,
+        recoverOnFail: false,
+    )
     // THE INTRA-DETECTOR: low-motion content (frozen background, only the block moves) — real desktop
     // shape. P deltas collapse to a few KB; a secretly-INTRA stream stays large. This decides whether
     // per-frame ForceLTRRefresh is shippable at all (all-intra would balloon idle bitrate ~10×).
-    let baseLow = runAckRefArm(name: "J base P-chain    LOW-MOTION clean", frames: frames, ackRef: false, ackLagFrames: 0, dropEveryN: 0, recoverOnFail: true, lowMotion: true)
-    let ackLow  = runAckRefArm(name: "K ack-ref lag2    LOW-MOTION clean", frames: frames, ackRef: true,  ackLagFrames: 2, dropEveryN: 0, recoverOnFail: true, lowMotion: true)
+    let baseLow = runAckRefArm(
+        name: "J base P-chain    LOW-MOTION clean",
+        frames: frames,
+        ackRef: false,
+        ackLagFrames: 0,
+        dropEveryN: 0,
+        recoverOnFail: true,
+        lowMotion: true,
+    )
+    let ackLow = runAckRefArm(
+        name: "K ack-ref lag2    LOW-MOTION clean",
+        frames: frames,
+        ackRef: true,
+        ackLagFrames: 2,
+        dropEveryN: 0,
+        recoverOnFail: true,
+        lowMotion: true,
+    )
     // SPARSE refresh (the WF-8 recovery shape): normal P-chain + ForceLTRRefresh every 30 frames.
     // Refresh frame P-sized (~few KB on low-motion) ⇒ VT emits a GENUINE P against the acked LTR;
     // intra-sized (~25KB) ⇒ even sparse "LTR refresh" is a coarse intra (= compact-IDR equivalent).
-    let sparse = runAckRefArm(name: "L sparse-refresh  LOW-MOTION clean", frames: frames, ackRef: true, ackLagFrames: 2, dropEveryN: 0, recoverOnFail: true, verbose: true, lowMotion: true, refreshEvery: 30)
+    let sparse = runAckRefArm(
+        name: "L sparse-refresh  LOW-MOTION clean",
+        frames: frames,
+        ackRef: true,
+        ackLagFrames: 2,
+        dropEveryN: 0,
+        recoverOnFail: true,
+        verbose: true,
+        lowMotion: true,
+        refreshEvery: 30,
+    )
     // WHICH LTR does the sparse refresh reference? Burst-kill frames 25–29 (their tokens are never
     // acked), refresh fires at 30. ACKED-LTR semantics (Parsec) ⇒ the refresh references ≤24 (the
     // newest acked LTR), the client holds it, decode + MAD stay clean WITHOUT any recovery.
     // Newest-INTERNAL-LTR semantics ⇒ the refresh references a dead frame → decode fails/corrupts.
-    let anchored = runAckRefArm(name: "M sparse+burst25-29 acked  NOrec  ", frames: frames, ackRef: true, ackLagFrames: 2, dropEveryN: 0, recoverOnFail: false, lowMotion: true, refreshEvery: 30, dropFrames: [25, 26, 27, 28, 29])
+    let anchored = runAckRefArm(
+        name: "M sparse+burst25-29 acked  NOrec  ",
+        frames: frames,
+        ackRef: true,
+        ackLagFrames: 2,
+        dropEveryN: 0,
+        recoverOnFail: false,
+        lowMotion: true,
+        refreshEvery: 30,
+        dropFrames: [25, 26, 27, 28, 29],
+    )
     // Same but NO acks ever: VT's documented contract says ForceLTRRefresh without an acknowledged
     // LTR falls back to an IDR — the safety net under the host's ACKED-ONLY gate.
-    let anchoredNoAck = runAckRefArm(name: "N sparse+burst25-29 NOack  NOrec  ", frames: frames, ackRef: true, ackLagFrames: 2, dropEveryN: 0, recoverOnFail: false, neverAck: true, lowMotion: true, refreshEvery: 30, dropFrames: [25, 26, 27, 28, 29])
+    let anchoredNoAck = runAckRefArm(
+        name: "N sparse+burst25-29 NOack  NOrec  ",
+        frames: frames,
+        ackRef: true,
+        ackLagFrames: 2,
+        dropEveryN: 0,
+        recoverOnFail: false,
+        neverAck: true,
+        lowMotion: true,
+        refreshEvery: 30,
+        dropFrames: [25, 26, 27, 28, 29],
+    )
     // Refresh COST on real motion: full-motion content, refresh every 6 frames (100ms self-heal
     // cadence) — how much bigger is a refresh (referencing an ~RTT-old acked LTR) than a 1-back delta?
-    let sparseCost = runAckRefArm(name: "O sparse6 MOTION  clean (cost)    ", frames: frames, ackRef: true, ackLagFrames: 2, dropEveryN: 0, recoverOnFail: true, refreshEvery: 6)
+    let sparseCost = runAckRefArm(
+        name: "O sparse6 MOTION  clean (cost)    ",
+        frames: frames,
+        ackRef: true,
+        ackLagFrames: 2,
+        dropEveryN: 0,
+        recoverOnFail: true,
+        refreshEvery: 6,
+    )
 
     func pct(_ a: Int, _ b: Int) -> String {
         guard b > 0 else { return "n/a" }
@@ -721,47 +945,107 @@ func runAckRefProbe(frames: Int) {
     // means the picture after a loss is as healthy as a picture with no loss at all.
     let cleanCeiling = max(3.0, ackClean.maxMAD * 1.5)
     let dSurvives = ackLoss.decodeFail == 0 && ackLoss.recoveryIDRs == 0 && ackLoss.postDropMaxMAD <= cleanCeiling
-    let fSurvives = ackTokLoss.decodeFail == 0 && ackTokLoss.recoveryIDRs == 0 && ackTokLoss.postDropMaxMAD <= cleanCeiling
+    let fSurvives = ackTokLoss.decodeFail == 0 && ackTokLoss.recoveryIDRs == 0 && ackTokLoss
+        .postDropMaxMAD <= cleanCeiling
     let baselineBreaks = baseLoss.decodeFail > 0 || baseLoss.recoveryIDRs > 0
 
     print("")
-    print("  token cadence (LTR frames/encoded)      : \(ackClean.ltrTokenFrames)/\(ackClean.encoded) = \(String(format: "%.0f%%", tokenCoverage * 100))")
-    print("  byte overhead vs baseline  lag2 / lag6  : \(pct(ackClean.avgFrameBytes, base.avgFrameBytes)) / \(pct(ackLag6.avgFrameBytes, base.avgFrameBytes)) (base \(base.avgFrameBytes)B)")
-    print("  acks ignored by encoder?                : lag2=\(ackClean.avgFrameBytes)B lag6=\(ackLag6.avgFrameBytes)B noAck=\(ackNever.avgFrameBytes)B "
-        + "(identical ⇒ AcknowledgedLTRTokens has no effect)")
+    print(
+        "  token cadence (LTR frames/encoded)      : \(ackClean.ltrTokenFrames)/\(ackClean.encoded) = \(String(format: "%.0f%%", tokenCoverage * 100))",
+    )
+    print(
+        "  byte overhead vs baseline  lag2 / lag6  : \(pct(ackClean.avgFrameBytes, base.avgFrameBytes)) / \(pct(ackLag6.avgFrameBytes, base.avgFrameBytes)) (base \(base.avgFrameBytes)B)",
+    )
+    print(
+        "  acks ignored by encoder?                : lag2=\(ackClean.avgFrameBytes)B lag6=\(ackLag6.avgFrameBytes)B noAck=\(ackNever.avgFrameBytes)B "
+            + "(identical ⇒ AcknowledgedLTRTokens has no effect)",
+    )
     print("  VERDICT survive 7.7% mixed frame loss, ZERO recovery : \(dSurvives ? "✅" : "❌") "
-        + String(format: "(decodeFail=%d recIDR=%d postDropMAD=%.1f vs clean %.1f)", ackLoss.decodeFail, ackLoss.recoveryIDRs, ackLoss.postDropMaxMAD, ackClean.maxMAD))
+        + String(
+            format: "(decodeFail=%d recIDR=%d postDropMAD=%.1f vs clean %.1f)",
+            ackLoss.decodeFail,
+            ackLoss.recoveryIDRs,
+            ackLoss.postDropMaxMAD,
+            ackClean.maxMAD,
+        ))
     print("  VERDICT survive TOKEN-frame loss, ZERO recovery      : \(fSurvives ? "✅" : "❌") "
-        + String(format: "(decodeFail=%d recIDR=%d postDropMAD=%.1f)", ackTokLoss.decodeFail, ackTokLoss.recoveryIDRs, ackTokLoss.postDropMaxMAD))
+        + String(
+            format: "(decodeFail=%d recIDR=%d postDropMAD=%.1f)",
+            ackTokLoss.decodeFail,
+            ackTokLoss.recoveryIDRs,
+            ackTokLoss.postDropMaxMAD,
+        ))
     let hSurvives = ackBurst.decodeFail == 0 && ackBurst.recoveryIDRs == 0 && ackBurst.postDropMaxMAD <= cleanCeiling
     print("  VERDICT survive BURST-4 frame loss, ZERO recovery    : \(hSurvives ? "✅" : "❌") "
-        + String(format: "(decodeFail=%d recIDR=%d postDropMAD=%.1f)", ackBurst.decodeFail, ackBurst.recoveryIDRs, ackBurst.postDropMaxMAD))
+        + String(
+            format: "(decodeFail=%d recIDR=%d postDropMAD=%.1f)",
+            ackBurst.decodeFail,
+            ackBurst.recoveryIDRs,
+            ackBurst.postDropMaxMAD,
+        ))
     let iSurvives = ackBurst8.decodeFail == 0 && ackBurst8.recoveryIDRs == 0 && ackBurst8.postDropMaxMAD <= cleanCeiling
-    print("  horizon  survive BURST-8 frame loss, ZERO recovery   : \(iSurvives ? "✅" : "❌ (past horizon — client recovery backstop applies)") "
-        + String(format: "(decodeFail=%d postDropMAD=%.1f)", ackBurst8.decodeFail, ackBurst8.postDropMaxMAD))
+    print(
+        "  horizon  survive BURST-8 frame loss, ZERO recovery   : \(iSurvives ? "✅" : "❌ (past horizon — client recovery backstop applies)") "
+            + String(format: "(decodeFail=%d postDropMAD=%.1f)", ackBurst8.decodeFail, ackBurst8.postDropMaxMAD),
+    )
     print("  VERDICT no-acks arm under loss (VT contract check)   : "
-        + String(format: "decodeFail=%d postDropMAD=%.1f kf=%d", ackNever.decodeFail, ackNever.postDropMaxMAD, ackNever.keyframes))
-    print("  baseline P-chain breaks under same loss (contrast)   : \(baselineBreaks ? "✅ breaks as expected" : "⚠️ did not break") "
-        + String(format: "(decodeFail=%d recIDR=%d postDropMAD=%.1f)", baseLoss.decodeFail, baseLoss.recoveryIDRs, baseLoss.postDropMaxMAD))
+        + String(
+            format: "decodeFail=%d postDropMAD=%.1f kf=%d",
+            ackNever.decodeFail,
+            ackNever.postDropMaxMAD,
+            ackNever.keyframes,
+        ))
+    print(
+        "  baseline P-chain breaks under same loss (contrast)   : \(baselineBreaks ? "✅ breaks as expected" : "⚠️ did not break") "
+            + String(
+                format: "(decodeFail=%d recIDR=%d postDropMAD=%.1f)",
+                baseLoss.decodeFail,
+                baseLoss.recoveryIDRs,
+                baseLoss.postDropMaxMAD,
+            ),
+    )
     let intraRatio = baseLow.avgFrameBytes > 0 ? Double(ackLow.avgFrameBytes) / Double(baseLow.avgFrameBytes) : 0
     let isSecretlyIntra = intraRatio > 3.0
-    print("  INTRA-DETECTOR low-motion bytes base→ackRef          : \(baseLow.avgFrameBytes)B → \(ackLow.avgFrameBytes)B "
-        + String(format: "(%.1f×) ", intraRatio)
-        + (isSecretlyIntra ? "❌ ack-ref frames are SECRETLY INTRA — per-frame refresh NOT shippable" : "✅ genuine P-frames — shippable"))
+    print(
+        "  INTRA-DETECTOR low-motion bytes base→ackRef          : \(baseLow.avgFrameBytes)B → \(ackLow.avgFrameBytes)B "
+            + String(format: "(%.1f×) ", intraRatio)
+            +
+            (isSecretlyIntra ? "❌ ack-ref frames are SECRETLY INTRA — per-frame refresh NOT shippable" :
+                "✅ genuine P-frames — shippable"),
+    )
     let sparseRefreshIsP = sparse.avgRefreshBytes > 0 && sparse.avgRefreshBytes < baseLow.avgFrameBytes * 8
-    print("  SPARSE refresh frame size (every 30, low-motion)     : \(sparse.avgRefreshBytes)B vs P-delta \(baseLow.avgFrameBytes)B vs intra ~\(ackLow.avgFrameBytes)B → "
-        + (sparseRefreshIsP ? "✅ GENUINE LTR-P (WF-8 recovery is a real P-frame)" : "❌ intra-sized (VT LTR refresh = coarse intra, no real long-term P reference)"))
+    print(
+        "  SPARSE refresh frame size (every 30, low-motion)     : \(sparse.avgRefreshBytes)B vs P-delta \(baseLow.avgFrameBytes)B vs intra ~\(ackLow.avgFrameBytes)B → "
+            +
+            (sparseRefreshIsP ? "✅ GENUINE LTR-P (WF-8 recovery is a real P-frame)" :
+                "❌ intra-sized (VT LTR refresh = coarse intra, no real long-term P reference)"),
+    )
     // M: only the refresh@30 + followers matter. Post-burst MAD clean + no decode failures AFTER
     // frame 30 ⇒ acked-LTR anchored. (Frames 25–29 were never delivered; deltas before 30 that
     // referenced a dead frame would throw — count via decodeFail timing instead of total.)
     let mHealed = anchored.postDropMaxMAD <= cleanCeiling && anchored.postDropMaxMAD > 0
-    print("  VERDICT refresh anchors to ACKED LTR (burst-kill 25-29): \(mHealed ? "✅ healed at refresh@30 with zero recovery" : "❌ refresh referenced a dead frame") "
-        + String(format: "(decodeFail=%d postDropMAD=%.1f kf=%d)", anchored.decodeFail, anchored.postDropMaxMAD, anchored.keyframes))
+    print(
+        "  VERDICT refresh anchors to ACKED LTR (burst-kill 25-29): \(mHealed ? "✅ healed at refresh@30 with zero recovery" : "❌ refresh referenced a dead frame") "
+            + String(
+                format: "(decodeFail=%d postDropMAD=%.1f kf=%d)",
+                anchored.decodeFail,
+                anchored.postDropMaxMAD,
+                anchored.keyframes,
+            ),
+    )
     print("  VERDICT no-ack refresh falls back to IDR (VT contract) : "
-        + String(format: "kf=%d decodeFail=%d postDropMAD=%.1f refreshAvg=%dB", anchoredNoAck.keyframes, anchoredNoAck.decodeFail, anchoredNoAck.postDropMaxMAD, anchoredNoAck.avgRefreshBytes))
+        + String(
+            format: "kf=%d decodeFail=%d postDropMAD=%.1f refreshAvg=%dB",
+            anchoredNoAck.keyframes,
+            anchoredNoAck.decodeFail,
+            anchoredNoAck.postDropMaxMAD,
+            anchoredNoAck.avgRefreshBytes,
+        ))
     let costRatio = base.avgFrameBytes > 0 ? Double(sparseCost.avgRefreshBytes) / Double(base.avgFrameBytes) : 0
-    print("  refresh COST on motion (every 6, vs 1-back delta)      : \(sparseCost.avgRefreshBytes)B vs \(base.avgFrameBytes)B "
-        + String(format: "(%.2f× per refresh ⇒ +%.1f%% stream at K=6)", costRatio, max(0, costRatio - 1) / 6 * 100))
+    print(
+        "  refresh COST on motion (every 6, vs 1-back delta)      : \(sparseCost.avgRefreshBytes)B vs \(base.avgFrameBytes)B "
+            + String(format: "(%.2f× per refresh ⇒ +%.1f%% stream at K=6)", costRatio, max(0, costRatio - 1) / 6 * 100),
+    )
 }
 
 // MARK: - CLOSED-LOOP adaptation (full reflex through REAL components, in-process lossy transport)
@@ -796,7 +1080,7 @@ struct ClosedLoopResult {
     /// FIX 1 (2026-06-11, FEC ladder floor): whether the adaptive tier EVER selected OFF during
     /// the run — the floor's contract is that it never does (without AISLOPDESK_FEC_ALLOW_OFF).
     var sawOffTier = false
-    var adverseUnrecSecondHalf = 0     // steady-state (after the FEC climb settles) — the fair A/B window
+    var adverseUnrecSecondHalf = 0 // steady-state (after the FEC climb settles) — the fair A/B window
     var bitrateFellInAdverse = false
     var bitrateRecoveredAfter = false
     /// Bitrate at the END of the recovery phase. The recovery VERDICT keys on this vs the adverse
@@ -814,7 +1098,15 @@ struct ClosedLoopResult {
 /// build-up → measured RTT ~90ms vs ~10ms baseline) so the loss is CORROBORATED — real congestion.
 /// When false the adverse phase is WEATHER loss (loss at flat RTT, the 2026-06-10 measured path
 /// shape) and the LOSS-TOLERANCE #4 controller must HOLD the bitrate.
-func runClosedLoopAdaptation(framesPerPhase: Int, enableABR: Bool, enableFEC: Bool, enableJitter: Bool, fixedTier: UInt8? = nil, congestRTTInAdverse: Bool = true, verbose: Bool) -> ClosedLoopResult {
+func runClosedLoopAdaptation(
+    framesPerPhase: Int,
+    enableABR: Bool,
+    enableFEC: Bool,
+    enableJitter: Bool,
+    fixedTier: UInt8? = nil,
+    congestRTTInAdverse: Bool = true,
+    verbose: Bool,
+) -> ClosedLoopResult {
     var result = ClosedLoopResult()
 
     // ── Host-side real components ──
@@ -823,7 +1115,7 @@ func runClosedLoopAdaptation(framesPerPhase: Int, enableABR: Bool, enableFEC: Bo
     var ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
     var est = NetworkEstimate()
     var cc = LiveCongestionController(ceiling: ceiling)
-    var currentTier: UInt8 = fixedTier ?? AdaptiveFECPolicy.defaultTier   // 0 = g5
+    var currentTier: UInt8 = fixedTier ?? AdaptiveFECPolicy.defaultTier // 0 = g5
     var lastActuated = ceiling
     var lastTarget = ceiling
 
@@ -831,10 +1123,17 @@ func runClosedLoopAdaptation(framesPerPhase: Int, enableABR: Bool, enableFEC: Bo
     let decoded = Counter()
     let enc: VideoEncoder
     do {
-        enc = VideoEncoder(width: kWidth, height: kHeight, fps: kFPS, ltrEnabled: false,
-                           outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) })
+        enc = VideoEncoder(
+            width: kWidth,
+            height: kHeight,
+            fps: kFPS,
+            ltrEnabled: false,
+            outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) },
+        )
         try enc.createLiveSession()
-    } catch { print("  closed-loop encoder create FAILED: \(error)"); return result }
+    } catch { print("  closed-loop encoder create FAILED: \(error)")
+        return result
+    }
     _ = enc.setLiveBitrate(ceiling)
     let dec = VideoDecoder(decodedFrameHandler: { _ in decoded.value += 1 })
     guard let pb = makePixelBuffer(width: kWidth, height: kHeight, fullRange: false) else { return result }
@@ -850,7 +1149,7 @@ func runClosedLoopAdaptation(framesPerPhase: Int, enableABR: Bool, enableFEC: Bo
     var latestObservedAtMs = 0.0
 
     // ── Virtual clock + per-phase loss/jitter schedule ──
-    let reportEvery = 3                     // ~50 ms at 60 fps
+    let reportEvery = 3 // ~50 ms at 60 fps
     // One-way delay: ~10ms RTT baseline; a CONGESTED adverse phase inflates it to ~90ms RTT
     // (queue build-up — the corroboration LOSS-TOLERANCE #4 requires), a WEATHER adverse phase
     // keeps it flat (loss alone must NOT move the bitrate).
@@ -859,10 +1158,10 @@ func runClosedLoopAdaptation(framesPerPhase: Int, enableABR: Bool, enableFEC: Bo
     var globalFrag = 0
     var recoveryPending = false
     var depth = jc.targetDepth
-    var adverseSecondHalfUnrec = 0          // steady-state window (2nd half of adverse) for the fair FEC A/B
+    var adverseSecondHalfUnrec = 0 // steady-state window (2nd half of adverse) for the fair FEC A/B
 
-    func lossPercent(phase: Int) -> Int { phase == 1 ? 3 : 0 }           // adverse = 3%/frag (realistic congestion)
-    func jitterMs(phase: Int, frame: Int) -> Double {                     // adverse = ±0/30 ms saw
+    func lossPercent(phase: Int) -> Int { phase == 1 ? 3 : 0 } // adverse = 3%/frag (realistic congestion)
+    func jitterMs(phase: Int, frame: Int) -> Double { // adverse = ±0/30 ms saw
         guard enableJitter, phase == 1 else { return 0 }
         return (frame & 1) == 0 ? 0 : 40
     }
@@ -885,15 +1184,26 @@ func runClosedLoopAdaptation(framesPerPhase: Int, enableABR: Bool, enableFEC: Bo
             recoveryPending = false
             clockMs += 1000.0 / Double(kFPS)
             do {
-                try enc.encodeLive(pixelBuffer: pb, presentationTime: CMTime(value: Int64(phase * framesPerPhase + f), timescale: Int32(kFPS)), forceKeyframe: force)
+                try enc.encodeLive(
+                    pixelBuffer: pb,
+                    presentationTime: CMTime(value: Int64(phase * framesPerPhase + f), timescale: Int32(kFPS)),
+                    forceKeyframe: force,
+                )
             } catch { continue }
             enc.completeFrames()
 
             for out in sink.drain() {
-                phaseEncBytesSum += out.avcc.count; phaseEncN += 1
+                phaseEncBytesSum += out.avcc.count
+                phaseEncN += 1
                 let sendTs = UInt32(clockMs)
                 _ = pk.peekNextFrameID
-                let frags = pk.packetize(frame: out.avcc, keyframe: out.keyframe, hostSendTsMillis: sendTs, fecTier: currentTier, isLTR: false)
+                let frags = pk.packetize(
+                    frame: out.avcc,
+                    keyframe: out.keyframe,
+                    hostSendTsMillis: sendTs,
+                    fecTier: currentTier,
+                    isLTR: false,
+                )
                 let tierGroup = AdaptiveFECPolicy.groupSize(forTier: currentTier, default: 5) ?? 0
                 // The frame's fragments arrive spread across the wire (host paces large frames ~8 ms), NOT
                 // all at one instant — so the per-fragment OWD jitter estimator sees realistic inter-arrival
@@ -905,15 +1215,16 @@ func runClosedLoopAdaptation(framesPerPhase: Int, enableABR: Bool, enableFEC: Bo
                 for (localIdx, frag) in frags.enumerated() {
                     globalFrag += 1
                     let arrivalMs = frameArrivalMs + Double(localIdx) * intraGap
-                    if loss > 0 && (globalFrag * 7 + 3) % 100 < loss { continue }   // deterministic ~loss%
+                    if loss > 0, (globalFrag * 7 + 3) % 100 < loss { continue } // deterministic ~loss%
                     guard let parsed = try? FrameFragment.decode(frag.encode()) else { continue }
                     owd.note(arrival: arrivalMs / 1000.0)
                     let ts = parsed.header.hostSendTsMillis
                     if ts != 0, latestHostSendTs == 0 || ts.distanceWrapped(from: latestHostSendTs) > 0 {
-                        latestHostSendTs = ts; latestObservedAtMs = arrivalMs
+                        latestHostSendTs = ts
+                        latestObservedAtMs = arrivalMs
                     }
                     switch ra.ingest(parsed) {
-                    case .completed(let frame):
+                    case let .completed(frame):
                         winFrames &+= 1
                         if frame.recoveredViaFEC { winFec &+= 1 }
                         try? dec.decode(frame)
@@ -925,65 +1236,109 @@ func runClosedLoopAdaptation(framesPerPhase: Int, enableABR: Bool, enableFEC: Bo
                         dp.notePresent(arrivalMs / 1000.0)
                         phasePeakDepthV2 = max(phasePeakDepthV2, dp.depth)
                     case .dropped:
-                        winUnrec &+= 1; phaseUnrec += 1; recoveryPending = true
-                        if phase == 1 && f >= framesPerPhase / 2 { adverseSecondHalfUnrec += 1 }
-                    case .incomplete, .stale:
+                        winUnrec &+= 1
+                        phaseUnrec += 1
+                        recoveryPending = true
+                        if phase == 1, f >= framesPerPhase / 2 { adverseSecondHalfUnrec += 1 }
+                    case .incomplete,
+                         .stale:
                         break
                     }
                     while ra.nextDroppedFrame() != nil {
-                        winUnrec &+= 1; phaseUnrec += 1; recoveryPending = true
-                        if phase == 1 && f >= framesPerPhase / 2 { adverseSecondHalfUnrec += 1 }
+                        winUnrec &+= 1
+                        phaseUnrec += 1
+                        recoveryPending = true
+                        if phase == 1, f >= framesPerPhase / 2 { adverseSecondHalfUnrec += 1 }
                     }
                 }
                 _ = tierGroup
 
                 // CLIENT: emit a NetworkStatsReport every `reportEvery` frames (the 50 ms cadence).
                 if phaseEncN % reportEvery == 0 {
-                    let holdMs = latestHostSendTs == 0 ? 0 : UInt32(max(0, arrivalMsHold(now: clockMs + oneWayMs(phase: phase), observedAt: latestObservedAtMs)))
+                    let holdMs = latestHostSendTs == 0 ? 0 : UInt32(max(
+                        0,
+                        arrivalMsHold(now: clockMs + oneWayMs(phase: phase), observedAt: latestObservedAtMs),
+                    ))
                     // Component 4: drain the depth-v2 window per report (production cadence) so the
                     // WIDENED 45-byte type-5 wire round-trips with live pacer telemetry both ways.
                     let pacerWin = dp.drainCounters()
-                    let report = NetworkStatsReport(framesReceived: winFrames, fecRecovered: winFec,
-                                                    unrecovered: winUnrec, latestHostSendTs: latestHostSendTs,
-                                                    clientHoldMs: holdMs, owdJitterMicros: owd.jitterMicros(),
-                                                    pacerLateFrames: pacerWin.lateFrames,
-                                                    pacerPresentGaps: pacerWin.presentGaps,
-                                                    pacerDepth: UInt32(dp.depth))
-                    winFrames = 0; winFec = 0; winUnrec = 0
+                    let report = NetworkStatsReport(
+                        framesReceived: winFrames,
+                        fecRecovered: winFec,
+                        unrecovered: winUnrec,
+                        latestHostSendTs: latestHostSendTs,
+                        clientHoldMs: holdMs,
+                        owdJitterMicros: owd.jitterMicros(),
+                        pacerLateFrames: pacerWin.lateFrames,
+                        pacerPresentGaps: pacerWin.presentGaps,
+                        pacerDepth: UInt32(dp.depth),
+                    )
+                    winFrames = 0
+                    winFec = 0
+                    winUnrec = 0
                     // REAL wire round-trip of the telemetry.
                     let wire = RecoveryMessage.networkStats(report).encode()
-                    guard case .networkStats(let rx)? = try? RecoveryMessage.decode(wire) else { continue }
+                    guard case let .networkStats(rx)? = try? RecoveryMessage.decode(wire) else { continue }
 
                     // HOST: fold + tick + actuate — exactly AislopdeskVideoHostSession.handleRecovery(.networkStats).
                     let hostNowMs = UInt32(clockMs + oneWayMs(phase: phase) * 2)
-                    let rtt = NetworkEstimate.computeRTTMillis(hostNowMs: hostNowMs, latestHostSendTs: rx.latestHostSendTs, clientHoldMs: rx.clientHoldMs)
-                    est.fold(rttMillis: rtt, framesReceived: rx.framesReceived, unrecovered: rx.unrecovered, owdJitterMicros: rx.owdJitterMicros)
-                    if enableFEC, fixedTier == nil { currentTier = AdaptiveFECPolicy.tier(forLossRate: est.lossRate, previousTier: currentTier) }
+                    let rtt = NetworkEstimate.computeRTTMillis(
+                        hostNowMs: hostNowMs,
+                        latestHostSendTs: rx.latestHostSendTs,
+                        clientHoldMs: rx.clientHoldMs,
+                    )
+                    est.fold(
+                        rttMillis: rtt,
+                        framesReceived: rx.framesReceived,
+                        unrecovered: rx.unrecovered,
+                        owdJitterMicros: rx.owdJitterMicros,
+                    )
+                    if enableFEC, fixedTier == nil { currentTier = AdaptiveFECPolicy.tier(
+                        forLossRate: est.lossRate,
+                        previousTier: currentTier,
+                    ) }
                     if currentTier == 1 { result.sawOffTier = true }
                     phasePeakTier = maxTier(phasePeakTier, currentTier)
                     if enableABR {
                         let target = cc.onReport(est)
                         lastTarget = target
-                        if LiveCongestionController.isMaterialChange(previous: lastActuated, target: target, ceiling: cc.ceiling) {
+                        if LiveCongestionController.isMaterialChange(
+                            previous: lastActuated,
+                            target: target,
+                            ceiling: cc.ceiling,
+                        ) {
                             lastActuated = target
                             _ = enc.setLiveBitrate(target)
                         }
                     }
-                    phaseBitrateSum += Double(lastActuated) / 1_000_000.0; phaseBitrateN += 1
+                    phaseBitrateSum += Double(lastActuated) / 1_000_000.0
+                    phaseBitrateN += 1
                     // The recovery verdict keys on the controller TARGET, not the actuated rate: the
                     // material-change gate deliberately hides sub-500k moves, and the cautious
                     // above-knee climb is sub-500k per tick by design.
-                    if phase == 1 { result.adverseTroughMbps = min(result.adverseTroughMbps, Double(lastTarget) / 1_000_000.0) }
+                    if phase == 1 { result.adverseTroughMbps = min(
+                        result.adverseTroughMbps,
+                        Double(lastTarget) / 1_000_000.0,
+                    ) }
 
-                    if verbose && (phaseEncN % (reportEvery * 5) == 0) {
-                        print(String(format: "    f%-3d loss=%.3f unrec/win=%d  tier=%d(%@)  bitrate=%.1fMbps  depth=%d  enc~%dB",
-                                     f, est.lossRate, Int(rx.unrecovered), Int(currentTier), tierDesc(currentTier),
-                                     Double(lastActuated) / 1_000_000.0, depth, phaseEncN > 0 ? phaseEncBytesSum / phaseEncN : 0))
+                    if verbose, phaseEncN % (reportEvery * 5) == 0 {
+                        print(String(
+                            format: "    f%-3d loss=%.3f unrec/win=%d  tier=%d(%@)  bitrate=%.1fMbps  depth=%d  enc~%dB",
+                            f,
+                            est.lossRate,
+                            Int(rx.unrecovered),
+                            Int(currentTier),
+                            tierDesc(currentTier),
+                            Double(lastActuated) / 1_000_000.0,
+                            depth,
+                            phaseEncN > 0 ? phaseEncBytesSum / phaseEncN : 0,
+                        ))
                     }
                 }
             }
         }
-        result.phaseAvgBitrateMbps.append(phaseBitrateN > 0 ? phaseBitrateSum / Double(phaseBitrateN) : Double(lastActuated) / 1_000_000.0)
+        result.phaseAvgBitrateMbps
+            .append(phaseBitrateN > 0 ? phaseBitrateSum / Double(phaseBitrateN) : Double(lastActuated) / 1_000_000.0)
         result.phasePeakTier.append(phasePeakTier)
         result.phasePeakDepth.append(phasePeakDepth)
         result.phasePeakDepthV2.append(phasePeakDepthV2)
@@ -1006,10 +1361,10 @@ func runClosedLoopAdaptation(framesPerPhase: Int, enableABR: Bool, enableFEC: Bo
 
 /// Result of ``runBottleneckQueueScenario``.
 struct BottleneckResult {
-    var convergedAtMs: Double?      // first virtual time the actuated rate reached ≤ capacity
-    var tailAvgQueueMs = 0.0        // mean standing queue over the last 25% of the run
+    var convergedAtMs: Double? // first virtual time the actuated rate reached ≤ capacity
+    var tailAvgQueueMs = 0.0 // mean standing queue over the last 25% of the run
     var tailMaxQueueMs = 0.0
-    var rebashCount = 0             // post-convergence climbs back above capacity × 1.35 (pumping)
+    var rebashCount = 0 // post-convergence climbs back above capacity × 1.35 (pumping)
     var endActuatedMbps = 0.0
     var capacityMbps = 0.0
 }
@@ -1025,7 +1380,7 @@ func runBottleneckQueueScenario(frames: Int, verbose: Bool) -> BottleneckResult 
     var result = BottleneckResult()
 
     let ceiling = LiveBitratePolicy.targetBitrate(pixelWidth: kWidth, pixelHeight: kHeight, fps: kFPS, floor: 2_000_000)
-    let capacityBps = ceiling * 55 / 100        // between the 25% floor and the ceiling — convergence is reachable
+    let capacityBps = ceiling * 55 / 100 // between the 25% floor and the ceiling — convergence is reachable
     result.capacityMbps = Double(capacityBps) / 1_000_000.0
     var pk = VideoPacketizer(fec: XORParityFEC(groupSize: 5))
     var ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
@@ -1037,10 +1392,17 @@ func runBottleneckQueueScenario(frames: Int, verbose: Bool) -> BottleneckResult 
     let decoded = Counter()
     let enc: VideoEncoder
     do {
-        enc = VideoEncoder(width: kWidth, height: kHeight, fps: kFPS, ltrEnabled: false,
-                           outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) })
+        enc = VideoEncoder(
+            width: kWidth,
+            height: kHeight,
+            fps: kFPS,
+            ltrEnabled: false,
+            outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) },
+        )
         try enc.createLiveSession()
-    } catch { print("  bottleneck encoder create FAILED: \(error)"); return result }
+    } catch { print("  bottleneck encoder create FAILED: \(error)")
+        return result
+    }
     _ = enc.setLiveBitrate(ceiling)
     let dec = VideoDecoder(decodedFrameHandler: { _ in decoded.value += 1 })
     guard let pb = makePixelBuffer(width: kWidth, height: kHeight, fullRange: false) else { return result }
@@ -1053,7 +1415,7 @@ func runBottleneckQueueScenario(frames: Int, verbose: Bool) -> BottleneckResult 
     let frameIntervalMs = 1000.0 / Double(kFPS)
     let baseOneWayMs = 5.0
     var clockMs = 0.0
-    var queueMs = 0.0                           // standing bottleneck queue, in ms-of-drain-time
+    var queueMs = 0.0 // standing bottleneck queue, in ms-of-drain-time
     var encN = 0
     var queueSamples: [(ms: Double, queue: Double, actuated: Int)] = []
 
@@ -1063,14 +1425,24 @@ func runBottleneckQueueScenario(frames: Int, verbose: Bool) -> BottleneckResult 
         // The bottleneck drains continuously, one frame-interval per frame tick.
         queueMs = max(0, queueMs - frameIntervalMs)
         do {
-            try enc.encodeLive(pixelBuffer: pb, presentationTime: CMTime(value: Int64(f), timescale: Int32(kFPS)), forceKeyframe: f == 0)
+            try enc.encodeLive(
+                pixelBuffer: pb,
+                presentationTime: CMTime(value: Int64(f), timescale: Int32(kFPS)),
+                forceKeyframe: f == 0,
+            )
         } catch { continue }
         enc.completeFrames()
 
         for out in sink.drain() {
             encN += 1
             let sendTs = UInt32(clockMs)
-            let frags = pk.packetize(frame: out.avcc, keyframe: out.keyframe, hostSendTsMillis: sendTs, fecTier: 0, isLTR: false)
+            let frags = pk.packetize(
+                frame: out.avcc,
+                keyframe: out.keyframe,
+                hostSendTsMillis: sendTs,
+                fecTier: 0,
+                isLTR: false,
+            )
             // FEEDBACK: this frame's wire bytes join the queue; its own delivery waits behind it.
             let wireBytes = frags.reduce(0) { $0 + $1.encode().count }
             queueMs += Double(wireBytes * 8) / Double(capacityBps) * 1000.0
@@ -1084,40 +1456,70 @@ func runBottleneckQueueScenario(frames: Int, verbose: Bool) -> BottleneckResult 
                 owd.note(arrival: arrivalMs / 1000.0)
                 let ts = parsed.header.hostSendTsMillis
                 if ts != 0, latestHostSendTs == 0 || ts.distanceWrapped(from: latestHostSendTs) > 0 {
-                    latestHostSendTs = ts; latestObservedAtMs = arrivalMs
+                    latestHostSendTs = ts
+                    latestObservedAtMs = arrivalMs
                 }
                 switch ra.ingest(parsed) {
-                case .completed(let frame):
+                case let .completed(frame):
                     winFrames &+= 1
                     if frame.recoveredViaFEC { winFec &+= 1 }
                     try? dec.decode(frame)
                 case .dropped: winUnrec &+= 1
-                case .incomplete, .stale: break
+                case .incomplete,
+                     .stale: break
                 }
             }
 
-            if encN % 3 == 0 {                  // the ~50ms report cadence
-                let holdMs = latestHostSendTs == 0 ? 0 : UInt32(max(0, arrivalMsHold(now: clockMs + oneWay, observedAt: latestObservedAtMs)))
-                let report = NetworkStatsReport(framesReceived: winFrames, fecRecovered: winFec,
-                                                unrecovered: winUnrec, latestHostSendTs: latestHostSendTs,
-                                                clientHoldMs: holdMs, owdJitterMicros: owd.jitterMicros())
-                winFrames = 0; winFec = 0; winUnrec = 0
+            if encN % 3 == 0 { // the ~50ms report cadence
+                let holdMs = latestHostSendTs == 0 ? 0 : UInt32(max(
+                    0,
+                    arrivalMsHold(now: clockMs + oneWay, observedAt: latestObservedAtMs),
+                ))
+                let report = NetworkStatsReport(
+                    framesReceived: winFrames,
+                    fecRecovered: winFec,
+                    unrecovered: winUnrec,
+                    latestHostSendTs: latestHostSendTs,
+                    clientHoldMs: holdMs,
+                    owdJitterMicros: owd.jitterMicros(),
+                )
+                winFrames = 0
+                winFec = 0
+                winUnrec = 0
                 let wire = RecoveryMessage.networkStats(report).encode()
-                guard case .networkStats(let rx)? = try? RecoveryMessage.decode(wire) else { continue }
-                let hostNowMs = UInt32(clockMs + oneWay + baseOneWayMs)   // return path rides the un-queued direction
-                let rtt = NetworkEstimate.computeRTTMillis(hostNowMs: hostNowMs, latestHostSendTs: rx.latestHostSendTs, clientHoldMs: rx.clientHoldMs)
-                est.fold(rttMillis: rtt, framesReceived: rx.framesReceived, unrecovered: rx.unrecovered, owdJitterMicros: rx.owdJitterMicros)
+                guard case let .networkStats(rx)? = try? RecoveryMessage.decode(wire) else { continue }
+                let hostNowMs = UInt32(clockMs + oneWay + baseOneWayMs) // return path rides the un-queued direction
+                let rtt = NetworkEstimate.computeRTTMillis(
+                    hostNowMs: hostNowMs,
+                    latestHostSendTs: rx.latestHostSendTs,
+                    clientHoldMs: rx.clientHoldMs,
+                )
+                est.fold(
+                    rttMillis: rtt,
+                    framesReceived: rx.framesReceived,
+                    unrecovered: rx.unrecovered,
+                    owdJitterMicros: rx.owdJitterMicros,
+                )
                 let target = cc.onReport(est)
-                if LiveCongestionController.isMaterialChange(previous: lastActuated, target: target, ceiling: cc.ceiling) {
+                if LiveCongestionController.isMaterialChange(
+                    previous: lastActuated,
+                    target: target,
+                    ceiling: cc.ceiling,
+                ) {
                     lastActuated = target
                     _ = enc.setLiveBitrate(target)
                 }
                 queueSamples.append((clockMs, queueMs, lastActuated))
                 if result.convergedAtMs == nil, lastActuated <= capacityBps { result.convergedAtMs = clockMs }
-                if verbose && encN % 30 == 0 {
-                    print(String(format: "    t=%5.0fms  queue=%5.1fms  smoothedRTT=%5.1fms  rate=%4.1fMbps  knee=%@",
-                                 clockMs, queueMs, est.smoothedRTTMillis, Double(lastActuated) / 1_000_000.0,
-                                 cc.kneeBps.map { String(format: "%.1fM", Double($0) / 1_000_000.0) } ?? "-"))
+                if verbose, encN % 30 == 0 {
+                    print(String(
+                        format: "    t=%5.0fms  queue=%5.1fms  smoothedRTT=%5.1fms  rate=%4.1fMbps  knee=%@",
+                        clockMs,
+                        queueMs,
+                        est.smoothedRTTMillis,
+                        Double(lastActuated) / 1_000_000.0,
+                        cc.kneeBps.map { String(format: "%.1fM", Double($0) / 1_000_000.0) } ?? "-",
+                    ))
                 }
             }
         }
@@ -1128,8 +1530,9 @@ func runBottleneckQueueScenario(frames: Int, verbose: Bool) -> BottleneckResult 
     result.tailMaxQueueMs = tail.reduce(0.0) { max($0, $1.queue) }
     if let conv = result.convergedAtMs {
         result.rebashCount = zip(queueSamples, queueSamples.dropFirst())
-            .filter { $0.0.ms >= conv && $0.0.actuated <= capacityBps * 135 / 100 && $0.1.actuated > capacityBps * 135 / 100 }
-            .count
+            .count(where: {
+                $0.0.ms >= conv && $0.0.actuated <= capacityBps * 135 / 100 && $0.1.actuated > capacityBps * 135 / 100
+            })
     }
     result.endActuatedMbps = Double(lastActuated) / 1_000_000.0
     return result
@@ -1191,10 +1594,17 @@ func runGradientOnsetArm(gradientEnabled: Bool, verbose: Bool) -> GradientArmTra
     let decoded = Counter()
     let enc: VideoEncoder
     do {
-        enc = VideoEncoder(width: kWidth, height: kHeight, fps: kFPS, ltrEnabled: false,
-                           outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) })
+        enc = VideoEncoder(
+            width: kWidth,
+            height: kHeight,
+            fps: kFPS,
+            ltrEnabled: false,
+            outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) },
+        )
         try enc.createLiveSession()
-    } catch { print("  gradient-onset encoder create FAILED: \(error)"); return trace }
+    } catch { print("  gradient-onset encoder create FAILED: \(error)")
+        return trace
+    }
     _ = enc.setLiveBitrate(ceiling)
     let dec = VideoDecoder(decodedFrameHandler: { _ in decoded.value += 1 })
     guard let pb = makePixelBuffer(width: kWidth, height: kHeight, fullRange: false) else { return trace }
@@ -1221,14 +1631,24 @@ func runGradientOnsetArm(gradientEnabled: Bool, verbose: Bool) -> GradientArmTra
         if f == warmFrames { trace.onsetClockMs = clockMs }
         queueMs = max(0, queueMs - frameIntervalMs)
         do {
-            try enc.encodeLive(pixelBuffer: pb, presentationTime: CMTime(value: Int64(f), timescale: Int32(kFPS)), forceKeyframe: f == 0)
+            try enc.encodeLive(
+                pixelBuffer: pb,
+                presentationTime: CMTime(value: Int64(f), timescale: Int32(kFPS)),
+                forceKeyframe: f == 0,
+            )
         } catch { continue }
         enc.completeFrames()
 
         for out in sink.drain() {
             encN += 1
             let sendTs = UInt32(clockMs)
-            let frags = pk.packetize(frame: out.avcc, keyframe: out.keyframe, hostSendTsMillis: sendTs, fecTier: 0, isLTR: false)
+            let frags = pk.packetize(
+                frame: out.avcc,
+                keyframe: out.keyframe,
+                hostSendTsMillis: sendTs,
+                fecTier: 0,
+                isLTR: false,
+            )
             let wireBytes = frags.reduce(0) { $0 + $1.encode().count }
             queueMs += Double(wireBytes * 8) / Double(capacityBps) * 1000.0
             let oneWay = baseOneWayMs + queueMs
@@ -1241,36 +1661,58 @@ func runGradientOnsetArm(gradientEnabled: Bool, verbose: Bool) -> GradientArmTra
                 owd.note(arrival: arrivalMs / 1000.0)
                 let ts = parsed.header.hostSendTsMillis
                 if ts != 0, latestHostSendTs == 0 || ts.distanceWrapped(from: latestHostSendTs) > 0 {
-                    latestHostSendTs = ts; latestObservedAtMs = arrivalMs
+                    latestHostSendTs = ts
+                    latestObservedAtMs = arrivalMs
                 }
                 // PRODUCTION trend sampling: first fragment of each strictly-newer frame only.
                 if gate.shouldSample(frameID: parsed.header.frameID, sendTs: ts) {
                     trend.note(arrivalMs: arrivalMs, sendTs: ts)
                 }
                 switch ra.ingest(parsed) {
-                case .completed(let frame):
+                case let .completed(frame):
                     winFrames &+= 1
                     if frame.recoveredViaFEC { winFec &+= 1 }
                     try? dec.decode(frame)
                 case .dropped: winUnrec &+= 1
-                case .incomplete, .stale: break
+                case .incomplete,
+                     .stale: break
                 }
             }
 
-            if encN % 3 == 0 {                  // the ~50ms report cadence
-                let holdMs = latestHostSendTs == 0 ? 0 : UInt32(max(0, arrivalMsHold(now: clockMs + oneWay, observedAt: latestObservedAtMs)))
-                let report = NetworkStatsReport(framesReceived: winFrames, fecRecovered: winFec,
-                                                unrecovered: winUnrec, latestHostSendTs: latestHostSendTs,
-                                                clientHoldMs: holdMs, owdJitterMicros: owd.jitterMicros(),
-                                                owdTrendMilli: trend.wireTrendMilli, owdTrendFlags: trend.wireTrendFlags)
-                winFrames = 0; winFec = 0; winUnrec = 0
+            if encN % 3 == 0 { // the ~50ms report cadence
+                let holdMs = latestHostSendTs == 0 ? 0 : UInt32(max(
+                    0,
+                    arrivalMsHold(now: clockMs + oneWay, observedAt: latestObservedAtMs),
+                ))
+                let report = NetworkStatsReport(
+                    framesReceived: winFrames,
+                    fecRecovered: winFec,
+                    unrecovered: winUnrec,
+                    latestHostSendTs: latestHostSendTs,
+                    clientHoldMs: holdMs,
+                    owdJitterMicros: owd.jitterMicros(),
+                    owdTrendMilli: trend.wireTrendMilli,
+                    owdTrendFlags: trend.wireTrendFlags,
+                )
+                winFrames = 0
+                winFec = 0
+                winUnrec = 0
                 let wire = RecoveryMessage.networkStats(report).encode()
-                guard case .networkStats(let rx)? = try? RecoveryMessage.decode(wire) else { continue }
-                let hostNowMs = UInt32(clockMs + oneWay + baseOneWayMs)   // return path rides the un-queued direction
-                let rtt = NetworkEstimate.computeRTTMillis(hostNowMs: hostNowMs, latestHostSendTs: rx.latestHostSendTs, clientHoldMs: rx.clientHoldMs)
-                est.fold(rttMillis: rtt, framesReceived: rx.framesReceived, unrecovered: rx.unrecovered,
-                         owdJitterMicros: rx.owdJitterMicros,
-                         owdTrendState: rx.owdTrendStateRaw, owdTrendModifiedMilli: rx.owdTrendModifiedMilliSigned)
+                guard case let .networkStats(rx)? = try? RecoveryMessage.decode(wire) else { continue }
+                let hostNowMs = UInt32(clockMs + oneWay + baseOneWayMs) // return path rides the un-queued direction
+                let rtt = NetworkEstimate.computeRTTMillis(
+                    hostNowMs: hostNowMs,
+                    latestHostSendTs: rx.latestHostSendTs,
+                    clientHoldMs: rx.clientHoldMs,
+                )
+                est.fold(
+                    rttMillis: rtt,
+                    framesReceived: rx.framesReceived,
+                    unrecovered: rx.unrecovered,
+                    owdJitterMicros: rx.owdJitterMicros,
+                    owdTrendState: rx.owdTrendStateRaw,
+                    owdTrendModifiedMilli: rx.owdTrendModifiedMilliSigned,
+                )
                 let before = cc.current
                 let target = cc.onReport(est)
                 reportIndex += 1
@@ -1281,14 +1723,24 @@ func runGradientOnsetArm(gradientEnabled: Bool, verbose: Bool) -> GradientArmTra
                         trace.trendOverusingAtFirstCut = est.owdTrendOverusing
                     }
                 }
-                if LiveCongestionController.isMaterialChange(previous: lastActuated, target: target, ceiling: cc.ceiling) {
+                if LiveCongestionController.isMaterialChange(
+                    previous: lastActuated,
+                    target: target,
+                    ceiling: cc.ceiling,
+                ) {
                     lastActuated = target
                     _ = enc.setLiveBitrate(target)
                 }
-                if verbose && encN % 30 == 0 {
-                    print(String(format: "    [%@] t=%5.0fms  queue=%5.1fms  smoothedRTT=%5.1fms  rate=%4.1fMbps  trend=%@",
-                                 gradientEnabled ? "ON " : "OFF", clockMs, queueMs, est.smoothedRTTMillis,
-                                 Double(cc.current) / 1_000_000.0, est.owdTrendOverusing ? "OVERUSE" : "-"))
+                if verbose, encN % 30 == 0 {
+                    print(String(
+                        format: "    [%@] t=%5.0fms  queue=%5.1fms  smoothedRTT=%5.1fms  rate=%4.1fMbps  trend=%@",
+                        gradientEnabled ? "ON " : "OFF",
+                        clockMs,
+                        queueMs,
+                        est.smoothedRTTMillis,
+                        Double(cc.current) / 1_000_000.0,
+                        est.owdTrendOverusing ? "OVERUSE" : "-",
+                    ))
                 }
             }
         }
@@ -1311,10 +1763,17 @@ func runGradientWobbleArm(frames: Int, verbose: Bool) -> Int {
     let decoded = Counter()
     let enc: VideoEncoder
     do {
-        enc = VideoEncoder(width: kWidth, height: kHeight, fps: kFPS, ltrEnabled: false,
-                           outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) })
+        enc = VideoEncoder(
+            width: kWidth,
+            height: kHeight,
+            fps: kFPS,
+            ltrEnabled: false,
+            outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) },
+        )
         try enc.createLiveSession()
-    } catch { print("  gradient-wobble encoder create FAILED: \(error)"); return 0 }
+    } catch { print("  gradient-wobble encoder create FAILED: \(error)")
+        return 0
+    }
     _ = enc.setLiveBitrate(ceiling)
     let dec = VideoDecoder(decodedFrameHandler: { _ in decoded.value += 1 })
     guard let pb = makePixelBuffer(width: kWidth, height: kHeight, fullRange: false) else { return 0 }
@@ -1338,14 +1797,24 @@ func runGradientWobbleArm(frames: Int, verbose: Bool) -> Int {
         if f % 4 == 0 { fillFrame(pb, f) }
         clockMs += frameIntervalMs
         do {
-            try enc.encodeLive(pixelBuffer: pb, presentationTime: CMTime(value: Int64(f), timescale: Int32(kFPS)), forceKeyframe: f == 0)
+            try enc.encodeLive(
+                pixelBuffer: pb,
+                presentationTime: CMTime(value: Int64(f), timescale: Int32(kFPS)),
+                forceKeyframe: f == 0,
+            )
         } catch { continue }
         enc.completeFrames()
 
         for out in sink.drain() {
             encN += 1
             let sendTs = UInt32(clockMs)
-            let frags = pk.packetize(frame: out.avcc, keyframe: out.keyframe, hostSendTsMillis: sendTs, fecTier: 0, isLTR: false)
+            let frags = pk.packetize(
+                frame: out.avcc,
+                keyframe: out.keyframe,
+                hostSendTsMillis: sendTs,
+                fecTier: 0,
+                isLTR: false,
+            )
             let wobble = (encN % 2 == 0) ? 4.0 : -4.0
             let frameArrivalMs = clockMs + baseOneWayMs + wobble
             let intraGap = frags.count > 1 ? 8.0 / Double(frags.count) : 0.0
@@ -1356,41 +1825,67 @@ func runGradientWobbleArm(frames: Int, verbose: Bool) -> Int {
                 owd.note(arrival: arrivalMs / 1000.0)
                 let ts = parsed.header.hostSendTsMillis
                 if ts != 0, latestHostSendTs == 0 || ts.distanceWrapped(from: latestHostSendTs) > 0 {
-                    latestHostSendTs = ts; latestObservedAtMs = arrivalMs
+                    latestHostSendTs = ts
+                    latestObservedAtMs = arrivalMs
                 }
                 if gate.shouldSample(frameID: parsed.header.frameID, sendTs: ts) {
                     trend.note(arrivalMs: arrivalMs, sendTs: ts)
                 }
                 switch ra.ingest(parsed) {
-                case .completed(let frame):
+                case let .completed(frame):
                     winFrames &+= 1
                     if frame.recoveredViaFEC { winFec &+= 1 }
                     try? dec.decode(frame)
                 case .dropped: winUnrec &+= 1
-                case .incomplete, .stale: break
+                case .incomplete,
+                     .stale: break
                 }
             }
 
             if encN % 3 == 0 {
-                let holdMs = latestHostSendTs == 0 ? 0 : UInt32(max(0, arrivalMsHold(now: clockMs + baseOneWayMs + wobble, observedAt: latestObservedAtMs)))
-                let report = NetworkStatsReport(framesReceived: winFrames, fecRecovered: winFec,
-                                                unrecovered: winUnrec, latestHostSendTs: latestHostSendTs,
-                                                clientHoldMs: holdMs, owdJitterMicros: owd.jitterMicros(),
-                                                owdTrendMilli: trend.wireTrendMilli, owdTrendFlags: trend.wireTrendFlags)
-                winFrames = 0; winFec = 0; winUnrec = 0
+                let holdMs = latestHostSendTs == 0 ? 0 : UInt32(max(
+                    0,
+                    arrivalMsHold(now: clockMs + baseOneWayMs + wobble, observedAt: latestObservedAtMs),
+                ))
+                let report = NetworkStatsReport(
+                    framesReceived: winFrames,
+                    fecRecovered: winFec,
+                    unrecovered: winUnrec,
+                    latestHostSendTs: latestHostSendTs,
+                    clientHoldMs: holdMs,
+                    owdJitterMicros: owd.jitterMicros(),
+                    owdTrendMilli: trend.wireTrendMilli,
+                    owdTrendFlags: trend.wireTrendFlags,
+                )
+                winFrames = 0
+                winFec = 0
+                winUnrec = 0
                 let wire = RecoveryMessage.networkStats(report).encode()
-                guard case .networkStats(let rx)? = try? RecoveryMessage.decode(wire) else { continue }
+                guard case let .networkStats(rx)? = try? RecoveryMessage.decode(wire) else { continue }
                 let hostNowMs = UInt32(clockMs + baseOneWayMs + wobble + baseOneWayMs)
-                let rtt = NetworkEstimate.computeRTTMillis(hostNowMs: hostNowMs, latestHostSendTs: rx.latestHostSendTs, clientHoldMs: rx.clientHoldMs)
-                est.fold(rttMillis: rtt, framesReceived: rx.framesReceived, unrecovered: rx.unrecovered,
-                         owdJitterMicros: rx.owdJitterMicros,
-                         owdTrendState: rx.owdTrendStateRaw, owdTrendModifiedMilli: rx.owdTrendModifiedMilliSigned)
+                let rtt = NetworkEstimate.computeRTTMillis(
+                    hostNowMs: hostNowMs,
+                    latestHostSendTs: rx.latestHostSendTs,
+                    clientHoldMs: rx.clientHoldMs,
+                )
+                est.fold(
+                    rttMillis: rtt,
+                    framesReceived: rx.framesReceived,
+                    unrecovered: rx.unrecovered,
+                    owdJitterMicros: rx.owdJitterMicros,
+                    owdTrendState: rx.owdTrendStateRaw,
+                    owdTrendModifiedMilli: rx.owdTrendModifiedMilliSigned,
+                )
                 let before = cc.current
                 if cc.onReport(est) < before { cuts += 1 }
             }
         }
     }
-    if verbose { print("    wobble arm: \(encN) frames, cuts=\(cuts), end rate=\(String(format: "%.1f", Double(cc.current) / 1_000_000.0))Mbps") }
+    if verbose {
+        print(
+            "    wobble arm: \(encN) frames, cuts=\(cuts), end rate=\(String(format: "%.1f", Double(cc.current) / 1_000_000.0))Mbps",
+        )
+    }
     return cuts
 }
 
@@ -1398,7 +1893,7 @@ func runGradientWobbleArm(frames: Int, verbose: Bool) -> Int {
 /// delay SLOPE precedes the smoothed-RTT level by design. A/B in ONE process via the controller's
 /// instance-level `gradientCutEnabled` (no env games), plus the clean-wobble false-positive guard.
 func runGradientOnsetScenario(frames: Int, verbose: Bool) -> GradientOnsetResult {
-    _ = frames   // phase lengths are fixed to the controller's tick constants (see arm doc)
+    _ = frames // phase lengths are fixed to the controller's tick constants (see arm doc)
     var result = GradientOnsetResult()
     let off = runGradientOnsetArm(gradientEnabled: false, verbose: verbose)
     let on = runGradientOnsetArm(gradientEnabled: true, verbose: verbose)
@@ -1472,9 +1967,9 @@ struct FPSGovResult {
     /// QP51 entropy floor, where VT drops frames silently (the measured R7 behaviour) — the
     /// governor exists to relieve exactly that, and real content at a governed fps fits.
     var cadenceRegular = true
-    var worstCadenceErrMs = 0.0          // admit-schedule, all plateaus (asserted)
-    var worstFitEncodeErrMs = 0.0        // encoder-output, final plateau (asserted)
-    var worstEncodeGapMs = 0.0           // encoder-output, anywhere (informational — VT starvation drops)
+    var worstCadenceErrMs = 0.0 // admit-schedule, all plateaus (asserted)
+    var worstFitEncodeErrMs = 0.0 // encoder-output, final plateau (asserted)
+    var worstEncodeGapMs = 0.0 // encoder-output, anywhere (informational — VT starvation drops)
     /// fps at the end of the restore phase (expect base 60) + the climb spacings (~3 s/rung).
     var endFps = 0
     var stepUpSpacingsMs: [Double] = []
@@ -1515,10 +2010,17 @@ func runFPSGovernorCliffScenario(verbose: Bool) -> FPSGovResult {
     let decoded = Counter()
     let enc: VideoEncoder
     do {
-        enc = VideoEncoder(width: kWidth, height: kHeight, fps: kFPS, ltrEnabled: false,
-                           outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) })
+        enc = VideoEncoder(
+            width: kWidth,
+            height: kHeight,
+            fps: kFPS,
+            ltrEnabled: false,
+            outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) },
+        )
         try enc.createLiveSession()
-    } catch { print("  fps-gov encoder create FAILED: \(error)"); return result }
+    } catch { print("  fps-gov encoder create FAILED: \(error)")
+        return result
+    }
     _ = enc.setLiveBitrate(ceiling)
     let dec = VideoDecoder(decodedFrameHandler: { _ in decoded.value += 1 })
     guard let pb = makePixelBuffer(width: kWidth, height: kHeight, fullRange: false) else { return result }
@@ -1534,24 +2036,28 @@ func runFPSGovernorCliffScenario(verbose: Bool) -> FPSGovResult {
     var queueBytes = 0.0
     var globalIndex = 0
     var deliveredSinceReport = 0
-    var admitTimesMs: [Double] = []      // gate-admission schedule (the governed cadence)
-    var encodeTimesMs: [Double] = []     // VT OUTPUT times (holes = VT starvation drops)
+    var admitTimesMs: [Double] = [] // gate-admission schedule (the governed cadence)
+    var encodeTimesMs: [Double] = [] // VT OUTPUT times (holes = VT starvation drops)
     var fpsChanges: [(ms: Double, fps: Int)] = [(0, kFPS)]
     var cliffStepTimesMs: [Double] = []
 
-    let phaseFrames = [120, 360, 840]                                  // 2 s / 6 s / 14 s at 60 fps deliveries
+    let phaseFrames = [120, 360, 840] // 2 s / 6 s / 14 s at 60 fps deliveries
     let capacities = [ceiling * 2, 2_500_000, ceiling * 2]
 
     for phase in 0..<3 {
         let capacityBps = capacities[phase]
         if verbose {
-            print(String(format: "    ── phase %d  capacity=%.1fMbps  %@ ──", phase + 1,
-                         Double(capacityBps) / 1_000_000.0,
-                         phase == 0 ? "structured (hold 60)" : (phase == 1 ? "NOISE cliff (ladder down)" : "low-motion restore (climb)")))
+            print(String(
+                format: "    ── phase %d  capacity=%.1fMbps  %@ ──",
+                phase + 1,
+                Double(capacityBps) / 1_000_000.0,
+                phase == 0 ? "structured (hold 60)" :
+                    (phase == 1 ? "NOISE cliff (ladder down)" : "low-motion restore (climb)"),
+            ))
         }
         for _ in 0..<phaseFrames[phase] {
             clockMs += slotMs
-            queueBytes = max(0, queueBytes - Double(capacityBps) / 8.0 * slotMs / 1000.0)   // continuous drain
+            queueBytes = max(0, queueBytes - Double(capacityBps) / 8.0 * slotMs / 1000.0) // continuous drain
             switch phase {
             case 0: fillFrame(pb, globalIndex)
             case 1: fillFrameNoise(pb, globalIndex)
@@ -1561,20 +2067,38 @@ func runFPSGovernorCliffScenario(verbose: Bool) -> FPSGovResult {
             // consulted only when governed below base; first frame forced).
             let forced = globalIndex == 0
             let admitted = governedFps < kFPS
-                ? gate.admit(now: clockMs / 1000.0, targetIntervalSeconds: 1.0 / Double(governedFps),
-                             toleranceSeconds: 0.5 / 120.0, forced: forced)
+                ? gate.admit(
+                    now: clockMs / 1000.0,
+                    targetIntervalSeconds: 1.0 / Double(governedFps),
+                    toleranceSeconds: 0.5 / 120.0,
+                    forced: forced,
+                )
                 : true
             globalIndex += 1
             if admitted {
                 admitTimesMs.append(clockMs)
                 do {
-                    try enc.encodeLive(pixelBuffer: pb, presentationTime: CMTime(value: Int64(globalIndex), timescale: Int32(kFPS)), forceKeyframe: forced)
+                    try enc.encodeLive(
+                        pixelBuffer: pb,
+                        presentationTime: CMTime(value: Int64(globalIndex), timescale: Int32(kFPS)),
+                        forceKeyframe: forced,
+                    )
                 } catch { continue }
                 enc.completeFrames()
                 for out in sink.drain() {
                     encodeTimesMs.append(clockMs)
-                    gov.noteEncodedFrame(bytes: out.avcc.count, isAnchor: out.keyframe)   // the host's onEncodedFrame fold
-                    let frags = pk.packetize(frame: out.avcc, keyframe: out.keyframe, hostSendTsMillis: UInt32(clockMs), fecTier: 0, isLTR: false)
+                    gov
+                        .noteEncodedFrame(
+                            bytes: out.avcc.count,
+                            isAnchor: out.keyframe,
+                        ) // the host's onEncodedFrame fold
+                    let frags = pk.packetize(
+                        frame: out.avcc,
+                        keyframe: out.keyframe,
+                        hostSendTsMillis: UInt32(clockMs),
+                        fecTier: 0,
+                        isLTR: false,
+                    )
                     let wireBytes = frags.reduce(0) { $0 + $1.encode().count }
                     queueBytes += Double(wireBytes)
                     // Bufferbloat tail-clamp (~400 ms at the live capacity): real paths bound their
@@ -1592,15 +2116,17 @@ func runFPSGovernorCliffScenario(verbose: Bool) -> FPSGovResult {
                         owd.note(arrival: arrivalMs / 1000.0)
                         let ts = parsed.header.hostSendTsMillis
                         if ts != 0, latestHostSendTs == 0 || ts.distanceWrapped(from: latestHostSendTs) > 0 {
-                            latestHostSendTs = ts; latestObservedAtMs = arrivalMs
+                            latestHostSendTs = ts
+                            latestObservedAtMs = arrivalMs
                         }
                         switch ra.ingest(parsed) {
-                        case .completed(let frame):
+                        case let .completed(frame):
                             winFrames &+= 1
                             if frame.recoveredViaFEC { winFec &+= 1 }
                             try? dec.decode(frame)
                         case .dropped: winUnrec &+= 1
-                        case .incomplete, .stale: break
+                        case .incomplete,
+                             .stale: break
                         }
                     }
                 }
@@ -1612,18 +2138,41 @@ func runFPSGovernorCliffScenario(verbose: Bool) -> FPSGovResult {
                 deliveredSinceReport = 0
                 let queueMs = queueBytes * 8.0 / Double(capacityBps) * 1000.0
                 let nowClientMs = clockMs + baseOneWayMs + queueMs
-                let holdMs = latestHostSendTs == 0 ? 0 : UInt32(max(0, arrivalMsHold(now: nowClientMs, observedAt: latestObservedAtMs)))
-                let report = NetworkStatsReport(framesReceived: winFrames, fecRecovered: winFec,
-                                                unrecovered: winUnrec, latestHostSendTs: latestHostSendTs,
-                                                clientHoldMs: holdMs, owdJitterMicros: owd.jitterMicros())
-                winFrames = 0; winFec = 0; winUnrec = 0
+                let holdMs = latestHostSendTs == 0 ? 0 : UInt32(max(
+                    0,
+                    arrivalMsHold(now: nowClientMs, observedAt: latestObservedAtMs),
+                ))
+                let report = NetworkStatsReport(
+                    framesReceived: winFrames,
+                    fecRecovered: winFec,
+                    unrecovered: winUnrec,
+                    latestHostSendTs: latestHostSendTs,
+                    clientHoldMs: holdMs,
+                    owdJitterMicros: owd.jitterMicros(),
+                )
+                winFrames = 0
+                winFec = 0
+                winUnrec = 0
                 let wire = RecoveryMessage.networkStats(report).encode()
-                guard case .networkStats(let rx)? = try? RecoveryMessage.decode(wire) else { continue }
-                let hostNowMs = UInt32(nowClientMs + baseOneWayMs)     // return path rides the un-queued direction
-                let rtt = NetworkEstimate.computeRTTMillis(hostNowMs: hostNowMs, latestHostSendTs: rx.latestHostSendTs, clientHoldMs: rx.clientHoldMs)
-                est.fold(rttMillis: rtt, framesReceived: rx.framesReceived, unrecovered: rx.unrecovered, owdJitterMicros: rx.owdJitterMicros)
+                guard case let .networkStats(rx)? = try? RecoveryMessage.decode(wire) else { continue }
+                let hostNowMs = UInt32(nowClientMs + baseOneWayMs) // return path rides the un-queued direction
+                let rtt = NetworkEstimate.computeRTTMillis(
+                    hostNowMs: hostNowMs,
+                    latestHostSendTs: rx.latestHostSendTs,
+                    clientHoldMs: rx.clientHoldMs,
+                )
+                est.fold(
+                    rttMillis: rtt,
+                    framesReceived: rx.framesReceived,
+                    unrecovered: rx.unrecovered,
+                    owdJitterMicros: rx.owdJitterMicros,
+                )
                 let target = cc.onReport(est)
-                if LiveCongestionController.isMaterialChange(previous: lastActuated, target: target, ceiling: cc.ceiling) {
+                if LiveCongestionController.isMaterialChange(
+                    previous: lastActuated,
+                    target: target,
+                    ceiling: cc.ceiling,
+                ) {
                     lastActuated = target
                     _ = enc.setLiveBitrate(target)
                 }
@@ -1631,13 +2180,21 @@ func runFPSGovernorCliffScenario(verbose: Bool) -> FPSGovResult {
                 // GOVERNOR tick — exactly the host's handleRecovery(.networkStats) arm.
                 let congested = FPSGovernor.congestionEvidence(
                     lastLossSample: est.lastLossSample, smoothedRTTMillis: est.smoothedRTTMillis,
-                    minRTTMillis: est.minRTTMillis, abrCurrent: cc.current, abrCeiling: cc.ceiling)
+                    minRTTMillis: est.minRTTMillis, abrCurrent: cc.current, abrCeiling: cc.ceiling,
+                )
                 let newFps = gov.onTick(targetBps: lastActuated, congested: congested)
                 if newFps != governedFps {
                     if verbose {
-                        print(String(format: "    t=%5.0fms  fps %d → %d  (offered≈%.1fMbps target=%.1fMbps congested=%@ rtt=%.0fms)",
-                                     clockMs, governedFps, newFps, gov.bytesPerFrameEWMA * 8 * Double(governedFps) / 1_000_000.0,
-                                     Double(lastActuated) / 1_000_000.0, congested ? "Y" : "n", est.smoothedRTTMillis))
+                        print(String(
+                            format: "    t=%5.0fms  fps %d → %d  (offered≈%.1fMbps target=%.1fMbps congested=%@ rtt=%.0fms)",
+                            clockMs,
+                            governedFps,
+                            newFps,
+                            gov.bytesPerFrameEWMA * 8 * Double(governedFps) / 1_000_000.0,
+                            Double(lastActuated) / 1_000_000.0,
+                            congested ? "Y" : "n",
+                            est.smoothedRTTMillis,
+                        ))
                     }
                     if phase == 0 { result.heldBaseInPhase1 = false }
                     if phase == 1, newFps < governedFps {
@@ -1649,7 +2206,7 @@ func runFPSGovernorCliffScenario(verbose: Bool) -> FPSGovResult {
                     }
                     fpsChanges.append((clockMs, newFps))
                     governedFps = newFps
-                    enc.setExpectedFrameRate(newFps)                   // REAL HW live property set
+                    enc.setExpectedFrameRate(newFps) // REAL HW live property set
                 }
             }
         }
@@ -1725,10 +2282,17 @@ func runFPSGovernorWeatherArm(frames: Int, verbose: Bool) -> FPSGovWeatherResult
     let decoded = Counter()
     let enc: VideoEncoder
     do {
-        enc = VideoEncoder(width: kWidth, height: kHeight, fps: kFPS, ltrEnabled: false,
-                           outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) })
+        enc = VideoEncoder(
+            width: kWidth,
+            height: kHeight,
+            fps: kFPS,
+            ltrEnabled: false,
+            outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) },
+        )
         try enc.createLiveSession()
-    } catch { print("  fps-gov weather encoder create FAILED: \(error)"); return result }
+    } catch { print("  fps-gov weather encoder create FAILED: \(error)")
+        return result
+    }
     _ = enc.setLiveBitrate(ceiling)
     let dec = VideoDecoder(decodedFrameHandler: { _ in decoded.value += 1 })
     guard let pb = makePixelBuffer(width: kWidth, height: kHeight, fullRange: false) else { return result }
@@ -1749,63 +2313,108 @@ func runFPSGovernorWeatherArm(frames: Int, verbose: Bool) -> FPSGovWeatherResult
         let force = (f == 0) || recoveryPending
         recoveryPending = false
         do {
-            try enc.encodeLive(pixelBuffer: pb, presentationTime: CMTime(value: Int64(f), timescale: Int32(kFPS)), forceKeyframe: force)
+            try enc.encodeLive(
+                pixelBuffer: pb,
+                presentationTime: CMTime(value: Int64(f), timescale: Int32(kFPS)),
+                forceKeyframe: force,
+            )
         } catch { continue }
         enc.completeFrames()
 
         for out in sink.drain() {
             encN += 1
             gov.noteEncodedFrame(bytes: out.avcc.count, isAnchor: out.keyframe)
-            let frags = pk.packetize(frame: out.avcc, keyframe: out.keyframe, hostSendTsMillis: UInt32(clockMs), fecTier: 0, isLTR: false)
-            let frameArrivalMs = clockMs + baseOneWayMs                // FLAT RTT — weather, no queue
+            let frags = pk.packetize(
+                frame: out.avcc,
+                keyframe: out.keyframe,
+                hostSendTsMillis: UInt32(clockMs),
+                fecTier: 0,
+                isLTR: false,
+            )
+            let frameArrivalMs = clockMs + baseOneWayMs // FLAT RTT — weather, no queue
             let intraGap = frags.count > 1 ? 8.0 / Double(frags.count) : 0.0
             for (localIdx, frag) in frags.enumerated() {
                 globalFrag += 1
                 let arrivalMs = frameArrivalMs + Double(localIdx) * intraGap
-                if (globalFrag * 7 + 3) % 100 < 3 { continue }         // deterministic ~3% fragment loss
+                if (globalFrag * 7 + 3) % 100 < 3 { continue } // deterministic ~3% fragment loss
                 guard let parsed = try? FrameFragment.decode(frag.encode()) else { continue }
                 owd.note(arrival: arrivalMs / 1000.0)
                 let ts = parsed.header.hostSendTsMillis
                 if ts != 0, latestHostSendTs == 0 || ts.distanceWrapped(from: latestHostSendTs) > 0 {
-                    latestHostSendTs = ts; latestObservedAtMs = arrivalMs
+                    latestHostSendTs = ts
+                    latestObservedAtMs = arrivalMs
                 }
                 switch ra.ingest(parsed) {
-                case .completed(let frame):
+                case let .completed(frame):
                     winFrames &+= 1
                     if frame.recoveredViaFEC { winFec &+= 1 }
                     try? dec.decode(frame)
-                case .dropped: winUnrec &+= 1; recoveryPending = true
-                case .incomplete, .stale: break
+                case .dropped: winUnrec &+= 1
+                    recoveryPending = true
+                case .incomplete,
+                     .stale: break
                 }
-                while ra.nextDroppedFrame() != nil { winUnrec &+= 1; recoveryPending = true }
+                while ra.nextDroppedFrame() != nil { winUnrec &+= 1
+                    recoveryPending = true
+                }
             }
 
-            if encN % 3 == 0 {                                         // the ~50 ms report cadence
-                let holdMs = latestHostSendTs == 0 ? 0 : UInt32(max(0, arrivalMsHold(now: clockMs + baseOneWayMs, observedAt: latestObservedAtMs)))
-                let report = NetworkStatsReport(framesReceived: winFrames, fecRecovered: winFec,
-                                                unrecovered: winUnrec, latestHostSendTs: latestHostSendTs,
-                                                clientHoldMs: holdMs, owdJitterMicros: owd.jitterMicros())
-                winFrames = 0; winFec = 0; winUnrec = 0
+            if encN % 3 == 0 { // the ~50 ms report cadence
+                let holdMs = latestHostSendTs == 0 ? 0 : UInt32(max(
+                    0,
+                    arrivalMsHold(now: clockMs + baseOneWayMs, observedAt: latestObservedAtMs),
+                ))
+                let report = NetworkStatsReport(
+                    framesReceived: winFrames,
+                    fecRecovered: winFec,
+                    unrecovered: winUnrec,
+                    latestHostSendTs: latestHostSendTs,
+                    clientHoldMs: holdMs,
+                    owdJitterMicros: owd.jitterMicros(),
+                )
+                winFrames = 0
+                winFec = 0
+                winUnrec = 0
                 let wire = RecoveryMessage.networkStats(report).encode()
-                guard case .networkStats(let rx)? = try? RecoveryMessage.decode(wire) else { continue }
+                guard case let .networkStats(rx)? = try? RecoveryMessage.decode(wire) else { continue }
                 let hostNowMs = UInt32(clockMs + baseOneWayMs * 2)
-                let rtt = NetworkEstimate.computeRTTMillis(hostNowMs: hostNowMs, latestHostSendTs: rx.latestHostSendTs, clientHoldMs: rx.clientHoldMs)
-                est.fold(rttMillis: rtt, framesReceived: rx.framesReceived, unrecovered: rx.unrecovered, owdJitterMicros: rx.owdJitterMicros)
+                let rtt = NetworkEstimate.computeRTTMillis(
+                    hostNowMs: hostNowMs,
+                    latestHostSendTs: rx.latestHostSendTs,
+                    clientHoldMs: rx.clientHoldMs,
+                )
+                est.fold(
+                    rttMillis: rtt,
+                    framesReceived: rx.framesReceived,
+                    unrecovered: rx.unrecovered,
+                    owdJitterMicros: rx.owdJitterMicros,
+                )
                 let target = cc.onReport(est)
-                if LiveCongestionController.isMaterialChange(previous: lastActuated, target: target, ceiling: cc.ceiling) {
+                if LiveCongestionController.isMaterialChange(
+                    previous: lastActuated,
+                    target: target,
+                    ceiling: cc.ceiling,
+                ) {
                     lastActuated = target
                     _ = enc.setLiveBitrate(target)
                 }
                 if lastActuated < cc.ceiling { result.bitrateHeld = false }
                 let congested = FPSGovernor.congestionEvidence(
                     lastLossSample: est.lastLossSample, smoothedRTTMillis: est.smoothedRTTMillis,
-                    minRTTMillis: est.minRTTMillis, abrCurrent: cc.current, abrCeiling: cc.ceiling)
+                    minRTTMillis: est.minRTTMillis, abrCurrent: cc.current, abrCeiling: cc.ceiling,
+                )
                 if congested { result.sawLossEvidence = true }
                 governedFps = gov.onTick(targetBps: lastActuated, congested: congested)
                 result.minFps = min(result.minFps, governedFps)
-                if verbose && encN % 30 == 0 {
-                    print(String(format: "    f%-3d loss=%.3f congested=%@ fps=%d rate=%.1fMbps", f, est.lastLossSample,
-                                 congested ? "Y" : "n", governedFps, Double(lastActuated) / 1_000_000.0))
+                if verbose, encN % 30 == 0 {
+                    print(String(
+                        format: "    f%-3d loss=%.3f congested=%@ fps=%d rate=%.1fMbps",
+                        f,
+                        est.lastLossSample,
+                        congested ? "Y" : "n",
+                        governedFps,
+                        Double(lastActuated) / 1_000_000.0,
+                    ))
                 }
             }
         }
@@ -1841,19 +2450,23 @@ struct RecoveryIDRResult {
 /// either the component-2 ``RecoveryIDRPolicy`` (`.v2`) or the legacy sent-keyed 500 ms window
 /// (`.legacy`, the exact F1 `now − lastKeyframeEmit < 0.5` predicate). Deterministic virtual clock.
 enum RecoveryGateMode { case v2, legacy }
-func simulateDoubleLossRecovery(mode: RecoveryGateMode, rtt: Double, verbose: Bool) -> (unfreezeMs: Double, requests: Int, secondGranted: Bool) {
+func simulateDoubleLossRecovery(
+    mode: RecoveryGateMode,
+    rtt: Double,
+    verbose: Bool,
+) -> (unfreezeMs: Double, requests: Int, secondGranted: Bool) {
     let oneWay = rtt / 2
     let encodeDelay = 0.010
     var policy = RecoveryIDRPolicy()
     let router = RecoveryDatagramRouter()
-    let ltrCtl = LTRController()                  // fresh ⇒ no acked token ⇒ refreshLTR folds to .idr
+    let ltrCtl = LTRController() // fresh ⇒ no acked token ⇒ refreshLTR folds to .idr
     let recoveryPolicy = RecoveryPolicy()
     var escalation = LTREscalationTracker()
     var frontier = DecodeFrontier()
-    frontier.noteDecoded(frameID: 49)             // the client's decode frontier before the loss
+    frontier.noteDecoded(frameID: 49) // the client's decode frontier before the loss
     var nextKF: UInt32 = 100
     var kfSent = 0
-    var lastKeyframeEmit: Double?                 // the legacy F1 anchor
+    var lastKeyframeEmit: Double? // the legacy F1 anchor
     var secondGranted = false
     var requests = 0
     var unfreeze: Double?
@@ -1873,9 +2486,9 @@ func simulateDoubleLossRecovery(mode: RecoveryGateMode, rtt: Double, verbose: Bo
     func hostReceive(_ wire: Data, arriveAt: Double) -> Double? {
         var granted = false
         switch router.route(datagram: wire, mediaFlowing: true) {
-        case .forceKeyframe(let last):
+        case let .forceKeyframe(last):
             granted = admit(last: last, now: arriveAt)
-        case .refreshLTR(let last):
+        case let .refreshLTR(last):
             if case .idr = ltrCtl.recoveryDecision(request: .ltrRefresh, hasEnableLTR: true) {
                 granted = admit(last: last, now: arriveAt)
             }
@@ -1888,7 +2501,7 @@ func simulateDoubleLossRecovery(mode: RecoveryGateMode, rtt: Double, verbose: Bo
         nextKF += 1
         lastKeyframeEmit = sentAt
         kfSent += 1
-        if kfSent == 1 { return nil }             // BOTH kfDup copies of the first recovery IDR die
+        if kfSent == 1 { return nil } // BOTH kfDup copies of the first recovery IDR die
         return sentAt + oneWay
     }
 
@@ -1914,8 +2527,13 @@ func simulateDoubleLossRecovery(mode: RecoveryGateMode, rtt: Double, verbose: Bo
         if let decodeAt = hostReceive(wire, arriveAt: t + oneWay) { unfreeze = decodeAt }
         if requests == 2, kfSent > kfBefore { secondGranted = true }
         if verbose {
-            print(String(format: "      [%@] request #%d at t=%.0fms → %@", mode == .v2 ? "v2    " : "legacy",
-                         requests, t * 1000, kfSent > kfBefore ? "GRANT (kf #\(kfSent))" : "suppressed"))
+            print(String(
+                format: "      [%@] request #%d at t=%.0fms → %@",
+                mode == .v2 ? "v2    " : "legacy",
+                requests,
+                t * 1000,
+                kfSent > kfBefore ? "GRANT (kf #\(kfSent))" : "suppressed",
+            ))
         }
     }
     return ((unfreeze ?? 2.0) * 1000.0, requests, secondGranted)
@@ -1943,26 +2561,31 @@ func runRecoveryIDRCooldownScenario(verbose: Bool) -> RecoveryIDRResult {
         let router = RecoveryDatagramRouter()
         var nextKF: UInt32 = 500
         let requestTimes = [0.0, 0.02, 0.05, 0.1, 0.2, 0.35]
-        let serviceDelay = 0.03                  // grant → keyframe on the wire 30 ms later
+        let serviceDelay = 0.03 // grant → keyframe on the wire 30 ms later
         var pendingService: Double?
         for t in requestTimes {
             if let due = pendingService, t >= due {
-                policy.noteKeyframeSent(frameID: nextKF, now: due); nextKF += 1
+                policy.noteKeyframeSent(frameID: nextKF, now: due)
+                nextKF += 1
                 pendingService = nil
             }
-            let wire = RecoveryMessage.requestIDR(lastDecodedFrameID: 400).encode()  // always behind
-            guard case .forceKeyframe(let last) = router.route(datagram: wire, mediaFlowing: true) else { continue }
+            let wire = RecoveryMessage.requestIDR(lastDecodedFrameID: 400).encode() // always behind
+            guard case let .forceKeyframe(last) = router.route(datagram: wire, mediaFlowing: true) else { continue }
             switch policy.decide(now: t, clientLastDecoded: last, smoothedRTTSeconds: 0.05) {
             case .grant:
                 result.stormGrants += 1
                 pendingService = t + serviceDelay
-            case .suppressGrantPending, .suppressRateLimited, .suppressInFlight:
+            case .suppressGrantPending,
+                 .suppressRateLimited,
+                 .suppressInFlight:
                 result.stormSuppressed += 1
             case .suppressStale:
-                result.stormVerdictsOK = false   // nothing was acked — stale is impossible here
+                result.stormVerdictsOK = false // nothing was acked — stale is impossible here
             }
         }
-        if let due = pendingService { policy.noteKeyframeSent(frameID: nextKF, now: due); nextKF += 1 }
+        if let due = pendingService { policy.noteKeyframeSent(frameID: nextKF, now: due)
+            nextKF += 1
+        }
         // ≥1 refill interval later the bucket must admit again (sustained rate = legacy 2/s).
         result.refillGrantAfter = policy.decide(now: 1.0, clientLastDecoded: 400, smoothedRTTSeconds: 0.05) == .grant
     }
@@ -1972,7 +2595,10 @@ func runRecoveryIDRCooldownScenario(verbose: Bool) -> RecoveryIDRResult {
         var policy = RecoveryIDRPolicy()
         let router = RecoveryDatagramRouter()
         policy.noteKeyframeSent(frameID: 200, now: 0.0)
-        if case .ack(let frameID) = router.route(datagram: RecoveryMessage.ack(streamSeq: 200).encode(), mediaFlowing: true) {
+        if case let .ack(frameID) = router.route(
+            datagram: RecoveryMessage.ack(streamSeq: 200).encode(),
+            mediaFlowing: true,
+        ) {
             policy.noteKeyframeDelivered(frameID: frameID)
         }
         let tokensBefore = policy.availableTokens
@@ -1986,10 +2612,18 @@ func runRecoveryIDRCooldownScenario(verbose: Bool) -> RecoveryIDRResult {
     do {
         var policy = RecoveryIDRPolicy()
         let sink = FrameSink()
-        let enc = VideoEncoder(width: kWidth, height: kHeight, fps: kFPS, ltrEnabled: false,
-                               outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) })
+        let enc = VideoEncoder(
+            width: kWidth,
+            height: kHeight,
+            fps: kFPS,
+            ltrEnabled: false,
+            outputHandler: { avcc, kf, _, ltr, _ in
+                sink.append(avcc: avcc, keyframe: kf, ltr: ltr)
+            },
+        )
         do { try enc.createLiveSession() } catch {
-            print("  recovery-idr encoder create FAILED: \(error)"); return result
+            print("  recovery-idr encoder create FAILED: \(error)")
+            return result
         }
         guard let pb = makePixelBuffer(width: kWidth, height: kHeight, fullRange: false) else { return result }
         var force = false
@@ -1997,7 +2631,11 @@ func runRecoveryIDRCooldownScenario(verbose: Bool) -> RecoveryIDRResult {
         for i in 0..<20 {
             fillFrame(pb, i)
             do {
-                try enc.encodeLive(pixelBuffer: pb, presentationTime: CMTime(value: Int64(i), timescale: Int32(kFPS)), forceKeyframe: force)
+                try enc.encodeLive(
+                    pixelBuffer: pb,
+                    presentationTime: CMTime(value: Int64(i), timescale: Int32(kFPS)),
+                    forceKeyframe: force,
+                )
             } catch { continue }
             enc.completeFrames()
             for out in sink.drain() {
@@ -2026,7 +2664,8 @@ func runRecoveryIDRCooldownScenario(verbose: Bool) -> RecoveryIDRResult {
 func arrivalMsHold(now: Double, observedAt: Double) -> Double { max(0, now - observedAt) }
 /// Peak by REDUNDANCY level (wire tier numbering is non-monotonic), so g2 ranks above g5 above OFF.
 func maxTier(_ a: UInt8, _ b: UInt8) -> UInt8 {
-    func g(_ t: UInt8) -> Int { switch AdaptiveFECPolicy.groupSize(forTier: t, default: 5) { case nil: return 0; case .some(let v): return 100 - v } }
+    func g(_ t: UInt8) -> Int { switch AdaptiveFECPolicy.groupSize(forTier: t, default: 5) { case nil: 0
+    case let .some(v): 100 - v } }
     return g(b) > g(a) ? b : a
 }
 
@@ -2082,7 +2721,9 @@ func runPacerDepthScenario(verbose: Bool) -> PacerDepthScenarioResult {
         t += dt
         guard deliver else { return nil }
         var tick = lastPresent + 1.0 / 120.0
-        while tick < t { dp.noteReshow(tick); tick += 1.0 / 120.0 }
+        while tick < t { dp.noteReshow(tick)
+            tick += 1.0 / 120.0
+        }
         dp.noteArrival(t)
         let cls = dp.notePresent(t)
         lastPresent = t
@@ -2120,13 +2761,15 @@ func runPacerDepthScenario(verbose: Bool) -> PacerDepthScenarioResult {
     for i in 0..<600 {
         _ = step(deliver: true, dt: dt60)
         sampleOwd(spike: i % 20 == 0 ? 0.035 : 0, intervalMs: dt60 * 1000)
-        if dp.depth == 2 && r.promoteAfterOnsetMs == nil { r.promoteAfterOnsetMs = (t - onset) * 1000 }
-        if r.promoteAfterOnsetMs != nil && dp.depth != 2 { r.heldThroughBurst = false }
+        if dp.depth == 2, r.promoteAfterOnsetMs == nil { r.promoteAfterOnsetMs = (t - onset) * 1000 }
+        if r.promoteAfterOnsetMs != nil, dp.depth != 2 { r.heldThroughBurst = false }
     }
     let burstWin = dp.drainCounters()
     r.burstLates = burstWin.lateFrames
     if verbose {
-        print("    [B] 10s owd-spike burst   : late=\(r.burstLates) promote@\(r.promoteAfterOnsetMs.map { String(format: "%.0fms", $0) } ?? "NEVER") held=\(r.heldThroughBurst ? "YES" : "no") depth=\(dp.depth)")
+        print(
+            "    [B] 10s owd-spike burst   : late=\(r.burstLates) promote@\(r.promoteAfterOnsetMs.map { String(format: "%.0fms", $0) } ?? "NEVER") held=\(r.heldThroughBurst ? "YES" : "no") depth=\(dp.depth)",
+        )
     }
 
     // ── Phase C: 8s clean recovery ──
@@ -2134,14 +2777,16 @@ func runPacerDepthScenario(verbose: Bool) -> PacerDepthScenarioResult {
     for _ in 0..<480 {
         _ = step(deliver: true, dt: dt60)
         sampleOwd(spike: 0, intervalMs: dt60 * 1000)
-        if dp.depth == 1 && r.demoteAfterLastLateMs == nil, let ll = lastLate {
+        if dp.depth == 1, r.demoteAfterLastLateMs == nil, let ll = lastLate {
             r.demoteAfterLastLateMs = (t - ll) * 1000
         }
     }
     r.depth1AtRecoveryEnd = dp.depth == 1
     _ = dp.drainCounters()
     if verbose {
-        print("    [C] 8s clean recovery     : demote \(r.demoteAfterLastLateMs.map { String(format: "%.0fms", $0) } ?? "NEVER") after last late, depth=\(dp.depth)")
+        print(
+            "    [C] 8s clean recovery     : demote \(r.demoteAfterLastLateMs.map { String(format: "%.0fms", $0) } ?? "NEVER") after last late, depth=\(dp.depth)",
+        )
     }
 
     // ── Phase D: 60→30fps downshift, no loss, NO hint (estimator + gradient handle it) ──
@@ -2155,22 +2800,32 @@ func runPacerDepthScenario(verbose: Bool) -> PacerDepthScenarioResult {
     // downshift — the rebased threshold means zero lates, not even the crossover transient.
     var dph = PacerDepthPolicy(config: .init(), adaptEnabled: true)
     var th = 0.0
-    for _ in 0..<120 { th += dt60; dph.noteArrival(th); dph.notePresent(th) }
+    for _ in 0..<120 { th += dt60
+        dph.noteArrival(th)
+        dph.notePresent(th)
+    }
     dph.setIntervalHint(1.0 / 30.0)
-    for _ in 0..<150 { th += 1.0 / 30.0; dph.noteArrival(th); dph.notePresent(th) }
+    for _ in 0..<150 { th += 1.0 / 30.0
+        dph.noteArrival(th)
+        dph.notePresent(th)
+    }
     r.downshiftHintLates = dph.drainCounters().lateFrames
     if verbose {
-        print("    [D] 60→30 downshift       : no-hint late=\(r.downshiftLates) promoted=\(r.downshiftPromoted ? "YES" : "no")   with-hint late=\(r.downshiftHintLates)")
+        print(
+            "    [D] 60→30 downshift       : no-hint late=\(r.downshiftLates) promoted=\(r.downshiftPromoted ? "YES" : "no")   with-hint late=\(r.downshiftHintLates)",
+        )
     }
 
     // ── Phase E: motion stop (400ms idle), then typing at one frame / 180ms ──
-    _ = step(deliver: true, dt: 0.400)   // idle-classified resume present
+    _ = step(deliver: true, dt: 0.400) // idle-classified resume present
     for _ in 0..<15 { _ = step(deliver: true, dt: 0.180) }
     let typingWin = dp.drainCounters()
     r.typingLates = typingWin.lateFrames
     r.typingGaps = typingWin.presentGaps
     if verbose {
-        print("    [E] stop + typing @180ms  : late=\(r.typingLates) gaps=\(r.typingGaps) (gaps ≤1 = the stop-boundary episode, by design) depth=\(dp.depth)")
+        print(
+            "    [E] stop + typing @180ms  : late=\(r.typingLates) gaps=\(r.typingGaps) (gaps ≤1 = the stop-boundary episode, by design) depth=\(dp.depth)",
+        )
     }
     return r
 }
@@ -2200,8 +2855,15 @@ struct RecoveryRequestLossArmResult {
 ///   - dropInitialCopies: copy indices of the INITIAL logical request the wire eats.
 ///   - fastEscalation: the `AISLOPDESK_FAST_ESCALATION` gate (observingLoss forced false when off).
 ///   - seedLossEvents: FEC-recovered early-warning events seeded into the loss window at t=0.
-func runRecoveryRequestLossArm(copies: Int, dropInitialCopies: Set<Int>, fastEscalation: Bool,
-                               seedLossEvents: Int, rtt: Double, verbose: Bool, label: String) -> RecoveryRequestLossArmResult {
+func runRecoveryRequestLossArm(
+    copies: Int,
+    dropInitialCopies: Set<Int>,
+    fastEscalation: Bool,
+    seedLossEvents: Int,
+    rtt: Double,
+    verbose: Bool,
+    label: String,
+) -> RecoveryRequestLossArmResult {
     let oneWay = rtt / 2
     let encodeDelay = 0.010
     let frameInterval = 1.0 / Double(kFPS)
@@ -2217,7 +2879,7 @@ func runRecoveryRequestLossArm(copies: Int, dropInitialCopies: Set<Int>, fastEsc
     // ── REAL components, host side ──
     let router = RecoveryDatagramRouter()
     var deduper = RecoveryRequestDeduper()
-    let ltrCtl = LTRController()              // fresh ⇒ no acked token ⇒ refreshLTR falls back to .idr
+    let ltrCtl = LTRController() // fresh ⇒ no acked token ⇒ refreshLTR falls back to .idr
     var idrPolicy = RecoveryIDRPolicy()
     var nextKF: UInt32 = 100
 
@@ -2240,19 +2902,24 @@ func runRecoveryRequestLossArm(copies: Int, dropInitialCopies: Set<Int>, fastEsc
     func hostReceive(_ wire: Data, at: Double) {
         var lastDecoded: UInt32?
         switch router.route(datagram: wire, mediaFlowing: true) {
-        case .forceKeyframe(let last):
-            guard deduper.admit(wire, now: at) else { r.hostDuplicatesDropped += 1; return }
+        case let .forceKeyframe(last):
+            guard deduper.admit(wire, now: at) else { r.hostDuplicatesDropped += 1
+                return
+            }
             r.hostAdmitted += 1
             lastDecoded = last
-        case .refreshLTR(let last):
-            guard deduper.admit(wire, now: at) else { r.hostDuplicatesDropped += 1; return }
+        case let .refreshLTR(last):
+            guard deduper.admit(wire, now: at) else { r.hostDuplicatesDropped += 1
+                return
+            }
             r.hostAdmitted += 1
             guard case .idr = ltrCtl.recoveryDecision(request: .ltrRefresh, hasEnableLTR: true) else { return }
             lastDecoded = last
         default:
             return
         }
-        guard idrPolicy.decide(now: at, clientLastDecoded: lastDecoded, smoothedRTTSeconds: rtt) == .grant else { return }
+        guard idrPolicy.decide(now: at, clientLastDecoded: lastDecoded, smoothedRTTSeconds: rtt) == .grant
+        else { return }
         let boundary = (at / frameInterval).rounded(.up) * frameInterval
         let sentAt = boundary + encodeDelay
         idrPolicy.noteKeyframeSent(frameID: nextKF, now: sentAt)
@@ -2286,8 +2953,13 @@ func runRecoveryRequestLossArm(copies: Int, dropInitialCopies: Set<Int>, fastEsc
             break
         }
         if Int((t * 1000).rounded()) % 5 == 0,
-           escalation.shouldEscalate(now: t, rtt: rtt, policy: recoveryPolicy,
-                                     observingLoss: fastEscalation && lossWindow.isObservingLoss(now: t)) {
+           escalation.shouldEscalate(
+               now: t,
+               rtt: rtt,
+               policy: recoveryPolicy,
+               observingLoss: fastEscalation && lossWindow.isObservingLoss(now: t),
+           )
+        {
             r.escalations += 1
             sendLogical(RecoveryMessage.requestIDR(lastDecodedFrameID: frontier.wireValue).encode(), at: t, drop: [])
             escalation.noteRequestSent(now: t)
@@ -2295,8 +2967,16 @@ func runRecoveryRequestLossArm(copies: Int, dropInitialCopies: Set<Int>, fastEsc
         }
     }
     if verbose {
-        print(String(format: "    %@ freeze=%.0fms requests=%d copies=%d admitted=%d dups-dropped=%d escalations=%d",
-                     label, r.freezeMs, r.logicalRequests, r.wireCopies, r.hostAdmitted, r.hostDuplicatesDropped, r.escalations))
+        print(String(
+            format: "    %@ freeze=%.0fms requests=%d copies=%d admitted=%d dups-dropped=%d escalations=%d",
+            label,
+            r.freezeMs,
+            r.logicalRequests,
+            r.wireCopies,
+            r.hostAdmitted,
+            r.hostDuplicatesDropped,
+            r.escalations,
+        ))
     }
     return r
 }
@@ -2320,14 +3000,19 @@ struct RecoveryDedupArmResult {
 func runRecoveryDedupStraddleArm(dedupOn: Bool, verbose: Bool) -> RecoveryDedupArmResult {
     var r = RecoveryDedupArmResult()
     let router = RecoveryDatagramRouter()
-    var deduper = RecoveryRequestDeduper(windowSeconds: dedupOn ? 0.020 : 0)   // 0 = the kill switch ⇒ today's behaviour
+    var deduper = RecoveryRequestDeduper(windowSeconds: dedupOn ? 0.020 : 0) // 0 = the kill switch ⇒ today's behaviour
     var ltrCtl = LTRController()
     ltrCtl.recordLTRFrame(frameID: 0, token: 1)
-    _ = ltrCtl.ackFrame(frameID: 0)            // acked token ⇒ refreshLTR resolves to .ltrRefresh (the no-cooldown path)
+    _ = ltrCtl.ackFrame(frameID: 0) // acked token ⇒ refreshLTR resolves to .ltrRefresh (the no-cooldown path)
 
     let sink = FrameSink()
-    let enc = VideoEncoder(width: kWidth, height: kHeight, fps: kFPS, ltrEnabled: true,
-                           outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) })
+    let enc = VideoEncoder(
+        width: kWidth,
+        height: kHeight,
+        fps: kFPS,
+        ltrEnabled: true,
+        outputHandler: { avcc, kf, _, ltr, _ in sink.append(avcc: avcc, keyframe: kf, ltr: ltr) },
+    )
     do { try enc.createLiveSession() } catch {
         print("  recovery-loss straddle encoder create FAILED: \(error)")
         return r
@@ -2335,9 +3020,9 @@ func runRecoveryDedupStraddleArm(dedupOn: Bool, verbose: Bool) -> RecoveryDedupA
     guard let pb = makePixelBuffer(width: kWidth, height: kHeight, fullRange: false) else { return r }
 
     let wire = RecoveryMessage.requestLTRRefresh(fromFrameID: 50, toFrameID: 50, lastDecodedFrameID: 49).encode()
-    let copyArrivals = [0.010, 0.015, 0.020]   // straddles the 16.7 ms boundary between #2 and #3
+    let copyArrivals = [0.010, 0.015, 0.020] // straddles the 16.7 ms boundary between #2 and #3
     var arrivalIdx = 0
-    var pendingLTRRefresh = false              // the WindowCapturer latch model
+    var pendingLTRRefresh = false // the WindowCapturer latch model
     let frameInterval = 1.0 / Double(kFPS)
 
     for f in 0..<6 {
@@ -2347,7 +3032,9 @@ func runRecoveryDedupStraddleArm(dedupOn: Bool, verbose: Bool) -> RecoveryDedupA
             let at = copyArrivals[arrivalIdx]
             arrivalIdx += 1
             guard case .refreshLTR = router.route(datagram: wire, mediaFlowing: true) else { continue }
-            guard deduper.admit(wire, now: at) else { r.duplicatesDropped += 1; continue }
+            guard deduper.admit(wire, now: at) else { r.duplicatesDropped += 1
+                continue
+            }
             r.admitted += 1
             if case .ltrRefresh = ltrCtl.recoveryDecision(request: .ltrRefresh, hasEnableLTR: true) {
                 pendingLTRRefresh = true
@@ -2372,19 +3059,21 @@ func runRecoveryDedupStraddleArm(dedupOn: Bool, verbose: Bool) -> RecoveryDedupA
         r.framesEmitted += sink.drain().count
     }
     if verbose {
-        print("    straddle dedup=\(dedupOn ? "ON " : "OFF"): recovery encodes=\(r.recoveryEncodes) admitted=\(r.admitted) dups-dropped=\(r.duplicatesDropped) HW frames=\(r.framesEmitted)")
+        print(
+            "    straddle dedup=\(dedupOn ? "ON " : "OFF"): recovery encodes=\(r.recoveryEncodes) admitted=\(r.admitted) dups-dropped=\(r.duplicatesDropped) HW frames=\(r.framesEmitted)",
+        )
     }
     return r
 }
 
 /// Aggregate result of the component-5 scenario (``runRecoveryRequestLossScenario``).
 struct RecoveryRedundancyScenarioResult {
-    var baseline = RecoveryRequestLossArmResult()   // arm 1: copies=1, request lost (today)
-    var redundant = RecoveryRequestLossArmResult()  // arm 2: copies=3, first copy lost
-    var dedupOn = RecoveryDedupArmResult()          // arm 3: straddle, deduper on
-    var dedupOff = RecoveryDedupArmResult()         // arm 3 control: straddle, deduper off
-    var fastOn = RecoveryRequestLossArmResult()     // arm 4: all copies lost, halved clock
-    var fastOff = RecoveryRequestLossArmResult()    // arm 4 control: all copies lost, 2·RTT clock
+    var baseline = RecoveryRequestLossArmResult() // arm 1: copies=1, request lost (today)
+    var redundant = RecoveryRequestLossArmResult() // arm 2: copies=3, first copy lost
+    var dedupOn = RecoveryDedupArmResult() // arm 3: straddle, deduper on
+    var dedupOff = RecoveryDedupArmResult() // arm 3 control: straddle, deduper off
+    var fastOn = RecoveryRequestLossArmResult() // arm 4: all copies lost, halved clock
+    var fastOff = RecoveryRequestLossArmResult() // arm 4 control: all copies lost, 2·RTT clock
 }
 
 /// Component-5 closed-loop scenario: (1) the request-loss freeze before/after redundancy,
@@ -2393,128 +3082,255 @@ struct RecoveryRedundancyScenarioResult {
 func runRecoveryRequestLossScenario(verbose: Bool) -> RecoveryRedundancyScenarioResult {
     var result = RecoveryRedundancyScenarioResult()
     let rtt = 0.05
-    result.baseline = runRecoveryRequestLossArm(copies: 1, dropInitialCopies: [0], fastEscalation: false,
-                                                seedLossEvents: 0, rtt: rtt, verbose: verbose,
-                                                label: "arm1 copies=1 req LOST (today) :")
-    result.redundant = runRecoveryRequestLossArm(copies: 3, dropInitialCopies: [0], fastEscalation: false,
-                                                 seedLossEvents: 0, rtt: rtt, verbose: verbose,
-                                                 label: "arm2 copies=3 first copy lost :")
+    result.baseline = runRecoveryRequestLossArm(
+        copies: 1,
+        dropInitialCopies: [0],
+        fastEscalation: false,
+        seedLossEvents: 0,
+        rtt: rtt,
+        verbose: verbose,
+        label: "arm1 copies=1 req LOST (today) :",
+    )
+    result.redundant = runRecoveryRequestLossArm(
+        copies: 3,
+        dropInitialCopies: [0],
+        fastEscalation: false,
+        seedLossEvents: 0,
+        rtt: rtt,
+        verbose: verbose,
+        label: "arm2 copies=3 first copy lost :",
+    )
     result.dedupOn = runRecoveryDedupStraddleArm(dedupOn: true, verbose: verbose)
     result.dedupOff = runRecoveryDedupStraddleArm(dedupOn: false, verbose: verbose)
-    result.fastOn = runRecoveryRequestLossArm(copies: 3, dropInitialCopies: [0, 1, 2], fastEscalation: true,
-                                              seedLossEvents: 2, rtt: rtt, verbose: verbose,
-                                              label: "arm4 ALL copies lost, fast ON  :")
-    result.fastOff = runRecoveryRequestLossArm(copies: 3, dropInitialCopies: [0, 1, 2], fastEscalation: false,
-                                               seedLossEvents: 2, rtt: rtt, verbose: verbose,
-                                               label: "arm4 ALL copies lost, fast OFF :")
+    result.fastOn = runRecoveryRequestLossArm(
+        copies: 3,
+        dropInitialCopies: [0, 1, 2],
+        fastEscalation: true,
+        seedLossEvents: 2,
+        rtt: rtt,
+        verbose: verbose,
+        label: "arm4 ALL copies lost, fast ON  :",
+    )
+    result.fastOff = runRecoveryRequestLossArm(
+        copies: 3,
+        dropInitialCopies: [0, 1, 2],
+        fastEscalation: false,
+        seedLossEvents: 2,
+        rtt: rtt,
+        verbose: verbose,
+        label: "arm4 ALL copies lost, fast OFF :",
+    )
     return result
 }
 
 /// Shared verdict line for section [I] / `--recovery-loss` (printed in both paths).
 func printRecoveryRedundancyVerdict(_ rr: RecoveryRedundancyScenarioResult) {
-    let rrRedundant = rr.redundant.freezeMs <= rr.baseline.freezeMs * 0.6   // ≥40% better
-        && rr.redundant.hostDuplicatesDropped >= 1                          // host absorbed the copies
-        && rr.redundant.hostAdmitted == 1                                   // exactly one action
+    let rrRedundant = rr.redundant.freezeMs <= rr.baseline.freezeMs * 0.6 // ≥40% better
+        && rr.redundant.hostDuplicatesDropped >= 1 // host absorbed the copies
+        && rr.redundant.hostAdmitted == 1 // exactly one action
     let rrDedup = rr.dedupOn.recoveryEncodes == 1 && rr.dedupOff.recoveryEncodes >= 2
     // FIX 3 (2026-06-11): the lossy clock is now max(1·RTT, 60ms, 1.5·RTT) — at the arm's
     // rtt=50ms that is 75ms vs the normal 100ms, so the ON−OFF escalation-deadline gap is ~25ms
     // (was ~50ms at the old 30ms floor), of which the host's 60fps frame-boundary quantization
     // can eat up to one frame interval (16.7ms) — measured 152 vs 168ms. The shrunken margin is
     // the deliberate price of never escalating before an LTR refresh can physically land.
-    let rrFast = rr.fastOn.freezeMs + 8 <= rr.fastOff.freezeMs              // ≥ 25 − 16.7 ms
-    print("    #9 recovery-redundancy: lost-request freeze 3×-copies beats single ≥40%=\(rrRedundant ? "YES" : "no")  straddle dedup ON=1/OFF≥2 HW encodes=\(rrDedup ? "YES" : "no")  lossy clock ≥8ms faster when all copies lost=\(rrFast ? "YES" : "no")  \(rrRedundant && rrDedup && rrFast ? "✅" : "⚠️")")
+    let rrFast = rr.fastOn.freezeMs + 8 <= rr.fastOff.freezeMs // ≥ 25 − 16.7 ms
+    print(
+        "    #9 recovery-redundancy: lost-request freeze 3×-copies beats single ≥40%=\(rrRedundant ? "YES" : "no")  straddle dedup ON=1/OFF≥2 HW encodes=\(rrDedup ? "YES" : "no")  lossy clock ≥8ms faster when all copies lost=\(rrFast ? "YES" : "no")  \(rrRedundant && rrDedup && rrFast ? "✅" : "⚠️")",
+    )
 }
 
 func runClosedLoopSuite(framesPerPhase: Int) {
     print("\n=== CLOSED-LOOP ADAPTATION :: full reflex through REAL components (in-process lossy transport) ===")
     print("    real HW encode→packetize(tier)→LOSS→reassemble+FEC→NetworkStatsReport(REAL wire)→")
-    print("    host fold→AdaptiveFECPolicy.tier + LiveCongestionController→encoder.setLiveBitrate; client jitter→depth.")
+    print(
+        "    host fold→AdaptiveFECPolicy.tier + LiveCongestionController→encoder.setLiveBitrate; client jitter→depth.",
+    )
     print("    \(framesPerPhase) frames/phase, phases: CLEAN → ADVERSE(3% loss+jitter) → CLEAN.\n")
 
     print("  [A] ALL adaptation ON (ABR + adaptive FEC + adaptive jitter)")
-    let on = runClosedLoopAdaptation(framesPerPhase: framesPerPhase, enableABR: true, enableFEC: true, enableJitter: true, verbose: true)
+    let on = runClosedLoopAdaptation(
+        framesPerPhase: framesPerPhase,
+        enableABR: true,
+        enableFEC: true,
+        enableJitter: true,
+        verbose: true,
+    )
     func mbps(_ x: Double) -> String { String(format: "%.1f", x) }
-    print("    BITRATE  Mbps/phase  : clean=\(mbps(on.phaseAvgBitrateMbps[0]))  adverse=\(mbps(on.phaseAvgBitrateMbps[1]))  recovery=\(mbps(on.phaseAvgBitrateMbps[2]))")
-    print("    ENC bytes/frame      : clean=\(on.phaseAvgEncBytes[0])  adverse=\(on.phaseAvgEncBytes[1])  recovery=\(on.phaseAvgEncBytes[2])  (HW honoured setLiveBitrate ⇒ bytes track bitrate)")
-    print("    FEC tier  peak/phase : clean=\(tierDesc(on.phasePeakTier[0]))  adverse=\(tierDesc(on.phasePeakTier[1]))  recovery=\(tierDesc(on.phasePeakTier[2]))")
-    print("    JITTER depth peak    : clean=\(on.phasePeakDepth[0])  adverse=\(on.phasePeakDepth[1])  recovery=\(on.phasePeakDepth[2])")
-    print("    DEPTH-V2 peak (comp4): clean=\(on.phasePeakDepthV2[0])  adverse=\(on.phasePeakDepthV2[1])  recovery=\(on.phasePeakDepthV2[2])  (late-event 1↔2 policy on the same stream)")
-    print("    UNRECOVERED/phase    : clean=\(on.phaseUnrecovered[0])  adverse=\(on.phaseUnrecovered[1])  recovery=\(on.phaseUnrecovered[2])")
+    print(
+        "    BITRATE  Mbps/phase  : clean=\(mbps(on.phaseAvgBitrateMbps[0]))  adverse=\(mbps(on.phaseAvgBitrateMbps[1]))  recovery=\(mbps(on.phaseAvgBitrateMbps[2]))",
+    )
+    print(
+        "    ENC bytes/frame      : clean=\(on.phaseAvgEncBytes[0])  adverse=\(on.phaseAvgEncBytes[1])  recovery=\(on.phaseAvgEncBytes[2])  (HW honoured setLiveBitrate ⇒ bytes track bitrate)",
+    )
+    print(
+        "    FEC tier  peak/phase : clean=\(tierDesc(on.phasePeakTier[0]))  adverse=\(tierDesc(on.phasePeakTier[1]))  recovery=\(tierDesc(on.phasePeakTier[2]))",
+    )
+    print(
+        "    JITTER depth peak    : clean=\(on.phasePeakDepth[0])  adverse=\(on.phasePeakDepth[1])  recovery=\(on.phasePeakDepth[2])",
+    )
+    print(
+        "    DEPTH-V2 peak (comp4): clean=\(on.phasePeakDepthV2[0])  adverse=\(on.phasePeakDepthV2[1])  recovery=\(on.phasePeakDepthV2[2])  (late-event 1↔2 policy on the same stream)",
+    )
+    print(
+        "    UNRECOVERED/phase    : clean=\(on.phaseUnrecovered[0])  adverse=\(on.phaseUnrecovered[1])  recovery=\(on.phaseUnrecovered[2])",
+    )
 
     print("\n  [B] adaptive-FEC A/B control (ABR+jitter ON, FEC pinned at today-default g5 = non-adaptive baseline)")
-    let fecPinned = runClosedLoopAdaptation(framesPerPhase: framesPerPhase, enableABR: true, enableFEC: false, enableJitter: true, fixedTier: 0, verbose: false)
+    let fecPinned = runClosedLoopAdaptation(
+        framesPerPhase: framesPerPhase,
+        enableABR: true,
+        enableFEC: false,
+        enableJitter: true,
+        fixedTier: 0,
+        verbose: false,
+    )
     // Fair window = STEADY-STATE (2nd half of adverse): excludes the adaptive run's climb-from-OFF transient,
     // which the pinned baseline doesn't pay. There the adaptive tier has settled at its heaviest (g3/g2).
-    print("    adverse STEADY-STATE (2nd half) UNRECOVERED : adaptive=\(on.adverseUnrecSecondHalf)  vs  pinned-g5=\(fecPinned.adverseUnrecSecondHalf)")
-    print("    adverse FULL-phase UNRECOVERED              : adaptive=\(on.phaseUnrecovered[1])  vs  pinned-g5=\(fecPinned.phaseUnrecovered[1])  (adaptive pays a climb-from-OFF transient)")
+    print(
+        "    adverse STEADY-STATE (2nd half) UNRECOVERED : adaptive=\(on.adverseUnrecSecondHalf)  vs  pinned-g5=\(fecPinned.adverseUnrecSecondHalf)",
+    )
+    print(
+        "    adverse FULL-phase UNRECOVERED              : adaptive=\(on.phaseUnrecovered[1])  vs  pinned-g5=\(fecPinned.phaseUnrecovered[1])  (adaptive pays a climb-from-OFF transient)",
+    )
     let fecHelped = on.adverseUnrecSecondHalf <= fecPinned.adverseUnrecSecondHalf
 
-    print("\n  [C] LOSS-TOLERANCE #4 weather control (ABR ON, 3% loss at FLAT RTT — the measured 2026-06-10 path shape)")
-    let weather = runClosedLoopAdaptation(framesPerPhase: framesPerPhase, enableABR: true, enableFEC: true, enableJitter: false,
-                                          congestRTTInAdverse: false, verbose: false)
+    print(
+        "\n  [C] LOSS-TOLERANCE #4 weather control (ABR ON, 3% loss at FLAT RTT — the measured 2026-06-10 path shape)",
+    )
+    let weather = runClosedLoopAdaptation(
+        framesPerPhase: framesPerPhase,
+        enableABR: true,
+        enableFEC: true,
+        enableJitter: false,
+        congestRTTInAdverse: false,
+        verbose: false,
+    )
     let weatherHeld = !weather.bitrateFellInAdverse
-    print("    BITRATE  Mbps/phase  : clean=\(mbps(weather.phaseAvgBitrateMbps[0]))  weather=\(mbps(weather.phaseAvgBitrateMbps[1]))  after=\(mbps(weather.phaseAvgBitrateMbps[2]))")
+    print(
+        "    BITRATE  Mbps/phase  : clean=\(mbps(weather.phaseAvgBitrateMbps[0]))  weather=\(mbps(weather.phaseAvgBitrateMbps[1]))  after=\(mbps(weather.phaseAvgBitrateMbps[2]))",
+    )
 
-    print("\n  [D] DELAY-TARGETING bottleneck queue (capacity = 55% of ceiling, ZERO loss — the measured 2026-06-11 scroll shape)")
+    print(
+        "\n  [D] DELAY-TARGETING bottleneck queue (capacity = 55% of ceiling, ZERO loss — the measured 2026-06-11 scroll shape)",
+    )
     let bn = runBottleneckQueueScenario(frames: framesPerPhase * 5, verbose: true)
-    let bnConverged = bn.convergedAtMs.map { $0 <= 2_500 } ?? false
+    let bnConverged = bn.convergedAtMs.map { $0 <= 2500 } ?? false
     // The controller TARGETS the rttSlack (15ms) trim boundary, so the steady hover averages around
     // it (± probe overshoot) — 25ms is the "queue is governed, not standing" gate (vs ~600-900ms
     // ungoverned).
     let bnDrained = bn.tailAvgQueueMs < 25.0
     let bnNoPump = bn.rebashCount <= 1
-    print(String(format: "    capacity=%.1fMbps  converged at t=%@  end rate=%.1fMbps", bn.capacityMbps,
-                 bn.convergedAtMs.map { String(format: "%.0fms", $0) } ?? "NEVER", bn.endActuatedMbps))
-    print(String(format: "    tail (last 25%%) queue: avg=%.1fms max=%.1fms   re-bash climbs after convergence=%d", bn.tailAvgQueueMs, bn.tailMaxQueueMs, bn.rebashCount))
+    print(String(
+        format: "    capacity=%.1fMbps  converged at t=%@  end rate=%.1fMbps",
+        bn.capacityMbps,
+        bn.convergedAtMs.map { String(format: "%.0fms", $0) } ?? "NEVER",
+        bn.endActuatedMbps,
+    ))
+    print(String(
+        format: "    tail (last 25%%) queue: avg=%.1fms max=%.1fms   re-bash climbs after convergence=%d",
+        bn.tailAvgQueueMs,
+        bn.tailMaxQueueMs,
+        bn.rebashCount,
+    ))
 
-    print("\n  [E] FPS-GOVERNOR cliff (2.5Mbps + uncompressible noise = past the QP51 floor → fps ladder; restore → climb)")
+    print(
+        "\n  [E] FPS-GOVERNOR cliff (2.5Mbps + uncompressible noise = past the QP51 floor → fps ladder; restore → climb)",
+    )
     let fg = runFPSGovernorCliffScenario(verbose: true)
     print("    cliff steps (in order)    : \(fg.cliffStepsInOrder.map(String.init).joined(separator: " → "))"
-        + String(format: "   min rung spacing=%@", fg.minCliffSpacingMs.isFinite ? String(format: "%.0fms", fg.minCliffSpacingMs) : "n/a"))
-    print(String(format: "    held 60 in ample phase=%@  ABR collapsed in cliff=%@  end fps=%d  step-up spacings=%@",
-                 fg.heldBaseInPhase1 ? "YES" : "no", fg.abrCollapsedInCliff ? "YES" : "no", fg.endFps,
-                 fg.stepUpSpacingsMs.map { String(format: "%.0fms", $0) }.joined(separator: ", ")))
-    print(String(format: "    cadence within plateaus   : admit worst |Δt − 1/fps| = %.2fms, final-plateau encode worst = %.2fms (tolerance %.2fms); cliff VT-starvation gaps up to %.0fms (expected, not asserted)",
-                 fg.worstCadenceErrMs, fg.worstFitEncodeErrMs, 0.5 / 120.0 * 1000.0, fg.worstEncodeGapMs))
+        + String(
+            format: "   min rung spacing=%@",
+            fg.minCliffSpacingMs.isFinite ? String(format: "%.0fms", fg.minCliffSpacingMs) : "n/a",
+        ))
+    print(String(
+        format: "    held 60 in ample phase=%@  ABR collapsed in cliff=%@  end fps=%d  step-up spacings=%@",
+        fg.heldBaseInPhase1 ? "YES" : "no",
+        fg.abrCollapsedInCliff ? "YES" : "no",
+        fg.endFps,
+        fg.stepUpSpacingsMs.map { String(format: "%.0fms", $0) }.joined(separator: ", "),
+    ))
+    print(String(
+        format: "    cadence within plateaus   : admit worst |Δt − 1/fps| = %.2fms, final-plateau encode worst = %.2fms (tolerance %.2fms); cliff VT-starvation gaps up to %.0fms (expected, not asserted)",
+        fg.worstCadenceErrMs,
+        fg.worstFitEncodeErrMs,
+        0.5 / 120.0 * 1000.0,
+        fg.worstEncodeGapMs,
+    ))
 
     print("\n  [E2] FPS-GOVERNOR weather arm (3% loss at FLAT RTT, ABR holds — fps must hold 60)")
     let fw = runFPSGovernorWeatherArm(frames: framesPerPhase * 4, verbose: false)
-    print("    min fps=\(fw.minFps)  loss-evidence ticks seen=\(fw.sawLossEvidence ? "YES" : "no")  bitrate held=\(fw.bitrateHeld ? "YES" : "no")")
+    print(
+        "    min fps=\(fw.minFps)  loss-evidence ticks seen=\(fw.sawLossEvidence ? "YES" : "no")  bitrate held=\(fw.bitrateHeld ? "YES" : "no")",
+    )
 
     print("\n  [F] RECOVERY-IDR delivery-keyed cooldown (component 2: kfDup double-loss bypass vs legacy 500ms gate)")
     let ri = runRecoveryIDRCooldownScenario(verbose: true)
-    print(String(format: "    Phase A unfreeze (rtt=50ms, both IDR copies lost): V2=%.0fms (%d requests)  vs  LEGACY=%.0fms (%d requests)  — %.1f× faster",
-                 ri.v2UnfreezeMs, ri.v2Requests, ri.legacyUnfreezeMs, ri.legacyRequests,
-                 ri.v2UnfreezeMs > 0 ? ri.legacyUnfreezeMs / ri.v2UnfreezeMs : 0))
-    print("    Phase B storm (6 requests in 350ms): grants=\(ri.stormGrants)  suppressed=\(ri.stormSuppressed)  refill-grant after 500ms=\(ri.refillGrantAfter ? "YES" : "no")")
-    print("    Phase C stale pre-ack request      : suppressed=\(ri.staleSuppressed ? "YES" : "no")  zero-cost=\(ri.staleSpentNoToken ? "YES" : "no")")
-    print("    Phase D real-HW grant→keyframe     : next encoded frame was IDR=\(ri.grantYieldedKeyframe ? "YES" : "no")  pre-grant deltas stayed deltas=\(ri.preGrantFramesWereDeltas ? "YES" : "no")")
+    print(String(
+        format: "    Phase A unfreeze (rtt=50ms, both IDR copies lost): V2=%.0fms (%d requests)  vs  LEGACY=%.0fms (%d requests)  — %.1f× faster",
+        ri.v2UnfreezeMs,
+        ri.v2Requests,
+        ri.legacyUnfreezeMs,
+        ri.legacyRequests,
+        ri.v2UnfreezeMs > 0 ? ri.legacyUnfreezeMs / ri.v2UnfreezeMs : 0,
+    ))
+    print(
+        "    Phase B storm (6 requests in 350ms): grants=\(ri.stormGrants)  suppressed=\(ri.stormSuppressed)  refill-grant after 500ms=\(ri.refillGrantAfter ? "YES" : "no")",
+    )
+    print(
+        "    Phase C stale pre-ack request      : suppressed=\(ri.staleSuppressed ? "YES" : "no")  zero-cost=\(ri.staleSpentNoToken ? "YES" : "no")",
+    )
+    print(
+        "    Phase D real-HW grant→keyframe     : next encoded frame was IDR=\(ri.grantYieldedKeyframe ? "YES" : "no")  pre-grant deltas stayed deltas=\(ri.preGrantFramesWereDeltas ? "YES" : "no")",
+    )
 
-    print("\n  [G] DELAY-GRADIENT early cut (component 3: capacity step to 40% — client trendline + raw-RTT one-report cut, A/B in-process)")
+    print(
+        "\n  [G] DELAY-GRADIENT early cut (component 3: capacity step to 40% — client trendline + raw-RTT one-report cut, A/B in-process)",
+    )
     let gr = runGradientOnsetScenario(frames: framesPerPhase, verbose: true)
-    print(String(format: "    capacity step=%.1fMbps  onset→first-cut: OFF=%@  ON=%@  (trend OVERUSING at ON cut=%@)",
-                 gr.capacityMbps,
-                 gr.offOnsetToFirstCutMs.map { String(format: "%.0fms", $0) } ?? "NEVER",
-                 gr.onOnsetToFirstCutMs.map { String(format: "%.0fms", $0) } ?? "NEVER",
-                 gr.onTrendOverusingAtFirstCut ? "YES" : "no"))
-    print("    ON cuts ≤1s after onset   : \(gr.onCutTicksFromOnset.count) (ticks-from-first \(gr.onCutTicksFromOnset))  min cut spacing=\(gr.onMinCutSpacingTicks.map { "\($0)" } ?? "n/a") ticks")
+    print(String(
+        format: "    capacity step=%.1fMbps  onset→first-cut: OFF=%@  ON=%@  (trend OVERUSING at ON cut=%@)",
+        gr.capacityMbps,
+        gr.offOnsetToFirstCutMs.map { String(format: "%.0fms", $0) } ?? "NEVER",
+        gr.onOnsetToFirstCutMs.map { String(format: "%.0fms", $0) } ?? "NEVER",
+        gr.onTrendOverusingAtFirstCut ? "YES" : "no",
+    ))
+    print(
+        "    ON cuts ≤1s after onset   : \(gr.onCutTicksFromOnset.count) (ticks-from-first \(gr.onCutTicksFromOnset))  min cut spacing=\(gr.onMinCutSpacingTicks.map { "\($0)" } ?? "n/a") ticks",
+    )
     print("    clean ±4ms-wobble sub-run : cuts=\(gr.cleanWobbleCuts) (false-positive guard, must be 0)")
 
-    print("\n  [H] ADAPTIVE PACER DEPTH v3 (component 4: owd-late 1↔2 boost — real OwdLateDetector + policy, virtual clock, phases A-E)")
+    print(
+        "\n  [H] ADAPTIVE PACER DEPTH v3 (component 4: owd-late 1↔2 boost — real OwdLateDetector + policy, virtual clock, phases A-E)",
+    )
     let pd = runPacerDepthScenario(verbose: true)
 
-    print("\n  [I] RECOVERY-REQUEST REDUNDANCY (component 5: 3× spaced copies + host dedup + loss-adaptive halved escalation)")
+    print(
+        "\n  [I] RECOVERY-REQUEST REDUNDANCY (component 5: 3× spaced copies + host dedup + loss-adaptive halved escalation)",
+    )
     let rr = runRecoveryRequestLossScenario(verbose: true)
-    print(String(format: "    lost-request freeze: copies=1 (today)=%.0fms  vs  copies=3=%.0fms  (%.0f%% better)",
-                 rr.baseline.freezeMs, rr.redundant.freezeMs,
-                 rr.baseline.freezeMs > 0 ? (1 - rr.redundant.freezeMs / rr.baseline.freezeMs) * 100 : 0))
-    print("    straddle dedup (REAL HW)  : ON encodes=\(rr.dedupOn.recoveryEncodes) (expect 1)  OFF control=\(rr.dedupOff.recoveryEncodes) (expect ≥2 — the pre-existing LTR straddle bug)")
-    print(String(format: "    all-copies-lost residual  : fast-escalation ON=%.0fms  vs  OFF=%.0fms (halved clock at max(1·RTT, 60ms, 1.5·RTT) — the fix-3 floor)",
-                 rr.fastOn.freezeMs, rr.fastOff.freezeMs))
+    print(String(
+        format: "    lost-request freeze: copies=1 (today)=%.0fms  vs  copies=3=%.0fms  (%.0f%% better)",
+        rr.baseline.freezeMs,
+        rr.redundant.freezeMs,
+        rr.baseline.freezeMs > 0 ? (1 - rr.redundant.freezeMs / rr.baseline.freezeMs) * 100 : 0,
+    ))
+    print(
+        "    straddle dedup (REAL HW)  : ON encodes=\(rr.dedupOn.recoveryEncodes) (expect 1)  OFF control=\(rr.dedupOff.recoveryEncodes) (expect ≥2 — the pre-existing LTR straddle bug)",
+    )
+    print(String(
+        format: "    all-copies-lost residual  : fast-escalation ON=%.0fms  vs  OFF=%.0fms (halved clock at max(1·RTT, 60ms, 1.5·RTT) — the fix-3 floor)",
+        rr.fastOn.freezeMs,
+        rr.fastOff.freezeMs,
+    ))
 
     print("\n  ===== CLOSED-LOOP VERDICT =====")
-    print("    #2 ABR        : bitrate fell under CORROBORATED loss (RTT inflated)=\(on.bitrateFellInAdverse ? "YES" : "no")  recovered after=\(on.bitrateRecoveredAfter ? "YES" : "no")  \(on.bitrateFellInAdverse && on.bitrateRecoveredAfter ? "✅" : "⚠️")")
-    print("    #2b weather   : bitrate HELD under uncorroborated weather loss (flat RTT)=\(weatherHeld ? "YES" : "no")  \(weatherHeld ? "✅" : "⚠️")")
+    print(
+        "    #2 ABR        : bitrate fell under CORROBORATED loss (RTT inflated)=\(on.bitrateFellInAdverse ? "YES" : "no")  recovered after=\(on.bitrateRecoveredAfter ? "YES" : "no")  \(on.bitrateFellInAdverse && on.bitrateRecoveredAfter ? "✅" : "⚠️")",
+    )
+    print(
+        "    #2b weather   : bitrate HELD under uncorroborated weather loss (flat RTT)=\(weatherHeld ? "YES" : "no")  \(weatherHeld ? "✅" : "⚠️")",
+    )
     // FIX 1 (2026-06-11, FEC ladder floor): pre-floor, the clean phase walked the tier to OFF, so
     // the adverse onset landed on an UNPROTECTED stream — visible unrecovered loss, then a
     // tier climb (the old "tier escalated under loss" check). With the floor the stream enters
@@ -2524,7 +3340,9 @@ func runClosedLoopSuite(framesPerPhase: Int) {
     // and never worse than the pinned-g5 baseline.
     let fecNeverOff = !on.sawOffTier
     let fecAbsorbed = on.phaseUnrecovered[1] == 0
-    print("    #3 adaptiveFEC: never relaxed to OFF (ladder floor)=\(fecNeverOff ? "YES" : "no")  adverse absorbed at the standing floor (unrec=0)=\(fecAbsorbed ? "YES" : "no")  reduced unrecovered vs pinned-g5=\(fecHelped ? "YES" : "no")  \(fecNeverOff && fecAbsorbed && fecHelped ? "✅" : "⚠️")")
+    print(
+        "    #3 adaptiveFEC: never relaxed to OFF (ladder floor)=\(fecNeverOff ? "YES" : "no")  adverse absorbed at the standing floor (unrec=0)=\(fecAbsorbed ? "YES" : "no")  reduced unrecovered vs pinned-g5=\(fecHelped ? "YES" : "no")  \(fecNeverOff && fecAbsorbed && fecHelped ? "✅" : "⚠️")",
+    )
     let depthGrew = on.phasePeakDepth[1] > on.phasePeakDepth[0]
     print("    #4 adaptiveJit: playout depth grew under jitter=\(depthGrew ? "YES" : "no")  \(depthGrew ? "✅" : "⚠️")")
     let pdClean = pd.cleanLates == 0 && pd.cleanGaps == 0 && pd.cleanDepthStayed1
@@ -2534,27 +3352,41 @@ func runClosedLoopSuite(framesPerPhase: Int) {
     // 2.2s after the LAST late (was a strict ≥2.5s at tolerance 0).
     let pdDemote = pd.demoteAfterLastLateMs.map { $0 >= 2000 && $0 <= 4000 } ?? false
     let pdImmune = pd.downshiftLates <= 1 && !pd.downshiftPromoted && pd.downshiftHintLates == 0 && pd.typingLates == 0
-    print("    #4b depth-v2  : clean never engages=\(pdClean ? "YES" : "no")  promote ≤1.5s into owd burst + holds=\(pdPromote ? "YES" : "no")  demote 2-4s after last late=\(pdDemote ? "YES" : "no")  downshift/typing immune=\(pdImmune ? "YES" : "no")  \(pdClean && pdPromote && pdDemote && pdImmune && pd.depth1AtRecoveryEnd ? "✅" : "⚠️")")
+    print(
+        "    #4b depth-v2  : clean never engages=\(pdClean ? "YES" : "no")  promote ≤1.5s into owd burst + holds=\(pdPromote ? "YES" : "no")  demote 2-4s after last late=\(pdDemote ? "YES" : "no")  downshift/typing immune=\(pdImmune ? "YES" : "no")  \(pdClean && pdPromote && pdDemote && pdImmune && pd.depth1AtRecoveryEnd ? "✅" : "⚠️")",
+    )
     let hwTracked = on.phaseAvgEncBytes[1] < on.phaseAvgEncBytes[0]
-    print("    HW actuation  : encoded bytes shrank with bitrate=\(hwTracked ? "YES" : "no") (real VTSessionSetProperty took effect)  \(hwTracked ? "✅" : "⚠️")")
-    print("    #5 delay-targeting: converged ≤2.5s=\(bnConverged ? "YES" : "no")  tail queue <25ms=\(bnDrained ? "YES" : "no")  no pumping=\(bnNoPump ? "YES" : "no")  \(bnConverged && bnDrained && bnNoPump ? "✅" : "⚠️")")
-    let fgStepped = fg.cliffStepsInOrder.starts(with: [30, 20]) && fg.cliffSpacingOK && fg.heldBaseInPhase1 && fg.abrCollapsedInCliff
+    print(
+        "    HW actuation  : encoded bytes shrank with bitrate=\(hwTracked ? "YES" : "no") (real VTSessionSetProperty took effect)  \(hwTracked ? "✅" : "⚠️")",
+    )
+    print(
+        "    #5 delay-targeting: converged ≤2.5s=\(bnConverged ? "YES" : "no")  tail queue <25ms=\(bnDrained ? "YES" : "no")  no pumping=\(bnNoPump ? "YES" : "no")  \(bnConverged && bnDrained && bnNoPump ? "✅" : "⚠️")",
+    )
+    let fgStepped = fg.cliffStepsInOrder.starts(with: [30, 20]) && fg.cliffSpacingOK && fg.heldBaseInPhase1 && fg
+        .abrCollapsedInCliff
     let fgRecovered = fg.endFps == 60
-    print("    #6 fps-governor: stepped 60→30→20 under cliff=\(fgStepped ? "YES" : "no")  cadence regular=\(fg.cadenceRegular ? "YES" : "no")  recovered to 60=\(fgRecovered ? "YES" : "no")  \(fgStepped && fg.cadenceRegular && fgRecovered ? "✅" : "⚠️")")
+    print(
+        "    #6 fps-governor: stepped 60→30→20 under cliff=\(fgStepped ? "YES" : "no")  cadence regular=\(fg.cadenceRegular ? "YES" : "no")  recovered to 60=\(fgRecovered ? "YES" : "no")  \(fgStepped && fg.cadenceRegular && fgRecovered ? "✅" : "⚠️")",
+    )
     let fwHeld = fw.minFps == 60 && fw.sawLossEvidence
     print("    #6b fps-governor weather: held 60 under flat-RTT loss=\(fwHeld ? "YES" : "no")  \(fwHeld ? "✅" : "⚠️")")
     let riBypass = ri.v2SecondRequestGranted && ri.v2UnfreezeMs < 250 && ri.legacyUnfreezeMs > 500
     let riStorm = ri.stormGrants <= 2 && ri.stormGrants >= 1 && ri.stormVerdictsOK && ri.refillGrantAfter
     let riStale = ri.staleSuppressed && ri.staleSpentNoToken
     let riForced = ri.grantYieldedKeyframe && ri.preGrantFramesWereDeltas
-    print("    #7 recovery-idr: casualty bypass <250ms (legacy >500ms)=\(riBypass ? "YES" : "no")  storm ≤2 grants+refill=\(riStorm ? "YES" : "no")  stale-ack zero-cost=\(riStale ? "YES" : "no")  grant→HW keyframe=\(riForced ? "YES" : "no")  \(riBypass && riStorm && riStale && riForced ? "✅" : "⚠️")")
+    print(
+        "    #7 recovery-idr: casualty bypass <250ms (legacy >500ms)=\(riBypass ? "YES" : "no")  storm ≤2 grants+refill=\(riStorm ? "YES" : "no")  stale-ack zero-cost=\(riStale ? "YES" : "no")  grant→HW keyframe=\(riForced ? "YES" : "no")  \(riBypass && riStorm && riStale && riForced ? "✅" : "⚠️")",
+    )
     let grFaster = (gr.onOnsetToFirstCutMs ?? .infinity) < (gr.offOnsetToFirstCutMs ?? .infinity)
     // One immediate cut + at most one per cutHold window inside the first second of a persisting
     // squeeze (1 + 1000ms/400ms = 3) — the no-cascade invariant is the SPACING, not the count.
-    let grSpaced = (gr.onMinCutSpacingTicks ?? LiveCongestionController.cutHoldTicks) >= LiveCongestionController.cutHoldTicks
+    let grSpaced = (gr.onMinCutSpacingTicks ?? LiveCongestionController.cutHoldTicks) >= LiveCongestionController
+        .cutHoldTicks
         && gr.onCutTicksFromOnset.count <= 3
     let grCalm = gr.cleanWobbleCuts == 0
-    print("    #8 delay-gradient: onset→cut ON beats OFF=\(grFaster ? "YES" : "no")  cuts spaced ≥\(LiveCongestionController.cutHoldTicks) ticks (≤3 in 1s)=\(grSpaced ? "YES" : "no")  clean-phase cuts 0=\(grCalm ? "YES" : "no")  \(grFaster && grSpaced && grCalm ? "✅" : "⚠️")")
+    print(
+        "    #8 delay-gradient: onset→cut ON beats OFF=\(grFaster ? "YES" : "no")  cuts spaced ≥\(LiveCongestionController.cutHoldTicks) ticks (≤3 in 1s)=\(grSpaced ? "YES" : "no")  clean-phase cuts 0=\(grCalm ? "YES" : "no")  \(grFaster && grSpaced && grCalm ? "✅" : "⚠️")",
+    )
     printRecoveryRedundancyVerdict(rr)
 }
 
@@ -2567,11 +3399,23 @@ func runControllerDrive() {
     print("  [NetworkEstimate]")
     var est = NetworkEstimate()
     for _ in 0..<5 { est.fold(rttMillis: 20, framesReceived: 100, unrecovered: 0, owdJitterMicros: 500) }
-    print(String(format: "    clean x5  -> smoothedRTT=%.1fms minRTT=%.1fms lossRate=%.4f lastLoss=%.4f owdRising=%@",
-                 est.smoothedRTTMillis, est.minRTTMillis, est.lossRate, est.lastLossSample, est.owdGradientRising ? "true" : "false"))
+    print(String(
+        format: "    clean x5  -> smoothedRTT=%.1fms minRTT=%.1fms lossRate=%.4f lastLoss=%.4f owdRising=%@",
+        est.smoothedRTTMillis,
+        est.minRTTMillis,
+        est.lossRate,
+        est.lastLossSample,
+        est.owdGradientRising ? "true" : "false",
+    ))
     est.fold(rttMillis: 60, framesReceived: 100, unrecovered: 12, owdJitterMicros: 3000)
-    print(String(format: "    loss spike -> smoothedRTT=%.1fms minRTT=%.1fms lossRate=%.4f lastLoss=%.4f owdRising=%@",
-                 est.smoothedRTTMillis, est.minRTTMillis, est.lossRate, est.lastLossSample, est.owdGradientRising ? "true" : "false"))
+    print(String(
+        format: "    loss spike -> smoothedRTT=%.1fms minRTT=%.1fms lossRate=%.4f lastLoss=%.4f owdRising=%@",
+        est.smoothedRTTMillis,
+        est.minRTTMillis,
+        est.lossRate,
+        est.lastLossSample,
+        est.owdGradientRising ? "true" : "false",
+    ))
     let rtt = NetworkEstimate.computeRTTMillis(hostNowMs: 1000, latestHostSendTs: 950, clientHoldMs: 10)
     print("    computeRTTMillis(hostNow=1000, sendTs=950, hold=10) = \(rtt.map(String.init) ?? "nil") ms (expect 40)")
 
@@ -2580,7 +3424,9 @@ func runControllerDrive() {
     var cc = LiveCongestionController(ceiling: 45_000_000)
     print("    ceiling=\(cc.ceiling) floor=\(cc.floor) start=\(cc.current)")
     var ce = NetworkEstimate()
-    for _ in 0..<10 { ce.fold(rttMillis: 20, framesReceived: 100, unrecovered: 0, owdJitterMicros: 400); cc.onReport(ce) }
+    for _ in 0..<10 { ce.fold(rttMillis: 20, framesReceived: 100, unrecovered: 0, owdJitterMicros: 400)
+        cc.onReport(ce)
+    }
     print("    after 10 warmup clean reports: current=\(cc.current) (held at ceiling)")
     for k in 0..<5 {
         ce.fold(rttMillis: 25, framesReceived: 100, unrecovered: 4, owdJitterMicros: 600) // raw loss 0.04 > 0.02
@@ -2588,7 +3434,9 @@ func runControllerDrive() {
     }
     ce.fold(rttMillis: 30, framesReceived: 100, unrecovered: 20, owdJitterMicros: 900) // raw loss 0.20 severe
     print("    SEVERE report (loss 20%): current=\(cc.onReport(ce))")
-    for _ in 0..<30 { ce.fold(rttMillis: 20, framesReceived: 100, unrecovered: 0, owdJitterMicros: 300); cc.onReport(ce) }
+    for _ in 0..<30 { ce.fold(rttMillis: 20, framesReceived: 100, unrecovered: 0, owdJitterMicros: 300)
+        cc.onReport(ce)
+    }
     print("    after 30 clean recovery reports: current=\(cc.current) (additive climb back toward ceiling)")
 
     // --- AdaptiveFECPolicy.tier ---
@@ -2605,8 +3453,12 @@ func runControllerDrive() {
     var jit = OWDJitterEstimator()
     var arrival = 0.0
     let intervals: [Double] = [0.016, 0.016, 0.050, 0.016, 0.045, 0.016, 0.055, 0.016, 0.040, 0.016]
-    for dt in intervals { arrival += dt; jit.note(arrival: arrival) }
-    print("    jittery arrival series -> jitterMicros=\(jit.jitterMicros())us (smoothed seconds=\(String(format: "%.5f", jit.jitterSeconds)))")
+    for dt in intervals { arrival += dt
+        jit.note(arrival: arrival)
+    }
+    print(
+        "    jittery arrival series -> jitterMicros=\(jit.jitterMicros())us (smoothed seconds=\(String(format: "%.5f", jit.jitterSeconds)))",
+    )
     var jc = AdaptiveJitterController(maxDepth: 8, fps: 60, initialDepth: 1)
     print("    targetDepth start=\(jc.targetDepth)")
     for j in [0.0, 0.005, 0.010, 0.020, 0.030] {
@@ -2619,41 +3471,71 @@ func runControllerDrive() {
     // --- LTRController (pure) ---
     print("  [LTRController] record -> ack -> recoveryDecision -> reset")
     var ltr = LTRController()
-    print("    before ack: recoveryDecision(.ltrRefresh) = \(ltr.recoveryDecision(request: .ltrRefresh, hasEnableLTR: true)) (expect idr)")
+    print(
+        "    before ack: recoveryDecision(.ltrRefresh) = \(ltr.recoveryDecision(request: .ltrRefresh, hasEnableLTR: true)) (expect idr)",
+    )
     ltr.recordLTRFrame(frameID: 10, token: 7777)
     print("    ackFrame(10) -> \(ltr.ackFrame(frameID: 10).map(String.init) ?? "nil") (expect 7777)")
     print("    hasAckedToken = \(ltr.hasAckedToken)")
-    print("    after ack: recoveryDecision(.ltrRefresh) = \(ltr.recoveryDecision(request: .ltrRefresh, hasEnableLTR: true)) (expect ltrRefresh)")
+    print(
+        "    after ack: recoveryDecision(.ltrRefresh) = \(ltr.recoveryDecision(request: .ltrRefresh, hasEnableLTR: true)) (expect ltrRefresh)",
+    )
     print("    requestIDR always -> \(ltr.recoveryDecision(request: .idr, hasEnableLTR: true)) (expect idr)")
     print("    LTR off -> \(ltr.recoveryDecision(request: .ltrRefresh, hasEnableLTR: false)) (expect idr)")
     print("    ackFrame(unknown 999) -> \(ltr.ackFrame(frameID: 999).map(String.init) ?? "nil") (expect nil)")
     ltr.reset()
-    print("    after reset: hasAckedToken=\(ltr.hasAckedToken) recoveryDecision(.ltrRefresh)=\(ltr.recoveryDecision(request: .ltrRefresh, hasEnableLTR: true)) (expect false, idr)")
+    print(
+        "    after reset: hasAckedToken=\(ltr.hasAckedToken) recoveryDecision(.ltrRefresh)=\(ltr.recoveryDecision(request: .ltrRefresh, hasEnableLTR: true)) (expect false, idr)",
+    )
 
     // --- PacerDepthPolicy (component 4: late-event 1↔2 depth, scripted transitions) ---
     print("  [PacerDepthPolicy] late-event promote / clean-dwell demote (component 4)")
     var dp = PacerDepthPolicy(config: .init(), adaptEnabled: true)
     var dpt = 0.0
-    for _ in 0..<60 { dpt += 1.0 / 60; dp.noteArrival(dpt); dp.notePresent(dpt) }
-    print("    1s clean 60fps -> depth=\(dp.depth) lateLo=\(String(format: "%.1f", dp.lateThresholdSeconds * 1000))ms (expect 1, ~28ms)")
-    dpt += 2.0 / 60; dp.noteArrival(dpt)                       // one dropped slot → 33ms gap
+    for _ in 0..<60 { dpt += 1.0 / 60
+        dp.noteArrival(dpt)
+        dp.notePresent(dpt)
+    }
+    print(
+        "    1s clean 60fps -> depth=\(dp.depth) lateLo=\(String(format: "%.1f", dp.lateThresholdSeconds * 1000))ms (expect 1, ~28ms)",
+    )
+    dpt += 2.0 / 60
+    dp.noteArrival(dpt) // one dropped slot → 33ms gap
     let c1 = dp.notePresent(dpt)
     print("    33ms dense gap #1 -> \(c1) depth=\(dp.depth) (expect late, still 1)")
-    for _ in 0..<24 { dpt += 1.0 / 60; dp.noteArrival(dpt); dp.notePresent(dpt) }   // 400ms clean
-    dpt += 2.0 / 60; dp.noteArrival(dpt)
+    for _ in 0..<24 { dpt += 1.0 / 60
+        dp.noteArrival(dpt)
+        dp.notePresent(dpt)
+    } // 400ms clean
+    dpt += 2.0 / 60
+    dp.noteArrival(dpt)
     let c2 = dp.notePresent(dpt)
     print("    33ms dense gap #2 (+433ms) -> \(c2) depth=\(dp.depth) (expect late, PROMOTED to 2)")
-    for _ in 0..<180 { dpt += 1.0 / 60; dp.noteArrival(dpt); dp.notePresent(dpt) }  // 3s clean dwell
+    for _ in 0..<180 { dpt += 1.0 / 60
+        dp.noteArrival(dpt)
+        dp.notePresent(dpt)
+    } // 3s clean dwell
     print("    after 3s clean dwell -> depth=\(dp.depth) (expect demoted to 1)")
     let dpWin = dp.drainCounters()
     print("    drained window -> late=\(dpWin.lateFrames) gaps=\(dpWin.presentGaps)")
 
     // --- NetworkStatsReport round-trip (the telemetry wire that feeds the above) ---
-    let report = NetworkStatsReport(framesReceived: 120, fecRecovered: 5, unrecovered: 2, latestHostSendTs: 950, clientHoldMs: 10, owdJitterMicros: 1500,
-                                    pacerLateFrames: dpWin.lateFrames, pacerPresentGaps: dpWin.presentGaps, pacerDepth: UInt32(dp.depth))
+    let report = NetworkStatsReport(
+        framesReceived: 120,
+        fecRecovered: 5,
+        unrecovered: 2,
+        latestHostSendTs: 950,
+        clientHoldMs: 10,
+        owdJitterMicros: 1500,
+        pacerLateFrames: dpWin.lateFrames,
+        pacerPresentGaps: dpWin.presentGaps,
+        pacerDepth: UInt32(dp.depth),
+    )
     let wire = RecoveryMessage.networkStats(report).encode()
-    if case .networkStats(let rt)? = try? RecoveryMessage.decode(wire) {
-        print("  [NetworkStatsReport] wire round-trip OK: framesReceived=\(rt.framesReceived) unrecovered=\(rt.unrecovered) jitter=\(rt.owdJitterMicros)us late=\(rt.pacerLateFrames) gaps=\(rt.pacerPresentGaps) depth=\(rt.pacerDepth) (\(wire.count)-byte msg)")
+    if case let .networkStats(rt)? = try? RecoveryMessage.decode(wire) {
+        print(
+            "  [NetworkStatsReport] wire round-trip OK: framesReceived=\(rt.framesReceived) unrecovered=\(rt.unrecovered) jitter=\(rt.owdJitterMicros)us late=\(rt.pacerLateFrames) gaps=\(rt.pacerPresentGaps) depth=\(rt.pacerDepth) (\(wire.count)-byte msg)",
+        )
     } else {
         print("  [NetworkStatsReport] wire round-trip FAILED")
     }
@@ -2664,6 +3546,7 @@ func runControllerDrive() {
 func pad(_ s: String, _ n: Int) -> String {
     s.count >= n ? s : s + String(repeating: " ", count: n - s.count)
 }
+
 func lpad(_ s: String, _ n: Int) -> String {
     s.count >= n ? s : String(repeating: " ", count: n - s.count) + s
 }
@@ -2703,17 +3586,30 @@ if args.contains("--recovery-idr") {
     // multi-minute full closed-loop suite.
     print("\n  [F] RECOVERY-IDR delivery-keyed cooldown (component 2: kfDup double-loss bypass vs legacy 500ms gate)")
     let ri = runRecoveryIDRCooldownScenario(verbose: true)
-    print(String(format: "    Phase A unfreeze (rtt=50ms, both IDR copies lost): V2=%.0fms (%d requests)  vs  LEGACY=%.0fms (%d requests)  — %.1f× faster",
-                 ri.v2UnfreezeMs, ri.v2Requests, ri.legacyUnfreezeMs, ri.legacyRequests,
-                 ri.v2UnfreezeMs > 0 ? ri.legacyUnfreezeMs / ri.v2UnfreezeMs : 0))
-    print("    Phase B storm (6 requests in 350ms): grants=\(ri.stormGrants)  suppressed=\(ri.stormSuppressed)  refill-grant after 500ms=\(ri.refillGrantAfter ? "YES" : "no")")
-    print("    Phase C stale pre-ack request      : suppressed=\(ri.staleSuppressed ? "YES" : "no")  zero-cost=\(ri.staleSpentNoToken ? "YES" : "no")")
-    print("    Phase D real-HW grant→keyframe     : next encoded frame was IDR=\(ri.grantYieldedKeyframe ? "YES" : "no")  pre-grant deltas stayed deltas=\(ri.preGrantFramesWereDeltas ? "YES" : "no")")
+    print(String(
+        format: "    Phase A unfreeze (rtt=50ms, both IDR copies lost): V2=%.0fms (%d requests)  vs  LEGACY=%.0fms (%d requests)  — %.1f× faster",
+        ri.v2UnfreezeMs,
+        ri.v2Requests,
+        ri.legacyUnfreezeMs,
+        ri.legacyRequests,
+        ri.v2UnfreezeMs > 0 ? ri.legacyUnfreezeMs / ri.v2UnfreezeMs : 0,
+    ))
+    print(
+        "    Phase B storm (6 requests in 350ms): grants=\(ri.stormGrants)  suppressed=\(ri.stormSuppressed)  refill-grant after 500ms=\(ri.refillGrantAfter ? "YES" : "no")",
+    )
+    print(
+        "    Phase C stale pre-ack request      : suppressed=\(ri.staleSuppressed ? "YES" : "no")  zero-cost=\(ri.staleSpentNoToken ? "YES" : "no")",
+    )
+    print(
+        "    Phase D real-HW grant→keyframe     : next encoded frame was IDR=\(ri.grantYieldedKeyframe ? "YES" : "no")  pre-grant deltas stayed deltas=\(ri.preGrantFramesWereDeltas ? "YES" : "no")",
+    )
     let riBypass = ri.v2SecondRequestGranted && ri.v2UnfreezeMs < 250 && ri.legacyUnfreezeMs > 500
     let riStorm = ri.stormGrants <= 2 && ri.stormGrants >= 1 && ri.stormVerdictsOK && ri.refillGrantAfter
     let riStale = ri.staleSuppressed && ri.staleSpentNoToken
     let riForced = ri.grantYieldedKeyframe && ri.preGrantFramesWereDeltas
-    print("    #7 recovery-idr: casualty bypass <250ms (legacy >500ms)=\(riBypass ? "YES" : "no")  storm ≤2 grants+refill=\(riStorm ? "YES" : "no")  stale-ack zero-cost=\(riStale ? "YES" : "no")  grant→HW keyframe=\(riForced ? "YES" : "no")  \(riBypass && riStorm && riStale && riForced ? "✅" : "⚠️")")
+    print(
+        "    #7 recovery-idr: casualty bypass <250ms (legacy >500ms)=\(riBypass ? "YES" : "no")  storm ≤2 grants+refill=\(riStorm ? "YES" : "no")  stale-ack zero-cost=\(riStale ? "YES" : "no")  grant→HW keyframe=\(riForced ? "YES" : "no")  \(riBypass && riStorm && riStale && riForced ? "✅" : "⚠️")",
+    )
     print("\naislopdesk-loopback-validate: COMPLETE (recovery-idr only) — exiting 0")
     exit(0)
 }
@@ -2721,20 +3617,29 @@ if args.contains("--recovery-idr") {
 if args.contains("--gradient") {
     // Component 3 standalone: just the [G] delay-gradient onset scenario (two ~4.5s-equivalent
     // bottleneck arms + the wobble guard) for quick iteration without the multi-minute suite.
-    print("\n  [G] DELAY-GRADIENT early cut (component 3: capacity step to 40% — client trendline + raw-RTT one-report cut, A/B in-process)")
+    print(
+        "\n  [G] DELAY-GRADIENT early cut (component 3: capacity step to 40% — client trendline + raw-RTT one-report cut, A/B in-process)",
+    )
     let gr = runGradientOnsetScenario(frames: max(60, frameCount), verbose: true)
-    print(String(format: "    capacity step=%.1fMbps  onset→first-cut: OFF=%@  ON=%@  (trend OVERUSING at ON cut=%@)",
-                 gr.capacityMbps,
-                 gr.offOnsetToFirstCutMs.map { String(format: "%.0fms", $0) } ?? "NEVER",
-                 gr.onOnsetToFirstCutMs.map { String(format: "%.0fms", $0) } ?? "NEVER",
-                 gr.onTrendOverusingAtFirstCut ? "YES" : "no"))
-    print("    ON cuts ≤1s after onset   : \(gr.onCutTicksFromOnset.count) (ticks-from-first \(gr.onCutTicksFromOnset))  min cut spacing=\(gr.onMinCutSpacingTicks.map { "\($0)" } ?? "n/a") ticks")
+    print(String(
+        format: "    capacity step=%.1fMbps  onset→first-cut: OFF=%@  ON=%@  (trend OVERUSING at ON cut=%@)",
+        gr.capacityMbps,
+        gr.offOnsetToFirstCutMs.map { String(format: "%.0fms", $0) } ?? "NEVER",
+        gr.onOnsetToFirstCutMs.map { String(format: "%.0fms", $0) } ?? "NEVER",
+        gr.onTrendOverusingAtFirstCut ? "YES" : "no",
+    ))
+    print(
+        "    ON cuts ≤1s after onset   : \(gr.onCutTicksFromOnset.count) (ticks-from-first \(gr.onCutTicksFromOnset))  min cut spacing=\(gr.onMinCutSpacingTicks.map { "\($0)" } ?? "n/a") ticks",
+    )
     print("    clean ±4ms-wobble sub-run : cuts=\(gr.cleanWobbleCuts) (false-positive guard, must be 0)")
     let grFaster = (gr.onOnsetToFirstCutMs ?? .infinity) < (gr.offOnsetToFirstCutMs ?? .infinity)
-    let grSpaced = (gr.onMinCutSpacingTicks ?? LiveCongestionController.cutHoldTicks) >= LiveCongestionController.cutHoldTicks
+    let grSpaced = (gr.onMinCutSpacingTicks ?? LiveCongestionController.cutHoldTicks) >= LiveCongestionController
+        .cutHoldTicks
         && gr.onCutTicksFromOnset.count <= 3
     let grCalm = gr.cleanWobbleCuts == 0
-    print("    #8 delay-gradient: onset→cut ON beats OFF=\(grFaster ? "YES" : "no")  cuts spaced ≥\(LiveCongestionController.cutHoldTicks) ticks (≤3 in 1s)=\(grSpaced ? "YES" : "no")  clean-phase cuts 0=\(grCalm ? "YES" : "no")  \(grFaster && grSpaced && grCalm ? "✅" : "⚠️")")
+    print(
+        "    #8 delay-gradient: onset→cut ON beats OFF=\(grFaster ? "YES" : "no")  cuts spaced ≥\(LiveCongestionController.cutHoldTicks) ticks (≤3 in 1s)=\(grSpaced ? "YES" : "no")  clean-phase cuts 0=\(grCalm ? "YES" : "no")  \(grFaster && grSpaced && grCalm ? "✅" : "⚠️")",
+    )
     print("\naislopdesk-loopback-validate: COMPLETE (gradient only) — exiting 0")
     exit(0)
 }
@@ -2742,7 +3647,9 @@ if args.contains("--gradient") {
 if args.contains("--pacer-depth") {
     // Component 4 standalone: just the [H] adaptive-pacer-depth reflex scenario (pure virtual
     // clock — instant) for quick iteration without the multi-minute full closed-loop suite.
-    print("\n  [H] ADAPTIVE PACER DEPTH v3 (component 4: owd-late 1↔2 boost — real OwdLateDetector + policy, virtual clock, phases A-E)")
+    print(
+        "\n  [H] ADAPTIVE PACER DEPTH v3 (component 4: owd-late 1↔2 boost — real OwdLateDetector + policy, virtual clock, phases A-E)",
+    )
     let pd = runPacerDepthScenario(verbose: true)
     let pdClean = pd.cleanLates == 0 && pd.cleanGaps == 0 && pd.cleanDepthStayed1
     let pdPromote = (pd.promoteAfterOnsetMs ?? .infinity) <= 1500 && pd.heldThroughBurst
@@ -2751,7 +3658,9 @@ if args.contains("--pacer-depth") {
     // 2.2s after the LAST late (was a strict ≥2.5s at tolerance 0).
     let pdDemote = pd.demoteAfterLastLateMs.map { $0 >= 2000 && $0 <= 4000 } ?? false
     let pdImmune = pd.downshiftLates <= 1 && !pd.downshiftPromoted && pd.downshiftHintLates == 0 && pd.typingLates == 0
-    print("    #4b depth-v2  : clean never engages=\(pdClean ? "YES" : "no")  promote ≤1.5s into owd burst + holds=\(pdPromote ? "YES" : "no")  demote 2-4s after last late=\(pdDemote ? "YES" : "no")  downshift/typing immune=\(pdImmune ? "YES" : "no")  \(pdClean && pdPromote && pdDemote && pdImmune && pd.depth1AtRecoveryEnd ? "✅" : "⚠️")")
+    print(
+        "    #4b depth-v2  : clean never engages=\(pdClean ? "YES" : "no")  promote ≤1.5s into owd burst + holds=\(pdPromote ? "YES" : "no")  demote 2-4s after last late=\(pdDemote ? "YES" : "no")  downshift/typing immune=\(pdImmune ? "YES" : "no")  \(pdClean && pdPromote && pdDemote && pdImmune && pd.depth1AtRecoveryEnd ? "✅" : "⚠️")",
+    )
     print("\naislopdesk-loopback-validate: COMPLETE (pacer-depth only) — exiting 0")
     exit(0)
 }
@@ -2760,14 +3669,24 @@ if args.contains("--recovery-loss") {
     // Component 5 standalone: just the [I] recovery-request-redundancy scenario (fast — the
     // timing arms are pure virtual clock; the straddle arm encodes 2×6 real HW frames), for
     // quick iteration without the multi-minute full closed-loop suite.
-    print("\n  [I] RECOVERY-REQUEST REDUNDANCY (component 5: 3× spaced copies + host dedup + loss-adaptive halved escalation)")
+    print(
+        "\n  [I] RECOVERY-REQUEST REDUNDANCY (component 5: 3× spaced copies + host dedup + loss-adaptive halved escalation)",
+    )
     let rr = runRecoveryRequestLossScenario(verbose: true)
-    print(String(format: "    lost-request freeze: copies=1 (today)=%.0fms  vs  copies=3=%.0fms  (%.0f%% better)",
-                 rr.baseline.freezeMs, rr.redundant.freezeMs,
-                 rr.baseline.freezeMs > 0 ? (1 - rr.redundant.freezeMs / rr.baseline.freezeMs) * 100 : 0))
-    print("    straddle dedup (REAL HW)  : ON encodes=\(rr.dedupOn.recoveryEncodes) (expect 1)  OFF control=\(rr.dedupOff.recoveryEncodes) (expect ≥2 — the pre-existing LTR straddle bug)")
-    print(String(format: "    all-copies-lost residual  : fast-escalation ON=%.0fms  vs  OFF=%.0fms (halved clock at max(1·RTT, 60ms, 1.5·RTT) — the fix-3 floor)",
-                 rr.fastOn.freezeMs, rr.fastOff.freezeMs))
+    print(String(
+        format: "    lost-request freeze: copies=1 (today)=%.0fms  vs  copies=3=%.0fms  (%.0f%% better)",
+        rr.baseline.freezeMs,
+        rr.redundant.freezeMs,
+        rr.baseline.freezeMs > 0 ? (1 - rr.redundant.freezeMs / rr.baseline.freezeMs) * 100 : 0,
+    ))
+    print(
+        "    straddle dedup (REAL HW)  : ON encodes=\(rr.dedupOn.recoveryEncodes) (expect 1)  OFF control=\(rr.dedupOff.recoveryEncodes) (expect ≥2 — the pre-existing LTR straddle bug)",
+    )
+    print(String(
+        format: "    all-copies-lost residual  : fast-escalation ON=%.0fms  vs  OFF=%.0fms (halved clock at max(1·RTT, 60ms, 1.5·RTT) — the fix-3 floor)",
+        rr.fastOn.freezeMs,
+        rr.fastOff.freezeMs,
+    ))
     printRecoveryRedundancyVerdict(rr)
     print("\naislopdesk-loopback-validate: COMPLETE (recovery-loss only) — exiting 0")
     exit(0)
@@ -2805,7 +3724,8 @@ if smoke {
     for tier in [UInt8(1), 2, 3, 4, 0] {
         allStats.append(runScenario(
             name: "FEC tier \(tier) (\(tierDesc(tier))) 1-hole/grp",
-            frames: demoFrames, tier: tier, loss: .firstPerGroup(1)))
+            frames: demoFrames, tier: tier, loss: .firstPerGroup(1),
+        ))
     }
 
     // ── #6 INTERLEAVE investigation: prove the column-major send reorder (a) decodes cleanly through
@@ -2813,16 +3733,40 @@ if smoke {
     // protocol/codec fault), and (b) turns an adjacent-datagram BURST that single-loss XOR cannot
     // recover in consecutive order into a fully recoverable, decodable stream. Tier 0 = g5 parity.
     print("=== 7. INTERLEAVE, clean link (tier g5) — must decode ALL through real HW (white-screen check) ===")
-    allStats.append(runScenario(name: "7. interleave clean g5", frames: frameCount, tier: 0, loss: .none, interleave: true))
+    allStats.append(runScenario(
+        name: "7. interleave clean g5",
+        frames: frameCount,
+        tier: 0,
+        loss: .none,
+        interleave: true,
+    ))
 
     print("=== 8. burst-2 adjacent, NO interleave (tier g5) — 2 in one group → expect UNRECOVERED ===")
-    allStats.append(runScenario(name: "8. burst-2 NO interleave g5", frames: frameCount, tier: 0, loss: .wireBurst(start: 1, len: 2), interleave: false))
+    allStats.append(runScenario(
+        name: "8. burst-2 NO interleave g5",
+        frames: frameCount,
+        tier: 0,
+        loss: .wireBurst(start: 1, len: 2),
+        interleave: false,
+    ))
 
     print("=== 9. burst-2 adjacent, WITH interleave (tier g5) — spread 1/group → expect FEC RECOVERS ===")
-    allStats.append(runScenario(name: "9. burst-2 interleave g5", frames: frameCount, tier: 0, loss: .wireBurst(start: 1, len: 2), interleave: true))
+    allStats.append(runScenario(
+        name: "9. burst-2 interleave g5",
+        frames: frameCount,
+        tier: 0,
+        loss: .wireBurst(start: 1, len: 2),
+        interleave: true,
+    ))
 
     print("=== 9b. burst-3 adjacent, WITH interleave (tier g5) — deeper burst still recovers ===")
-    allStats.append(runScenario(name: "9b. burst-3 interleave g5", frames: frameCount, tier: 0, loss: .wireBurst(start: 1, len: 3), interleave: true))
+    allStats.append(runScenario(
+        name: "9b. burst-3 interleave g5",
+        frames: frameCount,
+        tier: 0,
+        loss: .wireBurst(start: 1, len: 3),
+        interleave: true,
+    ))
 
     print("=== 6. LTR HW (record -> ack -> ForceLTRRefresh -> decode) ===")
     allStats.append(runLTRHWScenario(frames: max(6, min(frameCount, 12))))
@@ -2837,6 +3781,7 @@ print("\naislopdesk-loopback-validate: COMPLETE — exiting 0")
 exit(0)
 
 #else
-FileHandle.standardError.write(Data("aislopdesk-loopback-validate requires macOS (VideoToolbox HW encode/decode).\n".utf8))
+FileHandle.standardError
+    .write(Data("aislopdesk-loopback-validate requires macOS (VideoToolbox HW encode/decode).\n".utf8))
 exit(1)
 #endif

@@ -12,7 +12,6 @@ import XCTest
 /// exact keyspace `HostServer.muxSessions` uses (`[MuxSessionKey: …]`), with `Int` standing
 /// in for the live `MuxChannelSession` value so no PTY/NWListener is touched.
 final class MuxSessionKeyTests: XCTestCase {
-
     func testSameChannelIDOnDifferentConnectionsAreDistinctKeys() {
         let connA = UUID()
         let connB = UUID()
@@ -27,7 +26,7 @@ final class MuxSessionKeyTests: XCTestCase {
         XCTAssertEqual(
             MuxSessionKey(connectionID: conn, channelID: 3),
             MuxSessionKey(connectionID: conn, channelID: 3),
-            "the same (connectionID, channelID) pair is idempotent — re-keys the same session"
+            "the same (connectionID, channelID) pair is idempotent — re-keys the same session",
         )
     }
 
@@ -55,7 +54,7 @@ final class MuxSessionKeyTests: XCTestCase {
         XCTAssertNil(muxSessions[MuxSessionKey(connectionID: connA, channelID: 1)])
         XCTAssertEqual(
             muxSessions[MuxSessionKey(connectionID: connB, channelID: 1)], 200,
-            "closing A's channelID 1 must NOT cross-shut B's live channelID 1 session"
+            "closing A's channelID 1 must NOT cross-shut B's live channelID 1 session",
         )
     }
 
@@ -68,7 +67,10 @@ final class MuxSessionKeyTests: XCTestCase {
         muxSessions[MuxSessionKey(connectionID: conn, channelID: 3)] = 3
         XCTAssertEqual(muxSessions.count, 2)
         muxSessions.removeValue(forKey: MuxSessionKey(connectionID: conn, channelID: 1))
-        XCTAssertEqual(muxSessions[MuxSessionKey(connectionID: conn, channelID: 3)], 3,
-                       "closing one pane must not shut the connection's other panes")
+        XCTAssertEqual(
+            muxSessions[MuxSessionKey(connectionID: conn, channelID: 3)],
+            3,
+            "closing one pane must not shut the connection's other panes",
+        )
     }
 }

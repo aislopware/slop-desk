@@ -1,8 +1,8 @@
 #if canImport(Darwin)
 import Darwin
 #endif
-import XCTest
 import Foundation
+import XCTest
 @testable import AislopdeskTTY
 
 /// Raw-mode safety: the termios save/restore logic must restore the original attributes
@@ -11,7 +11,6 @@ import Foundation
 /// CLI depends on are actually validated (the executable itself is not importable, so the
 /// load-bearing primitives live in the testable AislopdeskTTY library).
 final class TerminalRawModeTests: XCTestCase {
-
     /// Opens a pty pair, returns (master, slave). Caller closes both.
     private func openPTYPair() throws -> (master: Int32, slave: Int32) {
         var master: Int32 = 0
@@ -26,7 +25,9 @@ final class TerminalRawModeTests: XCTestCase {
 
     func testRawAttributesDifferFromCookedThenRestoreIsExact() throws {
         let (master, slave) = try openPTYPair()
-        defer { close(master); close(slave) }
+        defer { close(master)
+            close(slave)
+        }
 
         // The SLAVE end is a tty; capture its cooked attributes.
         let original = try TerminalRawMode.currentAttributes(fd: slave)
@@ -60,7 +61,9 @@ final class TerminalRawModeTests: XCTestCase {
         // A pipe read-end is not a tty → currentAttributes must throw notATTY.
         var fds: [Int32] = [0, 0]
         guard pipe(&fds) == 0 else { throw XCTSkip("pipe unavailable") }
-        defer { close(fds[0]); close(fds[1]) }
+        defer { close(fds[0])
+            close(fds[1])
+        }
         XCTAssertThrowsError(try TerminalRawMode.currentAttributes(fd: fds[0])) { error in
             guard case RawModeError.notATTY = error else {
                 return XCTFail("expected notATTY, got \(error)")
@@ -72,7 +75,9 @@ final class TerminalRawModeTests: XCTestCase {
 
     func testWindowSizeSetAndGetRoundTrip() throws {
         let (master, slave) = try openPTYPair()
-        defer { close(master); close(slave) }
+        defer { close(master)
+            close(slave)
+        }
 
         // Set a known size on the master (as the host PTY / SIGWINCH handler would).
         XCTAssertTrue(TerminalRawMode.setWindowSize(fd: master, cols: 120, rows: 40, pxWidth: 960, pxHeight: 640))
@@ -80,7 +85,8 @@ final class TerminalRawModeTests: XCTestCase {
         // The slave (the controlled tty) must observe the new size — this is exactly what
         // a resize message carries from the client's local terminal to the host PTY.
         guard let ws = TerminalRawMode.windowSize(fd: slave) else {
-            return XCTFail("windowSize returned nil for a tty")
+            XCTFail("windowSize returned nil for a tty")
+            return
         }
         XCTAssertEqual(ws.cols, 120)
         XCTAssertEqual(ws.rows, 40)
@@ -91,7 +97,9 @@ final class TerminalRawModeTests: XCTestCase {
     func testWindowSizeNilForNonTTY() throws {
         var fds: [Int32] = [0, 0]
         guard pipe(&fds) == 0 else { throw XCTSkip("pipe unavailable") }
-        defer { close(fds[0]); close(fds[1]) }
+        defer { close(fds[0])
+            close(fds[1])
+        }
         XCTAssertNil(TerminalRawMode.windowSize(fd: fds[0]), "windowSize must be nil for a non-tty")
     }
 }

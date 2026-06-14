@@ -1,5 +1,5 @@
-import XCTest
 import CoreVideo
+import XCTest
 @testable import AislopdeskVideoClient
 @testable import AislopdeskVideoProtocol
 
@@ -7,14 +7,19 @@ import CoreVideo
 /// state machine emits `.applyStreamCadence` only while streaming, and `FramePacer.setContentFps`
 /// rebases the deadline-mode rhythm + the adaptive jitter controller (preserving live depth).
 final class StreamCadenceClientTests: XCTestCase {
-
     // MARK: Session-logic fold
 
     private func streamingSM() -> VideoClientStateMachine {
         var sm = VideoClientStateMachine(requestedWindowID: 7, viewport: VideoSize(width: 800, height: 600))
         _ = sm.start()
-        _ = sm.handleControl(.helloAck(accepted: true, streamID: 1, captureWidth: 800, captureHeight: 600,
-                                       windowBoundsCG: VideoRect(x: 0, y: 0, width: 800, height: 600), fullRange: false))
+        _ = sm.handleControl(.helloAck(
+            accepted: true,
+            streamID: 1,
+            captureWidth: 800,
+            captureHeight: 600,
+            windowBoundsCG: VideoRect(x: 0, y: 0, width: 800, height: 600),
+            fullRange: false,
+        ))
         return sm
     }
 
@@ -47,7 +52,14 @@ final class StreamCadenceClientTests: XCTestCase {
 
     private func makePixelBuffer() -> CVPixelBuffer {
         var pb: CVPixelBuffer?
-        let status = CVPixelBufferCreate(kCFAllocatorDefault, 4, 4, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, nil, &pb)
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            4,
+            4,
+            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            nil,
+            &pb,
+        )
         precondition(status == kCVReturnSuccess && pb != nil, "CVPixelBufferCreate failed (\(status))")
         return pb!
     }
@@ -59,23 +71,29 @@ final class StreamCadenceClientTests: XCTestCase {
     /// before/after timestamps — the bracket is sub-ms in-process.)
     func testSetContentFpsRebasesDeadlineRhythm() {
         let presents = PresentCounter()
-        let pacer = FramePacer(maxFrameRate: 60, targetDepth: 1, maxDepth: 5,
-                               deadlineMode: true, contentFps: 60, playoutDelayMs: 20,
-                               renderCallback: { _ in presents.bump() })
+        let pacer = FramePacer(
+            maxFrameRate: 60,
+            targetDepth: 1,
+            maxDepth: 5,
+            deadlineMode: true,
+            contentFps: 60,
+            playoutDelayMs: 20,
+            renderCallback: { _ in presents.bump() },
+        )
         pacer.setContentFps(30)
         let halfTick = 0.5 / 60.0
 
         let t0 = FramePacer.currentHostTimeSeconds()
-        pacer.submit(makePixelBuffer())                       // d1 ∈ [t0, t1] + 0.020
+        pacer.submit(makePixelBuffer()) // d1 ∈ [t0, t1] + 0.020
         let t1 = FramePacer.currentHostTimeSeconds()
         XCTAssertLessThan(t1 - t0, 0.01, "submit bracket must be tight for the deadline bounds below")
-        pacer.tick(hostTimeSeconds: t1 + 0.020 + halfTick)    // d1 is due → presents, anchors the rhythm at d1
+        pacer.tick(hostTimeSeconds: t1 + 0.020 + halfTick) // d1 is due → presents, anchors the rhythm at d1
         XCTAssertEqual(presents.count, 1)
 
-        pacer.submit(makePixelBuffer())                       // d2 = d1 + 1/30 (the REBASED interval)
-        pacer.tick(hostTimeSeconds: t0 + 0.020 + 1.0 / 60.0)  // old 60 fps spacing: d2 ≥ d1 + 1/30 > this + halfTick
+        pacer.submit(makePixelBuffer()) // d2 = d1 + 1/30 (the REBASED interval)
+        pacer.tick(hostTimeSeconds: t0 + 0.020 + 1.0 / 60.0) // old 60 fps spacing: d2 ≥ d1 + 1/30 > this + halfTick
         XCTAssertEqual(presents.count, 1, "a 16.7 ms tick must NOT present — the rhythm is 33.3 ms now")
-        pacer.tick(hostTimeSeconds: t1 + 0.020 + 1.0 / 30.0 + halfTick)  // ≥ d2 → due
+        pacer.tick(hostTimeSeconds: t1 + 0.020 + 1.0 / 30.0 + halfTick) // ≥ d2 → due
         XCTAssertEqual(presents.count, 2, "presented exactly one content interval (1/30) after the first")
     }
 
@@ -83,8 +101,13 @@ final class StreamCadenceClientTests: XCTestCase {
     /// depth: the first post-rebase low-jitter fold must still read the carried depth (a
     /// recreation that lost it would recommend the floor immediately).
     func testSetContentFpsPreservesAdaptiveDepth() {
-        let pacer = FramePacer(maxFrameRate: 60, targetDepth: 3, maxDepth: 8, adaptiveJitter: true,
-                               renderCallback: { _ in })
+        let pacer = FramePacer(
+            maxFrameRate: 60,
+            targetDepth: 3,
+            maxDepth: 8,
+            adaptiveJitter: true,
+            renderCallback: { _ in },
+        )
         XCTAssertEqual(pacer.currentDepth, 3)
         pacer.setContentFps(30)
         // One clean submit folds jitter ≈ 0 through the REBUILT controller: shrink is slow
@@ -98,10 +121,19 @@ final class StreamCadenceClientTests: XCTestCase {
     /// rebase stays in the SAME unit. (Constructing with the 120 Hz tick rate made the unit flip
     /// 120→60 on the first rebase, silently halving every depth recommendation mid-session.)
     func testAdaptiveControllerFpsUnitIsContentFps() {
-        let pacer = FramePacer(maxFrameRate: 120, targetDepth: 1, maxDepth: 8, adaptiveJitter: true,
-                               contentFps: 60, renderCallback: { _ in })
-        XCTAssertEqual(pacer.controllerFpsForTest, 60,
-                       "construction uses the content fps, not the 120 Hz display tick rate")
+        let pacer = FramePacer(
+            maxFrameRate: 120,
+            targetDepth: 1,
+            maxDepth: 8,
+            adaptiveJitter: true,
+            contentFps: 60,
+            renderCallback: { _ in },
+        )
+        XCTAssertEqual(
+            pacer.controllerFpsForTest,
+            60,
+            "construction uses the content fps, not the 120 Hz display tick rate",
+        )
         pacer.setContentFps(30)
         XCTAssertEqual(pacer.controllerFpsForTest, 30, "a streamCadence rebase stays in the content unit")
         pacer.setContentFps(60)
@@ -122,6 +154,13 @@ final class StreamCadenceClientTests: XCTestCase {
 private final class PresentCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var value = 0
-    func bump() { lock.lock(); value += 1; lock.unlock() }
-    var count: Int { lock.lock(); defer { lock.unlock() }; return value }
+    func bump() { lock.lock()
+        value += 1
+        lock.unlock()
+    }
+
+    var count: Int { lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
 }

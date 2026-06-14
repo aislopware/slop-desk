@@ -74,8 +74,8 @@ public struct FloatingCursorMapping: Sendable, Equatable {
     /// app interpret as right/left. Routed to `AislopdeskClient.sendInput`.
     public static func bytes(for arrow: Arrow) -> [UInt8] {
         switch arrow {
-        case .right: return [0x1B, 0x5B, 0x43] // ESC [ C
-        case .left:  return [0x1B, 0x5B, 0x44] // ESC [ D
+        case .right: [0x1B, 0x5B, 0x43] // ESC [ C
+        case .left: [0x1B, 0x5B, 0x44] // ESC [ D
         }
     }
 

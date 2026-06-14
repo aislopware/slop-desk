@@ -49,9 +49,11 @@ struct CanvasView: View {
                     // through to the pan catcher below / the panes above.
                     if showGrid {
                         CanvasGridLayer(
-                            offset: CGSize(width: -camera.origin.x + livePan.width + store.liveCameraOffset.width,
-                                           height: -camera.origin.y + livePan.height + store.liveCameraOffset.height),
-                            viewport: geo.size
+                            offset: CGSize(
+                                width: -camera.origin.x + livePan.width + store.liveCameraOffset.width,
+                                height: -camera.origin.y + livePan.height + store.liveCameraOffset.height,
+                            ),
+                            viewport: geo.size,
                         )
                         .allowsHitTesting(false)
                     }
@@ -66,7 +68,9 @@ struct CanvasView: View {
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
             .coordinateSpace(.named(Self.coordSpace))
-            .overlay { if maxID == nil && !store.overviewActive { offscreenBeaconLayer(viewport: geo.size, camera: camera) } }
+            .overlay { if maxID == nil,
+                          !store.overviewActive { offscreenBeaconLayer(viewport: geo.size, camera: camera) }
+            }
             .overlay(alignment: .bottomTrailing) {
                 if !store.overviewActive {
                     // The Recenter button's `.transition(.opacity)` had no driver, so it popped. The
@@ -76,10 +80,12 @@ struct CanvasView: View {
                     // the wrong (0.18s) curve. The committed camera feeds `needsRecenter`, so a live
                     // pan doesn't churn it (it flips once on commit).
                     recenterButton(viewport: geo.size)
-                        .animation(.easeInOut(duration: 0.18),
-                                   value: store.workspace.maximizedPane == nil
-                                       && !canvas.items.isEmpty
-                                       && canvas.needsRecenter(viewport: geo.size))
+                        .animation(
+                            .easeInOut(duration: 0.18),
+                            value: store.workspace.maximizedPane == nil
+                                && !canvas.items.isEmpty
+                                && canvas.needsRecenter(viewport: geo.size),
+                        )
                 }
             }
             .overlay { if store.overviewActive { overviewLayer(viewport: geo.size) } }
@@ -87,7 +93,7 @@ struct CanvasView: View {
             // every keystroke does (it fans to the group). It MUST be visible while armed — a top-centre
             // pill naming the reach, tap to disarm. Scoped fade so it never animates the camera offset.
             .overlay(alignment: .top) {
-                if store.broadcastActive && !store.overviewActive && maxID == nil {
+                if store.broadcastActive, !store.overviewActive, maxID == nil {
                     broadcastBanner
                         .padding(.top, 10)
                         .transition(.move(edge: .top).combined(with: .opacity))
@@ -97,7 +103,7 @@ struct CanvasView: View {
             // Group / Broadcast all act on) is visible; tap to deselect. Shown for ≥2 (a single focused
             // pane already reads as focused).
             .overlay(alignment: .topLeading) {
-                if store.selectedPanes.count >= 2 && !store.overviewActive && maxID == nil {
+                if store.selectedPanes.count >= 2, !store.overviewActive, maxID == nil {
                     selectionChip
                         .padding(.leading, 12)
                         .padding(.top, 12)
@@ -136,14 +142,20 @@ struct CanvasView: View {
     // MARK: Content
 
     private func canvasContent(camera: CanvasCamera, viewport: CGSize, maxID: PaneID?) -> some View {
-        let visible = CanvasGeometry.visibleItems(canvas.items, camera: camera, viewport: viewport,
-                                                  focused: store.workspace.focusedPane)
+        let visible = CanvasGeometry.visibleItems(
+            canvas.items,
+            camera: camera,
+            viewport: viewport,
+            focused: store.workspace.focusedPane,
+        )
         // Canvas-space rect a maximized pane occupies: viewport-sized (minus a small inset for a thin
         // border), anchored at the camera origin so the single camera `.offset` below lands it exactly
         // on the viewport.
         let maxInset: CGFloat = 4
-        let maxSize = CGSize(width: max(1, viewport.width - maxInset * 2),
-                             height: max(1, viewport.height - maxInset * 2))
+        let maxSize = CGSize(
+            width: max(1, viewport.width - maxInset * 2),
+            height: max(1, viewport.height - maxInset * 2),
+        )
         return ZStack(alignment: .topLeading) {
             // Group bounding boxes, BEHIND every pane. The dashed frame is decorative (never intercepts);
             // only the move handle + corner resize grips (which live in the clear padding RING outside the
@@ -160,32 +172,39 @@ struct CanvasView: View {
                 let pos = isMax
                     ? CGPoint(x: camera.origin.x + viewport.width / 2, y: camera.origin.y + viewport.height / 2)
                     : CGPoint(x: item.frame.midX, y: item.frame.midY)
-                CanvasItemView(item: item, store: store, coordSpace: Self.coordSpace,
-                               viewportSize: viewport,
-                               displaySize: isMax ? maxSize : nil)
-                    // Lifecycle transition: a new pane scales+fades IN, a closed one scales+fades OUT.
-                    // Fires ONLY inside the item-id-keyed animation below (a real add/remove), never on
-                    // pan-culling (the cull changes `visible`, not the full id list → no transaction).
-                    .transition(.scale(scale: 0.92, anchor: .center).combined(with: .opacity))
-                    .position(x: pos.x, y: pos.y)
-                    // Non-overlap MAKE-SPACE (and Tidy / Align / Distribute) spring: a NON-focused pane
-                    // whose canvas frame changed eases to its new slot — critically damped (no overshoot
-                    // past the slot, the research's reflow guidance). The focused (dragged / resized /
-                    // maximized) pane is EXCLUDED so ITS commit stays instant: it carries a live gesture
-                    // offset that resets to zero on `.onEnded`, and easing its `.position` from the OLD
-                    // frame while the offset snaps to zero would flash it back to its pre-drag origin. A
-                    // pure pan moves the camera `.offset`, not `pos`, so this never fires on scroll.
-                    .animation(store.isFocused(item.id) || isMax ? nil
-                               : .spring(response: 0.28, dampingFraction: 1), value: pos)
-                    // Maximized pane on top of everything; otherwise the focused pane renders above the
-                    // rest (the pane you are interacting with is on top; the dragged pane is usually the
-                    // focused one and is raised on commit).
-                    .zIndex(isMax ? 2_000_000 : (store.isFocused(item.id) ? 1_000_000 : Double(item.z)))
-                    // While maximized the OTHER panes stay MOUNTED (so their surfaces survive restore with
-                    // no rebuild → no garbled re-render) but are hidden + non-interactive behind it.
-                    .opacity(maxID != nil && !isMax ? 0 : 1)
-                    .allowsHitTesting(maxID == nil || isMax)
-                    .id(item.id)                                         // LOAD-BEARING (.id(PaneID))
+                CanvasItemView(
+                    item: item,
+                    store: store,
+                    coordSpace: Self.coordSpace,
+                    viewportSize: viewport,
+                    displaySize: isMax ? maxSize : nil,
+                )
+                // Lifecycle transition: a new pane scales+fades IN, a closed one scales+fades OUT.
+                // Fires ONLY inside the item-id-keyed animation below (a real add/remove), never on
+                // pan-culling (the cull changes `visible`, not the full id list → no transaction).
+                .transition(.scale(scale: 0.92, anchor: .center).combined(with: .opacity))
+                .position(x: pos.x, y: pos.y)
+                // Non-overlap MAKE-SPACE (and Tidy / Align / Distribute) spring: a NON-focused pane
+                // whose canvas frame changed eases to its new slot — critically damped (no overshoot
+                // past the slot, the research's reflow guidance). The focused (dragged / resized /
+                // maximized) pane is EXCLUDED so ITS commit stays instant: it carries a live gesture
+                // offset that resets to zero on `.onEnded`, and easing its `.position` from the OLD
+                // frame while the offset snaps to zero would flash it back to its pre-drag origin. A
+                // pure pan moves the camera `.offset`, not `pos`, so this never fires on scroll.
+                .animation(
+                    store.isFocused(item.id) || isMax ? nil
+                        : .spring(response: 0.28, dampingFraction: 1),
+                    value: pos,
+                )
+                // Maximized pane on top of everything; otherwise the focused pane renders above the
+                // rest (the pane you are interacting with is on top; the dragged pane is usually the
+                // focused one and is raised on commit).
+                .zIndex(isMax ? 2_000_000 : (store.isFocused(item.id) ? 1_000_000 : Double(item.z)))
+                // While maximized the OTHER panes stay MOUNTED (so their surfaces survive restore with
+                // no rebuild → no garbled re-render) but are hidden + non-interactive behind it.
+                .opacity(maxID != nil && !isMax ? 0 : 1)
+                .allowsHitTesting(maxID == nil || isMax)
+                .id(item.id) // LOAD-BEARING (.id(PaneID))
             }
         }
         // Explicit size so `.position` lays out absolutely; off-frame items are NOT clipped here (the
@@ -201,8 +220,10 @@ struct CanvasView: View {
         // The ONLY camera application (rigid). `livePan` = a live background DRAG (view @State); the store's
         // `liveCameraOffset` = a live trackpad/wheel SCROLL pan that has not yet committed (BUG-2/BUG-1
         // freeze fix) — both are visual-only, folded into `camera.origin` on commit with no jump.
-        .offset(x: -camera.origin.x + livePan.width + store.liveCameraOffset.width,
-                y: -camera.origin.y + livePan.height + store.liveCameraOffset.height)
+        .offset(
+            x: -camera.origin.x + livePan.width + store.liveCameraOffset.width,
+            y: -camera.origin.y + livePan.height + store.liveCameraOffset.height,
+        )
     }
 
     // MARK: Group bounding boxes (the Figma-style labeled frame around each group's panes)
@@ -211,8 +232,13 @@ struct CanvasView: View {
         ZStack(alignment: .topLeading) {
             ForEach(store.workspace.groups) { group in
                 if let box = canvas.groupBoundingBox(group.id) {
-                    CanvasGroupView(store: store, group: group, unpaddedBox: box,
-                                    padding: Self.groupPadding, coordSpace: Self.coordSpace)
+                    CanvasGroupView(
+                        store: store,
+                        group: group,
+                        unpaddedBox: box,
+                        padding: Self.groupPadding,
+                        coordSpace: Self.coordSpace,
+                    )
                 }
             }
         }
@@ -221,7 +247,7 @@ struct CanvasView: View {
     // MARK: Background pan
 
     @ViewBuilder
-    private func backgroundPanLayer(camera: CanvasCamera) -> some View {
+    private func backgroundPanLayer(camera _: CanvasCamera) -> some View {
         #if os(macOS)
         // macOS: a bottom NSView catches scroll-wheel / trackpad-scroll AND empty-background drag to pan
         // (a SwiftUI DragGesture cannot see scroll, and an overlay returning nil from hitTest would get
@@ -233,11 +259,12 @@ struct CanvasView: View {
                 // A background click (negligible drag) clears the multi-selection — the standard
                 // "click empty space to deselect" idiom.
                 if abs(translation.width) < 3, abs(translation.height) < 3 { store.clearSelection() }
-                commitPan(translation); livePan = .zero
+                commitPan(translation)
+                livePan = .zero
             },
             // Scroll-pan goes through the debounced live accumulator (NOT a per-step commitCamera) so a pan
             // no longer thrashes the canvas re-render + report() cascade that froze the video/cursor.
-            onScroll: { delta in store.scrollPan(by: delta) }
+            onScroll: { delta in store.scrollPan(by: delta) },
         )
         #else
         // iOS: one-finger drag on the empty background pans (a touch that starts on a pane is absorbed by
@@ -247,7 +274,9 @@ struct CanvasView: View {
             .gesture(
                 DragGesture(minimumDistance: 8, coordinateSpace: .named(Self.coordSpace))
                     .onChanged { v in livePan = v.translation }
-                    .onEnded { v in commitPan(v.translation); livePan = .zero }
+                    .onEnded { v in commitPan(v.translation)
+                        livePan = .zero
+                    },
             )
         #endif
     }
@@ -279,7 +308,7 @@ struct CanvasView: View {
                     OverviewCard(
                         title: PanePresentation.displayTitle(store.handle(for: item.id), spec: item.spec),
                         kind: item.spec.kind,
-                        focused: store.focusedPane == item.id
+                        focused: store.focusedPane == item.id,
                     ) {
                         store.selectFromOverview(item.id)
                     }
@@ -293,7 +322,7 @@ struct CanvasView: View {
         .background(
             Button("") { store.exitOverview() }
                 .keyboardShortcut(.escape, modifiers: [])
-                .opacity(0)
+                .opacity(0),
         )
         .transition(.opacity)
     }
@@ -311,11 +340,14 @@ struct CanvasView: View {
             let isDialog = canvas.spec(for: beacon.id)?.kind == .systemDialog
             OffscreenBeaconPill(
                 title: beacon.id == store.focusedPane
-                    ? (canvas.spec(for: beacon.id).map { PanePresentation.displayTitle(store.handle(for: beacon.id), spec: $0) } ?? "Pane")
+                    ? (canvas.spec(for: beacon.id).map { PanePresentation.displayTitle(
+                        store.handle(for: beacon.id),
+                        spec: $0,
+                    ) } ?? "Pane")
                     : (canvas.spec(for: beacon.id)?.title ?? "Pane"),
                 kind: canvas.spec(for: beacon.id)?.kind ?? .terminal,
                 edge: beacon.edge,
-                pulsing: isDialog && store.focusedPane != beacon.id
+                pulsing: isDialog && store.focusedPane != beacon.id,
             ) {
                 store.revealPane(beacon.id)
             }
@@ -354,7 +386,7 @@ struct CanvasView: View {
             HStack(spacing: 6) {
                 Image(systemName: "dot.radiowaves.left.and.right")
                 Text(count == 0 ? "Broadcasting — no panes in range"
-                                : "Broadcasting to \(count) pane\(count == 1 ? "" : "s")")
+                    : "Broadcasting to \(count) pane\(count == 1 ? "" : "s")")
                     .font(.callout.weight(.medium))
                 Text("⇧⌘B").font(.caption2.monospaced()).opacity(0.7)
             }
@@ -403,7 +435,7 @@ struct CanvasView: View {
             store.updateSolvedLayout(SolvedLayout(frames: [maxID: CGRect(origin: .zero, size: size)]))
         } else {
             store.updateViewportMembership(CanvasGeometry.viewportMembers(canvas.items, camera: camera, viewport: size))
-            store.updateSolvedLayout(canvas.solvedLayout())   // canvas-space; FocusResolver consumes unchanged
+            store.updateSolvedLayout(canvas.solvedLayout()) // canvas-space; FocusResolver consumes unchanged
         }
     }
 }
@@ -427,10 +459,10 @@ private struct OffscreenBeaconPill: View {
 
     private var arrow: String {
         switch edge {
-        case .top:    return "chevron.up"
-        case .bottom: return "chevron.down"
-        case .left:   return "chevron.left"
-        case .right:  return "chevron.right"
+        case .top: "chevron.up"
+        case .bottom: "chevron.down"
+        case .left: "chevron.left"
+        case .right: "chevron.right"
         }
     }
 
@@ -444,8 +476,10 @@ private struct OffscreenBeaconPill: View {
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
             .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(pulsing ? Color.accentColor : Color.secondary.opacity(0.4),
-                                            lineWidth: pulsing ? 1.5 : 1))
+            .overlay(Capsule().strokeBorder(
+                pulsing ? Color.accentColor : Color.secondary.opacity(0.4),
+                lineWidth: pulsing ? 1.5 : 1,
+            ))
             .shadow(radius: 3, y: 1)
         }
         .buttonStyle(.plain)
@@ -486,8 +520,10 @@ private struct OverviewCard: View {
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(focused ? Color.accentColor : Color.secondary.opacity(0.35),
-                                  lineWidth: focused ? 2 : 1)
+                    .strokeBorder(
+                        focused ? Color.accentColor : Color.secondary.opacity(0.35),
+                        lineWidth: focused ? 2 : 1,
+                    ),
             )
         }
         .buttonStyle(.plain)
@@ -525,7 +561,7 @@ private struct CanvasGridLayer: View {
             size: CGSize(width: viewport.width + 2 * s, height: viewport.height + 2 * s),
             // Dark canvases swallow contrast — and with no pane borders the dots also help separate
             // near-black terminal panes from the background.
-            opacity: colorScheme == .dark ? 0.11 : 0.07
+            opacity: colorScheme == .dark ? 0.11 : 0.07,
         )
         .equatable()
         .offset(x: phase(offset.width, s), y: phase(offset.height, s))
@@ -556,8 +592,12 @@ private struct DotGridTile: View, Equatable {
             while y <= canvasSize.height {
                 var x: CGFloat = 0
                 while x <= canvasSize.width {
-                    path.addEllipse(in: CGRect(x: x - Self.dotRadius, y: y - Self.dotRadius,
-                                               width: Self.dotRadius * 2, height: Self.dotRadius * 2))
+                    path.addEllipse(in: CGRect(
+                        x: x - Self.dotRadius,
+                        y: y - Self.dotRadius,
+                        width: Self.dotRadius * 2,
+                        height: Self.dotRadius * 2,
+                    ))
                     x += CanvasGridLayer.spacing
                 }
                 y += CanvasGridLayer.spacing
@@ -602,6 +642,7 @@ private struct CanvasGroupView: View {
     private var minPaddedSize: CGSize {
         CGSize(width: Canvas.minItemSize.width + 2 * padding, height: Canvas.minItemSize.height + 2 * padding)
     }
+
     private var overlapConfig: CanvasNonOverlap.Config {
         #if os(macOS)
         if NSEvent.modifierFlags.contains(.command) { return .disabled }
@@ -627,7 +668,7 @@ private struct CanvasGroupView: View {
             cornerGrip(.bottomTrailing)
         }
         .frame(width: shown.width, height: shown.height, alignment: .topLeading)
-        .position(x: shown.midX, y: shown.midY)   // canvas-space; rides the same camera offset
+        .position(x: shown.midX, y: shown.midY) // canvas-space; rides the same camera offset
     }
 
     // MARK: Move handle (the name chip)
@@ -643,10 +684,10 @@ private struct CanvasGroupView: View {
             .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.25), lineWidth: 0.5))
             .contentShape(Capsule())
             .padding(.leading, 10)
-            .padding(.top, -12)   // straddle the top stroke, like a fieldset legend
-            #if os(macOS)
+            .padding(.top, -12) // straddle the top stroke, like a fieldset legend
+        #if os(macOS)
             .onHover { inside in if inside { NSCursor.openHand.push() } else { NSCursor.pop() } }
-            #endif
+        #endif
             .gesture(
                 DragGesture(minimumDistance: 2, coordinateSpace: .named(coordSpace))
                     .onChanged { v in
@@ -654,7 +695,10 @@ private struct CanvasGroupView: View {
                         let cfg = moveOverlapConfig ?? overlapConfig
                         // Broadcast the SLID offset (not the raw translation) so the members + box glide
                         // flush along neighbours live — matching the rest-flush commit (preview ≡ commit).
-                        store.updateGroupHandleDrag(group.id, delta: store.groupSlideOffset(group.id, rawDelta: v.translation, config: cfg))
+                        store.updateGroupHandleDrag(
+                            group.id,
+                            delta: store.groupSlideOffset(group.id, rawDelta: v.translation, config: cfg),
+                        )
                     }
                     .onEnded { v in
                         let cfg = moveOverlapConfig ?? overlapConfig
@@ -662,15 +706,17 @@ private struct CanvasGroupView: View {
                         // Instant commit (no `.animation(value: pos)` spring): the members already tracked
                         // the pointer via their live offset, so springing `pos` from the old origin would
                         // flash them backward.
-                        var instant = Transaction(); instant.disablesAnimations = true
+                        var instant = Transaction()
+                        instant.disablesAnimations = true
                         withTransaction(instant) {
                             store.endGroupHandleDrag()
                             store.moveGroupNonOverlapping(
                                 group.id,
                                 snappedBox: unpaddedBox.offsetBy(dx: v.translation.width, dy: v.translation.height),
-                                config: cfg)
+                                config: cfg,
+                            )
                         }
-                    }
+                    },
             )
     }
 
@@ -682,31 +728,45 @@ private struct CanvasGroupView: View {
             .fill(Color.accentColor.opacity(0.55))
             .frame(width: gripSize, height: gripSize)
             .contentShape(Rectangle())
-            #if os(macOS)
+        #if os(macOS)
             .onHover { inside in if inside { NSCursor.crosshair.push() } else { NSCursor.pop() } }
-            #endif
+        #endif
             .gesture(
                 DragGesture(minimumDistance: 2, coordinateSpace: .named(coordSpace))
                     .updating($resizePreview) { v, state, _ in
-                        state = CanvasGeometry.resizing(paddedBox, anchor: anchor, by: v.translation, minSize: minPaddedSize)
+                        state = CanvasGeometry.resizing(
+                            paddedBox,
+                            anchor: anchor,
+                            by: v.translation,
+                            minSize: minPaddedSize,
+                        )
                     }
                     .onChanged { _ in if resizeOverlapConfig == nil { resizeOverlapConfig = overlapConfig } }
                     .onEnded { v in
                         let cfg = resizeOverlapConfig ?? overlapConfig
                         resizeOverlapConfig = nil
-                        let newPadded = CanvasGeometry.resizing(paddedBox, anchor: anchor, by: v.translation, minSize: minPaddedSize)
-                        store.resizeGroupNonOverlapping(group.id, newBox: newPadded.insetBy(dx: padding, dy: padding), config: cfg)
-                    }
+                        let newPadded = CanvasGeometry.resizing(
+                            paddedBox,
+                            anchor: anchor,
+                            by: v.translation,
+                            minSize: minPaddedSize,
+                        )
+                        store.resizeGroupNonOverlapping(
+                            group.id,
+                            newBox: newPadded.insetBy(dx: padding, dy: padding),
+                            config: cfg,
+                        )
+                    },
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
     }
 
     private static func anchor(for alignment: Alignment) -> ResizeAnchor {
         switch alignment {
-        case .topLeading:     return .topLeft
-        case .topTrailing:    return .topRight
-        case .bottomLeading:  return .bottomLeft
-        default:              return .bottomRight
+        case .topLeading: .topLeft
+        case .topTrailing: .topRight
+        case .bottomLeading: .bottomLeft
+        default: .bottomRight
         }
     }
 }
@@ -719,7 +779,7 @@ private struct CanvasGroupFrame: View {
             .strokeBorder(Color.secondary.opacity(0.45), style: StrokeStyle(lineWidth: 1.5, dash: [7, 5]))
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.secondary.opacity(0.05))
+                    .fill(Color.secondary.opacity(0.05)),
             )
     }
 }
@@ -741,11 +801,11 @@ private struct CanvasBackingView: NSViewRepresentable {
     /// Called per scroll step with the camera delta to apply (already sign-adjusted for natural scroll).
     let onScroll: (CGSize) -> Void
 
-    func makeNSView(context: Context) -> NSView {
+    func makeNSView(context _: Context) -> NSView {
         PanView(onLiveDrag: onLiveDrag, onCommitDrag: onCommitDrag, onScroll: onScroll)
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
+    func updateNSView(_ nsView: NSView, context _: Context) {
         guard let v = nsView as? PanView else { return }
         v.onLiveDrag = onLiveDrag
         v.onCommitDrag = onCommitDrag
@@ -758,23 +818,29 @@ private struct CanvasBackingView: NSViewRepresentable {
         var onScroll: (CGSize) -> Void
         private var dragStart: NSPoint?
 
-        init(onLiveDrag: @escaping (CGSize) -> Void,
-             onCommitDrag: @escaping (CGSize) -> Void,
-             onScroll: @escaping (CGSize) -> Void) {
+        init(
+            onLiveDrag: @escaping (CGSize) -> Void,
+            onCommitDrag: @escaping (CGSize) -> Void,
+            onScroll: @escaping (CGSize) -> Void,
+        ) {
             self.onLiveDrag = onLiveDrag
             self.onCommitDrag = onCommitDrag
             self.onScroll = onScroll
             super.init(frame: .zero)
         }
-        required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+        @available(*, unavailable)
+        required init?(coder _: NSCoder) { fatalError("init(coder:) not used") }
 
         // Bottom layer: receives only events not consumed by a pane above it.
         override func scrollWheel(with event: NSEvent) {
             let dx: CGFloat, dy: CGFloat
             if event.hasPreciseScrollingDeltas {
-                dx = event.scrollingDeltaX; dy = event.scrollingDeltaY
+                dx = event.scrollingDeltaX
+                dy = event.scrollingDeltaY
             } else {
-                dx = event.scrollingDeltaX * 10; dy = event.scrollingDeltaY * 10
+                dx = event.scrollingDeltaX * 10
+                dy = event.scrollingDeltaY * 10
             }
             // Natural scroll: the content follows the fingers, so the camera moves opposite the scroll.
             onScroll(CGSize(width: -dx, height: -dy))
@@ -783,12 +849,14 @@ private struct CanvasBackingView: NSViewRepresentable {
         override func mouseDown(with event: NSEvent) {
             dragStart = convert(event.locationInWindow, from: nil)
         }
+
         override func mouseDragged(with event: NSEvent) {
             guard let start = dragStart else { return }
             let p = convert(event.locationInWindow, from: nil)
             // AppKit y grows UP; SwiftUI / canvas y grows DOWN → flip dy so a drag feels natural.
             onLiveDrag(CGSize(width: p.x - start.x, height: -(p.y - start.y)))
         }
+
         override func mouseUp(with event: NSEvent) {
             guard let start = dragStart else { return }
             let p = convert(event.locationInWindow, from: nil)

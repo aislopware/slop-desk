@@ -6,7 +6,6 @@ import XCTest
 /// and the bounded unknown-line buffer that keeps the true monotonic count.
 @MainActor
 final class InspectorViewModelStateTests: XCTestCase {
-
     // MARK: - Empty-state gate (`hasRenderableActivity`)
 
     func testHasRenderableActivityFalseOnFreshModelThenTrueAfterEvent() {
@@ -114,7 +113,7 @@ final class InspectorViewModelStateTests: XCTestCase {
     /// `toolCards` drop-oldest at the cap, and the lookup index is REBUILT after eviction so a later
     /// upsert of a surviving id still resolves in place (no duplicate append) — the part that breaks if
     /// the index is left pointing at pre-eviction offsets.
-    func testToolCardsAreBoundedAndIndexStaysValidAfterEviction() {
+    func testToolCardsAreBoundedAndIndexStaysValidAfterEviction() throws {
         let vm = InspectorViewModel()
         let n = InspectorViewModel.toolCardCap + 100
         for i in 0..<n { vm.apply(.toolCard(ToolCard(id: "t\(i)", name: "x", input: .string("\(i)")))) }
@@ -122,28 +121,38 @@ final class InspectorViewModelStateTests: XCTestCase {
         XCTAssertEqual(vm.toolCards.last?.id, "t\(n - 1)", "newest card retained")
         XCTAssertFalse(vm.toolCards.contains { $0.id == "t0" }, "oldest card evicted")
 
-        let survivor = vm.toolCards.last!.id
+        let survivor = try XCTUnwrap(vm.toolCards.last?.id)
         let before = vm.toolCards.count
         vm.apply(.toolCard(ToolCard(id: survivor, name: "x", input: .string("u"), output: "done")))
         XCTAssertEqual(vm.toolCards.count, before, "upsert of a surviving id does not append (index rebuilt)")
-        XCTAssertEqual(vm.toolCards.filter { $0.id == survivor }.count, 1, "exactly one card with that id")
+        XCTAssertEqual(vm.toolCards.count(where: { $0.id == survivor }), 1, "exactly one card with that id")
         XCTAssertEqual(vm.toolCards.first(where: { $0.id == survivor })?.output, "done", "updated in place")
     }
 
-    func testSubagentCardsBoundedPerAgent() {
+    func testSubagentCardsBoundedPerAgent() throws {
         let vm = InspectorViewModel()
         let n = InspectorViewModel.subagentCardCap + 100
         for i in 0..<n {
-            vm.apply(.subagentToolCard(agentID: "agent", card: ToolCard(id: "s\(i)", name: "x", input: .string("\(i)"))))
+            vm.apply(.subagentToolCard(
+                agentID: "agent",
+                card: ToolCard(id: "s\(i)", name: "x", input: .string("\(i)")),
+            ))
         }
         let cards = vm.subagentCards["agent"] ?? []
-        XCTAssertLessThanOrEqual(cards.count, InspectorViewModel.subagentCardCap, "per-agent cards drop-oldest at the cap")
+        XCTAssertLessThanOrEqual(
+            cards.count,
+            InspectorViewModel.subagentCardCap,
+            "per-agent cards drop-oldest at the cap",
+        )
         XCTAssertEqual(cards.last?.id, "s\(n - 1)", "newest retained")
 
-        let survivor = cards.last!.id
-        vm.apply(.subagentToolCard(agentID: "agent", card: ToolCard(id: survivor, name: "x", input: .string("u"), output: "done")))
+        let survivor = try XCTUnwrap(cards.last?.id)
+        vm.apply(.subagentToolCard(
+            agentID: "agent",
+            card: ToolCard(id: survivor, name: "x", input: .string("u"), output: "done"),
+        ))
         let after = vm.subagentCards["agent"] ?? []
-        XCTAssertEqual(after.filter { $0.id == survivor }.count, 1, "exactly one card for the survivor id")
+        XCTAssertEqual(after.count(where: { $0.id == survivor }), 1, "exactly one card for the survivor id")
         XCTAssertEqual(after.first(where: { $0.id == survivor })?.output, "done", "updated in place (index rebuilt)")
     }
 
@@ -172,7 +181,10 @@ final class InspectorViewModelStateTests: XCTestCase {
         let vm = InspectorViewModel()
         let n = InspectorViewModel.maxAgents + 100
         for i in 0..<n {
-            vm.apply(.subagentToolCard(agentID: "agent\(i)", card: ToolCard(id: "c\(i)", name: "x", input: .string("\(i)"))))
+            vm.apply(.subagentToolCard(
+                agentID: "agent\(i)",
+                card: ToolCard(id: "c\(i)", name: "x", input: .string("\(i)")),
+            ))
         }
         XCTAssertLessThanOrEqual(vm.subagents.count, InspectorViewModel.maxAgents, "distinct-agent count is bounded")
         XCTAssertNotNil(vm.subagents["agent\(n - 1)"], "newest agent retained")

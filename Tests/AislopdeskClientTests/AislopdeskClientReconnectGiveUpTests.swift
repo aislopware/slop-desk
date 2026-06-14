@@ -1,7 +1,7 @@
-import XCTest
-import Foundation
 import AislopdeskProtocol
 import AislopdeskTransport
+import Foundation
+import XCTest
 @testable import AislopdeskClient
 
 /// Pins the reconnect campaign's give-up ceiling: a campaign against a host that never answers must
@@ -9,7 +9,6 @@ import AislopdeskTransport
 /// once — no more, no fewer. This is the regression net for the cap unification (the per-pane campaign
 /// once ran to 30 while the UI displayed a cap of 20; both now read the one constant).
 final class AislopdeskClientReconnectGiveUpTests: XCTestCase {
-
     func testReconnectLoopGivesUpAfterExactlyMaxAttempts() async {
         let client = AislopdeskClient(makeTransport: { FailingTransport() })
         let logs = LineCollector()
@@ -21,16 +20,19 @@ final class AislopdeskClientReconnectGiveUpTests: XCTestCase {
             backoff: .init(initial: .microseconds(1), maximum: .microseconds(2), multiplier: 2.0),
             onLog: { logs.append($0) },
             onProgress: { _, _ in },
-            onGaveUp: { gaveUp.bump() }
+            onGaveUp: { gaveUp.bump() },
         )
 
-        let failedCount = logs.lines.filter { $0.contains("failed") }.count
-        XCTAssertEqual(failedCount, ReconnectManager.maxReconnectAttempts,
-                       "exactly maxReconnectAttempts connect attempts are made before giving up")
+        let failedCount = logs.lines.count(where: { $0.contains("failed") })
+        XCTAssertEqual(
+            failedCount,
+            ReconnectManager.maxReconnectAttempts,
+            "exactly maxReconnectAttempts connect attempts are made before giving up",
+        )
         XCTAssertEqual(gaveUp.value, 1, "onGaveUp fires exactly once at the end of the campaign")
         XCTAssertTrue(
             logs.lines.contains { $0.contains("gave up after \(ReconnectManager.maxReconnectAttempts)") },
-            "the give-up log names the real campaign length"
+            "the give-up log names the real campaign length",
         )
         await client.close()
     }
@@ -54,27 +56,48 @@ final class AislopdeskClientReconnectGiveUpTests: XCTestCase {
         }
 
         struct Refused: Error {}
-        func connect(host: String, port: UInt16, resume: UUID, lastReceivedSeq: Int64, handshakeTimeout: Duration) async throws {
+        func connect(
+            host _: String,
+            port _: UInt16,
+            resume _: UUID,
+            lastReceivedSeq _: Int64,
+            handshakeTimeout _: Duration,
+        ) throws {
             throw Refused()
         }
-        func sendInput(_ bytes: Data) async throws {}
-        func sendResize(cols: UInt16, rows: UInt16, pxWidth: UInt16, pxHeight: UInt16) async throws {}
-        func sendAck(seq: Int64) async throws {}
-        func sendBye() async throws {}
-        func close() async { continuation.finish() }
+
+        func sendInput(_: Data) {}
+        func sendResize(cols _: UInt16, rows _: UInt16, pxWidth _: UInt16, pxHeight _: UInt16) {}
+        func sendAck(seq _: Int64) {}
+        func sendBye() {}
+        func close() { continuation.finish() }
     }
 
     private final class LineCollector: @unchecked Sendable {
         private let lock = NSLock()
         private var _lines: [String] = []
-        func append(_ s: String) { lock.lock(); _lines.append(s); lock.unlock() }
-        var lines: [String] { lock.lock(); defer { lock.unlock() }; return _lines }
+        func append(_ s: String) { lock.lock()
+            _lines.append(s)
+            lock.unlock()
+        }
+
+        var lines: [String] { lock.lock()
+            defer { lock.unlock() }
+            return _lines
+        }
     }
 
     private final class GiveUpCounter: @unchecked Sendable {
         private let lock = NSLock()
         private var _value = 0
-        func bump() { lock.lock(); _value += 1; lock.unlock() }
-        var value: Int { lock.lock(); defer { lock.unlock() }; return _value }
+        func bump() { lock.lock()
+            _value += 1
+            lock.unlock()
+        }
+
+        var value: Int { lock.lock()
+            defer { lock.unlock() }
+            return _value
+        }
     }
 }

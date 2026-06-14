@@ -1,0 +1,64 @@
+# SwiftFormat — canonical Swift formatting. Pairs with .swiftlint.yml: SwiftFormat
+# OWNS formatting (whitespace, wrapping, redundancy); SwiftLint owns lint/bug rules.
+# The two are kept non-conflicting by construction (see the notes in .swiftlint.yml).
+# Run: `make fmt-swift` (writes) / `make lint-swift` (check).
+
+--swift-version 6.2
+--max-width 120
+
+# ---- Indentation & wrapping --------------------------------------------------
+--indent 4
+--tab-width 4
+--ifdef no-indent
+--wrap-arguments before-first
+--wrap-parameters before-first
+--wrap-collections before-first
+--wrap-conditions after-first
+--wrap-type-aliases before-first
+--closing-paren balanced
+--func-attributes prev-line
+--type-attributes prev-line
+
+# ---- Redundancy removal (the strict cleanup core) ----------------------------
+--self remove
+--strip-unused-args closure-only
+
+# ---- Style normalisation -----------------------------------------------------
+--trailing-commas always
+--semicolons never
+--ranges no-space
+--operator-func spaced
+--empty-braces no-space
+--some-any true
+--import-grouping testable-last,alpha
+--header ignore
+--doc-comments preserve
+
+# ---- Opt-in rules (off by default) — enable the high-value, low-risk ones -----
+--enable isEmpty
+--enable blankLinesBetweenImports
+--enable blankLineAfterImports
+--enable redundantInternal
+--enable wrapEnumCases
+--enable wrapSwitchCases
+--enable wrapMultilineConditionalAssignment
+
+# ---- Explicitly disabled (preserve repo intent) ------------------------------
+# wrapSingleLineComments — the long-form explanatory comments are a deliberate asset;
+#                          do NOT reflow prose. Code lines still wrap at --max-width.
+# docComments            — `//` block comments above decls are intentional; don't force `///`.
+# organizeDeclarations / sortDeclarations — semantic reordering is risky on this codebase.
+# acronyms               — would rewrite identifiers (userId->userID), touching wire/API names.
+# wrap*Bodies            — preserve the author's compact one-liner bodies (`{ x }`); the dense
+#                          codec/controller code reads better inline. `wrap` still breaks >120.
+--disable wrapSingleLineComments
+--disable docComments
+--disable organizeDeclarations
+--disable sortDeclarations
+--disable acronyms
+--disable wrapFunctionBodies
+--disable wrapLoopBodies
+--disable wrapPropertyBodies
+
+# ---- Never descend into generated / vendored trees ---------------------------
+--exclude .build,.build-*,DerivedData,**/.build,ThirdParty,**/*.generated.swift

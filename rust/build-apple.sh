@@ -19,21 +19,22 @@ echo "==> cargo build --release -p aislopdesk-ffi (host: $(rustc -vV | sed -n 's
 cargo build --release -p aislopdesk-ffi
 
 # Keep the SwiftPM-visible header byte-identical to the Rust-side source of truth.
-SRC_HEADER="$RUST_DIR/aislopdesk-ffi/include/aislopdesk_ffi.h"
-DST_HEADER="$PKG_DIR/Sources/CAislopdeskFFI/include/aislopdesk_ffi.h"
-if ! cmp -s "$SRC_HEADER" "$DST_HEADER"; then
-    echo "==> syncing header -> Sources/CAislopdeskFFI/include/aislopdesk_ffi.h"
-    cp "$SRC_HEADER" "$DST_HEADER"
+SRC_HEADER="${RUST_DIR}/aislopdesk-ffi/include/aislopdesk_ffi.h"
+DST_HEADER="${PKG_DIR}/Sources/CAislopdeskFFI/include/aislopdesk_ffi.h"
+if ! cmp -s "${SRC_HEADER}" "${DST_HEADER}"; then
+  echo "==> syncing header -> Sources/CAislopdeskFFI/include/aislopdesk_ffi.h"
+  cp "${SRC_HEADER}" "${DST_HEADER}"
 fi
 
-echo "==> macOS staticlib: $(ls -lh "$RUST_DIR/target/release/libaislopdesk_ffi.a" | awk '{print $5}')"
+# shellcheck disable=SC2012 # controlled path; want `ls -lh`'s human-readable size column
+echo "==> macOS staticlib: $(ls -lh "${RUST_DIR}/target/release/libaislopdesk_ffi.a" | awk '{print $5}')"
 
 if [[ "${1:-}" == "--ios" ]]; then
-    for tgt in aarch64-apple-ios aarch64-apple-ios-sim; do
-        echo "==> cargo build --release --target $tgt -p aislopdesk-ffi"
-        cargo build --release --target "$tgt" -p aislopdesk-ffi
-    done
-    echo "==> iOS slices built under rust/target/<triple>/release/ (wire into an xcframework for the app target)"
+  for tgt in aarch64-apple-ios aarch64-apple-ios-sim; do
+    echo "==> cargo build --release --target ${tgt} -p aislopdesk-ffi"
+    cargo build --release --target "${tgt}" -p aislopdesk-ffi
+  done
+  echo "==> iOS slices built under rust/target/<triple>/release/ (wire into an xcframework for the app target)"
 fi
 
 echo "==> done."

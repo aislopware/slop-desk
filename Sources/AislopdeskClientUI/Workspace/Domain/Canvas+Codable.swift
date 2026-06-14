@@ -1,5 +1,5 @@
-import Foundation
 import CoreGraphics
+import Foundation
 
 // MARK: - Readable wire shape for CoreGraphics values
 
@@ -9,19 +9,30 @@ import CoreGraphics
 private struct WirePoint: Codable {
     var x: CGFloat
     var y: CGFloat
-    init(_ p: CGPoint) { x = p.x; y = p.y }
+    init(_ p: CGPoint) { x = p.x
+        y = p.y
+    }
+
     var point: CGPoint { CGPoint(x: x, y: y) }
 }
+
 private struct WireSize: Codable {
     var width: CGFloat
     var height: CGFloat
-    init(_ s: CGSize) { width = s.width; height = s.height }
+    init(_ s: CGSize) { width = s.width
+        height = s.height
+    }
+
     var size: CGSize { CGSize(width: width, height: height) }
 }
+
 private struct WireRect: Codable {
     var origin: WirePoint
     var size: WireSize
-    init(_ r: CGRect) { origin = WirePoint(r.origin); size = WireSize(r.size) }
+    init(_ r: CGRect) { origin = WirePoint(r.origin)
+        size = WireSize(r.size)
+    }
+
     var rect: CGRect { CGRect(origin: origin.point, size: size.size) }
 }
 
@@ -31,8 +42,9 @@ public extension CanvasCamera {
     private enum CodingKeys: String, CodingKey { case origin }
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(origin: try c.decode(WirePoint.self, forKey: .origin).point)
+        try self.init(origin: c.decode(WirePoint.self, forKey: .origin).point)
     }
+
     func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(WirePoint(origin), forKey: .origin)
@@ -48,18 +60,19 @@ public extension CanvasItem {
     private enum CodingKeys: String, CodingKey { case id, spec, frame, z, groupID }
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(
-            id: try c.decode(PaneID.self, forKey: .id),
-            spec: try c.decode(PaneSpec.self, forKey: .spec),
-            frame: try c.decode(WireRect.self, forKey: .frame).rect,
+        try self.init(
+            id: c.decode(PaneID.self, forKey: .id),
+            spec: c.decode(PaneSpec.self, forKey: .spec),
+            frame: c.decode(WireRect.self, forKey: .frame).rect,
             // CLAMP z into a safe band (like the frame sanitize): a hostile / corrupt file with z = Int.max
             // would otherwise survive decode and TRAP the very next `maxZ + 1` (addPane / raise / restore)
             // on Swift's checked arithmetic — a deterministic crash purely from untrusted input.
-            z: min(max(try c.decode(Int.self, forKey: .z), -Self.zBound), Self.zBound),
+            z: min(max(c.decode(Int.self, forKey: .z), -Self.zBound), Self.zBound),
             // Optional so an ungrouped pane (and any pre-group file) round-trips: absent ⇒ ungrouped.
-            groupID: try c.decodeIfPresent(PaneGroupID.self, forKey: .groupID)
+            groupID: c.decodeIfPresent(PaneGroupID.self, forKey: .groupID),
         )
     }
+
     func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
@@ -96,7 +109,7 @@ public extension Canvas {
         // The camera is optional on the wire so a hand-authored / older-but-v2 file without it decodes
         // to the zero (un-panned) camera rather than failing. Sanitized so a corrupt non-finite/extreme
         // origin can never later overflow or make a save throw.
-        let camera = (try container.decodeIfPresent(CanvasCamera.self, forKey: .camera) ?? .zero).sanitized()
+        let camera = try (container.decodeIfPresent(CanvasCamera.self, forKey: .camera) ?? .zero).sanitized()
 
         // An EMPTY canvas is now a valid state — it is the single workspace root (docs/31), not a tab's
         // canvas, so when the user closes the last pane the canvas legitimately has zero items and must
@@ -108,7 +121,7 @@ public extension Canvas {
         // `dedupingItemIDs`, since the registry is keyed 1:1 by PaneID.)
         let sanitized = rawItems.map { item -> CanvasItem in
             var copy = item
-            copy.frame = Canvas.sanitize(item.frame)
+            copy.frame = Self.sanitize(item.frame)
             return copy
         }
         self.init(items: sanitized, camera: camera)

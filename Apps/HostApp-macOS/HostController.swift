@@ -1,7 +1,7 @@
-import Foundation
-import Observation
 import AislopdeskHost
 import AislopdeskTransport
+import Foundation
+import Observation
 
 /// `@MainActor @Observable` start/stop wrapper over the in-process terminal ``HostServer``.
 ///
@@ -52,12 +52,13 @@ final class HostController {
     /// applied at the view layer (research §C1); this just reflects the running state.
     var menuBarSymbol: String {
         switch state {
-        case .running: return "bolt.horizontal.circle.fill"
-        case .starting, .stopping: return "bolt.horizontal.circle"
-        case .stopped: return "bolt.horizontal.circle"
+        case .running: "bolt.horizontal.circle.fill"
+        case .starting,
+             .stopping: "bolt.horizontal.circle"
+        case .stopped: "bolt.horizontal.circle"
         // A failed-to-start daemon must NOT look identical to a never-started one — a distinct error
         // glyph tells the operator the host is broken, not merely off.
-        case .failed: return "exclamationmark.triangle.fill"
+        case .failed: "exclamationmark.triangle.fill"
         }
     }
 
@@ -65,12 +66,15 @@ final class HostController {
     /// No-op unless currently stopped/failed.
     func start(port: UInt16) {
         switch state {
-        case .running, .starting, .stopping:
+        case .running,
+             .starting,
+             .stopping:
             // Already running, or busy bringing up / tearing down — refuse. Refusing during `.stopping`
             // is what prevents a new listener binding the port while the old one is still being released
             // (R16 HOSTVIEW-2); the UI also keeps Start disabled across `.stopping` via `isBusy`.
             return
-        case .stopped, .failed:
+        case .stopped,
+             .failed:
             break
         }
         state = .starting
@@ -92,11 +96,11 @@ final class HostController {
         //    feeds `hasConnectedClients`, gating the Stop/Quit confirmation).
         let (countStream, countContinuation) = AsyncStream<Int>.makeStream()
         server.onConnectionCountChanged = { count in countContinuation.yield(count) }
-        self.countConsumerTask?.cancel()
-        self.countConsumerTask = Task { @MainActor [weak self] in
+        countConsumerTask?.cancel()
+        countConsumerTask = Task { @MainActor [weak self] in
             for await count in countStream {
                 guard let self, self.server === server else { continue }
-                self.clientCount = count
+                clientCount = count
             }
         }
         // Post-ready listener health (R15 #2): if the listener silently dies after binding (interface
@@ -152,7 +156,7 @@ final class HostController {
         Task { @MainActor [weak self] in
             await server.stop()
             guard let self else { return }
-            if case .stopping = self.state { self.state = .stopped }
+            if case .stopping = state { state = .stopped }
         }
     }
 

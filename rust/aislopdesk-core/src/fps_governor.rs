@@ -218,7 +218,7 @@ impl EncodeCadenceGate {
     /// The anchored next-due boundary (0 = unanchored). A REJECTED admit exposes the slot boundary
     /// at which the rejected content becomes admissible; rejections never move it.
     #[must_use]
-    pub const fn next_due(&self) -> f64 {
+    pub const fn next_due(self) -> f64 {
         self.next_due_seconds
     }
 

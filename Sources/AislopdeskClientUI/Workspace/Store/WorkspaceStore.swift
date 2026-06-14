@@ -1,9 +1,9 @@
-import Foundation
-import CoreGraphics
-import Network
 import AislopdeskClient
 import AislopdeskInspector
 import AislopdeskTransport
+import CoreGraphics
+import Foundation
+import Network
 
 // MARK: - WorkspaceStore (the one @MainActor @Observable owner)
 
@@ -25,6 +25,7 @@ import AislopdeskTransport
 /// Sessions are built through the injected `makeSession` factory — NOT a fake `AislopdeskClient` (which is
 /// impossible) and NEVER a real `HostServer` (forbidden, pool deadlock). Tests inject a
 /// `FakePaneSession`; production injects ``LivePaneSession/make(_:makeClient:makeInspector:)``.
+@preconcurrency
 @MainActor
 @Observable
 public final class WorkspaceStore {
@@ -175,7 +176,7 @@ public final class WorkspaceStore {
     /// The last viewport size the canvas view reported (docs/30 §5.3). Used by new-pane placement, the
     /// in-view guarantee, and the centre/tidy camera ops so the store can position panes without the
     /// view passing a size into every mutation. A nominal desktop default until the view reports one.
-    private var lastViewport: CGSize = CGSize(width: 1280, height: 800)
+    private var lastViewport: CGSize = .init(width: 1280, height: 800)
 
     /// The set of pane ids the canvas view currently reports as INSIDE the viewport (no margin). Pure
     /// view-derived state; never reconciles. Drives ``isPaneVisible(_:)`` (the video-cap "on screen"
@@ -227,22 +228,23 @@ public final class WorkspaceStore {
     ///     default) ⇒ no disk writes, so the pure/fake test seam never touches the filesystem; the app
     ///     passes a real ``WorkspacePersistence``.
     ///   - saveDebounce: the mutation-coalescing window before a write (default 600ms).
+    @preconcurrency
     public init(
         restoring: Workspace? = nil,
         makeSession: @escaping @MainActor (PaneSpec) -> any PaneSessionHandle,
         liveVideoCap: Int = 2,
         persistence: WorkspacePersistence? = nil,
         saveDebounce: Duration = .milliseconds(600),
-        videoTeardownSettle: Duration = .zero
+        videoTeardownSettle: Duration = .zero,
     ) {
-        self.workspace = restoring ?? .defaultWorkspace()
+        workspace = restoring ?? .defaultWorkspace()
         self.makeSession = makeSession
         self.liveVideoCap = liveVideoCap
         self.persistence = persistence
         self.saveDebounce = saveDebounce
         self.videoTeardownSettle = videoTeardownSettle
-        reconcile()   // materialize idle sessions for the restored/default leaves
-        savingEnabled = true   // arm debounced saves only AFTER the restore reconcile
+        reconcile() // materialize idle sessions for the restored/default leaves
+        savingEnabled = true // arm debounced saves only AFTER the restore reconcile
     }
 
     // MARK: - Accessors
@@ -376,8 +378,11 @@ public final class WorkspaceStore {
     @discardableResult
     public func addRemoteWindowPane(windowID: UInt32, title: String, appName: String) -> PaneID {
         let label = title.isEmpty ? (appName.isEmpty ? "Remote window" : appName) : title
-        let spec = PaneSpec(kind: .remoteGUI, title: label,
-                            video: VideoEndpoint(windowID: windowID, title: label, appName: appName))
+        let spec = PaneSpec(
+            kind: .remoteGUI,
+            title: label,
+            video: VideoEndpoint(windowID: windowID, title: label, appName: appName),
+        )
         let viewport = lastViewport
         let (canvas, id) = workspace.canvas.adding(spec, near: workspace.focusedPane, viewport: viewport)
         workspace.canvas = canvas
@@ -400,7 +405,7 @@ public final class WorkspaceStore {
             recentlyClosed = RecentlyClosedPane(spec: item.spec, frame: item.frame, group: item.groupID)
         }
         if pendingClose == id { pendingClose = nil }
-        pruneFocusHistory(id)   // a closed pane must never be a quick-switch target
+        pruneFocusHistory(id) // a closed pane must never be a quick-switch target
         // Capture a geometric neighbour BEFORE the close (so refocus follows what the user saw).
         let refocus = neighbourForRefocus(of: id)
         if let newCanvas = workspace.canvas.removing(id) {
@@ -426,7 +431,7 @@ public final class WorkspaceStore {
     public func duplicatePane(_ id: PaneID) -> PaneID? {
         guard let item = workspace.canvas.item(id), !item.spec.kind.isEphemeral else { return nil }
         let (canvas, newID) = workspace.canvas.adding(
-            item.spec, near: id, viewport: lastViewport, size: item.frame.size
+            item.spec, near: id, viewport: lastViewport, size: item.frame.size,
         )
         workspace.canvas = canvas
         focusOnPlacement(newID)
@@ -524,8 +529,11 @@ public final class WorkspaceStore {
     @discardableResult
     public func addSystemDialogPane(windowID: UInt32, owner: String, title: String, isSecure: Bool) -> PaneID {
         let label = title.isEmpty ? owner : "\(owner) — \(title)"
-        let spec = PaneSpec(kind: .systemDialog, title: label,
-                            video: VideoEndpoint(windowID: windowID, title: label, appName: owner))
+        let spec = PaneSpec(
+            kind: .systemDialog,
+            title: label,
+            video: VideoEndpoint(windowID: windowID, title: label, appName: owner),
+        )
         let viewport = lastViewport
         let (canvas, id) = workspace.canvas.adding(spec, near: workspace.focusedPane, viewport: viewport)
         workspace.canvas = canvas
@@ -642,13 +650,17 @@ public final class WorkspaceStore {
         guard let focused = workspace.focusedPane else { return }
         let target: PaneID?
         switch dir {
-        case .next, .previous:
+        case .next,
+             .previous:
             if let solved = lastSolvedLayout, solved.frames[focused] != nil {
                 target = FocusResolver.neighbor(of: focused, dir, in: solved)
             } else {
                 target = FocusResolver.cycle(workspace.canvas.allIDs(), from: focused, forward: dir == .next)
             }
-        case .left, .right, .up, .down:
+        case .left,
+             .right,
+             .up,
+             .down:
             guard let solved = lastSolvedLayout else { return }
             target = FocusResolver.neighbor(of: focused, dir, in: solved)
         }
@@ -707,8 +719,10 @@ public final class WorkspaceStore {
     /// reading) expanded by the snap margin so almost-visible neighbours still participate.
     private var collisionRegion: CGRect {
         let camera = workspace.canvas.camera
-        let origin = CGPoint(x: camera.origin.x - liveCameraOffset.width,
-                             y: camera.origin.y - liveCameraOffset.height)
+        let origin = CGPoint(
+            x: camera.origin.x - liveCameraOffset.width,
+            y: camera.origin.y - liveCameraOffset.height,
+        )
         return CGRect(origin: origin, size: lastViewport).insetBy(dx: -200, dy: -200)
     }
 
@@ -727,8 +741,14 @@ public final class WorkspaceStore {
         }
         let groupID = workspace.canvas.item(id)?.groupID
         let bodies = workspace.canvas.collisionBodies(
-            excludingPane: id, excludingGroup: groupID, region: collisionRegion, groups: workspace.groups)
-        if let result = CanvasNonOverlap.makeSpace(target: snapped, draggedID: .pane(id), bodies: bodies, config: config) {
+            excludingPane: id, excludingGroup: groupID, region: collisionRegion, groups: workspace.groups,
+        )
+        if let result = CanvasNonOverlap.makeSpace(
+            target: snapped,
+            draggedID: .pane(id),
+            bodies: bodies,
+            config: config,
+        ) {
             // Insert-intent: pin the pane at the drop and part the surrounded neighbours around it.
             workspace.canvas = workspace.canvas.applying(result, groups: workspace.groups).raising(id)
         } else {
@@ -738,7 +758,12 @@ public final class WorkspaceStore {
         }
         // Keep the pane's own group members non-overlapping (the top-level solve treated the dragged
         // pane's group as one excluded body, so a sibling overlap is resolved here).
-        if let groupID { workspace.canvas = reflowedWithinGroup(workspace.canvas, movedPane: id, groupID: groupID, config: config) }
+        if let groupID { workspace.canvas = reflowedWithinGroup(
+            workspace.canvas,
+            movedPane: id,
+            groupID: groupID,
+            config: config,
+        ) }
         focusOnPlacement(id)
         reconcile()
     }
@@ -746,15 +771,23 @@ public final class WorkspaceStore {
     /// Keeps the members of `groupID` non-overlapping after one of them moved/resized: pins the changed
     /// pane and separates its siblings around it (the within-group reflow — members shouldn't overlap each
     /// other any more than top-level windows do).
-    private func reflowedWithinGroup(_ canvas: Canvas, movedPane: PaneID, groupID: PaneGroupID,
-                                     config: CanvasNonOverlap.Config) -> Canvas {
+    private func reflowedWithinGroup(
+        _ canvas: Canvas,
+        movedPane: PaneID,
+        groupID: PaneGroupID,
+        config: CanvasNonOverlap.Config,
+    ) -> Canvas {
         guard config.enabled, let pinned = canvas.frame(of: movedPane) else { return canvas }
         let siblings = canvas.items
             .filter { $0.groupID == groupID && $0.id != movedPane }
             .map { CanvasNonOverlap.Body(id: .pane($0.id), rect: $0.frame) }
         guard !siblings.isEmpty else { return canvas }
-        let result = CanvasNonOverlap.separate(pinnedID: .pane(movedPane), pinnedRect: pinned,
-                                               bodies: siblings, config: config)
+        let result = CanvasNonOverlap.separate(
+            pinnedID: .pane(movedPane),
+            pinnedRect: pinned,
+            bodies: siblings,
+            config: config,
+        )
         return canvas.applying(result, groups: workspace.groups)
     }
 
@@ -766,18 +799,26 @@ public final class WorkspaceStore {
         guard let oldBox = workspace.canvas.groupBoundingBox(groupID) else { return }
         guard config.enabled else {
             workspace.canvas = workspace.canvas.movingGroup(
-                groupID, by: CGSize(width: snappedBox.minX - oldBox.minX, height: snappedBox.minY - oldBox.minY))
+                groupID, by: CGSize(width: snappedBox.minX - oldBox.minX, height: snappedBox.minY - oldBox.minY),
+            )
             reconcile()
             return
         }
         let bodies = workspace.canvas.collisionBodies(
-            excludingPane: nil, excludingGroup: groupID, region: collisionRegion, groups: workspace.groups)
-        if let result = CanvasNonOverlap.makeSpace(target: snappedBox, draggedID: .group(groupID), bodies: bodies, config: config) {
+            excludingPane: nil, excludingGroup: groupID, region: collisionRegion, groups: workspace.groups,
+        )
+        if let result = CanvasNonOverlap.makeSpace(
+            target: snappedBox,
+            draggedID: .group(groupID),
+            bodies: bodies,
+            config: config,
+        ) {
             workspace.canvas = workspace.canvas.applying(result, groups: workspace.groups)
         } else {
             let slid = CanvasNonOverlap.slide(snappedBox, from: oldBox.origin, bodies: bodies, config: config).frame
             workspace.canvas = workspace.canvas.movingGroup(
-                groupID, by: CGSize(width: slid.minX - oldBox.minX, height: slid.minY - oldBox.minY))
+                groupID, by: CGSize(width: slid.minX - oldBox.minX, height: slid.minY - oldBox.minY),
+            )
         }
         reconcile()
     }
@@ -789,7 +830,8 @@ public final class WorkspaceStore {
     public func groupSlideOffset(_ groupID: PaneGroupID, rawDelta: CGSize, config: CanvasNonOverlap.Config) -> CGSize {
         guard config.enabled, let oldBox = workspace.canvas.groupBoundingBox(groupID) else { return rawDelta }
         let bodies = workspace.canvas.collisionBodies(
-            excludingPane: nil, excludingGroup: groupID, region: collisionRegion, groups: workspace.groups)
+            excludingPane: nil, excludingGroup: groupID, region: collisionRegion, groups: workspace.groups,
+        )
         let target = oldBox.offsetBy(dx: rawDelta.width, dy: rawDelta.height)
         let slid = CanvasNonOverlap.slide(target, from: oldBox.origin, bodies: bodies, config: config).frame
         return CGSize(width: slid.minX - oldBox.minX, height: slid.minY - oldBox.minY)
@@ -809,8 +851,14 @@ public final class WorkspaceStore {
         }
         if config.enabled, let grown = canvas.groupBoundingBox(groupID) {
             let bodies = canvas.collisionBodies(
-                excludingPane: nil, excludingGroup: groupID, region: collisionRegion, groups: workspace.groups)
-            let result = CanvasNonOverlap.separate(pinnedID: .group(groupID), pinnedRect: grown, bodies: bodies, config: config)
+                excludingPane: nil, excludingGroup: groupID, region: collisionRegion, groups: workspace.groups,
+            )
+            let result = CanvasNonOverlap.separate(
+                pinnedID: .group(groupID),
+                pinnedRect: grown,
+                bodies: bodies,
+                config: config,
+            )
             canvas = canvas.applying(result, groups: workspace.groups)
         }
         workspace.canvas = canvas
@@ -844,8 +892,10 @@ public final class WorkspaceStore {
         // (nativeContent − currentContent); the chrome inset rides along (constant), no constant needed.
         nativeFrameSize[id] = CGSize(width: frame.width + dw, height: frame.height + dh)
         guard abs(dw) >= 0.5 || abs(dh) >= 0.5 else { return }
-        let snapped = CGRect(origin: frame.origin,
-                             size: CGSize(width: frame.width + dw, height: frame.height + dh))
+        let snapped = CGRect(
+            origin: frame.origin,
+            size: CGSize(width: frame.width + dw, height: frame.height + dh),
+        )
         workspace.canvas = workspace.canvas.resizing(id, to: snapped)
         reconcile()
     }
@@ -894,13 +944,19 @@ public final class WorkspaceStore {
         liveCameraOffset.width -= delta.width
         liveCameraOffset.height -= delta.height
         if Self.wsDbgEnabled {
-            FileHandle.standardError.write(Data("Aislopdesk[workspace]: scrollPan d=(\(Int(delta.width)),\(Int(delta.height))) liveOff=(\(Int(liveCameraOffset.width)),\(Int(liveCameraOffset.height))) camOrigin=(\(Int(workspace.canvas.camera.origin.x)),\(Int(workspace.canvas.camera.origin.y)))\n".utf8))
+            FileHandle.standardError
+                .write(
+                    Data(
+                        "Aislopdesk[workspace]: scrollPan d=(\(Int(delta.width)),\(Int(delta.height))) liveOff=(\(Int(liveCameraOffset.width)),\(Int(liveCameraOffset.height))) camOrigin=(\(Int(workspace.canvas.camera.origin.x)),\(Int(workspace.canvas.camera.origin.y)))\n"
+                            .utf8,
+                    ),
+                )
         }
         scrollCommitTask?.cancel()
         scrollCommitTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(110))
             guard let self, !Task.isCancelled else { return }
-            self.commitScrollPan()
+            commitScrollPan()
         }
     }
 
@@ -925,7 +981,13 @@ public final class WorkspaceStore {
         commitCamera(workspace.canvas.camera.translated(by: CGSize(width: -off.width, height: -off.height)))
         if Self.wsDbgEnabled {
             let after = workspace.canvas.camera.origin
-            FileHandle.standardError.write(Data("Aislopdesk[workspace]: commitScrollPan camOrigin (\(Int(before.x)),\(Int(before.y)))→(\(Int(after.x)),\(Int(after.y))) foldedOff=(\(Int(off.width)),\(Int(off.height)))\n".utf8))
+            FileHandle.standardError
+                .write(
+                    Data(
+                        "Aislopdesk[workspace]: commitScrollPan camOrigin (\(Int(before.x)),\(Int(before.y)))→(\(Int(after.x)),\(Int(after.y))) foldedOff=(\(Int(off.width)),\(Int(off.height)))\n"
+                            .utf8,
+                    ),
+                )
         }
     }
 
@@ -966,7 +1028,7 @@ public final class WorkspaceStore {
         guard let box = workspace.canvas.groupBoundingBox(id) else { return }
         let camera = CanvasCamera(origin: CGPoint(
             x: box.midX - lastViewport.width / 2,
-            y: box.midY - lastViewport.height / 2
+            y: box.midY - lastViewport.height / 2,
         ))
         discardLiveScroll()
         workspace.canvas = workspace.canvas.camera(camera)
@@ -1114,7 +1176,7 @@ public final class WorkspaceStore {
     /// Deletes a snippet. No-op for an unknown id.
     public func deleteSnippet(_ id: UUID) {
         workspace.snippets.removeAll { $0.id == id }
-        if lastRanSnippetID == id { lastRanSnippetID = nil }   // don't leave ⌥⌘R pointing at a dead snippet
+        if lastRanSnippetID == id { lastRanSnippetID = nil } // don't leave ⌥⌘R pointing at a dead snippet
         reconcile()
     }
 
@@ -1163,7 +1225,7 @@ public final class WorkspaceStore {
             ws.bookmarks = imported.bookmarks.mapValues { bm in
                 CanvasBookmark(pane: bm.pane.flatMap { idMap[$0] }, cameraOrigin: bm.cameraOrigin, name: bm.name)
             }
-            ws.connection = workspace.connection        // keep the local host; never adopt the imported one
+            ws.connection = workspace.connection // keep the local host; never adopt the imported one
             ws.maximizedPane = nil
             workspace = ws.normalizingGroups()
             pendingClose = nil
@@ -1174,7 +1236,7 @@ public final class WorkspaceStore {
             // not survive and surprise you") — clear both, matching switchToLayoutPreset.
             recentlyClosed = nil
             setBroadcast(false)
-            reseedFocusHistory()   // re-minted ids → the quick-switch ring would otherwise be all-dead
+            reseedFocusHistory() // re-minted ids → the quick-switch ring would otherwise be all-dead
             clearSelection()
         case .mergeAppend:
             // The MERGED canvas must obey the same size cap a single imported document does: decode()
@@ -1194,7 +1256,8 @@ public final class WorkspaceStore {
             // exact post-merge count; snippets/presets dedup, so the sum is a safe upper bound). Live untouched.
             guard workspace.groups.count + imported.groups.count <= WorkspaceTransfer.maxItems,
                   workspace.snippets.count + imported.snippets.count <= WorkspaceTransfer.maxItems,
-                  workspace.layoutPresets.count + imported.layoutPresets.count <= WorkspaceTransfer.maxItems else {
+                  workspace.layoutPresets.count + imported.layoutPresets.count <= WorkspaceTransfer.maxItems
+            else {
                 return false
             }
             // Re-mint imported pane ids AND group ids (the imported groups are brand-new here), offset the
@@ -1210,9 +1273,13 @@ public final class WorkspaceStore {
                 let fresh = PaneID()
                 idMap[item.id] = fresh
                 let group = item.groupID.flatMap { groupMap[$0] }
-                return CanvasItem(id: fresh, spec: item.spec,
-                                  frame: item.frame.offsetBy(dx: cascade.width, dy: cascade.height),
-                                  z: item.z, groupID: group)
+                return CanvasItem(
+                    id: fresh,
+                    spec: item.spec,
+                    frame: item.frame.offsetBy(dx: cascade.width, dy: cascade.height),
+                    z: item.z,
+                    groupID: group,
+                )
             }
             workspace.canvas = Canvas(items: workspace.canvas.items + appended, camera: workspace.canvas.camera)
             workspace.groups += imported.groups.map { PaneGroup(id: groupMap[$0.id] ?? PaneGroupID(), name: $0.name) }
@@ -1220,15 +1287,24 @@ public final class WorkspaceStore {
             // library (a snippet whose body already exists, or a preset whose canvas+groups already exist,
             // is a re-import — skip it). Without this, repeated identical merges accrued "X copy copy …".
             for s in imported.snippets where !workspace.snippets.contains(where: { $0.body == s.body }) {
-                let name = Self.uniqueName(base: Self.snippetName(s.name), existing: Set(workspace.snippets.map(\.name)))
+                let name = Self.uniqueName(
+                    base: Self.snippetName(s.name),
+                    existing: Set(workspace.snippets.map(\.name)),
+                )
                 workspace.snippets.append(Snippet(name: name, body: s.body))
             }
             for p in imported.layoutPresets
-            where !workspace.layoutPresets.contains(where: { $0.canvas == p.canvas && $0.groups == p.groups }) {
+                where !workspace.layoutPresets.contains(where: { $0.canvas == p.canvas && $0.groups == p.groups })
+            {
                 let name = Self.uniqueName(base: p.name, existing: Set(workspace.layoutPresets.map(\.name)))
                 // Clear the trigger on a merged preset — two presets must not both auto-switch on one app.
-                workspace.layoutPresets.append(LayoutPreset(name: name, canvas: p.canvas, groups: p.groups,
-                                                            focusedPane: p.focusedPane, triggerAppName: nil))
+                workspace.layoutPresets.append(LayoutPreset(
+                    name: name,
+                    canvas: p.canvas,
+                    groups: p.groups,
+                    focusedPane: p.focusedPane,
+                    triggerAppName: nil,
+                ))
             }
             // Adopt an imported bookmark into an empty slot ONLY when its anchor pane SURVIVES the id remap.
             // recallBookmark FOLLOWS a live anchor (re-deriving the camera from the pane's current position),
@@ -1300,7 +1376,7 @@ public final class WorkspaceStore {
     @discardableResult
     public func beginRunSnippet(_ id: UUID) -> SnippetRunOutcome {
         guard let snippet = workspace.snippets.first(where: { $0.id == id }) else { return .unknown }
-        lastRanSnippetID = id   // remember the launch so ⌥⌘R can re-fire it without ⌘K
+        lastRanSnippetID = id // remember the launch so ⌥⌘R can re-fire it without ⌘K
         let slots = snippet.placeholders
         guard !slots.isEmpty else { return .ran(runSnippet(id)) }
         pendingSnippetRun = id
@@ -1422,13 +1498,18 @@ public final class WorkspaceStore {
     /// The LIVE group-drag offset broadcast by the dragged anchor so the OTHER selected panes follow it
     /// in real time (view-only state, like ``liveCameraOffset`` — never reconciles/persists). `nil`
     /// between drags. Only selected panes read it, so a group drag re-renders just the cohort.
-    public struct GroupDragState: Equatable, Sendable { public let anchor: PaneID; public let delta: CGSize }
+    public struct GroupDragState: Equatable, Sendable { public let anchor: PaneID
+        public let delta: CGSize
+    }
+
     public private(set) var groupDragLive: GroupDragState?
 
     /// The anchor broadcasts its live raw translation each gesture frame. Cleared (and ignored) unless
     /// the anchor is in a multi-selection of ≥2.
     public func updateGroupDrag(anchor: PaneID, delta: CGSize) {
-        guard selectedPanes.contains(anchor), selectedPanes.count > 1 else { groupDragLive = nil; return }
+        guard selectedPanes.contains(anchor), selectedPanes.count > 1 else { groupDragLive = nil
+            return
+        }
         groupDragLive = GroupDragState(anchor: anchor, delta: delta)
     }
 
@@ -1460,13 +1541,17 @@ public final class WorkspaceStore {
     /// The LIVE group-handle drag: the group being moved + its raw translation, broadcast so its member
     /// panes (and the drawn group box) follow in real time — view-only, like ``groupDragLive`` but keyed
     /// to a PaneGroup (not the ad-hoc multi-selection). `nil` between drags.
-    public struct GroupHandleDragState: Equatable, Sendable { public let group: PaneGroupID; public let delta: CGSize }
+    public struct GroupHandleDragState: Equatable, Sendable { public let group: PaneGroupID
+        public let delta: CGSize
+    }
+
     public private(set) var groupHandleDragLive: GroupHandleDragState?
 
     /// The handle broadcasts its live raw translation each gesture frame.
     public func updateGroupHandleDrag(_ groupID: PaneGroupID, delta: CGSize) {
         groupHandleDragLive = GroupHandleDragState(group: groupID, delta: delta)
     }
+
     /// Ends the live group-handle drag (committed or cancelled).
     public func endGroupHandleDrag() { groupHandleDragLive = nil }
 
@@ -1477,6 +1562,7 @@ public final class WorkspaceStore {
         guard let gh = groupHandleDragLive, workspace.canvas.item(id)?.groupID == gh.group else { return .zero }
         return gh.delta
     }
+
     /// The live offset the DRAWN group box of `groupID` should render at during its own handle move.
     public func groupBoxOffset(for groupID: PaneGroupID) -> CGSize {
         guard let gh = groupHandleDragLive, gh.group == groupID else { return .zero }
@@ -1564,22 +1650,25 @@ public final class WorkspaceStore {
     public func saveLayoutPreset(name: String, triggerAppName: String? = nil) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let trigger = (triggerAppName?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+        let trigger = (triggerAppName?.trimmingCharacters(in: .whitespacesAndNewlines))
+            .flatMap { $0.isEmpty ? nil : $0 }
         // Strip ephemeral (auto-managed) panes from the snapshot — a saved layout must not resurrect a
         // dead system-dialog windowID.
         let snapshotCanvas = strippingEphemeral(workspace.canvas)
-        let focus = snapshotCanvas.contains(workspace.focusedPane ?? PaneID()) ? workspace.focusedPane : snapshotCanvas.allIDs().first
+        let focus = snapshotCanvas.contains(workspace.focusedPane ?? PaneID()) ? workspace.focusedPane : snapshotCanvas
+            .allIDs().first
         if let i = workspace.layoutPresets.firstIndex(where: { $0.name == trimmed }) {
             workspace.layoutPresets[i] = LayoutPreset(
                 id: workspace.layoutPresets[i].id, name: trimmed,
-                canvas: snapshotCanvas, groups: workspace.groups, focusedPane: focus, triggerAppName: trigger
+                canvas: snapshotCanvas, groups: workspace.groups, focusedPane: focus, triggerAppName: trigger,
             )
         } else {
             workspace.layoutPresets.append(LayoutPreset(
                 name: trimmed, canvas: snapshotCanvas, groups: workspace.groups,
-                focusedPane: focus, triggerAppName: trigger))
+                focusedPane: focus, triggerAppName: trigger,
+            ))
         }
-        reconcile()   // metadata-only — persists the new preset list
+        reconcile() // metadata-only — persists the new preset list
     }
 
     /// The preset whose `triggerAppName` matches `appName` (case-insensitive), or `nil`. Pure — the
@@ -1647,7 +1736,7 @@ public final class WorkspaceStore {
         // mode and a "reopen the pane from the OLD workspace" both make no sense in the new layout.
         setBroadcast(false)
         recentlyClosed = nil
-        reseedFocusHistory()   // every old pane id is re-minted — drop the now-dead quick-switch ring
+        reseedFocusHistory() // every old pane id is re-minted — drop the now-dead quick-switch ring
         // Every old pane id is now orphaned — clear any pending request keyed to one (else a busy-close
         // confirmation or rename targeting a now-gone pane lingers as a phantom dialog, the closePane
         // contract at the top of this type). Reconcile tears the old sessions down.
@@ -1695,9 +1784,9 @@ public final class WorkspaceStore {
         workspace.bookmarks[slot] = CanvasBookmark(
             pane: workspace.focusedPane,
             cameraOrigin: workspace.canvas.camera.origin,
-            name: name
+            name: name,
         )
-        reconcile()   // metadata-only (leaf set unchanged) — reconcile just persists
+        reconcile() // metadata-only (leaf set unchanged) — reconcile just persists
     }
 
     /// Recalls bookmark `slot`: when its anchor pane is still on the canvas, FOLLOW it (focus +
@@ -1776,7 +1865,7 @@ public final class WorkspaceStore {
         // `connect()` would CLEAR deliberatelyClosed and open a fresh socket for a pane that no longer
         // exists — a live, supervised, reconnecting zombie connection stranded for a closed pane.
         Task { @MainActor [weak self] in
-            guard let self, self.paneStillRegistered(id, as: handle) else { return }
+            guard let self, paneStillRegistered(id, as: handle) else { return }
             await connection.connect()
         }
     }
@@ -1830,7 +1919,7 @@ public final class WorkspaceStore {
     /// the explicit ``videoPromotionGeneration`` nudge on slot-freeing events, so this read need not be
     /// the only liveness trigger; it is the cap-vs-config discriminator for the display decision.
     public func hasFreeVideoSlot(for id: PaneID) -> Bool {
-        let activeOthers = registry.values.filter { $0.kind.isVideo && $0.isVideoActive && $0.id != id }.count
+        let activeOthers = registry.values.count(where: { $0.kind.isVideo && $0.isVideoActive && $0.id != id })
         // Count panes whose video stack is still TEARING DOWN against the cap too (ITEM #3): an orphan
         // closed this same tick is already gone from the registry but its UDP / VTDecompression /
         // CVDisplayLink stack is not released until its async teardown completes, so admitting a new
@@ -1966,7 +2055,7 @@ public final class WorkspaceStore {
               let cursorStr = env["AISLOPDESK_VIDEO_AUTOCONNECT_CURSOR_PORT"], let cursor = UInt16(cursorStr),
               let widStr = env["AISLOPDESK_VIDEO_AUTOCONNECT_WINDOW_ID"], let wid = UInt32(widStr) else { return nil }
         let title = env["AISLOPDESK_VIDEO_AUTOCONNECT_TITLE"].flatMap { $0.isEmpty ? nil : $0 } ?? "Remote window"
-        let port = (env["AISLOPDESK_AUTOCONNECT_PORT"]).flatMap { UInt16($0) } ?? 7420
+        let port = env["AISLOPDESK_AUTOCONNECT_PORT"].flatMap { UInt16($0) } ?? 7420
         let target = ConnectionTarget(host: host, port: port, mediaPort: media, cursorPort: cursor)
         return (target, VideoEndpoint(windowID: wid, title: title))
     }
@@ -1975,8 +2064,12 @@ public final class WorkspaceStore {
     /// id is minted fresh; the item sits at the canvas origin at the default size, focused, ungrouped.
     private static func singleLeafWorkspace(spec: PaneSpec, connection: ConnectionTarget? = nil) -> Workspace {
         let paneID = PaneID()
-        let item = CanvasItem(id: paneID, spec: spec,
-                              frame: CGRect(origin: .zero, size: Canvas.defaultItemSize), z: 0)
+        let item = CanvasItem(
+            id: paneID,
+            spec: spec,
+            frame: CGRect(origin: .zero, size: Canvas.defaultItemSize),
+            z: 0,
+        )
         return Workspace(canvas: Canvas(items: [item]), focusedPane: paneID, connection: connection)
     }
 
@@ -2035,7 +2128,7 @@ public final class WorkspaceStore {
             // Hold the cap slot for an orphan that is STILL holding a live video stack (ITEM #3). Read
             // `isVideoActive` NOW, before the async teardown nils it, and record the id so
             // `activateVideo` keeps counting it until its teardown task actually releases the resources.
-            if orphan.kind.isVideo && orphan.isVideoActive {
+            if orphan.kind.isVideo, orphan.isVideoActive {
                 tearingDownVideo.insert(orphan.id)
                 // Closing an ACTIVE video pane is a slot-freeing event (ITEM #2): once this orphan's
                 // teardown releases its stack, a previously-gated on-screen sibling should re-attempt
@@ -2193,7 +2286,7 @@ public final class WorkspaceStore {
             do {
                 try await Task.sleep(for: debounce)
             } catch {
-                return   // superseded by a newer mutation (cancelled) — that one will write.
+                return // superseded by a newer mutation (cancelled) — that one will write.
             }
             // BUG-D / F5 — the supersession re-check AND the atomic write are ONE main-actor critical
             // section: re-check `saveGeneration` and, only if still current, write the snapshot — all
@@ -2206,10 +2299,10 @@ public final class WorkspaceStore {
             // debounced write reliably win. Encoding the small layout tree on the main actor is
             // acceptable; the clear of the (now-current) handle happens in the same block.
             await MainActor.run { [weak self] in
-                guard let self, self.isCurrentSaveGeneration(generation) else { return }
+                guard let self, isCurrentSaveGeneration(generation) else { return }
                 // A failed save keeps the previous good file (best-effort).
                 try? persistence.save(snapshot)
-                self.saveTask = nil
+                saveTask = nil
             }
         }
     }
@@ -2275,10 +2368,10 @@ public final class WorkspaceStore {
 
     private func defaultTitle(for kind: PaneKind) -> String {
         switch kind {
-        case .terminal:     return "Terminal"
-        case .claudeCode:   return "Claude Code"
-        case .remoteGUI:    return "Remote window"
-        case .systemDialog: return "System dialog"
+        case .terminal: "Terminal"
+        case .claudeCode: "Claude Code"
+        case .remoteGUI: "Remote window"
+        case .systemDialog: "System dialog"
         }
     }
 }
@@ -2300,7 +2393,7 @@ public extension WorkspaceStore {
     static func liveMakeSession(
         makeInspector: @escaping @MainActor (ConnectionTarget) -> InspectorClient? = liveMakeInspector,
         muxRegistry: ConnectionRegistry,
-        target: @escaping @MainActor () -> ConnectionTarget = { .default }
+        target: @escaping @MainActor () -> ConnectionTarget = { .default },
     ) -> @MainActor (PaneSpec) -> any PaneSessionHandle {
         // Every pane is backed by a logical channel over the per-host shared `MuxNWConnection`
         // (refcounted by the registry), connecting to the ONE app-global `target`. This is the SOLE
@@ -2318,19 +2411,19 @@ public extension WorkspaceStore {
     /// the shared transport torn down only when the LAST pane's channel goes. The registry is
     /// `@MainActor`; the transport's acquire/release closures hop onto the main actor to call it.
     private static func muxBackedClientFactory(
-        registry: ConnectionRegistry
+        registry: ConnectionRegistry,
     ) -> @Sendable () -> AislopdeskClient {
         { @Sendable in
             AislopdeskClient(makeTransport: {
                 MuxClientTransport(
                     acquire: { host, port, sessionID, lastReceivedSeq in
                         try await registry.acquire(
-                            host: host, port: port, sessionID: sessionID, lastReceivedSeq: lastReceivedSeq
+                            host: host, port: port, sessionID: sessionID, lastReceivedSeq: lastReceivedSeq,
                         )
                     },
                     release: { host, port, channelID in
                         await registry.release(host: host, port: port, channelID: channelID)
-                    }
+                    },
                 )
             })
         }
@@ -2374,7 +2467,7 @@ public extension WorkspaceStore {
         let connection = NWConnection(
             host: NWEndpoint.Host(target.host),
             port: nwPort,
-            using: NWByteChannel.parameters()
+            using: NWByteChannel.parameters(),
         )
         // The channel connects lazily: NWByteChannel.start() is idempotent and is triggered by the
         // first send (the `subscribe(fromSeq:)` in LivePaneSession.subscribeInspector). We do not
@@ -2393,6 +2486,7 @@ public extension WorkspaceStore {
 ///
 /// Commands that act on "the focused pane" read it from the store's current `workspace.focusedPane`;
 /// a command with no valid target (no focused pane) is a graceful no-op.
+@preconcurrency
 @MainActor
 public func apply(_ command: WorkspaceCommand, to store: WorkspaceStore) {
     // Record action verbs into the palette recents from the ONE chokepoint every path funnels through

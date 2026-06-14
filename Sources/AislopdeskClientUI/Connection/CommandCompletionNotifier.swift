@@ -10,7 +10,7 @@ public enum CommandNotificationPolicy {
     /// Commands shorter than this never notify — only LONG-running commands are worth a
     /// desktop alert (matches the iTerm2/Warp "command finished" default of ~10 seconds).
     /// A quick `ls` (milliseconds) is far below this and stays silent.
-    public static let longRunningThresholdMS: UInt32 = 10_000
+    public static let longRunningThresholdMS: UInt32 = 10000
 
     /// The pure decision: notify iff the host-measured C→D duration is at least the threshold.
     /// `>=` so a command that took exactly the threshold notifies (and `sleep 12` clearly does).
@@ -27,7 +27,11 @@ public enum ExplicitNotificationContent {
     /// - OSC 9 carries only a body (`explicitTitle == ""`) → the pane title is the title and the OSC
     ///   body is the body; if the pane has no title either, the body becomes the title (so the alert
     ///   is never blank) and the body line is dropped.
-    public static func resolve(paneTitle: String, explicitTitle: String, body: String) -> (title: String, body: String) {
+    public static func resolve(
+        paneTitle: String,
+        explicitTitle: String,
+        body: String,
+    ) -> (title: String, body: String) {
         let pane = paneTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let explicit = explicitTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         if !explicit.isEmpty {
@@ -55,8 +59,8 @@ public struct NotificationRateLimiter: Sendable {
     public init(capacity: Double = 5, refillPerSecond: Double = 0.5, now: TimeInterval) {
         self.capacity = capacity
         self.refillPerSecond = refillPerSecond
-        self.tokens = capacity
-        self.lastRefill = now
+        tokens = capacity
+        lastRefill = now
     }
 
     /// Refills by elapsed time then consumes a token if one is available. Returns whether the
@@ -177,6 +181,7 @@ final class CommandCompletionNotifier {
 /// store (focus + centre the originating pane). The app installs it as the
 /// `UNUserNotificationCenterDelegate` at launch; the key + parsing live here so they are one source
 /// of truth shared with ``CommandCompletionNotifier``.
+@preconcurrency
 @MainActor
 public final class PaneNotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     /// The `userInfo` key carrying the originating pane's id string. `nonisolated` so the
@@ -187,24 +192,24 @@ public final class PaneNotificationRouter: NSObject, UNUserNotificationCenterDel
     /// `store.revealPane(byIDString:)`.
     public var onReveal: ((String) -> Void)?
 
-    public override init() { super.init() }
+    override public init() { super.init() }
 
     /// Show the banner even while the app is foreground (otherwise an explicit notification fired while
     /// the user is looking at a different pane would be silently dropped). `nonisolated` to satisfy the
     /// delegate conformance; it touches no main-actor state.
     public nonisolated func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+        _: UNUserNotificationCenter,
+        willPresent _: UNNotification,
+        withCompletionHandler completionHandler: (UNNotificationPresentationOptions) -> Void,
     ) {
         completionHandler([.banner, .sound])
     }
 
     /// A click on the notification → reveal the originating pane (hops to the main actor for the store).
     public nonisolated func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
+        _: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
-        withCompletionHandler completionHandler: @escaping () -> Void
+        withCompletionHandler completionHandler: () -> Void,
     ) {
         let key = response.notification.request.content.userInfo[Self.paneIDUserInfoKey] as? String
         Task { @MainActor [weak self] in

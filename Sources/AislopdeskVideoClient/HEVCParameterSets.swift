@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskVideoProtocol
+import Foundation
 
 /// Pure HEVC parameter-set extraction from an AVCC/HVCC byte buffer.
 ///
@@ -39,6 +39,7 @@ public enum HEVCParameterSets {
             self.sps = sps
             self.pps = pps
         }
+
         /// In the fixed [VPS, SPS, PPS] order the format-description API expects.
         public var ordered: [Data] { [vps, sps, pps] }
     }

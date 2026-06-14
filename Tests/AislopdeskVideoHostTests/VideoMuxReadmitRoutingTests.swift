@@ -1,7 +1,7 @@
 #if os(macOS)
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoHost
-import AislopdeskVideoProtocol
 
 /// In-memory transport-level harness for the FIX #2 (retired re-admit on hello) + FIX #6 (no
 /// stray-control flow stamp) changes to `NWVideoMuxDatagramTransport.routeMedia` — WITHOUT a socket.
@@ -9,7 +9,6 @@ import AislopdeskVideoProtocol
 /// `routeMedia` runs (incl. the shared one-shot hello-peek), recording deliveries AND the flow-stamp
 /// table so a test can assert both the re-admit and the leak-avoidance behavior.
 final class VideoMuxReadmitRoutingTests: XCTestCase {
-
     /// A faux NWConnection identity (the live code keys `channelMediaConn` by the conn that carried
     /// the lane). We only need object identity, so a bare class instance stands in for the conn.
     private final class FakeConn {}
@@ -24,9 +23,11 @@ final class VideoMuxReadmitRoutingTests: XCTestCase {
         /// One framed datagram through the SAME pipeline as `routeMedia` (sans socket/reaper).
         @discardableResult
         func feed(channelID: UInt32, channel: VideoChannel, payload: Data, on conn: FakeConn) -> Bool {
-            var inner = Data([channel.rawValue]); inner.append(payload)
+            var inner = Data([channel.rawValue])
+            inner.append(payload)
             let datagram = VideoMuxHeaderCodec.encode(channelID: channelID, payload: inner)
-            guard let (decodedID, rest) = try? VideoMuxHeaderCodec.decode(datagram), rest.count >= 1 else { return false }
+            guard let (decodedID, rest) = try? VideoMuxHeaderCodec.decode(datagram),
+                  rest.count >= 1 else { return false }
             let tag = rest[rest.startIndex]
             guard let decodedChannel = VideoChannel(rawValue: tag) else { return false }
             let p = Data(rest[(rest.startIndex + 1)...])
@@ -37,10 +38,12 @@ final class VideoMuxReadmitRoutingTests: XCTestCase {
             case .route:
                 channelMediaConn[decodedID] = conn
                 deliver = true
-            case .rejectUnadmitted, .dropRetired:
+            case .rejectUnadmitted,
+                 .dropRetired:
                 // The one-shot hello peek mirrors the private `payloadIsHello` helper.
                 let isHello: Bool = {
-                    guard decodedChannel == .control, let msg = try? VideoControlMessage.decode(p), case .hello = msg else { return false }
+                    guard decodedChannel == .control, let msg = try? VideoControlMessage.decode(p),
+                          case .hello = msg else { return false }
                     return true
                 }()
                 switch VideoMuxRouter.bootstrapAction(for: decision, channel: decodedChannel, payloadIsHello: isHello) {
@@ -50,19 +53,23 @@ final class VideoMuxReadmitRoutingTests: XCTestCase {
                 case .dropNoStamp:
                     deliver = false
                 }
-            case .dropDraining, .drop:
+            case .dropDraining,
+                 .drop:
                 deliver = false
             }
             if deliver { delivered.append((decodedID, decodedChannel, p)) }
             return deliver
         }
 
-        var deliveredIDs: [UInt32] { delivered.map { $0.0 } }
+        var deliveredIDs: [UInt32] { delivered.map(\.0) }
     }
 
     private func helloPayload() -> Data {
-        VideoControlMessage.hello(protocolVersion: AislopdeskVideoProtocol.version, requestedWindowID: 7,
-                                  viewport: VideoSize(width: 100, height: 100)).encode()
+        VideoControlMessage.hello(
+            protocolVersion: AislopdeskVideoProtocol.version,
+            requestedWindowID: 7,
+            viewport: VideoSize(width: 100, height: 100),
+        ).encode()
     }
 
     func testRetiredLaneReconnectsOnHelloAfterCrossProcessReuse() {
@@ -73,8 +80,8 @@ final class VideoMuxReadmitRoutingTests: XCTestCase {
 
         // Lane 1 admitted (via a first hello), then retired (the client went away / bye).
         XCTAssertTrue(h.feed(channelID: 1, channel: .control, payload: helloPayload(), on: conn1))
-        h.router.admit(1)             // mint path admits on session.start
-        h.router.retire(1)            // client gone
+        h.router.admit(1) // mint path admits on session.start
+        h.router.retire(1) // client gone
 
         // A stale old-gen video datagram for the retired lane drops (generation safety).
         XCTAssertFalse(h.feed(channelID: 1, channel: .video, payload: Data([0xAA]), on: conn1))
@@ -83,9 +90,11 @@ final class VideoMuxReadmitRoutingTests: XCTestCase {
         // for mint, and the NEW flow remembered so the helloAck replies on conn2).
         XCTAssertTrue(h.feed(channelID: 1, channel: .control, payload: helloPayload(), on: conn2))
         XCTAssertTrue(h.channelMediaConn[1] === conn2, "the re-admit remembers the NEW reply flow")
-        h.router.admit(1)             // session.start re-admits → clears retired
-        XCTAssertTrue(h.feed(channelID: 1, channel: .video, payload: Data([0xBB]), on: conn2),
-                      "after re-admission the reused lane routes again — reconnect is no longer blocked")
+        h.router.admit(1) // session.start re-admits → clears retired
+        XCTAssertTrue(
+            h.feed(channelID: 1, channel: .video, payload: Data([0xBB]), on: conn2),
+            "after re-admission the reused lane routes again — reconnect is no longer blocked",
+        )
     }
 
     func testStrayNonHelloControlForUnknownLaneNeverStampsFlow() {
@@ -104,7 +113,8 @@ final class VideoMuxReadmitRoutingTests: XCTestCase {
         // stamp too (only a hello re-admits a retired id).
         let h = Harness()
         let conn = FakeConn()
-        h.router.admit(3); h.router.retire(3)
+        h.router.admit(3)
+        h.router.retire(3)
         let bye = VideoControlMessage.bye.encode()
         XCTAssertFalse(h.feed(channelID: 3, channel: .control, payload: bye, on: conn))
         XCTAssertNil(h.channelMediaConn[3], "a non-hello control datagram for a retired lane stamps no flow")

@@ -193,7 +193,6 @@ public struct WorkspaceCommands: Commands {
     /// Align + distribute the Arrange targets (the multi-selection when ≥2 selected, else all panes).
     /// Routed through `apply(_:to:)` (no chords needed) so the verbs land in the ⌘K recents ring like
     /// every other action — the items disable when no store is key.
-    @ViewBuilder
     private var arrangeMenu: some View {
         Menu("Arrange") {
             Button("Align Left") { if let store { apply(.align(.left), to: store) } }
@@ -216,7 +215,6 @@ public struct WorkspaceCommands: Commands {
     /// reverse-lookup `CommandPaletteView.shortcutHint` uses — rather than hand-declared, so the menu
     /// and the interpreter can never drift apart. A command with no default chord simply gets no
     /// shortcut (the `nil` case is handled by ``OptionalShortcut``).
-    @ViewBuilder
     private func commandButton(_ title: String, _ command: WorkspaceCommand) -> some View {
         Button(title) {
             if let store { apply(command, to: store) }

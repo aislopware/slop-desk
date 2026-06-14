@@ -5,24 +5,23 @@ import XCTest
 /// ``MuxFrameFragmentHeader`` round-trips, mirroring the CodecTests / FramePacketizer
 /// round-trip + truncation-rejection style. PURE: no socket, no transport.
 final class VideoMuxHeaderCodecTests: XCTestCase {
-
     // MARK: 19-byte muxed fragment header
 
     func testMuxFrameFragmentHeaderRoundTripIncludesChannelIDAtOffsetZero() throws {
         let cases: [(MuxFrameFragmentHeader, Data)] = [
             (
                 MuxFrameFragmentHeader(
-                    channelID: 0xDEADBEEF, streamSeq: 7, frameID: 42,
-                    fragIndex: 3, fragCount: 9, flags: [.keyframe, .crisp], payloadLength: 0
+                    channelID: 0xDEAD_BEEF, streamSeq: 7, frameID: 42,
+                    fragIndex: 3, fragCount: 9, flags: [.keyframe, .crisp], payloadLength: 0,
                 ),
-                Data((0 ..< 500).map { UInt8(truncatingIfNeeded: $0) })
+                Data((0..<500).map { UInt8(truncatingIfNeeded: $0) }),
             ),
             (
                 MuxFrameFragmentHeader(
                     channelID: 1, streamSeq: 0, frameID: 0,
-                    fragIndex: 0, fragCount: 1, flags: [], payloadLength: 0
+                    fragIndex: 0, fragCount: 1, flags: [], payloadLength: 0,
                 ),
-                Data()
+                Data(),
             ),
         ]
         for (header, payload) in cases {
@@ -52,14 +51,17 @@ final class VideoMuxHeaderCodecTests: XCTestCase {
 
     func testMuxMaxPayloadSizeIsDatagramMinus23() {
         XCTAssertEqual(MuxFrameFragmentHeader.maxPayloadSize, VideoPacketizer.maxDatagramSize - 23)
-        XCTAssertEqual(MuxFrameFragmentHeader.maxPayloadSize, VideoPacketizer.maxDatagramSize - MuxFrameFragmentHeader.size)
+        XCTAssertEqual(
+            MuxFrameFragmentHeader.maxPayloadSize,
+            VideoPacketizer.maxDatagramSize - MuxFrameFragmentHeader.size,
+        )
     }
 
     func testMuxFrameFragmentHeaderRejectsTruncatedDatagram() {
         // Header claims a 100-byte payload but the datagram ends right after the header.
         let header = MuxFrameFragmentHeader(
             channelID: 5, streamSeq: 1, frameID: 1,
-            fragIndex: 0, fragCount: 1, flags: [], payloadLength: 100
+            fragIndex: 0, fragCount: 1, flags: [], payloadLength: 100,
         )
         var bytes = Data()
         bytes.appendBE(header.channelID)
@@ -85,11 +87,11 @@ final class VideoMuxHeaderCodecTests: XCTestCase {
 
     func testChannelIDPrefixRoundTripForControlPayload() throws {
         let payload = VideoControlMessage.bye.encode()
-        let datagram = VideoMuxHeaderCodec.encode(channelID: 0x01020304, payload: payload)
+        let datagram = VideoMuxHeaderCodec.encode(channelID: 0x0102_0304, payload: payload)
         XCTAssertEqual(datagram.count, VideoMuxHeaderCodec.channelIDLength + payload.count)
 
         let (channelID, decodedPayload) = try VideoMuxHeaderCodec.decode(datagram)
-        XCTAssertEqual(channelID, 0x01020304)
+        XCTAssertEqual(channelID, 0x0102_0304)
         XCTAssertEqual(decodedPayload, payload)
         // The carried payload is opaque — it still decodes as the original control message.
         XCTAssertEqual(try VideoControlMessage.decode(decodedPayload), .bye)
@@ -139,7 +141,7 @@ final class VideoMuxHeaderCodecTests: XCTestCase {
         // to today once the channelID is peeled off (and what a mixed-version OFF receiver misframes).
         let tag: UInt8 = 1 // video
         let inner = Data([tag]) + Data([0xAA, 0xBB, 0xCC])
-        let framed = VideoMuxHeaderCodec.encode(channelID: 0x00000007, payload: inner)
+        let framed = VideoMuxHeaderCodec.encode(channelID: 0x0000_0007, payload: inner)
         let (channelID, rest) = try VideoMuxHeaderCodec.decode(framed)
         XCTAssertEqual(channelID, 7)
         XCTAssertEqual(rest, inner, "peeling the channelID yields the byte-identical today [tag][payload]")

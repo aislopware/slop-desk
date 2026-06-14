@@ -47,7 +47,9 @@ final class BlockingMuxLink: MuxByteLink, @unchecked Sendable {
             let waiters: [CheckedContinuation<Void, Never>] = locked {
                 gateClosed = closed
                 guard !closed else { return [] }
-                let w = writerWaiters; writerWaiters.removeAll(); return w
+                let w = writerWaiters
+                writerWaiters.removeAll()
+                return w
             }
             for w in waiters { w.resume() }
         }
@@ -55,14 +57,16 @@ final class BlockingMuxLink: MuxByteLink, @unchecked Sendable {
         /// Runs `body` under the lock and returns its result (a SYNCHRONOUS critical section — the
         /// lock is never held across a suspension).
         private func locked<T>(_ body: () -> T) -> T {
-            lock.lock(); defer { lock.unlock() }; return body()
+            lock.lock()
+            defer { lock.unlock() }
+            return body()
         }
 
         /// The decision a `send` reaches under the lock.
         private enum SendStep {
-            case done                                                  // accepted (and possibly handed off)
-            case handoff(CheckedContinuation<Data?, Never>, Data)      // accepted + a parked reader to wake
-            case park                                                  // buffer full → suspend then retry
+            case done // accepted (and possibly handed off)
+            case handoff(CheckedContinuation<Data?, Never>, Data) // accepted + a parked reader to wake
+            case park // buffer full → suspend then retry
         }
 
         /// Appends `data`; suspends the caller while the buffer is at/over capacity (backpressure).
@@ -70,7 +74,7 @@ final class BlockingMuxLink: MuxByteLink, @unchecked Sendable {
             while true {
                 let step: SendStep = locked {
                     if finished { return .done }
-                    if gateClosed { return .park }                     // gate forces every send to park
+                    if gateClosed { return .park } // gate forces every send to park
                     guard buffer.count < capacity else { return .park }
                     if let waiter = readerWaiter {
                         // Hand off directly to a parked reader (buffer was empty ⇒ this is the item).
@@ -151,8 +155,10 @@ final class BlockingMuxLink: MuxByteLink, @unchecked Sendable {
         func finish() {
             let (reader, writers): (CheckedContinuation<Data?, Never>?, [CheckedContinuation<Void, Never>]) = locked {
                 finished = true
-                let r = readerWaiter; readerWaiter = nil
-                let w = writerWaiters; writerWaiters.removeAll()
+                let r = readerWaiter
+                readerWaiter = nil
+                let w = writerWaiters
+                writerWaiters.removeAll()
                 return (r, w)
             }
             reader?.resume(returning: nil)
@@ -177,14 +183,14 @@ final class BlockingMuxLink: MuxByteLink, @unchecked Sendable {
         }
     }
 
-    private let outPipe: Pipe   // this end's send → peer's receive
-    private let inPipe: Pipe    // peer's send → this end's receive
+    private let outPipe: Pipe // this end's send → peer's receive
+    private let inPipe: Pipe // peer's send → this end's receive
     private let chunkStream: AsyncThrowingStream<Data, Error>
 
     private init(outPipe: Pipe, inPipe: Pipe) {
         self.outPipe = outPipe
         self.inPipe = inPipe
-        self.chunkStream = AsyncThrowingStream { continuation in
+        chunkStream = AsyncThrowingStream { continuation in
             let pipe = inPipe
             let task = Task {
                 while let chunk = await pipe.receive() {
@@ -216,7 +222,7 @@ final class BlockingMuxLink: MuxByteLink, @unchecked Sendable {
         outPipe.setGateClosed(closed)
     }
 
-    func send(_ data: Data) async throws {
+    func send(_ data: Data) async {
         await outPipe.send(data)
     }
 
@@ -228,7 +234,7 @@ final class BlockingMuxLink: MuxByteLink, @unchecked Sendable {
         outPipe.enqueueUnbounded(data)
     }
 
-    func close() async {
+    func close() {
         outPipe.finish()
         inPipe.finish()
     }

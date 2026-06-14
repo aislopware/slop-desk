@@ -1,6 +1,6 @@
+import AislopdeskProtocol
 import Foundation
 import Network
-import AislopdeskProtocol
 
 /// The shared-mux channel-association preamble that pairs two physical TCP connections (DATA +
 /// CONTROL) into one shared ``MuxNWConnection`` carrying MANY logical channels.

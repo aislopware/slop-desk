@@ -12,7 +12,6 @@ import XCTest
 ///   Shift folded into both edges, and is a no-op when no sink is wired.
 @MainActor
 final class KeystrokeReplayTests: XCTestCase {
-
     // MARK: - Encoding
 
     func testLowerAndUpperLettersShareKeyWithShift() {
@@ -26,8 +25,11 @@ final class KeystrokeReplayTests: XCTestCase {
 
     func testDigitsAndShiftedSymbols() {
         XCTAssertEqual(KeystrokeReplay.encode("1").strokes, [ReplayStroke(keyCode: 18, shift: false)])
-        XCTAssertEqual(KeystrokeReplay.encode("!").strokes, [ReplayStroke(keyCode: 18, shift: true)],
-                       "! is Shift+1 — same key")
+        XCTAssertEqual(
+            KeystrokeReplay.encode("!").strokes,
+            [ReplayStroke(keyCode: 18, shift: true)],
+            "! is Shift+1 — same key",
+        )
         XCTAssertEqual(KeystrokeReplay.encode("0").strokes, [ReplayStroke(keyCode: 29, shift: false)])
         XCTAssertEqual(KeystrokeReplay.encode(")").strokes, [ReplayStroke(keyCode: 29, shift: true)])
     }
@@ -38,11 +40,11 @@ final class KeystrokeReplayTests: XCTestCase {
         // collapsing multi-line text onto one line. Normalization turns each CRLF into a single Return.
         let crlf = KeystrokeReplay.encode("ab\r\ncd")
         XCTAssertEqual(crlf.strokes, [
-            ReplayStroke(keyCode: 0, shift: false),   // a
-            ReplayStroke(keyCode: 11, shift: false),  // b
-            ReplayStroke(keyCode: 36, shift: false),  // Return (from \r\n)
-            ReplayStroke(keyCode: 8, shift: false),   // c
-            ReplayStroke(keyCode: 2, shift: false),   // d
+            ReplayStroke(keyCode: 0, shift: false), // a
+            ReplayStroke(keyCode: 11, shift: false), // b
+            ReplayStroke(keyCode: 36, shift: false), // Return (from \r\n)
+            ReplayStroke(keyCode: 8, shift: false), // c
+            ReplayStroke(keyCode: 2, shift: false), // d
         ])
         XCTAssertEqual(crlf.skipped, 0, "the CRLF newline is typed as Return, not dropped")
         // A bare LF and a bare CR each still map to Return (unchanged).
@@ -65,16 +67,16 @@ final class KeystrokeReplayTests: XCTestCase {
         let encoded = KeystrokeReplay.encode("Tr0ub4dor&3")
         XCTAssertEqual(encoded.skipped, 0)
         XCTAssertEqual(encoded.strokes.count, 11)
-        XCTAssertEqual(encoded.strokes.first, ReplayStroke(keyCode: 17, shift: true))   // 'T'
-        XCTAssertEqual(encoded.strokes.last, ReplayStroke(keyCode: 20, shift: false))   // '3'
+        XCTAssertEqual(encoded.strokes.first, ReplayStroke(keyCode: 17, shift: true)) // 'T'
+        XCTAssertEqual(encoded.strokes.last, ReplayStroke(keyCode: 20, shift: false)) // '3'
     }
 
     func testUnmappableCharactersAreSkippedNotMistyped() {
         let encoded = KeystrokeReplay.encode("aé😀b")
         XCTAssertEqual(encoded.skipped, 2, "é and 😀 have no US-QWERTY key")
         XCTAssertEqual(encoded.strokes, [
-            ReplayStroke(keyCode: 0, shift: false),   // a
-            ReplayStroke(keyCode: 11, shift: false),  // b
+            ReplayStroke(keyCode: 0, shift: false), // a
+            ReplayStroke(keyCode: 11, shift: false), // b
         ])
     }
 
@@ -110,10 +112,16 @@ final class KeystrokeReplayTests: XCTestCase {
 
         // H (Shift), i (no Shift), ! (Shift+1) — each a down then an up, Shift folded into both edges.
         XCTAssertEqual(events.count, 6)
-        XCTAssertEqual(events[0].0, 4); XCTAssertEqual(events[0].1, true);  XCTAssertEqual(events[0].2, true)  // H down
-        XCTAssertEqual(events[1].0, 4); XCTAssertEqual(events[1].1, false); XCTAssertEqual(events[1].2, true)  // H up
-        XCTAssertEqual(events[2].0, 34); XCTAssertEqual(events[2].2, false)   // i, no shift
-        XCTAssertEqual(events[4].0, 18); XCTAssertEqual(events[4].2, true)    // ! → Shift+1
+        XCTAssertEqual(events[0].0, 4)
+        XCTAssertEqual(events[0].1, true)
+        XCTAssertEqual(events[0].2, true) // H down
+        XCTAssertEqual(events[1].0, 4)
+        XCTAssertEqual(events[1].1, false)
+        XCTAssertEqual(events[1].2, true) // H up
+        XCTAssertEqual(events[2].0, 34)
+        XCTAssertEqual(events[2].2, false) // i, no shift
+        XCTAssertEqual(events[4].0, 18)
+        XCTAssertEqual(events[4].2, true) // ! → Shift+1
     }
 
     func testPasteIsNoopWithoutSink() {
@@ -121,7 +129,7 @@ final class KeystrokeReplayTests: XCTestCase {
         model.pick(RemoteWindowSummary(windowID: 1, appName: "Term", title: "t", width: 10, height: 10))
         model.open()
         XCTAssertFalse(model.canPasteKeystrokes, "no injector wired → cannot paste")
-        let encoded = model.pasteAsKeystrokes("abc")   // must not trap
+        let encoded = model.pasteAsKeystrokes("abc") // must not trap
         XCTAssertEqual(encoded.strokes.count, 3, "still reports what WOULD be typed")
     }
 
@@ -147,14 +155,17 @@ final class KeystrokeReplayTests: XCTestCase {
     func testPasteFeedbackSetWhenCharactersAreSkipped() {
         let model = streamingModel()
         XCTAssertNil(model.pasteFeedback)
-        _ = model.pasteAsKeystrokes("aé😀b")   // é + 😀 unmappable
-        XCTAssertEqual(model.pasteFeedback, RemoteWindowModel.PasteFeedback(typed: 2, skipped: 2),
-                       "feedback names what was typed and what was dropped")
+        _ = model.pasteAsKeystrokes("aé😀b") // é + 😀 unmappable
+        XCTAssertEqual(
+            model.pasteFeedback,
+            RemoteWindowModel.PasteFeedback(typed: 2, skipped: 2),
+            "feedback names what was typed and what was dropped",
+        )
     }
 
     func testNoPasteFeedbackWhenEverythingMaps() {
         let model = streamingModel()
-        _ = model.pasteAsKeystrokes("Tr0ub4dor&3")   // a clean password — no skips
+        _ = model.pasteAsKeystrokes("Tr0ub4dor&3") // a clean password — no skips
         XCTAssertNil(model.pasteFeedback, "a clean paste shows no interruption")
     }
 
@@ -169,7 +180,7 @@ final class KeystrokeReplayTests: XCTestCase {
 
     func testDismissPasteFeedbackClearsIt() {
         let model = streamingModel()
-        _ = model.pasteAsKeystrokes("é")   // all skipped
+        _ = model.pasteAsKeystrokes("é") // all skipped
         XCTAssertNotNil(model.pasteFeedback)
         model.dismissPasteFeedback()
         XCTAssertNil(model.pasteFeedback)

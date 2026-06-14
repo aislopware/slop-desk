@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins broadcast / synchronized input (tmux `synchronize-panes`): the target resolver (multi-selection /
@@ -8,15 +8,21 @@ import CoreGraphics
 /// ⇧⌘B chord. The on-device feel (N libghostty echoes) is HW; the routing/targeting core is all here.
 @MainActor
 final class BroadcastInputTests: XCTestCase {
-
     private func store(_ items: [CanvasItem], focus: PaneID) -> WorkspaceStore {
-        WorkspaceStore(restoring: Workspace(canvas: Canvas(items: items), focusedPane: focus),
-                       makeSession: { FakePaneSession($0) }, liveVideoCap: 5)
+        WorkspaceStore(
+            restoring: Workspace(canvas: Canvas(items: items), focusedPane: focus),
+            makeSession: { FakePaneSession($0) },
+            liveVideoCap: 5,
+        )
     }
 
     private func term(_ x: CGFloat) -> CanvasItem {
-        CanvasItem(id: PaneID(), spec: PaneSpec(kind: .terminal, title: "t"),
-                   frame: CGRect(x: x, y: 0, width: 300, height: 200), z: 0)
+        CanvasItem(
+            id: PaneID(),
+            spec: PaneSpec(kind: .terminal, title: "t"),
+            frame: CGRect(x: x, y: 0, width: 300, height: 200),
+            z: 0,
+        )
     }
 
     private func sent(_ store: WorkspaceStore, _ id: PaneID) -> [String] {
@@ -26,7 +32,7 @@ final class BroadcastInputTests: XCTestCase {
     func testBroadcastTextFansToEverySelectedTerminalExactlyOnce() {
         let a = term(0), b = term(400), c = term(800)
         let st = store([a, b, c], focus: a.id)
-        st.setSelection([a.id, b.id])   // ≥2 selected → the selection is the target set
+        st.setSelection([a.id, b.id]) // ≥2 selected → the selection is the target set
         let n = st.broadcastText("uptime\r")
         XCTAssertEqual(n, 2)
         XCTAssertEqual(sent(st, a.id), ["uptime\r"])
@@ -36,10 +42,16 @@ final class BroadcastInputTests: XCTestCase {
 
     func testBroadcastSkipsVideoPanesWithNoTextFunnel() {
         let a = term(0)
-        let v = CanvasItem(id: PaneID(),
-                           spec: PaneSpec(kind: .remoteGUI, title: "v",
-                                          video: VideoEndpoint(windowID: 1, title: "v", appName: "")),
-                           frame: CGRect(x: 400, y: 0, width: 300, height: 200), z: 1)
+        let v = CanvasItem(
+            id: PaneID(),
+            spec: PaneSpec(
+                kind: .remoteGUI,
+                title: "v",
+                video: VideoEndpoint(windowID: 1, title: "v", appName: ""),
+            ),
+            frame: CGRect(x: 400, y: 0, width: 300, height: 200),
+            z: 1,
+        )
         let st = store([a, v], focus: a.id)
         st.setSelection([a.id, v.id])
         let n = st.broadcastText("ls\r")
@@ -55,9 +67,12 @@ final class BroadcastInputTests: XCTestCase {
         st.assignPane(a.id, toGroup: g)
         st.assignPane(b.id, toGroup: g)
         st.assignPane(c.id, toGroup: g)
-        st.focus(a.id)   // a grouped member is focused, no multi-selection
-        XCTAssertEqual(Set(st.broadcastTargets()), Set([a.id, b.id, c.id]),
-                       "the focused pane's whole group is the target set")
+        st.focus(a.id) // a grouped member is focused, no multi-selection
+        XCTAssertEqual(
+            Set(st.broadcastTargets()),
+            Set([a.id, b.id, c.id]),
+            "the focused pane's whole group is the target set",
+        )
         XCTAssertFalse(st.broadcastTargets().contains(d.id), "a pane outside the group is excluded")
     }
 
@@ -73,7 +88,7 @@ final class BroadcastInputTests: XCTestCase {
         XCTAssertFalse(st.broadcastActive, "disarmed by default (never persisted)")
         st.toggleBroadcast()
         XCTAssertTrue(st.broadcastActive)
-        apply(.toggleBroadcast, to: st)   // the menu / keyboard / palette chokepoint
+        apply(.toggleBroadcast, to: st) // the menu / keyboard / palette chokepoint
         XCTAssertFalse(st.broadcastActive, "apply(.toggleBroadcast) routes to toggleBroadcast()")
     }
 
@@ -114,10 +129,13 @@ final class BroadcastInputTests: XCTestCase {
         // ≥2 selected → the SELECTION is the target set; a focused-but-unselected pane typing must not fan.
         let a = term(0), b = term(400), c = term(800)
         let st = store([a, b, c], focus: c.id)
-        st.setSelection([a.id, b.id])   // c is the source but not a target
+        st.setSelection([a.id, b.id]) // c is the source but not a target
         st.setBroadcast(true)
-        XCTAssertEqual(st.fanBroadcastInput(from: c.id, Data("x".utf8)), 0,
-                       "typing in a pane outside the broadcast group does not fan")
+        XCTAssertEqual(
+            st.fanBroadcastInput(from: c.id, Data("x".utf8)),
+            0,
+            "typing in a pane outside the broadcast group does not fan",
+        )
         XCTAssertEqual(bytes(st, a.id), [])
         XCTAssertEqual(bytes(st, b.id), [])
     }
@@ -129,7 +147,8 @@ final class BroadcastInputTests: XCTestCase {
         XCTAssertEqual(st.fanBroadcastInput(from: a.id, Data("x".utf8)), 0, "one target has no siblings")
         let a2 = term(0), b2 = term(400)
         let st2 = store([a2, b2], focus: a2.id)
-        st2.setSelection([a2.id, b2.id]); st2.setBroadcast(true)
+        st2.setSelection([a2.id, b2.id])
+        st2.setBroadcast(true)
         XCTAssertEqual(st2.fanBroadcastInput(from: a2.id, Data()), 0, "empty data is a no-op")
         XCTAssertEqual(bytes(st2, b2.id), [])
     }

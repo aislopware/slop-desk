@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskProtocol
+import Foundation
 
 /// Drives reconnection for a ``AislopdeskClient`` after the transport drops.
 ///
@@ -38,7 +38,7 @@ public final class ReconnectManager: Sendable {
         public init(
             initial: Duration = .milliseconds(250),
             maximum: Duration = .seconds(2),
-            multiplier: Double = 2.0
+            multiplier: Double = 2.0,
         ) {
             self.initial = initial
             self.maximum = maximum
@@ -90,12 +90,13 @@ public final class ReconnectManager: Sendable {
     /// instead of a frozen "reconnecting" dot (the previously-invisible WF3 give-up path).
     private let onGaveUp: (@Sendable () -> Void)?
 
+    @preconcurrency
     public init(
         client: AislopdeskClient,
         backoff: Backoff = Backoff(),
         onLog: (@Sendable (String) -> Void)? = nil,
         onProgress: (@Sendable (_ attempt: Int, _ nextRetryAt: Date?) -> Void)? = nil,
-        onGaveUp: (@Sendable () -> Void)? = nil
+        onGaveUp: (@Sendable () -> Void)? = nil,
     ) {
         self.client = client
         self.backoff = backoff
@@ -109,11 +110,11 @@ public final class ReconnectManager: Sendable {
     /// retain it via ``stop()``-able handle if preferred.
     @discardableResult
     public func start(host: String, port: UInt16) -> Task<Void, Never> {
-        let client = self.client
-        let backoff = self.backoff
-        let onLog = self.onLog
-        let onProgress = self.onProgress
-        let onGaveUp = self.onGaveUp
+        let client = client
+        let backoff = backoff
+        let onLog = onLog
+        let onProgress = onProgress
+        let onGaveUp = onGaveUp
         // Subscribe to the event stream SYNCHRONOUSLY here — `EventBroadcaster.subscribe()` registers the
         // child continuation eagerly at call time — so the subscription is live the instant `start()`
         // returns, BEFORE the caller drives `connect()`. Evaluating `client.events` lazily inside the
@@ -139,7 +140,7 @@ public final class ReconnectManager: Sendable {
                 onLog?("reconnect: transport dropped (\(reason)) — retrying")
                 await Self.reconnectLoop(
                     client: client, host: host, port: port, backoff: backoff,
-                    onLog: onLog, onProgress: onProgress, onGaveUp: onGaveUp
+                    onLog: onLog, onProgress: onProgress, onGaveUp: onGaveUp,
                 )
             }
         }
@@ -168,7 +169,7 @@ public final class ReconnectManager: Sendable {
         backoff: Backoff,
         onLog: (@Sendable (String) -> Void)?,
         onProgress: (@Sendable (_ attempt: Int, _ nextRetryAt: Date?) -> Void)? = nil,
-        onGaveUp: (@Sendable () -> Void)? = nil
+        onGaveUp: (@Sendable () -> Void)? = nil,
     ) async {
         var delay = backoff.initial
         var attempt = 0

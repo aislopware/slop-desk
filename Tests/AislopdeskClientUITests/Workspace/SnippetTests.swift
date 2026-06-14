@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins the Command Snippets feature: the two pure parsers (`SnippetExpander` placeholder resolution,
@@ -8,7 +8,6 @@ import CoreGraphics
 /// via FakePaneSession.sentBytes; only the placeholder-entry sheet is GUI.
 @MainActor
 final class SnippetTests: XCTestCase {
-
     // MARK: - SnippetExpander
 
     func testExpandResolvesPlaceholders() {
@@ -63,20 +62,31 @@ final class SnippetTests: XCTestCase {
     func testCombinedLiteralAndTokens() {
         XCTAssertEqual(SendKeysParser.encode("git add -A<Enter>"), Array("git add -A".utf8) + [0x0D])
         // A chained two-command macro.
-        XCTAssertEqual(SendKeysParser.encode("a<Enter>b<Enter>"),
-                       Array("a".utf8) + [0x0D] + Array("b".utf8) + [0x0D])
+        XCTAssertEqual(
+            SendKeysParser.encode("a<Enter>b<Enter>"),
+            Array("a".utf8) + [0x0D] + Array("b".utf8) + [0x0D],
+        )
     }
 
     // MARK: - Store CRUD + run
 
     private func store(_ items: [CanvasItem], focus: PaneID) -> WorkspaceStore {
-        WorkspaceStore(restoring: Workspace(canvas: Canvas(items: items), focusedPane: focus),
-                       makeSession: { FakePaneSession($0) }, liveVideoCap: 5)
+        WorkspaceStore(
+            restoring: Workspace(canvas: Canvas(items: items), focusedPane: focus),
+            makeSession: { FakePaneSession($0) },
+            liveVideoCap: 5,
+        )
     }
+
     private func term(_ x: CGFloat) -> CanvasItem {
-        CanvasItem(id: PaneID(), spec: PaneSpec(kind: .terminal, title: "t"),
-                   frame: CGRect(x: x, y: 0, width: 300, height: 200), z: 0)
+        CanvasItem(
+            id: PaneID(),
+            spec: PaneSpec(kind: .terminal, title: "t"),
+            frame: CGRect(x: x, y: 0, width: 300, height: 200),
+            z: 0,
+        )
     }
+
     private func bytes(_ store: WorkspaceStore, _ id: PaneID) -> [[UInt8]] {
         (store.handle(for: id) as? FakePaneSession)?.sentBytes ?? []
     }
@@ -85,7 +95,11 @@ final class SnippetTests: XCTestCase {
         let a = term(0)
         let st = store([a], focus: a.id)
         XCTAssertEqual(st.addSnippet(name: "  deploy  ", body: "x").name, "deploy", "name is trimmed")
-        XCTAssertEqual(st.addSnippet(name: "   ", body: "x").name, "Snippet", "a blank name falls back (no blank palette row)")
+        XCTAssertEqual(
+            st.addSnippet(name: "   ", body: "x").name,
+            "Snippet",
+            "a blank name falls back (no blank palette row)",
+        )
         XCTAssertEqual(st.addSnippet(name: "", body: "x").name, "Snippet")
     }
 
@@ -95,9 +109,19 @@ final class SnippetTests: XCTestCase {
         let clean = Workspace(canvas: Canvas(items: [term(0)]), focusedPane: nil, snippets: [s])
         XCTAssertEqual(clean.normalizingCollections().snippets.first?.id, s.id, "a unique snippet id is preserved")
         // A genuine duplicate id is still re-minted (palette entry-id safety).
-        let dup = Workspace(canvas: Canvas(items: [term(0)]), focusedPane: nil,
-                            snippets: [Snippet(id: s.id, name: "a", body: "b"), Snippet(id: s.id, name: "c", body: "d")])
-        XCTAssertEqual(Set(dup.normalizingCollections().snippets.map(\.id)).count, 2, "a duplicate snippet id is re-minted")
+        let dup = Workspace(
+            canvas: Canvas(items: [term(0)]),
+            focusedPane: nil,
+            snippets: [
+                Snippet(id: s.id, name: "a", body: "b"),
+                Snippet(id: s.id, name: "c", body: "d"),
+            ],
+        )
+        XCTAssertEqual(
+            Set(dup.normalizingCollections().snippets.map(\.id)).count,
+            2,
+            "a duplicate snippet id is re-minted",
+        )
     }
 
     func testCRUDPersistsOnWorkspace() {
@@ -169,8 +193,11 @@ final class SnippetTests: XCTestCase {
         let a = term(0)
         let st = store([a], focus: a.id)
         let s = st.addSnippet(name: "ssh", body: "ssh {{user}}@{{host}}<Enter>")
-        XCTAssertEqual(st.beginRunSnippet(s.id), .needsValues(["user", "host"]),
-                       "placeholders are reported in first-appearance order")
+        XCTAssertEqual(
+            st.beginRunSnippet(s.id),
+            .needsValues(["user", "host"]),
+            "placeholders are reported in first-appearance order",
+        )
         XCTAssertEqual(st.pendingSnippetRun, s.id, "the value sheet is armed")
         XCTAssertEqual(bytes(st, a.id), [], "NOTHING is sent until values are collected (no literal {{}})")
     }
@@ -191,18 +218,21 @@ final class SnippetTests: XCTestCase {
         XCTAssertEqual(st.runLastSnippet(), .unknown, "nothing launched yet → graceful no-op")
         XCTAssertEqual(bytes(st, a.id), [])
 
-        st.beginRunSnippet(s.id)                       // launch records lastRanSnippetID
+        st.beginRunSnippet(s.id) // launch records lastRanSnippetID
         XCTAssertEqual(st.lastRanSnippetID, s.id)
         XCTAssertEqual(st.runLastSnippet(), .ran(1), "⌥⌘R re-fires the last snippet")
-        XCTAssertEqual(bytes(st, a.id), [Array("uptime".utf8) + [0x0D], Array("uptime".utf8) + [0x0D]],
-                       "the macro was sent twice (the launch + the re-fire)")
+        XCTAssertEqual(
+            bytes(st, a.id),
+            [Array("uptime".utf8) + [0x0D], Array("uptime".utf8) + [0x0D]],
+            "the macro was sent twice (the launch + the re-fire)",
+        )
     }
 
     func testRunLastSnippetRePromptsForAParameterizedSnippet() {
         let a = term(0)
         let st = store([a], focus: a.id)
         let s = st.addSnippet(name: "ssh", body: "ssh {{host}}<Enter>")
-        st.beginRunSnippet(s.id)                       // arms the value sheet, records lastRan
+        st.beginRunSnippet(s.id) // arms the value sheet, records lastRan
         st.clearSnippetRunRequest()
         XCTAssertEqual(st.runLastSnippet(), .needsValues(["host"]), "re-firing a parameterized macro re-prompts")
         XCTAssertEqual(bytes(st, a.id), [], "no literal {{host}} is sent")
@@ -259,23 +289,25 @@ final class SnippetTests: XCTestCase {
     }
 
     func testManageSnippetsIsInThePaletteCatalog() {
-        XCTAssertTrue(CommandPaletteView.commandCatalog.contains { $0.command == .manageSnippets },
-                      "Manage Snippets… is runnable from ⌘K")
+        XCTAssertTrue(
+            CommandPaletteView.commandCatalog.contains { $0.command == .manageSnippets },
+            "Manage Snippets… is runnable from ⌘K",
+        )
     }
 
-    func testUpdateSnippetStoresNameVerbatimSoLiveEditingDoesNotChurn() {
+    func testUpdateSnippetStoresNameVerbatimSoLiveEditingDoesNotChurn() throws {
         // The live editor binds name straight through updateSnippet; a per-keystroke trim/substitute
         // would eat a trailing space and snap a cleared field to "Snippet". updateSnippet must NOT
         // normalize — the empty→"Snippet" fallback is display-time only.
         let a = term(0)
         let st = store([a], focus: a.id)
         let s = st.addSnippet(name: "x", body: "b")
-        st.updateSnippet(s.id, name: "my server ", body: "b")     // trailing space kept
+        st.updateSnippet(s.id, name: "my server ", body: "b") // trailing space kept
         XCTAssertEqual(st.snippets.first?.name, "my server ")
-        st.updateSnippet(s.id, name: "", body: "b")               // cleared, not snapped to "Snippet"
+        st.updateSnippet(s.id, name: "", body: "b") // cleared, not snapped to "Snippet"
         XCTAssertEqual(st.snippets.first?.name, "")
         // The display fallback still produces a non-blank label.
-        XCTAssertEqual(WorkspaceStore.snippetName(st.snippets.first!.name), "Snippet")
+        XCTAssertEqual(try WorkspaceStore.snippetName(XCTUnwrap(st.snippets.first?.name)), "Snippet")
     }
 
     func testRequestSnippetManagerClearsAStrandedPendingRun() {

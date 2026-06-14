@@ -7,16 +7,17 @@ import XCTest
 /// current literals (so DEFAULT OFF is unchanged), (b) `.full` changes ONLY the luma,
 /// and (c) both ranges map black→black / white→white / mid→mid for their own swing.
 final class YCbCrConversionTests: XCTestCase {
-
     /// Mirror of the Metal fragment shader's YCbCr→RGB math, in Float (byte values 0..255).
     private func rgb(yByte: Float, cbByte: Float, crByte: Float, _ c: YCbCrCoefficients) -> SIMD3<Float> {
         let y = yByte / 255.0, cb = cbByte / 255.0, cr = crByte / 255.0
         let yy = (y - c.lumaBias) * c.lumaScale
         let cbc = cb - c.chromaBias
         let crc = cr - c.chromaBias
-        return SIMD3(yy + c.crToR * crc,
-                     yy - c.cbToG * cbc - c.crToG * crc,
-                     yy + c.cbToB * cbc)
+        return SIMD3(
+            yy + c.crToR * crc,
+            yy - c.cbToG * cbc - c.crToG * crc,
+            yy + c.cbToB * cbc,
+        )
     }
 
     // MARK: (a) .video == today's shader literals, byte-for-byte
@@ -61,8 +62,8 @@ final class YCbCrConversionTests: XCTestCase {
     func testVideoRangeGreyscaleRoundsCorrectly() {
         let v = YCbCrConversion.coefficients(.video)
         // Studio-swing achromatic samples (Cb=Cr=128 → no colour).
-        assertRGB(rgb(yByte: 16, cbByte: 128, crByte: 128, v), SIMD3(0, 0, 0))       // black floor 16
-        assertRGB(rgb(yByte: 235, cbByte: 128, crByte: 128, v), SIMD3(1, 1, 1))      // white ceiling 235
+        assertRGB(rgb(yByte: 16, cbByte: 128, crByte: 128, v), SIMD3(0, 0, 0)) // black floor 16
+        assertRGB(rgb(yByte: 235, cbByte: 128, crByte: 128, v), SIMD3(1, 1, 1)) // white ceiling 235
         // Mid: Y=126 → (126-16)/219 = 110/219 ≈ 0.50228.
         assertRGB(rgb(yByte: 126, cbByte: 128, crByte: 128, v), SIMD3(110.0 / 219.0, 110.0 / 219.0, 110.0 / 219.0))
     }
@@ -70,8 +71,8 @@ final class YCbCrConversionTests: XCTestCase {
     func testFullRangeGreyscaleRoundsCorrectly() {
         let f = YCbCrConversion.coefficients(.full)
         // Full-swing achromatic samples (Cb=Cr=128 → no colour).
-        assertRGB(rgb(yByte: 0, cbByte: 128, crByte: 128, f), SIMD3(0, 0, 0))        // black floor 0
-        assertRGB(rgb(yByte: 255, cbByte: 128, crByte: 128, f), SIMD3(1, 1, 1))      // white ceiling 255
+        assertRGB(rgb(yByte: 0, cbByte: 128, crByte: 128, f), SIMD3(0, 0, 0)) // black floor 0
+        assertRGB(rgb(yByte: 255, cbByte: 128, crByte: 128, f), SIMD3(1, 1, 1)) // white ceiling 255
         assertRGB(rgb(yByte: 128, cbByte: 128, crByte: 128, f), SIMD3(128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0))
     }
 

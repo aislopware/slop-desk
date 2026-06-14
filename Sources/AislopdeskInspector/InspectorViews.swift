@@ -35,21 +35,29 @@ public struct InspectorPane: View {
                         if model.evictedToolCardCount > 0 {
                             // The drop-oldest cap truncated the START of a long session's timeline —
                             // disclose it instead of silently losing the early steps (UI/UX pass-3 #9).
-                            Label("\(model.evictedToolCardCount) earlier steps hidden",
-                                  systemImage: "clock.arrow.circlepath")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                                .accessibilityLabel("\(model.evictedToolCardCount) earlier tool calls hidden to bound memory")
+                            Label(
+                                "\(model.evictedToolCardCount) earlier steps hidden",
+                                systemImage: "clock.arrow.circlepath",
+                            )
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .accessibilityLabel(
+                                "\(model.evictedToolCardCount) earlier tool calls hidden to bound memory",
+                            )
                         }
                         if model.droppedReplayEventCount > 0 {
                             // The HOST replay log dropped the oldest events (retention overflow) before
                             // the prefix we subscribed from — the timeline starts mid-transcript, so
                             // disclose it rather than presenting a truncated history as complete (R17 INSP-WIRE-1).
-                            Label("\(model.droppedReplayEventCount) earlier steps dropped before this point",
-                                  systemImage: "scissors")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                                .accessibilityLabel("\(model.droppedReplayEventCount) earlier inspector events dropped by the host retention limit")
+                            Label(
+                                "\(model.droppedReplayEventCount) earlier steps dropped before this point",
+                                systemImage: "scissors",
+                            )
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .accessibilityLabel(
+                                "\(model.droppedReplayEventCount) earlier inspector events dropped by the host retention limit",
+                            )
                         }
                         ToolCardListView(title: "Tool calls", cards: model.toolCards)
                         if !model.subagentTree.isEmpty {
@@ -98,7 +106,8 @@ struct FeedStateBannerView: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: state == .failed ? "exclamationmark.triangle.fill" : "pause.circle.fill")
-            Text(state == .failed ? "Feed disconnected — showing last received state" : "Feed ended — showing final state")
+            Text(state == .failed ? "Feed disconnected — showing last received state" :
+                "Feed ended — showing final state")
                 .font(.caption)
             Spacer()
         }
@@ -211,17 +220,17 @@ struct ToolCardView: View {
 
     private var statusIcon: String {
         switch card.status {
-        case .pending: return "clock"
-        case .completed: return "checkmark.circle"
-        case .errored: return "exclamationmark.triangle"
+        case .pending: "clock"
+        case .completed: "checkmark.circle"
+        case .errored: "exclamationmark.triangle"
         }
     }
 
     private var statusColor: Color {
         switch card.status {
-        case .pending: return .secondary
-        case .completed: return .green
-        case .errored: return .red
+        case .pending: .secondary
+        case .completed: .green
+        case .errored: .red
         }
     }
 }
@@ -252,17 +261,17 @@ public struct TodoListView: View {
 
     private func glyph(_ status: TodoItem.Status) -> String {
         switch status {
-        case .pending: return "circle"
-        case .inProgress: return "arrow.triangle.2.circlepath"
-        case .completed: return "checkmark.circle.fill"
+        case .pending: "circle"
+        case .inProgress: "arrow.triangle.2.circlepath"
+        case .completed: "checkmark.circle.fill"
         }
     }
 
     private func color(_ status: TodoItem.Status) -> Color {
         switch status {
-        case .pending: return .secondary
-        case .inProgress: return .blue
-        case .completed: return .green
+        case .pending: .secondary
+        case .inProgress: .blue
+        case .completed: .green
         }
     }
 }
@@ -298,7 +307,7 @@ struct SubagentNodeView: View {
                     ToolCardView(card: card)
                 }
                 ForEach(node.children) { child in
-                    SubagentNodeView(node: child)
+                    Self(node: child)
                         .padding(.leading, 12)
                 }
             }

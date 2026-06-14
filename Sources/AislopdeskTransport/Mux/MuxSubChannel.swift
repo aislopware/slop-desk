@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskProtocol
+import Foundation
 
 /// One logical Aislopdesk channel multiplexed over a shared physical mux connection.
 ///
@@ -89,16 +89,20 @@ public actor MuxSubChannel: MessageChannel {
     /// Arms the per-channel send window with ``MuxFlowControl/initialWindowBytes`` — the DATA
     /// sub-channel path. The CONTROL sub-channel (infinite window, never gated) uses the
     /// designated init below with `sendWindowBytes: nil`.
+    @preconcurrency
     public init(
         channelID: UInt32,
         channel: Channel,
         consumedSink: (@Sendable (_ bytes: Int) async -> Void)? = nil,
-        muxSend: @escaping @Sendable (_ channelID: UInt32, _ innerFrame: Data) async throws -> Void
+        muxSend: @escaping @Sendable (_ channelID: UInt32, _ innerFrame: Data) async throws -> Void,
     ) {
-        self.init(channelID: channelID, channel: channel,
-                  sendWindowBytes: MuxFlowControl.initialWindowBytes,
-                  consumedSink: consumedSink,
-                  muxSend: muxSend)
+        self.init(
+            channelID: channelID,
+            channel: channel,
+            sendWindowBytes: MuxFlowControl.initialWindowBytes,
+            consumedSink: consumedSink,
+            muxSend: muxSend,
+        )
     }
 
     /// Designated init taking an explicit send-window size (`nil` = infinite window, never gated).
@@ -109,16 +113,19 @@ public actor MuxSubChannel: MessageChannel {
         channel: Channel,
         sendWindowBytes: Int?,
         consumedSink: (@Sendable (_ bytes: Int) async -> Void)? = nil,
-        muxSend: @escaping @Sendable (_ channelID: UInt32, _ innerFrame: Data) async throws -> Void
+        muxSend: @escaping @Sendable (_ channelID: UInt32, _ innerFrame: Data) async throws -> Void,
     ) {
         self.channelID = channelID
         self.channel = channel
         self.muxSend = muxSend
         self.consumedSink = consumedSink
-        self.sendWindow = sendWindowBytes.map { FlowCreditPolicy(initialWindow: $0) }
-        var continuation: AsyncThrowingStream<WireMessage, Error>.Continuation!
-        self.inboundStream = AsyncThrowingStream { continuation = $0 }
-        self.inboundContinuation = continuation
+        sendWindow = sendWindowBytes.map { FlowCreditPolicy(initialWindow: $0) }
+        var continuation: AsyncThrowingStream<WireMessage, Error>.Continuation?
+        inboundStream = AsyncThrowingStream { continuation = $0 }
+        guard let continuation else {
+            preconditionFailure("AsyncThrowingStream runs its build closure synchronously, so the continuation is set")
+        }
+        inboundContinuation = continuation
     }
 
     /// Reports that `bytes` wire bytes of inbound messages were CONSUMED by the channel's
@@ -180,7 +187,7 @@ public actor MuxSubChannel: MessageChannel {
         while offset < total {
             let granted = try await awaitChunkCredit(maxWanted: total - offset)
             // `granted` ∈ [1, total-offset]: ship exactly that many bytes as their own envelope.
-            if offset == 0 && granted == total {
+            if offset == 0, granted == total {
                 // The whole frame fits the granted credit (the >99% common case): ship `framed`
                 // directly. `framed.subdata(in: 0..<total)` would be a byte-identical copy of `framed`
                 // that muxSend then copies AGAIN into the envelope — pure waste. `framed` is a COW
@@ -208,12 +215,14 @@ public actor MuxSubChannel: MessageChannel {
             // sub-channel) would leak the parked task + its retained actors forever. The cancellation
             // handler on the park below wakes us; this re-check then throws.
             try Task.checkCancellation()
-            let available = sendWindow!.remaining
+            guard let available = sendWindow?.remaining else {
+                preconditionFailure("awaitChunkCredit requires flow ON (sendWindow != nil)")
+            }
             if available > 0 {
                 let take = min(available, maxWanted)
                 // PARTIAL consume: `take <= remaining` ⇒ always .allowed; never the all-or-nothing
                 // park that stranded an oversized frame (FIX #1).
-                guard case .allowed = sendWindow!.consume(take) else {
+                guard case .allowed = sendWindow?.consume(take) else {
                     // Unreachable (take <= remaining); re-loop defensively rather than trap.
                     continue
                 }
@@ -227,7 +236,7 @@ public actor MuxSubChannel: MessageChannel {
             await withTaskCancellationHandler {
                 await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                     if Task.isCancelled {
-                        continuation.resume()   // already cancelled — do not park; re-check + throw above
+                        continuation.resume() // already cancelled — do not park; re-check + throw above
                     } else {
                         blockedSenders.append(continuation)
                     }
@@ -243,7 +252,7 @@ public actor MuxSubChannel: MessageChannel {
     /// sender so each can retry its ``FlowCreditPolicy/consume(_:)``. A no-op when flow is OFF.
     func grantCredit(_ bytesToAdd: Int) {
         guard sendWindow != nil else { return }
-        sendWindow!.adjust(bytesToAdd: bytesToAdd)
+        sendWindow?.adjust(bytesToAdd: bytesToAdd)
         wakeBlockedSenders()
     }
 

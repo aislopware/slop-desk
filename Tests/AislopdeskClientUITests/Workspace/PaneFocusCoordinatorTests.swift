@@ -7,11 +7,12 @@ import XCTest
 /// macOS, where there is no UIKit first-responder model), so this is unit-testable without a device.
 @MainActor
 final class PaneFocusCoordinatorTests: XCTestCase {
-
     private final class FakeHost: PaneFocusCoordinator.FocusableInputHost {
         private(set) var became = false
         func resignFocus() -> Bool { true }
-        func becomeFocus() -> Bool { became = true; return true }
+        func becomeFocus() -> Bool { became = true
+            return true
+        }
     }
 
     /// Identity-unregister (the fix): host A dismantles by IDENTITY AFTER host B re-registered under the
@@ -21,8 +22,8 @@ final class PaneFocusCoordinatorTests: XCTestCase {
         let id = PaneID()
         let a = FakeHost(), b = FakeHost()
         coord.register(a, for: id)
-        coord.register(b, for: id)        // make-before-dismantle: B replaces A under the same paneID
-        coord.unregister(host: a)         // A's dismantle — by IDENTITY, must NOT drop B
+        coord.register(b, for: id) // make-before-dismantle: B replaces A under the same paneID
+        coord.unregister(host: a) // A's dismantle — by IDENTITY, must NOT drop B
         coord.focus(id)
         XCTAssertTrue(b.became, "the live re-registered host B is still focusable")
         XCTAssertFalse(a.became, "the dismantled host A never focuses")
@@ -36,7 +37,7 @@ final class PaneFocusCoordinatorTests: XCTestCase {
         let a = FakeHost(), b = FakeHost()
         coord.register(a, for: id)
         coord.register(b, for: id)
-        coord.unregister(id)              // by-paneID drops the live B too
+        coord.unregister(id) // by-paneID drops the live B too
         coord.focus(id)
         XCTAssertFalse(b.became, "by-paneID unregister wrongly dropped the live host (the R13 #8 bug)")
     }

@@ -42,7 +42,6 @@ import Foundation
 /// `@unchecked Sendable`: all mutable state is guarded by ``lock``; the queue itself is
 /// thread-safe. Waiter continuations are resumed OUTSIDE the lock.
 public final class SerialFeedGate: @unchecked Sendable {
-
     private let queue: DispatchQueue
     private let lock = NSLock()
 
@@ -72,10 +71,10 @@ public final class SerialFeedGate: @unchecked Sendable {
     public init(
         label: String,
         highWaterBytes: Int = 512 * 1024,
-        lowWaterBytes: Int = 256 * 1024
+        lowWaterBytes: Int = 256 * 1024,
     ) {
         precondition(highWaterBytes > 0)
-        self.queue = DispatchQueue(label: label, qos: .userInitiated)
+        queue = DispatchQueue(label: label, qos: .userInitiated)
         self.highWaterBytes = highWaterBytes
         self.lowWaterBytes = max(0, min(lowWaterBytes, highWaterBytes - 1))
     }
@@ -98,6 +97,7 @@ public final class SerialFeedGate: @unchecked Sendable {
     /// accounting; `work` runs on the serial queue, strictly after every previously
     /// enqueued block. After ``closeBarrier()`` this is a no-op (nothing runs, nothing
     /// is counted).
+    @preconcurrency
     public func enqueue(byteCount: Int, _ work: @escaping @Sendable () -> Void) {
         lock.lock()
         if closed {
@@ -128,6 +128,7 @@ public final class SerialFeedGate: @unchecked Sendable {
     /// thread (see the class doc for why blocking main here can deadlock). Calling it
     /// again schedules another `onDrained` after the drain — the caller guards against
     /// double-free (GhosttySurface nils its pointer before closing).
+    @preconcurrency
     public func close(onDrained: @escaping @Sendable () -> Void) {
         lock.lock()
         closed = true

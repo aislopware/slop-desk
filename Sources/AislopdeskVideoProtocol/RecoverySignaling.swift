@@ -53,7 +53,19 @@ public struct NetworkStatsReport: Equatable, Sendable {
     /// Component 4: gauge — the client pacer's live presentation depth (0 = no pacer attached).
     public var pacerDepth: UInt32
 
-    public init(framesReceived: UInt32, fecRecovered: UInt32, unrecovered: UInt32, latestHostSendTs: UInt32, clientHoldMs: UInt32, owdJitterMicros: UInt32, owdTrendMilli: UInt32 = 0, owdTrendFlags: UInt32 = 0, pacerLateFrames: UInt32 = 0, pacerPresentGaps: UInt32 = 0, pacerDepth: UInt32 = 0) {
+    public init(
+        framesReceived: UInt32,
+        fecRecovered: UInt32,
+        unrecovered: UInt32,
+        latestHostSendTs: UInt32,
+        clientHoldMs: UInt32,
+        owdJitterMicros: UInt32,
+        owdTrendMilli: UInt32 = 0,
+        owdTrendFlags: UInt32 = 0,
+        pacerLateFrames: UInt32 = 0,
+        pacerPresentGaps: UInt32 = 0,
+        pacerDepth: UInt32 = 0,
+    ) {
         self.framesReceived = framesReceived
         self.fecRecovered = fecRecovered
         self.unrecovered = unrecovered
@@ -129,11 +141,11 @@ public enum RecoveryMessage: Equatable, Sendable {
     /// On-wire message-type byte.
     public var messageType: UInt8 {
         switch self {
-        case .ack: return 1
-        case .requestLTRRefresh: return 2
-        case .requestIDR: return 3
-        case .requestCursorShape: return 4
-        case .networkStats: return 5
+        case .ack: 1
+        case .requestLTRRefresh: 2
+        case .requestIDR: 3
+        case .requestCursorShape: 4
+        case .networkStats: 5
         }
     }
 
@@ -142,17 +154,17 @@ public enum RecoveryMessage: Equatable, Sendable {
         var out = Data()
         out.append(messageType)
         switch self {
-        case .ack(let streamSeq):
+        case let .ack(streamSeq):
             out.appendBE(streamSeq)
-        case .requestLTRRefresh(let fromFrameID, let toFrameID, let lastDecodedFrameID):
+        case let .requestLTRRefresh(fromFrameID, toFrameID, lastDecodedFrameID):
             out.appendBE(fromFrameID)
             out.appendBE(toFrameID)
             out.appendBE(lastDecodedFrameID)
-        case .requestIDR(let lastDecodedFrameID):
+        case let .requestIDR(lastDecodedFrameID):
             out.appendBE(lastDecodedFrameID)
-        case .requestCursorShape(let shapeID):
+        case let .requestCursorShape(shapeID):
             out.appendBE(shapeID)
-        case .networkStats(let r):
+        case let .networkStats(r):
             out.appendBE(r.framesReceived)
             out.appendBE(r.fecRecovered)
             out.appendBE(r.unrecovered)
@@ -174,13 +186,13 @@ public enum RecoveryMessage: Equatable, Sendable {
     /// datagram bytes — a decoder that tolerated suffixes would let suffix-varied copies of one
     /// logical request each decode identically yet bypass the byte-keyed dedup (re-triggering a
     /// second ForceLTRRefresh/IDR). No backcompat needed; both ends redeploy together.
-    public static func decode(_ data: Data) throws -> RecoveryMessage {
+    public static func decode(_ data: Data) throws -> Self {
         var reader = VideoByteReader(data)
         let type = try reader.readUInt8()
-        let message: RecoveryMessage
+        let message: Self
         switch type {
         case 1:
-            message = .ack(streamSeq: try reader.readUInt32())
+            message = try .ack(streamSeq: reader.readUInt32())
         case 2:
             // Three fixed-width UInt32s; bounds-checked reads ⇒ a body < 12 bytes throws .truncated
             // → the router drops the single datagram (never crashes on hostile input).
@@ -191,9 +203,9 @@ public enum RecoveryMessage: Equatable, Sendable {
         case 3:
             // One bounds-checked UInt32 (lastDecodedFrameID); a 0-byte legacy body now throws
             // .truncated and is dropped — no backcompat (both ends redeploy together).
-            message = .requestIDR(lastDecodedFrameID: try reader.readUInt32())
+            message = try .requestIDR(lastDecodedFrameID: reader.readUInt32())
         case 4:
-            message = .requestCursorShape(shapeID: try reader.readUInt16())
+            message = try .requestCursorShape(shapeID: reader.readUInt16())
         case 5:
             // Eleven fixed-width UInt32s; each read is bounds-checked, so a body < 44 bytes throws
             // .truncated → the router drops the datagram (no OOB / overflow / force-unwrap surface).
@@ -212,7 +224,8 @@ public enum RecoveryMessage: Equatable, Sendable {
                 framesReceived: framesReceived, fecRecovered: fecRecovered, unrecovered: unrecovered,
                 latestHostSendTs: latestHostSendTs, clientHoldMs: clientHoldMs, owdJitterMicros: owdJitterMicros,
                 owdTrendMilli: owdTrendMilli, owdTrendFlags: owdTrendFlags,
-                pacerLateFrames: pacerLateFrames, pacerPresentGaps: pacerPresentGaps, pacerDepth: pacerDepth))
+                pacerLateFrames: pacerLateFrames, pacerPresentGaps: pacerPresentGaps, pacerDepth: pacerDepth,
+            ))
         default:
             throw VideoProtocolError.malformed("unknown recovery message type \(type)")
         }
@@ -262,10 +275,12 @@ public struct RecoveryPolicy: Sendable {
     public static let defaultLossyEscalationFloor: TimeInterval =
         escalationFloorSeconds(env: ProcessInfo.processInfo.environment)
 
-    public init(idrTimeoutRTTMultiple: Double = 2.0,
-                lossyIdrTimeoutRTTMultiple: Double = 1.0,
-                lossyEscalationFloor: TimeInterval = RecoveryPolicy.defaultLossyEscalationFloor,
-                lossyEscalationFloorRTTMultiple: Double = 1.5) {
+    public init(
+        idrTimeoutRTTMultiple: Double = 2.0,
+        lossyIdrTimeoutRTTMultiple: Double = 1.0,
+        lossyEscalationFloor: TimeInterval = Self.defaultLossyEscalationFloor,
+        lossyEscalationFloorRTTMultiple: Double = 1.5,
+    ) {
         self.idrTimeoutRTTMultiple = idrTimeoutRTTMultiple
         self.lossyIdrTimeoutRTTMultiple = lossyIdrTimeoutRTTMultiple
         self.lossyEscalationFloor = lossyEscalationFloor
@@ -305,7 +320,7 @@ public struct RecoveryPolicy: Sendable {
             lossyIdrTimeoutRTTMultiple: lossyIdrTimeoutRTTMultiple,
             lossyEscalationFloor: lossyEscalationFloor,
             lossyEscalationFloorRTTMultiple: lossyEscalationFloorRTTMultiple,
-            elapsedSinceRequest: elapsedSinceRequest, rtt: rtt, observingLoss: observingLoss
+            elapsedSinceRequest: elapsedSinceRequest, rtt: rtt, observingLoss: observingLoss,
         )
     }
 }
@@ -355,7 +370,11 @@ public struct RecoveryRequestRedundancy: Sendable, Equatable {
 
     /// Expected freeze added by REQUEST loss per loss event: P(all copies lost) × the escalation
     /// delay the client then sits through. THE before/after freeze-time math as a testable function.
-    public static func expectedRequestLossFreeze(perDatagramLoss: Double, copies: Int, escalationDelay: TimeInterval) -> TimeInterval {
+    public static func expectedRequestLossFreeze(
+        perDatagramLoss: Double,
+        copies: Int,
+        escalationDelay: TimeInterval,
+    ) -> TimeInterval {
         allCopiesLostProbability(perDatagramLoss: perDatagramLoss, copies: copies) * escalationDelay
     }
 }

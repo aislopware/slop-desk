@@ -17,7 +17,7 @@ impl SessionId {
 
     /// The all-zero id (`hello` / `channelOpen` use it to request a NEW session). Mirrors
     /// Swift `WireMessage.newSessionID`.
-    pub const NEW_SESSION: SessionId = SessionId([0u8; 16]);
+    pub const NEW_SESSION: Self = Self([0u8; 16]);
 
     /// Builds a session id from exactly 16 raw bytes.
     ///
@@ -36,7 +36,7 @@ impl SessionId {
 
     /// The 16 raw bytes, in canonical order (what `encode` writes to the wire).
     #[must_use]
-    pub fn bytes(&self) -> &[u8; 16] {
+    pub const fn bytes(&self) -> &[u8; 16] {
         &self.0
     }
 }

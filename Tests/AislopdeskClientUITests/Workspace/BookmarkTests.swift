@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins the viewport-bookmark contract (⇧⌘1–9 save / ⌘1–9 recall):
@@ -13,7 +13,6 @@ import CoreGraphics
 ///   and bookmarks round-trip through the Codable workspace (they persist).
 @MainActor
 final class BookmarkTests: XCTestCase {
-
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
         WorkspaceStore(restoring: restoring, makeSession: { FakePaneSession($0) })
     }
@@ -24,10 +23,18 @@ final class BookmarkTests: XCTestCase {
     private func twoPaneWorkspace() -> (Workspace, PaneID, PaneID) {
         let a = PaneID(), b = PaneID()
         let items = [
-            CanvasItem(id: a, spec: PaneSpec(kind: .terminal, title: "Build"),
-                       frame: CGRect(x: 100, y: 100, width: 480, height: 320), z: 0),
-            CanvasItem(id: b, spec: PaneSpec(kind: .terminal, title: "Logs"),
-                       frame: CGRect(x: 2000, y: 1500, width: 480, height: 320), z: 1),
+            CanvasItem(
+                id: a,
+                spec: PaneSpec(kind: .terminal, title: "Build"),
+                frame: CGRect(x: 100, y: 100, width: 480, height: 320),
+                z: 0,
+            ),
+            CanvasItem(
+                id: b,
+                spec: PaneSpec(kind: .terminal, title: "Logs"),
+                frame: CGRect(x: 2000, y: 1500, width: 480, height: 320),
+                z: 1,
+            ),
         ]
         return (Workspace(canvas: Canvas(items: items), focusedPane: a), a, b)
     }
@@ -57,8 +64,11 @@ final class BookmarkTests: XCTestCase {
 
         store.saveBookmark(1)
 
-        XCTAssertEqual(store.workspace.bookmarks[1]?.cameraOrigin, CGPoint(x: 100, y: 50),
-                       "the in-flight scroll folds into the camera before the save reads it")
+        XCTAssertEqual(
+            store.workspace.bookmarks[1]?.cameraOrigin,
+            CGPoint(x: 100, y: 50),
+            "the in-flight scroll folds into the camera before the save reads it",
+        )
         XCTAssertEqual(store.liveCameraOffset, .zero, "nothing left pending")
     }
 
@@ -76,7 +86,7 @@ final class BookmarkTests: XCTestCase {
         let (ws, a, b) = twoPaneWorkspace()
         let store = makeStore(restoring: ws)
         store.focus(b)
-        store.saveBookmark(2)   // anchored to "Logs" at (2000,1500)
+        store.saveBookmark(2) // anchored to "Logs" at (2000,1500)
         store.focus(a)
         // The pane MOVES after the save — recall must follow it, not the stale coordinate.
         store.movePane(b, by: CGSize(width: 500, height: 0))
@@ -86,8 +96,11 @@ final class BookmarkTests: XCTestCase {
 
         XCTAssertEqual(store.focusedPane, b, "recall focuses the anchor pane")
         let expected = store.workspace.canvas.centered(on: b, viewport: viewport).camera.origin
-        XCTAssertEqual(store.workspace.canvas.camera.origin, expected,
-                       "recall centres the pane at its CURRENT position")
+        XCTAssertEqual(
+            store.workspace.canvas.camera.origin,
+            expected,
+            "recall centres the pane at its CURRENT position",
+        )
     }
 
     func testRecallFallsBackToRawCameraWhenPaneGone() {
@@ -101,8 +114,11 @@ final class BookmarkTests: XCTestCase {
 
         store.recallBookmark(4)
 
-        XCTAssertEqual(store.workspace.canvas.camera.origin, CGPoint(x: 77, y: 33),
-                       "anchor gone → the raw saved viewport comes back")
+        XCTAssertEqual(
+            store.workspace.canvas.camera.origin,
+            CGPoint(x: 77, y: 33),
+            "anchor gone → the raw saved viewport comes back",
+        )
         XCTAssertEqual(store.focusedPane, a, "focus untouched by a camera-only recall")
     }
 
@@ -120,10 +136,14 @@ final class BookmarkTests: XCTestCase {
         let interpreter = CommandInterpreter()
         for n in 1...9 {
             let digit = Character("\(n)")
-            XCTAssertEqual(interpreter.feed(KeyChord(character: digit, [.command, .shift])),
-                           .saveBookmark(n))
-            XCTAssertEqual(interpreter.feed(KeyChord(character: digit, [.command])),
-                           .recallBookmark(n))
+            XCTAssertEqual(
+                interpreter.feed(KeyChord(character: digit, [.command, .shift])),
+                .saveBookmark(n),
+            )
+            XCTAssertEqual(
+                interpreter.feed(KeyChord(character: digit, [.command])),
+                .recallBookmark(n),
+            )
         }
     }
 

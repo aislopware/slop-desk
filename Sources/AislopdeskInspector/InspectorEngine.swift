@@ -17,9 +17,10 @@ public actor InspectorEngine {
     private let stream: AsyncStream<InspectorEvent>
 
     public init() {
-        var cont: AsyncStream<InspectorEvent>.Continuation!
-        self.stream = AsyncStream { cont = $0 }
-        self.continuation = cont
+        var cont: AsyncStream<InspectorEvent>.Continuation?
+        stream = AsyncStream { cont = $0 }
+        guard let cont else { preconditionFailure("AsyncStream build closure runs synchronously during init") }
+        continuation = cont
     }
 
     /// The combined, ordered event stream the host serialises to the client.

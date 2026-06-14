@@ -1,7 +1,7 @@
 #if os(macOS)
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoHost
-import AislopdeskVideoProtocol
 
 /// In-memory datagram-routing harness for the HOST UDP-mux (Stage S3) — the analogue of the TCP
 /// `MuxLoopbackTests`, but WITHOUT a socket / `NWListener` / SCStream. It drives the SAME pure
@@ -11,7 +11,6 @@ import AislopdeskVideoProtocol
 /// disturbs siblings (RTP per-channel loss isolation), and that a stale-generation datagram is
 /// dropped.
 final class VideoMuxDatagramRoutingTests: XCTestCase {
-
     /// A minimal in-memory host demux: the exact decode + route + deliver pipeline the live receive
     /// loop runs, with the sinks recording what they got. No socket. `@unchecked Sendable` via the
     /// `NSLock` so the `@Sendable` sink closures can record into it.
@@ -49,7 +48,8 @@ final class VideoMuxDatagramRoutingTests: XCTestCase {
         /// the raw router decision so a test can assert the loss-isolation semantics.
         @discardableResult
         func feedMedia(channelID: UInt32, channel: VideoChannel, payload: Data) -> VideoMuxRouter.Decision {
-            var inner = Data([channel.rawValue]); inner.append(payload)
+            var inner = Data([channel.rawValue])
+            inner.append(payload)
             let datagram = VideoMuxHeaderCodec.encode(channelID: channelID, payload: inner)
             guard let (decodedID, rest) = try? VideoMuxHeaderCodec.decode(datagram), rest.count >= 1 else {
                 return .drop(reason: "undecodable")
@@ -57,12 +57,14 @@ final class VideoMuxDatagramRoutingTests: XCTestCase {
             let tag = rest[rest.startIndex]
             let decodedChannel = VideoChannel(rawValue: tag)!
             let decision = router.route(channelID: decodedID, channel: decodedChannel, bytesCount: datagram.count)
-            let deliver: Bool
-            switch decision {
-            case .route: deliver = true
-            case .rejectUnadmitted: deliver = (decodedChannel == .control)   // bootstrap: the first hello
-            case .dropRetired, .dropDraining, .drop: deliver = false
-            }
+            let deliver: Bool =
+                switch decision {
+                case .route: true
+                case .rejectUnadmitted: decodedChannel == .control // bootstrap: the first hello
+                case .dropRetired,
+                     .dropDraining,
+                     .drop: false
+                }
             if deliver {
                 table.sink(decodedID)?(decodedChannel, Data(rest[(rest.startIndex + 1)...]))
             }
@@ -70,12 +72,14 @@ final class VideoMuxDatagramRoutingTests: XCTestCase {
         }
 
         func count(_ channelID: UInt32) -> Int { lock.withLock { _received[channelID]?.count ?? 0 } }
-        func payloads(_ channelID: UInt32) -> [Data] { lock.withLock { (_received[channelID] ?? []).map { $0.1 } } }
+        func payloads(_ channelID: UInt32) -> [Data] { lock.withLock { (_received[channelID] ?? []).map(\.1) } }
     }
 
     func testNChannelsRouteToTheirOwnSink() {
         let h = Harness()
-        h.openLane(10); h.openLane(20); h.openLane(30)
+        h.openLane(10)
+        h.openLane(20)
+        h.openLane(30)
 
         h.feedMedia(channelID: 10, channel: .video, payload: Data([0x0A]))
         h.feedMedia(channelID: 20, channel: .video, payload: Data([0x14]))
@@ -99,7 +103,8 @@ final class VideoMuxDatagramRoutingTests: XCTestCase {
     func testRetiringOneLaneKeepsSiblingsStreaming() {
         // Per-channel loss isolation: a `bye` on lane 10 retires ONLY 10; 20 keeps routing.
         let h = Harness()
-        h.openLane(10); h.openLane(20)
+        h.openLane(10)
+        h.openLane(20)
         h.feedMedia(channelID: 10, channel: .video, payload: Data([0x01]))
         h.retireLane(10)
 
@@ -120,8 +125,12 @@ final class VideoMuxDatagramRoutingTests: XCTestCase {
         let h = Harness()
         // No lane opened yet (unadmitted). Register a RECORDING sink to OBSERVE the control bootstrap.
         h.registerRecordingSink(5)
-        let helloLike = VideoControlMessage.hello(protocolVersion: AislopdeskVideoProtocol.version,
-                                                  requestedWindowID: 42, viewport: VideoSize(width: 1, height: 1)).encode()
+        let helloLike = VideoControlMessage.hello(
+            protocolVersion: AislopdeskVideoProtocol.version,
+            requestedWindowID: 42,
+            viewport: VideoSize(width: 1, height: 1),
+        )
+        .encode()
         let controlDecision = h.feedMedia(channelID: 5, channel: .control, payload: helloLike)
         let videoDecision = h.feedMedia(channelID: 5, channel: .video, payload: Data([0x01]))
         XCTAssertEqual(controlDecision, .rejectUnadmitted, "router still reports unadmitted...")
@@ -134,8 +143,8 @@ final class VideoMuxDatagramRoutingTests: XCTestCase {
         // one's route — no cross-generation leak into the fresh session.
         let h = Harness()
         h.openLane(7)
-        h.retireLane(7)            // client went away
-        h.openLane(9)              // reconnect under a fresh lane
+        h.retireLane(7) // client went away
+        h.openLane(9) // reconnect under a fresh lane
         XCTAssertEqual(h.feedMedia(channelID: 9, channel: .video, payload: Data([0x09])), .route(channelID: 9))
         XCTAssertEqual(h.feedMedia(channelID: 7, channel: .video, payload: Data([0x07])), .dropRetired)
         XCTAssertEqual(h.payloads(9), [Data([0x09])])

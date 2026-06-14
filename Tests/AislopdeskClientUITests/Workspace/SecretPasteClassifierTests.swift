@@ -5,7 +5,6 @@ import XCTest
 /// over-long payload, warn before a bulk/multi-line paste into a password field, warn before typing a
 /// credential into an echoing field, and stay quiet for ordinary text + normal passwords.
 final class SecretPasteClassifierTests: XCTestCase {
-
     func testOverLongIsTooLarge() {
         let big = String(repeating: "a", count: KeystrokeReplay.maxLength + 1)
         XCTAssertEqual(SecretPasteClassifier.assess(text: big, targetIsSecure: true), .tooLarge)
@@ -14,8 +13,10 @@ final class SecretPasteClassifierTests: XCTestCase {
 
     func testBulkIntoSecureFieldWarns() {
         // Multi-line into a password field is a mis-paste.
-        XCTAssertEqual(SecretPasteClassifier.assess(text: "line one\nline two", targetIsSecure: true),
-                       .bulkIntoSecureField)
+        XCTAssertEqual(
+            SecretPasteClassifier.assess(text: "line one\nline two", targetIsSecure: true),
+            .bulkIntoSecureField,
+        )
         // A very long single line into a password field is also suspicious.
         let long = String(repeating: "x", count: 300)
         XCTAssertEqual(SecretPasteClassifier.assess(text: long, targetIsSecure: true), .bulkIntoSecureField)
@@ -29,24 +30,29 @@ final class SecretPasteClassifierTests: XCTestCase {
 
     func testSecretIntoInsecureFieldWarns() {
         // A high-entropy token typed into a NON-secure (echoing) field is a leak risk.
-        let token = "aB3dE6fG9hJ2kL5mN8pQ1rS4tU7vW0xY"   // 32 chars, mixed classes, no spaces
+        let token = "aB3dE6fG9hJ2kL5mN8pQ1rS4tU7vW0xY" // 32 chars, mixed classes, no spaces
         XCTAssertEqual(SecretPasteClassifier.assess(text: token, targetIsSecure: false), .secretIntoInsecureField)
         // A recognized key=value secret too.
-        XCTAssertEqual(SecretPasteClassifier.assess(text: "PASSWORD=s3cr3tValueHere", targetIsSecure: false),
-                       .secretIntoInsecureField)
+        XCTAssertEqual(
+            SecretPasteClassifier.assess(text: "PASSWORD=s3cr3tValueHere", targetIsSecure: false),
+            .secretIntoInsecureField,
+        )
     }
 
     func testDigitFreeHighEntropyTokenIsFlagged() {
         // A random base64 secret with no digit (or single-case) must still warn — the digit requirement
         // was redundant with the redactor's own digit lookahead and left these uncovered on both paths.
-        let token = "AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGh"   // 34 chars, no digit, mixed case, high entropy
+        let token = "AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGh" // 34 chars, no digit, mixed case, high entropy
         XCTAssertTrue(SecretPasteClassifier.looksSecret(token))
         XCTAssertEqual(SecretPasteClassifier.assess(text: token, targetIsSecure: false), .secretIntoInsecureField)
     }
 
     func testOrdinaryTextIntoInsecureFieldIsOK() {
         XCTAssertEqual(SecretPasteClassifier.assess(text: "ls -la", targetIsSecure: false), .ok)
-        XCTAssertEqual(SecretPasteClassifier.assess(text: "git commit -m \"fix the thing\"", targetIsSecure: false), .ok)
+        XCTAssertEqual(
+            SecretPasteClassifier.assess(text: "git commit -m \"fix the thing\"", targetIsSecure: false),
+            .ok,
+        )
         XCTAssertEqual(SecretPasteClassifier.assess(text: "~/Workspace/oss/aislopdesk", targetIsSecure: false), .ok)
         XCTAssertEqual(SecretPasteClassifier.assess(text: "hello", targetIsSecure: false), .ok)
     }

@@ -1,5 +1,7 @@
 //! Streaming splitter that turns arbitrary chunks of TCP bytes into whole [`MuxFrame`]
-//! values — a port of Swift `AislopdeskProtocol.MuxFrameDecoder`, the direct analogue of
+//! values
+//!
+//! — a port of Swift `AislopdeskProtocol.MuxFrameDecoder`, the direct analogue of
 //! [`FrameDecoder`](crate::terminal::FrameDecoder) one layer up (mux envelopes instead of
 //! terminal `WireMessage` frames).
 //!

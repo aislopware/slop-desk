@@ -15,17 +15,17 @@ pub struct InputModifiers(pub u8);
 
 impl InputModifiers {
     /// Shift key.
-    pub const SHIFT: InputModifiers = InputModifiers(1 << 0);
+    pub const SHIFT: Self = Self(1 << 0);
     /// Control key.
-    pub const CONTROL: InputModifiers = InputModifiers(1 << 1);
+    pub const CONTROL: Self = Self(1 << 1);
     /// Option / Alt key.
-    pub const OPTION: InputModifiers = InputModifiers(1 << 2);
+    pub const OPTION: Self = Self(1 << 2);
     /// Command key.
-    pub const COMMAND: InputModifiers = InputModifiers(1 << 3);
+    pub const COMMAND: Self = Self(1 << 3);
     /// Caps Lock.
-    pub const CAPS_LOCK: InputModifiers = InputModifiers(1 << 4);
+    pub const CAPS_LOCK: Self = Self(1 << 4);
     /// Function key.
-    pub const FUNCTION: InputModifiers = InputModifiers(1 << 5);
+    pub const FUNCTION: Self = Self(1 << 5);
 
     /// The raw bitmask.
     #[must_use]
@@ -35,14 +35,14 @@ impl InputModifiers {
 
     /// Whether every bit of `other` is set.
     #[must_use]
-    pub const fn contains(self, other: InputModifiers) -> bool {
+    pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }
 
     /// The union of two modifier sets.
     #[must_use]
-    pub const fn union(self, other: InputModifiers) -> InputModifiers {
-        InputModifiers(self.0 | other.0)
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
     }
 }
 
@@ -70,7 +70,7 @@ impl MouseButton {
 
     /// Parses a raw value; `None` for anything outside 0..=2.
     #[must_use]
-    pub const fn from_u8(value: u8) -> Option<MouseButton> {
+    pub const fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::Left),
             1 => Some(Self::Right),
@@ -163,7 +163,7 @@ pub enum InputEvent {
 impl InputEvent {
     /// The on-wire type byte.
     #[must_use]
-    pub fn message_type(&self) -> u8 {
+    pub const fn message_type(&self) -> u8 {
         match self {
             Self::MouseMove { .. } => 1,
             Self::MouseDown { .. } => 2,
@@ -177,7 +177,7 @@ impl InputEvent {
 
     /// The self-inject filter tag.
     #[must_use]
-    pub fn tag(&self) -> u32 {
+    pub const fn tag(&self) -> u32 {
         match *self {
             Self::MouseMove { tag, .. }
             | Self::MouseDown { tag, .. }
@@ -261,7 +261,7 @@ impl InputEvent {
 
     /// Parses an input event. Positions are finite-checked; an unknown button or type, or
     /// invalid UTF-8 text, is rejected as malformed.
-    pub fn decode(data: &[u8]) -> Result<InputEvent> {
+    pub fn decode(data: &[u8]) -> Result<Self> {
         let mut r = ByteReader::new(data);
         let kind = r.read_u8()?;
         match kind {

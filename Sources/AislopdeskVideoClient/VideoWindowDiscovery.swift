@@ -1,6 +1,6 @@
 #if canImport(QuartzCore) && canImport(Metal) && canImport(VideoToolbox)
-import Foundation
 import AislopdeskVideoProtocol
+import Foundation
 
 /// One-shot client-side window DISCOVERY for the Remote Window picker (docs/31): asks the host "what
 /// windows can I stream?" and returns the answer, so the UI can list them instead of making the user type
@@ -14,6 +14,7 @@ import AislopdeskVideoProtocol
 /// resends the request every `retryInterval` until a reply arrives or `timeout` elapses, then releases
 /// the lane. An old host (no listWindows support) simply never replies → empty result → the UI falls back
 /// to manual entry.
+@preconcurrency
 @MainActor
 public enum VideoWindowDiscovery {
     /// Discovers the host's shareable windows. Returns `[]` on timeout / no registry / no host support
@@ -23,7 +24,7 @@ public enum VideoWindowDiscovery {
         mediaPort: UInt16,
         cursorPort: UInt16,
         retryInterval: Duration = .milliseconds(500),
-        timeout: Duration = .seconds(3)
+        timeout: Duration = .seconds(3),
     ) async -> [WindowSummary] {
         guard let registry = VideoWindowPipeline.sharedRegistry else { return [] }
         let acq = registry.acquire(host: host, mediaPort: mediaPort, cursorPort: cursorPort)
@@ -35,10 +36,10 @@ public enum VideoWindowDiscovery {
             onMedia: { channel, payload in
                 guard channel == .control,
                       let msg = try? VideoControlMessage.decode(payload),
-                      case .windowList(let windows) = msg else { return }
+                      case let .windowList(windows) = msg else { return }
                 box.deliver(windows)
             },
-            onCursor: { _ in }
+            onCursor: { _ in },
         )
 
         let request = VideoControlMessage.listWindows.encode()
@@ -54,9 +55,9 @@ public enum VideoWindowDiscovery {
                 flow.send(request, on: .control, channelID: channelID)
                 try? await Task.sleep(for: retryInterval)
             }
-            box.finish()   // resolve the waiter with whatever arrived (possibly nothing)
+            box.finish() // resolve the waiter with whatever arrived (possibly nothing)
         }
-        let result = await box.firstReply()   // resumes on the first windowList OR on the sender's finish()
+        let result = await box.firstReply() // resumes on the first windowList OR on the sender's finish()
         sender.cancel()
         return result ?? []
     }
@@ -72,7 +73,7 @@ public enum VideoWindowDiscovery {
         mediaPort: UInt16,
         cursorPort: UInt16,
         retryInterval: Duration = .milliseconds(400),
-        timeout: Duration = .milliseconds(1500)
+        timeout: Duration = .milliseconds(1500),
     ) async -> [SystemDialogSummary] {
         guard let registry = VideoWindowPipeline.sharedRegistry else { return [] }
         let acq = registry.acquire(host: host, mediaPort: mediaPort, cursorPort: cursorPort)
@@ -84,10 +85,10 @@ public enum VideoWindowDiscovery {
             onMedia: { channel, payload in
                 guard channel == .control,
                       let msg = try? VideoControlMessage.decode(payload),
-                      case .systemDialogList(let dialogs) = msg else { return }
+                      case let .systemDialogList(dialogs) = msg else { return }
                 box.deliver(dialogs)
             },
-            onCursor: { _ in }
+            onCursor: { _ in },
         )
 
         let request = VideoControlMessage.listSystemDialogs.encode()
@@ -123,8 +124,11 @@ private final class ReplyBox<Element>: @unchecked Sendable {
     func deliver(_ records: [Element]) {
         lock.lock()
         if result == nil { result = records }
-        guard !resolved, let c = cont else { lock.unlock(); return }
-        resolved = true; cont = nil
+        guard !resolved, let c = cont else { lock.unlock()
+            return
+        }
+        resolved = true
+        cont = nil
         let r = result
         lock.unlock()
         c.resume(returning: r)
@@ -133,8 +137,11 @@ private final class ReplyBox<Element>: @unchecked Sendable {
     /// Timeout: resolve the waiter with whatever we have (possibly `nil`). No-op once resolved.
     func finish() {
         lock.lock()
-        guard !resolved, let c = cont else { lock.unlock(); return }
-        resolved = true; cont = nil
+        guard !resolved, let c = cont else { lock.unlock()
+            return
+        }
+        resolved = true
+        cont = nil
         let r = result
         lock.unlock()
         c.resume(returning: r)

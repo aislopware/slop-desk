@@ -46,8 +46,8 @@ public enum FragmentInterleaver {
         // Column-major: rank 0 of every group, then rank 1 of every group, … Consecutive emissions
         // are thus from distinct groups, so any adjacent-loss burst of length ≤ numGroups spreads to
         // distinct groups (each recoverable by single-loss XOR).
-        for rank in 0 ..< groupSize {
-            for group in 0 ..< numGroups {
+        for rank in 0..<groupSize {
+            for group in 0..<numGroups {
                 let idx = group * groupSize + rank
                 if idx < data.count { ordered.append(data[idx]) }
             }

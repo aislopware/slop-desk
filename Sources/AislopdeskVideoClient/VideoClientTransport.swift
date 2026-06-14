@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskVideoProtocol
+import Foundation
 
 /// The logical sub-streams that share one PATH 2 UDP session (doc 17 §3.3/§3.6/§3.8).
 ///
@@ -53,7 +53,7 @@ public protocol VideoClientTransport: Sendable {
     /// datagram (bare ``CursorChannelMessage`` bytes).
     func start(
         onMedia: @escaping @Sendable (VideoChannel, Data) -> Void,
-        onCursor: @escaping @Sendable (Data) -> Void
+        onCursor: @escaping @Sendable (Data) -> Void,
     ) async throws
 
     /// Sends one datagram on `channel` (control or input). Fire-and-forget (UDP): an

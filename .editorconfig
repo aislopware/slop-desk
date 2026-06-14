@@ -1,0 +1,36 @@
+# EditorConfig — the cross-editor baseline for whitespace/charset, so every tool
+# (and every editor) agrees before the language-specific formatters run.
+# https://editorconfig.org
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# Swift, Rust, C/C++/Obj-C, headers — 4-space indent (matches swiftformat/rustfmt).
+[*.{swift,rs,c,h,cpp,m,mm}]
+indent_size = 4
+
+# Data/markup — 2-space indent.
+[*.{yml,yaml,json,jsonl}]
+indent_size = 2
+
+# Shell — 2-space indent (matches shfmt -i 2 in the Makefile).
+[*.{sh,bash}]
+indent_size = 2
+
+# Python — 4-space (PEP 8 / ruff default).
+[*.py]
+indent_size = 4
+
+# Makefiles require real tabs.
+[{Makefile,*.mk}]
+indent_style = tab
+
+# Markdown: trailing whitespace can be a hard line break — don't strip it.
+[*.md]
+trim_trailing_whitespace = false

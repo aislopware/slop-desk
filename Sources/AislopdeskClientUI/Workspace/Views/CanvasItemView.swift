@@ -17,18 +17,25 @@ import AppKit
 /// ``CanvasView``'s `PanView` so panning over a pane feels identical to panning empty space.
 struct ScrollPanForwarder: NSViewRepresentable {
     let store: WorkspaceStore
-    func makeNSView(context: Context) -> NSView { ForwardingView(store: store) }
-    func updateNSView(_ nsView: NSView, context: Context) { (nsView as? ForwardingView)?.store = store }
+    func makeNSView(context _: Context) -> NSView { ForwardingView(store: store) }
+    func updateNSView(_ nsView: NSView, context _: Context) { (nsView as? ForwardingView)?.store = store }
 
     final class ForwardingView: NSView {
         weak var store: WorkspaceStore?
-        init(store: WorkspaceStore) { self.store = store; super.init(frame: .zero) }
-        @available(*, unavailable) required init?(coder: NSCoder) { fatalError("not used") }
+        init(store: WorkspaceStore) { self.store = store
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder _: NSCoder) { fatalError("not used") }
         override func scrollWheel(with event: NSEvent) {
             let dx: CGFloat, dy: CGFloat
-            if event.hasPreciseScrollingDeltas { dx = event.scrollingDeltaX; dy = event.scrollingDeltaY }
-            else { dx = event.scrollingDeltaX * 10; dy = event.scrollingDeltaY * 10 }
-            store?.scrollPan(by: CGSize(width: -dx, height: -dy))   // natural-scroll, same sign as PanView
+            if event.hasPreciseScrollingDeltas { dx = event.scrollingDeltaX
+                dy = event.scrollingDeltaY
+            } else { dx = event.scrollingDeltaX * 10
+                dy = event.scrollingDeltaY * 10
+            }
+            store?.scrollPan(by: CGSize(width: -dx, height: -dy)) // natural-scroll, same sign as PanView
         }
     }
 }
@@ -88,7 +95,7 @@ struct CanvasItemView: View {
     /// its canvas tile, so libghostty's surface is merely RESIZED — never torn down + rebuilt. The old
     /// separate-subtree maximize rebuilt the surface, which replayed stale bytes (garbled glyphs) and
     /// crashed the app on repeated maximize/restore cycles.
-    var displaySize: CGSize? = nil
+    var displaySize: CGSize?
 
     /// Live drag-to-move preview — the full snapped resolution, or `nil` when not dragging / inside
     /// the dead zone. Auto-resets on ANY gesture end/cancel (no stuck preview, no stuck guides); the
@@ -164,89 +171,96 @@ struct CanvasItemView: View {
             // The dead scrim (below) carries the failure reason + the reconnect tap for the SAME
             // states — suppress the in-leaf orange banner so the pane doesn't say it twice (the
             // neutral "Session ended" banner is untouched; the scrim never shows for it).
-            suppressFailureBanner: PaneDeadScrim.isShown(status)
+            suppressFailureBanner: PaneDeadScrim.isShown(status),
         )
         // Maximized: inset the content below the pill so the terminal's FIRST ROW (where the prompt
         // lives) is never occluded by it. Geometry-only (same view identity — guardrail 2 safe).
         .padding(.top, maximized ? 34 : Self.contentPadding)
         .padding([.horizontal, .bottom], Self.contentPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .frame(width: shown.width, height: shown.height)   // resize previews live (intended reflow)
+        .frame(width: shown.width, height: shown.height) // resize previews live (intended reflow)
         #if os(macOS)
-        // BUG-2: catch a scroll over any non-NSView pane region (placeholder / padding) and pan the
-        // canvas, instead of it being swallowed. Behind the content, so the video/terminal NSView (in
-        // front) still gets — and forwards — its own scroll. The resize-grip PERIMETER is the OVERLAY
-        // in front of this, so its grips forward via `gripBase` (below); together they make the whole
-        // pane pan like empty space.
-        .background { ScrollPanForwarder(store: store) }
+            // BUG-2: catch a scroll over any non-NSView pane region (placeholder / padding) and pan the
+            // canvas, instead of it being swallowed. Behind the content, so the video/terminal NSView (in
+            // front) still gets — and forwards — its own scroll. The resize-grip PERIMETER is the OVERLAY
+            // in front of this, so its grips forward via `gripBase` (below); together they make the whole
+            // pane pan like empty space.
+            .background { ScrollPanForwarder(store: store) }
         #endif
-        // The pane plate: a flat opaque fill behind the padded content (the border-to-content gap
-        // must cover the canvas dots) — no shadow, the border below carries the focus cue.
-        .background(.background)
-        // The pane border: a flat 1pt line, accent while focused (the header stays gone — the pill
-        // is the only other chrome). A pane in the MULTI-SELECTION gets a thicker accent ring (so a
-        // shift-click cohort reads as one group). Hit-testing off so it never steals the grips' slivers.
-        .overlay {
-            let selected = store.isSelected(item.id)
-            Rectangle()
-                .strokeBorder(isFocused || selected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.separator),
-                              lineWidth: selected ? 2.5 : 1)
-                .allowsHitTesting(false)
-        }
-        // Terminal connection failure dims the (stale) body into a big "click to reconnect" target.
-        // Declared BEFORE the grips + pill: the perimeter must keep RESIZING a dead pane (the grips
-        // win hit-testing where they overlap the scrim's edge), and the pill stays usable above it.
-        .overlay {
-            if PaneDeadScrim.isShown(status) {
-                PaneDeadScrim(status: status, store: store) { store.reconnect(item.id) }
+            // The pane plate: a flat opaque fill behind the padded content (the border-to-content gap
+            // must cover the canvas dots) — no shadow, the border below carries the focus cue.
+            .background(.background)
+            // The pane border: a flat 1pt line, accent while focused (the header stays gone — the pill
+            // is the only other chrome). A pane in the MULTI-SELECTION gets a thicker accent ring (so a
+            // shift-click cohort reads as one group). Hit-testing off so it never steals the grips' slivers.
+            .overlay {
+                let selected = store.isSelected(item.id)
+                Rectangle()
+                    .strokeBorder(
+                        isFocused || selected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.separator),
+                        lineWidth: selected ? 2.5 : 1,
+                    )
+                    .allowsHitTesting(false)
             }
-        }
-        .overlay { resizeHandles }
-        // The floating pill, frontmost (declared last → wins hit-testing over the top-edge grip
-        // sliver it overlaps — the same declared-last-wins pattern the corner grips use).
-        .overlay(alignment: .top) { pill(maximized: maximized) }
-        // The smart-snap alignment guides of OUR in-flight drag, item-local: they live in the gesture
-        // state, so a cancelled gesture cleans them up by construction. Gated off while maximized —
-        // a maximize mid-drag does NOT cancel the in-flight gesture (identity survives by design), so
-        // a frozen preview must not paint guides over the maximized pane.
-        .overlay {
-            if displaySize == nil, let resolution = resizePreview ?? movePreview, !resolution.guides.isEmpty {
-                SnapGuideOverlay(guides: resolution.guides, origin: shown.origin)
+            // Terminal connection failure dims the (stale) body into a big "click to reconnect" target.
+            // Declared BEFORE the grips + pill: the perimeter must keep RESIZING a dead pane (the grips
+            // win hit-testing where they overlap the scrim's edge), and the pill stays usable above it.
+            .overlay {
+                if PaneDeadScrim.isShown(status) {
+                    PaneDeadScrim(status: status, store: store) { store.reconnect(item.id) }
+                }
             }
-        }
-        .offset(x: offsetX, y: offsetY)
-        // NOTE: the dragged pane floats above its siblings via the OUTER `.zIndex` in CanvasView (sibling
-        // stacking lives there) — driven by `store.isFocused`, which the move/resize gestures set at drag
-        // START (`raiseOnGestureStart`). A `.zIndex` here would be inert (no siblings at this level).
-        .onAppear { wireFocusOnClick(for: item.id) }
-        // A maximize toggle mid-drag does NOT cancel the in-flight gesture (the pane keeps its SwiftUI
-        // identity by design — guardrail 2), but every gesture closure guards itself out while
-        // maximized; this drops the plain-@State mirrors so no stale hysteresis token / config can
-        // leak into the next drag (the proven livePan repair pattern).
-        .onChange(of: store.workspace.maximizedPane) { _, _ in
-            moveChain = nil
-            resizeChain = nil
-            moveConfig = nil
-            resizeConfig = nil
-            moveNoOverlap = nil
-            resizeNoOverlap = nil
-        }
-        // General cancellation repair: ANY gesture that dies without `.onEnded` (system cancel, view
-        // dismantle) auto-resets the preview to nil — mirror that into the chain, or the NEXT pill
-        // gesture would see a stale non-nil chain, bypass the dead-zone click branch, and commit a
-        // zero-distance "move" instead of opening the menu.
-        .onChange(of: movePreview == nil) { _, gone in if gone { moveChain = nil; moveConfig = nil; moveNoOverlap = nil } }
-        .onChange(of: resizePreview == nil) { _, gone in if gone { resizeChain = nil; resizeConfig = nil; resizeNoOverlap = nil } }
+            .overlay { resizeHandles }
+            // The floating pill, frontmost (declared last → wins hit-testing over the top-edge grip
+            // sliver it overlaps — the same declared-last-wins pattern the corner grips use).
+            .overlay(alignment: .top) { pill(maximized: maximized) }
+            // The smart-snap alignment guides of OUR in-flight drag, item-local: they live in the gesture
+            // state, so a cancelled gesture cleans them up by construction. Gated off while maximized —
+            // a maximize mid-drag does NOT cancel the in-flight gesture (identity survives by design), so
+            // a frozen preview must not paint guides over the maximized pane.
+            .overlay {
+                if displaySize == nil, let resolution = resizePreview ?? movePreview, !resolution.guides.isEmpty {
+                    SnapGuideOverlay(guides: resolution.guides, origin: shown.origin)
+                }
+            }
+            .offset(x: offsetX, y: offsetY)
+            // NOTE: the dragged pane floats above its siblings via the OUTER `.zIndex` in CanvasView (sibling
+            // stacking lives there) — driven by `store.isFocused`, which the move/resize gestures set at drag
+            // START (`raiseOnGestureStart`). A `.zIndex` here would be inert (no siblings at this level).
+            .onAppear { wireFocusOnClick(for: item.id) }
+            // A maximize toggle mid-drag does NOT cancel the in-flight gesture (the pane keeps its SwiftUI
+            // identity by design — guardrail 2), but every gesture closure guards itself out while
+            // maximized; this drops the plain-@State mirrors so no stale hysteresis token / config can
+            // leak into the next drag (the proven livePan repair pattern).
+            .onChange(of: store.workspace.maximizedPane) { _, _ in
+                moveChain = nil
+                resizeChain = nil
+                moveConfig = nil
+                resizeConfig = nil
+                moveNoOverlap = nil
+                resizeNoOverlap = nil
+            }
+            // General cancellation repair: ANY gesture that dies without `.onEnded` (system cancel, view
+            // dismantle) auto-resets the preview to nil — mirror that into the chain, or the NEXT pill
+            // gesture would see a stale non-nil chain, bypass the dead-zone click branch, and commit a
+            // zero-distance "move" instead of opening the menu.
+            .onChange(of: movePreview == nil) { _, gone in if gone { moveChain = nil
+                moveConfig = nil
+                moveNoOverlap = nil
+            } }
+            .onChange(of: resizePreview == nil) { _, gone in if gone { resizeChain = nil
+                resizeConfig = nil
+                resizeNoOverlap = nil
+            } }
         #if os(iOS)
-        // Absorb a touch on the body → focus this pane AND block the background pan from firing under
-        // it (the bottom Color.clear pan layer never sees a touch that lands on a pane).
-        .simultaneousGesture(TapGesture().onEnded { store.focus(item.id) })
+            // Absorb a touch on the body → focus this pane AND block the background pan from firing under
+            // it (the bottom Color.clear pan layer never sees a touch that lands on a pane).
+            .simultaneousGesture(TapGesture().onEnded { store.focus(item.id) })
         #endif
     }
 
     // MARK: The pill (move/menu affordance — the header's replacement)
 
-    @ViewBuilder
     private func pill(maximized: Bool) -> some View {
         FloatingPaneHandle(
             id: item.id,
@@ -255,7 +269,7 @@ struct CanvasItemView: View {
             isFocused: isFocused,
             isMaximized: maximized,
             store: store,
-            menuShown: $menuShown
+            menuShown: $menuShown,
         )
         .gesture(pillGesture)
         .padding(.top, 6)
@@ -294,13 +308,16 @@ struct CanvasItemView: View {
         let camera = store.workspace.canvas.camera
         guard viewportSize.width > 0, viewportSize.height > 0 else { return [] }
         let viewport = CGRect(
-            origin: CGPoint(x: camera.origin.x - store.liveCameraOffset.width,
-                            y: camera.origin.y - store.liveCameraOffset.height),
-            size: viewportSize
+            origin: CGPoint(
+                x: camera.origin.x - store.liveCameraOffset.width,
+                y: camera.origin.y - store.liveCameraOffset.height,
+            ),
+            size: viewportSize,
         )
         let region = viewport.insetBy(dx: -200, dy: -200)
         return store.workspace.canvas.collisionBodies(
-            excludingPane: item.id, excludingGroup: item.groupID, region: region, groups: store.workspace.groups)
+            excludingPane: item.id, excludingGroup: item.groupID, region: region, groups: store.workspace.groups,
+        )
     }
 
     /// The smart-snap inputs, read AT SOLVE TIME inside the gesture closures (never a body input —
@@ -313,9 +330,11 @@ struct CanvasItemView: View {
         let camera = store.workspace.canvas.camera
         guard viewportSize.width > 0, viewportSize.height > 0 else { return ([], nil) }
         let viewport = CGRect(
-            origin: CGPoint(x: camera.origin.x - store.liveCameraOffset.width,
-                            y: camera.origin.y - store.liveCameraOffset.height),
-            size: viewportSize
+            origin: CGPoint(
+                x: camera.origin.x - store.liveCameraOffset.width,
+                y: camera.origin.y - store.liveCameraOffset.height,
+            ),
+            size: viewportSize,
         )
         // Snapping to far-off-screen panes would be invisible surprise; a small margin keeps
         // almost-visible neighbours snappable.
@@ -335,23 +354,31 @@ struct CanvasItemView: View {
             .updating($movePreview) { value, state, _ in
                 // Maximized: click-only — and CLEAR a preview frozen by a maximize-mid-drag (the
                 // gesture itself is never cancelled; identity survives by design).
-                guard displaySize == nil else { state = nil; return }
+                guard displaySize == nil else { state = nil
+                    return
+                }
                 if state == nil, !Self.pastDeadZone(value.translation) { return }
                 // GROUP drag: the anchor moves RAW (no per-pane snap — snapping individual cohort
                 // members would scatter the group); the cohort stays rigid.
                 if store.isSelected(item.id), store.selectedPanes.count > 1 {
                     state = CanvasSnap.Resolution(
                         frame: item.frame.offsetBy(dx: value.translation.width, dy: value.translation.height),
-                        guides: [])
+                        guides: [],
+                    )
                     return
                 }
                 let (targets, viewport) = snapEnvironment()
                 let snap = CanvasSnap.move(
                     item.frame.offsetBy(dx: value.translation.width, dy: value.translation.height),
                     others: targets, viewport: viewport,
-                    config: snapConfig, previous: state
+                    config: snapConfig, previous: state,
                 )
-                state = Self.previewResolution(snap: snap, item: item, config: nonOverlapConfig, bodies: collisionEnvironment)
+                state = Self.previewResolution(
+                    snap: snap,
+                    item: item,
+                    config: nonOverlapConfig,
+                    bodies: collisionEnvironment,
+                )
             }
             .onChanged { value in
                 guard displaySize == nil else { return }
@@ -369,7 +396,7 @@ struct CanvasItemView: View {
                 moveChain = CanvasSnap.move(
                     item.frame.offsetBy(dx: value.translation.width, dy: value.translation.height),
                     others: targets, viewport: viewport,
-                    config: config, previous: moveChain
+                    config: config, previous: moveChain,
                 )
             }
             .onEnded { value in
@@ -410,7 +437,8 @@ struct CanvasItemView: View {
                     // flashes back to its pre-drag origin and glides forward (the offset drops to zero the
                     // instant the spring starts from the old position). The anchor is exempt via `isFocused`;
                     // this transaction covers the rest.
-                    var instant = Transaction(); instant.disablesAnimations = true
+                    var instant = Transaction()
+                    instant.disablesAnimations = true
                     withTransaction(instant) {
                         store.endGroupDragLive()
                         store.moveSelection(by: value.translation, anchor: item.id)
@@ -424,7 +452,7 @@ struct CanvasItemView: View {
                 let final = CanvasSnap.move(
                     item.frame.offsetBy(dx: value.translation.width, dy: value.translation.height),
                     others: targets, viewport: viewport,
-                    config: config, previous: chain
+                    config: config, previous: chain,
                 )
                 // NON-OVERLAP: route the snapped target through the slide + (insert-intent) make-space
                 // commit so the pane lands flush — or the neighbours part to admit it. A disabled config
@@ -432,8 +460,10 @@ struct CanvasItemView: View {
                 if noOverlap.enabled {
                     store.movePaneNonOverlapping(item.id, snapped: final.frame, config: noOverlap)
                 } else {
-                    store.movePane(item.id, by: CGSize(width: final.frame.minX - item.frame.minX,
-                                                       height: final.frame.minY - item.frame.minY))
+                    store.movePane(item.id, by: CGSize(
+                        width: final.frame.minX - item.frame.minX,
+                        height: final.frame.minY - item.frame.minY,
+                    ))
                 }
             }
     }
@@ -448,13 +478,17 @@ struct CanvasItemView: View {
         snap: CanvasSnap.Resolution,
         item: CanvasItem,
         config: CanvasNonOverlap.Config,
-        bodies: () -> [CanvasNonOverlap.Body]
+        bodies: () -> [CanvasNonOverlap.Body],
     ) -> CanvasSnap.Resolution {
         guard config.enabled else { return snap }
         let slid = CanvasNonOverlap.slide(snap.frame, from: item.frame.origin, bodies: bodies(), config: config).frame
         let moved = abs(slid.minX - snap.frame.minX) > 0.5 || abs(slid.minY - snap.frame.minY) > 0.5
-        return CanvasSnap.Resolution(frame: slid, guides: moved ? [] : snap.guides,
-                                     stickX: snap.stickX, stickY: snap.stickY)
+        return CanvasSnap.Resolution(
+            frame: slid,
+            guides: moved ? [] : snap.guides,
+            stickX: snap.stickX,
+            stickY: snap.stickY,
+        )
     }
 
     private static func pastDeadZone(_ translation: CGSize) -> Bool {
@@ -491,9 +525,15 @@ struct CanvasItemView: View {
                 // The grips are hit-disabled while maximized, but an IN-FLIGHT resize survives a
                 // maximize toggle (the gesture is never cancelled) — guard every closure so it can
                 // neither keep previewing nor commit onto the hidden restore frame.
-                guard displaySize == nil else { state = nil; return }
-                state = resizeResolution(anchor, translation: value.translation,
-                                         config: snapConfig, previous: state)
+                guard displaySize == nil else { state = nil
+                    return
+                }
+                state = resizeResolution(
+                    anchor,
+                    translation: value.translation,
+                    config: snapConfig,
+                    previous: state,
+                )
             }
             .onChanged { value in
                 guard displaySize == nil else { return }
@@ -501,8 +541,12 @@ struct CanvasItemView: View {
                 let config = snapConfig
                 resizeConfig = config
                 resizeNoOverlap = nonOverlapConfig
-                resizeChain = resizeResolution(anchor, translation: value.translation,
-                                               config: config, previous: resizeChain)
+                resizeChain = resizeResolution(
+                    anchor,
+                    translation: value.translation,
+                    config: config,
+                    previous: resizeChain,
+                )
             }
             .onEnded { value in
                 let chain = resizeChain
@@ -512,8 +556,17 @@ struct CanvasItemView: View {
                 resizeConfig = nil
                 resizeNoOverlap = nil
                 guard displaySize == nil else { return }
-                store.resizePane(item.id, to: resizeResolution(anchor, translation: value.translation,
-                                                               config: config, previous: chain, noOverlap: noOverlap).frame)
+                store.resizePane(
+                    item.id,
+                    to: resizeResolution(
+                        anchor,
+                        translation: value.translation,
+                        config: config,
+                        previous: chain,
+                        noOverlap: noOverlap,
+                    )
+                    .frame,
+                )
             }
     }
 
@@ -527,20 +580,35 @@ struct CanvasItemView: View {
         translation: CGSize,
         config: CanvasSnap.Config,
         previous: CanvasSnap.Resolution?,
-        noOverlap: CanvasNonOverlap.Config? = nil
+        noOverlap: CanvasNonOverlap.Config? = nil,
     ) -> CanvasSnap.Resolution {
         let raw = CanvasGeometry.resizing(item.frame, anchor: anchor, by: translation, minSize: Canvas.minItemSize)
         let (targets, viewport) = snapEnvironment()
-        let snapped = CanvasSnap.resize(raw, anchor: anchor, others: targets, viewport: viewport,
-                                        config: config, previous: previous)
+        let snapped = CanvasSnap.resize(
+            raw,
+            anchor: anchor,
+            others: targets,
+            viewport: viewport,
+            config: config,
+            previous: previous,
+        )
         let no = noOverlap ?? nonOverlapConfig
         guard no.enabled else { return snapped }
-        let clamped = CanvasNonOverlap.clampResize(snapped.frame, anchor: anchor, bodies: collisionEnvironment(),
-                                                   minSize: Canvas.minItemSize, config: no)
+        let clamped = CanvasNonOverlap.clampResize(
+            snapped.frame,
+            anchor: anchor,
+            bodies: collisionEnvironment(),
+            minSize: Canvas.minItemSize,
+            config: no,
+        )
         let changed = abs(clamped.minX - snapped.frame.minX) > 0.5 || abs(clamped.maxX - snapped.frame.maxX) > 0.5
             || abs(clamped.minY - snapped.frame.minY) > 0.5 || abs(clamped.maxY - snapped.frame.maxY) > 0.5
-        return CanvasSnap.Resolution(frame: clamped, guides: changed ? [] : snapped.guides,
-                                     stickX: snapped.stickX, stickY: snapped.stickY)
+        return CanvasSnap.Resolution(
+            frame: clamped,
+            guides: changed ? [] : snapped.guides,
+            stickX: snapped.stickX,
+            stickY: snapped.stickY,
+        )
     }
 
     // MARK: Resize handles
@@ -559,7 +627,7 @@ struct CanvasItemView: View {
             cornerHandle(.bottomLeft, alignment: .bottomLeading)
             cornerHandle(.bottomRight, alignment: .bottomTrailing)
         }
-        .allowsHitTesting(store.workspace.maximizedPane == nil)   // no resize while maximized
+        .allowsHitTesting(store.workspace.maximizedPane == nil) // no resize while maximized
     }
 
     private static let cornerGrip: CGFloat = 16
@@ -582,9 +650,9 @@ struct CanvasItemView: View {
             .frame(width: Self.cornerGrip, height: Self.cornerGrip)
             .contentShape(Rectangle())
             .gesture(resizeGesture(anchor))
-            #if os(macOS)
+        #if os(macOS)
             .onHover { inside in if inside { NSCursor.crosshair.push() } else { NSCursor.pop() } }
-            #endif
+        #endif
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
     }
 
@@ -594,17 +662,17 @@ struct CanvasItemView: View {
         gripBase
             .frame(
                 width: horizontal ? nil : Self.edgeThickness,
-                height: horizontal ? Self.edgeThickness : nil
+                height: horizontal ? Self.edgeThickness : nil,
             )
             .frame(maxWidth: horizontal ? .infinity : nil, maxHeight: horizontal ? nil : .infinity)
             .contentShape(Rectangle())
             .gesture(resizeGesture(anchor))
-            #if os(macOS)
+        #if os(macOS)
             .onHover { inside in
                 if inside { (horizontal ? NSCursor.resizeUpDown : NSCursor.resizeLeftRight).push() }
                 else { NSCursor.pop() }
             }
-            #endif
+        #endif
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
     }
 
@@ -655,12 +723,14 @@ private struct SnapGuideOverlay: View {
                 let vertical = guide.orientation == .vertical
                 let length = guide.end - guide.start + Self.overshoot * 2
                 GuideLineShape(vertical: vertical)
-                    .stroke(Color.accentColor.opacity(0.9),
-                            style: StrokeStyle(lineWidth: 1, dash: guide.kind == .center ? [4, 3] : []))
+                    .stroke(
+                        Color.accentColor.opacity(0.9),
+                        style: StrokeStyle(lineWidth: 1, dash: guide.kind == .center ? [4, 3] : []),
+                    )
                     .frame(width: vertical ? 1 : length, height: vertical ? length : 1)
                     .position(
                         x: vertical ? guide.position - origin.x : (guide.start + guide.end) / 2 - origin.x,
-                        y: vertical ? (guide.start + guide.end) / 2 - origin.y : guide.position - origin.y
+                        y: vertical ? (guide.start + guide.end) / 2 - origin.y : guide.position - origin.y,
                     )
             }
         }

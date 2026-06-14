@@ -7,18 +7,24 @@ import XCTest
 /// present-gap classifier (late/idle/dense) is telemetry + diagnostics only. No Apple
 /// frameworks touched; all time is injected seconds.
 final class PacerDepthPolicyTests: XCTestCase {
-
     /// Drive `n` clean in-flow slots at `fps`: arrival + present at the same instant
     /// (the depth-1 present-on-arrival model), with 120 Hz re-show ticks in between.
-    private func driveClean(_ dp: inout PacerDepthPolicy, from t: Double, frames: Int, fps: Double = 60,
-                            reshows: Bool = true) -> Double {
+    private func driveClean(
+        _ dp: inout PacerDepthPolicy,
+        from t: Double,
+        frames: Int,
+        fps: Double = 60,
+        reshows: Bool = true,
+    ) -> Double {
         var t = t
         var lastPresent = t
         for _ in 0..<frames {
             t += 1.0 / fps
             if reshows {
                 var tick = lastPresent + 1.0 / 120.0
-                while tick < t { dp.noteReshow(tick); tick += 1.0 / 120.0 }
+                while tick < t { dp.noteReshow(tick)
+                    tick += 1.0 / 120.0
+                }
             }
             dp.noteArrival(t)
             dp.notePresent(t)
@@ -28,7 +34,10 @@ final class PacerDepthPolicyTests: XCTestCase {
     }
 
     /// One skipped 60fps content slot: a 33.3ms arrival+present gap (the dominant hitch shape).
-    private func skipOneSlot(_ dp: inout PacerDepthPolicy, from t: Double) -> (t: Double, cls: PacerDepthPolicy.GapClass) {
+    private func skipOneSlot(
+        _ dp: inout PacerDepthPolicy,
+        from t: Double,
+    ) -> (t: Double, cls: PacerDepthPolicy.GapClass) {
         let t2 = t + 2.0 / 60.0
         dp.noteArrival(t2)
         return (t2, dp.notePresent(t2))
@@ -38,7 +47,7 @@ final class PacerDepthPolicyTests: XCTestCase {
 
     func testCleanSteady60fpsNeverLate() {
         var dp = PacerDepthPolicy(adaptEnabled: true)
-        _ = driveClean(&dp, from: 0, frames: 600)   // 10s
+        _ = driveClean(&dp, from: 0, frames: 600) // 10s
         let win = dp.drainCounters()
         XCTAssertEqual(win.lateFrames, 0)
         XCTAssertEqual(win.presentGaps, 0)
@@ -54,7 +63,7 @@ final class PacerDepthPolicyTests: XCTestCase {
         for i in 0..<240 {
             arrival += 1.0 / 60.0
             dp.noteArrival(arrival)
-            present += (i % 2 == 0) ? 1.0 / 120.0 : 0.025
+            present += i.isMultiple(of: 2) ? 1.0 / 120.0 : 0.025
             XCTAssertNotEqual(dp.notePresent(present), .late, "tick-alternation gap must stay sub-late")
         }
         XCTAssertEqual(dp.drainCounters().lateFrames, 0)
@@ -68,8 +77,8 @@ final class PacerDepthPolicyTests: XCTestCase {
     /// (the measured 2026-06-11 depth-2 pinning bug).
     func testPresentGapLateClassifiesButNeverCountsNorPromotes() {
         var dp = PacerDepthPolicy(adaptEnabled: true)
-        var t = driveClean(&dp, from: 0, frames: 130)        // past the 2s promote warmup
-        for _ in 0..<6 {                                     // 6 genuine 33ms hitches, ~330ms apart
+        var t = driveClean(&dp, from: 0, frames: 130) // past the 2s promote warmup
+        for _ in 0..<6 { // 6 genuine 33ms hitches, ~330ms apart
             let r = skipOneSlot(&dp, from: t)
             XCTAssertEqual(r.cls, .late, "classification stays (diagnostics)")
             t = driveClean(&dp, from: r.t, frames: 20)
@@ -111,9 +120,9 @@ final class PacerDepthPolicyTests: XCTestCase {
 
     func testTwoNetworkLatesWithinWindowPromote() {
         var dp = PacerDepthPolicy(adaptEnabled: true)
-        let t = driveClean(&dp, from: 0, frames: 130)        // ~2.2s — past the 2s promote warmup
+        let t = driveClean(&dp, from: 0, frames: 130) // ~2.2s — past the 2s promote warmup
         dp.noteNetworkLate(t)
-        dp.noteNetworkLate(t + 0.6)                          // inside the 1s pairing window
+        dp.noteNetworkLate(t + 0.6) // inside the 1s pairing window
         XCTAssertEqual(dp.depth, 2, "2nd late within the 1s window promotes")
     }
 
@@ -121,14 +130,14 @@ final class PacerDepthPolicyTests: XCTestCase {
         var dp = PacerDepthPolicy(adaptEnabled: true)
         var t = driveClean(&dp, from: 0, frames: 130)
         dp.noteNetworkLate(t)
-        t = driveClean(&dp, from: t, frames: 72)             // 1.2s of clean flow
+        t = driveClean(&dp, from: t, frames: 72) // 1.2s of clean flow
         dp.noteNetworkLate(t)
         XCTAssertEqual(dp.depth, 1, "lates 1.2s apart never pair inside the 1s window")
     }
 
     func testBurstPromotesWithinBudget() {
         var dp = PacerDepthPolicy(adaptEnabled: true)
-        var t = driveClean(&dp, from: 0, frames: 180)        // 3s clean
+        var t = driveClean(&dp, from: 0, frames: 180) // 3s clean
         let onset = t
         var promotedAt: Double?
         // Wi-Fi burst: an owd spike every ~333ms while flow continues.
@@ -136,10 +145,12 @@ final class PacerDepthPolicyTests: XCTestCase {
             t += 1.0 / 60.0
             dp.noteArrival(t)
             dp.notePresent(t)
-            if i % 20 == 0 { dp.noteNetworkLate(t) }
-            if dp.depth == 2 && promotedAt == nil { promotedAt = t }
+            if i.isMultiple(of: 20) { dp.noteNetworkLate(t) }
+            if dp.depth == 2, promotedAt == nil { promotedAt = t }
         }
-        guard let promotedAt else { return XCTFail("never promoted under a spiking burst") }
+        guard let promotedAt else { XCTFail("never promoted under a spiking burst")
+            return
+        }
         XCTAssertLessThanOrEqual(promotedAt - onset, 1.5, "promotion must land ≤1.5s after onset")
     }
 
@@ -151,10 +162,10 @@ final class PacerDepthPolicyTests: XCTestCase {
         var promoted = false
         var held = true
         for k in 0..<20 {
-            t = driveClean(&dp, from: t, frames: k % 2 == 0 ? 20 : 38)   // ~333ms / ~633ms
+            t = driveClean(&dp, from: t, frames: k.isMultiple(of: 2) ? 20 : 38) // ~333ms / ~633ms
             dp.noteNetworkLate(t)
             if dp.depth == 2 { promoted = true }
-            if promoted && dp.depth != 2 { held = false }
+            if promoted, dp.depth != 2 { held = false }
         }
         XCTAssertTrue(promoted)
         XCTAssertTrue(held, "no mid-burst demote while lates keep arriving")
@@ -169,22 +180,28 @@ final class PacerDepthPolicyTests: XCTestCase {
         var strict = PacerDepthPolicy.Config()
         strict.demoteToleranceLates = 0
         var dp = PacerDepthPolicy(config: strict, adaptEnabled: true)
-        var t = driveClean(&dp, from: 0, frames: 130)        // past the promote warmup
+        var t = driveClean(&dp, from: 0, frames: 130) // past the promote warmup
         dp.noteNetworkLate(t)
         t = driveClean(&dp, from: t, frames: 30)
         dp.noteNetworkLate(t)
         XCTAssertEqual(dp.depth, 2)
         let lastLate = t
         var demotedAt: Double?
-        for _ in 0..<300 {                                   // 5s clean
+        for _ in 0..<300 { // 5s clean
             t += 1.0 / 60.0
             dp.noteArrival(t)
             dp.notePresent(t)
-            if dp.depth == 1 && demotedAt == nil { demotedAt = t }
+            if dp.depth == 1, demotedAt == nil { demotedAt = t }
         }
-        guard let demotedAt else { return XCTFail("never demoted on a clean link") }
+        guard let demotedAt else { XCTFail("never demoted on a clean link")
+            return
+        }
         XCTAssertGreaterThanOrEqual(demotedAt - lastLate, 2.5)
-        XCTAssertLessThanOrEqual(demotedAt - lastLate, 2.5 + 2.0 / 60.0, "demote fires on the first evaluation past the dwell")
+        XCTAssertLessThanOrEqual(
+            demotedAt - lastLate,
+            2.5 + 2.0 / 60.0,
+            "demote fires on the first evaluation past the dwell",
+        )
 
         // MIN-HOLD arm: a config whose dwell (0.5s) is SHORTER than the hold (1.5s) — the demote
         // must wait for the hold even though the dwell elapsed.
@@ -204,9 +221,11 @@ final class PacerDepthPolicyTests: XCTestCase {
             th += 1.0 / 60.0
             dph.noteArrival(th)
             dph.notePresent(th)
-            if dph.depth == 1 && demotedAtH == nil { demotedAtH = th }
+            if dph.depth == 1, demotedAtH == nil { demotedAtH = th }
         }
-        guard let demotedAtH else { return XCTFail("min-hold arm never demoted") }
+        guard let demotedAtH else { XCTFail("min-hold arm never demoted")
+            return
+        }
         XCTAssertGreaterThanOrEqual(demotedAtH - promotedAt, 1.5, "min-hold must dominate a shorter dwell")
         XCTAssertLessThanOrEqual(demotedAtH - promotedAt, 1.5 + 2.0 / 60.0)
     }
@@ -216,7 +235,7 @@ final class PacerDepthPolicyTests: XCTestCase {
         var cfg = PacerDepthPolicy.Config()
         cfg.demoteToleranceLates = tolerance
         var dp = PacerDepthPolicy(config: cfg, adaptEnabled: true)
-        var t = driveClean(&dp, from: 0, frames: 150)        // 2.5s — past the warmup
+        var t = driveClean(&dp, from: 0, frames: 150) // 2.5s — past the warmup
         dp.noteNetworkLate(t)
         t = driveClean(&dp, from: t, frames: 20)
         dp.noteNetworkLate(t)
@@ -226,11 +245,11 @@ final class PacerDepthPolicyTests: XCTestCase {
         dp.noteNetworkLate(t)
         let lateAt = t
         var demotedAt: Double?
-        for _ in 0..<360 {                                   // 6s clean
+        for _ in 0..<360 { // 6s clean
             t += 1.0 / 60.0
             dp.noteArrival(t)
             dp.notePresent(t)
-            if dp.depth == 1 && demotedAt == nil { demotedAt = t }
+            if dp.depth == 1, demotedAt == nil { demotedAt = t }
         }
         return (demotedAt, lateAt)
     }
@@ -240,14 +259,24 @@ final class PacerDepthPolicyTests: XCTestCase {
     /// dwell anchored at the lone late. Tolerance 0 keeps the strict anchoring.
     func testDemoteToleratesOneLateInWindow() {
         let tolerant = demoteTimeWithOneMidDwellLate(tolerance: 1)
-        guard let demoted = tolerant.demotedAt else { return XCTFail("tolerance 1 never demoted") }
-        XCTAssertLessThan(demoted - tolerant.lateAt, 2.5,
-                          "the lone late must not re-arm the full dwell at tolerance 1")
+        guard let demoted = tolerant.demotedAt else { XCTFail("tolerance 1 never demoted")
+            return
+        }
+        XCTAssertLessThan(
+            demoted - tolerant.lateAt,
+            2.5,
+            "the lone late must not re-arm the full dwell at tolerance 1",
+        )
 
         let strict = demoteTimeWithOneMidDwellLate(tolerance: 0)
-        guard let strictDemoted = strict.demotedAt else { return XCTFail("tolerance 0 never demoted") }
-        XCTAssertGreaterThanOrEqual(strictDemoted - strict.lateAt, 2.5,
-                                    "tolerance 0 = the old strict clean dwell after the last late")
+        guard let strictDemoted = strict.demotedAt else { XCTFail("tolerance 0 never demoted")
+            return
+        }
+        XCTAssertGreaterThanOrEqual(
+            strictDemoted - strict.lateAt,
+            2.5,
+            "tolerance 0 = the old strict clean dwell after the last late",
+        )
     }
 
     // MARK: Promote warmup (cold-start guard)
@@ -256,13 +285,13 @@ final class PacerDepthPolicyTests: XCTestCase {
     /// the identical pattern after the warmup promotes.
     func testWarmupSuppressesEarlyPromote() {
         var dp = PacerDepthPolicy(adaptEnabled: true)
-        var t = driveClean(&dp, from: 0, frames: 60)         // 1s — inside the 2s warmup
+        var t = driveClean(&dp, from: 0, frames: 60) // 1s — inside the 2s warmup
         dp.noteNetworkLate(t)
         dp.noteNetworkLate(t + 0.3)
         XCTAssertEqual(dp.depth, 1, "no promotion inside the warmup")
         XCTAssertEqual(dp.drainCounters().lateFrames, 2, "telemetry is unconditional")
         // Same pattern once warmed: promotes.
-        t = driveClean(&dp, from: t, frames: 90)             // now past 2s from stream start
+        t = driveClean(&dp, from: t, frames: 90) // now past 2s from stream start
         dp.noteNetworkLate(t)
         dp.noteNetworkLate(t + 0.3)
         XCTAssertEqual(dp.depth, 2, "post-warmup the same pattern promotes")
@@ -284,7 +313,7 @@ final class PacerDepthPolicyTests: XCTestCase {
     func testIdleGapsClassifyIdleNotLate() {
         var dp = PacerDepthPolicy(adaptEnabled: true)
         var t = driveClean(&dp, from: 0, frames: 60)
-        for _ in 0..<10 {                                    // ≥250ms gaps = host idle-skip
+        for _ in 0..<10 { // ≥250ms gaps = host idle-skip
             t += 0.300
             dp.noteArrival(t)
             XCTAssertEqual(dp.notePresent(t), .idle)
@@ -296,7 +325,7 @@ final class PacerDepthPolicyTests: XCTestCase {
     func testTypingSparseNeverLate() {
         var dp = PacerDepthPolicy(adaptEnabled: true)
         var t = 0.0
-        for i in 0..<40 {                                    // 150-220ms keystroke cadence
+        for i in 0..<40 { // 150-220ms keystroke cadence
             t += 0.150 + Double(i % 8) * 0.010
             dp.noteArrival(t)
             XCTAssertNotEqual(dp.notePresent(t), .late, "sparse flow fails the dense gate")
@@ -310,8 +339,8 @@ final class PacerDepthPolicyTests: XCTestCase {
     func testDenseFlowJitterWithinSlackNeverLate() {
         var dp = PacerDepthPolicy(adaptEnabled: true)
         var t = driveClean(&dp, from: 0, frames: 150)
-        for i in 0..<600 {                                   // ~10s, one 30ms wobble per second
-            t += (i % 60 == 0) ? 0.030 : 1.0 / 60.0
+        for i in 0..<600 { // ~10s, one 30ms wobble per second
+            t += i.isMultiple(of: 60) ? 0.030 : 1.0 / 60.0
             dp.noteArrival(t)
             XCTAssertNotEqual(dp.notePresent(t), .late, "routine jitter within the slack must not be late")
         }
@@ -360,10 +389,10 @@ final class PacerDepthPolicyTests: XCTestCase {
         var dp = PacerDepthPolicy(adaptEnabled: true)
         let t = driveClean(&dp, from: 0, frames: 60)
         // Re-show ticks walk the open gap past the 28ms boundary: ONE episode however many ticks.
-        dp.noteReshow(t + 0.025)                             // under the boundary: nothing
+        dp.noteReshow(t + 0.025) // under the boundary: nothing
         XCTAssertEqual(dp.drainCounters().presentGaps, 0)
-        dp.noteReshow(t + 0.033)                             // crosses: episode opens
-        dp.noteReshow(t + 0.042)                             // latched: no recount
+        dp.noteReshow(t + 0.033) // crosses: episode opens
+        dp.noteReshow(t + 0.042) // latched: no recount
         dp.noteReshow(t + 0.050)
         // The resolving present ends the gap: classifies late (diagnostics), episode closed.
         dp.noteArrival(t + 0.058)
@@ -382,7 +411,9 @@ final class PacerDepthPolicyTests: XCTestCase {
         // Motion stops: re-shows walk out past the boundary (episode), but NO frame ever resolves
         // the gap — the next present is past the idle cap and classifies idle, never late.
         var tick = t + 1.0 / 120.0
-        while tick < t + 0.400 { dp.noteReshow(tick); tick += 1.0 / 120.0 }
+        while tick < t + 0.400 { dp.noteReshow(tick)
+            tick += 1.0 / 120.0
+        }
         dp.noteArrival(t + 0.400)
         XCTAssertEqual(dp.notePresent(t + 0.400), .idle)
         let win = dp.drainCounters()
@@ -406,7 +437,7 @@ final class PacerDepthPolicyTests: XCTestCase {
 
     func testAdaptDisabledCountsButNeverPromotes() {
         var dp = PacerDepthPolicy(adaptEnabled: false)
-        let t = driveClean(&dp, from: 0, frames: 130)        // past the warmup
+        let t = driveClean(&dp, from: 0, frames: 130) // past the warmup
         dp.noteNetworkLate(t)
         dp.noteNetworkLate(t + 0.3)
         XCTAssertEqual(dp.depth, 1, "telemetry-only mode never moves the depth")
@@ -441,14 +472,14 @@ final class PacerDepthPolicyTests: XCTestCase {
         XCTAssertEqual(custom.promoteWarmupSeconds, 5.0, accuracy: 1e-9)
 
         let clamped = PacerDepthPolicy.Config.fromEnvironment([
-            "AISLOPDESK_DEPTH_PROMOTE_LATES": "99",          // lateTimes ring holds 4
+            "AISLOPDESK_DEPTH_PROMOTE_LATES": "99", // lateTimes ring holds 4
             "AISLOPDESK_DEPTH_PROMOTE_WINDOW_MS": "0",
             "AISLOPDESK_DEPTH_DEMOTE_MS": "999999",
             "AISLOPDESK_DEPTH_LATE_FACTOR": "0.1",
             "AISLOPDESK_DEPTH_IDLE_MS": "garbage",
-            "AISLOPDESK_DEPTH_LATE_SLACK_PCT": "250",        // clamp 0...100 → 1.0
-            "AISLOPDESK_DEPTH_DEMOTE_TOLERANCE": "99",       // clamp 0...3
-            "AISLOPDESK_DEPTH_WARMUP_MS": "999999",          // clamp ≤ 30s
+            "AISLOPDESK_DEPTH_LATE_SLACK_PCT": "250", // clamp 0...100 → 1.0
+            "AISLOPDESK_DEPTH_DEMOTE_TOLERANCE": "99", // clamp 0...3
+            "AISLOPDESK_DEPTH_WARMUP_MS": "999999", // clamp ≤ 30s
         ])
         XCTAssertEqual(clamped.promoteLateCount, 4)
         XCTAssertEqual(clamped.promoteWindowSeconds, 0.1, accuracy: 1e-9)

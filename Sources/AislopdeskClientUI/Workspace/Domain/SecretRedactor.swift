@@ -16,7 +16,6 @@ import Foundation
 /// host (`user@host: ~/dir`), or a git SHA (lower-case hex) is left untouched. The generic high-entropy
 /// backstop requires length ≥ 32 AND mixed case AND a digit, so hashes/paths/words never trip it.
 public enum SecretRedactor {
-
     /// The fixed placeholder a masked secret collapses to. Contains no secret-shaped substring, so
     /// ``redact(_:)`` is idempotent (re-running never re-matches the mask).
     public static let mask = "«redacted»"
@@ -41,9 +40,27 @@ public enum SecretRedactor {
     private static func mightContainSecret(_ text: String) -> Bool {
         if text.count < 16 { return false }
         if text.contains("=") || text.contains(":") { return true }
-        for needle in ["AKIA", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "xox", "AIza", "eyJ", "Bearer", "bearer",
-                       "sk_live_", "sk_test_", "rk_live_", "rk_test_", "pk_live_", "npm_"] {
-            if text.contains(needle) { return true }
+        for needle in [
+            "AKIA",
+            "ghp_",
+            "gho_",
+            "ghu_",
+            "ghs_",
+            "ghr_",
+            "github_pat_",
+            "xox",
+            "AIza",
+            "eyJ",
+            "Bearer",
+            "bearer",
+            "sk_live_",
+            "sk_test_",
+            "rk_live_",
+            "rk_test_",
+            "pk_live_",
+            "npm_",
+        ] where text.contains(needle) {
+            return true
         }
         // A long unbroken alphanumeric run is the generic-backstop trigger.
         var run = 0
@@ -84,11 +101,20 @@ public enum SecretRedactor {
             //    The key may carry an env-style prefix as long as it ENDS in a secret word, so GITHUB_TOKEN,
             //    DB_PASSWORD, MY_CLIENT_SECRET all match while `tokenizer=` / `keyword=` do NOT (the secret
             //    word must sit immediately before the delimiter).
-            Rule(regex: re(#"(?i)\b([A-Za-z0-9_]*(?:password|passwd|passphrase|secret|api[_-]?key|apikey|access[_-]?key|auth[_-]?token|client[_-]?secret|token))(\s*[=:]\s*)(\S+)"#),
-                 template: "$1$2\(m)"),
+            Rule(
+                regex: re(
+                    #"(?i)\b([A-Za-z0-9_]*"#
+                        + #"(?:password|passwd|passphrase|secret|api[_-]?key|apikey|"#
+                        + #"access[_-]?key|auth[_-]?token|client[_-]?secret|token))"#
+                        + #"(\s*[=:]\s*)(\S+)"#,
+                ),
+                template: "$1$2\(m)",
+            ),
             // 2. Authorization: Bearer <token> — keep "Bearer", mask the token.
-            Rule(regex: re(#"(?i)\b(bearer)(\s+)([A-Za-z0-9._~+/\-]+=*)"#),
-                 template: "$1$2\(m)"),
+            Rule(
+                regex: re(#"(?i)\b(bearer)(\s+)([A-Za-z0-9._~+/\-]+=*)"#),
+                template: "$1$2\(m)",
+            ),
             // 3. AWS key ids (access / temporary / user / role / …).
             Rule(regex: re(#"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|AIPA)[0-9A-Z]{16}\b"#), template: m),
             // 4. GitHub tokens (PAT / OAuth / app / refresh) + fine-grained PAT.
@@ -107,8 +133,12 @@ public enum SecretRedactor {
             //    like Users/me/Project2024 can't form one contiguous run) that has BOTH cases AND a digit —
             //    so a lower-case hex SHA, a dictionary word, or a path never trips it. The mixed-shape
             //    lookaheads validate the upcoming run before the greedy body matches.
-            Rule(regex: re(#"\b(?=[A-Za-z0-9+]*[a-z])(?=[A-Za-z0-9+]*[A-Z])(?=[A-Za-z0-9+]*[0-9])[A-Za-z0-9+]{32,}={0,2}\b"#),
-                 template: m),
+            Rule(
+                regex: re(
+                    #"\b(?=[A-Za-z0-9+]*[a-z])(?=[A-Za-z0-9+]*[A-Z])(?=[A-Za-z0-9+]*[0-9])[A-Za-z0-9+]{32,}={0,2}\b"#,
+                ),
+                template: m,
+            ),
         ]
     }()
 }

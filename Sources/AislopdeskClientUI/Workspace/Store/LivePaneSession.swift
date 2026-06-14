@@ -1,6 +1,6 @@
-import Foundation
 import AislopdeskClient
 import AislopdeskInspector
+import Foundation
 
 // MARK: - LivePaneSession (the production handle)
 
@@ -23,6 +23,7 @@ import AislopdeskInspector
 /// ``make(_:makeClient:makeInspector:)`` BUILDS the `ConnectionViewModel` (host/port pre-filled from
 /// `spec.endpoint`) but does **not** call `connect()`. The view triggers `connect()` lazily on appear
 /// (WF4/WF5) so restoring a 12-pane workspace does not slam 12 sockets at launch.
+@preconcurrency
 @MainActor
 @Observable
 public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Identifiable, PaneSessionIDAdopting {
@@ -145,7 +146,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         inspectorClient: InspectorClient?,
         remoteWindow: RemoteWindowModel?,
         makeInspector: (@MainActor (ConnectionTarget) -> InspectorClient?)?,
-        target: (@MainActor () -> ConnectionTarget)?
+        target: (@MainActor () -> ConnectionTarget)?,
     ) {
         self.id = id
         self.kind = kind
@@ -172,25 +173,27 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     ///   - makeInspector: builds the read-only `InspectorClient` (NWConnection #2) for a `.claudeCode`
     ///     pane's endpoint, or returns `nil` when no second channel is available. Retained for the
     ///     `resume()` rebuild.
+    @preconcurrency
     public static func make(
         _ spec: PaneSpec,
         makeClient: @escaping @Sendable () -> AislopdeskClient,
         makeInspector: @escaping @MainActor (ConnectionTarget) -> InspectorClient?,
-        target: @escaping @MainActor () -> ConnectionTarget = { .default }
+        target: @escaping @MainActor () -> ConnectionTarget = { .default },
     ) -> LivePaneSession {
         // `make` is a pure spec→session factory: the spec carries no id (identity lives on the tree's
         // leaf), so the session mints a placeholder ``PaneID`` here and the store's `reconcile()`
         // immediately re-points it to the real leaf id via `adopt(id:)` before registering it.
         switch spec.kind {
         case .terminal:
-            return makeTerminal(spec, claudeCode: false, makeClient: makeClient, makeInspector: makeInspector, target: target)
+            makeTerminal(spec, claudeCode: false, makeClient: makeClient, makeInspector: makeInspector, target: target)
         case .claudeCode:
-            return makeTerminal(spec, claudeCode: true, makeClient: makeClient, makeInspector: makeInspector, target: target)
-        case .remoteGUI, .systemDialog:
+            makeTerminal(spec, claudeCode: true, makeClient: makeClient, makeInspector: makeInspector, target: target)
+        case .remoteGUI,
+             .systemDialog:
             // A system-dialog pane uses the SAME video stack as a remote-GUI pane (it streams one host
             // window by id); the differences — auto-management, no picker, skip revalidation, not
             // persisted — live in the store/monitor and in `setVideoActive`, not in the session shape.
-            return makeRemoteGUI(spec, target: target)
+            makeRemoteGUI(spec, target: target)
         }
     }
 
@@ -201,13 +204,13 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         claudeCode: Bool,
         makeClient: @escaping @Sendable () -> AislopdeskClient,
         makeInspector: @escaping @MainActor (ConnectionTarget) -> InspectorClient?,
-        target: @escaping @MainActor () -> ConnectionTarget
+        target: @escaping @MainActor () -> ConnectionTarget,
     ) -> LivePaneSession {
         let terminal = TerminalViewModel()
         let connection = ConnectionViewModel(
             terminal: terminal,
             target: target,
-            makeClient: makeClient
+            makeClient: makeClient,
         )
         let inputBar = InputBarModel()
         // SINGLE OUT FUNNEL: input-bar bytes ride the pane's ONE ordered OUT FIFO
@@ -224,10 +227,10 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             connection: connection,
             inputBar: inputBar,
             inspector: inspectorModel,
-            inspectorClient: nil,                          // opened lazily by subscribeInspector()
+            inspectorClient: nil, // opened lazily by subscribeInspector()
             remoteWindow: nil,
             makeInspector: claudeCode ? makeInspector : nil,
-            target: claudeCode ? target : nil
+            target: claudeCode ? target : nil,
         )
     }
 
@@ -235,15 +238,19 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// window pre-filled, NOT opened (UDP is user-initiated — docs/22 §6).
     private static func makeRemoteGUI(
         _ spec: PaneSpec,
-        target: @escaping @MainActor () -> ConnectionTarget
+        target: @escaping @MainActor () -> ConnectionTarget,
     ) -> LivePaneSession {
-        let model: RemoteWindowModel
-        if let v = spec.video {
-            model = RemoteWindowModel(target: target, windowID: String(v.windowID), title: v.title,
-                                      appName: v.appName)
-        } else {
-            model = RemoteWindowModel(target: target)
-        }
+        let model =
+            if let v = spec.video {
+                RemoteWindowModel(
+                    target: target,
+                    windowID: String(v.windowID),
+                    title: v.title,
+                    appName: v.appName,
+                )
+            } else {
+                RemoteWindowModel(target: target)
+            }
         return LivePaneSession(
             id: PaneID(),
             kind: spec.kind,
@@ -253,7 +260,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             inspectorClient: nil,
             remoteWindow: model,
             makeInspector: nil,
-            target: nil
+            target: nil,
         )
     }
 
@@ -280,7 +287,9 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         guard let target, let client = makeInspector?(target()) else { return }
         // Cancelled before we stored anything (e.g. pause()/teardown() fired between resume's spawn and
         // here) — close the just-built client so its lazily-opened socket is never stranded.
-        if Task.isCancelled { await client.close(); return }
+        if Task.isCancelled { await client.close()
+            return
+        }
         inspectorClient = client
         try? await client.subscribe(fromSeq: 0)
         // Torn down WHILE we were subscribing: drop our reference (if still ours) and close — this is
@@ -331,7 +340,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             guard let model else { return }
             let outcome = await model.revalidateBinding()
             guard let self, !Task.isCancelled else { return }
-            if outcome == .unbound { self.isVideoActive = model.active != nil }
+            if outcome == .unbound { isVideoActive = model.active != nil }
         }
     }
 

@@ -6,7 +6,6 @@ import XCTest
 /// wire-safe in both directions: a peer that does not recognise type 6 hits the decoder's
 /// `default` arm, which THROWS `.malformed` — both consumers catch-and-drop it, never crash.
 final class KeepaliveCodecTests: XCTestCase {
-
     /// encode → decode → .keepalive, and it is a single type byte (value 6, no body — like `bye`).
     func testKeepaliveRoundTrip() throws {
         let ka = VideoControlMessage.keepalive

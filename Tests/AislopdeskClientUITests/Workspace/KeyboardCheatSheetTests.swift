@@ -10,7 +10,6 @@ import SwiftUI
 /// without a cheat-sheet row.
 @MainActor
 final class KeyboardCheatSheetTests: XCTestCase {
-
     #if canImport(SwiftUI)
 
     func testSectionsAreNonEmptyAndEveryRowHasAGlyph() {
@@ -34,11 +33,11 @@ final class KeyboardCheatSheetTests: XCTestCase {
         XCTAssertTrue(all.contains { $0.glyph == "⌥⌘A" }, "Select all panes → ⌥⌘A")
     }
 
-    func testIncludesBookmarkAndTerminalSections() {
+    func testIncludesBookmarkAndTerminalSections() throws {
         let titles = KeyboardCheatSheet.sections().map(\.title)
         XCTAssertTrue(titles.contains("Viewport bookmarks"))
         XCTAssertTrue(titles.contains("Search & terminal"))
-        let extras = KeyboardCheatSheet.sections().first { $0.title == "Search & terminal" }!.items
+        let extras = try XCTUnwrap(KeyboardCheatSheet.sections().first { $0.title == "Search & terminal" }?.items)
         XCTAssertTrue(extras.contains { $0.glyph == "⌘K" }, "the palette chord is documented")
         XCTAssertTrue(extras.contains { $0.glyph == "⌘/" }, "the cheat sheet documents its own chord")
     }
@@ -49,11 +48,14 @@ final class KeyboardCheatSheetTests: XCTestCase {
         let covered = KeyboardCheatSheet.workspaceCommands
         for command in CommandInterpreter.defaultBindings.values {
             switch command {
-            case .saveBookmark, .recallBookmark:
-                continue   // collapsed into the "⌘1–9 / ⇧⌘1–9" rows
+            case .saveBookmark,
+                 .recallBookmark:
+                continue // collapsed into the "⌘1–9 / ⇧⌘1–9" rows
             default:
-                XCTAssertTrue(covered.contains(command),
-                              "the ⌘/ cheat sheet is missing a row for \(command)")
+                XCTAssertTrue(
+                    covered.contains(command),
+                    "the ⌘/ cheat sheet is missing a row for \(command)",
+                )
             }
         }
     }

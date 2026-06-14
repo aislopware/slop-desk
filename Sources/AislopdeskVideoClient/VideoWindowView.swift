@@ -1,9 +1,9 @@
 #if canImport(SwiftUI) && canImport(QuartzCore) && canImport(Metal) && canImport(VideoToolbox)
-import SwiftUI
-import QuartzCore
-import Metal
-import CoreVideo
 import AislopdeskVideoProtocol
+import CoreVideo
+import Metal
+import QuartzCore
+import SwiftUI
 
 /// Connection parameters for a remote GUI window (PATH 2 / Phase 4, doc 17 §3): the
 /// host endpoint + the window to remote. The GUI app builds this once it knows a host
@@ -33,6 +33,7 @@ public struct VideoWindowConnection: Sendable, Equatable {
 /// gesture recognizers to the layer-backed Metal view perturbed its geometry and swallowed
 /// the `mouseUp` of a trackpad three-finger-drag (→ a stuck remote button). The overlay
 /// touches none of that.
+@preconcurrency
 @MainActor
 public final class VideoPaneControls: ObservableObject {
     @Published public var mode: VideoContentMode = .fit
@@ -90,23 +91,26 @@ public struct VideoWindowView: View {
     /// without a live connection. Kept so `VideoWindowFactory` callers compile.
     public init(title: String) {
         self.title = title
-        self.connection = nil
-        self.isActive = true
-        self.onActivate = {}
-        self.onCanvasScroll = { _ in }
-        self.onStreamNativeSize = nil
-        self.onKeyInjectorReady = nil
+        connection = nil
+        isActive = true
+        onActivate = {}
+        onCanvasScroll = { _ in }
+        onStreamNativeSize = nil
+        onKeyInjectorReady = nil
     }
 
     /// Live remote-window view: brings up the orchestrator against `connection`. `isActive` /
     /// `onActivate` / `onCanvasScroll` carry the canvas pane behaviour (active-only pointer + click-to-
     /// activate + non-active scroll-to-pan); they default to the standalone (always-active) values.
-    public init(title: String, connection: VideoWindowConnection,
-                isActive: Bool = true,
-                onActivate: @escaping () -> Void = {},
-                onCanvasScroll: @escaping (CGSize) -> Void = { _ in },
-                onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)? = nil,
-                onKeyInjectorReady: ((((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?) -> Void)? = nil) {
+    public init(
+        title: String,
+        connection: VideoWindowConnection,
+        isActive: Bool = true,
+        onActivate: @escaping () -> Void = {},
+        onCanvasScroll: @escaping (CGSize) -> Void = { _ in },
+        onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)? = nil,
+        onKeyInjectorReady: ((((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?) -> Void)? = nil,
+    ) {
         self.title = title
         self.connection = connection
         self.isActive = isActive
@@ -121,18 +125,24 @@ public struct VideoWindowView: View {
 
     public var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            MetalVideoLayerView(connection: connection, controls: controls,
-                                isActive: isActive, onActivate: onActivate, onCanvasScroll: onCanvasScroll,
-                                onStreamNativeSize: onStreamNativeSize, onKeyInjectorReady: onKeyInjectorReady)
-                // FILL THE PANE. Without this the bare representable does not claim the
-                // ZStack's space, so the `.bottomTrailing` alignment pins the Metal view as a
-                // small island in the BOTTOM-RIGHT corner (the "nhỏ 1 góc" bug) — and clicks
-                // across the rest of the pane then miss it (the "toạ độ sai" bug). Mirrors the
-                // PROVEN terminal seam (`TerminalScreenView`), which puts this frame directly
-                // on the renderer view inside its ZStack. The overlay below stays the small
-                // bottom-trailing control cluster.
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityLabel(Text("Remote GUI window: \(title)"))
+            MetalVideoLayerView(
+                connection: connection,
+                controls: controls,
+                isActive: isActive,
+                onActivate: onActivate,
+                onCanvasScroll: onCanvasScroll,
+                onStreamNativeSize: onStreamNativeSize,
+                onKeyInjectorReady: onKeyInjectorReady,
+            )
+            // FILL THE PANE. Without this the bare representable does not claim the
+            // ZStack's space, so the `.bottomTrailing` alignment pins the Metal view as a
+            // small island in the BOTTOM-RIGHT corner (the "nhỏ 1 góc" bug) — and clicks
+            // across the rest of the pane then miss it (the "toạ độ sai" bug). Mirrors the
+            // PROVEN terminal seam (`TerminalScreenView`), which puts this frame directly
+            // on the renderer view inside its ZStack. The overlay below stays the small
+            // bottom-trailing control cluster.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityLabel(Text("Remote GUI window: \(title)"))
             if connection != nil {
                 controlOverlay
             }
@@ -150,12 +160,12 @@ public struct VideoWindowView: View {
             }
             Button(action: { controls.toggleFill() }) {
                 Image(systemName: controls.mode == .fill
-                      ? "arrow.down.right.and.arrow.up.left"
-                      : "arrow.up.left.and.arrow.down.right")
+                    ? "arrow.down.right.and.arrow.up.left"
+                    : "arrow.up.left.and.arrow.down.right")
                     .padding(6)
             }
             .help(controls.mode == .fill ? "Fit — xem trọn cửa sổ"
-                                         : "Fill — phủ kín pane (giữ tỉ lệ, cắt mép)")
+                : "Fill — phủ kín pane (giữ tỉ lệ, cắt mép)")
         }
         .buttonStyle(.plain)
         .foregroundColor(.white)
@@ -176,20 +186,20 @@ func videoViewDbg(_ message: @autoclosure () -> String) {
 /// `NSViewRepresentable` host backing the `CAMetalLayer` + cursor overlay on macOS.
 struct MetalVideoLayerView: NSViewRepresentable {
     let connection: VideoWindowConnection?
-    var controls: VideoPaneControls? = nil
+    var controls: VideoPaneControls?
     var isActive: Bool = true
     var onActivate: () -> Void = {}
     var onCanvasScroll: (CGSize) -> Void = { _ in }
-    var onStreamNativeSize: ((CGSize, CGSize) -> Void)? = nil
-    var onKeyInjectorReady: ((((UInt16, Bool, Bool) -> Void)?) -> Void)? = nil
+    var onStreamNativeSize: ((CGSize, CGSize) -> Void)?
+    var onKeyInjectorReady: ((((UInt16, Bool, Bool) -> Void)?) -> Void)?
 
-    func makeNSView(context: Context) -> MetalLayerBackedView {
+    func makeNSView(context _: Context) -> MetalLayerBackedView {
         let view = MetalLayerBackedView()
         view.controls = controls
         view.isActive = isActive
         view.onActivate = onActivate
         view.onCanvasScroll = onCanvasScroll
-        view.onStreamNativeSize = onStreamNativeSize   // before activate — its nil-ness picks snap vs host-follow
+        view.onStreamNativeSize = onStreamNativeSize // before activate — its nil-ness picks snap vs host-follow
         view.activate(connection: connection)
         // PASTE AS KEYSTROKES: publish a key-injection sink routed to THIS view's pipeline (the
         // `pipeline.key` guard no-ops until the session is up, so publishing now is safe). The
@@ -202,7 +212,7 @@ struct MetalVideoLayerView: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: MetalLayerBackedView, context: Context) {
+    func updateNSView(_ nsView: MetalLayerBackedView, context _: Context) {
         nsView.controls = controls
         if nsView.isActive != isActive { videoViewDbg("updateNSView isActive \(nsView.isActive)→\(isActive)") }
         nsView.isActive = isActive
@@ -212,7 +222,7 @@ struct MetalVideoLayerView: NSViewRepresentable {
         nsView.activate(connection: connection)
     }
 
-    static func dismantleNSView(_ nsView: MetalLayerBackedView, coordinator: ()) {
+    static func dismantleNSView(_ nsView: MetalLayerBackedView, coordinator _: ()) {
         nsView.deactivate()
     }
 }
@@ -257,9 +267,9 @@ final class MetalLayerBackedView: NSView {
     /// modifiers; `pipeline.key` no-ops until the session is up). Idempotent — safe to call on every
     /// render; the sink captures `self` weakly so a torn-down view injects nothing.
     func publishKeyInjector() {
-        onKeyInjectorReady?({ [weak self] keyCode, down, shift in
+        onKeyInjectorReady? { [weak self] keyCode, down, shift in
             self?.pipeline.key(keyCode: keyCode, down: down, modifiers: shift ? .shift : [])
-        })
+        }
     }
 
     // ── Local view navigation (macOS): pinch-zoom (+ pan-when-zoomed) via the RESPONDER
@@ -279,8 +289,9 @@ final class MetalLayerBackedView: NSView {
         wantsLayer = true
         layer = videoLayer
     }
+
     @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("not supported") }
+    required init?(coder _: NSCoder) { fatalError("not supported") }
     override func makeBackingLayer() -> CALayer { videoLayer }
 
     func activate(connection: VideoWindowConnection?) {
@@ -303,10 +314,11 @@ final class MetalLayerBackedView: NSView {
             controls.mode = pipeline.contentMode
         }
     }
+
     func deactivate() {
-        if pointerInside { NSCursor.arrow.set() }   // restore the arrow before the pipeline tears down
+        if pointerInside { NSCursor.arrow.set() } // restore the arrow before the pipeline tears down
         pointerInside = false
-        onKeyInjectorReady?(nil)   // PASTE AS KEYSTROKES: drop the stale sink before teardown
+        onKeyInjectorReady?(nil) // PASTE AS KEYSTROKES: drop the stale sink before teardown
         pipeline.deactivate()
     }
 
@@ -323,9 +335,13 @@ final class MetalLayerBackedView: NSView {
         pipeline.adoptLayerSize(target)
         let current = VideoSize(width: Double(bounds.width), height: Double(bounds.height))
         guard StreamSizeSnap.shouldSnap(target: target, current: current) else { return }
-        videoViewDbg("1:1 snap → video \(Int(current.width))x\(Int(current.height)) → \(Int(target.width))x\(Int(target.height))pt (pixels \(Int(pixelSize.width))x\(Int(pixelSize.height)) @\(scale)x)")
-        handler(CGSize(width: target.width, height: target.height),
-                CGSize(width: current.width, height: current.height))
+        videoViewDbg(
+            "1:1 snap → video \(Int(current.width))x\(Int(current.height)) → \(Int(target.width))x\(Int(target.height))pt (pixels \(Int(pixelSize.width))x\(Int(pixelSize.height)) @\(scale)x)",
+        )
+        handler(
+            CGSize(width: target.width, height: target.height),
+            CGSize(width: current.width, height: current.height),
+        )
     }
 
     // MARK: Local cursor (Parsec model — host shape on the instant local pointer)
@@ -397,7 +413,8 @@ final class MetalLayerBackedView: NSView {
     }
 
     private func applyResetZoom() {
-        zoom = 1; pan = .zero
+        zoom = 1
+        pan = .zero
         pipeline.setZoom(1, pan: .zero)
         controls?.zoomed = false
     }
@@ -410,6 +427,7 @@ final class MetalLayerBackedView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         return VideoPoint(x: Double(p.x), y: Double(bounds.height - p.y))
     }
+
     private func mods(_ event: NSEvent) -> InputModifiers { Self.modifiers(event.modifierFlags) }
 
     /// Clamps `NSEvent.clickCount` (an unbounded `Int` — AppKit keeps incrementing it for consecutive
@@ -425,13 +443,24 @@ final class MetalLayerBackedView: NSView {
         guard isActive else { return }
         pipeline.mouseMove(viewPoint(event))
     }
+
     // A drag (a button is HELD) is a DISTINCT NSView callback from a hover `mouseMoved`, so the
     // client KNOWS which button is down and forwards an explicit `.mouseDrag`; the host posts
     // the matching `*MouseDragged` STATELESSLY — no host-side held-button guess. NOT gated on
     // `isActive`: a drag only follows a `mouseDown` on THIS pane, which already activated it, so the
     // in-gesture frames must keep flowing even before SwiftUI re-renders `isActive` true.
-    override func mouseDragged(with event: NSEvent) { pipeline.mouseDrag(.left, viewPoint(event), Self.clampClickCount(event.clickCount), mods(event)) }
-    override func rightMouseDragged(with event: NSEvent) { pipeline.mouseDrag(.right, viewPoint(event), Self.clampClickCount(event.clickCount), mods(event)) }
+    override func mouseDragged(with event: NSEvent) { pipeline.mouseDrag(
+        .left,
+        viewPoint(event),
+        Self.clampClickCount(event.clickCount),
+        mods(event),
+    ) }
+    override func rightMouseDragged(with event: NSEvent) { pipeline.mouseDrag(
+        .right,
+        viewPoint(event),
+        Self.clampClickCount(event.clickCount),
+        mods(event),
+    ) }
     // CLICK = ACTIVATE: a mouseDown makes this the active pane (`onActivate` → workspace focus) AND
     // raises the host window to top (`focusWindow`), THEN lands as a remote click. This is the
     // "click to activate + raise GUI window on click" model (replaces the earlier hover-raise). The
@@ -448,13 +477,25 @@ final class MetalLayerBackedView: NSView {
         if !isActive { pipeline.focusWindow() }
         pipeline.mouseDown(.left, viewPoint(event), Self.clampClickCount(event.clickCount), mods(event))
     }
-    override func mouseUp(with event: NSEvent) { pipeline.mouseUp(.left, viewPoint(event), Self.clampClickCount(event.clickCount), mods(event)) }
+
+    override func mouseUp(with event: NSEvent) { pipeline.mouseUp(
+        .left,
+        viewPoint(event),
+        Self.clampClickCount(event.clickCount),
+        mods(event),
+    ) }
     override func rightMouseDown(with event: NSEvent) {
         onActivate()
         if !isActive { pipeline.focusWindow() }
         pipeline.mouseDown(.right, viewPoint(event), Self.clampClickCount(event.clickCount), mods(event))
     }
-    override func rightMouseUp(with event: NSEvent) { pipeline.mouseUp(.right, viewPoint(event), Self.clampClickCount(event.clickCount), mods(event)) }
+
+    override func rightMouseUp(with event: NSEvent) { pipeline.mouseUp(
+        .right,
+        viewPoint(event),
+        Self.clampClickCount(event.clickCount),
+        mods(event),
+    ) }
     override func scrollWheel(with event: NSEvent) {
         // Zoomed in (local crop): a two-finger scroll pans the LOCAL view so you can reach the off-screen
         // parts of the zoomed window. This is the ONE case where a scroll stays INSIDE the pane, and it is
@@ -462,8 +503,14 @@ final class MetalLayerBackedView: NSView {
         // anyway — fall through to the canvas pan below.)
         if zoom > 1.001 {
             let invZoom = 1.0 / Double(zoom)
-            pan.x = CGFloat(min(max(Double(pan.x) - Double(event.scrollingDeltaX) / Double(max(bounds.width, 1)) * invZoom, -0.5), 0.5))
-            pan.y = CGFloat(min(max(Double(pan.y) - Double(event.scrollingDeltaY) / Double(max(bounds.height, 1)) * invZoom, -0.5), 0.5))
+            pan.x = CGFloat(min(
+                max(Double(pan.x) - Double(event.scrollingDeltaX) / Double(max(bounds.width, 1)) * invZoom, -0.5),
+                0.5,
+            ))
+            pan.y = CGFloat(min(
+                max(Double(pan.y) - Double(event.scrollingDeltaY) / Double(max(bounds.height, 1)) * invZoom, -0.5),
+                0.5,
+            ))
             pipeline.setZoom(zoom, pan: pan)
             return
         }
@@ -478,17 +525,25 @@ final class MetalLayerBackedView: NSView {
         //   • ⌥ held         → ALWAYS pan the canvas, even while focused (escape hatch to pan a focused
         //     pane without first unfocusing it).
         // Natural-scroll sign matches `CanvasView.PanView` so a pane-pan feels identical to the bg pan.
-        if isActive && !event.modifierFlags.contains(.option) {
+        if isActive, !event.modifierFlags.contains(.option) {
             videoViewDbg("scroll → remote (focused)")
-            pipeline.scroll(dx: Double(event.scrollingDeltaX), dy: Double(event.scrollingDeltaY), viewPoint: viewPoint(event))
+            pipeline.scroll(
+                dx: Double(event.scrollingDeltaX),
+                dy: Double(event.scrollingDeltaY),
+                viewPoint: viewPoint(event),
+            )
             return
         }
         let dx: CGFloat, dy: CGFloat
-        if event.hasPreciseScrollingDeltas { dx = event.scrollingDeltaX; dy = event.scrollingDeltaY }
-        else { dx = event.scrollingDeltaX * 10; dy = event.scrollingDeltaY * 10 }
+        if event.hasPreciseScrollingDeltas { dx = event.scrollingDeltaX
+            dy = event.scrollingDeltaY
+        } else { dx = event.scrollingDeltaX * 10
+            dy = event.scrollingDeltaY * 10
+        }
         videoViewDbg("scroll → canvas pan d=(\(Int(-dx)),\(Int(-dy))) isActive=\(isActive)")
         onCanvasScroll(CGSize(width: -dx, height: -dy))
     }
+
     // ALL keys (printable + special) go through the layout-level keycode `.key` path so
     // the HOST's keyboard layout + input method (e.g. OpenKey/xkey Telex) interpret and
     // COMPOSE them server-side — exactly like Parsec/VNC/Screen-Sharing "scancode mode".
@@ -505,9 +560,11 @@ final class MetalLayerBackedView: NSView {
     override func keyDown(with event: NSEvent) {
         pipeline.key(keyCode: event.keyCode, down: true, modifiers: mods(event))
     }
+
     override func keyUp(with event: NSEvent) {
         pipeline.key(keyCode: event.keyCode, down: false, modifiers: mods(event))
     }
+
     // Modifier press/release. Without this, ⌘/⇧/⌃/⌥ are NEVER sent as discrete key
     // events — they only ride as per-event flags on key/mouse events. On the host
     // `postKey` posts a CGEvent whose flags come from those per-event mods, but the
@@ -521,6 +578,7 @@ final class MetalLayerBackedView: NSView {
         guard let down = Self.modifierDown(keyCode: event.keyCode, flags: event.modifierFlags) else { return }
         pipeline.key(keyCode: event.keyCode, down: down, modifiers: mods(event))
     }
+
     override var acceptsFirstResponder: Bool { true }
 
     /// AppKit only delivers `mouseMoved` when a tracking area requests it, and
@@ -537,36 +595,44 @@ final class MetalLayerBackedView: NSView {
             // AppKit call `cursorUpdate(with:)` on each move so we re-assert the host's cursor shape.
             rect: bounds,
             options: [.mouseMoved, .mouseEnteredAndExited, .cursorUpdate, .activeInKeyWindow, .inVisibleRect],
-            owner: self, userInfo: nil)
+            owner: self, userInfo: nil,
+        )
         addTrackingArea(area)
         trackingArea = area
     }
-    override func mouseEntered(with event: NSEvent) {
+
+    override func mouseEntered(with _: NSEvent) {
         pointerInside = true
         applyLocalCursor()
     }
-    override func mouseExited(with event: NSEvent) {
+
+    override func mouseExited(with _: NSEvent) {
         pointerInside = false
-        NSCursor.arrow.set()   // leaving the pane → restore the normal pointer
+        NSCursor.arrow.set() // leaving the pane → restore the normal pointer
     }
+
     /// AppKit's per-move cursor callback while the pointer is in the pane: re-assert the host shape (or
     /// fall through to AppKit's default arrow) so a transient `.set()` from elsewhere can't win on a move.
     override func cursorUpdate(with event: NSEvent) {
         if isActive, pipeline.isServerCursorVisible, let cursor = pipeline.currentRemoteCursor {
             cursor.set()
         } else {
-            super.cursorUpdate(with: event)   // AppKit already set the window's default (arrow) pre-callback
+            super.cursorUpdate(with: event) // AppKit already set the window's default (arrow) pre-callback
         }
     }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil { window?.makeFirstResponder(self) }
     }
+
     /// Restore the arrow when the view leaves its window (drag-out / pane close): a teardown that skipped
     /// `mouseExited` must not leave a stale host-shape cursor set.
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         super.viewWillMove(toWindow: newWindow)
-        if newWindow == nil { if pointerInside { NSCursor.arrow.set() }; pointerInside = false }
+        if newWindow == nil { if pointerInside { NSCursor.arrow.set() }
+            pointerInside = false
+        }
     }
 
     static func modifiers(_ flags: NSEvent.ModifierFlags) -> InputModifiers {
@@ -588,44 +654,51 @@ final class MetalLayerBackedView: NSView {
     /// mapping is unit-testable without an `NSEvent`.
     static func modifierDown(keyCode: UInt16, flags: NSEvent.ModifierFlags) -> Bool? {
         switch Int(keyCode) {
-        case 55, 54: return flags.contains(.command)   // ⌘ left / right
-        case 56, 60: return flags.contains(.shift)     // ⇧ left / right
-        case 59, 62: return flags.contains(.control)   // ⌃ left / right
-        case 58, 61: return flags.contains(.option)    // ⌥ left / right
-        case 57:     return flags.contains(.capsLock)  // ⇪
-        case 63:     return flags.contains(.function)  // fn
-        default:     return nil
+        case 55,
+             54: flags.contains(.command) // ⌘ left / right
+        case 56,
+             60: flags.contains(.shift) // ⇧ left / right
+        case 59,
+             62: flags.contains(.control) // ⌃ left / right
+        case 58,
+             61: flags.contains(.option) // ⌥ left / right
+        case 57: flags.contains(.capsLock) // ⇪
+        case 63: flags.contains(.function) // fn
+        default: nil
         }
     }
 }
 
 #elseif os(iOS)
 import UIKit
+
 /// `UIViewRepresentable` host backing the `CAMetalLayer` + cursor overlay on iOS.
 struct MetalVideoLayerView: UIViewRepresentable {
     let connection: VideoWindowConnection?
-    var controls: VideoPaneControls? = nil
+    var controls: VideoPaneControls?
     // Accepted for signature parity with the macOS representable (the shared `VideoWindowView.body`
     // constructs both). iOS pane activation already runs through the canvas's per-pane SwiftUI tap
     // gesture + a background `DragGesture` for panning, so these are currently unused on iOS.
     var isActive: Bool = true
     var onActivate: () -> Void = {}
     var onCanvasScroll: (CGSize) -> Void = { _ in }
-    var onStreamNativeSize: ((CGSize, CGSize) -> Void)? = nil
+    var onStreamNativeSize: ((CGSize, CGSize) -> Void)?
 
-    func makeUIView(context: Context) -> MetalLayerBackedView {
+    func makeUIView(context _: Context) -> MetalLayerBackedView {
         let view = MetalLayerBackedView()
         view.controls = controls
-        view.onStreamNativeSize = onStreamNativeSize   // before activate — nil-ness picks snap vs host-follow
+        view.onStreamNativeSize = onStreamNativeSize // before activate — nil-ness picks snap vs host-follow
         view.activate(connection: connection)
         return view
     }
-    func updateUIView(_ uiView: MetalLayerBackedView, context: Context) {
+
+    func updateUIView(_ uiView: MetalLayerBackedView, context _: Context) {
         uiView.controls = controls
         uiView.onStreamNativeSize = onStreamNativeSize
         uiView.activate(connection: connection)
     }
-    static func dismantleUIView(_ uiView: MetalLayerBackedView, coordinator: ()) {
+
+    static func dismantleUIView(_ uiView: MetalLayerBackedView, coordinator _: ()) {
         uiView.deactivate()
     }
 }
@@ -633,8 +706,14 @@ struct MetalVideoLayerView: UIViewRepresentable {
 /// A `UIView` whose `layerClass` is `CAMetalLayer`, owning the client pipeline. Adds VNC-style
 /// pinch-to-zoom + one-finger pan (+ double-tap to reset) over the remote window.
 final class MetalLayerBackedView: UIView, UIGestureRecognizerDelegate {
-    override class var layerClass: AnyClass { CAMetalLayer.self }
-    var videoLayer: CAMetalLayer { layer as! CAMetalLayer }
+    override static var layerClass: AnyClass { CAMetalLayer.self }
+    var videoLayer: CAMetalLayer {
+        guard let metalLayer = layer as? CAMetalLayer else {
+            preconditionFailure("layerClass is CAMetalLayer, so the backing layer is always a CAMetalLayer")
+        }
+        return metalLayer
+    }
+
     private let pipeline = VideoWindowPipeline()
 
     private var zoom: CGFloat = 1
@@ -663,6 +742,7 @@ final class MetalLayerBackedView: UIView, UIGestureRecognizerDelegate {
             controls.mode = pipeline.contentMode
         }
     }
+
     func deactivate() { pipeline.deactivate() }
 
     /// 1:1 PANE SNAP: compute the point size at which this view renders the stream
@@ -675,8 +755,10 @@ final class MetalLayerBackedView: UIView, UIGestureRecognizerDelegate {
         pipeline.adoptLayerSize(target)
         let current = VideoSize(width: Double(bounds.width), height: Double(bounds.height))
         guard StreamSizeSnap.shouldSnap(target: target, current: current) else { return }
-        handler(CGSize(width: target.width, height: target.height),
-                CGSize(width: current.width, height: current.height))
+        handler(
+            CGSize(width: target.width, height: target.height),
+            CGSize(width: current.width, height: current.height),
+        )
     }
 
     private func applyToggleFill() {
@@ -684,8 +766,10 @@ final class MetalLayerBackedView: UIView, UIGestureRecognizerDelegate {
         pipeline.setContentMode(next)
         controls?.mode = next
     }
+
     private func applyResetZoom() {
-        zoom = 1; pan = .zero
+        zoom = 1
+        pan = .zero
         pipeline.setZoom(zoom, pan: pan)
         controls?.zoomed = false
     }
@@ -696,23 +780,32 @@ final class MetalLayerBackedView: UIView, UIGestureRecognizerDelegate {
         isUserInteractionEnabled = true
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(onPinch(_:)))
         let pan = UIPanGestureRecognizer(target: self, action: #selector(onPan(_:)))
-        pan.minimumNumberOfTouches = 1; pan.maximumNumberOfTouches = 2
+        pan.minimumNumberOfTouches = 1
+        pan.maximumNumberOfTouches = 2
         let doubleTap = UITapGestureRecognizer(target: self, action: #selector(onDoubleTap))
         doubleTap.numberOfTapsRequired = 2
-        for g in [pinch, pan, doubleTap] as [UIGestureRecognizer] { g.delegate = self; addGestureRecognizer(g) }
+        for g in [pinch, pan, doubleTap] as [UIGestureRecognizer] { g.delegate = self
+            addGestureRecognizer(g)
+        }
     }
 
     // Let pinch + pan run together (zoom while dragging).
-    func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+    func gestureRecognizer(
+        _: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith _: UIGestureRecognizer,
+    ) -> Bool { true }
 
-    @objc private func onPinch(_ g: UIPinchGestureRecognizer) {
+    @objc
+    private func onPinch(_ g: UIPinchGestureRecognizer) {
         if g.state == .began { gestureBaseZoom = zoom }
         zoom = min(max(gestureBaseZoom * g.scale, 1), 8)
         if zoom <= 1.001 { pan = .zero }
         pipeline.setZoom(zoom, pan: pan)
         controls?.zoomed = zoom > 1.001
     }
-    @objc private func onPan(_ g: UIPanGestureRecognizer) {
+
+    @objc
+    private func onPan(_ g: UIPanGestureRecognizer) {
         if g.state == .began { gestureBasePan = pan }
         let t = g.translation(in: self)
         let invZoom = 1.0 / zoom
@@ -720,7 +813,9 @@ final class MetalLayerBackedView: UIView, UIGestureRecognizerDelegate {
         pan.y = gestureBasePan.y - (t.y / max(bounds.height, 1)) * invZoom
         pipeline.setZoom(zoom, pan: pan)
     }
-    @objc private func onDoubleTap() { applyResetZoom() }
+
+    @objc
+    private func onDoubleTap() { applyResetZoom() }
 
     override func layoutSubviews() {
         super.layoutSubviews()

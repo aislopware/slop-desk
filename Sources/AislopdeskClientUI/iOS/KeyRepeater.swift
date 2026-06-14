@@ -36,7 +36,7 @@ public final class KeyRepeater<Key: Hashable & Sendable>: @unchecked Sendable {
             self.repeatInterval = repeatInterval
         }
 
-        public static var standard: Timing { Timing() }
+        public static var standard: Self { Self() }
     }
 
     private let timing: Timing
@@ -50,10 +50,11 @@ public final class KeyRepeater<Key: Hashable & Sendable>: @unchecked Sendable {
     private var heldKey: Key?
     private var handle: RepeatSchedulerHandle?
 
+    @preconcurrency
     public init(
         timing: Timing = .standard,
         scheduler: RepeatScheduler,
-        onFire: @escaping @Sendable (Key) -> Void
+        onFire: @escaping @Sendable (Key) -> Void,
     ) {
         self.timing = timing
         self.scheduler = scheduler
@@ -62,13 +63,15 @@ public final class KeyRepeater<Key: Hashable & Sendable>: @unchecked Sendable {
 
     /// Whether a key is currently held + repeating (diagnostics / tests).
     public var isRepeating: Bool {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return heldKey != nil
     }
 
     /// The key currently held, if any.
     public var currentKey: Key? {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return heldKey
     }
 
@@ -79,7 +82,9 @@ public final class KeyRepeater<Key: Hashable & Sendable>: @unchecked Sendable {
     /// the *same* held key is idempotent (the timer is already running).
     public func keyDown(_ key: Key) {
         lock.lock()
-        if heldKey == key { lock.unlock(); return } // already repeating this key.
+        if heldKey == key { lock.unlock()
+            return
+        } // already repeating this key.
         let old = handle
         handle = nil
         heldKey = key
@@ -114,23 +119,24 @@ public final class KeyRepeater<Key: Hashable & Sendable>: @unchecked Sendable {
 
     /// Reads the currently-held key under the lock (the scheduler-callback liveness check).
     private func currentlyHeld() -> Key? {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return heldKey
     }
 
     private func scheduleInitial(for key: Key) {
         let h = scheduler.schedule(after: timing.initialDelay) { [weak self] in
-            guard let self, self.currentlyHeld() == key else { return }
-            self.onFire(key)
-            self.scheduleRepeat(for: key)
+            guard let self, currentlyHeld() == key else { return }
+            onFire(key)
+            scheduleRepeat(for: key)
         }
         store(h, ifStillHolding: key)
     }
 
     private func scheduleRepeat(for key: Key) {
         let h = scheduler.scheduleRepeating(every: timing.repeatInterval) { [weak self] in
-            guard let self, self.currentlyHeld() == key else { return }
-            self.onFire(key)
+            guard let self, currentlyHeld() == key else { return }
+            onFire(key)
         }
         store(h, ifStillHolding: key)
     }
@@ -187,6 +193,7 @@ public final class DispatchRepeatScheduler: RepeatScheduler, @unchecked Sendable
         self.queue = queue
     }
 
+    @preconcurrency
     public func schedule(after delay: Duration, _ work: @escaping @Sendable () -> Void) -> RepeatSchedulerHandle {
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + delay.timeIntervalSeconds, repeating: .infinity)
@@ -196,7 +203,11 @@ public final class DispatchRepeatScheduler: RepeatScheduler, @unchecked Sendable
         return handle
     }
 
-    public func scheduleRepeating(every interval: Duration, _ work: @escaping @Sendable () -> Void) -> RepeatSchedulerHandle {
+    @preconcurrency
+    public func scheduleRepeating(
+        every interval: Duration,
+        _ work: @escaping @Sendable () -> Void,
+    ) -> RepeatSchedulerHandle {
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + interval.timeIntervalSeconds, repeating: interval.timeIntervalSeconds)
         timer.setEventHandler(handler: work)
@@ -214,7 +225,8 @@ private final class DispatchTimerHandle: RepeatSchedulerHandle, @unchecked Senda
     init(timer: DispatchSourceTimer) { self.timer = timer }
 
     func cancel() {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         guard !cancelled else { return }
         cancelled = true
         timer.cancel()

@@ -1,10 +1,10 @@
 #if canImport(VideoToolbox)
-import Foundation
-import VideoToolbox
+import AislopdeskVideoProtocol
 import CoreMedia
 import CoreVideo
+import Foundation
 import OSLog
-import AislopdeskVideoProtocol
+import VideoToolbox
 
 /// Errors raised by the video decoder.
 public enum VideoDecoderError: Error {
@@ -107,7 +107,7 @@ public final class VideoDecoder: @unchecked Sendable {
                 parameterSetSizes: sizes,
                 nalUnitHeaderLength: Int32(NALUnit.lengthPrefixSize),
                 extensions: nil,
-                formatDescriptionOut: &formatDescription
+                formatDescriptionOut: &formatDescription,
             )
         }
         guard status == noErr, let formatDescription else {
@@ -127,7 +127,7 @@ public final class VideoDecoder: @unchecked Sendable {
     /// VideoToolbox dependency. The session-reuse fix for BUG-I.
     public static func needsReconfigure(
         current: HEVCParameterSets.ParameterSets?,
-        incoming: HEVCParameterSets.ParameterSets
+        incoming: HEVCParameterSets.ParameterSets,
     ) -> Bool {
         current != incoming
     }
@@ -156,7 +156,9 @@ public final class VideoDecoder: @unchecked Sendable {
     /// Sets the format description and (re)creates the session. Must precede the first
     /// `decode`. Recreate on resolution change.
     public func configure(formatDescription: CMFormatDescription) throws {
-        if let session { VTDecompressionSessionInvalidate(session); self.session = nil }
+        if let session { VTDecompressionSessionInvalidate(session)
+            self.session = nil
+        }
         self.formatDescription = formatDescription
         // This path builds the session from a raw format description, not parameter
         // sets, so drop any cached sets — a later identical-sets keyframe must rebuild
@@ -170,8 +172,8 @@ public final class VideoDecoder: @unchecked Sendable {
             ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
             : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         let imageBufferAttributes: [CFString: Any] = [
-            kCVPixelBufferPixelFormatTypeKey: pixelFormat,                                       // NV12 (doc 04)
-            kCVPixelBufferMetalCompatibilityKey: true,                                          // zero-copy to Metal
+            kCVPixelBufferPixelFormatTypeKey: pixelFormat, // NV12 (doc 04)
+            kCVPixelBufferMetalCompatibilityKey: true, // zero-copy to Metal
             kCVPixelBufferIOSurfacePropertiesKey: [:],
         ]
         var spec: [CFString: Any] = [:]
@@ -183,7 +185,7 @@ public final class VideoDecoder: @unchecked Sendable {
             allocator: nil, formatDescription: formatDescription,
             decoderSpecification: spec as CFDictionary,
             imageBufferAttributes: imageBufferAttributes as CFDictionary,
-            outputCallback: nil, decompressionSessionOut: &session
+            outputCallback: nil, decompressionSessionOut: &session,
         )
         guard status == noErr, let session else { throw VideoDecoderError.sessionCreateFailed(status) }
         self.session = session
@@ -204,8 +206,8 @@ public final class VideoDecoder: @unchecked Sendable {
         // teardown + visible stall for what is really a corrupt/empty fragment. An empty delta is
         // dropped cheaply; an empty keyframe re-anchors via `awaitingKeyframe` (no session rebuild).
         switch FrameDecodability.classify(keyframe: frame.keyframe, byteCount: frame.avcc.count) {
-        case .decodable:       break
-        case .dropSilently:    return
+        case .decodable: break
+        case .dropSilently: return
         case .requestKeyframe: throw VideoDecoderError.awaitingKeyframe
         }
         if frame.keyframe, let sets = HEVCParameterSets.extract(from: frame.avcc) {
@@ -234,9 +236,11 @@ public final class VideoDecoder: @unchecked Sendable {
         // synchronous so the write-then-read is race-free, but the box keeps the capture Sendable-clean).
         let callbackStatus = DecodeStatusBox()
         let status = VTDecompressionSessionDecodeFrame(
-            session, sampleBuffer: sampleBuffer, flags: [], infoFlagsOut: nil
+            session, sampleBuffer: sampleBuffer, flags: [], infoFlagsOut: nil,
         ) { status, _, imageBuffer, _, _ in
-            if status != noErr { callbackStatus.value = status; return }
+            if status != noErr { callbackStatus.value = status
+                return
+            }
             guard let imageBuffer else { return }
             handler(imageBuffer) // NV12 CVPixelBuffer → MetalVideoRenderer at vsync
         }
@@ -262,7 +266,7 @@ public final class VideoDecoder: @unchecked Sendable {
             allocator: kCFAllocatorDefault, memoryBlock: nil,
             blockLength: dataLength, blockAllocator: kCFAllocatorDefault,
             customBlockSource: nil, offsetToData: 0, dataLength: dataLength,
-            flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &blockBuffer
+            flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &blockBuffer,
         )
         guard status == noErr, let blockBuffer else { throw VideoDecoderError.sampleBufferFailed(status) }
 
@@ -271,7 +275,7 @@ public final class VideoDecoder: @unchecked Sendable {
             guard let base = raw.baseAddress else { return noErr } // empty frame: nothing to copy
             return CMBlockBufferReplaceDataBytes(
                 with: base, blockBuffer: blockBuffer,
-                offsetIntoDestination: 0, dataLength: dataLength
+                offsetIntoDestination: 0, dataLength: dataLength,
             )
         }
         guard status == noErr else { throw VideoDecoderError.sampleBufferFailed(status) }
@@ -283,25 +287,27 @@ public final class VideoDecoder: @unchecked Sendable {
             formatDescription: formatDescription, sampleCount: 1,
             sampleTimingEntryCount: 0, sampleTimingArray: nil,
             sampleSizeEntryCount: 1, sampleSizeArray: &sampleSize,
-            sampleBufferOut: &sampleBuffer
+            sampleBufferOut: &sampleBuffer,
         )
         guard status == noErr, let sampleBuffer else { throw VideoDecoderError.sampleBufferFailed(status) }
         return sampleBuffer
     }
 }
 
-private extension Array where Element == Data {
+private extension [Data] {
     /// Exposes parallel base-pointer + size arrays for the parameter-set bytes, valid
     /// only for the duration of `body` (the pointers reference the `Data`'s storage).
     /// `CMVideoFormatDescriptionCreateFromHEVCParameterSets` copies the bytes, so the
     /// scoped lifetime is sufficient.
     func withUnsafeParameterSetPointers<R>(
-        _ body: ([UnsafePointer<UInt8>], [Int]) -> R
+        _ body: ([UnsafePointer<UInt8>], [Int]) -> R,
     ) -> R {
         func recurse(index: Int, pointers: [UnsafePointer<UInt8>], sizes: [Int]) -> R {
             if index == count { return body(pointers, sizes) }
             return self[index].withUnsafeBytes { raw -> R in
-                let base = raw.bindMemory(to: UInt8.self).baseAddress!
+                guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
+                    preconditionFailure("HEVC parameter-set Data must be non-empty (a zero-length NAL unit is invalid)")
+                }
                 return recurse(index: index + 1, pointers: pointers + [base], sizes: sizes + [self[index].count])
             }
         }

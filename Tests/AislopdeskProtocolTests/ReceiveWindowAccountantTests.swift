@@ -6,7 +6,6 @@ import XCTest
 /// sender (S2 scope #3): accumulate consumed bytes, grant the whole pending amount once the
 /// half-window threshold is crossed.
 final class ReceiveWindowAccountantTests: XCTestCase {
-
     func testNoGrantBelowHalfWindowThreshold() {
         var acc = ReceiveWindowAccountant(initialWindow: 1000)
         XCTAssertEqual(acc.threshold, 500)

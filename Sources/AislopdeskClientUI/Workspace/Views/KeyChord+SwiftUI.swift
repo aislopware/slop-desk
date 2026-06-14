@@ -15,13 +15,13 @@ extension KeyChord.Key {
     /// correct); named keys map to their SwiftUI constants.
     nonisolated var keyEquivalent: KeyEquivalent {
         switch self {
-        case let .character(c): return KeyEquivalent(c)
-        case .tab:        return .tab
-        case .return:     return .return
-        case .leftArrow:  return .leftArrow
-        case .rightArrow: return .rightArrow
-        case .upArrow:    return .upArrow
-        case .downArrow:  return .downArrow
+        case let .character(c): KeyEquivalent(c)
+        case .tab: .tab
+        case .return: .return
+        case .leftArrow: .leftArrow
+        case .rightArrow: .rightArrow
+        case .upArrow: .upArrow
+        case .downArrow: .downArrow
         }
     }
 }
@@ -30,9 +30,9 @@ extension KeyChord.Modifiers {
     /// The native `EventModifiers` for this modifier set — the union of the flags that are present.
     nonisolated var eventModifiers: EventModifiers {
         var out: EventModifiers = []
-        if contains(.shift)   { out.insert(.shift) }
+        if contains(.shift) { out.insert(.shift) }
         if contains(.control) { out.insert(.control) }
-        if contains(.option)  { out.insert(.option) }
+        if contains(.option) { out.insert(.option) }
         if contains(.command) { out.insert(.command) }
         return out
     }

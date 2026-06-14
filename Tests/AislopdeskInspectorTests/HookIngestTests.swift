@@ -7,12 +7,15 @@ final class HookIngestTests: XCTestCase {
     func testSessionStartHookGivesTranscriptPath() {
         let hook = HookParser.parse(Fixtures.data("hook-session-start.json"))
         guard case let .sessionStart(info)? = hook else {
-            return XCTFail("expected .sessionStart, got \(String(describing: hook))")
+            XCTFail("expected .sessionStart, got \(String(describing: hook))")
+            return
         }
         XCTAssertEqual(info.sessionID, "11111111-2222-3333-4444-555555555555")
         XCTAssertEqual(info.model, "claude-opus-4-8")
-        XCTAssertEqual(info.transcriptPath,
-                       "/Users/dev/.claude/projects/encoded-cwd/11111111-2222-3333-4444-555555555555.jsonl")
+        XCTAssertEqual(
+            info.transcriptPath,
+            "/Users/dev/.claude/projects/encoded-cwd/11111111-2222-3333-4444-555555555555.jsonl",
+        )
 
         var b = EventBuilder()
         let events = b.ingest(hook: .sessionStart(info))
@@ -27,7 +30,8 @@ final class HookIngestTests: XCTestCase {
     func testPostToolUseHookFoldsToCompletedCard() {
         let hook = HookParser.parse(Fixtures.data("hook-post-tool-use.json"))
         guard case let .postToolUse(use, result)? = hook else {
-            return XCTFail("expected .postToolUse, got \(String(describing: hook))")
+            XCTFail("expected .postToolUse, got \(String(describing: hook))")
+            return
         }
         XCTAssertEqual(use.id, "toolu_hook_01")
         XCTAssertEqual(use.name, "Write")
@@ -36,7 +40,7 @@ final class HookIngestTests: XCTestCase {
 
         var b = EventBuilder()
         let events = b.ingest(hook: .postToolUse(use, result))
-        let cards = events.compactMap { if case let .toolCard(c) = $0 { return c } else { return nil } }
+        let cards = events.compactMap { if case let .toolCard(c) = $0 { c } else { nil } }
         XCTAssertEqual(cards.last?.status, .completed, "PostToolUse with a result → immediate completed card")
         XCTAssertEqual(cards.last?.output, "File created successfully")
     }
@@ -44,18 +48,23 @@ final class HookIngestTests: XCTestCase {
     func testSubagentStopHookFoldsToStoppedNode() {
         let hook = HookParser.parse(Fixtures.data("hook-subagent-stop.json"))
         guard case let .subagentStop(node)? = hook else {
-            return XCTFail("expected .subagentStop, got \(String(describing: hook))")
+            XCTFail("expected .subagentStop, got \(String(describing: hook))")
+            return
         }
-        XCTAssertEqual(HookParser.subagentTranscriptPath(Fixtures.data("hook-subagent-stop.json")),
-                       "/Users/dev/.claude/projects/encoded-cwd/session/subagents/agent-deadbeef.jsonl")
+        XCTAssertEqual(
+            HookParser.subagentTranscriptPath(Fixtures.data("hook-subagent-stop.json")),
+            "/Users/dev/.claude/projects/encoded-cwd/session/subagents/agent-deadbeef.jsonl",
+        )
 
         var b = EventBuilder()
         let events = b.ingest(hook: .subagentStop(node))
-        let nodes = events.compactMap { if case let .subagentUpdated(n) = $0 { return n } else { return nil } }
+        let nodes = events.compactMap { if case let .subagentUpdated(n) = $0 { n } else { nil } }
         XCTAssertEqual(nodes.last?.id, "deadbeef")
         XCTAssertEqual(nodes.last?.status, .stopped)
-        XCTAssertEqual(nodes.last?.lastAssistantMessage,
-                       "Found 2 callers of foo() in src/a.swift and src/b.swift.")
+        XCTAssertEqual(
+            nodes.last?.lastAssistantMessage,
+            "Found 2 callers of foo() in src/a.swift and src/b.swift.",
+        )
     }
 
     func testPostToolUseHookBeforeJSONLDedupsOnCardID() {
@@ -67,9 +76,9 @@ final class HookIngestTests: XCTestCase {
         // Later, the JSONL tool_result arrives for the same id.
         events += b.ingest(line: .user(UserLine(
             identity: LineIdentity(uuid: "r1"),
-            toolResults: [ToolResultBlock(toolUseID: "shared", content: "content", isError: false)]
+            toolResults: [ToolResultBlock(toolUseID: "shared", content: "content", isError: false)],
         )))
-        let cards = events.compactMap { if case let .toolCard(c) = $0 { return c } else { return nil } }
+        let cards = events.compactMap { if case let .toolCard(c) = $0 { c } else { nil } }
         let shared = cards.filter { $0.id == "shared" }
         XCTAssertEqual(shared.map(\.status), [.pending, .completed])
         XCTAssertEqual(shared.last?.output, "content")

@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins the fixes from the adversarial review of the infinite-canvas implementation (docs/30): the
@@ -7,39 +7,44 @@ import CoreGraphics
 /// sanitation against non-finite/extreme values, and the dangling-`maximizedPane` load repair.
 @MainActor
 final class CanvasReviewFixTests: XCTestCase {
-
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
         WorkspaceStore(restoring: restoring, makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
     }
+
     private func pid(_ n: Int) -> PaneID {
         PaneID(raw: UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", n))!)
     }
 
     // MARK: - focus() re-points maximize (no typing into an invisible pane)
 
-    func testFocusWhileMaximizedRepointsMaximizeToTheFocusedPane() {
+    func testFocusWhileMaximizedRepointsMaximizeToTheFocusedPane() throws {
         let store = makeStore()
-        let a = store.focusedPane!
-        store.addPane(kind: .terminal)                       // pane b, focused
-        let b = store.focusedPane!
+        let a = try XCTUnwrap(store.focusedPane)
+        store.addPane(kind: .terminal) // pane b, focused
+        let b = try XCTUnwrap(store.focusedPane)
         XCTAssertNotEqual(a, b)
 
         store.focus(a)
-        store.toggleZoom()                                   // maximize a
+        store.toggleZoom() // maximize a
         XCTAssertEqual(store.workspace.maximizedPane, a)
 
-        store.focus(b)                                       // ⌘K-style jump to b while a is maximized
+        store.focus(b) // ⌘K-style jump to b while a is maximized
         XCTAssertEqual(store.focusedPane, b)
-        XCTAssertEqual(store.workspace.maximizedPane, b,
-                       "maximize follows focus — the on-screen pane equals the focused one (no invisible-pane typing)")
+        XCTAssertEqual(
+            store.workspace.maximizedPane,
+            b,
+            "maximize follows focus — the on-screen pane equals the focused one (no invisible-pane typing)",
+        )
     }
 
     // MARK: - isPaneVisible: reported-vs-empty semantics
 
     func testIsPaneVisibleReportedVsEmptySemantics() {
         let p0 = PaneID(), p1 = PaneID()
-        let store = makeStore(restoring: .make(panes: [(p0, PaneSpec(kind: .remoteGUI, title: "0")),
-                                                       (p1, PaneSpec(kind: .remoteGUI, title: "1"))]))
+        let store = makeStore(restoring: .make(panes: [
+            (p0, PaneSpec(kind: .remoteGUI, title: "0")),
+            (p1, PaneSpec(kind: .remoteGUI, title: "1")),
+        ]))
 
         // Pre-report: falls back to isPaneOnCanvas (both true).
         XCTAssertTrue(store.isPaneVisible(p0))
@@ -70,16 +75,23 @@ final class CanvasReviewFixTests: XCTestCase {
         let nan = CanvasCamera(origin: CGPoint(x: CGFloat.nan, y: 50)).sanitized()
         XCTAssertEqual(nan.origin, CGPoint(x: 0, y: 50))
         let inf = CanvasCamera(origin: CGPoint(x: CGFloat.infinity, y: -CGFloat.infinity)).sanitized()
-        XCTAssertEqual(inf.origin, CGPoint(x: 0, y: 0))
+        XCTAssertEqual(inf.origin, CGPoint.zero)
         // Extreme-but-finite is clamped to the coordinate bound.
         let huge = CanvasCamera(origin: CGPoint(x: 1e300, y: -1e300)).sanitized()
         XCTAssertEqual(huge.origin, CGPoint(x: Canvas.coordinateBound, y: -Canvas.coordinateBound))
     }
 
     func testCameraSettersSanitize() {
-        let canvas = Canvas(items: [CanvasItem(id: pid(1), spec: PaneSpec(kind: .terminal, title: "t"),
-                                               frame: CGRect(x: 0, y: 0, width: 640, height: 420), z: 0)])
-        XCTAssertEqual(canvas.camera(CanvasCamera(origin: CGPoint(x: CGFloat.nan, y: CGFloat.nan))).camera.origin, .zero)
+        let canvas = Canvas(items: [CanvasItem(
+            id: pid(1),
+            spec: PaneSpec(kind: .terminal, title: "t"),
+            frame: CGRect(x: 0, y: 0, width: 640, height: 420),
+            z: 0,
+        )])
+        XCTAssertEqual(
+            canvas.camera(CanvasCamera(origin: CGPoint(x: CGFloat.nan, y: CGFloat.nan))).camera.origin,
+            .zero,
+        )
         XCTAssertTrue(canvas.panned(by: CGSize(width: CGFloat.infinity, height: 0)).camera.origin.x.isFinite)
     }
 
@@ -101,11 +113,16 @@ final class CanvasReviewFixTests: XCTestCase {
         """
         let canvas = try JSONDecoder().decode(Canvas.self, from: Data(json.utf8))
         for f in canvas.items.map(\.frame) {
-            XCTAssertTrue(f.origin.x.isFinite && abs(f.origin.x) <= Canvas.coordinateBound, "item origin clamped finite")
+            XCTAssertTrue(
+                f.origin.x.isFinite && abs(f.origin.x) <= Canvas.coordinateBound,
+                "item origin clamped finite",
+            )
         }
         let centered = canvas.centeredOnAll(viewport: CGSize(width: 1280, height: 800))
-        XCTAssertTrue(centered.camera.origin.x.isFinite && centered.camera.origin.y.isFinite,
-                      "Center-on-All over clamped items yields a finite camera (no inf overflow → save never throws)")
+        XCTAssertTrue(
+            centered.camera.origin.x.isFinite && centered.camera.origin.y.isFinite,
+            "Center-on-All over clamped items yields a finite camera (no inf overflow → save never throws)",
+        )
     }
 
     // MARK: - dangling maximizedPane repair on load
@@ -120,8 +137,11 @@ final class CanvasReviewFixTests: XCTestCase {
 
         let real = PaneID()
         // Dangling maximizedPane — a pane not on the canvas.
-        let workspace = Workspace.make(panes: [(real, PaneSpec(kind: .terminal, title: "A"))],
-                                       focused: real, maximized: PaneID())
+        let workspace = Workspace.make(
+            panes: [(real, PaneSpec(kind: .terminal, title: "A"))],
+            focused: real,
+            maximized: PaneID(),
+        )
         try persistence.save(workspace)
 
         let loaded = persistence.load()

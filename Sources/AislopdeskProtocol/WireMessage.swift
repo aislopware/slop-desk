@@ -118,30 +118,42 @@ public enum WireMessage: Equatable, Sendable {
     /// The on-wire message-type byte (`UInt8`) for this case.
     public var messageType: UInt8 {
         switch self {
-        case .output: return 1
-        case .exit: return 2
-        case .input: return 3
-        case .hello: return 10
-        case .resize: return 11
-        case .ack: return 12
-        case .bye: return 13
-        case .ping: return 14
-        case .helloAck: return 20
-        case .title: return 21
-        case .bell: return 22
-        case .commandStatus: return 23
-        case .pong: return 24
-        case .notification: return 25
+        case .output: 1
+        case .exit: 2
+        case .input: 3
+        case .hello: 10
+        case .resize: 11
+        case .ack: 12
+        case .bye: 13
+        case .ping: 14
+        case .helloAck: 20
+        case .title: 21
+        case .bell: 22
+        case .commandStatus: 23
+        case .pong: 24
+        case .notification: 25
         }
     }
 
     /// The channel this message is expected to travel on (advisory; see ``Channel``).
     public var channel: Channel {
         switch self {
-        case .output, .exit, .input:
-            return .data
-        case .hello, .resize, .ack, .bye, .ping, .helloAck, .title, .bell, .commandStatus, .pong, .notification:
-            return .control
+        case .output,
+             .exit,
+             .input:
+            .data
+        case .hello,
+             .resize,
+             .ack,
+             .bye,
+             .ping,
+             .helloAck,
+             .title,
+             .bell,
+             .commandStatus,
+             .pong,
+             .notification:
+            .control
         }
     }
 }

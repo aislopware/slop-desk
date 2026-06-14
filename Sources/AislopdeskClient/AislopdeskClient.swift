@@ -1,6 +1,6 @@
-import Foundation
 import AislopdeskProtocol
 import AislopdeskTransport
+import Foundation
 
 /// The Aislopdesk client session driver — the real, working PATH 1 client.
 ///
@@ -158,7 +158,7 @@ public actor AislopdeskClient {
 
     /// Highest output seq actually fed to the surface (== ``highestContiguousSeq`` while
     /// the stream is contiguous, which it always is here). Used as the dedup high-water
-    /// mark: any inbound `output` with `seq <= highestSeqFed` is a replay duplicate and
+    /// bound — any inbound `output` with `seq <= highestSeqFed` is a replay duplicate and
     /// is dropped.
     private var highestSeqFed: Int64 = 0
 
@@ -194,7 +194,7 @@ public actor AislopdeskClient {
     /// SELF-INFLICTED end, not a real drop. This flag lets `handleStreamEnded` suppress
     /// that spurious `.disconnected` (mirror of the `closed` guard), so `ReconnectManager`
     /// does not queue a redundant reconnect campaign. The real drop path
-    /// (``_forceDropForTesting()`` / transport failing on its own) leaves this `false`.
+    /// (``forceDropForTesting()`` / transport failing on its own) leaves this `false`.
     /// DEPTH counter (not a bare Bool) so two overlapping teardowns — a reentrant connect()/pause() whose
     /// teardownTransport awaits across another connect()/pause() — cannot clobber each other's suppression
     /// window: a shared Bool let the inner scope's `= false` clear the outer's `= true`, briefly un-
@@ -214,19 +214,21 @@ public actor AislopdeskClient {
     ///   - makeTransport: the session-transport factory. Vends a logical channel over a shared
     ///     ``MuxNWConnection`` (a `MuxClientTransport`) — wired at the
     ///     `WorkspaceStore.liveMakeSession` construction site, never on the hot path.
+    @preconcurrency
     public init(
         ackInterval: Duration = AislopdeskClient.defaultAckInterval,
-        makeTransport: @escaping @Sendable () -> any ClientTransporting
+        makeTransport: @escaping @Sendable () -> any ClientTransporting,
     ) {
         self.ackInterval = ackInterval
         self.makeTransport = makeTransport
-        (self.outputWakeStream, self.outputWakeContinuation) =
+        (outputWakeStream, outputWakeContinuation) =
             AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
     }
 
     /// Attaches a feeder that mirrors every delivered `output` payload to a terminal
     /// surface (in addition to the ``output`` stream). The closure runs on the actor;
     /// for the GUI surface WF-5 will hop to `@MainActor` inside it.
+    @preconcurrency
     public func setSurfaceFeed(_ feed: @escaping @Sendable (Data) -> Void) {
         surfaceFeed = feed
     }
@@ -242,7 +244,7 @@ public actor AislopdeskClient {
     public func connect(
         host: String,
         port: UInt16,
-        handshakeTimeout: Duration = .seconds(10)
+        handshakeTimeout: Duration = .seconds(10),
     ) async throws {
         guard !closed else { throw ClientError.invalidState("connect after close") }
         self.host = host
@@ -270,7 +272,7 @@ public actor AislopdeskClient {
                 port: port,
                 resume: resume,
                 lastReceivedSeq: lastSeq,
-                handshakeTimeout: handshakeTimeout
+                handshakeTimeout: handshakeTimeout,
             )
         } catch {
             await transport.close()
@@ -296,7 +298,7 @@ public actor AislopdeskClient {
         let learnedID = await transport.sessionID
         let resumeFromSeq = await transport.resumeFromSeq
         let returning = await transport.returningClient
-        if let learnedID { self.sessionID = learnedID }
+        if let learnedID { sessionID = learnedID }
 
         // RESET DEDUP / ACK STATE ON EVERY (RE)CONNECT. The mux transport — the SOLE terminal
         // connectivity — has NO per-channel server-side resume: `HostServer.spawnMuxChannel` mints a
@@ -363,11 +365,11 @@ public actor AislopdeskClient {
             guard let self else { return }
             do {
                 for try await message in inbound {
-                    await self.handleInbound(message)
+                    await handleInbound(message)
                 }
-                await self.handleStreamEnded(error: nil)
+                await handleStreamEnded(error: nil)
             } catch {
-                await self.handleStreamEnded(error: error)
+                await handleStreamEnded(error: error)
             }
         }
     }
@@ -378,14 +380,14 @@ public actor AislopdeskClient {
     /// `@testable import` — this is the only way to prove the client-side dedup high-water
     /// mark independent of host replay behavior (the host always keys replay off
     /// `lastReceivedSeq`, so an e2e never feeds an already-fed seq).
-    func _handleInboundForTesting(_ message: WireMessage) async {
+    func handleInboundForTesting(_ message: WireMessage) async {
         await handleInbound(message)
     }
 
     /// Test-only: whether a transport is currently adopted (`self.transport != nil`). Used by the
     /// reconnect-race regression suite to assert that a connect superseded/closed/paused mid-handshake
     /// does NOT leave a zombie transport adopted on the client.
-    var _hasLiveTransportForTesting: Bool { transport != nil }
+    var hasLiveTransportForTesting: Bool { transport != nil }
 
     private func handleInbound(_ message: WireMessage) async {
         switch message {
@@ -468,8 +470,7 @@ public actor AislopdeskClient {
         // self-inflicted and a real `.disconnected` would queue a redundant reconnect).
         // ReconnectManager watches `events` / observes the thrown connect error.
         guard !closed, !tearingDown else { return }
-        let reason: String
-        if let error { reason = String(describing: error) } else { reason = "stream ended (FIN)" }
+        let reason = if let error { String(describing: error) } else { "stream ended (FIN)" }
         eventBroadcaster.yield(.disconnected(reason: reason))
     }
 
@@ -486,7 +487,7 @@ public actor AislopdeskClient {
             while !Task.isCancelled {
                 try? await Task.sleep(for: interval)
                 guard let self else { return }
-                await self.flushAckIfPending()
+                await flushAckIfPending()
             }
         }
     }
@@ -502,7 +503,7 @@ public actor AislopdeskClient {
             while !Task.isCancelled {
                 try? await Task.sleep(for: interval)
                 guard let self else { return }
-                await self.sendPingProbe()
+                await sendPingProbe()
             }
         }
     }
@@ -599,7 +600,7 @@ public actor AislopdeskClient {
     ///
     /// Marked underscored + documented as test-only; the production drop path is the
     /// transport failing on its own (handled by ``handleStreamEnded(error:)``).
-    public func _forceDropForTesting() async {
+    public func forceDropForTesting() async {
         await teardownTransport()
     }
 

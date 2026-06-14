@@ -86,7 +86,7 @@ public struct DecodeSequencer: Sendable {
     public mutating func noteLost(frameID: UInt32) -> [ReassembledFrame] {
         guard let expected = nextExpected else { return [] }
         let dist = frameID.distanceWrapped(from: expected)
-        if dist < 0 { return [] }                  // already behind the expectation
+        if dist < 0 { return [] } // already behind the expectation
         if dist == 0 {
             nextExpected = expected &+ 1
             return drainContiguous()

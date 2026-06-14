@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskVideoProtocol
+import Foundation
 
 /// LOSS-TOLERANCE #1 (2026-06-10): a dedicated PACED-SEND lane that decouples wire pacing from the
 /// encoder-output pump.
@@ -25,7 +25,6 @@ import AislopdeskVideoProtocol
 /// `EncodedFrameQueue`/`InboundQueue`. The send closure is the fire-and-forget
 /// `VideoDatagramTransport.send` (UDP enqueue, never blocks).
 public final class VideoSendLane: @unchecked Sendable {
-
     /// One frame's worth of wire datagrams plus its pacing parameters, computed by the session
     /// actor at enqueue time (it owns `lastActuatedBitrate`/flags; the lane stays policy-free).
     public struct Job: Sendable {
@@ -37,8 +36,12 @@ public final class VideoSendLane: @unchecked Sendable {
         /// Sleep BEFORE sending (kfDup second copy time-separation). 0 for normal frames.
         public let leadingDelayNanos: UInt64
 
-        public init(outgoings: [VideoSendScheduler.Outgoing], gapNanos: UInt64,
-                    chunkFragments: Int, leadingDelayNanos: UInt64 = 0) {
+        public init(
+            outgoings: [VideoSendScheduler.Outgoing],
+            gapNanos: UInt64,
+            chunkFragments: Int,
+            leadingDelayNanos: UInt64 = 0,
+        ) {
             self.outgoings = outgoings
             self.gapNanos = gapNanos
             self.chunkFragments = max(1, chunkFragments)
@@ -54,6 +57,7 @@ public final class VideoSendLane: @unchecked Sendable {
     private var wakeup: AsyncStream<Void>.Continuation?
     private let send: @Sendable (Data, VideoChannel) -> Void
 
+    @preconcurrency
     public init(send: @escaping @Sendable (Data, VideoChannel) -> Void) {
         self.send = send
         let (wakeups, continuation) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
@@ -72,21 +76,25 @@ public final class VideoSendLane: @unchecked Sendable {
 
     /// Queued jobs not yet fully sent (the backpressure signal; ≥1 while a job is mid-pace).
     public var depth: Int {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return fifo.count + (transmitting ? 1 : 0)
     }
 
     private var transmitting = false
 
     private var isClosed: Bool {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return closed
     }
 
     /// O(1) append + coalesced wakeup. Never blocks, never sleeps.
     public func enqueue(_ job: Job) {
         lock.lock()
-        guard !closed else { lock.unlock(); return }
+        guard !closed else { lock.unlock()
+            return
+        }
         fifo.append(job)
         lock.unlock()
         wakeup?.yield()
@@ -115,14 +123,18 @@ public final class VideoSendLane: @unchecked Sendable {
     }
 
     private func popNext() -> (Job, UInt64)? {
-        lock.lock(); defer { lock.unlock() }
-        guard !closed, !fifo.isEmpty else { transmitting = false; return nil }
+        lock.lock()
+        defer { lock.unlock() }
+        guard !closed, !fifo.isEmpty else { transmitting = false
+            return nil
+        }
         transmitting = true
         return (fifo.removeFirst(), generation)
     }
 
     private func currentGeneration() -> UInt64 {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return generation
     }
 
@@ -156,7 +168,9 @@ public final class VideoSendLane: @unchecked Sendable {
         while i < outgoings.count {
             let end = min(i + job.chunkFragments, outgoings.count)
             var j = i
-            while j < end { send(outgoings[j].bytes, outgoings[j].channel); j += 1 }
+            while j < end { send(outgoings[j].bytes, outgoings[j].channel)
+                j += 1
+            }
             i = end
             chunk += 1
             if i < outgoings.count {
@@ -164,7 +178,7 @@ public final class VideoSendLane: @unchecked Sendable {
                 if deadline > clock.now {
                     try? await clock.sleep(until: deadline)
                 }
-                guard currentGeneration() == gen else { return }   // flushed/closed mid-pace
+                guard currentGeneration() == gen else { return } // flushed/closed mid-pace
             }
         }
     }

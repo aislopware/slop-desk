@@ -5,7 +5,6 @@ import XCTest
 /// BOTH ends) and a host-only loss → tier decision (hysteretic, one-step-clamped). These tests pin
 /// the wire-codec totality + byte-identity invariants and the decision's hysteresis/anti-flap.
 final class AdaptiveFECPolicyTests: XCTestCase {
-
     // MARK: A. Wire codec (tier → group size)
 
     /// TOTAL over all 8 tiers: explicit groups for 1-4, default for 0 + reserved 5-7, and OFF → nil.
@@ -49,7 +48,14 @@ final class AdaptiveFECPolicyTests: XCTestCase {
             XCTAssertEqual(flags.fecTier, t, "setting parity must not change the tier")
             XCTAssertTrue(flags.contains(.parity))
 
-            let header = FrameFragmentHeader(streamSeq: 1, frameID: 2, fragIndex: 0, fragCount: 1, flags: flags, payloadLength: 0)
+            let header = FrameFragmentHeader(
+                streamSeq: 1,
+                frameID: 2,
+                fragIndex: 0,
+                fragCount: 1,
+                flags: flags,
+                payloadLength: 0,
+            )
             let decoded = try FrameFragment.decode(FrameFragment(header: header, payload: Data()).encode())
             XCTAssertEqual(decoded.header.flags.fecTier, t, "tier survives wire round-trip")
             XCTAssertTrue(decoded.header.flags.contains(.keyframe))
@@ -87,11 +93,16 @@ final class AdaptiveFECPolicyTests: XCTestCase {
     func testTierRampsDownOneLevelPerCallAndFloorsAtG10() {
         var tier: UInt8 = 4 // start at the most-redundant level (g2)
         let loss = 0.0
-        tier = AdaptiveFECPolicy.tier(forLossRate: loss, previousTier: tier); XCTAssertEqual(tier, 3, "g2 → g3")
-        tier = AdaptiveFECPolicy.tier(forLossRate: loss, previousTier: tier); XCTAssertEqual(tier, 0, "g3 → g5 (tier 0)")
-        tier = AdaptiveFECPolicy.tier(forLossRate: loss, previousTier: tier); XCTAssertEqual(tier, 2, "g5 → g10 (tier 2)")
-        tier = AdaptiveFECPolicy.tier(forLossRate: loss, previousTier: tier); XCTAssertEqual(tier, 2, "g10 is the FLOOR — never OFF")
-        tier = AdaptiveFECPolicy.tier(forLossRate: loss, previousTier: tier); XCTAssertEqual(tier, 2, "saturated at g10")
+        tier = AdaptiveFECPolicy.tier(forLossRate: loss, previousTier: tier)
+        XCTAssertEqual(tier, 3, "g2 → g3")
+        tier = AdaptiveFECPolicy.tier(forLossRate: loss, previousTier: tier)
+        XCTAssertEqual(tier, 0, "g3 → g5 (tier 0)")
+        tier = AdaptiveFECPolicy.tier(forLossRate: loss, previousTier: tier)
+        XCTAssertEqual(tier, 2, "g5 → g10 (tier 2)")
+        tier = AdaptiveFECPolicy.tier(forLossRate: loss, previousTier: tier)
+        XCTAssertEqual(tier, 2, "g10 is the FLOOR — never OFF")
+        tier = AdaptiveFECPolicy.tier(forLossRate: loss, previousTier: tier)
+        XCTAssertEqual(tier, 2, "saturated at g10")
     }
 
     /// The escape hatch (`AISLOPDESK_FEC_ALLOW_OFF=1` → `allowOff: true`) restores the old walk all
@@ -116,8 +127,11 @@ final class AdaptiveFECPolicyTests: XCTestCase {
     /// Defensive: a pre-existing OFF state under the floor steps UP to g10 on the first clean
     /// report (the floor is an invariant, not just a relax clamp).
     func testFloorLiftsAPreExistingOffState() {
-        XCTAssertEqual(AdaptiveFECPolicy.tier(forLossRate: 0.0, previousTier: 1), 2,
-                       "OFF under the floor steps up to g10 even on a clean report")
+        XCTAssertEqual(
+            AdaptiveFECPolicy.tier(forLossRate: 0.0, previousTier: 1),
+            2,
+            "OFF under the floor steps up to g10 even on a clean report",
+        )
     }
 
     /// A loss sitting inside the dead-band between two levels HOLDS the current tier from EITHER side
@@ -245,8 +259,11 @@ final class AdaptiveFECPolicyTests: XCTestCase {
     /// The sticky window DECAYS one report at a time and the dwell returns to normal once it
     /// closes — the doubled dwell is a window, not a latch.
     func testStickyWindowDecaysBackToNormalDwell() {
-        var s = AdaptiveFECPolicy.TierState(tier: 0, relaxStreak: 0,
-                                            stickyRelaxRemaining: 3)
+        var s = AdaptiveFECPolicy.TierState(
+            tier: 0,
+            relaxStreak: 0,
+            stickyRelaxRemaining: 3,
+        )
         s = AdaptiveFECPolicy.nextTierState(forLossRate: 0.0, state: s)
         XCTAssertEqual(s.stickyRelaxRemaining, 2)
         s = AdaptiveFECPolicy.nextTierState(forLossRate: 0.0, state: s)

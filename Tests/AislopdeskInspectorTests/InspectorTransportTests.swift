@@ -1,5 +1,5 @@
-import XCTest
 import AislopdeskProtocol
+import XCTest
 @testable import AislopdeskInspector
 
 /// Inspector transport round-trip: encode a set of InspectorEvents through
@@ -11,13 +11,27 @@ final class InspectorTransportTests: XCTestCase {
             .message(MessageEvent(role: .user, text: "hello")),
             .thinking(ThinkingMarker(isPlaceholder: true, signature: "sig123")),
             .toolCard(ToolCard(id: "t1", name: "Bash", input: .object(["command": .string("ls")]), status: .pending)),
-            .toolCard(ToolCard(id: "t1", name: "Bash", input: .object(["command": .string("ls")]), output: "files", status: .completed)),
+            .toolCard(ToolCard(
+                id: "t1",
+                name: "Bash",
+                input: .object(["command": .string("ls")]),
+                output: "files",
+                status: .completed,
+            )),
             .todosUpdated([
                 TodoItem(content: "a", status: .completed),
                 TodoItem(content: "b", status: .inProgress, activeForm: "doing b"),
             ]),
-            .subagentUpdated(SubagentNode(id: "deadbeef", agentType: "Ariadne", status: .stopped, lastAssistantMessage: "done")),
-            .subagentToolCard(agentID: "deadbeef", card: ToolCard(id: "sa1", name: "Grep", input: .object([:]), output: "hit", status: .completed)),
+            .subagentUpdated(SubagentNode(
+                id: "deadbeef",
+                agentType: "Ariadne",
+                status: .stopped,
+                lastAssistantMessage: "done",
+            )),
+            .subagentToolCard(
+                agentID: "deadbeef",
+                card: ToolCard(id: "sa1", name: "Grep", input: .object([:]), output: "hit", status: .completed),
+            ),
             .workflow(WorkflowMarker(state: .running)),
             .unknownLine(raw: #"{"type":"future"}"#),
         ]
@@ -98,7 +112,7 @@ final class InspectorTransportTests: XCTestCase {
             .event(.toolCard(ToolCard(id: "z", name: "Read", input: .object([:]), status: .pending))),
         ]
         var blob = Data()
-        for message in messages { blob.append(try InspectorCodec.encode(message)) }
+        for message in messages { try blob.append(InspectorCodec.encode(message)) }
 
         // Feed one byte at a time → the decoder must still recover every frame in order.
         var decoder = InspectorFrameDecoder()

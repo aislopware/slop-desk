@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins the client-side invariants of the "show system popups in their own pane" feature (the user's
@@ -8,7 +8,6 @@ import CoreGraphics
 /// restore a stale dialog windowID). Uses the spec-only ``FakePaneSession`` seam — no client/host.
 @MainActor
 final class SystemDialogPaneTests: XCTestCase {
-
     private func makeStore(persistence: WorkspacePersistence? = nil) -> WorkspaceStore {
         WorkspaceStore(restoring: nil, makeSession: { FakePaneSession($0) }, liveVideoCap: 2, persistence: persistence)
     }
@@ -49,7 +48,7 @@ final class SystemDialogPaneTests: XCTestCase {
 
     // THE key invariant: a `.systemDialog` pane is NOT written to disk — a relaunch restores only the
     // real (terminal/remoteGUI) panes, never a stale dialog windowID.
-    func testSystemDialogPaneIsNotPersisted() throws {
+    func testSystemDialogPaneIsNotPersisted() {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("aislopdesk-sysdialog-test-\(ProcessInfo.processInfo.globallyUniqueString)")
             .appendingPathComponent("workspace.json")
@@ -57,7 +56,7 @@ final class SystemDialogPaneTests: XCTestCase {
         let persistence = WorkspacePersistence(fileURL: tmp)
 
         let store = makeStore(persistence: persistence)
-        let terminalCount = kinds(store).filter { $0 == .terminal }.count
+        let terminalCount = kinds(store).count(where: { $0 == .terminal })
         XCTAssertGreaterThan(terminalCount, 0, "the default workspace has a terminal pane")
         store.addSystemDialogPane(windowID: 1966, owner: "SecurityAgent", title: "", isSecure: true)
         XCTAssertTrue(kinds(store).contains(.systemDialog), "the dialog pane is live on the canvas")
@@ -66,8 +65,11 @@ final class SystemDialogPaneTests: XCTestCase {
         let reloaded = persistence.load()
         let reloadedKinds = reloaded.canvas.allIDs().compactMap { reloaded.canvas.spec(for: $0)?.kind }
         XCTAssertFalse(reloadedKinds.contains(.systemDialog), "the ephemeral dialog pane must NOT persist")
-        XCTAssertEqual(reloadedKinds.filter { $0 == .terminal }.count, terminalCount,
-                       "the real terminal pane(s) still persist unchanged")
+        XCTAssertEqual(
+            reloadedKinds.count(where: { $0 == .terminal }),
+            terminalCount,
+            "the real terminal pane(s) still persist unchanged",
+        )
     }
 
     // A dialog pane is a VIDEO kind (counts against the cap / renders the remote-GUI view) but also flagged

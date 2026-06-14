@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskProtocol
+import Foundation
 
 /// Host-side replay buffer for lossless reconnect — an Aislopdesk-native port of
 /// Eternal Terminal's `BackedWriter` over plain TCP.
@@ -112,11 +112,11 @@ public struct ReplayBuffer: Sendable {
     public let offlineGateBytesCap: Int
 
     public init(
-        maxBackupBytes: Int = ReplayBuffer.maxBackupBytes,
-        offlineGateBytes: Int = ReplayBuffer.offlineGateBytes
+        maxBackupBytes: Int = Self.maxBackupBytes,
+        offlineGateBytes: Int = Self.offlineGateBytes,
     ) {
-        self.maxBackupBytesCap = max(0, maxBackupBytes)
-        self.offlineGateBytesCap = max(0, offlineGateBytes)
+        maxBackupBytesCap = max(0, maxBackupBytes)
+        offlineGateBytesCap = max(0, offlineGateBytes)
     }
 
     // MARK: Derived signals
@@ -136,7 +136,7 @@ public struct ReplayBuffer: Sendable {
     /// while honoring the never-drop invariant.
     public var shouldPauseDrain: Bool {
         if retainedBytes >= maxBackupBytesCap { return true }
-        if !isClientOnline && retainedBytes >= offlineGateBytesCap { return true }
+        if !isClientOnline, retainedBytes >= offlineGateBytesCap { return true }
         return false
     }
 

@@ -1,6 +1,6 @@
-import Foundation
 import AislopdeskClient
 import AislopdeskProtocol
+import Foundation
 
 /// Orchestrates a ``AislopdeskClient`` + ``ReconnectManager`` for the UI: host/port entry,
 /// connect/disconnect, and a live status the chrome renders.
@@ -14,6 +14,7 @@ import AislopdeskProtocol
 ///
 /// `@MainActor @Observable`: bound directly to ``ConnectionView``. The terminal byte handling
 /// is delegated to the injected ``TerminalViewModel`` (one source of truth for live state).
+@preconcurrency
 @MainActor
 @Observable
 public final class ConnectionViewModel {
@@ -90,7 +91,9 @@ public final class ConnectionViewModel {
     /// survived a coalesce. The `.resize` payload is the libghostty grid (cols,rows) only —
     /// the wire's px/py path is driven downstream by `AislopdeskClient.sendResize` (px/py = 0),
     /// unchanged.
-    enum OutEvent: Sendable, Equatable { case input(Data); case resize(cols: UInt16, rows: UInt16) }
+    enum OutEvent: Equatable { case input(Data)
+        case resize(cols: UInt16, rows: UInt16)
+    }
 
     /// LATEST-WINS coalescer for one drained OUT batch — the resize-corruption fix.
     ///
@@ -122,17 +125,19 @@ public final class ConnectionViewModel {
         guard batch.count > 1 else { return batch }
         var output: [OutEvent] = []
         output.reserveCapacity(batch.count)
-        var pending: OutEvent?   // the latest buffered `.resize` in the current run (nil ⇔ none)
+        var pending: OutEvent? // the latest buffered `.resize` in the current run (nil ⇔ none)
         for event in batch {
             switch event {
             case .resize:
-                pending = event                                  // same run: keep only the latest
+                pending = event // same run: keep only the latest
             case .input:
-                if let p = pending { output.append(p); pending = nil }  // barrier: flush resize FIRST
-                output.append(event)                             // then the input (byte order intact)
+                if let p = pending { output.append(p)
+                    pending = nil
+                } // barrier: flush resize FIRST
+                output.append(event) // then the input (byte order intact)
             }
         }
-        if let p = pending { output.append(p) }                  // trailing resize run (line-398 analog)
+        if let p = pending { output.append(p) } // trailing resize run (line-398 analog)
         return output
     }
 
@@ -147,7 +152,7 @@ public final class ConnectionViewModel {
     /// Pure ⇒ `nonisolated` (the off-main drain + headless tests call it directly).
     nonisolated static func packInputs(
         _ events: [OutEvent],
-        maxInputFrameBytes: Int = MuxFlowControl.maxDataMessagePayloadBytes
+        maxInputFrameBytes: Int = MuxFlowControl.maxDataMessagePayloadBytes,
     ) -> [OutEvent] {
         var output: [OutEvent] = []
         output.reserveCapacity(events.count)
@@ -168,7 +173,7 @@ public final class ConnectionViewModel {
             case let .input(data):
                 buffer.append(data)
             case .resize:
-                flushBuffer()        // barrier: a resize never crosses input bytes
+                flushBuffer() // barrier: a resize never crosses input bytes
                 output.append(event)
             }
         }
@@ -182,8 +187,8 @@ public final class ConnectionViewModel {
     nonisolated static func sendBatch(_ batch: [OutEvent], over client: AislopdeskClient) async {
         for event in packInputs(coalesceOut(batch)) {
             switch event {
-            case let .input(data):          try? await client.sendInput(data)
-            case let .resize(cols, rows):   try? await client.sendResize(cols: cols, rows: rows)
+            case let .input(data): try? await client.sendInput(data)
+            case let .resize(cols, rows): try? await client.sendResize(cols: cols, rows: rows)
             }
         }
     }
@@ -201,11 +206,12 @@ public final class ConnectionViewModel {
     private var outWakeContinuation: AsyncStream<Void>.Continuation?
     private var outDrainTask: Task<Void, Never>?
 
+    @preconcurrency
     public init(
         terminal: TerminalViewModel,
         target: @escaping @MainActor () -> ConnectionTarget = { .default },
         backoff: ReconnectManager.Backoff = .init(),
-        makeClient: @escaping @Sendable () -> AislopdeskClient
+        makeClient: @escaping @Sendable () -> AislopdeskClient,
     ) {
         self.terminal = terminal
         self.target = target
@@ -286,11 +292,13 @@ public final class ConnectionViewModel {
         }
         terminal.inputSink = { [weak self] data in
             guard let self else { return }
-            self.outQueue.append(.input(data)); self.outWakeContinuation?.yield()
+            outQueue.append(.input(data))
+            outWakeContinuation?.yield()
         }
         terminal.resizeSink = { [weak self] cols, rows in
             guard let self else { return }
-            self.outQueue.append(.resize(cols: cols, rows: rows)); self.outWakeContinuation?.yield()
+            outQueue.append(.resize(cols: cols, rows: rows))
+            outWakeContinuation?.yield()
         }
 
         // Single UI-layer events loop (chrome status + forward to the terminal model).
@@ -317,9 +325,9 @@ public final class ConnectionViewModel {
             },
             onGaveUp: { [weak self] in
                 Task { @MainActor in self?.applyReconnectGaveUp() }
-            }
+            },
         )
-        self.reconnect = manager
+        reconnect = manager
 
         // DEAD-HOST TIMEOUT: the ~10s ceiling now lives at the TRANSPORT layer
         // (`LiveMuxConnectionFactory.makeConnection` → `withMuxConnectTimeout`), NOT here. Do NOT
@@ -374,7 +382,7 @@ public final class ConnectionViewModel {
             Task { @MainActor [weak self, weak client] in
                 try? await Task.sleep(for: .milliseconds(400))
                 guard let self, self.client === client else { return }
-                self.terminal.resendCurrentSize()
+                terminal.resendCurrentSize()
             }
         } catch {
             guard myGeneration == connectGeneration, self.client === client else { return }
@@ -422,11 +430,12 @@ public final class ConnectionViewModel {
         // Capture the pre-resume state: pause() does not change `status`, so a connection that
         // was live (or mid-reconnect) before backgrounding is still `.connected`/`.reconnecting`.
         // Only such a pane should snap back to `.connected`; a never-up client must not.
-        let wasLive: Bool
-        switch status {
-        case .connected, .reconnecting: wasLive = true
-        default: wasLive = false
-        }
+        let wasLive =
+            switch status {
+            case .connected,
+                 .reconnecting: true
+            default: false
+            }
         do {
             try await client.resume()
             // Same supersede guard as connect() (R6 #1): a teardown/reconnect during resume's handshake
@@ -435,7 +444,7 @@ public final class ConnectionViewModel {
             if wasLive { status = .connected }
         } catch {
             guard self.client === client else { return }
-            status = .failed(Self.failureReason(for: error))   // humanized + payload-safe (see connect()'s catch)
+            status = .failed(Self.failureReason(for: error)) // humanized + payload-safe (see connect()'s catch)
         }
     }
 
@@ -452,7 +461,7 @@ public final class ConnectionViewModel {
         observeTask = Task { @MainActor [weak self] in
             for await event in client.events {
                 guard let self else { return }
-                self.foldEvent(event)
+                foldEvent(event)
             }
         }
     }
@@ -463,13 +472,13 @@ public final class ConnectionViewModel {
     private func foldEvent(_ event: AislopdeskClient.Event) {
         switch event {
         case .disconnected:
-            if self.deliberatelyClosed {
-                self.status = .disconnected
+            if deliberatelyClosed {
+                status = .disconnected
             } else {
                 // A fresh drop: enter reconnecting with no attempt info yet (the supervisor's
                 // `onProgress` enriches it with the attempt count + countdown as it retries).
-                self.status = .reconnecting(attempt: 0, nextRetry: nil)
-                self.terminal.markReconnecting()
+                status = .reconnecting(attempt: 0, nextRetry: nil)
+                terminal.markReconnecting()
             }
         case let .reconnected(sessionID, _):
             // A late .reconnected can be drained from the broadcaster buffer AFTER a deliberate
@@ -479,9 +488,9 @@ public final class ConnectionViewModel {
             // `return` (not break) also skips the terminal.handle(event) forward below, which would
             // otherwise wedge the terminal model's connectionStatus to .connected past disconnect()'s
             // terminal.reset() (R13 #3).
-            if self.deliberatelyClosed { return }
+            if deliberatelyClosed { return }
             self.sessionID = sessionID
-            self.status = .connected
+            status = .connected
             // RECONNECT GRID RE-ASSERT (the "render bị xô lệch khi reconnect" fix). A reconnect spawns
             // a BRAND-NEW host shell (the mux path has no server-side resume — see
             // `TerminalViewModel.markReconnecting`), whose PTY starts at its 80×24 init size. The grid
@@ -493,15 +502,15 @@ public final class ConnectionViewModel {
             // two-shot re-assert: now, then again after the host control-reader is reliably pumping (it
             // may not be the instant the resume completes, so an immediate-only send can be dropped at
             // the mux before it is read; the host debounces duplicates, so the second send is free).
-            self.terminal.resendCurrentSize()
-            let reconnectedClient = self.client
+            terminal.resendCurrentSize()
+            let reconnectedClient = client
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(400))
-                guard let self, self.client === reconnectedClient else { return }
-                self.terminal.resendCurrentSize()
+                guard let self, client === reconnectedClient else { return }
+                terminal.resendCurrentSize()
             }
         case .exit:
-            self.status = .disconnected
+            status = .disconnected
         case let .commandStatus(commandStatus):
             // A finished command (OSC 133;D): best-effort long-command notification (macOS-only). The
             // running/idle indicator itself is folded by the terminal model below — this branch only
@@ -509,10 +518,10 @@ public final class ConnectionViewModel {
             if case let .idle(exitCode, durationMS) = commandStatus {
                 #if os(macOS)
                 if SettingsKey.longCommandNotificationsEnabled {
-                    self.commandNotifier.notifyIfLong(
-                        paneTitle: self.terminal.title ?? "",
+                    commandNotifier.notifyIfLong(
+                        paneTitle: terminal.title ?? "",
                         exitCode: exitCode,
-                        durationMS: durationMS
+                        durationMS: durationMS,
                     )
                 }
                 #endif
@@ -521,13 +530,14 @@ public final class ConnectionViewModel {
             // An EXPLICIT child-requested notification (OSC 9 / OSC 777). Hand it to the store's
             // pane-notification hook with the live pane title (the OSC-9 title fallback). The
             // running/idle indicator is unaffected; this is a pure side-effect.
-            self.onExplicitNotification?(self.terminal.title ?? "", title, body)
+            onExplicitNotification?(terminal.title ?? "", title, body)
         case let .rtt(milliseconds):
-            self.latencyMS = milliseconds
-        case .title, .bell:
+            latencyMS = milliseconds
+        case .title,
+             .bell:
             break
         }
-        self.terminal.handle(event)
+        terminal.handle(event)
     }
 
     #if DEBUG
@@ -551,10 +561,11 @@ public final class ConnectionViewModel {
         // resolves, since the supervisor is dead). `observeEvents` already guards `.disconnected` this way.
         guard !deliberatelyClosed else { return }
         switch status {
-        case .reconnecting, .disconnected:
+        case .reconnecting,
+             .disconnected:
             status = .reconnecting(attempt: attempt, nextRetry: nextRetry)
         default:
-            break   // already connected / failed — do not regress
+            break // already connected / failed — do not regress
         }
     }
 
@@ -573,7 +584,8 @@ public final class ConnectionViewModel {
         // `disconnect()` must not whitewash the closed pane to `.unreachable` (red "Unreachable").
         guard !deliberatelyClosed else { return }
         switch status {
-        case .reconnecting, .disconnected:
+        case .reconnecting,
+             .disconnected:
             status = .unreachable
         default:
             break
@@ -620,8 +632,8 @@ public final class ConnectionViewModel {
             outQueue.removeAll(keepingCapacity: true)
             for event in Self.coalesceOut(residual) {
                 switch event {
-                case .input:                    break
-                case let .resize(cols, rows):   try? await client.sendResize(cols: cols, rows: rows)
+                case .input: break
+                case let .resize(cols, rows): try? await client.sendResize(cols: cols, rows: rows)
                 }
             }
         }

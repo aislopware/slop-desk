@@ -6,9 +6,8 @@ import XCTest
 /// step (dup ×2). Body = one big-endian UInt16 fps. Pattern of KeepaliveCodecTests /
 /// FocusWindowCodecTests: round-trip + truncation + unknown-type tolerance.
 final class StreamCadenceCodecTests: XCTestCase {
-
     func testRoundTripAcrossLadderAndExtremes() throws {
-        for fps: UInt16 in [60, 30, 20, 15, 1, 65_535] {
+        for fps: UInt16 in [60, 30, 20, 15, 1, 65535] {
             let msg = VideoControlMessage.streamCadence(fps: fps)
             XCTAssertEqual(try VideoControlMessage.decode(msg.encode()), msg)
         }
@@ -18,8 +17,11 @@ final class StreamCadenceCodecTests: XCTestCase {
         let msg = VideoControlMessage.streamCadence(fps: 60)
         XCTAssertEqual(msg.messageType, 10)
         XCTAssertEqual(msg.encode(), Data([10, 0x00, 0x3C]), "type 10 | UInt16 BE fps — exactly 3 bytes")
-        XCTAssertEqual(VideoControlMessage.streamCadence(fps: 0x0102).encode(), Data([10, 0x01, 0x02]),
-                       "big-endian byte order")
+        XCTAssertEqual(
+            VideoControlMessage.streamCadence(fps: 0x0102).encode(),
+            Data([10, 0x01, 0x02]),
+            "big-endian byte order",
+        )
     }
 
     func testTypeByteIsNextFreeAfterFocusWindow() {

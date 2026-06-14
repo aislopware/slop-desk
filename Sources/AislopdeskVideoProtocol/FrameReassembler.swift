@@ -21,7 +21,15 @@ public struct ReassembledFrame: Equatable, Sendable {
     /// the decode gate's non-keyframe re-anchor admission (see FrameFragmentHeader.Flags.ackedAnchored).
     public var ackedAnchored: Bool
 
-    public init(frameID: UInt32, keyframe: Bool, crisp: Bool, avcc: Data, recoveredViaFEC: Bool = false, isLTR: Bool = false, ackedAnchored: Bool = false) {
+    public init(
+        frameID: UInt32,
+        keyframe: Bool,
+        crisp: Bool,
+        avcc: Data,
+        recoveredViaFEC: Bool = false,
+        isLTR: Bool = false,
+        ackedAnchored: Bool = false,
+    ) {
         self.frameID = frameID
         self.keyframe = keyframe
         self.crisp = crisp
@@ -152,12 +160,15 @@ public struct FrameReassembler {
         // ids are `dataCount + groupOrder < fragCount`). Drop the bad fragment as `.stale` (ignored).
         guard fragment.header.fragCount > 0,
               Int(fragment.header.fragCount) <= Self.maxFragmentsPerFrame,
-              fragment.header.fragIndex < fragment.header.fragCount else {
+              fragment.header.fragIndex < fragment.header.fragCount
+        else {
             return .stale
         }
 
         if retired.contains(frameID) { return .stale }
-        if let retiredHigh = highestRetiredFrameID, frameID.distanceWrapped(from: retiredHigh) <= 0, !pending.keys.contains(frameID) {
+        if let retiredHigh = highestRetiredFrameID, frameID.distanceWrapped(from: retiredHigh) <= 0,
+           !pending.keys.contains(frameID)
+        {
             // frameID is at or behind the retire frontier and not actively pending.
             return .stale
         }
@@ -169,12 +180,17 @@ public struct FrameReassembler {
             highestSeenFrameID = frameID
         }
 
-        var entry = pending[frameID] ?? Pending(fragCount: fragment.header.fragCount, keyframe: false, crisp: false, fecTier: fragment.header.flags.fecTier)
+        var entry = pending[frameID] ?? Pending(
+            fragCount: fragment.header.fragCount,
+            keyframe: false,
+            crisp: false,
+            fecTier: fragment.header.flags.fecTier,
+        )
         entry.fragCount = fragment.header.fragCount
         if fragment.header.flags.contains(.keyframe) { entry.keyframe = true }
         if fragment.header.flags.contains(.crisp) { entry.crisp = true }
-        if fragment.header.flags.contains(.isLTR) { entry.isLTR = true }   // WF-8 bit 6
-        if fragment.header.flags.contains(.ackedAnchored) { entry.ackedAnchored = true }   // bit 7
+        if fragment.header.flags.contains(.isLTR) { entry.isLTR = true } // WF-8 bit 6
+        if fragment.header.flags.contains(.ackedAnchored) { entry.ackedAnchored = true } // bit 7
 
         if fragment.header.flags.contains(.parity) {
             let pIndex = Int(fragment.header.fragIndex)
@@ -188,12 +204,12 @@ public struct FrameReassembler {
             // parity does not shift the boundary or mis-map a surviving higher-group
             // parity. Without FEC (or an OFF-tier frame), fall back to the raw fragIndex.
             // The boundary uses this frame's PER-FRAME group size (WF-4), not a local constant.
-            let dataBoundary: Int
-            if let g = parityGroupSize(entry) {
-                dataBoundary = invertedDataCount(fragCount: Int(entry.fragCount), groupSize: g)
-            } else {
-                dataBoundary = pIndex
-            }
+            let dataBoundary: Int =
+                if let g = parityGroupSize(entry) {
+                    invertedDataCount(fragCount: Int(entry.fragCount), groupSize: g)
+                } else {
+                    pIndex
+                }
             let groupOrder = max(0, pIndex - dataBoundary)
             entry.parity[groupOrder] = fragment.payload
         } else {
@@ -264,7 +280,7 @@ public struct FrameReassembler {
         var sawRepairableHole = false
         while index < dataCount {
             let upper = min(index + g, dataCount)
-            let missing = (index ..< upper).filter { entry.data[UInt16($0)] == nil }.count
+            let missing = (index..<upper).count(where: { entry.data[UInt16($0)] == nil })
             if missing >= 2 { return false } // not parity-repairable: permanently hopeless
             if missing == 1 {
                 // A single hole repairable IFF its parity is still outstanding. Parity is
@@ -283,7 +299,15 @@ public struct FrameReassembler {
         guard let entry = pending[frameID] else { return .stale }
         guard let assembled = assemble(entry) else { return .incomplete }
         retire(frameID, completed: true)
-        return .completed(ReassembledFrame(frameID: frameID, keyframe: entry.keyframe, crisp: entry.crisp, avcc: assembled.avcc, recoveredViaFEC: assembled.recoveredViaFEC, isLTR: entry.isLTR, ackedAnchored: entry.ackedAnchored))
+        return .completed(ReassembledFrame(
+            frameID: frameID,
+            keyframe: entry.keyframe,
+            crisp: entry.crisp,
+            avcc: assembled.avcc,
+            recoveredViaFEC: assembled.recoveredViaFEC,
+            isLTR: entry.isLTR,
+            ackedAnchored: entry.ackedAnchored,
+        ))
     }
 
     /// Resolves how many of a frame's fragments are DATA (vs FEC parity).
@@ -346,7 +370,7 @@ public struct FrameReassembler {
             return nil
         }
 
-        var dataFragments: [Data?] = (0 ..< dataCount).map { entry.data[UInt16($0)] }
+        var dataFragments: [Data?] = (0..<dataCount).map { entry.data[UInt16($0)] }
 
         // A hole existed before FEC: if recovery then completes the frame, it was FEC-recovered.
         // WF-4: only attempt recovery with a real PER-FRAME group size (nil = no-FEC OR OFF tier →
@@ -357,13 +381,14 @@ public struct FrameReassembler {
             // Parity is keyed by GROUP ORDER (FIX #1): group `g`'s parity is `parity[g]`,
             // so a lost group-0 parity leaves slot 0 `nil` (the recover() contract) while
             // a surviving group-1 parity is correctly at slot 1 — never shifted.
-            let parityFragments: [Data?] = (0 ..< max(0, parityCount)).map { entry.parity[$0] }
+            let parityFragments: [Data?] = (0..<max(0, parityCount)).map { entry.parity[$0] }
             dataFragments = fec.recover(dataFragments: dataFragments, parityFragments: parityFragments, groupSize: g)
         }
 
         guard !dataFragments.contains(where: { $0 == nil }) else { return nil }
         var avcc = Data()
-        for fragment in dataFragments { avcc.append(fragment!) }
+        // The guard above proved every element is non-nil; `case let _?` unwraps each in order.
+        for case let fragment? in dataFragments { avcc.append(fragment) }
         return (avcc, hadHole)
     }
 
@@ -377,13 +402,13 @@ public struct FrameReassembler {
         // way to fill it cannot complete. Without FEC (or an OFF-tier frame, group size nil),
         // ANY missing data fragment is terminal once the frame is "old".
         guard let g = parityGroupSize(entry) else {
-            return !(0 ..< dataCount).contains { entry.data[UInt16($0)] == nil }
+            return !(0..<dataCount).contains { entry.data[UInt16($0)] == nil }
         }
         var index = 0
         var groupIndex = 0
         while index < dataCount {
             let upper = min(index + g, dataCount)
-            let missing = (index ..< upper).filter { entry.data[UInt16($0)] == nil }.count
+            let missing = (index..<upper).count(where: { entry.data[UInt16($0)] == nil })
             if missing >= 2 { return false }
             // Parity keyed by GROUP ORDER (FIX #1): this group's parity is `parity[groupIndex]`.
             if missing == 1, entry.parity[groupIndex] == nil { return false }
@@ -393,7 +418,7 @@ public struct FrameReassembler {
         return true
     }
 
-    private mutating func retire(_ frameID: UInt32, completed: Bool) {
+    private mutating func retire(_ frameID: UInt32, completed _: Bool) {
         pending[frameID] = nil
         retired.insert(frameID)
         if let high = highestRetiredFrameID {
@@ -408,12 +433,12 @@ public struct FrameReassembler {
     }
 }
 
-extension UInt32 {
+public extension UInt32 {
     /// Signed wrap-aware distance `self - other` interpreted in a 32-bit sequence
     /// space (handles the `frameID`/`streamSeq` wrap at 2^32). Positive ⇒ `self` is
     /// "ahead of" `other`. Public so the host's ``VideoMuxRouter`` can bound its retired
     /// channelID set with the SAME wrap-aware high-water-mark prune (FIX #4).
-    public func distanceWrapped(from other: UInt32) -> Int {
+    func distanceWrapped(from other: UInt32) -> Int {
         Int(Int32(bitPattern: self &- other))
     }
 }

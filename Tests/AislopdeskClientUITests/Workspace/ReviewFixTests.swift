@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins the fixes from the session self-review:
@@ -8,7 +8,6 @@ import CoreGraphics
 /// CanvasView eyeball / PaneCreationCommandTests respectively.)
 @MainActor
 final class ReviewFixTests: XCTestCase {
-
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
         WorkspaceStore(restoring: restoring, makeSession: { FakePaneSession($0) }, liveVideoCap: 5)
     }
@@ -18,8 +17,13 @@ final class ReviewFixTests: XCTestCase {
     func testSwitchLayoutClearsPendingClose() {
         let a = PaneID()
         let ws = Workspace(canvas: Canvas(items: [
-            CanvasItem(id: a, spec: PaneSpec(kind: .terminal, title: "A"),
-                       frame: CGRect(x: 0, y: 0, width: 480, height: 320), z: 0)]), focusedPane: a)
+            CanvasItem(
+                id: a,
+                spec: PaneSpec(kind: .terminal, title: "A"),
+                frame: CGRect(x: 0, y: 0, width: 480, height: 320),
+                z: 0,
+            ),
+        ]), focusedPane: a)
         let store = makeStore(restoring: ws)
         store.saveLayoutPreset(name: "x")
         (store.handle(for: a) as? FakePaneSession)?.isShellBusy = true
@@ -38,12 +42,20 @@ final class ReviewFixTests: XCTestCase {
         // The FakePaneSession has no live terminal title, so displayTitle falls back to spec.title.
         let a = PaneID()
         let ws = Workspace(canvas: Canvas(items: [
-            CanvasItem(id: a, spec: PaneSpec(kind: .terminal, title: "MyShell"),
-                       frame: CGRect(x: 0, y: 0, width: 480, height: 320), z: 0)]), focusedPane: a)
+            CanvasItem(
+                id: a,
+                spec: PaneSpec(kind: .terminal, title: "MyShell"),
+                frame: CGRect(x: 0, y: 0, width: 480, height: 320),
+                z: 0,
+            ),
+        ]), focusedPane: a)
         let store = makeStore(restoring: ws)
         store.saveBookmark(1)
-        XCTAssertEqual(store.workspace.bookmarks[1]?.name, "MyShell",
-                       "bookmark name resolves through displayTitle (live title when present, else spec)")
+        XCTAssertEqual(
+            store.workspace.bookmarks[1]?.name,
+            "MyShell",
+            "bookmark name resolves through displayTitle (live title when present, else spec)",
+        )
     }
 
     /// displayTitle (now used by the carousel tab + top bar, not just the pill/sidebar) masks secrets,

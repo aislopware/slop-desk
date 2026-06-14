@@ -4,13 +4,12 @@ import XCTest
 /// Length-prefixed (AVCC) NAL-unit iteration — defensive parsing per doc 18 (macOS
 /// 26 emits 1 NALU but we iterate anyway; a bad prefix must not crash).
 final class NALUnitTests: XCTestCase {
-
     private func avcc(_ units: [[UInt8]]) -> Data {
         NALUnit.join(units.map { Data($0) })
     }
 
     func testSingleNALURoundTrip() {
-        let units = [Data([0x40, 0x01, 0x0c, 0x01])] // an HEVC VPS-ish blob
+        let units = [Data([0x40, 0x01, 0x0C, 0x01])] // an HEVC VPS-ish blob
         let joined = NALUnit.join(units)
         XCTAssertEqual(NALUnit.split(joined), units)
     }

@@ -10,7 +10,6 @@ import XCTest
 /// - `pages(for:)` order == `canvas.allIDs()` (z-order), carrying each pane's kind+title.
 /// - `selectedIndex(focusedPane:in:)` == the focused pane's index, or `0` if the focused pane is absent.
 final class CompactLayoutResolverTests: XCTestCase {
-
     // MARK: - Fixtures
 
     /// A 3-pane canvas whose z-order is a, b, c (``Canvas/make`` assigns z = array index), each
@@ -73,7 +72,15 @@ final class CompactLayoutResolverTests: XCTestCase {
     func testSelectedIndexDefaultsToZeroWhenFocusAbsent() {
         let a = PaneID(), b = PaneID(), c = PaneID(), ghost = PaneID()
         let canvas = threePaneCanvas(a: a, b: b, c: c)
-        XCTAssertEqual(CompactLayoutResolver.selectedIndex(focusedPane: ghost, in: canvas), 0, "absent focus → page 0 (defensive)")
-        XCTAssertEqual(CompactLayoutResolver.selectedIndex(focusedPane: nil, in: canvas), 0, "nil focus → page 0 (defensive)")
+        XCTAssertEqual(
+            CompactLayoutResolver.selectedIndex(focusedPane: ghost, in: canvas),
+            0,
+            "absent focus → page 0 (defensive)",
+        )
+        XCTAssertEqual(
+            CompactLayoutResolver.selectedIndex(focusedPane: nil, in: canvas),
+            0,
+            "nil focus → page 0 (defensive)",
+        )
     }
 }

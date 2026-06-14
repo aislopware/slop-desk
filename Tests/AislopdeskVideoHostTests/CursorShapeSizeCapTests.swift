@@ -1,8 +1,8 @@
 #if os(macOS)
-import XCTest
-import AppKit
-@testable import AislopdeskVideoHost
 import AislopdeskVideoProtocol
+import AppKit
+import XCTest
+@testable import AislopdeskVideoHost
 
 /// FIX B size guard: a cursor shape PNG MUST fit one datagram (≤ MTU − header). A larger
 /// bitmap would be IP-fragmented, so losing ANY fragment loses the whole shape — amplifying the
@@ -15,10 +15,11 @@ import AislopdeskVideoProtocol
 /// re-introduce fragmentation.
 @MainActor
 final class CursorShapeSizeCapTests: XCTestCase {
-
     func testBudgetMatchesWireConstants() {
-        XCTAssertEqual(CursorSampler.maxShapeBitmapBytes,
-                       VideoPacketizer.maxDatagramSize - CursorShapeMessage.headerSize)
+        XCTAssertEqual(
+            CursorSampler.maxShapeBitmapBytes,
+            VideoPacketizer.maxDatagramSize - CursorShapeMessage.headerSize,
+        )
     }
 
     /// A small (typical) cursor encodes unchanged and trivially fits — no downscale needed.
@@ -38,8 +39,11 @@ final class CursorShapeSizeCapTests: XCTestCase {
         // 512×512 of incompressible random RGBA → a PNG far over the ~1173-byte budget.
         let image = Self.noiseImage(width: 512, height: 512)
         let message = try XCTUnwrap(CursorSampler.encodeShape(image, shapeID: 2, hotspot: .init(x: 4, y: 4)))
-        XCTAssertLessThanOrEqual(message.bitmap.count, CursorSampler.maxShapeBitmapBytes,
-                                 "an oversized cursor PNG must be downscaled to fit one datagram")
+        XCTAssertLessThanOrEqual(
+            message.bitmap.count,
+            CursorSampler.maxShapeBitmapBytes,
+            "an oversized cursor PNG must be downscaled to fit one datagram",
+        )
         XCTAssertLessThanOrEqual(message.encode().count, VideoPacketizer.maxDatagramSize)
         // Logical size + hotspot are preserved (downscale is a transport-fit only).
         XCTAssertEqual(message.size.width, 512)
@@ -57,12 +61,12 @@ final class CursorShapeSizeCapTests: XCTestCase {
         let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0,
         )!
         var rng = SystemRandomNumberGenerator()
         if let base = rep.bitmapData {
             let count = rep.bytesPerRow * height
-            for i in 0 ..< count { base[i] = UInt8.random(in: 0...255, using: &rng) }
+            for i in 0..<count { base[i] = UInt8.random(in: 0...255, using: &rng) }
         }
         let image = NSImage(size: NSSize(width: width, height: height))
         image.addRepresentation(rep)

@@ -27,7 +27,7 @@ pub enum WindowGeometryMessage {
 impl WindowGeometryMessage {
     /// The on-wire type byte.
     #[must_use]
-    pub fn message_type(&self) -> u8 {
+    pub const fn message_type(&self) -> u8 {
         match self {
             Self::Move(_) => 1,
             Self::Resize(_) => 2,
@@ -63,7 +63,7 @@ impl WindowGeometryMessage {
 
     /// Parses a window-geometry message. Coordinates are finite-checked; the title is
     /// decoded as **strict** UTF-8 (invalid bytes → malformed, NOT lossy).
-    pub fn decode(data: &[u8]) -> Result<WindowGeometryMessage> {
+    pub fn decode(data: &[u8]) -> Result<Self> {
         let mut r = ByteReader::new(data);
         let kind = r.read_u8()?;
         match kind {

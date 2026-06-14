@@ -25,7 +25,7 @@ pub struct ByteWriter {
 impl ByteWriter {
     /// A new empty writer.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { buf: Vec::new() }
     }
 
@@ -128,13 +128,13 @@ pub struct ByteReader<'a> {
 impl<'a> ByteReader<'a> {
     /// Wraps a slice for reading.
     #[must_use]
-    pub fn new(data: &'a [u8]) -> Self {
+    pub const fn new(data: &'a [u8]) -> Self {
         Self { data, offset: 0 }
     }
 
     /// Bytes not yet consumed.
     #[must_use]
-    pub fn bytes_remaining(&self) -> usize {
+    pub const fn bytes_remaining(&self) -> usize {
         self.data.len() - self.offset
     }
 

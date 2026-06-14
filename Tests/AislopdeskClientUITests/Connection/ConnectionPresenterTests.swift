@@ -1,6 +1,6 @@
-import XCTest
-import AislopdeskTransport
 import AislopdeskClient
+import AislopdeskTransport
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins ``ConnectionPresenter`` (raw transport payloads → actionable copy) and the gate's recent-hosts
@@ -15,14 +15,16 @@ import AislopdeskClient
 ///   through an injected scratch `UserDefaults` suite.
 @MainActor
 final class ConnectionPresenterTests: XCTestCase {
-
     // MARK: - Reconnect cap is a single source of truth
 
     func testReconnectCapMirrorsTheOneConstant() {
         // The displayed "attempt N of M" cap and the per-pane transport campaign length must be the SAME
         // number, or the UI lies (it once showed "of 20" while the per-pane campaign ran to 30).
-        XCTAssertEqual(ConnectionPresenter.maxReconnectAttempts, ReconnectManager.maxReconnectAttempts,
-                       "ConnectionPresenter must mirror ReconnectManager's give-up ceiling")
+        XCTAssertEqual(
+            ConnectionPresenter.maxReconnectAttempts,
+            ReconnectManager.maxReconnectAttempts,
+            "ConnectionPresenter must mirror ReconnectManager's give-up ceiling",
+        )
     }
 
     // MARK: - friendlyFailure mapping
@@ -69,11 +71,11 @@ final class ConnectionPresenterTests: XCTestCase {
         XCTAssertEqual(ConnectionPresenter.headline(for: .connecting), "Connecting…")
         XCTAssertEqual(
             ConnectionPresenter.headline(for: .reconnecting(attempt: 3, nextRetry: nil)),
-            "Reconnecting — attempt 3 of \(ConnectionPresenter.maxReconnectAttempts)"
+            "Reconnecting — attempt 3 of \(ConnectionPresenter.maxReconnectAttempts)",
         )
         XCTAssertEqual(
             ConnectionPresenter.headline(for: .reconnecting(attempt: 0, nextRetry: nil)),
-            "Reconnecting…"
+            "Reconnecting…",
         )
     }
 
@@ -81,11 +83,11 @@ final class ConnectionPresenterTests: XCTestCase {
         XCTAssertEqual(
             ConnectionPresenter.rawDetail(for: .failed("Connection refused")),
             "Connection refused",
-            "a mapped failure keeps its raw payload as the tooltip"
+            "a mapped failure keeps its raw payload as the tooltip",
         )
         XCTAssertNil(
             ConnectionPresenter.rawDetail(for: .failed("some exotic failure")),
-            "a passthrough message would duplicate the headline"
+            "a passthrough message would duplicate the headline",
         )
         XCTAssertNil(ConnectionPresenter.rawDetail(for: .connected))
     }
@@ -93,10 +95,13 @@ final class ConnectionPresenterTests: XCTestCase {
     func testShortLabelCompactsCampaignAndFailure() {
         XCTAssertEqual(
             ConnectionPresenter.shortLabel(for: .reconnecting(attempt: 7, nextRetry: nil)),
-            "reconnecting 7/\(ConnectionPresenter.maxReconnectAttempts)"
+            "reconnecting 7/\(ConnectionPresenter.maxReconnectAttempts)",
         )
-        XCTAssertEqual(ConnectionPresenter.shortLabel(for: .failed("huge raw NWError dump")), "failed",
-                       "the toolbar label never dumps a raw payload")
+        XCTAssertEqual(
+            ConnectionPresenter.shortLabel(for: .failed("huge raw NWError dump")),
+            "failed",
+            "the toolbar label never dumps a raw payload",
+        )
         XCTAssertEqual(ConnectionPresenter.shortLabel(for: .connected), "connected")
     }
 
@@ -126,21 +131,24 @@ final class ConnectionPresenterTests: XCTestCase {
         XCTAssertEqual(list.first?.host, "h9")
     }
 
-    func testRecentTargetsRoundTripThroughDefaultsAndSkipFailures() async {
+    func testRecentTargetsRoundTripThroughDefaultsAndSkipFailures() async throws {
         let suiteName = "aislopdesk-test-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         // A FAILED connect (throwing registry) must not enter the MRU.
         let failing = ConnectionRegistry { _, _ in throw AislopdeskTransportError.timedOut("test") }
         let c = AppConnection(registry: failing, defaults: defaults)
-        c.host = "10.0.0.9"; c.port = "7420"; c.mediaPort = "9000"; c.cursorPort = "9001"
+        c.host = "10.0.0.9"
+        c.port = "7420"
+        c.mediaPort = "9000"
+        c.cursorPort = "9001"
         await c.connect()
         XCTAssertTrue(c.recentTargets.isEmpty, "failures never pollute the recents menu")
 
         // A persisted MRU loads back on the next AppConnection (simulated relaunch).
         let seeded = [target("studio", 7420), target("macbook", 7421)]
-        defaults.set(try! JSONEncoder().encode(seeded), forKey: "connection.recentTargets")
+        try defaults.set(JSONEncoder().encode(seeded), forKey: "connection.recentTargets")
         let c2 = AppConnection(registry: failing, defaults: defaults)
         XCTAssertEqual(c2.recentTargets, seeded)
 

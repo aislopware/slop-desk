@@ -22,7 +22,7 @@ public struct FlowCreditPolicy: Sendable, Equatable {
     public init(initialWindow: Int) {
         let start = max(0, initialWindow)
         self.initialWindow = start
-        self.remaining = start
+        remaining = start
     }
 
     /// The outcome of attempting to send `bytes`.

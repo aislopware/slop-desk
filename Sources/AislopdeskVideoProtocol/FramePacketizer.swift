@@ -24,13 +24,13 @@ public struct FrameFragmentHeader: Equatable, Sendable {
         public let rawValue: UInt8
         public init(rawValue: UInt8) { self.rawValue = rawValue }
         /// This frame is a keyframe (IDR) — a fresh decode anchor.
-        public static let keyframe = Flags(rawValue: 1 << 0)
+        public static let keyframe = Self(rawValue: 1 << 0)
         /// This fragment is an FEC parity fragment, not original data.
-        public static let parity = Flags(rawValue: 1 << 1)
+        public static let parity = Self(rawValue: 1 << 1)
         /// This frame is a CRISP near-lossless static refresh (a QP-bumped keyframe from the live
         /// session, emitted when the window is at rest — Design A). Informational on the wire; the
         /// client treats it as an ordinary keyframe.
-        public static let crisp = Flags(rawValue: 1 << 2)
+        public static let crisp = Self(rawValue: 1 << 2)
 
         // WF-4 ADAPTIVE FEC: a 3-bit FEC tier index packed into bits 3,4,5 of the (otherwise
         // 3-bit-used) flags byte — NO new header field, NO size change. The tier signals the
@@ -48,7 +48,7 @@ public struct FrameFragmentHeader: Equatable, Sendable {
         /// that LTR (the ACKED-ONLY recovery invariant). Disjoint from keyframe/parity/crisp/tier;
         /// bit 7 stays reserved. Set only when the host has `AISLOPDESK_LTR` on AND the frame carried a
         /// token, so the OFF path leaves bit 6 zero → byte-identical wire.
-        public static let isLTR = Flags(rawValue: 1 << 6)
+        public static let isLTR = Self(rawValue: 1 << 6)
 
         /// ACKED-ANCHORED MARKER (bit 7, 2026-06-12): this frame was encoded via `ForceLTRRefresh`
         /// — it references ONLY long-term references the client ACKNOWLEDGED (decoded), so it is
@@ -59,7 +59,7 @@ public struct FrameFragmentHeader: Equatable, Sendable {
         /// the host exactly when the encode call carried `kVTEncodeFrameOptionKey_ForceLTRRefresh`
         /// (recovery refresh + self-heal cadence). Previously-reserved bit ⇒ old senders leave it
         /// zero (byte-identical wire when unused).
-        public static let ackedAnchored = Flags(rawValue: 1 << 7)
+        public static let ackedAnchored = Self(rawValue: 1 << 7)
 
         /// The 3-bit FEC tier (0..7) read from bits 3-5 — masks out keyframe/parity/crisp + bits 6,7.
         public var fecTier: UInt8 { (rawValue & Self.tierMask) >> Self.tierShift }
@@ -67,7 +67,7 @@ public struct FrameFragmentHeader: Equatable, Sendable {
         /// Sets the 3-bit FEC tier in bits 3-5, preserving every other flag bit. `t` is masked to
         /// 3 bits, so this can never disturb keyframe/parity/crisp or the reserved bits.
         public mutating func setFECTier(_ t: UInt8) {
-            self = Flags(rawValue: (rawValue & ~Self.tierMask) | ((t & 0b111) << Self.tierShift))
+            self = Self(rawValue: (rawValue & ~Self.tierMask) | ((t & 0b111) << Self.tierShift))
         }
     }
 
@@ -83,7 +83,15 @@ public struct FrameFragmentHeader: Equatable, Sendable {
     public var hostSendTsMillis: UInt32
     public var payloadLength: UInt16
 
-    public init(streamSeq: UInt32, frameID: UInt32, fragIndex: UInt16, fragCount: UInt16, flags: Flags, payloadLength: UInt16, hostSendTsMillis: UInt32 = 0) {
+    public init(
+        streamSeq: UInt32,
+        frameID: UInt32,
+        fragIndex: UInt16,
+        fragCount: UInt16,
+        flags: Flags,
+        payloadLength: UInt16,
+        hostSendTsMillis: UInt32 = 0,
+    ) {
         self.streamSeq = streamSeq
         self.frameID = frameID
         self.fragIndex = fragIndex
@@ -123,13 +131,13 @@ public struct FrameFragment: Equatable, Sendable {
 
     /// Parses one datagram. Throws ``VideoProtocolError`` on a short/inconsistent
     /// datagram (a corrupt single packet must not crash the receiver).
-    public static func decode(_ datagram: Data) throws -> FrameFragment {
+    public static func decode(_ datagram: Data) throws -> Self {
         var reader = VideoByteReader(datagram)
         let streamSeq = try reader.readUInt32()
         let frameID = try reader.readUInt32()
         let fragIndex = try reader.readUInt16()
         let fragCount = try reader.readUInt16()
-        let flags = FrameFragmentHeader.Flags(rawValue: try reader.readUInt8())
+        let flags = try FrameFragmentHeader.Flags(rawValue: reader.readUInt8())
         // Auto-bounds-checked (VideoByteReader throws .truncated on underflow): a datagram shorter
         // than the 19-byte header throws → the router drops the single packet, never crashes.
         let hostSendTsMillis = try reader.readUInt32()
@@ -137,9 +145,9 @@ public struct FrameFragment: Equatable, Sendable {
         let payload = try reader.readBytes(Int(payloadLength))
         let header = FrameFragmentHeader(
             streamSeq: streamSeq, frameID: frameID, fragIndex: fragIndex,
-            fragCount: fragCount, flags: flags, payloadLength: payloadLength, hostSendTsMillis: hostSendTsMillis
+            fragCount: fragCount, flags: flags, payloadLength: payloadLength, hostSendTsMillis: hostSendTsMillis,
         )
-        return FrameFragment(header: header, payload: payload)
+        return Self(header: header, payload: payload)
     }
 }
 
@@ -193,7 +201,15 @@ public struct VideoPacketizer {
     ///     EVERY fragment so the client knows to ack it after a successful decode. Default false →
     ///     bit 6 stays zero → byte-identical to the pre-WF-8 wire.
     /// - Returns: data fragments + parity fragments, in send order.
-    public mutating func packetize(frame: Data, keyframe: Bool, crisp: Bool = false, hostSendTsMillis: UInt32 = 0, fecTier: UInt8 = AdaptiveFECPolicy.defaultTier, isLTR: Bool = false, ackedAnchored: Bool = false) -> [FrameFragment] {
+    public mutating func packetize(
+        frame: Data,
+        keyframe: Bool,
+        crisp: Bool = false,
+        hostSendTsMillis: UInt32 = 0,
+        fecTier: UInt8 = AdaptiveFECPolicy.defaultTier,
+        isLTR: Bool = false,
+        ackedAnchored: Bool = false,
+    ) -> [FrameFragment] {
         let frameID = nextFrameID
         nextFrameID &+= 1
 
@@ -206,7 +222,7 @@ public struct VideoPacketizer {
         } else {
             while offset < end {
                 let upper = frame.index(offset, offsetBy: Self.maxPayloadSize, limitedBy: end) ?? end
-                payloads.append(Data(frame[offset ..< upper]))
+                payloads.append(Data(frame[offset..<upper]))
                 offset = upper
             }
         }
@@ -214,14 +230,16 @@ public struct VideoPacketizer {
         // WF-4: the per-frame group size comes from the tier (nil = OFF → no parity). Tier 0 maps to
         // the configured `fec.groupSize` (5 in prod) so parity shape is identical to the pre-WF-4 path.
         let groupSize = AdaptiveFECPolicy.groupSize(forTier: fecTier, default: fec?.groupSize ?? 1)
-        let parityPayloads = (groupSize != nil ? fec?.parity(forDataFragments: payloads, groupSize: groupSize!) : nil) ?? []
+        let parityPayloads = groupSize.flatMap {
+            fec?.parity(forDataFragments: payloads, groupSize: $0)
+        } ?? []
         let fragCount = UInt16(payloads.count + parityPayloads.count)
 
         var baseFlags: FrameFragmentHeader.Flags = []
         if keyframe { baseFlags.insert(.keyframe) }
         if crisp { baseFlags.insert(.crisp) }
-        if isLTR { baseFlags.insert(.isLTR) }   // WF-8 bit 6 — disjoint from keyframe/crisp/tier
-        if ackedAnchored { baseFlags.insert(.ackedAnchored) }   // bit 7 — ForceLTRRefresh product
+        if isLTR { baseFlags.insert(.isLTR) } // WF-8 bit 6 — disjoint from keyframe/crisp/tier
+        if ackedAnchored { baseFlags.insert(.ackedAnchored) } // bit 7 — ForceLTRRefresh product
         // Stamp the tier into bits 3-5 BEFORE forking data/parity flags. Tier 0 leaves them zero.
         baseFlags.setFECTier(fecTier)
 
@@ -229,24 +247,46 @@ public struct VideoPacketizer {
         fragments.reserveCapacity(payloads.count + parityPayloads.count)
         var fragIndex: UInt16 = 0
         for payload in payloads {
-            fragments.append(makeFragment(frameID: frameID, fragIndex: fragIndex, fragCount: fragCount, flags: baseFlags, payload: payload, hostSendTsMillis: hostSendTsMillis))
+            fragments.append(makeFragment(
+                frameID: frameID,
+                fragIndex: fragIndex,
+                fragCount: fragCount,
+                flags: baseFlags,
+                payload: payload,
+                hostSendTsMillis: hostSendTsMillis,
+            ))
             fragIndex += 1
         }
         for payload in parityPayloads {
             var flags = baseFlags
             flags.insert(.parity)
-            fragments.append(makeFragment(frameID: frameID, fragIndex: fragIndex, fragCount: fragCount, flags: flags, payload: payload, hostSendTsMillis: hostSendTsMillis))
+            fragments.append(makeFragment(
+                frameID: frameID,
+                fragIndex: fragIndex,
+                fragCount: fragCount,
+                flags: flags,
+                payload: payload,
+                hostSendTsMillis: hostSendTsMillis,
+            ))
             fragIndex += 1
         }
         return fragments
     }
 
-    private mutating func makeFragment(frameID: UInt32, fragIndex: UInt16, fragCount: UInt16, flags: FrameFragmentHeader.Flags, payload: Data, hostSendTsMillis: UInt32) -> FrameFragment {
+    private mutating func makeFragment(
+        frameID: UInt32,
+        fragIndex: UInt16,
+        fragCount: UInt16,
+        flags: FrameFragmentHeader.Flags,
+        payload: Data,
+        hostSendTsMillis: UInt32,
+    ) -> FrameFragment {
         let seq = nextStreamSeq
         nextStreamSeq &+= 1
         let header = FrameFragmentHeader(
             streamSeq: seq, frameID: frameID, fragIndex: fragIndex,
-            fragCount: fragCount, flags: flags, payloadLength: UInt16(payload.count), hostSendTsMillis: hostSendTsMillis
+            fragCount: fragCount, flags: flags, payloadLength: UInt16(payload.count),
+            hostSendTsMillis: hostSendTsMillis,
         )
         return FrameFragment(header: header, payload: payload)
     }

@@ -10,7 +10,7 @@
 /// reinterpretation of `a.wrapping_sub(b)`, so it stays correct across the 2³² wrap as
 /// long as the two values are within 2³¹ of each other (always true for a live stream).
 #[must_use]
-pub fn distance_wrapped(a: u32, b: u32) -> i32 {
+pub const fn distance_wrapped(a: u32, b: u32) -> i32 {
     a.wrapping_sub(b) as i32
 }
 

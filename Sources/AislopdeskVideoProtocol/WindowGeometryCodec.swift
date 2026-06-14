@@ -20,10 +20,10 @@ public enum WindowGeometryMessage: Equatable, Sendable {
 
     public var messageType: UInt8 {
         switch self {
-        case .move: return 1
-        case .resize: return 2
-        case .bounds: return 3
-        case .title: return 4
+        case .move: 1
+        case .resize: 2
+        case .bounds: 3
+        case .title: 4
         }
     }
 
@@ -31,32 +31,40 @@ public enum WindowGeometryMessage: Equatable, Sendable {
         var out = Data()
         out.append(messageType)
         switch self {
-        case .move(let p):
-            out.appendBE(p.x); out.appendBE(p.y)
-        case .resize(let s):
-            out.appendBE(s.width); out.appendBE(s.height)
-        case .bounds(let r):
-            out.appendBE(r.origin.x); out.appendBE(r.origin.y)
-            out.appendBE(r.size.width); out.appendBE(r.size.height)
-        case .title(let title):
+        case let .move(p):
+            out.appendBE(p.x)
+            out.appendBE(p.y)
+        case let .resize(s):
+            out.appendBE(s.width)
+            out.appendBE(s.height)
+        case let .bounds(r):
+            out.appendBE(r.origin.x)
+            out.appendBE(r.origin.y)
+            out.appendBE(r.size.width)
+            out.appendBE(r.size.height)
+        case let .title(title):
             out.append(Data(title.utf8))
         }
         return out
     }
 
-    public static func decode(_ data: Data) throws -> WindowGeometryMessage {
+    public static func decode(_ data: Data) throws -> Self {
         var reader = VideoByteReader(data)
         let type = try reader.readUInt8()
         switch type {
         case 1:
-            let x = try reader.readFiniteFloat64("geometry.move.x"); let y = try reader.readFiniteFloat64("geometry.move.y")
+            let x = try reader.readFiniteFloat64("geometry.move.x")
+            let y = try reader.readFiniteFloat64("geometry.move.y")
             return .move(VideoPoint(x: x, y: y))
         case 2:
-            let w = try reader.readFiniteFloat64("geometry.resize.w"); let h = try reader.readFiniteFloat64("geometry.resize.h")
+            let w = try reader.readFiniteFloat64("geometry.resize.w")
+            let h = try reader.readFiniteFloat64("geometry.resize.h")
             return .resize(VideoSize(width: w, height: h))
         case 3:
-            let x = try reader.readFiniteFloat64("geometry.bounds.x"); let y = try reader.readFiniteFloat64("geometry.bounds.y")
-            let w = try reader.readFiniteFloat64("geometry.bounds.w"); let h = try reader.readFiniteFloat64("geometry.bounds.h")
+            let x = try reader.readFiniteFloat64("geometry.bounds.x")
+            let y = try reader.readFiniteFloat64("geometry.bounds.y")
+            let w = try reader.readFiniteFloat64("geometry.bounds.w")
+            let h = try reader.readFiniteFloat64("geometry.bounds.h")
             return .bounds(VideoRect(x: x, y: y, width: w, height: h))
         case 4:
             let bytes = reader.remaining()

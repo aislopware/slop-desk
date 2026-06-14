@@ -97,7 +97,7 @@ impl Default for RecoveryIdrPolicy {
 impl RecoveryIdrPolicy {
     /// Builds a policy with the given config; the token bucket starts full.
     #[must_use]
-    pub fn new(config: Config) -> Self {
+    pub const fn new(config: Config) -> Self {
         let tokens = config.bucket_capacity;
         Self {
             config,
@@ -111,13 +111,13 @@ impl RecoveryIdrPolicy {
 
     /// The active config.
     #[must_use]
-    pub fn config(&self) -> &Config {
+    pub const fn config(&self) -> &Config {
         &self.config
     }
 
     /// Read-only token level (proves `suppress*` verdicts spend nothing).
     #[must_use]
-    pub fn available_tokens(&self) -> f64 {
+    pub const fn available_tokens(&self) -> f64 {
         self.tokens
     }
 

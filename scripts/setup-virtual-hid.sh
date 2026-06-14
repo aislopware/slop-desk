@@ -26,14 +26,23 @@ MGR="/Applications/.Karabiner-VirtualHIDDevice-Manager.app/Contents/MacOS/Karabi
 DAEMON="/Library/Application Support/org.pqrs/Karabiner-DriverKit-VirtualHIDDevice/Applications/Karabiner-VirtualHIDDevice-Daemon.app/Contents/MacOS/Karabiner-VirtualHIDDevice-Daemon"
 
 echo "==> 1/4 downloading Karabiner-DriverKit-VirtualHIDDevice v${VER}"
-curl -fL "$PKG_URL" -o "$PKG" || { echo "download failed"; exit 1; }
+curl -fL "${PKG_URL}" -o "${PKG}" || {
+  echo "download failed"
+  exit 1
+}
 
 echo "==> 2/4 installing (needs sudo) …"
-sudo installer -pkg "$PKG" -target / || { echo "install failed"; exit 1; }
+sudo installer -pkg "${PKG}" -target / || {
+  echo "install failed"
+  exit 1
+}
 
 echo "==> 3/4 activating the system extension …"
-[ -x "$MGR" ] || { echo "manager not found at $MGR — check the installed path"; exit 1; }
-"$MGR" activate || true
+[[ -x "${MGR}" ]] || {
+  echo "manager not found at ${MGR} — check the installed path"
+  exit 1
+}
+"${MGR}" activate || true
 echo
 echo "    ┌──────────────────────────────────────────────────────────────────────────┐"
 echo "    │  NOW APPROVE in System Settings → Privacy & Security (or Login Items &      │"
@@ -41,11 +50,12 @@ echo "    │  Extensions → Driver Extensions) → Allow 'pqrs.org'. Then re-r
 echo "    │  '$0 --verify' to confirm + start the daemon.                                │"
 echo "    └──────────────────────────────────────────────────────────────────────────┘"
 
-if [ "${1:-}" == "--verify" ]; then
+if [[ "${1:-}" == "--verify" ]]; then
   echo "==> 4/4 verify + start daemon"
   systemextensionsctl list | grep -i pqrs || echo "  (dext not listed yet — finish the System Settings approval)"
   echo "  starting daemon (root) in the background…"
-  sudo "$DAEMON" >/tmp/karabiner-vhid-daemon.log 2>&1 &
+  # shellcheck disable=SC2024 # debug log in world-writable /tmp; current-user ownership is fine
+  sudo "${DAEMON}" > /tmp/karabiner-vhid-daemon.log 2>&1 &
   sleep 1
   echo "  daemon log: /tmp/karabiner-vhid-daemon.log"
   echo "  DONE if 'systemextensionsctl list' shows pqrs as [activated enabled]."

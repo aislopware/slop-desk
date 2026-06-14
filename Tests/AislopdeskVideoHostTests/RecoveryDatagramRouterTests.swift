@@ -1,6 +1,6 @@
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoHost
-import AislopdeskVideoProtocol
 
 /// PURE recovery-routing decision logic + the never-run wire-collision regression.
 /// Decides forceKeyframe/ack/drop/ignore for a client→host `RecoveryMessage` WITHOUT
@@ -16,7 +16,10 @@ final class RecoveryDatagramRouterTests: XCTestCase {
     /// Component 2: `.forceKeyframe` carries the request's decode frontier for the actor's
     /// delivery-keyed RecoveryIDRPolicy.
     func testRequestIDRForcesKeyframeCarryingLastDecoded() {
-        let decision = router.route(datagram: RecoveryMessage.requestIDR(lastDecodedFrameID: 41).encode(), mediaFlowing: true)
+        let decision = router.route(
+            datagram: RecoveryMessage.requestIDR(lastDecodedFrameID: 41).encode(),
+            mediaFlowing: true,
+        )
         XCTAssertEqual(decision, .forceKeyframe(lastDecodedFrameID: 41))
     }
 
@@ -24,7 +27,8 @@ final class RecoveryDatagramRouterTests: XCTestCase {
     func testRequestIDRSentinelMapsToNil() {
         let decision = router.route(
             datagram: RecoveryMessage.requestIDR(lastDecodedFrameID: RecoveryMessage.noFrameDecodedSentinel).encode(),
-            mediaFlowing: true)
+            mediaFlowing: true,
+        )
         XCTAssertEqual(decision, .forceKeyframe(lastDecodedFrameID: nil))
     }
 
@@ -38,15 +42,23 @@ final class RecoveryDatagramRouterTests: XCTestCase {
 
     func testRequestLTRRefreshSentinelMapsToNil() {
         let message = RecoveryMessage.requestLTRRefresh(
-            fromFrameID: 0, toFrameID: 0, lastDecodedFrameID: RecoveryMessage.noFrameDecodedSentinel)
-        XCTAssertEqual(router.route(datagram: message.encode(), mediaFlowing: true), .refreshLTR(lastDecodedFrameID: nil))
+            fromFrameID: 0, toFrameID: 0, lastDecodedFrameID: RecoveryMessage.noFrameDecodedSentinel,
+        )
+        XCTAssertEqual(
+            router.route(datagram: message.encode(), mediaFlowing: true),
+            .refreshLTR(lastDecodedFrameID: nil),
+        )
     }
 
     /// requestIDR MUST stay a real forced keyframe — the guaranteed-recovery escalation must never
     /// degrade to an LTR refresh.
     func testRequestIDRStaysForceKeyframe() {
-        guard case .forceKeyframe = router.route(datagram: RecoveryMessage.requestIDR(lastDecodedFrameID: 0).encode(), mediaFlowing: true) else {
-            return XCTFail("expected forceKeyframe")
+        guard case .forceKeyframe = router.route(
+            datagram: RecoveryMessage.requestIDR(lastDecodedFrameID: 0).encode(),
+            mediaFlowing: true,
+        ) else {
+            XCTFail("expected forceKeyframe")
+            return
         }
     }
 
@@ -58,7 +70,10 @@ final class RecoveryDatagramRouterTests: XCTestCase {
     /// FIX B: a `requestCursorShape` on the recovery channel routes to a re-ship of that shape,
     /// NOT a forced keyframe — the cursor self-heal must not trigger an expensive IDR.
     func testRequestCursorShapeReships() {
-        let decision = router.route(datagram: RecoveryMessage.requestCursorShape(shapeID: 7).encode(), mediaFlowing: true)
+        let decision = router.route(
+            datagram: RecoveryMessage.requestCursorShape(shapeID: 7).encode(),
+            mediaFlowing: true,
+        )
         XCTAssertEqual(decision, .reshipCursorShape(shapeID: 7))
     }
 
@@ -70,7 +85,8 @@ final class RecoveryDatagramRouterTests: XCTestCase {
     func testDropsUndecodableDatagram() {
         let garbage = Data([0x7F, 0x00]) // unknown recovery type 0x7F
         guard case .drop = router.route(datagram: garbage, mediaFlowing: true) else {
-            return XCTFail("expected drop")
+            XCTFail("expected drop")
+            return
         }
     }
 
@@ -79,12 +95,24 @@ final class RecoveryDatagramRouterTests: XCTestCase {
     /// bit-pattern + packed state/deltas flags survive the wire round-trip untouched) and
     /// component 4's pacer presentation-health fields (late/gaps counters + the depth gauge).
     func testNetworkStatsRoutes() {
-        let report = NetworkStatsReport(framesReceived: 600, fecRecovered: 12, unrecovered: 3, latestHostSendTs: 1_234_567, clientHoldMs: 7, owdJitterMicros: 850,
-                                        owdTrendMilli: UInt32(bitPattern: -987), owdTrendFlags: (42 << 8) | 1,
-                                        pacerLateFrames: 4, pacerPresentGaps: 6, pacerDepth: 2)
+        let report = NetworkStatsReport(
+            framesReceived: 600,
+            fecRecovered: 12,
+            unrecovered: 3,
+            latestHostSendTs: 1_234_567,
+            clientHoldMs: 7,
+            owdJitterMicros: 850,
+            owdTrendMilli: UInt32(bitPattern: -987),
+            owdTrendFlags: (42 << 8) | 1,
+            pacerLateFrames: 4,
+            pacerPresentGaps: 6,
+            pacerDepth: 2,
+        )
         let decision = router.route(datagram: RecoveryMessage.networkStats(report).encode(), mediaFlowing: true)
         XCTAssertEqual(decision, .networkStats(report))
-        guard case .networkStats(let rx) = decision else { return XCTFail("expected networkStats") }
+        guard case let .networkStats(rx) = decision else { XCTFail("expected networkStats")
+            return
+        }
         XCTAssertEqual(rx.owdTrendStateRaw, 1)
         XCTAssertEqual(rx.owdTrendDeltas, 42)
         XCTAssertEqual(rx.owdTrendModifiedMilliSigned, -987)
@@ -94,15 +122,33 @@ final class RecoveryDatagramRouterTests: XCTestCase {
     }
 
     func testNetworkStatsIgnoredWhenNotStreaming() {
-        let report = NetworkStatsReport(framesReceived: 1, fecRecovered: 0, unrecovered: 0, latestHostSendTs: 1, clientHoldMs: 0, owdJitterMicros: 0)
-        XCTAssertEqual(router.route(datagram: RecoveryMessage.networkStats(report).encode(), mediaFlowing: false), .ignoreNotStreaming)
+        let report = NetworkStatsReport(
+            framesReceived: 1,
+            fecRecovered: 0,
+            unrecovered: 0,
+            latestHostSendTs: 1,
+            clientHoldMs: 0,
+            owdJitterMicros: 0,
+        )
+        XCTAssertEqual(
+            router.route(datagram: RecoveryMessage.networkStats(report).encode(), mediaFlowing: false),
+            .ignoreNotStreaming,
+        )
     }
 
     /// A truncated NetworkStats body (short of the 11×UInt32 payload) DROPS — never crashes the host.
     func testTruncatedNetworkStatsDrops() {
-        let full = RecoveryMessage.networkStats(NetworkStatsReport(framesReceived: 1, fecRecovered: 2, unrecovered: 3, latestHostSendTs: 4, clientHoldMs: 5, owdJitterMicros: 6)).encode()
+        let full = RecoveryMessage.networkStats(NetworkStatsReport(
+            framesReceived: 1,
+            fecRecovered: 2,
+            unrecovered: 3,
+            latestHostSendTs: 4,
+            clientHoldMs: 5,
+            owdJitterMicros: 6,
+        )).encode()
         guard case .drop = router.route(datagram: full.prefix(10), mediaFlowing: true) else {
-            return XCTFail("expected a truncated stats body to drop")
+            XCTFail("expected a truncated stats body to drop")
+            return
         }
     }
 
@@ -127,11 +173,12 @@ final class RecoveryDatagramRouterTests: XCTestCase {
         // the wire: recovery is sent on `.recovery`, input on `.input`. This call only
         // documents that the byte grammars DO overlap (hence the dedicated channel).
         let asInput = inputRouter.route(datagram: ltr, mediaFlowing: true, needsRaise: false)
-        if case .inject(let event, _) = asInput {
+        if case let .inject(event, _) = asInput {
             // Confirms the collision the dedicated channel eliminates: LTR(type 2) looks
             // like a mouseDown to the input grammar.
             guard case .mouseDown = event else {
-                return XCTFail("expected the overlap to surface as a mouseDown, got \(event)")
+                XCTFail("expected the overlap to surface as a mouseDown, got \(event)")
+                return
             }
         }
         // (No assertion on drop-vs-inject: the point is recovery NEVER travels on .input.)
@@ -149,7 +196,8 @@ final class RecoveryDatagramRouterTests: XCTestCase {
         XCTAssertEqual(router.route(datagram: idr, mediaFlowing: true), .forceKeyframe(lastDecodedFrameID: 99))
         // 5 bytes is still too short for a mouseUp body → the input grammar drops it.
         guard case .drop = inputRouter.route(datagram: idr, mediaFlowing: true, needsRaise: false) else {
-            return XCTFail("expected the 5-byte requestIDR to drop under the input grammar")
+            XCTFail("expected the 5-byte requestIDR to drop under the input grammar")
+            return
         }
     }
 }

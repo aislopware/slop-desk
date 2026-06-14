@@ -1,16 +1,17 @@
-import XCTest
 import AislopdeskClient
 import AislopdeskInspector
 import AislopdeskTransport
+import XCTest
 @testable import AislopdeskClientUI
 
 /// An `AislopdeskClient` whose transport factory is inert (never invoked — these `.claudeCode` panes are
 /// never connected: the inspector fold is driven over an in-process loopback channel, no socket).
-@Sendable private func makeUnconnectedClient() -> AislopdeskClient {
+@Sendable
+private func makeUnconnectedClient() -> AislopdeskClient {
     AislopdeskClient(makeTransport: {
         MuxClientTransport(
             acquire: { _, _, _, _ in throw AislopdeskTransportError.notConnected("inert test transport") },
-            release: { _, _, _ in }
+            release: { _, _, _ in },
         )
     })
 }
@@ -43,7 +44,6 @@ import AislopdeskTransport
 /// fold } — never both. Each test below respects that.
 @MainActor
 final class InspectorGlueTests: XCTestCase {
-
     // MARK: - Deterministic wait helper
 
     /// Awaits until `predicate` holds (re-checked each main-actor hop) or a deadline elapses. The
@@ -54,7 +54,7 @@ final class InspectorGlueTests: XCTestCase {
         _ message: @autoclosure () -> String = "",
         timeout: TimeInterval = 2.0,
         file: StaticString = #filePath,
-        line: UInt = #line
+        line: UInt = #line,
     ) async {
         let deadline = Date().addingTimeInterval(timeout)
         while !predicate() {
@@ -72,14 +72,14 @@ final class InspectorGlueTests: XCTestCase {
         name: String = "Bash",
         command: String = "ls",
         output: String? = nil,
-        status: ToolCard.Status = .pending
+        status: ToolCard.Status = .pending,
     ) -> ToolCard {
         ToolCard(
             id: id,
             name: name,
             input: .object(["command": .string(command)]),
             output: output,
-            status: status
+            status: status,
         )
     }
 
@@ -125,10 +125,18 @@ final class InspectorGlueTests: XCTestCase {
 
         try await source.send(.toolCard(sampleCard(id: "a", name: "Read", command: "open")))
         try await source.send(.toolCard(sampleCard(id: "b", name: "Grep", command: "find")))
-        try await source.send(.toolCard(sampleCard(id: "a", name: "Read", command: "open", output: "done", status: .completed)))
+        try await source.send(.toolCard(sampleCard(
+            id: "a",
+            name: "Read",
+            command: "open",
+            output: "done",
+            status: .completed,
+        )))
 
-        await waitUntil({ vm.toolCards.count == 2 && vm.toolCards.first?.status == .completed },
-                        "expected exactly two cards with the first completed")
+        await waitUntil(
+            { vm.toolCards.count == 2 && vm.toolCards.first?.status == .completed },
+            "expected exactly two cards with the first completed",
+        )
 
         XCTAssertEqual(vm.toolCards.map(\.id), ["a", "b"], "arrival order preserved across the upsert")
         XCTAssertEqual(vm.toolCards.first?.status, .completed)
@@ -182,7 +190,7 @@ final class InspectorGlueTests: XCTestCase {
         try await source.send(.subagentUpdated(SubagentNode(id: "deadbeef", agentType: "Ariadne", status: .running)))
         try await source.send(.subagentToolCard(
             agentID: "deadbeef",
-            card: ToolCard(id: "sa1", name: "Grep", input: .object([:]), output: "hit", status: .completed)
+            card: ToolCard(id: "sa1", name: "Grep", input: .object([:]), output: "hit", status: .completed),
         ))
 
         await waitUntil({ vm.subagentCards["deadbeef"]?.count == 1 }, "subagent card never attached")
@@ -207,7 +215,7 @@ final class InspectorGlueTests: XCTestCase {
         let fold = Task { await vm.consume(client.events()) }
         defer { fold.cancel() }
 
-        try await source.sendKeepAlive()                       // must NOT fold to any state
+        try await source.sendKeepAlive() // must NOT fold to any state
         try await source.send(.toolCard(sampleCard(id: "real", status: .pending)))
 
         await waitUntil({ vm.toolCards.count == 1 }, "real card after keep-alive never folded")
@@ -233,7 +241,7 @@ final class InspectorGlueTests: XCTestCase {
         let session = LivePaneSession.make(
             PaneSpec(kind: .claudeCode, title: "claude"),
             makeClient: { makeUnconnectedClient() },
-            makeInspector: { _ in InspectorClient(channel: clientCh) }
+            makeInspector: { _ in InspectorClient(channel: clientCh) },
         )
 
         XCTAssertEqual(session.kind, .claudeCode)
@@ -245,7 +253,13 @@ final class InspectorGlueTests: XCTestCase {
         defer { fold.cancel() }
 
         try await source.send(.toolCard(sampleCard(id: "x", name: "Bash", command: "echo hi", status: .pending)))
-        try await source.send(.toolCard(sampleCard(id: "x", name: "Bash", command: "echo hi", output: "hi", status: .completed)))
+        try await source.send(.toolCard(sampleCard(
+            id: "x",
+            name: "Bash",
+            command: "echo hi",
+            output: "hi",
+            status: .completed,
+        )))
 
         await waitUntil({ vm.toolCards.first?.status == .completed }, "session inspector never folded the card")
 
@@ -265,7 +279,7 @@ final class InspectorGlueTests: XCTestCase {
         let session = LivePaneSession.make(
             PaneSpec(kind: .claudeCode, title: "claude"),
             makeClient: { makeUnconnectedClient() },
-            makeInspector: { _ in InspectorClient(channel: clientCh) }
+            makeInspector: { _ in InspectorClient(channel: clientCh) },
         )
 
         // Observe the host's inbound control channel.
@@ -299,7 +313,7 @@ final class InspectorGlueTests: XCTestCase {
             makeInspector: { _ in
                 clientHandedOut += 1
                 return InspectorClient(channel: clientCh)
-            }
+            },
         )
         let vm = try XCTUnwrap(session.inspector)
 
@@ -336,7 +350,7 @@ final class InspectorGlueTests: XCTestCase {
         let session = LivePaneSession.make(
             PaneSpec(kind: .claudeCode, title: "claude"),
             makeClient: { makeUnconnectedClient() },
-            makeInspector: { _ in InspectorClient(channel: clientCh) }
+            makeInspector: { _ in InspectorClient(channel: clientCh) },
         )
         let vm = try XCTUnwrap(session.inspector)
 
@@ -361,7 +375,7 @@ final class InspectorGlueTests: XCTestCase {
 
     /// A non-`.claudeCode` session (`.terminal`) owns NO inspector and `subscribeInspector()` is a
     /// no-op (it must never reach for a second channel) — the terminal pane has only PATH 1.
-    func testTerminalSessionHasNoInspectorAndSubscribeIsNoOp() async throws {
+    func testTerminalSessionHasNoInspectorAndSubscribeIsNoOp() async {
         var makeInspectorCalled = false
         let session = LivePaneSession.make(
             PaneSpec(kind: .terminal, title: "term"),
@@ -369,12 +383,12 @@ final class InspectorGlueTests: XCTestCase {
             makeInspector: { _ in
                 makeInspectorCalled = true
                 return nil
-            }
+            },
         )
 
         XCTAssertNil(session.inspector, "a terminal pane has no structured inspector")
 
-        await session.subscribeInspector()   // must be a clean no-op
+        await session.subscribeInspector() // must be a clean no-op
         XCTAssertFalse(makeInspectorCalled, "a terminal session must never open a second channel")
     }
 
@@ -388,7 +402,7 @@ final class InspectorGlueTests: XCTestCase {
         XCTAssertEqual(
             WorkspaceStore.inspectorPort(for: ConnectionTarget(host: "127.0.0.1", port: 7420)),
             7421,
-            "inspector NWConnection #2 = terminal port + offset"
+            "inspector NWConnection #2 = terminal port + offset",
         )
     }
 
@@ -398,7 +412,7 @@ final class InspectorGlueTests: XCTestCase {
     func testInspectorPortReturnsNilWhenTerminalIsOnTopPort() {
         XCTAssertNil(
             WorkspaceStore.inspectorPort(for: ConnectionTarget(host: "127.0.0.1", port: .max)),
-            "no port above UInt16.max → inspector unavailable, not a crash"
+            "no port above UInt16.max → inspector unavailable, not a crash",
         )
     }
 }

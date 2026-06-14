@@ -111,7 +111,7 @@ impl Default for OwdLateDetector {
 impl OwdLateDetector {
     /// Builds a detector with the given config.
     #[must_use]
-    pub fn new(config: Config) -> Self {
+    pub const fn new(config: Config) -> Self {
         Self {
             config,
             unwrapped_send_ms: 0.0,
@@ -125,7 +125,7 @@ impl OwdLateDetector {
 
     /// The active config.
     #[must_use]
-    pub fn config(&self) -> Config {
+    pub const fn config(&self) -> Config {
         self.config
     }
 

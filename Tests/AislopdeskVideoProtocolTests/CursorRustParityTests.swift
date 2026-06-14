@@ -1,6 +1,5 @@
 import Foundation
 import XCTest
-
 @testable import AislopdeskVideoProtocol
 
 /// Differential equivalence between the native Swift cursor codec and the Rust-backed codec
@@ -11,9 +10,24 @@ final class CursorRustParityTests: XCTestCase {
     private static func corpus() -> [CursorUpdate] {
         [
             CursorUpdate(position: VideoPoint(x: 0, y: 0), shapeID: 0, hotspot: VideoPoint(x: 0, y: 0), visible: false),
-            CursorUpdate(position: VideoPoint(x: 1920, y: 1080), shapeID: 42, hotspot: VideoPoint(x: 8, y: 8), visible: true),
-            CursorUpdate(position: VideoPoint(x: -1e9, y: 1e9), shapeID: 65535, hotspot: VideoPoint(x: -0.5, y: 0.25), visible: true),
-            CursorUpdate(position: VideoPoint(x: 0.1, y: -0.1), shapeID: 7, hotspot: VideoPoint(x: 1, y: 2), visible: false),
+            CursorUpdate(
+                position: VideoPoint(x: 1920, y: 1080),
+                shapeID: 42,
+                hotspot: VideoPoint(x: 8, y: 8),
+                visible: true,
+            ),
+            CursorUpdate(
+                position: VideoPoint(x: -1e9, y: 1e9),
+                shapeID: 65535,
+                hotspot: VideoPoint(x: -0.5, y: 0.25),
+                visible: true,
+            ),
+            CursorUpdate(
+                position: VideoPoint(x: 0.1, y: -0.1),
+                shapeID: 7,
+                hotspot: VideoPoint(x: 1, y: 2),
+                visible: false,
+            ),
         ]
     }
 
@@ -44,11 +58,11 @@ final class CursorRustParityTests: XCTestCase {
             let n = Result { try CursorUpdate.decodeNative(data) }
             switch (r, n) {
             case let (.success(a), .success(b)):
-                XCTAssertEqual(a, b, "cursor fuzz value mismatch for \(data as NSData)")
+                XCTAssertEqual(a, b, "cursor fuzz value mismatch for \(Array(data))")
             case (.failure, .failure):
                 break
             default:
-                XCTFail("cursor fuzz disagreement (one threw) for \(data as NSData)")
+                XCTFail("cursor fuzz disagreement (one threw) for \(Array(data))")
             }
         }
     }

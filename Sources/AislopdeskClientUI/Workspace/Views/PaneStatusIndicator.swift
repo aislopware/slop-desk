@@ -28,13 +28,13 @@ struct PaneConnectionStatus: Equatable {
     /// The presented phase — a flattened projection of `ConnectionViewModel.Status` plus a `.none`
     /// sentinel for a pane that has no PATH-1 connection (a `.remoteGUI` / faked handle ⇒ no dot).
     enum Phase: Equatable {
-        case idle           // .disconnected — known, deliberately not connected
-        case connecting     // .connecting — initial dial
-        case connected      // .connected
-        case reconnecting   // .reconnecting — a drop is being retried (WF3 backoff)
-        case unreachable    // .unreachable — gave up after the dead-host timeout
-        case failed         // .failed — initial connect refused / timed out
-        case none           // no connection at all (video pane / faked handle): render no dot
+        case idle // .disconnected — known, deliberately not connected
+        case connecting // .connecting — initial dial
+        case connected // .connected
+        case reconnecting // .reconnecting — a drop is being retried (WF3 backoff)
+        case unreachable // .unreachable — gave up after the dead-host timeout
+        case failed // .failed — initial connect refused / timed out
+        case none // no connection at all (video pane / faked handle): render no dot
     }
 
     let phase: Phase
@@ -55,15 +55,19 @@ struct PaneConnectionStatus: Equatable {
 
     /// Derives the presentation from a connection status (`nil` ⇒ `.none`, no dot). The single mapping
     /// site — both surfaces call this so the colour/label/pulse rules live in one place.
-    static func from(_ status: ConnectionViewModel.Status?) -> PaneConnectionStatus {
+    static func from(_ status: ConnectionViewModel.Status?) -> Self {
         switch status {
-        case .none:                            return PaneConnectionStatus(phase: .none)
-        case .disconnected:                    return PaneConnectionStatus(phase: .idle)
-        case .connecting:                      return PaneConnectionStatus(phase: .connecting)
-        case .connected:                       return PaneConnectionStatus(phase: .connected)
-        case let .reconnecting(attempt, next): return PaneConnectionStatus(phase: .reconnecting, attempt: attempt, nextRetry: next)
-        case .unreachable:                     return PaneConnectionStatus(phase: .unreachable)
-        case let .failed(message):             return PaneConnectionStatus(phase: .failed, failureDetail: message)
+        case .none: Self(phase: .none)
+        case .disconnected: Self(phase: .idle)
+        case .connecting: Self(phase: .connecting)
+        case .connected: Self(phase: .connected)
+        case let .reconnecting(attempt, next): Self(
+                phase: .reconnecting,
+                attempt: attempt,
+                nextRetry: next,
+            )
+        case .unreachable: Self(phase: .unreachable)
+        case let .failed(message): Self(phase: .failed, failureDetail: message)
         }
     }
 
@@ -73,20 +77,22 @@ struct PaneConnectionStatus: Equatable {
     /// The dot colour for the phase (the at-a-glance signal). `.none` returns clear (never drawn).
     var color: Color {
         switch phase {
-        case .connecting:   return .yellow
-        case .connected:    return .green
-        case .reconnecting: return .orange
-        case .unreachable, .failed: return .red
-        case .idle:         return .secondary
-        case .none:         return .clear
+        case .connecting: .yellow
+        case .connected: .green
+        case .reconnecting: .orange
+        case .unreachable,
+             .failed: .red
+        case .idle: .secondary
+        case .none: .clear
         }
     }
 
     /// Whether the dot pulses (the "something is in flight" cue): connecting + reconnecting only.
     var pulses: Bool {
         switch phase {
-        case .connecting, .reconnecting: return true
-        default: return false
+        case .connecting,
+             .reconnecting: true
+        default: false
         }
     }
 
@@ -94,13 +100,13 @@ struct PaneConnectionStatus: Equatable {
     /// `nextRetry` via a `TimelineView`, so this stays pure/clock-free and testable).
     var label: String {
         switch phase {
-        case .idle:         return "Disconnected"
-        case .connecting:   return "Connecting…"
-        case .connected:    return "Connected"
-        case .reconnecting: return attempt > 0 ? "Reconnecting (\(attempt))…" : "Reconnecting…"
-        case .unreachable:  return "Unreachable"
-        case .failed:       return "Failed"
-        case .none:         return ""
+        case .idle: "Disconnected"
+        case .connecting: "Connecting…"
+        case .connected: "Connected"
+        case .reconnecting: attempt > 0 ? "Reconnecting (\(attempt))…" : "Reconnecting…"
+        case .unreachable: "Unreachable"
+        case .failed: "Failed"
+        case .none: ""
         }
     }
 
@@ -123,22 +129,22 @@ struct PaneConnectionStatus: Equatable {
     /// Pure + `nonisolated` so it is unit-tested without a view. When the worst phase is `.reconnecting`
     /// the fold carries through the lowest-attempt / soonest-`nextRetry` reconnecting leaf so the rail's
     /// dot still pulses with a representative countdown.
-    nonisolated static func fold(_ statuses: [ConnectionViewModel.Status?]) -> PaneConnectionStatus {
+    nonisolated static func fold(_ statuses: [ConnectionViewModel.Status?]) -> Self {
         let derived = statuses.map(from)
         func salience(_ p: Phase) -> Int {
             switch p {
-            case .unreachable:  return 6
-            case .failed:       return 5
-            case .reconnecting: return 4
-            case .connecting:   return 3
-            case .connected:    return 2
-            case .idle:         return 1
-            case .none:         return 0
+            case .unreachable: 6
+            case .failed: 5
+            case .reconnecting: 4
+            case .connecting: 3
+            case .connected: 2
+            case .idle: 1
+            case .none: 0
             }
         }
         // The leaf with the highest salience wins; ties keep the first (stable, pre-order).
         guard let worst = derived.max(by: { salience($0.phase) < salience($1.phase) }) else {
-            return PaneConnectionStatus(phase: .none)
+            return Self(phase: .none)
         }
         return worst
     }
@@ -229,7 +235,7 @@ struct PaneStatusDot: View {
     /// state is stored. `0.5`-second ticks keep it light; the cosine interpolation reads as a pulse.
     private func pulseOpacity(at date: Date) -> Double {
         let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.0)
-        let eased = (cos(phase * 2 * .pi) + 1) / 2     // 0…1, smooth
+        let eased = (cos(phase * 2 * .pi) + 1) / 2 // 0…1, smooth
         return 0.4 + 0.6 * eased
     }
 }

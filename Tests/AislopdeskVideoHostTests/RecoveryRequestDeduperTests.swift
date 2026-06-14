@@ -1,12 +1,11 @@
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoHost
-import AislopdeskVideoProtocol
 
 /// Component 5 (recovery-redundancy, 2026-06-11): the host-side dedup window that collapses the
 /// client's byte-identical redundant recovery-request copies (3× spaced 3 ms) to ONE host action.
 /// Pure value type — `now` injected, keyed on FULL raw datagram bytes (zero wire-layout coupling).
 final class RecoveryRequestDeduperTests: XCTestCase {
-
     private func idrWire(lastDecoded: UInt32 = 400) -> Data {
         RecoveryMessage.requestIDR(lastDecodedFrameID: lastDecoded).encode()
     }
@@ -79,11 +78,11 @@ final class RecoveryRequestDeduperTests: XCTestCase {
         var d = RecoveryRequestDeduper()
         let a = ltrWire(from: 50, to: 50, lastDecoded: 49)
         let b = ltrWire(from: 51, to: 51, lastDecoded: 49)
-        XCTAssertTrue(d.admit(a, now: 100.000))   // A
-        XCTAssertTrue(d.admit(b, now: 100.003))   // B
-        XCTAssertFalse(d.admit(a, now: 100.005))  // A′
-        XCTAssertFalse(d.admit(b, now: 100.008))  // B′
-        XCTAssertFalse(d.admit(a, now: 100.010))  // A″
+        XCTAssertTrue(d.admit(a, now: 100.000)) // A
+        XCTAssertTrue(d.admit(b, now: 100.003)) // B
+        XCTAssertFalse(d.admit(a, now: 100.005)) // A′
+        XCTAssertFalse(d.admit(b, now: 100.008)) // B′
+        XCTAssertFalse(d.admit(a, now: 100.010)) // A″
     }
 
     /// CROSS-SIDE COUPLING at the RESOLVED defaults (no env overrides in tests): the client's
@@ -96,13 +95,19 @@ final class RecoveryRequestDeduperTests: XCTestCase {
     func testRedundancySpreadVsDedupWindowCouplingAtDefaults() {
         let window = AislopdeskVideoHostSession.recoveryDedupWindow
         XCTAssertGreaterThan(window, 0, "the default window must be a real (non-kill-switch) window")
-        XCTAssertLessThan(window, RecoveryPolicy().lossyEscalationFloor,
-                          "must stay below the lossy-escalation floor (a legitimate re-request is never deduped)")
+        XCTAssertLessThan(
+            window,
+            RecoveryPolicy().lossyEscalationFloor,
+            "must stay below the lossy-escalation floor (a legitimate re-request is never deduped)",
+        )
         for copies in 1...5 {
             let r = RecoveryRequestRedundancy(copies: copies)
             let spread = Double(r.copies - 1) * r.spacing
-            XCTAssertLessThanOrEqual(spread, window / 2,
-                                     "copies=\(copies): spread \(spread * 1000) ms must be ≤ half the dedup window \(window * 1000) ms")
+            XCTAssertLessThanOrEqual(
+                spread,
+                window / 2,
+                "copies=\(copies): spread \(spread * 1000) ms must be ≤ half the dedup window \(window * 1000) ms",
+            )
         }
     }
 }

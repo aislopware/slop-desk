@@ -5,14 +5,15 @@ import XCTest
 /// link into the tree.
 @MainActor
 final class SubagentTreeTests: XCTestCase {
-    func testSubagentStopLinksFileContentIntoTree() async {
+    func testSubagentStopLinksFileContentIntoTree() {
         var builder = EventBuilder()
         var events: [InspectorEvent] = []
 
         // 1. SubagentStop hook arrives (links the subagent into the tree).
         let stop = HookParser.parse(Fixtures.data("hook-subagent-stop.json"))
         guard case let .subagentStop(node)? = stop else {
-            return XCTFail("expected SubagentStop, got \(String(describing: stop))")
+            XCTFail("expected SubagentStop, got \(String(describing: stop))")
+            return
         }
         XCTAssertEqual(node.id, "deadbeef")
         XCTAssertEqual(node.agentType, "Ariadne")
@@ -27,12 +28,12 @@ final class SubagentTreeTests: XCTestCase {
         }
 
         // The node was emitted with stopped status + last message.
-        let nodes = events.compactMap { if case let .subagentUpdated(n) = $0 { return n } else { return nil } }
+        let nodes = events.compactMap { if case let .subagentUpdated(n) = $0 { n } else { nil } }
         XCTAssertEqual(nodes.last?.lastAssistantMessage, "Found 2 callers of foo() in src/a.swift and src/b.swift.")
 
         // The subagent's Grep card paired (completed) and is tagged to the subagent.
         let saCards = events.compactMap {
-            if case let .subagentToolCard(agentID, card) = $0 { return (agentID, card) } else { return nil }
+            if case let .subagentToolCard(agentID, card) = $0 { (agentID, card) } else { nil }
         }
         let grep = saCards.filter { $0.1.id == "toolu_sa_01" }
         XCTAssertEqual(grep.first?.0, "deadbeef")
@@ -71,7 +72,7 @@ final class SubagentTreeTests: XCTestCase {
         let vm = InspectorViewModel()
         vm.apply(.subagentUpdated(SubagentNode(id: "", agentType: "phantom")))
         vm.apply(.subagentUpdated(SubagentNode(id: "real", agentType: "lead")))
-        let tree = vm.subagentTree   // must NOT stack-overflow
+        let tree = vm.subagentTree // must NOT stack-overflow
         XCTAssertEqual(tree.map(\.node.id), ["real"], "empty-id node dropped; real node rendered; build terminates")
     }
 
@@ -82,7 +83,7 @@ final class SubagentTreeTests: XCTestCase {
     func testSelfParentSubagentDoesNotRecurseInfinitely() {
         let vm = InspectorViewModel()
         vm.apply(.subagentUpdated(SubagentNode(id: "loop", parentID: "loop", agentType: "worker")))
-        let tree = vm.subagentTree   // must NOT stack-overflow / hang
+        let tree = vm.subagentTree // must NOT stack-overflow / hang
         XCTAssertTrue(tree.isEmpty, "a self-parented (id==parentID) node is an unreachable orphan, not a phantom root")
     }
 }

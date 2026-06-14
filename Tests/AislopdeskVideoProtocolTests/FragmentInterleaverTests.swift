@@ -6,12 +6,11 @@ import XCTest
 /// consecutive group order — into spread loss that IS recoverable, with NO wire/protocol change
 /// (the reassembler reconstructs identically regardless of send order).
 final class FragmentInterleaverTests: XCTestCase {
-
     private let groupSize = 5
 
     /// A frame whose AVCC bytes fragment into ~23 data fragments (5 groups: 5,5,5,5,3) + 5 parity.
-    private func makeFrameBytes(_ n: Int = 27_000) -> Data {
-        Data((0 ..< n).map { UInt8(truncatingIfNeeded: $0) })
+    private func makeFrameBytes(_ n: Int = 27000) -> Data {
+        Data((0..<n).map { UInt8(truncatingIfNeeded: $0) })
     }
 
     private func packetized() -> [FrameFragment] {
@@ -55,7 +54,7 @@ final class FragmentInterleaverTests: XCTestCase {
             if let prev = lastPos[g] { minSpacing = min(minSpacing, pos - prev) }
             lastPos[g] = pos
         }
-        let expected = dataCount % groupSize == 0 ? numGroups : numGroups - 1
+        let expected = dataCount.isMultiple(of: groupSize) ? numGroups : numGroups - 1
         XCTAssertEqual(minSpacing, expected, "guaranteed recoverable adjacent-burst length")
         XCTAssertGreaterThanOrEqual(minSpacing, numGroups - 1)
     }
@@ -68,7 +67,9 @@ final class FragmentInterleaverTests: XCTestCase {
         let survivors = out.enumerated().filter { $0.offset != 1 && $0.offset != 2 }.map(\.element)
         var r = FrameReassembler(fec: XORParityFEC(groupSize: groupSize))
         var completed: ReassembledFrame?
-        for f in survivors { if case .completed(let c) = r.ingest(try FrameFragment.decode(f.encode())) { completed = c } }
+        for f in survivors {
+            if case let .completed(c) = try r.ingest(FrameFragment.decode(f.encode())) { completed = c }
+        }
         XCTAssertEqual(completed?.avcc, frame, "interleaved adjacent burst-of-2 fully recovered by FEC")
     }
 
@@ -80,7 +81,9 @@ final class FragmentInterleaverTests: XCTestCase {
         XCTAssertEqual(group(of: frags[1]), group(of: frags[2]), "precondition: positions 1,2 share a group")
         var r = FrameReassembler(fec: XORParityFEC(groupSize: groupSize))
         var completed: ReassembledFrame?
-        for f in survivors { if case .completed(let c) = r.ingest(try FrameFragment.decode(f.encode())) { completed = c } }
+        for f in survivors {
+            if case let .completed(c) = try r.ingest(FrameFragment.decode(f.encode())) { completed = c }
+        }
         XCTAssertNil(completed, "two losses in one group are unrecoverable by single-loss XOR")
     }
 
@@ -94,14 +97,16 @@ final class FragmentInterleaverTests: XCTestCase {
         let survivors = out.enumerated().filter { $0.offset >= numGroups }.map(\.element)
         var r = FrameReassembler(fec: XORParityFEC(groupSize: groupSize))
         var completed: ReassembledFrame?
-        for f in survivors { if case .completed(let c) = r.ingest(try FrameFragment.decode(f.encode())) { completed = c } }
+        for f in survivors {
+            if case let .completed(c) = try r.ingest(FrameFragment.decode(f.encode())) { completed = c }
+        }
         XCTAssertEqual(completed?.avcc, frame, "a \(numGroups)-long adjacent burst spread one-per-group is recovered")
     }
 
     // No-op guards: a single group can't benefit; groupSize ≤ 1 has no groups to spread across.
     func testSingleGroupReturnedUnchanged() {
         var p = VideoPacketizer(fec: XORParityFEC(groupSize: groupSize))
-        let smallFrame = Data((0 ..< 100).map { UInt8(truncatingIfNeeded: $0) }) // 1 data fragment
+        let smallFrame = Data((0..<100).map { UInt8(truncatingIfNeeded: $0) }) // 1 data fragment
         let frags = p.packetize(frame: smallFrame, keyframe: true)
         let out = FragmentInterleaver.interleave(frags, groupSize: groupSize)
         XCTAssertEqual(out.map(\.header.fragIndex), frags.map(\.header.fragIndex))

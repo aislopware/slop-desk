@@ -1,6 +1,6 @@
+import AislopdeskInspector
 import Foundation
 import Network
-import AislopdeskInspector
 
 /// Host-side server for the inspector's **second** TCP connection (NWConnection #2, doc
 /// 00 ③ / doc 16 §3): the read-only structured-event channel that rides beside the
@@ -95,7 +95,7 @@ public final class InspectorServer: @unchecked Sendable {
         terminalPort: UInt16,
         replayLog: InspectorReplayLog,
         transcriptPath: String? = nil,
-        keepAliveInterval: Duration = .seconds(15)
+        keepAliveInterval: Duration = .seconds(15),
     ) {
         self.terminalPort = terminalPort
         self.replayLog = replayLog
@@ -107,7 +107,8 @@ public final class InspectorServer: @unchecked Sendable {
     /// was `0` → OS-assigned `+ 1` is still 1; in practice the daemon binds a real port).
     /// `nil` until ``start()`` resolves.
     public func boundPort() -> UInt16? {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return listener?.port?.rawValue
     }
 
@@ -121,7 +122,7 @@ public final class InspectorServer: @unchecked Sendable {
 
         listener.newConnectionHandler = { [weak self] connection in
             guard let self else { return }
-            self.accept(connection: connection)
+            accept(connection: connection)
         }
 
         _ = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UInt16, Error>) in
@@ -163,7 +164,8 @@ public final class InspectorServer: @unchecked Sendable {
 
     /// Sync lock-guarded listener store (keeps `NSLock` out of the async ``start()``).
     private func storeListener(_ listener: NWListener) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         self.listener = listener
     }
 
@@ -183,8 +185,12 @@ public final class InspectorServer: @unchecked Sendable {
     /// production accept path and the test seam alike.
     private func spawnServe(channel: ByteChannel) {
         let id = UUID()
-        let task = Task { [weak self] () -> Void in
-            await self?.serve(channel: channel, id: id)
+        // `guard let self` (not `self?.serve`) so the closure body returns `Void`, not the
+        // `()?` that optional-chaining would infer — keeps `Task<Void, Never>` without relying
+        // on an explicit `-> Void` annotation (which the formatter strips as redundant).
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await serve(channel: channel, id: id)
         }
         lock.lock()
         connections[id] = task
@@ -320,7 +326,8 @@ private final class ResumeOnce: @unchecked Sendable {
     private let lock = NSLock()
     private var resumed = false
     func tryResume(_ body: () -> Void) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         guard !resumed else { return }
         resumed = true
         body()

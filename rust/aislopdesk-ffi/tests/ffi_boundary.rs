@@ -21,7 +21,7 @@ use aislopdesk_ffi::{
 };
 
 /// A zeroed message — every field default, both buffers empty.
-fn base() -> AisdWireMessage {
+const fn base() -> AisdWireMessage {
     AisdWireMessage {
         tag: 0,
         seq: 0,
@@ -45,7 +45,7 @@ fn base() -> AisdWireMessage {
 }
 
 /// Borrows a slice as an input `AisdBytes` (read-only; encode copies it, never frees it).
-fn borrow(bytes: &[u8]) -> AisdBytes {
+const fn borrow(bytes: &[u8]) -> AisdBytes {
     if bytes.is_empty() {
         AisdBytes::EMPTY
     } else {
@@ -347,7 +347,7 @@ fn nonstandard_bool_bytes_are_treated_as_true_not_ub() {
 #[test]
 fn notification_round_trips_title_and_body() {
     unsafe {
-        let title = "CI".as_bytes();
+        let title = b"CI";
         let body = "all green ✅ — đa byte".as_bytes();
         let msg = AisdWireMessage {
             tag: AISD_WIRE_NOTIFICATION,

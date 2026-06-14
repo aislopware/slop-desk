@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskTransport
+import Foundation
 
 /// The ONE app-global connection (docs/31): the single host the whole app talks to, fronted by the
 /// connect-gate. It owns the editable host/port form, the single ``ConnectionStatus`` the gate +
@@ -12,6 +12,7 @@ import AislopdeskTransport
 /// gate ("reconnecting…") and retries with backoff until it is back (or gives up to `.unreachable`, with a
 /// manual Retry). The per-pane ``ConnectionViewModel`` still re-opens each channel on the rebuilt mux —
 /// the two cooperate via the registry's dead-eviction single-flight, so the mux is rebuilt exactly once.
+@preconcurrency
 @MainActor
 @Observable
 public final class AppConnection {
@@ -69,16 +70,19 @@ public final class AppConnection {
     private static let recentTargetsKey = "connection.recentTargets"
     static let recentTargetsLimit = 5
 
-    public init(registry: ConnectionRegistry, seed: ConnectionTarget = .default,
-                defaults: UserDefaults = .standard) {
+    public init(
+        registry: ConnectionRegistry,
+        seed: ConnectionTarget = .default,
+        defaults: UserDefaults = .standard,
+    ) {
         self.registry = registry
-        self.target = seed
-        self.host = seed.host
-        self.port = String(seed.port)
-        self.mediaPort = String(seed.mediaPort)
-        self.cursorPort = String(seed.cursorPort)
+        target = seed
+        host = seed.host
+        port = String(seed.port)
+        mediaPort = String(seed.mediaPort)
+        cursorPort = String(seed.cursorPort)
         self.defaults = defaults
-        self.recentTargets = Self.loadRecentTargets(from: defaults)
+        recentTargets = Self.loadRecentTargets(from: defaults)
     }
 
     /// The persisted MRU, or `[]` (a fresh install / undecodable blob — best-effort, never throws).
@@ -92,7 +96,7 @@ public final class AppConnection {
     static func pushingRecent(
         _ target: ConnectionTarget,
         into list: [ConnectionTarget],
-        limit: Int = AppConnection.recentTargetsLimit
+        limit: Int = AppConnection.recentTargetsLimit,
     ) -> [ConnectionTarget] {
         var out = list.filter { !($0.host == target.host && $0.port == target.port) }
         out.insert(target, at: 0)
@@ -153,7 +157,9 @@ public final class AppConnection {
     /// Connects to the host in the form: commits the target, PINS the shared mux, and starts the
     /// liveness/reconnect supervisor. `status` flips `.connecting` → `.connected` / `.failed`.
     public func connect() async {
-        guard let t = parsedTarget() else { status = .failed("invalid host/port"); return }
+        guard let t = parsedTarget() else { status = .failed("invalid host/port")
+            return
+        }
         status = .connecting
         deliberatelyClosed = false
         target = t
@@ -165,7 +171,7 @@ public final class AppConnection {
 
     /// The shared establish path used by ``connect()`` and ``resume()``: unpin a stale endpoint, pin the
     /// new one, and (on success) start the supervisor. Guarded by `gen`/`deliberatelyClosed`.
-    private func establish(_ t: ConnectionTarget, generation gen: Int, isRetry: Bool) async {
+    private func establish(_ t: ConnectionTarget, generation gen: Int, isRetry _: Bool) async {
         // Host changed since the last pin → release the old shared connection first.
         if let prev = pinnedTarget, prev.host != t.host || prev.port != t.port {
             await registry.unpin(host: prev.host, port: prev.port)
@@ -192,7 +198,7 @@ public final class AppConnection {
     /// until they release (the registry refcount), but the app is no longer pinned.
     public func disconnect() async {
         deliberatelyClosed = true
-        connectGeneration &+= 1   // supersede any in-flight establish/supervisor
+        connectGeneration &+= 1 // supersede any in-flight establish/supervisor
         superviseTask?.cancel()
         superviseTask = nil
         if let prev = pinnedTarget {
@@ -219,7 +225,7 @@ public final class AppConnection {
     /// socket). The per-pane `pauseAll` pauses channels; `resume()` re-pins + the channels re-open.
     public func pause() async {
         guard !deliberatelyClosed, let prev = pinnedTarget else { return }
-        connectGeneration &+= 1   // stop the supervisor cleanly without flipping `deliberatelyClosed`
+        connectGeneration &+= 1 // stop the supervisor cleanly without flipping `deliberatelyClosed`
         superviseTask?.cancel()
         superviseTask = nil
         await registry.unpin(host: prev.host, port: prev.port)
@@ -246,28 +252,28 @@ public final class AppConnection {
             guard let self else { return }
             var attempt = 0
             while !Task.isCancelled {
-                guard gen == self.connectGeneration, !self.deliberatelyClosed else { return }
-                let alive = await self.registry.isConnectionAlive(host: t.host, port: t.port)
-                guard gen == self.connectGeneration, !self.deliberatelyClosed else { return }
+                guard gen == connectGeneration, !deliberatelyClosed else { return }
+                let alive = await registry.isConnectionAlive(host: t.host, port: t.port)
+                guard gen == connectGeneration, !deliberatelyClosed else { return }
                 if alive {
                     attempt = 0
-                    if self.status != .connected { self.status = .connected }
+                    if status != .connected { status = .connected }
                     try? await Task.sleep(for: Self.healthyPoll)
                     continue
                 }
                 // Dropped → reconnect campaign.
                 attempt += 1
-                self.status = .reconnecting(attempt: attempt, nextRetry: nil)
+                status = .reconnecting(attempt: attempt, nextRetry: nil)
                 do {
-                    try await self.registry.pin(host: t.host, port: t.port)   // rebuilds via dead-eviction
-                    guard gen == self.connectGeneration, !self.deliberatelyClosed else { return }
-                    self.status = .connected   // `pinnedTarget` is already `t` (set in establish, kept across reconnect)
+                    try await registry.pin(host: t.host, port: t.port) // rebuilds via dead-eviction
+                    guard gen == connectGeneration, !deliberatelyClosed else { return }
+                    status = .connected // `pinnedTarget` is already `t` (set in establish, kept across reconnect)
                     attempt = 0
                 } catch {
-                    guard gen == self.connectGeneration, !self.deliberatelyClosed else { return }
+                    guard gen == connectGeneration, !deliberatelyClosed else { return }
                     if attempt >= Self.maxReconnectAttempts {
-                        self.status = .unreachable
-                        return   // campaign exhausted; the gate's Retry re-runs connect()
+                        status = .unreachable
+                        return // campaign exhausted; the gate's Retry re-runs connect()
                     }
                     // Linear-capped backoff (1…5s).
                     try? await Task.sleep(for: .seconds(min(Double(attempt), 5)))

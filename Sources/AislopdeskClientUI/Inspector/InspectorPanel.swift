@@ -1,6 +1,6 @@
 #if canImport(SwiftUI)
-import SwiftUI
 import AislopdeskInspector
+import SwiftUI
 
 /// The read-only structured inspector panel: composes the SwiftUI views already built in
 /// `AislopdeskInspector` (`InspectorPane` → tool-card timeline / subagent tree / todos /

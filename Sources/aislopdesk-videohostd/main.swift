@@ -22,10 +22,10 @@
 import Foundation
 
 #if os(macOS)
-import AppKit
-import ScreenCaptureKit
 import AislopdeskVideoHost
 import AislopdeskVideoProtocol
+import AppKit
+import ScreenCaptureKit
 
 // MARK: - Arguments
 
@@ -36,14 +36,14 @@ struct VideoHostdArguments {
     var windowTitle: String?
     var mediaPort: UInt16 = 9000
     var cursorPort: UInt16 = 9001
-    var scale: Double = 1.0   // capture at window-points × scale PIXELS (1 = point-res/light; raise for sharper)
+    var scale: Double = 1.0 // capture at window-points × scale PIXELS (1 = point-res/light; raise for sharper)
     var bitrateMbps: Int = 12 // live-encoder target bitrate (Mbps); raise for crisper text
-    var fps: Int = 60         // capture + encoder frame-rate cap; 60 = smooth scroll/motion, 30 = lighter
+    var fps: Int = 60 // capture + encoder frame-rate cap; 60 = smooth scroll/motion, 30 = lighter
     // Feature #1: create a HiDPI 2× virtual display and move each remoted window onto it, so the
     // window renders at REAL Retina backing (sharp text) instead of point-res-upscale on a 1× host.
     // Env `AISLOPDESK_VD=1` is an A/B default; `--virtual-display` forces it on.
     var virtualDisplay = false
-    var vdPointWidth = 1920   // VD logical (point) size; windows larger than this are resized to fit
+    var vdPointWidth = 1920 // VD logical (point) size; windows larger than this are resized to fit
     var vdPointHeight = 1080
 
     static func usage(_ program: String) -> String {
@@ -71,8 +71,8 @@ struct VideoHostdArguments {
         """
     }
 
-    static func parse(_ argv: [String]) -> VideoHostdArguments? {
-        var a = VideoHostdArguments()
+    static func parse(_ argv: [String]) -> Self? {
+        var a = Self()
         var i = 1
         func next() -> String? { i + 1 < argv.count ? argv[i + 1] : nil }
         while i < argv.count {
@@ -81,33 +81,44 @@ struct VideoHostdArguments {
             case "--list-dialogs": a.listDialogs = true
             case "--window-id":
                 guard let v = next(), let n = UInt32(v) else { return nil }
-                a.windowID = n; i += 1
+                a.windowID = n
+                i += 1
             case "--window-title":
                 guard let v = next() else { return nil }
-                a.windowTitle = v; i += 1
+                a.windowTitle = v
+                i += 1
             case "--media-port":
                 guard let v = next(), let n = UInt16(v) else { return nil }
-                a.mediaPort = n; i += 1
+                a.mediaPort = n
+                i += 1
             case "--cursor-port":
                 guard let v = next(), let n = UInt16(v) else { return nil }
-                a.cursorPort = n; i += 1
+                a.cursorPort = n
+                i += 1
             case "--scale":
                 guard let v = next(), let n = Double(v), n >= 1 else { return nil }
-                a.scale = n; i += 1
+                a.scale = n
+                i += 1
             case "--bitrate":
                 guard let v = next(), let n = Int(v), n >= 1 else { return nil }
-                a.bitrateMbps = n; i += 1
+                a.bitrateMbps = n
+                i += 1
             case "--fps":
                 guard let v = next(), let n = Int(v), n >= 1, n <= 120 else { return nil }
-                a.fps = n; i += 1
+                a.fps = n
+                i += 1
             case "--virtual-display": a.virtualDisplay = true
             case "--vd-point-size":
                 // Parse WxH (e.g. 1920x1080).
                 guard let v = next() else { return nil }
                 let parts = v.lowercased().split(separator: "x")
-                guard parts.count == 2, let w = Int(parts[0]), let h = Int(parts[1]), w >= 320, h >= 240 else { return nil }
-                a.vdPointWidth = w; a.vdPointHeight = h; i += 1
-            case "-h", "--help": return nil
+                guard parts.count == 2, let w = Int(parts[0]), let h = Int(parts[1]), w >= 320,
+                      h >= 240 else { return nil }
+                a.vdPointWidth = w
+                a.vdPointHeight = h
+                i += 1
+            case "-h",
+                 "--help": return nil
             default: return nil
             }
             i += 1
@@ -126,7 +137,8 @@ struct VideoHostdArguments {
 }
 
 let argv = CommandLine.arguments
-let program = (argv.first as NSString?)?.lastPathComponent ?? "aislopdesk-videohostd"
+let program = argv.first.map { $0.isEmpty ? "" : URL(fileURLWithPath: $0).lastPathComponent }
+    ?? "aislopdesk-videohostd"
 
 func die(_ message: String, code: Int32 = 1) -> Never {
     FileHandle.standardError.write(Data("\(program): \(message)\n".utf8))
@@ -138,7 +150,8 @@ guard let args = VideoHostdArguments.parse(argv) else {
     exit(2)
 }
 
-@Sendable func log(_ message: String) {
+@Sendable
+func log(_ message: String) {
     FileHandle.standardError.write(Data("\(program): \(message)\n".utf8))
 }
 
@@ -152,9 +165,11 @@ guard let args = VideoHostdArguments.parse(argv) else {
 NSApplication.shared.setActivationPolicy(.accessory)
 
 /// Fetches the shareable, on-screen windows (excluding desktop chrome).
-@Sendable func shareableWindows() async throws -> [SCWindow] {
+@Sendable
+func shareableWindows() async throws -> [SCWindow] {
     let content = try await SCShareableContent.excludingDesktopWindows(
-        false, onScreenWindowsOnly: true)
+        false, onScreenWindowsOnly: true,
+    )
     // Stable, readable order: by owning app then window id.
     return content.windows.sorted {
         let an = $0.owningApplication?.applicationName ?? ""
@@ -165,10 +180,15 @@ NSApplication.shared.setActivationPolicy(.accessory)
 
 func describe(_ w: SCWindow) -> String {
     let app = w.owningApplication?.applicationName ?? "?"
-    let title = (w.title?.isEmpty == false) ? w.title! : "(untitled)"
+    let title = w.title.flatMap { $0.isEmpty ? nil : $0 } ?? "(untitled)"
     let size = "\(Int(w.frame.width))x\(Int(w.frame.height))"
-    return String(format: "  id=%-8u  %-22@  %@  [%@]",
-                  w.windowID, app as NSString, title as NSString, size as NSString)
+    return String(
+        format: "  id=%-8u  %-22@  %@  [%@]",
+        w.windowID,
+        app,
+        title,
+        size,
+    )
 }
 
 /// System apps whose windows are NOT useful to stream — filtered OUT of the picker list (docs/31).
@@ -178,7 +198,8 @@ private let pickerSystemApps: Set<String> = [
 
 /// Maps an `SCWindow` to a picker ``WindowSummary``, or `nil` if it is system chrome / a tiny indicator
 /// (StatusIndicator, Cursor, Menubar, Control Center items) that should not appear in the picker.
-@Sendable func pickerSummary(_ w: SCWindow) -> WindowSummary? {
+@Sendable
+func pickerSummary(_ w: SCWindow) -> WindowSummary? {
     let app = w.owningApplication?.applicationName ?? ""
     let width = Int(w.frame.width.rounded()), height = Int(w.frame.height.rounded())
     guard !pickerSystemApps.contains(app), width >= 80, height >= 80 else { return nil }
@@ -187,7 +208,7 @@ private let pickerSystemApps: Set<String> = [
         appName: app,
         title: w.title ?? "",
         width: UInt16(clamping: width),
-        height: UInt16(clamping: height)
+        height: UInt16(clamping: height),
     )
 }
 
@@ -209,9 +230,14 @@ final class ListAnswerGuard: @unchecked Sendable {
 /// request's channelID, then RETIRE that channelID's reply-flow entry (the lane was never admitted as a
 /// streaming session, so its `channelMediaConn` mapping would otherwise linger). The `answerGuard` slot
 /// is cleared on every exit so a later (post-reply) retransmit can re-answer.
-@Sendable func answerWindowList(channelID: UInt32, mux: NWVideoMuxDatagramTransport, answerGuard: ListAnswerGuard) async {
+@Sendable
+func answerWindowList(
+    channelID: UInt32,
+    mux: NWVideoMuxDatagramTransport,
+    answerGuard: ListAnswerGuard,
+) async {
     defer { answerGuard.end(channelID) }
-    let summaries = ((try? await shareableWindows()) ?? []).compactMap(pickerSummary).prefix(64)
+    let summaries = await ((try? shareableWindows()) ?? []).compactMap(pickerSummary).prefix(64)
     let reply = VideoControlMessage.windowList(Array(summaries)).encode()
     mux.send(reply, on: .control, channelID: channelID)
     mux.retire(channelID)
@@ -220,8 +246,9 @@ final class ListAnswerGuard: @unchecked Sendable {
 
 /// Enumerate the on-screen windows and classify the open SYSTEM dialogs (SecurityAgent login/password
 /// prompts etc.) via the pure ``SystemDialogDetector``, capped to a control-datagram-safe count.
-@Sendable func systemDialogSummaries() async -> [SystemDialogSummary] {
-    let windows = (try? await shareableWindows()) ?? []
+@Sendable
+func systemDialogSummaries() async -> [SystemDialogSummary] {
+    let windows = await (try? shareableWindows()) ?? []
     let snaps = windows.map { w in
         SystemDialogDetector.WindowSnapshot(
             windowID: w.windowID,
@@ -229,18 +256,30 @@ final class ListAnswerGuard: @unchecked Sendable {
             bundleID: w.owningApplication?.bundleIdentifier ?? "",
             isOnScreen: w.isOnScreen,
             title: w.title ?? "",
-            frame: w.frame)
+            frame: w.frame,
+        )
     }
     return SystemDialogDetector.detect(snaps).prefix(16).map {
-        SystemDialogSummary(windowID: $0.windowID, owner: $0.owner, title: $0.title,
-                            width: UInt16(clamping: $0.width), height: UInt16(clamping: $0.height), isSecure: $0.isSecure)
+        SystemDialogSummary(
+            windowID: $0.windowID,
+            owner: $0.owner,
+            title: $0.title,
+            width: UInt16(clamping: $0.width),
+            height: UInt16(clamping: $0.height),
+            isSecure: $0.isSecure,
+        )
     }
 }
 
 /// Answers a client `listSystemDialogs` poll (the system-popup-pane feature): enumerate → classify →
 /// reply `systemDialogList` on the request's channelID → RETIRE the session-less lane. Mirrors
 /// ``answerWindowList``; quiet on the common empty case (the client polls on a slow cadence).
-@Sendable func answerSystemDialogList(channelID: UInt32, mux: NWVideoMuxDatagramTransport, answerGuard: ListAnswerGuard) async {
+@Sendable
+func answerSystemDialogList(
+    channelID: UInt32,
+    mux: NWVideoMuxDatagramTransport,
+    answerGuard: ListAnswerGuard,
+) async {
     defer { answerGuard.end(channelID) }
     let dialogs = await systemDialogSummaries()
     let reply = VideoControlMessage.systemDialogList(dialogs).encode()
@@ -258,16 +297,31 @@ final class Holder: @unchecked Sendable {
     private let lock = NSLock()
     private var registry: VideoMuxSessionRegistry?
     private var mux: NWVideoMuxDatagramTransport?
-    private var virtualDisplay: VirtualDisplay?   // feature #1: held for daemon lifetime (ARC owns the CGVirtualDisplay)
-    func setMux(_ r: VideoMuxSessionRegistry, _ m: NWVideoMuxDatagramTransport) { lock.lock(); registry = r; mux = m; lock.unlock() }
+    private var virtualDisplay: VirtualDisplay? // feature #1: held for daemon lifetime (ARC owns the CGVirtualDisplay)
+    func setMux(_ r: VideoMuxSessionRegistry, _ m: NWVideoMuxDatagramTransport) { lock.lock()
+        registry = r
+        mux = m
+        lock.unlock()
+    }
+
     func currentMux() -> (VideoMuxSessionRegistry, NWVideoMuxDatagramTransport)? {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         guard let registry, let mux else { return nil }
         return (registry, mux)
     }
-    func setVirtualDisplay(_ vd: VirtualDisplay) { lock.lock(); virtualDisplay = vd; lock.unlock() }
-    func currentVirtualDisplay() -> VirtualDisplay? { lock.lock(); defer { lock.unlock() }; return virtualDisplay }
+
+    func setVirtualDisplay(_ vd: VirtualDisplay) { lock.lock()
+        virtualDisplay = vd
+        lock.unlock()
+    }
+
+    func currentVirtualDisplay() -> VirtualDisplay? { lock.lock()
+        defer { lock.unlock() }
+        return virtualDisplay
+    }
 }
+
 let holder = Holder()
 
 // A one-shot latch so a second SIGINT during the async shutdown does not spawn a second teardown Task
@@ -276,18 +330,20 @@ final class VideoShutdownLatch: @unchecked Sendable {
     private let lock = NSLock()
     private var fired = false
     func tryFire() -> Bool {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         if fired { return false }
         fired = true
         return true
     }
 }
+
 let videoShutdownLatch = VideoShutdownLatch()
 
 signal(SIGINT, SIG_IGN)
 let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
 sigint.setEventHandler {
-    guard videoShutdownLatch.tryFire() else { return }   // ignore repeated Ctrl-C during the async drain
+    guard videoShutdownLatch.tryFire() else { return } // ignore repeated Ctrl-C during the async drain
     log("SIGINT — shutting down")
     Task {
         if let (registry, mux) = holder.currentMux() {
@@ -302,6 +358,7 @@ sigint.setEventHandler {
         exit(0)
     }
 }
+
 sigint.resume()
 
 /// Daemon-side errors surfaced from the UDP-mux mint factory (a thrown error drops the triggering
@@ -310,7 +367,7 @@ enum VideoHostdError: Error, CustomStringConvertible {
     case muxNoWindow(requestedWindowID: UInt32)
     var description: String {
         switch self {
-        case .muxNoWindow(let id): return "no shareable window matched hello requestedWindowID=\(id)"
+        case let .muxNoWindow(id): "no shareable window matched hello requestedWindowID=\(id)"
         }
     }
 }
@@ -323,7 +380,9 @@ final class MuxRetireBox: @unchecked Sendable {
     private let lock = NSLock()
     private var retireFn: (@Sendable (UInt32) -> Void)?
     func bind(_ fn: @escaping @Sendable (UInt32) -> Void) { lock.withLock { retireFn = fn } }
-    func retire(_ id: UInt32) { let fn = lock.withLock { retireFn }; fn?(id) }
+    func retire(_ id: UInt32) { let fn = lock.withLock { retireFn }
+        fn?(id)
+    }
 }
 
 Task {
@@ -351,7 +410,9 @@ Task {
             } else {
                 log("system dialogs (\(dialogs.count)):")
                 for d in dialogs {
-                    log("  id=\(d.windowID) [\(d.width)x\(d.height)] \(d.owner) secure=\(d.isSecure) — \(d.title.isEmpty ? "(untitled)" : d.title)")
+                    log(
+                        "  id=\(d.windowID) [\(d.width)x\(d.height)] \(d.owner) secure=\(d.isSecure) — \(d.title.isEmpty ? "(untitled)" : d.title)",
+                    )
                 }
             }
             exit(0)
@@ -394,12 +455,14 @@ Task {
             let geo = VirtualDisplayGeometry(pointWidth: args.vdPointWidth, pointHeight: args.vdPointHeight, scale: 2)
             if let id = await virtualDisplay.create(geo) {
                 vdID = id
-                log("virtual display ONLINE id=\(id) (\(args.vdPointWidth)x\(args.vdPointHeight)pt @2× → \(geo.pixelWidth)x\(geo.pixelHeight)px) — windows will be moved onto it for sharp capture")
+                log(
+                    "virtual display ONLINE id=\(id) (\(args.vdPointWidth)x\(args.vdPointHeight)pt @2× → \(geo.pixelWidth)x\(geo.pixelHeight)px) — windows will be moved onto it for sharp capture",
+                )
             } else {
                 log("virtual display unavailable — falling back to 1× real-display capture")
             }
         }
-        let vdDisplayID = vdID   // immutable capture for the mint closure
+        let vdDisplayID = vdID // immutable capture for the mint closure
 
         // CONCURRENCY-HOST-1 mux analogue: the shared transport arms the per-lane reaper.
         let mux = NWVideoMuxDatagramTransport(mediaPort: mediaPort, cursorPort: cursorPort)
@@ -410,8 +473,10 @@ Task {
         let retireBox = MuxRetireBox()
         // The session registry mints a session per new channel's hello. The lane transport
         // (`VideoMuxChannelTransport`) wires the session's sink into the shared sink table.
-        let registry = VideoMuxSessionRegistry(sinkTable: sinkTable, forgetLane: { id in mux.retire(id) }) { channelID, hello in
-            guard case .hello(_, let requestedWindowID, _) = hello else {
+        let registry = VideoMuxSessionRegistry(sinkTable: sinkTable, forgetLane: { id in
+            mux.retire(id)
+        }) { channelID, hello in
+            guard case let .hello(_, requestedWindowID, _) = hello else {
                 throw VideoHostdError.muxNoWindow(requestedWindowID: 0)
             }
             // Re-enumerate live windows for THIS hello (a pane may open long after launch).
@@ -428,7 +493,7 @@ Task {
                 channelID: channelID,
                 shared: mux,
                 sinkTable: sinkTable,
-                onRetire: { id in retireBox.retire(id) }
+                onRetire: { id in retireBox.retire(id) },
             )
             // Feature #1: if the VD is up, move THIS window onto it (AX) and capture at 2× real
             // backing. The move returns the ACHIEVED post-move point size (a window larger than the VD
@@ -438,16 +503,29 @@ Task {
             // window simply stays where it is and still streams. Per-pane so two panes can each be
             // moved onto the shared VD.
             let paneCaptureScale: Double
-            var paneSizeOverride: VideoSize? = nil
+            var paneSizeOverride: VideoSize?
             if vdDisplayID != 0, let movePid = w.owningApplication?.processID,
-               let achieved = await WindowPlacement.moveWindowOntoDisplay(windowID: requestedWindowID, pid: movePid, displayID: vdDisplayID) {
+               let achieved = await WindowPlacement.moveWindowOntoDisplay(
+                   windowID: requestedWindowID,
+                   pid: movePid,
+                   displayID: vdDisplayID,
+               )
+            {
                 paneCaptureScale = 2.0
                 paneSizeOverride = VideoSize(width: Double(achieved.width), height: Double(achieved.height))
             } else {
                 paneCaptureScale = effectiveScale
-                if vdDisplayID != 0 { log("mux: could not move window \(requestedWindowID) onto the VD — capturing at 1×") }
+                if vdDisplayID !=
+                    0 { log("mux: could not move window \(requestedWindowID) onto the VD — capturing at 1×") }
             }
-            let session = AislopdeskVideoHostSession(window: w, transport: lane, captureScale: paneCaptureScale, captureSizeOverride: paneSizeOverride, bitrate: bitrate, fps: args.fps)
+            let session = AislopdeskVideoHostSession(
+                window: w,
+                transport: lane,
+                captureScale: paneCaptureScale,
+                captureSizeOverride: paneSizeOverride,
+                bitrate: bitrate,
+                fps: args.fps,
+            )
             try await session.start()
             log("mux: minted session chan=\(channelID) window-id=\(requestedWindowID) over shared flow")
             return session
@@ -477,7 +555,9 @@ Task {
                 if listAnswerGuard.begin(channelID) {
                     Task { await answerWindowList(channelID: channelID, mux: mux, answerGuard: listAnswerGuard) }
                 }
-            } else if channel == .control, let msg = try? VideoControlMessage.decode(data), case .listSystemDialogs = msg {
+            } else if channel == .control, let msg = try? VideoControlMessage.decode(data),
+                      case .listSystemDialogs = msg
+            {
                 // Session-LESS system-dialog poll (the system-popup-pane feature): enumerate + classify +
                 // reply, NEVER mint a session. Bootstraps its reply flow exactly like listWindows.
                 if listAnswerGuard.begin(channelID) {
@@ -487,7 +567,9 @@ Task {
                 Task { await registry.dispatch(channelID: channelID, channel: channel, data: data) }
             }
         }
-        log("UDP-mux: serving SHARED flow on media:\(mediaPort) cursor:\(cursorPort) — N panes, one flow, per-hello windows")
+        log(
+            "UDP-mux: serving SHARED flow on media:\(mediaPort) cursor:\(cursorPort) — N panes, one flow, per-hello windows",
+        )
         log("client: open the Aislopdesk app → Remote window; each pane's hello picks its window")
     } catch {
         die("failed to start: \(error)")
@@ -508,7 +590,8 @@ if args.virtualDisplay {
 #else
 
 FileHandle.standardError.write(Data(
-    "aislopdesk-videohostd: the GUI video path host is macOS-only (ScreenCaptureKit + VideoToolbox).\n".utf8))
+    "aislopdesk-videohostd: the GUI video path host is macOS-only (ScreenCaptureKit + VideoToolbox).\n".utf8,
+))
 exit(1)
 
 #endif

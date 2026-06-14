@@ -65,36 +65,36 @@ struct BigEndianReader {
     }
 
     mutating func readUInt16() throws -> UInt16 {
-        let b0 = UInt16(try nextByte())
-        let b1 = UInt16(try nextByte())
+        let b0 = try UInt16(nextByte())
+        let b1 = try UInt16(nextByte())
         return (b0 << 8) | b1
     }
 
     mutating func readUInt32() throws -> UInt32 {
         var value: UInt32 = 0
-        for _ in 0 ..< 4 { value = (value << 8) | UInt32(try nextByte()) }
+        for _ in 0..<4 { value = try (value << 8) | UInt32(nextByte()) }
         return value
     }
 
     mutating func readUInt64() throws -> UInt64 {
         var value: UInt64 = 0
-        for _ in 0 ..< 8 { value = (value << 8) | UInt64(try nextByte()) }
+        for _ in 0..<8 { value = try (value << 8) | UInt64(nextByte()) }
         return value
     }
 
     mutating func readInt32() throws -> Int32 {
-        Int32(bitPattern: try readUInt32())
+        try Int32(bitPattern: readUInt32())
     }
 
     mutating func readInt64() throws -> Int64 {
-        Int64(bitPattern: try readUInt64())
+        try Int64(bitPattern: readUInt64())
     }
 
     /// Reads exactly `count` raw bytes, returned as a fresh zero-based `Data`.
     mutating func readBytes(_ count: Int) throws -> Data {
         guard count >= 0, bytesRemaining >= count else { throw AislopdeskError.truncated }
         let start = data.startIndex + offset
-        let slice = data[start ..< start + count]
+        let slice = data[start..<start + count]
         offset += count
         return Data(slice)
     }

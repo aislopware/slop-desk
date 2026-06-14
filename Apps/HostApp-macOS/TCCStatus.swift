@@ -1,5 +1,5 @@
-import ApplicationServices  // AXIsProcessTrusted
-import CoreGraphics         // CGPreflightScreenCaptureAccess
+import ApplicationServices // AXIsProcessTrusted
+import CoreGraphics // CGPreflightScreenCaptureAccess
 import Foundation
 
 /// One row in the TCC (privacy/permission) checklist (research §C1).
@@ -7,7 +7,7 @@ import Foundation
 /// Each row describes a macOS privacy permission the GUI-video / remote-input host features
 /// require, how to (re)check whether it is currently granted, the human note explaining why,
 /// and the deep-link that jumps straight to the exact System Settings pane.
-struct TCCRow: Identifiable, Sendable {
+struct TCCRow: Identifiable {
     let id: String
     /// Display title, e.g. "Screen Recording".
     let title: String
@@ -59,8 +59,8 @@ enum TCC {
             requiresRelaunch: true,
             isGranted: screenRecordingGranted,
             settingsURL: URL(
-                string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
-            )!
+                string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            )!,
         ),
         TCCRow(
             id: "accessibility",
@@ -69,8 +69,8 @@ enum TCC {
             requiresRelaunch: false,
             isGranted: accessibilityGranted,
             settingsURL: URL(
-                string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-            )!
+                string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            )!,
         ),
     ]
 

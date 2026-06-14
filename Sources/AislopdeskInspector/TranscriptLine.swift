@@ -50,7 +50,7 @@ public struct LineIdentity: Sendable, Equatable {
         parentUUID: String? = nil,
         isSidechain: Bool = false,
         agentID: String? = nil,
-        timestamp: String? = nil
+        timestamp: String? = nil,
     ) {
         self.uuid = uuid
         self.parentUUID = parentUUID
@@ -89,7 +89,7 @@ public struct AssistantLine: Sendable, Equatable {
         identity: LineIdentity,
         text: String? = nil,
         toolUses: [ToolUseBlock] = [],
-        thinkingBlocks: [ThinkingBlock] = []
+        thinkingBlocks: [ThinkingBlock] = [],
     ) {
         self.identity = identity
         self.text = text
@@ -112,7 +112,7 @@ public struct MetaLine: Sendable, Equatable {
         rawType: String,
         sessionID: String? = nil,
         model: String? = nil,
-        cwd: String? = nil
+        cwd: String? = nil,
     ) {
         self.identity = identity
         self.rawType = rawType

@@ -1,6 +1,6 @@
 #if os(macOS)
-import Foundation
 import CoreGraphics
+import Foundation
 
 /// PURE point↔pixel↔millimeter arithmetic for a HiDPI virtual display (feature #1, 2026-06-08).
 /// No CoreGraphics IPC, no private API — just the math that decides the `CGVirtualDisplayMode`
@@ -44,8 +44,10 @@ public struct VirtualDisplayGeometry: Equatable, Sendable {
     /// the PIXEL dimensions so the density matches the real framebuffer. `1 inch = 25.4 mm`.
     public func sizeInMillimeters(targetPPI: Double = 163) -> CGSize {
         let ppi = max(1, targetPPI)
-        return CGSize(width: Double(pixelWidth) / ppi * 25.4,
-                      height: Double(pixelHeight) / ppi * 25.4)
+        return CGSize(
+            width: Double(pixelWidth) / ppi * 25.4,
+            height: Double(pixelHeight) / ppi * 25.4,
+        )
     }
 }
 #endif

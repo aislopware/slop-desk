@@ -89,10 +89,13 @@ public struct ChannelTable: Sendable, Equatable {
     /// already-open channel; a no-op for an unknown or already-closed id.
     public mutating func open(_ id: UInt32) {
         switch states[id] {
-        case .idle, .open, .none:
+        case .idle,
+             .open,
+             .none:
             // `.none` lets a responder register a peer-initiated id it did not allocate.
             states[id] = .open
-        case .halfClosed, .closed:
+        case .halfClosed,
+             .closed:
             break // closing/closed channels do not re-open
         }
     }
@@ -105,7 +108,9 @@ public struct ChannelTable: Sendable, Equatable {
     /// (a stray refusal for an unknown id creates no entry). Returns the resulting state.
     @discardableResult
     public mutating func reject(_ id: UInt32) -> ChannelState {
-        if states[id] == .idle { states[id] = .closed; noteTerminal(id) }
+        if states[id] == .idle { states[id] = .closed
+            noteTerminal(id)
+        }
         return states[id] ?? .closed
     }
 
@@ -129,9 +134,10 @@ public struct ChannelTable: Sendable, Equatable {
     /// close from either direction advances the same one-step state machine.
     private mutating func advanceClose(_ id: UInt32) -> ChannelState {
         switch states[id] {
-        case .idle, .open:
+        case .idle,
+             .open:
             states[id] = .halfClosed // first close from either side
-            noteTerminal(id)         // newly terminal — bound the retained entries (R12 #1)
+            noteTerminal(id) // newly terminal — bound the retained entries (R12 #1)
             return .halfClosed
         case .halfClosed:
             states[id] = .closed // second close — both sides done (already ring-recorded at half-close)

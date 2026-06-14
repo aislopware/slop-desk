@@ -19,7 +19,9 @@ pub const DEFAULT_BITS_PER_PIXEL_PER_FRAME: f64 = 0.15;
 /// own clamp). Swift `Int`, i.e. `i64` on the platforms this runs on.
 pub const MINIMUM_BITRATE: i64 = 1_000_000;
 
-/// Resolves the bits-per-pixel-per-frame density from an `AISLOPDESK_BPP` value. Accepts a
+/// Resolves the bits-per-pixel-per-frame density from an `AISLOPDESK_BPP` value.
+///
+/// Accepts a
 /// finite value in `(0, 1]`; anything else (absent, unparsable, ≤0, >1, NaN, ∞) yields
 /// [`DEFAULT_BITS_PER_PIXEL_PER_FRAME`].
 ///
@@ -42,7 +44,9 @@ pub fn default_bits_per_pixel_per_frame() -> f64 {
 }
 
 /// Resolution-aware target bitrate (bits/sec) for an encoder of `pixel_width × pixel_height`
-/// at `fps`, at the given `bits_per_pixel` density. Never below `floor` (the configured
+/// at `fps`, at the given `bits_per_pixel` density.
+///
+/// Never below `floor` (the configured
 /// `--bitrate`, so an explicit higher cap is honoured) and never below [`MINIMUM_BITRATE`].
 /// Degenerate (zero/negative) dimensions and fps are clamped to 1.
 #[must_use]

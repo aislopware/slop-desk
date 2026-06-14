@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins the live SCROLL-pan accumulator (``WorkspaceStore/scrollPan(by:)`` / ``commitScrollPan()``) — the
@@ -12,7 +12,6 @@ import CoreGraphics
 /// `WorkspaceStore` is `@MainActor`; the suite uses the spec-only `FakePaneSession` seam (no client/host).
 @MainActor
 final class CanvasScrollPanTests: XCTestCase {
-
     private let eps: CGFloat = 1e-9
 
     private func makeStore() -> WorkspaceStore {
@@ -43,7 +42,7 @@ final class CanvasScrollPanTests: XCTestCase {
 
         store.scrollPan(by: CGSize(width: 10, height: 5))
         store.scrollPan(by: CGSize(width: 4, height: -3))
-        let liveOffset = store.liveCameraOffset   // captured live visual offset
+        let liveOffset = store.liveCameraOffset // captured live visual offset
 
         store.commitScrollPan()
 
@@ -91,8 +90,11 @@ final class CanvasScrollPanTests: XCTestCase {
 
         store.switchToLayoutPreset(name: "p")
 
-        XCTAssertEqual(store.liveCameraOffset, .zero,
-                       "switching to a saved layout preset discards the pending live scroll")
+        XCTAssertEqual(
+            store.liveCameraOffset,
+            .zero,
+            "switching to a saved layout preset discards the pending live scroll",
+        )
     }
 
     /// The in-view-guarantee re-center in the placement paths (add / duplicate / reopen / system-dialog) is
@@ -101,7 +103,7 @@ final class CanvasScrollPanTests: XCTestCase {
     /// land, then adding a pane mid-scroll.
     func testOffscreenPlacementRecenterDiscardsPendingLiveScroll() {
         let store = makeStore()
-        store.addPane(kind: .terminal)                      // a pane near the origin; becomes focused
+        store.addPane(kind: .terminal) // a pane near the origin; becomes focused
         store.updateViewport(CGSize(width: 400, height: 300))
         // Commit the real camera far from where panes live, so the next pane lands off-viewport.
         store.scrollPan(by: CGSize(width: 5000, height: 5000))
@@ -111,9 +113,12 @@ final class CanvasScrollPanTests: XCTestCase {
         store.scrollPan(by: CGSize(width: 60, height: 40))
         XCTAssertNotEqual(store.liveCameraOffset, .zero, "precondition: a live scroll is pending")
 
-        store.addPane(kind: .terminal)   // placed near the origin-area focused pane → off the far viewport
+        store.addPane(kind: .terminal) // placed near the origin-area focused pane → off the far viewport
 
-        XCTAssertEqual(store.liveCameraOffset, .zero,
-                       "an off-viewport placement recenter discards the pending live scroll")
+        XCTAssertEqual(
+            store.liveCameraOffset,
+            .zero,
+            "an off-viewport placement recenter discards the pending live scroll",
+        )
     }
 }

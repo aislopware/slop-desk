@@ -5,19 +5,18 @@ import XCTest
 /// decoded-frame's smoothed jitter — no clock inside), so the grow-fast / shrink-slow /
 /// hysteresis / clamp behaviour is fully unit-testable in isolation.
 final class AdaptiveJitterControllerTests: XCTestCase {
-
     func testStableLowJitterSettlesToFloor() {
         // initialDepth 3, but a perfectly clean link (jitter 0) ⇒ recommendation = minDepth(1).
         // Shrink is slow: one step per shrinkCooldownFrames, so it takes 2 cooldown windows to
         // walk 3 → 2 → 1 and then it holds at the floor.
         var c = AdaptiveJitterController(minDepth: 1, maxDepth: 8, fps: 60, initialDepth: 3, shrinkCooldownFrames: 4)
         // First 3 low-jitter frames: under cooldown (4), no shrink yet.
-        for _ in 0 ..< 3 { XCTAssertEqual(c.noteFrame(jitterSeconds: 0), 3) }
+        for _ in 0..<3 { XCTAssertEqual(c.noteFrame(jitterSeconds: 0), 3) }
         XCTAssertEqual(c.noteFrame(jitterSeconds: 0), 2, "4th consecutive low frame ⇒ one-step shrink")
-        for _ in 0 ..< 3 { XCTAssertEqual(c.noteFrame(jitterSeconds: 0), 2, "next window not yet elapsed") }
+        for _ in 0..<3 { XCTAssertEqual(c.noteFrame(jitterSeconds: 0), 2, "next window not yet elapsed") }
         XCTAssertEqual(c.noteFrame(jitterSeconds: 0), 1, "another cooldown ⇒ shrink to floor")
         // Settles: at the floor the recommendation == targetDepth, so it never drops below 1.
-        for _ in 0 ..< 20 { XCTAssertEqual(c.noteFrame(jitterSeconds: 0), 1, "holds at the floor") }
+        for _ in 0..<20 { XCTAssertEqual(c.noteFrame(jitterSeconds: 0), 1, "holds at the floor") }
     }
 
     func testJitterRiseGrowsImmediately() {
@@ -74,7 +73,7 @@ final class AdaptiveJitterControllerTests: XCTestCase {
         var c = AdaptiveJitterController(minDepth: 2, maxDepth: 5, fps: 60, initialDepth: 2, shrinkCooldownFrames: 1)
         XCTAssertEqual(c.noteFrame(jitterSeconds: 10.0), 5, "absurd jitter clamps to maxDepth")
         // shrinkCooldownFrames 1 ⇒ each low frame steps down, but never below minDepth(2).
-        for _ in 0 ..< 10 { _ = c.noteFrame(jitterSeconds: 0) }
+        for _ in 0..<10 { _ = c.noteFrame(jitterSeconds: 0) }
         XCTAssertEqual(c.targetDepth, 2, "never shrinks below minDepth")
     }
 

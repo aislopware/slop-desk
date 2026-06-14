@@ -6,7 +6,6 @@ import XCTest
 /// pump/pipeline are @MainActor + view-owned and never instantiated here; this pins the env→interval
 /// math: the new responsive default and the HZ/MS precedence + clamp.
 final class MotionIntervalTests: XCTestCase {
-
     private let defaultInterval = 1.0 / 120.0
 
     // The new DEFAULT is the more-responsive 120Hz (~8.3ms), down from the old 1/60 (~16.7ms).
@@ -45,7 +44,11 @@ final class MotionIntervalTests: XCTestCase {
     func testBadMsFallsToDefault() {
         XCTAssertEqual(VideoWindowPipeline.resolveMotionInterval(hz: nil, ms: "0"), defaultInterval, accuracy: 1e-12)
         XCTAssertEqual(VideoWindowPipeline.resolveMotionInterval(hz: nil, ms: "9999"), defaultInterval, accuracy: 1e-12)
-        XCTAssertEqual(VideoWindowPipeline.resolveMotionInterval(hz: nil, ms: "garbage"), defaultInterval, accuracy: 1e-12)
+        XCTAssertEqual(
+            VideoWindowPipeline.resolveMotionInterval(hz: nil, ms: "garbage"),
+            defaultInterval,
+            accuracy: 1e-12,
+        )
     }
 
     // Clamp boundaries are inclusive.

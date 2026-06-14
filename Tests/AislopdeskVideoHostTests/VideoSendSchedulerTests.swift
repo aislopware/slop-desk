@@ -1,6 +1,6 @@
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoHost
-import AislopdeskVideoProtocol
 
 /// PURE packet-scheduling: turns encoder output + per-stream messages into ordered,
 /// channel-tagged datagrams. No socket; just channel assignment + ordering.
@@ -9,7 +9,7 @@ final class VideoSendSchedulerTests: XCTestCase {
 
     private func makeAVCC(naluSizes: [Int]) -> Data {
         let units = naluSizes.enumerated().map { i, size in
-            Data((0 ..< size).map { UInt8(truncatingIfNeeded: $0 &+ i &* 7) })
+            Data((0..<size).map { UInt8(truncatingIfNeeded: $0 &+ i &* 7) })
         }
         return NALUnit.join(units)
     }
@@ -38,7 +38,7 @@ final class VideoSendSchedulerTests: XCTestCase {
         for out in outgoing {
             XCTAssertEqual(out.channel, .video)
             let parsed = try FrameFragment.decode(out.bytes)
-            if case .completed(let f) = reassembler.ingest(parsed) { completed = f }
+            if case let .completed(f) = reassembler.ingest(parsed) { completed = f }
         }
         XCTAssertEqual(completed?.avcc, frame)
         XCTAssertEqual(completed?.keyframe, true)
@@ -53,8 +53,17 @@ final class VideoSendSchedulerTests: XCTestCase {
     }
 
     func testCursorUpdateAndShapeBothGoOnCursorChannel() throws {
-        let update = CursorChannelMessage.update(CursorUpdate(position: VideoPoint(x: 5, y: 6), shapeID: 2, hotspot: VideoPoint(x: 0, y: 0)))
-        let shape = CursorChannelMessage.shape(CursorShapeMessage(shapeID: 2, size: VideoSize(width: 16, height: 16), hotspot: VideoPoint(x: 1, y: 1), bitmap: Data([1, 2, 3])))
+        let update = CursorChannelMessage.update(CursorUpdate(
+            position: VideoPoint(x: 5, y: 6),
+            shapeID: 2,
+            hotspot: VideoPoint(x: 0, y: 0),
+        ))
+        let shape = CursorChannelMessage.shape(CursorShapeMessage(
+            shapeID: 2,
+            size: VideoSize(width: 16, height: 16),
+            hotspot: VideoPoint(x: 1, y: 1),
+            bitmap: Data([1, 2, 3]),
+        ))
 
         let outUpdate = scheduler.scheduleCursor(update)
         let outShape = scheduler.scheduleCursor(shape)
@@ -65,7 +74,14 @@ final class VideoSendSchedulerTests: XCTestCase {
     }
 
     func testControlGoesOnControlChannel() throws {
-        let message = VideoControlMessage.helloAck(accepted: true, streamID: 3, captureWidth: 800, captureHeight: 600, windowBoundsCG: VideoRect(x: 0, y: 0, width: 800, height: 600), fullRange: false)
+        let message = VideoControlMessage.helloAck(
+            accepted: true,
+            streamID: 3,
+            captureWidth: 800,
+            captureHeight: 600,
+            windowBoundsCG: VideoRect(x: 0, y: 0, width: 800, height: 600),
+            fullRange: false,
+        )
         let out = scheduler.scheduleControl(message)
         XCTAssertEqual(out.channel, .control)
         XCTAssertEqual(try VideoControlMessage.decode(out.bytes), message)

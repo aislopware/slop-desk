@@ -5,15 +5,21 @@ import XCTest
 /// peer-crafted fragment header must not let it allocate/iterate a huge per-frame buffer (alloc+CPU DoS)
 /// or wedge a frame with an out-of-range index. Pure: no transport.
 final class FrameReassemblerValidationTests: XCTestCase {
-
-    private func frag(frameID: UInt32, fragIndex: UInt16, fragCount: UInt16,
-                      parity: Bool = false, keyframe: Bool = false, payload: Data = Data([1, 2, 3])) -> FrameFragment {
+    private func frag(
+        frameID: UInt32,
+        fragIndex: UInt16,
+        fragCount: UInt16,
+        parity: Bool = false,
+        keyframe: Bool = false,
+        payload: Data = Data([1, 2, 3]),
+    ) -> FrameFragment {
         var flags: FrameFragmentHeader.Flags = []
         if parity { flags.insert(.parity) }
         if keyframe { flags.insert(.keyframe) }
         let header = FrameFragmentHeader(
             streamSeq: frameID, frameID: frameID, fragIndex: fragIndex, fragCount: fragCount,
-            flags: flags, payloadLength: UInt16(payload.count))
+            flags: flags, payloadLength: UInt16(payload.count),
+        )
         return FrameFragment(header: header, payload: payload)
     }
 
@@ -21,10 +27,16 @@ final class FrameReassemblerValidationTests: XCTestCase {
     /// per-frame buffer is allocated — no alloc/CPU amplification, no pending frame created.
     func testHugeFragCountIsRejected() {
         var r = FrameReassembler()
-        XCTAssertEqual(r.ingest(frag(frameID: 1, fragIndex: 0, fragCount: .max)), .stale,
-                       "an implausibly huge fragCount is dropped, not buffered")
-        XCTAssertEqual(r.ingest(frag(frameID: 2, fragIndex: 0, fragCount: 9000)), .stale,
-                       "a fragCount just over the 8192 cap is dropped")
+        XCTAssertEqual(
+            r.ingest(frag(frameID: 1, fragIndex: 0, fragCount: .max)),
+            .stale,
+            "an implausibly huge fragCount is dropped, not buffered",
+        )
+        XCTAssertEqual(
+            r.ingest(frag(frameID: 2, fragIndex: 0, fragCount: 9000)),
+            .stale,
+            "a fragCount just over the 8192 cap is dropped",
+        )
         XCTAssertNil(r.nextDroppedFrame(), "a rejected fragment never creates a frame to drop")
     }
 
@@ -42,8 +54,11 @@ final class FrameReassemblerValidationTests: XCTestCase {
     func testValidSingleFragmentFrameStillCompletes() {
         var r = FrameReassembler()
         let result = r.ingest(frag(frameID: 1, fragIndex: 0, fragCount: 1, keyframe: true, payload: Data([9, 8, 7])))
-        XCTAssertEqual(result, .completed(ReassembledFrame(frameID: 1, keyframe: true, crisp: false, avcc: Data([9, 8, 7]))),
-                       "a valid single-fragment frame reassembles normally — the guard is not over-broad")
+        XCTAssertEqual(
+            result,
+            .completed(ReassembledFrame(frameID: 1, keyframe: true, crisp: false, avcc: Data([9, 8, 7]))),
+            "a valid single-fragment frame reassembles normally — the guard is not over-broad",
+        )
     }
 
     /// R7 #3 contract lock: in the reorder-then-loss interleaving, the INGESTED fragment's own frame can
@@ -57,9 +72,14 @@ final class FrameReassemblerValidationTests: XCTestCase {
         XCTAssertEqual(r.ingest(frag(frameID: 1, fragIndex: 0, fragCount: 2)), .incomplete)
         // frame0's late fragment arrives — frame0 is older than the frontier, missing fragIndex 0, no
         // FEC → hopeless. ingest() returns .dropped(0) DIRECTLY (and removes it from the drain queue).
-        XCTAssertEqual(r.ingest(frag(frameID: 0, fragIndex: 1, fragCount: 2)), .dropped(frameID: 0),
-                       "the ingested frame's own loss is surfaced via the .dropped RETURN")
-        XCTAssertNil(r.nextDroppedFrame(),
-                     "frame0 was returned directly, NOT left on the drain queue — so ignoring the return loses it")
+        XCTAssertEqual(
+            r.ingest(frag(frameID: 0, fragIndex: 1, fragCount: 2)),
+            .dropped(frameID: 0),
+            "the ingested frame's own loss is surfaced via the .dropped RETURN",
+        )
+        XCTAssertNil(
+            r.nextDroppedFrame(),
+            "frame0 was returned directly, NOT left on the drain queue — so ignoring the return loses it",
+        )
     }
 }

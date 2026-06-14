@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskProtocol
+import Foundation
 
 /// A **non-destructive** sniffer over the host's outbound PTY byte stream that observes
 /// (never consumes) the bytes the host relays to the client and emits the two
@@ -58,7 +58,6 @@ import AislopdeskProtocol
 /// `onChunk` sink), so calls are already serialized; the lock makes the type safe to
 /// capture in the `@Sendable` `onChunk` closure regardless.
 public final class HostTitleBellSniffer: @unchecked Sendable {
-
     public init() {}
 
     // MARK: Parser state
@@ -103,15 +102,15 @@ public final class HostTitleBellSniffer: @unchecked Sendable {
 
     private static let esc: UInt8 = 0x1B
     private static let bel: UInt8 = 0x07
-    private static let rightBracket: UInt8 = 0x5D  // ']'
-    private static let backslash: UInt8 = 0x5C     // '\'
-    private static let semicolon: UInt8 = 0x3B     // ';'
+    private static let rightBracket: UInt8 = 0x5D // ']'
+    private static let backslash: UInt8 = 0x5C // '\'
+    private static let semicolon: UInt8 = 0x3B // ';'
     // String-sequence introducers (R9 #4): DCS `ESC P`, SOS `ESC X`, PM `ESC ^`, APC `ESC _`. A real
     // terminal swallows their body to the ST/BEL terminator without ringing a bell or changing the title.
-    private static let dcs: UInt8 = 0x50           // 'P'
-    private static let sos: UInt8 = 0x58           // 'X'
-    private static let pm: UInt8 = 0x5E            // '^'
-    private static let apc: UInt8 = 0x5F           // '_'
+    private static let dcs: UInt8 = 0x50 // 'P'
+    private static let sos: UInt8 = 0x58 // 'X'
+    private static let pm: UInt8 = 0x5E // '^'
+    private static let apc: UInt8 = 0x5F // '_'
 
     // MARK: Observe
 
@@ -155,7 +154,10 @@ public final class HostTitleBellSniffer: @unchecked Sendable {
             case Self.rightBracket:
                 state = .osc
                 oscBuffer.removeAll(keepingCapacity: true)
-            case Self.dcs, Self.sos, Self.pm, Self.apc:
+            case Self.dcs,
+                 Self.sos,
+                 Self.pm,
+                 Self.apc:
                 // R9 #4 (security): DCS/SOS/PM/APC introduce a STRING sequence whose body a conformant
                 // terminal swallows to its ST/BEL terminator WITHOUT ringing a bell or changing the title.
                 // Consume the whole string + terminator, emitting NOTHING — else a malicious remote program
@@ -270,7 +272,7 @@ public final class HostTitleBellSniffer: @unchecked Sendable {
         // Split only on the FIRST ';': `Ps ; Pt` — the title text itself may contain ';'.
         guard let sep = oscBuffer.firstIndex(of: Self.semicolon) else { return }
         let psBytes = oscBuffer[oscBuffer.startIndex..<sep]
-        let ps = String(decoding: psBytes, as: UTF8.self)
+        let ps = String(bytes: psBytes, encoding: .utf8) ?? ""
         // We surface a title for OSC 0 (icon name + window title) and OSC 2 (window title
         // only). OSC 1 is icon-name-ONLY and is deliberately ignored — it never sets the
         // window title, so it should not change the client's displayed title. Any other Ps
@@ -278,7 +280,7 @@ public final class HostTitleBellSniffer: @unchecked Sendable {
         // not a title and is skipped.
         guard ps == "0" || ps == "2" else { return }
         let titleBytes = oscBuffer[oscBuffer.index(after: sep)...]
-        let title = String(decoding: titleBytes, as: UTF8.self)
+        let title = String(bytes: titleBytes, encoding: .utf8) ?? ""
         // Trivial dedup: don't spam an identical title back-to-back.
         if title == lastTitle { return }
         lastTitle = title

@@ -1,7 +1,7 @@
-import XCTest
-import CoreVideo
-@testable import AislopdeskVideoClient
 import AislopdeskVideoProtocol
+import CoreVideo
+import XCTest
+@testable import AislopdeskVideoClient
 
 /// PURE reassembly → pace scheduling decisions the client orchestrator makes, with
 /// fakes only: packetize a frame the way the host's scheduler does, reassemble it on
@@ -9,10 +9,9 @@ import AislopdeskVideoProtocol
 /// recovery-signal path), then exercise the pacer's most-recent-wins queue with the
 /// reassembled outputs. NO decoder / display link / socket.
 final class ReassemblyPacingTests: XCTestCase {
-
     private func makeAVCC(naluSizes: [Int]) -> Data {
         NALUnit.join(naluSizes.enumerated().map { i, size in
-            Data((0 ..< size).map { UInt8(truncatingIfNeeded: $0 &+ i &* 13) })
+            Data((0..<size).map { UInt8(truncatingIfNeeded: $0 &+ i &* 13) })
         })
     }
 
@@ -30,7 +29,7 @@ final class ReassemblyPacingTests: XCTestCase {
         var reassembler = FrameReassembler()
         var completed: ReassembledFrame?
         for f in fragments {
-            if case .completed(let r) = reassembler.ingest(try FrameFragment.decode(f.encode())) { completed = r }
+            if case let .completed(r) = try reassembler.ingest(FrameFragment.decode(f.encode())) { completed = r }
         }
         XCTAssertEqual(completed?.avcc, frame)
         XCTAssertEqual(completed?.keyframe, true)
@@ -41,12 +40,12 @@ final class ReassemblyPacingTests: XCTestCase {
         let frame = makeAVCC(naluSizes: [VideoPacketizer.maxPayloadSize * 2 + 50])
         let fragments = packetizer.packetize(frame: frame, keyframe: true)
         // Drop the FIRST data fragment; FEC parity (sent last) must recover it.
-        let dataDropIndex = fragments.firstIndex { !$0.header.flags.contains(.parity) }!
+        let dataDropIndex = try XCTUnwrap(fragments.firstIndex { !$0.header.flags.contains(.parity) })
 
         var reassembler = FrameReassembler(fec: XORParityFEC(groupSize: 5))
         var completed: ReassembledFrame?
         for (i, f) in fragments.enumerated() where i != dataDropIndex {
-            if case .completed(let r) = reassembler.ingest(try FrameFragment.decode(f.encode())) { completed = r }
+            if case let .completed(r) = try reassembler.ingest(FrameFragment.decode(f.encode())) { completed = r }
         }
         XCTAssertEqual(completed?.avcc, frame, "FEC recovered the single lost data fragment")
     }
@@ -63,15 +62,15 @@ final class ReassemblyPacingTests: XCTestCase {
 
         var reassembler = FrameReassembler()
         // Deliver only the FIRST fragment of frame A (drop the rest), then all of B.
-        _ = reassembler.ingest(try FrameFragment.decode(fragsA[0].encode()))
-        for f in fragsB { _ = reassembler.ingest(try FrameFragment.decode(f.encode())) }
+        _ = try reassembler.ingest(FrameFragment.decode(fragsA[0].encode()))
+        for f in fragsB { _ = try reassembler.ingest(FrameFragment.decode(f.encode())) }
 
         var drops: [UInt32] = []
         while let lost = reassembler.nextDroppedFrame() { drops.append(lost) }
         XCTAssertEqual(drops, [fragsA[0].header.frameID], "frame A was declared lost once B advanced the frontier")
     }
 
-    func testPacerBuffersTwoReassembledFramesInOrder() throws {
+    func testPacerBuffersTwoReassembledFramesInOrder() {
         // Two frames complete back-to-back; the jitter buffer (targetDepth 2) primes and
         // presents them IN ORDER (oldest first), not skip-late — smoothing arrival jitter.
         let pacer = FramePacer(targetDepth: 2, renderCallback: { _ in })

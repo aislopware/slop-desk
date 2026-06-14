@@ -47,7 +47,7 @@ public actor SubagentWatcher {
     /// One scan step: starts tailing any newly-appeared `agent-*.jsonl` file. Returns
     /// `false` once ``stop()`` has been called (so the driver finishes the stream).
     private func scan(
-        into continuation: AsyncStream<(agentID: String, line: TranscriptLine)>.Continuation
+        into continuation: AsyncStream<(agentID: String, line: TranscriptLine)>.Continuation,
     ) -> Bool {
         guard !stopped else { return false }
         for (agentID, path) in discoverNewFiles() {
@@ -85,7 +85,7 @@ public actor SubagentWatcher {
     private func startTailing(
         agentID: String,
         path: String,
-        into continuation: AsyncStream<(agentID: String, line: TranscriptLine)>.Continuation
+        into continuation: AsyncStream<(agentID: String, line: TranscriptLine)>.Continuation,
     ) {
         guard tailers[agentID] == nil else { return }
         let tailer = TranscriptTailer(path: path, pollInterval: pollInterval)

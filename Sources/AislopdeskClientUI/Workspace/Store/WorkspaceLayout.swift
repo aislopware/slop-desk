@@ -70,12 +70,12 @@ public enum WorkspaceLayout {
     public static func isCompact(
         horizontalSizeClassCompact: Bool,
         detailWidth: CGFloat,
-        windowWidth: CGFloat?
+        windowWidth: CGFloat?,
     ) -> Bool {
         if let windowWidth {
-            return horizontalSizeClassCompact || windowWidth < compactWindowWidthThreshold
+            horizontalSizeClassCompact || windowWidth < compactWindowWidthThreshold
         } else {
-            return horizontalSizeClassCompact || detailWidth < compactWidthThreshold
+            horizontalSizeClassCompact || detailWidth < compactWidthThreshold
         }
     }
 }
@@ -87,7 +87,9 @@ public enum WorkspaceLayout {
 /// with the host's decode/compositing headroom, which differs sharply between a phone, an iPad, and a
 /// Mac. `Sendable` so it can cross into the (Sendable-`Int`) store init without ceremony.
 public enum VideoDeviceClass: Sendable {
-    case phone, pad, mac
+    case phone
+    case pad
+    case mac
 }
 
 /// The pure policy that maps a ``VideoDeviceClass`` to its concurrent live-video ceiling (the number
@@ -108,9 +110,9 @@ public enum VideoCapPolicy {
     /// The concurrent live-video ceiling for `deviceClass`.
     public static func cap(for deviceClass: VideoDeviceClass) -> Int {
         switch deviceClass {
-        case .phone: return phoneCap
-        case .pad:   return padCap
-        case .mac:   return macCap
+        case .phone: phoneCap
+        case .pad: padCap
+        case .mac: macCap
         }
     }
 
@@ -127,10 +129,10 @@ public enum VideoCapPolicy {
     public static func deviceClass(
         isMac: Bool,
         horizontalSizeClassCompact: Bool,
-        userInterfaceIdiomPad: Bool
+        userInterfaceIdiomPad: Bool,
     ) -> VideoDeviceClass {
         if isMac { return .mac }
-        if userInterfaceIdiomPad && !horizontalSizeClassCompact { return .pad }
+        if userInterfaceIdiomPad, !horizontalSizeClassCompact { return .pad }
         return .phone
     }
 
@@ -140,12 +142,12 @@ public enum VideoCapPolicy {
     public static func cap(
         isMac: Bool,
         horizontalSizeClassCompact: Bool,
-        userInterfaceIdiomPad: Bool
+        userInterfaceIdiomPad: Bool,
     ) -> Int {
         cap(for: deviceClass(
             isMac: isMac,
             horizontalSizeClassCompact: horizontalSizeClassCompact,
-            userInterfaceIdiomPad: userInterfaceIdiomPad
+            userInterfaceIdiomPad: userInterfaceIdiomPad,
         ))
     }
 }

@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins the 4 fixes from the round-2 self-review:
@@ -7,7 +7,6 @@ import CoreGraphics
 /// auto-switch winner; G3 live group-drag offset broadcast; G4 nativeFrameSize eviction on close.
 @MainActor
 final class Round2FixTests: XCTestCase {
-
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
         WorkspaceStore(restoring: restoring, makeSession: { FakePaneSession($0) }, liveVideoCap: 5)
     }
@@ -22,8 +21,11 @@ final class Round2FixTests: XCTestCase {
         let store = makeStore()
         apply(.tidy, to: store)
         apply(.toggleOverview, to: store)
-        XCTAssertEqual(store.recentCommands, [.toggleOverview, .tidy],
-                       "a command run via apply() (keyboard/menu) populates recents, not just the palette")
+        XCTAssertEqual(
+            store.recentCommands,
+            [.toggleOverview, .tidy],
+            "a command run via apply() (keyboard/menu) populates recents, not just the palette",
+        )
     }
 
     func testApplyDoesNotRecordNavigationVerbs() {
@@ -49,7 +51,7 @@ final class Round2FixTests: XCTestCase {
         // Save "first" (1 pane) with trigger Alpha, then "second" (2 panes) with trigger Beta.
         store.closePane(b)
         store.saveLayoutPreset(name: "first", triggerAppName: "Alpha")
-        store.addPane(kind: .terminal)   // 2 panes
+        store.addPane(kind: .terminal) // 2 panes
         store.saveLayoutPreset(name: "second", triggerAppName: "Beta")
         // Both triggers present: the loop iterates presets in saved order, so "first" wins.
         // (Drive the store's per-app switch as the monitor would, in preset order.)
@@ -73,7 +75,11 @@ final class Round2FixTests: XCTestCase {
         store.setSelection([a, b])
 
         store.updateGroupDrag(anchor: a, delta: CGSize(width: 40, height: 20))
-        XCTAssertEqual(store.groupDragOffset(for: b), CGSize(width: 40, height: 20), "a non-anchor selected pane follows")
+        XCTAssertEqual(
+            store.groupDragOffset(for: b),
+            CGSize(width: 40, height: 20),
+            "a non-anchor selected pane follows",
+        )
         XCTAssertEqual(store.groupDragOffset(for: a), .zero, "the anchor uses its own gesture preview")
         XCTAssertEqual(store.groupDragOffset(for: c), .zero, "an unselected pane doesn't move")
 
@@ -98,7 +104,11 @@ final class Round2FixTests: XCTestCase {
         let store = makeStore(restoring: Workspace(canvas: Canvas(items: [
             item(a, CGRect(x: 0, y: 0, width: 800, height: 600), .remoteGUI),
         ]), focusedPane: a))
-        store.snapPaneToContentSize(a, target: CGSize(width: 1000, height: 700), current: CGSize(width: 760, height: 560))
+        store.snapPaneToContentSize(
+            a,
+            target: CGSize(width: 1000, height: 700),
+            current: CGSize(width: 760, height: 560),
+        )
         XCTAssertTrue(store.hasNativeSize(a))
         store.closePane(a)
         XCTAssertFalse(store.hasNativeSize(a), "a closed pane's cached native size is evicted (no leak)")

@@ -21,7 +21,6 @@ import XCTest
 /// variant) — NEVER a `HostServer` or a connected `AislopdeskClient`.
 @MainActor
 final class ScenePhaseFanOutTests: XCTestCase {
-
     // MARK: - Fixtures
 
     /// Builds a store whose default workspace is one terminal pane, then grows it (via the store's own
@@ -51,8 +50,11 @@ final class ScenePhaseFanOutTests: XCTestCase {
 
         // Precondition: 4 panes materialized on the canvas, one of them the claudeCode pane.
         XCTAssertEqual(fakes.count, 4, "all four canvas panes are materialized")
-        XCTAssertEqual(fakes.filter { $0.kind == .claudeCode }.count, 1,
-                       "the inspector-bearing claudeCode pane is among them")
+        XCTAssertEqual(
+            fakes.count(where: { $0.kind == .claudeCode }),
+            1,
+            "the inspector-bearing claudeCode pane is among them",
+        )
         XCTAssertTrue(fakes.allSatisfy { $0.pauseCount == 0 }, "nothing paused before pauseAll")
 
         await store.pauseAll()
@@ -61,8 +63,11 @@ final class ScenePhaseFanOutTests: XCTestCase {
         for fake in fakes {
             XCTAssertEqual(fake.pauseCount, 1, "pane \(fake.kind) paused exactly once")
             XCTAssertEqual(fake.resumeCount, 0, "pauseAll does not resume")
-            XCTAssertEqual(fake.events, [.adopt(fake.id), .pause],
-                           "the only events are id-adoption then a single pause")
+            XCTAssertEqual(
+                fake.events,
+                [.adopt(fake.id), .pause],
+                "the only events are id-adoption then a single pause",
+            )
         }
     }
 
@@ -76,8 +81,11 @@ final class ScenePhaseFanOutTests: XCTestCase {
             XCTAssertEqual(fake.pauseCount, 1, "pane \(fake.kind) paused once")
             XCTAssertEqual(fake.resumeCount, 1, "pane \(fake.kind) resumed once")
             // Ordering: adoption, then pause, then resume — resume strictly follows pause.
-            XCTAssertEqual(fake.events, [.adopt(fake.id), .pause, .resume],
-                           "resume strictly follows the pause for every session")
+            XCTAssertEqual(
+                fake.events,
+                [.adopt(fake.id), .pause, .resume],
+                "resume strictly follows the pause for every session",
+            )
         }
     }
 
@@ -87,7 +95,8 @@ final class ScenePhaseFanOutTests: XCTestCase {
         // exactly the store's contract (the LivePaneSession internally fans that to connection+inspector).
         let (store, fakes) = makeMultiPaneStore()
         guard let claude = fakes.first(where: { $0.kind == .claudeCode }) else {
-            return XCTFail("expected a claudeCode pane in the fixture")
+            XCTFail("expected a claudeCode pane in the fixture")
+            return
         }
 
         await store.pauseAll()
@@ -103,12 +112,12 @@ final class ScenePhaseFanOutTests: XCTestCase {
     /// by `pauseAll()` (iOS kills an app that strands the UDP/VTDecompress/CADisplayLink stack) and
     /// RESTORED by `resumeAll()`. The restore re-opens at most the set that was already admitted, so it
     /// cannot exceed `liveVideoCap`. Driven through `FakePaneSession`, which mirrors the contract.
-    func testVideoPaneSuspendsOnPauseAndRestoresOnResume() async {
+    func testVideoPaneSuspendsOnPauseAndRestoresOnResume() async throws {
         let store = WorkspaceStore(makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
         store.addPane(kind: .remoteGUI)
-        let videoID = store.focusedPane!                    // the new remoteGUI pane is focused
+        let videoID = try XCTUnwrap(store.focusedPane) // the new remoteGUI pane is focused
         XCTAssertTrue(store.activateVideo(videoID), "video pane admitted under the cap")
-        let video = store.handle(for: videoID) as! FakePaneSession
+        let video = try XCTUnwrap(store.handle(for: videoID) as? FakePaneSession)
         XCTAssertTrue(video.isVideoActive, "active before background")
 
         await store.pauseAll()
@@ -120,11 +129,11 @@ final class ScenePhaseFanOutTests: XCTestCase {
 
     /// A `.remoteGUI` pane that was NOT video-active at background stays inactive after resume — the
     /// restore re-opens only what was admitted, never spuriously activating an idle video pane.
-    func testInactiveVideoPaneStaysInactiveAcrossFanOut() async {
+    func testInactiveVideoPaneStaysInactiveAcrossFanOut() async throws {
         let store = WorkspaceStore(makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
         store.addPane(kind: .remoteGUI)
-        let videoID = store.focusedPane!
-        let video = store.handle(for: videoID) as! FakePaneSession
+        let videoID = try XCTUnwrap(store.focusedPane)
+        let video = try XCTUnwrap(store.handle(for: videoID) as? FakePaneSession)
         XCTAssertFalse(video.isVideoActive, "never activated")
 
         await store.pauseAll()
@@ -140,13 +149,18 @@ final class ScenePhaseFanOutTests: XCTestCase {
 
         // Sanity: a handle exists for every pane on the canvas (the registry spans the whole canvas).
         let allPaneIDs = store.workspace.canvas.allIDs()
-        XCTAssertEqual(Set(fakes.map { $0.id }), Set(allPaneIDs),
-                       "every pane on the canvas is materialized")
+        XCTAssertEqual(
+            Set(fakes.map(\.id)),
+            Set(allPaneIDs),
+            "every pane on the canvas is materialized",
+        )
         XCTAssertGreaterThan(allPaneIDs.count, 1, "more than one pane, so some are unfocused")
 
         await store.pauseAll()
-        XCTAssertTrue(fakes.allSatisfy { $0.pauseCount == 1 },
-                      "unfocused panes are paused too, not just the focused pane")
+        XCTAssertTrue(
+            fakes.allSatisfy { $0.pauseCount == 1 },
+            "unfocused panes are paused too, not just the focused pane",
+        )
     }
 
     // MARK: - The fan-out is AWAITED (no fire-and-forget)
@@ -160,7 +174,8 @@ final class ScenePhaseFanOutTests: XCTestCase {
         let gate = ContinuationGate()
         let store = WorkspaceStore(makeSession: { GatedFakePaneSession($0, gate: gate) }, liveVideoCap: 2)
         guard let gated = store.allSessions.first as? GatedFakePaneSession else {
-            return XCTFail("expected the single gated session")
+            XCTFail("expected the single gated session")
+            return
         }
 
         // Launch pauseAll on a child task; it should suspend inside the gated pause().
@@ -175,8 +190,10 @@ final class ScenePhaseFanOutTests: XCTestCase {
         XCTAssertTrue(entered, "pauseAll dispatched the session's pause()")
 
         // While the gate is closed, pauseAll() must NOT have returned (proves it awaits the body).
-        XCTAssertFalse(pauseAllFinished.value,
-                       "pauseAll has not returned while pause() is still suspended — it is awaited, not fire-and-forget")
+        XCTAssertFalse(
+            pauseAllFinished.value,
+            "pauseAll has not returned while pause() is still suspended — it is awaited, not fire-and-forget",
+        )
 
         // Release the gate; pauseAll() should now complete.
         gate.release()
@@ -190,7 +207,8 @@ final class ScenePhaseFanOutTests: XCTestCase {
         let gate = ContinuationGate()
         let store = WorkspaceStore(makeSession: { GatedFakePaneSession($0, gate: gate) }, liveVideoCap: 2)
         guard let gated = store.allSessions.first as? GatedFakePaneSession else {
-            return XCTFail("expected the single gated session")
+            XCTFail("expected the single gated session")
+            return
         }
 
         let resumeAllFinished = Flag()
@@ -201,8 +219,10 @@ final class ScenePhaseFanOutTests: XCTestCase {
 
         let entered = await waitUntil { gated.resumeEntered }
         XCTAssertTrue(entered, "resumeAll dispatched the session's resume()")
-        XCTAssertFalse(resumeAllFinished.value,
-                       "resumeAll has not returned while resume() is still suspended — it is awaited")
+        XCTAssertFalse(
+            resumeAllFinished.value,
+            "resumeAll has not returned while resume() is still suspended — it is awaited",
+        )
 
         gate.release()
         await task.value
@@ -242,25 +262,25 @@ final class ScenePhaseFanOutTests: XCTestCase {
 
     // MARK: - Empty / idempotency edges
 
-    func testPauseAllOnEmptyRegistryIsANoOp() async {
+    func testPauseAllOnEmptyRegistryIsANoOp() async throws {
         // A store with no panes (close the only pane → empty canvas). pauseAll must not hang or crash
         // with an empty registry.
         let store = WorkspaceStore(makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
-        let onlyPane = store.focusedPane!
-        store.closePane(onlyPane)        // last pane → empty canvas
-        await store.quiesce()            // let the orphan teardown settle
+        let onlyPane = try XCTUnwrap(store.focusedPane)
+        store.closePane(onlyPane) // last pane → empty canvas
+        await store.quiesce() // let the orphan teardown settle
         XCTAssertTrue(store.allSessions.isEmpty, "registry is empty")
 
-        await store.pauseAll()           // must simply return
+        await store.pauseAll() // must simply return
         await store.resumeAll()
         XCTAssertTrue(store.allSessions.isEmpty, "still empty; fan-out over nothing is a clean no-op")
     }
 
-    func testRepeatedPauseAllAccumulatesCallsWithoutResume() async {
+    func testRepeatedPauseAllAccumulatesCallsWithoutResume() async throws {
         // pauseAll is not idempotent at the count level (it forwards a pause() each time). Two calls
         // with no resume in between => pauseCount == 2. This documents the store does not de-dup.
         let store = WorkspaceStore(makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
-        let fake = store.allSessions.first as! FakePaneSession
+        let fake = try XCTUnwrap(store.allSessions.first as? FakePaneSession)
 
         await store.pauseAll()
         await store.pauseAll()
@@ -274,7 +294,7 @@ final class ScenePhaseFanOutTests: XCTestCase {
     /// the `waitUntil` used by the connection tests.
     private func waitUntil(
         timeout: Duration = .seconds(5),
-        _ predicate: @MainActor () -> Bool
+        _ predicate: @MainActor () -> Bool,
     ) async -> Bool {
         let start = ContinuousClock.now
         while ContinuousClock.now - start < timeout {
@@ -360,8 +380,8 @@ private final class GatedFakePaneSession: @MainActor PaneSessionHandle, @MainAct
     private(set) var isVideoActive = false
 
     init(_ spec: PaneSpec, gate: ContinuationGate) {
-        self.id = PaneID()
-        self.kind = spec.kind
+        id = PaneID()
+        kind = spec.kind
         self.gate = gate
     }
 
@@ -374,7 +394,7 @@ private final class GatedFakePaneSession: @MainActor PaneSessionHandle, @MainAct
 
     func pause() async {
         pauseEntered = true
-        await gate.wait()      // suspend until the test releases the gate
+        await gate.wait() // suspend until the test releases the gate
         pauseCount += 1
     }
 
@@ -384,7 +404,7 @@ private final class GatedFakePaneSession: @MainActor PaneSessionHandle, @MainAct
         resumeCount += 1
     }
 
-    func teardown() async {
+    func teardown() {
         teardownCount += 1
     }
 }

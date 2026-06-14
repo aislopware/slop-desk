@@ -13,7 +13,9 @@
 //! `⚠️ MUST be set identically in BOTH processes` caveat from the Swift source applies to
 //! any host using the env seam.
 
-/// Initial per-channel send/receive window, in bytes (64 KiB). Sized for LATENCY now that
+/// Initial per-channel send/receive window, in bytes (64 KiB).
+///
+/// Sized for LATENCY now that
 /// credit is granted at CONSUMPTION: the window bounds both client RAM per flooding pane
 /// and the echo head-of-line delay. Still far above what an interactive pane ever has
 /// outstanding, so flow control stays invisible on the common path.
@@ -23,7 +25,9 @@ pub const MIN_INITIAL_WINDOW_BYTES: usize = 16 * 1024;
 /// Upper bound for [`resolve_initial_window_bytes`] (16 MiB).
 pub const MAX_INITIAL_WINDOW_BYTES: usize = 16 * 1024 * 1024;
 
-/// Bound on the host's per-channel PTY-read queue, in bytes (64 KiB). Sized for LATENCY:
+/// Bound on the host's per-channel PTY-read queue, in bytes (64 KiB).
+///
+/// Sized for LATENCY:
 /// every byte enqueued-not-yet-sent is committed ahead of fresh output, so the queue bound
 /// IS the in-host head-of-line delay. Host-local only (no protocol interaction).
 pub const DEFAULT_HOST_QUEUE_CAPACITY_BYTES: usize = 64 * 1024;
@@ -32,7 +36,9 @@ pub const MIN_HOST_QUEUE_CAPACITY_BYTES: usize = 8 * 1024;
 /// Upper bound for [`resolve_host_queue_capacity_bytes`] (8 MiB).
 pub const MAX_HOST_QUEUE_CAPACITY_BYTES: usize = 8 * 1024 * 1024;
 
-/// Cap on a MERGED host output frame (drain-side coalescing), in bytes (32 KiB). The host
+/// Cap on a MERGED host output frame (drain-side coalescing), in bytes (32 KiB).
+///
+/// The host
 /// drain concatenates immediately-available FIFO chunks into one `.output` frame up to this
 /// cap, amortizing per-frame costs across a flood's small kernel-sized chunks. The
 /// EFFECTIVE bound is [`max_output_frame_payload_bytes`], which cross-clamps this against
@@ -44,7 +50,9 @@ pub const MIN_HOST_MERGE_CAP_BYTES: usize = 4 * 1024;
 pub const MAX_HOST_MERGE_CAP_BYTES: usize = 128 * 1024;
 
 /// Max number of LIVE logical channels (panes) one physical connection may hold open at
-/// once. A hostile/buggy peer can otherwise spam distinct `channelOpen` ids and make the
+/// once.
+///
+/// A hostile/buggy peer can otherwise spam distinct `channelOpen` ids and make the
 /// host fork a shell per id without bound. 256 is far above any real multi-pane session.
 pub const MAX_CHANNELS_PER_CONNECTION: usize = 256;
 
@@ -55,9 +63,13 @@ pub const MAX_CHANNELS_PER_CONNECTION: usize = 256;
 /// = 32781 > 32768).
 const FRAME_OVERHEAD_MARGIN: usize = 16;
 
-/// Hard cap on `.input` (paste) frame payloads (16 KiB), cross-clamped against the window's
+/// Hard cap on `.input` (paste) frame payloads (16 KiB),
+///
+/// cross-clamped against the window's
 /// half-window grant threshold so a low `initial_window` can never reintroduce the
-/// frame ≥ window/2 dead zone on the input direction. See the progress invariant in the
+/// frame ≥ window/2 dead zone on the input direction.
+///
+/// See the progress invariant in the
 /// Swift source.
 #[must_use]
 pub fn max_data_message_payload_bytes(initial_window_bytes: usize) -> usize {
@@ -65,7 +77,9 @@ pub fn max_data_message_payload_bytes(initial_window_bytes: usize) -> usize {
 }
 
 /// The PROVABLY-SAFE payload cap for host `.output` frames — the single place the credit
-/// progress invariant is enforced. In PAYLOAD bytes but accounting the frame overhead:
+/// progress invariant is enforced.
+///
+/// In PAYLOAD bytes but accounting the frame overhead:
 /// `window / 2` minus a margin, cross-clamped against `host_merge_cap_bytes` so env-tuning
 /// either knob can never produce a deadlocking combination.
 #[must_use]

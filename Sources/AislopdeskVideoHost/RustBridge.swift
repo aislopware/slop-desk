@@ -16,12 +16,12 @@ enum RustVideoHostFFI {
         pixelHeight: Int,
         fps: Int,
         floor: Int,
-        bitsPerPixel: Double
+        bitsPerPixel: Double,
     ) -> Int {
         Int(
             aisd_live_bitrate_target(
-                Int64(pixelWidth), Int64(pixelHeight), Int64(fps), Int64(floor), bitsPerPixel
-            )
+                Int64(pixelWidth), Int64(pixelHeight), Int64(fps), Int64(floor), bitsPerPixel,
+            ),
         )
     }
 

@@ -1,5 +1,5 @@
-import XCTest
 import Foundation
+import XCTest
 
 /// Headless, HostServer-FREE proof that ITEM #10's CI-safety mechanism actually works.
 ///
@@ -10,7 +10,6 @@ import Foundation
 /// `addTeardownBlock` — no `HostServer`, no `PTYProcess`, no cooperative-pool footprint.
 /// This is the authoritative gate that a `swift build` + this filter can verify.
 final class HostServerE2EGuardTests: XCTestCase {
-
     /// A body that overruns the deadline must yield `nil` PROMPTLY (the timer branch wins and
     /// the helper returns at the deadline, not after the body's own 10s sleep). This is the
     /// core of "a hung test FAILS instead of wedging the run".
@@ -25,8 +24,11 @@ final class HostServerE2EGuardTests: XCTestCase {
         }
         let elapsed = ContinuousClock.now - started
         XCTAssertNil(result, "an over-deadline body must time out to nil")
-        XCTAssertLessThan(elapsed, .seconds(2),
-                          "the helper must return at the ~50ms deadline, not wait out the 10s body; took \(elapsed)")
+        XCTAssertLessThan(
+            elapsed,
+            .seconds(2),
+            "the helper must return at the ~50ms deadline, not wait out the 10s body; took \(elapsed)",
+        )
     }
 
     /// A body that finishes within the deadline returns its real value (here, 42) — the
@@ -52,16 +54,19 @@ final class HostServerE2EGuardTests: XCTestCase {
     /// teardown would never execute the post-sleep body, so the increment would be lost — and
     /// a second, also-async assertion block (registered earlier, so it drains after under
     /// XCTest's LIFO teardown order) catches that the work-done block ran to completion.
-    func testAddedTeardownBlockRunsAndIsAwaited() async {
+    func testAddedTeardownBlockRunsAndIsAwaited() {
         let counter = TeardownCounter()
 
         // Verifier (registered FIRST → under LIFO drains LAST): asserts the work block below
         // was awaited to completion. Its own `await` settle also proves THIS block is awaited.
         addTeardownBlock {
             try? await Task.sleep(for: .milliseconds(10))
-            XCTAssertEqual(counter.value, 1,
-                           "the async teardown work block must be RESUMED past its `await` and run to " +
-                           "completion (awaited, not fire-and-forget); saw \(counter.value)")
+            XCTAssertEqual(
+                counter.value,
+                1,
+                "the async teardown work block must be RESUMED past its `await` and run to " +
+                    "completion (awaited, not fire-and-forget); saw \(counter.value)",
+            )
         }
 
         // Work block (registered LAST → under LIFO drains FIRST): its increment is GATED
@@ -76,7 +81,14 @@ final class HostServerE2EGuardTests: XCTestCase {
     private final class TeardownCounter: @unchecked Sendable {
         private let lock = NSLock()
         private var n = 0
-        var value: Int { lock.lock(); defer { lock.unlock() }; return n }
-        func markAsyncWorkDone() { lock.lock(); n += 1; lock.unlock() }
+        var value: Int { lock.lock()
+            defer { lock.unlock() }
+            return n
+        }
+
+        func markAsyncWorkDone() { lock.lock()
+            n += 1
+            lock.unlock()
+        }
     }
 }

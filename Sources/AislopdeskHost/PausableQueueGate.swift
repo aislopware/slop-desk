@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskProtocol
+import Foundation
 
 /// The host PTY-read backpressure GATE (TCP-mux S2): a ``AislopdeskProtocol/BoundedQueuePolicy`` plus the
 /// pause/resume ACTION, fused so the decision and the action are ATOMIC under one lock.
@@ -41,7 +41,7 @@ final class PausableQueueGate: @unchecked Sendable {
     private let setPaused: @Sendable (Bool) -> Void
 
     init(capacity: Int, setPaused: @escaping @Sendable (Bool) -> Void) {
-        self.policy = BoundedQueuePolicy(capacity: capacity)
+        policy = BoundedQueuePolicy(capacity: capacity)
         self.setPaused = setPaused
     }
 
@@ -50,20 +50,24 @@ final class PausableQueueGate: @unchecked Sendable {
     /// the pause state is always a consistent function of BOTH sources' current accounting.
     private func applyLocked() {
         let want = policy.isFull || replayPause
-        if want != applied { applied = want; setPaused(want) }
+        if want != applied { applied = want
+            setPaused(want)
+        }
     }
 
     /// Accounts `count` enqueued bytes and re-applies the combined pause state atomically under the lock
     /// so a concurrent ``dequeue(_:)`` / ``setReplayPause(_:)`` cannot interleave a stale resume.
     func enqueue(_ count: Int) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         policy.enqueue(count)
         applyLocked()
     }
 
     /// Accounts `count` dequeued (sent) bytes and re-applies the combined pause state atomically.
     func dequeue(_ count: Int) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         policy.dequeue(count)
         applyLocked()
     }
@@ -72,11 +76,15 @@ final class PausableQueueGate: @unchecked Sendable {
     /// combined state atomically. The read loop resumes only once this clears AND the queue is below
     /// bound — so neither source can resume while the other still wants the loop paused.
     func setReplayPause(_ pause: Bool) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         replayPause = pause
         applyLocked()
     }
 
     /// The current outstanding (enqueued-not-yet-sent) byte count. Test/inspection seam.
-    var outstanding: Int { lock.lock(); defer { lock.unlock() }; return policy.outstanding }
+    var outstanding: Int { lock.lock()
+        defer { lock.unlock() }
+        return policy.outstanding
+    }
 }

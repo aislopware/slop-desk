@@ -1,12 +1,11 @@
-import XCTest
 import AislopdeskProtocol
+import XCTest
 @testable import AislopdeskInspector
 
 /// BUG-G: a single malformed / unknown-type frame must be SKIPPED (logged + continue),
 /// not finish the whole inspector stream. Only a genuine framing desync (frameTooLarge)
 /// ends the stream so the client resubscribes. Pure: a hand-fed loopback channel.
 final class InspectorResilientDecodeTests: XCTestCase {
-
     /// Builds a length-prefixed frame from a raw payload (`typeTag + body`), bypassing
     /// `InspectorCodec.encode` so we can craft a *malformed* body deliberately.
     private func frame(payload: Data) -> Data {
@@ -54,10 +53,10 @@ final class InspectorResilientDecodeTests: XCTestCase {
 
         // Feed raw bytes straight onto the host end of the loopback (so the client
         // decodes them). `hostChannel.send` bytes surface on `clientChannel.inbound`.
-        try await hostChannel.send(try good("first"))
+        try await hostChannel.send(good("first"))
         try await hostChannel.send(malformedEventFrame())
         try await hostChannel.send(unknownTypeFrame())
-        try await hostChannel.send(try good("second"))
+        try await hostChannel.send(good("second"))
 
         let got = try await collector.value
         XCTAssertEqual(
@@ -66,7 +65,7 @@ final class InspectorResilientDecodeTests: XCTestCase {
                 .message(MessageEvent(role: .assistant, text: "first")),
                 .message(MessageEvent(role: .assistant, text: "second")),
             ],
-            "malformed + unknown frames are skipped; the two good events still arrive"
+            "malformed + unknown frames are skipped; the two good events still arrive",
         )
     }
 
@@ -89,7 +88,7 @@ final class InspectorResilientDecodeTests: XCTestCase {
         }
 
         // One good event, then an oversized length prefix (claims > 16 MiB).
-        try await hostChannel.send(try good("before"))
+        try await hostChannel.send(good("before"))
         var bad = Data()
         let tooBig = UInt32(Aislopdesk.maxFramePayloadLength + 1)
         bad.append(UInt8(truncatingIfNeeded: tooBig >> 24))

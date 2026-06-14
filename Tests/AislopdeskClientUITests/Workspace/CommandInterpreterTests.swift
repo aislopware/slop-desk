@@ -24,7 +24,6 @@ import SwiftUI
 /// no async, no client, no store).
 @MainActor
 final class CommandInterpreterTests: XCTestCase {
-
     // MARK: - Every default binding maps to the expected command
 
     /// Table-driven assertion over the entire shipped default binding set. If a default chord is
@@ -35,28 +34,28 @@ final class CommandInterpreterTests: XCTestCase {
 
         let expected: [(KeyChord, WorkspaceCommand)] = [
             // Canvas: new pane / tidy.
-            (KeyChord(character: "t", [.command]),                 .newPane(.terminal)),
-            (KeyChord(character: "d", [.command, .shift]),         .tidy),
+            (KeyChord(character: "t", [.command]), .newPane(.terminal)),
+            (KeyChord(character: "d", [.command, .shift]), .tidy),
             // Centre camera on the focused pane / on all panes.
-            (KeyChord(character: "c", [.option, .command]),        .centerFocusedPane),
+            (KeyChord(character: "c", [.option, .command]), .centerFocusedPane),
             (KeyChord(character: "c", [.option, .command, .shift]), .centerAll),
             // Close the focused pane.
-            (KeyChord(character: "w", [.command]),                 .closePane),
+            (KeyChord(character: "w", [.command]), .closePane),
             // New group.
-            (KeyChord(character: "g", [.control, .command]),       .newGroup),
+            (KeyChord(character: "g", [.control, .command]), .newGroup),
             // Geometric focus.
-            (KeyChord(.leftArrow, [.option, .command]),            .focus(.left)),
-            (KeyChord(.rightArrow, [.option, .command]),           .focus(.right)),
-            (KeyChord(.upArrow, [.option, .command]),              .focus(.up)),
-            (KeyChord(.downArrow, [.option, .command]),            .focus(.down)),
+            (KeyChord(.leftArrow, [.option, .command]), .focus(.left)),
+            (KeyChord(.rightArrow, [.option, .command]), .focus(.right)),
+            (KeyChord(.upArrow, [.option, .command]), .focus(.up)),
+            (KeyChord(.downArrow, [.option, .command]), .focus(.down)),
             // Cycle focus.
-            (KeyChord(character: "]", [.command]),                 .cycleFocus(forward: true)),
-            (KeyChord(character: "[", [.command]),                 .cycleFocus(forward: false)),
+            (KeyChord(character: "]", [.command]), .cycleFocus(forward: true)),
+            (KeyChord(character: "[", [.command]), .cycleFocus(forward: false)),
             // Zoom + rename.
-            (KeyChord(.return, [.command, .shift]),                .toggleZoom),
-            (KeyChord(character: "r", [.command]),                 .renamePane),
+            (KeyChord(.return, [.command, .shift]), .toggleZoom),
+            (KeyChord(character: "r", [.command]), .renamePane),
             // Reconnect the focused pane (primary failure recovery) — ⇧⌘R, distinct from ⌘R rename.
-            (KeyChord(character: "r", [.command, .shift]),         .reconnectPane)
+            (KeyChord(character: "r", [.command, .shift]), .reconnectPane),
         ]
 
         for (chord, command) in expected {
@@ -74,7 +73,7 @@ final class CommandInterpreterTests: XCTestCase {
         XCTAssertEqual(
             KeyChord(character: "T", [.command]),
             KeyChord(character: "t", [.command]),
-            "the convenience init lower-cases the base key — case is not part of identity"
+            "the convenience init lower-cases the base key — case is not part of identity",
         )
         XCTAssertEqual(interpreter.feed(KeyChord(character: "T", [.command])), .newPane(.terminal))
         // Tidy requires an EXPLICIT .shift, not an upper-case char.
@@ -82,7 +81,7 @@ final class CommandInterpreterTests: XCTestCase {
         XCTAssertEqual(
             interpreter.feed(KeyChord(character: "d", [.command, .shift])),
             .tidy,
-            "shift is carried by the modifier set, identically for 'd' and 'D'"
+            "shift is carried by the modifier set, identically for 'd' and 'D'",
         )
     }
 
@@ -126,7 +125,7 @@ final class CommandInterpreterTests: XCTestCase {
     /// chords resolve, everything else falls through.
     func testCustomBindingsAtInitReplaceDefaults() {
         let custom: [KeyChord: WorkspaceCommand] = [
-            KeyChord(character: "x", [.command]): .closePane
+            KeyChord(character: "x", [.command]): .closePane,
         ]
         let interpreter = CommandInterpreter(bindings: custom)
         XCTAssertEqual(interpreter.feed(KeyChord(character: "x", [.command])), .closePane)
@@ -146,7 +145,10 @@ final class CommandInterpreterTests: XCTestCase {
         let interpreter = CommandInterpreter()
         interpreter.bindings.removeAll()
         XCTAssertTrue(interpreter.bindings.isEmpty)
-        XCTAssertFalse(CommandInterpreter.defaultBindings.isEmpty, "mutating an instance does not corrupt the static default")
+        XCTAssertFalse(
+            CommandInterpreter.defaultBindings.isEmpty,
+            "mutating an instance does not corrupt the static default",
+        )
     }
 
     // MARK: - SwiftUI bridge (KeyChord → KeyboardShortcut) — one source of truth
@@ -161,11 +163,11 @@ final class CommandInterpreterTests: XCTestCase {
             let shortcut = chord.shortcut
             XCTAssertEqual(
                 shortcut.key, chord.key.keyEquivalent,
-                "chord \(chord) must derive a shortcut with the matching key equivalent"
+                "chord \(chord) must derive a shortcut with the matching key equivalent",
             )
             XCTAssertEqual(
                 shortcut.modifiers, chord.modifiers.eventModifiers,
-                "chord \(chord) must derive a shortcut with the matching modifiers"
+                "chord \(chord) must derive a shortcut with the matching modifiers",
             )
         }
     }
@@ -181,11 +183,11 @@ final class CommandInterpreterTests: XCTestCase {
         XCTAssertEqual(
             KeyChord.Modifiers([.option, .command]).eventModifiers,
             [.option, .command],
-            "composed modifier sets union their native flags"
+            "composed modifier sets union their native flags",
         )
         XCTAssertEqual(
             KeyChord.Modifiers([.shift, .control, .option, .command]).eventModifiers,
-            [.shift, .control, .option, .command]
+            [.shift, .control, .option, .command],
         )
     }
 
@@ -218,12 +220,12 @@ final class CommandInterpreterTests: XCTestCase {
             let mods = chord.shortcut.modifiers
             XCTAssertFalse(
                 mods.isEmpty,
-                "no workspace shortcut may be a bare key (chord \(chord)) — plain keys belong to the terminal"
+                "no workspace shortcut may be a bare key (chord \(chord)) — plain keys belong to the terminal",
             )
             if case .character = chord.key {
                 XCTAssertTrue(
                     mods.contains(.command) || mods.contains(.option),
-                    "a character shortcut must carry ⌘ or ⌥ (chord \(chord)) so Ctrl-letters reach the terminal as control codes"
+                    "a character shortcut must carry ⌘ or ⌥ (chord \(chord)) so Ctrl-letters reach the terminal as control codes",
                 )
             }
         }

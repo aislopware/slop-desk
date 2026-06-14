@@ -1,0 +1,15 @@
+# Nested config for the test tree — inherits the root .swiftlint.yml and relaxes the
+# rules that are IDIOMATIC in tests: a test SHOULD force-unwrap/try!/as! a known-good
+# fixture (you want it to crash loudly on an unexpected shape), and `var sut: Foo!` in
+# setUp is the standard pattern. The pure assertion-style rules are also test-noise.
+# Everything else (correctness, the bug rules) stays on for tests too.
+disabled_rules:
+  - force_unwrapping
+  - force_try
+  - force_cast
+  - implicitly_unwrapped_optional
+  - xct_specific_matcher
+  - xctfail_message
+  - balanced_xctest_lifecycle
+  - single_test_class
+  - non_overridable_class_declaration

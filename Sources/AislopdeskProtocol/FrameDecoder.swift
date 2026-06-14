@@ -50,7 +50,9 @@ public struct FrameDecoder {
         // Bytes not yet consumed by a completed frame.
         let available = buffer.count - readOffset
         // Need at least the length prefix to know how big the frame is.
-        guard available >= Self.prefixLength else { compactConsumed(); return nil }
+        guard available >= Self.prefixLength else { compactConsumed()
+            return nil
+        }
 
         let payloadLength = Int(readPrefix())
 
@@ -61,13 +63,15 @@ public struct FrameDecoder {
 
         // Wait until the whole payload has arrived (partial read — not an error).
         let frameLength = Self.prefixLength + payloadLength
-        guard available >= frameLength else { compactConsumed(); return nil }
+        guard available >= frameLength else { compactConsumed()
+            return nil
+        }
 
         // Slice out the payload (after the prefix) and ADVANCE the cursor past the frame (no per-frame
         // front-removal). `base` is the absolute index of this frame's first byte.
         let base = buffer.startIndex + readOffset
         let payloadStart = base + Self.prefixLength
-        let payload = Data(buffer[payloadStart ..< base + frameLength])
+        let payload = Data(buffer[payloadStart..<base + frameLength])
         readOffset += frameLength
         // Bound the wasted head mid-burst; a drain that returns nil reclaims the rest.
         if readOffset >= Self.compactionThreshold { compactConsumed() }
@@ -79,7 +83,7 @@ public struct FrameDecoder {
     /// resetting the cursor — the single O(remaining) memmove that replaces the per-frame one.
     private mutating func compactConsumed() {
         guard readOffset > 0 else { return }
-        buffer.removeSubrange(buffer.startIndex ..< buffer.startIndex + readOffset)
+        buffer.removeSubrange(buffer.startIndex..<buffer.startIndex + readOffset)
         readOffset = 0
     }
 
@@ -89,7 +93,7 @@ public struct FrameDecoder {
     private func readPrefix() -> UInt32 {
         let base = buffer.startIndex + readOffset
         var value: UInt32 = 0
-        for i in 0 ..< Self.prefixLength {
+        for i in 0..<Self.prefixLength {
             value = (value << 8) | UInt32(buffer[base + i])
         }
         return value

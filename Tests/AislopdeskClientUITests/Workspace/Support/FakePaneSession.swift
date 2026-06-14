@@ -34,7 +34,7 @@ final class FakePaneSession: @MainActor PaneSessionHandle, @MainActor Identifiab
     private(set) var teardownCount = 0
 
     /// A monotonically-appended log of every lifecycle event, in call order, for ordering assertions.
-    enum Event: Equatable, Sendable { case pause, resume, teardown, adopt(PaneID), videoActive(Bool) }
+    enum Event: Equatable { case pause, resume, teardown, adopt(PaneID), videoActive(Bool) }
     private(set) var events: [Event] = []
 
     // MARK: Shell activity (the busy-close-guard signal)
@@ -85,8 +85,8 @@ final class FakePaneSession: @MainActor PaneSessionHandle, @MainActor Identifiab
     /// Builds a fake session from `spec` (the store-injected shape). Mints a placeholder id; the store
     /// adopts the leaf id during reconcile.
     init(_ spec: PaneSpec) {
-        self.id = PaneID()
-        self.kind = spec.kind
+        id = PaneID()
+        kind = spec.kind
         self.spec = spec
     }
 
@@ -134,7 +134,7 @@ final class FakePaneSession: @MainActor PaneSessionHandle, @MainActor Identifiab
 
     // MARK: PaneSessionHandle: lifecycle
 
-    func pause() async {
+    func pause() {
         pauseCount += 1
         events.append(.pause)
         // Mirror LivePaneSession: suspend live video and remember it for resume (.remoteGUI only).
@@ -145,7 +145,7 @@ final class FakePaneSession: @MainActor PaneSessionHandle, @MainActor Identifiab
         }
     }
 
-    func resume() async {
+    func resume() {
         resumeCount += 1
         events.append(.resume)
         // Mirror LivePaneSession: re-activate video that was active before pause (.remoteGUI only).

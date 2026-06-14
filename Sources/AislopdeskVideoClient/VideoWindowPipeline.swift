@@ -1,10 +1,10 @@
 #if canImport(QuartzCore) && canImport(Metal) && canImport(VideoToolbox)
-import Foundation
-import QuartzCore
-import CoreVideo
-import CoreGraphics
-import OSLog
 import AislopdeskVideoProtocol
+import CoreGraphics
+import CoreVideo
+import Foundation
+import OSLog
+import QuartzCore
 #if os(macOS)
 import AppKit
 #elseif canImport(UIKit)
@@ -39,7 +39,7 @@ final class VideoWindowPipeline {
     private var pacer: FramePacer?
     private var session: AislopdeskVideoClientSession?
     private var activeConnection: VideoWindowConnection?
-    private var layerSize: VideoSize = VideoSize(width: 0, height: 0)
+    private var layerSize: VideoSize = .init(width: 0, height: 0)
 
     /// INBOUND cursor-overlay coalescing (BUG-1 freeze fix). The ~120 Hz cursor stream used to spawn ONE
     /// `Task { @MainActor in compositor.apply }` PER packet. When a click flips workspace focus, the
@@ -135,7 +135,12 @@ final class VideoWindowPipeline {
     /// `view`. Idempotent: re-activating with the same connection is a no-op; a
     /// different connection tears the old one down first. `maxFrameRate` caps the GUI
     /// video path (~24-30fps; NOT a 60/120fps game stream).
-    func activate(view: HostView, videoLayer: CAMetalLayer, connection: VideoWindowConnection?, maxFrameRate: Double = 60.0) {
+    func activate(
+        view: HostView,
+        videoLayer: CAMetalLayer,
+        connection: VideoWindowConnection?,
+        maxFrameRate: Double = 60.0,
+    ) {
         guard let connection else { return } // no live host: chrome only (placeholder owns the idle UI)
         if activeConnection == connection, session != nil { return }
         deactivate()
@@ -183,15 +188,23 @@ final class VideoWindowPipeline {
         // self-measures decoded-frame arrival jitter and floats the depth between 1 and jitterMax:
         // it shrinks toward the latency floor on a clean LAN and re-inflates on a real spike/underrun.
         // v2 SUPERSEDES v1 (one writer of the live depth) — both set ⇒ v1 is forced off.
-        let adaptiveV1Requested = env["AISLOPDESK_ADAPTIVE_JITTER"].map { $0 == "1" || $0.lowercased() == "true" } ?? false
+        let adaptiveV1Requested = env["AISLOPDESK_ADAPTIVE_JITTER"]
+            .map { $0 == "1" || $0.lowercased() == "true" } ?? false
         let adaptive = adaptiveV1Requested && !adaptiveDepth
-        if adaptiveV1Requested && adaptiveDepth, Self.dbgGapEnabled {
-            FileHandle.standardError.write(Data("Aislopdesk[video.client]: AISLOPDESK_ADAPTIVE_JITTER ignored — AISLOPDESK_ADAPTIVE_DEPTH (v2) supersedes v1\n".utf8))
+        if adaptiveV1Requested, adaptiveDepth, Self.dbgGapEnabled {
+            FileHandle.standardError
+                .write(
+                    Data(
+                        "Aislopdesk[video.client]: AISLOPDESK_ADAPTIVE_JITTER ignored — AISLOPDESK_ADAPTIVE_DEPTH (v2) supersedes v1\n"
+                            .utf8,
+                    ),
+                )
         }
         // Present-on-arrival for a starved display (FramePacer header; select-text/typing feedback
         // latency). Default ON — it only fires where the old hold-for-vsync was strictly worse;
         // `AISLOPDESK_PRESENT_ON_ARRIVAL=0` restores the pure vsync-paced pacer for A/B.
-        let presentOnArrival = env["AISLOPDESK_PRESENT_ON_ARRIVAL"].map { !($0 == "0" || $0.lowercased() == "false") } ?? true
+        let presentOnArrival = env["AISLOPDESK_PRESENT_ON_ARRIVAL"]
+            .map { !($0 == "0" || $0.lowercased() == "false") } ?? true
         // DISPLAY-NATIVE TICK (2026-06-10 latency audit): the link was hard-locked to the host
         // content fps (60), so on a 120 Hz ProMotion panel a decoded frame could sit up to a full
         // 16.7 ms waiting for the next tick. Resolve the tick rate from the view's ACTUAL screen
@@ -203,7 +216,11 @@ final class VideoWindowPipeline {
         #else
         let displayMaxHz = view.window?.windowScene?.screen.maximumFramesPerSecond ?? 0
         #endif
-        let tickRate = FramePacer.resolveTickRate(envOverride: env["AISLOPDESK_TICK_HZ"], displayMaxHz: displayMaxHz, floor: maxFrameRate)
+        let tickRate = FramePacer.resolveTickRate(
+            envOverride: env["AISLOPDESK_TICK_HZ"],
+            displayMaxHz: displayMaxHz,
+            floor: maxFrameRate,
+        )
         // DEADLINE PACER (AISLOPDESK_PACER=deadline; see the FramePacer header): schedule presentation
         // on the CONTENT rhythm with a small playout delay (AISLOPDESK_PLAYOUT_MS, default 20) instead
         // of on arrival events — the research-validated fix for jitter-induced "bunched frame"
@@ -211,9 +228,18 @@ final class VideoWindowPipeline {
         let deadlineMode = env["AISLOPDESK_PACER"]?.lowercased() == "deadline"
         let playoutMs = env["AISLOPDESK_PLAYOUT_MS"].flatMap(Double.init) ?? 20.0
         let contentFps = env["AISLOPDESK_CONTENT_FPS"].flatMap(Double.init) ?? 60.0
-        let pacer = FramePacer(maxFrameRate: tickRate, targetDepth: jitterDepth, maxDepth: jitterMax, adaptiveJitter: adaptive, presentOnArrival: presentOnArrival,
-                               adaptiveDepth: adaptiveDepth, depthPolicyConfig: depthPolicyConfig,
-                               deadlineMode: deadlineMode, contentFps: contentFps, playoutDelayMs: playoutMs) { [weak self] buffer in
+        let pacer = FramePacer(
+            maxFrameRate: tickRate,
+            targetDepth: jitterDepth,
+            maxDepth: jitterMax,
+            adaptiveJitter: adaptive,
+            presentOnArrival: presentOnArrival,
+            adaptiveDepth: adaptiveDepth,
+            depthPolicyConfig: depthPolicyConfig,
+            deadlineMode: deadlineMode,
+            contentFps: contentFps,
+            playoutDelayMs: playoutMs,
+        ) { [weak self] buffer in
             // CAD-2 (2026-06-09 smoothness): present SYNCHRONOUSLY on the display-link tick instead of
             // hopping through `Task { @MainActor }`. The FramePacer is driven by `NSView.displayLink` /
             // `CADisplayLink`, which fires on the MAIN run loop — so this callback is ALREADY on the main
@@ -226,7 +252,7 @@ final class VideoWindowPipeline {
             let box = UnsafeTransfer(buffer)
             MainActor.assumeIsolated {
                 renderer.render(box.value)
-                self?.dbgNoteRender()   // BUG-1: time consecutive MAIN-ACTOR renders (freeze localisation)
+                self?.dbgNoteRender() // BUG-1: time consecutive MAIN-ACTOR renders (freeze localisation)
             }
         }
         self.pacer = pacer
@@ -246,7 +272,12 @@ final class VideoWindowPipeline {
         let transport: any VideoClientTransport = VideoMuxClientTransport(
             host: host, mediaPort: mediaPort, cursorPort: cursorPort,
             acquire: { await registry.acquire(host: host, mediaPort: mediaPort, cursorPort: cursorPort) },
-            release: { channelID in await registry.release(host: host, mediaPort: mediaPort, cursorPort: cursorPort, channelID: channelID) }
+            release: { channelID in await registry.release(
+                host: host,
+                mediaPort: mediaPort,
+                cursorPort: cursorPort,
+                channelID: channelID,
+            ) },
         )
 
         // 1:1 PANE SNAP: only a view that wired `onDecodedPixelSize` gets the hook — its
@@ -254,14 +285,14 @@ final class VideoWindowPipeline {
         // from a standalone window (legacy connect-time host-follow negotiation). Hoisted out
         // of the GUIHooks init with an explicit type (the ternary inside the big call defeated
         // the type-checker).
-        let notifyDecodedPixelSize: (@Sendable (VideoSize) -> Void)?
-        if onDecodedPixelSize == nil {
-            notifyDecodedPixelSize = nil
-        } else {
-            notifyDecodedPixelSize = { [weak self] px in
-                Task { @MainActor in self?.onDecodedPixelSize?(px) }
+        let notifyDecodedPixelSize: (@Sendable (VideoSize) -> Void)? =
+            if onDecodedPixelSize == nil {
+                nil
+            } else {
+                { [weak self] px in
+                    Task { @MainActor in self?.onDecodedPixelSize?(px) }
+                }
             }
-        }
         // GUI hooks: each hops to the main actor to touch the (main-confined) pacer /
         // compositor. The orchestrator actor calls these from its own executor.
         let gui = AislopdeskVideoClientSession.GUIHooks(
@@ -307,14 +338,14 @@ final class VideoWindowPipeline {
                 // Depth v3: one owd-spike event from the session's OwdLateDetector → the depth
                 // policy's promotion input. Lock-guarded, no main hop (same as drainTelemetry).
                 pacer.noteNetworkLate()
-            }
+            },
         )
 
         let session = AislopdeskVideoClientSession(
             requestedWindowID: connection.windowID,
             viewport: viewport,
             transport: transport,
-            gui: gui
+            gui: gui,
         )
         self.session = session
 
@@ -350,7 +381,7 @@ final class VideoWindowPipeline {
             Task { await session.stop() }
         }
         compositor?.cursorLayer.removeFromSuperlayer()
-        setServerCursorVisible(false)   // host cursor gone ⇒ let the view restore the OS arrow
+        setServerCursorVisible(false) // host cursor gone ⇒ let the view restore the OS arrow
         #if os(macOS)
         currentRemoteCursor = nil
         currentRemoteCursorShapeID = nil
@@ -381,7 +412,13 @@ final class VideoWindowPipeline {
             if ProcessInfo.processInfo.environment["AISLOPDESK_VIDEO_DEBUG"] != nil {
                 // Proof the contentsScale fix took: on Retina this must read scale=2.0 and a
                 // drawable = 2× the point size. scale=1.0 here is the "nhỏ 1 góc" regression.
-                FileHandle.standardError.write(Data("Aislopdesk[video.client]: layoutChanged layer=\(Int(layerSize.width))x\(Int(layerSize.height))pt contentsScale=\(scale) drawable=\(Int(layer.drawableSize.width))x\(Int(layer.drawableSize.height))px\n".utf8))
+                FileHandle.standardError
+                    .write(
+                        Data(
+                            "Aislopdesk[video.client]: layoutChanged layer=\(Int(layerSize.width))x\(Int(layerSize.height))pt contentsScale=\(scale) drawable=\(Int(layer.drawableSize.width))x\(Int(layer.drawableSize.height))px\n"
+                                .utf8,
+                        ),
+                    )
             }
         }
         // The layer geometry changed under an unchanged frame — force the next tick to render
@@ -408,7 +445,7 @@ final class VideoWindowPipeline {
     func setZoom(_ zoom: CGFloat, pan: CGPoint) {
         renderer?.zoom = zoom
         renderer?.panNormalized = pan
-        pacer?.setNeedsRedisplay()   // transform changed under an unchanged frame (see layoutChanged)
+        pacer?.setNeedsRedisplay() // transform changed under an unchanged frame (see layoutChanged)
         if let session {
             let z = Double(zoom)
             let p = VideoPoint(x: Double(pan.x), y: Double(pan.y))
@@ -440,6 +477,7 @@ final class VideoWindowPipeline {
         // as the bare async send so a following button can fold it into one ordered hop.
         pendingMotionSend = { await session.sendMouseMove(viewPoint: viewPoint) }
     }
+
     func mouseDrag(_ button: MouseButton, _ viewPoint: VideoPoint, _ clickCount: UInt8, _ modifiers: InputModifiers) {
         guard let session else { return }
         // SELECT-TEXT LATENCY (2026-06-10): a drag is FEEDBACK-CRITICAL — the host-rendered
@@ -448,27 +486,47 @@ final class VideoWindowPipeline {
         // coalesced almost nothing anyway (trackpad events arrive at 90-120 Hz) yet cost 0-8.3 ms
         // on every drag step. Hover moves (cosmetic, no host-side feedback the user is tracking)
         // stay pump-coalesced. Flushing any pending hover first preserves physical order.
-        submitFlushingMotion { await session.sendMouseDrag(button: button, viewPoint: viewPoint, clickCount: clickCount, modifiers: modifiers) }
+        submitFlushingMotion { await session.sendMouseDrag(
+            button: button,
+            viewPoint: viewPoint,
+            clickCount: clickCount,
+            modifiers: modifiers,
+        ) }
     }
+
     func mouseDown(_ button: MouseButton, _ viewPoint: VideoPoint, _ clickCount: UInt8, _ modifiers: InputModifiers) {
         guard let session else { return }
         // Flush any pending move, THEN the button — both enqueued onto the ONE ordered FIFO with no
         // `await` between, so they reach the session actor in physical order (move, then down). The
         // single consumer can never let a later event overtake this one (the old per-event-Task race).
-        submitFlushingMotion { await session.sendMouseDown(button: button, viewPoint: viewPoint, clickCount: clickCount, modifiers: modifiers) }
+        submitFlushingMotion { await session.sendMouseDown(
+            button: button,
+            viewPoint: viewPoint,
+            clickCount: clickCount,
+            modifiers: modifiers,
+        ) }
     }
+
     func mouseUp(_ button: MouseButton, _ viewPoint: VideoPoint, _ clickCount: UInt8, _ modifiers: InputModifiers) {
         guard let session else { return }
-        submitFlushingMotion { await session.sendMouseUp(button: button, viewPoint: viewPoint, clickCount: clickCount, modifiers: modifiers) }
+        submitFlushingMotion { await session.sendMouseUp(
+            button: button,
+            viewPoint: viewPoint,
+            clickCount: clickCount,
+            modifiers: modifiers,
+        ) }
     }
+
     func scroll(dx: Double, dy: Double, viewPoint: VideoPoint) {
         guard let session else { return }
         submitFlushingMotion { await session.sendScroll(dx: dx, dy: dy, viewPoint: viewPoint) }
     }
+
     func key(keyCode: UInt16, down: Bool, modifiers: InputModifiers) {
         guard let session else { return }
         submitFlushingMotion { await session.sendKey(keyCode: keyCode, down: down, modifiers: modifiers) }
     }
+
     func text(_ string: String) {
         guard let session else { return }
         submitFlushingMotion { await session.sendText(string) }
@@ -491,7 +549,7 @@ final class VideoWindowPipeline {
     /// a cheap store and only ONE `flushCursor` is ever queued — so when the actor frees, the overlay
     /// snaps once to the LATEST position instead of replaying a burst of stale ones.
     private func coalesceCursor(_ update: CursorUpdate, _ placement: AislopdeskVideoClientSession.CursorPlacement) {
-        dbgNoteCursorApply()   // BUG-1: time consecutive MAIN-ACTOR cursor applies (freeze localisation)
+        dbgNoteCursorApply() // BUG-1: time consecutive MAIN-ACTOR cursor applies (freeze localisation)
         pendingCursorUpdate = update
         pendingCursorPlacement = placement
         guard !cursorFlushScheduled else { return }
@@ -508,7 +566,15 @@ final class VideoWindowPipeline {
         let now = FramePacer.currentHostTimeSeconds()
         if dbgLastCursorApply > 0 {
             let gap = now - dbgLastCursorApply
-            if gap > 0.1 { FileHandle.standardError.write(Data("Aislopdesk[video.client.view]: cursorAPPLY gap \(Int(gap * 1000))ms (main-actor block)\n".utf8)) }
+            if gap >
+                0.1
+            {
+                FileHandle.standardError
+                    .write(
+                        Data("Aislopdesk[video.client.view]: cursorAPPLY gap \(Int(gap * 1000))ms (main-actor block)\n"
+                            .utf8),
+                    )
+            }
         }
         dbgLastCursorApply = now
     }
@@ -521,7 +587,12 @@ final class VideoWindowPipeline {
         let now = FramePacer.currentHostTimeSeconds()
         if dbgLastRender > 0 {
             let gap = now - dbgLastRender
-            if gap > 0.12 { FileHandle.standardError.write(Data("Aislopdesk[video.client.view]: RENDER gap \(Int(gap * 1000))ms (main-actor)\n".utf8)) }
+            if gap >
+                0.12
+            {
+                FileHandle.standardError
+                    .write(Data("Aislopdesk[video.client.view]: RENDER gap \(Int(gap * 1000))ms (main-actor)\n".utf8))
+            }
         }
         dbgLastRender = now
     }
@@ -531,8 +602,9 @@ final class VideoWindowPipeline {
     private func flushCursor() {
         cursorFlushScheduled = false
         guard let update = pendingCursorUpdate, let placement = pendingCursorPlacement, let compositor else {
-            pendingCursorUpdate = nil; pendingCursorPlacement = nil
-            setServerCursorVisible(false)   // torn down / nothing to draw ⇒ no overlay ⇒ show the OS arrow
+            pendingCursorUpdate = nil
+            pendingCursorPlacement = nil
+            setServerCursorVisible(false) // torn down / nothing to draw ⇒ no overlay ⇒ show the OS arrow
             return
         }
         pendingCursorUpdate = nil
@@ -543,8 +615,14 @@ final class VideoWindowPipeline {
         // draws that shape on the LOCAL OS cursor at the instant mouse position.
         updateRemoteCursor(update)
         #else
-        compositor.apply(update, viewSize: placement.viewSize, videoNativeSize: placement.videoNativeSize,
-                         zoom: placement.zoom, pan: placement.pan, mode: placement.mode)
+        compositor.apply(
+            update,
+            viewSize: placement.viewSize,
+            videoNativeSize: placement.videoNativeSize,
+            zoom: placement.zoom,
+            pan: placement.pan,
+            mode: placement.mode,
+        )
         #endif
         // Mirror the host cursor's just-applied visibility so the view can choose remote-shape vs arrow.
         setServerCursorVisible(update.visible)
@@ -561,7 +639,8 @@ final class VideoWindowPipeline {
             currentRemoteCursor = compositor.makeCursor(shapeID: update.shapeID, hotspot: update.hotspot)
             onRemoteCursorChanged?()
         } else if currentRemoteCursor == nil,
-                  let cursor = compositor.makeCursor(shapeID: update.shapeID, hotspot: update.hotspot) {
+                  let cursor = compositor.makeCursor(shapeID: update.shapeID, hotspot: update.hotspot)
+        {
             currentRemoteCursor = cursor
             onRemoteCursorChanged?()
         }

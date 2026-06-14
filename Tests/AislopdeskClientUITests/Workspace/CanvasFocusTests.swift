@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins that the canvas reuses ``FocusResolver`` verbatim (docs/30 §3): ``Canvas/solvedLayout()``
@@ -7,10 +7,10 @@ import CoreGraphics
 /// `cycle` resolve directional + cyclic focus against them exactly as they did for the tiling layout.
 /// Off-viewport panes stay keyboard-navigable because the layout is canvas-space, not screen-space.
 final class CanvasFocusTests: XCTestCase {
-
     private func pid(_ n: Int) -> PaneID {
         PaneID(raw: UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", n))!)
     }
+
     private func item(_ n: Int, _ frame: CGRect, z: Int) -> CanvasItem {
         CanvasItem(id: pid(n), spec: PaneSpec(kind: .terminal, title: "p\(n)"), frame: frame, z: z)
     }
@@ -19,9 +19,9 @@ final class CanvasFocusTests: XCTestCase {
     func testDirectionalFocusOverCanvasFrames() {
         // (1) top-left, (2) top-right, (3) bottom-left, (4) bottom-right
         let canvas = Canvas(items: [
-            item(1, CGRect(x: 0,   y: 0,   width: 400, height: 300), z: 0),
-            item(2, CGRect(x: 500, y: 0,   width: 400, height: 300), z: 1),
-            item(3, CGRect(x: 0,   y: 400, width: 400, height: 300), z: 2),
+            item(1, CGRect(x: 0, y: 0, width: 400, height: 300), z: 0),
+            item(2, CGRect(x: 500, y: 0, width: 400, height: 300), z: 1),
+            item(3, CGRect(x: 0, y: 400, width: 400, height: 300), z: 2),
             item(4, CGRect(x: 500, y: 400, width: 400, height: 300), z: 3),
         ])
         let solved = canvas.solvedLayout()
@@ -39,13 +39,16 @@ final class CanvasFocusTests: XCTestCase {
         let canvas = Canvas(
             items: [
                 item(1, CGRect(x: 0, y: 0, width: 400, height: 300), z: 0),
-                item(2, CGRect(x: 5000, y: 0, width: 400, height: 300), z: 1),   // far off-viewport
+                item(2, CGRect(x: 5000, y: 0, width: 400, height: 300), z: 1), // far off-viewport
             ],
-            camera: CanvasCamera(origin: CGPoint(x: 9999, y: 9999))             // panned away from both
+            camera: CanvasCamera(origin: CGPoint(x: 9999, y: 9999)), // panned away from both
         )
         let solved = canvas.solvedLayout()
-        XCTAssertEqual(FocusResolver.neighbor(of: pid(1), .right, in: solved), pid(2),
-                       "an off-viewport pane is still keyboard-navigable (canvas-space layout)")
+        XCTAssertEqual(
+            FocusResolver.neighbor(of: pid(1), .right, in: solved),
+            pid(2),
+            "an off-viewport pane is still keyboard-navigable (canvas-space layout)",
+        )
     }
 
     /// `.next`/`.previous` cycle through the canvas z-order with wrap (the carousel + ⌘]/⌘[ path).

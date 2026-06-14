@@ -1,6 +1,6 @@
-import XCTest
-import Foundation
 import AislopdeskProtocol
+import Foundation
+import XCTest
 @testable import AislopdeskTransport
 
 /// Pins the two-tier send contract introduced for the terminal hot path: DATA frames ride
@@ -9,7 +9,6 @@ import AislopdeskProtocol
 /// and a pipelined write FAILURE routes into the LINK failure path (receiveChunks finishes
 /// throwing → `finishLink` → `isDead`), exactly like a receive error.
 final class MuxSendPipeliningTests: XCTestCase {
-
     /// Counts bytes handed to the link by pipelined sends — the receiver never grants, so
     /// the credit window is the ONLY bound. Without debit-before-send the flood would all
     /// reach the link at once.
@@ -17,13 +16,20 @@ final class MuxSendPipeliningTests: XCTestCase {
         final class CountingSink: @unchecked Sendable {
             private let lock = NSLock()
             private var bytes = 0
-            func record(_ d: Data) { lock.lock(); bytes += d.count; lock.unlock() }
-            var total: Int { lock.lock(); defer { lock.unlock() }; return bytes }
+            func record(_ d: Data) { lock.lock()
+                bytes += d.count
+                lock.unlock()
+            }
+
+            var total: Int { lock.lock()
+                defer { lock.unlock() }
+                return bytes
+            }
         }
         let sink = CountingSink()
         let window = 8 * 1024
         let ch = MuxSubChannel(channelID: 1, channel: .data, sendWindowBytes: window) { _, inner in
-            sink.record(inner)   // synchronous record — models sendPipelined's enqueue
+            sink.record(inner) // synchronous record — models sendPipelined's enqueue
         }
 
         // Flood far past the window from one sender task (the production shape: a single
@@ -34,11 +40,14 @@ final class MuxSendPipeliningTests: XCTestCase {
             }
         }
         try await Task.sleep(for: .milliseconds(200))
-        XCTAssertLessThanOrEqual(sink.total, window,
-                                 "bytes handed to the link are bounded by the credit window even with pipelined (non-awaited) sends")
+        XCTAssertLessThanOrEqual(
+            sink.total,
+            window,
+            "bytes handed to the link are bounded by the credit window even with pipelined (non-awaited) sends",
+        )
         XCTAssertGreaterThan(sink.total, 0, "the first window's worth of frames did flow")
 
-        await ch.finish()   // wakes the parked sender (throws) so the task ends
+        await ch.finish() // wakes the parked sender (throws) so the task ends
         _ = await floodTask.value
     }
 
@@ -46,8 +55,8 @@ final class MuxSendPipeliningTests: XCTestCase {
     /// path (the same machinery a receive error drives) — pipelining swallows the per-call
     /// throw, so this path is the ONLY failure surfacing and must be provably wired.
     func testPipelinedSendFailureMarksConnectionDead() async throws {
-        /// Receive stays silent (link looks alive); the FIRST pipelined send finishes the
-        /// receive stream throwing — the documented NWMuxByteLink failure contract.
+        // Receive stays silent (link looks alive); the FIRST pipelined send finishes the
+        // receive stream throwing — the documented NWMuxByteLink failure contract.
         final class PipelinedFailLink: MuxByteLink, @unchecked Sendable {
             private let stream: AsyncThrowingStream<Data, Error>
             private let continuation: AsyncThrowingStream<Data, Error>.Continuation
@@ -56,12 +65,14 @@ final class MuxSendPipeliningTests: XCTestCase {
                 stream = AsyncThrowingStream { c = $0 }
                 continuation = c
             }
+
             var receiveChunks: AsyncThrowingStream<Data, Error> { stream }
-            func send(_ data: Data) async throws {}   // awaited sends (openChannel) succeed
-            func sendPipelined(_ data: Data) {
+            func send(_: Data) {} // awaited sends (openChannel) succeed
+            func sendPipelined(_: Data) {
                 continuation.finish(throwing: AislopdeskTransportError.sendFailed("pipelined write failed (test)"))
             }
-            func close() async {}
+
+            func close() {}
         }
 
         let (controlA, _) = InMemoryMuxLink.pair()
@@ -82,7 +93,7 @@ final class MuxSendPipeliningTests: XCTestCase {
         // The sub-channel's inbound must have ended throwing (the consumer-visible signal).
         var inboundThrew = false
         do {
-            for try await _ in pair.data.inbound { }
+            for try await _ in pair.data.inbound {}
         } catch {
             inboundThrew = true
         }
@@ -97,7 +108,8 @@ final class MuxSendPipeliningTests: XCTestCase {
             if await cond() { return }
             try await Task.sleep(for: .milliseconds(5))
         }
-        if !(await cond()) { throw PipelineTestError.timedOut }
+        if await !cond() { throw PipelineTestError.timedOut }
     }
+
     private enum PipelineTestError: Error { case timedOut }
 }

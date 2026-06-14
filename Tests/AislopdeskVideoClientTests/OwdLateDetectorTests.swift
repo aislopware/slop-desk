@@ -10,8 +10,12 @@ final class OwdLateDetectorTests: XCTestCase {
     /// Feeds `n` clean steady samples at 60 fps starting from (arrival0, send0) with a constant
     /// owd offset, asserting none classify late. Returns the next (arrival, send) pair.
     @discardableResult
-    private func warm(_ d: inout OwdLateDetector, n: Int = 30, arrival0: Double = 5000,
-                      send0: UInt32 = 91_000) -> (Double, UInt32) {
+    private func warm(
+        _ d: inout OwdLateDetector,
+        n: Int = 30,
+        arrival0: Double = 5000,
+        send0: UInt32 = 91000,
+    ) -> (Double, UInt32) {
         var arrival = arrival0
         var send = send0
         for _ in 0..<n {
@@ -30,7 +34,7 @@ final class OwdLateDetectorTests: XCTestCase {
     func testWarmupSuppressesEarlyVerdicts() {
         var d = OwdLateDetector()
         var arrival = 1000.0
-        var send: UInt32 = 50_000
+        var send: UInt32 = 50000
         // Huge spikes during the first warmupSamples-1 samples must stay silent.
         for _ in 0..<(OwdLateDetector.Config().warmupSamples - 1) {
             XCTAssertNil(d.note(arrivalMs: arrival + 500, sendTs: send, intervalMs: interval))
@@ -47,7 +51,7 @@ final class OwdLateDetectorTests: XCTestCase {
         send &+= 17
         let over = d.note(arrivalMs: arrival, sendTs: send, intervalMs: interval)
         XCTAssertNotNil(over)
-        XCTAssertGreaterThan(over ?? 0, 10)   // 40 − threshold(25) = 15
+        XCTAssertGreaterThan(over ?? 0, 10) // 40 − threshold(25) = 15
     }
 
     /// THE MEASURED FALSE-LATE BAND (2026-06-12 live): packetize-stamped frames pick up 10-20ms
@@ -57,10 +61,12 @@ final class OwdLateDetectorTests: XCTestCase {
         var d = OwdLateDetector()
         var (arrival, send) = warm(&d)
         for i in 0..<50 {
-            arrival += 16.7 + (i % 3 == 0 ? 18 : (i % 3 == 1 ? -18 : 0))
+            arrival += 16.7 + (i.isMultiple(of: 3) ? 18 : (i % 3 == 1 ? -18 : 0))
             send &+= 17
-            XCTAssertNil(d.note(arrivalMs: arrival, sendTs: send, intervalMs: interval),
-                         "±18ms pacing wobble sits under the 25ms floor")
+            XCTAssertNil(
+                d.note(arrivalMs: arrival, sendTs: send, intervalMs: interval),
+                "±18ms pacing wobble sits under the 25ms floor",
+            )
         }
     }
 
@@ -92,19 +98,21 @@ final class OwdLateDetectorTests: XCTestCase {
         // The path's delay steps up +50ms PERMANENTLY (route change / standing queue).
         arrival += 16.7 + 50
         send &+= 17
-        XCTAssertNotNil(d.note(arrivalMs: arrival, sendTs: send, intervalMs: interval))   // the step itself spikes
+        XCTAssertNotNil(d.note(arrivalMs: arrival, sendTs: send, intervalMs: interval)) // the step itself spikes
         // After two full bucket rotations (2 × bucketMs of arrivals at the new level), the new
         // level IS the baseline — steady frames are clean again (variation, not level). The
         // transition itself may flag a few lates; only the end state matters.
-        for _ in 0..<260 {   // 260 × 16.7ms ≈ 4.3s > 2 buckets
+        for _ in 0..<260 { // 260 × 16.7ms ≈ 4.3s > 2 buckets
             arrival += 16.7
             send &+= 17
             _ = d.note(arrivalMs: arrival, sendTs: send, intervalMs: interval)
         }
         arrival += 16.7
         send &+= 17
-        XCTAssertNil(d.note(arrivalMs: arrival, sendTs: send, intervalMs: interval),
-                     "steady post-rebase frame must be clean")
+        XCTAssertNil(
+            d.note(arrivalMs: arrival, sendTs: send, intervalMs: interval),
+            "steady post-rebase frame must be clean",
+        )
     }
 
     func testContentGapsHarmless() {
@@ -128,17 +136,19 @@ final class OwdLateDetectorTests: XCTestCase {
         var (arrival, send) = warm(&d, n: 30, arrival0: 5000, send0: UInt32.max - 200)
         for _ in 0..<30 {
             arrival += 16.7
-            send &+= 17   // wraps through 0
-            XCTAssertNil(d.note(arrivalMs: arrival, sendTs: send, intervalMs: interval),
-                         "wrap must not fabricate an owd discontinuity")
+            send &+= 17 // wraps through 0
+            XCTAssertNil(
+                d.note(arrivalMs: arrival, sendTs: send, intervalMs: interval),
+                "wrap must not fabricate an owd discontinuity",
+            )
         }
     }
 
     func testThresholdScalesWithInterval() {
         var d = OwdLateDetector()
         var arrival = 5000.0
-        var send: UInt32 = 91_000
-        let slow = 1000.0 / 15.0   // governed-down stream: 15 fps → threshold 0.75×66.7 = 50ms
+        var send: UInt32 = 91000
+        let slow = 1000.0 / 15.0 // governed-down stream: 15 fps → threshold 0.75×66.7 = 50ms
         for _ in 0..<30 {
             XCTAssertNil(d.note(arrivalMs: arrival, sendTs: send, intervalMs: slow))
             arrival += 66.7
@@ -152,9 +162,9 @@ final class OwdLateDetectorTests: XCTestCase {
 
     func testEnvConfigClamps() {
         let c = OwdLateDetector.Config.fromEnvironment([
-            "AISLOPDESK_OWD_LATE_FLOOR_MS": "0.2",     // below min → clamp to 1
-            "AISLOPDESK_OWD_LATE_FRAC_PCT": "9999",    // above max → clamp to 400%
-            "AISLOPDESK_OWD_LATE_WARMUP": "0",         // below min → clamp to 1
+            "AISLOPDESK_OWD_LATE_FLOOR_MS": "0.2", // below min → clamp to 1
+            "AISLOPDESK_OWD_LATE_FRAC_PCT": "9999", // above max → clamp to 400%
+            "AISLOPDESK_OWD_LATE_WARMUP": "0", // below min → clamp to 1
         ])
         XCTAssertEqual(c.thresholdFloorMs, 1)
         XCTAssertEqual(c.thresholdIntervalFraction, 4.0)

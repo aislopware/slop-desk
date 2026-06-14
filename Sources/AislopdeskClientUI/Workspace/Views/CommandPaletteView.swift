@@ -125,10 +125,10 @@ struct CommandPaletteView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 16))
                 .focused($searchFocused)
-                #if os(iOS)
+            #if os(iOS)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                #endif
+            #endif
                 .onChange(of: query) { _, _ in
                     // A new query rebuilds the filtered list; reset to the top so the best fuzzy match
                     // is highlighted.
@@ -137,10 +137,18 @@ struct CommandPaletteView: View {
                 // ⏎ runs the highlighted entry. (`.onSubmit` also fires this on iOS soft-return.)
                 .onSubmit(runSelection)
                 // Palette-local key handlers — consumed here, so they never reach the terminal.
-                .onKeyPress(.downArrow) { moveSelection(by: 1); return .handled }
-                .onKeyPress(.upArrow) { moveSelection(by: -1); return .handled }
-                .onKeyPress(.return) { runSelection(); return .handled }
-                .onKeyPress(.escape) { dismiss(); return .handled }
+                .onKeyPress(.downArrow) { moveSelection(by: 1)
+                    return .handled
+                }
+                .onKeyPress(.upArrow) { moveSelection(by: -1)
+                    return .handled
+                }
+                .onKeyPress(.return) { runSelection()
+                    return .handled
+                }
+                .onKeyPress(.escape) { dismiss()
+                    return .handled
+                }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -163,11 +171,11 @@ struct CommandPaletteView: View {
                                 .id(index)
                                 .contentShape(Rectangle())
                                 .onTapGesture { run(entry) }
-                                #if os(macOS)
+                            #if os(macOS)
                                 .onHover { hovering in
                                     if hovering { selection = index }
                                 }
-                                #endif
+                            #endif
                         }
                     }
                     .padding(6)
@@ -182,7 +190,6 @@ struct CommandPaletteView: View {
         }
     }
 
-    @ViewBuilder
     private func row(for entry: Entry, selected: Bool) -> some View {
         HStack(spacing: 10) {
             Image(systemName: entry.symbol)
@@ -214,7 +221,7 @@ struct CommandPaletteView: View {
                     .padding(.vertical, 2)
                     .background(
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .fill(selected ? Color.white.opacity(0.18) : Color.primary.opacity(0.06))
+                            .fill(selected ? Color.white.opacity(0.18) : Color.primary.opacity(0.06)),
                     )
             }
         }
@@ -222,7 +229,7 @@ struct CommandPaletteView: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(selected ? Color.accentColor : Color.clear)
+                .fill(selected ? Color.accentColor : Color.clear),
         )
     }
 
@@ -297,13 +304,14 @@ struct CommandPaletteView: View {
         // stripped before fuzzy matching; an empty post-prefix query lists just that section.
         let raw = query.trimmingCharacters(in: .whitespaces)
         let (scope, stripped) = Self.parseScope(raw)
-        let all: [Entry]
-        switch scope {
-        case .all:        all = commandEntries + layoutEntries + snippetEntries + groupEntries + paneEntries + bookmarkEntries + hostWindowEntries
-        case .commands:   all = commandEntries + layoutEntries + snippetEntries
-        case .panes:      all = groupEntries + paneEntries + bookmarkEntries
-        case .hostWindows: all = hostWindowEntries
-        }
+        let all: [Entry] =
+            switch scope {
+            case .all: commandEntries + layoutEntries + snippetEntries + groupEntries + paneEntries + bookmarkEntries +
+                hostWindowEntries
+            case .commands: commandEntries + layoutEntries + snippetEntries
+            case .panes: groupEntries + paneEntries + bookmarkEntries
+            case .hostWindows: hostWindowEntries
+            }
         let trimmed = stripped
         // Empty query (the '.all' / '.commands' scopes): float the recently-run commands to the top so
         // the verbs you use most are one keystroke away. Only on an empty query — once the user types,
@@ -345,7 +353,7 @@ struct CommandPaletteView: View {
                 title: item.title,
                 symbol: item.symbol,
                 shortcutHint: Self.shortcutHint(for: item.command),
-                keywords: item.keywords
+                keywords: item.keywords,
             )
         }
     }
@@ -359,7 +367,7 @@ struct CommandPaletteView: View {
                 kind: .group(group.id),
                 title: group.name,
                 subtitle: "Jump to group",
-                symbol: "square.on.square.dashed"
+                symbol: "square.on.square.dashed",
             )
         }
     }
@@ -373,8 +381,10 @@ struct CommandPaletteView: View {
     /// The recently-run commands as entries, in recency order — surfaced at the top of an empty-query
     /// palette. Delegates to the pure builder so the focused-pane visibility filter is unit-testable.
     private var recentEntries: [Entry] {
-        Self.buildRecentEntries(commands: store.recentCommands,
-                                hasFocusedPane: store.workspace.focusedPane != nil)
+        Self.buildRecentEntries(
+            commands: store.recentCommands,
+            hasFocusedPane: store.workspace.focusedPane != nil,
+        )
     }
 
     /// Pure builder for the recents entries (factored out so the visibility filter is testable without a
@@ -385,7 +395,8 @@ struct CommandPaletteView: View {
     /// a focus-requiring verb (Close/Rename/Reconnect/Duplicate/Maximize Pane) on an empty canvas is a
     /// graceful no-op that "reads as broken" at the TOP of the palette — the exact case the catalog hides,
     /// so the recents block must hide it too. A recent not resolvable in the catalog is skipped.
-    @MainActor static func buildRecentEntries(commands: [WorkspaceCommand], hasFocusedPane: Bool) -> [Entry] {
+    @MainActor
+    static func buildRecentEntries(commands: [WorkspaceCommand], hasFocusedPane: Bool) -> [Entry] {
         commands.compactMap { command -> Entry? in
             guard hasFocusedPane || !command.requiresFocusedPane else { return nil }
             guard let item = commandCatalog.first(where: { $0.command == command }) else { return nil }
@@ -395,7 +406,7 @@ struct CommandPaletteView: View {
                 title: item.title,
                 subtitle: "Recent",
                 symbol: item.symbol,
-                shortcutHint: Self.shortcutHint(for: item.command)
+                shortcutHint: Self.shortcutHint(for: item.command),
             )
         }
     }
@@ -407,7 +418,8 @@ struct CommandPaletteView: View {
 
     /// Pure builder for the bookmark recall entries (factored out so it is unit-testable without a view).
     /// `@MainActor` because `shortcutHint` reads the main-actor `defaultBindings` table.
-    @MainActor static func buildBookmarkEntries(workspace: Workspace) -> [Entry] {
+    @MainActor
+    static func buildBookmarkEntries(workspace: Workspace) -> [Entry] {
         workspace.bookmarks.keys.sorted().compactMap { slot -> Entry? in
             guard let bm = workspace.bookmarks[slot] else { return nil }
             return Entry(
@@ -417,7 +429,7 @@ struct CommandPaletteView: View {
                 subtitle: "Bookmark \(slot)",
                 symbol: "bookmark",
                 shortcutHint: Self.shortcutHint(for: .recallBookmark(slot)),
-                keywords: "bookmark viewport jump go to \(slot)"
+                keywords: "bookmark viewport jump go to \(slot)",
             )
         }
     }
@@ -431,7 +443,7 @@ struct CommandPaletteView: View {
                 title: "Switch to “\(name)”",
                 subtitle: "Saved layout",
                 symbol: "rectangle.on.rectangle.angled",
-                keywords: "layout preset workspace context"
+                keywords: "layout preset workspace context",
             )
         }
     }
@@ -449,7 +461,7 @@ struct CommandPaletteView: View {
                 title: "Run “\(WorkspaceStore.snippetName(snippet.name))”",
                 subtitle: slots.isEmpty ? "Snippet" : "Snippet · needs \(slots.joined(separator: ", "))",
                 symbol: "scroll",
-                keywords: "snippet macro run send keys \(snippet.name)"
+                keywords: "snippet macro run send keys \(snippet.name)",
             )
         }
     }
@@ -464,7 +476,7 @@ struct CommandPaletteView: View {
                 title: window.title.isEmpty ? window.appName : window.title,
                 subtitle: "Open “\(window.appName)” window  ·  \(window.width)×\(window.height)",
                 symbol: "macwindow.badge.plus",
-                keywords: "\(window.appName) window remote stream"
+                keywords: "\(window.appName) window remote stream",
             )
         }
     }
@@ -486,7 +498,7 @@ struct CommandPaletteView: View {
         case ">": return (.commands, rest)
         case "@": return (.panes, rest)
         case "#": return (.hostWindows, rest)
-        default:  return (.all, raw)
+        default: return (.all, raw)
         }
     }
 
@@ -495,7 +507,8 @@ struct CommandPaletteView: View {
     /// carrying the `PaneID` so the run handler focuses + centres it. `@MainActor` because the pane glyph
     /// (`PaneLeafView.icon`) is main-actor-isolated; the view's `paneEntries` and the `@MainActor` test
     /// suite are the only callers.
-    @MainActor static func buildPaneEntries(workspace: Workspace) -> [Entry] {
+    @MainActor
+    static func buildPaneEntries(workspace: Workspace) -> [Entry] {
         workspace.canvas.allIDs().compactMap { id -> Entry? in
             guard let spec = workspace.canvas.spec(for: id) else { return nil }
             let groupName = workspace.group(ofPane: id)?.name
@@ -504,7 +517,7 @@ struct CommandPaletteView: View {
                 kind: .pane(id),
                 title: spec.title,
                 subtitle: groupName.map { "Pane in \($0)" } ?? "Pane",
-                symbol: PaneLeafView.icon(for: spec.kind)
+                symbol: PaneLeafView.icon(for: spec.kind),
             )
         }
     }
@@ -523,8 +536,8 @@ struct CommandPaletteView: View {
         let needle = Array(query.lowercased())
         guard !needle.isEmpty else { return 0 }
 
-        /// A word boundary precedes index `j` when it is the start, or the prior char is not
-        /// alphanumeric (a space / punctuation / separator) — i.e. `j` begins a new word/token.
+        // A word boundary precedes index `j` when it is the start, or the prior char is not
+        // alphanumeric (a space / punctuation / separator) — i.e. `j` begins a new word/token.
         func isWordStart(_ j: Int) -> Bool {
             j == 0 || !(haystack[j - 1].isLetter || haystack[j - 1].isNumber)
         }
@@ -537,15 +550,15 @@ struct CommandPaletteView: View {
             while hayIndex < haystack.count {
                 if haystack[hayIndex] == ch {
                     if hayIndex == lastMatch + 1 {
-                        score += 8                       // contiguous run
+                        score += 8 // contiguous run
                     } else {
                         score += 1
                         // Penalise the run skipped since the last match (a scattered match is weaker).
                         let gap = hayIndex - lastMatch - 1
                         score -= min(gap, 4)
                     }
-                    if isWordStart(hayIndex) { score += 10 }   // word/token start — the strongest signal
-                    if hayIndex < 4 { score += 2 }             // near the very start of the string
+                    if isWordStart(hayIndex) { score += 10 } // word/token start — the strongest signal
+                    if hayIndex < 4 { score += 2 } // near the very start of the string
                     lastMatch = hayIndex
                     hayIndex += 1
                     found = true
@@ -553,7 +566,7 @@ struct CommandPaletteView: View {
                 }
                 hayIndex += 1
             }
-            if !found { return nil }    // a needle char never appeared in order ⇒ no match
+            if !found { return nil } // a needle char never appeared in order ⇒ no match
         }
         return score
     }
@@ -590,7 +603,7 @@ struct CommandPaletteView: View {
         /// The text the fuzzy filter matches against (title + subtitle + keywords, so "tab" / "select
         /// tab 3" also surface tab rows even when the user types the action word, not the tab name).
         var searchText: String {
-            [title, subtitle, keywords].compactMap { $0 }.joined(separator: " ")
+            [title, subtitle, keywords].compactMap(\.self).joined(separator: " ")
         }
 
         init(
@@ -600,7 +613,7 @@ struct CommandPaletteView: View {
             subtitle: String? = nil,
             symbol: String,
             shortcutHint: String? = nil,
-            keywords: String? = nil
+            keywords: String? = nil,
         ) {
             self.id = id
             self.kind = kind
@@ -617,7 +630,7 @@ struct CommandPaletteView: View {
     /// One catalog item: a palette-runnable command with its display title and SF Symbol. Pure value
     /// data (no shortcut lookup, so the catalog stays nonisolated) — the shortcut hint is resolved per
     /// render in ``commandEntries`` against the main-actor `defaultBindings` table.
-    struct CatalogItem: Sendable {
+    struct CatalogItem {
         let command: WorkspaceCommand
         let title: String
         let symbol: String
@@ -641,41 +654,176 @@ struct CommandPaletteView: View {
     /// though its store effect is a UI affordance (the command layer treats it as a no-op marker,
     /// docs/22 §5).
     nonisolated static let commandCatalog: [CatalogItem] = [
-        CatalogItem(command: .newPane(.terminal), title: "New Terminal Pane", symbol: "plus.rectangle", keywords: "split window shell add open create"),
-        CatalogItem(command: .newPane(.claudeCode), title: "New Claude Code Pane", symbol: "sparkles.rectangle.stack", keywords: "split ai assistant add open create"),
-        CatalogItem(command: .newPane(.remoteGUI), title: "New Remote Window Pane", symbol: "macwindow.badge.plus", keywords: "split video screen share desktop add open create"),
-        CatalogItem(command: .duplicatePane, title: "Duplicate Pane", symbol: "plus.square.on.square", keywords: "copy clone"),
-        CatalogItem(command: .newGroup, title: "New Group", symbol: "square.on.square.dashed", keywords: "cluster organize folder"),
-        CatalogItem(command: .groupSelection, title: "Group Selected Panes", symbol: "square.stack.3d.up", keywords: "cluster combine merge organize selection"),
-        CatalogItem(command: .selectAllPanes, title: "Select All Panes", symbol: "checkmark.rectangle.stack", keywords: "select all multi selection everything"),
-        CatalogItem(command: .tidy, title: "Tidy Layout", symbol: "square.grid.2x2", keywords: "arrange pack grid clean up organize auto layout"),
-        CatalogItem(command: .centerFocusedPane, title: "Center on Pane", symbol: "scope", keywords: "recenter focus jump go to camera"),
-        CatalogItem(command: .centerAll, title: "Center on All", symbol: "dot.scope", keywords: "recenter fit zoom out frame everything camera"),
-        CatalogItem(command: .toggleZoom, title: "Maximize Pane", symbol: "arrow.up.left.and.arrow.down.right", keywords: "fullscreen full screen zoom expand enlarge"),
-        CatalogItem(command: .toggleOverview, title: "Overview", symbol: "rectangle.grid.2x2", keywords: "mission control fit all zoom out birdseye exposé show all panes"),
-        CatalogItem(command: .toggleBroadcast, title: "Broadcast Input", symbol: "dot.radiowaves.left.and.right", keywords: "sync synchronize panes tmux mirror type everywhere"),
+        CatalogItem(
+            command: .newPane(.terminal),
+            title: "New Terminal Pane",
+            symbol: "plus.rectangle",
+            keywords: "split window shell add open create",
+        ),
+        CatalogItem(
+            command: .newPane(.claudeCode),
+            title: "New Claude Code Pane",
+            symbol: "sparkles.rectangle.stack",
+            keywords: "split ai assistant add open create",
+        ),
+        CatalogItem(
+            command: .newPane(.remoteGUI),
+            title: "New Remote Window Pane",
+            symbol: "macwindow.badge.plus",
+            keywords: "split video screen share desktop add open create",
+        ),
+        CatalogItem(
+            command: .duplicatePane,
+            title: "Duplicate Pane",
+            symbol: "plus.square.on.square",
+            keywords: "copy clone",
+        ),
+        CatalogItem(
+            command: .newGroup,
+            title: "New Group",
+            symbol: "square.on.square.dashed",
+            keywords: "cluster organize folder",
+        ),
+        CatalogItem(
+            command: .groupSelection,
+            title: "Group Selected Panes",
+            symbol: "square.stack.3d.up",
+            keywords: "cluster combine merge organize selection",
+        ),
+        CatalogItem(
+            command: .selectAllPanes,
+            title: "Select All Panes",
+            symbol: "checkmark.rectangle.stack",
+            keywords: "select all multi selection everything",
+        ),
+        CatalogItem(
+            command: .tidy,
+            title: "Tidy Layout",
+            symbol: "square.grid.2x2",
+            keywords: "arrange pack grid clean up organize auto layout",
+        ),
+        CatalogItem(
+            command: .centerFocusedPane,
+            title: "Center on Pane",
+            symbol: "scope",
+            keywords: "recenter focus jump go to camera",
+        ),
+        CatalogItem(
+            command: .centerAll,
+            title: "Center on All",
+            symbol: "dot.scope",
+            keywords: "recenter fit zoom out frame everything camera",
+        ),
+        CatalogItem(
+            command: .toggleZoom,
+            title: "Maximize Pane",
+            symbol: "arrow.up.left.and.arrow.down.right",
+            keywords: "fullscreen full screen zoom expand enlarge",
+        ),
+        CatalogItem(
+            command: .toggleOverview,
+            title: "Overview",
+            symbol: "rectangle.grid.2x2",
+            keywords: "mission control fit all zoom out birdseye exposé show all panes",
+        ),
+        CatalogItem(
+            command: .toggleBroadcast,
+            title: "Broadcast Input",
+            symbol: "dot.radiowaves.left.and.right",
+            keywords: "sync synchronize panes tmux mirror type everywhere",
+        ),
         CatalogItem(command: .renamePane, title: "Rename Pane", symbol: "pencil", keywords: "title label"),
-        CatalogItem(command: .reconnectPane, title: "Reconnect Pane", symbol: "arrow.clockwise", keywords: "redial retry reconnect reopen recover refresh"),
-        CatalogItem(command: .closePane, title: "Close Pane", symbol: "xmark", keywords: "quit kill end terminate remove"),
-        CatalogItem(command: .reopenClosedPane, title: "Reopen Closed Pane", symbol: "arrow.uturn.backward", keywords: "restore undo close reopen tab"),
-        CatalogItem(command: .cycleFocus(forward: true), title: "Focus Next Pane", symbol: "arrow.forward.square", keywords: "cycle next tab switch"),
-        CatalogItem(command: .cycleFocus(forward: false), title: "Focus Previous Pane", symbol: "arrow.backward.square", keywords: "cycle previous prev tab switch"),
+        CatalogItem(
+            command: .reconnectPane,
+            title: "Reconnect Pane",
+            symbol: "arrow.clockwise",
+            keywords: "redial retry reconnect reopen recover refresh",
+        ),
+        CatalogItem(
+            command: .closePane,
+            title: "Close Pane",
+            symbol: "xmark",
+            keywords: "quit kill end terminate remove",
+        ),
+        CatalogItem(
+            command: .reopenClosedPane,
+            title: "Reopen Closed Pane",
+            symbol: "arrow.uturn.backward",
+            keywords: "restore undo close reopen tab",
+        ),
+        CatalogItem(
+            command: .cycleFocus(forward: true),
+            title: "Focus Next Pane",
+            symbol: "arrow.forward.square",
+            keywords: "cycle next tab switch",
+        ),
+        CatalogItem(
+            command: .cycleFocus(forward: false),
+            title: "Focus Previous Pane",
+            symbol: "arrow.backward.square",
+            keywords: "cycle previous prev tab switch",
+        ),
         CatalogItem(command: .focus(.left), title: "Focus Left", symbol: "arrow.left", keywords: "move navigate"),
         CatalogItem(command: .focus(.right), title: "Focus Right", symbol: "arrow.right", keywords: "move navigate"),
         CatalogItem(command: .focus(.up), title: "Focus Up", symbol: "arrow.up", keywords: "move navigate"),
         CatalogItem(command: .focus(.down), title: "Focus Down", symbol: "arrow.down", keywords: "move navigate"),
-        CatalogItem(command: .manageSnippets, title: "Manage Snippets…", symbol: "scroll", keywords: "macro send keys library edit create snippet"),
-        CatalogItem(command: .saveLayout, title: "Save Current Layout…", symbol: "rectangle.badge.plus", keywords: "layout preset workspace snapshot save"),
+        CatalogItem(
+            command: .manageSnippets,
+            title: "Manage Snippets…",
+            symbol: "scroll",
+            keywords: "macro send keys library edit create snippet",
+        ),
+        CatalogItem(
+            command: .saveLayout,
+            title: "Save Current Layout…",
+            symbol: "rectangle.badge.plus",
+            keywords: "layout preset workspace snapshot save",
+        ),
         // Align + distribute (the Arrange ops) — previously menu-bar-only. They act on the multi-selection
         // (≥2 selected) else all panes, exactly like Pane ▸ Arrange.
-        CatalogItem(command: .align(.left), title: "Align Left", symbol: "align.horizontal.left", keywords: "arrange edge"),
-        CatalogItem(command: .align(.right), title: "Align Right", symbol: "align.horizontal.right", keywords: "arrange edge"),
+        CatalogItem(
+            command: .align(.left),
+            title: "Align Left",
+            symbol: "align.horizontal.left",
+            keywords: "arrange edge",
+        ),
+        CatalogItem(
+            command: .align(.right),
+            title: "Align Right",
+            symbol: "align.horizontal.right",
+            keywords: "arrange edge",
+        ),
         CatalogItem(command: .align(.top), title: "Align Top", symbol: "align.vertical.top", keywords: "arrange edge"),
-        CatalogItem(command: .align(.bottom), title: "Align Bottom", symbol: "align.vertical.bottom", keywords: "arrange edge"),
-        CatalogItem(command: .align(.centerHorizontal), title: "Align Center Horizontally", symbol: "align.horizontal.center", keywords: "arrange centre middle"),
-        CatalogItem(command: .align(.centerVertical), title: "Align Center Vertically", symbol: "align.vertical.center", keywords: "arrange centre middle"),
-        CatalogItem(command: .distribute(horizontal: true), title: "Distribute Horizontally", symbol: "arrow.left.and.right", keywords: "arrange even space spread"),
-        CatalogItem(command: .distribute(horizontal: false), title: "Distribute Vertically", symbol: "arrow.up.and.down", keywords: "arrange even space spread"),
+        CatalogItem(
+            command: .align(.bottom),
+            title: "Align Bottom",
+            symbol: "align.vertical.bottom",
+            keywords: "arrange edge",
+        ),
+        CatalogItem(
+            command: .align(.centerHorizontal),
+            title: "Align Center Horizontally",
+            symbol: "align.horizontal.center",
+            keywords: "arrange centre middle",
+        ),
+        CatalogItem(
+            command: .align(.centerVertical),
+            title: "Align Center Vertically",
+            symbol: "align.vertical.center",
+            keywords: "arrange centre middle",
+        ),
+        CatalogItem(
+            command: .distribute(horizontal: true),
+            title: "Distribute Horizontally",
+            symbol: "arrow.left.and.right",
+            keywords: "arrange even space spread",
+        ),
+        CatalogItem(
+            command: .distribute(horizontal: false),
+            title: "Distribute Vertically",
+            symbol: "arrow.up.and.down",
+            keywords: "arrange even space spread",
+        ),
     ]
 
     // MARK: - Shortcut hint rendering (chord → glyph string)
@@ -700,8 +848,8 @@ struct CommandPaletteView: View {
     nonisolated static func render(_ chord: KeyChord) -> String {
         var out = ""
         if chord.modifiers.contains(.control) { out += "⌃" }
-        if chord.modifiers.contains(.option)  { out += "⌥" }
-        if chord.modifiers.contains(.shift)   { out += "⇧" }
+        if chord.modifiers.contains(.option) { out += "⌥" }
+        if chord.modifiers.contains(.shift) { out += "⇧" }
         if chord.modifiers.contains(.command) { out += "⌘" }
         out += keyGlyph(chord.key)
         return out
@@ -709,13 +857,13 @@ struct CommandPaletteView: View {
 
     private nonisolated static func keyGlyph(_ key: KeyChord.Key) -> String {
         switch key {
-        case let .character(c): return c.uppercased()
-        case .tab:        return "⇥"
-        case .return:     return "↩"
-        case .leftArrow:  return "←"
-        case .rightArrow: return "→"
-        case .upArrow:    return "↑"
-        case .downArrow:  return "↓"
+        case let .character(c): c.uppercased()
+        case .tab: "⇥"
+        case .return: "↩"
+        case .leftArrow: "←"
+        case .rightArrow: "→"
+        case .upArrow: "↑"
+        case .downArrow: "↓"
         }
     }
 }

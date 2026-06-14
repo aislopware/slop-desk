@@ -1,5 +1,5 @@
-import XCTest
 import Foundation
+import XCTest
 @testable import AislopdeskHost
 
 /// Audit #17 — host-side TERM/terminfo bootstrap (ssh / kitty model).
@@ -13,7 +13,6 @@ import Foundation
 /// so they run headlessly + deterministically (they never depend on whether THIS machine
 /// happens to have the ghostty terminfo installed).
 final class TerminfoResolverTests: XCTestCase {
-
     // MARK: Pure decision — the three required cases
 
     func testResolvableGhosttyKeepsGhostty() {
@@ -21,7 +20,7 @@ final class TerminfoResolverTests: XCTestCase {
         let result = TerminfoResolver.effectiveTerm(
             requested: .ghostty,
             explicitOverride: false,
-            isGhosttyResolvable: true
+            isGhosttyResolvable: true,
         )
         XCTAssertEqual(result.term, .ghostty)
         XCTAssertFalse(result.fellBack)
@@ -32,7 +31,7 @@ final class TerminfoResolverTests: XCTestCase {
         let result = TerminfoResolver.effectiveTerm(
             requested: .ghostty,
             explicitOverride: false,
-            isGhosttyResolvable: false
+            isGhosttyResolvable: false,
         )
         XCTAssertEqual(result.term, .xterm256)
         XCTAssertTrue(result.fellBack)
@@ -44,7 +43,7 @@ final class TerminfoResolverTests: XCTestCase {
         let resolvable = TerminfoResolver.effectiveTerm(
             requested: .xterm256,
             explicitOverride: true,
-            isGhosttyResolvable: true
+            isGhosttyResolvable: true,
         )
         XCTAssertEqual(resolvable.term, .xterm256)
         XCTAssertFalse(resolvable.fellBack, "an explicit choice is not an auto-fallback")
@@ -52,7 +51,7 @@ final class TerminfoResolverTests: XCTestCase {
         let unresolvable = TerminfoResolver.effectiveTerm(
             requested: .xterm256,
             explicitOverride: true,
-            isGhosttyResolvable: false
+            isGhosttyResolvable: false,
         )
         XCTAssertEqual(unresolvable.term, .xterm256)
         XCTAssertFalse(unresolvable.fellBack)
@@ -66,7 +65,7 @@ final class TerminfoResolverTests: XCTestCase {
         let result = TerminfoResolver.effectiveTerm(
             requested: .xterm256,
             explicitOverride: false,
-            isGhosttyResolvable: false
+            isGhosttyResolvable: false,
         )
         XCTAssertEqual(result.term, .xterm256)
         XCTAssertFalse(result.fellBack)
@@ -78,14 +77,14 @@ final class TerminfoResolverTests: XCTestCase {
         // A ghostty request consults the probe.
         let resolvableProbe = GhosttyTerminfoProbe { true }
         let kept = TerminfoResolver.resolve(
-            requested: .ghostty, explicitOverride: false, probe: resolvableProbe
+            requested: .ghostty, explicitOverride: false, probe: resolvableProbe,
         )
         XCTAssertEqual(kept.term, .ghostty)
         XCTAssertFalse(kept.fellBack)
 
         let unresolvableProbe = GhosttyTerminfoProbe { false }
         let fell = TerminfoResolver.resolve(
-            requested: .ghostty, explicitOverride: false, probe: unresolvableProbe
+            requested: .ghostty, explicitOverride: false, probe: unresolvableProbe,
         )
         XCTAssertEqual(fell.term, .xterm256)
         XCTAssertTrue(fell.fellBack)
@@ -99,7 +98,7 @@ final class TerminfoResolverTests: XCTestCase {
             return true
         }
         let result = TerminfoResolver.resolve(
-            requested: .xterm256, explicitOverride: true, probe: probe
+            requested: .xterm256, explicitOverride: true, probe: probe,
         )
         XCTAssertEqual(result.term, .xterm256)
         XCTAssertFalse(result.fellBack)
@@ -109,24 +108,24 @@ final class TerminfoResolverTests: XCTestCase {
 
     func testProbeFindsGhosttyUnderXSubdirectory() {
         // The conventional `x/xterm-ghostty` layout under a system dir resolves.
-        let env: [String: String] = ["HOME": "/Users/dev"]
+        let env = ["HOME": "/Users/dev"]
         let target = "/usr/share/terminfo/x/xterm-ghostty"
         let exists = GhosttyTerminfoProbe.terminfoEntryExists(
             term: "xterm-ghostty",
             environment: env,
-            fileExists: { $0 == target }
+            fileExists: { $0 == target },
         )
         XCTAssertTrue(exists)
     }
 
     func testProbeFindsGhosttyUnderHexSubdirectory() {
         // Some `tic` builds store the entry under `<hex-of-first-char>/<name>` (78 == 'x').
-        let env: [String: String] = ["HOME": "/Users/dev"]
+        let env = ["HOME": "/Users/dev"]
         let target = "/Users/dev/.terminfo/78/xterm-ghostty"
         let exists = GhosttyTerminfoProbe.terminfoEntryExists(
             term: "xterm-ghostty",
             environment: env,
-            fileExists: { $0 == target }
+            fileExists: { $0 == target },
         )
         XCTAssertTrue(exists)
     }
@@ -138,17 +137,17 @@ final class TerminfoResolverTests: XCTestCase {
         let exists = GhosttyTerminfoProbe.terminfoEntryExists(
             term: "xterm-ghostty",
             environment: env,
-            fileExists: { $0 == target }
+            fileExists: { $0 == target },
         )
         XCTAssertTrue(exists)
     }
 
     func testProbeMissesWhenNoEntryAnywhere() {
-        let env: [String: String] = ["HOME": "/Users/dev"]
+        let env = ["HOME": "/Users/dev"]
         let exists = GhosttyTerminfoProbe.terminfoEntryExists(
             term: "xterm-ghostty",
             environment: env,
-            fileExists: { _ in false }
+            fileExists: { _ in false },
         )
         XCTAssertFalse(exists)
     }
@@ -178,7 +177,7 @@ final class TerminfoResolverTests: XCTestCase {
             term: "xterm-ghostty",
             environment: ["HOME": "/Users/dev"],
             fileExists: { _ in false },
-            infocmpExitStatus: { _ in 0 }
+            infocmpExitStatus: { _ in 0 },
         )
         XCTAssertTrue(resolvable)
     }
@@ -188,7 +187,7 @@ final class TerminfoResolverTests: XCTestCase {
             term: "xterm-ghostty",
             environment: ["HOME": "/Users/dev"],
             fileExists: { _ in false },
-            infocmpExitStatus: { _ in 1 }
+            infocmpExitStatus: { _ in 1 },
         )
         XCTAssertFalse(unresolvable)
     }
@@ -200,7 +199,7 @@ final class TerminfoResolverTests: XCTestCase {
             term: "xterm-ghostty",
             environment: ["HOME": "/Users/dev"],
             fileExists: { _ in false },
-            infocmpExitStatus: { _ in nil }
+            infocmpExitStatus: { _ in nil },
         )
         XCTAssertFalse(result)
     }
@@ -214,7 +213,7 @@ final class TerminfoResolverTests: XCTestCase {
             infocmpExitStatus: { _ in
                 XCTFail("infocmp must not run when the directory search already hit")
                 return 1
-            }
+            },
         )
         XCTAssertTrue(result)
     }

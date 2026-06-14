@@ -66,12 +66,12 @@ public struct CursorUpdate: Equatable, Sendable {
 
     /// Decodes via the Rust cursor codec — behaviour-identical to ``decodeNative(_:)``
     /// (re-proven by `CursorRustParityTests`).
-    public static func decode(_ data: Data) throws -> CursorUpdate {
+    public static func decode(_ data: Data) throws -> Self {
         try RustVideoFFI.decodeCursor(data)
     }
 
     /// The native Swift decoder, retained as the differential baseline.
-    static func decodeNative(_ data: Data) throws -> CursorUpdate {
+    static func decodeNative(_ data: Data) throws -> Self {
         var reader = VideoByteReader(data)
         let type = try reader.readUInt8()
         guard type == messageType else {
@@ -86,11 +86,11 @@ public struct CursorUpdate: Equatable, Sendable {
         let y = try reader.readFiniteFloat64("cursor.y")
         let hx = try reader.readFiniteFloat64("cursor.hotspot.x")
         let hy = try reader.readFiniteFloat64("cursor.hotspot.y")
-        return CursorUpdate(
+        return Self(
             position: VideoPoint(x: x, y: y),
             shapeID: shapeID,
             hotspot: VideoPoint(x: hx, y: hy),
-            visible: visible
+            visible: visible,
         )
     }
 }

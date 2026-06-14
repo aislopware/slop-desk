@@ -1,5 +1,5 @@
-import XCTest
 import AislopdeskProtocol
+import XCTest
 @testable import AislopdeskHost
 
 /// FIX #3 tests for ``PausableQueueGate`` — the host PTY-read backpressure gate that fuses the
@@ -9,18 +9,22 @@ import AislopdeskProtocol
 /// these are pure concurrency unit tests of the lost-wakeup fix (the action being atomic with the
 /// accounting), in the spirit of the pure decider tests for `BoundedQueuePolicy`.
 final class PausableQueueGateTests: XCTestCase {
-
     /// Thread-safe recorder for the pause/resume sink + a count of transitions.
     private final class PauseRecorder: @unchecked Sendable {
         private let lock = NSLock()
         private(set) var current = false
         private(set) var transitions = 0
         func apply(_ paused: Bool) {
-            lock.lock(); defer { lock.unlock() }
+            lock.lock()
+            defer { lock.unlock() }
             if paused != current { transitions += 1 }
             current = paused
         }
-        var isPaused: Bool { lock.lock(); defer { lock.unlock() }; return current }
+
+        var isPaused: Bool { lock.lock()
+            defer { lock.unlock() }
+            return current
+        }
     }
 
     /// Basic behaviour: crossing the bound pauses; draining below it resumes.
@@ -47,7 +51,7 @@ final class PausableQueueGateTests: XCTestCase {
         let rec = PauseRecorder()
         let capacity = 1024
         let gate = PausableQueueGate(capacity: capacity) { rec.apply($0) }
-        let pairs = 5_000
+        let pairs = 5000
         let chunk = 256 // 4 enqueues to cross the 1024 bound, so the pause path is hit constantly
 
         // Producers enqueue; consumers dequeue the SAME total, concurrently, so the net is zero.
@@ -74,7 +78,10 @@ final class PausableQueueGateTests: XCTestCase {
         XCTAssertEqual(gate.outstanding, 0, "balanced enqueue/dequeue must net to zero outstanding")
         // The load-bearing FIX #3 assertion: empty queue ⇒ the gate is NOT paused. A lost-wakeup
         // (stale pause winning a race) would leave it stuck paused here.
-        XCTAssertFalse(rec.isPaused, "empty queue (outstanding 0 < capacity) must NOT be left PAUSED (FIX #3 lost-wakeup)")
+        XCTAssertFalse(
+            rec.isPaused,
+            "empty queue (outstanding 0 < capacity) must NOT be left PAUSED (FIX #3 lost-wakeup)",
+        )
         XCTAssertGreaterThan(rec.transitions, 0, "the pause/resume path was actually exercised under load")
     }
 
@@ -105,7 +112,7 @@ final class PausableQueueGateTests: XCTestCase {
         gate.enqueue(60) // outstanding 60
 
         await withTaskGroup(of: Void.self) { group in
-            group.addTask { gate.enqueue(60) }   // → 120 ≥ 100 → slow pause
+            group.addTask { gate.enqueue(60) } // → 120 ≥ 100 → slow pause
             group.addTask {
                 // Let the enqueue cross the bound + begin its (slow) pause, then drain below it.
                 try? await Task.sleep(for: .milliseconds(10))
@@ -114,8 +121,10 @@ final class PausableQueueGateTests: XCTestCase {
         }
 
         XCTAssertEqual(gate.outstanding, 40, "net accounting is correct")
-        XCTAssertFalse(rec.isPaused,
-                       "below capacity after the race ⇒ must NOT be left paused (FIX #3: pause action atomic with accounting)")
+        XCTAssertFalse(
+            rec.isPaused,
+            "below capacity after the race ⇒ must NOT be left paused (FIX #3: pause action atomic with accounting)",
+        )
     }
 
     /// OFF-path parity: a gate is only built when flow control is ON (the session leaves `outputGate`
@@ -138,7 +147,7 @@ final class PausableQueueGateTests: XCTestCase {
         let gate = PausableQueueGate(capacity: 1000) { rec.apply($0) }
         gate.enqueue(10) // well under the queue bound
         XCTAssertFalse(rec.isPaused)
-        gate.setReplayPause(true)   // retained-byte cap crossed even though the queue is near-empty
+        gate.setReplayPause(true) // retained-byte cap crossed even though the queue is near-empty
         XCTAssertTrue(rec.isPaused, "the replay source pauses the read loop independent of the queue bound")
         gate.setReplayPause(false)
         XCTAssertFalse(rec.isPaused, "clearing the replay source resumes (queue is below bound)")
@@ -149,12 +158,12 @@ final class PausableQueueGateTests: XCTestCase {
     func testResumesOnlyWhenBothSourcesClear() {
         let rec = PauseRecorder()
         let gate = PausableQueueGate(capacity: 100) { rec.apply($0) }
-        gate.enqueue(120)            // queue full → pause
-        gate.setReplayPause(true)    // replay also wants pause
+        gate.enqueue(120) // queue full → pause
+        gate.setReplayPause(true) // replay also wants pause
         XCTAssertTrue(rec.isPaused)
-        gate.dequeue(120)            // queue drains below bound, but replay still over cap
+        gate.dequeue(120) // queue drains below bound, but replay still over cap
         XCTAssertTrue(rec.isPaused, "queue cleared but replay still over cap → must remain paused")
-        gate.setReplayPause(false)   // now both clear
+        gate.setReplayPause(false) // now both clear
         XCTAssertFalse(rec.isPaused, "both sources clear → resume")
         XCTAssertEqual(gate.outstanding, 0)
     }
@@ -166,7 +175,7 @@ final class PausableQueueGateTests: XCTestCase {
         gate.setReplayPause(true)
         gate.enqueue(120)
         XCTAssertTrue(rec.isPaused)
-        gate.setReplayPause(false)   // replay clears, queue still full
+        gate.setReplayPause(false) // replay clears, queue still full
         XCTAssertTrue(rec.isPaused, "replay cleared but queue still full → remain paused")
         gate.dequeue(120)
         XCTAssertFalse(rec.isPaused, "both clear → resume")
@@ -179,14 +188,20 @@ final class PausableQueueGateTests: XCTestCase {
         let gate = PausableQueueGate(capacity: 512) { rec.apply($0) }
         await withTaskGroup(of: Void.self) { group in
             for _ in 0..<4 {
-                group.addTask { for _ in 0..<2000 { gate.enqueue(256); gate.dequeue(256) } }
+                group.addTask { for _ in 0..<2000 { gate.enqueue(256)
+                    gate.dequeue(256)
+                } }
             }
             for _ in 0..<4 {
-                group.addTask { for _ in 0..<2000 { gate.setReplayPause(true); gate.setReplayPause(false) } }
+                group.addTask { for _ in 0..<2000 { gate.setReplayPause(true)
+                    gate.setReplayPause(false)
+                } }
             }
         }
         XCTAssertEqual(gate.outstanding, 0, "balanced enqueue/dequeue nets to zero")
-        XCTAssertFalse(rec.isPaused,
-                       "both sources cleared ⇒ gate must NOT be left paused (no cross-source lost-wakeup)")
+        XCTAssertFalse(
+            rec.isPaused,
+            "both sources cleared ⇒ gate must NOT be left paused (no cross-source lost-wakeup)",
+        )
     }
 }

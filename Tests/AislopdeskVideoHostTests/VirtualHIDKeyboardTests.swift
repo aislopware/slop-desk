@@ -6,7 +6,6 @@ import XCTest
 /// which Secure Event Input blocks for synthetic CGEvents): macOS keycode → HID usage mapping, the
 /// modifier byte, the 8-byte boot report, and the stateful fold of key down/up events.
 final class VirtualHIDKeyboardTests: XCTestCase {
-
     // MARK: keycode → HID usage
 
     func testLetterMapping() {
@@ -56,15 +55,23 @@ final class VirtualHIDKeyboardTests: XCTestCase {
     // MARK: boot report
 
     func testBootReportLayout() {
-        XCTAssertEqual(VirtualHIDKeyboard.bootReport(modifiers: 0x02, keys: [0x04]),
-                       [0x02, 0x00, 0x04, 0, 0, 0, 0, 0], "shift + 'a' → 'A'")
-        XCTAssertEqual(VirtualHIDKeyboard.bootReport(modifiers: 0, keys: []),
-                       [0, 0, 0, 0, 0, 0, 0, 0], "empty report")
+        XCTAssertEqual(
+            VirtualHIDKeyboard.bootReport(modifiers: 0x02, keys: [0x04]),
+            [0x02, 0x00, 0x04, 0, 0, 0, 0, 0],
+            "shift + 'a' → 'A'",
+        )
+        XCTAssertEqual(
+            VirtualHIDKeyboard.bootReport(modifiers: 0, keys: []),
+            [0, 0, 0, 0, 0, 0, 0, 0],
+            "empty report",
+        )
     }
 
     func testBootReportSortsKeys() {
-        XCTAssertEqual(VirtualHIDKeyboard.bootReport(modifiers: 0, keys: [0x10, 0x04, 0x08]),
-                       [0, 0, 0x04, 0x08, 0x10, 0, 0, 0])
+        XCTAssertEqual(
+            VirtualHIDKeyboard.bootReport(modifiers: 0, keys: [0x10, 0x04, 0x08]),
+            [0, 0, 0x04, 0x08, 0x10, 0, 0, 0],
+        )
     }
 
     func testBootReportRollsOverPastSix() {
@@ -91,7 +98,7 @@ final class VirtualHIDKeyboardTests: XCTestCase {
 
     func testTwoKeysHeldConcurrently() {
         var s = HIDKeyboardState()
-        _ = s.apply(virtualKey: 0x00, down: true, modifiers: [])   // a
+        _ = s.apply(virtualKey: 0x00, down: true, modifiers: []) // a
         let r = s.apply(virtualKey: 0x0B, down: true, modifiers: []) // + b
         XCTAssertEqual(r, [0, 0, 0x04, 0x05, 0, 0, 0, 0], "both a(0x04) and b(0x05) held")
     }
@@ -110,7 +117,7 @@ final class VirtualHIDKeyboardTests: XCTestCase {
         // key held when the keyboard was released re-appears in the NEXT key's report — a phantom press
         // typed into the next secure (password) field, a key the user never pressed.
         var s = HIDKeyboardState()
-        _ = s.apply(virtualKey: 0x00, down: true, modifiers: [])   // press 'a' (held, never released)
+        _ = s.apply(virtualKey: 0x00, down: true, modifiers: []) // press 'a' (held, never released)
         XCTAssertEqual(s.releaseAll(), [0, 0, 0, 0, 0, 0, 0, 0], "release ships the all-zero report")
         // Type 'b' next: the report must contain ONLY 'b' (0x05), NOT the previously-held 'a' (0x04).
         let r = s.apply(virtualKey: 0x0B, down: true, modifiers: [])

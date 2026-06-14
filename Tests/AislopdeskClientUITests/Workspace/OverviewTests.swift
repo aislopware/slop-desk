@@ -1,12 +1,11 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins the fit-all overview: the pure ``CanvasGeometry/overviewLayout`` (scale to fit all panes,
 /// centred, never magnified past 1×) and the store's overview presentation state + command wiring.
 @MainActor
 final class OverviewTests: XCTestCase {
-
     private let eps: CGFloat = 1e-6
 
     private func item(_ id: PaneID, _ frame: CGRect) -> CanvasItem {
@@ -25,22 +24,27 @@ final class OverviewTests: XCTestCase {
         XCTAssertTrue(layout.cards.isEmpty)
     }
 
-    func testSingleSmallPaneIsNotMagnified() {
+    func testSingleSmallPaneIsNotMagnified() throws {
         let id = PaneID()
-        let layout = CanvasGeometry.overviewLayout([item(id, CGRect(x: 0, y: 0, width: 200, height: 150))],
-                                                   viewport: CGSize(width: 1000, height: 800), padding: 48)
+        let layout = CanvasGeometry.overviewLayout(
+            [item(id, CGRect(x: 0, y: 0, width: 200, height: 150))],
+            viewport: CGSize(width: 1000, height: 800),
+            padding: 48,
+        )
         XCTAssertEqual(layout.scale, 1, "a pane that already fits is never zoomed IN")
         // Centred: card centre == viewport centre.
-        let card = layout.cards[id]!
+        let card = try XCTUnwrap(layout.cards[id])
         XCTAssertEqual(card.midX, 500, accuracy: eps)
         XCTAssertEqual(card.midY, 400, accuracy: eps)
     }
 
-    func testLargeSpreadIsScaledToFitWithPadding() {
+    func testLargeSpreadIsScaledToFitWithPadding() throws {
         let a = PaneID(), b = PaneID()
         // Bounding box 4000 wide → must scale down to fit a 1000-wide viewport (minus padding).
-        let items = [item(a, CGRect(x: 0, y: 0, width: 500, height: 400)),
-                     item(b, CGRect(x: 3500, y: 0, width: 500, height: 400))]
+        let items = [
+            item(a, CGRect(x: 0, y: 0, width: 500, height: 400)),
+            item(b, CGRect(x: 3500, y: 0, width: 500, height: 400)),
+        ]
         let vp = CGSize(width: 1000, height: 800)
         let layout = CanvasGeometry.overviewLayout(items, viewport: vp, padding: 48)
         XCTAssertLessThan(layout.scale, 1, "a wide spread scales down")
@@ -52,13 +56,13 @@ final class OverviewTests: XCTestCase {
             XCTAssertLessThanOrEqual(card.maxY, vp.height + eps)
         }
         // Relative geometry preserved: b is right of a.
-        XCTAssertGreaterThan(layout.cards[b]!.minX, layout.cards[a]!.minX)
+        XCTAssertGreaterThan(try XCTUnwrap(layout.cards[b]?.minX), try XCTUnwrap(layout.cards[a]?.minX))
     }
 
     // MARK: - Store state + commands
 
     func testToggleOverviewOnNonEmptyCanvas() {
-        let store = makeStore()   // default workspace has one pane
+        let store = makeStore() // default workspace has one pane
         XCTAssertFalse(store.overviewActive)
         store.toggleOverview()
         XCTAssertTrue(store.overviewActive)
@@ -66,9 +70,9 @@ final class OverviewTests: XCTestCase {
         XCTAssertFalse(store.overviewActive)
     }
 
-    func testToggleOverviewNoopOnEmptyCanvas() {
+    func testToggleOverviewNoopOnEmptyCanvas() throws {
         let store = makeStore()
-        store.closePane(store.focusedPane!)
+        try store.closePane(XCTUnwrap(store.focusedPane))
         XCTAssertTrue(store.workspace.canvas.items.isEmpty)
         store.toggleOverview()
         XCTAssertFalse(store.overviewActive, "nothing to overview on an empty canvas")
@@ -85,8 +89,10 @@ final class OverviewTests: XCTestCase {
 
     func testSelectFromOverviewJumpsAndExits() {
         let a = PaneID(), b = PaneID()
-        let items = [item(a, CGRect(x: 0, y: 0, width: 480, height: 320)),
-                     item(b, CGRect(x: 3000, y: 2000, width: 480, height: 320))]
+        let items = [
+            item(a, CGRect(x: 0, y: 0, width: 480, height: 320)),
+            item(b, CGRect(x: 3000, y: 2000, width: 480, height: 320)),
+        ]
         let store = makeStore(restoring: Workspace(canvas: Canvas(items: items), focusedPane: a))
         store.toggleOverview()
         store.selectFromOverview(b)

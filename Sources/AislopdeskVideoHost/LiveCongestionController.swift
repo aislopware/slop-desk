@@ -96,7 +96,8 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// Backing the rate off cannot reduce that loss; it only degrades quality and (pre-#1) paced the
     /// recovery IDR at the collapsed rate. Loss WITH RTT inflation = a building queue = real
     /// congestion → the classic AIMD response stays. `AISLOPDESK_ABR_LOSS_NEEDS_RTT=0` reverts.
-    public static let lossNeedsRTTCorroboration = ProcessInfo.processInfo.environment["AISLOPDESK_ABR_LOSS_NEEDS_RTT"] != "0"
+    public static let lossNeedsRTTCorroboration = ProcessInfo.processInfo
+        .environment["AISLOPDESK_ABR_LOSS_NEEDS_RTT"] != "0"
     /// EWMA loss-rate above THIS halves even at flat RTT: a queue-less policer / true link collapse
     /// drops without inflating RTT, and at a SUSTAINED ≥25% the stream is unusable regardless of
     /// cause — backing off is the only safe move. Keyed on the EWMA ``NetworkEstimate/lossRate``
@@ -118,7 +119,7 @@ public struct LiveCongestionController: Sendable, Equatable {
     public static let rttInflateFactor: Double = envDouble("AISLOPDESK_ABR_RTT", 1.25, min: 1.0, max: 100)
     /// ABSOLUTE smoothed-RTT inflation over the baseline (ms) ALSO required before the RTT path may
     /// signal congestion — keeps LAN scheduling wobble (a few ms on a ~5ms baseline) sub-threshold. `AISLOPDESK_ABR_SLACK`.
-    public static let rttSlackMillis: Double = envDouble("AISLOPDESK_ABR_SLACK", 15.0, min: 0, max: 10_000)
+    public static let rttSlackMillis: Double = envDouble("AISLOPDESK_ABR_SLACK", 15.0, min: 0, max: 10000)
     /// BASELINE-PROPORTIONAL slack (2026-06-11, cellular wobble fix): the effective slack is
     /// `max(rttSlackMillis, slackFraction × minRTT)`. The fixed 15ms was tuned for ~5-10ms LAN
     /// baselines; on the measured 4G path (minRTT ≈ 40-44ms) cellular scheduler wobble of ±50% is
@@ -134,6 +135,7 @@ public struct LiveCongestionController: Sendable, Equatable {
         guard minRTTMillis.isFinite else { return rttSlackMillis }
         return max(rttSlackMillis, rttSlackFraction * minRTTMillis)
     }
+
     /// CONSECUTIVE inflated reports required before the RTT path decreases (~N × 50ms). `AISLOPDESK_ABR_RTT_N`.
     public static let rttStreakTicks: Int = envInt("AISLOPDESK_ABR_RTT_N", 3, min: 1, max: 100_000)
     /// Reports between ANY multiplicative decreases — RTT-path AND loss-path (~8 × 50ms ≈ 400ms).
@@ -151,10 +153,20 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// `AISLOPDESK_ABR_CUT_HOLD`.
     public static let cutHoldTicks: Int = envInt("AISLOPDESK_ABR_CUT_HOLD", 8, min: 0, max: 100_000)
     /// Hardest single proportional RTT decrease (0.6 = at most −40% in one step). `AISLOPDESK_ABR_RTT_DEC_MIN`.
-    public static let rttDecreaseFloorFactor: Double = envDouble("AISLOPDESK_ABR_RTT_DEC_MIN", 0.6, min: 0.05, max: 0.999)
+    public static let rttDecreaseFloorFactor: Double = envDouble(
+        "AISLOPDESK_ABR_RTT_DEC_MIN",
+        0.6,
+        min: 0.05,
+        max: 0.999,
+    )
     /// Gentlest proportional RTT decrease — barely-over-threshold inflation still trims a little
     /// (0.95 = −5%), and the post-congestion EWMA decay tail can never re-cut deeply. `AISLOPDESK_ABR_RTT_DEC_MAX`.
-    public static let rttDecreaseCapFactor: Double = envDouble("AISLOPDESK_ABR_RTT_DEC_MAX", 0.95, min: 0.05, max: 0.999)
+    public static let rttDecreaseCapFactor: Double = envDouble(
+        "AISLOPDESK_ABR_RTT_DEC_MAX",
+        0.95,
+        min: 0.05,
+        max: 0.999,
+    )
     /// Additive-increase divisor applied ON TOP of ``increaseDivisor`` at/above the remembered knee
     /// (ssthresh): climbing back INTO the rate that just built a queue should be slow (probe), while
     /// recovery below it stays fast. 8 ⇒ ~0.4% of ceiling per tick above the knee. `AISLOPDESK_ABR_KNEE_DIV`.
@@ -167,7 +179,12 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// Actuation churn gate (fraction of ceiling): the host skips a re-actuation smaller than this. `AISLOPDESK_ABR_MATERIAL`.
     public static let materialFraction: Double = envDouble("AISLOPDESK_ABR_MATERIAL", 0.05, min: 0.0, max: 1.0)
     /// Actuation churn gate (absolute bps floor): the host skips a re-actuation smaller than this. `AISLOPDESK_ABR_MATERIAL_FLOOR`.
-    public static let materialFloorBps: Int = envInt("AISLOPDESK_ABR_MATERIAL_FLOOR", 500_000, min: 0, max: 1_000_000_000)
+    public static let materialFloorBps: Int = envInt(
+        "AISLOPDESK_ABR_MATERIAL_FLOOR",
+        500_000,
+        min: 0,
+        max: 1_000_000_000,
+    )
     /// DELAY-GRADIENT EARLY CUT (component 3) — DEFAULT OFF until the HW feel-test (repo convention:
     /// two prior delay designs were falsified live by rate-independent 4G wobble). `AISLOPDESK_ABR_GRAD=1`
     /// enables on the host; the client-side estimator + wire fields are pure telemetry and default ON.
@@ -240,15 +257,18 @@ public struct LiveCongestionController: Sendable, Equatable {
         let c = max(1, ceiling)
         self.ceiling = c
         self.floor = max(LiveBitratePolicy.minimumBitrate, min(floor, c))
-        self.current = c
+        current = c
         self.gradientCutEnabled = gradientCutEnabled
     }
 
     /// Convenience: derive the floor from `ceiling × minFrac` (the production wiring), keeping the
     /// floor-derivation policy in one place.
     public init(ceiling: Int, gradientCutEnabled: Bool = Self.gradientCutEnabledDefault) {
-        self.init(ceiling: ceiling, floor: Int(Double(max(1, ceiling)) * Self.minFrac),
-                  gradientCutEnabled: gradientCutEnabled)
+        self.init(
+            ceiling: ceiling,
+            floor: Int(Double(max(1, ceiling)) * Self.minFrac),
+            gradientCutEnabled: gradientCutEnabled,
+        )
     }
 
     // MARK: Control law
@@ -336,7 +356,7 @@ public struct LiveCongestionController: Sendable, Equatable {
         let rttCongested = rttInflated
             && rttInflatedStreak >= Self.rttStreakTicks
             && ticks >= cutHoldUntilTick
-            && e.smoothedRTTMillis + 1.0 >= prevSmoothedRTTMillis   // not improving — see prevSmoothedRTTMillis
+            && e.smoothedRTTMillis + 1.0 >= prevSmoothedRTTMillis // not improving — see prevSmoothedRTTMillis
 
         // Knee TTL: a knee that hasn't been re-confirmed by a queue-corroborated decrease within
         // `kneeTTLTicks` is stale path knowledge — forget it so the climb is uncapped again.
@@ -366,14 +386,16 @@ public struct LiveCongestionController: Sendable, Equatable {
             && ticks >= cutHoldUntilTick
         if e.lossRate > Self.catastrophicLossThreshold,
            e.lastLossSample > Self.severeLossThreshold,
-           ticks >= holdUntilTick {
+           ticks >= holdUntilTick
+        {
             // SUSTAINED catastrophic loss (EWMA over the gate AND the CURRENT raw sample still
             // severe — the collapse is happening now, not the decaying tail of one that ended):
             // halve regardless of RTT (queue-less policer / true collapse), at most once per
             // hold-down window.
             decrease(to: max(floor, Int(Double(current) * Self.severeDecreaseFactor)), queueCorroborated: rttInflated)
             return Decision(target: current, reason: .catastrophic)
-        } else if rttCongested || lossCongested || gradientCongested {
+        }
+        if rttCongested || lossCongested || gradientCongested {
             // Ordinary congestion. DELAY-TARGETING (2026-06-11): the RTT path sizes the decrease to
             // the MEASURED queue instead of a fixed ×0.85 — `factor = (minRTT + slack) / smoothedRTT`,
             // clamped to [rttDecreaseFloorFactor, rttDecreaseCapFactor]. A 70ms standing queue over a
@@ -386,19 +408,25 @@ public struct LiveCongestionController: Sendable, Equatable {
             // any more — at ~3 frames per report one lost frame reads 33%, so raw severity is
             // quantization noise. Depth comes from the measured queue; collapse from the EWMA gate.
             var target = Int.max
-            var reason = CutReason.hold   // overwritten below — at least one branch fired to get here
+            var reason = CutReason.hold // overwritten below — at least one branch fired to get here
             if rttCongested {
                 // Drain target uses the SAME baseline-proportional slack as the gate, so the
                 // proportional cut sizes against the path's own wobble floor, not the LAN constant.
                 let drained = e.minRTTMillis + slack
-                let factor = min(Self.rttDecreaseCapFactor,
-                                 max(Self.rttDecreaseFloorFactor, drained / e.smoothedRTTMillis))
+                let factor = min(
+                    Self.rttDecreaseCapFactor,
+                    max(Self.rttDecreaseFloorFactor, drained / e.smoothedRTTMillis),
+                )
                 let cut = Int(Double(current) * factor)
-                if cut < target { target = cut; reason = .rttStreak }
+                if cut < target { target = cut
+                    reason = .rttStreak
+                }
             }
             if lossCongested {
                 let cut = Int(Double(current) * Self.decreaseFactor)
-                if cut < target { target = cut; reason = .lossCorroborated }
+                if cut < target { target = cut
+                    reason = .lossCorroborated
+                }
             }
             if gradientCongested {
                 // The early-onset reflex: one conventional ×0.85-deep cut. NOTE the unchanged
@@ -408,11 +436,14 @@ public struct LiveCongestionController: Sendable, Equatable {
                 // `kneeTTLTicks` on the measured rate-independent 4G/inter-ISP wobble (the
                 // falsified-design history). The proportional path sets it if the queue is real.
                 let cut = Int(Double(current) * Self.gradientDecreaseFactor)
-                if cut < target { target = cut; reason = .gradient }
+                if cut < target { target = cut
+                    reason = .gradient
+                }
             }
             decrease(to: max(floor, target), queueCorroborated: rttInflated)
             return Decision(target: current, reason: reason)
-        } else if ticks >= holdUntilTick && !rttInflated && !(gradientCutEnabled && e.owdTrendOverusing) {
+        }
+        if ticks >= holdUntilTick, !rttInflated, !(gradientCutEnabled && e.owdTrendOverusing) {
             // Clean link past the hold-down: probe up additively toward the ceiling. `!rttInflated`
             // keeps the probe from climbing INTO a building queue while the streak/hold-down is
             // still suppressing the decrease (minRTT re-baselines upward ~1%/fold, so a genuinely
@@ -473,12 +504,14 @@ public struct LiveCongestionController: Sendable, Equatable {
     // MARK: Env parsing helpers
 
     private static func envInt(_ key: String, _ fallback: Int, min lo: Int, max hi: Int) -> Int {
-        guard let s = ProcessInfo.processInfo.environment[key], let v = Int(s), v >= lo, v <= hi else { return fallback }
+        guard let s = ProcessInfo.processInfo.environment[key], let v = Int(s), v >= lo,
+              v <= hi else { return fallback }
         return v
     }
 
     private static func envDouble(_ key: String, _ fallback: Double, min lo: Double, max hi: Double) -> Double {
-        guard let s = ProcessInfo.processInfo.environment[key], let v = Double(s), v >= lo, v <= hi else { return fallback }
+        guard let s = ProcessInfo.processInfo.environment[key], let v = Double(s), v >= lo,
+              v <= hi else { return fallback }
         return v
     }
 }

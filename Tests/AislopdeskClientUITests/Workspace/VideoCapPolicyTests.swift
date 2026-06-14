@@ -15,7 +15,6 @@ import XCTest
 /// store's activation gate honours whatever Int the policy chose.
 @MainActor
 final class VideoCapPolicyTests: XCTestCase {
-
     // MARK: - Tier values: distinct + ordered (phone ≤ pad ≤ mac)
 
     /// The three tiers are the documented constants and are strictly ordered phone < pad < mac, so a
@@ -26,8 +25,11 @@ final class VideoCapPolicyTests: XCTestCase {
         XCTAssertEqual(VideoCapPolicy.macCap, 3, "mac tier")
 
         // Distinct.
-        XCTAssertEqual(Set([VideoCapPolicy.phoneCap, VideoCapPolicy.padCap, VideoCapPolicy.macCap]).count, 3,
-                       "the three tiers are distinct")
+        XCTAssertEqual(
+            Set([VideoCapPolicy.phoneCap, VideoCapPolicy.padCap, VideoCapPolicy.macCap]).count,
+            3,
+            "the three tiers are distinct",
+        )
         // Ordered (the monotone-headroom contract).
         XCTAssertLessThanOrEqual(VideoCapPolicy.phoneCap, VideoCapPolicy.padCap, "phone ≤ pad")
         XCTAssertLessThanOrEqual(VideoCapPolicy.padCap, VideoCapPolicy.macCap, "pad ≤ mac")
@@ -47,11 +49,11 @@ final class VideoCapPolicyTests: XCTestCase {
     func testDeviceClassMacAlwaysMacRegardlessOfOtherSignals() {
         XCTAssertEqual(
             VideoCapPolicy.deviceClass(isMac: true, horizontalSizeClassCompact: false, userInterfaceIdiomPad: false),
-            .mac
+            .mac,
         )
         XCTAssertEqual(
             VideoCapPolicy.deviceClass(isMac: true, horizontalSizeClassCompact: true, userInterfaceIdiomPad: true),
-            .mac, "isMac dominates — idiom/size-class are irrelevant"
+            .mac, "isMac dominates — idiom/size-class are irrelevant",
         )
     }
 
@@ -60,11 +62,11 @@ final class VideoCapPolicyTests: XCTestCase {
     func testDeviceClassPadResolvesPadOnlyWhenRegular() {
         XCTAssertEqual(
             VideoCapPolicy.deviceClass(isMac: false, horizontalSizeClassCompact: false, userInterfaceIdiomPad: true),
-            .pad, "regular pad → pad"
+            .pad, "regular pad → pad",
         )
         XCTAssertEqual(
             VideoCapPolicy.deviceClass(isMac: false, horizontalSizeClassCompact: true, userInterfaceIdiomPad: true),
-            .phone, "compact pad (slide-over) falls to the phone tier"
+            .phone, "compact pad (slide-over) falls to the phone tier",
         )
     }
 
@@ -72,11 +74,11 @@ final class VideoCapPolicyTests: XCTestCase {
     func testDeviceClassPhoneIdiomAlwaysPhone() {
         XCTAssertEqual(
             VideoCapPolicy.deviceClass(isMac: false, horizontalSizeClassCompact: true, userInterfaceIdiomPad: false),
-            .phone, "compact phone → phone"
+            .phone, "compact phone → phone",
         )
         XCTAssertEqual(
             VideoCapPolicy.deviceClass(isMac: false, horizontalSizeClassCompact: false, userInterfaceIdiomPad: false),
-            .phone, "a (hypothetical) regular phone is still the phone tier"
+            .phone, "a (hypothetical) regular phone is still the phone tier",
         )
     }
 
@@ -90,21 +92,36 @@ final class VideoCapPolicyTests: XCTestCase {
             for compact in [true, false] {
                 for pad in [true, false] {
                     let composed = VideoCapPolicy.cap(
-                        isMac: isMac, horizontalSizeClassCompact: compact, userInterfaceIdiomPad: pad
+                        isMac: isMac, horizontalSizeClassCompact: compact, userInterfaceIdiomPad: pad,
                     )
                     let resolved = VideoCapPolicy.cap(for: VideoCapPolicy.deviceClass(
-                        isMac: isMac, horizontalSizeClassCompact: compact, userInterfaceIdiomPad: pad
+                        isMac: isMac, horizontalSizeClassCompact: compact, userInterfaceIdiomPad: pad,
                     ))
-                    XCTAssertEqual(composed, resolved,
-                                   "composed == resolve-then-map (isMac=\(isMac) compact=\(compact) pad=\(pad))")
+                    XCTAssertEqual(
+                        composed,
+                        resolved,
+                        "composed == resolve-then-map (isMac=\(isMac) compact=\(compact) pad=\(pad))",
+                    )
                 }
             }
         }
         // Spot-check the load-bearing tiers through the composed call.
-        XCTAssertEqual(VideoCapPolicy.cap(isMac: true, horizontalSizeClassCompact: false, userInterfaceIdiomPad: false), 3)
-        XCTAssertEqual(VideoCapPolicy.cap(isMac: false, horizontalSizeClassCompact: false, userInterfaceIdiomPad: true), 2)
-        XCTAssertEqual(VideoCapPolicy.cap(isMac: false, horizontalSizeClassCompact: true, userInterfaceIdiomPad: true), 1)
-        XCTAssertEqual(VideoCapPolicy.cap(isMac: false, horizontalSizeClassCompact: true, userInterfaceIdiomPad: false), 1)
+        XCTAssertEqual(
+            VideoCapPolicy.cap(isMac: true, horizontalSizeClassCompact: false, userInterfaceIdiomPad: false),
+            3,
+        )
+        XCTAssertEqual(
+            VideoCapPolicy.cap(isMac: false, horizontalSizeClassCompact: false, userInterfaceIdiomPad: true),
+            2,
+        )
+        XCTAssertEqual(
+            VideoCapPolicy.cap(isMac: false, horizontalSizeClassCompact: true, userInterfaceIdiomPad: true),
+            1,
+        )
+        XCTAssertEqual(
+            VideoCapPolicy.cap(isMac: false, horizontalSizeClassCompact: true, userInterfaceIdiomPad: false),
+            1,
+        )
     }
 
     // MARK: - the store honours the policy-chosen Int (cap-1 gates the 2nd remoteGUI pane)
@@ -122,7 +139,7 @@ final class VideoCapPolicyTests: XCTestCase {
         let store = WorkspaceStore(
             restoring: Workspace.make(panes: [(rootID, spec)], focused: rootID),
             makeSession: { FakePaneSession($0) },
-            liveVideoCap: phoneCap
+            liveVideoCap: phoneCap,
         )
         store.addPane(kind: .remoteGUI)
         let ids = store.workspace.canvas.allIDs()

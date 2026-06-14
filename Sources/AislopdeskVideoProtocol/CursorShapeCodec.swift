@@ -62,7 +62,7 @@ public struct CursorShapeMessage: Equatable, Sendable {
         return out
     }
 
-    public static func decode(_ data: Data) throws -> CursorShapeMessage {
+    public static func decode(_ data: Data) throws -> Self {
         var reader = VideoByteReader(data)
         let type = try reader.readUInt8()
         guard type == messageType else {
@@ -75,11 +75,11 @@ public struct CursorShapeMessage: Equatable, Sendable {
         let hy = try reader.readFiniteFloat64("cursorShape.hotspot.y")
         let bitmapLength = try reader.readUInt32()
         let bitmap = try reader.readBytes(Int(bitmapLength))
-        return CursorShapeMessage(
+        return Self(
             shapeID: shapeID,
             size: VideoSize(width: Double(width), height: Double(height)),
             hotspot: VideoPoint(x: hx, y: hy),
-            bitmap: bitmap
+            bitmap: bitmap,
         )
     }
 }
@@ -95,17 +95,17 @@ public enum CursorChannelMessage: Equatable, Sendable {
 
     public func encode() -> Data {
         switch self {
-        case .update(let u): return u.encode()
-        case .shape(let s): return s.encode()
+        case let .update(u): u.encode()
+        case let .shape(s): s.encode()
         }
     }
 
     /// Routes a received cursor datagram by its leading type byte.
-    public static func decode(_ data: Data) throws -> CursorChannelMessage {
+    public static func decode(_ data: Data) throws -> Self {
         guard let first = data.first else { throw VideoProtocolError.truncated }
         switch first {
-        case CursorUpdate.messageType: return .update(try CursorUpdate.decode(data))
-        case CursorShapeMessage.messageType: return .shape(try CursorShapeMessage.decode(data))
+        case CursorUpdate.messageType: return try .update(CursorUpdate.decode(data))
+        case CursorShapeMessage.messageType: return try .shape(CursorShapeMessage.decode(data))
         default: throw VideoProtocolError.malformed("unknown cursor channel type \(first)")
         }
     }

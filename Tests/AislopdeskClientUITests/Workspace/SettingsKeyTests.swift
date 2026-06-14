@@ -5,12 +5,20 @@ import XCTest
 /// overrides) — the shared source of truth between the Settings scene and the consumers.
 @MainActor
 final class SettingsKeyTests: XCTestCase {
-
     private var keys: [String] {
-        [SettingsKey.oscNotifications, SettingsKey.longCommandNotifications,
-         SettingsKey.systemDialogPanes, SettingsKey.defaultPaneKindKey,
-         SettingsKey.snapPanes, SettingsKey.snapGrid, SettingsKey.showGrid, SettingsKey.nonOverlap,
-         SettingsKey.autoSwitchLayouts, SettingsKey.redactSecrets, SettingsKey.recordClipboardHistory]
+        [
+            SettingsKey.oscNotifications,
+            SettingsKey.longCommandNotifications,
+            SettingsKey.systemDialogPanes,
+            SettingsKey.defaultPaneKindKey,
+            SettingsKey.snapPanes,
+            SettingsKey.snapGrid,
+            SettingsKey.showGrid,
+            SettingsKey.nonOverlap,
+            SettingsKey.autoSwitchLayouts,
+            SettingsKey.redactSecrets,
+            SettingsKey.recordClipboardHistory,
+        ]
     }
 
     override func setUp() { keys.forEach { UserDefaults.standard.removeObject(forKey: $0) } }

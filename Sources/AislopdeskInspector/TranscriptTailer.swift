@@ -57,9 +57,9 @@ public actor TranscriptTailer {
     public init(
         path: String,
         pollInterval: Duration = .milliseconds(100),
-        maxReadPerPoll: Int = 1 * 1024 * 1024
+        maxReadPerPoll: Int = 1 * 1024 * 1024,
     ) {
-        self.url = URL(fileURLWithPath: path)
+        url = URL(fileURLWithPath: path)
         self.pollInterval = pollInterval
         self.maxReadPerPoll = maxReadPerPoll
     }
@@ -155,7 +155,9 @@ public actor TranscriptTailer {
     private func fileIdentity(of handle: FileHandle) -> FileIdentity? {
         var info = stat()
         guard fstat(handle.fileDescriptor, &info) == 0 else { return nil }
-        return FileIdentity(device: UInt64(bitPattern: Int64(info.st_dev)),
-                            inode: UInt64(info.st_ino))
+        return FileIdentity(
+            device: UInt64(bitPattern: Int64(info.st_dev)),
+            inode: UInt64(info.st_ino),
+        )
     }
 }

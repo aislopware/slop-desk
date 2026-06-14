@@ -1,5 +1,5 @@
-import XCTest
 import AislopdeskVideoProtocol
+import XCTest
 @testable import AislopdeskVideoClient
 
 /// In-order decode admission (the `frontier = N−2` -12909 class fix). Pure, wrap-aware.
@@ -50,7 +50,7 @@ final class DecodeSequencerTests: XCTestCase {
     func testKeyframeBypassesGapAndDropsObsoleteHeld() {
         var sq = DecodeSequencer()
         _ = sq.noteCompleted(frame(10, kf: true))
-        XCTAssertEqual(ids(sq.noteCompleted(frame(12))), [])        // held behind missing 11
+        XCTAssertEqual(ids(sq.noteCompleted(frame(12))), []) // held behind missing 11
         // An IDR lands (recovery): releases NOW; held #12 (older than the kf) is obsolete.
         XCTAssertEqual(ids(sq.noteCompleted(frame(20, kf: true))), [20])
         XCTAssertEqual(sq.nextExpected, 21)
@@ -59,10 +59,13 @@ final class DecodeSequencerTests: XCTestCase {
 
     func testKeyframeKeepsNewerHeldFrames() {
         var sq = DecodeSequencer()
-        _ = sq.noteCompleted(frame(10, kf: true))                   // expected 11
+        _ = sq.noteCompleted(frame(10, kf: true)) // expected 11
         XCTAssertEqual(ids(sq.noteCompleted(frame(16))), [], "held behind the 11..15 gap (within maxGap)")
-        XCTAssertEqual(ids(sq.noteCompleted(frame(15, kf: true))), [15, 16],
-                       "kf releases immediately AND the newer held frame follows in order")
+        XCTAssertEqual(
+            ids(sq.noteCompleted(frame(15, kf: true))),
+            [15, 16],
+            "kf releases immediately AND the newer held frame follows in order",
+        )
         XCTAssertEqual(sq.nextExpected, 17)
     }
 

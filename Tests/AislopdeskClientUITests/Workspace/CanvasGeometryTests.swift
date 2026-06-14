@@ -1,16 +1,21 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pure tests for ``CanvasGeometry`` — the screen transform (a rigid 1:1 translate), the 8-anchor
 /// resize math, and new-pane placement (docs/30 §3, §9.1). The resize table is the canvas analogue of
 /// `SplitContainerTests`' `applyingDelta` coverage.
 final class CanvasGeometryTests: XCTestCase {
-
     private let eps: CGFloat = 1e-6
-    private let minSize = Canvas.minItemSize   // 160 × 120
+    private let minSize = Canvas.minItemSize // 160 × 120
 
-    private func assertRect(_ a: CGRect, _ b: CGRect, _ msg: String = "", file: StaticString = #filePath, line: UInt = #line) {
+    private func assertRect(
+        _ a: CGRect,
+        _ b: CGRect,
+        _ msg: String = "",
+        file: StaticString = #filePath,
+        line: UInt = #line,
+    ) {
         XCTAssertEqual(a.minX, b.minX, accuracy: eps, "\(msg) x", file: file, line: line)
         XCTAssertEqual(a.minY, b.minY, accuracy: eps, "\(msg) y", file: file, line: line)
         XCTAssertEqual(a.width, b.width, accuracy: eps, "\(msg) w", file: file, line: line)
@@ -40,18 +45,18 @@ final class CanvasGeometryTests: XCTestCase {
 
     /// Start 200×200 at (100,100); drag each anchor by (+40,+30). Opposite edge(s) pinned.
     func testResizeAllAnchors() {
-        let base = CGRect(x: 100, y: 100, width: 200, height: 200)   // edges: L100 R300 T100 B300
+        let base = CGRect(x: 100, y: 100, width: 200, height: 200) // edges: L100 R300 T100 B300
         let d = CGSize(width: 40, height: 30)
         func r(_ a: ResizeAnchor) -> CGRect { CanvasGeometry.resizing(base, anchor: a, by: d, minSize: minSize) }
 
-        assertRect(r(.right),       CGRect(x: 100, y: 100, width: 240, height: 200), "right edge +40")
-        assertRect(r(.left),        CGRect(x: 140, y: 100, width: 160, height: 200), "left edge +40 (R pinned)")
-        assertRect(r(.bottom),      CGRect(x: 100, y: 100, width: 200, height: 230), "bottom +30")
-        assertRect(r(.top),         CGRect(x: 100, y: 130, width: 200, height: 170), "top +30 (B pinned)")
+        assertRect(r(.right), CGRect(x: 100, y: 100, width: 240, height: 200), "right edge +40")
+        assertRect(r(.left), CGRect(x: 140, y: 100, width: 160, height: 200), "left edge +40 (R pinned)")
+        assertRect(r(.bottom), CGRect(x: 100, y: 100, width: 200, height: 230), "bottom +30")
+        assertRect(r(.top), CGRect(x: 100, y: 130, width: 200, height: 170), "top +30 (B pinned)")
         assertRect(r(.bottomRight), CGRect(x: 100, y: 100, width: 240, height: 230), "BR both grow")
-        assertRect(r(.topLeft),     CGRect(x: 140, y: 130, width: 160, height: 170), "TL both, opposite pinned")
-        assertRect(r(.topRight),    CGRect(x: 100, y: 130, width: 240, height: 170), "TR: R grows, T moves")
-        assertRect(r(.bottomLeft),  CGRect(x: 140, y: 100, width: 160, height: 230), "BL: L moves, B grows")
+        assertRect(r(.topLeft), CGRect(x: 140, y: 130, width: 160, height: 170), "TL both, opposite pinned")
+        assertRect(r(.topRight), CGRect(x: 100, y: 130, width: 240, height: 170), "TR: R grows, T moves")
+        assertRect(r(.bottomLeft), CGRect(x: 140, y: 100, width: 160, height: 230), "BL: L moves, B grows")
     }
 
     func testResizeFloorsByPushingMovedEdge() {
@@ -69,9 +74,12 @@ final class CanvasGeometryTests: XCTestCase {
 
     func testPlacementCascadesFromNear() {
         let near = CGRect(x: 200, y: 200, width: 640, height: 420)
-        let p = CanvasGeometry.placement(near: near, existing: [near],
-                                         viewport: CGRect(x: 0, y: 0, width: 1280, height: 800),
-                                         size: Canvas.defaultItemSize)
+        let p = CanvasGeometry.placement(
+            near: near,
+            existing: [near],
+            viewport: CGRect(x: 0, y: 0, width: 1280, height: 800),
+            size: Canvas.defaultItemSize,
+        )
         // first cascade step lands at near.origin + (28,28); overlap with `near` there is tested to be
         // ≤25% so it is accepted (640×420 shifted 28,28 overlaps ~ (612*392)/(640*420) ≈ 0.89 of its
         // area → MUST nudge further). So it keeps stepping until overlap ≤ 25%.
@@ -85,8 +93,12 @@ final class CanvasGeometryTests: XCTestCase {
 
     func testPlacementCentersWhenNoNear() {
         let vp = CGRect(x: 0, y: 0, width: 1280, height: 800)
-        let p = CanvasGeometry.placement(near: nil, existing: [],
-                                         viewport: vp, size: Canvas.defaultItemSize)
+        let p = CanvasGeometry.placement(
+            near: nil,
+            existing: [],
+            viewport: vp,
+            size: Canvas.defaultItemSize,
+        )
         XCTAssertEqual(p.midX, vp.midX, accuracy: eps)
         XCTAssertEqual(p.midY, vp.midY, accuracy: eps)
     }
@@ -94,10 +106,16 @@ final class CanvasGeometryTests: XCTestCase {
     func testPlacementNoCollisionReturnsSeed() {
         let near = CGRect(x: 0, y: 0, width: 100, height: 100)
         // No existing → seed (near.origin + cascade) is accepted immediately.
-        let p = CanvasGeometry.placement(near: near, existing: [],
-                                         viewport: CGRect(x: 0, y: 0, width: 1280, height: 800),
-                                         size: Canvas.defaultItemSize)
-        assertRect(p, CGRect(origin: CGPoint(x: Canvas.cascadeStep, y: Canvas.cascadeStep), size: Canvas.defaultItemSize))
+        let p = CanvasGeometry.placement(
+            near: near,
+            existing: [],
+            viewport: CGRect(x: 0, y: 0, width: 1280, height: 800),
+            size: Canvas.defaultItemSize,
+        )
+        assertRect(
+            p,
+            CGRect(origin: CGPoint(x: Canvas.cascadeStep, y: Canvas.cascadeStep), size: Canvas.defaultItemSize),
+        )
     }
 
     // MARK: offscreenBeacons
@@ -109,8 +127,11 @@ final class CanvasGeometryTests: XCTestCase {
     func testNoBeaconForAVisiblePane() {
         let id = PaneID()
         let items = [item(id, CGRect(x: 100, y: 100, width: 200, height: 150))]
-        let beacons = CanvasGeometry.offscreenBeacons(items, camera: .zero,
-                                                      viewport: CGSize(width: 1280, height: 800))
+        let beacons = CanvasGeometry.offscreenBeacons(
+            items,
+            camera: .zero,
+            viewport: CGSize(width: 1280, height: 800),
+        )
         XCTAssertTrue(beacons.isEmpty, "a pane intersecting the viewport gets no beacon")
     }
 
@@ -119,27 +140,43 @@ final class CanvasGeometryTests: XCTestCase {
         let inset: CGFloat = 18
         // A pane far to the RIGHT (off the right edge).
         let right = PaneID()
-        let rb = CanvasGeometry.offscreenBeacons([item(right, CGRect(x: 5000, y: 300, width: 100, height: 100))],
-                                                 camera: .zero, viewport: vp, inset: inset)
+        let rb = CanvasGeometry.offscreenBeacons(
+            [item(right, CGRect(x: 5000, y: 300, width: 100, height: 100))],
+            camera: .zero,
+            viewport: vp,
+            inset: inset,
+        )
         XCTAssertEqual(rb.count, 1)
         XCTAssertEqual(rb[0].edge, .right)
         XCTAssertEqual(rb[0].screenPoint.x, vp.width - inset, accuracy: eps, "clamped to the right inset")
         // ABOVE (off the top edge).
         let up = PaneID()
-        let ub = CanvasGeometry.offscreenBeacons([item(up, CGRect(x: 400, y: -4000, width: 100, height: 100))],
-                                                 camera: .zero, viewport: vp, inset: inset)
+        let ub = CanvasGeometry.offscreenBeacons(
+            [item(up, CGRect(x: 400, y: -4000, width: 100, height: 100))],
+            camera: .zero,
+            viewport: vp,
+            inset: inset,
+        )
         XCTAssertEqual(ub[0].edge, .top)
         XCTAssertEqual(ub[0].screenPoint.y, inset, accuracy: eps)
         // LEFT.
         let left = PaneID()
-        let lb = CanvasGeometry.offscreenBeacons([item(left, CGRect(x: -5000, y: 300, width: 100, height: 100))],
-                                                 camera: .zero, viewport: vp, inset: inset)
+        let lb = CanvasGeometry.offscreenBeacons(
+            [item(left, CGRect(x: -5000, y: 300, width: 100, height: 100))],
+            camera: .zero,
+            viewport: vp,
+            inset: inset,
+        )
         XCTAssertEqual(lb[0].edge, .left)
         XCTAssertEqual(lb[0].screenPoint.x, inset, accuracy: eps)
         // BELOW.
         let down = PaneID()
-        let db = CanvasGeometry.offscreenBeacons([item(down, CGRect(x: 400, y: 6000, width: 100, height: 100))],
-                                                 camera: .zero, viewport: vp, inset: inset)
+        let db = CanvasGeometry.offscreenBeacons(
+            [item(down, CGRect(x: 400, y: 6000, width: 100, height: 100))],
+            camera: .zero,
+            viewport: vp,
+            inset: inset,
+        )
         XCTAssertEqual(db[0].edge, .bottom)
         XCTAssertEqual(db[0].screenPoint.y, vp.height - inset, accuracy: eps)
     }
@@ -154,5 +191,4 @@ final class CanvasGeometryTests: XCTestCase {
         let panned = CanvasCamera(origin: CGPoint(x: 1900, y: 0))
         XCTAssertTrue(CanvasGeometry.offscreenBeacons(items, camera: panned, viewport: vp).isEmpty)
     }
-
 }

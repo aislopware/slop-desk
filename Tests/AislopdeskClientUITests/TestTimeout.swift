@@ -15,11 +15,15 @@ import Foundation
 /// standing up the E2E machinery it protects.
 func withTestTimeout<T: Sendable>(
     _ timeout: Duration,
-    _ body: @escaping @Sendable () async -> T
+    _ body: @escaping @Sendable () async -> T,
 ) async -> T? {
     await withTaskGroup(of: T?.self) { group in
         group.addTask { await body() }
-        group.addTask { try? await Task.sleep(for: timeout); return nil }
+        group.addTask { try? await Task.sleep(for: timeout)
+            return nil
+        }
+        // `group.next()` is `T??`; the `?? nil` flattens the double-optional to `T?`.
+        // swiftlint:disable:next redundant_nil_coalescing
         let first = await group.next() ?? nil
         group.cancelAll()
         return first

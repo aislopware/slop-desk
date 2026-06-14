@@ -122,8 +122,8 @@ public struct PacerDepthPolicy: Sendable, Equatable {
 
         /// Env-tunable construction (`AISLOPDESK_DEPTH_*`), each clamped to a sane band; absent /
         /// unparseable values keep the default. Pure — unit-testable headlessly.
-        public static func fromEnvironment(_ env: [String: String]) -> Config {
-            var c = Config()
+        public static func fromEnvironment(_ env: [String: String]) -> Self {
+            var c = Self()
             if let v = env["AISLOPDESK_DEPTH_PROMOTE_LATES"].flatMap(Int.init) {
                 // lateTimes ring holds 4 — a count above that could never be satisfied.
                 c.promoteLateCount = min(4, max(1, v))
@@ -148,7 +148,7 @@ public struct PacerDepthPolicy: Sendable, Equatable {
                 c.lateSlackFraction = min(100.0, max(0.0, v)) / 100.0
             }
             if let v = env["AISLOPDESK_DEPTH_DEMOTE_TOLERANCE"].flatMap(Int.init) {
-                c.demoteToleranceLates = min(3, max(0, v))   // lateTimes ring holds 4
+                c.demoteToleranceLates = min(3, max(0, v)) // lateTimes ring holds 4
             }
             if let v = env["AISLOPDESK_DEPTH_WARMUP_MS"].flatMap(Double.init), v.isFinite {
                 c.promoteWarmupSeconds = min(30.0, max(0.0, v / 1000.0))
@@ -159,7 +159,10 @@ public struct PacerDepthPolicy: Sendable, Equatable {
 
     /// Classification of one content-present gap (returned by ``notePresent(_:)`` for tests/diagnostics).
     public enum GapClass: Sendable, Equatable {
-        case first, normal, late, idle
+        case first
+        case normal
+        case late
+        case idle
     }
 
     /// The recommended presentation depth: 1 or `boostDepth`. Always 1 while `adaptEnabled` is
@@ -200,20 +203,20 @@ public struct PacerDepthPolicy: Sendable, Equatable {
     public init(config: Config = Config(), adaptEnabled: Bool) {
         self.config = config
         self.adaptEnabled = adaptEnabled
-        self.depth = 1
+        depth = 1
     }
 
     /// The expected content interval: the hint (if set), else the median of the in-flow
     /// inter-arrival ring (once warmed), else the default — clamped to a sane band.
     public var expectedIntervalSeconds: Double {
-        let raw: Double
-        if let intervalHint {
-            raw = intervalHint
-        } else if intervalRing.count >= config.minSamplesForEstimate {
-            raw = Self.median(intervalRing)
-        } else {
-            raw = config.defaultIntervalSeconds
-        }
+        let raw: Double =
+            if let intervalHint {
+                intervalHint
+            } else if intervalRing.count >= config.minSamplesForEstimate {
+                Self.median(intervalRing)
+            } else {
+                config.defaultIntervalSeconds
+            }
         return min(config.maxIntervalSeconds, max(config.minIntervalSeconds, raw))
     }
 
@@ -232,7 +235,7 @@ public struct PacerDepthPolicy: Sendable, Equatable {
         if streamStartAt == nil { streamStartAt = now }
         if let last = lastArrival {
             let gap = now - last
-            if gap > 0 && gap <= config.idleGapSeconds {
+            if gap > 0, gap <= config.idleGapSeconds {
                 intervalRing.append(gap)
                 if intervalRing.count > config.intervalRingSize {
                     intervalRing.removeFirst(intervalRing.count - config.intervalRingSize)
@@ -268,7 +271,7 @@ public struct PacerDepthPolicy: Sendable, Equatable {
         // v3: classification only (GapClass diagnostics) — a present-gap late no longer counts or
         // promotes (the v2 pinning bug); the depth action runs on ``noteNetworkLate(_:)``.
         let isLate = gap > lateThresholdSeconds && gradientOK && wasDense(asOf: last)
-        gapEpisodeOpen = false   // any present closes an open re-show episode
+        gapEpisodeOpen = false // any present closes an open re-show episode
         prevPresentGap = gap
         lastPresentAt = now
         evaluateDemote(now)
@@ -292,7 +295,7 @@ public struct PacerDepthPolicy: Sendable, Equatable {
     public mutating func noteReshow(_ now: Double) {
         guard let last = lastPresentAt, !gapEpisodeOpen else { return }
         let openGap = now - last
-        if openGap > lateThresholdSeconds && openGap <= config.idleGapSeconds && wasDense(asOf: last) {
+        if openGap > lateThresholdSeconds, openGap <= config.idleGapSeconds, wasDense(asOf: last) {
             if gapCount < .max { gapCount += 1 }
             gapEpisodeOpen = true
         }
@@ -300,7 +303,9 @@ public struct PacerDepthPolicy: Sendable, Equatable {
 
     /// Read + reset the windowed counters (one drain per NetworkStats report).
     public mutating func drainCounters() -> (lateFrames: UInt32, presentGaps: UInt32) {
-        defer { lateCount = 0; gapCount = 0 }
+        defer { lateCount = 0
+            gapCount = 0
+        }
         return (lateCount, gapCount)
     }
 

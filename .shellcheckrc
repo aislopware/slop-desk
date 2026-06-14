@@ -1,0 +1,13 @@
+# ShellCheck — strictest practical config for the repo's shell scripts.
+# `enable=all` turns on every optional check (the ones off by default), e.g.
+# require-variable-braces, quote-safe-variables, check-unassigned-uppercase.
+enable=all
+
+# Allow `source`/`.` of files that ShellCheck can locate, so cross-file checks work.
+external-sources=true
+
+# The ONLY carve-out from `enable=all`: the return-value-masking trio. These are
+# OFF by default in ShellCheck for good reason — they fire on every idiomatic
+# `echo "$(cmd …)"` / `$(a | b)` and demand awkward split-into-a-variable rewrites
+# with no real robustness gain for these scripts. Everything else stays maximal.
+disable=SC2312,SC2310,SC2311

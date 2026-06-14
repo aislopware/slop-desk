@@ -8,7 +8,6 @@ import AppKit
 /// monitor's changeCount-gated poll into it.
 @MainActor
 final class ClipboardRingTests: XCTestCase {
-
     private func makeStore() -> WorkspaceStore {
         WorkspaceStore(restoring: nil, makeSession: { FakePaneSession($0) })
     }
@@ -48,7 +47,7 @@ final class ClipboardRingTests: XCTestCase {
         let store = makeStore()
         let key = SettingsKey.recordClipboardHistory
         UserDefaults.standard.set(false, forKey: key)
-        defer { UserDefaults.standard.removeObject(forKey: key) }   // restore default (ON) for other tests
+        defer { UserDefaults.standard.removeObject(forKey: key) } // restore default (ON) for other tests
         store.recordClip("a copied secret")
         XCTAssertTrue(store.clipboardRing.isEmpty, "recording disabled → nothing is retained")
         UserDefaults.standard.set(true, forKey: key)
@@ -72,13 +71,15 @@ final class ClipboardRingTests: XCTestCase {
         let store = makeStore()
         let pb = NSPasteboard(name: NSPasteboard.Name("aislopdesk-test-\(UUID().uuidString)"))
         defer { pb.releaseGlobally() }
-        pb.clearContents(); pb.setString("seed", forType: .string)
+        pb.clearContents()
+        pb.setString("seed", forType: .string)
         let monitor = ClipboardMonitor(store: store, pasteboard: pb)
         // The seed predates the monitor → not retro-captured.
         monitor.poll()
         XCTAssertTrue(store.clipboardRing.isEmpty, "the clip present at init is not retro-captured")
         // A new copy advances changeCount → captured.
-        pb.clearContents(); pb.setString("fresh", forType: .string)
+        pb.clearContents()
+        pb.setString("fresh", forType: .string)
         monitor.poll()
         XCTAssertEqual(store.clipboardRing, ["fresh"])
         // Polling again with no change is a no-op (no duplicate).

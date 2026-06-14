@@ -1,7 +1,7 @@
 #if canImport(SwiftUI)
-import SwiftUI
 import AislopdeskClaudeCode
 import AislopdeskClient
+import SwiftUI
 
 /// The external input affordance (doc 14 A + B1): a compose field that sends via
 /// `AislopdeskClient.sendInput`, switching its label/behaviour with the ``InputBarModel``'s
@@ -22,7 +22,7 @@ public struct InputBarView: View {
         model: InputBarModel,
         client: AislopdeskClient?,
         paneID: PaneID? = nil,
-        focusCoordinator: PaneFocusCoordinator? = nil
+        focusCoordinator: PaneFocusCoordinator? = nil,
     ) {
         _model = Bindable(model)
         self.client = client
@@ -61,10 +61,10 @@ public struct InputBarView: View {
             // Never register a coordinator under an ephemeral (no-paneID) key: a coordinator only
             // makes sense with a STABLE paneID. A mis-wired caller (coordinator but nil paneID)
             // degrades to the compact direct-claim path instead of an unstable registration.
-            coordinator: paneID == nil ? nil : focusCoordinator
+            coordinator: paneID == nil ? nil : focusCoordinator,
         )
-            .frame(maxWidth: .infinity, minHeight: 36)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 6))
+        .frame(maxWidth: .infinity, minHeight: 36)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 6))
         #else
         TextField(placeholder, text: $model.compose, axis: .vertical)
             .textFieldStyle(.roundedBorder)
@@ -84,9 +84,9 @@ public struct InputBarView: View {
     private var placeholder: String {
         switch model.affordance {
         case .shellCommand:
-            return model.commandRunning ? "command running…" : "shell command"
+            model.commandRunning ? "command running…" : "shell command"
         case .tuiCompose:
-            return "compose (TUI)"
+            "compose (TUI)"
         }
     }
     #endif
@@ -102,8 +102,8 @@ public struct InputBarView: View {
 
     private var badgeColor: Color {
         switch model.affordance {
-        case .shellCommand: return .blue
-        case .tuiCompose: return .purple
+        case .shellCommand: .blue
+        case .tuiCompose: .purple
         }
     }
 }

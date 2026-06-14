@@ -3,10 +3,9 @@ import XCTest
 
 /// Pure allocator + lifecycle tests for `ChannelTable`. No IO, no sockets.
 final class ChannelTableTests: XCTestCase {
-
     func testAllocatesOddMonotonicIDs() {
         var table = ChannelTable()
-        let ids = (0 ..< 5).map { _ in table.allocate() }
+        let ids = (0..<5).map { _ in table.allocate() }
         XCTAssertEqual(ids, [1, 3, 5, 7, 9], "client-initiated ids are odd and monotonic")
         for id in ids {
             XCTAssertEqual(table.state(of: id), .idle, "a freshly allocated id starts idle")
@@ -15,9 +14,9 @@ final class ChannelTableTests: XCTestCase {
 
     func testNeverReusesALiveID() {
         var table = ChannelTable()
-        let first = table.allocate()       // 1
+        let first = table.allocate() // 1
         table.open(first)
-        let second = table.allocate()      // 3 — must not collide with the live id
+        let second = table.allocate() // 3 — must not collide with the live id
         XCTAssertNotEqual(first, second)
         XCTAssertEqual([first, second], [1, 3])
     }
@@ -95,7 +94,8 @@ final class ChannelTableTests: XCTestCase {
         let d = table.allocate() // 7 fully closed
         table.open(b)
         table.localClose(c)
-        table.localClose(d); table.remoteClose(d)
+        table.localClose(d)
+        table.remoteClose(d)
 
         XCTAssertEqual(table.liveChannelIDs, [a, b, c], "idle, open, half-closed are live; closed is not")
         XCTAssertFalse(table.liveChannelIDs.contains(d))

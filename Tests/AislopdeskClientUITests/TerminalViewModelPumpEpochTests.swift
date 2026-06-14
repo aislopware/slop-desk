@@ -1,9 +1,9 @@
-import XCTest
-import Foundation
-import AislopdeskProtocol
-import AislopdeskTransport
 import AislopdeskClient
+import AislopdeskProtocol
 import AislopdeskTerminal
+import AislopdeskTransport
+import Foundation
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Regression net for the output pump's epoch-snapshot timing (review finding): `observe()` must tag a
@@ -16,8 +16,7 @@ import AislopdeskTerminal
 /// (the suspension point inside `takeOutputBatch`), so the interleave is deterministic, not racy.
 @MainActor
 final class TerminalViewModelPumpEpochTests: XCTestCase {
-
-    private static let ris = Data([0x1B, 0x63])   // ESC c — the fresh-session wipe prefix.
+    private static let ris = Data([0x1B, 0x63]) // ESC c — the fresh-session wipe prefix.
 
     func testPumpTagsInHandBatchWithPreReconnectEpoch() async throws {
         let transport = GatedTransport()
@@ -90,30 +89,45 @@ final class TerminalViewModelPumpEpochTests: XCTestCase {
         func hasEntered() -> Bool { entered }
         func release() { released = true }
 
-        func connect(host: String, port: UInt16, resume: UUID, lastReceivedSeq: Int64, handshakeTimeout: Duration) async throws {
+        func connect(
+            host _: String,
+            port _: UInt16,
+            resume: UUID,
+            lastReceivedSeq _: Int64,
+            handshakeTimeout _: Duration,
+        ) {
             _sessionID = (resume == WireMessage.newSessionID) ? UUID() : resume
         }
-        func sendInput(_ bytes: Data) async throws {}
-        func sendResize(cols: UInt16, rows: UInt16, pxWidth: UInt16, pxHeight: UInt16) async throws {}
-        func sendAck(seq: Int64) async throws {}
-        func sendBye() async throws {}
-        func close() async { released = true; continuation.finish() }
 
-        func noteOutputConsumed(wireBytes: Int) async {
+        func sendInput(_: Data) {}
+        func sendResize(cols _: UInt16, rows _: UInt16, pxWidth _: UInt16, pxHeight _: UInt16) {}
+        func sendAck(seq _: Int64) {}
+        func sendBye() {}
+        func close() { released = true
+            continuation.finish()
+        }
+
+        func noteOutputConsumed(wireBytes _: Int) async {
             guard gateArmed else { return }
             gateArmed = false
             entered = true
-            while !released { await Task.yield() }   // hold the take open until the test interleaves the reconnect
+            while !released { await Task.yield() } // hold the take open until the test interleaves the reconnect
         }
     }
 
     private final class RecordingSurface: TerminalSurface, @unchecked Sendable {
         var writes: [Data] = []
         var flushes = 0
-        func feed(_ bytes: Data) { writes.append(bytes); flushes += 1 }
-        func feedBatch(_ chunks: ArraySlice<Data>) { writes.append(contentsOf: chunks); flushes += 1 }
-        func setSize(cols: UInt16, rows: UInt16) {}
-        func handleInput(_ bytes: Data) {}
+        func feed(_ bytes: Data) { writes.append(bytes)
+            flushes += 1
+        }
+
+        func feedBatch(_ chunks: ArraySlice<Data>) { writes.append(contentsOf: chunks)
+            flushes += 1
+        }
+
+        func setSize(cols _: UInt16, rows _: UInt16) {}
+        func handleInput(_: Data) {}
         var onWrite: ((Data) -> Void)?
     }
 }

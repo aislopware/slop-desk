@@ -1,5 +1,5 @@
-import XCTest
 import AislopdeskClaudeCode
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Tests the `@MainActor @Observable` ``InputBarModel`` shell — it must faithfully mirror the
@@ -8,7 +8,6 @@ import AislopdeskClaudeCode
 /// submit encoding.
 @MainActor
 final class InputBarModelTests: XCTestCase {
-
     /// `ESC[?1049h` = enter alt-screen (→ B1); `ESC[?1049l` = leave (→ A).
     private let enterAlt = Data([0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x68])
     private let leaveAlt = Data([0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x6C])
@@ -39,13 +38,13 @@ final class InputBarModelTests: XCTestCase {
         XCTAssertNil(model.encodeSubmit())
     }
 
-    func testB1SubmitRecordsForDedupAndShellDoesNot() {
+    func testB1SubmitRecordsForDedupAndShellDoesNot() throws {
         // In B1, encodeSubmit records the bytes so the echo is suppressed: feeding the echo
         // back through ingestOutput yields nothing to render.
         let model = InputBarModel()
-        model.ingestOutput(enterAlt)            // → B1
+        model.ingestOutput(enterAlt) // → B1
         model.compose = "hi"
-        let sent = model.encodeSubmit()!        // records "hi\r" in the ring
+        let sent = try XCTUnwrap(model.encodeSubmit()) // records "hi\r" in the ring
         XCTAssertEqual(sent, Data("hi\r".utf8))
 
         // The PTY echoes "hi\r\n"; the ring should strip the recorded prefix.
@@ -54,7 +53,7 @@ final class InputBarModelTests: XCTestCase {
         XCTAssertEqual(rendered, Data(), "B1 dedup ring suppresses the recorded echo")
 
         // In A (shell), the same submit must NOT record (echo shows normally).
-        let shellModel = InputBarModel()        // starts in A
+        let shellModel = InputBarModel() // starts in A
         shellModel.compose = "hi"
         _ = shellModel.encodeSubmit()
         let shellRendered = shellModel.ingestOutput(Data("hi\r\n".utf8))

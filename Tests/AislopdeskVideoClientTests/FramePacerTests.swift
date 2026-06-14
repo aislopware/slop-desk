@@ -1,5 +1,5 @@
-import XCTest
 import CoreVideo
+import XCTest
 @testable import AislopdeskVideoClient
 
 /// PURE frame-pacer logic: most-recent-wins submit, show-last-frame on empty queue,
@@ -8,10 +8,16 @@ import CoreVideo
 /// are pure. `CVPixelBufferCreate` is a plain CoreVideo allocation (no decode session,
 /// no window-server) so it is hang-safe.
 final class FramePacerTests: XCTestCase {
-
     private func makePixelBuffer() -> CVPixelBuffer {
         var pb: CVPixelBuffer?
-        let status = CVPixelBufferCreate(kCFAllocatorDefault, 4, 4, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, nil, &pb)
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            4,
+            4,
+            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            nil,
+            &pb,
+        )
         precondition(status == kCVReturnSuccess && pb != nil, "CVPixelBufferCreate failed (\(status))")
         return pb!
     }
@@ -72,9 +78,11 @@ final class FramePacerTests: XCTestCase {
         // The key fix: after a real idle (buffer empty ≥ targetDepth vsyncs) the pacer re-primes, so a
         // single frame arriving at scroll-resume is HELD (slack rebuilt) instead of presented with none.
         let pacer = FramePacer(targetDepth: 2, maxDepth: 5, renderCallback: { _ in })
-        let a = makePixelBuffer(); let b = makePixelBuffer()
-        pacer.submit(a); pacer.submit(b)
-        XCTAssertTrue(pacer.frameForVSync() === a)   // primed
+        let a = makePixelBuffer()
+        let b = makePixelBuffer()
+        pacer.submit(a)
+        pacer.submit(b)
+        XCTAssertTrue(pacer.frameForVSync() === a) // primed
         XCTAssertTrue(pacer.frameForVSync() === b)
         // Idle: drain underflows. underflowRun reaches targetDepth(2) ⇒ primed reset to false.
         XCTAssertTrue(pacer.frameForVSync() === b, "underflow 1 → re-show last")
@@ -94,7 +102,7 @@ final class FramePacerTests: XCTestCase {
         let pacer = FramePacer(targetDepth: 3, maxDepth: 8, renderCallback: { _ in })
         let f = (0..<3).map { _ in makePixelBuffer() }
         f.forEach { pacer.submit($0) }
-        XCTAssertTrue(pacer.frameForVSync() === f[0])  // primed
+        XCTAssertTrue(pacer.frameForVSync() === f[0]) // primed
         XCTAssertTrue(pacer.frameForVSync() === f[1])
         XCTAssertTrue(pacer.frameForVSync() === f[2])
         XCTAssertTrue(pacer.frameForVSync() === f[2], "one empty vsync → re-show last (transient dip)")
@@ -126,7 +134,7 @@ final class FramePacerTests: XCTestCase {
         // targetDepth 1 so the cap (not priming) is what gates rendering here.
         let pacer = FramePacer(maxFrameRate: 30, targetDepth: 1, renderCallback: { _ in counter.bump() })
         pacer.submit(makePixelBuffer())
-        pacer.tick(hostTimeSeconds: 0.0)   // first tick (lastRender==0) → renders
+        pacer.tick(hostTimeSeconds: 0.0) // first tick (lastRender==0) → renders
         pacer.submit(makePixelBuffer())
         pacer.tick(hostTimeSeconds: 1.000) // lastRender still 0 → renders
         pacer.submit(makePixelBuffer())
@@ -140,6 +148,13 @@ final class FramePacerTests: XCTestCase {
 private final class RenderCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var value = 0
-    func bump() { lock.lock(); value += 1; lock.unlock() }
-    var count: Int { lock.lock(); defer { lock.unlock() }; return value }
+    func bump() { lock.lock()
+        value += 1
+        lock.unlock()
+    }
+
+    var count: Int { lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
 }

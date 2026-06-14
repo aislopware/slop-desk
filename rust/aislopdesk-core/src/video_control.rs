@@ -111,7 +111,7 @@ pub enum VideoControlMessage {
 impl VideoControlMessage {
     /// The on-wire type byte.
     #[must_use]
-    pub fn message_type(&self) -> u8 {
+    pub const fn message_type(&self) -> u8 {
         match self {
             Self::Hello { .. } => 1,
             Self::HelloAck { .. } => 2,
@@ -212,7 +212,7 @@ impl VideoControlMessage {
     /// Parses a control message. An unknown type byte is malformed; list records are read
     /// without pre-allocating against the untrusted count, so each short read fails fast.
     #[allow(clippy::too_many_lines)] // one flat match over 12 wire variants reads clearest inline.
-    pub fn decode(data: &[u8]) -> Result<VideoControlMessage> {
+    pub fn decode(data: &[u8]) -> Result<Self> {
         let mut r = ByteReader::new(data);
         let kind = r.read_u8()?;
         match kind {

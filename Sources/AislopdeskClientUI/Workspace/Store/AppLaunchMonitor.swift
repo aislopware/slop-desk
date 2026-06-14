@@ -7,6 +7,7 @@ import Foundation
 /// host-window query the picker uses), diffs the app-name set across polls, and fires
 /// ``WorkspaceStore/autoSwitchForLaunchedApp(_:)`` for each NEWLY-appeared app. Inert unless the
 /// feature toggle is on AND at least one preset has a trigger (so a user with no triggers pays nothing).
+@preconcurrency
 @MainActor
 public final class AppLaunchMonitor {
     private weak var store: WorkspaceStore?
@@ -16,10 +17,13 @@ public final class AppLaunchMonitor {
     /// The host app names present on the last poll (to diff for newly-appeared apps).
     private var lastApps: Set<String> = []
 
-    public init(store: WorkspaceStore,
-                isConnected: @escaping @MainActor () -> Bool,
-                target: @escaping @MainActor () -> ConnectionTarget,
-                pollGap: Duration = .seconds(3)) {
+    @preconcurrency
+    public init(
+        store: WorkspaceStore,
+        isConnected: @escaping @MainActor () -> Bool,
+        target: @escaping @MainActor () -> ConnectionTarget,
+        pollGap: Duration = .seconds(3),
+    ) {
         self.store = store
         self.isConnected = isConnected
         self.target = target
@@ -40,7 +44,8 @@ public final class AppLaunchMonitor {
         // Cheap early-out: nothing to do unless the feature is on and some preset carries a trigger.
         guard SettingsKey.autoSwitchLayoutsEnabled,
               store.workspace.layoutPresets.contains(where: { $0.triggerAppName != nil }),
-              isConnected(), let query = RemoteWindowDiscovery.shared else {
+              isConnected(), let query = RemoteWindowDiscovery.shared
+        else {
             // Not ready (feature off / no trigger / DISCONNECTED): treat it like the host's whole app set
             // went absent — clear the auto-switch latch for every previously-seen app AND forget the
             // last-seen set. So a later reconnect re-evaluates from scratch: present host apps are

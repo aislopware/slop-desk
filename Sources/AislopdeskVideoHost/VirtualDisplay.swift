@@ -1,6 +1,7 @@
 #if os(macOS)
-import Foundation
 import CoreGraphics
+import Foundation
+
 // @preconcurrency: the private CG classes (clang module) predate Swift concurrency and are not
 // `Sendable`; we cross them into a background queue ONLY inside ``applyWithTimeout`` via an explicit
 // unchecked-Sendable box, so downgrade the module-level Sendable notes to warnings.
@@ -23,6 +24,7 @@ import OSLog
 ///
 /// HW-GATED: needs a window server + a run loop; not exercised in tests (the pure pixel/point math
 /// is in ``VirtualDisplayGeometry``, which IS unit-tested).
+@preconcurrency
 @MainActor
 public final class VirtualDisplay {
     private let log = Logger(subsystem: "aislopdesk.video.host", category: "VirtualDisplay")
@@ -38,9 +40,15 @@ public final class VirtualDisplay {
     /// `nil` on ANY failure (private API absent on this OS, WindowServer refusal, applySettings
     /// timeout/failure, displayID stayed 0, pixel-limit exceeded) — the caller then falls back to
     /// 1× real-display capture.
-    public func create(_ geometry: VirtualDisplayGeometry, name: String = "Aislopdesk Remote") async -> CGDirectDisplayID? {
+    public func create(
+        _ geometry: VirtualDisplayGeometry,
+        name: String = "Aislopdesk Remote",
+    ) async -> CGDirectDisplayID? {
         guard !geometry.exceedsPixelLimit else {
-            log.error("VD \(geometry.pixelWidth)×\(geometry.pixelHeight)px exceeds chip limit \(geometry.maxHorizontalPixels) — fallback to 1×")
+            log
+                .error(
+                    "VD \(geometry.pixelWidth)×\(geometry.pixelHeight)px exceeds chip limit \(geometry.maxHorizontalPixels) — fallback to 1×",
+                )
             return nil
         }
 
@@ -51,7 +59,7 @@ public final class VirtualDisplay {
         let physicalBounds = CGDisplayBounds(physicalMain)
 
         let desc = CGVirtualDisplayDescriptor()
-        desc.vendorID = 0xEEEE          // arbitrary NON-ZERO (a zero vendorID → initWithDescriptor: nil)
+        desc.vendorID = 0xEEEE // arbitrary NON-ZERO (a zero vendorID → initWithDescriptor: nil)
         desc.productID = 0x0001
         // serial: GUARDED KVC. The property name diverges across macOS versions (`serialNum` vs
         // `serialNumber`); setting via a typed accessor that the runtime class lacks would crash with
@@ -63,10 +71,10 @@ public final class VirtualDisplay {
         desc.sizeInMillimeters = geometry.sizeInMillimeters()
         // EXACT sRGB IEC 61966-2.1 D65 primaries — a custom profile can deadlock colorsyncd against
         // WindowServer's render threads; the cached sRGB profile avoids that.
-        desc.whitePoint   = CGPoint(x: 0.3127, y: 0.3290)
-        desc.redPrimary   = CGPoint(x: 0.6400, y: 0.3300)
+        desc.whitePoint = CGPoint(x: 0.3127, y: 0.3290)
+        desc.redPrimary = CGPoint(x: 0.6400, y: 0.3300)
         desc.greenPrimary = CGPoint(x: 0.3000, y: 0.6000)
-        desc.bluePrimary  = CGPoint(x: 0.1500, y: 0.0600)
+        desc.bluePrimary = CGPoint(x: 0.1500, y: 0.0600)
         desc.queue = DispatchQueue(label: "aislopdesk.video.vd.termination")
         desc.terminationHandler = { _, reason in
             // Delivered on desc.queue. Just log — the daemon drops its strong ref via destroy() on shutdown.
@@ -75,12 +83,15 @@ public final class VirtualDisplay {
         }
 
         guard let vd = CGVirtualDisplay(descriptor: desc) else {
-            log.error("CGVirtualDisplay(descriptor:) → nil (private API absent / WindowServer refused) — fallback to 1×")
+            log
+                .error(
+                    "CGVirtualDisplay(descriptor:) → nil (private API absent / WindowServer refused) — fallback to 1×",
+                )
             return nil
         }
 
         let settings = CGVirtualDisplaySettings()
-        settings.hiDPI = (geometry.scale >= 2) ? 1 : 0   // 1 = 2× Retina backing
+        settings.hiDPI = (geometry.scale >= 2) ? 1 : 0 // 1 = 2× Retina backing
         settings.modes = [
             CGVirtualDisplayMode(width: UInt(geometry.pointWidth), height: UInt(geometry.pointHeight), refreshRate: 60),
             CGVirtualDisplayMode(width: UInt(geometry.pointWidth), height: UInt(geometry.pointHeight), refreshRate: 30),
@@ -113,24 +124,35 @@ public final class VirtualDisplay {
         try? await Task.sleep(nanoseconds: 200_000_000)
         var cfg: CGDisplayConfigRef?
         if CGBeginDisplayConfiguration(&cfg) == .success, let cfg {
-            CGConfigureDisplayMirrorOfDisplay(cfg, id, kCGNullDirectDisplay)             // null master = stop mirroring = extend
-            CGConfigureDisplayOrigin(cfg, physicalMain, 0, 0)                            // physical stays at origin → stays main
-            CGConfigureDisplayOrigin(cfg, id, Int32(physicalBounds.width.rounded()), 0)  // VD to the right of the physical display
+            CGConfigureDisplayMirrorOfDisplay(cfg, id, kCGNullDirectDisplay) // null master = stop mirroring = extend
+            CGConfigureDisplayOrigin(cfg, physicalMain, 0, 0) // physical stays at origin → stays main
+            CGConfigureDisplayOrigin(
+                cfg,
+                id,
+                Int32(physicalBounds.width.rounded()),
+                0,
+            ) // VD to the right of the physical display
             CGCompleteDisplayConfiguration(cfg, .forSession)
         }
 
         self.vd = vd
-        self.displayID = id
-        self.pointSize = CGSize(width: geometry.pointWidth, height: geometry.pointHeight)
-        self.scale = geometry.scale
-        log.notice("virtual display ONLINE: id=\(id) \(geometry.pointWidth)×\(geometry.pointHeight)pt @\(geometry.scale)× (\(geometry.pixelWidth)×\(geometry.pixelHeight)px)")
+        displayID = id
+        pointSize = CGSize(width: geometry.pointWidth, height: geometry.pointHeight)
+        scale = geometry.scale
+        log
+            .notice(
+                "virtual display ONLINE: id=\(id) \(geometry.pointWidth)×\(geometry.pointHeight)pt @\(geometry.scale)× (\(geometry.pixelWidth)×\(geometry.pixelHeight)px)",
+            )
         return id
     }
 
     /// Release the display (ARC dealloc → WindowServer unregisters). Call on shutdown, AFTER all
     /// SCStreams targeting it have stopped (the FB17797423 retain rule).
     public func destroy() {
-        if vd != nil { log.notice("virtual display destroyed (id=\(self.displayID))") }
+        if vd != nil {
+            let destroyedID = displayID
+            log.notice("virtual display destroyed (id=\(destroyedID))")
+        }
         vd = nil
         displayID = 0
     }
@@ -141,7 +163,8 @@ public final class VirtualDisplay {
         for key in ["serialNum", "serialNumber"] {
             let setter = NSSelectorFromString("set" + key.prefix(1).uppercased() + key.dropFirst() + ":")
             if desc.responds(to: setter) {
-                desc.setValue(NSNumber(value: value), forKey: key)
+                // `value` (UInt32) bridges to `NSNumber` across the KVC `setValue(_:forKey:)` boundary.
+                desc.setValue(value, forKey: key)
                 return
             }
         }
@@ -150,7 +173,11 @@ public final class VirtualDisplay {
     /// Runs the blocking `applySettings:` on a background queue, resolving `false` if it does not
     /// return within `seconds` (a wedged WindowServer must not hang daemon bring-up). The once-guard
     /// ensures the continuation resumes exactly once.
-    private static func applyWithTimeout(_ vd: CGVirtualDisplay, _ settings: CGVirtualDisplaySettings, seconds: Double) async -> Bool {
+    private static func applyWithTimeout(
+        _ vd: CGVirtualDisplay,
+        _ settings: CGVirtualDisplaySettings,
+        seconds: Double,
+    ) async -> Bool {
         // The CG classes aren't Sendable; ferry them into the background queue via an explicit
         // unchecked box. Safe: `applySettings:` is the only off-main touch and it runs once, before
         // we store/use `vd` on the main actor (the continuation hop re-synchronizes).
@@ -158,7 +185,7 @@ public final class VirtualDisplay {
         return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
             let once = OnceFlag()
             DispatchQueue.global(qos: .userInitiated).async {
-                let ok = box.vd.apply(box.settings)   // imported Swift name for `-applySettings:`
+                let ok = box.vd.apply(box.settings) // imported Swift name for `-applySettings:`
                 if once.fire() { cont.resume(returning: ok) }
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
@@ -178,6 +205,11 @@ public final class VirtualDisplay {
 private final class OnceFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var fired = false
-    func fire() -> Bool { lock.lock(); defer { lock.unlock() }; if fired { return false }; fired = true; return true }
+    func fire() -> Bool { lock.lock()
+        defer { lock.unlock() }
+        if fired { return false }
+        fired = true
+        return true
+    }
 }
 #endif

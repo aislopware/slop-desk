@@ -1,6 +1,6 @@
-import XCTest
-import Foundation
 import AislopdeskProtocol
+import Foundation
+import XCTest
 @testable import AislopdeskTransport
 
 /// Credit-at-CONSUMPTION contract (the end-to-end backpressure restore): windowAdjust
@@ -9,7 +9,6 @@ import AislopdeskProtocol
 /// without bound downstream of the demux, and a slow consumer transitively pauses the
 /// producing peer at ~one window.
 final class MuxConsumptionCreditTests: XCTestCase {
-
     /// Loopback where the host floods output and the CLIENT's grant emissions are spied:
     /// delivering several windows' worth of threshold-crossing bytes with NO noteConsumed
     /// must emit ZERO grants (this exact assertion was FALSE before the change — demux-time
@@ -33,7 +32,9 @@ final class MuxConsumptionCreditTests: XCTestCase {
 
         let ch = try await client.openChannel(sessionID: UUID(), lastReceivedSeq: 0)
         try await Task.sleep(for: .milliseconds(80))
-        guard let hostData2 = hostSide.get() else { return XCTFail("host never saw the open") }
+        guard let hostData2 = hostSide.get() else { XCTFail("host never saw the open")
+            return
+        }
 
         // Host floods just under one window of threshold-crossing output (well past the
         // half-window grant threshold). The client demuxes + buffers it, but NOBODY consumes.
@@ -41,8 +42,11 @@ final class MuxConsumptionCreditTests: XCTestCase {
         for i in 1...6 { try await hostData2.send(.output(seq: Int64(i), bytes: frame)) } // 48KiB > threshold
         try await Task.sleep(for: .milliseconds(200))
 
-        XCTAssertEqual(clientControl.windowAdjustCount, 0,
-                       "NO grant may be emitted before the consumer reports consumption (credit-at-consumption)")
+        XCTAssertEqual(
+            clientControl.windowAdjustCount,
+            0,
+            "NO grant may be emitted before the consumer reports consumption (credit-at-consumption)",
+        )
 
         // Now the consumer reports consumption → the grant fires (and rides CONTROL).
         var consumedWire = 0
@@ -54,8 +58,11 @@ final class MuxConsumptionCreditTests: XCTestCase {
             if received == 6 { break }
         }
         try await Task.sleep(for: .milliseconds(100))
-        XCTAssertGreaterThan(clientControl.windowAdjustCount, 0,
-                             "consumption past the threshold emits the grant")
+        XCTAssertGreaterThan(
+            clientControl.windowAdjustCount,
+            0,
+            "consumption past the threshold emits the grant",
+        )
         XCTAssertGreaterThan(consumedWire, MuxFlowControl.initialWindowBytes / 2)
 
         await client.close()
@@ -83,7 +90,9 @@ final class MuxConsumptionCreditTests: XCTestCase {
 
         let ch = try await client.openChannel(sessionID: UUID(), lastReceivedSeq: 0)
         try await Task.sleep(for: .milliseconds(80))
-        guard let sender = hostSide.get() else { return XCTFail("host never saw the open") }
+        guard let sender = hostSide.get() else { XCTFail("host never saw the open")
+            return
+        }
 
         // Flood 4 windows' worth from the host. With no consumption the sender MUST park.
         let window = MuxFlowControl.initialWindowBytes
@@ -95,8 +104,10 @@ final class MuxConsumptionCreditTests: XCTestCase {
             sentAll.set(true)
         }
         try await Task.sleep(for: .milliseconds(300))
-        XCTAssertFalse(sentAll.get(),
-                       "the flood must PARK against a non-consuming receiver (bounded by ~one window)")
+        XCTAssertFalse(
+            sentAll.get(),
+            "the flood must PARK against a non-consuming receiver (bounded by ~one window)",
+        )
 
         // Drain + credit: the flood completes and every byte arrives in order.
         var receivedFrames = 0
@@ -146,13 +157,18 @@ final class MuxConsumptionCreditTests: XCTestCase {
             private var decoder = FrameDecoder()
             private(set) var inputs: [Data] = []
             func ingest(_ inner: Data) {
-                lock.lock(); defer { lock.unlock() }
+                lock.lock()
+                defer { lock.unlock() }
                 decoder.append(inner)
-                while let message = (try? decoder.nextMessage()) ?? nil {
+                while let message = (try? decoder.nextMessage()) {
                     if case let .input(bytes) = message { inputs.append(bytes) }
                 }
             }
-            var payloads: [Data] { lock.lock(); defer { lock.unlock() }; return inputs }
+
+            var payloads: [Data] { lock.lock()
+                defer { lock.unlock() }
+                return inputs
+            }
         }
         let recorder = FrameRecorder()
         // Infinite send window: this test isolates the SPLIT (credit interplay is covered above).
@@ -162,10 +178,15 @@ final class MuxConsumptionCreditTests: XCTestCase {
         let controlCh = MuxSubChannel(channelID: 1, channel: .control, sendWindowBytes: nil) { _, _ in }
         let transport = MuxClientTransport(
             acquire: { _, _, _, _ in MuxAcquisition(channelID: 1, data: dataCh, control: controlCh) },
-            release: { _, _, _ in }
+            release: { _, _, _ in },
         )
-        try await transport.connect(host: "h", port: 1, resume: WireMessage.newSessionID,
-                                    lastReceivedSeq: 0, handshakeTimeout: .seconds(1))
+        try await transport.connect(
+            host: "h",
+            port: 1,
+            resume: WireMessage.newSessionID,
+            lastReceivedSeq: 0,
+            handshakeTimeout: .seconds(1),
+        )
 
         var paste = Data()
         for i in 0..<(100 * 1024) { paste.append(UInt8(i % 251)) } // 100 KiB, non-repeating-ish
@@ -174,8 +195,11 @@ final class MuxConsumptionCreditTests: XCTestCase {
         let frames = recorder.payloads
         XCTAssertGreaterThan(frames.count, 1, "a large paste splits into multiple .input frames")
         for frame in frames {
-            XCTAssertLessThanOrEqual(frame.count, MuxFlowControl.maxDataMessagePayloadBytes,
-                                     "every split frame stays within the payload cap")
+            XCTAssertLessThanOrEqual(
+                frame.count,
+                MuxFlowControl.maxDataMessagePayloadBytes,
+                "every split frame stays within the payload cap",
+            )
         }
         XCTAssertEqual(frames.reduce(Data(), +), paste, "split frames reassemble byte-identically in order")
 
@@ -190,15 +214,29 @@ final class MuxConsumptionCreditTests: XCTestCase {
     private final class HostSideBox: @unchecked Sendable {
         private let lock = NSLock()
         private var channel: MuxSubChannel?
-        func set(_ ch: MuxSubChannel) { lock.lock(); channel = ch; lock.unlock() }
-        func get() -> MuxSubChannel? { lock.lock(); defer { lock.unlock() }; return channel }
+        func set(_ ch: MuxSubChannel) { lock.lock()
+            channel = ch
+            lock.unlock()
+        }
+
+        func get() -> MuxSubChannel? { lock.lock()
+            defer { lock.unlock() }
+            return channel
+        }
     }
 
     private final class BoolBox: @unchecked Sendable {
         private let lock = NSLock()
         private var value: Bool
         init(_ v: Bool) { value = v }
-        func get() -> Bool { lock.lock(); defer { lock.unlock() }; return value }
-        func set(_ v: Bool) { lock.lock(); value = v; lock.unlock() }
+        func get() -> Bool { lock.lock()
+            defer { lock.unlock() }
+            return value
+        }
+
+        func set(_ v: Bool) { lock.lock()
+            value = v
+            lock.unlock()
+        }
     }
 }

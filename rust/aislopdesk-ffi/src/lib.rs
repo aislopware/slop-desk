@@ -34,7 +34,9 @@ use aislopdesk_core::terminal::{
 };
 
 /// The video-path C ABI (codecs + scalar policies), kept in its own module so this file
-/// stays the shared-infrastructure + terminal hub. Reuses [`AisdBytes`] / [`AisdStatus`] /
+/// stays the shared-infrastructure + terminal hub.
+///
+/// Reuses [`AisdBytes`] / [`AisdStatus`] /
 /// the byte helpers below.
 pub mod video;
 
@@ -68,7 +70,9 @@ pub const AISD_ERR_INVALID_ARGUMENT: AisdStatus = -6;
 // Owned byte buffer (Rust-allocated, Rust-freed)
 // ---------------------------------------------------------------------------------------
 
-/// A length-counted byte buffer that crosses the boundary. When returned by a function it
+/// A length-counted byte buffer that crosses the boundary.
+///
+/// When returned by a function it
 /// owns a Rust allocation; release it with [`aisd_bytes_free`] (or [`aisd_wire_message_free`]
 /// for the buffers inside an [`AisdWireMessage`]). An empty buffer is `{ ptr: null, len: 0,
 /// cap: 0 }`. When *passed in* (e.g. to [`aisd_wire_message_encode`]) only `ptr`/`len` are
@@ -87,7 +91,7 @@ pub struct AisdBytes {
 
 impl AisdBytes {
     /// The canonical empty buffer: null pointer, zero length, zero capacity.
-    pub const EMPTY: AisdBytes = AisdBytes {
+    pub const EMPTY: Self = Self {
         ptr: core::ptr::null_mut(),
         len: 0,
         cap: 0,
@@ -149,7 +153,7 @@ pub unsafe extern "C" fn aisd_bytes_free(bytes: AisdBytes) {
 /// Wraps [`aislopdesk_core::seq::distance_wrapped`].
 #[must_use]
 #[no_mangle]
-pub extern "C" fn aisd_seq_distance(a: u32, b: u32) -> i32 {
+pub const extern "C" fn aisd_seq_distance(a: u32, b: u32) -> i32 {
     distance_wrapped(a, b)
 }
 
@@ -250,7 +254,7 @@ pub struct AisdWireMessage {
 
 impl AisdWireMessage {
     /// An all-zero message with empty buffers — the base every decode fills in.
-    fn zeroed() -> Self {
+    const fn zeroed() -> Self {
         Self {
             tag: 0,
             seq: 0,
@@ -495,7 +499,9 @@ pub unsafe extern "C" fn aisd_wire_message_free(msg: *mut AisdWireMessage) {
 // Streaming frame decoder (opaque handle — the canonical "Rust owns the pipeline" boundary)
 // ---------------------------------------------------------------------------------------
 
-/// Opaque streaming length-prefixed frame decoder. Create with [`aisd_frame_decoder_new`],
+/// Opaque streaming length-prefixed frame decoder.
+///
+/// Create with [`aisd_frame_decoder_new`],
 /// feed raw socket bytes with [`aisd_frame_decoder_append`], drain whole messages with
 /// [`aisd_frame_decoder_next`], destroy with [`aisd_frame_decoder_free`]. One per channel
 /// per connection; not thread-safe (drive it from one receive loop).
@@ -547,7 +553,9 @@ pub unsafe extern "C" fn aisd_frame_decoder_append(
     AISD_OK
 }
 
-/// Drains the next complete message into `*out`. Returns [`AISD_OK`] (a message was
+/// Drains the next complete message into `*out`.
+///
+/// Returns [`AISD_OK`] (a message was
 /// written; release its buffers with [`aisd_wire_message_free`]), [`AISD_EMPTY`] (need more
 /// bytes — nothing written), or a negative decode error.
 ///
@@ -577,7 +585,7 @@ pub unsafe extern "C" fn aisd_frame_decoder_next(
 }
 
 /// Maps a core decode error to its boundary status code.
-fn status_for_error(error: &TerminalProtocolError) -> AisdStatus {
+const fn status_for_error(error: &TerminalProtocolError) -> AisdStatus {
     match error {
         TerminalProtocolError::FrameTooLarge(_) => AISD_ERR_FRAME_TOO_LARGE,
         TerminalProtocolError::Truncated => AISD_ERR_TRUNCATED,

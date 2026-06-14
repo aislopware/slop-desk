@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pure tests for the kind-aware culling decision (docs/30 §1, §6, §9.1): terminals are NEVER culled
@@ -7,10 +7,10 @@ import CoreGraphics
 /// viewport+margin (freeing a `liveVideoCap` slot), and the viewport-membership signal is
 /// intersection-only with no margin / no kind filter.
 final class CanvasCullingTests: XCTestCase {
-
     private func pid(_ n: Int) -> PaneID {
         PaneID(raw: UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", n))!)
     }
+
     private func item(_ n: Int, _ frame: CGRect, kind: PaneKind) -> CanvasItem {
         CanvasItem(id: pid(n), spec: PaneSpec(kind: kind, title: "p\(n)"), frame: frame, z: n)
     }
@@ -54,9 +54,13 @@ final class CanvasCullingTests: XCTestCase {
 
     func testViewportMembersIntersectionOnly() {
         let items = [
-            item(1, onScreen, kind: .terminal),                 // intersects
-            item(2, farOff, kind: .terminal),                   // does not
-            item(3, CGRect(x: 1000 + 100, y: 100, width: 300, height: 200), kind: .remoteGUI), // within margin but NOT viewport
+            item(1, onScreen, kind: .terminal), // intersects
+            item(2, farOff, kind: .terminal), // does not
+            item(
+                3,
+                CGRect(x: 1000 + 100, y: 100, width: 300, height: 200),
+                kind: .remoteGUI,
+            ), // within margin but NOT viewport
         ]
         let members = CanvasGeometry.viewportMembers(items, camera: .zero, viewport: viewport)
         XCTAssertEqual(members, [pid(1)], "membership is strict viewport intersection — no margin, no kind filter")

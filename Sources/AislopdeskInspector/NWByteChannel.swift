@@ -22,9 +22,14 @@ public actor NWByteChannel: ByteChannel {
 
     public init(connection: NWConnection) {
         self.connection = connection
-        var cont: AsyncThrowingStream<Data, Error>.Continuation!
-        self.inboundStream = AsyncThrowingStream { cont = $0 }
-        self.inboundContinuation = cont
+        var cont: AsyncThrowingStream<Data, Error>.Continuation?
+        inboundStream = AsyncThrowingStream { cont = $0 }
+        guard let cont else {
+            preconditionFailure(
+                "AsyncThrowingStream's build closure runs synchronously, so the continuation is always set",
+            )
+        }
+        inboundContinuation = cont
         // R17 INSP-WIRE-2: if the inbound consumer cancels its iteration WITHOUT calling close() (e.g.
         // its draining task is cancelled), cancel the NWConnection so its fd is released deterministically
         // rather than lingering until the actor deallocs. Capture `connection` (not self) so the handler
@@ -86,17 +91,18 @@ public actor NWByteChannel: ByteChannel {
     }
 
     private func receiveLoop() {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
-            guard let self else { return }
-            Task { await self.handleReceive(data: data, isComplete: isComplete, error: error) }
-        }
+        connection
+            .receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
+                guard let self else { return }
+                Task { await self.handleReceive(data: data, isComplete: isComplete, error: error) }
+            }
     }
 
     private func handleReceive(data: Data?, isComplete: Bool, error: NWError?) {
         if let error {
             inboundContinuation.finish(throwing: error)
             connection.cancel() // R6 #10: free the socket fd — finishing the stream alone leaves the
-            return              // NWConnection (and its fd) alive until the actor deallocs.
+            return // NWConnection (and its fd) alive until the actor deallocs.
         }
         if let data, !data.isEmpty {
             inboundContinuation.yield(data)
@@ -104,7 +110,7 @@ public actor NWByteChannel: ByteChannel {
         if isComplete {
             inboundContinuation.finish()
             connection.cancel() // R6 #10: the peer/host closed the channel → cancel to release the fd
-            return              // (idempotent vs. the stateUpdateHandler's `.cancelled` finish).
+            return // (idempotent vs. the stateUpdateHandler's `.cancelled` finish).
         }
         receiveLoop()
     }

@@ -1,6 +1,8 @@
 //! Client-side recovery DECISION logic — a port of the policy half of Swift
 //! `RecoverySignaling` (`RecoveryPolicy`, `RecoveryRequestRedundancy`,
-//! `LossObservationWindow`). Pure deciders; the timer/transport lives above this crate.
+//! `LossObservationWindow`).
+//!
+//! Pure deciders; the timer/transport lives above this crate.
 
 use crate::recovery::RecoveryMessage;
 
@@ -52,7 +54,7 @@ pub struct RecoveryPolicy {
 impl RecoveryPolicy {
     /// Builds a policy with explicit parameters.
     #[must_use]
-    pub fn new(
+    pub const fn new(
         idr_timeout_rtt_multiple: f64,
         lossy_idr_timeout_rtt_multiple: f64,
         lossy_escalation_floor: f64,
@@ -70,8 +72,7 @@ impl RecoveryPolicy {
     /// prefer an LTR refresh, threading the decode frontier through for the host's
     /// delivery-keyed cooldown.
     #[must_use]
-    pub fn initial_request(
-        &self,
+    pub const fn initial_request(
         lost_from: u32,
         lost_to: u32,
         last_decoded: u32,
@@ -172,7 +173,9 @@ impl Default for RecoveryRequestRedundancy {
     }
 }
 
-/// The client-side loss-observing predicate gating the halved escalation clock. Events
+/// The client-side loss-observing predicate gating the halved escalation clock.
+///
+/// Events
 /// (unrecoverable losses and FEC-recovered completions) are fed in; the window reports
 /// "observing loss" once enough events are recent.
 #[derive(Debug, Clone, PartialEq)]

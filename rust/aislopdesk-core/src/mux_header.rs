@@ -97,7 +97,7 @@ impl MuxFrameFragmentHeader {
 
     /// Parses one muxed datagram into `(header, payload)`. Trailing bytes beyond the
     /// declared payload length are ignored (matches Swift).
-    pub fn decode(datagram: &[u8]) -> Result<(MuxFrameFragmentHeader, Vec<u8>)> {
+    pub fn decode(datagram: &[u8]) -> Result<(Self, Vec<u8>)> {
         let mut r = ByteReader::new(datagram);
         let channel_id = r.read_u32()?;
         let stream_seq = r.read_u32()?;
@@ -108,7 +108,7 @@ impl MuxFrameFragmentHeader {
         let payload_length = r.read_u16()?;
         let payload = r.read_bytes(usize::from(payload_length))?.to_vec();
         Ok((
-            MuxFrameFragmentHeader {
+            Self {
                 channel_id,
                 stream_seq,
                 frame_id,

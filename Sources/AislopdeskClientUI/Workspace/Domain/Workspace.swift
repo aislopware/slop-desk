@@ -1,5 +1,5 @@
-import Foundation
 import CoreGraphics
+import Foundation
 
 // MARK: - Workspace (the whole tree of intent — ONE canvas, no tabs)
 
@@ -52,7 +52,7 @@ public struct Workspace: Codable, Sendable, Equatable {
     public var snippets: [Snippet]
 
     public init(
-        schemaVersion: Int = Workspace.currentSchemaVersion,
+        schemaVersion: Int = Self.currentSchemaVersion,
         canvas: Canvas,
         focusedPane: PaneID?,
         maximizedPane: PaneID? = nil,
@@ -60,7 +60,7 @@ public struct Workspace: Codable, Sendable, Equatable {
         connection: ConnectionTarget? = nil,
         bookmarks: [Int: CanvasBookmark] = [:],
         layoutPresets: [LayoutPreset] = [],
-        snippets: [Snippet] = []
+        snippets: [Snippet] = [],
     ) {
         self.schemaVersion = schemaVersion
         self.canvas = canvas
@@ -92,8 +92,14 @@ public struct LayoutPreset: Codable, Sendable, Equatable, Identifiable {
     /// on the host. `nil` = no trigger (manual switch only).
     public var triggerAppName: String?
 
-    public init(id: UUID = UUID(), name: String, canvas: Canvas, groups: [PaneGroup],
-                focusedPane: PaneID?, triggerAppName: String? = nil) {
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        canvas: Canvas,
+        groups: [PaneGroup],
+        focusedPane: PaneID?,
+        triggerAppName: String? = nil,
+    ) {
         self.id = id
         self.name = name
         self.canvas = canvas
@@ -141,7 +147,7 @@ public extension Workspace {
             id: paneID,
             spec: PaneSpec(kind: .terminal, title: "Terminal"),
             frame: CGRect(origin: .zero, size: Canvas.defaultItemSize),
-            z: 0
+            z: 0,
         )
         return Workspace(canvas: Canvas(items: [item]), focusedPane: paneID)
     }
@@ -197,7 +203,7 @@ public extension Workspace {
                 c.groupID = nil
                 return c
             },
-            camera: canvas.camera
+            camera: canvas.camera,
         )
         return copy
     }
@@ -215,7 +221,8 @@ public extension Workspace {
         // Re-mint ONLY a DUPLICATE snippet id (keep the first occurrence's id), so a clean file round-trips
         // verbatim — an unconditional re-mint made load() non-idempotent (every launch changed the ids).
         var seenSnippetIDs = Set<UUID>()
-        copy.snippets = snippets.map { seenSnippetIDs.insert($0.id).inserted ? $0 : Snippet(name: $0.name, body: $0.body) }
+        copy.snippets = snippets
+            .map { seenSnippetIDs.insert($0.id).inserted ? $0 : Snippet(name: $0.name, body: $0.body) }
         var seenPresetNames = Set<String>()
         copy.layoutPresets = layoutPresets.filter { seenPresetNames.insert($0.name).inserted }
         return copy

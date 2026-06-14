@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskProtocol
+import Foundation
 
 /// The exact surface ``AislopdeskClient/AislopdeskClient`` drives on its session transport: a logical
 /// channel riding a shared ``MuxNWConnection`` (``MuxClientTransport``).
@@ -28,7 +28,7 @@ public protocol ClientTransporting: Sendable {
         port: UInt16,
         resume: UUID,
         lastReceivedSeq: Int64,
-        handshakeTimeout: Duration
+        handshakeTimeout: Duration,
     ) async throws
 
     /// Sends raw keystroke/paste bytes as `input`.
@@ -51,9 +51,9 @@ public protocol ClientTransporting: Sendable {
     func close() async
 }
 
-extension ClientTransporting {
+public extension ClientTransporting {
     /// Default no-op: only windowed transports (the mux) account consumption.
-    public func noteOutputConsumed(wireBytes: Int) async {}
+    func noteOutputConsumed(wireBytes _: Int) {}
     /// Default no-op: only the mux transport carries the RTT probe.
-    public func sendPing(timestampMS: UInt64) async throws {}
+    func sendPing(timestampMS _: UInt64) {}
 }

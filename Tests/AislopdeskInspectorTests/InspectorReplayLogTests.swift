@@ -4,7 +4,6 @@ import XCTest
 /// Replay-then-live + fan-out semantics of ``InspectorReplayLog`` (PIECE A, resolves
 /// BUG-B). Pure: no transport, no HostServer — just the actor + AsyncStreams.
 final class InspectorReplayLogTests: XCTestCase {
-
     /// A few distinct, order-bearing events to assert exact sequence.
     private func msg(_ text: String) -> InspectorEvent {
         .message(MessageEvent(role: .assistant, text: text))
@@ -14,7 +13,7 @@ final class InspectorReplayLogTests: XCTestCase {
     /// fails the test rather than the suite).
     private func collect(
         _ stream: AsyncStream<InspectorEvent>,
-        count: Int
+        count: Int,
     ) async throws -> [InspectorEvent] {
         let task = Task { () -> [InspectorEvent] in
             var got: [InspectorEvent] = []
@@ -101,8 +100,11 @@ final class InspectorReplayLogTests: XCTestCase {
         await log.append(msg("e4")) // live, seq 4
 
         let got = try await collect(stream, count: 3)
-        XCTAssertEqual(got, [msg("e2"), msg("e3"), msg("e4")],
-                       "resume replays history[2...] (e2,e3) then live e4 — no e0/e1")
+        XCTAssertEqual(
+            got,
+            [msg("e2"), msg("e3"), msg("e4")],
+            "resume replays history[2...] (e2,e3) then live e4 — no e0/e1",
+        )
     }
 
     /// A fromSeq past the end of history (a future resume point) → empty replay, then
@@ -152,21 +154,24 @@ final class InspectorReplayLogTests: XCTestCase {
     /// (no crash) instead of leaking the whole history forever.
     func testHistoryRetentionIsBoundedAndSeqStaysAbsolute() async throws {
         let log = InspectorReplayLog()
-        let total = 60_000 // > the 50k retention cap
+        let total = 60000 // > the 50k retention cap
         for i in 0..<total { await log.append(msg("e\(i)")) }
 
         let absolute = await log.historyCount
         let retained = await log.retainedEventCount
         XCTAssertEqual(absolute, total, "historyCount is the ABSOLUTE next-seq, stable across retention drops")
-        XCTAssertLessThanOrEqual(retained, 50_000, "the retained window is bounded (no unbounded OOM)")
+        XCTAssertLessThanOrEqual(retained, 50000, "the retained window is bounded (no unbounded OOM)")
         XCTAssertGreaterThan(absolute, retained, "older events were dropped to keep memory bounded")
 
         await log.markFinished() // so subscribe streams deliver the snapshot then finish (no live wait)
         // Absolute-seq mapping survives the drop: from (total-3) → exactly the last 3 events in order.
         let tail = await log.subscribe(fromSeq: Int64(total - 3))
         let gotTail = try await collect(tail, count: 3)
-        XCTAssertEqual(gotTail, [msg("e\(total - 3)"), msg("e\(total - 2)"), msg("e\(total - 1)")],
-                       "subscribe maps the ABSOLUTE fromSeq through baseSeq to the correct tail after drops")
+        XCTAssertEqual(
+            gotTail,
+            [msg("e\(total - 3)"), msg("e\(total - 2)"), msg("e\(total - 1)")],
+            "subscribe maps the ABSOLUTE fromSeq through baseSeq to the correct tail after drops",
+        )
         // A fromSeq BELOW the retained base must clamp to the oldest retained (no crash / no negative slice).
         let fromZero = await log.subscribe(fromSeq: 0)
         let firstFew = try await collect(fromZero, count: 1)
@@ -178,7 +183,7 @@ final class InspectorReplayLogTests: XCTestCase {
     /// underflow) — it saturates to "everything retained". `Int64.max` (past the end) → empty replay.
     func testSubscribeWithHostileFromSeqDoesNotCrash() async throws {
         let log = InspectorReplayLog()
-        for i in 0..<60_000 { await log.append(msg("e\(i)")) } // baseSeq advances past 0
+        for i in 0..<60000 { await log.append(msg("e\(i)")) } // baseSeq advances past 0
         await log.markFinished()
 
         let everything = await log.subscribe(fromSeq: Int64.min) // would underflow-trap before the fix

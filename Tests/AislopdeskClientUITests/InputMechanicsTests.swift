@@ -5,18 +5,17 @@ import XCTest
 /// accessory-bar show/hide decision, and the IME-vs-key routing decision. These are the
 /// macOS-testable cores behind the `#if os(iOS)` UIKit wrappers (doc 17 §2.5).
 final class InputMechanicsTests: XCTestCase {
-
     // MARK: FloatingCursorMapping (5pt threshold → arrow count, the spec's examples)
 
     func testFloatingCursorSubThresholdEmitsNothing() {
-        var m = FloatingCursorMapping()         // 5pt
-        XCTAssertEqual(m.feed(deltaX: 4), [])   // 4pt → 0 arrows
+        var m = FloatingCursorMapping() // 5pt
+        XCTAssertEqual(m.feed(deltaX: 4), []) // 4pt → 0 arrows
         XCTAssertEqual(m.accumulated, 4, accuracy: 0.0001)
     }
 
     func testFloatingCursorOneRightArrow() {
         var m = FloatingCursorMapping()
-        XCTAssertEqual(m.feed(deltaX: 6), [.right])  // 6pt → 1 right
+        XCTAssertEqual(m.feed(deltaX: 6), [.right]) // 6pt → 1 right
         XCTAssertEqual(m.accumulated, 1, accuracy: 0.0001) // 1pt remainder
     }
 
@@ -59,9 +58,11 @@ final class InputMechanicsTests: XCTestCase {
 
     func testFloatingCursorByteEncoding() {
         XCTAssertEqual(FloatingCursorMapping.bytes(for: .right), [0x1B, 0x5B, 0x43]) // ESC [ C
-        XCTAssertEqual(FloatingCursorMapping.bytes(for: .left), [0x1B, 0x5B, 0x44])  // ESC [ D
-        XCTAssertEqual(FloatingCursorMapping.bytes(for: [.left, .left]),
-                       [0x1B, 0x5B, 0x44, 0x1B, 0x5B, 0x44])
+        XCTAssertEqual(FloatingCursorMapping.bytes(for: .left), [0x1B, 0x5B, 0x44]) // ESC [ D
+        XCTAssertEqual(
+            FloatingCursorMapping.bytes(for: [.left, .left]),
+            [0x1B, 0x5B, 0x44, 0x1B, 0x5B, 0x44],
+        )
     }
 
     // MARK: KeyboardAccessoryDecision (~150pt threshold)
@@ -120,6 +121,7 @@ final class InputMechanicsTests: XCTestCase {
     }
 
     // MARK: KeyEncoding — the platform-agnostic terminal byte mapping (the headless-testable core of
+
     // the iOS key path; the UIKit `TerminalInputResponderView` forwards to it). R12 #3 / #5 / #6.
 
     // #3 — Ctrl maps the full C0 control range, not just letters.
@@ -127,25 +129,26 @@ final class InputMechanicsTests: XCTestCase {
     func testControlCodeMapsLetters() {
         XCTAssertEqual(KeyEncoding.controlCode(for: "a"), [0x01])
         XCTAssertEqual(KeyEncoding.controlCode(for: "c"), [0x03])
-        XCTAssertEqual(KeyEncoding.controlCode(for: "C"), [0x03])  // case-insensitive
+        XCTAssertEqual(KeyEncoding.controlCode(for: "C"), [0x03]) // case-insensitive
         XCTAssertEqual(KeyEncoding.controlCode(for: "z"), [0x1A])
     }
 
     func testControlCodeMapsC0SymbolRange() {
-        XCTAssertEqual(KeyEncoding.controlCode(for: "["), [0x1B])   // Ctrl-[ = ESC (the headline fix)
+        XCTAssertEqual(KeyEncoding.controlCode(for: "["), [0x1B]) // Ctrl-[ = ESC (the headline fix)
         XCTAssertEqual(KeyEncoding.controlCode(for: "\\"), [0x1C])
         XCTAssertEqual(KeyEncoding.controlCode(for: "]"), [0x1D])
         XCTAssertEqual(KeyEncoding.controlCode(for: "^"), [0x1E])
         XCTAssertEqual(KeyEncoding.controlCode(for: "_"), [0x1F])
         XCTAssertEqual(KeyEncoding.controlCode(for: "@"), [0x00])
-        XCTAssertEqual(KeyEncoding.controlCode(for: " "), [0x00])   // Ctrl-Space = NUL
-        XCTAssertEqual(KeyEncoding.controlCode(for: "?"), [0x7F])   // Ctrl-? = DEL
+        XCTAssertEqual(KeyEncoding.controlCode(for: " "), [0x00]) // Ctrl-Space = NUL
+        XCTAssertEqual(KeyEncoding.controlCode(for: "?"), [0x7F]) // Ctrl-? = DEL
     }
 
     func testEncodeCtrlBracketSendsESC() {
         // The full encode path: Ctrl+[ (charactersIgnoringModifiers "[", not a special key) → ESC.
         let press = InputRouting.KeyPress(
-            characters: "[", charactersIgnoringModifiers: "[", control: true, isSpecial: false)
+            characters: "[", charactersIgnoringModifiers: "[", control: true, isSpecial: false,
+        )
         XCTAssertEqual(KeyEncoding.encode(press), [0x1B])
     }
 
@@ -153,12 +156,12 @@ final class InputMechanicsTests: XCTestCase {
 
     func testOptionBackspaceEmitsMetaDEL() {
         let press = InputRouting.KeyPress(characters: "\u{7F}", option: true, isSpecial: true)
-        XCTAssertEqual(KeyEncoding.encode(press), [0x1B, 0x7F])    // ESC + DEL = delete-previous-word
+        XCTAssertEqual(KeyEncoding.encode(press), [0x1B, 0x7F]) // ESC + DEL = delete-previous-word
     }
 
     func testPlainBackspaceEmitsBareDEL() {
         let press = InputRouting.KeyPress(characters: "\u{7F}", isSpecial: true)
-        XCTAssertEqual(KeyEncoding.encode(press), [0x7F])          // non-regression of the plain path
+        XCTAssertEqual(KeyEncoding.encode(press), [0x7F]) // non-regression of the plain path
     }
 
     func testOptionReturnEmitsMetaCR() {
@@ -182,7 +185,7 @@ final class InputMechanicsTests: XCTestCase {
 
     func testEncodeAltLetterMetaPrefix() {
         let press = InputRouting.KeyPress(characters: "∫", charactersIgnoringModifiers: "b", option: true)
-        XCTAssertEqual(KeyEncoding.encode(press), [0x1B, 0x62])    // ESC b
+        XCTAssertEqual(KeyEncoding.encode(press), [0x1B, 0x62]) // ESC b
     }
 
     func testEncodeCommandComboSendsNothing() {
@@ -194,27 +197,28 @@ final class InputMechanicsTests: XCTestCase {
 
     func testEncodeCtrlOptionLetterMetaControlPrefix() {
         let press = InputRouting.KeyPress(
-            characters: "", charactersIgnoringModifiers: "b", control: true, option: true)
-        XCTAssertEqual(KeyEncoding.encode(press), [0x1B, 0x02])   // ESC + Ctrl-B (meta + control code)
+            characters: "", charactersIgnoringModifiers: "b", control: true, option: true,
+        )
+        XCTAssertEqual(KeyEncoding.encode(press), [0x1B, 0x02]) // ESC + Ctrl-B (meta + control code)
     }
 
     func testEncodeCtrlOnlyLetterStillBareControlCode() {
         let press = InputRouting.KeyPress(characters: "", charactersIgnoringModifiers: "c", control: true)
-        XCTAssertEqual(KeyEncoding.encode(press), [0x03])         // non-regression: bare Ctrl-C
+        XCTAssertEqual(KeyEncoding.encode(press), [0x03]) // non-regression: bare Ctrl-C
     }
 
     // R13 #6 — accessory-bar Ctrl fold for soft-keyboard text (was a dead no-op → Ctrl-C impossible).
 
     func testFoldArmedControlFoldsFirstScalar() {
         let folded = KeyEncoding.foldArmedControl("c", armed: true)
-        XCTAssertEqual(folded?.controlBytes, [0x03])   // Ctrl-C
+        XCTAssertEqual(folded?.controlBytes, [0x03]) // Ctrl-C
         XCTAssertEqual(folded?.rest, "")
     }
 
     func testFoldArmedControlSplitsRest() {
         let folded = KeyEncoding.foldArmedControl("cat", armed: true)
-        XCTAssertEqual(folded?.controlBytes, [0x03])   // Ctrl-C folds the first scalar…
-        XCTAssertEqual(folded?.rest, "at")             // …the remainder stays plain text
+        XCTAssertEqual(folded?.controlBytes, [0x03]) // Ctrl-C folds the first scalar…
+        XCTAssertEqual(folded?.rest, "at") // …the remainder stays plain text
     }
 
     func testFoldArmedControlNotArmedOrEmptyIsNil() {
@@ -231,7 +235,8 @@ final class InputMechanicsTests: XCTestCase {
         }
         XCTAssertEqual(KeyEncoding.encode(up, arrowFallback: fallback), [0x1B, 0x5B, 0x41])
         let optUp = InputRouting.KeyPress(
-            characters: "", charactersIgnoringModifiers: "UP", option: true, isSpecial: true)
+            characters: "", charactersIgnoringModifiers: "UP", option: true, isSpecial: true,
+        )
         XCTAssertEqual(KeyEncoding.encode(optUp, arrowFallback: fallback), [0x1B, 0x1B, 0x5B, 0x41])
     }
 }

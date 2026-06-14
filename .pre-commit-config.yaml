@@ -1,0 +1,78 @@
+# pre-commit — run the fast strict checks on staged files before each commit.
+# Install once with: pre-commit install   (or `make install-tools`).
+# The language-specific hooks are `system` hooks that shell out to the SAME tools
+# `make lint` uses, so local and CI behaviour match exactly.
+minimum_pre_commit_version: "3.5.0"
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.md$|^ThirdParty/'
+      - id: end-of-file-fixer
+        exclude: '^ThirdParty/'
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=2048]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: local
+    hooks:
+      - id: swiftformat
+        name: SwiftFormat
+        entry: swiftformat
+        language: system
+        types: [swift]
+        exclude: '^ThirdParty/'
+
+      - id: swiftlint
+        name: SwiftLint (strict)
+        entry: swiftlint lint --strict --quiet --use-script-input-files
+        language: system
+        types: [swift]
+        exclude: '^ThirdParty/'
+        require_serial: true
+
+      - id: rustfmt
+        name: rustfmt
+        entry: bash -c 'cd rust && cargo fmt --all --check'
+        language: system
+        files: '^rust/.*\.rs$'
+        pass_filenames: false
+
+      - id: clippy
+        name: cargo clippy -D warnings
+        entry: bash -c 'cd rust && cargo clippy --workspace --all-targets -- -D warnings'
+        language: system
+        files: '^rust/.*\.rs$'
+        pass_filenames: false
+
+      - id: shellcheck
+        name: ShellCheck
+        entry: shellcheck
+        language: system
+        types: [shell]
+        exclude: '^ThirdParty/'
+
+      - id: shfmt
+        name: shfmt
+        entry: shfmt -i 2 -ci -sr -d
+        language: system
+        types: [shell]
+        exclude: '^ThirdParty/'
+
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check --force-exclude
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: ruff format --check
+        language: system
+        types: [python]

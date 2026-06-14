@@ -23,8 +23,11 @@ final class OutEventCoalescerTests: XCTestCase {
     /// A continuous drag (59→60→…→145 cols) collapses to ONLY the final size — the headline fix.
     func testDragBurstCollapsesToFinalSize() {
         let burst = (59...145).map { resize(UInt16($0)) }
-        XCTAssertEqual(coalesce(burst), [resize(145)],
-                       "a fast drag's distinct sizes must converge to the FINAL size only")
+        XCTAssertEqual(
+            coalesce(burst),
+            [resize(145)],
+            "a fast drag's distinct sizes must converge to the FINAL size only",
+        )
     }
 
     /// `.input` is a hard barrier: a resize on EACH side survives, and the input is between them
@@ -32,22 +35,26 @@ final class OutEventCoalescerTests: XCTestCase {
     func testInputIsAHardBarrier() {
         XCTAssertEqual(
             coalesce([resize(80), input([0x78]), resize(90)]),
-            [resize(80), input([0x78]), resize(90)])
+            [resize(80), input([0x78]), resize(90)],
+        )
     }
 
     /// Both inputs survive IN ORDER; only the LATEST resize of the run between them survives.
     func testBothInputsPreservedOnlyLatestResizeOfRun() {
         XCTAssertEqual(
             coalesce([input([0x61]), resize(80), resize(90), input([0x62])]),
-            [input([0x61]), resize(90), input([0x62])])
+            [input([0x61]), resize(90), input([0x62])],
+        )
     }
 
     /// A batch ENDING in a resize run still emits the latest (the `InputMotionCoalescer` line-398
     /// trailing-flush invariant) — this IS the trailing-edge guarantee in pure form.
     func testTrailingResizeRunIsFlushed() {
-        XCTAssertEqual(coalesce([input([0x61]), resize(80), resize(90), resize(100)]),
-                       [input([0x61]), resize(100)],
-                       "the trailing resize run must flush its latest — the final size always survives")
+        XCTAssertEqual(
+            coalesce([input([0x61]), resize(80), resize(90), resize(100)]),
+            [input([0x61]), resize(100)],
+            "the trailing resize run must flush its latest — the final size always survives",
+        )
     }
 
     /// Empty / single passthrough (identity) — the `batch.count > 1` fast path.
@@ -92,14 +99,17 @@ final class OutEventCoalescerTests: XCTestCase {
     // MARK: helpers
 
     private func isResize(_ e: ConnectionViewModel.OutEvent) -> Bool {
-        if case .resize = e { return true }; return false
+        if case .resize = e { return true }
+        return false
     }
+
     private func inputsOnly(_ events: [ConnectionViewModel.OutEvent]) -> [ConnectionViewModel.OutEvent] {
         events.filter { !isResize($0) }
     }
+
     private func hasAdjacentResize(_ events: [ConnectionViewModel.OutEvent]) -> Bool {
         for i in 1..<max(1, events.count) where i < events.count {
-            if isResize(events[i]) && isResize(events[i - 1]) { return true }
+            if isResize(events[i]), isResize(events[i - 1]) { return true }
         }
         return false
     }
@@ -111,10 +121,10 @@ private struct SeededRNG: RandomNumberGenerator {
     private var state: UInt64
     init(seed: UInt64) { state = seed }
     mutating func next() -> UInt64 {
-        state &+= 0x9E3779B97F4A7C15
+        state &+= 0x9E37_79B9_7F4A_7C15
         var z = state
-        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
-        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
         return z ^ (z >> 31)
     }
 }

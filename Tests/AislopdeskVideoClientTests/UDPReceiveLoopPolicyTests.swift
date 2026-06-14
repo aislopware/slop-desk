@@ -45,9 +45,17 @@ final class UDPReceiveLoopPolicyTests: XCTestCase {
     /// The delay is capped (~250 ms) so a long error storm settles at the cap instead of
     /// growing unbounded — and a very large count cannot overflow the shift.
     func testBackoffIsCapped() {
-        XCTAssertEqual(UDPReceiveLoopPolicy.nextBackoff(consecutiveErrors: 7), 0.250, accuracy: 1e-9)   // 5·2^6 = 320ms → cap
+        XCTAssertEqual(
+            UDPReceiveLoopPolicy.nextBackoff(consecutiveErrors: 7),
+            0.250,
+            accuracy: 1e-9,
+        ) // 5·2^6 = 320ms → cap
         XCTAssertEqual(UDPReceiveLoopPolicy.nextBackoff(consecutiveErrors: 100), 0.250, accuracy: 1e-9) // no overflow
-        XCTAssertEqual(UDPReceiveLoopPolicy.nextBackoff(consecutiveErrors: 6), 0.160, accuracy: 1e-9)   // last value below the cap
+        XCTAssertEqual(
+            UDPReceiveLoopPolicy.nextBackoff(consecutiveErrors: 6),
+            0.160,
+            accuracy: 1e-9,
+        ) // last value below the cap
     }
 
     /// The reset-to-0 path is what restores the hot path: after errors, the first good

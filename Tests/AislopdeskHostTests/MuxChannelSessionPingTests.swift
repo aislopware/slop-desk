@@ -1,26 +1,30 @@
-import XCTest
-import Foundation
 import AislopdeskProtocol
-@testable import AislopdeskTransport
+import Foundation
+import XCTest
 @testable import AislopdeskHost
+@testable import AislopdeskTransport
 
 /// The host's stateless RTT responder: a `.ping(ts)` arriving on the CONTROL sub-channel
 /// is answered with `.pong(ts)` (timestamp echoed VERBATIM) via the control sender — and
 /// it must NOT flush the resize micro-debounce (a periodic probe would otherwise defeat
 /// the latest-wins window every 3 s).
 final class MuxChannelSessionPingTests: XCTestCase {
-
     func testPingIsAnsweredWithEchoedPong() async throws {
         final class FrameRecorder: @unchecked Sendable {
             private let lock = NSLock()
             private var decoder = FrameDecoder()
             private(set) var messages: [WireMessage] = []
             func ingest(_ inner: Data) {
-                lock.lock(); defer { lock.unlock() }
+                lock.lock()
+                defer { lock.unlock() }
                 decoder.append(inner)
-                while let m = (try? decoder.nextMessage()) ?? nil { messages.append(m) }
+                while let m = (try? decoder.nextMessage()) { messages.append(m) }
             }
-            var all: [WireMessage] { lock.lock(); defer { lock.unlock() }; return messages }
+
+            var all: [WireMessage] { lock.lock()
+                defer { lock.unlock() }
+                return messages
+            }
         }
         let recorder = FrameRecorder()
         let data = MuxSubChannel(channelID: 9, channel: .data) { _, _ in }
@@ -31,9 +35,9 @@ final class MuxChannelSessionPingTests: XCTestCase {
         }
         let session = MuxChannelSession(
             channelID: 9,
-            pty: PTYProcess(),   // unspawned: the read loop EOFs immediately; harmless
+            pty: PTYProcess(), // unspawned: the read loop EOFs immediately; harmless
             data: data,
-            control: control
+            control: control,
         )
         session.startRelay()
 
@@ -47,8 +51,10 @@ final class MuxChannelSessionPingTests: XCTestCase {
             if recorder.all.contains(.pong(timestampMS: ts)) { break }
             try await Task.sleep(for: .milliseconds(5))
         }
-        XCTAssertTrue(recorder.all.contains(.pong(timestampMS: ts)),
-                      "the host answers ping with a pong echoing the client's timestamp verbatim")
+        XCTAssertTrue(
+            recorder.all.contains(.pong(timestampMS: ts)),
+            "the host answers ping with a pong echoing the client's timestamp verbatim",
+        )
 
         session.shutdownDetached()
     }

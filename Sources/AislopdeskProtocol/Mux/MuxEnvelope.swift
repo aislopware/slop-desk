@@ -49,22 +49,22 @@ public enum MuxFrame: Equatable, Sendable {
     /// The logical channel this frame addresses.
     public var channelID: UInt32 {
         switch self {
-        case let .channelOpen(channelID, _, _, _): return channelID
-        case let .channelOpenAck(channelID, _): return channelID
-        case let .channelData(channelID, _): return channelID
-        case let .channelClose(channelID): return channelID
-        case let .windowAdjust(channelID, _): return channelID
+        case let .channelOpen(channelID, _, _, _): channelID
+        case let .channelOpenAck(channelID, _): channelID
+        case let .channelData(channelID, _): channelID
+        case let .channelClose(channelID): channelID
+        case let .windowAdjust(channelID, _): channelID
         }
     }
 
     /// The on-wire mux-type byte for this frame.
     public var muxType: MuxFrameType {
         switch self {
-        case .channelOpen: return .channelOpen
-        case .channelOpenAck: return .channelOpenAck
-        case .channelData: return .channelData
-        case .channelClose: return .channelClose
-        case .windowAdjust: return .windowAdjust
+        case .channelOpen: .channelOpen
+        case .channelOpenAck: .channelOpenAck
+        case .channelData: .channelData
+        case .channelClose: .channelClose
+        case .windowAdjust: .windowAdjust
         }
     }
 }
@@ -126,7 +126,7 @@ public enum MuxEnvelopeCodec {
         // prefix — exactly the value the old `UInt32(inner.count)` carried.
         let innerLength = UInt32(out.count - prefixLength)
         let s = out.startIndex
-        out[s]     = UInt8(truncatingIfNeeded: innerLength >> 24)
+        out[s] = UInt8(truncatingIfNeeded: innerLength >> 24)
         out[s + 1] = UInt8(truncatingIfNeeded: innerLength >> 16)
         out[s + 2] = UInt8(truncatingIfNeeded: innerLength >> 8)
         out[s + 3] = UInt8(truncatingIfNeeded: innerLength)
@@ -160,7 +160,7 @@ public enum MuxEnvelopeCodec {
                 channelID: channelID,
                 sessionID: sessionID,
                 lastReceivedSeq: lastReceivedSeq,
-                channelClass: channelClass
+                channelClass: channelClass,
             )
 
         case .channelOpenAck:

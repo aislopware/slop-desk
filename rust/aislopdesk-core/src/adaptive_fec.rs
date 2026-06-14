@@ -23,7 +23,9 @@ pub const RELAX_DWELL_REPORTS: i32 = 24;
 pub const STICKY_RELAX_WINDOW_REPORTS: i32 = 2 * RELAX_DWELL_REPORTS;
 
 /// Maps a wire tier index to the FEC group size both ends must use, or `None` for the
-/// OFF (no-parity) tier. TOTAL over every `u8` — a malformed tier off a corrupt fragment
+/// OFF (no-parity) tier.
+///
+/// TOTAL over every `u8` — a malformed tier off a corrupt fragment
 /// can never trap; unknown indices fall back to `default_group_size`.
 ///
 /// * tier 0 → `default` (g5 in prod) — flag bits 3-5 = 0.
@@ -33,7 +35,7 @@ pub const STICKY_RELAX_WINDOW_REPORTS: i32 = 2 * RELAX_DWELL_REPORTS;
 /// * tier 4 → 2 (severe, 50%).
 /// * tier 5,6,7 and any other → `default` (reserved → safe, forward-compatible).
 #[must_use]
-pub fn group_size(tier: u8, default_group_size: usize) -> Option<usize> {
+pub const fn group_size(tier: u8, default_group_size: usize) -> Option<usize> {
     match tier {
         1 => None,
         2 => Some(10),
@@ -60,7 +62,7 @@ pub fn allow_off_tier_from_env() -> bool {
 /// (default), 3=g3, 4=g2. The wire tier numbering is NOT the redundancy order (tier 0
 /// must be g5 for byte-identity), so these maps translate between them.
 #[allow(clippy::match_same_arms)] // explicit documentary mapping (mirrors the Swift table).
-fn level_for_tier(tier: u8) -> i32 {
+const fn level_for_tier(tier: u8) -> i32 {
     match tier {
         1 => 0, // OFF
         2 => 1, // g10
@@ -72,7 +74,7 @@ fn level_for_tier(tier: u8) -> i32 {
 }
 
 #[allow(clippy::match_same_arms)] // explicit documentary mapping (mirrors the Swift table).
-fn tier_for_level(level: i32) -> u8 {
+const fn tier_for_level(level: i32) -> u8 {
     match level {
         0 => 1, // OFF
         1 => 2, // g10
@@ -84,7 +86,7 @@ fn tier_for_level(level: i32) -> u8 {
 }
 
 #[allow(clippy::bool_to_int_with_if)] // explicit form documents the floor LEVELS, not a cast.
-fn relax_floor_level(allow_off: bool) -> i32 {
+const fn relax_floor_level(allow_off: bool) -> i32 {
     if allow_off {
         0
     } else {
@@ -131,7 +133,9 @@ fn target_level(loss: f64, current: i32) -> i32 {
 }
 
 /// Picks the next wire tier from the EWMA loss and the previous tier, with hysteresis
-/// and a strict one-level-per-call clamp (anti-flap). Relaxation floors at level 1 (g10)
+/// and a strict one-level-per-call clamp (anti-flap).
+///
+/// Relaxation floors at level 1 (g10)
 /// unless `allow_off`. (The plain decider; production uses [`next_tier_state`].)
 #[must_use]
 pub fn tier(loss: f64, previous_tier: u8, allow_off: bool) -> u8 {
@@ -170,7 +174,7 @@ impl Default for TierState {
 impl TierState {
     /// Builds an explicit tier state.
     #[must_use]
-    pub fn new(tier: u8, relax_streak: i32, sticky_relax_remaining: i32) -> Self {
+    pub const fn new(tier: u8, relax_streak: i32, sticky_relax_remaining: i32) -> Self {
         Self {
             tier,
             relax_streak,
@@ -179,7 +183,9 @@ impl TierState {
     }
 }
 
-/// Dwell-gated tier step — the production entry point. Escalation is immediate (one step,
+/// Dwell-gated tier step — the production entry point.
+///
+/// Escalation is immediate (one step,
 /// resets the relax streak); relaxation is counted across consecutive relax-demanding
 /// reports and applied only when the streak reaches the effective dwell (doubled while a
 /// sticky window from a recent unrecovered loss is open). Any non-relax report resets the

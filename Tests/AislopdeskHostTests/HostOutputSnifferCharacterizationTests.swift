@@ -1,6 +1,6 @@
-import XCTest
-import Foundation
 import AislopdeskProtocol
+import Foundation
+import XCTest
 @testable import AislopdeskHost
 
 /// CHARACTERIZATION tests for the FUSED ``HostOutputSniffer`` against the two sniffers it
@@ -28,7 +28,6 @@ import AislopdeskProtocol
 /// NOTE: this file dies together with the OLD sniffers after the production swap. The
 /// PERMANENT chunking-invariance oracle lives in `HostOutputSnifferTests.swift`.
 final class HostOutputSnifferCharacterizationTests: XCTestCase {
-
     private let ESC = "\u{1B}"
     private let BEL = "\u{07}"
     private let ST = "\u{1B}\\" // ESC \
@@ -38,8 +37,15 @@ final class HostOutputSnifferCharacterizationTests: XCTestCase {
     private final class TestClock: @unchecked Sendable {
         private let lock = NSLock()
         private var now = Date(timeIntervalSinceReferenceDate: 0)
-        func date() -> Date { lock.lock(); defer { lock.unlock() }; return now }
-        func advance(_ seconds: TimeInterval) { lock.lock(); now = now.addingTimeInterval(seconds); lock.unlock() }
+        func date() -> Date { lock.lock()
+            defer { lock.unlock() }
+            return now
+        }
+
+        func advance(_ seconds: TimeInterval) { lock.lock()
+            now = now.addingTimeInterval(seconds)
+            lock.unlock()
+        }
     }
 
     // MARK: Deterministic PRNG (SplitMix64) — seeded fuzz, reproducible failures
@@ -54,6 +60,7 @@ final class HostOutputSnifferCharacterizationTests: XCTestCase {
             z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
             return z ^ (z >> 31)
         }
+
         mutating func next(upTo n: Int) -> Int {
             precondition(n > 0)
             return Int(next() % UInt64(n))
@@ -65,8 +72,9 @@ final class HostOutputSnifferCharacterizationTests: XCTestCase {
     private func titleBellOnly(_ messages: [WireMessage]) -> [WireMessage] {
         messages.filter {
             switch $0 {
-            case .title, .bell: return true
-            default: return false
+            case .title,
+                 .bell: true
+            default: false
             }
         }
     }
@@ -86,7 +94,7 @@ final class HostOutputSnifferCharacterizationTests: XCTestCase {
         _ chunks: [[UInt8]],
         _ label: @autoclosure () -> String,
         file: StaticString = #filePath,
-        line: UInt = #line
+        line: UInt = #line,
     ) {
         let clock = TestClock()
         let title = HostTitleBellSniffer()
@@ -100,10 +108,20 @@ final class HostOutputSnifferCharacterizationTests: XCTestCase {
             cmdOut += cmd.observe(chunk)
             fusedOut += fused.observe(chunk)
         }
-        XCTAssertEqual(titleBellOnly(fusedOut), titleOut,
-                       "title/bell filtered output diverged — \(label())", file: file, line: line)
-        XCTAssertEqual(commandOnly(fusedOut), cmdOut,
-                       "commandStatus filtered output diverged — \(label())", file: file, line: line)
+        XCTAssertEqual(
+            titleBellOnly(fusedOut),
+            titleOut,
+            "title/bell filtered output diverged — \(label())",
+            file: file,
+            line: line,
+        )
+        XCTAssertEqual(
+            commandOnly(fusedOut),
+            cmdOut,
+            "commandStatus filtered output diverged — \(label())",
+            file: file,
+            line: line,
+        )
     }
 
     /// Splits `bytes` into two chunks at `cut`.
@@ -132,11 +150,13 @@ final class HostOutputSnifferCharacterizationTests: XCTestCase {
         for center in hot {
             for delta in -16...16 {
                 let cut = center + delta
-                if cut >= 1 && cut < count { cuts.insert(cut) }
+                if cut >= 1, cut < count { cuts.insert(cut) }
             }
         }
         var s = 17
-        while s < count { cuts.insert(s); s += 257 }
+        while s < count { cuts.insert(s)
+            s += 257
+        }
         return cuts.sorted()
     }
 
@@ -147,7 +167,7 @@ final class HostOutputSnifferCharacterizationTests: XCTestCase {
         hot: [Int] = [],
         _ label: @autoclosure () -> String,
         file: StaticString = #filePath,
-        line: UInt = #line
+        line: UInt = #line,
     ) {
         assertDifferential([bytes], "\(label()) [whole]", file: file, line: line)
         for cut in interiorCuts(count: bytes.count, hot: hot) {
@@ -250,8 +270,10 @@ final class HostOutputSnifferCharacterizationTests: XCTestCase {
 
         // Cmd flavor: stray ESC fires the C, the following D emits idle.
         let marks = Array("\(ESC)]133;C".utf8) + Array("\(ESC)]133;D;0\(BEL)".utf8)
-        XCTAssertEqual(fusedWhole(marks),
-                       [.commandStatus(.running), .commandStatus(.idle(exitCode: 0, durationMS: 0))])
+        XCTAssertEqual(
+            fusedWhole(marks),
+            [.commandStatus(.running), .commandStatus(.idle(exitCode: 0, durationMS: 0))],
+        )
         assertDifferentialAllChunkings(marks, "stray-ESC C then D")
 
         // Cross flavor: a title OSC ended by the stray ESC of a 133 mark.
@@ -336,8 +358,10 @@ final class HostOutputSnifferCharacterizationTests: XCTestCase {
 
         // And a D after the phantom-D + a real C still measures from the REAL C.
         let cycle = Array("\(ESC)]133;D;0\(BEL)\(ESC)]133;C\(BEL)\(ESC)]133;D;7\(BEL)".utf8)
-        XCTAssertEqual(fusedWhole(cycle),
-                       [.commandStatus(.running), .commandStatus(.idle(exitCode: 7, durationMS: 0))])
+        XCTAssertEqual(
+            fusedWhole(cycle),
+            [.commandStatus(.running), .commandStatus(.idle(exitCode: 7, durationMS: 0))],
+        )
         assertDifferentialAllChunkings(cycle, "phantom D, then C→D")
     }
 
@@ -370,7 +394,7 @@ final class HostOutputSnifferCharacterizationTests: XCTestCase {
             feed(dBytes)
             let expected: [WireMessage] = [
                 .commandStatus(.running),
-                .commandStatus(.idle(exitCode: 3, durationMS: 12_000)),
+                .commandStatus(.idle(exitCode: 3, durationMS: 12000)),
             ]
             XCTAssertEqual(commandOnly(fusedOut), cmdOut, "chunk size \(size)")
             XCTAssertEqual(fusedOut, expected, "chunk size \(size)")
@@ -382,10 +406,10 @@ final class HostOutputSnifferCharacterizationTests: XCTestCase {
     func testTitleDedupParity() {
         let bytes = Array((
             "\(ESC)]0;same\(BEL)"
-            + "\(ESC)]2;same\(BEL)"     // deduped
-            + "\(ESC)]133;C\(BEL)"      // a mark between the dupes must not break dedup
-            + "\(ESC)]0;same\(BEL)"     // still deduped
-            + "\(ESC)]0;other\(BEL)"
+                + "\(ESC)]2;same\(BEL)" // deduped
+                + "\(ESC)]133;C\(BEL)" // a mark between the dupes must not break dedup
+                + "\(ESC)]0;same\(BEL)" // still deduped
+                + "\(ESC)]0;other\(BEL)"
         ).utf8)
         XCTAssertEqual(fusedWhole(bytes), [.title("same"), .commandStatus(.running), .title("other")])
         assertDifferentialAllChunkings(bytes, "dedup across an interleaved mark")
@@ -396,14 +420,14 @@ final class HostOutputSnifferCharacterizationTests: XCTestCase {
     func testInterleavedCrossTypeStream() {
         let bytes = Array((
             "welcome\n"
-            + "\(ESC)]0;Claude Code\(BEL)"
-            + "\(ESC)]133;A\(BEL)"
-            + "$ make\n"
-            + "\(ESC)]133;C\(BEL)"
-            + "\(BEL)building\(ESC)[2J"
-            + "\(ESC)]2;make — repo\(ST)"
-            + "\(ESC)]133;D;2\(BEL)"
-            + "\(BEL)"
+                + "\(ESC)]0;Claude Code\(BEL)"
+                + "\(ESC)]133;A\(BEL)"
+                + "$ make\n"
+                + "\(ESC)]133;C\(BEL)"
+                + "\(BEL)building\(ESC)[2J"
+                + "\(ESC)]2;make — repo\(ST)"
+                + "\(ESC)]133;D;2\(BEL)"
+                + "\(BEL)"
         ).utf8)
         let expected: [WireMessage] = [
             .title("Claude Code"),
@@ -431,7 +455,7 @@ final class HostOutputSnifferCharacterizationTests: XCTestCase {
             UInt8(ascii: "a"),
         ]
         var rng = SplitMix64(seed: 0x5EED_2026_0612_0001)
-        for iteration in 0..<10_000 {
+        for iteration in 0..<10000 {
             let length = rng.next(upTo: 33) // 0..32
             var bytes: [UInt8] = []
             bytes.reserveCapacity(length)
@@ -464,7 +488,7 @@ final class HostOutputSnifferCharacterizationTests: XCTestCase {
             "a", "spoof", "\u{1B}]2;t\u{07}", "\u{1B}]133;C\u{07}", "\u{1B}]133;D;1\u{07}",
         ]
         var rng = SplitMix64(seed: 0x5EED_2026_0612_0002)
-        for iteration in 0..<2_000 {
+        for iteration in 0..<2000 {
             var stream = ""
             for _ in 0..<(1 + rng.next(upTo: 8)) {
                 stream += tokens[rng.next(upTo: tokens.count)]

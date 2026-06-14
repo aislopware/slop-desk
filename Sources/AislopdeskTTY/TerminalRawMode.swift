@@ -39,6 +39,7 @@ public enum TerminalRawMode {
         var fd: Int32 = -1
         var active = false
     }
+
     private static let state = SavedState()
 
     // MARK: - Async-signal-safe globals for the signal handler (NO lock)
@@ -96,7 +97,13 @@ public enum TerminalRawMode {
     /// Sets the window size of `fd` via `TIOCSWINSZ` (the host-side / SIGWINCH mapping).
     /// Pure helper, unit-testable against an openpty master fd.
     @discardableResult
-    public static func setWindowSize(fd: Int32, cols: UInt16, rows: UInt16, pxWidth: UInt16 = 0, pxHeight: UInt16 = 0) -> Bool {
+    public static func setWindowSize(
+        fd: Int32,
+        cols: UInt16,
+        rows: UInt16,
+        pxWidth: UInt16 = 0,
+        pxHeight: UInt16 = 0,
+    ) -> Bool {
         var ws = winsize(ws_row: rows, ws_col: cols, ws_xpixel: pxWidth, ws_ypixel: pxHeight)
         return ioctl(fd, UInt(TIOCSWINSZ), &ws) == 0
     }
@@ -196,7 +203,7 @@ public enum TerminalRawMode {
         for sig in handledSignals {
             var action = sigaction()
             action.__sigaction_u.__sa_handler = { signo in
-                TerminalRawMode.restoreFromSignalHandler()
+                Self.restoreFromSignalHandler()
                 // Re-raise with the default disposition so we die with the right status.
                 signal(signo, SIG_DFL)
                 raise(signo)
@@ -234,7 +241,9 @@ public enum TerminalRawMode {
 
     /// Reads the local terminal window size via `TIOCGWINSZ`. Returns `nil` if `fd`
     /// is not a tty or the ioctl fails.
-    public static func windowSize(fd: Int32 = STDIN_FILENO) -> (cols: UInt16, rows: UInt16, pxWidth: UInt16, pxHeight: UInt16)? {
+    public static func windowSize(fd: Int32 = STDIN_FILENO)
+        -> (cols: UInt16, rows: UInt16, pxWidth: UInt16, pxHeight: UInt16)?
+    {
         var ws = winsize()
         guard ioctl(fd, UInt(TIOCGWINSZ), &ws) == 0 else { return nil }
         return (cols: ws.ws_col, rows: ws.ws_row, pxWidth: ws.ws_xpixel, pxHeight: ws.ws_ypixel)
@@ -248,9 +257,9 @@ public enum RawModeError: Error, CustomStringConvertible {
 
     public var description: String {
         switch self {
-        case .notATTY: return "stdin is not a TTY"
-        case let .tcgetattrFailed(e): return "tcgetattr failed (errno \(e))"
-        case let .tcsetattrFailed(e): return "tcsetattr failed (errno \(e))"
+        case .notATTY: "stdin is not a TTY"
+        case let .tcgetattrFailed(e): "tcgetattr failed (errno \(e))"
+        case let .tcsetattrFailed(e): "tcsetattr failed (errno \(e))"
         }
     }
 }

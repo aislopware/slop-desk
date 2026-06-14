@@ -1,5 +1,5 @@
-import XCTest
 import Foundation
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pure tests for ``ConnectionViewModel/packInputs(_:maxInputFrameBytes:)`` — the OUT-batch
@@ -7,22 +7,22 @@ import Foundation
 /// barrier). The load-bearing property is CONCATENATION BYTE-IDENTITY: the emitted input
 /// payloads concatenate to exactly the input payloads, in order.
 final class PackInputsTests: XCTestCase {
-    private typealias E = ConnectionViewModel.OutEvent
+    private typealias OutEvent = ConnectionViewModel.OutEvent
 
-    private func concatInputs(_ events: [E]) -> Data {
+    private func concatInputs(_ events: [OutEvent]) -> Data {
         events.reduce(into: Data()) { acc, e in
             if case let .input(d) = e { acc.append(d) }
         }
     }
 
     func testAdjacentTinyInputsMergeIntoOneFrame() {
-        let events: [E] = [.input(Data("a".utf8)), .input(Data("b".utf8)), .input(Data("c".utf8))]
+        let events: [OutEvent] = [.input(Data("a".utf8)), .input(Data("b".utf8)), .input(Data("c".utf8))]
         let packed = ConnectionViewModel.packInputs(events, maxInputFrameBytes: 1024)
         XCTAssertEqual(packed, [.input(Data("abc".utf8))], "key-repeat runs merge to one frame")
     }
 
     func testOversizedInputSplitsAtCap() {
-        let big = Data((0..<10_000).map { UInt8($0 % 251) })
+        let big = Data((0..<10000).map { UInt8($0 % 251) })
         let packed = ConnectionViewModel.packInputs([.input(big)], maxInputFrameBytes: 4096)
         XCTAssertEqual(packed.count, 3, "10000 bytes at cap 4096 → 3 frames")
         for case let .input(d) in packed {
@@ -32,7 +32,7 @@ final class PackInputsTests: XCTestCase {
     }
 
     func testResizeIsAHardBarrier() {
-        let events: [E] = [
+        let events: [OutEvent] = [
             .input(Data("before".utf8)),
             .resize(cols: 100, rows: 30),
             .input(Data("after".utf8)),
@@ -46,13 +46,13 @@ final class PackInputsTests: XCTestCase {
     }
 
     func testConcatenationIdentityUnderMixedBatch() {
-        var events: [E] = []
+        var events: [OutEvent] = []
         var expected = Data()
         for i in 0..<50 {
             let payload = Data(repeating: UInt8(i % 256), count: (i % 7) * 700 + 1)
             events.append(.input(payload))
             expected.append(payload)
-            if i % 11 == 0 { events.append(.resize(cols: UInt16(80 + i), rows: 24)) }
+            if i.isMultiple(of: 11) { events.append(.resize(cols: UInt16(80 + i), rows: 24)) }
         }
         let packed = ConnectionViewModel.packInputs(events, maxInputFrameBytes: 2048)
         XCTAssertEqual(concatInputs(packed), expected, "byte-identity holds for arbitrary mixes")
@@ -64,22 +64,25 @@ final class PackInputsTests: XCTestCase {
 
     func testEmptyAndResizeOnlyBatchesPassThrough() {
         XCTAssertEqual(ConnectionViewModel.packInputs([]), [])
-        let resizeOnly: [E] = [.resize(cols: 80, rows: 24)]
+        let resizeOnly: [OutEvent] = [.resize(cols: 80, rows: 24)]
         XCTAssertEqual(ConnectionViewModel.packInputs(resizeOnly), resizeOnly)
     }
 
     func testPackAfterCoalesceKeepsTrailingResize() {
         // The production pipeline is packInputs(coalesceOut(batch)) — the trailing-edge
         // resize guarantee must survive the pack stage.
-        let events: [E] = [
+        let events: [OutEvent] = [
             .resize(cols: 90, rows: 25),
             .input(Data("x".utf8)),
             .resize(cols: 100, rows: 30),
             .resize(cols: 110, rows: 35),
         ]
         let packed = ConnectionViewModel.packInputs(ConnectionViewModel.coalesceOut(events))
-        XCTAssertEqual(packed.last, .resize(cols: 110, rows: 35),
-                       "the final drag size still reaches the PTY after coalesce+pack")
+        XCTAssertEqual(
+            packed.last,
+            .resize(cols: 110, rows: 35),
+            "the final drag size still reaches the PTY after coalesce+pack",
+        )
         XCTAssertEqual(concatInputs(packed), Data("x".utf8))
     }
 }

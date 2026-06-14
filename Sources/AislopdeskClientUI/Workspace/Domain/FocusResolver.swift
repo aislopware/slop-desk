@@ -1,5 +1,5 @@
-import Foundation
 import CoreGraphics
+import Foundation
 
 // MARK: - Geometric focus resolution
 
@@ -25,7 +25,8 @@ public enum FocusResolver {
         guard let source = solved.frames[pane] else { return nil }
 
         switch dir {
-        case .next, .previous:
+        case .next,
+             .previous:
             // Reading-order (top-to-bottom, then left-to-right) cycle over the solved frames.
             let ordered = solved.frames
                 .sorted { lhs, rhs in
@@ -40,7 +41,10 @@ public enum FocusResolver {
                 .map(\.key)
             return cycle(ordered, from: pane, forward: dir == .next)
 
-        case .left, .right, .up, .down:
+        case .left,
+             .right,
+             .up,
+             .down:
             return directionalNeighbor(of: pane, source: source, dir: dir, in: solved)
         }
     }
@@ -61,7 +65,7 @@ public enum FocusResolver {
         of pane: PaneID,
         source: CGRect,
         dir: FocusDirection,
-        in solved: SolvedLayout
+        in solved: SolvedLayout,
     ) -> PaneID? {
         var best: (id: PaneID, overlap: CGFloat, distance: CGFloat)?
 
@@ -70,7 +74,8 @@ public enum FocusResolver {
         // so a deterministic iteration order makes the directional pick deterministic too: two equally-good
         // candidates (e.g. coincident panes on the requested side) always resolve to the smaller id.
         for (id, rect) in solved.frames.sorted(by: { $0.key.raw.uuidString < $1.key.raw.uuidString })
-        where id != pane {
+            where id != pane
+        {
             guard isOnRequestedSide(candidate: rect, source: source, dir: dir) else { continue }
 
             let overlap = crossAxisOverlap(candidate: rect, source: source, dir: dir)
@@ -84,7 +89,8 @@ public enum FocusResolver {
             if let current = best {
                 // Prefer more cross-axis overlap; break ties by the smaller axial distance.
                 if overlap > current.overlap + 0.5 ||
-                    (abs(overlap - current.overlap) <= 0.5 && distance < current.distance) {
+                    (abs(overlap - current.overlap) <= 0.5 && distance < current.distance)
+                {
                     best = (id, overlap, distance)
                 }
             } else {
@@ -98,11 +104,12 @@ public enum FocusResolver {
     /// leading edge in that direction, so an adjacent pane counts even if rects abut exactly).
     private static func isOnRequestedSide(candidate: CGRect, source: CGRect, dir: FocusDirection) -> Bool {
         switch dir {
-        case .left:  return candidate.midX < source.minX + 0.5
-        case .right: return candidate.midX > source.maxX - 0.5
-        case .up:    return candidate.midY < source.minY + 0.5
-        case .down:  return candidate.midY > source.maxY - 0.5
-        case .next, .previous: return false
+        case .left: candidate.midX < source.minX + 0.5
+        case .right: candidate.midX > source.maxX - 0.5
+        case .up: candidate.midY < source.minY + 0.5
+        case .down: candidate.midY > source.maxY - 0.5
+        case .next,
+             .previous: false
         }
     }
 
@@ -110,17 +117,20 @@ public enum FocusResolver {
     /// movement direction (horizontal move → vertical overlap, and vice versa).
     private static func crossAxisOverlap(candidate: CGRect, source: CGRect, dir: FocusDirection) -> CGFloat {
         switch dir {
-        case .left, .right:
+        case .left,
+             .right:
             // Movement is horizontal → cross axis is vertical (y).
             let lo = max(candidate.minY, source.minY)
             let hi = min(candidate.maxY, source.maxY)
             return max(hi - lo, 0)
-        case .up, .down:
+        case .up,
+             .down:
             // Movement is vertical → cross axis is horizontal (x).
             let lo = max(candidate.minX, source.minX)
             let hi = min(candidate.maxX, source.maxX)
             return max(hi - lo, 0)
-        case .next, .previous:
+        case .next,
+             .previous:
             return 0
         }
     }
@@ -129,11 +139,12 @@ public enum FocusResolver {
     /// clamped at 0 for abutting/overlapping rects).
     private static func axialDistance(candidate: CGRect, source: CGRect, dir: FocusDirection) -> CGFloat {
         switch dir {
-        case .left:  return max(source.minX - candidate.maxX, 0)
-        case .right: return max(candidate.minX - source.maxX, 0)
-        case .up:    return max(source.minY - candidate.maxY, 0)
-        case .down:  return max(candidate.minY - source.maxY, 0)
-        case .next, .previous: return .greatestFiniteMagnitude
+        case .left: max(source.minX - candidate.maxX, 0)
+        case .right: max(candidate.minX - source.maxX, 0)
+        case .up: max(source.minY - candidate.maxY, 0)
+        case .down: max(candidate.minY - source.maxY, 0)
+        case .next,
+             .previous: .greatestFiniteMagnitude
         }
     }
 }

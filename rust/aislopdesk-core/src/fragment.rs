@@ -29,15 +29,15 @@ pub struct Flags(pub u8);
 
 impl Flags {
     /// This frame is a keyframe (IDR) — a fresh decode anchor.
-    pub const KEYFRAME: Flags = Flags(1 << 0);
+    pub const KEYFRAME: Self = Self(1 << 0);
     /// This fragment is an FEC parity fragment, not original data.
-    pub const PARITY: Flags = Flags(1 << 1);
+    pub const PARITY: Self = Self(1 << 1);
     /// This frame is a crisp near-lossless static refresh (treated as a keyframe).
-    pub const CRISP: Flags = Flags(1 << 2);
+    pub const CRISP: Self = Self(1 << 2);
     /// Bit 6 — this is a Long-Term-Reference frame; a client that decodes it must ack it.
-    pub const IS_LTR: Flags = Flags(1 << 6);
+    pub const IS_LTR: Self = Self(1 << 6);
     /// Bit 7 — encoded via `ForceLTRRefresh`; the decode gate's non-keyframe re-anchor.
-    pub const ACKED_ANCHORED: Flags = Flags(1 << 7);
+    pub const ACKED_ANCHORED: Self = Self(1 << 7);
 
     const TIER_SHIFT: u8 = 3;
     const TIER_MASK: u8 = 0b0011_1000; // bits 3,4,5
@@ -50,19 +50,19 @@ impl Flags {
 
     /// Whether every bit of `other` is set (`OptionSet.contains`).
     #[must_use]
-    pub const fn contains(self, other: Flags) -> bool {
+    pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }
 
     /// Sets every bit of `other` (`OptionSet.insert`).
-    pub fn insert(&mut self, other: Flags) {
+    pub const fn insert(&mut self, other: Self) {
         self.0 |= other.0;
     }
 
     /// Returns the union of two flag sets.
     #[must_use]
-    pub const fn union(self, other: Flags) -> Flags {
-        Flags(self.0 | other.0)
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
     }
 
     /// The 3-bit FEC tier (0..=7) read from bits 3-5.
@@ -73,7 +73,7 @@ impl Flags {
 
     /// Sets the 3-bit FEC tier in bits 3-5, preserving every other bit. `t` is masked to
     /// 3 bits, so this can never disturb the other flags or the reserved bits.
-    pub fn set_fec_tier(&mut self, t: u8) {
+    pub const fn set_fec_tier(&mut self, t: u8) {
         self.0 = (self.0 & !Self::TIER_MASK) | ((t & 0b111) << Self::TIER_SHIFT);
     }
 }
@@ -139,7 +139,7 @@ impl FrameFragment {
     /// Parses one datagram. Returns a [`crate::VideoProtocolError`] on a short /
     /// inconsistent datagram — a corrupt single packet must not crash the receiver.
     /// Trailing bytes beyond the declared payload length are ignored (matches Swift).
-    pub fn decode(datagram: &[u8]) -> Result<FrameFragment> {
+    pub fn decode(datagram: &[u8]) -> Result<Self> {
         let mut r = ByteReader::new(datagram);
         let stream_seq = r.read_u32()?;
         let frame_id = r.read_u32()?;
@@ -149,7 +149,7 @@ impl FrameFragment {
         let host_send_ts_millis = r.read_u32()?;
         let payload_length = r.read_u16()?;
         let payload = r.read_bytes(usize::from(payload_length))?.to_vec();
-        Ok(FrameFragment {
+        Ok(Self {
             header: FrameFragmentHeader {
                 stream_seq,
                 frame_id,
@@ -164,7 +164,9 @@ impl FrameFragment {
     }
 }
 
-/// Optional per-frame parameters for [`VideoPacketizer::packetize`]. Mirrors the Swift
+/// Optional per-frame parameters for [`VideoPacketizer::packetize`].
+///
+/// Mirrors the Swift
 /// default arguments (`crisp=false`, `host_send_ts_millis=0`, tier 0, `is_ltr=false`,
 /// `acked_anchored=false`). The defaults reproduce the pre-WF-4/WF-8 wire byte-for-byte.
 #[derive(Debug, Clone, Copy)]
@@ -226,13 +228,13 @@ impl VideoPacketizer {
 
     /// The `stream_seq` the next emitted datagram will carry.
     #[must_use]
-    pub fn peek_next_stream_seq(&self) -> u32 {
+    pub const fn peek_next_stream_seq(&self) -> u32 {
         self.next_stream_seq
     }
 
     /// The `frame_id` the next `packetize` call will assign.
     #[must_use]
-    pub fn peek_next_frame_id(&self) -> u32 {
+    pub const fn peek_next_frame_id(&self) -> u32 {
         self.next_frame_id
     }
 
@@ -428,12 +430,12 @@ mod tests {
             .iter()
             .filter(|f| !f.header.flags.contains(Flags::PARITY))
             .collect();
-        let parity: Vec<_> = frags
+        let parity_count = frags
             .iter()
             .filter(|f| f.header.flags.contains(Flags::PARITY))
-            .collect();
+            .count();
         assert_eq!(data.len(), 6);
-        assert_eq!(parity.len(), 2);
+        assert_eq!(parity_count, 2);
         assert!(frags.iter().all(|f| f.header.frag_count == 8));
         assert!(data
             .iter()

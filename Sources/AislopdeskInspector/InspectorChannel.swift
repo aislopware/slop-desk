@@ -33,18 +33,18 @@ public actor InspectorSource {
 
     /// Sends one event frame to the client.
     public func send(_ event: InspectorEvent) async throws {
-        try await channel.send(try InspectorCodec.encode(.event(event)))
+        try await channel.send(InspectorCodec.encode(.event(event)))
     }
 
     /// Sends a keep-alive frame (so a quiet workflow run reads as alive).
     public func sendKeepAlive() async throws {
-        try await channel.send(try InspectorCodec.encode(.keepAlive))
+        try await channel.send(InspectorCodec.encode(.keepAlive))
     }
 
     /// Pumps an entire ``InspectorEvent`` stream to the client, in order.
     public func stream(_ events: AsyncStream<InspectorEvent>) async {
         for await event in events {
-            try? await self.send(event)
+            try? await send(event)
         }
     }
 
@@ -71,7 +71,7 @@ public actor InspectorClient {
     /// Requests (re)delivery of events. `fromSeq == 0` = full replay; a higher value
     /// resumes after a reconnect. Read-only control.
     public func subscribe(fromSeq: Int64 = 0) async throws {
-        try await channel.send(try InspectorCodec.encode(.subscribe(fromSeq: fromSeq)))
+        try await channel.send(InspectorCodec.encode(.subscribe(fromSeq: fromSeq)))
     }
 
     /// The decoded inbound stream, filtered to ``InspectorEvent`` (keep-alives are
@@ -120,7 +120,7 @@ public actor InspectorClient {
 /// which opens a fresh connection and `subscribe(fromSeq:)`s from 0, getting a clean
 /// framed stream from the host's replay log.
 private func decodeStream(
-    _ inbound: AsyncThrowingStream<Data, Error>
+    _ inbound: AsyncThrowingStream<Data, Error>,
 ) -> AsyncThrowingStream<InspectorWireMessage, Error> {
     AsyncThrowingStream { continuation in
         let task = Task {
@@ -136,7 +136,9 @@ private func decodeStream(
                             continuation.yield(message)
                         } catch let error as InspectorCodec.CodecError {
                             switch error {
-                            case .malformedBody, .unknownType, .truncated:
+                            case .malformedBody,
+                                 .unknownType,
+                                 .truncated:
                                 // Recoverable: the frame was already consumed (its bytes
                                 // removed before decode), so the boundary is intact. Skip
                                 // this one message and keep decoding the next frame.
@@ -171,25 +173,30 @@ public final class LoopbackByteChannel: ByteChannel, @unchecked Sendable {
 
     private init(
         inbound: AsyncThrowingStream<Data, Error>,
-        peerInbound: AsyncThrowingStream<Data, Error>.Continuation
+        peerInbound: AsyncThrowingStream<Data, Error>.Continuation,
     ) {
         self.inbound = inbound
-        self.outbound = peerInbound
+        outbound = peerInbound
     }
 
     /// Creates a connected pair `(host, client)`.
     public static func pair() -> (LoopbackByteChannel, LoopbackByteChannel) {
-        var aCont: AsyncThrowingStream<Data, Error>.Continuation!
+        var aCont: AsyncThrowingStream<Data, Error>.Continuation?
         let aIn = AsyncThrowingStream<Data, Error> { aCont = $0 }
-        var bCont: AsyncThrowingStream<Data, Error>.Continuation!
+        var bCont: AsyncThrowingStream<Data, Error>.Continuation?
         let bIn = AsyncThrowingStream<Data, Error> { bCont = $0 }
+        guard let aCont, let bCont else {
+            preconditionFailure(
+                "AsyncThrowingStream runs its build closure synchronously, so the continuations are set",
+            )
+        }
         // `a.send` → `b.inbound` (bCont); `b.send` → `a.inbound` (aCont).
         let a = LoopbackByteChannel(inbound: aIn, peerInbound: bCont)
         let b = LoopbackByteChannel(inbound: bIn, peerInbound: aCont)
         return (a, b)
     }
 
-    public func send(_ data: Data) async throws {
+    public func send(_ data: Data) {
         outbound.yield(data)
     }
 

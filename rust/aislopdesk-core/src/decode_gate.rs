@@ -98,18 +98,18 @@ impl DecodeGate {
     }
 
     /// A hard decode failure tore the session down — only an IDR helps now.
-    pub fn note_hard_decode_failure(&mut self) {
+    pub const fn note_hard_decode_failure(&mut self) {
         self.mode = Mode::NeedKeyframe;
     }
 
     /// The decoder reported `awaiting_keyframe` (no session / parameter sets yet) — same anchor set.
-    pub fn note_awaiting_keyframe(&mut self) {
+    pub const fn note_awaiting_keyframe(&mut self) {
         self.mode = Mode::NeedKeyframe;
     }
 
     /// Admission decision for one reassembled frame. Pure — never mutates.
     #[must_use]
-    pub fn verdict(&self, frame_id: u32, keyframe: bool, acked_anchored: bool) -> Verdict {
+    pub const fn verdict(&self, frame_id: u32, keyframe: bool, acked_anchored: bool) -> Verdict {
         match self.mode {
             Mode::Open => Verdict::Submit,
             Mode::NeedKeyframe => {
@@ -163,7 +163,7 @@ impl DecodeGate {
         }
     }
 
-    fn reset(&mut self) {
+    const fn reset(&mut self) {
         self.mode = Mode::Open;
         self.min_lost_frame_id = None;
         self.max_lost_frame_id = None;

@@ -53,18 +53,18 @@ public struct ConnectionGateView: View {
                     TextField("host", text: $connection.host)
                         .textFieldStyle(.roundedBorder)
                         .frame(minWidth: 160)
-                        #if os(iOS)
+                    #if os(iOS)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
-                        #endif
+                    #endif
                         .disabled(isBusy)
                     TextField("port", text: $connection.port)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 78)
-                        #if os(iOS)
+                    #if os(iOS)
                         .keyboardType(.numberPad)
-                        #endif
+                    #endif
                         .disabled(isBusy)
                     // Recent hosts (most-recent-first, successful connects only): one pick fills the
                     // whole form — the daily two-machine loop should never re-type an address.
@@ -111,9 +111,9 @@ public struct ConnectionGateView: View {
     private func labeledField(_ prompt: String, text: Binding<String>) -> some View {
         TextField(prompt, text: text)
             .textFieldStyle(.roundedBorder)
-            #if os(iOS)
+        #if os(iOS)
             .keyboardType(.numberPad)
-            #endif
+        #endif
     }
 
     private var statusRow: some View {
@@ -137,13 +137,16 @@ public struct ConnectionGateView: View {
     @ViewBuilder
     private var actionButton: some View {
         switch connection.status {
-        case .connecting, .reconnecting:
+        case .connecting,
+             .reconnecting:
             Button("Cancel", role: .cancel) { Task { await connection.disconnect() } }
-        case .disconnected, .connected:
+        case .disconnected,
+             .connected:
             Button("Connect") { connectIfPossible() }
                 .buttonStyle(.borderedProminent)
                 .disabled(!connection.canConnect)
-        case .failed, .unreachable:
+        case .failed,
+             .unreachable:
             Button("Retry") { connectIfPossible() }
                 .buttonStyle(.borderedProminent)
                 .disabled(!connection.canConnect)
@@ -153,8 +156,12 @@ public struct ConnectionGateView: View {
     /// Whether the connection is mid-attempt (form locked + spinner shown).
     private var isBusy: Bool {
         switch connection.status {
-        case .connecting, .reconnecting: return true
-        case .disconnected, .connected, .failed, .unreachable: return false
+        case .connecting,
+             .reconnecting: true
+        case .disconnected,
+             .connected,
+             .failed,
+             .unreachable: false
         }
     }
 

@@ -49,9 +49,9 @@ final class EventBroadcaster<Element: Sendable>: @unchecked Sendable {
 
             continuation.onTermination = { [weak self] _ in
                 guard let self else { return }
-                self.lock.lock()
-                self.children[id] = nil
-                self.lock.unlock()
+                lock.lock()
+                children[id] = nil
+                lock.unlock()
             }
         }
     }
@@ -68,7 +68,9 @@ final class EventBroadcaster<Element: Sendable>: @unchecked Sendable {
     /// finished stream). Idempotent.
     func finish() {
         lock.lock()
-        guard !finished else { lock.unlock(); return }
+        guard !finished else { lock.unlock()
+            return
+        }
         finished = true
         let conts = Array(children.values)
         children.removeAll()

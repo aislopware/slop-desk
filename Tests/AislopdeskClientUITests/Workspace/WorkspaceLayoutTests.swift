@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins the pure responsive-breakpoint helpers in ``WorkspaceLayout`` (docs/22 §4, ITEM #6) and the
@@ -16,7 +16,6 @@ import CoreGraphics
 ///   tab-switch reclaim logic is unit-reachable here without a device.
 @MainActor
 final class WorkspaceLayoutTests: XCTestCase {
-
     // MARK: - ITEM #6: the EXISTING detail-width breakpoint stays byte-for-byte (4 regressions)
 
     /// The original `isCompact(...:width:)` signature + the 460 detail threshold are load-bearing and
@@ -44,13 +43,13 @@ final class WorkspaceLayoutTests: XCTestCase {
         // a sub-threshold 300pt mid-resize — the window width wins.
         XCTAssertFalse(
             WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 300, windowWidth: 720),
-            "window 720 (>= 680) resolves regular regardless of a transient narrow detail width"
+            "window 720 (>= 680) resolves regular regardless of a transient narrow detail width",
         )
         // The window width, not the detail width, is the one compared: a wide detail can't rescue a
         // sub-threshold window.
         XCTAssertTrue(
             WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 5000, windowWidth: 600),
-            "window 600 (< 680) resolves compact even with a wide detail width"
+            "window 600 (< 680) resolves compact even with a wide detail width",
         )
     }
 
@@ -59,11 +58,11 @@ final class WorkspaceLayoutTests: XCTestCase {
     func testWindowWidthBelowWindowThresholdCollapses() {
         XCTAssertTrue(
             WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 679, windowWidth: 679),
-            "window just below 680 → compact"
+            "window just below 680 → compact",
         )
         XCTAssertFalse(
             WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 680, windowWidth: 680),
-            "window exactly at the threshold → regular (strict <)"
+            "window exactly at the threshold → regular (strict <)",
         )
     }
 
@@ -77,19 +76,19 @@ final class WorkspaceLayoutTests: XCTestCase {
         // 500 >= 460, so no one-frame compact carousel.
         XCTAssertFalse(
             WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 500, windowWidth: nil),
-            "nil window → detail 500 (>= 460) resolves regular (no one-frame compact flash on macOS launch)"
+            "nil window → detail 500 (>= 460) resolves regular (no one-frame compact flash on macOS launch)",
         )
         // A genuinely phone-narrow detail still collapses via the 460 detail threshold.
         XCTAssertTrue(
             WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 400, windowWidth: nil),
-            "nil window → detail 400 (< 460) resolves compact"
+            "nil window → detail 400 (< 460) resolves compact",
         )
         // The nil-window fallback uses the DETAIL threshold (460), not the window threshold (680): a
         // detail between the two thresholds is REGULAR (it would wrongly be compact under the old
         // collapsed gate).
         XCTAssertFalse(
             WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 600, windowWidth: nil),
-            "nil window → detail 600 resolves against the 460 detail threshold ⇒ regular (not the 680 window one)"
+            "nil window → detail 600 resolves against the 460 detail threshold ⇒ regular (not the 680 window one)",
         )
     }
 
@@ -100,12 +99,12 @@ final class WorkspaceLayoutTests: XCTestCase {
         // windowWidth 600 (< 680) → compact, regardless of detail.
         XCTAssertTrue(
             WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 600, windowWidth: 600),
-            "window 600 (< 680) → compact"
+            "window 600 (< 680) → compact",
         )
         // windowWidth 720 (>= 680) with a transient narrow 300pt detail → regular (the window wins).
         XCTAssertFalse(
             WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 300, windowWidth: 720),
-            "window 720 (>= 680) → regular even with a transient narrow detail (300)"
+            "window 720 (>= 680) → regular even with a transient narrow detail (300)",
         )
     }
 
@@ -114,7 +113,7 @@ final class WorkspaceLayoutTests: XCTestCase {
     func testSizeClassStillPrimaryOverWindowWidth() {
         XCTAssertTrue(
             WorkspaceLayout.isCompact(horizontalSizeClassCompact: true, detailWidth: 5000, windowWidth: 5000),
-            "size-class compact wins over an arbitrarily wide window"
+            "size-class compact wins over an arbitrarily wide window",
         )
     }
 
@@ -125,12 +124,14 @@ final class WorkspaceLayoutTests: XCTestCase {
         let a0 = PaneID(), a1 = PaneID(), a2 = PaneID()
         let store = WorkspaceStore(
             restoring: Workspace.make(
-                panes: [(a0, PaneSpec(kind: .terminal, title: "a0")),
-                        (a1, PaneSpec(kind: .terminal, title: "a1")),
-                        (a2, PaneSpec(kind: .terminal, title: "a2"))],
-                focused: a1
+                panes: [
+                    (a0, PaneSpec(kind: .terminal, title: "a0")),
+                    (a1, PaneSpec(kind: .terminal, title: "a1")),
+                    (a2, PaneSpec(kind: .terminal, title: "a2")),
+                ],
+                focused: a1,
             ),
-            makeSession: { FakePaneSession($0) }
+            makeSession: { FakePaneSession($0) },
         )
         return (store, [a0, a1, a2])
     }
@@ -144,7 +145,7 @@ final class WorkspaceLayoutTests: XCTestCase {
                 ids[0]: CGRect(x: 0, y: 0, width: 100, height: 100),
                 ids[1]: CGRect(x: 100, y: 0, width: 100, height: 100),
                 ids[2]: CGRect(x: 200, y: 0, width: 100, height: 100),
-            ]
+            ],
         ))
         XCTAssertEqual(store.focusedPane, ids[1], "focused on the middle pane")
         store.move(.left)
@@ -162,14 +163,14 @@ final class WorkspaceLayoutTests: XCTestCase {
                 ids[0]: CGRect(x: 0, y: 0, width: 100, height: 100),
                 ids[1]: CGRect(x: 100, y: 0, width: 100, height: 100),
                 ids[2]: CGRect(x: 200, y: 0, width: 100, height: 100),
-            ]
+            ],
         ))
         // Zoom the focused (middle) pane. The FIX has PaneTreeView's zoomed branch report a single-leaf
         // layout; simulate that report through the same store seam the view uses.
         store.toggleZoom()
         XCTAssertEqual(store.workspace.maximizedPane, ids[1], "middle pane is zoomed")
         store.updateSolvedLayout(SolvedLayout(
-            frames: [ids[1]: CGRect(x: 0, y: 0, width: 300, height: 100)]
+            frames: [ids[1]: CGRect(x: 0, y: 0, width: 300, height: 100)],
         ))
 
         // A directional move finds no neighbour in the single-leaf layout → focus is unchanged (no jump
@@ -183,18 +184,20 @@ final class WorkspaceLayoutTests: XCTestCase {
     /// BUG-F downstream: closing the zoomed pane refocuses a TREE neighbour (pre-order), not a stale
     /// geometric rect. With a single-leaf layout reported, `neighbourForRefocus` falls through to the
     /// tree's pre-order successor/predecessor — a real surviving pane.
-    func testCloseZoomedPaneRefocusesSurvivingTreeNeighbour() async {
+    func testCloseZoomedPaneRefocusesSurvivingTreeNeighbour() async throws {
         let (store, ids) = makeThreeLeafStore()
-        store.toggleZoom()    // zoom the middle pane (ids[1])
+        store.toggleZoom() // zoom the middle pane (ids[1])
         store.updateSolvedLayout(SolvedLayout(
-            frames: [ids[1]: CGRect(x: 0, y: 0, width: 300, height: 100)]
+            frames: [ids[1]: CGRect(x: 0, y: 0, width: 300, height: 100)],
         ))
         store.closePane(ids[1])
         let survivors = store.workspace.canvas.allIDs()
         XCTAssertEqual(survivors.count, 2, "closing one of three leaves leaves two")
         XCTAssertNotNil(store.focusedPane)
-        XCTAssertTrue(survivors.contains(store.focusedPane!),
-                      "refocus lands on a surviving pane, not the closed/zoomed one")
+        XCTAssertTrue(
+            try survivors.contains(XCTUnwrap(store.focusedPane)),
+            "refocus lands on a surviving pane, not the closed/zoomed one",
+        )
         await store.quiesce()
     }
 
@@ -206,8 +209,17 @@ final class WorkspaceLayoutTests: XCTestCase {
         private(set) var becomeCount = 0
         private(set) var resignCount = 0
         var isFirstResponder = false
-        @discardableResult func resignFocus() -> Bool { resignCount += 1; isFirstResponder = false; return true }
-        @discardableResult func becomeFocus() -> Bool { becomeCount += 1; isFirstResponder = true; return true }
+        @discardableResult
+        func resignFocus() -> Bool { resignCount += 1
+            isFirstResponder = false
+            return true
+        }
+
+        @discardableResult
+        func becomeFocus() -> Bool { becomeCount += 1
+            isFirstResponder = true
+            return true
+        }
     }
 
     /// `reassertFocus(_:)` claims first responder for the target even when the coordinator already
@@ -238,11 +250,13 @@ final class WorkspaceLayoutTests: XCTestCase {
         let pA = PaneID(), pB = PaneID()
         let store = WorkspaceStore(
             restoring: Workspace.make(
-                panes: [(pA, PaneSpec(kind: .terminal, title: "A")),
-                        (pB, PaneSpec(kind: .terminal, title: "B"))],
-                focused: pA
+                panes: [
+                    (pA, PaneSpec(kind: .terminal, title: "A")),
+                    (pB, PaneSpec(kind: .terminal, title: "B")),
+                ],
+                focused: pA,
             ),
-            makeSession: { FakePaneSession($0) }
+            makeSession: { FakePaneSession($0) },
         )
         let hostA = FakeHost(), hostB = FakeHost()
         store.focusCoordinator.register(hostA, for: pA)
@@ -265,9 +279,11 @@ final class WorkspaceLayoutTests: XCTestCase {
     func testGroupArithmeticAddRenameReorderRemove() {
         let p0 = PaneID(), p1 = PaneID()
         let base = Workspace.make(
-            panes: [(p0, PaneSpec(kind: .terminal, title: "p0")),
-                    (p1, PaneSpec(kind: .terminal, title: "p1"))],
-            focused: p0
+            panes: [
+                (p0, PaneSpec(kind: .terminal, title: "p0")),
+                (p1, PaneSpec(kind: .terminal, title: "p1")),
+            ],
+            focused: p0,
         )
 
         // Add two groups; each returns the minted id.

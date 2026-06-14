@@ -134,21 +134,23 @@ struct PaneSidebarView: View {
                 Image(systemName: PaneLeafView.icon(for: spec.kind))
                     .foregroundStyle(.secondary)
                     .frame(width: 18)
-                    .accessibilityHidden(true)   // the title Text carries the row label
+                    .accessibilityHidden(true) // the title Text carries the row label
 
                 // Carry the RUNNING signal (the pulsing ring), like the pill — the sidebar dot was
                 // connection-only, so a command running in a background pane had no rail-level cue.
-                PaneStatusDot(status: PaneConnectionStatus.from(liveStatus(id)),
-                              running: PanePresentation.isRunning(store.handle(for: id)))
+                PaneStatusDot(
+                    status: PaneConnectionStatus.from(liveStatus(id)),
+                    running: PanePresentation.isRunning(store.handle(for: id)),
+                )
 
                 if renamingPane == id {
                     TextField("Pane name", text: $draft)
                         .textFieldStyle(.plain)
                         .focused($fieldFocused)
                         .onSubmit { commitPaneRename(id) }
-                        #if os(macOS)
+                    #if os(macOS)
                         .onExitCommand { renamingPane = nil }
-                        #endif
+                    #endif
                 } else {
                     // The LIVE title (OSC 0/2 — "vim", "make test"…) when the shell set one, like the
                     // pill; the static spec.title was stale the moment the shell spoke. Rename still
@@ -159,7 +161,7 @@ struct PaneSidebarView: View {
                 Spacer(minLength: 0)
 
                 // Attention badge: the terminal rang while this (unfocused) pane was in the background.
-                if (store.handle(for: id)?.bellPending ?? false) && store.focusedPane != id {
+                if store.handle(for: id)?.bellPending ?? false, store.focusedPane != id {
                     Image(systemName: "bell.fill")
                         .font(.caption2)
                         .foregroundStyle(.orange)
@@ -197,7 +199,6 @@ struct PaneSidebarView: View {
 
     // MARK: Group header
 
-    @ViewBuilder
     private func groupHeader(_ group: PaneGroup) -> some View {
         HStack(spacing: 6) {
             if renamingGroup == group.id {
@@ -205,9 +206,9 @@ struct PaneSidebarView: View {
                     .textFieldStyle(.plain)
                     .focused($fieldFocused)
                     .onSubmit { commitGroupRename(group.id) }
-                    #if os(macOS)
+                #if os(macOS)
                     .onExitCommand { renamingGroup = nil }
-                    #endif
+                #endif
             } else {
                 Text(group.name)
             }
@@ -278,7 +279,7 @@ struct PaneSidebarView: View {
                 guard let id = newValue else { return }
                 store.focus(id)
                 store.centerOnPane(id)
-            }
+            },
         )
     }
 

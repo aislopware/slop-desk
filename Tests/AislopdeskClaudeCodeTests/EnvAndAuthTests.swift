@@ -1,5 +1,5 @@
-import XCTest
 import Foundation
+import XCTest
 @testable import AislopdeskHost
 
 /// WF-7 host launch environment + auth resolution tests.
@@ -8,7 +8,6 @@ import Foundation
 /// existence / path ONLY and inject an open-recording predicate to PROVE the resolver
 /// never reads the file's bytes. The real `~/.claude/.credentials.json` is never touched.
 final class EnvAndAuthTests: XCTestCase {
-
     // MARK: Curated env — forced keys
 
     func testForcedKeysPresentWithDefaultGhosttyProfile() {
@@ -107,7 +106,7 @@ final class EnvAndAuthTests: XCTestCase {
         XCTAssertEqual(ClaudeCodeProfile().loginShellArguments(), ["-lc", "claude"])
         XCTAssertEqual(
             ClaudeCodeProfile(command: "/opt/claude").loginShellArguments(),
-            ["-lc", "/opt/claude"]
+            ["-lc", "/opt/claude"],
         )
     }
 
@@ -162,7 +161,7 @@ final class EnvAndAuthTests: XCTestCase {
         let strategy = ClaudeAuthResolver.resolve(parent: ["HOME": home])
         XCTAssertEqual(
             strategy,
-            .inheritedCredentials(path: ClaudeAuthResolver.credentialsPath(home: home))
+            .inheritedCredentials(path: ClaudeAuthResolver.credentialsPath(home: home)),
         )
     }
 
@@ -172,11 +171,11 @@ final class EnvAndAuthTests: XCTestCase {
     /// junk bytes that the resolver must never read — we assert only on existence/path.
     private func makeFixtureHomeWithCredentials() throws -> String {
         let home = NSTemporaryDirectory() + "aislopdesk-auth-\(UUID().uuidString)"
-        let dir = (home as NSString).appendingPathComponent(".claude")
+        let dir = URL(fileURLWithPath: home).appendingPathComponent(".claude").path
         try FileManager.default.createDirectory(
-            atPath: dir, withIntermediateDirectories: true
+            atPath: dir, withIntermediateDirectories: true,
         )
-        let path = (dir as NSString).appendingPathComponent(".credentials.json")
+        let path = URL(fileURLWithPath: dir).appendingPathComponent(".credentials.json").path
         // Obviously-fake fixture content; the resolver must never read this.
         try Data("{\"FIXTURE_ONLY\":true}".utf8).write(to: URL(fileURLWithPath: path))
         return home

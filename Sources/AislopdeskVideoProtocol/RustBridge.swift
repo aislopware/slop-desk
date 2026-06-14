@@ -24,7 +24,7 @@ enum RustVideoFFI {
             update.position.y,
             update.hotspot.x,
             update.hotspot.y,
-            &out
+            &out,
         )
         guard status == AISD_OK, let ptr = out.ptr, out.len > 0 else {
             return update.encodeNative()
@@ -47,7 +47,7 @@ enum RustVideoFFI {
                 position: VideoPoint(x: out.x, y: out.y),
                 shapeID: out.shape_id,
                 hotspot: VideoPoint(x: out.hotspot_x, y: out.hotspot_y),
-                visible: out.visible != 0
+                visible: out.visible != 0,
             )
         case AISD_ERR_MALFORMED:
             throw VideoProtocolError.malformed("rust: malformed cursor update")
@@ -83,15 +83,15 @@ enum RustVideoFFI {
         stickyRelaxRemaining: Int,
         dwell: Int,
         allowOff: Bool,
-        sawUnrecoveredLoss: Bool
+        sawUnrecoveredLoss: Bool,
     ) -> (tier: UInt8, relaxStreak: Int, stickyRelaxRemaining: Int) {
         let inState = AisdTierState(
             tier: tier,
             relax_streak: Int32(clamping: relaxStreak),
-            sticky_relax_remaining: Int32(clamping: stickyRelaxRemaining)
+            sticky_relax_remaining: Int32(clamping: stickyRelaxRemaining),
         )
         let out = aisd_adaptive_fec_next_tier_state(
-            loss, inState, Int32(clamping: dwell), allowOff ? 1 : 0, sawUnrecoveredLoss ? 1 : 0
+            loss, inState, Int32(clamping: dwell), allowOff ? 1 : 0, sawUnrecoveredLoss ? 1 : 0,
         )
         return (out.tier, Int(out.relax_streak), Int(out.sticky_relax_remaining))
     }
@@ -120,7 +120,7 @@ enum RustVideoFFI {
     static func coordBackingScaleFactor(
         windowBoundsCG: VideoRect,
         screens: [ScreenInfo],
-        primaryHeight: Double
+        primaryHeight: Double,
     ) -> Double? {
         let cScreens = screens.map { s in
             AisdScreenInfo(cocoa_frame: cRect(s.cocoaFrame), backing_scale_factor: s.backingScaleFactor)
@@ -128,7 +128,7 @@ enum RustVideoFFI {
         var scale = 0.0
         let status: AisdStatus = cScreens.withUnsafeBufferPointer { buf in
             aisd_coord_backing_scale_factor(
-                cRect(windowBoundsCG), buf.baseAddress, buf.count, primaryHeight, &scale
+                cRect(windowBoundsCG), buf.baseAddress, buf.count, primaryHeight, &scale,
             )
         }
         return status == AISD_OK ? scale : nil
@@ -138,7 +138,7 @@ enum RustVideoFFI {
     static func coordWindowPoint(
         pixel: VideoPoint,
         windowBoundsCG: VideoRect,
-        backingScaleFactor scale: Double
+        backingScaleFactor scale: Double,
     ) -> VideoPoint {
         point(aisd_coord_window_point_from_pixel(cPoint(pixel), cRect(windowBoundsCG), scale))
     }
@@ -154,11 +154,11 @@ enum RustVideoFFI {
         lossyEscalationFloorRTTMultiple: Double,
         elapsedSinceRequest: Double,
         rtt: Double,
-        observingLoss: Bool
+        observingLoss: Bool,
     ) -> Bool {
         aisd_recovery_policy_should_escalate_to_idr(
             idrTimeoutRTTMultiple, lossyIdrTimeoutRTTMultiple, lossyEscalationFloor,
-            lossyEscalationFloorRTTMultiple, elapsedSinceRequest, rtt, observingLoss ? 1 : 0
+            lossyEscalationFloorRTTMultiple, elapsedSinceRequest, rtt, observingLoss ? 1 : 0,
         ) != 0
     }
 }

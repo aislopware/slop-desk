@@ -1,17 +1,17 @@
+import AislopdeskProtocol
 import Foundation
 import Network
-import AislopdeskProtocol
 
 /// Host side of the Aislopdesk transport: an `NWListener` that accepts the shared-mux (CONTROL + DATA)
 /// TCP socket pairs, pairs the two physical connections by their preamble `connectionID` into one
-/// ``MuxNWConnection``, and surfaces them on ``muxConnections_`` for the mux relay owner.
+/// ``MuxNWConnection``, and surfaces them on ``muxConnections`` for the mux relay owner.
 ///
 /// ## Handshake (shared-mux pairing)
 /// 1. A new connection arrives; the listener reads the 1-byte association preamble.
 /// 2. **MUX CONTROL** (`0x03`) / **MUX DATA** (`0x04`): each carries a 16-byte `connectionID`. The
 ///    first socket to arrive parks in `pendingMux`; the second with the same id completes the pair.
 ///    Once both are present they are wrapped into one ``MuxNWConnection`` (role `.host`), the
-///    receive loops are started, and it is yielded on ``muxConnections_``.
+///    receive loops are started, and it is yielded on ``muxConnections``.
 ///
 /// Each pane on a shared connection is a logical channel (SSH-style), opened via `channelOpen`; the
 /// per-channel PTY relay (``AislopdeskHost/MuxChannelSession``) is owned by the relay owner, not here.
@@ -51,6 +51,7 @@ public actor HostTransport {
         /// CONTROL-only flood) cannot leak NWConnections unbounded.
         let createdAt: ContinuousClock.Instant
     }
+
     private var pendingMux: [UUID: PendingMuxLink] = [:]
 
     /// Set by ``stop()`` (R9 #5). After stop, an in-flight handshake that completes a mux pair must NOT
@@ -70,20 +71,20 @@ public actor HostTransport {
     ///   - pendingDataTimeout: bound on a half-paired mux link waiting for its partner (default 15s).
     public init(
         handshakeTimeout: Duration = .seconds(10),
-        pendingDataTimeout: Duration = .seconds(15)
+        pendingDataTimeout: Duration = .seconds(15),
     ) {
         self.handshakeTimeout = handshakeTimeout
         self.pendingDataTimeout = pendingDataTimeout
-        self.clock = ContinuousClock()
-        var muxC: AsyncStream<MuxNWConnection>.Continuation!
-        self.muxConnectionStream = AsyncStream { muxC = $0 }
-        self.muxConnectionContinuation = muxC
+        clock = ContinuousClock()
+        let (muxStream, muxCont) = AsyncStream.makeStream(of: MuxNWConnection.self)
+        muxConnectionStream = muxStream
+        muxConnectionContinuation = muxCont
     }
 
     /// Newly-accepted SHARED mux connections (CONTROL+DATA paired into one ``MuxNWConnection``,
     /// role `.host`, receive loops started). The mux relay owner (the host daemon) consumes these,
     /// installs a per-channel-open handler, and spawns a PTY per channel.
-    public nonisolated var muxConnections_: AsyncStream<MuxNWConnection> { muxConnectionStream }
+    public nonisolated var muxConnections: AsyncStream<MuxNWConnection> { muxConnectionStream }
 
     /// The port the listener actually bound to. `nil` until ``start(port:)`` resolves.
     public private(set) var boundPort: UInt16?
@@ -103,10 +104,11 @@ public actor HostTransport {
     ///     ready/failed, so a LATER failure otherwise vanishes and a long-lived host keeps showing
     ///     "running" while silently accepting nothing. Additive + defaulted nil: the headless daemon
     ///     is unaffected. A deliberate `stop()` (`.cancelled`) is NOT a failure and never fires it.
+    @preconcurrency
     public func start(
         port: UInt16,
         readinessTimeout: Duration = .seconds(10),
-        onListenerFailed: (@Sendable (AislopdeskTransportError) -> Void)? = nil
+        onListenerFailed: (@Sendable (AislopdeskTransportError) -> Void)? = nil,
     ) async throws {
         // NOTE (R10 self-audit): do NOT reset `stopped` here. A `HostTransport` is SINGLE-USE — `stop()`
         // permanently `finish()`es `muxConnectionContinuation`, so even a fresh listener after stop would
@@ -178,18 +180,19 @@ public actor HostTransport {
                     // so this branch no-ops there and `.failed` handles it. (Pure decision in
                     // `AislopdeskTransportError.waitingErrnoIsFatalBindConflict`, unit-tested.)
                     if case let .posix(code) = error,
-                       AislopdeskTransportError.waitingErrnoIsFatalBindConflict(code.rawValue) {
+                       AislopdeskTransportError.waitingErrnoIsFatalBindConflict(code.rawValue)
+                    {
                         timeoutTask.cancel()
                         let err = AislopdeskTransportError.listenerFailed(String(describing: error))
                         if box.hasResumed {
-                            onListenerFailed?(err)   // post-ready stuck-waiting bind conflict (rare): health signal
+                            onListenerFailed?(err) // post-ready stuck-waiting bind conflict (rare): health signal
                         } else {
                             box.tryResume { continuation.resume(throwing: err) }
                         }
                     }
-                    // Any other waiting errno: keep waiting; the readiness timeout bounds it.
+                // Any other waiting errno: keep waiting; the readiness timeout bounds it.
                 default:
-                    break   // .setup (and any future state): keep waiting; the readiness timeout bounds it
+                    break // .setup (and any future state): keep waiting; the readiness timeout bounds it
                 }
             }
             listener.start(queue: queue)
@@ -236,7 +239,7 @@ public actor HostTransport {
                     return // cancelled
                 }
                 guard let self else { return }
-                await self.reapExpiredPending(now: self.clockNow())
+                await reapExpiredPending(now: clockNow())
             }
         }
     }
@@ -336,7 +339,7 @@ public actor HostTransport {
 
     /// Pairs the two physical mux sockets (CONTROL + DATA) that share `connectionID` into ONE
     /// shared ``MuxNWConnection`` (role `.host`), starts its receive loops, and yields it on
-    /// ``muxConnections_`` for the mux relay owner. The first socket to arrive parks in `pendingMux`;
+    /// ``muxConnections`` for the mux relay owner. The first socket to arrive parks in `pendingMux`;
     /// the second completes the pair.
     private func associateMux(_ connection: NWConnection, connectionID: UUID, isControl: Bool) {
         let link = NWMuxByteLink(connection: connection, label: isControl ? "host.control" : "host.data")
@@ -363,7 +366,7 @@ public actor HostTransport {
                 role: .host,
                 controlLink: control,
                 dataLink: data,
-                connectionID: connectionID
+                connectionID: connectionID,
             )
             Task {
                 await mux.start()
@@ -390,12 +393,14 @@ public actor HostTransport {
             let decision = MuxPairing.decide(
                 existingHasControl: existing?.control != nil,
                 existingHasData: existing?.data != nil,
-                isControl: isControl)
+                isControl: isControl,
+            )
             if decision.closesDisplacedSameSide, let replaced = isControl ? existing?.control : existing?.data {
                 Task { await replaced.close() }
             }
             pendingMux[connectionID] = PendingMuxLink(
-                control: control, data: data, createdAt: existing?.createdAt ?? clock.now)
+                control: control, data: data, createdAt: existing?.createdAt ?? clock.now,
+            )
         }
     }
 }
@@ -418,7 +423,7 @@ enum MuxPairing {
     static func decide(existingHasControl: Bool, existingHasData: Bool, isControl: Bool) -> Decision {
         let controlPresent = isControl ? true : existingHasControl
         let dataPresent = isControl ? existingHasData : true
-        if controlPresent && dataPresent {
+        if controlPresent, dataPresent {
             return Decision(paired: true, closesDisplacedSameSide: false)
         }
         // Re-park: the half on the arriving side displaces whatever was already parked on that side.
@@ -433,15 +438,20 @@ final class ReadyBox: @unchecked Sendable {
     private let lock = NSLock()
     private var resumed = false
     func tryResume(_ body: () -> Void) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         guard !resumed else { return }
         resumed = true
         body()
     }
+
     /// Whether the continuation has already been resumed. The listener handler reads this to tell a
     /// POST-ready `.failed` (start() already returned → surface a health signal) from a pre-ready one
     /// (resume start() throwing).
-    var hasResumed: Bool { lock.lock(); defer { lock.unlock() }; return resumed }
+    var hasResumed: Bool { lock.lock()
+        defer { lock.unlock() }
+        return resumed
+    }
 }
 
 extension UUID {

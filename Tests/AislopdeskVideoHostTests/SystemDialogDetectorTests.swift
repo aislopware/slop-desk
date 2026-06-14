@@ -1,18 +1,31 @@
 #if os(macOS)
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskVideoHost
 
 /// `SystemDialogDetector` — the pure classifier that decides which on-screen windows are system
 /// prompts to surface in their own pane (the user's case: a SecurityAgent login/password dialog).
 /// Values mirror the HW probe (2026-06-12): SecurityAgent prompt at layer 1000, 260×312, onScreen.
 final class SystemDialogDetectorTests: XCTestCase {
-    typealias Snap = SystemDialogDetector.WindowSnapshot
+    private typealias Snap = SystemDialogDetector.WindowSnapshot
 
-    func snap(_ id: UInt32, owner: String, bundle: String, onScreen: Bool = true,
-              w: CGFloat = 260, h: CGFloat = 312, title: String = "") -> Snap {
-        Snap(windowID: id, ownerName: owner, bundleID: bundle, isOnScreen: onScreen, title: title,
-             frame: CGRect(x: 830, y: 201, width: w, height: h))
+    private func snap(
+        _ id: UInt32,
+        owner: String,
+        bundle: String,
+        onScreen: Bool = true,
+        w: CGFloat = 260,
+        h: CGFloat = 312,
+        title: String = "",
+    ) -> Snap {
+        Snap(
+            windowID: id,
+            ownerName: owner,
+            bundleID: bundle,
+            isOnScreen: onScreen,
+            title: title,
+            frame: CGRect(x: 830, y: 201, width: w, height: h),
+        )
     }
 
     // The HW-probed SecurityAgent password prompt → surfaced + flagged secure.
@@ -27,7 +40,10 @@ final class SystemDialogDetectorTests: XCTestCase {
 
     // Touch ID / LocalAuthentication agent — also secure.
     func testCoreauthdIsSecureDialog() {
-        XCTAssertEqual(SystemDialogDetector.classify(snap(7, owner: "coreauthd", bundle: "com.apple.coreauthd"))?.isSecure, true)
+        XCTAssertEqual(
+            SystemDialogDetector.classify(snap(7, owner: "coreauthd", bundle: "com.apple.coreauthd"))?.isSecure,
+            true,
+        )
     }
 
     // Matched by OWNER NAME even when the bundle id is unexpected/blank (resilient across builds).
@@ -37,18 +53,36 @@ final class SystemDialogDetectorTests: XCTestCase {
 
     // A normal app window (Chrome) is NOT a system dialog.
     func testRegularAppWindowIgnored() {
-        XCTAssertNil(SystemDialogDetector.classify(snap(1783, owner: "Google Chrome", bundle: "com.google.Chrome", w: 700, h: 500)))
+        XCTAssertNil(SystemDialogDetector.classify(snap(
+            1783,
+            owner: "Google Chrome",
+            bundle: "com.google.Chrome",
+            w: 700,
+            h: 500,
+        )))
     }
 
     // The SecurityAgent OFFSCREEN helper (onScreen=false, 500×500) must not surface.
     func testOffscreenHelperIgnored() {
-        XCTAssertNil(SystemDialogDetector.classify(snap(1967, owner: "SecurityAgent", bundle: "com.apple.SecurityAgent",
-                                                        onScreen: false, w: 500, h: 500)))
+        XCTAssertNil(SystemDialogDetector.classify(snap(
+            1967,
+            owner: "SecurityAgent",
+            bundle: "com.apple.SecurityAgent",
+            onScreen: false,
+            w: 500,
+            h: 500,
+        )))
     }
 
     // A sub-minSize same-owner sliver (an indicator) is rejected.
     func testTinyWindowIgnored() {
-        XCTAssertNil(SystemDialogDetector.classify(snap(9, owner: "SecurityAgent", bundle: "com.apple.SecurityAgent", w: 20, h: 20)))
+        XCTAssertNil(SystemDialogDetector.classify(snap(
+            9,
+            owner: "SecurityAgent",
+            bundle: "com.apple.SecurityAgent",
+            w: 20,
+            h: 20,
+        )))
     }
 
     // detect() filters a mixed snapshot down to just the system prompts, order preserved.

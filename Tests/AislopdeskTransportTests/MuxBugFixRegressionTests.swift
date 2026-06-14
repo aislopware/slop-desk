@@ -1,5 +1,5 @@
-import XCTest
 import AislopdeskProtocol
+import XCTest
 @testable import AislopdeskTransport
 
 /// Regression tests for the overnight bug-hunt fixes at the ``MuxNWConnection`` layer (headless,
@@ -11,7 +11,6 @@ import AislopdeskProtocol
 ///   • [5] a HARD link failure must mark the connection `isDead` and make `openChannel` reject reuse
 ///     (so a reconnecting pane never opens onto a corpse the registry still pools).
 final class MuxBugFixRegressionTests: XCTestCase {
-
     // MARK: - [3] duplicate channelOpen does not double-fire the host open hook
 
     func testDuplicateChannelOpenFiresHostOpenHandlerExactlyOnce() async throws {
@@ -26,12 +25,17 @@ final class MuxBugFixRegressionTests: XCTestCase {
         // Drive TWO identical channelOpen frames for the SAME id straight onto the host's DATA link
         // (a retransmit / duplicate). The first registers + spawns; the second must be suppressed.
         let frame = MuxEnvelopeCodec.encode(
-            .channelOpen(channelID: 1, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0))
+            .channelOpen(channelID: 1, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0),
+        )
         try await clientData.send(frame)
         try await clientData.send(frame)
         try await Task.sleep(for: .milliseconds(120))
 
-        XCTAssertEqual(opens.value, 1, "a duplicate channelOpen must not re-invoke the host open hook (no double-spawn)")
+        XCTAssertEqual(
+            opens.value,
+            1,
+            "a duplicate channelOpen must not re-invoke the host open hook (no double-spawn)",
+        )
     }
 
     // MARK: - [4] channelClose before setHostCloseHandler is buffered + replayed
@@ -44,9 +48,10 @@ final class MuxBugFixRegressionTests: XCTestCase {
 
         // An open then a close for the same id arrive in the accept→install gap (NO handler yet).
         try await clientData.send(MuxEnvelopeCodec.encode(
-            .channelOpen(channelID: 1, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0)))
+            .channelOpen(channelID: 1, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0),
+        ))
         try await clientData.send(MuxEnvelopeCodec.encode(.channelClose(channelID: 1)))
-        try await Task.sleep(for: .milliseconds(80))   // let the receive loop route both frames
+        try await Task.sleep(for: .milliseconds(80)) // let the receive loop route both frames
 
         // Install the handlers in production order (open first, then close): the buffered open replays
         // (would spawn the shell), then the buffered close replays (reaps it — no leaked PTY).
@@ -56,7 +61,11 @@ final class MuxBugFixRegressionTests: XCTestCase {
         await host.setHostCloseHandler { id in closed.append(id) }
 
         XCTAssertEqual(opened.value, [1], "the buffered open replays when the open handler installs")
-        XCTAssertEqual(closed.value, [1], "the buffered close replays when the close handler installs (no leaked shell)")
+        XCTAssertEqual(
+            closed.value,
+            [1],
+            "the buffered close replays when the close handler installs (no leaked shell)",
+        )
     }
 
     // MARK: - [5] hard link failure marks the connection dead and rejects reuse
@@ -108,12 +117,13 @@ final class MuxBugFixRegressionTests: XCTestCase {
         // Storm distinct channelOpen ids straight onto the host's CONTROL link.
         for id in UInt32(1)...50 {
             try await clientControl.send(MuxEnvelopeCodec.encode(
-                .channelOpen(channelID: id, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0)))
+                .channelOpen(channelID: id, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0),
+            ))
         }
-        try await Task.sleep(for: .milliseconds(120))   // let the control receive loop route them all
+        try await Task.sleep(for: .milliseconds(120)) // let the control receive loop route them all
 
         XCTAssertEqual(opens.value, 0, "a control-link channelOpen must NOT spawn a session (never legitimate there)")
-        let controlTableCount = await host._controlTableStateCountForTesting
+        let controlTableCount = await host.controlTableStateCountForTesting
         XCTAssertEqual(controlTableCount, 0, "a control-link channelOpen storm must not grow the control router table")
     }
 
@@ -137,18 +147,20 @@ final class MuxBugFixRegressionTests: XCTestCase {
         // control-link close), with a fresh distinct id every cycle.
         for id in stride(from: UInt32(2), through: 4000, by: 2) {
             try await clientData.send(MuxEnvelopeCodec.encode(
-                .channelOpen(channelID: id, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0)))
+                .channelOpen(channelID: id, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0),
+            ))
             try await clientData.send(MuxEnvelopeCodec.encode(.channelClose(channelID: id)))
         }
         // A sentinel OPEN left live: FIFO on the data link guarantees every churn frame was processed
         // before it goes live, so observing it bounds the whole burst as drained.
-        let sentinel: UInt32 = 99_999
+        let sentinel: UInt32 = 99999
         try await clientData.send(MuxEnvelopeCodec.encode(
-            .channelOpen(channelID: sentinel, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0)))
+            .channelOpen(channelID: sentinel, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0),
+        ))
         try await Self.waitUntil(timeout: 20) { await host.hasLiveChannels }
 
-        let dataCount = await host._dataTableStateCountForTesting
-        let controlCount = await host._controlTableStateCountForTesting
+        let dataCount = await host.dataTableStateCountForTesting
+        let controlCount = await host.controlTableStateCountForTesting
         // ~2000 cycles ran; without the fix each table would hold ~2000 entries. Bounded now to
         // (ring cap 1024) + (the 1 live sentinel), with headroom.
         XCTAssertLessThanOrEqual(dataCount, 1100, "dataTable bounded by the eviction ring, not ~2000")
@@ -164,28 +176,40 @@ final class MuxBugFixRegressionTests: XCTestCase {
     /// that DISPLACES the already-parked half — which must be closed so its NWConnection/fd does not leak.
     func testMuxPairingClosesDisplacedSameSideHalf() {
         // First arrival of either side: parks, nothing displaced.
-        XCTAssertEqual(MuxPairing.decide(existingHasControl: false, existingHasData: false, isControl: true),
-                       .init(paired: false, closesDisplacedSameSide: false))
-        XCTAssertEqual(MuxPairing.decide(existingHasControl: false, existingHasData: false, isControl: false),
-                       .init(paired: false, closesDisplacedSameSide: false))
+        XCTAssertEqual(
+            MuxPairing.decide(existingHasControl: false, existingHasData: false, isControl: true),
+            .init(paired: false, closesDisplacedSameSide: false),
+        )
+        XCTAssertEqual(
+            MuxPairing.decide(existingHasControl: false, existingHasData: false, isControl: false),
+            .init(paired: false, closesDisplacedSameSide: false),
+        )
 
         // Opposite side arrives → pair completes, nothing displaced.
-        XCTAssertEqual(MuxPairing.decide(existingHasControl: true, existingHasData: false, isControl: false),
-                       .init(paired: true, closesDisplacedSameSide: false))
-        XCTAssertEqual(MuxPairing.decide(existingHasControl: false, existingHasData: true, isControl: true),
-                       .init(paired: true, closesDisplacedSameSide: false))
+        XCTAssertEqual(
+            MuxPairing.decide(existingHasControl: true, existingHasData: false, isControl: false),
+            .init(paired: true, closesDisplacedSameSide: false),
+        )
+        XCTAssertEqual(
+            MuxPairing.decide(existingHasControl: false, existingHasData: true, isControl: true),
+            .init(paired: true, closesDisplacedSameSide: false),
+        )
 
         // SAME side arrives again (duplicate) → re-park AND close the displaced half (the leak guard).
-        XCTAssertEqual(MuxPairing.decide(existingHasControl: true, existingHasData: false, isControl: true),
-                       .init(paired: false, closesDisplacedSameSide: true))
-        XCTAssertEqual(MuxPairing.decide(existingHasControl: false, existingHasData: true, isControl: false),
-                       .init(paired: false, closesDisplacedSameSide: true))
+        XCTAssertEqual(
+            MuxPairing.decide(existingHasControl: true, existingHasData: false, isControl: true),
+            .init(paired: false, closesDisplacedSameSide: true),
+        )
+        XCTAssertEqual(
+            MuxPairing.decide(existingHasControl: false, existingHasData: true, isControl: false),
+            .init(paired: false, closesDisplacedSameSide: true),
+        )
     }
 
     // MARK: - helpers
 
     /// Polls `condition` (an async predicate) until true or the timeout elapses.
-    static func waitUntil(timeout: TimeInterval = 2, _ condition: @Sendable () async -> Bool) async throws {
+    private static func waitUntil(timeout: TimeInterval = 2, _ condition: @Sendable () async -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if await condition() { return }
@@ -199,14 +223,28 @@ final class MuxBugFixRegressionTests: XCTestCase {
 final class AtomicCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var n = 0
-    func bump() { lock.lock(); n += 1; lock.unlock() }
-    var value: Int { lock.lock(); defer { lock.unlock() }; return n }
+    func bump() { lock.lock()
+        n += 1
+        lock.unlock()
+    }
+
+    var value: Int { lock.lock()
+        defer { lock.unlock() }
+        return n
+    }
 }
 
 /// A thread-safe ordered list usable from `@Sendable` hooks.
 final class AtomicList: @unchecked Sendable {
     private let lock = NSLock()
     private var items: [UInt32] = []
-    func append(_ x: UInt32) { lock.lock(); items.append(x); lock.unlock() }
-    var value: [UInt32] { lock.lock(); defer { lock.unlock() }; return items }
+    func append(_ x: UInt32) { lock.lock()
+        items.append(x)
+        lock.unlock()
+    }
+
+    var value: [UInt32] { lock.lock()
+        defer { lock.unlock() }
+        return items
+    }
 }

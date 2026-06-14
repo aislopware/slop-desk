@@ -15,7 +15,9 @@
 use crate::fragment::{Flags, FrameFragment};
 
 /// Returns `fragments` reordered for burst-resilient transmission: data fragments
-/// emitted column-major across FEC groups, then parity (each its own group). A no-op
+/// emitted column-major across FEC groups, then parity (each its own group).
+///
+/// A no-op
 /// (returns the input unchanged, original order) when `group_size <= 1`, there is ≤1
 /// group, or there are no more fragments than one group. The result is a permutation of
 /// the input — same set of fragments, every `frag_index` preserved.

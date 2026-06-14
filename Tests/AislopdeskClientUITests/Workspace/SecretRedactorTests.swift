@@ -6,7 +6,6 @@ import XCTest
 /// (a) the known token shapes + `key=value` assignments are masked, (b) the original secret never survives
 /// in the output, (c) ordinary titles / paths / SHAs are untouched, (d) idempotency.
 final class SecretRedactorTests: XCTestCase {
-
     private let mask = SecretRedactor.mask
 
     /// Asserts `input` is redacted: the output differs, carries the mask, and contains none of `secrets`.
@@ -18,21 +17,34 @@ final class SecretRedactorTests: XCTestCase {
             XCTAssertFalse(out.contains(secret), "secret leaked into output: \(out)", file: file, line: line)
         }
         // Idempotent: a second pass is a fixed point.
-        XCTAssertEqual(SecretRedactor.redact(out), out, "redact is not idempotent for: \(input)", file: file, line: line)
+        XCTAssertEqual(
+            SecretRedactor.redact(out),
+            out,
+            "redact is not idempotent for: \(input)",
+            file: file,
+            line: line,
+        )
     }
 
     private func assertUntouched(_ input: String, file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertEqual(SecretRedactor.redact(input), input, "false positive — should be untouched: \(input)", file: file, line: line)
+        XCTAssertEqual(
+            SecretRedactor.redact(input),
+            input,
+            "false positive — should be untouched: \(input)",
+            file: file,
+            line: line,
+        )
     }
 
     // MARK: - Known token shapes
+
     //
     // NOTE: the vendor-token fixtures are ASSEMBLED at runtime from fragments (no contiguous token
     // literal sits in the source) so GitHub's own secret-scanning push protection doesn't flag this very
     // test file. The redactor still sees the full token string once joined.
 
     func testAWSAccessKeyMasked() {
-        let key = "AKIA" + "IOSFODNN7EXAMPLE"   // AKIA + 16 chars
+        let key = "AKIA" + "IOSFODNN7EXAMPLE" // AKIA + 16 chars
         assertMasked("region us-east-1 key \(key) done", secrets: [key])
     }
 
@@ -47,12 +59,13 @@ final class SecretRedactorTests: XCTestCase {
     }
 
     func testJWTMasked() {
-        let jwt = ["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", "dozjgNryP4J3jVmNHl0w5N"].joined(separator: ".")
+        let jwt = ["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", "dozjgNryP4J3jVmNHl0w5N"]
+            .joined(separator: ".")
         assertMasked("auth \(jwt)", secrets: [jwt])
     }
 
     func testGenericHighEntropyTokenMasked() {
-        let tok = "aB3dE6fG9hJ2kL5mN8pQ1rS4tU7vW0xY3zA6bC9d"   // 40 chars, mixed case + digits
+        let tok = "aB3dE6fG9hJ2kL5mN8pQ1rS4tU7vW0xY3zA6bC9d" // 40 chars, mixed case + digits
         assertMasked("export X=\(tok)", secrets: [tok])
     }
 
@@ -102,6 +115,6 @@ final class SecretRedactorTests: XCTestCase {
     func testEmptyAndShortStringsUntouched() {
         assertUntouched("")
         assertUntouched("ok")
-        assertUntouched("AKIA")   // prefix only, not a full key
+        assertUntouched("AKIA") // prefix only, not a full key
     }
 }

@@ -19,11 +19,11 @@
 // Mac). Exit code 1 on setup failure with a reason on stderr.
 
 #if os(macOS)
-import Foundation
 import AppKit
-import ScreenCaptureKit
 import CoreMedia
 import CoreVideo
+import Foundation
+import ScreenCaptureKit
 
 // SCStream needs a live window-server (CGS) connection; a bare CLI has none and trips
 // `CGS_REQUIRE_INIT`. Touching NSApplication.shared initializes it (GUI session required anyway).
@@ -50,7 +50,8 @@ while let a = args.next() {
     case "--latency": latencyMode = true
     case "--title-a": titleA = args.next()
     case "--title-b": titleB = args.next()
-    default: eprint("unknown arg: \(a)"); exit(1)
+    default: eprint("unknown arg: \(a)")
+        exit(1)
     }
 }
 
@@ -61,19 +62,23 @@ final class Collector: NSObject, SCStreamOutput, @unchecked Sendable {
     private(set) var arrivals: [Double] = []
     private(set) var checksums: [UInt64] = []
 
-    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+    func stream(_: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen, sampleBuffer.isValid,
               let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         // SCK also delivers idle/status frames — only count COMPLETE content frames.
-        if let infos = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
-           let statusRaw = infos.first?[.status] as? Int,
-           let status = SCFrameStatus(rawValue: statusRaw), status != .complete {
+        if let infos = CMSampleBufferGetSampleAttachmentsArray(
+            sampleBuffer,
+            createIfNecessary: false,
+        ) as? [[SCStreamFrameInfo: Any]],
+            let statusRaw = infos.first?[.status] as? Int,
+            let status = SCFrameStatus(rawValue: statusRaw), status != .complete
+        {
             return
         }
         let now = CACurrentMediaTime()
         // Cheap content checksum: FNV-1a over one row sampled every 16 rows of the luma plane —
         // enough to distinguish "new content" from a re-delivered identical frame, ~µs cost.
-        var hash: UInt64 = 0xcbf29ce484222325
+        var hash: UInt64 = 0xCBF2_9CE4_8422_2325
         CVPixelBufferLockBaseAddress(pb, .readOnly)
         let plane = CVPixelBufferGetPlaneCount(pb) > 0 ? 0 : -1
         let base = plane >= 0 ? CVPixelBufferGetBaseAddressOfPlane(pb, 0) : CVPixelBufferGetBaseAddress(pb)
@@ -86,7 +91,7 @@ final class Collector: NSObject, SCStreamOutput, @unchecked Sendable {
                 let p = base.advanced(by: row * stride).assumingMemoryBound(to: UInt8.self)
                 var col = 0
                 while col < width {
-                    hash = (hash ^ UInt64(p[col])) &* 0x100000001b3
+                    hash = (hash ^ UInt64(p[col])) &* 0x100_0000_01B3
                     col += 8
                 }
                 row += 16
@@ -100,8 +105,11 @@ final class Collector: NSObject, SCStreamOutput, @unchecked Sendable {
     }
 
     func report() {
-        lock.lock(); defer { lock.unlock() }
-        guard arrivals.count > 1 else { print("framewatch: <2 frames captured — window idle or capture failed"); return }
+        lock.lock()
+        defer { lock.unlock() }
+        guard arrivals.count > 1 else { print("framewatch: <2 frames captured — window idle or capture failed")
+            return
+        }
         var dts: [Double] = []
         var repeats = 0
         for i in 1..<arrivals.count {
@@ -111,10 +119,19 @@ final class Collector: NSObject, SCStreamOutput, @unchecked Sendable {
         let sorted = dts.sorted()
         let sum = dts.reduce(0, +)
         let n = Double(dts.count)
-        let bin = { (lo: Double, hi: Double) in dts.filter { $0 > lo && $0 <= hi }.count }
-        print("framewatch: frames=\(arrivals.count) span=\(String(format: "%.1f", (arrivals.last! - arrivals.first!)))s eff_fps=\(String(format: "%.1f", n / (sum / 1000)))")
-        print("framewatch: dt p50=\(String(format: "%.1f", sorted[Int(n * 0.5)]))ms p90=\(String(format: "%.1f", sorted[Int(n * 0.9)]))ms p99=\(String(format: "%.1f", sorted[min(dts.count - 1, Int(n * 0.99))]))ms max=\(String(format: "%.1f", sorted.last!))ms")
-        print("framewatch: bins ≤20ms=\(bin(0, 20)) 20-28ms=\(bin(20, 28)) 28-42ms(1-slot)=\(bin(28, 42)) 42-60ms(2-slot)=\(bin(42, 60)) >60ms=\(bin(60, .infinity))")
+        let bin = { (lo: Double, hi: Double) in dts.count(where: { $0 > lo && $0 <= hi }) }
+        // `arrivals.count > 1` (guarded above) ⇒ first/last present and `dts`/`sorted` non-empty.
+        guard let firstArrival = arrivals.first, let lastArrival = arrivals.last,
+              let maxDt = sorted.last else { return }
+        print(
+            "framewatch: frames=\(arrivals.count) span=\(String(format: "%.1f", lastArrival - firstArrival))s eff_fps=\(String(format: "%.1f", n / (sum / 1000)))",
+        )
+        print(
+            "framewatch: dt p50=\(String(format: "%.1f", sorted[Int(n * 0.5)]))ms p90=\(String(format: "%.1f", sorted[Int(n * 0.9)]))ms p99=\(String(format: "%.1f", sorted[min(dts.count - 1, Int(n * 0.99))]))ms max=\(String(format: "%.1f", maxDt))ms",
+        )
+        print(
+            "framewatch: bins ≤20ms=\(bin(0, 20)) 20-28ms=\(bin(20, 28)) 28-42ms(1-slot)=\(bin(28, 42)) 42-60ms(2-slot)=\(bin(42, 60)) >60ms=\(bin(60, .infinity))",
+        )
         print("framewatch: identical-content re-deliveries=\(repeats)")
     }
 }
@@ -125,19 +142,26 @@ final class Collector: NSObject, SCStreamOutput, @unchecked Sendable {
 /// `>0.62` of full scale = light, `<0.38` = dark (wide hysteresis so HEVC ringing/QP noise on
 /// the streamed copy can't double-trigger). Flip event = state transition after the first state.
 final class LumaFlipDetector: NSObject, SCStreamOutput, @unchecked Sendable {
-    struct Flip { let time: Double; let toLight: Bool }
+    struct Flip { let time: Double
+        let toLight: Bool
+    }
+
     private let lock = NSLock()
     private(set) var flips: [Flip] = []
     private var state: Bool? // nil until first classification; true = light
     let label: String
     init(label: String) { self.label = label }
 
-    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+    func stream(_: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen, sampleBuffer.isValid,
               let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        if let infos = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
-           let statusRaw = infos.first?[.status] as? Int,
-           let status = SCFrameStatus(rawValue: statusRaw), status != .complete {
+        if let infos = CMSampleBufferGetSampleAttachmentsArray(
+            sampleBuffer,
+            createIfNecessary: false,
+        ) as? [[SCStreamFrameInfo: Any]],
+            let statusRaw = infos.first?[.status] as? Int,
+            let status = SCFrameStatus(rawValue: statusRaw), status != .complete
+        {
             return
         }
         let now = CACurrentMediaTime()
@@ -148,12 +172,13 @@ final class LumaFlipDetector: NSObject, SCStreamOutput, @unchecked Sendable {
             let height = planar ? CVPixelBufferGetHeightOfPlane(pb, 0) : CVPixelBufferGetHeight(pb)
             let stride = planar ? CVPixelBufferGetBytesPerRowOfPlane(pb, 0) : CVPixelBufferGetBytesPerRow(pb)
             let width = min(stride, 1024)
-            var row = height / 4   // sample the central half (skip window chrome / pane borders)
+            var row = height / 4 // sample the central half (skip window chrome / pane borders)
             while row < (height * 3) / 4 {
                 let p = base.advanced(by: row * stride).assumingMemoryBound(to: UInt8.self)
                 var col = width / 4
                 while col < (width * 3) / 4 {
-                    sum += Int(p[col]); count += 1
+                    sum += Int(p[col])
+                    count += 1
                     col += 8
                 }
                 row += 8
@@ -162,8 +187,7 @@ final class LumaFlipDetector: NSObject, SCStreamOutput, @unchecked Sendable {
         CVPixelBufferUnlockBaseAddress(pb, .readOnly)
         guard count > 0 else { return }
         let avg = Double(sum) / Double(count) / 255.0
-        let newState: Bool?
-        if avg > 0.62 { newState = true } else if avg < 0.38 { newState = false } else { newState = nil }
+        let newState: Bool? = if avg > 0.62 { true } else if avg < 0.38 { false } else { nil }
         guard let newState else { return }
         lock.lock()
         if let s = state, s != newState {
@@ -173,11 +197,19 @@ final class LumaFlipDetector: NSObject, SCStreamOutput, @unchecked Sendable {
         lock.unlock()
     }
 
-    func snapshotFlips() -> [Flip] { lock.lock(); defer { lock.unlock() }; return flips }
+    func snapshotFlips() -> [Flip] { lock.lock()
+        defer { lock.unlock() }
+        return flips
+    }
 }
 
 @MainActor
-func startWatch(window: SCWindow, fps: Int, output: SCStreamOutput & NSObject, asDisplay: SCDisplay? = nil) throws -> SCStream {
+func startWatch(
+    window: SCWindow,
+    fps: Int,
+    output: SCStreamOutput & NSObject,
+    asDisplay: SCDisplay? = nil,
+) throws -> SCStream {
     // `asDisplay` non-nil ⇒ capture the WHOLE display the window sits on (the game-streaming
     // path) instead of the per-window composite — used to A/B SCK's delivery latency between
     // the two filter kinds (the window path is suspected of ~1 extra frame of internal latency).
@@ -190,22 +222,31 @@ func startWatch(window: SCWindow, fps: Int, output: SCStreamOutput & NSObject, a
         // Crop the display capture to the window's rect (display-local points) so the luma
         // detector reads the SAME content as the window-filter watcher.
         let db = CGDisplayBounds(asDisplay.displayID)
-        config.sourceRect = CGRect(x: window.frame.minX - db.minX, y: window.frame.minY - db.minY,
-                                   width: window.frame.width, height: window.frame.height)
+        config.sourceRect = CGRect(
+            x: window.frame.minX - db.minX,
+            y: window.frame.minY - db.minY,
+            width: window.frame.width,
+            height: window.frame.height,
+        )
     }
     config.minimumFrameInterval = CMTime(value: 1, timescale: Int32(fps))
     config.queueDepth = 8
     config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
     config.showsCursor = false
     let stream = SCStream(filter: filter, configuration: config, delegate: nil)
-    try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: DispatchQueue(label: "framewatch.\(ObjectIdentifier(output))", qos: .userInteractive))
+    try stream.addStreamOutput(
+        output,
+        type: .screen,
+        sampleHandlerQueue: DispatchQueue(label: "framewatch.\(ObjectIdentifier(output))", qos: .userInteractive),
+    )
     return stream
 }
 
 func findWindow(_ content: SCShareableContent, query: String) -> SCWindow? {
     let q = query.lowercased()
     return content.windows.filter {
-        ($0.title?.lowercased().contains(q) ?? false) || ($0.owningApplication?.applicationName.lowercased().contains(q) ?? false)
+        ($0.title?.lowercased().contains(q) ?? false) ||
+            ($0.owningApplication?.applicationName.lowercased().contains(q) ?? false)
     }.max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
 }
 
@@ -216,29 +257,40 @@ Task {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         if listOnly {
             for w in content.windows where w.isOnScreen || w.frame.width > 100 {
-                print("id=\(w.windowID)\t\(w.owningApplication?.applicationName ?? "?")\t\(w.title ?? "")\t[\(Int(w.frame.width))x\(Int(w.frame.height))]")
+                print(
+                    "id=\(w.windowID)\t\(w.owningApplication?.applicationName ?? "?")\t\(w.title ?? "")\t[\(Int(w.frame.width))x\(Int(w.frame.height))]",
+                )
             }
             exit(0)
         }
         if latencyMode {
-            guard let qa = titleA, let qb = titleB else { eprint("--latency needs --title-a and --title-b"); exit(1) }
+            guard let qa = titleA, let qb = titleB else { eprint("--latency needs --title-a and --title-b")
+                exit(1)
+            }
             // "@display" suffix on either title ⇒ watch the DISPLAY containing that window
             // (SCK filter-kind A/B). e.g. --title-a "FLASHER@display" --title-b "FLASHER".
             func resolve(_ q: String) -> (SCWindow, SCDisplay?)? {
                 var qEff = q
-                var disp: SCDisplay? = nil
+                var disp: SCDisplay?
                 if q.hasSuffix("@display") {
                     qEff = String(q.dropLast("@display".count))
                     guard let w = findWindow(content, query: qEff) else { return nil }
-                    disp = content.displays.first { CGDisplayBounds($0.displayID).intersects(w.frame) } ?? content.displays.first
+                    disp = content.displays.first { CGDisplayBounds($0.displayID).intersects(w.frame) } ?? content
+                        .displays.first
                     return (w, disp)
                 }
                 guard let w = findWindow(content, query: qEff) else { return nil }
                 return (w, nil)
             }
-            guard let (wa, aAsDisplay) = resolve(qa) else { eprint("no window matching \"\(qa)\""); exit(1) }
-            guard let (wb, bAsDisplay) = resolve(qb) else { eprint("no window matching \"\(qb)\""); exit(1) }
-            print("framewatch[latency]: A=\(wa.windowID) \(wa.owningApplication?.applicationName ?? "?") \"\(wa.title ?? "")\"  B=\(wb.windowID) \(wb.owningApplication?.applicationName ?? "?") \"\(wb.title ?? "")\"  \(Int(seconds))s")
+            guard let (wa, aAsDisplay) = resolve(qa) else { eprint("no window matching \"\(qa)\"")
+                exit(1)
+            }
+            guard let (wb, bAsDisplay) = resolve(qb) else { eprint("no window matching \"\(qb)\"")
+                exit(1)
+            }
+            print(
+                "framewatch[latency]: A=\(wa.windowID) \(wa.owningApplication?.applicationName ?? "?") \"\(wa.title ?? "")\"  B=\(wb.windowID) \(wb.owningApplication?.applicationName ?? "?") \"\(wb.title ?? "")\"  \(Int(seconds))s",
+            )
             let da = LumaFlipDetector(label: "A"), db = LumaFlipDetector(label: "B")
             let sa = try await startWatch(window: wa, fps: fps, output: da, asDisplay: aAsDisplay)
             let sb = try await startWatch(window: wb, fps: fps, output: db, asDisplay: bAsDisplay)
@@ -253,7 +305,7 @@ Task {
             // A) reads as negative latency instead of zero pairs.
             var lats: [Double] = []
             for a in fa {
-                var best: Double? = nil
+                var best: Double?
                 for b in fb where b.toLight == a.toLight {
                     let d = (b.time - a.time) * 1000
                     if abs(d) < 450, abs(d) < abs(best ?? .infinity) { best = d }
@@ -261,22 +313,38 @@ Task {
                 if let best { lats.append(best) }
             }
             print("framewatch[latency]: sourceFlips=\(fa.count) clientFlips=\(fb.count) paired=\(lats.count)")
-            guard lats.count >= 5 else { print("framewatch[latency]: not enough pairs — is the flasher running and the pane streaming it?"); exit(1) }
+            guard lats.count >= 5
+            else {
+                print("framewatch[latency]: not enough pairs — is the flasher running and the pane streaming it?")
+                exit(1)
+            }
             let s = lats.sorted()
             let f = { (v: Double) in String(format: "%.1f", v) }
-            print("framewatch[latency]: glass-to-glass p50=\(f(s[s.count / 2]))ms p90=\(f(s[(s.count * 9) / 10]))ms min=\(f(s.first!))ms max=\(f(s.last!))ms n=\(s.count)")
+            // `lats.count >= 5` (guarded above) ⇒ `s` is non-empty.
+            guard let minS = s.first, let maxS = s.last else {
+                preconditionFailure("sorted latencies non-empty after lats.count >= 5 guard")
+            }
+            print(
+                "framewatch[latency]: glass-to-glass p50=\(f(s[s.count / 2]))ms p90=\(f(s[(s.count * 9) / 10]))ms min=\(f(minS))ms max=\(f(maxS))ms n=\(s.count)",
+            )
             exit(0)
         }
-        guard let query = titleQuery else { eprint("need --title <substring> (or --list)"); exit(1) }
+        guard let query = titleQuery else { eprint("need --title <substring> (or --list)")
+            exit(1)
+        }
         let q = query.lowercased()
         // Prefer the LARGEST match (the content window, not a toolbar/status sliver).
         let candidates = content.windows.filter {
-            ($0.title?.lowercased().contains(q) ?? false) || ($0.owningApplication?.applicationName.lowercased().contains(q) ?? false)
+            ($0.title?.lowercased().contains(q) ?? false) ||
+                ($0.owningApplication?.applicationName.lowercased().contains(q) ?? false)
         }.sorted { $0.frame.width * $0.frame.height > $1.frame.width * $1.frame.height }
         guard let window = candidates.first else {
-            eprint("no window matching \"\(query)\" — try --list"); exit(1)
+            eprint("no window matching \"\(query)\" — try --list")
+            exit(1)
         }
-        print("framewatch: watching id=\(window.windowID) \(window.owningApplication?.applicationName ?? "?") \"\(window.title ?? "")\" [\(Int(window.frame.width))x\(Int(window.frame.height))] for \(Int(seconds))s @\(fps)Hz")
+        print(
+            "framewatch: watching id=\(window.windowID) \(window.owningApplication?.applicationName ?? "?") \"\(window.title ?? "")\" [\(Int(window.frame.width))x\(Int(window.frame.height))] for \(Int(seconds))s @\(fps)Hz",
+        )
 
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let config = SCStreamConfiguration()
@@ -290,7 +358,11 @@ Task {
 
         let collector = Collector()
         let stream = SCStream(filter: filter, configuration: config, delegate: nil)
-        try stream.addStreamOutput(collector, type: .screen, sampleHandlerQueue: DispatchQueue(label: "framewatch.frames", qos: .userInteractive))
+        try stream.addStreamOutput(
+            collector,
+            type: .screen,
+            sampleHandlerQueue: DispatchQueue(label: "framewatch.frames", qos: .userInteractive),
+        )
         try await stream.startCapture()
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
         try? await stream.stopCapture()

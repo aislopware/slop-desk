@@ -45,13 +45,13 @@ impl FlowCreditPolicy {
 
     /// The window size the channel started with.
     #[must_use]
-    pub fn initial_window(&self) -> i64 {
+    pub const fn initial_window(&self) -> i64 {
         self.initial_window
     }
 
     /// Bytes of credit still available to send.
     #[must_use]
-    pub fn remaining(&self) -> i64 {
+    pub const fn remaining(&self) -> i64 {
         self.remaining
     }
 
@@ -79,7 +79,7 @@ impl FlowCreditPolicy {
     /// [`i64::MAX`] instead of trapping. SSH-style windows may legitimately grow PAST
     /// `initial_window` (it is the starting reference, not a hard cap), so this does NOT
     /// clamp to the window; it only defuses the overflow trap.
-    pub fn adjust(&mut self, bytes_to_add: i64) {
+    pub const fn adjust(&mut self, bytes_to_add: i64) {
         if bytes_to_add <= 0 {
             return;
         }
@@ -89,7 +89,7 @@ impl FlowCreditPolicy {
 
     /// Whether the window is exhausted (no credit to send even a single byte).
     #[must_use]
-    pub fn is_blocked(&self) -> bool {
+    pub const fn is_blocked(&self) -> bool {
         self.remaining <= 0
     }
 }

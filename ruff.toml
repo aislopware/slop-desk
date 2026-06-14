@@ -1,0 +1,31 @@
+# Ruff — strict lint + format for the repo's Python helper scripts (scripts/*.py).
+# These are developer test/probe utilities, not a shipped package, so the few
+# rule families that only make sense for libraries/apps are turned off.
+target-version = "py314"
+line-length = 100
+
+[lint]
+# Maximal: enable every rule family, then turn off the ones that are pure noise
+# for single-file developer scripts.
+select = ["ALL"]
+ignore = [
+    "D",       # pydocstyle — no docstring mandate on a throwaway probe script
+    "ANN",     # type-annotation mandate — optional for scripts
+    "T20",     # `print()` IS the script's output
+    "S101",    # `assert` is fine in a test helper
+    "S104",    # binding to 0.0.0.0 etc. — local loopback tooling
+    "S311",    # non-crypto random is fine
+    "PLR2004", # "magic" numbers — wire offsets/ports are inherently literal here
+    "C901",    # cyclomatic complexity — these probes branch a lot by design
+    "PLR0912", # too many branches — ditto
+    "PLR0913", # too many arguments — ditto
+    "PLR0915", # too many statements — ditto
+    "COM812",  # trailing comma — handled by the formatter (avoid conflict)
+    "ISC001",  # implicit string concat — handled by the formatter (avoid conflict)
+]
+
+[lint.per-file-ignores]
+"scripts/*.py" = ["INP001"] # not a package (no __init__.py) — intentional
+
+[format]
+docstring-code-format = true

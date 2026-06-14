@@ -1,6 +1,6 @@
-import Foundation
 import AislopdeskHost
 import AislopdeskInspector
+import Foundation
 
 // aislopdesk-hostd — headless Aislopdesk host daemon (PTY + transport).
 //
@@ -10,11 +10,12 @@ import AislopdeskInspector
 // Runs until SIGINT.
 
 let arguments = CommandLine.arguments
-let programName = (arguments.first as NSString?)?.lastPathComponent ?? "aislopdesk-hostd"
+let programName = arguments.first.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "aislopdesk-hostd"
 
 guard let parsed = HostdArguments.parse(arguments) else {
     FileHandle.standardError.write(Data(
-        (HostdArguments.usage(programName: programName) + "\n").utf8))
+        (HostdArguments.usage(programName: programName) + "\n").utf8,
+    ))
     exit(2)
 }
 
@@ -25,7 +26,7 @@ let log: @Sendable (String) -> Void = { message in
 let server = HostServer(
     port: parsed.port,
     shellPath: parsed.shell,
-    launchMode: parsed.launchMode
+    launchMode: parsed.launchMode,
 )
 server.onLog = log
 
@@ -45,7 +46,7 @@ if parsed.inspectorEnabled {
     let inspector = InspectorServer(
         terminalPort: parsed.port,
         replayLog: inspectorReplayLog,
-        transcriptPath: parsed.transcriptPath
+        transcriptPath: parsed.transcriptPath,
     )
     inspector.onLog = log
     inspectorServer = inspector
@@ -70,12 +71,14 @@ final class ShutdownLatch: @unchecked Sendable {
     private var fired = false
     /// Returns `true` exactly once (the first call); `false` thereafter.
     func tryFire() -> Bool {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         if fired { return false }
         fired = true
         return true
     }
 }
+
 let shutdownLatch = ShutdownLatch()
 
 // Install a SIGINT handler that stops the server and exits. Use a DispatchSource so
@@ -83,7 +86,7 @@ let shutdownLatch = ShutdownLatch()
 signal(SIGINT, SIG_IGN)
 let sigintSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
 sigintSource.setEventHandler {
-    guard shutdownLatch.tryFire() else { return }   // ignore repeated Ctrl-C during the async drain
+    guard shutdownLatch.tryFire() else { return } // ignore repeated Ctrl-C during the async drain
     log("SIGINT — shutting down")
     Task {
         inspectorServer?.stop()
@@ -91,19 +94,20 @@ sigintSource.setEventHandler {
         exit(0)
     }
 }
+
 sigintSource.resume()
 
 Task {
     do {
         try await server.start()
         let bound = await server.boundPort() ?? parsed.port
-        let mode: String
-        switch parsed.launchMode {
-        case .shell:
-            mode = "shell"
-        case let .claudeCode(profile):
-            mode = "claude (TERM=\(profile.term.rawValue))"
-        }
+        let mode =
+            switch parsed.launchMode {
+            case .shell:
+                "shell"
+            case let .claudeCode(profile):
+                "claude (TERM=\(profile.term.rawValue))"
+            }
         log("listening on 0.0.0.0:\(bound) (shell=\(server.shellPath), mode=\(mode))")
     } catch {
         log("failed to start: \(error)")

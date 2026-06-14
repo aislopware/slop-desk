@@ -1,5 +1,5 @@
-import XCTest
 import AislopdeskInspector
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Verifies the inspector composition the panel relies on: an `InspectorClient` fed events over
@@ -9,7 +9,6 @@ import AislopdeskInspector
 /// composes.
 @MainActor
 final class InspectorPanelTests: XCTestCase {
-
     func testClientEventStreamFoldsIntoViewModel() async throws {
         let (hostChannel, clientChannel) = LoopbackByteChannel.pair()
         let source = InspectorSource(channel: hostChannel)
@@ -24,8 +23,13 @@ final class InspectorPanelTests: XCTestCase {
         // Host emits a representative slice of the taxonomy.
         try await source.send(.sessionStarted(SessionInfo(model: "claude-opus", cwd: "/work")))
         try await source.send(.toolCard(ToolCard(id: "t1", name: "Read", input: .string("/a.swift"))))
-        try await source.send(.toolCard(ToolCard(id: "t1", name: "Read", input: .string("/a.swift"),
-                                                  output: "ok", status: .completed)))
+        try await source.send(.toolCard(ToolCard(
+            id: "t1",
+            name: "Read",
+            input: .string("/a.swift"),
+            output: "ok",
+            status: .completed,
+        )))
         try await source.send(.todosUpdated([
             TodoItem(content: "wire UI", status: .inProgress),
             TodoItem(content: "tests", status: .pending),
@@ -35,16 +39,16 @@ final class InspectorPanelTests: XCTestCase {
         // Poll the model until the events have folded in.
         let ok = await waitUntil {
             model.session?.model == "claude-opus" &&
-            model.toolCards.count == 1 &&
-            model.toolCards.first?.status == .completed &&
-            model.todos.count == 2 &&
-            model.lastThinking?.isPlaceholder == true
+                model.toolCards.count == 1 &&
+                model.toolCards.first?.status == .completed &&
+                model.todos.count == 2 &&
+                model.lastThinking?.isPlaceholder == true
         }
         XCTAssertTrue(ok, """
-            view-model folded the inspector stream:
-            session=\(String(describing: model.session)) cards=\(model.toolCards.count) \
-            todos=\(model.todos.count) thinking=\(String(describing: model.lastThinking))
-            """)
+        view-model folded the inspector stream:
+        session=\(String(describing: model.session)) cards=\(model.toolCards.count) \
+        todos=\(model.todos.count) thinking=\(String(describing: model.lastThinking))
+        """)
 
         // The re-emitted t1 card updated in place (no duplicate) — the upsert the panel needs.
         XCTAssertEqual(model.toolCards.count, 1, "re-emitted tool card upserts, not duplicates")

@@ -1,6 +1,6 @@
+import AislopdeskTransport // PortValidation (R16 HOSTVIEW-1)
 import AppKit
 import SwiftUI
-import AislopdeskTransport   // PortValidation (R16 HOSTVIEW-1)
 
 /// The body of the menu-bar popover (research §C4 / §C1).
 ///
@@ -48,10 +48,12 @@ struct MenuContentView: View {
         // performs the action, so the dialog actually intercepts. 0-client paths never reach here.
         .confirmationDialog(
             pendingDestruction?.title ?? "",
-            isPresented: Binding(get: { pendingDestruction != nil },
-                                 set: { if !$0 { pendingDestruction = nil } }),
+            isPresented: Binding(
+                get: { pendingDestruction != nil },
+                set: { if !$0 { pendingDestruction = nil } },
+            ),
             titleVisibility: .visible,
-            presenting: pendingDestruction
+            presenting: pendingDestruction,
         ) { action in
             Button(action.confirmLabel, role: .destructive) {
                 switch action {
@@ -78,25 +80,29 @@ struct MenuContentView: View {
         /// Identifies the dialog KIND (independent of the captured count).
         var id: Int {
             switch self {
-            case .stopHost: return 0
-            case .quit: return 1
+            case .stopHost: 0
+            case .quit: 1
             }
         }
+
         var clientCount: Int {
             switch self {
-            case let .stopHost(c), let .quit(c): return c
+            case let .stopHost(c),
+                 let .quit(c): c
             }
         }
+
         var title: String {
             switch self {
-            case .stopHost: return "Stop the host?"
-            case .quit: return "Quit Aislopdesk Host?"
+            case .stopHost: "Stop the host?"
+            case .quit: "Quit Aislopdesk Host?"
             }
         }
+
         var confirmLabel: String {
             switch self {
-            case .stopHost: return "Stop Host"
-            case .quit: return "Quit"
+            case .stopHost: "Stop Host"
+            case .quit: "Quit"
             }
         }
     }
@@ -127,10 +133,11 @@ struct MenuContentView: View {
 
     private var statusColor: Color {
         switch controller.state {
-        case .running: return .green
-        case .starting, .stopping: return .yellow
-        case .stopped: return .secondary
-        case .failed: return .red
+        case .running: .green
+        case .starting,
+             .stopping: .yellow
+        case .stopped: .secondary
+        case .failed: .red
         }
     }
 
@@ -141,11 +148,11 @@ struct MenuContentView: View {
 
     private var statusText: String {
         switch controller.state {
-        case let .running(boundPort): return "Running on :\(boundPort)"
-        case .starting: return "Starting…"
-        case .stopping: return "Stopping…"
-        case .stopped: return "Stopped"
-        case let .failed(message): return "Failed: \(message)"
+        case let .running(boundPort): "Running on :\(boundPort)"
+        case .starting: "Starting…"
+        case .stopping: "Stopping…"
+        case .stopped: "Stopped"
+        case let .failed(message): "Failed: \(message)"
         }
     }
 
@@ -165,10 +172,12 @@ struct MenuContentView: View {
                 TextField("7779", value: $port, format: .number.grouping(.never))
                     .textFieldStyle(.roundedBorder)
                     .disabled(controller.isRunning || controller.isBusy)
-                    .help(controller.isRunning ? "Stop the host to change the port." : "TCP port to listen on (0 = OS-assigned, max 65535).")
+                    .help(controller
+                        .isRunning ? "Stop the host to change the port." :
+                        "TCP port to listen on (0 = OS-assigned, max 65535).")
             }
             // Non-color + color feedback that the field is out of range, with Start disabled below.
-            if !controller.isRunning && !portIsValid {
+            if !controller.isRunning, !portIsValid {
                 Text("Enter a port between 0 and 65535.")
                     .font(.caption2)
                     .foregroundStyle(.red)
@@ -287,7 +296,7 @@ private struct TCCRowView: View {
                 Text(row.note)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                if !granted && row.requiresRelaunch {
+                if !granted, row.requiresRelaunch {
                     Text("Quit & Reopen Aislopdesk Host after granting.")
                         .font(.caption2)
                         .foregroundStyle(.orange)

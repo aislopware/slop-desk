@@ -1,23 +1,37 @@
-import XCTest
 import AislopdeskProtocol
+import XCTest
 @testable import AislopdeskTransport
 
 /// S2 per-channel flow-control tests for ``MuxSubChannel`` in isolation (no shared connection, no
 /// socket). Proves the consume→suspend / grant→wake decision and the close-while-blocked wakeup —
 /// the actor-level seam around the pure ``FlowCreditPolicy`` decider.
 final class MuxSubChannelFlowTests: XCTestCase {
-
     /// Records every framed payload the sub-channel actually wrote out (i.e. that passed the window).
     private final class Sink: @unchecked Sendable {
         private let lock = NSLock()
         private var sent: [Data] = []
-        func record(_ d: Data) { lock.lock(); sent.append(d); lock.unlock() }
-        var count: Int { lock.lock(); defer { lock.unlock() }; return sent.count }
+        func record(_ d: Data) { lock.lock()
+            sent.append(d)
+            lock.unlock()
+        }
+
+        var count: Int { lock.lock()
+            defer { lock.unlock() }
+            return sent.count
+        }
+
         /// Total bytes written across all envelopes (chunks for one frame may be several envelopes).
-        var totalBytes: Int { lock.lock(); defer { lock.unlock() }; return sent.reduce(0) { $0 + $1.count } }
+        var totalBytes: Int { lock.lock()
+            defer { lock.unlock() }
+            return sent.reduce(0) { $0 + $1.count }
+        }
+
         /// Concatenation of every envelope's bytes IN WRITE ORDER — the stream the receiver's
         /// `FrameDecoder` reassembles. Used to prove chunks reassemble to the original frame(s).
-        var concatenated: Data { lock.lock(); defer { lock.unlock() }; return sent.reduce(into: Data()) { $0.append($1) } }
+        var concatenated: Data { lock.lock()
+            defer { lock.unlock() }
+            return sent.reduce(into: Data()) { $0.append($1) }
+        }
     }
 
     /// A `.input(N body bytes)` frame is `5 + N` bytes on the wire (4 length prefix + 1 type byte +
@@ -43,7 +57,7 @@ final class MuxSubChannelFlowTests: XCTestCase {
         XCTAssertEqual(sink.count, 1, "the second send must be SUSPENDED (window exhausted), not written")
 
         // A windowAdjust grant must WAKE the suspended sender so it proceeds.
-        await ch.grantCredit(10_000)
+        await ch.grantCredit(10000)
         await fulfillment(of: [secondDone], timeout: 2)
         XCTAssertEqual(sink.count, 2, "after the grant the suspended frame is written")
         _ = await sendTask.value
@@ -80,7 +94,7 @@ final class MuxSubChannelFlowTests: XCTestCase {
         let ch = MuxSubChannel(channelID: 1, channel: .data, sendWindowBytes: nil) { _, inner in
             sink.record(inner)
         }
-        for _ in 0..<50 { try await ch.send(WireMessage.input(Data(repeating: 0x41, count: 10_000))) }
+        for _ in 0..<50 { try await ch.send(WireMessage.input(Data(repeating: 0x41, count: 10000))) }
         XCTAssertEqual(sink.count, 50, "flow OFF → every send goes straight through, no blocking")
     }
 
@@ -134,7 +148,11 @@ final class MuxSubChannelFlowTests: XCTestCase {
         await fulfillment(of: [done], timeout: 5)
         _ = await sendTask.value
 
-        XCTAssertGreaterThan(sink.count, 1, "an oversized frame must be split into MULTIPLE envelopes (chunking exercised)")
+        XCTAssertGreaterThan(
+            sink.count,
+            1,
+            "an oversized frame must be split into MULTIPLE envelopes (chunking exercised)",
+        )
         XCTAssertEqual(sink.totalBytes, framed.count, "every byte of the framed message is written exactly once")
         // The receiver's per-channel FrameDecoder reassembles the inner WireMessage across the
         // .channelData chunk boundaries — feed the concatenated chunks and assert the ORIGINAL frame.
@@ -142,7 +160,8 @@ final class MuxSubChannelFlowTests: XCTestCase {
         decoder.append(sink.concatenated)
         let reassembled = try decoder.nextMessage()
         guard case let .input(bytes) = reassembled else {
-            return XCTFail("reassembled message must be the original .input, got \(String(describing: reassembled))")
+            XCTFail("reassembled message must be the original .input, got \(String(describing: reassembled))")
+            return
         }
         XCTAssertEqual(bytes, payload, "chunks reassemble to the EXACT original frame (no corruption)")
         XCTAssertNil(try decoder.nextMessage(), "exactly one frame reassembled (no trailing bytes)")
@@ -185,10 +204,21 @@ final class MuxSubChannelFlowTests: XCTestCase {
         let first = try decoder.nextMessage()
         let second = try decoder.nextMessage()
         guard case let .input(b1) = first, case let .input(b2) = second else {
-            return XCTFail("expected two .input frames in order, got \(String(describing: first)), \(String(describing: second))")
+            XCTFail(
+                "expected two .input frames in order, got \(String(describing: first)), \(String(describing: second))",
+            )
+            return
         }
-        XCTAssertEqual(b1, bigPayload, "first reassembled frame is the big one (chunks not interleaved with the small send)")
-        XCTAssertEqual(b2, Data("z".utf8), "second reassembled frame is the small one, strictly AFTER the big frame's last chunk")
+        XCTAssertEqual(
+            b1,
+            bigPayload,
+            "first reassembled frame is the big one (chunks not interleaved with the small send)",
+        )
+        XCTAssertEqual(
+            b2,
+            Data("z".utf8),
+            "second reassembled frame is the small one, strictly AFTER the big frame's last chunk",
+        )
     }
 
     /// Re-review (send-gate): two CONCURRENT sends (SEPARATE Tasks) of oversized frames on ONE
@@ -212,8 +242,12 @@ final class MuxSubChannelFlowTests: XCTestCase {
         let bothDone = expectation(description: "both concurrent sends complete")
         bothDone.expectedFulfillmentCount = 2
         // Issue the two sends from SEPARATE concurrent Tasks — the corruption trigger.
-        let taskA = Task { try? await ch.send(msgA); bothDone.fulfill() }
-        let taskB = Task { try? await ch.send(msgB); bothDone.fulfill() }
+        let taskA = Task { try? await ch.send(msgA)
+            bothDone.fulfill()
+        }
+        let taskB = Task { try? await ch.send(msgB)
+            bothDone.fulfill()
+        }
         let totalFramed = msgA.encode().count + msgB.encode().count
         // Grant ONE window's worth incrementally so BOTH sends chunk+park repeatedly (max interleave
         // opportunity on the buggy code); credit banks in FlowCreditPolicy so it cannot deadlock.
@@ -222,7 +256,8 @@ final class MuxSubChannelFlowTests: XCTestCase {
             await ch.grantCredit(window)
         }
         await fulfillment(of: [bothDone], timeout: 5)
-        _ = await taskA.value; _ = await taskB.value
+        _ = await taskA.value
+        _ = await taskB.value
 
         // The wire must reassemble to EXACTLY two intact .input frames (no interleave → no corruption).
         var decoder = FrameDecoder()
@@ -231,10 +266,17 @@ final class MuxSubChannelFlowTests: XCTestCase {
         let f2 = try decoder.nextMessage()
         XCTAssertNil(try decoder.nextMessage(), "exactly two frames reassembled — no trailing/garbled bytes")
         guard case let .input(b1) = f1, case let .input(b2) = f2 else {
-            return XCTFail("expected two intact .input frames, got \(String(describing: f1)), \(String(describing: f2))")
+            XCTFail(
+                "expected two intact .input frames, got \(String(describing: f1)), \(String(describing: f2))",
+            )
+            return
         }
         // Order is whichever took the gate first; both payloads must appear INTACT.
-        XCTAssertEqual(Set([b1, b2]), Set([payloadA, payloadB]), "both frames reassemble intact (chunks not interleaved)")
+        XCTAssertEqual(
+            Set([b1, b2]),
+            Set([payloadA, payloadB]),
+            "both frames reassemble intact (chunks not interleaved)",
+        )
     }
 
     /// FIX #1 close-mid-chunk: a `finish()` while a chunked send is parked between chunks must THROW
@@ -262,7 +304,11 @@ final class MuxSubChannelFlowTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
         let beforeClose = sink.count
         XCTAssertGreaterThanOrEqual(beforeClose, 1, "at least the first chunk should have gone out before parking")
-        XCTAssertLessThan(sink.totalBytes, message.encode().count, "the frame must NOT be fully sent (still parked mid-chunk)")
+        XCTAssertLessThan(
+            sink.totalBytes,
+            message.encode().count,
+            "the frame must NOT be fully sent (still parked mid-chunk)",
+        )
         await ch.finish()
         await fulfillment(of: [threw], timeout: 2)
         _ = await sendTask.value
@@ -278,12 +324,12 @@ final class MuxSubChannelFlowTests: XCTestCase {
         let ch = MuxSubChannel(channelID: 1, channel: .data, sendWindowBytes: 6) { _, inner in
             sink.record(inner)
         }
-        try await ch.send(WireMessage.input(Data("x".utf8)))   // exactly fills the 6-byte window
+        try await ch.send(WireMessage.input(Data("x".utf8))) // exactly fills the 6-byte window
         XCTAssertEqual(sink.count, 1)
 
         let completed = expectation(description: "the blocked send completes when its Task is cancelled")
         let sendTask = Task {
-            try? await ch.send(WireMessage.input(Data("y".utf8)))   // parks on the exhausted window
+            try? await ch.send(WireMessage.input(Data("y".utf8))) // parks on the exhausted window
             completed.fulfill()
         }
         try await Task.sleep(for: .milliseconds(100))

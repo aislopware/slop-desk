@@ -72,23 +72,23 @@ public enum AdaptiveFECPolicy {
     /// order is NOT the redundancy order).
     private static func level(forTier tier: UInt8) -> Int {
         switch tier {
-        case 1: return 0   // OFF
-        case 2: return 1   // g10
-        case 0: return 2   // g5 (default)
-        case 3: return 3   // g3
-        case 4: return 4   // g2
-        default: return 2  // reserved → treat as the default/g5 level
+        case 1: 0 // OFF
+        case 2: 1 // g10
+        case 0: 2 // g5 (default)
+        case 3: 3 // g3
+        case 4: 4 // g2
+        default: 2 // reserved → treat as the default/g5 level
         }
     }
 
     private static func tier(forLevel level: Int) -> UInt8 {
         switch level {
-        case 0: return 1   // OFF
-        case 1: return 2   // g10
-        case 2: return 0   // g5 (default)
-        case 3: return 3   // g3
-        case 4: return 4   // g2
-        default: return 0  // clamp → default
+        case 0: 1 // OFF
+        case 1: 2 // g10
+        case 2: 0 // g5 (default)
+        case 3: 3 // g3
+        case 4: 4 // g2
+        default: 0 // clamp → default
         }
     }
 
@@ -101,23 +101,17 @@ public enum AdaptiveFECPolicy {
     /// For every adjacent pair the up-threshold strictly exceeds the down-threshold (dead-band),
     /// so `upLevel <= downLevel` always and the two `if`s below are mutually exclusive.
     private static func targetLevel(forLossRate loss: Double, currentLevel current: Int) -> Int {
-        let upLevel: Int
-        if loss >= 0.10 { upLevel = 4 }
-        else if loss >= 0.05 { upLevel = 3 }
-        else if loss >= 0.02 { upLevel = 2 }
-        else if loss >= 0.005 { upLevel = 1 }
-        else { upLevel = 0 }
+        let upLevel =
+            if loss >= 0.10 { 4 } else if loss >= 0.05 { 3 } else if loss >= 0.02 { 2 } else if loss >= 0.005 { 1 }
+            else { 0 }
 
-        let downLevel: Int
-        if loss < 0.002 { downLevel = 0 }
-        else if loss < 0.012 { downLevel = 1 }
-        else if loss < 0.035 { downLevel = 2 }
-        else if loss < 0.08 { downLevel = 3 }
-        else { downLevel = 4 }
+        let downLevel =
+            if loss < 0.002 { 0 } else if loss < 0.012 { 1 } else if loss < 0.035 { 2 } else if loss < 0.08 { 3 }
+            else { 4 }
 
-        if upLevel > current { return upLevel }     // loss has risen → demand more redundancy
+        if upLevel > current { return upLevel } // loss has risen → demand more redundancy
         if downLevel < current { return downLevel } // loss low enough → relax
-        return current                              // dead-band → hold
+        return current // dead-band → hold
     }
 
     /// Picks the next wire tier from the EWMA loss and the previous tier, with hysteresis and a
@@ -127,8 +121,11 @@ public enum AdaptiveFECPolicy {
     /// pre-existing OFF state with the floor active, the first call steps UP to g10 (defensive —
     /// unreachable in production, where the env gate is fixed for the process lifetime). The host
     /// only ever calls this on a real netstats report (inert with no data).
-    public static func tier(forLossRate loss: Double, previousTier: UInt8,
-                            allowOff: Bool = allowOffTierDefault) -> UInt8 {
+    public static func tier(
+        forLossRate loss: Double,
+        previousTier: UInt8,
+        allowOff: Bool = allowOffTierDefault,
+    ) -> UInt8 {
         // Delegates to the Rust core (golden-vector `adaptiveTier` proves bit-exact parity with
         // the former native ladder). Env stays Swift-side: `allowOff` crosses as a byte.
         RustVideoFFI.adaptiveFECTier(loss: loss, previousTier: previousTier, allowOff: allowOff)
@@ -168,8 +165,11 @@ public enum AdaptiveFECPolicy {
         /// Reports remaining in the sticky-relax (doubled-dwell) window; 0 = inactive. Re-armed to
         /// ``stickyRelaxWindowReports`` by any report with unrecovered loss, decays by 1 per report.
         public var stickyRelaxRemaining: Int
-        public init(tier: UInt8 = AdaptiveFECPolicy.defaultTier, relaxStreak: Int = 0,
-                    stickyRelaxRemaining: Int = 0) {
+        public init(
+            tier: UInt8 = AdaptiveFECPolicy.defaultTier,
+            relaxStreak: Int = 0,
+            stickyRelaxRemaining: Int = 0,
+        ) {
             self.tier = tier
             self.relaxStreak = relaxStreak
             self.stickyRelaxRemaining = stickyRelaxRemaining
@@ -183,10 +183,13 @@ public enum AdaptiveFECPolicy {
     /// is open — see ``stickyRelaxWindowReports``); any report that does NOT demand relaxation
     /// (hold or escalate) resets the streak, so a burst arriving mid-dwell re-arms the full wait.
     /// Relaxation floors at level 1 (g10) unless `allowOff` (see ``allowOffTierDefault``).
-    public static func nextTierState(forLossRate loss: Double, state: TierState,
-                                     dwell: Int = relaxDwellReports,
-                                     allowOff: Bool = allowOffTierDefault,
-                                     sawUnrecoveredLoss: Bool = false) -> TierState {
+    public static func nextTierState(
+        forLossRate loss: Double,
+        state: TierState,
+        dwell: Int = relaxDwellReports,
+        allowOff: Bool = allowOffTierDefault,
+        sawUnrecoveredLoss: Bool = false,
+    ) -> TierState {
         // Delegates to the Rust core: marshal the value-type state through the flat
         // `AisdTierState` and rebuild a Swift `TierState` from the result. The whole
         // hysteresis/dwell/sticky decision lives in `aislopdesk-core::adaptive_fec`, the single
@@ -195,8 +198,12 @@ public enum AdaptiveFECPolicy {
         let next = RustVideoFFI.adaptiveFECNextTierState(
             loss: loss, tier: state.tier, relaxStreak: state.relaxStreak,
             stickyRelaxRemaining: state.stickyRelaxRemaining,
-            dwell: dwell, allowOff: allowOff, sawUnrecoveredLoss: sawUnrecoveredLoss)
-        return TierState(tier: next.tier, relaxStreak: next.relaxStreak,
-                         stickyRelaxRemaining: next.stickyRelaxRemaining)
+            dwell: dwell, allowOff: allowOff, sawUnrecoveredLoss: sawUnrecoveredLoss,
+        )
+        return TierState(
+            tier: next.tier,
+            relaxStreak: next.relaxStreak,
+            stickyRelaxRemaining: next.stickyRelaxRemaining,
+        )
     }
 }

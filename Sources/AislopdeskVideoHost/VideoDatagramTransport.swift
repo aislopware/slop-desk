@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskVideoProtocol
+import Foundation
 
 /// The logical sub-streams that share one PATH 2 UDP session (doc 17 §3.3/§3.6/§3.8).
 ///

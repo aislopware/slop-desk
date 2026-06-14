@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskVideoProtocol
+import Foundation
 
 // Pure, platform-free client-session logic for the GUI video path (PATH 2 / Phase 4).
 // NO VideoToolbox / Metal / Network — exactly the discipline of AislopdeskVideoProtocol
@@ -36,10 +36,10 @@ public struct VideoClientStateMachine: Sendable {
 
     /// Negotiated values, populated on an accepted `helloAck`.
     public private(set) var streamID: UInt32 = 0
-    public private(set) var captureSize: VideoSize = VideoSize(width: 0, height: 0)
+    public private(set) var captureSize: VideoSize = .init(width: 0, height: 0)
     /// The window's CG-top-left bounds reported in the ack (the initial geometry,
     /// updated thereafter by the geometry channel).
-    public private(set) var windowBoundsCG: VideoRect = VideoRect(x: 0, y: 0, width: 0, height: 0)
+    public private(set) var windowBoundsCG: VideoRect = .init(x: 0, y: 0, width: 0, height: 0)
 
     public init(requestedWindowID: UInt32, viewport: VideoSize) {
         self.requestedWindowID = requestedWindowID
@@ -74,7 +74,11 @@ public struct VideoClientStateMachine: Sendable {
     public mutating func start() -> [Effect] {
         guard state == .idle else { return [] }
         state = .connecting
-        return [.sendControl(.hello(protocolVersion: AislopdeskVideoProtocol.version, requestedWindowID: requestedWindowID, viewport: viewport))]
+        return [.sendControl(.hello(
+            protocolVersion: AislopdeskVideoProtocol.version,
+            requestedWindowID: requestedWindowID,
+            viewport: viewport,
+        ))]
     }
 
     /// A control datagram arrived from the host. The only message the client acts on
@@ -83,7 +87,7 @@ public struct VideoClientStateMachine: Sendable {
     /// (idempotent — UDP may deliver the ack more than once).
     public mutating func handleControl(_ message: VideoControlMessage) -> [Effect] {
         switch message {
-        case .helloAck(let accepted, let streamID, let cw, let ch, let bounds, let fullRange):
+        case let .helloAck(accepted, streamID, cw, ch, bounds, fullRange):
             guard state == .connecting else {
                 // Already resolved: ignore a duplicate / late ack.
                 return []
@@ -93,15 +97,15 @@ public struct VideoClientStateMachine: Sendable {
                 return []
             }
             self.streamID = streamID
-            self.captureSize = VideoSize(width: Double(cw), height: Double(ch))
-            self.windowBoundsCG = bounds
+            captureSize = VideoSize(width: Double(cw), height: Double(ch))
+            windowBoundsCG = bounds
             state = .streaming
             return [.startDecodePipeline(captureSize: captureSize, windowBoundsCG: bounds, fullRange: fullRange)]
         case .bye:
             guard state == .streaming || state == .connecting else { return [] }
             state = .stopped
             return [.stopDecodePipeline]
-        case .resizeAck(let cw, let ch, _):
+        case let .resizeAck(cw, ch, _):
             // The host adopted a new capture size for an in-session resize. Stage it as the
             // pending capture size; the actor adopts it as the aspect-fit denominator only when
             // a decoded CVPixelBuffer actually arrives at that size (frame-gated — in-flight
@@ -112,14 +116,20 @@ public struct VideoClientStateMachine: Sendable {
             // is sent, so this branch is simply never reached.
             guard state == .streaming else { return [] }
             return [.updateCaptureSize(VideoSize(width: Double(cw), height: Double(ch)))]
-        case .streamCadence(let fps):
+        case let .streamCadence(fps):
             // FPS governor (host→client): rebase the content-cadence assumptions. Only meaningful
             // while streaming (a stray/late cadence after teardown is inert); fps 0 is nonsense —
             // dropped (the host never sends it; defensive against a corrupt body that still parsed).
             guard state == .streaming, fps >= 1 else { return [] }
             return [.applyStreamCadence(fps)]
-        case .hello, .resizeRequest, .keepalive, .listWindows, .windowList, .focusWindow,
-             .listSystemDialogs, .systemDialogList:
+        case .hello,
+             .resizeRequest,
+             .keepalive,
+             .listWindows,
+             .windowList,
+             .focusWindow,
+             .listSystemDialogs,
+             .systemDialogList:
             // The client never receives a hello / resizeRequest / keepalive / listWindows / focusWindow /
             // listSystemDialogs (all client→host). `windowList` and `systemDialogList` ARE host→client but
             // are handled out-of-band by the discovery / system-dialog-monitor queries (transient lanes),
@@ -184,7 +194,7 @@ public enum FrameDecodability: Equatable, Sendable {
     case requestKeyframe
 
     /// Triage a frame by its keyframe flag and reassembled byte count.
-    public static func classify(keyframe: Bool, byteCount: Int) -> FrameDecodability {
+    public static func classify(keyframe: Bool, byteCount: Int) -> Self {
         if byteCount > 0 { return .decodable }
         return keyframe ? .requestKeyframe : .dropSilently
     }
@@ -218,7 +228,8 @@ public enum ResizeAdoption {
     public static func shouldAdopt(pending: VideoSize, decoded: VideoSize, previousDecoded: VideoSize?) -> Bool {
         guard pending.width > 0, pending.height > 0, decoded.width > 0, decoded.height > 0 else { return false }
         let aspectMatches = abs(pending.width / pending.height - decoded.width / decoded.height) < 0.02
-        let sizeChanged = previousDecoded.map { abs(decoded.width - $0.width) >= 1 || abs(decoded.height - $0.height) >= 1 } ?? true
+        let sizeChanged = previousDecoded
+            .map { abs(decoded.width - $0.width) >= 1 || abs(decoded.height - $0.height) >= 1 } ?? true
         return aspectMatches && sizeChanged
     }
 }
@@ -366,17 +377,22 @@ public struct ReceivedDatagramRouter: Sendable {
     public func route(channel: VideoChannel, data: Data, mediaFlowing: Bool) -> Routed {
         switch channel {
         case .control:
-            do { return .control(try VideoControlMessage.decode(data)) }
-            catch { return .drop(reason: "undecodable control datagram") }
+            do { return try .control(VideoControlMessage.decode(data)) } catch {
+                return .drop(reason: "undecodable control datagram")
+            }
         case .video:
             guard mediaFlowing else { return .ignore }
-            do { return .videoFragment(try FrameFragment.decode(data)) }
-            catch { return .drop(reason: "undecodable video fragment") }
+            do { return try .videoFragment(FrameFragment.decode(data)) } catch {
+                return .drop(reason: "undecodable video fragment")
+            }
         case .geometry:
             guard mediaFlowing else { return .ignore }
-            do { return .geometry(try WindowGeometryMessage.decode(data)) }
-            catch { return .drop(reason: "undecodable geometry datagram") }
-        case .cursor, .input, .recovery:
+            do { return try .geometry(WindowGeometryMessage.decode(data)) } catch {
+                return .drop(reason: "undecodable geometry datagram")
+            }
+        case .cursor,
+             .input,
+             .recovery:
             // Cursor arrives on its own socket; input + recovery are client→host only.
             return .ignore
         }
@@ -395,7 +411,7 @@ public struct InputEventEncoder: Sendable {
     private var nextTag: UInt32
 
     public init(initialTag: UInt32 = 1) {
-        self.nextTag = initialTag
+        nextTag = initialTag
     }
 
     /// Normalises a point in the layer's view space (origin top-left, +Y down, the
@@ -419,7 +435,7 @@ public struct InputEventEncoder: Sendable {
         videoNativeSize: VideoSize,
         zoom: Double = 1,
         pan: VideoPoint = VideoPoint(x: 0, y: 0),
-        mode: VideoContentMode = .fit
+        mode: VideoContentMode = .fit,
     ) -> VideoPoint {
         let r = AspectFit.displayedVideoRect(viewSize: layerSize, videoNativeSize: videoNativeSize, mode: mode)
         // 0..1 over the DISPLAYED (un-zoomed) video rect; degenerate rect → 0.
@@ -444,26 +460,138 @@ public struct InputEventEncoder: Sendable {
         return tag
     }
 
-    public mutating func mouseMove(viewPoint: VideoPoint, layerSize: VideoSize, videoNativeSize: VideoSize, zoom: Double = 1, pan: VideoPoint = VideoPoint(x: 0, y: 0), mode: VideoContentMode = .fit) -> InputEvent {
-        .mouseMove(normalized: Self.normalize(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan, mode: mode), tag: takeTag())
+    public mutating func mouseMove(
+        viewPoint: VideoPoint,
+        layerSize: VideoSize,
+        videoNativeSize: VideoSize,
+        zoom: Double = 1,
+        pan: VideoPoint = VideoPoint(x: 0, y: 0),
+        mode: VideoContentMode = .fit,
+    ) -> InputEvent {
+        .mouseMove(
+            normalized: Self
+                .normalize(
+                    viewPoint: viewPoint,
+                    layerSize: layerSize,
+                    videoNativeSize: videoNativeSize,
+                    zoom: zoom,
+                    pan: pan,
+                    mode: mode,
+                ),
+            tag: takeTag(),
+        )
     }
 
-    public mutating func mouseDown(button: MouseButton, viewPoint: VideoPoint, layerSize: VideoSize, videoNativeSize: VideoSize, clickCount: UInt8, modifiers: InputModifiers, zoom: Double = 1, pan: VideoPoint = VideoPoint(x: 0, y: 0), mode: VideoContentMode = .fit) -> InputEvent {
-        .mouseDown(button: button, normalized: Self.normalize(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan, mode: mode), clickCount: clickCount, modifiers: modifiers, tag: takeTag())
+    public mutating func mouseDown(
+        button: MouseButton,
+        viewPoint: VideoPoint,
+        layerSize: VideoSize,
+        videoNativeSize: VideoSize,
+        clickCount: UInt8,
+        modifiers: InputModifiers,
+        zoom: Double = 1,
+        pan: VideoPoint = VideoPoint(x: 0, y: 0),
+        mode: VideoContentMode = .fit,
+    ) -> InputEvent {
+        .mouseDown(
+            button: button,
+            normalized: Self
+                .normalize(
+                    viewPoint: viewPoint,
+                    layerSize: layerSize,
+                    videoNativeSize: videoNativeSize,
+                    zoom: zoom,
+                    pan: pan,
+                    mode: mode,
+                ),
+            clickCount: clickCount,
+            modifiers: modifiers,
+            tag: takeTag(),
+        )
     }
 
-    public mutating func mouseUp(button: MouseButton, viewPoint: VideoPoint, layerSize: VideoSize, videoNativeSize: VideoSize, clickCount: UInt8, modifiers: InputModifiers, zoom: Double = 1, pan: VideoPoint = VideoPoint(x: 0, y: 0), mode: VideoContentMode = .fit) -> InputEvent {
-        .mouseUp(button: button, normalized: Self.normalize(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan, mode: mode), clickCount: clickCount, modifiers: modifiers, tag: takeTag())
+    public mutating func mouseUp(
+        button: MouseButton,
+        viewPoint: VideoPoint,
+        layerSize: VideoSize,
+        videoNativeSize: VideoSize,
+        clickCount: UInt8,
+        modifiers: InputModifiers,
+        zoom: Double = 1,
+        pan: VideoPoint = VideoPoint(x: 0, y: 0),
+        mode: VideoContentMode = .fit,
+    ) -> InputEvent {
+        .mouseUp(
+            button: button,
+            normalized: Self
+                .normalize(
+                    viewPoint: viewPoint,
+                    layerSize: layerSize,
+                    videoNativeSize: videoNativeSize,
+                    zoom: zoom,
+                    pan: pan,
+                    mode: mode,
+                ),
+            clickCount: clickCount,
+            modifiers: modifiers,
+            tag: takeTag(),
+        )
     }
 
     /// A drag move (a button is held). Emitted from the view's `mouseDragged`/`rightMouseDragged`
     /// — distinct from a hover `mouseMove` — so the host posts a `*MouseDragged` statelessly.
-    public mutating func mouseDrag(button: MouseButton, viewPoint: VideoPoint, layerSize: VideoSize, videoNativeSize: VideoSize, clickCount: UInt8, modifiers: InputModifiers, zoom: Double = 1, pan: VideoPoint = VideoPoint(x: 0, y: 0), mode: VideoContentMode = .fit) -> InputEvent {
-        .mouseDrag(button: button, normalized: Self.normalize(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan, mode: mode), clickCount: clickCount, modifiers: modifiers, tag: takeTag())
+    public mutating func mouseDrag(
+        button: MouseButton,
+        viewPoint: VideoPoint,
+        layerSize: VideoSize,
+        videoNativeSize: VideoSize,
+        clickCount: UInt8,
+        modifiers: InputModifiers,
+        zoom: Double = 1,
+        pan: VideoPoint = VideoPoint(x: 0, y: 0),
+        mode: VideoContentMode = .fit,
+    ) -> InputEvent {
+        .mouseDrag(
+            button: button,
+            normalized: Self
+                .normalize(
+                    viewPoint: viewPoint,
+                    layerSize: layerSize,
+                    videoNativeSize: videoNativeSize,
+                    zoom: zoom,
+                    pan: pan,
+                    mode: mode,
+                ),
+            clickCount: clickCount,
+            modifiers: modifiers,
+            tag: takeTag(),
+        )
     }
 
-    public mutating func scroll(dx: Double, dy: Double, viewPoint: VideoPoint, layerSize: VideoSize, videoNativeSize: VideoSize, zoom: Double = 1, pan: VideoPoint = VideoPoint(x: 0, y: 0), mode: VideoContentMode = .fit) -> InputEvent {
-        .scroll(dx: dx, dy: dy, normalized: Self.normalize(viewPoint: viewPoint, layerSize: layerSize, videoNativeSize: videoNativeSize, zoom: zoom, pan: pan, mode: mode), tag: takeTag())
+    public mutating func scroll(
+        dx: Double,
+        dy: Double,
+        viewPoint: VideoPoint,
+        layerSize: VideoSize,
+        videoNativeSize: VideoSize,
+        zoom: Double = 1,
+        pan: VideoPoint = VideoPoint(x: 0, y: 0),
+        mode: VideoContentMode = .fit,
+    ) -> InputEvent {
+        .scroll(
+            dx: dx,
+            dy: dy,
+            normalized: Self
+                .normalize(
+                    viewPoint: viewPoint,
+                    layerSize: layerSize,
+                    videoNativeSize: videoNativeSize,
+                    zoom: zoom,
+                    pan: pan,
+                    mode: mode,
+                ),
+            tag: takeTag(),
+        )
     }
 
     public mutating func key(keyCode: UInt16, down: Bool, modifiers: InputModifiers) -> InputEvent {
@@ -555,10 +683,14 @@ public struct OWDJitterEstimator: Sendable, Equatable {
     /// (no interval yet); the second seeds the first interval (no 2nd-difference yet); from the third
     /// on it updates the smoothed jitter — so an initial burst never emits a spurious spike.
     public mutating func note(arrival: Double) {
-        guard let prevArrival = lastArrival else { lastArrival = arrival; return }
+        guard let prevArrival = lastArrival else { lastArrival = arrival
+            return
+        }
         let inter = arrival - prevArrival
         lastArrival = arrival
-        guard let prevInter = lastInterArrival else { lastInterArrival = inter; return }
+        guard let prevInter = lastInterArrival else { lastInterArrival = inter
+            return
+        }
         let d = abs(inter - prevInter)
         jitterSeconds += (d - jitterSeconds) / 16
         lastInterArrival = inter
@@ -608,14 +740,21 @@ public struct AdaptiveJitterController: Sendable, Equatable {
     /// fires (and resets this) at `shrinkCooldownFrames`. Reset to 0 by any grow or steady step.
     private var shrinkRun: Int = 0
 
-    public init(minDepth: Int = 1, maxDepth: Int, fps: Double, initialDepth: Int, jitterSafety: Double = 2.5, shrinkCooldownFrames: Int = 180) {
+    public init(
+        minDepth: Int = 1,
+        maxDepth: Int,
+        fps: Double,
+        initialDepth: Int,
+        jitterSafety: Double = 2.5,
+        shrinkCooldownFrames: Int = 180,
+    ) {
         let lo = max(1, minDepth)
         self.minDepth = lo
         self.maxDepth = max(lo, maxDepth)
         self.fps = fps
         self.jitterSafety = jitterSafety
         self.shrinkCooldownFrames = max(1, shrinkCooldownFrames)
-        self.targetDepth = min(self.maxDepth, max(lo, initialDepth))
+        targetDepth = min(self.maxDepth, max(lo, initialDepth))
     }
 
     /// Depth that would absorb jitter `j` (seconds): `1 + ceil(j × fps × safety)`, clamped to

@@ -89,23 +89,23 @@ struct PaneCarouselView: View {
                 handle: store.handle(for: page.id),
                 isFocused: true,
                 isZoomed: store.workspace.maximizedPane == page.id,
-                store: store
+                store: store,
             ) {
                 PaneLeafView(
                     handle: store.handle(for: page.id),
                     spec: spec,
                     isFocused: true,
                     focusCoordinator: store.focusCoordinator,
-                    store: store
+                    store: store,
                 )
             }
             // Stable identity across swipes / reshape / a regular↔compact flip (docs/22 §4, §7): never
             // tear down or rewire the live session backing this page.
             .id(page.id)
             #if os(macOS)
-            // The LIVE, redacted title (OSC 0/2 + secret-redaction) like the pill/sidebar — not the
-            // stale, unredacted spec.title (which also leaked secrets in window titles to this tab).
-            .tabItem { Text(PanePresentation.displayTitle(store.handle(for: page.id), spec: spec)) }
+                // The LIVE, redacted title (OSC 0/2 + secret-redaction) like the pill/sidebar — not the
+                // stale, unredacted spec.title (which also leaked secrets in window titles to this tab).
+                .tabItem { Text(PanePresentation.displayTitle(store.handle(for: page.id), spec: spec)) }
             #endif
         }
     }
@@ -113,7 +113,6 @@ struct PaneCarouselView: View {
     // MARK: Top bar (sidebar + add + page position)
 
     /// A slim top affordance: open the sidebar, a page-position chip, prev/next, and a `+` to add a pane.
-    @ViewBuilder
     private func topBar(pages: [CompactPage]) -> some View {
         HStack(spacing: 10) {
             if let onShowSidebar {
@@ -130,12 +129,14 @@ struct PaneCarouselView: View {
                 .lineLimit(1)
 
             if pages.count > 1 {
-                Text("\(CompactLayoutResolver.selectedIndex(focusedPane: store.workspace.focusedPane, in: canvas) + 1)/\(pages.count)")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.quaternary, in: Capsule())
+                Text(
+                    "\(CompactLayoutResolver.selectedIndex(focusedPane: store.workspace.focusedPane, in: canvas) + 1)/\(pages.count)",
+                )
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(.quaternary, in: Capsule())
             }
 
             Spacer(minLength: 8)
@@ -216,7 +217,7 @@ struct PaneCarouselView: View {
             set: { newID in
                 guard newID != store.workspace.focusedPane, canvas.contains(newID) else { return }
                 store.focus(newID)
-            }
+            },
         )
     }
 }

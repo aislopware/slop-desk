@@ -14,8 +14,8 @@ public enum JSONValue: Sendable, Equatable, Codable {
     case bool(Bool)
     case number(Double)
     case string(String)
-    case array([JSONValue])
-    case object([String: JSONValue])
+    case array([Self])
+    case object([String: Self])
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
@@ -27,9 +27,9 @@ public enum JSONValue: Sendable, Equatable, Codable {
             self = .number(value)
         } else if let value = try? container.decode(String.self) {
             self = .string(value)
-        } else if let value = try? container.decode([JSONValue].self) {
+        } else if let value = try? container.decode([Self].self) {
             self = .array(value)
-        } else if let value = try? container.decode([String: JSONValue].self) {
+        } else if let value = try? container.decode([String: Self].self) {
             self = .object(value)
         } else {
             // Should be unreachable for valid JSON; stay tolerant rather than throw.
@@ -51,7 +51,7 @@ public enum JSONValue: Sendable, Equatable, Codable {
 
     // MARK: Convenience accessors (nil when the shape doesn't match)
 
-    public subscript(_ key: String) -> JSONValue? {
+    public subscript(_ key: String) -> Self? {
         if case let .object(dict) = self { return dict[key] }
         return nil
     }
@@ -61,12 +61,12 @@ public enum JSONValue: Sendable, Equatable, Codable {
         return nil
     }
 
-    public var arrayValue: [JSONValue]? {
+    public var arrayValue: [Self]? {
         if case let .array(value) = self { return value }
         return nil
     }
 
-    public var objectValue: [String: JSONValue]? {
+    public var objectValue: [String: Self]? {
         if case let .object(value) = self { return value }
         return nil
     }

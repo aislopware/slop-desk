@@ -19,25 +19,25 @@ final class TranscriptParsingTests: XCTestCase {
         let events = buildEvents(from: "main-session.jsonl")
 
         // Session metadata surfaced from the init line.
-        let sessions = events.compactMap { if case let .sessionStarted(info) = $0 { return info } else { return nil } }
+        let sessions = events.compactMap { if case let .sessionStarted(info) = $0 { info } else { nil } }
         XCTAssertEqual(sessions.first?.model, "claude-opus-4-8")
         XCTAssertEqual(sessions.first?.cwd, "/Volumes/Lacie/Workspace/oss/aislopdesk")
 
         // User + assistant messages reached the timeline.
-        let messages = events.compactMap { if case let .message(m) = $0 { return m } else { return nil } }
+        let messages = events.compactMap { if case let .message(m) = $0 { m } else { nil } }
         XCTAssertTrue(messages.contains { $0.role == .user && $0.text.contains("list the files") })
         XCTAssertTrue(messages.contains { $0.role == .assistant && $0.text.contains("list the files first") })
         XCTAssertTrue(messages.contains { $0.role == .assistant && $0.text.contains("Done.") })
 
         // The unknown line was surfaced (not dropped, not a crash).
-        let unknowns = events.compactMap { if case let .unknownLine(raw) = $0 { return raw } else { return nil } }
+        let unknowns = events.compactMap { if case let .unknownLine(raw) = $0 { raw } else { nil } }
         XCTAssertEqual(unknowns.count, 1)
         XCTAssertTrue(unknowns[0].contains("some-future-event-we-do-not-know"))
     }
 
     func testThinkingBlockIsPlaceholderOnly() {
         let events = buildEvents(from: "main-session.jsonl")
-        let thinking = events.compactMap { if case let .thinking(m) = $0 { return m } else { return nil } }
+        let thinking = events.compactMap { if case let .thinking(m) = $0 { m } else { nil } }
         XCTAssertEqual(thinking.count, 1)
         XCTAssertTrue(thinking[0].isPlaceholder, "Opus 4.x thinking text is empty → placeholder")
         XCTAssertNil(thinking[0].text, "must never fabricate thinking content")
@@ -46,7 +46,7 @@ final class TranscriptParsingTests: XCTestCase {
 
     func testToolCardPairingFromTranscript() {
         let events = buildEvents(from: "main-session.jsonl")
-        let cards = events.compactMap { if case let .toolCard(c) = $0 { return c } else { return nil } }
+        let cards = events.compactMap { if case let .toolCard(c) = $0 { c } else { nil } }
 
         // Bash card: pending (on tool_use) then completed (on tool_result).
         let bash = cards.filter { $0.id == "toolu_001" }
@@ -63,7 +63,7 @@ final class TranscriptParsingTests: XCTestCase {
 
     func testTodoWriteAccumulatesLatestState() {
         let events = buildEvents(from: "main-session.jsonl")
-        let todoUpdates = events.compactMap { if case let .todosUpdated(t) = $0 { return t } else { return nil } }
+        let todoUpdates = events.compactMap { if case let .todosUpdated(t) = $0 { t } else { nil } }
         XCTAssertEqual(todoUpdates.count, 1)
         let todos = todoUpdates[0]
         XCTAssertEqual(todos.count, 3)
@@ -81,8 +81,8 @@ final class TranscriptParsingTests: XCTestCase {
                 "todos": .array([
                     .object(["content": .string("Build"), "status": .string("in_progress")]),
                     .object(["content": .string("Test"), "status": .string("pending")]),
-                ])
-            ]))
+                ]),
+            ])),
         ])
         _ = b.ingest(line: .assistant(write))
         XCTAssertEqual(b.todos.count, 2, "the TodoWrite populated the panel")
@@ -90,16 +90,18 @@ final class TranscriptParsingTests: XCTestCase {
         // A later Task* payload carrying NEITHER `todos` nor `tasks` (e.g. a partial single-task update)
         // must NOT wipe the panel — no event, list intact.
         let partial = AssistantLine(identity: LineIdentity(uuid: "a2"), toolUses: [
-            ToolUseBlock(id: "t2", name: "TaskUpdate", input: .object(["status": .string("completed")]))
+            ToolUseBlock(id: "t2", name: "TaskUpdate", input: .object(["status": .string("completed")])),
         ])
         let events = b.ingest(line: .assistant(partial))
-        XCTAssertFalse(events.contains { if case .todosUpdated = $0 { return true } else { return false } },
-                       "a payload with no todos/tasks array emits no todosUpdated event")
+        XCTAssertFalse(
+            events.contains { if case .todosUpdated = $0 { true } else { false } },
+            "a payload with no todos/tasks array emits no todosUpdated event",
+        )
         XCTAssertEqual(b.todos.count, 2, "the existing todo list is preserved, not blanked")
 
         // An EXPLICITLY empty array IS a legitimate clear.
         let clear = AssistantLine(identity: LineIdentity(uuid: "a3"), toolUses: [
-            ToolUseBlock(id: "t3", name: "TodoWrite", input: .object(["todos": .array([])]))
+            ToolUseBlock(id: "t3", name: "TodoWrite", input: .object(["todos": .array([])])),
         ])
         _ = b.ingest(line: .assistant(clear))
         XCTAssertEqual(b.todos.count, 0, "an explicit empty array clears the panel")
@@ -109,18 +111,26 @@ final class TranscriptParsingTests: XCTestCase {
         // A tool_result content block that is an object with multiple keys but NO `text` key must render
         // deterministically (the whole object, keys sorted) — not `values.first`, whose Dictionary order
         // is randomized per process, so a different / less-informative field surfaced each run.
-        let raw = #"{"type":"user","uuid":"u1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"x","content":[{"alpha":"A","bravo":"B","charlie":"C"}]}]}}"#
-        guard case let .user(line)? = TranscriptParser.parse(line: raw) else { return XCTFail("should parse a user line") }
-        XCTAssertEqual(line.toolResults.first?.content, "alpha: A\nbravo: B\ncharlie: C",
-                       "an object block without `text` renders all keys, sorted — stable across runs")
+        let raw = #"{"type":"user","uuid":"u1","message":{"role":"user","content":[{"type":"tool_result","# +
+            #""tool_use_id":"x","content":[{"alpha":"A","bravo":"B","charlie":"C"}]}]}}"#
+        guard case let .user(line)? = TranscriptParser.parse(line: raw)
+        else { XCTFail("should parse a user line")
+            return
+        }
+        XCTAssertEqual(
+            line.toolResults.first?.content,
+            "alpha: A\nbravo: B\ncharlie: C",
+            "an object block without `text` renders all keys, sorted — stable across runs",
+        )
     }
 
     func testIgnoredInternalTypeIsClassifiedNotUnknown() {
         // The file-history-snapshot line must classify as `.ignored`, not `.unknown`.
         let raw = #"{"type":"file-history-snapshot","uuid":"x","snapshot":{}}"#
         let line = TranscriptParser.parse(line: raw)
-        guard case .ignored(let type) = line else {
-            return XCTFail("expected .ignored, got \(String(describing: line))")
+        guard case let .ignored(type) = line else {
+            XCTFail("expected .ignored, got \(String(describing: line))")
+            return
         }
         XCTAssertEqual(type, "file-history-snapshot")
     }

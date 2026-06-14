@@ -40,11 +40,11 @@ public final class InputBoxModel {
 
     public init(
         tracker: TerminalModeTracker = TerminalModeTracker(),
-        dedup: InputDedupRing = InputDedupRing()
+        dedup: InputDedupRing = InputDedupRing(),
     ) {
         self.tracker = tracker
         self.dedup = dedup
-        self.affordance = Self.affordance(for: tracker.mode)
+        affordance = Self.affordance(for: tracker.mode)
     }
 
     /// The current terminal mode (passthrough for inspection).
@@ -94,23 +94,25 @@ public final class InputBoxModel {
 
     private func apply(_ event: TerminalModeEvent) {
         switch event {
-        case .enteredAltScreen, .exitedAltScreen:
+        case .enteredAltScreen,
+             .exitedAltScreen:
             // Mode flip clears any half-matched echo state.
             dedup.reset()
         case .commandStarted:
             commandRunning = true
-        case .commandFinished(let code):
+        case let .commandFinished(code):
             commandRunning = false
             lastExitCode = code
-        case .promptStart, .commandStart:
+        case .promptStart,
+             .commandStart:
             commandRunning = false
         }
     }
 
     private static func affordance(for mode: TerminalMode) -> InputAffordance {
         switch mode {
-        case .shellPrompt: return .shellCommand
-        case .altScreen: return .tuiCompose
+        case .shellPrompt: .shellCommand
+        case .altScreen: .tuiCompose
         }
     }
 }

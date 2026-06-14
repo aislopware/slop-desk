@@ -1,5 +1,5 @@
-import XCTest
 import CoreVideo
+import XCTest
 @testable import AislopdeskVideoClient
 
 /// Component 4 (adaptive pacer depth): FramePacer wiring tests via the INTERNAL now-injection
@@ -10,10 +10,16 @@ import CoreVideo
 /// (`noteNetworkLate`), never by present gaps. No display link, no env vars — everything is
 /// injected at construction.
 final class FramePacerDepthV2Tests: XCTestCase {
-
     private func makePixelBuffer() -> CVPixelBuffer {
         var pb: CVPixelBuffer?
-        let status = CVPixelBufferCreate(kCFAllocatorDefault, 4, 4, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, nil, &pb)
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            4,
+            4,
+            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            nil,
+            &pb,
+        )
         precondition(status == kCVReturnSuccess && pb != nil, "CVPixelBufferCreate failed (\(status))")
         return pb!
     }
@@ -41,12 +47,12 @@ final class FramePacerDepthV2Tests: XCTestCase {
 
     func testPromoteReprimesAndBoostsLiveDepth() {
         let pacer = FramePacer(targetDepth: 1, adaptiveDepth: true, renderCallback: { _ in })
-        var t = driveClean(pacer, from: 0, frames: 130)     // ~2.2s — past the fix-2c promote warmup
+        var t = driveClean(pacer, from: 0, frames: 130) // ~2.2s — past the fix-2c promote warmup
         XCTAssertEqual(pacer.currentDepth, 1)
-        pacer.noteNetworkLateForTest(now: t)                // network late #1 (owd spike)
+        pacer.noteNetworkLateForTest(now: t) // network late #1 (owd spike)
         XCTAssertEqual(pacer.currentDepth, 1, "one late never promotes")
-        t = driveClean(pacer, from: t, frames: 24)          // 400ms clean
-        pacer.noteNetworkLateForTest(now: t)                // late #2 within 1s → promote
+        t = driveClean(pacer, from: t, frames: 24) // 400ms clean
+        pacer.noteNetworkLateForTest(now: t) // late #2 within 1s → promote
         XCTAssertEqual(pacer.currentDepth, 2, "2nd network late within the window boosts liveDepth")
 
         // Promote re-primed (primed = false): the next single frame is HELD until the slack is
@@ -64,20 +70,28 @@ final class FramePacerDepthV2Tests: XCTestCase {
 
     func testDemoteRestoresDepthOneAndPresentOnArrival() {
         let pacer = FramePacer(targetDepth: 1, adaptiveDepth: true, renderCallback: { _ in })
-        var t = driveClean(pacer, from: 0, frames: 130)     // past the fix-2c promote warmup
+        var t = driveClean(pacer, from: 0, frames: 130) // past the fix-2c promote warmup
         pacer.noteNetworkLateForTest(now: t)
         t = driveClean(pacer, from: t, frames: 24)
         pacer.noteNetworkLateForTest(now: t)
         XCTAssertEqual(pacer.currentDepth, 2)
         // While boosted, the present-on-arrival gate is unsatisfiable (empty-queue arrival can
         // never complete depth 2).
-        XCTAssertFalse(FramePacer.shouldPresentOnArrival(enabled: true, queueWasEmpty: true,
-                                                         queueCount: 1, liveDepth: pacer.currentDepth))
+        XCTAssertFalse(FramePacer.shouldPresentOnArrival(
+            enabled: true,
+            queueWasEmpty: true,
+            queueCount: 1,
+            liveDepth: pacer.currentDepth,
+        ))
         // 3s clean dwell (> 2.5s demote + 1s min-hold) → back to 1; the gate re-arms by itself.
         t = driveClean(pacer, from: t, frames: 180)
         XCTAssertEqual(pacer.currentDepth, 1, "clean dwell demotes back to the latency floor")
-        XCTAssertTrue(FramePacer.shouldPresentOnArrival(enabled: true, queueWasEmpty: true,
-                                                        queueCount: 1, liveDepth: pacer.currentDepth))
+        XCTAssertTrue(FramePacer.shouldPresentOnArrival(
+            enabled: true,
+            queueWasEmpty: true,
+            queueCount: 1,
+            liveDepth: pacer.currentDepth,
+        ))
     }
 
     /// v3 REGRESSION (the 2026-06-11/12 pinning bug, at the pacer level): genuine present-gap
@@ -85,7 +99,7 @@ final class FramePacerDepthV2Tests: XCTestCase {
     func testPresentGapsNeverPromote() {
         let pacer = FramePacer(targetDepth: 1, adaptiveDepth: true, renderCallback: { _ in })
         var t = driveClean(pacer, from: 0, frames: 130)
-        for _ in 0..<6 {                                    // six 33ms hitches ~400ms apart
+        for _ in 0..<6 { // six 33ms hitches ~400ms apart
             t = skipOneSlot(pacer, from: t)
             t = driveClean(pacer, from: t, frames: 24)
         }
@@ -115,10 +129,10 @@ final class FramePacerDepthV2Tests: XCTestCase {
         // followed by a present would have grown a live v1 controller.
         let pacer = FramePacer(targetDepth: 1, adaptiveJitter: true, adaptiveDepth: true, renderCallback: { _ in })
         var t = driveClean(pacer, from: 0, frames: 30)
-        _ = pacer.frameForVSyncForTest(now: t + 0.001)      // empty tick → underflowRun = 1
+        _ = pacer.frameForVSyncForTest(now: t + 0.001) // empty tick → underflowRun = 1
         t += 1.0 / 60.0
         pacer.submitForTest(makePixelBuffer(), now: t)
-        _ = pacer.frameForVSyncForTest(now: t)              // transient-dip present (v1 would grow here)
+        _ = pacer.frameForVSyncForTest(now: t) // transient-dip present (v1 would grow here)
         XCTAssertEqual(pacer.currentDepth, 1, "v1 is disabled — transient dips never inflate the depth")
     }
 

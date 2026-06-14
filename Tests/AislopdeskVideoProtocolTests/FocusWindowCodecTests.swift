@@ -8,7 +8,6 @@ import XCTest
 /// the case hits the decoder's `default` and THROWS `.malformed`, which both consumers
 /// catch-and-drop — never a crash).
 final class FocusWindowCodecTests: XCTestCase {
-
     /// encode → decode → .focusWindow, a single type byte (value 9, no body — like `bye`/`keepalive`).
     func testFocusWindowRoundTrip() throws {
         let msg = VideoControlMessage.focusWindow

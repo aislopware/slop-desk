@@ -1,7 +1,7 @@
 #if os(macOS)
-import Foundation
-import AppKit
 import AislopdeskVideoProtocol
+import AppKit
+import Foundation
 
 /// Samples the mouse position + current cursor shape and emits ``CursorUpdate``
 /// messages for the cursor side-channel (doc 17 §3.3).
@@ -45,6 +45,7 @@ public final class CursorSampler: @unchecked Sendable {
         let hotspotX: Double
         let hotspotY: Double
     }
+
     /// Stable shape-id assignment: each distinct cursor SHAPE (keyed by its rendered bitmap + hotspot,
     /// NOT object identity — `NSCursor.currentSystem` returns a FRESH object per read) gets an
     /// incrementing id. Mutated only on the main actor (in ``refreshShapeAndScreen()``), so it needs
@@ -61,7 +62,7 @@ public final class CursorSampler: @unchecked Sendable {
     /// (the system-wide displayed shape) and `NSScreen` (primary height for the Y-flip) — are refreshed on a slower main cadence
     /// and cached here. Guarded by ``stateLock`` (written on main, read on the cursor queue).
     private var cachedShapeID: UInt16 = 0
-    private var cachedHotspot: VideoPoint = VideoPoint(x: 0, y: 0)
+    private var cachedHotspot: VideoPoint = .init(x: 0, y: 0)
     private var cachedPrimaryHeight: Double = 0
     /// Set true after the first main-thread shape/screen prime; until then the position path emits
     /// nothing (so no update ever carries a bogus shape id or an unset screen height).
@@ -87,6 +88,7 @@ public final class CursorSampler: @unchecked Sendable {
         }
         return nil
     }()
+
     /// Pure seed→refresh decision state (touched only on the serial cursor queue).
     private var shapeRefreshPolicy = ShapeRefreshPolicy()
     /// The already-encoded ``CursorShapeMessage`` per `shapeID`, retained so a client that
@@ -111,14 +113,18 @@ public final class CursorSampler: @unchecked Sendable {
     /// shape handler. Safe to call off the main actor — `shapeMessages` is lock-guarded and the
     /// `CursorShapeMessage` value is `Sendable`, so re-shipping needs no `NSCursor` re-read.
     public func reshipShape(_ shapeID: UInt16) {
-        shapeLock.lock(); let message = shapeMessages[shapeID]; shapeLock.unlock()
+        shapeLock.lock()
+        let message = shapeMessages[shapeID]
+        shapeLock.unlock()
         guard let message, let shapeHandler else { return }
         shapeHandler(message)
     }
 
     /// Updates the tracked window bounds (call from the geometry watcher).
     public func updateWindowBounds(_ bounds: VideoRect) {
-        boundsLock.lock(); windowBoundsCG = bounds; boundsLock.unlock()
+        boundsLock.lock()
+        windowBoundsCG = bounds
+        boundsLock.unlock()
     }
 
     /// Starts the ~120 Hz sampling timer. GUI-only.
@@ -164,7 +170,9 @@ public final class CursorSampler: @unchecked Sendable {
     /// composites directly — doc 17 §3.3). Because this never touches the main thread, a concurrent
     /// main-thread `raiseTargetWindow()` (the ~6–10 AX IPC calls) can't stall the cursor stream.
     private func emitPositionOffMain() {
-        boundsLock.lock(); let bounds = windowBoundsCG; boundsLock.unlock()
+        boundsLock.lock()
+        let bounds = windowBoundsCG
+        boundsLock.unlock()
         stateLock.lock()
         let primed = shapePrimed
         let primaryHeight = cachedPrimaryHeight
@@ -184,7 +192,7 @@ public final class CursorSampler: @unchecked Sendable {
 
         let update = CursorUpdate(
             position: VideoPoint(x: windowX, y: windowY),
-            shapeID: id, hotspot: hotspot, visible: visible
+            shapeID: id, hotspot: hotspot, visible: visible,
         )
         updateHandler(update)
     }
@@ -232,7 +240,13 @@ public final class CursorSampler: @unchecked Sendable {
         nextShapeID &+= 1
         shapeIDs[key] = id
         if Self.debugStderr {
-            FileHandle.standardError.write(Data("[cursor] mint shapeID=\(id) hotspot=(\(hotspot.x),\(hotspot.y)) bitmapBytes=\(key.bitmap.count)\n".utf8))
+            FileHandle.standardError
+                .write(
+                    Data(
+                        "[cursor] mint shapeID=\(id) hotspot=(\(hotspot.x),\(hotspot.y)) bitmapBytes=\(key.bitmap.count)\n"
+                            .utf8,
+                    ),
+                )
         }
         // OOB cursor-bitmap channel (doc 17 §3.3): the FIRST time a distinct shape
         // appears, ship its bitmap + hotspot ONCE so the client caches it by `id` and
@@ -240,7 +254,9 @@ public final class CursorSampler: @unchecked Sendable {
         // hot per-sample message stays position-only. The encoded message is also RETAINED
         // (FIX B) so a client that loses this one-shot shipment can re-request it.
         if let shapeHandler, let message = Self.encodeShape(image, shapeID: id, hotspot: hotspot) {
-            shapeLock.lock(); shapeMessages[id] = message; shapeLock.unlock()
+            shapeLock.lock()
+            shapeMessages[id] = message
+            shapeLock.unlock()
             shapeHandler(message)
         }
         return id
@@ -269,7 +285,7 @@ public final class CursorSampler: @unchecked Sendable {
             shapeID: shapeID,
             size: VideoSize(width: Double(image.size.width), height: Double(image.size.height)),
             hotspot: hotspot,
-            bitmap: png
+            bitmap: png,
         )
     }
 
@@ -288,7 +304,7 @@ public final class CursorSampler: @unchecked Sendable {
         var height = rep.pixelsHigh
         var lastPNG = rep.representation(using: .png, properties: [:])
         // Bound the loop (≤ ~12 halvings reaches 1px from any realistic cursor) so it always ends.
-        for _ in 0 ..< 16 {
+        for _ in 0..<16 {
             guard width > 1 || height > 1 else { break }
             width = Swift.max(1, width / 2)
             height = Swift.max(1, height / 2)
@@ -303,11 +319,15 @@ public final class CursorSampler: @unchecked Sendable {
     /// Draws `source` into a fresh `width × height` RGBA bitmap (no window-server: an offscreen
     /// `NSBitmapImageRep` draw context). Returns `nil` if the context can't be made.
     @MainActor
-    private static func downscaledBitmap(_ source: NSBitmapImageRep, toPixelWidth width: Int, height: Int) -> NSBitmapImageRep? {
+    private static func downscaledBitmap(
+        _ source: NSBitmapImageRep,
+        toPixelWidth width: Int,
+        height: Int,
+    ) -> NSBitmapImageRep? {
         guard let dest = NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0,
         ) else { return nil }
         dest.size = NSSize(width: width, height: height)
         guard let ctx = NSGraphicsContext(bitmapImageRep: dest) else { return nil }
@@ -344,12 +364,12 @@ struct ShapeRefreshPolicy {
     }
 
     mutating func shouldRefresh(seed: Int32?, tickCount: Int) -> Bool {
-        guard let seed else { return tickCount % fallbackDivisor == 0 }
+        guard let seed else { return tickCount.isMultiple(of: fallbackDivisor) }
         if seed != lastSeed {
             lastSeed = seed
             return true
         }
-        return tickCount % safetyDivisor == 0
+        return tickCount.isMultiple(of: safetyDivisor)
     }
 }
 #endif

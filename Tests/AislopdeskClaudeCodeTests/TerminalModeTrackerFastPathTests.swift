@@ -1,5 +1,5 @@
-import XCTest
 import Foundation
+import XCTest
 @testable import AislopdeskClaudeCode
 
 /// Pins the memchr fast path of ``TerminalModeTracker`` (docs/31 follow-up #6) to the
@@ -15,7 +15,6 @@ import Foundation
 ///    byte-alphabet fuzz + seeded token fuzz, each under whole / random / per-byte
 ///    chunkings, must produce identical events and final mode.
 final class TerminalModeTrackerFastPathTests: XCTestCase {
-
     private let ESC = "\u{1B}"
     private let BEL = "\u{07}"
     private let ST = "\u{1B}\\"
@@ -32,6 +31,7 @@ final class TerminalModeTrackerFastPathTests: XCTestCase {
             z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
             return z ^ (z >> 31)
         }
+
         mutating func next(upTo n: Int) -> Int {
             precondition(n > 0)
             return Int(next() % UInt64(n))
@@ -73,7 +73,7 @@ final class TerminalModeTrackerFastPathTests: XCTestCase {
         _ chunks: [[UInt8]],
         _ label: @autoclosure () -> String,
         file: StaticString = #filePath,
-        line: UInt = #line
+        line: UInt = #line,
     ) {
         let (newEvents, newMode) = run(chunks)
         let (oldEvents, oldMode) = runLegacy(chunks)
@@ -99,7 +99,10 @@ final class TerminalModeTrackerFastPathTests: XCTestCase {
         // The tracked markers, both terminators.
         streams.append(("alt enter/exit", Array("\(ESC)[?1049htui\(ESC)[?1049l".utf8)))
         streams.append(("legacy 47/1047", Array("\(ESC)[?47hx\(ESC)[?47l\(ESC)[?1047hy\(ESC)[?1047l".utf8)))
-        streams.append(("osc133 cycle BEL", Array("\(ESC)]133;A\(BEL)$ \(ESC)]133;B\(BEL)ls\n\(ESC)]133;C\(BEL)out\n\(ESC)]133;D;0\(BEL)".utf8)))
+        streams.append((
+            "osc133 cycle BEL",
+            Array("\(ESC)]133;A\(BEL)$ \(ESC)]133;B\(BEL)ls\n\(ESC)]133;C\(BEL)out\n\(ESC)]133;D;0\(BEL)".utf8),
+        ))
         streams.append(("osc133 cycle ST", Array("\(ESC)]133;A\(ST)$ \(ESC)]133;C\(ST)\(ESC)]133;D;42\(ST)".utf8)))
         // Stray ESC ends an OSC and introduces the next sequence (the .oscEscape re-entry).
         streams.append(("stray-ESC osc then csi", Array("\(ESC)]133".utf8) + Array("\(ESC)[?1049h".utf8)))
@@ -107,9 +110,15 @@ final class TerminalModeTrackerFastPathTests: XCTestCase {
         streams.append(("ESC ESC backslash", Array("\(ESC)]133;A\(ESC)\(ESC)\\".utf8)))
         // Over-cap OSC: drops to .ground MID-payload (documented quirk) — the rest of the
         // payload is then skimmed as ground; a later real marker must still fire.
-        streams.append(("over-cap OSC", Array("\(ESC)]999;\(String(repeating: "x", count: 1000))\(BEL)\(ESC)[?1049h".utf8)))
+        streams.append((
+            "over-cap OSC",
+            Array("\(ESC)]999;\(String(repeating: "x", count: 1000))\(BEL)\(ESC)[?1049h".utf8),
+        ))
         // Over-cap OSC whose tail CONTAINS escape-looking bytes once reparsed as ground.
-        streams.append(("over-cap OSC esc tail", Array("\(ESC)]999;\(String(repeating: "y", count: 300))\(ESC)[?1049h\(BEL)".utf8)))
+        streams.append((
+            "over-cap OSC esc tail",
+            Array("\(ESC)]999;\(String(repeating: "y", count: 300))\(ESC)[?1049h\(BEL)".utf8),
+        ))
         // Over-cap CSI (>64 params) drops to ground mid-sequence.
         streams.append(("over-cap CSI", Array("\(ESC)[\(String(repeating: "1;", count: 40))h\(ESC)[?1049h".utf8)))
         // String sequences: embedded spoofs swallowed; BEL terminates; lone ESC stays inside.
@@ -127,7 +136,7 @@ final class TerminalModeTrackerFastPathTests: XCTestCase {
         // Escape-dense worst case for the bounded scans (every byte is ESC).
         streams.append(("all ESC", [UInt8](repeating: 0x1B, count: 257)))
         // Alternating ESC/BEL — adversarial for both memchrs at once.
-        streams.append(("ESC BEL alternating", (0..<128).map { $0 % 2 == 0 ? 0x1B : 0x07 }))
+        streams.append(("ESC BEL alternating", (0..<128).map { $0.isMultiple(of: 2) ? 0x1B : 0x07 }))
         // High-bit / invalid UTF-8 around a marker.
         var highBit: [UInt8] = Array("café 🚀 ".utf8)
         highBit += [0xFF, 0x80, 0xC0]
@@ -187,7 +196,7 @@ final class TerminalModeTrackerFastPathTests: XCTestCase {
             UInt8(ascii: "a"),
         ]
         var rng = SplitMix64(seed: 0x5EED_2026_0612_0006)
-        for iteration in 0..<10_000 {
+        for iteration in 0..<10000 {
             let length = rng.next(upTo: 33) // 0..32
             var bytes: [UInt8] = []
             bytes.reserveCapacity(length)
@@ -222,7 +231,7 @@ final class TerminalModeTrackerFastPathTests: XCTestCase {
             "plain", String(repeating: "x", count: 300),
         ]
         var rng = SplitMix64(seed: 0x5EED_2026_0612_0007)
-        for iteration in 0..<2_000 {
+        for iteration in 0..<2000 {
             var stream = ""
             for _ in 0..<(1 + rng.next(upTo: 8)) {
                 stream += tokens[rng.next(upTo: tokens.count)]
@@ -248,7 +257,7 @@ final class TerminalModeTrackerFastPathTests: XCTestCase {
         let old = LegacyTerminalModeTracker()
         var rng = SplitMix64(seed: 0x5EED_2026_0612_0008)
         let fragments: [[UInt8]] = adversarialStreams.map(\.bytes)
-        for iteration in 0..<2_000 {
+        for iteration in 0..<2000 {
             let fragment = fragments[rng.next(upTo: fragments.count)]
             let newEvents = new.consume(fragment)
             let oldEvents = old.consume(fragment)

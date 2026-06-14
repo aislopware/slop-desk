@@ -1,7 +1,7 @@
 #if canImport(QuartzCore) && canImport(Metal) && canImport(VideoToolbox)
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoClient
-import AislopdeskVideoProtocol
 
 /// Refcount + share-one-flow-per-host invariants for the client UDP-mux pool (Stage S3) — the
 /// analogue of the TCP `ConnectionRegistryTests`, proven with an IN-MEMORY fake flow (no socket, no
@@ -11,7 +11,6 @@ import AislopdeskVideoProtocol
 /// safety on the host router).
 @MainActor
 final class VideoConnectionRegistryTests: XCTestCase {
-
     /// In-memory ``VideoMuxClientFlowing``: records lane registrations + sends, never opens a socket.
     private final class FakeFlow: VideoMuxClientFlowing, @unchecked Sendable {
         let lock = NSLock()
@@ -20,11 +19,19 @@ final class VideoConnectionRegistryTests: XCTestCase {
         private(set) var lanes: Set<UInt32> = []
         private(set) var sends: [(VideoChannel, UInt32)] = []
         func startIfNeeded() { lock.withLock { startCount += 1 } }
-        func registerLane(channelID: UInt32, onMedia: @escaping @Sendable (VideoChannel, Data) -> Void, onCursor: @escaping @Sendable (Data) -> Void) {
+        func registerLane(
+            channelID: UInt32,
+            onMedia _: @Sendable (VideoChannel, Data) -> Void,
+            onCursor _: @Sendable (Data) -> Void,
+        ) {
             lock.withLock { _ = lanes.insert(channelID) }
         }
+
         func unregisterLane(channelID: UInt32) { lock.withLock { _ = lanes.remove(channelID) } }
-        func send(_ datagram: Data, on channel: VideoChannel, channelID: UInt32) { lock.withLock { sends.append((channel, channelID)) } }
+        func send(_: Data, on channel: VideoChannel, channelID: UInt32) { lock.withLock { sends.append((
+            channel,
+            channelID,
+        )) } }
         func close() { lock.withLock { closeCount += 1 } }
     }
 

@@ -43,7 +43,7 @@ public struct WorkspacePersistence: @unchecked Sendable {
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
-            create: true
+            create: true,
         )) ?? fileManager.temporaryDirectory
         return base
             .appendingPathComponent("Aislopdesk", isDirectory: true)
@@ -90,15 +90,15 @@ public struct WorkspacePersistence: @unchecked Sendable {
     /// JSON→JSON upgrade, then decode). That is out of scope — see ``WorkspaceSchemaMigration``.
     public func load() -> Workspace {
         guard let data = try? Data(contentsOf: fileURL) else {
-            return .defaultWorkspace()   // missing file = first launch; nothing to back up
+            return .defaultWorkspace() // missing file = first launch; nothing to back up
         }
         guard let decoded = try? JSONDecoder().decode(Workspace.self, from: data) else {
-            return resetToDefault()      // hard-corrupt JSON (or an older incompatible shape) — preserve aside
+            return resetToDefault() // hard-corrupt JSON (or an older incompatible shape) — preserve aside
         }
         // Forward-migrate the decoded value to this build's schema. A future/un-migratable version
         // (migrate → nil) falls back to the default; the current version is an identity passthrough.
         guard let migrated = WorkspaceSchemaMigration.migrate(decoded, from: decoded.schemaVersion) else {
-            return resetToDefault()      // e.g. a newer build wrote it, this older build can't read it
+            return resetToDefault() // e.g. a newer build wrote it, this older build can't read it
         }
         // Repair a corrupt / copy-pasted canvas with DUPLICATE item PaneIDs (the liveness registry is
         // keyed 1:1 by PaneID, so duplicates would collapse two panes onto one session) by RE-MINTING the

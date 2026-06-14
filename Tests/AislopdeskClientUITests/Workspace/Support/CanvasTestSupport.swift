@@ -1,5 +1,5 @@
-import Foundation
 import CoreGraphics
+import Foundation
 @testable import AislopdeskClientUI
 
 // MARK: - Canvas / Workspace test helpers (single-canvas model, docs/31)
@@ -11,7 +11,7 @@ extension Canvas {
     static func make(
         panes: [(PaneID, PaneSpec)],
         groupID: PaneGroupID? = nil,
-        camera: CanvasCamera = .zero
+        camera: CanvasCamera = .zero,
     ) -> Canvas {
         let items = panes.enumerated().map { index, pane in
             CanvasItem(
@@ -19,7 +19,7 @@ extension Canvas {
                 spec: pane.1,
                 frame: CGRect(x: CGFloat(index) * 700, y: 0, width: 640, height: 420),
                 z: index,
-                groupID: groupID
+                groupID: groupID,
             )
         }
         return Canvas(items: items, camera: camera)
@@ -34,14 +34,14 @@ extension Workspace {
         focused: PaneID? = nil,
         maximized: PaneID? = nil,
         groups: [PaneGroup] = [],
-        camera: CanvasCamera = .zero
+        camera: CanvasCamera = .zero,
     ) -> Workspace {
         precondition(!panes.isEmpty, "a canvas workspace fixture needs at least one pane")
         return Workspace(
             canvas: .make(panes: panes, camera: camera),
             focusedPane: focused ?? panes[0].0,
             maximizedPane: maximized,
-            groups: groups
+            groups: groups,
         )
     }
 }

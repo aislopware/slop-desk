@@ -1,19 +1,18 @@
-import XCTest
 import AislopdeskProtocol
 import AislopdeskTransport
+import XCTest
 @testable import AislopdeskClient
 
 /// Smoke tests so the target compiles and the basic seams behave. Real connect /
 /// reconnect / dedup are exercised by the e2e tests in this target.
 final class AislopdeskClientSmokeTests: XCTestCase {
-
     /// An `AislopdeskClient` whose transport factory is inert (never invoked — these tests never
     /// `connect()`). Mirrors how production injects a `MuxClientTransport` over a shared connection.
     private func makeUnconnectedClient() -> AislopdeskClient {
         AislopdeskClient(makeTransport: {
             MuxClientTransport(
                 acquire: { _, _, _, _ in throw AislopdeskTransportError.notConnected("inert test transport") },
-                release: { _, _, _ in }
+                release: { _, _, _ in },
             )
         })
     }
@@ -57,9 +56,9 @@ final class AislopdeskClientSmokeTests: XCTestCase {
         XCTAssertEqual(backoff.delay(forAttempt: 1), .milliseconds(250))
         XCTAssertEqual(backoff.delay(forAttempt: 2), .milliseconds(500))
         XCTAssertEqual(backoff.delay(forAttempt: 3), .seconds(1))
-        XCTAssertEqual(backoff.delay(forAttempt: 4), .seconds(2))   // reaches the cap
-        XCTAssertEqual(backoff.delay(forAttempt: 5), .seconds(2))   // stays capped
-        XCTAssertEqual(backoff.delay(forAttempt: 30), .seconds(2))  // far past the cap — still bounded
+        XCTAssertEqual(backoff.delay(forAttempt: 4), .seconds(2)) // reaches the cap
+        XCTAssertEqual(backoff.delay(forAttempt: 5), .seconds(2)) // stays capped
+        XCTAssertEqual(backoff.delay(forAttempt: 30), .seconds(2)) // far past the cap — still bounded
         // A non-positive / first attempt is exactly `initial` (defensive lower bound).
         XCTAssertEqual(backoff.delay(forAttempt: 0), .milliseconds(250))
         // Equivalence with the chained `next(after:)` form (same schedule, different encoding).

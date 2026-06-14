@@ -45,7 +45,9 @@ public enum KeystrokeReplay {
         var skipped = 0
         var count = 0
         for ch in normalized {
-            if count >= maxLength { skipped += 1; continue }
+            if count >= maxLength { skipped += 1
+                continue
+            }
             count += 1
             if let stroke = stroke(for: ch) {
                 strokes.append(stroke)
@@ -61,10 +63,10 @@ public enum KeystrokeReplay {
         // Letters: same key, Shift for upper case.
         if let ascii = ch.asciiValue {
             switch ascii {
-            case 0x61...0x7A:   // a–z
+            case 0x61...0x7A: // a–z
                 guard let kc = letterKey[Character(UnicodeScalar(ascii))] else { return nil }
                 return ReplayStroke(keyCode: kc, shift: false)
-            case 0x41...0x5A:   // A–Z
+            case 0x41...0x5A: // A–Z
                 guard let kc = letterKey[Character(UnicodeScalar(ascii + 0x20))] else { return nil }
                 return ReplayStroke(keyCode: kc, shift: true)
             default:
@@ -111,9 +113,9 @@ public enum KeystrokeReplay {
         ]
         for (c, kc) in shiftedPunct { m[c] = ReplayStroke(keyCode: kc, shift: true) }
         // Whitespace.
-        m[" "]  = ReplayStroke(keyCode: 49, shift: false)   // space
-        m["\t"] = ReplayStroke(keyCode: 48, shift: false)   // tab
-        m["\n"] = ReplayStroke(keyCode: 36, shift: false)   // return
+        m[" "] = ReplayStroke(keyCode: 49, shift: false) // space
+        m["\t"] = ReplayStroke(keyCode: 48, shift: false) // tab
+        m["\n"] = ReplayStroke(keyCode: 36, shift: false) // return
         m["\r"] = ReplayStroke(keyCode: 36, shift: false)
         return m
     }()

@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskProtocol
+import Foundation
 
 /// The shared, side-agnostic demux core for ``MuxRouter`` (client) and
 /// ``HostChannelRouter`` (host).
@@ -28,7 +28,7 @@ enum MuxRoutingCore {
                 let known = table.state(of: id) != nil
                 return .dropUnknownChannel(
                     channelID: id,
-                    reason: known ? "data for non-open channel" : "data for unknown channel"
+                    reason: known ? "data for non-open channel" : "data for unknown channel",
                 )
             }
             return .deliverData(channelID: id, payload: payload)

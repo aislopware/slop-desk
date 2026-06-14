@@ -16,6 +16,7 @@ import Foundation
 /// `@MainActor` because every conformer owns `@Observable` UI state bound on the main actor; `AnyObject`
 /// because the registry stores it by reference (1:1 with a ``PaneID``, never copied, never shared).
 /// `Identifiable` by ``PaneID`` so a handle drops straight into SwiftUI `ForEach` / identity diffing.
+@preconcurrency
 @MainActor
 public protocol PaneSessionHandle: AnyObject, Identifiable {
     /// The pane this session backs. Stable for the session's lifetime and the join key into the
@@ -99,10 +100,10 @@ public extension PaneSessionHandle {
     var isShellBusy: Bool { false }
 
     /// Default: no text funnel (the video kinds). ``LivePaneSession`` overrides for terminal/Claude panes.
-    func sendText(_ text: String) {}
+    func sendText(_: String) {}
 
     /// Default: no text funnel. ``LivePaneSession`` overrides for terminal/Claude panes.
-    func sendBytes(_ bytes: [UInt8]) {}
+    func sendBytes(_: [UInt8]) {}
 
     /// Default: no terminal, never rings. ``LivePaneSession`` overrides via its terminal model.
     var bellPending: Bool { false }

@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskProtocol
+import Foundation
 
 /// A bidirectional, framed transport for ``WireMessage``.
 ///

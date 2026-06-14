@@ -1,5 +1,5 @@
-import XCTest
 import AislopdeskProtocol
+import XCTest
 @testable import AislopdeskTransport
 
 /// Refcount + teardown tests for ``ConnectionRegistry`` — the per-host shared-connection pool.
@@ -9,7 +9,6 @@ import AislopdeskProtocol
 /// channel closes (single-pane close/reconnect never drops it).
 @MainActor
 final class ConnectionRegistryTests: XCTestCase {
-
     /// Builds a registry whose `makeConnection` returns a fresh in-memory client connection (paired
     /// with an auto-accepting host) per endpoint. Returns the registry; `created` counts how many
     /// distinct shared connections the factory actually built (to assert reuse).
@@ -85,8 +84,11 @@ final class ConnectionRegistryTests: XCTestCase {
 
             await registry.release(host: "h", port: 1, channelID: ra.channelID)
             await registry.release(host: "h", port: 1, channelID: rb.channelID)
-            XCTAssertEqual(registry.sharedConnectionCount, 0,
-                           "after both panes close, the shared connection tears down (no pendingAcquires under-count leak)")
+            XCTAssertEqual(
+                registry.sharedConnectionCount,
+                0,
+                "after both panes close, the shared connection tears down (no pendingAcquires under-count leak)",
+            )
         }
     }
 
@@ -151,8 +153,10 @@ final class ConnectionRegistryTests: XCTestCase {
                 let (cd, hd) = InMemoryMuxLink.pair()
                 let client = MuxNWConnection(role: .client, controlLink: cc, dataLink: cd)
                 let host = MuxNWConnection(role: .host, controlLink: hc, dataLink: hd)
-                await host.setHostOpenHandler { open in Task { await host.sendOpenAck(open.channelID, accepted: true) } }
-                await client.start(); await host.start()
+                await host
+                    .setHostOpenHandler { open in Task { await host.sendOpenAck(open.channelID, accepted: true) } }
+                await client.start()
+                await host.start()
                 made.record(client: client, clientData: cd)
                 return client
             }
@@ -173,10 +177,21 @@ final class ConnectionRegistryTests: XCTestCase {
             async let b = registry.acquire(host: "h", port: 1, sessionID: UUID(), lastReceivedSeq: 0)
             _ = try await (a, b)
 
-            XCTAssertEqual(made.count, 2,
-                           "both concurrent reconnectors evict the corpse ONCE and share ONE fresh connection (no orphaned 3rd)")
-            XCTAssertEqual(registry.sharedConnectionCount, 1, "exactly one live shared connection after the concurrent rebuild")
-            XCTAssertEqual(registry.channelCount(host: "h", port: 1), 2, "both reconnectors' channels land on the SAME fresh connection")
+            XCTAssertEqual(
+                made.count,
+                2,
+                "both concurrent reconnectors evict the corpse ONCE and share ONE fresh connection (no orphaned 3rd)",
+            )
+            XCTAssertEqual(
+                registry.sharedConnectionCount,
+                1,
+                "exactly one live shared connection after the concurrent rebuild",
+            )
+            XCTAssertEqual(
+                registry.channelCount(host: "h", port: 1),
+                2,
+                "both reconnectors' channels land on the SAME fresh connection",
+            )
         }
     }
 
@@ -194,12 +209,18 @@ final class ConnectionRegistryTests: XCTestCase {
             let (cdInner, hd) = InMemoryMuxLink.pair()
             let isFirst = state.takeFirst()
             let cd: any MuxByteLink
-            if isFirst { let g = GatedMuxLink(cdInner); state.gated = g; cd = g } else { cd = cdInner }
+            if isFirst { let g = GatedMuxLink(cdInner)
+                state.gated = g
+                cd = g
+            } else { cd = cdInner }
             let client = MuxNWConnection(role: .client, controlLink: cc, dataLink: cd)
             let host = MuxNWConnection(role: .host, controlLink: hc, dataLink: hd)
             await host.setHostOpenHandler { open in Task { await host.sendOpenAck(open.channelID, accepted: true) } }
-            await client.start(); await host.start()
-            if isFirst { state.c1 = client; state.c1HostData = hd }
+            await client.start()
+            await host.start()
+            if isFirst { state.c1 = client
+                state.c1HostData = hd
+            }
             return client
         }
 
@@ -227,8 +248,11 @@ final class ConnectionRegistryTests: XCTestCase {
         // Load-bearing leak assertion: releasing B's only channel must tear C2 down. Without the identity
         // gate, A's stale `pendingAcquires -= 1` underflowed C2 to -1, so teardown never fired → C2 leaked.
         await registry.release(host: "h", port: 1, channelID: b.channelID)
-        XCTAssertEqual(registry.sharedConnectionCount, 0,
-                       "C2 tears down on its last release (no pendingAcquires-underflow leak)")
+        XCTAssertEqual(
+            registry.sharedConnectionCount,
+            0,
+            "C2 tears down on its last release (no pendingAcquires-underflow leak)",
+        )
     }
 
     // MARK: - App-global pin (docs/31 connect-gate)
@@ -261,7 +285,11 @@ final class ConnectionRegistryTests: XCTestCase {
 
         // Unpin (deliberate disconnect) with no channels → torn down.
         await registry.unpin(host: "h", port: 1)
-        XCTAssertEqual(registry.sharedConnectionCount, 0, "unpin tears the pinned connection down when no channel rides it")
+        XCTAssertEqual(
+            registry.sharedConnectionCount,
+            0,
+            "unpin tears the pinned connection down when no channel rides it",
+        )
     }
 
     /// `unpin` with channels still live leaves the connection up (the refcount path still owns it); only
@@ -286,24 +314,28 @@ final class ConnectionRegistryTests: XCTestCase {
     func testPinRacingConcurrentUnpinDoesNotOrphanConnection() async throws {
         let gate = BuildGate()
         let registry = ConnectionRegistry { _, _ in
-            await gate.wait()                       // suspend the build until the test releases it
+            await gate.wait() // suspend the build until the test releases it
             let (cc, hc) = InMemoryMuxLink.pair()
             let (cd, hd) = InMemoryMuxLink.pair()
             let client = MuxNWConnection(role: .client, controlLink: cc, dataLink: cd)
             let host = MuxNWConnection(role: .host, controlLink: hc, dataLink: hd)
             await host.setHostOpenHandler { open in Task { await host.sendOpenAck(open.channelID, accepted: true) } }
-            await client.start(); await host.start()
+            await client.start()
+            await host.start()
             return client
         }
 
         async let pinTask: Void = registry.pin(host: "h", port: 1)
-        try await pollUntil { gate.isWaiting }      // pin is suspended inside the build
-        await registry.unpin(host: "h", port: 1)    // concurrent unpin removes the optimistic pin
-        gate.release()                              // let the build complete
+        try await pollUntil { gate.isWaiting } // pin is suspended inside the build
+        await registry.unpin(host: "h", port: 1) // concurrent unpin removes the optimistic pin
+        gate.release() // let the build complete
         try await pinTask
 
-        XCTAssertEqual(registry.sharedConnectionCount, 0,
-                       "a pin whose unpin raced its build must tear the just-built connection down, not orphan it")
+        XCTAssertEqual(
+            registry.sharedConnectionCount,
+            0,
+            "a pin whose unpin raced its build must tear the just-built connection down, not orphan it",
+        )
     }
 
     private func pollUntil(timeout: Duration = .seconds(3), _ cond: () async -> Bool) async throws {
@@ -330,7 +362,11 @@ private final class BuildGate {
             cont = c
         }
     }
-    func release() { isWaiting = false; cont?.resume(); cont = nil }
+
+    func release() { isWaiting = false
+        cont?.resume()
+        cont = nil
+    }
 }
 
 /// Holds the FIRST connection's gated link + corpse handles so the test can park `openChannel` mid-send,
@@ -341,7 +377,10 @@ private final class GatedFactoryState {
     var gated: GatedMuxLink?
     var c1: MuxNWConnection?
     var c1HostData: InMemoryMuxLink?
-    func takeFirst() -> Bool { let f = !firstTaken; firstTaken = true; return f }
+    func takeFirst() -> Bool { let f = !firstTaken
+        firstTaken = true
+        return f
+    }
 }
 
 /// A ``MuxByteLink`` that SUSPENDS `send()` until the test opens its gate — so a test can hold
@@ -357,19 +396,33 @@ private final class GatedMuxLink: MuxByteLink, @unchecked Sendable {
     func send(_ data: Data) async throws {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             lock.lock()
-            if opened { lock.unlock(); c.resume(); return }
-            waiters.append(c); lock.unlock()
+            if opened { lock.unlock()
+                c.resume()
+                return
+            }
+            waiters.append(c)
+            lock.unlock()
         }
         try await inner.send(data)
     }
+
     /// Pipelined sends bypass the gate (it exists to hold the AWAITED `openChannel` send
     /// mid-flight; pipelined frames are not what this fixture gates).
     func sendPipelined(_ data: Data) { inner.sendPipelined(data) }
     func openGate() {
-        lock.lock(); opened = true; let w = waiters; waiters.removeAll(); lock.unlock()
+        lock.lock()
+        opened = true
+        let w = waiters
+        waiters.removeAll()
+        lock.unlock()
         for c in w { c.resume() }
     }
-    var hasWaiter: Bool { lock.lock(); defer { lock.unlock() }; return !waiters.isEmpty }
+
+    var hasWaiter: Bool { lock.lock()
+        defer { lock.unlock() }
+        return !waiters.isEmpty
+    }
+
     func close() async { await inner.close() }
 }
 
@@ -391,6 +444,13 @@ private final class MadeConnections {
 private final class Counter: @unchecked Sendable {
     private let lock = NSLock()
     private var n = 0
-    func bump() { lock.lock(); n += 1; lock.unlock() }
-    var value: Int { lock.lock(); defer { lock.unlock() }; return n }
+    func bump() { lock.lock()
+        n += 1
+        lock.unlock()
+    }
+
+    var value: Int { lock.lock()
+        defer { lock.unlock() }
+        return n
+    }
 }

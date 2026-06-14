@@ -65,13 +65,13 @@ impl VideoRect {
 
     /// Minimum x (origin.x).
     #[must_use]
-    pub fn min_x(&self) -> f64 {
+    pub const fn min_x(&self) -> f64 {
         self.origin.x
     }
 
     /// Minimum y (origin.y).
     #[must_use]
-    pub fn min_y(&self) -> f64 {
+    pub const fn min_y(&self) -> f64 {
         self.origin.y
     }
 
@@ -90,14 +90,16 @@ impl VideoRect {
     /// The area of intersection with `other` (0 when disjoint). Used by the
     /// multi-monitor coordinate-mapping screen pick.
     #[must_use]
-    pub fn intersection_area(&self, other: &VideoRect) -> f64 {
+    pub fn intersection_area(&self, other: &Self) -> f64 {
         let ix = 0.0_f64.max(self.max_x().min(other.max_x()) - self.min_x().max(other.min_x()));
         let iy = 0.0_f64.max(self.max_y().min(other.max_y()) - self.min_y().max(other.min_y()));
         ix * iy
     }
 }
 
-/// How the decoded video is scaled into the on-screen layer. Both modes PRESERVE the
+/// How the decoded video is scaled into the on-screen layer.
+///
+/// Both modes PRESERVE the
 /// native aspect ratio (neither stretches): `Fit` letterboxes/pillarboxes so the whole
 /// remote window is visible; `Fill` covers the pane, cropping the overflowing axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,7 +116,9 @@ pub mod aspect_fit {
     use super::{VideoContentMode, VideoPoint, VideoRect, VideoSize};
 
     /// The centred rect the displayed video occupies inside a `view_size` layer,
-    /// preserving the native aspect ratio. In `Fit` the rect is contained (centred,
+    /// preserving the native aspect ratio.
+    ///
+    /// In `Fit` the rect is contained (centred,
     /// with bars); in `Fill` it covers the view (centred, may exceed it — that overflow
     /// is the crop). Falls back to the full `view_size` rect for any non-positive
     /// dimension (degenerate input placed sensibly).
@@ -146,7 +150,9 @@ pub mod aspect_fit {
     }
 
     /// FORWARD render transform: maps a host-window-space point to where it is drawn in
-    /// the layer's view space. The exact inverse of the input encoder's `normalize` and
+    /// the layer's view space.
+    ///
+    /// The exact inverse of the input encoder's `normalize` and
     /// the renderer's aspect-fit + zoom/pan crop. Pan is clamped identically to the
     /// renderer (`pan_limit = 0.5·(1 - 1/zoom)`).
     #[must_use]

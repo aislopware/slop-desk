@@ -8,33 +8,33 @@ import Foundation
 /// (`.contextMenu`, swipe) emit the same cases. Keeping it a value type makes the chord → command
 /// mapping fully unit-testable with no view.
 public enum WorkspaceCommand: Sendable, Equatable {
-    case newPaneDefault            // ⌘N   — a pane of the user's default kind (Settings ▸ Canvas)
-    case newPane(PaneKind)         // ⌘T terminal, ⇧⌘N claudeCode, ⌥⌘N remoteGUI
-    case duplicatePane             // ⌘D   — copy the focused pane's spec (incl. endpoint) beside it
-    case tidy                      // ⇧⌘D  — pack panes into a grid
-    case centerFocusedPane         // ⌥⌘C  — centre the camera on the focused pane (the pan-only "recenter")
-    case centerAll                 // ⌥⇧⌘C — centre the camera on the bounding box of ALL panes
-    case closePane                 // ⌘W
-    case reopenClosedPane          // ⇧⌘T  — restore the last closed pane (browser "reopen tab" idiom)
-    case newGroup                  // ⌃⌘G  — group the selection (≥1 selected), else a new empty group
-    case groupSelection            // ⌥⌘G  — group the current multi-selection into a new group
-    case focus(FocusDirection)     // ⌥⌘←/→/↑/↓
+    case newPaneDefault // ⌘N   — a pane of the user's default kind (Settings ▸ Canvas)
+    case newPane(PaneKind) // ⌘T terminal, ⇧⌘N claudeCode, ⌥⌘N remoteGUI
+    case duplicatePane // ⌘D   — copy the focused pane's spec (incl. endpoint) beside it
+    case tidy // ⇧⌘D  — pack panes into a grid
+    case centerFocusedPane // ⌥⌘C  — centre the camera on the focused pane (the pan-only "recenter")
+    case centerAll // ⌥⇧⌘C — centre the camera on the bounding box of ALL panes
+    case closePane // ⌘W
+    case reopenClosedPane // ⇧⌘T  — restore the last closed pane (browser "reopen tab" idiom)
+    case newGroup // ⌃⌘G  — group the selection (≥1 selected), else a new empty group
+    case groupSelection // ⌥⌘G  — group the current multi-selection into a new group
+    case focus(FocusDirection) // ⌥⌘←/→/↑/↓
     case cycleFocus(forward: Bool) // ⌘] (forward) / ⌘[ (back)
     case switchRecentPane(forward: Bool) // ⌥⌘; (to the previously-focused pane) / ⌥⇧⌘; (back toward newer)
     case cycleFocusInGroup(forward: Bool) // ⌃⌘] / ⌃⌘[ — cycle focus WITHIN the focused pane's group only
-    case toggleZoom                // ⇧⌘↩  — maximize the focused pane to the viewport
-    case toggleOverview            // ⌘\   — fit-all overview (Mission Control for the canvas)
-    case toggleBroadcast           // ⇧⌘B — arm/disarm synchronized input to the pane group (tmux synchronize-panes)
-    case renamePane                // ⌘R   — rename the focused pane
-    case reconnectPane             // ⇧⌘R — re-dial the focused pane (primary failure recovery)
-    case saveBookmark(Int)         // ⇧⌘1–9 — save the viewport as bookmark n
-    case recallBookmark(Int)       // ⌘1–9  — jump back to bookmark n
-    case manageSnippets            // open the snippet manager (create / edit / delete command macros)
-    case runLastSnippet            // ⌥⌘R — re-fire the most-recently-launched snippet (repeat my last macro)
-    case align(AlignEdge)          // align the Arrange targets (selection ≥2, else all) to an edge/centre
+    case toggleZoom // ⇧⌘↩  — maximize the focused pane to the viewport
+    case toggleOverview // ⌘\   — fit-all overview (Mission Control for the canvas)
+    case toggleBroadcast // ⇧⌘B — arm/disarm synchronized input to the pane group (tmux synchronize-panes)
+    case renamePane // ⌘R   — rename the focused pane
+    case reconnectPane // ⇧⌘R — re-dial the focused pane (primary failure recovery)
+    case saveBookmark(Int) // ⇧⌘1–9 — save the viewport as bookmark n
+    case recallBookmark(Int) // ⌘1–9  — jump back to bookmark n
+    case manageSnippets // open the snippet manager (create / edit / delete command macros)
+    case runLastSnippet // ⌥⌘R — re-fire the most-recently-launched snippet (repeat my last macro)
+    case align(AlignEdge) // align the Arrange targets (selection ≥2, else all) to an edge/centre
     case distribute(horizontal: Bool) // even-space the Arrange targets horizontally / vertically
-    case saveLayout                // open the "Save Current Layout…" prompt
-    case selectAllPanes            // ⌥⌘A — multi-select every pane on the canvas
+    case saveLayout // open the "Save Current Layout…" prompt
+    case selectAllPanes // ⌥⌘A — multi-select every pane on the canvas
 }
 
 public extension WorkspaceCommand {
@@ -44,10 +44,20 @@ public extension WorkspaceCommand {
     /// run by keyboard or menu (not just the palette) populates the recents.
     var isRecentsWorthy: Bool {
         switch self {
-        case .focus, .cycleFocus, .switchRecentPane, .cycleFocusInGroup, .saveBookmark, .recallBookmark, .centerFocusedPane, .centerAll, .manageSnippets, .runLastSnippet, .selectAllPanes:
-            return false
+        case .focus,
+             .cycleFocus,
+             .switchRecentPane,
+             .cycleFocusInGroup,
+             .saveBookmark,
+             .recallBookmark,
+             .centerFocusedPane,
+             .centerAll,
+             .manageSnippets,
+             .runLastSnippet,
+             .selectAllPanes:
+            false
         default:
-            return true
+            true
         }
     }
 
@@ -56,10 +66,15 @@ public extension WorkspaceCommand {
     /// broken). Creation / camera / global verbs do NOT require a focused pane and always show.
     var requiresFocusedPane: Bool {
         switch self {
-        case .duplicatePane, .closePane, .renamePane, .reconnectPane, .toggleZoom, .centerFocusedPane:
-            return true
+        case .duplicatePane,
+             .closePane,
+             .renamePane,
+             .reconnectPane,
+             .toggleZoom,
+             .centerFocusedPane:
+            true
         default:
-            return false
+            false
         }
     }
 }
@@ -76,10 +91,10 @@ public struct KeyChord: Hashable, Sendable {
         public let rawValue: Int
         public init(rawValue: Int) { self.rawValue = rawValue }
 
-        public static let shift   = Modifiers(rawValue: 1 << 0)
-        public static let control = Modifiers(rawValue: 1 << 1)
-        public static let option  = Modifiers(rawValue: 1 << 2)
-        public static let command = Modifiers(rawValue: 1 << 3)
+        public static let shift = Self(rawValue: 1 << 0)
+        public static let control = Self(rawValue: 1 << 1)
+        public static let option = Self(rawValue: 1 << 2)
+        public static let command = Self(rawValue: 1 << 3)
     }
 
     /// A normalized key token. Printable keys are lower-cased single characters (the chord is
@@ -107,7 +122,7 @@ public struct KeyChord: Hashable, Sendable {
     /// Convenience for a printable-character chord, lower-casing the character so binding lookups
     /// are case-insensitive on the base key (⇧ is expressed in `modifiers`, not in the char).
     public init(character: Character, _ modifiers: Modifiers = []) {
-        self.key = .character(Character(character.lowercased()))
+        key = .character(Character(character.lowercased()))
         self.modifiers = modifiers
     }
 }
@@ -120,6 +135,7 @@ public struct KeyChord: Hashable, Sendable {
 /// Per the WF2 scope this owns ONLY the pure chord → command mapping. It does **not** apply a
 /// command to a store (the store does not exist yet); `apply(_:to:)` lives with the store in a
 /// later workstream.
+@preconcurrency
 @MainActor
 public final class CommandInterpreter {
     /// The active bindings. Public + mutable so the UI (or a settings screen) can rebind; defaults
@@ -129,7 +145,7 @@ public final class CommandInterpreter {
     /// - Parameters:
     ///   - bindings: the initial chord table (defaults to ``defaultBindings``).
     public init(
-        bindings: [KeyChord: WorkspaceCommand] = CommandInterpreter.defaultBindings
+        bindings: [KeyChord: WorkspaceCommand] = CommandInterpreter.defaultBindings,
     ) {
         self.bindings = bindings
     }
@@ -160,16 +176,16 @@ public final class CommandInterpreter {
     /// A pure, stable textual form for the deterministic sort above (NOT a display string — the
     /// palette owns glyph rendering).
     private static func describe(_ chord: KeyChord) -> String {
-        let key: String
-        switch chord.key {
-        case let .character(c): key = String(c)
-        case .tab: key = "\u{F700}tab"
-        case .return: key = "\u{F700}return"
-        case .leftArrow: key = "\u{F700}left"
-        case .rightArrow: key = "\u{F700}right"
-        case .upArrow: key = "\u{F700}up"
-        case .downArrow: key = "\u{F700}down"
-        }
+        let key =
+            switch chord.key {
+            case let .character(c): String(c)
+            case .tab: "\u{F700}tab"
+            case .return: "\u{F700}return"
+            case .leftArrow: "\u{F700}left"
+            case .rightArrow: "\u{F700}right"
+            case .upArrow: "\u{F700}up"
+            case .downArrow: "\u{F700}down"
+            }
         return "\(chord.modifiers.rawValue)-\(key)"
     }
 }

@@ -18,11 +18,11 @@ public enum KeyEncoding {
     /// completely broken (R12 #3).
     public static func controlCode(for scalar: UnicodeScalar) -> [UInt8] {
         let v = scalar.value
-        if v >= 0x61, v <= 0x7A { return [UInt8(v - 0x60)] }        // a-z → 1…26
-        if v >= 0x41, v <= 0x5A { return [UInt8(v - 0x40)] }        // A-Z → 1…26
-        if v >= 0x40, v <= 0x5F { return [UInt8(v & 0x1F)] }        // @ [ \ ] ^ _ → 0x00,0x1B,0x1C,0x1D,0x1E,0x1F
-        if v == 0x20 { return [0x00] }                              // Ctrl-Space → NUL
-        if v == 0x3F { return [0x7F] }                              // Ctrl-? → DEL
+        if v >= 0x61, v <= 0x7A { return [UInt8(v - 0x60)] } // a-z → 1…26
+        if v >= 0x41, v <= 0x5A { return [UInt8(v - 0x40)] } // A-Z → 1…26
+        if v >= 0x40, v <= 0x5F { return [UInt8(v & 0x1F)] } // @ [ \ ] ^ _ → 0x00,0x1B,0x1C,0x1D,0x1E,0x1F
+        if v == 0x20 { return [0x00] } // Ctrl-Space → NUL
+        if v == 0x3F { return [0x7F] } // Ctrl-? → DEL
         return [UInt8(v & 0x7F)]
     }
 
@@ -42,13 +42,15 @@ public enum KeyEncoding {
     /// are resolved by the iOS layer and threaded in through ``encode(_:arrowFallback:)``.
     public static func characterSpecialBytes(for press: InputRouting.KeyPress) -> [UInt8]? {
         switch press.characters {
-        case "\u{1B}": return [0x1B]                  // ESC
+        case "\u{1B}": [0x1B] // ESC
         // Shift+Tab is back-tab (CBT, ESC [ Z) — UIKit reports the same "\t" with or without Shift,
         // so the shift flag is the only discriminator. Plain Tab stays forward TAB (R12 #6).
-        case "\t":     return press.shift ? [0x1B, 0x5B, 0x5A] : [0x09]
-        case "\r", "\n": return [0x0D]                // CR (Enter)
-        case "\u{7F}", "\u{08}": return [0x7F]        // DEL (Backspace)
-        default: return nil
+        case "\t": press.shift ? [0x1B, 0x5B, 0x5A] : [0x09]
+        case "\r",
+             "\n": [0x0D] // CR (Enter)
+        case "\u{7F}",
+             "\u{08}": [0x7F] // DEL (Backspace)
+        default: nil
         }
     }
 
@@ -57,7 +59,7 @@ public enum KeyEncoding {
     /// UIKit-constant arrow keys; pure callers/tests that don't exercise arrows can omit it.
     public static func encode(
         _ press: InputRouting.KeyPress,
-        arrowFallback: (InputRouting.KeyPress) -> [UInt8]? = { _ in nil }
+        arrowFallback: (InputRouting.KeyPress) -> [UInt8]? = { _ in nil },
     ) -> [UInt8]? {
         if press.isSpecial, let bytes = characterSpecialBytes(for: press) ?? arrowFallback(press) {
             // Option held with a special key applies the same xterm metaSendsEscape prefix the letter

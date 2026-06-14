@@ -4,14 +4,23 @@ import XCTest
 /// Cursor / window-geometry / input-event / recovery-signaling codec round-trips,
 /// plus the <64-byte cursor-message size assertion.
 final class CodecTests: XCTestCase {
-
     // MARK: Cursor side-channel
 
     func testCursorUpdateRoundTrip() throws {
         let cases = [
             CursorUpdate(position: VideoPoint(x: 0, y: 0), shapeID: 0, hotspot: VideoPoint(x: 0, y: 0), visible: true),
-            CursorUpdate(position: VideoPoint(x: 1234.5, y: -987.25), shapeID: 65535, hotspot: VideoPoint(x: 8, y: 16), visible: false),
-            CursorUpdate(position: VideoPoint(x: 0.5, y: 0.5), shapeID: 7, hotspot: VideoPoint(x: 1.5, y: 2.5), visible: true),
+            CursorUpdate(
+                position: VideoPoint(x: 1234.5, y: -987.25),
+                shapeID: 65535,
+                hotspot: VideoPoint(x: 8, y: 16),
+                visible: false,
+            ),
+            CursorUpdate(
+                position: VideoPoint(x: 0.5, y: 0.5),
+                shapeID: 7,
+                hotspot: VideoPoint(x: 1.5, y: 2.5),
+                visible: true,
+            ),
         ]
         for update in cases {
             let decoded = try CursorUpdate.decode(update.encode())
@@ -47,7 +56,10 @@ final class CodecTests: XCTestCase {
             CursorUpdate(position: VideoPoint(x: 0, y: 0), shapeID: 1, hotspot: VideoPoint(x: 0, y: .nan)),
         ]
         for update in nonFinite {
-            XCTAssertThrowsError(try CursorUpdate.decode(update.encode()), "expected \(update.position) to be rejected") { error in
+            XCTAssertThrowsError(
+                try CursorUpdate.decode(update.encode()),
+                "expected \(update.position) to be rejected",
+            ) { error in
                 guard let e = error as? VideoProtocolError, case .malformed = e else {
                     return XCTFail("expected .malformed, got \(error)")
                 }
@@ -55,7 +67,8 @@ final class CodecTests: XCTestCase {
         }
         // A finite (even large/negative) position still decodes — only non-finite is rejected.
         XCTAssertNoThrow(try CursorUpdate.decode(
-            CursorUpdate(position: VideoPoint(x: 1e9, y: -1e9), shapeID: 2, hotspot: VideoPoint(x: 8, y: 8)).encode()))
+            CursorUpdate(position: VideoPoint(x: 1e9, y: -1e9), shapeID: 2, hotspot: VideoPoint(x: 8, y: 8)).encode(),
+        ))
     }
 
     // MARK: Window geometry
@@ -88,14 +101,26 @@ final class CodecTests: XCTestCase {
 
     func testInputEventRoundTrip() throws {
         let cases: [InputEvent] = [
-            .mouseMove(normalized: VideoPoint(x: 0.5, y: 0.25), tag: 0xDEADBEEF),
-            .mouseDown(button: .left, normalized: VideoPoint(x: 0, y: 0), clickCount: 1, modifiers: [.command, .shift], tag: 1),
+            .mouseMove(normalized: VideoPoint(x: 0.5, y: 0.25), tag: 0xDEAD_BEEF),
+            .mouseDown(
+                button: .left,
+                normalized: VideoPoint(x: 0, y: 0),
+                clickCount: 1,
+                modifiers: [.command, .shift],
+                tag: 1,
+            ),
             .mouseUp(button: .right, normalized: VideoPoint(x: 1, y: 1), clickCount: 2, modifiers: [.control], tag: 2),
-            .mouseDrag(button: .left, normalized: VideoPoint(x: 0.4, y: 0.6), clickCount: 1, modifiers: [.shift], tag: 8),
+            .mouseDrag(
+                button: .left,
+                normalized: VideoPoint(x: 0.4, y: 0.6),
+                clickCount: 1,
+                modifiers: [.shift],
+                tag: 8,
+            ),
             .mouseDrag(button: .other, normalized: VideoPoint(x: 0.9, y: 0.1), clickCount: 2, modifiers: [], tag: 9),
             .scroll(dx: -3.5, dy: 12.0, normalized: VideoPoint(x: 0.3, y: 0.7), tag: 3),
-            .key(keyCode: 36, down: true, modifiers: [.option, .function], tag: 4),  // Return
-            .key(keyCode: 53, down: false, modifiers: [], tag: 5),                    // Escape
+            .key(keyCode: 36, down: true, modifiers: [.option, .function], tag: 4), // Return
+            .key(keyCode: 53, down: false, modifiers: [], tag: 5), // Escape
             .text("hello 世界", tag: 6),
             .text("", tag: 7),
         ]
@@ -114,8 +139,12 @@ final class CodecTests: XCTestCase {
 
     func testInputEventRejectsUnknownButtonAndType() {
         // type 2 (mouseDown), tag(4) + button=9 (invalid)
-        var bad = Data([2]); bad.appendBE(UInt32(0)); bad.append(9)
-        bad.append(contentsOf: [1, 0]); bad.appendBE(0.0); bad.appendBE(0.0)
+        var bad = Data([2])
+        bad.appendBE(UInt32(0))
+        bad.append(9)
+        bad.append(contentsOf: [1, 0])
+        bad.appendBE(0.0)
+        bad.appendBE(0.0)
         XCTAssertThrowsError(try InputEvent.decode(bad))
         XCTAssertThrowsError(try InputEvent.decode(Data([250])))
     }
@@ -131,9 +160,21 @@ final class CodecTests: XCTestCase {
             .scroll(dx: 1, dy: .infinity, normalized: VideoPoint(x: 0, y: 0), tag: 1),
             .scroll(dx: 1, dy: 1, normalized: VideoPoint(x: .nan, y: 0), tag: 1),
             .mouseMove(normalized: VideoPoint(x: .infinity, y: 0), tag: 1),
-            .mouseDown(button: .left, normalized: VideoPoint(x: 0, y: -.infinity), clickCount: 1, modifiers: [], tag: 1),
+            .mouseDown(
+                button: .left,
+                normalized: VideoPoint(x: 0, y: -.infinity),
+                clickCount: 1,
+                modifiers: [],
+                tag: 1,
+            ),
             .mouseUp(button: .right, normalized: VideoPoint(x: .nan, y: .nan), clickCount: 1, modifiers: [], tag: 1),
-            .mouseDrag(button: .left, normalized: VideoPoint(x: .infinity, y: 0.5), clickCount: 1, modifiers: [], tag: 1),
+            .mouseDrag(
+                button: .left,
+                normalized: VideoPoint(x: .infinity, y: 0.5),
+                clickCount: 1,
+                modifiers: [],
+                tag: 1,
+            ),
         ]
         for event in nonFinite {
             XCTAssertThrowsError(try InputEvent.decode(event.encode()), "expected \(event) to be rejected") { error in
@@ -145,7 +186,8 @@ final class CodecTests: XCTestCase {
         // A FINITE (even very large) scroll delta still decodes — clamping out-of-Int32-range
         // values is the host injector's job (Self.clampToInt32), not decode's.
         XCTAssertNoThrow(try InputEvent.decode(
-            InputEvent.scroll(dx: 1e9, dy: -1e9, normalized: VideoPoint(x: 0.5, y: 0.5), tag: 1).encode()))
+            InputEvent.scroll(dx: 1e9, dy: -1e9, normalized: VideoPoint(x: 0.5, y: 0.5), tag: 1).encode(),
+        ))
     }
 
     func testModifierBitmaskIsStable() {
@@ -162,7 +204,11 @@ final class CodecTests: XCTestCase {
             // Component 2: both loss-recovery requests carry the client's decode frontier
             // (lastDecodedFrameID), incl. the "nothing decoded yet" wire sentinel.
             .requestLTRRefresh(fromFrameID: 10, toFrameID: 14, lastDecodedFrameID: 9),
-            .requestLTRRefresh(fromFrameID: 0, toFrameID: 0, lastDecodedFrameID: RecoveryMessage.noFrameDecodedSentinel),
+            .requestLTRRefresh(
+                fromFrameID: 0,
+                toFrameID: 0,
+                lastDecodedFrameID: RecoveryMessage.noFrameDecodedSentinel,
+            ),
             .requestIDR(lastDecodedFrameID: 0),
             .requestIDR(lastDecodedFrameID: 0xCAFE_F00D),
             .requestIDR(lastDecodedFrameID: RecoveryMessage.noFrameDecodedSentinel),
@@ -174,10 +220,53 @@ final class CodecTests: XCTestCase {
             // bit-pattern (an underusing/draining detector reading) with packed state+deltas flags.
             // Component 4 appends the pacer presentation-health fields (late/gaps/depth) — the
             // all-defaulted, .max and mid cases exercise them 0 / saturated / realistic.
-            .networkStats(NetworkStatsReport(framesReceived: 0, fecRecovered: 0, unrecovered: 0, latestHostSendTs: 0, clientHoldMs: 0, owdJitterMicros: 0)),
-            .networkStats(NetworkStatsReport(framesReceived: .max, fecRecovered: .max, unrecovered: .max, latestHostSendTs: .max, clientHoldMs: .max, owdJitterMicros: .max, owdTrendMilli: .max, owdTrendFlags: .max, pacerLateFrames: .max, pacerPresentGaps: .max, pacerDepth: .max)),
-            .networkStats(NetworkStatsReport(framesReceived: 600, fecRecovered: 12, unrecovered: 3, latestHostSendTs: 1_234_567, clientHoldMs: 7, owdJitterMicros: 850, owdTrendMilli: UInt32(bitPattern: -987_654), owdTrendFlags: (42 << 8) | 2, pacerLateFrames: 3, pacerPresentGaps: 5, pacerDepth: 2)),
-            .networkStats(NetworkStatsReport(framesReceived: 600, fecRecovered: 12, unrecovered: 3, latestHostSendTs: 1_234_567, clientHoldMs: 7, owdJitterMicros: 850, owdTrendMilli: 1_000_000_000, owdTrendFlags: (255 << 8) | 1, pacerLateFrames: 1, pacerPresentGaps: 1, pacerDepth: 1)),
+            .networkStats(NetworkStatsReport(
+                framesReceived: 0,
+                fecRecovered: 0,
+                unrecovered: 0,
+                latestHostSendTs: 0,
+                clientHoldMs: 0,
+                owdJitterMicros: 0,
+            )),
+            .networkStats(NetworkStatsReport(
+                framesReceived: .max,
+                fecRecovered: .max,
+                unrecovered: .max,
+                latestHostSendTs: .max,
+                clientHoldMs: .max,
+                owdJitterMicros: .max,
+                owdTrendMilli: .max,
+                owdTrendFlags: .max,
+                pacerLateFrames: .max,
+                pacerPresentGaps: .max,
+                pacerDepth: .max,
+            )),
+            .networkStats(NetworkStatsReport(
+                framesReceived: 600,
+                fecRecovered: 12,
+                unrecovered: 3,
+                latestHostSendTs: 1_234_567,
+                clientHoldMs: 7,
+                owdJitterMicros: 850,
+                owdTrendMilli: UInt32(bitPattern: -987_654),
+                owdTrendFlags: (42 << 8) | 2,
+                pacerLateFrames: 3,
+                pacerPresentGaps: 5,
+                pacerDepth: 2,
+            )),
+            .networkStats(NetworkStatsReport(
+                framesReceived: 600,
+                fecRecovered: 12,
+                unrecovered: 3,
+                latestHostSendTs: 1_234_567,
+                clientHoldMs: 7,
+                owdJitterMicros: 850,
+                owdTrendMilli: 1_000_000_000,
+                owdTrendFlags: (255 << 8) | 1,
+                pacerLateFrames: 1,
+                pacerPresentGaps: 1,
+                pacerDepth: 1,
+            )),
         ]
         for message in cases {
             XCTAssertEqual(try RecoveryMessage.decode(message.encode()), message)
@@ -193,11 +282,13 @@ final class CodecTests: XCTestCase {
     /// shape as the legacy ack, so it round-trips byte-for-byte; the host reinterprets the UInt32 as a
     /// frameID. This documents that no new message type / header growth is needed for WF-8.
     func testWF8AckCarriesFrameIDRoundTrip() throws {
-        for frameID: UInt32 in [0, 1, 12_345, .max] {
+        for frameID: UInt32 in [0, 1, 12345, .max] {
             let message = RecoveryMessage.ack(streamSeq: frameID)
             let decoded = try RecoveryMessage.decode(message.encode())
             XCTAssertEqual(decoded, message)
-            guard case .ack(let got) = decoded else { return XCTFail("expected ack") }
+            guard case let .ack(got) = decoded else { XCTFail("expected ack")
+                return
+            }
             XCTAssertEqual(got, frameID)
         }
     }
@@ -208,7 +299,19 @@ final class CodecTests: XCTestCase {
     /// it 32→44: pacerLateFrames/pacerPresentGaps/pacerDepth appended. Each previous full length —
     /// 25 and 33 — is now itself a truncated prefix.)
     func testNetworkStatsRejectsTruncatedBody() {
-        let full = RecoveryMessage.networkStats(NetworkStatsReport(framesReceived: 1, fecRecovered: 2, unrecovered: 3, latestHostSendTs: 4, clientHoldMs: 5, owdJitterMicros: 6, owdTrendMilli: 7, owdTrendFlags: 8, pacerLateFrames: 9, pacerPresentGaps: 10, pacerDepth: 11)).encode()
+        let full = RecoveryMessage.networkStats(NetworkStatsReport(
+            framesReceived: 1,
+            fecRecovered: 2,
+            unrecovered: 3,
+            latestHostSendTs: 4,
+            clientHoldMs: 5,
+            owdJitterMicros: 6,
+            owdTrendMilli: 7,
+            owdTrendFlags: 8,
+            pacerLateFrames: 9,
+            pacerPresentGaps: 10,
+            pacerDepth: 11,
+        )).encode()
         XCTAssertEqual(full.count, 45, "type byte + 11 UInt32 = 45 bytes")
         // Type byte alone, and every prefix shorter than the full body, must throw.
         for prefix in [1, 2, 5, 13, 24, 25, 32, 33, 44] {
@@ -249,15 +352,23 @@ final class CodecTests: XCTestCase {
             .requestLTRRefresh(fromFrameID: 1, toFrameID: 2, lastDecodedFrameID: 3),
             .requestIDR(lastDecodedFrameID: 9),
             .requestCursorShape(shapeID: 4),
-            .networkStats(NetworkStatsReport(framesReceived: 1, fecRecovered: 2, unrecovered: 3,
-                                             latestHostSendTs: 4, clientHoldMs: 5, owdJitterMicros: 6)),
+            .networkStats(NetworkStatsReport(
+                framesReceived: 1,
+                fecRecovered: 2,
+                unrecovered: 3,
+                latestHostSendTs: 4,
+                clientHoldMs: 5,
+                owdJitterMicros: 6,
+            )),
         ]
         for message in messages {
             for junk in [Data([0x00]), Data([0xDE, 0xAD, 0xBE, 0xEF])] {
                 var padded = message.encode()
                 padded.append(junk)
-                XCTAssertThrowsError(try RecoveryMessage.decode(padded),
-                                     "\(message) + \(junk.count) trailing byte(s) must be rejected") { error in
+                XCTAssertThrowsError(
+                    try RecoveryMessage.decode(padded),
+                    "\(message) + \(junk.count) trailing byte(s) must be rejected",
+                ) { error in
                     guard let e = error as? VideoProtocolError, case .malformed = e else {
                         return XCTFail("expected .malformed for \(message), got \(error)")
                     }
@@ -277,13 +388,21 @@ final class CodecTests: XCTestCase {
         let policy = RecoveryPolicy(idrTimeoutRTTMultiple: 2.0)
         // First response to a loss is an LTR refresh, not an IDR — and it passes the client's
         // decode frontier through verbatim (component 2).
-        XCTAssertEqual(policy.initialRequest(lostFrom: 5, lostTo: 8, lastDecoded: 4),
-                       .requestLTRRefresh(fromFrameID: 5, toFrameID: 8, lastDecodedFrameID: 4))
-        XCTAssertEqual(policy.initialRequest(lostFrom: 1, lostTo: 1, lastDecoded: RecoveryMessage.noFrameDecodedSentinel),
-                       .requestLTRRefresh(fromFrameID: 1, toFrameID: 1, lastDecodedFrameID: RecoveryMessage.noFrameDecodedSentinel))
+        XCTAssertEqual(
+            policy.initialRequest(lostFrom: 5, lostTo: 8, lastDecoded: 4),
+            .requestLTRRefresh(fromFrameID: 5, toFrameID: 8, lastDecodedFrameID: 4),
+        )
+        XCTAssertEqual(
+            policy.initialRequest(lostFrom: 1, lostTo: 1, lastDecoded: RecoveryMessage.noFrameDecodedSentinel),
+            .requestLTRRefresh(
+                fromFrameID: 1,
+                toFrameID: 1,
+                lastDecodedFrameID: RecoveryMessage.noFrameDecodedSentinel,
+            ),
+        )
         let rtt = 0.011 // 11ms measured
-        XCTAssertFalse(policy.shouldEscalateToIDR(elapsedSinceRequest: rtt, rtt: rtt))        // 1 RTT — wait
-        XCTAssertFalse(policy.shouldEscalateToIDR(elapsedSinceRequest: 1.9 * rtt, rtt: rtt))  // <2 RTT — wait
-        XCTAssertTrue(policy.shouldEscalateToIDR(elapsedSinceRequest: 2.0 * rtt, rtt: rtt))   // 2 RTT — escalate
+        XCTAssertFalse(policy.shouldEscalateToIDR(elapsedSinceRequest: rtt, rtt: rtt)) // 1 RTT — wait
+        XCTAssertFalse(policy.shouldEscalateToIDR(elapsedSinceRequest: 1.9 * rtt, rtt: rtt)) // <2 RTT — wait
+        XCTAssertTrue(policy.shouldEscalateToIDR(elapsedSinceRequest: 2.0 * rtt, rtt: rtt)) // 2 RTT — escalate
     }
 }

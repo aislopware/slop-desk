@@ -1,6 +1,6 @@
-import XCTest
-import Foundation
 import AislopdeskProtocol
+import Foundation
+import XCTest
 @testable import AislopdeskHost
 
 /// The FUSED ``HostOutputSniffer`` test suite: every test from the two suites it replaces
@@ -17,7 +17,6 @@ import AislopdeskProtocol
 ///      oracle below additionally pins the fused fast path to the per-byte path forever
 ///      (chunk-size-1 bypasses the memchr fast path entirely).
 final class HostOutputSnifferTests: XCTestCase {
-
     private let ESC = "\u{1B}"
     private let BEL = "\u{07}"
     private let ST = "\u{1B}\\" // ESC \
@@ -29,8 +28,15 @@ final class HostOutputSnifferTests: XCTestCase {
     private final class TestClock: @unchecked Sendable {
         private let lock = NSLock()
         private var now = Date(timeIntervalSinceReferenceDate: 0)
-        func date() -> Date { lock.lock(); defer { lock.unlock() }; return now }
-        func advance(_ seconds: TimeInterval) { lock.lock(); now = now.addingTimeInterval(seconds); lock.unlock() }
+        func date() -> Date { lock.lock()
+            defer { lock.unlock() }
+            return now
+        }
+
+        func advance(_ seconds: TimeInterval) { lock.lock()
+            now = now.addingTimeInterval(seconds)
+            lock.unlock()
+        }
     }
 
     private func bytes(_ s: String) -> [UInt8] { Array(s.utf8) }
@@ -77,7 +83,7 @@ final class HostOutputSnifferTests: XCTestCase {
             while i < bytes.count {
                 let end = min(i + size, bytes.count)
                 let chunk = Array(bytes[i..<end])
-                _ = s.observe(chunk)          // sniff (control side) — return discarded.
+                _ = s.observe(chunk) // sniff (control side) — return discarded.
                 forwarded.append(contentsOf: chunk) // relay (data side) — UNCHANGED bytes.
                 i = end
             }
@@ -121,14 +127,18 @@ final class HostOutputSnifferTests: XCTestCase {
             XCTAssertEqual(whole, concatenated, "fast path diverged from per-byte on: \(stream.debugDescription)")
             // And a few intermediate chunk sizes for good measure.
             for size in [2, 3, 7, 64] {
-                XCTAssertEqual(observeChunked(raw, size: size), whole,
-                               "chunk size \(size) diverged on: \(stream.debugDescription)")
+                XCTAssertEqual(
+                    observeChunked(raw, size: size),
+                    whole,
+                    "chunk size \(size) diverged on: \(stream.debugDescription)",
+                )
             }
         }
     }
 
     // ============================================================================
     // MARK: - Ported from HostTitleBellSnifferTests (30 tests)
+
     // ============================================================================
 
     // MARK: OSC 0 + BEL terminator → .title
@@ -268,7 +278,11 @@ final class HostOutputSnifferTests: XCTestCase {
         XCTAssertEqual(observeWhole(apcSpoof), [], "an OSC embedded in an APC string body must not spoof the title")
         // A REAL OSC 2 after a swallowed PM string still fires (resync is clean).
         let pmThenReal = Array("\(ESC)^junk\(BEL)".utf8) + Array("\(ESC)]2;real\(BEL)".utf8)
-        XCTAssertEqual(observeWhole(pmThenReal), [.title("real")], "a real title after a swallowed PM string still fires")
+        XCTAssertEqual(
+            observeWhole(pmThenReal),
+            [.title("real")],
+            "a real title after a swallowed PM string still fires",
+        )
     }
 
     func testDoubleESCThenBackslashTerminatesST() {
@@ -286,7 +300,7 @@ final class HostOutputSnifferTests: XCTestCase {
         // A huge unterminated OSC (far exceeds the 4096 cap) followed by a real title. The
         // overlong OSC must be abandoned at the cap (no partial title, no wedge) and the
         // following valid OSC 0 must still be detected.
-        let junk = String(repeating: "x", count: 10_000)
+        let junk = String(repeating: "x", count: 10000)
         let bytes = Array("\(ESC)]2;\(junk)".utf8) + Array("\(ESC)]0;after\(BEL)".utf8)
         XCTAssertEqual(observeWhole(bytes), [.title("after")])
         assertForwardsUnchanged(bytes)
@@ -307,9 +321,9 @@ final class HostOutputSnifferTests: XCTestCase {
     /// old code dropped to `.ground` AT the cap, so the terminator BEL fired a spurious bell
     /// (and could misread following bytes). A following real title must still be detected.
     func testOverlongOSCTerminatorBELIsNotAPhantomBell() {
-        let junk = String(repeating: "x", count: 5000)          // > 4096 cap
-        let bytes = Array("\(ESC)]2;\(junk)\(BEL)".utf8)         // over-cap OSC TERMINATED by BEL
-            + Array("\(ESC)]0;real\(BEL)".utf8)                  // then a valid title
+        let junk = String(repeating: "x", count: 5000) // > 4096 cap
+        let bytes = Array("\(ESC)]2;\(junk)\(BEL)".utf8) // over-cap OSC TERMINATED by BEL
+            + Array("\(ESC)]0;real\(BEL)".utf8) // then a valid title
         let msgs = observeWhole(bytes)
         XCTAssertFalse(msgs.contains(.bell), "an over-cap OSC's terminator BEL must not fire a phantom .bell")
         XCTAssertEqual(msgs, [.title("real")], "no phantom bell; the following title is still detected")
@@ -344,9 +358,9 @@ final class HostOutputSnifferTests: XCTestCase {
         // fused grammar but A is deliberately NOT surfaced), OSC 4 (palette).
         let bytes =
             Array("\(ESC)]8;;https://example.com\(BEL)".utf8)
-            + Array("\(ESC)]52;c;BASE64==\(BEL)".utf8)
-            + Array("\(ESC)]133;A\(BEL)".utf8)
-            + Array("\(ESC)]4;1;rgb:00/00/00\(BEL)".utf8)
+                + Array("\(ESC)]52;c;BASE64==\(BEL)".utf8)
+                + Array("\(ESC)]133;A\(BEL)".utf8)
+                + Array("\(ESC)]4;1;rgb:00/00/00\(BEL)".utf8)
         XCTAssertEqual(observeWhole(bytes), [])
         assertForwardsUnchanged(bytes)
     }
@@ -377,16 +391,16 @@ final class HostOutputSnifferTests: XCTestCase {
     func testIdenticalConsecutiveTitlesDeduped() {
         let bytes =
             Array("\(ESC)]0;same\(BEL)".utf8)
-            + Array("\(ESC)]2;same\(BEL)".utf8)   // same text via a different Ps — deduped
-            + Array("\(ESC)]0;same\(BEL)".utf8)
+                + Array("\(ESC)]2;same\(BEL)".utf8) // same text via a different Ps — deduped
+                + Array("\(ESC)]0;same\(BEL)".utf8)
         XCTAssertEqual(observeWhole(bytes), [.title("same")])
     }
 
     func testDifferentTitlesNotDeduped() {
         let bytes =
             Array("\(ESC)]0;one\(BEL)".utf8)
-            + Array("\(ESC)]2;two\(BEL)".utf8)
-            + Array("\(ESC)]0;one\(BEL)".utf8)   // back to "one" — different from prev, emit
+                + Array("\(ESC)]2;two\(BEL)".utf8)
+                + Array("\(ESC)]0;one\(BEL)".utf8) // back to "one" — different from prev, emit
         XCTAssertEqual(observeWhole(bytes), [.title("one"), .title("two"), .title("one")])
     }
 
@@ -395,15 +409,15 @@ final class HostOutputSnifferTests: XCTestCase {
     func testInterleavedRealWorldStream() {
         let stream =
             "welcome\n"
-            + "\(ESC)]0;Claude Code\(BEL)"            // OSC 0 title (BEL)
-            + "$ ls\n"
-            + "\(ESC)[?1049h"                          // alt-screen enter (CSI — ignored)
-            + "drawing\(ESC)[2J"                        // content + unknown CSI
-            + "\(ESC)]2;vim — file.txt\(ST)"           // OSC 2 title (ST)
-            + "\(BEL)"                                  // a real bell
-            + "\(ESC)[?1049l"                          // alt-screen exit (CSI — ignored)
-            + "\(ESC)]2;vim — file.txt\(ST)"           // SAME title again — deduped
-            + "bye\n"
+                + "\(ESC)]0;Claude Code\(BEL)" // OSC 0 title (BEL)
+                + "$ ls\n"
+                + "\(ESC)[?1049h" // alt-screen enter (CSI — ignored)
+                + "drawing\(ESC)[2J" // content + unknown CSI
+                + "\(ESC)]2;vim — file.txt\(ST)" // OSC 2 title (ST)
+                + "\(BEL)" // a real bell
+                + "\(ESC)[?1049l" // alt-screen exit (CSI — ignored)
+                + "\(ESC)]2;vim — file.txt\(ST)" // SAME title again — deduped
+                + "bye\n"
         let bytes = Array(stream.utf8)
         let expected: [WireMessage] = [
             .title("Claude Code"),
@@ -422,7 +436,7 @@ final class HostOutputSnifferTests: XCTestCase {
 
     func testUTF8TitleAndContentPassThrough() {
         var bytes = Array("café 🚀\n".utf8)
-        bytes.append(contentsOf: [0xFF, 0x80, 0xC0])              // raw high-bit content
+        bytes.append(contentsOf: [0xFF, 0x80, 0xC0]) // raw high-bit content
         bytes.append(contentsOf: Array("\(ESC)]0;日本語\(BEL)".utf8)) // UTF-8 title
         XCTAssertEqual(observeWhole(bytes), [.title("日本語")])
         assertForwardsUnchanged(bytes)
@@ -440,6 +454,7 @@ final class HostOutputSnifferTests: XCTestCase {
 
     // ============================================================================
     // MARK: - Ported from HostCommandStatusSnifferTests (13 tests)
+
     // ============================================================================
 
     // MARK: C → D: running then idle with measured duration + exit code
@@ -457,7 +472,7 @@ final class HostOutputSnifferTests: XCTestCase {
 
         // D;0: command finished, exit 0 → .idle with the measured 12_000 ms.
         let onD = sniffer.observe(osc133("D;0"))
-        XCTAssertEqual(onD, [.commandStatus(.idle(exitCode: 0, durationMS: 12_000))])
+        XCTAssertEqual(onD, [.commandStatus(.idle(exitCode: 0, durationMS: 12000))])
     }
 
     func testQuickCommandSubSecondDuration() {
@@ -465,8 +480,10 @@ final class HostOutputSnifferTests: XCTestCase {
         let sniffer = HostOutputSniffer(clock: clock.date)
         XCTAssertEqual(sniffer.observe(osc133("C")), [.commandStatus(.running)])
         clock.advance(0.3) // 300 ms
-        XCTAssertEqual(sniffer.observe(osc133("D;0")),
-                       [.commandStatus(.idle(exitCode: 0, durationMS: 300))])
+        XCTAssertEqual(
+            sniffer.observe(osc133("D;0")),
+            [.commandStatus(.idle(exitCode: 0, durationMS: 300))],
+        )
     }
 
     func testNonZeroExitCodeParsed() {
@@ -474,8 +491,10 @@ final class HostOutputSnifferTests: XCTestCase {
         let sniffer = HostOutputSniffer(clock: clock.date)
         _ = sniffer.observe(osc133("C"))
         clock.advance(1)
-        XCTAssertEqual(sniffer.observe(osc133("D;130")),
-                       [.commandStatus(.idle(exitCode: 130, durationMS: 1_000))])
+        XCTAssertEqual(
+            sniffer.observe(osc133("D;130")),
+            [.commandStatus(.idle(exitCode: 130, durationMS: 1000))],
+        )
     }
 
     func testDWithoutExitCodeYieldsNilExit() {
@@ -484,8 +503,10 @@ final class HostOutputSnifferTests: XCTestCase {
         _ = sniffer.observe(osc133("C"))
         clock.advance(2)
         // Bare `D` (no exit field) → nil exit, 2_000 ms.
-        XCTAssertEqual(sniffer.observe(osc133("D")),
-                       [.commandStatus(.idle(exitCode: nil, durationMS: 2_000))])
+        XCTAssertEqual(
+            sniffer.observe(osc133("D")),
+            [.commandStatus(.idle(exitCode: nil, durationMS: 2000))],
+        )
     }
 
     func testDExtraKeyValueFieldsTolerated() {
@@ -494,8 +515,10 @@ final class HostOutputSnifferTests: XCTestCase {
         _ = sniffer.observe(osc133("C"))
         clock.advance(1)
         // iTerm2/FinalTerm sometimes append `;aid=...` etc. — the exit (field 2) still parses.
-        XCTAssertEqual(sniffer.observe(osc133("D;0;aid=123")),
-                       [.commandStatus(.idle(exitCode: 0, durationMS: 1_000))])
+        XCTAssertEqual(
+            sniffer.observe(osc133("D;0;aid=123")),
+            [.commandStatus(.idle(exitCode: 0, durationMS: 1000))],
+        )
     }
 
     // MARK: D without a matching C is ignored (the first-prompt phantom)
@@ -529,7 +552,7 @@ final class HostOutputSnifferTests: XCTestCase {
         out += sniffer.observe(osc133("A"))
         XCTAssertEqual(out, [
             .commandStatus(.running),
-            .commandStatus(.idle(exitCode: 0, durationMS: 11_000)),
+            .commandStatus(.idle(exitCode: 0, durationMS: 11000)),
         ])
     }
 
@@ -561,7 +584,7 @@ final class HostOutputSnifferTests: XCTestCase {
         XCTAssertEqual(got, reference)
         XCTAssertEqual(got, [
             .commandStatus(.running),
-            .commandStatus(.idle(exitCode: 7, durationMS: 5_000)),
+            .commandStatus(.idle(exitCode: 7, durationMS: 5000)),
         ])
     }
 
@@ -575,7 +598,7 @@ final class HostOutputSnifferTests: XCTestCase {
         XCTAssertEqual(sniffer.observe(c), [.commandStatus(.running)])
         clock.advance(1)
         let d = Array("\u{1B}]133;D;0\u{1B}\\".utf8)
-        XCTAssertEqual(sniffer.observe(d), [.commandStatus(.idle(exitCode: 0, durationMS: 1_000))])
+        XCTAssertEqual(sniffer.observe(d), [.commandStatus(.idle(exitCode: 0, durationMS: 1000))])
     }
 
     // MARK: Interleaved with ordinary output + a title OSC (not a 133 mark)
@@ -603,41 +626,55 @@ final class HostOutputSnifferTests: XCTestCase {
         // First command: 3s.
         XCTAssertEqual(sniffer.observe(osc133("C")), [.commandStatus(.running)])
         clock.advance(3)
-        XCTAssertEqual(sniffer.observe(osc133("D;0")),
-                       [.commandStatus(.idle(exitCode: 0, durationMS: 3_000))])
+        XCTAssertEqual(
+            sniffer.observe(osc133("D;0")),
+            [.commandStatus(.idle(exitCode: 0, durationMS: 3000))],
+        )
         // Second command: 7s — runningSince must have been cleared + reset.
         XCTAssertEqual(sniffer.observe(osc133("C")), [.commandStatus(.running)])
         clock.advance(7)
-        XCTAssertEqual(sniffer.observe(osc133("D;1")),
-                       [.commandStatus(.idle(exitCode: 1, durationMS: 7_000))])
+        XCTAssertEqual(
+            sniffer.observe(osc133("D;1")),
+            [.commandStatus(.idle(exitCode: 1, durationMS: 7000))],
+        )
     }
 
     // MARK: - OSC 9 / OSC 777 explicit notifications
 
     /// The `.notification` subsequence (the fused sniffer may interleave titles/bells/command status).
     private func notificationsOnly(_ messages: [WireMessage]) -> [WireMessage] {
-        messages.filter { if case .notification = $0 { return true }; return false }
+        messages.filter { if case .notification = $0 { return true }
+            return false
+        }
     }
 
     func testOSC9EmitsNotificationWithEmptyTitle() {
-        XCTAssertEqual(observeWhole(bytes("\u{1B}]9;build done\u{07}")),
-                       [.notification(title: "", body: "build done")])
+        XCTAssertEqual(
+            observeWhole(bytes("\u{1B}]9;build done\u{07}")),
+            [.notification(title: "", body: "build done")],
+        )
     }
 
     func testOSC9WithSTTerminator() {
-        XCTAssertEqual(observeWhole(bytes("\u{1B}]9;tests passed\u{1B}\\")),
-                       [.notification(title: "", body: "tests passed")])
+        XCTAssertEqual(
+            observeWhole(bytes("\u{1B}]9;tests passed\u{1B}\\")),
+            [.notification(title: "", body: "tests passed")],
+        )
     }
 
     func testOSC777NotifySubcommandEmitsTitleAndBody() {
-        XCTAssertEqual(observeWhole(bytes("\u{1B}]777;notify;CI;all green\u{07}")),
-                       [.notification(title: "CI", body: "all green")])
+        XCTAssertEqual(
+            observeWhole(bytes("\u{1B}]777;notify;CI;all green\u{07}")),
+            [.notification(title: "CI", body: "all green")],
+        )
     }
 
     func testOSC777BodyMayContainSemicolons() {
         // maxSplits keeps the body intact even with embedded ';'.
-        XCTAssertEqual(observeWhole(bytes("\u{1B}]777;notify;Deploy;step 1;step 2 done\u{07}")),
-                       [.notification(title: "Deploy", body: "step 1;step 2 done")])
+        XCTAssertEqual(
+            observeWhole(bytes("\u{1B}]777;notify;Deploy;step 1;step 2 done\u{07}")),
+            [.notification(title: "Deploy", body: "step 1;step 2 done")],
+        )
     }
 
     func testOSC777NonNotifySubcommandIgnored() {
@@ -652,14 +689,22 @@ final class HostOutputSnifferTests: XCTestCase {
         // ConEmu/iTerm2 OSC 9 is overloaded: `ESC]9;4;<state>;<pct>` is the taskbar PROGRESS-BAR protocol,
         // emitted continuously by winget / long builds — NOT a desktop notification. It must be skipped so
         // benign progress output doesn't flood the user with alerts whose body is raw text like "4;1;50".
-        XCTAssertEqual(notificationsOnly(observeWhole(bytes("\u{1B}]9;4;1;50\u{07}"))), [],
-                       "OSC 9;4 progress update is not a notification")
-        XCTAssertEqual(notificationsOnly(observeWhole(bytes("\u{1B}]9;4\u{07}"))), [],
-                       "OSC 9;4 bare progress-clear is not a notification")
+        XCTAssertEqual(
+            notificationsOnly(observeWhole(bytes("\u{1B}]9;4;1;50\u{07}"))),
+            [],
+            "OSC 9;4 progress update is not a notification",
+        )
+        XCTAssertEqual(
+            notificationsOnly(observeWhole(bytes("\u{1B}]9;4\u{07}"))),
+            [],
+            "OSC 9;4 bare progress-clear is not a notification",
+        )
         // A genuine free-text OSC 9 whose body merely STARTS with '4' (not the `4;` progress subtype) fires.
-        XCTAssertEqual(observeWhole(bytes("\u{1B}]9;42 tests passed\u{07}")),
-                       [.notification(title: "", body: "42 tests passed")],
-                       "free-text body that only starts with a digit is still a real notification")
+        XCTAssertEqual(
+            observeWhole(bytes("\u{1B}]9;42 tests passed\u{07}")),
+            [.notification(title: "", body: "42 tests passed")],
+            "free-text body that only starts with a digit is still a real notification",
+        )
     }
 
     func testNotificationSplitAcrossChunksEquivalence() {
@@ -689,7 +734,10 @@ final class HostOutputSnifferTests: XCTestCase {
         let dcsSpoof = bytes("\u{1B}P\u{1B}]133;C\u{07}\u{1B}\\")
         XCTAssertEqual(sniffer.observe(dcsSpoof), [], "an OSC 133 embedded in a DCS string must not fire a status")
         // A REAL 133;C after the swallowed string still fires (clean resync).
-        XCTAssertEqual(sniffer.observe(osc133("C")), [.commandStatus(.running)],
-                       "a real mark after the swallowed string still fires")
+        XCTAssertEqual(
+            sniffer.observe(osc133("C")),
+            [.commandStatus(.running)],
+            "a real mark after the swallowed string still fires",
+        )
     }
 }

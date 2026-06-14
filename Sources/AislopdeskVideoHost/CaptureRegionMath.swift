@@ -1,6 +1,6 @@
 #if os(macOS)
-import Foundation
 import CoreGraphics
+import Foundation
 
 /// PURE geometry for the DIALOG-EXPAND feature (host-side, unit-tested): decide the capture region
 /// = the target window frame ∪ any associated panel windows (a file-open / print / share dialog
@@ -14,7 +14,6 @@ import CoreGraphics
 /// On the real deployment the streamed window is parked ALONE on the virtual display, so the only
 /// same-pid window overlapping it is its own dialog — robust even on a busy physical desktop.
 public enum CaptureRegionMath {
-
     /// One on-screen window, as read from `CGWindowListCopyWindowInfo` (CG top-left points).
     public struct WindowSnapshot: Equatable, Sendable {
         public let windowID: UInt32
@@ -22,7 +21,10 @@ public enum CaptureRegionMath {
         public let layer: Int
         public let frame: CGRect
         public init(windowID: UInt32, ownerPID: Int32, layer: Int, frame: CGRect) {
-            self.windowID = windowID; self.ownerPID = ownerPID; self.layer = layer; self.frame = frame
+            self.windowID = windowID
+            self.ownerPID = ownerPID
+            self.layer = layer
+            self.frame = frame
         }
     }
 
@@ -36,12 +38,14 @@ public enum CaptureRegionMath {
     /// tooltips at other levels), and overlapping the target by a meaningful fraction (≥
     /// `minOverlapFraction` of the smaller rect's area — skips an incidental 1px edge touch from a
     /// sibling window). The whole panel frame joins the union even where it overhangs the window.
-    public static func unionRegion(targetFrame: CGRect,
-                                   targetWindowID: UInt32,
-                                   targetPID: Int32,
-                                   windowsInFront: [WindowSnapshot],
-                                   displayBounds: CGRect,
-                                   minOverlapFraction: Double = 0.30) -> CGRect {
+    public static func unionRegion(
+        targetFrame: CGRect,
+        targetWindowID: UInt32,
+        targetPID: Int32,
+        windowsInFront: [WindowSnapshot],
+        displayBounds: CGRect,
+        minOverlapFraction: Double = 0.30,
+    ) -> CGRect {
         var union = targetFrame
         let targetArea = targetFrame.width * targetFrame.height
         guard targetArea > 0 else { return targetFrame.intersection(displayBounds) }

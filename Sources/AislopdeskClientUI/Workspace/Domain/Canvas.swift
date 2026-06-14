@@ -1,5 +1,5 @@
-import Foundation
 import CoreGraphics
+import Foundation
 
 // MARK: - The pan-only camera
 
@@ -18,12 +18,12 @@ public struct CanvasCamera: Codable, Sendable, Equatable {
     public init(origin: CGPoint = .zero) { self.origin = origin }
 
     /// The zero camera (viewport top-left at the canvas origin).
-    public static let zero = CanvasCamera(origin: .zero)
+    public static let zero = Self(origin: .zero)
 
     /// A new camera translated by `delta` (origin += delta). Pure — no scale term, so a screen-space
     /// translation IS the canvas-space delta.
-    public func translated(by delta: CGSize) -> CanvasCamera {
-        CanvasCamera(origin: CGPoint(x: origin.x + delta.width, y: origin.y + delta.height))
+    public func translated(by delta: CGSize) -> Self {
+        Self(origin: CGPoint(x: origin.x + delta.width, y: origin.y + delta.height))
     }
 }
 

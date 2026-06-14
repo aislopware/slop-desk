@@ -5,12 +5,12 @@ import Foundation
 public struct InputModifiers: OptionSet, Sendable, Equatable {
     public let rawValue: UInt8
     public init(rawValue: UInt8) { self.rawValue = rawValue }
-    public static let shift = InputModifiers(rawValue: 1 << 0)
-    public static let control = InputModifiers(rawValue: 1 << 1)
-    public static let option = InputModifiers(rawValue: 1 << 2)
-    public static let command = InputModifiers(rawValue: 1 << 3)
-    public static let capsLock = InputModifiers(rawValue: 1 << 4)
-    public static let function = InputModifiers(rawValue: 1 << 5)
+    public static let shift = Self(rawValue: 1 << 0)
+    public static let control = Self(rawValue: 1 << 1)
+    public static let option = Self(rawValue: 1 << 2)
+    public static let command = Self(rawValue: 1 << 3)
+    public static let capsLock = Self(rawValue: 1 << 4)
+    public static let function = Self(rawValue: 1 << 5)
 }
 
 /// Which mouse button an event concerns.
@@ -30,7 +30,13 @@ public enum InputEvent: Equatable, Sendable {
     /// Absolute pointer move to a normalised window position.
     case mouseMove(normalized: VideoPoint, tag: UInt32)
     /// Mouse button down at a normalised window position.
-    case mouseDown(button: MouseButton, normalized: VideoPoint, clickCount: UInt8, modifiers: InputModifiers, tag: UInt32)
+    case mouseDown(
+        button: MouseButton,
+        normalized: VideoPoint,
+        clickCount: UInt8,
+        modifiers: InputModifiers,
+        tag: UInt32,
+    )
     /// Mouse button up at a normalised window position.
     case mouseUp(button: MouseButton, normalized: VideoPoint, clickCount: UInt8, modifiers: InputModifiers, tag: UInt32)
     /// Mouse drag (a button is HELD) to a normalised window position. The CLIENT sends
@@ -42,7 +48,13 @@ public enum InputEvent: Equatable, Sendable {
     /// phantom-drag-after-a-lost-`mouseUp` class of bug (a `.mouseMove` is now ALWAYS a pure
     /// hover). `clickCount` carries the originating click count so the dragged event's
     /// clickState matches the down — selection engines key off it.
-    case mouseDrag(button: MouseButton, normalized: VideoPoint, clickCount: UInt8, modifiers: InputModifiers, tag: UInt32)
+    case mouseDrag(
+        button: MouseButton,
+        normalized: VideoPoint,
+        clickCount: UInt8,
+        modifiers: InputModifiers,
+        tag: UInt32,
+    )
     /// Scroll wheel (pixel units). `dy`/`dx` are signed scroll deltas.
     case scroll(dx: Double, dy: Double, normalized: VideoPoint, tag: UInt32)
     /// Key down/up by host virtual keycode (for navigation / shortcuts; doc 05 §3).
@@ -52,27 +64,27 @@ public enum InputEvent: Equatable, Sendable {
 
     public var messageType: UInt8 {
         switch self {
-        case .mouseMove: return 1
-        case .mouseDown: return 2
-        case .mouseUp: return 3
-        case .scroll: return 4
-        case .key: return 5
-        case .text: return 6
-        case .mouseDrag: return 7
+        case .mouseMove: 1
+        case .mouseDown: 2
+        case .mouseUp: 3
+        case .scroll: 4
+        case .key: 5
+        case .text: 6
+        case .mouseDrag: 7
         }
     }
 
     /// The self-inject filter tag.
     public var tag: UInt32 {
         switch self {
-        case .mouseMove(_, let tag),
-             .mouseDown(_, _, _, _, let tag),
-             .mouseUp(_, _, _, _, let tag),
-             .mouseDrag(_, _, _, _, let tag),
-             .scroll(_, _, _, let tag),
-             .key(_, _, _, let tag),
-             .text(_, let tag):
-            return tag
+        case let .mouseMove(_, tag),
+             let .mouseDown(_, _, _, _, tag),
+             let .mouseUp(_, _, _, _, tag),
+             let .mouseDrag(_, _, _, _, tag),
+             let .scroll(_, _, _, tag),
+             let .key(_, _, _, tag),
+             let .text(_, tag):
+            tag
         }
     }
 
@@ -80,55 +92,75 @@ public enum InputEvent: Equatable, Sendable {
         var out = Data()
         out.append(messageType)
         switch self {
-        case .mouseMove(let n, let tag):
-            out.appendBE(tag); out.appendBE(n.x); out.appendBE(n.y)
-        case .mouseDown(let button, let n, let clickCount, let mods, let tag),
-             .mouseUp(let button, let n, let clickCount, let mods, let tag),
-             .mouseDrag(let button, let n, let clickCount, let mods, let tag):
-            out.appendBE(tag); out.append(button.rawValue); out.append(clickCount); out.append(mods.rawValue)
-            out.appendBE(n.x); out.appendBE(n.y)
-        case .scroll(let dx, let dy, let n, let tag):
-            out.appendBE(tag); out.appendBE(dx); out.appendBE(dy); out.appendBE(n.x); out.appendBE(n.y)
-        case .key(let keyCode, let down, let mods, let tag):
-            out.appendBE(tag); out.appendBE(keyCode); out.append(down ? 1 : 0); out.append(mods.rawValue)
-        case .text(let string, let tag):
-            out.appendBE(tag); out.append(Data(string.utf8))
+        case let .mouseMove(n, tag):
+            out.appendBE(tag)
+            out.appendBE(n.x)
+            out.appendBE(n.y)
+        case let .mouseDown(button, n, clickCount, mods, tag),
+             let .mouseUp(button, n, clickCount, mods, tag),
+             let .mouseDrag(button, n, clickCount, mods, tag):
+            out.appendBE(tag)
+            out.append(button.rawValue)
+            out.append(clickCount)
+            out.append(mods.rawValue)
+            out.appendBE(n.x)
+            out.appendBE(n.y)
+        case let .scroll(dx, dy, n, tag):
+            out.appendBE(tag)
+            out.appendBE(dx)
+            out.appendBE(dy)
+            out.appendBE(n.x)
+            out.appendBE(n.y)
+        case let .key(keyCode, down, mods, tag):
+            out.appendBE(tag)
+            out.appendBE(keyCode)
+            out.append(down ? 1 : 0)
+            out.append(mods.rawValue)
+        case let .text(string, tag):
+            out.appendBE(tag)
+            out.append(Data(string.utf8))
         }
         return out
     }
 
-    public static func decode(_ data: Data) throws -> InputEvent {
+    public static func decode(_ data: Data) throws -> Self {
         var reader = VideoByteReader(data)
         let type = try reader.readUInt8()
         switch type {
         case 1:
             let tag = try reader.readUInt32()
-            let x = try reader.readFiniteFloat64("mouseMove.x"); let y = try reader.readFiniteFloat64("mouseMove.y")
+            let x = try reader.readFiniteFloat64("mouseMove.x")
+            let y = try reader.readFiniteFloat64("mouseMove.y")
             return .mouseMove(normalized: VideoPoint(x: x, y: y), tag: tag)
-        case 2, 3, 7:
+        case 2,
+             3,
+             7:
             let tag = try reader.readUInt32()
-            guard let button = MouseButton(rawValue: try reader.readUInt8()) else {
+            guard let button = try MouseButton(rawValue: reader.readUInt8()) else {
                 throw VideoProtocolError.malformed("unknown mouse button")
             }
             let clickCount = try reader.readUInt8()
-            let mods = InputModifiers(rawValue: try reader.readUInt8())
-            let x = try reader.readFiniteFloat64("mouseButton.x"); let y = try reader.readFiniteFloat64("mouseButton.y")
+            let mods = try InputModifiers(rawValue: reader.readUInt8())
+            let x = try reader.readFiniteFloat64("mouseButton.x")
+            let y = try reader.readFiniteFloat64("mouseButton.y")
             let n = VideoPoint(x: x, y: y)
             switch type {
-            case 2:  return .mouseDown(button: button, normalized: n, clickCount: clickCount, modifiers: mods, tag: tag)
-            case 3:  return .mouseUp(button: button, normalized: n, clickCount: clickCount, modifiers: mods, tag: tag)
+            case 2: return .mouseDown(button: button, normalized: n, clickCount: clickCount, modifiers: mods, tag: tag)
+            case 3: return .mouseUp(button: button, normalized: n, clickCount: clickCount, modifiers: mods, tag: tag)
             default: return .mouseDrag(button: button, normalized: n, clickCount: clickCount, modifiers: mods, tag: tag)
             }
         case 4:
             let tag = try reader.readUInt32()
-            let dx = try reader.readFiniteFloat64("scroll.dx"); let dy = try reader.readFiniteFloat64("scroll.dy")
-            let x = try reader.readFiniteFloat64("scroll.x"); let y = try reader.readFiniteFloat64("scroll.y")
+            let dx = try reader.readFiniteFloat64("scroll.dx")
+            let dy = try reader.readFiniteFloat64("scroll.dy")
+            let x = try reader.readFiniteFloat64("scroll.x")
+            let y = try reader.readFiniteFloat64("scroll.y")
             return .scroll(dx: dx, dy: dy, normalized: VideoPoint(x: x, y: y), tag: tag)
         case 5:
             let tag = try reader.readUInt32()
             let keyCode = try reader.readUInt16()
             let down = try reader.readUInt8() != 0
-            let mods = InputModifiers(rawValue: try reader.readUInt8())
+            let mods = try InputModifiers(rawValue: reader.readUInt8())
             return .key(keyCode: keyCode, down: down, modifiers: mods, tag: tag)
         case 6:
             let tag = try reader.readUInt32()

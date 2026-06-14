@@ -5,7 +5,6 @@ import XCTest
 /// This is the decider behind the host PTY-read backpressure (S2 scope #4): pause the producer
 /// when outstanding bytes cross the high-water mark, resume when the queue drains below it.
 final class BoundedQueuePolicyTests: XCTestCase {
-
     func testEnqueueBelowCapacityDoesNotPause() {
         var q = BoundedQueuePolicy(capacity: 1000)
         XCTAssertFalse(q.enqueue(300), "300 < 1000 → not full, producer keeps running")

@@ -6,7 +6,6 @@ import XCTest
 /// covers the arithmetic that builds `DataRateLimits = [maxBytes, seconds]` so every set-site stays
 /// consistent and the default path (T=1.0) is byte-identical to before the tunable window landed.
 final class VBVWindowTests: XCTestCase {
-
     // MARK: resolveVBVWindow (env parse + clamp)
 
     func testDefaultWhenEnvMissing() {
@@ -19,10 +18,10 @@ final class VBVWindowTests: XCTestCase {
     }
 
     func testClampsBadValueToDefault() {
-        XCTAssertEqual(VideoEncoder.resolveVBVWindow("0"), 1.0)        // below 0.01 lower bound
-        XCTAssertEqual(VideoEncoder.resolveVBVWindow("-1"), 1.0)       // negative → default
-        XCTAssertEqual(VideoEncoder.resolveVBVWindow("99"), 1.0)       // above 4.0 upper bound
-        XCTAssertEqual(VideoEncoder.resolveVBVWindow("garbage"), 1.0)  // unparseable → default
+        XCTAssertEqual(VideoEncoder.resolveVBVWindow("0"), 1.0) // below 0.01 lower bound
+        XCTAssertEqual(VideoEncoder.resolveVBVWindow("-1"), 1.0) // negative → default
+        XCTAssertEqual(VideoEncoder.resolveVBVWindow("99"), 1.0) // above 4.0 upper bound
+        XCTAssertEqual(VideoEncoder.resolveVBVWindow("garbage"), 1.0) // unparseable → default
         XCTAssertEqual(VideoEncoder.resolveVBVWindow(""), 1.0)
     }
 
@@ -43,7 +42,7 @@ final class VBVWindowTests: XCTestCase {
     // A TIGHTER window scales the budget DOWN proportionally → average rate unchanged.
     func testTightWindowScalesBudget() {
         let c = VideoEncoder.vbvComponents(bytesPerSecond: 1_500_000, seconds: 0.5)
-        XCTAssertEqual(c.maxBytes, 750_000)   // 1.5MB/s * 0.5s = 0.75MB cap, still 12 Mbps average
+        XCTAssertEqual(c.maxBytes, 750_000) // 1.5MB/s * 0.5s = 0.75MB cap, still 12 Mbps average
         XCTAssertEqual(c.seconds, 0.5)
     }
 
@@ -57,7 +56,7 @@ final class VBVWindowTests: XCTestCase {
     // The crisp one-shot budget (64 Mbit ≡ 8 MB/s) scales by T just like the live budget.
     func testCrispBudgetScales() {
         let c = VideoEncoder.vbvComponents(bytesPerSecond: VideoEncoder.crispDataRateMaxBytes, seconds: 0.25)
-        XCTAssertEqual(c.maxBytes, 2_000_000)  // 8MB/s * 0.25s
+        XCTAssertEqual(c.maxBytes, 2_000_000) // 8MB/s * 0.25s
         XCTAssertEqual(c.seconds, 0.25)
     }
 
@@ -66,8 +65,12 @@ final class VBVWindowTests: XCTestCase {
         let budget = 5_000_000
         for t in [0.1, 0.25, 0.5, 1.0, 2.0, 4.0] {
             let c = VideoEncoder.vbvComponents(bytesPerSecond: budget, seconds: t)
-            XCTAssertEqual(Double(c.maxBytes) / c.seconds, Double(budget), accuracy: 1.0,
-                           "average rate must stay \(budget) B/s at window \(t)")
+            XCTAssertEqual(
+                Double(c.maxBytes) / c.seconds,
+                Double(budget),
+                accuracy: 1.0,
+                "average rate must stay \(budget) B/s at window \(t)",
+            )
         }
     }
 
@@ -78,9 +81,12 @@ final class VBVWindowTests: XCTestCase {
     // window budget, the R7-HW-measured khựng factory). The bridged CFArray keeps the exact
     // [bytes (Int), seconds (Double)] shape; the byte element is the unbound sentinel regardless
     // of the requested rate (AverageBitRate alone steers — the Parsec rate-control model).
-    func testDataRateLimitsDefaultIsPureVBRUnbound() throws {
+    func testDataRateLimitsDefaultIsPureVBRUnbound() {
         XCTAssertEqual(VideoEncoder.vbvWindowSeconds, 1.0, "test env must not set AISLOPDESK_VBV_WINDOW")
-        let arr = VideoEncoder.dataRateLimits(bytesPerSecond: 1_500_000) as NSArray
+        guard let arr = VideoEncoder.dataRateLimits(bytesPerSecond: 1_500_000) as? [Any] else {
+            XCTFail("dataRateLimits must bridge to an array")
+            return
+        }
         XCTAssertEqual(arr.count, 2)
         XCTAssertEqual(arr[0] as? Int, 1_000_000_000, "default = pure VBR: the hard cap must never bind")
         XCTAssertEqual(arr[1] as? Double, 1.0)

@@ -5,7 +5,6 @@ import XCTest
 /// silently coerced (`-5 → 0`, `99999 → 65535`) and persisted, desyncing the displayed port from the
 /// actually-bound one. The pure validator rejects them so the UI can disable Start instead.
 final class PortValidationTests: XCTestCase {
-
     func testIsValid() {
         XCTAssertFalse(PortValidation.isValid(-5))
         XCTAssertFalse(PortValidation.isValid(-1))

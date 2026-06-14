@@ -1,12 +1,11 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins the ⌘K palette host-window addition: the scope-prefix parser, and the store's
 /// `addRemoteWindowPane` (a pre-bound `.remoteGUI` pane that streams without the picker step).
 @MainActor
 final class PaletteHostWindowTests: XCTestCase {
-
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
         WorkspaceStore(restoring: restoring, makeSession: { FakePaneSession($0) }, liveVideoCap: 5)
     }
@@ -53,8 +52,11 @@ final class PaletteHostWindowTests: XCTestCase {
     /// `LivePaneSession.makeRemoteGUI` does), so the pane streams without the picker.
     func testPreBoundSpecSeedsAnOpenableModel() {
         let endpoint = VideoEndpoint(windowID: 604, title: "Claude", appName: "Google Chrome")
-        let model = RemoteWindowModel(windowID: String(endpoint.windowID),
-                                      title: endpoint.title, appName: endpoint.appName)
+        let model = RemoteWindowModel(
+            windowID: String(endpoint.windowID),
+            title: endpoint.title,
+            appName: endpoint.appName,
+        )
         XCTAssertEqual(model.windowID, "604")
         XCTAssertTrue(model.canOpen, "a pre-bound spec is immediately openable")
     }

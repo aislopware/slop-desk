@@ -42,7 +42,7 @@ public struct TerminalScreenView: View {
             if model.glitchCaretVisible {
                 GlitchCaretOverlay()
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .allowsHitTesting(false)   // the pane has a history of scroll-swallowing chrome
+                    .allowsHitTesting(false) // the pane has a history of scroll-swallowing chrome
                     .transition(.opacity)
             }
         }

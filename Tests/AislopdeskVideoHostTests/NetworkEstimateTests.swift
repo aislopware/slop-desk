@@ -1,13 +1,12 @@
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoHost
-import AislopdeskVideoProtocol
 
 /// PURE host-clock RTT/loss/jitter math for the network-feedback channel. NO wall-clock, NO I/O —
 /// every timestamp is injected — so the estimate is deterministic and headlessly testable. The
 /// central correctness property is CLOCK-SKEW IMMUNITY: RTT is `(hostNow − latestHostSendTs) −
 /// clientHoldMs`, all in the host's own clock, so the two machines' clocks are never subtracted.
 final class NetworkEstimateTests: XCTestCase {
-
     // MARK: computeRTTMillis — the host-clock subtraction
 
     func testRTTSubtractsClientHold() {
@@ -23,16 +22,18 @@ final class NetworkEstimateTests: XCTestCase {
     /// would underflow to a huge value; the wrap-aware Int32(bitPattern:) subtraction yields the
     /// correct small positive elapsed.
     func testRTTWrapAround() {
-        let stamp: UInt32 = .max - 20      // 20ms before wrap
-        let now: UInt32 = 30               // 30ms after wrap → true elapsed 51ms
+        let stamp: UInt32 = .max - 20 // 20ms before wrap
+        let now: UInt32 = 30 // 30ms after wrap → true elapsed 51ms
         XCTAssertEqual(NetworkEstimate.computeRTTMillis(hostNowMs: now, latestHostSendTs: stamp, clientHoldMs: 1), 50)
     }
 
     // MARK: reject paths (return nil — never poison the EWMA, never trap)
 
     func testRejectsTelemetryOff() {
-        XCTAssertNil(NetworkEstimate.computeRTTMillis(hostNowMs: 1000, latestHostSendTs: 0, clientHoldMs: 0),
-                     "latestHostSendTs == 0 means telemetry off / never observed")
+        XCTAssertNil(
+            NetworkEstimate.computeRTTMillis(hostNowMs: 1000, latestHostSendTs: 0, clientHoldMs: 0),
+            "latestHostSendTs == 0 means telemetry off / never observed",
+        )
     }
 
     func testRejectsNegativeElapsed() {
@@ -47,11 +48,13 @@ final class NetworkEstimateTests: XCTestCase {
     }
 
     func testRejectsImplausiblyLargeRTT() {
-        XCTAssertNil(NetworkEstimate.computeRTTMillis(hostNowMs: 100_000, latestHostSendTs: 1, clientHoldMs: 0),
-                     "> 60s RTT is implausible — dropped rather than poisoning the EWMA")
+        XCTAssertNil(
+            NetworkEstimate.computeRTTMillis(hostNowMs: 100_000, latestHostSendTs: 1, clientHoldMs: 0),
+            "> 60s RTT is implausible — dropped rather than poisoning the EWMA",
+        )
         // Boundary: exactly 60_000 ms RTT is the inclusive limit — accepted; one over is rejected.
-        XCTAssertEqual(NetworkEstimate.computeRTTMillis(hostNowMs: 60_001, latestHostSendTs: 1, clientHoldMs: 0), 60_000)
-        XCTAssertNil(NetworkEstimate.computeRTTMillis(hostNowMs: 60_002, latestHostSendTs: 1, clientHoldMs: 0))
+        XCTAssertEqual(NetworkEstimate.computeRTTMillis(hostNowMs: 60001, latestHostSendTs: 1, clientHoldMs: 0), 60000)
+        XCTAssertNil(NetworkEstimate.computeRTTMillis(hostNowMs: 60002, latestHostSendTs: 1, clientHoldMs: 0))
     }
 
     func testTotalOverAllInputsDoesNotTrap() {
@@ -120,12 +123,24 @@ final class NetworkEstimateTests: XCTestCase {
     func testFoldTrendFields() {
         var est = NetworkEstimate()
         XCTAssertFalse(est.owdTrendOverusing)
-        est.fold(rttMillis: 10, framesReceived: 1, unrecovered: 0, owdJitterMicros: 0,
-                 owdTrendState: 1, owdTrendModifiedMilli: 42_500)
+        est.fold(
+            rttMillis: 10,
+            framesReceived: 1,
+            unrecovered: 0,
+            owdJitterMicros: 0,
+            owdTrendState: 1,
+            owdTrendModifiedMilli: 42500,
+        )
         XCTAssertTrue(est.owdTrendOverusing)
         XCTAssertEqual(est.owdTrendModified, 42.5, accuracy: 0.0001)
-        est.fold(rttMillis: 10, framesReceived: 1, unrecovered: 0, owdJitterMicros: 0,
-                 owdTrendState: 2, owdTrendModifiedMilli: -500)
+        est.fold(
+            rttMillis: 10,
+            framesReceived: 1,
+            unrecovered: 0,
+            owdJitterMicros: 0,
+            owdTrendState: 2,
+            owdTrendModifiedMilli: -500,
+        )
         XCTAssertFalse(est.owdTrendOverusing, "underusing (2) is not overusing")
         XCTAssertEqual(est.owdTrendModified, -0.5, accuracy: 0.0001)
         est.fold(rttMillis: 10, framesReceived: 1, unrecovered: 0, owdJitterMicros: 0)
@@ -140,8 +155,14 @@ final class NetworkEstimateTests: XCTestCase {
         var b = NetworkEstimate()
         for i in 0..<20 {
             a.fold(rttMillis: 50 + i, framesReceived: 100, unrecovered: UInt32(i % 3), owdJitterMicros: UInt32(i * 10))
-            b.fold(rttMillis: 50 + i, framesReceived: 100, unrecovered: UInt32(i % 3), owdJitterMicros: UInt32(i * 10),
-                   owdTrendState: 0, owdTrendModifiedMilli: 0)
+            b.fold(
+                rttMillis: 50 + i,
+                framesReceived: 100,
+                unrecovered: UInt32(i % 3),
+                owdJitterMicros: UInt32(i * 10),
+                owdTrendState: 0,
+                owdTrendModifiedMilli: 0,
+            )
         }
         XCTAssertEqual(a, b)
     }

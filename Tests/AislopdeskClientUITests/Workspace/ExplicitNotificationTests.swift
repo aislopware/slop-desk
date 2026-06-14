@@ -1,5 +1,5 @@
-import XCTest
 import AislopdeskClient
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins the explicit-notification (OSC 9 / OSC 777) content policy and the store's reveal routing:
@@ -12,7 +12,6 @@ import AislopdeskClient
 ///   ``revealPane(byIDString:)`` focus + centre the originating pane (no-op when it is gone).
 @MainActor
 final class ExplicitNotificationTests: XCTestCase {
-
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
         WorkspaceStore(restoring: restoring, makeSession: { FakePaneSession($0) })
     }
@@ -39,9 +38,9 @@ final class ExplicitNotificationTests: XCTestCase {
 
     // MARK: - Store routing
 
-    func testHandlePaneNotificationForwardsToHook() {
+    func testHandlePaneNotificationForwardsToHook() throws {
         let store = makeStore()
-        let paneID = store.focusedPane!
+        let paneID = try XCTUnwrap(store.focusedPane)
         var received: (PaneID, String, String, String)?
         store.onPaneNotification = { id, paneTitle, title, body in received = (id, paneTitle, title, body) }
 
@@ -56,10 +55,18 @@ final class ExplicitNotificationTests: XCTestCase {
     func testRevealPaneFocusesAndCenters() {
         let a = PaneID(), b = PaneID()
         let items = [
-            CanvasItem(id: a, spec: PaneSpec(kind: .terminal, title: "A"),
-                       frame: CGRect(x: 0, y: 0, width: 480, height: 320), z: 0),
-            CanvasItem(id: b, spec: PaneSpec(kind: .terminal, title: "B"),
-                       frame: CGRect(x: 3000, y: 2000, width: 480, height: 320), z: 1),
+            CanvasItem(
+                id: a,
+                spec: PaneSpec(kind: .terminal, title: "A"),
+                frame: CGRect(x: 0, y: 0, width: 480, height: 320),
+                z: 0,
+            ),
+            CanvasItem(
+                id: b,
+                spec: PaneSpec(kind: .terminal, title: "B"),
+                frame: CGRect(x: 3000, y: 2000, width: 480, height: 320),
+                z: 1,
+            ),
         ]
         let store = makeStore(restoring: Workspace(canvas: Canvas(items: items), focusedPane: a))
 
@@ -70,30 +77,30 @@ final class ExplicitNotificationTests: XCTestCase {
         XCTAssertEqual(store.workspace.canvas.camera.origin, expected)
     }
 
-    func testRevealPaneByIDStringRoundTrips() {
+    func testRevealPaneByIDStringRoundTrips() throws {
         let store = makeStore()
-        let id = store.focusedPane!
+        let id = try XCTUnwrap(store.focusedPane)
         // A valid id string reveals; an unknown/garbage id is a no-op (must not trap).
         store.revealPane(byIDString: id.raw.uuidString)
         XCTAssertEqual(store.focusedPane, id)
         store.revealPane(byIDString: "not-a-uuid")
-        store.revealPane(byIDString: UUID().uuidString)   // valid shape, unknown pane
+        store.revealPane(byIDString: UUID().uuidString) // valid shape, unknown pane
         XCTAssertEqual(store.focusedPane, id, "unknown ids leave focus untouched")
     }
 
-    func testRevealGonePaneIsNoop() {
+    func testRevealGonePaneIsNoop() throws {
         let store = makeStore()
-        let id = store.focusedPane!
+        let id = try XCTUnwrap(store.focusedPane)
         store.closePane(id)
-        store.revealPane(id)   // must not trap; nothing to focus
+        store.revealPane(id) // must not trap; nothing to focus
         XCTAssertNil(store.focusedPane)
     }
 
     // MARK: - Event plumbing (client Event → store hook)
 
-    func testNotificationEventReachesTheHookViaTheConnection() {
+    func testNotificationEventReachesTheHookViaTheConnection() throws {
         let store = makeStore()
-        let paneID = store.focusedPane!
+        let paneID = try XCTUnwrap(store.focusedPane)
         var received: (String, String, String)?
         store.onPaneNotification = { _, paneTitle, title, body in received = (paneTitle, title, body) }
 

@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskClient
+import Foundation
 
 // MARK: - ConnectionPresenter (raw transport state → human, actionable copy)
 
@@ -46,14 +46,16 @@ public enum ConnectionPresenter {
         // carries the word "handshake"). Distinct from "refused": something IS listening, it just isn't
         // a compatible aislopdesk-hostd.
         if lower.contains("handshake") {
-            return "The host answered but isn't a compatible aislopdesk host — check it's running aislopdesk-hostd and that the versions match."
+            return "The host answered but isn't a compatible aislopdesk host — check it's running "
+                + "aislopdesk-hostd and that the versions match."
         }
         // A clean drop mid-session (receiveFailed → "Connection lost", or an EOF / closed-by-peer): the
         // link is gone, not refused. Auto-reconnect handles a transient drop; a terminal .failed here
         // means it gave up — say so and offer Retry.
         if lower.contains("connection lost") || lower.contains("connection closed")
             || lower.contains("eof") || lower.contains("not connected") || lower.contains("enotconn")
-            || lower.contains("broken pipe") || lower.contains("epipe") {
+            || lower.contains("broken pipe") || lower.contains("epipe")
+        {
             return "Connection lost — the host or network dropped. Check the host is up, then Retry."
         }
         // A bare "Connection failed" (NWConnection failed before readiness with no more specific cause):
@@ -69,19 +71,19 @@ public enum ConnectionPresenter {
     public static func headline(for status: ConnectionStatus) -> String {
         switch status {
         case .disconnected:
-            return "Disconnected"
+            "Disconnected"
         case .connecting:
-            return "Connecting…"
+            "Connecting…"
         case .connected:
-            return "Connected"
+            "Connected"
         case let .reconnecting(attempt, _):
-            return attempt > 0
+            attempt > 0
                 ? "Reconnecting — attempt \(attempt) of \(maxReconnectAttempts)"
                 : "Reconnecting…"
         case .unreachable:
-            return "Unreachable — the host stopped answering. Check it, then Retry."
+            "Unreachable — the host stopped answering. Check it, then Retry."
         case let .failed(raw):
-            return friendlyFailure(raw)
+            friendlyFailure(raw)
         }
     }
 
@@ -97,11 +99,11 @@ public enum ConnectionPresenter {
     public static func shortLabel(for status: ConnectionStatus) -> String {
         switch status {
         case let .reconnecting(attempt, _) where attempt > 0:
-            return "reconnecting \(attempt)/\(maxReconnectAttempts)"
+            "reconnecting \(attempt)/\(maxReconnectAttempts)"
         case .failed:
-            return "failed"
+            "failed"
         default:
-            return status.label
+            status.label
         }
     }
 }

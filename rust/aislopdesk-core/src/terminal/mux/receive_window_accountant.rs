@@ -30,13 +30,13 @@ impl ReceiveWindowAccountant {
 
     /// The receive window size.
     #[must_use]
-    pub fn initial_window(&self) -> i64 {
+    pub const fn initial_window(&self) -> i64 {
         self.initial_window
     }
 
     /// Bytes consumed but not yet granted back to the sender.
     #[must_use]
-    pub fn pending_credit(&self) -> i64 {
+    pub const fn pending_credit(&self) -> i64 {
         self.pending_credit
     }
 

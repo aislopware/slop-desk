@@ -26,7 +26,7 @@ public struct ReceiveWindowAccountant: Sendable, Equatable {
     /// Creates an accountant for a window of `initialWindow` bytes (clamped non-negative).
     public init(initialWindow: Int) {
         self.initialWindow = max(0, initialWindow)
-        self.pendingCredit = 0
+        pendingCredit = 0
     }
 
     /// The half-window replenish threshold: once `pendingCredit` reaches this, emit a grant.

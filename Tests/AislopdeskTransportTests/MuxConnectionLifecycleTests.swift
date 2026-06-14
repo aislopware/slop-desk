@@ -1,5 +1,5 @@
-import XCTest
 import AislopdeskProtocol
+import XCTest
 @testable import AislopdeskTransport
 
 /// Lifecycle tests for ``MuxNWConnection`` host-side teardown (deep-hunt R5, rank 3): the host
@@ -9,8 +9,9 @@ import AislopdeskProtocol
 /// (in-memory links, no socket / HostServer).
 @MainActor
 final class MuxConnectionLifecycleTests: XCTestCase {
-
-    private func makeHost() async -> (host: MuxNWConnection, clientControl: InMemoryMuxLink, clientData: InMemoryMuxLink) {
+    private func makeHost() async
+        -> (host: MuxNWConnection, clientControl: InMemoryMuxLink, clientData: InMemoryMuxLink)
+    {
         let (cc, hc) = InMemoryMuxLink.pair()
         let (cd, hd) = InMemoryMuxLink.pair()
         let host = MuxNWConnection(role: .host, controlLink: hc, dataLink: hd)
@@ -27,14 +28,16 @@ final class MuxConnectionLifecycleTests: XCTestCase {
         do {
             let sentinel = Sentinel()
             weakSentinel = sentinel
-            await host.setHostOpenHandler { _ in _ = sentinel }     // strong-captures the sentinel
+            await host.setHostOpenHandler { _ in _ = sentinel } // strong-captures the sentinel
             await host.setHostCloseHandler { _ in _ = sentinel }
             await host.setLinkDownHandler { _ = sentinel }
         }
         XCTAssertNotNil(weakSentinel, "the host handlers retain the sentinel before close()")
         await host.close()
-        XCTAssertNil(weakSentinel,
-                     "close() must release the host handlers → the captured sentinel deallocs (cycle broken)")
+        XCTAssertNil(
+            weakSentinel,
+            "close() must release the host handlers → the captured sentinel deallocs (cycle broken)",
+        )
         _ = (cc, cd) // keep the client ends alive for the duration of the test
     }
 
@@ -44,7 +47,8 @@ final class MuxConnectionLifecycleTests: XCTestCase {
         let (host, cc, cd) = await makeHost()
         let counter = Counter()
         await host.setLinkDownHandler { counter.bump() }
-        cd.fail(); cc.fail()                  // both links drop (a TCP reset kills both)
+        cd.fail()
+        cc.fail() // both links drop (a TCP reset kills both)
         try await pollUntil { await host.isDead }
         try await Task.sleep(for: .milliseconds(40)) // let both receive loops finish processing
         XCTAssertEqual(counter.value, 1, "link-down fires exactly once on a hard failure (one-shot across both links)")
@@ -54,7 +58,8 @@ final class MuxConnectionLifecycleTests: XCTestCase {
     /// reaped: installing the hook after the failure fires it immediately.
     func testLinkDownHandlerInstalledAfterFailureFiresImmediately() async throws {
         let (host, cc, cd) = await makeHost()
-        cd.fail(); cc.fail()
+        cd.fail()
+        cc.fail()
         try await pollUntil { await host.isDead }
         let counter = Counter()
         await host.setLinkDownHandler { counter.bump() } // installed AFTER the drop
@@ -85,7 +90,8 @@ final class MuxConnectionLifecycleTests: XCTestCase {
         let reaped = IDRecorder()
         await host.setHostOpenHandler { open in Task { await host.sendOpenAck(open.channelID, accepted: true) } }
         await host.setHostCloseHandler { id in reaped.add(id) }
-        await client.start(); await host.start()
+        await client.start()
+        await host.start()
 
         // Client opens a channel → the host registers a LIVE channel (data + control sub-channels).
         let (dataCh, _) = try await client.openChannel(sessionID: UUID(), lastReceivedSeq: 0)
@@ -97,8 +103,10 @@ final class MuxConnectionLifecycleTests: XCTestCase {
         // own reap plus the cancelled data-loop's `finishLink` reap can both run — which is harmless:
         // `HostServer.removeMuxSession` is idempotent (map-removal guard), so the PTY shuts down once.
         // The load-bearing invariant is "the live channel WAS reaped, and no OTHER channel was."
-        XCTAssertFalse(reaped.ids.isEmpty,
-                       "close() must reap the live host channel so its PTY/fd/child is not leaked (control-first drop)")
+        XCTAssertFalse(
+            reaped.ids.isEmpty,
+            "close() must reap the live host channel so its PTY/fd/child is not leaked (control-first drop)",
+        )
         XCTAssertEqual(Set(reaped.ids), [dataCh.channelID], "only the live channel is reaped, nothing spurious")
         _ = (cc, cd) // keep the client ends alive for the test
     }
@@ -113,8 +121,11 @@ final class MuxConnectionLifecycleTests: XCTestCase {
         let client = MuxNWConnection(role: .client, controlLink: cc, dataLink: cd)
         let host = MuxNWConnection(role: .host, controlLink: hc, dataLink: hd)
         let opens = Counter()
-        await host.setHostOpenHandler { open in opens.bump(); Task { await host.sendOpenAck(open.channelID, accepted: true) } }
-        await client.start(); await host.start()
+        await host.setHostOpenHandler { open in opens.bump()
+            Task { await host.sendOpenAck(open.channelID, accepted: true) }
+        }
+        await client.start()
+        await host.start()
 
         let cap = MuxFlowControl.maxChannelsPerConnection
         for _ in 0..<(cap + 25) {
@@ -122,13 +133,19 @@ final class MuxConnectionLifecycleTests: XCTestCase {
         }
         try await pollUntil(timeout: .seconds(5)) { opens.value >= cap }
         try await Task.sleep(for: .milliseconds(150)) // let any past-cap opens route (they must be refused)
-        XCTAssertEqual(opens.value, cap,
-                       "the host registers at most \(cap) channels and refuses opens past the cap (fork-bomb cap)")
+        XCTAssertEqual(
+            opens.value,
+            cap,
+            "the host registers at most \(cap) channels and refuses opens past the cap (fork-bomb cap)",
+        )
         // R7 #6: the ROUTER TABLE must also stay bounded — a refused open must NOT grow dataTable.states
         // (the cap check now runs BEFORE the router records the id). Without the fix it would be cap+25.
-        let tableCount = await host._dataTableStateCountForTesting
-        XCTAssertLessThanOrEqual(tableCount, cap,
-                                 "refused over-cap opens must not grow the router table (cheap memory-DoS closed)")
+        let tableCount = await host.dataTableStateCountForTesting
+        XCTAssertLessThanOrEqual(
+            tableCount,
+            cap,
+            "refused over-cap opens must not grow the router table (cheap memory-DoS closed)",
+        )
         _ = (cc, cd)
     }
 
@@ -136,7 +153,7 @@ final class MuxConnectionLifecycleTests: XCTestCase {
     /// the just-registered sub-channels (decoder + inbound continuation + window accountant) leak forever
     /// and keep `hasLiveChannels` true. We open a channel on a connection whose data link throws on send,
     /// then assert no ghost channel was left behind.
-    func testOpenChannelCleansUpPartialRegistrationOnSendFailure() async throws {
+    func testOpenChannelCleansUpPartialRegistrationOnSendFailure() async {
         let (cc, _) = InMemoryMuxLink.pair()
         let failingData = SendFailingMuxLink()
         let client = MuxNWConnection(role: .client, controlLink: cc, dataLink: failingData)
@@ -170,26 +187,42 @@ final class MuxConnectionLifecycleTests: XCTestCase {
             stream = AsyncThrowingStream { c = $0 } // never yields → link stays "alive" until a pipelined failure
             continuation = c
         }
+
         var receiveChunks: AsyncThrowingStream<Data, Error> { stream }
-        func send(_ data: Data) async throws { throw AislopdeskTransportError.notConnected("send failed (test)") }
-        func sendPipelined(_ data: Data) {
+        func send(_: Data) throws { throw AislopdeskTransportError.notConnected("send failed (test)") }
+        func sendPipelined(_: Data) {
             continuation.finish(throwing: AislopdeskTransportError.sendFailed("pipelined send failed (test)"))
         }
-        func close() async {}
+
+        func close() {}
     }
 
     private final class IDRecorder: @unchecked Sendable {
         private let lock = NSLock()
         private var _ids: [UInt32] = []
-        func add(_ id: UInt32) { lock.lock(); _ids.append(id); lock.unlock() }
-        var ids: [UInt32] { lock.lock(); defer { lock.unlock() }; return _ids }
+        func add(_ id: UInt32) { lock.lock()
+            _ids.append(id)
+            lock.unlock()
+        }
+
+        var ids: [UInt32] { lock.lock()
+            defer { lock.unlock() }
+            return _ids
+        }
     }
 
     private final class Counter: @unchecked Sendable {
         private let lock = NSLock()
         private var n = 0
-        func bump() { lock.lock(); n += 1; lock.unlock() }
-        var value: Int { lock.lock(); defer { lock.unlock() }; return n }
+        func bump() { lock.lock()
+            n += 1
+            lock.unlock()
+        }
+
+        var value: Int { lock.lock()
+            defer { lock.unlock() }
+            return n
+        }
     }
 
     private func pollUntil(timeout: Duration = .seconds(2), _ cond: @Sendable () async -> Bool) async throws {

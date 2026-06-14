@@ -30,7 +30,8 @@ public enum LiveBitratePolicy {
     /// (`encodeLiveCrispKeyframe`) restores razor-sharp text the instant the screen goes still. With the
     /// `MaxAllowedFrameQP=40` ceiling a leaner budget COARSENS motion frames, never drops them.
     public static let bitsPerPixelPerFrame: Double = {
-        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_BPP"], let v = Double(s), v > 0, v <= 1.0 { return v }
+        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_BPP"], let v = Double(s), v > 0,
+           v <= 1.0 { return v }
         return 0.15
     }()
 
@@ -53,7 +54,7 @@ public enum LiveBitratePolicy {
             pixelHeight: pixelHeight,
             fps: fps,
             floor: floor,
-            bitsPerPixel: bitsPerPixelPerFrame
+            bitsPerPixel: bitsPerPixelPerFrame,
         )
     }
 }

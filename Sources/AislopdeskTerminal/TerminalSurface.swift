@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskProtocol
+import Foundation
 
 /// The seam between the byte pipeline and a terminal renderer.
 ///
@@ -45,10 +45,10 @@ public protocol TerminalSurface: AnyObject {
     var onWrite: ((Data) -> Void)? { get set }
 }
 
-extension TerminalSurface {
+public extension TerminalSurface {
     /// Default: feed each chunk individually (per-chunk flush). Renderers with a
     /// write/flush split override for one flush per batch.
-    public func feedBatch(_ chunks: ArraySlice<Data>) {
+    func feedBatch(_ chunks: ArraySlice<Data>) {
         for chunk in chunks {
             feed(chunk)
         }

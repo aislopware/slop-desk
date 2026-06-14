@@ -81,8 +81,8 @@ public struct FPSGovernor: Sendable, Equatable {
     public init(baseFps: Int) {
         let base = max(1, baseFps)
         self.baseFps = base
-        self.ladder = Self.ladder(baseFps: base)
-        self.currentFps = self.ladder[0]
+        ladder = Self.ladder(baseFps: base)
+        currentFps = ladder[0]
     }
 
     /// Clean-divisor ladder: divisors {1,2,3,4} of `baseFps`, floored at ``minFps``, dedup,
@@ -122,14 +122,15 @@ public struct FPSGovernor: Sendable, Equatable {
         guard ticks >= Self.warmupTicks, bytesPerFrameEWMA > 0, targetBps > 0 else { return currentFps }
         let offeredBps = bytesPerFrameEWMA * 8 * Double(currentFps)
         let overBudget = offeredBps > Double(targetBps) * Self.headroomFactor
-        if overBudget && congested {
+        if overBudget, congested {
             cleanRun = 0
             overBudgetRun += 1
             if overBudgetRun >= Self.stepDownTicks, ticks >= downHoldUntilTick,
-               let next = ladder.first(where: { $0 < currentFps }) {           // ONE rung down
+               let next = ladder.first(where: { $0 < currentFps })
+            { // ONE rung down
                 currentFps = next
                 overBudgetRun = 0
-                downHoldUntilTick = ticks + Self.stepDownHoldTicks             // one cut per window
+                downHoldUntilTick = ticks + Self.stepDownHoldTicks // one cut per window
             }
         } else if overBudget {
             // Content-heavy but the link is holding (no congestion evidence): NEVER step down on
@@ -140,10 +141,11 @@ public struct FPSGovernor: Sendable, Equatable {
             overBudgetRun = 0
             cleanRun += 1
             if currentFps < baseFps, cleanRun >= Self.stepUpTicks,
-               let next = ladder.last(where: { $0 > currentFps }),             // one rung UP
-               bytesPerFrameEWMA * 8 * Double(next) <= Double(targetBps) {     // strict fit, NO headroom
+               let next = ladder.last(where: { $0 > currentFps }), // one rung UP
+               bytesPerFrameEWMA * 8 * Double(next) <= Double(targetBps)
+            { // strict fit, NO headroom
                 currentFps = next
-                cleanRun = 0                                                   // re-arm per rung
+                cleanRun = 0 // re-arm per rung
             }
         }
         return currentFps
@@ -156,8 +158,13 @@ public struct FPSGovernor: Sendable, Equatable {
     /// included because that controller only cuts on positive evidence, making it a clean,
     /// already-debounced congestion proxy — and it automatically composes with any new ABR cut
     /// mechanism (anything that lowers `current` feeds this arm).
-    public static func congestionEvidence(lastLossSample: Double, smoothedRTTMillis: Double,
-                                          minRTTMillis: Double, abrCurrent: Int?, abrCeiling: Int?) -> Bool {
+    public static func congestionEvidence(
+        lastLossSample: Double,
+        smoothedRTTMillis: Double,
+        minRTTMillis: Double,
+        abrCurrent: Int?,
+        abrCeiling: Int?,
+    ) -> Bool {
         if let cur = abrCurrent, let ceil = abrCeiling, cur < ceil { return true }
         if lastLossSample > LiveCongestionController.lossThreshold { return true }
         let slack = LiveCongestionController.effectiveSlackMillis(minRTTMillis: minRTTMillis)
@@ -169,12 +176,14 @@ public struct FPSGovernor: Sendable, Equatable {
     // MARK: Env parsing helpers
 
     private static func envInt(_ key: String, _ fallback: Int, min lo: Int, max hi: Int) -> Int {
-        guard let s = ProcessInfo.processInfo.environment[key], let v = Int(s), v >= lo, v <= hi else { return fallback }
+        guard let s = ProcessInfo.processInfo.environment[key], let v = Int(s), v >= lo,
+              v <= hi else { return fallback }
         return v
     }
 
     private static func envDouble(_ key: String, _ fallback: Double, min lo: Double, max hi: Double) -> Double {
-        guard let s = ProcessInfo.processInfo.environment[key], let v = Double(s), v >= lo, v <= hi else { return fallback }
+        guard let s = ProcessInfo.processInfo.environment[key], let v = Double(s), v >= lo,
+              v <= hi else { return fallback }
         return v
     }
 }
@@ -207,8 +216,12 @@ public struct EncodeCadenceGate: Sendable, Equatable {
     /// One delivered-frame admission decision. `targetIntervalSeconds ≤ 0` is inert (always
     /// admit — the ungoverned/base-fps case never consults the schedule). The first call admits
     /// and anchors the schedule.
-    public mutating func admit(now: Double, targetIntervalSeconds: Double,
-                               toleranceSeconds: Double, forced: Bool) -> Bool {
+    public mutating func admit(
+        now: Double,
+        targetIntervalSeconds: Double,
+        toleranceSeconds: Double,
+        forced: Bool,
+    ) -> Bool {
         guard targetIntervalSeconds > 0 else { return true }
         if forced || nextDueSeconds == 0 {
             nextDueSeconds = now + targetIntervalSeconds
@@ -216,9 +229,9 @@ public struct EncodeCadenceGate: Sendable, Equatable {
         }
         guard now + toleranceSeconds >= nextDueSeconds else { return false }
         if now - nextDueSeconds > targetIntervalSeconds {
-            nextDueSeconds = now + targetIntervalSeconds   // stall: re-anchor, no burst catch-up
+            nextDueSeconds = now + targetIntervalSeconds // stall: re-anchor, no burst catch-up
         } else {
-            nextDueSeconds += targetIntervalSeconds        // drift-free schedule advance
+            nextDueSeconds += targetIntervalSeconds // drift-free schedule advance
         }
         return true
     }
@@ -235,7 +248,7 @@ public struct EncodeCadenceGate: Sendable, Equatable {
 /// governor's bytes-EWMA, so the budget test self-accounts for them.
 public enum SelfHealCadence {
     public static func effectiveEvery(baseEvery: Int, baseFps: Int, governedFps: Int) -> Int {
-        guard baseEvery > 0 else { return 0 }   // 0 = disabled, passthrough
+        guard baseEvery > 0 else { return 0 } // 0 = disabled, passthrough
         return max(2, Int((Double(baseEvery) * Double(governedFps) / Double(max(1, baseFps))).rounded()))
     }
 }

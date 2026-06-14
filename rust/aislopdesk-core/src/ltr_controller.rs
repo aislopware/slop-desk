@@ -62,7 +62,7 @@ impl LtrController {
 
     /// Recorded `frame_id → token` mappings awaiting a client ack.
     #[must_use]
-    pub fn frame_tokens(&self) -> &HashMap<u32, i64> {
+    pub const fn frame_tokens(&self) -> &HashMap<u32, i64> {
         &self.frame_tokens
     }
 

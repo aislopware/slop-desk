@@ -1,5 +1,5 @@
-import XCTest
 import AislopdeskVideoProtocol
+import XCTest
 @testable import AislopdeskVideoHost
 
 /// PURE idle-timeout reap decision (CONCURRENCY-HOST-1 crash-without-bye + mux analogue).
@@ -22,14 +22,14 @@ final class IdleReapDeciderTests: XCTestCase {
     }
 
     // 2. THE safety rule: a flow that NEVER proved keepalive is NEVER reaped, no matter how silent.
-    func testNeverReapWithoutKeepalive() {
+    func testNeverReapWithoutKeepalive() throws {
         var d = make()
         for t in stride(from: 0.0, through: 25.0, by: 5.0) {
-            d.noteInbound(id: 1, now: t, isKeepalive: false)   // media/input only, never a keepalive
+            d.noteInbound(id: 1, now: t, isKeepalive: false) // media/input only, never a keepalive
         }
-        XCTAssertEqual(d.reap(now: 1_000), [], "a flow that streams forever but never keepalives is never reaped")
+        XCTAssertEqual(d.reap(now: 1000), [], "a flow that streams forever but never keepalives is never reaped")
         XCTAssertNotNil(d.record(1), "the record still exists — it is simply not eligible")
-        XCTAssertFalse(d.record(1)!.sawKeepalive)
+        XCTAssertFalse(try XCTUnwrap(d.record(1)?.sawKeepalive))
     }
 
     // 3. keepalive refreshes lastInbound; sawKeepalive is STICKY (a later non-keepalive inbound still
@@ -37,10 +37,13 @@ final class IdleReapDeciderTests: XCTestCase {
     func testKeepaliveRefreshesAndStickyFlag() {
         var d = make()
         d.noteInbound(id: 1, now: 0, isKeepalive: true)
-        d.noteInbound(id: 1, now: 25, isKeepalive: false)   // a media datagram advances lastInbound
+        d.noteInbound(id: 1, now: 25, isKeepalive: false) // a media datagram advances lastInbound
         XCTAssertEqual(d.reap(now: 30), [], "lastInbound advanced to 25 ⇒ only 5s idle ⇒ not reapable")
-        XCTAssertEqual(d.reap(now: 55.001), [1],
-                       "55.001 - 25 > 30 AND sawKeepalive stayed true ⇒ reapable even though last inbound was non-keepalive")
+        XCTAssertEqual(
+            d.reap(now: 55.001),
+            [1],
+            "55.001 - 25 > 30 AND sawKeepalive stayed true ⇒ reapable even though last inbound was non-keepalive",
+        )
     }
 
     // 4. reconnect resets: forget() drops the record; a reused id starts a FRESH (unproven) record.
@@ -49,19 +52,22 @@ final class IdleReapDeciderTests: XCTestCase {
         d.noteInbound(id: 1, now: 0, isKeepalive: true)
         d.forget(id: 1)
         XCTAssertNil(d.record(1), "forget drops the record")
-        d.noteInbound(id: 1, now: 0, isKeepalive: false)   // fresh record under the same id (a reconnect)
-        XCTAssertEqual(d.reap(now: 1_000), [],
-                       "the fresh record never proved keepalive ⇒ never reaped (a reconnect under a reused id starts safe)")
+        d.noteInbound(id: 1, now: 0, isKeepalive: false) // fresh record under the same id (a reconnect)
+        XCTAssertEqual(
+            d.reap(now: 1000),
+            [],
+            "the fresh record never proved keepalive ⇒ never reaped (a reconnect under a reused id starts safe)",
+        )
     }
 
     // 5. multi-lane independence: only the silent-keepalive-proven lane is due; the others survive,
     //    and reaping/forgetting it leaves them untouched.
     func testMultiLaneIndependence() {
         var d = make()
-        d.noteInbound(id: 1, now: 0, isKeepalive: true)    // proven + will go silent → reapable
-        d.noteInbound(id: 2, now: 0, isKeepalive: true)    // proven but recently active
-        d.noteInbound(id: 2, now: 40, isKeepalive: false)  // lane 2 still talking at t=40
-        d.noteInbound(id: 3, now: 0, isKeepalive: false)   // never proved keepalive → never reapable
+        d.noteInbound(id: 1, now: 0, isKeepalive: true) // proven + will go silent → reapable
+        d.noteInbound(id: 2, now: 0, isKeepalive: true) // proven but recently active
+        d.noteInbound(id: 2, now: 40, isKeepalive: false) // lane 2 still talking at t=40
+        d.noteInbound(id: 3, now: 0, isKeepalive: false) // never proved keepalive → never reapable
         let due = d.reap(now: 45).sorted()
         XCTAssertEqual(due, [1], "only lane 1 (proven + silent ≥ 30) is due")
         d.forget(id: 1)
@@ -86,8 +92,11 @@ final class IdleReapDeciderTests: XCTestCase {
     //    constant edit from making the host trigger-happy. The shipping ratio is 6× (30s / 5s).
     func testKeepaliveRatioInvariant() {
         let ratio = KeepaliveTiming.idleTimeout / KeepaliveTiming.keepaliveInterval
-        XCTAssertGreaterThanOrEqual(ratio, 3,
-                                    "idleTimeout must be ≥ 3× the keepalive interval (RFC 9000 §10.1.2 / WireGuard) so a burst loss can't false-reap")
+        XCTAssertGreaterThanOrEqual(
+            ratio,
+            3,
+            "idleTimeout must be ≥ 3× the keepalive interval (RFC 9000 §10.1.2 / WireGuard) so a burst loss can't false-reap",
+        )
         XCTAssertEqual(KeepaliveTiming.keepaliveInterval, 5)
         XCTAssertEqual(KeepaliveTiming.idleTimeout, 30)
         XCTAssertEqual(KeepaliveTiming.reaperTick, 5)

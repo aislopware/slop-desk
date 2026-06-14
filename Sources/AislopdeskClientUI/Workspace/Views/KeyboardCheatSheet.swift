@@ -131,9 +131,11 @@ struct KeyboardCheatSheetView: View {
                 Label("Keyboard Shortcuts", systemImage: "keyboard")
                     .font(.headline)
                 Spacer()
-                Button { isPresented = false } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut(.cancelAction)
+                Button { isPresented = false } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
             }
             .padding(14)
             Divider()
@@ -165,14 +167,17 @@ struct KeyboardCheatSheetView: View {
         }
         .frame(maxWidth: 520, maxHeight: 540)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay { RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1) }
+        .overlay { RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(
+            Color.primary.opacity(0.08),
+            lineWidth: 1,
+        ) }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .shadow(color: .black.opacity(0.28), radius: 28, y: 12)
         .padding(.horizontal, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(.top, 70)
         #if os(macOS)
-        .onExitCommand { isPresented = false }
+            .onExitCommand { isPresented = false }
         #endif
     }
 }

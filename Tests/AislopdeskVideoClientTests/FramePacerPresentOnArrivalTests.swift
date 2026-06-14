@@ -1,5 +1,5 @@
-import XCTest
 import CoreVideo
+import XCTest
 @testable import AislopdeskVideoClient
 
 /// PRESENT-ON-ARRIVAL → PRESENT-ON-DECODE (2026-06-10): a frame that lands in an EMPTY queue
@@ -9,10 +9,16 @@ import CoreVideo
 /// and was dropped. The decision is a pure static (matrix-tested below); the behavioral test
 /// drives the real submit → main-actor hop → render path through the run loop.
 final class FramePacerPresentOnArrivalTests: XCTestCase {
-
     private func makePixelBuffer() -> CVPixelBuffer {
         var pb: CVPixelBuffer?
-        let status = CVPixelBufferCreate(kCFAllocatorDefault, 4, 4, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, nil, &pb)
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            4,
+            4,
+            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            nil,
+            &pb,
+        )
         precondition(status == kCVReturnSuccess && pb != nil, "CVPixelBufferCreate failed (\(status))")
         return pb!
     }
@@ -23,14 +29,34 @@ final class FramePacerPresentOnArrivalTests: XCTestCase {
         // The canonical fire: arrival lands in an empty queue and completes depth 1 — present on
         // decode, regardless of how recently the display ticked (the old starved-only gate raced
         // throttled ticks and lost; see the FramePacer header HISTORY note).
-        XCTAssertTrue(FramePacer.shouldPresentOnArrival(enabled: true, queueWasEmpty: true, queueCount: 1, liveDepth: 1))
+        XCTAssertTrue(FramePacer.shouldPresentOnArrival(
+            enabled: true,
+            queueWasEmpty: true,
+            queueCount: 1,
+            liveDepth: 1,
+        ))
 
         // Disabled (AISLOPDESK_PRESENT_ON_ARRIVAL=0) → never.
-        XCTAssertFalse(FramePacer.shouldPresentOnArrival(enabled: false, queueWasEmpty: true, queueCount: 1, liveDepth: 1))
+        XCTAssertFalse(FramePacer.shouldPresentOnArrival(
+            enabled: false,
+            queueWasEmpty: true,
+            queueCount: 1,
+            liveDepth: 1,
+        ))
         // Queue non-empty at arrival (display fell behind / burst) → vsync cadence owns presentation.
-        XCTAssertFalse(FramePacer.shouldPresentOnArrival(enabled: true, queueWasEmpty: false, queueCount: 2, liveDepth: 1))
+        XCTAssertFalse(FramePacer.shouldPresentOnArrival(
+            enabled: true,
+            queueWasEmpty: false,
+            queueCount: 2,
+            liveDepth: 1,
+        ))
         // Depth ≥ 2: an empty-queue append yields count 1 < depth — priming still owns the hold.
-        XCTAssertFalse(FramePacer.shouldPresentOnArrival(enabled: true, queueWasEmpty: true, queueCount: 1, liveDepth: 2))
+        XCTAssertFalse(FramePacer.shouldPresentOnArrival(
+            enabled: true,
+            queueWasEmpty: true,
+            queueCount: 1,
+            liveDepth: 2,
+        ))
     }
 
     // MARK: Behavioral (real submit → main hop → render)
@@ -42,8 +68,15 @@ final class FramePacerPresentOnArrivalTests: XCTestCase {
         final class RenderBox: @unchecked Sendable {
             private let lock = NSLock()
             private var frames: [CVImageBuffer] = []
-            func note(_ f: CVImageBuffer) { lock.lock(); frames.append(f); lock.unlock() }
-            var last: CVImageBuffer? { lock.lock(); defer { lock.unlock() }; return frames.last }
+            func note(_ f: CVImageBuffer) { lock.lock()
+                frames.append(f)
+                lock.unlock()
+            }
+
+            var last: CVImageBuffer? { lock.lock()
+                defer { lock.unlock() }
+                return frames.last
+            }
         }
         let box = RenderBox()
         let rendered = expectation(description: "render fired from the arrival hop")
@@ -63,8 +96,15 @@ final class FramePacerPresentOnArrivalTests: XCTestCase {
         final class Flag: @unchecked Sendable {
             private let lock = NSLock()
             private var v = false
-            func set() { lock.lock(); v = true; lock.unlock() }
-            var isSet: Bool { lock.lock(); defer { lock.unlock() }; return v }
+            func set() { lock.lock()
+                v = true
+                lock.unlock()
+            }
+
+            var isSet: Bool { lock.lock()
+                defer { lock.unlock() }
+                return v
+            }
         }
         let disabledFlag = Flag()
         let disabled = FramePacer(targetDepth: 1, presentOnArrival: false, renderCallback: { _ in disabledFlag.set() })

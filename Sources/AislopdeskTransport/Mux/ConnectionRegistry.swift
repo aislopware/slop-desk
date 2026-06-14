@@ -21,6 +21,7 @@ import Foundation
 /// The physical ``MuxNWConnection`` is built via an injected `makeConnection` factory, so the
 /// pool's refcount/teardown logic is provable with an in-memory connection (no socket, no
 /// `HostServer`). Production injects a factory that opens real `NWConnection`-backed links.
+@preconcurrency
 @MainActor
 public final class ConnectionRegistry {
     /// One shared connection's pool entry: the connection + the set of live channel ids on it.
@@ -58,8 +59,9 @@ public final class ConnectionRegistry {
 
     /// - Parameters:
     ///   - makeConnection: factory for a fresh shared connection (production: real NWConnections).
+    @preconcurrency
     public init(
-        makeConnection: @escaping @MainActor (String, UInt16) async throws -> MuxNWConnection
+        makeConnection: @escaping @MainActor (String, UInt16) async throws -> MuxNWConnection,
     ) {
         self.makeConnection = makeConnection
     }
@@ -85,7 +87,7 @@ public final class ConnectionRegistry {
         host: String,
         port: UInt16,
         sessionID: UUID,
-        lastReceivedSeq: Int64
+        lastReceivedSeq: Int64,
     ) async throws -> MuxAcquisition {
         let key = Self.key(host, port)
         let connection = try await sharedConnection(host: host, port: port, key: key)
@@ -110,7 +112,7 @@ public final class ConnectionRegistry {
             pair = try await connection.openChannel(
                 sessionID: sessionID,
                 lastReceivedSeq: lastReceivedSeq,
-                channelClass: 0
+                channelClass: 0,
             )
         } catch {
             // IDENTITY-GATE the cleanup (R8 #1, mirrors `release()` / `sharedConnection`): only touch
@@ -124,8 +126,9 @@ public final class ConnectionRegistry {
                 // whole connection is unusable. If no OTHER channel is live AND no other acquire is in
                 // flight on this endpoint, drop the dead connection + entry so the next acquire builds a
                 // fresh one instead of reusing a corpse. A surviving sibling/pending keeps it.
-                if (entries[key]?.channelIDs.isEmpty ?? true) && (entries[key]?.pendingAcquires ?? 0) == 0
-                    && !pinnedKeys.contains(key) {
+                if entries[key]?.channelIDs.isEmpty ?? true, (entries[key]?.pendingAcquires ?? 0) == 0,
+                   !pinnedKeys.contains(key)
+                {
                     entries.removeValue(forKey: key)
                     await connection.close()
                 }
@@ -180,7 +183,7 @@ public final class ConnectionRegistry {
                     // below (which shares a concurrent acquirer's IN-FLIGHT build) or build fresh.
                     if let rebuilt = entries[key]?.connection { return rebuilt }
                 } else if let rebuilt = entries[key]?.connection {
-                    return rebuilt   // a concurrent acquirer already replaced the corpse with a live one
+                    return rebuilt // a concurrent acquirer already replaced the corpse with a live one
                 }
                 // else entries[key] == nil (corpse evicted by a concurrent acquirer, its fresh one not
                 // yet stored): fall through to the `building` single-flight below, which returns that
@@ -190,7 +193,7 @@ public final class ConnectionRegistry {
             }
         }
         if let inFlight = building[key] {
-            return try await inFlight.value      // a concurrent first-acquire is already building it
+            return try await inFlight.value // a concurrent first-acquire is already building it
         }
         let task = Task { @MainActor in try await self.makeConnection(host, port) }
         building[key] = task
@@ -231,8 +234,9 @@ public final class ConnectionRegistry {
         // Tear down only when the LAST channel is gone AND no acquire is mid-open (pendingAcquires) AND
         // the endpoint is NOT pinned by the app-global connection — so an in-flight acquire's channel is
         // never stranded on a just-closed connection, and a pinned mux survives closing the last pane.
-        if entries[key]?.channelIDs.isEmpty == true && (entries[key]?.pendingAcquires ?? 0) == 0
-            && !pinnedKeys.contains(key) {
+        if entries[key]?.channelIDs.isEmpty == true, (entries[key]?.pendingAcquires ?? 0) == 0,
+           !pinnedKeys.contains(key)
+        {
             entries.removeValue(forKey: key)
             await connection.close()
         }
@@ -247,14 +251,14 @@ public final class ConnectionRegistry {
     /// drop rebuilds: `sharedConnection` evicts a dead pooled connection regardless of the pin.
     public func pin(host: String, port: UInt16) async throws {
         let key = Self.key(host, port)
-        pinnedKeys.insert(key)   // optimistic — protects the build from a racing last-channel teardown
+        pinnedKeys.insert(key) // optimistic — protects the build from a racing last-channel teardown
         let connection: MuxNWConnection
         do {
             connection = try await sharedConnection(host: host, port: port, key: key)
         } catch {
             // Build failed: drop the pin we optimistically set, unless a channel / another acquire still
             // wants this endpoint (then leave the entry's own lifecycle in charge).
-            if (entries[key]?.channelIDs.isEmpty ?? true) && (entries[key]?.pendingAcquires ?? 0) == 0 {
+            if entries[key]?.channelIDs.isEmpty ?? true, (entries[key]?.pendingAcquires ?? 0) == 0 {
                 pinnedKeys.remove(key)
             }
             throw error
@@ -266,8 +270,9 @@ public final class ConnectionRegistry {
         // concurrent dead-eviction rebuilt under this key during the await.
         if !pinnedKeys.contains(key),
            entries[key]?.connection === connection,
-           (entries[key]?.channelIDs.isEmpty ?? true),
-           (entries[key]?.pendingAcquires ?? 0) == 0 {
+           entries[key]?.channelIDs.isEmpty ?? true,
+           (entries[key]?.pendingAcquires ?? 0) == 0
+        {
             entries.removeValue(forKey: key)
             await connection.close()
         }
@@ -280,7 +285,7 @@ public final class ConnectionRegistry {
         let key = Self.key(host, port)
         pinnedKeys.remove(key)
         guard let connection = entries[key]?.connection else { return }
-        if entries[key]?.channelIDs.isEmpty == true && (entries[key]?.pendingAcquires ?? 0) == 0 {
+        if entries[key]?.channelIDs.isEmpty == true, (entries[key]?.pendingAcquires ?? 0) == 0 {
             entries.removeValue(forKey: key)
             await connection.close()
         }
@@ -292,6 +297,6 @@ public final class ConnectionRegistry {
     public func isConnectionAlive(host: String, port: UInt16) async -> Bool {
         let key = Self.key(host, port)
         guard let connection = entries[key]?.connection else { return false }
-        return !(await connection.isDead)
+        return await !(connection.isDead)
     }
 }

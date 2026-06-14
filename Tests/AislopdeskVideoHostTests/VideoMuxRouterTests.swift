@@ -1,12 +1,11 @@
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoHost
-import AislopdeskVideoProtocol
 
 /// PURE per-datagram mux routing: admit / retire / route decisions with the
 /// reconnect-generation drop. Mirrors `InputDatagramRouterTests`'s style (a pure
 /// router, a closed Decision enum, no socket / no SCStream).
 final class VideoMuxRouterTests: XCTestCase {
-
     func testRouteAdmittedChannelID() {
         var router = VideoMuxRouter()
         router.admit(11)
@@ -69,7 +68,8 @@ final class VideoMuxRouterTests: XCTestCase {
         var router = VideoMuxRouter()
         router.admit(3)
         guard case .drop = router.route(channelID: 3, channel: .video, bytesCount: 0) else {
-            return XCTFail("expected drop for an empty datagram")
+            XCTFail("expected drop for an empty datagram")
+            return
         }
     }
 }

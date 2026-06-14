@@ -1,5 +1,5 @@
-import XCTest
 import AislopdeskTransport
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Unit tests for ``AppConnection`` — the app-global connection model (docs/31): form validation, the
@@ -9,7 +9,6 @@ import AislopdeskTransport
 /// socket.
 @MainActor
 final class AppConnectionTests: XCTestCase {
-
     /// A registry whose `makeConnection` always throws — so `pin` fails immediately and `connect()` lands
     /// in `.failed` without any real network.
     private func failingRegistry() -> ConnectionRegistry {
@@ -23,19 +22,25 @@ final class AppConnectionTests: XCTestCase {
     func testValidationHintMatchesCanConnect() {
         let c = AppConnection(registry: failingRegistry())
 
-        c.host = ""; c.port = "7777"
+        c.host = ""
+        c.port = "7777"
         XCTAssertFalse(c.canConnect)
         XCTAssertEqual(c.validationHint, "Enter a host")
 
-        c.host = "example.com"; c.port = "abc"
+        c.host = "example.com"
+        c.port = "abc"
         XCTAssertFalse(c.canConnect)
         XCTAssertEqual(c.validationHint, "Port must be a number from 1–65535")
 
-        c.host = "example.com"; c.port = "0"   // parseable UInt16 but not a connectable port
+        c.host = "example.com"
+        c.port = "0" // parseable UInt16 but not a connectable port
         XCTAssertFalse(c.canConnect)
         XCTAssertEqual(c.validationHint, "Port must be a number from 1–65535")
 
-        c.host = "example.com"; c.port = "7420"; c.mediaPort = "9000"; c.cursorPort = "9000"
+        c.host = "example.com"
+        c.port = "7420"
+        c.mediaPort = "9000"
+        c.cursorPort = "9000"
         XCTAssertFalse(c.canConnect, "media and cursor ports must differ")
         XCTAssertEqual(c.validationHint, "Media and cursor ports must differ")
 
@@ -52,20 +57,28 @@ final class AppConnectionTests: XCTestCase {
         let c = AppConnection(registry: failingRegistry())
         var committed: ConnectionTarget?
         c.onTargetCommitted = { committed = $0 }
-        c.host = "10.0.0.5"; c.port = "7420"; c.mediaPort = "9000"; c.cursorPort = "9001"
+        c.host = "10.0.0.5"
+        c.port = "7420"
+        c.mediaPort = "9000"
+        c.cursorPort = "9001"
 
         await c.connect()
 
-        guard case .failed = c.status else { return XCTFail("expected .failed, got \(c.status)") }
-        XCTAssertEqual(c.target, ConnectionTarget(host: "10.0.0.5", port: 7420, mediaPort: 9000, cursorPort: 9001),
-                       "the parsed target is committed even on a failed connect")
+        guard case .failed = c.status else { XCTFail("expected .failed, got \(c.status)")
+            return
+        }
+        XCTAssertEqual(
+            c.target,
+            ConnectionTarget(host: "10.0.0.5", port: 7420, mediaPort: 9000, cursorPort: 9001),
+            "the parsed target is committed even on a failed connect",
+        )
         XCTAssertEqual(committed, c.target, "onTargetCommitted fires with the committed target")
     }
 
     /// An invalid form short-circuits to `.failed("invalid host/port")` without touching the registry.
     func testConnectWithInvalidFormIsFailed() async {
         let c = AppConnection(registry: failingRegistry())
-        c.host = ""   // invalid
+        c.host = "" // invalid
         await c.connect()
         XCTAssertEqual(c.status, .failed("invalid host/port"))
     }
@@ -73,8 +86,11 @@ final class AppConnectionTests: XCTestCase {
     /// `disconnect()` always lands `.disconnected` and marks the connection deliberately closed.
     func testDisconnectSurfacesDisconnected() async {
         let c = AppConnection(registry: failingRegistry())
-        c.host = "h"; c.port = "7420"; c.mediaPort = "9000"; c.cursorPort = "9001"
-        await c.connect()            // → .failed (throwing registry)
+        c.host = "h"
+        c.port = "7420"
+        c.mediaPort = "9000"
+        c.cursorPort = "9001"
+        await c.connect() // → .failed (throwing registry)
         await c.disconnect()
         XCTAssertEqual(c.status, .disconnected)
     }

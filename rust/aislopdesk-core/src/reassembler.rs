@@ -289,17 +289,16 @@ fn parity_group_size(fec: Option<&dyn FecScheme>, entry: &Pending) -> Option<usi
 /// `data_count == frag_count`.
 fn resolved_data_count(fec: Option<&dyn FecScheme>, entry: &Pending) -> usize {
     let total = usize::from(entry.frag_count);
-    if let Some(g) = parity_group_size(fec, entry) {
-        inverted_data_count(total, g)
-    } else {
-        entry.data_count.unwrap_or(total)
-    }
+    parity_group_size(fec, entry).map_or_else(
+        || entry.data_count.unwrap_or(total),
+        |g| inverted_data_count(total, g),
+    )
 }
 
 /// Inverts `frag_count = data_count + ceil(data_count / group_size)` to recover the data
 /// fragment count from the total. Monotonic in `data_count`, so a descending scan finds
 /// the unique solution. A zero `group_size` (defensive) returns `total` unchanged.
-fn inverted_data_count(total: usize, group_size: usize) -> usize {
+const fn inverted_data_count(total: usize, group_size: usize) -> usize {
     if group_size < 1 {
         return total;
     }

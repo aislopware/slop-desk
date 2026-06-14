@@ -5,7 +5,6 @@ import XCTest
 /// point (no Y flip for the click), the multi-monitor CG→Cocoa flip for screen pick,
 /// and Retina backingScaleFactor handling. Exhaustive single + multi-monitor + Retina.
 final class CoordinateMappingTests: XCTestCase {
-
     // MARK: normalised → host-window point (CG top-left, no Y flip)
 
     func testWindowPointCenterOfWindow() {
@@ -17,9 +16,15 @@ final class CoordinateMappingTests: XCTestCase {
     func testWindowPointCornersMapToWindowEdgesNoYFlip() {
         let bounds = VideoRect(x: 100, y: 200, width: 800, height: 600)
         // (0,0) = top-left of the window (CG top-left space — NOT flipped, doc 05 §2).
-        XCTAssertEqual(CoordinateMapping.windowPoint(normalized: VideoPoint(x: 0, y: 0), windowBounds: bounds), VideoPoint(x: 100, y: 200))
+        XCTAssertEqual(
+            CoordinateMapping.windowPoint(normalized: VideoPoint(x: 0, y: 0), windowBounds: bounds),
+            VideoPoint(x: 100, y: 200),
+        )
         // (1,1) = bottom-right.
-        XCTAssertEqual(CoordinateMapping.windowPoint(normalized: VideoPoint(x: 1, y: 1), windowBounds: bounds), VideoPoint(x: 900, y: 800))
+        XCTAssertEqual(
+            CoordinateMapping.windowPoint(normalized: VideoPoint(x: 1, y: 1), windowBounds: bounds),
+            VideoPoint(x: 900, y: 800),
+        )
     }
 
     func testWindowPointWindowAtNegativeOriginMultiMonitorLeft() {
@@ -58,7 +63,10 @@ final class CoordinateMappingTests: XCTestCase {
         // Cocoa space: primary frame (0,0,1920,1080); secondary Retina ABOVE it
         // occupies Cocoa y in [1080, 2520) (height 1440).
         let primary = ScreenInfo(cocoaFrame: VideoRect(x: 0, y: 0, width: 1920, height: 1080), backingScaleFactor: 1.0)
-        let retina = ScreenInfo(cocoaFrame: VideoRect(x: 0, y: 1080, width: 2560, height: 1440), backingScaleFactor: 2.0)
+        let retina = ScreenInfo(
+            cocoaFrame: VideoRect(x: 0, y: 1080, width: 2560, height: 1440),
+            backingScaleFactor: 2.0,
+        )
 
         // A window fully on the Retina display: in CG top-left space its top is above
         // the primary. Primary top is CG y=0; the secondary sits ABOVE, so CG y is
@@ -66,7 +74,7 @@ final class CoordinateMappingTests: XCTestCase {
         // entirely above the primary.
         let windowCG = VideoRect(x: 100, y: -1000, width: 1280, height: 800)
         let scale = CoordinateMapping.backingScaleFactor(
-            forWindowBoundsCG: windowCG, screens: [primary, retina], primaryHeight: primaryHeight
+            forWindowBoundsCG: windowCG, screens: [primary, retina], primaryHeight: primaryHeight,
         )
         XCTAssertEqual(scale, 2.0, "window on the secondary Retina display resolves to 2x")
     }
@@ -75,7 +83,7 @@ final class CoordinateMappingTests: XCTestCase {
         let primary = ScreenInfo(cocoaFrame: VideoRect(x: 0, y: 0, width: 1440, height: 900), backingScaleFactor: 2.0)
         let windowCG = VideoRect(x: 100, y: 100, width: 600, height: 400) // inside primary
         let scale = CoordinateMapping.backingScaleFactor(
-            forWindowBoundsCG: windowCG, screens: [primary], primaryHeight: 900
+            forWindowBoundsCG: windowCG, screens: [primary], primaryHeight: 900,
         )
         XCTAssertEqual(scale, 2.0)
     }
@@ -83,8 +91,12 @@ final class CoordinateMappingTests: XCTestCase {
     func testWindowOnNoScreenReturnsNil() {
         let primary = ScreenInfo(cocoaFrame: VideoRect(x: 0, y: 0, width: 1920, height: 1080), backingScaleFactor: 1.0)
         // Window far off to the right, no overlap.
-        let windowCG = VideoRect(x: 10_000, y: 0, width: 100, height: 100)
-        XCTAssertNil(CoordinateMapping.backingScaleFactor(forWindowBoundsCG: windowCG, screens: [primary], primaryHeight: 1080))
+        let windowCG = VideoRect(x: 10000, y: 0, width: 100, height: 100)
+        XCTAssertNil(CoordinateMapping.backingScaleFactor(
+            forWindowBoundsCG: windowCG,
+            screens: [primary],
+            primaryHeight: 1080,
+        ))
     }
 
     func testLargestOverlapWins() {
@@ -94,7 +106,11 @@ final class CoordinateMappingTests: XCTestCase {
         // CG window: most area to the right. primaryHeight 1000, height 100, CG y=0 →
         // Cocoa y = 1000-0-100 = 900, within both screens' y range.
         let windowCG = VideoRect(x: 900, y: 0, width: 600, height: 100) // x in [900,1500): 100 on A, 500 on B
-        let scale = CoordinateMapping.backingScaleFactor(forWindowBoundsCG: windowCG, screens: [a, b], primaryHeight: 1000)
+        let scale = CoordinateMapping.backingScaleFactor(
+            forWindowBoundsCG: windowCG,
+            screens: [a, b],
+            primaryHeight: 1000,
+        )
         XCTAssertEqual(scale, 2.0, "the screen with the larger overlap (B) is chosen")
     }
 
@@ -105,7 +121,11 @@ final class CoordinateMappingTests: XCTestCase {
         // to get points (doc 05 §2: don't double-apply scale).
         let bounds = VideoRect(x: 100, y: 200, width: 800, height: 600)
         // A pixel at (400, 300) on a 2x backing = (200, 150) points + window origin.
-        let pt = CoordinateMapping.windowPoint(pixel: VideoPoint(x: 400, y: 300), windowBoundsCG: bounds, backingScaleFactor: 2.0)
+        let pt = CoordinateMapping.windowPoint(
+            pixel: VideoPoint(x: 400, y: 300),
+            windowBoundsCG: bounds,
+            backingScaleFactor: 2.0,
+        )
         XCTAssertEqual(pt, VideoPoint(x: 100 + 200, y: 200 + 150))
     }
 }

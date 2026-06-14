@@ -1,91 +1,111 @@
-import XCTest
 import AislopdeskProtocol
+import XCTest
 @testable import AislopdeskTransport
 
 /// PURE client-side demux tests for `MuxRouter`. No socket, no per-channel decoder —
 /// the router only returns (channelID, opaque bytes) decisions + advances the table.
 /// Mirrors `InputDatagramRouterTests` (Decision-enum assertions).
 final class MuxRouterTests: XCTestCase {
-
     /// Opens `id` in the router via a channelOpen frame and asserts it became open.
-    private func open(_ id: UInt32, in router: inout MuxRouter, file: StaticString = #filePath, line: UInt = #line) {
+    private func openChannel(
+        _ id: UInt32,
+        in router: inout MuxRouter,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+    ) {
         let decision = router.route(.channelOpen(channelID: id, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0))
         guard case .lifecycle(id, .open) = decision else {
-            return XCTFail("expected open lifecycle for \(id), got \(decision)", file: file, line: line)
+            XCTFail("expected open lifecycle for \(id), got \(decision)", file: file, line: line)
+            return
         }
     }
 
     func testDemuxesTwoInterleavedChannelsIntoIndependentOutputs() {
         var router = MuxRouter()
-        open(1, in: &router)
-        open(3, in: &router)
+        openChannel(1, in: &router)
+        openChannel(3, in: &router)
 
         let payloadA1 = Data("A1".utf8)
         let payloadB1 = Data("B1".utf8)
         let payloadA2 = Data("A2".utf8)
 
         // Interleaved A,B,A on the single mux stream must demux to the right channels.
-        XCTAssertEqual(router.route(.channelData(channelID: 1, payload: payloadA1)),
-                       .deliverData(channelID: 1, payload: payloadA1))
-        XCTAssertEqual(router.route(.channelData(channelID: 3, payload: payloadB1)),
-                       .deliverData(channelID: 3, payload: payloadB1))
-        XCTAssertEqual(router.route(.channelData(channelID: 1, payload: payloadA2)),
-                       .deliverData(channelID: 1, payload: payloadA2))
+        XCTAssertEqual(
+            router.route(.channelData(channelID: 1, payload: payloadA1)),
+            .deliverData(channelID: 1, payload: payloadA1),
+        )
+        XCTAssertEqual(
+            router.route(.channelData(channelID: 3, payload: payloadB1)),
+            .deliverData(channelID: 3, payload: payloadB1),
+        )
+        XCTAssertEqual(
+            router.route(.channelData(channelID: 1, payload: payloadA2)),
+            .deliverData(channelID: 1, payload: payloadA2),
+        )
     }
 
     func testDataPayloadIsCarriedOpaqueByteIdentically() {
         var router = MuxRouter()
-        open(1, in: &router)
+        openChannel(1, in: &router)
         // A real inner WireMessage frame: must pass through untouched.
         let inner = WireMessage.output(seq: 5, bytes: Data("vt ✅".utf8)).encode()
         let decision = router.route(.channelData(channelID: 1, payload: inner))
         guard case let .deliverData(1, payload) = decision else {
-            return XCTFail("expected deliverData, got \(decision)")
+            XCTFail("expected deliverData, got \(decision)")
+            return
         }
         XCTAssertEqual(payload, inner, "the router must not parse or mutate the channelData body")
     }
 
     func testUnknownChannelDataIsDroppedNotCrashed() {
         var router = MuxRouter()
-        open(1, in: &router)
+        openChannel(1, in: &router)
         // Channel 99 was never opened: DATA for it must be dropped, never crash.
         let decision = router.route(.channelData(channelID: 99, payload: Data("orphan".utf8)))
         guard case .dropUnknownChannel(99, _) = decision else {
-            return XCTFail("expected dropUnknownChannel, got \(decision)")
+            XCTFail("expected dropUnknownChannel, got \(decision)")
+            return
         }
         // The known channel still routes afterwards.
-        XCTAssertEqual(router.route(.channelData(channelID: 1, payload: Data("ok".utf8))),
-                       .deliverData(channelID: 1, payload: Data("ok".utf8)))
+        XCTAssertEqual(
+            router.route(.channelData(channelID: 1, payload: Data("ok".utf8))),
+            .deliverData(channelID: 1, payload: Data("ok".utf8)),
+        )
     }
 
     func testDataOnNonOpenChannelIsDropped() {
         var router = MuxRouter()
-        open(1, in: &router)
+        openChannel(1, in: &router)
         // Half-close channel 1, then send data: a non-open channel drops (known) data.
         _ = router.route(.channelClose(channelID: 1))
         let decision = router.route(.channelData(channelID: 1, payload: Data("late".utf8)))
         guard case .dropUnknownChannel(1, _) = decision else {
-            return XCTFail("expected drop for non-open channel, got \(decision)")
+            XCTFail("expected drop for non-open channel, got \(decision)")
+            return
         }
     }
 
     func testCloseOnChannelALeavesChannelBRoutable() {
         var router = MuxRouter()
-        open(1, in: &router) // A
-        open(3, in: &router) // B
+        openChannel(1, in: &router) // A
+        openChannel(3, in: &router) // B
 
         // Close A.
         let closeDecision = router.route(.channelClose(channelID: 1))
         guard case .lifecycle(1, .halfClosed) = closeDecision else {
-            return XCTFail("expected A to half-close, got \(closeDecision)")
+            XCTFail("expected A to half-close, got \(closeDecision)")
+            return
         }
         // A no longer delivers data...
         guard case .dropUnknownChannel(1, _) = router.route(.channelData(channelID: 1, payload: Data())) else {
-            return XCTFail("A must not deliver after close")
+            XCTFail("A must not deliver after close")
+            return
         }
         // ...but B is untouched and still routes.
-        XCTAssertEqual(router.route(.channelData(channelID: 3, payload: Data("B-still-live".utf8))),
-                       .deliverData(channelID: 3, payload: Data("B-still-live".utf8)))
+        XCTAssertEqual(
+            router.route(.channelData(channelID: 3, payload: Data("B-still-live".utf8))),
+            .deliverData(channelID: 3, payload: Data("B-still-live".utf8)),
+        )
         XCTAssertTrue(router.isOpen(3))
         XCTAssertFalse(router.isOpen(1))
     }
@@ -97,7 +117,8 @@ final class MuxRouterTests: XCTestCase {
         XCTAssertEqual(id, 1)
         let decision = router.route(.channelOpenAck(channelID: id, accepted: true))
         guard case .lifecycle(1, .open) = decision else {
-            return XCTFail("openAck should mark the channel open, got \(decision)")
+            XCTFail("openAck should mark the channel open, got \(decision)")
+            return
         }
         XCTAssertTrue(router.isOpen(1))
     }
@@ -110,12 +131,15 @@ final class MuxRouterTests: XCTestCase {
         let decision = router.route(.channelOpenAck(channelID: id, accepted: false))
         // A refusal must mark the channel dead (.closed), NOT open it (the bug).
         guard case .lifecycle(1, .closed) = decision else {
-            return XCTFail("a refused openAck must close the channel, got \(decision)")
+            XCTFail("a refused openAck must close the channel, got \(decision)")
+            return
         }
         XCTAssertFalse(router.isOpen(1), "a refused channel must never be open")
         // ...and data for the refused channel is dropped, never delivered.
-        guard case .dropUnknownChannel(1, _) = router.route(.channelData(channelID: 1, payload: Data("refused".utf8))) else {
-            return XCTFail("data for a refused channel must be dropped")
+        guard case .dropUnknownChannel(1, _) = router.route(.channelData(channelID: 1, payload: Data("refused".utf8)))
+        else {
+            XCTFail("data for a refused channel must be dropped")
+            return
         }
         // The id is retained (monotonic allocator never reuses it): the next allocation is 3.
         XCTAssertEqual(router.allocateChannel(), 3)
@@ -129,27 +153,32 @@ final class MuxRouterTests: XCTestCase {
         var router = MuxRouter()
         let decision = router.route(.channelOpenAck(channelID: 99, accepted: true))
         guard case .lifecycle(99, .closed) = decision else {
-            return XCTFail("an ack for an unknown id reports .closed (no entry created), got \(decision)")
+            XCTFail("an ack for an unknown id reports .closed (no entry created), got \(decision)")
+            return
         }
         XCTAssertFalse(router.isOpen(99), "an ack for an unknown id must not create a phantom open channel")
         // Data for the phantom id is dropped (no entry to route to).
-        guard case .dropUnknownChannel(99, _) = router.route(.channelData(channelID: 99, payload: Data("x".utf8))) else {
-            return XCTFail("data for the unknown id must be dropped, not delivered to a phantom channel")
+        guard case .dropUnknownChannel(99, _) = router.route(.channelData(channelID: 99, payload: Data("x".utf8)))
+        else {
+            XCTFail("data for the unknown id must be dropped, not delivered to a phantom channel")
+            return
         }
         // The legit path is unaffected: an ack for an ALLOCATED id still opens it.
         let id = router.allocateChannel()
         guard case .lifecycle(_, .open) = router.route(.channelOpenAck(channelID: id, accepted: true)) else {
-            return XCTFail("a legit ack still opens an allocated channel")
+            XCTFail("a legit ack still opens an allocated channel")
+            return
         }
         XCTAssertTrue(router.isOpen(id))
     }
 
     func testWindowAdjustReportsLifecycleWithoutChangingOpenState() {
         var router = MuxRouter()
-        open(1, in: &router)
+        openChannel(1, in: &router)
         let decision = router.route(.windowAdjust(channelID: 1, bytesToAdd: 4096))
         guard case .lifecycle(1, .open) = decision else {
-            return XCTFail("windowAdjust on an open channel reports .open, got \(decision)")
+            XCTFail("windowAdjust on an open channel reports .open, got \(decision)")
+            return
         }
         XCTAssertTrue(router.isOpen(1), "windowAdjust must not change channel open state")
     }

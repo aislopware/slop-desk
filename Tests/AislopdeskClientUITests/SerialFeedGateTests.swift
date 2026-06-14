@@ -1,5 +1,5 @@
-import XCTest
 import Foundation
+import XCTest
 @testable import AislopdeskTerminal
 
 /// Pins `SerialFeedGate` (the off-main GhosttySurface feed mechanism, docs/31 #5):
@@ -8,7 +8,6 @@ import Foundation
 /// C-boundary behavior (write_output vs free) can only be exercised on the GUI rig;
 /// this is the logic that makes that boundary safe.
 final class SerialFeedGateTests: XCTestCase {
-
     /// Lock-guarded recorder shared between test threads and the gate's queue.
     private final class Recorder: @unchecked Sendable {
         private let lock = NSLock()
@@ -18,6 +17,7 @@ final class SerialFeedGateTests: XCTestCase {
             values.append(value)
             lock.unlock()
         }
+
         var snapshot: [Int] {
             lock.lock()
             defer { lock.unlock() }
@@ -35,6 +35,7 @@ final class SerialFeedGateTests: XCTestCase {
             value = true
             lock.unlock()
         }
+
         var isSet: Bool {
             lock.lock()
             defer { lock.unlock() }
@@ -64,7 +65,7 @@ final class SerialFeedGateTests: XCTestCase {
 
         gate.enqueue(byteCount: 1) {
             started.signal()
-            release.wait()   // stall the queue mid-work
+            release.wait() // stall the queue mid-work
             workFinished.set()
         }
         XCTAssertEqual(started.wait(timeout: .now() + 2), .success, "work started")
@@ -95,14 +96,14 @@ final class SerialFeedGateTests: XCTestCase {
         let gate = SerialFeedGate(label: "test.idempotent")
         gate.enqueue(byteCount: 1) {}
         gate.closeBarrier()
-        gate.closeBarrier()   // second close: returns immediately, no deadlock, no crash
+        gate.closeBarrier() // second close: returns immediately, no deadlock, no crash
         XCTAssertTrue(gate.isClosed)
     }
 
     /// The production shape: close runs on the MAIN thread while a queue block hops
     /// main.ASYNC — must not deadlock (the async block simply lands after the barrier).
     @MainActor
-    func testCloseBarrierFromMainDoesNotDeadlockWithMainAsyncHops() async {
+    func testCloseBarrierFromMainDoesNotDeadlockWithMainAsyncHops() {
         let gate = SerialFeedGate(label: "test.mainhop")
         let recorder = Recorder()
         for i in 0..<50 {
@@ -110,7 +111,7 @@ final class SerialFeedGateTests: XCTestCase {
                 DispatchQueue.main.async { recorder.append(i) }
             }
         }
-        gate.closeBarrier()   // on the main thread, like GhosttySurface.close()
+        gate.closeBarrier() // on the main thread, like GhosttySurface.close()
         XCTAssertTrue(gate.isClosed, "barrier returned — no deadlock")
     }
 
@@ -119,7 +120,7 @@ final class SerialFeedGateTests: XCTestCase {
     func testWaitReturnsImmediatelyBelowHighWater() async {
         let gate = SerialFeedGate(label: "test.bp.fast", highWaterBytes: 100, lowWaterBytes: 50)
         gate.enqueue(byteCount: 10) {}
-        await gate.waitUntilBelowHighWater()   // must not hang
+        await gate.waitUntilBelowHighWater() // must not hang
         gate.closeBarrier()
     }
 
@@ -143,14 +144,15 @@ final class SerialFeedGateTests: XCTestCase {
 
         // Release two blocks → 60 B (between low 40 and high 100): still parked
         // (hysteresis resumes at LOW water, not high).
-        release.signal(); release.signal()
+        release.signal()
+        release.signal()
         try? await Task.sleep(for: .milliseconds(100))
         XCTAssertFalse(resumed.isSet, "hysteresis: still parked between low and high water")
 
         // Release one more → 30 B ≤ low water → resume.
         release.signal()
         await waiter.value
-        release.signal()   // let the last block finish
+        release.signal() // let the last block finish
         gate.closeBarrier()
     }
 
@@ -168,7 +170,7 @@ final class SerialFeedGateTests: XCTestCase {
             release.signal()
             gate.closeBarrier()
         }
-        await waiter.value   // must resolve — either via drain or the close flush
+        await waiter.value // must resolve — either via drain or the close flush
         await closer.value
         XCTAssertTrue(gate.isClosed)
     }
@@ -176,7 +178,7 @@ final class SerialFeedGateTests: XCTestCase {
     func testWaitReturnsImmediatelyWhenClosed() async {
         let gate = SerialFeedGate(label: "test.bp.closed", highWaterBytes: 10, lowWaterBytes: 5)
         gate.closeBarrier()
-        await gate.waitUntilBelowHighWater()   // must not hang
+        await gate.waitUntilBelowHighWater() // must not hang
     }
 
     // MARK: Accounting
@@ -199,7 +201,7 @@ final class SerialFeedGateTests: XCTestCase {
         let order = Recorder()
 
         gate.enqueue(byteCount: 1) {
-            release.wait()   // stall — close() must NOT block on this
+            release.wait() // stall — close() must NOT block on this
             workFinished.set()
             order.append(1)
         }
@@ -221,7 +223,7 @@ final class SerialFeedGateTests: XCTestCase {
     func testAsyncCloseResumesParkedWaiterImmediately() async {
         let gate = SerialFeedGate(label: "test.aclose.waiter", highWaterBytes: 100, lowWaterBytes: 40)
         let release = DispatchSemaphore(value: 0)
-        gate.enqueue(byteCount: 200) { release.wait() }   // park the queue above high water
+        gate.enqueue(byteCount: 200) { release.wait() } // park the queue above high water
 
         let waiter = Task { await gate.waitUntilBelowHighWater() }
         try? await Task.sleep(for: .milliseconds(50))
@@ -229,8 +231,8 @@ final class SerialFeedGateTests: XCTestCase {
         // Close while the block is STILL stalled: the waiter must resume NOW (not when
         // the queue eventually drains) — a closed gate has nothing to wait for.
         gate.close {}
-        await waiter.value   // must not hang even though the queue is still parked
-        release.signal()     // let the block (and the deferred onDrained) finish
+        await waiter.value // must not hang even though the queue is still parked
+        release.signal() // let the block (and the deferred onDrained) finish
         XCTAssertTrue(gate.isClosed)
     }
 

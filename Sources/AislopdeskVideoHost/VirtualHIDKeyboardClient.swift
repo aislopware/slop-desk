@@ -1,7 +1,7 @@
 #if os(macOS)
-import Foundation
-import Darwin
 import AislopdeskVideoProtocol
+import Darwin
+import Foundation
 
 /// Sends 8-byte HID boot keyboard reports to **aislopdesk-hid-bridge** (the small root process that owns
 /// the Karabiner virtual keyboard) over localhost UDP, so keystrokes reach even a SecurityAgent secure
@@ -33,7 +33,9 @@ public final class VirtualHIDKeyboardClient: @unchecked Sendable {
                 connect(s, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
-        guard rc == 0 else { close(s); return nil }
+        guard rc == 0 else { close(s)
+            return nil
+        }
         fd = s
     }
 
@@ -41,7 +43,8 @@ public final class VirtualHIDKeyboardClient: @unchecked Sendable {
     /// maps to nothing (unmapped key) or the datagram couldn't be queued.
     @discardableResult
     public func send(keyCode: UInt16, down: Bool, modifiers: InputModifiers) -> Bool {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         guard let report = state.apply(virtualKey: keyCode, down: down, modifiers: modifiers) else { return false }
         let n = report.withUnsafeBytes { Darwin.send(fd, $0.baseAddress, report.count, 0) }
         return n == report.count
@@ -51,7 +54,8 @@ public final class VirtualHIDKeyboardClient: @unchecked Sendable {
     /// key can't stick on the host). Clears the folded state too (``HIDKeyboardState/releaseAll()``), so a
     /// later keystroke can't re-assert a previously-held key as a phantom press into the next secure field.
     public func releaseAll() {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         let report = state.releaseAll()
         _ = report.withUnsafeBytes { Darwin.send(fd, $0.baseAddress, report.count, 0) }
     }

@@ -33,7 +33,7 @@ pub enum MuxFrameType {
 impl MuxFrameType {
     /// The on-wire type byte.
     #[must_use]
-    pub fn raw_value(self) -> u8 {
+    pub const fn raw_value(self) -> u8 {
         match self {
             Self::ChannelOpen => 1,
             Self::ChannelOpenAck => 2,
@@ -46,7 +46,7 @@ impl MuxFrameType {
     /// Maps a wire type byte to its case, or `None` for an unrecognized byte (mirrors
     /// Swift's failable `MuxFrameType(rawValue:)`).
     #[must_use]
-    pub fn from_raw(byte: u8) -> Option<Self> {
+    pub const fn from_raw(byte: u8) -> Option<Self> {
         match byte {
             1 => Some(Self::ChannelOpen),
             2 => Some(Self::ChannelOpenAck),
@@ -103,7 +103,7 @@ pub enum MuxFrame {
 impl MuxFrame {
     /// The logical channel this frame addresses.
     #[must_use]
-    pub fn channel_id(&self) -> u32 {
+    pub const fn channel_id(&self) -> u32 {
         match self {
             Self::ChannelOpen { channel_id, .. }
             | Self::ChannelOpenAck { channel_id, .. }
@@ -115,7 +115,7 @@ impl MuxFrame {
 
     /// The on-wire mux-type for this frame.
     #[must_use]
-    pub fn mux_type(&self) -> MuxFrameType {
+    pub const fn mux_type(&self) -> MuxFrameType {
         match self {
             Self::ChannelOpen { .. } => MuxFrameType::ChannelOpen,
             Self::ChannelOpenAck { .. } => MuxFrameType::ChannelOpenAck,

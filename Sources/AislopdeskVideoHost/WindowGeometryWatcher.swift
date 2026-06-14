@@ -1,8 +1,8 @@
 #if os(macOS)
-import Foundation
+import AislopdeskVideoProtocol
 import AppKit
 import ApplicationServices
-import AislopdeskVideoProtocol
+import Foundation
 
 /// Watches a tracked window's geometry (move / resize / title) and emits
 /// ``WindowGeometryMessage`` for the geometry channel (doc 17 §3.8, doc 18 §B).
@@ -66,7 +66,8 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         guard let infoList = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
               let info = infoList.first,
               let boundsDict = info[kCGWindowBounds as String] as? [String: Any],
-              let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) else {
+              let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary)
+        else {
             return nil
         }
         return VideoRect(bounds)
@@ -79,7 +80,7 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: 1.0 / Self.dragPollHz)
         timer.setEventHandler { [weak self] in self?.pollOnce() }
-        self.pollTimer = timer
+        pollTimer = timer
         timer.resume()
     }
 
@@ -108,7 +109,7 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         // DIALOG-EXPAND: throttled union enumeration (only when armed).
         if associatedUnionHandler != nil {
             unionPollCounter += 1
-            if unionPollCounter % Self.unionPollDivider == 0 { pollAssociatedUnion(targetFrameVR: bounds) }
+            if unionPollCounter.isMultiple(of: Self.unionPollDivider) { pollAssociatedUnion(targetFrameVR: bounds) }
         }
     }
 
@@ -117,27 +118,38 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
     /// confined (called from ``pollOnce``). The display is the one under the window centre.
     private func pollAssociatedUnion(targetFrameVR: VideoRect) {
         guard let handler = associatedUnionHandler else { return }
-        let targetFrame = CGRect(x: targetFrameVR.origin.x, y: targetFrameVR.origin.y,
-                                 width: targetFrameVR.size.width, height: targetFrameVR.size.height)
+        let targetFrame = CGRect(
+            x: targetFrameVR.origin.x,
+            y: targetFrameVR.origin.y,
+            width: targetFrameVR.size.width,
+            height: targetFrameVR.size.height,
+        )
         // Display under the window centre (the VD in the real deployment).
         let center = CGPoint(x: targetFrame.midX, y: targetFrame.midY)
-        var did = CGDirectDisplayID(0); var count: UInt32 = 0
+        var did = CGDirectDisplayID(0)
+        var count: UInt32 = 0
         guard CGGetDisplaysWithPoint(center, 1, &did, &count) == .success, count > 0 else { return }
         let displayBounds = CGDisplayBounds(did)
-        guard let all = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else { return }
+        guard let all = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
+        else { return }
         // CGWindowList is FRONT-to-back: take the slice strictly in front of the tracked window.
         var inFront: [CaptureRegionMath.WindowSnapshot] = []
         for w in all {
             let wid = (w[kCGWindowNumber as String] as? UInt32) ?? 0
-            if wid == windowID { break }   // reached the tracked window — the rest are behind it
+            if wid == windowID { break } // reached the tracked window — the rest are behind it
             guard let bd = w[kCGWindowBounds as String] as? [String: Any],
                   let r = CGRect(dictionaryRepresentation: bd as CFDictionary) else { continue }
             let ownerPID = Int32((w[kCGWindowOwnerPID as String] as? Int) ?? -1)
             let layer = (w[kCGWindowLayer as String] as? Int) ?? Int.min
             inFront.append(.init(windowID: wid, ownerPID: ownerPID, layer: layer, frame: r))
         }
-        let union = CaptureRegionMath.unionRegion(targetFrame: targetFrame, targetWindowID: UInt32(windowID),
-                                                  targetPID: Int32(pid), windowsInFront: inFront, displayBounds: displayBounds)
+        let union = CaptureRegionMath.unionRegion(
+            targetFrame: targetFrame,
+            targetWindowID: UInt32(windowID),
+            targetPID: Int32(pid),
+            windowsInFront: inFront,
+            displayBounds: displayBounds,
+        )
         let baseline = lastUnionEmitted.isNull ? targetFrame : lastUnionEmitted
         guard CaptureRegionMath.shouldRetarget(current: baseline, desired: union) else { return }
         lastUnionEmitted = union
@@ -146,6 +158,7 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
 
     /// Emits a title change if the window's title differs from the last seen value.
     /// Driven by the AX `kAXTitleChangedNotification` in production.
+    @preconcurrency
     @MainActor
     public func checkTitle() {
         let appEl = AXUIElementCreateApplication(pid)
@@ -155,16 +168,15 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         // Heuristic match by position/size to the tracked CGWindowID (no public
         // AXUIElement <-> CGWindowID map — doc 05 §4).
         guard let bounds = currentBoundsCG() else { return }
-        for axWindow in axWindows {
-            if axWindowFrame(axWindow) == bounds {
-                var titleRef: CFTypeRef?
-                if AXUIElementCopyAttributeValue(axWindow, kAXTitleAttribute as CFString, &titleRef) == .success,
-                   let title = titleRef as? String, title != lastTitle {
-                    lastTitle = title
-                    geometryHandler(.title(title))
-                }
-                return
+        for axWindow in axWindows where axWindowFrame(axWindow) == bounds {
+            var titleRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(axWindow, kAXTitleAttribute as CFString, &titleRef) == .success,
+               let title = titleRef as? String, title != lastTitle
+            {
+                lastTitle = title
+                geometryHandler(.title(title))
             }
+            return
         }
     }
 
@@ -183,6 +195,7 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
     /// already require). `AXUIElementSetMessagingTimeout` caps a hung target (mirrors
     /// ``InputInjector/raiseTargetWindow()``) so a beachballing app fails fast instead of
     /// stalling the resize path.
+    @preconcurrency
     @MainActor
     public func resizeWindow(toPoints desiredPoints: VideoSize) -> VideoSize? {
         let appEl = AXUIElementCreateApplication(pid)
@@ -213,13 +226,20 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         var posRef: CFTypeRef?
         var sizeRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posRef) == .success,
-              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success else {
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success
+        else {
             return nil
         }
+        // `as?` to a CoreFoundation type (AXValue) always succeeds (compile error); the AX copies
+        // above succeeded so these are non-nil AXValues. Force cast traps on an OS-contract break.
+        // swiftlint:disable:next force_cast
+        let posValue = posRef as! AXValue
+        // swiftlint:disable:next force_cast
+        let sizeValue = sizeRef as! AXValue
         var point = CGPoint.zero
         var size = CGSize.zero
-        AXValueGetValue(posRef as! AXValue, .cgPoint, &point)
-        AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+        AXValueGetValue(posValue, .cgPoint, &point)
+        AXValueGetValue(sizeValue, .cgSize, &size)
         return VideoRect(x: Double(point.x), y: Double(point.y), width: Double(size.width), height: Double(size.height))
     }
 }

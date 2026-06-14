@@ -14,15 +14,15 @@
 // Runtime needs a GUI session + Screen Recording TCC. Exit 1 on setup failure.
 
 #if os(macOS)
-import Foundation
+import AislopdeskVideoHost
 import AppKit
-import ScreenCaptureKit
 import CoreImage
 import CoreMedia
 import CoreVideo
-import AislopdeskVideoHost
+import Foundation
+import ScreenCaptureKit
 
-_ = NSApplication.shared   // CGS connection — SCStream trips CGS_REQUIRE_INIT without it
+_ = NSApplication.shared // CGS connection — SCStream trips CGS_REQUIRE_INIT without it
 
 func eprint(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
 
@@ -43,7 +43,8 @@ while let a = args.next() {
     case "--max-hz": maxHz = args.next().flatMap(Double.init) ?? 4.0
     case "--list": listOnly = true
     case "--list-all": listAll = true
-    default: eprint("unknown arg: \(a)"); exit(1)
+    default: eprint("unknown arg: \(a)")
+        exit(1)
     }
 }
 
@@ -57,61 +58,84 @@ let task = Task {
                 let app = w.owningApplication
                 let f = w.frame
                 print("id=\(w.windowID) layer=\(w.windowLayer) onScreen=\(w.isOnScreen) pid=\(app?.processID ?? -1) " +
-                      "[\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))x\(Int(f.height))] " +
-                      "app=\(app?.applicationName ?? "?") bundle=\(app?.bundleIdentifier ?? "?") title=\(w.title ?? "<nil>")")
+                    "[\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))x\(Int(f.height))] " +
+                    "app=\(app?.applicationName ?? "?") bundle=\(app?.bundleIdentifier ?? "?") title=\(w.title ?? "<nil>")")
             }
             exit(0)
         }
         if listOnly {
             for w in content.windows where w.title?.isEmpty == false {
-                print("id=\(w.windowID) [\(Int(w.frame.width))x\(Int(w.frame.height))] \(w.owningApplication?.applicationName ?? "?") — \(w.title ?? "")")
+                print(
+                    "id=\(w.windowID) [\(Int(w.frame.width))x\(Int(w.frame.height))] \(w.owningApplication?.applicationName ?? "?") — \(w.title ?? "")",
+                )
             }
             exit(0)
         }
         let window: SCWindow
         if let wid = windowIDArg {
             guard let w = content.windows.first(where: { $0.windowID == wid }) else {
-                eprint("no window with id \(wid)"); exit(1)
+                eprint("no window with id \(wid)")
+                exit(1)
             }
             window = w
         } else if let needle = titleQuery {
             guard let w = content.windows
-                .filter({ ($0.title ?? "").localizedCaseInsensitiveContains(needle) || ($0.owningApplication?.applicationName ?? "").localizedCaseInsensitiveContains(needle) })
-                .max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
-                eprint("no window matching '\(needle)'"); exit(1)
+                .filter({
+                    ($0.title ?? "")
+                        .localizedCaseInsensitiveContains(needle) || ($0.owningApplication?.applicationName ?? "")
+                        .localizedCaseInsensitiveContains(needle) })
+                .max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height })
+            else {
+                eprint("no window matching '\(needle)'")
+                exit(1)
             }
             window = w
         } else {
-            eprint("need --window-id <N> or --title <substring> (or --list)"); exit(1)
+            eprint("need --window-id <N> or --title <substring> (or --list)")
+            exit(1)
         }
-        let scale = 1.0   // point-resolution capture: pixel offsets in dumps == point offsets
+        let scale = 1.0 // point-resolution capture: pixel offsets in dumps == point offsets
         let pixelW = Int(window.frame.width * scale), pixelH = Int(window.frame.height * scale)
         try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
-        eprint("probing id=\(window.windowID) '\(window.title ?? "")' \(pixelW)x\(pixelH)px mode-env=\(ProcessInfo.processInfo.environment["AISLOPDESK_DISPLAY_CAPTURE"] ?? "<unset>") → \(outDir)")
+        eprint(
+            "probing id=\(window.windowID) '\(window.title ?? "")' \(pixelW)x\(pixelH)px mode-env=\(ProcessInfo.processInfo.environment["AISLOPDESK_DISPLAY_CAPTURE"] ?? "<unset>") → \(outDir)",
+        )
 
         // Snapshot the MainActor-isolated top-level args into Sendable locals for the frame handler.
         let dir = outDir, hz = maxHz
         let ciContext = CIContext(options: [.cacheIntermediates: false])
-        final class SaveState: @unchecked Sendable { let lock = NSLock(); var lastSave = 0.0; var saved = 0 }
+        final class SaveState: @unchecked Sendable { let lock = NSLock()
+            var lastSave = 0.0
+            var saved = 0
+        }
         let state = SaveState()
         let t0 = CACurrentMediaTime()
         let capturer = WindowCapturer(fps: 60, captureScale: scale) { pixelBuffer, _, _, _, _, _ in
             let now = CACurrentMediaTime()
             state.lock.lock()
             let due = (now - state.lastSave) >= (1.0 / hz)
-            if due { state.lastSave = now; state.saved += 1 }
+            if due { state.lastSave = now
+                state.saved += 1
+            }
             let n = state.saved
             state.lock.unlock()
             guard due else { return }
             let img = CIImage(cvPixelBuffer: pixelBuffer)
             let ms = Int((now - t0) * 1000)
             let url = URL(fileURLWithPath: "\(dir)/frame-\(String(format: "%03d", n))-\(ms)ms.png")
+            guard let srgb = CGColorSpace(name: CGColorSpace.sRGB) else {
+                preconditionFailure("CGColorSpace(name: .sRGB) is a built-in color space and is never nil")
+            }
             do {
-                try ciContext.writePNGRepresentation(of: img, to: url, format: .RGBA8,
-                                                     colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+                try ciContext.writePNGRepresentation(
+                    of: img,
+                    to: url,
+                    format: .RGBA8,
+                    colorSpace: srgb,
+                )
             } catch { FileHandle.standardError.write(Data("png write failed: \(error)\n".utf8)) }
         }
-        nonisolated(unsafe) let w = window   // single-owner hand-off, same as the session's start path
+        nonisolated(unsafe) let w = window // single-owner hand-off, same as the session's start path
         try await capturer.start(window: w, pixelWidth: pixelW, pixelHeight: pixelH)
         try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
         await capturer.stop()
@@ -123,6 +147,7 @@ let task = Task {
         exit(1)
     }
 }
+
 _ = task
 RunLoop.main.run()
 #else

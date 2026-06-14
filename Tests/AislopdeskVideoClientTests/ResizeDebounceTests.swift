@@ -1,13 +1,12 @@
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoClient
-import AislopdeskVideoProtocol
 
 /// PURE client-side resize debounce: a burst of mid-drag layer-size samples coalesces to
 /// the SETTLED size and fires exactly once; sub-`minDelta` jitter is dropped; the epoch
 /// counter increments per emitted request. Elapsed-since-last-change is passed in (the
 /// ``LTREscalationTracker`` discipline) — no timer / socket touched.
 final class ResizeDebounceTests: XCTestCase {
-
     func testStillSettlingHolds() {
         let d = ResizeDebounce(minDelta: 8, settleInterval: 0.2)
         // Layer just changed (0.05s ago) — still mid-burst, do not request yet.
@@ -36,8 +35,11 @@ final class ResizeDebounceTests: XCTestCase {
             VideoSize(width: 1200, height: 760),
         ]
         for size in intermediates {
-            XCTAssertEqual(d.decide(layerSize: size, elapsedSinceLastChange: 0.03), .hold,
-                           "mid-burst sample \(size) must hold (not yet settled)")
+            XCTAssertEqual(
+                d.decide(layerSize: size, elapsedSinceLastChange: 0.03),
+                .hold,
+                "mid-burst sample \(size) must hold (not yet settled)",
+            )
         }
         // The drag ends; the LAST size has now been quiet >= settleInterval → one request,
         // for the SETTLED (final) size only — the intermediates never fired.
@@ -54,8 +56,11 @@ final class ResizeDebounceTests: XCTestCase {
 
         // A settled size within minDelta on BOTH axes (a 4px wobble) is jitter → hold.
         let jitter = VideoSize(width: 1284, height: 803)
-        XCTAssertEqual(d.decide(layerSize: jitter, elapsedSinceLastChange: 0.3), .hold,
-                       "a < minDelta change on every axis is dropped")
+        XCTAssertEqual(
+            d.decide(layerSize: jitter, elapsedSinceLastChange: 0.3),
+            .hold,
+            "a < minDelta change on every axis is dropped",
+        )
     }
 
     func testChangeOnSingleAxisExceedingMinDeltaFires() {
@@ -105,8 +110,11 @@ final class ResizeDebounceTests: XCTestCase {
         // otherwise every pane-follow connect would still AX-resize the host window once.
         let fresh = ResizeDebounce(minDelta: 8, settleInterval: 0.2)
         let size = VideoSize(width: 1331, height: 829)
-        XCTAssertEqual(fresh.decide(layerSize: size, elapsedSinceLastChange: 0.3), .request(size),
-                       "precondition: a nil baseline fires on the first settle")
+        XCTAssertEqual(
+            fresh.decide(layerSize: size, elapsedSinceLastChange: 0.3),
+            .request(size),
+            "precondition: a nil baseline fires on the first settle",
+        )
         var adopted = ResizeDebounce(minDelta: 8, settleInterval: 0.2)
         adopted.noteAdopted(size)
         XCTAssertEqual(adopted.decide(layerSize: size, elapsedSinceLastChange: 0.3), .hold)

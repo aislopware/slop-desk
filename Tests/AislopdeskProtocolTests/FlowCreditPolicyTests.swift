@@ -3,7 +3,6 @@ import XCTest
 
 /// Pure SSH-window credit-math tests for `FlowCreditPolicy`. No IO.
 final class FlowCreditPolicyTests: XCTestCase {
-
     func testInitialWindowIsFullCreditAndUnblocked() {
         let policy = FlowCreditPolicy(initialWindow: 1024)
         XCTAssertEqual(policy.initialWindow, 1024)

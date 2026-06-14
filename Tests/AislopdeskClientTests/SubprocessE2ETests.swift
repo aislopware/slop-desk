@@ -1,5 +1,5 @@
-import XCTest
 import Foundation
+import XCTest
 
 /// Proves the SHIPPED binaries: launches the real `aislopdesk-hostd` and `aislopdesk-client`
 /// executables as subprocesses (hostd on an ephemeral test port; client with `--no-raw`
@@ -10,7 +10,6 @@ import Foundation
 /// attempts it. Uses an ephemeral OS-chosen port (parsed from hostd's stderr) to avoid
 /// collisions.
 final class SubprocessE2ETests: XCTestCase {
-
     /// Locates a built product (e.g. `aislopdesk-hostd`) next to the test bundle. SwiftPM puts
     /// the executables in the same `debug`/`release` directory as the xctest bundle.
     private func builtProductURL(_ name: String) -> URL? {
@@ -28,7 +27,8 @@ final class SubprocessE2ETests: XCTestCase {
 
     func testShippedBinariesEchoOverTCP() throws {
         guard let hostdURL = builtProductURL("aislopdesk-hostd"),
-              let clientURL = builtProductURL("aislopdesk-client") else {
+              let clientURL = builtProductURL("aislopdesk-client")
+        else {
             throw XCTSkip("built aislopdesk-hostd / aislopdesk-client not found next to test bundle")
         }
 
@@ -96,27 +96,29 @@ final class SubprocessE2ETests: XCTestCase {
         XCTAssertTrue(exited, "client did not exit within the timeout")
 
         let out = collected.string
-        XCTAssertTrue(out.contains("SHIPPED_OK"),
-                      "expected SHIPPED_OK in the client's stdout; got: \(out.prefix(600))")
+        XCTAssertTrue(
+            out.contains("SHIPPED_OK"),
+            "expected SHIPPED_OK in the client's stdout; got: \(out.prefix(600))",
+        )
     }
 
     // MARK: - Helpers
 
     /// Reads hostd stderr until a "listening on …:<port>" line, returns the port.
-    private func awaitBoundPort(from handle: FileHandle, timeout: TimeInterval) throws -> UInt16? {
+    private func awaitBoundPort(from handle: FileHandle, timeout: TimeInterval) -> UInt16? {
         let deadline = Date().addingTimeInterval(timeout)
         var buffer = Data()
         while Date() < deadline {
             let chunk = handle.availableData // blocks until data or EOF
             if chunk.isEmpty {
                 // EOF (hostd died) — give up.
-                return parsePort(String(decoding: buffer, as: UTF8.self))
+                return parsePort(String(bytes: buffer, encoding: .utf8) ?? "")
             }
             buffer.append(chunk)
-            let text = String(decoding: buffer, as: UTF8.self)
+            let text = String(bytes: buffer, encoding: .utf8) ?? ""
             if let p = parsePort(text) { return p }
         }
-        return parsePort(String(decoding: buffer, as: UTF8.self))
+        return parsePort(String(bytes: buffer, encoding: .utf8) ?? "")
     }
 
     /// Extracts the port from a line like `…: listening on 0.0.0.0:54321 (shell=…)`.
@@ -147,7 +149,14 @@ final class SubprocessE2ETests: XCTestCase {
     private final class OutputBox: @unchecked Sendable {
         private let lock = NSLock()
         private var data = Data()
-        func append(_ d: Data) { lock.lock(); data.append(d); lock.unlock() }
-        var string: String { lock.lock(); defer { lock.unlock() }; return String(decoding: data, as: UTF8.self) }
+        func append(_ d: Data) { lock.lock()
+            data.append(d)
+            lock.unlock()
+        }
+
+        var string: String { lock.lock()
+            defer { lock.unlock() }
+            return String(bytes: data, encoding: .utf8) ?? ""
+        }
     }
 }

@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskProtocol
+import Foundation
 @testable import AislopdeskTransport
 
 /// A spy ``MuxByteLink`` that wraps an underlying link and CLASSIFIES every frame written through
@@ -21,7 +21,10 @@ final class RecordingMuxLink: MuxByteLink, @unchecked Sendable {
     }
 
     /// Number of `windowAdjust` frames written through this link so far.
-    var windowAdjustCount: Int { lock.lock(); defer { lock.unlock() }; return windowAdjusts }
+    var windowAdjustCount: Int { lock.lock()
+        defer { lock.unlock() }
+        return windowAdjusts
+    }
 
     var receiveChunks: AsyncThrowingStream<Data, Error> { underlying.receiveChunks }
 
@@ -38,9 +41,10 @@ final class RecordingMuxLink: MuxByteLink, @unchecked Sendable {
     /// Feeds `data` into the per-link frame decoder and counts `windowAdjust` frames. A malformed
     /// sequence (shouldn't happen — the owner writes whole frames) just stops counting; never fails.
     private func classify(_ data: Data) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         decoder.append(data)
-        while let frame = (try? decoder.nextFrame()) ?? nil {
+        while let frame = (try? decoder.nextFrame()) {
             if case .windowAdjust = frame { windowAdjusts += 1 }
         }
     }

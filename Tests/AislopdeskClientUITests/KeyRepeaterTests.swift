@@ -5,13 +5,20 @@ import XCTest
 /// time, no wall clock): initial fire is immediate, then +350ms, then +50ms (20Hz), stopping
 /// on release. The whole point of the scheduler seam is making this assertable to the exact ms.
 final class KeyRepeaterTests: XCTestCase {
-
     /// A thread-safe sink for the keys the repeater fired.
     private final class Sink: @unchecked Sendable {
         private let lock = NSLock()
         private var values: [String] = []
-        func append(_ s: String) { lock.lock(); values.append(s); lock.unlock() }
-        var all: [String] { lock.lock(); defer { lock.unlock() }; return values }
+        func append(_ s: String) { lock.lock()
+            values.append(s)
+            lock.unlock()
+        }
+
+        var all: [String] { lock.lock()
+            defer { lock.unlock() }
+            return values
+        }
+
         var count: Int { all.count }
     }
 
@@ -31,7 +38,7 @@ final class KeyRepeaterTests: XCTestCase {
         let sink = Sink()
         let repeater = KeyRepeater<String>(scheduler: scheduler) { sink.append($0) }
 
-        repeater.keyDown("a")            // immediate fire (1)
+        repeater.keyDown("a") // immediate fire (1)
         XCTAssertEqual(sink.count, 1)
 
         // Before the 350ms initial delay elapses: no repeat.
@@ -58,9 +65,9 @@ final class KeyRepeaterTests: XCTestCase {
         let sink = Sink()
         let repeater = KeyRepeater<String>(scheduler: scheduler) { sink.append($0) }
 
-        repeater.keyDown("x")                  // (1)
+        repeater.keyDown("x") // (1)
         scheduler.advance(by: .milliseconds(350)) // (2) first repeat
-        scheduler.advance(by: .milliseconds(50))  // (3)
+        scheduler.advance(by: .milliseconds(50)) // (3)
         XCTAssertEqual(sink.count, 3)
 
         repeater.keyUp("x")
@@ -81,8 +88,8 @@ final class KeyRepeaterTests: XCTestCase {
         let sink = Sink()
         let repeater = KeyRepeater<String>(scheduler: scheduler) { sink.append($0) }
 
-        repeater.keyDown("\u{7F}")   // fires one DEL synchronously + arms the 350ms timer
-        repeater.keyUp("\u{7F}")     // immediate release cancels the timer before it can repeat
+        repeater.keyDown("\u{7F}") // fires one DEL synchronously + arms the 350ms timer
+        repeater.keyUp("\u{7F}") // immediate release cancels the timer before it can repeat
         XCTAssertEqual(sink.all, ["\u{7F}"], "exactly one DEL fired")
         XCTAssertFalse(repeater.isRepeating)
         XCTAssertEqual(scheduler.pendingCount, 0, "no timer left armed → no 20Hz DEL flood")
@@ -112,7 +119,7 @@ final class KeyRepeaterTests: XCTestCase {
         let sink = Sink()
         let repeater = KeyRepeater<String>(scheduler: scheduler) { sink.append($0) }
 
-        repeater.keyDown("→")                  // immediate "→"
+        repeater.keyDown("→") // immediate "→"
         scheduler.advance(by: .milliseconds(350)) // repeat "→"
         XCTAssertEqual(sink.all, ["→", "→"])
 
@@ -143,10 +150,10 @@ final class KeyRepeaterTests: XCTestCase {
         gotTwo.assertForOverFulfill = false
         let repeater = KeyRepeater<String>(timing: timing, scheduler: scheduler) { key in
             sink.append(key)
-            if sink.count >= 2 { gotTwo.fulfill() }   // immediate + ≥1 timer fire
+            if sink.count >= 2 { gotTwo.fulfill() } // immediate + ≥1 timer fire
         }
 
-        repeater.keyDown("→")              // immediate fire (1) + arms the initial-delay timer
+        repeater.keyDown("→") // immediate fire (1) + arms the initial-delay timer
         wait(for: [gotTwo], timeout: 2.0)
         XCTAssertGreaterThanOrEqual(sink.count, 2, "real timer produced repeats")
 
@@ -168,8 +175,8 @@ final class KeyRepeaterTests: XCTestCase {
         let sink = Sink()
         let repeater = KeyRepeater<String>(scheduler: scheduler) { sink.append($0) }
 
-        repeater.keyDown("a")  // fires once
-        repeater.keyDown("a")  // already repeating — no extra immediate fire, no new timer
+        repeater.keyDown("a") // fires once
+        repeater.keyDown("a") // already repeating — no extra immediate fire, no new timer
         XCTAssertEqual(sink.count, 1)
         XCTAssertEqual(scheduler.pendingCount, 1, "still exactly one armed timer")
     }
@@ -184,7 +191,7 @@ final class KeyRepeaterTests: XCTestCase {
         struct IdKey: Hashable {
             let identity: String
             let payload: String
-            static func == (a: IdKey, b: IdKey) -> Bool { a.identity == b.identity }
+            static func == (a: Self, b: Self) -> Bool { a.identity == b.identity }
             func hash(into h: inout Hasher) { h.combine(identity) }
         }
         let scheduler = ManualRepeatScheduler()

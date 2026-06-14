@@ -1,7 +1,7 @@
 #if canImport(VideoToolbox)
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoClient
-import AislopdeskVideoProtocol
 
 /// BUG-I regression: the decoder must NOT tear down + recreate its VTDecompressionSession
 /// on a byte-identical keyframe.
@@ -65,7 +65,7 @@ final class VideoDecoderReuseTests: XCTestCase {
         let identicalIDR = sets([0x40, 0x01], [0x42, 0x02], [0x44, 0x03])
         XCTAssertFalse(
             VideoDecoder.needsReconfigure(current: decoder.cachedParameterSetsForTesting, incoming: identicalIDR),
-            "without a failure a byte-identical keyframe must REUSE (BUG-I preserved)"
+            "without a failure a byte-identical keyframe must REUSE (BUG-I preserved)",
         )
 
         // Simulate a hard decode failure → the VIDEO-CLIENT-1 catch invalidates the session.
@@ -75,7 +75,7 @@ final class VideoDecoderReuseTests: XCTestCase {
         // Now the byte-identical recovery IDR MUST reconfigure (rebuild the session).
         XCTAssertTrue(
             VideoDecoder.needsReconfigure(current: decoder.cachedParameterSetsForTesting, incoming: identicalIDR),
-            "after a hard failure a byte-identical keyframe must REBUILD the session"
+            "after a hard failure a byte-identical keyframe must REBUILD the session",
         )
     }
 
@@ -88,7 +88,7 @@ final class VideoDecoderReuseTests: XCTestCase {
         let identicalIDR = sets([0x40], [0x42, 0x02], [0x44])
         XCTAssertFalse(
             VideoDecoder.needsReconfigure(current: decoder.cachedParameterSetsForTesting, incoming: identicalIDR),
-            "no failure ⇒ byte-identical keyframe reuses the live session"
+            "no failure ⇒ byte-identical keyframe reuses the live session",
         )
     }
 }

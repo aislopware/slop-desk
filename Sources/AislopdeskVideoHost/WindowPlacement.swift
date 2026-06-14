@@ -1,7 +1,7 @@
 #if os(macOS)
-import Foundation
-import CoreGraphics
 import ApplicationServices
+import CoreGraphics
+import Foundation
 import OSLog
 
 /// Private AX SPI: maps an `AXUIElement` window to its `CGWindowID`. TCC-gated (Accessibility), no
@@ -18,7 +18,8 @@ public enum WindowPlacementMath {
     /// at the display's top-left origin. macOS crops a window that overhangs a display, so an
     /// oversized window must be shrunk before the move.
     public static func placement(windowSize: CGSize, displayBounds: CGRect)
-        -> (origin: CGPoint, size: CGSize, needsResize: Bool) {
+        -> (origin: CGPoint, size: CGSize, needsResize: Bool)
+    {
         let w = min(windowSize.width, displayBounds.width)
         let h = min(windowSize.height, displayBounds.height)
         // ½-pt tolerance so floating-point equality doesn't trigger a no-op resize.
@@ -42,14 +43,20 @@ public enum WindowPlacement {
     /// resized down to fit the VD must NOT be captured/acked at its stale pre-move size, or the
     /// SCStream over-crops AND the client's input mapping desyncs (the post-resize point size feeds
     /// both `captureWidth/Height` and the SCStream size). NEVER crashes. Main-actor (AX is main-thread).
+    @preconcurrency
     @MainActor
-    public static func moveWindowOntoDisplay(windowID: CGWindowID, pid: pid_t, displayID: CGDirectDisplayID) -> CGSize? {
+    public static func moveWindowOntoDisplay(
+        windowID: CGWindowID,
+        pid: pid_t,
+        displayID: CGDirectDisplayID,
+    ) -> CGSize? {
         guard pid > 0, displayID != 0 else { return nil }
         let appEl = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(appEl, 0.5)   // cap a hung target (mirrors resizeWindow)
+        AXUIElementSetMessagingTimeout(appEl, 0.5) // cap a hung target (mirrors resizeWindow)
         var windowsRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-              let axWindows = windowsRef as? [AXUIElement] else {
+              let axWindows = windowsRef as? [AXUIElement]
+        else {
             log.error("move window \(windowID): no AX windows for pid \(pid) (Accessibility not granted?)")
             return nil
         }
@@ -57,10 +64,10 @@ public enum WindowPlacement {
             log.error("move window \(windowID): no AX window matched the CGWindowID for pid \(pid)")
             return nil
         }
-        let bounds = CGDisplayBounds(displayID)               // global points; VD origin is the target
+        let bounds = CGDisplayBounds(displayID) // global points; VD origin is the target
         let currentSize = axWindowSize(axWindow) ?? bounds.size
         let plan = WindowPlacementMath.placement(windowSize: currentSize, displayBounds: bounds)
-        if plan.needsResize {                                 // shrink to fit BEFORE crossing displays
+        if plan.needsResize { // shrink to fit BEFORE crossing displays
             var size = plan.size
             if let v = AXValueCreate(.cgSize, &size) {
                 AXUIElementSetAttributeValue(axWindow, kAXSizeAttribute as CFString, v)
@@ -76,7 +83,10 @@ public enum WindowPlacement {
         // Read back the ACHIEVED size — the window may have clamped the resize to its own min/max,
         // and we need the TRUE post-move point size for the capture/helloAck (not the requested one).
         let achieved = axWindowSize(axWindow) ?? plan.size
-        log.notice("moved window \(windowID) onto display \(displayID) at (\(Int(origin.x)),\(Int(origin.y))) size \(Int(achieved.width))×\(Int(achieved.height))pt")
+        log
+            .notice(
+                "moved window \(windowID) onto display \(displayID) at (\(Int(origin.x)),\(Int(origin.y))) size \(Int(achieved.width))×\(Int(achieved.height))pt",
+            )
         return achieved
     }
 
@@ -92,7 +102,11 @@ public enum WindowPlacement {
         guard AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
               let sizeVal = sizeRef else { return nil }
         var size = CGSize.zero
-        AXValueGetValue(sizeVal as! AXValue, .cgSize, &size)
+        // `as?` to a CoreFoundation type (AXValue) always succeeds (compile error); the copy above
+        // succeeded so sizeVal is a non-nil AXValue. Force cast traps on an OS-contract break.
+        // swiftlint:disable:next force_cast
+        let axValue = sizeVal as! AXValue
+        AXValueGetValue(axValue, .cgSize, &size)
         return size
     }
 }

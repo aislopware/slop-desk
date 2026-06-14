@@ -11,7 +11,6 @@ import SwiftUI
 /// command routing is asserted against the store via `apply(_:to:)` with the `FakePaneSession` seam.
 @MainActor
 final class CommandPaletteEntriesTests: XCTestCase {
-
     #if canImport(SwiftUI)
 
     // MARK: - Catalog contains Reconnect Pane + fuzzy ranks it
@@ -54,20 +53,22 @@ final class CommandPaletteEntriesTests: XCTestCase {
         XCTAssertNil(CommandPaletteView.fuzzyScore(query: "xyz", in: "Reconnect Pane"))
     }
 
-    func testFuzzyRewardsWordStartsOverMidWordMatches() {
+    func testFuzzyRewardsWordStartsOverMidWordMatches() throws {
         // "np" → "New Pane" (both letters begin a word) ranks above a mid-word scatter.
-        let wordStarts = CommandPaletteView.fuzzyScore(query: "np", in: "New Pane")!
-        let midWord = CommandPaletteView.fuzzyScore(query: "np", in: "Unzip")!   // n@1, p@4, mid-word
+        let wordStarts = try XCTUnwrap(CommandPaletteView.fuzzyScore(query: "np", in: "New Pane"))
+        let midWord = try XCTUnwrap(CommandPaletteView.fuzzyScore(query: "np", in: "Unzip")) // n@1, p@4, mid-word
         XCTAssertGreaterThan(wordStarts, midWord)
         // A single letter at a word start beats the same letter buried mid-word.
-        XCTAssertGreaterThan(CommandPaletteView.fuzzyScore(query: "p", in: "Pane")!,
-                             CommandPaletteView.fuzzyScore(query: "p", in: "Snap")!)
+        XCTAssertGreaterThan(
+            try XCTUnwrap(CommandPaletteView.fuzzyScore(query: "p", in: "Pane")),
+            try XCTUnwrap(CommandPaletteView.fuzzyScore(query: "p", in: "Snap")),
+        )
     }
 
-    func testFuzzyPenalisesScatteredMatches() {
+    func testFuzzyPenalisesScatteredMatches() throws {
         // A tight (contiguous) match scores higher than the same letters spread far apart.
-        let tight = CommandPaletteView.fuzzyScore(query: "ab", in: "ab")!
-        let scattered = CommandPaletteView.fuzzyScore(query: "ab", in: "axxxxb")!
+        let tight = try XCTUnwrap(CommandPaletteView.fuzzyScore(query: "ab", in: "ab"))
+        let scattered = try XCTUnwrap(CommandPaletteView.fuzzyScore(query: "ab", in: "axxxxb"))
         XCTAssertGreaterThan(tight, scattered)
         XCTAssertNotNil(CommandPaletteView.fuzzyScore(query: "ab", in: "axxxxb"), "still matches, just lower")
     }
@@ -78,21 +79,31 @@ final class CommandPaletteEntriesTests: XCTestCase {
     /// have no subtitle).
     private func haystack(_ command: WorkspaceCommand) -> String {
         let item = CommandPaletteView.commandCatalog.first { $0.command == command }!
-        return [item.title, item.keywords].compactMap { $0 }.joined(separator: " ")
+        return [item.title, item.keywords].compactMap(\.self).joined(separator: " ")
     }
 
     func testKeywordAliasesMatchCommonVerbs() {
         // None of these verbs appear in the command TITLE — they only resolve via the keyword synonyms.
-        XCTAssertNotNil(CommandPaletteView.fuzzyScore(query: "sync", in: haystack(.toggleBroadcast)),
-                        "'sync' finds Broadcast Input")
-        XCTAssertNotNil(CommandPaletteView.fuzzyScore(query: "fullscreen", in: haystack(.toggleZoom)),
-                        "'fullscreen' finds Maximize Pane")
-        XCTAssertNotNil(CommandPaletteView.fuzzyScore(query: "split", in: haystack(.newPane(.terminal))),
-                        "'split' finds New Terminal Pane")
-        XCTAssertNotNil(CommandPaletteView.fuzzyScore(query: "mission control", in: haystack(.toggleOverview)),
-                        "'mission control' finds Overview")
-        XCTAssertNotNil(CommandPaletteView.fuzzyScore(query: "recenter", in: haystack(.centerAll)),
-                        "'recenter' finds Center on All")
+        XCTAssertNotNil(
+            CommandPaletteView.fuzzyScore(query: "sync", in: haystack(.toggleBroadcast)),
+            "'sync' finds Broadcast Input",
+        )
+        XCTAssertNotNil(
+            CommandPaletteView.fuzzyScore(query: "fullscreen", in: haystack(.toggleZoom)),
+            "'fullscreen' finds Maximize Pane",
+        )
+        XCTAssertNotNil(
+            CommandPaletteView.fuzzyScore(query: "split", in: haystack(.newPane(.terminal))),
+            "'split' finds New Terminal Pane",
+        )
+        XCTAssertNotNil(
+            CommandPaletteView.fuzzyScore(query: "mission control", in: haystack(.toggleOverview)),
+            "'mission control' finds Overview",
+        )
+        XCTAssertNotNil(
+            CommandPaletteView.fuzzyScore(query: "recenter", in: haystack(.centerAll)),
+            "'recenter' finds Center on All",
+        )
     }
 
     func testEveryCatalogCommandHasKeywords() {
@@ -142,14 +153,21 @@ final class CommandPaletteEntriesTests: XCTestCase {
         let pane = PaneID()
         let store = WorkspaceStore(
             restoring: Workspace(canvas: Canvas(items: [
-                CanvasItem(id: pane, spec: PaneSpec(kind: .terminal, title: "p"),
-                           frame: CGRect(x: 0, y: 0, width: 160, height: 120), z: 0)
+                CanvasItem(
+                    id: pane,
+                    spec: PaneSpec(kind: .terminal, title: "p"),
+                    frame: CGRect(x: 0, y: 0, width: 160, height: 120),
+                    z: 0,
+                ),
             ]), focusedPane: pane),
-            makeSession: { FakePaneSession($0) }, liveVideoCap: 5)
-        store.saveBookmark(3)   // names it after the focused pane's title
+            makeSession: { FakePaneSession($0) }, liveVideoCap: 5,
+        )
+        store.saveBookmark(3) // names it after the focused pane's title
         let entries = CommandPaletteView.buildBookmarkEntries(workspace: store.workspace)
-        XCTAssertTrue(entries.map(\.title).contains { $0.hasPrefix("Go to ") },
-                      "a saved bookmark surfaces a 'Go to …' row")
+        XCTAssertTrue(
+            entries.map(\.title).contains { $0.hasPrefix("Go to ") },
+            "a saved bookmark surfaces a 'Go to …' row",
+        )
         // And it carries the recall command for that slot.
         let entry = entries.first { $0.id == "bookmark.3" }
         XCTAssertNotNil(entry)
@@ -170,7 +188,7 @@ final class CommandPaletteEntriesTests: XCTestCase {
                 (ungroupedID, PaneSpec(kind: .claudeCode, title: "Right")),
             ],
             focused: groupedID,
-            groups: [group]
+            groups: [group],
         ).assigning(pane: groupedID, toGroup: group.id)
 
         let entries = CommandPaletteView.buildPaneEntries(workspace: workspace)
@@ -204,18 +222,18 @@ final class CommandPaletteEntriesTests: XCTestCase {
         let before = store.workspace
         let sessions = store.allSessions.count
 
-        apply(.reconnectPane, to: store)   // focused pane has a FakePaneSession (no connection) ⇒ no-op
+        apply(.reconnectPane, to: store) // focused pane has a FakePaneSession (no connection) ⇒ no-op
 
         XCTAssertEqual(store.workspace, before, "reconnect must not mutate the canvas")
         XCTAssertEqual(store.allSessions.count, sessions, "reconnect must not touch the registry")
     }
 
     /// `apply(.reconnectPane)` with no focused pane is a graceful no-op (no target to reconnect).
-    func testApplyReconnectPaneNoopWithNoFocusedPane() {
+    func testApplyReconnectPaneNoopWithNoFocusedPane() throws {
         let store = WorkspaceStore(restoring: nil, makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
-        store.closePane(store.focusedPane!)   // close the only pane → empty canvas, no focus
+        try store.closePane(XCTUnwrap(store.focusedPane)) // close the only pane → empty canvas, no focus
         XCTAssertNil(store.focusedPane)
-        apply(.reconnectPane, to: store)   // must not trap
+        apply(.reconnectPane, to: store) // must not trap
         XCTAssertNil(store.focusedPane)
     }
 
@@ -235,11 +253,11 @@ final class CommandPaletteEntriesTests: XCTestCase {
     }
 
     /// With no focused pane, `apply(.renamePane)` is a graceful no-op (nothing to rename).
-    func testApplyRenamePaneNoopWithNoFocusedPane() {
+    func testApplyRenamePaneNoopWithNoFocusedPane() throws {
         let store = WorkspaceStore(restoring: nil, makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
-        store.closePane(store.focusedPane!)   // close the only pane → no focus
+        try store.closePane(XCTUnwrap(store.focusedPane)) // close the only pane → no focus
         XCTAssertNil(store.focusedPane)
-        apply(.renamePane, to: store)   // must not trap
+        apply(.renamePane, to: store) // must not trap
         XCTAssertNil(store.pendingRename, "no focused pane → no rename request")
     }
 }

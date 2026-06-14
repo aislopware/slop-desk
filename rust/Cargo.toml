@@ -42,6 +42,16 @@ rust_2018_idioms = { level = "warn", priority = -1 }
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+# Maximal strictness: the nursery (in-development, occasionally noisy lints) and the
+# cargo group (manifest hygiene: duplicate deps, wildcard versions) are also on. Any
+# false positive is suppressed at the single offending site with a documented reason,
+# never blanket-allowed here.
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+# These private crates ship no SPDX metadata on purpose (publish = false), so the
+# "fill in description/repository/license" lint is pure noise — the one cargo-group
+# carve-out. Duplicate-version / wildcard-dependency detection stays ON.
+cargo_common_metadata = "allow"
 # Wire codecs unavoidably cast between integer widths exactly as the Swift source does
 # (`UInt8(truncatingIfNeeded:)`, `Int(uint16)`); these are deliberate and audited, so the
 # blanket cast lints would be pure noise. Truncation/wrap that MATTERS is written explicitly.
@@ -72,3 +82,13 @@ similar_names = "allow"
 # parity with the Swift source, and the tests pin coefficients/offsets to exact values.
 # The library code itself never compares floats with `==` (only ordered comparisons).
 float_cmp = "allow"
+# PARITY-CRITICAL (nursery): `suboptimal_flops` rewrites `a*b + c` into `a.mul_add(b, c)`
+# (a fused multiply-add). FMA keeps more intermediate precision, so its result differs in
+# the low bits from the separate mul+add the Swift source computes — that would BREAK the
+# golden bit-exact parity. The EWMA/threshold math MUST stay as written. Never apply this.
+suboptimal_flops = "allow"
+# Also nursery, same reason family: the controllers intentionally drive `while`/`if` loops
+# off float accumulators (mirroring the Swift control flow), and several private helpers are
+# scoped exactly to the module that needs them. These are by-design, not defects.
+while_float = "allow"
+redundant_pub_crate = "allow"

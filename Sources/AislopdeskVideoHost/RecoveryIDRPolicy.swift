@@ -92,7 +92,7 @@ public struct RecoveryIDRPolicy: Sendable, Equatable {
 
     public init(config: Config = Config()) {
         self.config = config
-        self.tokens = config.bucketCapacity
+        tokens = config.bucketCapacity
     }
 
     /// Read-only token level (observability/tests — proves suppress* verdicts spend nothing).
@@ -103,7 +103,7 @@ public struct RecoveryIDRPolicy: Sendable, Equatable {
     public mutating func noteKeyframeSent(frameID: UInt32, now: Double) {
         recentKeyframes.append(SentKeyframe(id: frameID, at: now))
         if recentKeyframes.count > config.keyframeRingCapacity { recentKeyframes.removeFirst() }
-        grantedAt = nil   // a keyframe went out: any pending grant is serviced
+        grantedAt = nil // a keyframe went out: any pending grant is serviced
     }
 
     /// Called from the `.ack` fold. Idempotent; only ids matching a ring entry count (an LTR-P
@@ -123,7 +123,8 @@ public struct RecoveryIDRPolicy: Sendable, Equatable {
             return .suppressGrantPending
         }
         if let delivered = deliveredKeyframeID, let request = clientLastDecoded,
-           request.distanceWrapped(from: delivered) < 0 {
+           request.distanceWrapped(from: delivered) < 0
+        {
             // Exact, not heuristic: the client's lastDecoded is monotonic, so a request older
             // than a keyframe it ACKED was composed before that keyframe decoded — stale.
             return .suppressStale

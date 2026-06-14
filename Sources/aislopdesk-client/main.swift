@@ -3,12 +3,12 @@ import Darwin
 #else
 import Glibc
 #endif
-import Foundation
 import AislopdeskClient
 import AislopdeskProtocol
 import AislopdeskTerminal
 import AislopdeskTransport
 import AislopdeskTTY
+import Foundation
 
 // aislopdesk-client — a genuinely usable interactive remote terminal over Aislopdesk PATH 1.
 //
@@ -29,7 +29,7 @@ import AislopdeskTTY
 
 /// Ctrl-] (GS, 0x1d) — the classic telnet escape. Pressing it cleanly disconnects,
 /// restores the terminal, and exits 0. Documented in --help.
-private let kDisconnectKey: UInt8 = 0x1d
+private let kDisconnectKey: UInt8 = 0x1D
 
 // MARK: - Shared mux connection pool
 
@@ -51,7 +51,8 @@ struct Args {
     var noRaw: Bool
 }
 
-let programName = (CommandLine.arguments.first as NSString?)?.lastPathComponent ?? "aislopdesk-client"
+let programName = CommandLine.arguments.first
+    .map { URL(fileURLWithPath: $0).lastPathComponent } ?? "aislopdesk-client"
 
 func stderrLine(_ s: String) {
     FileHandle.standardError.write(Data("\(programName): \(s)\n".utf8))
@@ -78,10 +79,12 @@ func parseArgs(_ argv: [String]) -> Args? {
     var it = argv.dropFirst().makeIterator()
     while let arg = it.next() {
         switch arg {
-        case "--host", "-h":
+        case "--host",
+             "-h":
             guard let v = it.next() else { return nil }
             host = v
-        case "--port", "-p":
+        case "--port",
+             "-p":
             guard let v = it.next(), let p = UInt16(v) else { return nil }
             port = p
         case "--no-raw":
@@ -130,16 +133,23 @@ final class ResizeBridge: @unchecked Sendable {
     private var continuation: AsyncStream<Void>.Continuation?
     let stream: AsyncStream<Void>
     init() {
-        var c: AsyncStream<Void>.Continuation!
-        self.stream = AsyncStream { c = $0 }
-        self.continuation = c
+        let (stream, continuation) = AsyncStream.makeStream(of: Void.self)
+        self.stream = stream
+        self.continuation = continuation
     }
+
     func signal() {
-        lock.lock(); let c = continuation; lock.unlock()
+        lock.lock()
+        let c = continuation
+        lock.unlock()
         c?.yield(())
     }
+
     func finish() {
-        lock.lock(); let c = continuation; continuation = nil; lock.unlock()
+        lock.lock()
+        let c = continuation
+        continuation = nil
+        lock.unlock()
         c?.finish()
     }
 }
@@ -157,12 +167,12 @@ let client = AislopdeskClient(makeTransport: {
     MuxClientTransport(
         acquire: { host, port, sessionID, lastReceivedSeq in
             try await CLIMux.shared.acquire(
-                host: host, port: port, sessionID: sessionID, lastReceivedSeq: lastReceivedSeq
+                host: host, port: port, sessionID: sessionID, lastReceivedSeq: lastReceivedSeq,
             )
         },
         release: { host, port, channelID in
             await CLIMux.shared.release(host: host, port: port, channelID: channelID)
-        }
+        },
     )
 })
 let reconnect = ReconnectManager(client: client, onLog: { stderrLine($0) })
@@ -177,10 +187,23 @@ final class ExitState: @unchecked Sendable {
     private let lock = NSLock()
     private var _code: Int32 = 0
     private var _done = false
-    func setExit(_ c: Int32) { lock.lock(); _code = c; _done = true; lock.unlock() }
-    var done: Bool { lock.lock(); defer { lock.unlock() }; return _done }
-    var code: Int32 { lock.lock(); defer { lock.unlock() }; return _code }
+    func setExit(_ c: Int32) { lock.lock()
+        _code = c
+        _done = true
+        lock.unlock()
+    }
+
+    var done: Bool { lock.lock()
+        defer { lock.unlock() }
+        return _done
+    }
+
+    var code: Int32 { lock.lock()
+        defer { lock.unlock() }
+        return _code
+    }
 }
+
 let exitState = ExitState()
 
 // Raw mode (interactive only). Saved attrs restored on EVERY exit path: defer below,
@@ -216,14 +239,18 @@ final class Shutdown: @unchecked Sendable {
     var shuttingDown: sig_atomic_t = 0
 
     func register(winchSource: DispatchSourceSignal) {
-        lock.lock(); self.winchSource = winchSource; lock.unlock()
+        lock.lock()
+        self.winchSource = winchSource
+        lock.unlock()
     }
 
     /// Stop the producers deterministically. Idempotent. Called by `finish()` before the
     /// final tty restore so `restore()` is guaranteed to be the last tty mutation.
     func stopProducers() {
         lock.lock()
-        if didStop { lock.unlock(); return }
+        if didStop { lock.unlock()
+            return
+        }
         didStop = true
         let source = winchSource
         winchSource = nil
@@ -236,6 +263,7 @@ final class Shutdown: @unchecked Sendable {
         close(STDIN_FILENO)
     }
 }
+
 let shutdown = Shutdown()
 
 /// Restore the terminal and exit with `code`. Centralizes the "never leave the terminal
@@ -262,7 +290,7 @@ Task {
     // 1. Connect.
     do {
         try await client.connect(host: args.host, port: args.port)
-        let sid = await client.sessionID.map { $0.uuidString } ?? "?"
+        let sid = await client.sessionID.map(\.uuidString) ?? "?"
         stderrLine("connected to \(args.host):\(args.port) (session \(sid))")
     } catch {
         stderrLine("connect failed: \(error)")
@@ -373,7 +401,8 @@ Task {
             // read so we never touch the fd while the tty is being restored.
             if shutdown.shuttingDown != 0 {
                 inputChunksCont.finish()
-                stdinDoneCont.yield(()); stdinDoneCont.finish()
+                stdinDoneCont.yield(())
+                stdinDoneCont.finish()
                 return
             }
             let n = read(STDIN_FILENO, &buf, buf.count)
@@ -384,7 +413,8 @@ Task {
                     let before = Data(slice[slice.startIndex..<idx])
                     if !before.isEmpty { inputChunksCont.yield(before) }
                     inputChunksCont.finish()
-                    stdinDoneCont.yield(()); stdinDoneCont.finish()
+                    stdinDoneCont.yield(())
+                    stdinDoneCont.finish()
                     return
                 }
                 inputChunksCont.yield(slice)
@@ -392,7 +422,8 @@ Task {
                 // EOF on stdin (pipe closed): stop relaying input. In non-interactive
                 // mode this is the normal end of the piped script.
                 inputChunksCont.finish()
-                stdinDoneCont.yield(()); stdinDoneCont.finish()
+                stdinDoneCont.yield(())
+                stdinDoneCont.finish()
                 return
             } else {
                 // EINTR during normal operation: retry. But if a shutdown began (STDIN was
@@ -400,7 +431,8 @@ Task {
                 // flag and return rather than spinning or re-reading a closed/cooked fd.
                 if errno == EINTR, shutdown.shuttingDown == 0 { continue }
                 inputChunksCont.finish()
-                stdinDoneCont.yield(()); stdinDoneCont.finish()
+                stdinDoneCont.yield(())
+                stdinDoneCont.finish()
                 return
             }
         }
@@ -417,8 +449,12 @@ Task {
     //      tail off (otherwise a piped `echo X\nexit\n` could race and lose `X`).
     if interactive {
         await withTaskGroup(of: String.self) { group in
-            group.addTask { await outputTask.value; return "output" }
-            group.addTask { for await _ in stdinDone { break }; return "stdin (disconnect)" }
+            group.addTask { await outputTask.value
+                return "output"
+            }
+            group.addTask { for await _ in stdinDone { break }
+                return "stdin (disconnect)"
+            }
             if let first = await group.next() {
                 stderrLine("session ending (\(first))")
             }
@@ -433,7 +469,7 @@ Task {
         stderrLine("session ending (output)")
     }
 
-    supervisor.cancel()   // R16 CLI-1: stop the reconnect supervisor BEFORE close() so it can't dial during exit.
+    supervisor.cancel() // R16 CLI-1: stop the reconnect supervisor BEFORE close() so it can't dial during exit.
     eventsTask.cancel()
     resizeTask.cancel()
     inputSenderTask.cancel()

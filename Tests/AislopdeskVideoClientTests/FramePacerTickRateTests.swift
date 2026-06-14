@@ -5,7 +5,6 @@ import XCTest
 /// native refresh, floored at the host content fps, with `AISLOPDESK_TICK_HZ` as the A/B override.
 /// Pure resolution matrix — the GUI wiring (reading the view's screen) is GUI-only.
 final class FramePacerTickRateTests: XCTestCase {
-
     func testDisplayRateWinsWhenAboveContentFloor() {
         // ProMotion panel: tick at 120 so a frame waits ≤8.3ms for a tick, not ≤16.7ms.
         XCTAssertEqual(FramePacer.resolveTickRate(envOverride: nil, displayMaxHz: 120, floor: 60), 120)

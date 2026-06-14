@@ -121,7 +121,14 @@ public enum VideoControlMessage: Equatable, Sendable {
     /// `fullRange` (WF-6 #8) tells the client the encoded stream's luma swing so it picks
     /// the matching decoder pixel-format + YCbCr→RGB shader coefficients FROM THE STREAM
     /// (no separate client env flag). `false` ⇒ today's video-range (the default).
-    case helloAck(accepted: Bool, streamID: UInt32, captureWidth: UInt16, captureHeight: UInt16, windowBoundsCG: VideoRect, fullRange: Bool)
+    case helloAck(
+        accepted: Bool,
+        streamID: UInt32,
+        captureWidth: UInt16,
+        captureHeight: UInt16,
+        windowBoundsCG: VideoRect,
+        fullRange: Bool,
+    )
     /// Either side: clean session teardown.
     case bye
     /// Client → host: the client surface settled to `desired` (points); please re-size
@@ -166,18 +173,18 @@ public enum VideoControlMessage: Equatable, Sendable {
 
     public var messageType: UInt8 {
         switch self {
-        case .hello: return 1
-        case .helloAck: return 2
-        case .bye: return 3
-        case .resizeRequest: return 4
-        case .resizeAck: return 5
-        case .keepalive: return 6
-        case .listWindows: return 7
-        case .windowList: return 8
-        case .focusWindow: return 9
-        case .streamCadence: return 10
-        case .listSystemDialogs: return 11
-        case .systemDialogList: return 12
+        case .hello: 1
+        case .helloAck: 2
+        case .bye: 3
+        case .resizeRequest: 4
+        case .resizeAck: 5
+        case .keepalive: 6
+        case .listWindows: 7
+        case .windowList: 8
+        case .focusWindow: 9
+        case .streamCadence: 10
+        case .listSystemDialogs: 11
+        case .systemDialogList: 12
         }
     }
 
@@ -185,28 +192,28 @@ public enum VideoControlMessage: Equatable, Sendable {
         var out = Data()
         out.append(messageType)
         switch self {
-        case .hello(let version, let windowID, let viewport):
+        case let .hello(version, windowID, viewport):
             out.appendBE(version)
             out.appendBE(windowID)
             out.appendBE(viewport.width)
             out.appendBE(viewport.height)
-        case .helloAck(let accepted, let streamID, let w, let h, let bounds, let fullRange):
+        case let .helloAck(accepted, streamID, w, h, bounds, fullRange):
             out.append(accepted ? 1 : 0)
             out.appendBE(streamID)
             out.appendBE(w)
             out.appendBE(h)
-            out.append(fullRange ? 1 : 0)   // WF-6 (#8): negotiated luma range (after captureHeight)
+            out.append(fullRange ? 1 : 0) // WF-6 (#8): negotiated luma range (after captureHeight)
             out.appendBE(bounds.origin.x)
             out.appendBE(bounds.origin.y)
             out.appendBE(bounds.size.width)
             out.appendBE(bounds.size.height)
         case .bye:
             break
-        case .resizeRequest(let desired, let epoch):
+        case let .resizeRequest(desired, epoch):
             out.appendBE(desired.width)
             out.appendBE(desired.height)
             out.appendBE(epoch)
-        case .resizeAck(let w, let h, let epoch):
+        case let .resizeAck(w, h, epoch):
             out.appendBE(w)
             out.appendBE(h)
             out.appendBE(epoch)
@@ -214,7 +221,7 @@ public enum VideoControlMessage: Equatable, Sendable {
             break
         case .listWindows:
             break
-        case .windowList(let windows):
+        case let .windowList(windows):
             // `UInt16 count` then per record: UInt32 id | UInt16 w | UInt16 h | len-prefixed app | len-prefixed title.
             // The CALLER (host) must cap the list to fit one UDP datagram (control is not packetized).
             out.appendBE(UInt16(truncatingIfNeeded: windows.count))
@@ -227,11 +234,11 @@ public enum VideoControlMessage: Equatable, Sendable {
             }
         case .focusWindow:
             break
-        case .streamCadence(let fps):
+        case let .streamCadence(fps):
             out.appendBE(fps)
         case .listSystemDialogs:
             break
-        case .systemDialogList(let dialogs):
+        case let .systemDialogList(dialogs):
             // Mirrors windowList; CALLER caps the list to fit one UDP datagram (control is not packetized).
             out.appendBE(UInt16(truncatingIfNeeded: dialogs.count))
             for d in dialogs {
@@ -246,7 +253,7 @@ public enum VideoControlMessage: Equatable, Sendable {
         return out
     }
 
-    public static func decode(_ data: Data) throws -> VideoControlMessage {
+    public static func decode(_ data: Data) throws -> Self {
         var reader = VideoByteReader(data)
         let type = try reader.readUInt8()
         switch type {
@@ -255,19 +262,29 @@ public enum VideoControlMessage: Equatable, Sendable {
             let windowID = try reader.readUInt32()
             let w = try reader.readFiniteFloat64("hello.viewport.w")
             let h = try reader.readFiniteFloat64("hello.viewport.h")
-            return .hello(protocolVersion: version, requestedWindowID: windowID, viewport: VideoSize(width: w, height: h))
+            return .hello(
+                protocolVersion: version,
+                requestedWindowID: windowID,
+                viewport: VideoSize(width: w, height: h),
+            )
         case 2:
             let accepted = try reader.readUInt8() != 0
             let streamID = try reader.readUInt32()
             let cw = try reader.readUInt16()
             let ch = try reader.readUInt16()
-            let fr = try reader.readUInt8() != 0   // WF-6 (#8): negotiated luma range (after captureHeight)
+            let fr = try reader.readUInt8() != 0 // WF-6 (#8): negotiated luma range (after captureHeight)
             let bx = try reader.readFiniteFloat64("helloAck.bounds.x")
             let by = try reader.readFiniteFloat64("helloAck.bounds.y")
             let bw = try reader.readFiniteFloat64("helloAck.bounds.w")
             let bh = try reader.readFiniteFloat64("helloAck.bounds.h")
-            return .helloAck(accepted: accepted, streamID: streamID, captureWidth: cw, captureHeight: ch,
-                             windowBoundsCG: VideoRect(x: bx, y: by, width: bw, height: bh), fullRange: fr)
+            return .helloAck(
+                accepted: accepted,
+                streamID: streamID,
+                captureWidth: cw,
+                captureHeight: ch,
+                windowBoundsCG: VideoRect(x: bx, y: by, width: bw, height: bh),
+                fullRange: fr,
+            )
         case 3:
             return .bye
         case 4:
@@ -285,12 +302,12 @@ public enum VideoControlMessage: Equatable, Sendable {
         case 7:
             return .listWindows
         case 8:
-            let count = Int(try reader.readUInt16())
+            let count = try Int(reader.readUInt16())
             var windows: [WindowSummary] = []
             // Do NOT reserveCapacity(count) — count is untrusted. Each record read throws `.truncated`
             // the instant the datagram runs short, so a bogus huge count cannot over-allocate or
             // over-read (it bails on the first missing byte).
-            for _ in 0 ..< count {
+            for _ in 0..<count {
                 let id = try reader.readUInt32()
                 let w = try reader.readUInt16()
                 let h = try reader.readUInt16()
@@ -302,23 +319,29 @@ public enum VideoControlMessage: Equatable, Sendable {
         case 9:
             return .focusWindow
         case 10:
-            return .streamCadence(fps: try reader.readUInt16())
+            return try .streamCadence(fps: reader.readUInt16())
         case 11:
             return .listSystemDialogs
         case 12:
-            let count = Int(try reader.readUInt16())
+            let count = try Int(reader.readUInt16())
             var dialogs: [SystemDialogSummary] = []
             // Same untrusted-count discipline as windowList: no reserveCapacity; each record read throws
             // `.truncated` the instant the datagram runs short, so a bogus huge count can't over-read.
-            for _ in 0 ..< count {
+            for _ in 0..<count {
                 let id = try reader.readUInt32()
                 let w = try reader.readUInt16()
                 let h = try reader.readUInt16()
                 let isSecure = try reader.readUInt8() != 0
                 let owner = try reader.readLengthPrefixed()
                 let title = try reader.readLengthPrefixed()
-                dialogs.append(SystemDialogSummary(windowID: id, owner: owner, title: title,
-                                                   width: w, height: h, isSecure: isSecure))
+                dialogs.append(SystemDialogSummary(
+                    windowID: id,
+                    owner: owner,
+                    title: title,
+                    width: w,
+                    height: h,
+                    isSecure: isSecure,
+                ))
             }
             return .systemDialogList(dialogs)
         default:

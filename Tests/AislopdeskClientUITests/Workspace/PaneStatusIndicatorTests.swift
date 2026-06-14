@@ -1,7 +1,7 @@
+import AislopdeskTransport
 import XCTest
 @testable import AislopdeskClient
 @testable import AislopdeskClientUI
-import AislopdeskTransport
 #if canImport(SwiftUI)
 import SwiftUI
 #endif
@@ -17,7 +17,6 @@ import SwiftUI
 /// socket, no `HostServer`.
 @MainActor
 final class PaneStatusIndicatorTests: XCTestCase {
-
     // MARK: - PaneConnectionStatus.from(_:) mapping
 
     func testFromMappingColorsAndPulse() {
@@ -102,12 +101,12 @@ final class PaneStatusIndicatorTests: XCTestCase {
         let terminal = TerminalViewModel()
         let vm = ConnectionViewModel(
             terminal: terminal, target: { ConnectionTarget(host: "127.0.0.1", port: 7777) },
-            makeClient: { fatalError("not invoked") }
+            makeClient: { fatalError("not invoked") },
         )
         XCTAssertEqual(vm.shellActivity, .idle)
         terminal.handle(.commandStatus(.running))
         XCTAssertEqual(vm.shellActivity, .running, "the view-model reflects the terminal's OSC 133 activity")
-        terminal.handle(.commandStatus(.idle(exitCode: 0, durationMS: 11_000)))
+        terminal.handle(.commandStatus(.idle(exitCode: 0, durationMS: 11000)))
         XCTAssertEqual(vm.shellActivity, .idle)
     }
 
@@ -117,12 +116,12 @@ final class PaneStatusIndicatorTests: XCTestCase {
         // A single reconnecting pane surfaces at the tab level even when a sibling is connected.
         XCTAssertEqual(
             PaneConnectionStatus.fold([.connected, .reconnecting(attempt: 2, nextRetry: nil)]).phase,
-            .reconnecting
+            .reconnecting,
         )
         // Unreachable beats reconnecting beats connected.
         XCTAssertEqual(
             PaneConnectionStatus.fold([.connected, .reconnecting(attempt: 1, nextRetry: nil), .unreachable]).phase,
-            .unreachable
+            .unreachable,
         )
         // All connected → connected.
         XCTAssertEqual(PaneConnectionStatus.fold([.connected, .connected]).phase, .connected)
@@ -133,7 +132,7 @@ final class PaneStatusIndicatorTests: XCTestCase {
         // A reconnecting fold carries the reconnecting leaf's attempt through to the rail dot.
         XCTAssertEqual(
             PaneConnectionStatus.fold([.connected, .reconnecting(attempt: 3, nextRetry: nil)]).attempt,
-            3
+            3,
         )
     }
 
@@ -145,7 +144,7 @@ final class PaneStatusIndicatorTests: XCTestCase {
     private func makeViewModel() -> ConnectionViewModel {
         ConnectionViewModel(
             terminal: TerminalViewModel(), target: { ConnectionTarget(host: "127.0.0.1", port: 7777) },
-            makeClient: { fatalError("makeClient must not be invoked in a pure status-transition test") }
+            makeClient: { fatalError("makeClient must not be invoked in a pure status-transition test") },
         )
     }
 
@@ -156,14 +155,18 @@ final class PaneStatusIndicatorTests: XCTestCase {
         let vm = makeViewModel()
 
         // Simulate the drop the events loop produces on a transport FIN.
-        vm.applyReconnectProgress(attempt: 0, nextRetry: nil)   // a bare drop is reconnecting(0)
-        guard case .reconnecting(let a0, _) = vm.status else { return XCTFail("expected reconnecting") }
+        vm.applyReconnectProgress(attempt: 0, nextRetry: nil) // a bare drop is reconnecting(0)
+        guard case let .reconnecting(a0, _) = vm.status else { XCTFail("expected reconnecting")
+            return
+        }
         XCTAssertEqual(a0, 0)
 
         // The supervisor reports a backoff attempt with a next-retry instant.
         let retryAt = Date().addingTimeInterval(0.5)
         vm.applyReconnectProgress(attempt: 2, nextRetry: retryAt)
-        guard case .reconnecting(let a2, let next) = vm.status else { return XCTFail("expected reconnecting(2)") }
+        guard case let .reconnecting(a2, next) = vm.status else { XCTFail("expected reconnecting(2)")
+            return
+        }
         XCTAssertEqual(a2, 2)
         XCTAssertEqual(next, retryAt)
 
@@ -198,10 +201,18 @@ final class PaneStatusIndicatorTests: XCTestCase {
         XCTAssertEqual(vm.status, .disconnected)
 
         vm.applyReconnectProgress(attempt: 1, nextRetry: Date())
-        XCTAssertEqual(vm.status, .disconnected, "a late progress must not revive a deliberately-closed pane to reconnecting")
+        XCTAssertEqual(
+            vm.status,
+            .disconnected,
+            "a late progress must not revive a deliberately-closed pane to reconnecting",
+        )
 
         vm.applyReconnectGaveUp()
-        XCTAssertEqual(vm.status, .disconnected, "a late give-up must not flip a deliberately-closed pane to unreachable")
+        XCTAssertEqual(
+            vm.status,
+            .disconnected,
+            "a late give-up must not flip a deliberately-closed pane to unreachable",
+        )
     }
 
     // MARK: - Failure-reason humanization
@@ -214,15 +225,19 @@ final class PaneStatusIndicatorTests: XCTestCase {
         XCTAssertEqual(
             ConnectionViewModel.failureReason(for: AislopdeskTransportError.timedOut("connect exceeded 10s")),
             "Connection timed out — host unreachable?",
-            "a transport LocalizedError yields its clean errorDescription"
+            "a transport LocalizedError yields its clean errorDescription",
         )
-        let clientReason = ConnectionViewModel.failureReason(for: ClientError.invalidState("resume before first connect"))
-        XCTAssertEqual(clientReason, #"invalidState("resume before first connect")"#,
-                       "a non-LocalizedError keeps its readable Swift payload")
+        let clientReason = ConnectionViewModel
+            .failureReason(for: ClientError.invalidState("resume before first connect"))
+        XCTAssertEqual(
+            clientReason,
+            #"invalidState("resume before first connect")"#,
+            "a non-LocalizedError keeps its readable Swift payload",
+        )
         XCTAssertFalse(clientReason.contains("couldn't be completed"), "must not be the bridged NSError dump")
         XCTAssertFalse(
             ConnectionViewModel.failureReason(for: CancellationError()).contains("couldn't be completed"),
-            "CancellationError must not surface as the Foundation dump either"
+            "CancellationError must not surface as the Foundation dump either",
         )
     }
 
@@ -248,7 +263,7 @@ final class PaneStatusIndicatorTests: XCTestCase {
         XCTAssertEqual(
             PaneRecoveryBanner.reason(for: .failed("Connection timed out — host unreachable?")),
             "Connection timed out — host unreachable?",
-            ".failed surfaces its humanized message as the banner reason"
+            ".failed surfaces its humanized message as the banner reason",
         )
         XCTAssertNotNil(PaneRecoveryBanner.reason(for: .unreachable), ".unreachable has a recovery banner")
         XCTAssertNil(PaneRecoveryBanner.reason(for: .disconnected))
@@ -256,7 +271,7 @@ final class PaneStatusIndicatorTests: XCTestCase {
         XCTAssertNil(PaneRecoveryBanner.reason(for: .connected))
         XCTAssertNil(
             PaneRecoveryBanner.reason(for: .reconnecting(attempt: 2, nextRetry: nil)),
-            "reconnecting is auto-healing → no Retry banner (would duplicate the chrome countdown)"
+            "reconnecting is auto-healing → no Retry banner (would duplicate the chrome countdown)",
         )
     }
 
@@ -264,10 +279,14 @@ final class PaneStatusIndicatorTests: XCTestCase {
     /// DISTINCT from the orange error `reason(for:)` (which stays nil for `.disconnected`), so a clean
     /// exit never reads as a failure. Every non-disconnected status has no session-ended notice.
     func testSessionEndedReasonOnlyForDisconnected() {
-        XCTAssertNotNil(PaneRecoveryBanner.sessionEndedReason(for: .disconnected),
-                        "a clean shell exit gets a neutral session-ended notice")
-        XCTAssertNil(PaneRecoveryBanner.reason(for: .disconnected),
-                     "…and the orange error banner stays absent (the two affordances are distinct)")
+        XCTAssertNotNil(
+            PaneRecoveryBanner.sessionEndedReason(for: .disconnected),
+            "a clean shell exit gets a neutral session-ended notice",
+        )
+        XCTAssertNil(
+            PaneRecoveryBanner.reason(for: .disconnected),
+            "…and the orange error banner stays absent (the two affordances are distinct)",
+        )
         XCTAssertNil(PaneRecoveryBanner.sessionEndedReason(for: .connected))
         XCTAssertNil(PaneRecoveryBanner.sessionEndedReason(for: .connecting))
         XCTAssertNil(PaneRecoveryBanner.sessionEndedReason(for: .reconnecting(attempt: 1, nextRetry: nil)))
@@ -280,7 +299,7 @@ final class PaneStatusIndicatorTests: XCTestCase {
     /// `Backoff.delay(forAttempt:)` — assert it is the capped-exponential sequence the UI countdown
     /// reflects (250ms · 2^(n-1), capped at 2s).
     func testBackoffDelayScheduleIsCappedExponential() {
-        let backoff = ReconnectManager.Backoff()   // initial 250ms, max 2s, ×2
+        let backoff = ReconnectManager.Backoff() // initial 250ms, max 2s, ×2
         XCTAssertEqual(backoff.delay(forAttempt: 1), .milliseconds(250))
         XCTAssertEqual(backoff.delay(forAttempt: 2), .milliseconds(500))
         XCTAssertEqual(backoff.delay(forAttempt: 3), .seconds(1))
@@ -294,8 +313,11 @@ final class PaneStatusIndicatorTests: XCTestCase {
         XCTAssertEqual(PanePresentation.formatCommandResult(exitCode: 0, durationMS: 1234), "✓ 1.2s")
         XCTAssertEqual(PanePresentation.formatCommandResult(exitCode: 1, durationMS: 500), "✗ exit 1 · 500ms")
         XCTAssertEqual(PanePresentation.formatCommandResult(exitCode: 130, durationMS: 0), "✗ exit 130 · 0ms")
-        XCTAssertEqual(PanePresentation.formatCommandResult(exitCode: nil, durationMS: 340), "340ms",
-                       "no exit code reported → just the duration")
+        XCTAssertEqual(
+            PanePresentation.formatCommandResult(exitCode: nil, durationMS: 340),
+            "340ms",
+            "no exit code reported → just the duration",
+        )
         XCTAssertEqual(PanePresentation.formatCommandResult(exitCode: 0, durationMS: 125_000), "✓ 2m 5s")
     }
 }

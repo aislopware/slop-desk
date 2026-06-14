@@ -40,7 +40,11 @@ public enum TranscriptParser {
             return .user(decodeUser(obj, identity: identity))
         case "assistant":
             return .assistant(decodeAssistant(obj, identity: identity))
-        case "system", "summary", "init", "session", "result":
+        case "system",
+             "summary",
+             "init",
+             "session",
+             "result":
             return .meta(decodeMeta(obj, identity: identity, rawType: type))
         case _ where ignoredTypes.contains(type):
             return .ignored(type: type)
@@ -61,7 +65,7 @@ public enum TranscriptParser {
             parentUUID: obj["parentUuid"]?.stringValue ?? obj["parentUUID"]?.stringValue,
             isSidechain: isSidechain,
             agentID: obj["agentId"]?.stringValue ?? obj["agentID"]?.stringValue,
-            timestamp: obj["timestamp"]?.stringValue
+            timestamp: obj["timestamp"]?.stringValue,
         )
     }
 
@@ -95,7 +99,7 @@ public enum TranscriptParser {
             switch b["type"]?.stringValue {
             case "text":
                 let value = b["text"]?.stringValue
-                text = [text, value].compactMap { $0 }.joined(separator: "\n").nonEmpty
+                text = [text, value].compactMap(\.self).joined(separator: "\n").nonEmpty
             case "tool_result":
                 results.append(decodeToolResult(b))
             default:
@@ -125,7 +129,7 @@ public enum TranscriptParser {
             switch b["type"]?.stringValue {
             case "text":
                 let value = b["text"]?.stringValue
-                text = [text, value].compactMap { $0 }.joined(separator: "\n").nonEmpty
+                text = [text, value].compactMap(\.self).joined(separator: "\n").nonEmpty
             case "tool_use":
                 if let id = b["id"]?.stringValue, let name = b["name"]?.stringValue {
                     uses.append(ToolUseBlock(id: id, name: name, input: b["input"] ?? .object([:])))
@@ -136,7 +140,7 @@ public enum TranscriptParser {
                 let rawText = b["thinking"]?.stringValue
                 thinking.append(ThinkingBlock(
                     signature: b["signature"]?.stringValue,
-                    text: (rawText?.isEmpty == true) ? nil : rawText
+                    text: (rawText?.isEmpty == true) ? nil : rawText,
                 ))
             default:
                 break
@@ -153,7 +157,7 @@ public enum TranscriptParser {
             rawType: rawType,
             sessionID: obj["sessionId"]?.stringValue ?? obj["session_id"]?.stringValue,
             model: model,
-            cwd: obj["cwd"]?.stringValue
+            cwd: obj["cwd"]?.stringValue,
         )
     }
 
@@ -162,9 +166,9 @@ public enum TranscriptParser {
     private static func flattenContent(_ value: JSONValue?) -> String {
         switch value {
         case let .some(.string(text)):
-            return text
+            text
         case let .some(.array(blocks)):
-            return blocks.compactMap { block -> String? in
+            blocks.compactMap { block -> String? in
                 if case let .object(b) = block {
                     // No `text` key → render the WHOLE object deterministically (object displayString sorts
                     // keys), NOT `b.values.first` (Dictionary iteration order is hash-seed-randomized per
@@ -174,9 +178,9 @@ public enum TranscriptParser {
                 return block.displayString
             }.joined(separator: "\n")
         case let .some(other):
-            return other.displayString
+            other.displayString
         case .none:
-            return ""
+            ""
         }
     }
 }

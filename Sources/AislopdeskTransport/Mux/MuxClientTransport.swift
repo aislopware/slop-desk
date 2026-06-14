@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskProtocol
+import Foundation
 
 /// A ``ClientTransporting`` backed by one logical channel on a SHARED ``MuxNWConnection`` — the
 /// per-pane terminal transport vended to ``AislopdeskClient/AislopdeskClient``.
@@ -42,15 +42,19 @@ public actor MuxClientTransport: ClientTransporting {
     private var connectedPort: UInt16?
     private var forwarders: [Task<Void, Never>] = []
 
+    @preconcurrency
     public init(
         acquire: @escaping @Sendable (String, UInt16, UUID, Int64) async throws -> MuxAcquisition,
-        release: @escaping @Sendable (String, UInt16, UInt32) async -> Void
+        release: @escaping @Sendable (String, UInt16, UInt32) async -> Void,
     ) {
         self.acquire = acquire
         self.release = release
-        var continuation: AsyncThrowingStream<WireMessage, Error>.Continuation!
-        self.inboundStream = AsyncThrowingStream { continuation = $0 }
-        self.inboundContinuation = continuation
+        var continuation: AsyncThrowingStream<WireMessage, Error>.Continuation?
+        inboundStream = AsyncThrowingStream { continuation = $0 }
+        guard let continuation else {
+            preconditionFailure("AsyncThrowingStream runs its builder synchronously; continuation is always set")
+        }
+        inboundContinuation = continuation
     }
 
     public nonisolated var inbound: AsyncThrowingStream<WireMessage, Error> { inboundStream }
@@ -60,18 +64,18 @@ public actor MuxClientTransport: ClientTransporting {
         port: UInt16,
         resume: UUID,
         lastReceivedSeq: Int64,
-        handshakeTimeout: Duration
+        handshakeTimeout _: Duration,
     ) async throws {
         let id = resume == WireMessage.newSessionID ? UUID() : resume
         let acquisition = try await acquire(host, port, id, lastReceivedSeq)
-        self.sessionID = id
-        self.resumeFromSeq = lastReceivedSeq
-        self.returningClient = (resume != WireMessage.newSessionID)
-        self.dataChannel = acquisition.data
-        self.controlChannel = acquisition.control
-        self.channelID = acquisition.channelID
-        self.connectedHost = host
-        self.connectedPort = port
+        sessionID = id
+        resumeFromSeq = lastReceivedSeq
+        returningClient = (resume != WireMessage.newSessionID)
+        dataChannel = acquisition.data
+        controlChannel = acquisition.control
+        channelID = acquisition.channelID
+        connectedHost = host
+        connectedPort = port
         startForwarding(data: acquisition.data, control: acquisition.control)
     }
 
@@ -146,16 +150,16 @@ public actor MuxClientTransport: ClientTransporting {
         forwarders.append(Task { [weak self] in
             guard let self else { return }
             do {
-                for try await message in data.inbound { await self.yieldInbound(message) }
-                await self.finishInbound(error: nil)
-            } catch { await self.finishInbound(error: error) }
+                for try await message in data.inbound { await yieldInbound(message) }
+                await finishInbound(error: nil)
+            } catch { await finishInbound(error: error) }
         })
         forwarders.append(Task { [weak self] in
             guard let self else { return }
             do {
-                for try await message in control.inbound { await self.yieldInbound(message) }
-                await self.finishInbound(error: nil)
-            } catch { await self.finishInbound(error: error) }
+                for try await message in control.inbound { await yieldInbound(message) }
+                await finishInbound(error: nil)
+            } catch { await finishInbound(error: error) }
         })
     }
 

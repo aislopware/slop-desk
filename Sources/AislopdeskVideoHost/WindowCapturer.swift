@@ -1,9 +1,9 @@
 #if os(macOS)
-import Foundation
-import ScreenCaptureKit
 import CoreMedia
 import CoreVideo
+import Foundation
 import OSLog
+import ScreenCaptureKit
 
 /// Captures a single GUI window via ScreenCaptureKit, configured to the MEASURED
 /// spike configs (doc 02 §3.1, doc 17 §3.1, doc 18 §D).
@@ -35,9 +35,11 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// while keeping a prompt insurance anchor (DETECTED loss recovers via the recovery channel, not this
     /// heartbeat). Env A/B `AISLOPDESK_HEARTBEAT_S`, clamped [0.25, 60].
     public static let heartbeatIDRInterval: TimeInterval = {
-        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_HEARTBEAT_S"], let v = Double(s), v >= 0.25, v <= 60 { return v }
+        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_HEARTBEAT_S"], let v = Double(s), v >= 0.25,
+           v <= 60 { return v }
         return 2.5
     }()
+
     /// CAD-3 (2026-06-09 smoothness): whether to force a periodic heartbeat IDR on the LIVE (active-motion)
     /// path. DEFAULT OFF. On a never-idle window the heartbeat is a 50-135 KB IDR through
     /// `encodeCompactKeyframe`, whose two synchronous `VTCompressionSessionCompleteFrames` calls BLOCK the
@@ -67,7 +69,14 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// with `forceKeyframe`/`crisp`/`compact` (a keyframe is a superset recovery and wins) and is never
     /// set on the static-timer path (which re-anchors with a crisp/compact IDR instead). Always false
     /// when `AISLOPDESK_LTR` is off ⇒ byte-identical handler behaviour.
-    public typealias FrameHandler = @Sendable (_ pixelBuffer: CVPixelBuffer, _ presentationTime: CMTime, _ forceKeyframe: Bool, _ crisp: Bool, _ compact: Bool, _ ltrRefresh: Bool) -> Void
+    public typealias FrameHandler = @Sendable (
+        _ pixelBuffer: CVPixelBuffer,
+        _ presentationTime: CMTime,
+        _ forceKeyframe: Bool,
+        _ crisp: Bool,
+        _ compact: Bool,
+        _ ltrRefresh: Bool,
+    ) -> Void
 
     /// Whether the static-IDR timer upgrades its re-encode to a CRISP near-lossless frame
     /// (Design A, ``VideoEncoder/encodeLiveCrispKeyframe``). Default on; set `AISLOPDESK_CRISP=0` to
@@ -125,7 +134,8 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// EXPLICIT `AISLOPDESK_MIN_IDR_MS` always wins — even with V2 on (a valid belt-and-suspenders
     /// double-gating A/B configuration).
     private static let minRecoveryIDRInterval: TimeInterval = {
-        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_MIN_IDR_MS"], let v = Double(s), v >= 0, v <= 5_000 { return v / 1000.0 }
+        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_MIN_IDR_MS"], let v = Double(s), v >= 0,
+           v <= 5000 { return v / 1000.0 }
         return ProcessInfo.processInfo.environment["AISLOPDESK_RECOVERY_IDR_V2"] != "0" ? 0 : 0.5
     }()
 
@@ -175,7 +185,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     // under `keyframeLock`.
     private var staticIDRDecider: StaticIDRDecider
     private var idrTimer: DispatchSourceTimer?
-    private var cachedPixelBuffer: CVPixelBuffer?   // deep COPY, frameQueue-owned (see copyPixelBuffer)
+    private var cachedPixelBuffer: CVPixelBuffer? // deep COPY, frameQueue-owned (see copyPixelBuffer)
     /// KHỰNG-ladder stage 1 (AISLOPDESK_VIDEO_DEBUG): last DELIVERED-frame time, frameQueue-owned.
     static let dbgGapEnabled = ProcessInfo.processInfo.environment["AISLOPDESK_VIDEO_DEBUG"] != nil
     private var lastDeliveredAt: Double = 0
@@ -184,18 +194,22 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     private var lastEmittedPTS: CMTime = .zero
     /// Standard MPEG 90 kHz timescale for the monotonic synthetic-PTS counter (§5; Sunshine
     /// "counter, not clock" discipline expressed in CMTime).
-    private static let ptsTimescale: CMTimeScale = 90_000
+    private static let ptsTimescale: CMTimeScale = 90000
 
     /// Requests a forced IDR on the next captured frame (client loss-recovery →
     /// ``RecoveryMessage/requestIDR``). Thread-safe; called from the orchestrator actor.
     public func requestKeyframe() {
-        keyframeLock.lock(); pendingForcedKeyframe = true; keyframeLock.unlock()
+        keyframeLock.lock()
+        pendingForcedKeyframe = true
+        keyframeLock.unlock()
     }
 
     /// WF-8: requests a cheap LTR refresh on the next captured frame (host `.refreshLTR` recovery
     /// decision when the ACKED-ONLY gate holds). Thread-safe; called from the orchestrator actor.
     public func requestLTRRefresh() {
-        keyframeLock.lock(); pendingLTRRefresh = true; keyframeLock.unlock()
+        keyframeLock.lock()
+        pendingLTRRefresh = true
+        keyframeLock.unlock()
     }
 
     /// SELF-HEAL gate. The session actor arms this when a client LTR ack folds (acks are flowing ⇒
@@ -203,11 +217,14 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// and disarms it whenever a fresh encoder is installed (``AislopdeskVideoHostSession`` resets the
     /// LTR controller at the same sites). Thread-safe.
     public func setSelfHealEligible(_ eligible: Bool) {
-        keyframeLock.lock(); selfHealEligible = eligible; keyframeLock.unlock()
+        keyframeLock.lock()
+        selfHealEligible = eligible
+        keyframeLock.unlock()
     }
 
     private func selfHealIsEligible() -> Bool {
-        keyframeLock.lock(); defer { keyframeLock.unlock() }
+        keyframeLock.lock()
+        defer { keyframeLock.unlock() }
         return selfHealEligible
     }
 
@@ -216,11 +233,14 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// step (and re-applied after a resize installs a fresh capturer).
     public func setGovernedFPS(_ newFps: Int) {
         let clamped = min(fps, max(1, newFps))
-        keyframeLock.lock(); governedFPS = clamped; keyframeLock.unlock()
+        keyframeLock.lock()
+        governedFPS = clamped
+        keyframeLock.unlock()
     }
 
     private func currentGovernedFPS() -> Int {
-        keyframeLock.lock(); defer { keyframeLock.unlock() }
+        keyframeLock.lock()
+        defer { keyframeLock.unlock() }
         return governedFPS
     }
 
@@ -229,13 +249,15 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// cooldown/latch logic sees an unchanged forced-frame stream and recovery latency stays
     /// ≤1 DELIVERY interval (deliveries continue at full rate), not 1 governed interval.
     private func peekPendingRecoveryLatches() -> Bool {
-        keyframeLock.lock(); defer { keyframeLock.unlock() }
+        keyframeLock.lock()
+        defer { keyframeLock.unlock() }
         return pendingForcedKeyframe || pendingLTRRefresh
     }
 
     /// Atomically reads + clears the pending-forced-keyframe latch.
     private func takePendingForcedKeyframe() -> Bool {
-        keyframeLock.lock(); defer { keyframeLock.unlock() }
+        keyframeLock.lock()
+        defer { keyframeLock.unlock() }
         let pending = pendingForcedKeyframe
         pendingForcedKeyframe = false
         return pending
@@ -243,7 +265,8 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
 
     /// WF-8: atomically reads + clears the pending-LTR-refresh latch.
     private func takePendingLTRRefresh() -> Bool {
-        keyframeLock.lock(); defer { keyframeLock.unlock() }
+        keyframeLock.lock()
+        defer { keyframeLock.unlock() }
         let pending = pendingLTRRefresh
         pendingLTRRefresh = false
         return pending
@@ -257,7 +280,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// so FIFO + monotonic PTS w.r.t. real frames is preserved.
     private func onIDRTimerTick() {
         let now = Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1_000_000_000.0
-        let forcedKeyframe = takePendingForcedKeyframe()  // drain the keyframe latch
+        let forcedKeyframe = takePendingForcedKeyframe() // drain the keyframe latch
         // WF-8: a STATIC window has no live delta to ride an LTR refresh, so on this path an LTR
         // request degrades to the same crisp/compact re-anchor as a forced keyframe — drain it and
         // fold it into `forced` (but the frameHandler is still called with ltrRefresh=false: the
@@ -265,10 +288,13 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // Always false when AISLOPDESK_LTR is off ⇒ `forced` is byte-identical to today.
         let forcedLTR = takePendingLTRRefresh()
         let forced = forcedKeyframe || forcedLTR
-        guard staticIDRDecider.shouldReencode(now: now,
-                                              forcedLatched: forced,
-                                              hasRetainedBuffer: cachedPixelBuffer != nil),
-              let buf = cachedPixelBuffer else {
+        guard staticIDRDecider.shouldReencode(
+            now: now,
+            forcedLatched: forced,
+            hasRetainedBuffer: cachedPixelBuffer != nil,
+        ),
+            let buf = cachedPixelBuffer
+        else {
             // If we drained a recovery request but decided not to fire (quiet window — the live path
             // will service it), DON'T lose it: re-latch each kind we took.
             if forcedKeyframe || forcedLTR {
@@ -280,13 +306,20 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             return
         }
         staticIDRDecider.recordSynthetic(now: now)
-        lastKeyframeEmit = now   // F1: the timer ALWAYS emits a keyframe → anchor the recovery cooldown
+        lastKeyframeEmit = now // F1: the timer ALWAYS emits a keyframe → anchor the recovery cooldown
         // The window is at rest (the live path is quiet — that is why this timer fired), so upgrade
         // the re-encode to a CRISP near-lossless intra refresh for razor-sharp static text (Design A,
         // same live session → no client decoder rebuild). `AISLOPDESK_CRISP=0` falls back to a plain IDR.
         // Static (at-rest) path: crisp (sharp) when enabled, never compact — at rest there is no live
         // delta competing for the wire, so the larger near-lossless IDR is not a burst-loss risk.
-        frameHandler(buf, syntheticPTS(), true, Self.crispWhenStatic, false, false) // force IDR, same hand-off as live path (never an LTR refresh on the static path)
+        frameHandler(
+            buf,
+            syntheticPTS(),
+            true,
+            Self.crispWhenStatic,
+            false,
+            false,
+        ) // force IDR, same hand-off as live path (never an LTR refresh on the static path)
     }
 
     /// One 90 kHz tick past the last emitted PTS → strictly monotonic, collision-free with
@@ -321,18 +354,24 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         captureScale: Double = 1.0,
         fullRange: Bool = false,
         preferDisplayAnchored: Bool = false,
-        frameHandler: @escaping FrameHandler
+        frameHandler: @escaping FrameHandler,
     ) {
         self.preferDisplayAnchored = preferDisplayAnchored
         self.fps = max(1, fps)
-        self.captureHz = Self.resolveCaptureHz(envValue: ProcessInfo.processInfo.environment["AISLOPDESK_CAPTURE_HZ"], fps: max(1, fps))
-        self.governedFPS = max(1, fps)
+        captureHz = Self.resolveCaptureHz(
+            envValue: ProcessInfo.processInfo.environment["AISLOPDESK_CAPTURE_HZ"],
+            fps: max(1, fps),
+        )
+        governedFPS = max(1, fps)
         self.captureScale = max(1.0, captureScale)
         self.fullRange = fullRange
         self.frameHandler = frameHandler
         // Cap quietWindow at 1s (F2): the decider's quietWindow gates shouldReencode, so a longer
         // heartbeat must NOT stretch the timer-path recovery-suppression window — recovery stays responsive.
-        self.staticIDRDecider = StaticIDRDecider(heartbeat: Self.heartbeatIDRInterval, quietWindow: min(1.0, Self.heartbeatIDRInterval))
+        staticIDRDecider = StaticIDRDecider(
+            heartbeat: Self.heartbeatIDRInterval,
+            quietWindow: min(1.0, Self.heartbeatIDRInterval),
+        )
         super.init()
     }
 
@@ -345,7 +384,13 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// placement stay correct without a separate pixel-scale axis. (On a Retina host
     /// this means remoted windows render at point resolution, not backing pixels — a
     /// quality trade chosen for a single, consistent capture-size source of truth.)
-    public static func makeConfiguration(width: Int, height: Int, fps: Int = 60, captureScale: Double = 1.0, fullRange: Bool = false) -> SCStreamConfiguration {
+    public static func makeConfiguration(
+        width: Int,
+        height: Int,
+        fps: Int = 60,
+        captureScale: Double = 1.0,
+        fullRange: Bool = false,
+    ) -> SCStreamConfiguration {
         let config = SCStreamConfiguration()
         // NV12 zero-copy (doc 02 §3.1). WF-6 (#8): the luma RANGE is carried by the pixel-format
         // VARIANT (FullRange vs VideoRange) — THIS is the capture-side range knob; VT reads it to
@@ -354,7 +399,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         config.pixelFormat = fullRange
             ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
             : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-        config.showsCursor = false                                          // client-side cursor (RESULTS.md D)
+        config.showsCursor = false // client-side cursor (RESULTS.md D)
         // showMouseClicks gates the click "ripple" overlay (default NO; only applies
         // to BGRA capture per the SDK header — a no-op for our NV12 path, set for
         // intent).
@@ -373,9 +418,12 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // 57.2 → 60.0fps, p99 cadence 24.2 → 19.8ms) and the live host log showed 144-161 clustered
         // ~30ms double-slot capture gaps per scroll session — ZERO after the raise (14.6k-frame
         // user session). Capture-side only: encode fps (and thus bitrate) unchanged.
-        let captureHz = resolveCaptureHz(envValue: ProcessInfo.processInfo.environment["AISLOPDESK_CAPTURE_HZ"], fps: fps)
+        let captureHz = resolveCaptureHz(
+            envValue: ProcessInfo.processInfo.environment["AISLOPDESK_CAPTURE_HZ"],
+            fps: fps,
+        )
         config.minimumFrameInterval = CMTime(value: 1, timescale: Int32(captureHz))
-        config.queueDepth = 3                                               // 2-3 for low latency (doc 02 §3.1)
+        config.queueDepth = 3 // 2-3 for low latency (doc 02 §3.1)
         config.width = width
         config.height = height
         config.colorSpaceName = CGColorSpace.sRGB
@@ -407,8 +455,8 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         let pointH = Double(height) / max(1.0, captureScale)
         config.sourceRect = CGRect(x: 0, y: 0, width: pointW, height: pointH)
         if #available(macOS 14.0, *) {
-            config.ignoreShadowsSingleWindow = true     // don't let the window's drop-shadow pad the rect
-            config.ignoreGlobalClipSingleWindow = true  // don't pad the rect to the global clip
+            config.ignoreShadowsSingleWindow = true // don't let the window's drop-shadow pad the rect
+            config.ignoreGlobalClipSingleWindow = true // don't pad the rect to the global clip
         }
         return config
     }
@@ -460,10 +508,13 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// tooltip, no multi-window bleed), else `.window` (off-VD the window may move/overlap freely).
     static func resolveCaptureMode(envValue: String?, preferDisplayAnchored: Bool) -> CaptureMode {
         switch envValue {
-        case "window", "0": return .window
-        case "1", "display": return .displayExcluding
-        case "include", "display-include": return .displayIncluding
-        default: return preferDisplayAnchored ? .displayIncluding : .window
+        case "window",
+             "0": .window
+        case "1",
+             "display": .displayExcluding
+        case "include",
+             "display-include": .displayIncluding
+        default: preferDisplayAnchored ? .displayIncluding : .window
         }
     }
 
@@ -471,7 +522,11 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// the crop is a FIXED display-local rect, so a window MOVE makes it stale — the session feeds
     /// geometry-watcher moves to ``updateDisplayAnchoredOrigin(windowFrameCG:)`` to re-anchor.
     /// Guarded by `anchorLock` (set on start's executor, read from the session actor's geometry path).
-    private struct DisplayAnchor { let displayBounds: CGRect; let config: SCStreamConfiguration; let isUnion: Bool }
+    private struct DisplayAnchor { let displayBounds: CGRect
+        let config: SCStreamConfiguration
+        let isUnion: Bool
+    }
+
     private var displayAnchor: DisplayAnchor?
     private let anchorLock = NSLock()
 
@@ -485,7 +540,9 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         public let displayLocalRect: CGRect
         public let globalRect: CGRect
         public init(displayID: CGDirectDisplayID, displayLocalRect: CGRect, globalRect: CGRect) {
-            self.displayID = displayID; self.displayLocalRect = displayLocalRect; self.globalRect = globalRect
+            self.displayID = displayID
+            self.displayLocalRect = displayLocalRect
+            self.globalRect = globalRect
         }
     }
 
@@ -497,14 +554,27 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// `region` (DIALOG-EXPAND): when non-nil, the display-anchored crop is pinned to that explicit
     /// union rect (window ∪ dialog) instead of the live window frame — `pixelWidth`/`pixelHeight`
     /// must already match `region.globalRect.size × captureScale`. nil ⇒ the normal window-frame crop.
-    public func start(window: SCWindow, pixelWidth: Int, pixelHeight: Int, region: CaptureRegionOverride? = nil) async throws {
-        let config = Self.makeConfiguration(width: pixelWidth, height: pixelHeight, fps: fps, captureScale: captureScale, fullRange: fullRange)
+    public func start(
+        window: SCWindow,
+        pixelWidth: Int,
+        pixelHeight: Int,
+        region: CaptureRegionOverride? = nil,
+    ) async throws {
+        let config = Self.makeConfiguration(
+            width: pixelWidth,
+            height: pixelHeight,
+            fps: fps,
+            captureScale: captureScale,
+            fullRange: fullRange,
+        )
         var filter = Self.makeFilter(window: window)
         // A union region only makes sense in the display-including mode (it relies on
         // includeChildWindows compositing the dialog); force that mode when a region is supplied.
         let mode: CaptureMode = region != nil ? .displayIncluding
-            : Self.resolveCaptureMode(envValue: ProcessInfo.processInfo.environment["AISLOPDESK_DISPLAY_CAPTURE"],
-                                      preferDisplayAnchored: preferDisplayAnchored)
+            : Self.resolveCaptureMode(
+                envValue: ProcessInfo.processInfo.environment["AISLOPDESK_DISPLAY_CAPTURE"],
+                preferDisplayAnchored: preferDisplayAnchored,
+            )
         if mode != .window {
             // Re-resolve the SCWindow by id: the mint flow AX-moves the window onto the VD AFTER
             // the `window` passed here was enumerated, so its `.frame` is the PRE-move one — the
@@ -524,9 +594,12 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
                 if let region {
                     config.sourceRect = region.displayLocalRect
                 } else {
-                    config.sourceRect = CGRect(x: liveWindow.frame.minX - db.minX, y: liveWindow.frame.minY - db.minY,
-                                               width: Double(pixelWidth) / max(1.0, captureScale),
-                                               height: Double(pixelHeight) / max(1.0, captureScale))
+                    config.sourceRect = CGRect(
+                        x: liveWindow.frame.minX - db.minX,
+                        y: liveWindow.frame.minY - db.minY,
+                        width: Double(pixelWidth) / max(1.0, captureScale),
+                        height: Double(pixelHeight) / max(1.0, captureScale),
+                    )
                 }
                 switch mode {
                 case .displayExcluding:
@@ -537,8 +610,15 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
                 case .window:
                     break
                 }
-                anchorLock.withLock { displayAnchor = DisplayAnchor(displayBounds: db, config: config, isUnion: region != nil) }
-                log.notice("capture mode \(String(describing: mode))\(region != nil ? " [union]" : ""): display \(display.displayID) sourceRect \(Int(config.sourceRect.origin.x)),\(Int(config.sourceRect.origin.y)) \(Int(config.sourceRect.width))x\(Int(config.sourceRect.height))pt")
+                anchorLock.withLock { displayAnchor = DisplayAnchor(
+                    displayBounds: db,
+                    config: config,
+                    isUnion: region != nil,
+                ) }
+                log
+                    .notice(
+                        "capture mode \(String(describing: mode))\(region != nil ? " [union]" : ""): display \(display.displayID) sourceRect \(Int(config.sourceRect.origin.x)),\(Int(config.sourceRect.origin.y)) \(Int(config.sourceRect.width))x\(Int(config.sourceRect.height))pt",
+                    )
             } else {
                 log.error("display-anchored capture: no display contains window center — falling back to window filter")
             }
@@ -563,7 +643,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         timer.schedule(deadline: .now() + tick, repeating: tick, leeway: .milliseconds(50))
         timer.setEventHandler { [weak self] in self?.onIDRTimerTick() }
         timer.resume()
-        self.idrTimer = timer
+        idrTimer = timer
     }
 
     /// Re-anchors a display-anchored crop after the window MOVED (geometry-watcher feed from the
@@ -576,8 +656,10 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // In union mode the crop spans window ∪ dialog and is owned by the session's union poller —
         // a plain window-frame re-origin would drop the dialog. Skip; the poller re-targets instead.
         guard !anchor.isUnion else { return }
-        let newOrigin = CGPoint(x: frame.minX - anchor.displayBounds.minX,
-                                y: frame.minY - anchor.displayBounds.minY)
+        let newOrigin = CGPoint(
+            x: frame.minX - anchor.displayBounds.minX,
+            y: frame.minY - anchor.displayBounds.minY,
+        )
         let current = anchor.config.sourceRect.origin
         guard abs(newOrigin.x - current.x) >= 0.5 || abs(newOrigin.y - current.y) >= 0.5 else { return }
         anchor.config.sourceRect = CGRect(origin: newOrigin, size: anchor.config.sourceRect.size)
@@ -597,11 +679,13 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // queue) BEFORE stopping capture, so no tick can race teardown. `cachedPixelBuffer = nil`
         // is sufficient — ARC releases the managed copy; no manual CVPixelBufferRelease.
         frameQueue.sync {
-            idrTimer?.cancel(); idrTimer = nil
+            idrTimer?.cancel()
+            idrTimer = nil
             // GATED-TAIL FLUSH: cancel the one-shot inside the same frameQueue.sync, so no flush
             // can race teardown (the work item runs on frameQueue too). Belt-and-braces: a
             // hypothetical already-queued execution is also inert — `cachedPixelBuffer` is nil.
-            pendingGatedFlush?.cancel(); pendingGatedFlush = nil
+            pendingGatedFlush?.cancel()
+            pendingGatedFlush = nil
             cachedPixelBuffer = nil
         }
         try? await stream.stopCapture()
@@ -610,16 +694,24 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
 
     // MARK: SCStreamOutput
 
-    public func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+    public func stream(
+        _: SCStream,
+        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+        of type: SCStreamOutputType,
+    ) {
         guard type == .screen else { return }
 
         // Idle-skip (doc 17 §3.5): read SCStreamFrameInfo.status; on .idle return
         // immediately — no IOSurface touch, no encode, no send. This keeps the
         // encoder slot free for the next real (keystroke-driven) frame.
-        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
-              let info = attachments.first,
-              let statusRaw = info[.status] as? Int,
-              let status = SCFrameStatus(rawValue: statusRaw) else {
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
+            sampleBuffer,
+            createIfNecessary: false,
+        ) as? [[SCStreamFrameInfo: Any]],
+            let info = attachments.first,
+            let statusRaw = info[.status] as? Int,
+            let status = SCFrameStatus(rawValue: statusRaw)
+        else {
             return
         }
         guard status == .complete else {
@@ -649,7 +741,9 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // read these lines only against a continuous-motion test (testufo).
         if Self.dbgGapEnabled {
             if lastDeliveredAt > 0, now - lastDeliveredAt > 0.028 {
-                FileHandle.standardError.write(Data("aislopdesk-videohostd[gap]: capture gap \(Int((now - lastDeliveredAt) * 1000))ms\n".utf8))
+                FileHandle.standardError
+                    .write(Data("aislopdesk-videohostd[gap]: capture gap \(Int((now - lastDeliveredAt) * 1000))ms\n"
+                            .utf8))
             }
             lastDeliveredAt = now
         }
@@ -687,12 +781,17 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         //  - GATED-TAIL FLUSH: any fresh `.complete` delivery supersedes a pending one-shot flush
         //    (it either encodes now, or is gated and RE-ARMS a replacement below) — so the flush
         //    only ever fires when its armed frame is still the NEWEST content.
-        pendingGatedFlush?.cancel(); pendingGatedFlush = nil
+        pendingGatedFlush?.cancel()
+        pendingGatedFlush = nil
         let governed = currentGovernedFPS()
         if governed < fps {
             let mustEncode = !hasEmittedFirstFrame || peekPendingRecoveryLatches()
-            if !cadenceGate.admit(now: now, targetIntervalSeconds: 1.0 / Double(governed),
-                                  toleranceSeconds: 0.5 / Double(captureHz), forced: mustEncode) {
+            if !cadenceGate.admit(
+                now: now,
+                targetIntervalSeconds: 1.0 / Double(governed),
+                toleranceSeconds: 0.5 / Double(captureHz),
+                forced: mustEncode,
+            ) {
                 // Delivered-but-gated: cache/decider/PTS already updated above. If this turns out
                 // to be the LAST frame of the burst, the one-shot ships its content at the next
                 // governed slot boundary instead of leaving a stale tail until the crisp refresh.
@@ -733,11 +832,14 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // cooldown) and is honored. Never gates the first-frame or heartbeat IDR. The dropped force is NOT
         // re-latched (takePendingForcedKeyframe already cleared it) so it cannot deferred-storm.
         if forceKeyframe, latched, !isFirstFrame, !isHeartbeat,
-           Self.minRecoveryIDRInterval > 0, now - lastKeyframeEmit < Self.minRecoveryIDRInterval {
+           Self.minRecoveryIDRInterval > 0, now - lastKeyframeEmit < Self.minRecoveryIDRInterval
+        {
             forceKeyframe = false
         }
         // Anchor BOTH the heartbeat cadence and the recovery cooldown on ANY actually-emitted keyframe.
-        if forceKeyframe { lastHeartbeat = now; lastKeyframeEmit = now }
+        if forceKeyframe { lastHeartbeat = now
+            lastKeyframeEmit = now
+        }
         // COMPACT IDR (2026-06-08 motion-smoothness): a forced IDR on the LIVE (active) path — recovery
         // (client-requested after loss) or heartbeat — is encoded SMALL+coarse (encodeCompactKeyframe)
         // so it survives a UDP burst instead of re-triggering the recovery-IDR loop that shows as a
@@ -759,7 +861,11 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // FPS-GOVERNOR: the heal K is rebased TIME-equivalently at a governed fps (60→6, 30→3,
         // 20→2, 15→2) so the wall-clock heal latency stays ≈100-133 ms — fps is governed down
         // exactly when whole-frame loss is most likely. `governed == fps` ⇒ K unchanged.
-        let healEvery = SelfHealCadence.effectiveEvery(baseEvery: Self.selfHealEvery, baseFps: fps, governedFps: governed)
+        let healEvery = SelfHealCadence.effectiveEvery(
+            baseEvery: Self.selfHealEvery,
+            baseFps: fps,
+            governedFps: governed,
+        )
         if healEvery > 0, !forceKeyframe, !ltrRefresh {
             framesSinceAnchor += 1
             if framesSinceAnchor >= healEvery, selfHealIsEligible() {
@@ -800,14 +906,18 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// PTS, which already advanced `lastEmittedPTS` above the gate).
     private func onGatedTailFlush() {
         pendingGatedFlush = nil
-        guard let buf = cachedPixelBuffer else { return }   // stopped / never delivered — nothing to ship
+        guard let buf = cachedPixelBuffer else { return } // stopped / never delivered — nothing to ship
         let now = Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1_000_000_000.0
         let governed = currentGovernedFPS()
         if governed < fps {
             let mustEncode = !hasEmittedFirstFrame || peekPendingRecoveryLatches()
-            guard cadenceGate.admit(now: now, targetIntervalSeconds: 1.0 / Double(governed),
-                                    toleranceSeconds: 0.5 / Double(captureHz), forced: mustEncode) else {
-                return   // fired early vs the schedule (clock skew) — the next delivery covers it
+            guard cadenceGate.admit(
+                now: now,
+                targetIntervalSeconds: 1.0 / Double(governed),
+                toleranceSeconds: 0.5 / Double(captureHz),
+                forced: mustEncode,
+            ) else {
+                return // fired early vs the schedule (clock skew) — the next delivery covers it
             }
         }
         encodeBelowGate(pixelBuffer: buf, encodePTS: syntheticPTS(), now: now, governed: governed)
@@ -815,7 +925,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
 
     // MARK: SCStreamDelegate
 
-    public func stream(_ stream: SCStream, didStopWithError error: Error) {
+    public func stream(_: SCStream, didStopWithError error: Error) {
         log.error("SCStream stopped with error: \(error.localizedDescription)")
     }
 
@@ -851,7 +961,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             CVPixelBufferUnlockBaseAddress(dst, [])
             CVPixelBufferUnlockBaseAddress(src, .readOnly)
         }
-        let planes = CVPixelBufferGetPlaneCount(src)  // NV12 = 2 (Y, CbCr)
+        let planes = CVPixelBufferGetPlaneCount(src) // NV12 = 2 (Y, CbCr)
         for p in 0..<planes {
             guard let s = CVPixelBufferGetBaseAddressOfPlane(src, p),
                   let d = CVPixelBufferGetBaseAddressOfPlane(dst, p) else { return nil }
@@ -860,7 +970,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             let rows = CVPixelBufferGetHeightOfPlane(src, p)
             if sb == db {
                 memcpy(d, s, sb * rows)
-            } else {                                  // stride mismatch → row-by-row
+            } else { // stride mismatch → row-by-row
                 let copyBytes = min(sb, db)
                 for r in 0..<rows { memcpy(d + r * db, s + r * sb, copyBytes) }
             }

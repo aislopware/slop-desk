@@ -1,5 +1,5 @@
-import XCTest
 import AislopdeskProtocol
+import XCTest
 @testable import AislopdeskTransport
 
 /// The headless E2E for the TCP mux: two ``MuxSubChannel``s riding ONE shared ``MuxNWConnection``
@@ -8,7 +8,6 @@ import AislopdeskProtocol
 /// frames from two channels on one connection demux onto the CORRECT per-channel inbound streams,
 /// and that channelOpen / Ack / Close lifecycle works.
 final class MuxLoopbackTests: XCTestCase {
-
     /// Wires a client + host shared connection over in-memory CONTROL + DATA links, with the host
     /// auto-accepting + echoing every peer-opened channel. Returns both ends. Per-channel credit
     /// flow control is always on (DATA armed, CONTROL infinite).
@@ -43,7 +42,11 @@ final class MuxLoopbackTests: XCTestCase {
     /// Collects up to `count` messages from a sub-channel's inbound, with a bounded timeout so a
     /// missing message fails the test rather than hanging. Free function (no `self`) so it can be
     /// launched in an `async let` under strict concurrency.
-    private static func collect(_ channel: MuxSubChannel, count: Int, timeout: Duration = .seconds(2)) async -> [WireMessage] {
+    private static func collect(
+        _ channel: MuxSubChannel,
+        count: Int,
+        timeout: Duration = .seconds(2),
+    ) async -> [WireMessage] {
         await withTaskGroup(of: [WireMessage]?.self) { group in
             group.addTask {
                 var out: [WireMessage] = []
@@ -61,6 +64,8 @@ final class MuxLoopbackTests: XCTestCase {
                 try? await Task.sleep(for: timeout)
                 return nil // timeout sentinel
             }
+            // `group.next()` is `[WireMessage]??`; the `?? nil` flattens the double-optional.
+            // swiftlint:disable:next redundant_nil_coalescing
             let first = await group.next() ?? nil
             group.cancelAll()
             return first ?? []
@@ -90,8 +95,14 @@ final class MuxLoopbackTests: XCTestCase {
 
         XCTAssertEqual(aMessages.count, 1, "channel A inbound must receive exactly its own echo")
         XCTAssertEqual(bMessages.count, 1, "channel B inbound must receive exactly its own echo")
-        guard case let .output(_, aBytes) = aMessages.first else { return XCTFail("A: expected output, got \(aMessages)") }
-        guard case let .output(_, bBytes) = bMessages.first else { return XCTFail("B: expected output, got \(bMessages)") }
+        guard case let .output(_, aBytes) = aMessages.first
+        else { XCTFail("A: expected output, got \(aMessages)")
+            return
+        }
+        guard case let .output(_, bBytes) = bMessages.first
+        else { XCTFail("B: expected output, got \(bMessages)")
+            return
+        }
         XCTAssertEqual(aBytes, Data("A-only".utf8), "channel A must receive ONLY A's bytes (no cross-talk)")
         XCTAssertEqual(bBytes, Data("B-only".utf8), "channel B must receive ONLY B's bytes (no cross-talk)")
     }
@@ -118,7 +129,11 @@ final class MuxLoopbackTests: XCTestCase {
             guard case let .output(_, bytes) = msg, let s = String(data: bytes, encoding: .utf8) else { return nil }
             return Int(s)
         }
-        XCTAssertEqual(received, Array(0..<n), "frames must arrive in EXACT send order (per-channel order = wire order)")
+        XCTAssertEqual(
+            received,
+            Array(0..<n),
+            "frames must arrive in EXACT send order (per-channel order = wire order)",
+        )
     }
 
     func testChannelOpenAckAcceptsChannel() async throws {
@@ -179,9 +194,11 @@ final class MuxLoopbackTests: XCTestCase {
 
         // Collect every channelID the host close hook is invoked for (the production wiring maps
         // this to removeMuxSession → MuxChannelSession.shutdown()).
-        actor Closed { var ids: [UInt32] = []; func add(_ id: UInt32) { ids.append(id) } }
+        actor Closed { var ids: [UInt32] = []
+            func add(_ id: UInt32) { ids.append(id) }
+        }
         let closed = Closed()
-        await host.setHostOpenHandler { _ in }            // accept opens (no echo needed here)
+        await host.setHostOpenHandler { _ in } // accept opens (no echo needed here)
         await host.setHostCloseHandler { id in Task { await closed.add(id) } }
         await client.start()
         await host.start()
@@ -195,8 +212,11 @@ final class MuxLoopbackTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(50)) // let the close frame route on the host
 
         let firedIDs = await closed.ids
-        XCTAssertEqual(firedIDs, [chA.data.channelID],
-                       "host close hook must fire exactly once, for the closed channel only (not the live sibling B)")
+        XCTAssertEqual(
+            firedIDs,
+            [chA.data.channelID],
+            "host close hook must fire exactly once, for the closed channel only (not the live sibling B)",
+        )
         XCTAssertNotEqual(chA.data.channelID, chB.data.channelID)
     }
 
@@ -237,12 +257,19 @@ final class MuxLoopbackTests: XCTestCase {
 
         let bMessages = await bOut
         XCTAssertEqual(bMessages.count, 1, "sibling B's keystroke echo must arrive despite A's flood (no starvation)")
-        guard case let .output(_, bBytes) = bMessages.first else { return XCTFail("B: expected output, got \(bMessages)") }
+        guard case let .output(_, bBytes) = bMessages.first
+        else { XCTFail("B: expected output, got \(bMessages)")
+            return
+        }
         XCTAssertEqual(bBytes, Data("B-keystroke".utf8), "B must receive ONLY its own bytes")
 
         let aMessages = await aOut
         _ = await flood.value
-        XCTAssertEqual(aMessages.count, floodCount, "all of A's flooded frames must arrive (credit loop keeps it flowing, no deadlock)")
+        XCTAssertEqual(
+            aMessages.count,
+            floodCount,
+            "all of A's flooded frames must arrive (credit loop keeps it flowing, no deadlock)",
+        )
         let indices = aMessages.compactMap { msg -> Int? in
             guard case let .output(_, bytes) = msg, let s = String(data: bytes, encoding: .utf8),
                   let colon = s.firstIndex(of: ":") else { return nil }
@@ -322,7 +349,7 @@ final class MuxLoopbackTests: XCTestCase {
                     for try await message in open.data.inbound {
                         await open.data.noteConsumed(message.wireByteCount)
                     }
-                } catch { }
+                } catch {}
             }
         }
         await client.start()
@@ -339,10 +366,16 @@ final class MuxLoopbackTests: XCTestCase {
 
         let controlGrants = hostControl.windowAdjustCount
         let dataGrants = hostData.windowAdjustCount
-        XCTAssertGreaterThan(controlGrants, 0,
-                             "the host must emit windowAdjust grants on the CONTROL link (FIX #2)")
-        XCTAssertEqual(dataGrants, 0,
-                       "NO windowAdjust may be emitted on the flooded DATA link (would deadlock under a bidirectional flood)")
+        XCTAssertGreaterThan(
+            controlGrants,
+            0,
+            "the host must emit windowAdjust grants on the CONTROL link (FIX #2)",
+        )
+        XCTAssertEqual(
+            dataGrants,
+            0,
+            "NO windowAdjust may be emitted on the flooded DATA link (would deadlock under a bidirectional flood)",
+        )
     }
 
     /// FIX #2 blocking-link variant: drive the flood over BLOCKING links (``BlockingMuxLink``) whose
@@ -355,7 +388,7 @@ final class MuxLoopbackTests: XCTestCase {
     /// the test process.
     func testBlockingLinkFloodCompletesWhenGrantRidesControl() async throws {
         let (clientControl, hostControl) = BlockingMuxLink.pair(capacity: 64) // CONTROL: open, fast
-        let (clientData, hostData) = BlockingMuxLink.pair(capacity: 8)        // DATA: client→host open
+        let (clientData, hostData) = BlockingMuxLink.pair(capacity: 8) // DATA: client→host open
         let client = MuxNWConnection(role: .client, controlLink: clientControl, dataLink: clientData)
         let host = MuxNWConnection(role: .host, controlLink: hostControl, dataLink: hostData)
         await host.setHostOpenHandler { open in
@@ -365,7 +398,7 @@ final class MuxLoopbackTests: XCTestCase {
                     for try await message in open.data.inbound {
                         await open.data.noteConsumed(message.wireByteCount)
                     }
-                } catch { }
+                } catch {}
             }
         }
         await client.start()
@@ -391,11 +424,15 @@ final class MuxLoopbackTests: XCTestCase {
         var completed = false
         for _ in 0..<120 { // up to ~6 s
             try await Task.sleep(for: .milliseconds(50))
-            if completedFlag.get() { completed = true; break }
+            if completedFlag.get() { completed = true
+                break
+            }
         }
         flood.cancel() // best-effort; a parked send is not cancellable, but we never await it.
-        XCTAssertTrue(completed,
-                      "the flood must complete — host grants reached the client via CONTROL despite the gated DATA link (FIX #2)")
+        XCTAssertTrue(
+            completed,
+            "the flood must complete — host grants reached the client via CONTROL despite the gated DATA link (FIX #2)",
+        )
     }
 }
 
@@ -404,7 +441,14 @@ final class MuxLoopbackTests: XCTestCase {
 private final class BoolFlagBox: @unchecked Sendable {
     private let lock = NSLock()
     private var value: Bool
-    init(_ initial: Bool) { self.value = initial }
-    func get() -> Bool { lock.lock(); defer { lock.unlock() }; return value }
-    func set(_ v: Bool) { lock.lock(); value = v; lock.unlock() }
+    init(_ initial: Bool) { value = initial }
+    func get() -> Bool { lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func set(_ v: Bool) { lock.lock()
+        value = v
+        lock.unlock()
+    }
 }

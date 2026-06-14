@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskProtocol
+import Foundation
 
 /// The inspector's own wire message set for NWConnection #2 (doc 00 ③ / doc 16 §3).
 ///
@@ -33,9 +33,9 @@ public enum InspectorWireMessage: Sendable, Equatable {
     /// but are decoded by a different decoder, so there is no collision).
     var typeTag: UInt8 {
         switch self {
-        case .event: return 1
-        case .keepAlive: return 2
-        case .subscribe: return 3
+        case .event: 1
+        case .keepAlive: 2
+        case .subscribe: 3
         }
     }
 }
@@ -67,7 +67,7 @@ public enum InspectorCodec {
         body.append(message.typeTag)
         switch message {
         case let .event(event):
-            body.append(try JSONEncoder().encode(event))
+            try body.append(JSONEncoder().encode(event))
         case .keepAlive:
             break
         case let .subscribe(fromSeq):
@@ -132,8 +132,8 @@ public struct InspectorFrameDecoder {
 
         let start = buffer.startIndex
         let payloadStart = start + InspectorCodec.prefixLength
-        let payload = Data(buffer[payloadStart ..< start + frameLength])
-        buffer.removeSubrange(start ..< start + frameLength)
+        let payload = Data(buffer[payloadStart..<start + frameLength])
+        buffer.removeSubrange(start..<start + frameLength)
         return try InspectorCodec.decode(payload: payload)
     }
 }
@@ -158,14 +158,14 @@ private extension Data {
     /// Reads the 4-byte BE length prefix at the front WITHOUT consuming it.
     func readBELength() -> UInt32 {
         var value: UInt32 = 0
-        for i in 0 ..< 4 { value = (value << 8) | UInt32(self[startIndex + i]) }
+        for i in 0..<4 { value = (value << 8) | UInt32(self[startIndex + i]) }
         return value
     }
 
     /// Reads an 8-byte BE Int64 from the front of this (exactly-8-byte) slice.
     func readBESeq() -> Int64 {
         var bits: UInt64 = 0
-        for i in 0 ..< 8 { bits = (bits << 8) | UInt64(self[startIndex + i]) }
+        for i in 0..<8 { bits = (bits << 8) | UInt64(self[startIndex + i]) }
         return Int64(bitPattern: bits)
     }
 }

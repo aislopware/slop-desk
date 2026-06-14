@@ -7,7 +7,6 @@ import XCTest
 /// keep-most-recent), the unknown/duplicate-ack no-op, and — paramount — the ACKED-ONLY recovery
 /// decision (`.ltrRefresh` ONLY when LTR is on AND a token is acked; `.idr` otherwise / for requestIDR).
 final class LTRControllerTests: XCTestCase {
-
     // MARK: record + ack
 
     func testAckUnknownFrameReturnsNilAndNoToken() {
@@ -80,7 +79,7 @@ final class LTRControllerTests: XCTestCase {
     func testStagingNeverGrowsUnderLongStream() {
         // A long synthetic record+ack stream must not grow either dimension past its cap.
         var c = LTRController()
-        for f in 0..<10_000 {
+        for f in 0..<10000 {
             c.recordLTRFrame(frameID: UInt32(truncatingIfNeeded: f), token: Int64(f))
             _ = c.ackFrame(frameID: UInt32(truncatingIfNeeded: f))
         }
@@ -158,8 +157,11 @@ final class LTRControllerTests: XCTestCase {
         c.reset()
 
         // The gate now falls back to a real IDR — the new session has no acked LTR to reference.
-        XCTAssertEqual(c.recoveryDecision(request: .ltrRefresh, hasEnableLTR: true), .idr,
-                       "after a session rebuild the ACKED-ONLY gate must require a FRESH ack before an LTR refresh")
+        XCTAssertEqual(
+            c.recoveryDecision(request: .ltrRefresh, hasEnableLTR: true),
+            .idr,
+            "after a session rebuild the ACKED-ONLY gate must require a FRESH ack before an LTR refresh",
+        )
         XCTAssertFalse(c.hasAckedToken)
     }
 

@@ -64,8 +64,15 @@ public struct YCbCrCoefficients: Sendable, Equatable {
     /// Cb→B coefficient `2(1-Kb) = 1.8556`. Range-independent.
     public let cbToB: Float
 
-    public init(lumaScale: Float, lumaBias: Float, chromaBias: Float,
-                crToR: Float, cbToG: Float, crToG: Float, cbToB: Float) {
+    public init(
+        lumaScale: Float,
+        lumaBias: Float,
+        chromaBias: Float,
+        crToR: Float,
+        cbToG: Float,
+        crToG: Float,
+        cbToB: Float,
+    ) {
         self.lumaScale = lumaScale
         self.lumaBias = lumaBias
         self.chromaBias = chromaBias
@@ -91,12 +98,26 @@ public enum YCbCrConversion {
         switch range {
         case .video:
             // Studio swing: expand [16,235]→[0,1] (the current shader, byte-for-byte).
-            return YCbCrCoefficients(lumaScale: 255.0 / 219.0, lumaBias: 16.0 / 255.0,
-                                     chromaBias: chromaBias, crToR: crToR, cbToG: cbToG, crToG: crToG, cbToB: cbToB)
+            return YCbCrCoefficients(
+                lumaScale: 255.0 / 219.0,
+                lumaBias: 16.0 / 255.0,
+                chromaBias: chromaBias,
+                crToR: crToR,
+                cbToG: cbToG,
+                crToG: crToG,
+                cbToB: cbToB,
+            )
         case .full:
             // Full swing: luma is already [0,1] — identity expansion, no bias.
-            return YCbCrCoefficients(lumaScale: 1.0, lumaBias: 0.0,
-                                     chromaBias: chromaBias, crToR: crToR, cbToG: cbToG, crToG: crToG, cbToB: cbToB)
+            return YCbCrCoefficients(
+                lumaScale: 1.0,
+                lumaBias: 0.0,
+                chromaBias: chromaBias,
+                crToR: crToR,
+                cbToG: cbToG,
+                crToG: crToG,
+                cbToB: cbToB,
+            )
         }
     }
 }

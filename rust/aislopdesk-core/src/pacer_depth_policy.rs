@@ -177,7 +177,7 @@ pub struct PacerDepthPolicy {
 impl PacerDepthPolicy {
     /// Builds a policy. `adapt_enabled = false` runs the counters (telemetry) but never moves depth.
     #[must_use]
-    pub fn new(config: Config, adapt_enabled: bool) -> Self {
+    pub const fn new(config: Config, adapt_enabled: bool) -> Self {
         Self {
             depth: 1,
             config,
@@ -213,13 +213,13 @@ impl PacerDepthPolicy {
     /// warmed), else the default — clamped to a sane band.
     #[must_use]
     pub fn expected_interval_seconds(&self) -> f64 {
-        let raw = if let Some(hint) = self.interval_hint {
-            hint
-        } else if self.interval_ring.len() >= self.config.min_samples_for_estimate {
-            Self::median(&self.interval_ring)
-        } else {
-            self.config.default_interval_seconds
-        };
+        let raw = self.interval_hint.unwrap_or_else(|| {
+            if self.interval_ring.len() >= self.config.min_samples_for_estimate {
+                Self::median(&self.interval_ring)
+            } else {
+                self.config.default_interval_seconds
+            }
+        });
         raw.clamp(
             self.config.min_interval_seconds,
             self.config.max_interval_seconds,
@@ -324,7 +324,7 @@ impl PacerDepthPolicy {
     }
 
     /// Reads + resets the windowed counters (one drain per `NetworkStats` report).
-    pub fn drain_counters(&mut self) -> (u32, u32) {
+    pub const fn drain_counters(&mut self) -> (u32, u32) {
         let out = (self.late_count, self.gap_count);
         self.late_count = 0;
         self.gap_count = 0;

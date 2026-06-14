@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskClaudeCode
+import Foundation
 
 /// VERBATIM copy of `TerminalModeTracker` as it stood BEFORE the memchr fast path
 /// (2026-06-12, docs/31 follow-up #6) — the naive `for byte in bytes { step(byte) }`
@@ -36,13 +36,13 @@ final class LegacyTerminalModeTracker {
 
     private static let esc: UInt8 = 0x1B
     private static let bel: UInt8 = 0x07
-    private static let leftBracket: UInt8 = 0x5B   // '['
-    private static let rightBracket: UInt8 = 0x5D  // ']'
-    private static let backslash: UInt8 = 0x5C     // '\'
-    private static let dcs: UInt8 = 0x50           // 'P'
-    private static let sos: UInt8 = 0x58           // 'X'
-    private static let pm: UInt8 = 0x5E            // '^'
-    private static let apc: UInt8 = 0x5F           // '_'
+    private static let leftBracket: UInt8 = 0x5B // '['
+    private static let rightBracket: UInt8 = 0x5D // ']'
+    private static let backslash: UInt8 = 0x5C // '\'
+    private static let dcs: UInt8 = 0x50 // 'P'
+    private static let sos: UInt8 = 0x58 // 'X'
+    private static let pm: UInt8 = 0x5E // '^'
+    private static let apc: UInt8 = 0x5F // '_'
 
     // MARK: Consume — the pre-fast-path naive loop, verbatim
 
@@ -75,7 +75,10 @@ final class LegacyTerminalModeTracker {
             case Self.rightBracket:
                 state = .osc
                 oscBuffer.removeAll(keepingCapacity: true)
-            case Self.dcs, Self.sos, Self.pm, Self.apc:
+            case Self.dcs,
+                 Self.sos,
+                 Self.pm,
+                 Self.apc:
                 state = .stringConsume
             case Self.esc:
                 state = .escape
@@ -146,7 +149,7 @@ final class LegacyTerminalModeTracker {
         guard buffer.first == 0x3F else { return } // '?'
 
         let paramBytes = buffer.dropFirst().dropLast()
-        let params = String(decoding: paramBytes, as: UTF8.self)
+        let params = (String(bytes: paramBytes, encoding: .utf8) ?? "")
             .split(separator: ";", omittingEmptySubsequences: true)
             .compactMap { Int($0) }
 
@@ -168,7 +171,7 @@ final class LegacyTerminalModeTracker {
     }
 
     private func handleOSC(_ buffer: [UInt8], into events: inout [TerminalModeEvent]) {
-        let payload = String(decoding: buffer, as: UTF8.self)
+        let payload = String(bytes: buffer, encoding: .utf8) ?? ""
         let fields = payload.split(separator: ";", omittingEmptySubsequences: false)
         guard fields.count >= 2, fields[0] == "133" else { return }
 
@@ -177,7 +180,7 @@ final class LegacyTerminalModeTracker {
         case "B": events.append(.commandStart)
         case "C": events.append(.commandStarted)
         case "D":
-            var exit: Int? = nil
+            var exit: Int?
             if fields.count >= 3 {
                 let raw = fields[2].split(separator: "=").first.map(String.init) ?? String(fields[2])
                 exit = Int(raw)

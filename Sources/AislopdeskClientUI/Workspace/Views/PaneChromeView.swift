@@ -40,7 +40,7 @@ struct PaneChromeView<Content: View>: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .strokeBorder(
                     isFocused ? Color.accentColor : Color.primary.opacity(0.12),
-                    lineWidth: isFocused ? 1.5 : 1
+                    lineWidth: isFocused ? 1.5 : 1,
                 )
         }
         .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -53,7 +53,7 @@ struct PaneChromeView<Content: View>: View {
             Image(systemName: PaneLeafView.icon(for: spec.kind))
                 .font(.caption)
                 .foregroundStyle(isFocused ? Color.accentColor : .secondary)
-                .accessibilityHidden(true)   // decorative — the title Text carries the row's label
+                .accessibilityHidden(true) // decorative — the title Text carries the row's label
 
             let status = connectionStatus
             PaneStatusDot(status: status, running: isRunning)
@@ -98,24 +98,24 @@ struct PaneChromeView<Content: View>: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         #if os(macOS)
-        // BUG-2 ("ở cạnh trên/header vẫn bị"): the header bar is hit-OPAQUE (it carries the
-        // tap-to-focus gesture over the whole bar), so a scroll over it was SWALLOWED instead of
-        // panning — exactly like the resize-grip perimeter was before `gripBase`. Fix with the SAME
-        // pattern: make the bar's hit layer a `ScrollPanForwarder` (a real NSView that forwards
-        // scroll → `store.scrollPan`) that ALSO carries the tap. (The canvas drag-to-move moved to
-        // the floating pill with the borderless canvas pane; this header now lives only on the
-        // compact carousel, where panes don't move.)
-        .background {
-            ScrollPanForwarder(store: store)
-                .contentShape(Rectangle())
-                .simultaneousGesture(TapGesture().onEnded { store.focus(id) })
-        }
-        .background(isFocused ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(.ultraThinMaterial))
+            // BUG-2 ("ở cạnh trên/header vẫn bị"): the header bar is hit-OPAQUE (it carries the
+            // tap-to-focus gesture over the whole bar), so a scroll over it was SWALLOWED instead of
+            // panning — exactly like the resize-grip perimeter was before `gripBase`. Fix with the SAME
+            // pattern: make the bar's hit layer a `ScrollPanForwarder` (a real NSView that forwards
+            // scroll → `store.scrollPan`) that ALSO carries the tap. (The canvas drag-to-move moved to
+            // the floating pill with the borderless canvas pane; this header now lives only on the
+            // compact carousel, where panes don't move.)
+            .background {
+                ScrollPanForwarder(store: store)
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(TapGesture().onEnded { store.focus(id) })
+            }
+            .background(isFocused ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(.ultraThinMaterial))
         #else
-        .background(isFocused ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(.ultraThinMaterial))
-        .contentShape(Rectangle())
-        // A plain TAP on the title bar focuses the pane (the natural way to select a window).
-        .simultaneousGesture(TapGesture().onEnded { store.focus(id) })
+            .background(isFocused ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(.ultraThinMaterial))
+            .contentShape(Rectangle())
+            // A plain TAP on the title bar focuses the pane (the natural way to select a window).
+            .simultaneousGesture(TapGesture().onEnded { store.focus(id) })
         #endif
     }
 
@@ -128,9 +128,9 @@ struct PaneChromeView<Content: View>: View {
             addMenu
             chromeButton(
                 isZoomed ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
-                help: isZoomed ? "Restore" : "Maximize"
+                help: isZoomed ? "Restore" : "Maximize",
             ) {
-                store.focus(id)        // maximize acts on the focused pane — ensure it's this one first
+                store.focus(id) // maximize acts on the focused pane — ensure it's this one first
                 store.toggleZoom()
             }
             chromeButton("xmark", help: store.isOnlyLeaf(id) ? "Close last pane" : "Close pane", role: .destructive) {
@@ -168,20 +168,19 @@ struct PaneChromeView<Content: View>: View {
         }
         .menuIndicator(.hidden)
         #if os(macOS)
-        .menuStyle(.borderlessButton)
+            .menuStyle(.borderlessButton)
         #endif
-        .fixedSize()
-        .foregroundStyle(.secondary)
-        .help("Add pane")
-        .accessibilityLabel("Add pane")
+            .fixedSize()
+            .foregroundStyle(.secondary)
+            .help("Add pane")
+            .accessibilityLabel("Add pane")
     }
 
-    @ViewBuilder
     private func chromeButton(
         _ systemImage: String,
         help: String,
         role: ButtonRole? = nil,
-        action: @escaping () -> Void
+        action: @escaping () -> Void,
     ) -> some View {
         Button(role: role, action: action) {
             Image(systemName: systemImage)
@@ -241,7 +240,8 @@ struct PaneChromeView<Content: View>: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-        case .unreachable, .failed:
+        case .unreachable,
+             .failed:
             // Show the CONCRETE reason ("Failed: timed out") inline, not the bare word "Failed" —
             // the reason was previously reachable only via the 7pt status-dot hover tooltip. The
             // full text stays in `.help` for the truncated case. (`.unreachable` carries no message,

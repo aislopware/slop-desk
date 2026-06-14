@@ -54,13 +54,13 @@ extension WireMessage {
             return .resize(cols: cols, rows: rows, pxWidth: pxWidth, pxHeight: pxHeight)
 
         case 12: // ack
-            return .ack(seq: try reader.readInt64())
+            return try .ack(seq: reader.readInt64())
 
         case 13: // bye
             return .bye
 
         case 14: // ping
-            return .ping(timestampMS: try reader.readUInt64())
+            return try .ping(timestampMS: reader.readUInt64())
 
         case 20: // helloAck
             let idBytes = try reader.readBytes(sessionIDByteCount)
@@ -72,7 +72,7 @@ extension WireMessage {
             return .helloAck(
                 sessionID: sessionID,
                 resumeFromSeq: resumeFromSeq,
-                returningClient: returningByte != 0
+                returningClient: returningByte != 0,
             )
 
         case 21: // title
@@ -100,10 +100,10 @@ extension WireMessage {
             }
 
         case 24: // pong
-            return .pong(timestampMS: try reader.readUInt64())
+            return try .pong(timestampMS: reader.readUInt64())
 
         case 25: // notification
-            let titleLen = Int(try reader.readUInt16())
+            let titleLen = try Int(reader.readUInt16())
             let titleBytes = try reader.readBytes(titleLen)
             let bodyBytes = reader.remaining()
             guard let title = String(data: titleBytes, encoding: .utf8) else {

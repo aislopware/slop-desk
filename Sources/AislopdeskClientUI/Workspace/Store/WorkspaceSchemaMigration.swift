@@ -19,13 +19,12 @@ import Foundation
 /// - `from != to` → `nil` (there are no upgrade steps; the caller resets to default). This covers both
 ///   an older shape (no step to climb) and a future version this build cannot interpret.
 enum WorkspaceSchemaMigration {
-
     /// Brings `workspace` from schema version `from` up to `to`, or returns `nil` when it cannot be
     /// understood. Pure and total — see the type doc.
     static func migrate(
         _ workspace: Workspace,
         from: Int,
-        to: Int = Workspace.currentSchemaVersion
+        to: Int = Workspace.currentSchemaVersion,
     ) -> Workspace? {
         // Same version: identity (preserves every field bit-for-bit). Any other version has no upgrade
         // step (single-user, no backward-compat) → nil so the caller falls back to the default.

@@ -36,7 +36,9 @@ pub trait FecScheme {
 }
 
 /// XOR parity FEC: each group of `group_size` data fragments produces one parity
-/// fragment = the byte-wise XOR of the group. A single missing fragment in a group is
+/// fragment = the byte-wise XOR of the group.
+///
+/// A single missing fragment in a group is
 /// recovered as `parity XOR (surviving members)`; two or more losses in one group are
 /// unrecoverable.
 ///

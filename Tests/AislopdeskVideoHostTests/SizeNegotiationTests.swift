@@ -1,6 +1,6 @@
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoHost
-import AislopdeskVideoProtocol
 
 /// PURE logic only — exercises the host-side ``SizeNegotiation`` clamp + epoch
 /// monotonicity. NO SCStream / AX is touched (hang-safety rule).
@@ -36,8 +36,11 @@ final class SizeNegotiationTests: XCTestCase {
 
     func testZeroMinPolicyStillNeverReturnsZero() {
         // A degenerate (0,0) min floor must still yield a non-zero, UInt16-safe size.
-        let (w, h) = SizeNegotiation.clamp(desired: VideoSize(width: 0, height: 0),
-                                           min: VideoSize(width: 0, height: 0), max: maxSize)
+        let (w, h) = SizeNegotiation.clamp(
+            desired: VideoSize(width: 0, height: 0),
+            min: VideoSize(width: 0, height: 0),
+            max: maxSize,
+        )
         XCTAssertGreaterThanOrEqual(w, 1)
         XCTAssertGreaterThanOrEqual(h, 1)
     }
@@ -50,8 +53,11 @@ final class SizeNegotiationTests: XCTestCase {
 
     func testUInt16SafetyClampsHugeAtMaxPolicyAndCeiling() {
         // Max policy itself is huge → ceilinged at UInt16.max; desired beyond it clamps there.
-        let (w, h) = SizeNegotiation.clamp(desired: VideoSize(width: 1_000_000, height: 1_000_000),
-                                           min: minSize, max: VideoSize(width: 1_000_000, height: 1_000_000))
+        let (w, h) = SizeNegotiation.clamp(
+            desired: VideoSize(width: 1_000_000, height: 1_000_000),
+            min: minSize,
+            max: VideoSize(width: 1_000_000, height: 1_000_000),
+        )
         XCTAssertEqual(w, UInt16.max)
         XCTAssertEqual(h, UInt16.max)
     }
@@ -67,16 +73,22 @@ final class SizeNegotiationTests: XCTestCase {
     func testNonFiniteDesiredCollapsesToLowerBoundNotTrap() {
         // A hostile/garbage desired (NaN/inf) must not trap UInt16(Double) — it collapses
         // to the lower bound.
-        let (w, h) = SizeNegotiation.clamp(desired: VideoSize(width: .nan, height: .infinity), min: minSize, max: maxSize)
+        let (w, h) = SizeNegotiation.clamp(
+            desired: VideoSize(width: .nan, height: .infinity),
+            min: minSize,
+            max: maxSize,
+        )
         XCTAssertEqual(w, 320, "NaN width collapses to the width min, never traps")
         XCTAssertEqual(h, 240, "inf height collapses to the height min, never overflows/traps")
     }
 
     func testSwappedPolicyStillClampsIntoValidRange() {
         // A degenerate policy with min > max must still produce a valid clamp (ordered).
-        let (w, h) = SizeNegotiation.clamp(desired: VideoSize(width: 1280, height: 800),
-                                           min: VideoSize(width: 3840, height: 2160),
-                                           max: VideoSize(width: 320, height: 240))
+        let (w, h) = SizeNegotiation.clamp(
+            desired: VideoSize(width: 1280, height: 800),
+            min: VideoSize(width: 3840, height: 2160),
+            max: VideoSize(width: 320, height: 240),
+        )
         XCTAssertGreaterThanOrEqual(w, 1)
         XCTAssertGreaterThanOrEqual(h, 1)
         XCTAssertLessThanOrEqual(w, 3840)

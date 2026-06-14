@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Persistence is the contract that the workspace *is* its on-disk JSON (docs/30 §4): a `Workspace`
@@ -21,7 +21,6 @@ import CoreGraphics
 /// (The app has no released persisted format, so there is no backward-compat migration to test — an
 /// older, incompatible on-disk shape simply fails to decode and falls back to the default.)
 final class WorkspacePersistenceTests: XCTestCase {
-
     // MARK: - Shared codecs
 
     private func makeEncoder(sortedKeys: Bool = false) -> JSONEncoder {
@@ -29,19 +28,36 @@ final class WorkspacePersistenceTests: XCTestCase {
         if sortedKeys { enc.outputFormatting = [.sortedKeys] }
         return enc
     }
+
     private let decoder = JSONDecoder()
 
     // MARK: - Fixtures
 
-    private func terminalItem(_ id: PaneID, title: String, frame: CGRect, z: Int, groupID: PaneGroupID? = nil) -> CanvasItem {
+    private func terminalItem(
+        _ id: PaneID,
+        title: String,
+        frame: CGRect,
+        z: Int,
+        groupID: PaneGroupID? = nil,
+    ) -> CanvasItem {
         CanvasItem(id: id, spec: PaneSpec(kind: .terminal, title: title), frame: frame, z: z, groupID: groupID)
     }
-    private func videoItem(_ id: PaneID, title: String, frame: CGRect, z: Int, groupID: PaneGroupID? = nil) -> CanvasItem {
+
+    private func videoItem(
+        _ id: PaneID,
+        title: String,
+        frame: CGRect,
+        z: Int,
+        groupID: PaneGroupID? = nil,
+    ) -> CanvasItem {
         CanvasItem(
             id: id,
-            spec: PaneSpec(kind: .remoteGUI, title: title,
-                           video: VideoEndpoint(windowID: 42, title: title)),
-            frame: frame, z: z, groupID: groupID
+            spec: PaneSpec(
+                kind: .remoteGUI,
+                title: title,
+                video: VideoEndpoint(windowID: 42, title: title),
+            ),
+            frame: frame, z: z, groupID: groupID,
         )
     }
 
@@ -65,19 +81,41 @@ final class WorkspacePersistenceTests: XCTestCase {
 
         let canvas = Canvas(
             items: [
-                terminalItem(pA, title: "build", frame: CGRect(x: -120, y: 40, width: 700, height: 460), z: 0, groupID: groupA.id),
-                videoItem(pB, title: "desktop", frame: CGRect(x: 800, y: 300, width: 900, height: 600), z: 1, groupID: groupA.id),
-                CanvasItem(id: pC, spec: PaneSpec(kind: .claudeCode, title: "agent"),
-                           frame: CGRect(x: 0, y: 0, width: 640, height: 420), z: 2, groupID: groupB.id),
+                terminalItem(
+                    pA,
+                    title: "build",
+                    frame: CGRect(x: -120, y: 40, width: 700, height: 460),
+                    z: 0,
+                    groupID: groupA.id,
+                ),
+                videoItem(
+                    pB,
+                    title: "desktop",
+                    frame: CGRect(x: 800, y: 300, width: 900, height: 600),
+                    z: 1,
+                    groupID: groupA.id,
+                ),
+                CanvasItem(
+                    id: pC,
+                    spec: PaneSpec(kind: .claudeCode, title: "agent"),
+                    frame: CGRect(x: 0, y: 0, width: 640, height: 420),
+                    z: 2,
+                    groupID: groupB.id,
+                ),
             ],
-            camera: CanvasCamera(origin: CGPoint(x: -50, y: 120))
+            camera: CanvasCamera(origin: CGPoint(x: -50, y: 120)),
         )
         let original = Workspace(
             canvas: canvas,
             focusedPane: pB,
-            maximizedPane: pB,            // exercise the non-nil maximize path
+            maximizedPane: pB, // exercise the non-nil maximize path
             groups: [groupA, groupB],
-            connection: ConnectionTarget(host: "10.0.0.9", port: 7420, mediaPort: 9000, cursorPort: 9001)  // exercise the app-global target round-trip
+            connection: ConnectionTarget(
+                host: "10.0.0.9",
+                port: 7420,
+                mediaPort: 9000,
+                cursorPort: 9001,
+            ), // exercise the app-global target round-trip
         )
         let data = try makeEncoder().encode(original)
         let restored = try decoder.decode(Workspace.self, from: data)
@@ -88,12 +126,18 @@ final class WorkspacePersistenceTests: XCTestCase {
         XCTAssertEqual(restored.groups, [groupA, groupB], "named groups + order survive")
         XCTAssertEqual(restored.group(ofPane: pC)?.id, groupB.id, "pane group membership survives")
         XCTAssertEqual(restored.canvas.camera.origin, CGPoint(x: -50, y: 120), "camera pan survives")
-        XCTAssertEqual(restored.canvas.frame(of: pA), CGRect(x: -120, y: 40, width: 700, height: 460), "item frame survives")
+        XCTAssertEqual(
+            restored.canvas.frame(of: pA),
+            CGRect(x: -120, y: 40, width: 700, height: 460),
+            "item frame survives",
+        )
         XCTAssertEqual(restored.schemaVersion, Workspace.currentSchemaVersion)
-        XCTAssertEqual(restored.schemaVersion, 9)   // 9: Workspace.snippets (command macros)
-        XCTAssertEqual(restored.connection,
-                       ConnectionTarget(host: "10.0.0.9", port: 7420, mediaPort: 9000, cursorPort: 9001),
-                       "the app-global connection target round-trips")
+        XCTAssertEqual(restored.schemaVersion, 9) // 9: Workspace.snippets (command macros)
+        XCTAssertEqual(
+            restored.connection,
+            ConnectionTarget(host: "10.0.0.9", port: 7420, mediaPort: 9000, cursorPort: 9001),
+            "the app-global connection target round-trips",
+        )
     }
 
     // MARK: - 2. Byte-stability
@@ -106,9 +150,9 @@ final class WorkspacePersistenceTests: XCTestCase {
                     terminalItem(p0, title: "p0", frame: CGRect(x: 12.5, y: -33.25, width: 643, height: 421), z: 5),
                     terminalItem(p1, title: "p1", frame: CGRect(x: 700.75, y: 100, width: 800, height: 500), z: 9),
                 ],
-                camera: CanvasCamera(origin: CGPoint(x: 17.5, y: -8.25))
+                camera: CanvasCamera(origin: CGPoint(x: 17.5, y: -8.25)),
             ),
-            focusedPane: p0
+            focusedPane: p0,
         )
 
         let encoder = makeEncoder(sortedKeys: true)
@@ -234,7 +278,7 @@ final class WorkspacePersistenceTests: XCTestCase {
         for older in [0, 1, 2] {
             XCTAssertNil(
                 WorkspaceSchemaMigration.migrate(original, from: older),
-                "schemaVersion \(older) has no upgrade step → nil"
+                "schemaVersion \(older) has no upgrade step → nil",
             )
         }
     }
@@ -268,10 +312,18 @@ final class WorkspacePersistenceTests: XCTestCase {
         let persistence = WorkspacePersistence(fileURL: url)
         let shared = PaneID()
         let canvas = Canvas(items: [
-            CanvasItem(id: shared, spec: PaneSpec(kind: .terminal, title: "A"),
-                       frame: CGRect(x: 0, y: 0, width: 640, height: 420), z: 0),
-            CanvasItem(id: shared, spec: PaneSpec(kind: .terminal, title: "B"),
-                       frame: CGRect(x: 700, y: 0, width: 640, height: 420), z: 1),
+            CanvasItem(
+                id: shared,
+                spec: PaneSpec(kind: .terminal, title: "A"),
+                frame: CGRect(x: 0, y: 0, width: 640, height: 420),
+                z: 0,
+            ),
+            CanvasItem(
+                id: shared,
+                spec: PaneSpec(kind: .terminal, title: "B"),
+                frame: CGRect(x: 700, y: 0, width: 640, height: 420),
+                z: 1,
+            ),
         ])
         try persistence.save(Workspace(canvas: canvas, focusedPane: shared))
 
@@ -307,8 +359,12 @@ final class WorkspacePersistenceTests: XCTestCase {
         let persistence = WorkspacePersistence(fileURL: url)
         let realPane = PaneID()
         let ghost = PaneID()
-        let canvas = Canvas(items: [CanvasItem(id: realPane, spec: PaneSpec(kind: .terminal, title: "A"),
-                                               frame: CGRect(x: 0, y: 0, width: 640, height: 420), z: 0)])
+        let canvas = Canvas(items: [CanvasItem(
+            id: realPane,
+            spec: PaneSpec(kind: .terminal, title: "A"),
+            frame: CGRect(x: 0, y: 0, width: 640, height: 420),
+            z: 0,
+        )])
         try persistence.save(Workspace(canvas: canvas, focusedPane: ghost))
         let loaded = persistence.load()
         XCTAssertEqual(loaded.focusedPane, realPane, "a dangling focusedPane is repaired to the first pane")
@@ -320,10 +376,14 @@ final class WorkspacePersistenceTests: XCTestCase {
         let url = try tempURL()
         let persistence = WorkspacePersistence(fileURL: url)
         let pane = PaneID()
-        let orphanGroup = PaneGroupID()   // referenced by the item but absent from `groups`
-        let canvas = Canvas(items: [CanvasItem(id: pane, spec: PaneSpec(kind: .terminal, title: "A"),
-                                               frame: CGRect(x: 0, y: 0, width: 640, height: 420), z: 0,
-                                               groupID: orphanGroup)])
+        let orphanGroup = PaneGroupID() // referenced by the item but absent from `groups`
+        let canvas = Canvas(items: [CanvasItem(
+            id: pane,
+            spec: PaneSpec(kind: .terminal, title: "A"),
+            frame: CGRect(x: 0, y: 0, width: 640, height: 420),
+            z: 0,
+            groupID: orphanGroup,
+        )])
         try persistence.save(Workspace(canvas: canvas, focusedPane: pane, groups: []))
         let loaded = persistence.load()
         XCTAssertEqual(loaded.canvas.itemCount, 1, "the pane is preserved, not reset")
@@ -386,14 +446,14 @@ final class WorkspacePersistenceTests: XCTestCase {
         let (c, _) = b.addingGroup(name: "C")
         XCTAssertEqual(c.groups.map(\.name), ["A", "B", "C"])
 
-        let moved = c.movingGroup(from: IndexSet(integer: 0), to: 3)   // A → end
+        let moved = c.movingGroup(from: IndexSet(integer: 0), to: 3) // A → end
         XCTAssertEqual(moved.groups.map(\.name), ["B", "C", "A"], "group order changed")
         XCTAssertEqual(moved.canvas, c.canvas, "membership unchanged by a reorder")
     }
 
     // MARK: - Helpers
 
-    private func tempURL(file: StaticString = #filePath, line: UInt = #line) throws -> URL {
+    private func tempURL(file _: StaticString = #filePath, line _: UInt = #line) throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("WorkspacePersistenceTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -419,17 +479,24 @@ final class WorkspacePersistenceTests: XCTestCase {
         _ ws: Workspace,
         _ message: String = "",
         file: StaticString = #filePath,
-        line: UInt = #line
+        line: UInt = #line,
     ) {
         XCTAssertEqual(ws.schemaVersion, Workspace.currentSchemaVersion, message, file: file, line: line)
         XCTAssertEqual(ws.canvas.itemCount, 1, "default has exactly one pane. \(message)", file: file, line: line)
         XCTAssertTrue(ws.groups.isEmpty, "default has no groups. \(message)", file: file, line: line)
         XCTAssertEqual(ws.maximizedPane, nil, "default is not maximized. \(message)", file: file, line: line)
         guard let item = ws.canvas.items.first else {
-            return XCTFail("default canvas must have one item. \(message)", file: file, line: line)
+            XCTFail("default canvas must have one item. \(message)", file: file, line: line)
+            return
         }
         XCTAssertEqual(item.spec.kind, .terminal, "default pane is a terminal. \(message)", file: file, line: line)
-        XCTAssertEqual(item.spec.title, "Terminal", "default pane is named Terminal. \(message)", file: file, line: line)
+        XCTAssertEqual(
+            item.spec.title,
+            "Terminal",
+            "default pane is named Terminal. \(message)",
+            file: file,
+            line: line,
+        )
         XCTAssertEqual(ws.focusedPane, item.id, "the single pane is focused. \(message)", file: file, line: line)
     }
 }

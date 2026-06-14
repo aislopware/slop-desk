@@ -25,7 +25,6 @@ import XCTest
 /// mirrors the existing `RemoteWindowModelTests` style.
 @MainActor
 final class RemoteWindowCloseButtonTests: XCTestCase {
-
     // MARK: - Initializer shape (compile-time smoke)
 
     /// Both initializer forms must compile. The default-arg form proves `showCloseButton` has a
@@ -36,8 +35,10 @@ final class RemoteWindowCloseButtonTests: XCTestCase {
         let model = RemoteWindowModel(windowID: "1")
         // Default form — workspace usage. Must compile WITHOUT passing showCloseButton.
         let panel = RemoteWindowPanel(model: model)
-        XCTAssertNotNil(panel as RemoteWindowPanel?,
-                        "RemoteWindowPanel(model:) must exist with showCloseButton defaulting to false")
+        XCTAssertNotNil(
+            panel as RemoteWindowPanel?,
+            "RemoteWindowPanel(model:) must exist with showCloseButton defaulting to false",
+        )
     }
 
     /// The explicit form (standalone callers that want the inline Close) must also compile, for both
@@ -59,7 +60,7 @@ final class RemoteWindowCloseButtonTests: XCTestCase {
         let model = RemoteWindowModel(windowID: "1")
         model.open()
         XCTAssertNotNil(model.active, "precondition: open() makes the panel show the live view")
-        model.close()   // exactly what the Close row's button invokes
+        model.close() // exactly what the Close row's button invokes
         XCTAssertNil(model.active, "close() must still clear active regardless of Close-row visibility")
     }
 
@@ -69,22 +70,26 @@ final class RemoteWindowCloseButtonTests: XCTestCase {
     func testOpenStillProducesLiveEndpointDescriptor() {
         let model = RemoteWindowModel(
             target: { ConnectionTarget(host: "h.local", port: 7420, mediaPort: 9000, cursorPort: 9001) },
-            windowID: "42", title: "Safari"
+            windowID: "42", title: "Safari",
         )
         model.open()
-        guard let d = model.active else { return XCTFail("open() should set active") }
+        guard let d = model.active else { XCTFail("open() should set active")
+            return
+        }
         XCTAssertEqual(d.host, "h.local", "host comes from the app target")
         XCTAssertEqual(d.mediaPort, 9000)
         XCTAssertEqual(d.cursorPort, 9001)
         XCTAssertEqual(d.windowID, 42)
-        XCTAssertTrue(d.hasEndpoint,
-                      "descriptor still carries a live endpoint ⇒ panel takes the live factory path")
+        XCTAssertTrue(
+            d.hasEndpoint,
+            "descriptor still carries a live endpoint ⇒ panel takes the live factory path",
+        )
     }
 
     /// The `canOpen` gate (which drives the entry-form Open button) now requires only a valid window id —
     /// host + UDP ports come from the app-global target, not the per-pane form (docs/31).
     func testCanOpenGateRequiresWindowID() {
-        let m = RemoteWindowModel()                 // empty windowID
+        let m = RemoteWindowModel() // empty windowID
         XCTAssertFalse(m.canOpen)
         m.windowID = "12345"
         XCTAssertTrue(m.canOpen, "a valid window id ⇒ can open")

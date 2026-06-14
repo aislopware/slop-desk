@@ -1,8 +1,8 @@
 #if os(macOS)
+import AislopdeskVideoProtocol
 import Foundation
 import Network
 import OSLog
-import AislopdeskVideoProtocol
 
 /// The host UDP video transport: ONE physical UDP flow (media + cursor sockets) shared
 /// across N client video channels, demultiplexed by a `UInt32` channelID prefix
@@ -81,8 +81,11 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
     }
 
     public init(mediaPort: UInt16, cursorPort: UInt16) {
-        self.mediaPort = NWEndpoint.Port(rawValue: mediaPort)!
-        self.cursorPort = NWEndpoint.Port(rawValue: cursorPort)!
+        guard let media = NWEndpoint.Port(rawValue: mediaPort),
+              let cursor = NWEndpoint.Port(rawValue: cursorPort)
+        else { preconditionFailure("NWEndpoint.Port(rawValue:) is total over UInt16 (the full valid port range)") }
+        self.mediaPort = media
+        self.cursorPort = cursor
     }
 
     // MARK: - Admission (driven by the daemon's session registry on hello / bye)
@@ -111,7 +114,10 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
     /// channelID, to `onReceive(channelID, channel, payload)`. The daemon dispatches that to the
     /// per-channel session. A datagram for an unadmitted/retired channelID is dropped (per-channel
     /// loss isolation), never delivered, never fatal.
-    public func start(onReceive: @escaping @Sendable (_ channelID: UInt32, _ channel: VideoChannel, _ data: Data) -> Void) async throws {
+    @preconcurrency
+    public func start(onReceive: @escaping @Sendable (_ channelID: UInt32, _ channel: VideoChannel, _ data: Data)
+        -> Void) throws
+    {
         let params = NWParameters.udp
         params.includePeerToPeer = false
 
@@ -126,19 +132,25 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
         // HostTransport — is the fuller fix, deferred as the real-socket path is hardware-only-verifiable.)
         media.stateUpdateHandler = { [weak self] state in
             if case let .failed(error) = state {
-                self?.log.error("media listener failed: \(String(describing: error)) — video will not flow on the media port")
+                self?.log
+                    .error(
+                        "media listener failed: \(String(describing: error)) — video will not flow on the media port",
+                    )
             }
         }
         media.newConnectionHandler = { [weak self] conn in
             guard let self else { return }
-            self.lock.lock()
-            if self.stopped { self.lock.unlock(); conn.cancel(); return }
-            self.mediaConns[ObjectIdentifier(conn)] = conn
-            self.lock.unlock()
+            lock.lock()
+            if stopped { lock.unlock()
+                conn.cancel()
+                return
+            }
+            mediaConns[ObjectIdentifier(conn)] = conn
+            lock.unlock()
             let live = Liveness()
-            self.installResetHandler(on: conn, isMedia: true, live: live)
-            conn.start(queue: self.queue)
-            self.receiveMedia(on: conn, live: live, onReceive: onReceive)
+            installResetHandler(on: conn, isMedia: true, live: live)
+            conn.start(queue: queue)
+            receiveMedia(on: conn, live: live, onReceive: onReceive)
         }
         media.start(queue: queue)
 
@@ -146,19 +158,25 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
         // R15 #10: same post-bind failure surfacing for the cursor listener (see media above).
         cursor.stateUpdateHandler = { [weak self] state in
             if case let .failed(error) = state {
-                self?.log.error("cursor listener failed: \(String(describing: error)) — cursor updates will not flow on the cursor port")
+                self?.log
+                    .error(
+                        "cursor listener failed: \(String(describing: error)) — cursor updates will not flow on the cursor port",
+                    )
             }
         }
         cursor.newConnectionHandler = { [weak self] conn in
             guard let self else { return }
-            self.lock.lock()
-            if self.stopped { self.lock.unlock(); conn.cancel(); return }
-            self.cursorConns[ObjectIdentifier(conn)] = conn
-            self.lock.unlock()
+            lock.lock()
+            if stopped { lock.unlock()
+                conn.cancel()
+                return
+            }
+            cursorConns[ObjectIdentifier(conn)] = conn
+            lock.unlock()
             let live = Liveness()
-            self.installResetHandler(on: conn, isMedia: false, live: live)
-            conn.start(queue: self.queue)
-            self.receiveCursor(on: conn, live: live, onReceive: onReceive)
+            installResetHandler(on: conn, isMedia: false, live: live)
+            conn.start(queue: queue)
+            receiveCursor(on: conn, live: live, onReceive: onReceive)
         }
         cursor.start(queue: queue)
 
@@ -171,10 +189,19 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
         // mutable field on this @unchecked Sendable class is lock-guarded; these two were the lone
         // lock-free exception → a torn read / ARC race if a future stop() ever overlapped an in-flight
         // start()). The listeners are already started above; only the field stores move under the lock.
-        lock.withLock { mediaListener = media; cursorListener = cursor; reaperTimer = timer }
+        lock.withLock { mediaListener = media
+            cursorListener = cursor
+            reaperTimer = timer
+        }
         timer.resume()
 
-        log.info("NWVideoMuxDatagramTransport listening media=\(self.mediaPort.rawValue) cursor=\(self.cursorPort.rawValue) (shared mux flow)")
+        // Bind locals so the os_log interpolation captures no `self` (see NWVideoMuxClientFlow).
+        let mediaPortValue = mediaPort.rawValue
+        let cursorPortValue = cursorPort.rawValue
+        log
+            .info(
+                "NWVideoMuxDatagramTransport listening media=\(mediaPortValue) cursor=\(cursorPortValue) (shared mux flow)",
+            )
     }
 
     /// One reaper scan (on `queue`): for each dead lane the decider reports, hold the lane in a
@@ -195,16 +222,16 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
         guard !due.isEmpty else { return }
         lock.withLock {
             for channelID in due {
-                muxRouter.beginDrain(channelID)   // hold the lane — a racing reconnect now `.dropDraining`s
-                idleReaper.forget(id: channelID)  // no re-schedule on the next tick
+                muxRouter.beginDrain(channelID) // hold the lane — a racing reconnect now `.dropDraining`s
+                idleReaper.forget(id: channelID) // no re-schedule on the next tick
             }
         }
         for channelID in due {
             Task { [weak self] in
-                await self?.onReapLane?(channelID)   // registry.retireAndStop — unregister sink + stop session
+                await self?.onReapLane?(channelID) // registry.retireAndStop — unregister sink + stop session
                 guard let self else { return }
-                self.lock.withLock {
-                    self.muxRouter.endDrain(channelID)             // draining → retired (a hello may now re-admit)
+                lock.withLock {
+                    self.muxRouter.endDrain(channelID) // draining → retired (a hello may now re-admit)
                     self.channelMediaConn.removeValue(forKey: channelID)
                     self.channelCursorConn.removeValue(forKey: channelID)
                 }
@@ -224,39 +251,51 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
         conn.stateUpdateHandler = { [weak self, weak conn] state in
             guard let self, let conn else { return }
             switch state {
-            case .failed, .cancelled:
+            case .failed,
+                 .cancelled:
                 live.markDead()
-                self.lock.lock()
+                lock.lock()
                 if isMedia {
-                    self.mediaConns.removeValue(forKey: ObjectIdentifier(conn))
-                    self.channelMediaConn = self.channelMediaConn.filter { $0.value !== conn }
+                    mediaConns.removeValue(forKey: ObjectIdentifier(conn))
+                    channelMediaConn = channelMediaConn.filter { $0.value !== conn }
                 } else {
-                    self.cursorConns.removeValue(forKey: ObjectIdentifier(conn))
-                    self.channelCursorConn = self.channelCursorConn.filter { $0.value !== conn }
+                    cursorConns.removeValue(forKey: ObjectIdentifier(conn))
+                    channelCursorConn = channelCursorConn.filter { $0.value !== conn }
                 }
-                self.lock.unlock()
+                lock.unlock()
             default:
                 break
             }
         }
     }
 
-    private func receiveMedia(on conn: NWConnection, live: Liveness, consecutiveErrors: Int = 0, onReceive: @escaping @Sendable (UInt32, VideoChannel, Data) -> Void) {
+    private func receiveMedia(
+        on conn: NWConnection,
+        live: Liveness,
+        consecutiveErrors: Int = 0,
+        onReceive: @escaping @Sendable (UInt32, VideoChannel, Data) -> Void,
+    ) {
         conn.receiveMessage { [weak self] data, _, _, error in
             guard let self else { return }
             if let data, !data.isEmpty {
-                self.routeMedia(data, on: conn, onReceive: onReceive)
+                routeMedia(data, on: conn, onReceive: onReceive)
             }
             guard UDPReceiveLoopPolicy.shouldRearm(connectionIsAlive: live.isAlive) else { return }
             if let error {
-                self.log.error("mux media receive error (transient, backing off + re-arming if alive): \(String(describing: error))")
+                log
+                    .error(
+                        "mux media receive error (transient, backing off + re-arming if alive): \(String(describing: error))",
+                    )
                 let next = consecutiveErrors + 1
-                self.queue.asyncAfter(deadline: .now() + UDPReceiveLoopPolicy.nextBackoff(consecutiveErrors: next)) { [weak self] in
-                    guard let self, live.isAlive else { return }
-                    self.receiveMedia(on: conn, live: live, consecutiveErrors: next, onReceive: onReceive)
-                }
+                queue
+                    .asyncAfter(deadline: .now() + UDPReceiveLoopPolicy
+                        .nextBackoff(consecutiveErrors: next))
+                    { [weak self] in
+                        guard let self, live.isAlive else { return }
+                        receiveMedia(on: conn, live: live, consecutiveErrors: next, onReceive: onReceive)
+                    }
             } else {
-                self.receiveMedia(on: conn, live: live, consecutiveErrors: 0, onReceive: onReceive)
+                receiveMedia(on: conn, live: live, consecutiveErrors: 0, onReceive: onReceive)
             }
         }
     }
@@ -281,7 +320,11 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
     /// non-hello stray/adversarial control datagram drops WITHOUT touching `channelMediaConn` (which
     /// would otherwise grow unboundedly for never-helloed ids). The hello-peek is done ONCE here and
     /// fed to the PURE ``VideoMuxRouter/bootstrapAction(for:channel:payloadIsHello:)`` decider.
-    private func routeMedia(_ data: Data, on conn: NWConnection, onReceive: @escaping @Sendable (UInt32, VideoChannel, Data) -> Void) {
+    private func routeMedia(
+        _ data: Data,
+        on conn: NWConnection,
+        onReceive: @Sendable (UInt32, VideoChannel, Data) -> Void,
+    ) {
         guard let (channelID, rest) = try? VideoMuxHeaderCodec.decode(data), rest.count >= 1 else { return }
         let tag = rest[rest.startIndex]
         guard let channel = VideoChannel(rawValue: tag) else { return }
@@ -298,7 +341,8 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
                 let isKA = channel == .control && rest.count >= 2 && rest[rest.startIndex + 1] == 6
                 idleReaper.noteInbound(id: channelID, now: Self.nowSeconds(), isKeepalive: isKA)
                 return true
-            case .rejectUnadmitted, .dropRetired:
+            case .rejectUnadmitted,
+                 .dropRetired:
                 // Bootstrap (FIX #2 + #6): peek-decode the payload ONCE and only re-admit/deliver +
                 // remember the reply flow for an actual hello on the control channel. A non-hello
                 // (stray, or a stale old-gen datagram for a retired id) drops WITHOUT a stamp.
@@ -310,14 +354,20 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
                 // A window-LIST request also bootstraps (deliver + stamp the reply flow) so the daemon
                 // can answer it WITHOUT minting a session (docs/31 remote-window picker).
                 let isList = Self.payloadIsListRequest(channel: channel, payload: payload)
-                switch VideoMuxRouter.bootstrapAction(for: decision, channel: channel, payloadIsHello: isHello, payloadIsListRequest: isList) {
+                switch VideoMuxRouter.bootstrapAction(
+                    for: decision,
+                    channel: channel,
+                    payloadIsHello: isHello,
+                    payloadIsListRequest: isList,
+                ) {
                 case .bootstrapDeliver:
                     channelMediaConn[channelID] = conn
                     return true
                 case .dropNoStamp:
                     return false
                 }
-            case .dropDraining, .drop:
+            case .dropDraining,
+                 .drop:
                 // Draining: the lane is mid-teardown (reaper stopping its session) — drop EVEN a hello
                 // until `endDrain` (no false accept to the dying sink, no premature re-mint). `.drop`:
                 // an empty datagram. Both benign — never fatal, never a sibling teardown.
@@ -345,12 +395,18 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
     private static func payloadIsListRequest(channel: VideoChannel, payload: Data) -> Bool {
         guard channel == .control, let msg = try? VideoControlMessage.decode(payload) else { return false }
         switch msg {
-        case .listWindows, .listSystemDialogs: return true
+        case .listWindows,
+             .listSystemDialogs: return true
         default: return false
         }
     }
 
-    private func receiveCursor(on conn: NWConnection, live: Liveness, consecutiveErrors: Int = 0, onReceive: @escaping @Sendable (UInt32, VideoChannel, Data) -> Void) {
+    private func receiveCursor(
+        on conn: NWConnection,
+        live: Liveness,
+        consecutiveErrors: Int = 0,
+        onReceive: @escaping @Sendable (UInt32, VideoChannel, Data) -> Void,
+    ) {
         conn.receiveMessage { [weak self] data, _, _, error in
             guard let self else { return }
             if let data, !data.isEmpty {
@@ -360,7 +416,7 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
                 // Remember it unconditionally — the prime can race AHEAD of the media hello, so the
                 // lane may not be admitted yet; the first cursor SEND after admission uses this flow.
                 if let (channelID, _) = try? VideoMuxHeaderCodec.decode(data) {
-                    self.lock.withLock {
+                    lock.withLock {
                         self.channelCursorConn[channelID] = conn
                         // Deliberately NOT stamped for the reaper: keepalives ride the MEDIA socket's
                         // control channel (every `keepaliveInterval`), so the media `.route` stamp is
@@ -373,14 +429,20 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
             }
             guard UDPReceiveLoopPolicy.shouldRearm(connectionIsAlive: live.isAlive) else { return }
             if let error {
-                self.log.error("mux cursor receive error (transient, backing off + re-arming if alive): \(String(describing: error))")
+                log
+                    .error(
+                        "mux cursor receive error (transient, backing off + re-arming if alive): \(String(describing: error))",
+                    )
                 let next = consecutiveErrors + 1
-                self.queue.asyncAfter(deadline: .now() + UDPReceiveLoopPolicy.nextBackoff(consecutiveErrors: next)) { [weak self] in
-                    guard let self, live.isAlive else { return }
-                    self.receiveCursor(on: conn, live: live, consecutiveErrors: next, onReceive: onReceive)
-                }
+                queue
+                    .asyncAfter(deadline: .now() + UDPReceiveLoopPolicy
+                        .nextBackoff(consecutiveErrors: next))
+                    { [weak self] in
+                        guard let self, live.isAlive else { return }
+                        receiveCursor(on: conn, live: live, consecutiveErrors: next, onReceive: onReceive)
+                    }
             } else {
-                self.receiveCursor(on: conn, live: live, consecutiveErrors: 0, onReceive: onReceive)
+                receiveCursor(on: conn, live: live, consecutiveErrors: 0, onReceive: onReceive)
             }
         }
     }
@@ -404,11 +466,16 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
             framed = VideoMuxHeaderCodec.encode(channelID: channelID, payload: datagram)
         }
         conn.send(content: framed, completion: .contentProcessed { [weak self] error in
-            if let error { self?.log.error("mux udp send failed channel=\(channel.rawValue) chan=\(channelID): \(String(describing: error))") }
+            if let error {
+                self?.log
+                    .error(
+                        "mux udp send failed channel=\(channel.rawValue) chan=\(channelID): \(String(describing: error))",
+                    )
+            }
         })
     }
 
-    public func stop() async {
+    public func stop() {
         // R14 lock-domain fix: read+nil the listener refs UNDER the lock (their write moved under the lock
         // in start()), then cancel OUTSIDE the lock. cancel() is idempotent and the refs are read nowhere
         // else, so this is behavior-preserving — it just closes the lock-free read/nil hole.
@@ -418,7 +485,8 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
             cursorListener = nil
             stopped = true
             // Cancel the reaper timer BEFORE tearing down flows so a tick cannot fire mid-teardown.
-            reaperTimer?.cancel(); reaperTimer = nil
+            reaperTimer?.cancel()
+            reaperTimer = nil
             for conn in mediaConns.values { conn.cancel() }
             for conn in cursorConns.values { conn.cancel() }
             mediaConns.removeAll()

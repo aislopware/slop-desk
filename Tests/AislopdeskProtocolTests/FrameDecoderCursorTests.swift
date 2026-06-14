@@ -9,7 +9,6 @@ import XCTest
 ///      drain quadratic, which this catches via a time-ratio bound (linear ≈ 4×, quadratic ≈ 16× for a
 ///      4× frame-count increase; the bound is a generous 8× to absorb timing noise).
 final class FrameDecoderCursorTests: XCTestCase {
-
     // MARK: WireMessage / FrameDecoder
 
     private func smallWireFrames(_ n: Int) -> (frames: [WireMessage], bytes: Data) {
@@ -26,7 +25,7 @@ final class FrameDecoderCursorTests: XCTestCase {
     }
 
     func testFrameDecoderDecodesManySmallFramesIdenticallyInOneChunk() throws {
-        let (expected, bytes) = smallWireFrames(12_000) // > 64 KiB of tiny frames → compaction fires mid-drain
+        let (expected, bytes) = smallWireFrames(12000) // > 64 KiB of tiny frames → compaction fires mid-drain
         var decoder = FrameDecoder()
         decoder.append(bytes)
         var decoded: [WireMessage] = []
@@ -36,7 +35,7 @@ final class FrameDecoderCursorTests: XCTestCase {
     }
 
     func testFrameDecoderDecodesIdenticallyAcrossArbitrarySplits() throws {
-        let (expected, bytes) = smallWireFrames(3_000)
+        let (expected, bytes) = smallWireFrames(3000)
         var decoder = FrameDecoder()
         var decoded: [WireMessage] = []
         // Feed in 7-byte slices so frames straddle append boundaries and the cursor/compaction interact
@@ -53,12 +52,15 @@ final class FrameDecoderCursorTests: XCTestCase {
     }
 
     func testFrameDecoderScalesLinearlyNotQuadratically() throws {
-        let small = try drainTime { smallWireFrames(8_000).bytes }
-        let large = try drainTime { smallWireFrames(32_000).bytes } // 4× the frames
+        let small = try drainTime { smallWireFrames(8000).bytes }
+        let large = try drainTime { smallWireFrames(32000).bytes } // 4× the frames
         // Linear ≈ 4×; the old O(n²) front-removal ≈ 16×. Assert well below the quadratic regime.
-        XCTAssertLessThan(large / max(small, 1e-9), 8.0,
-                          "decode time must scale ~linearly in frame count (got \(large/small)× for 4× frames) — "
-                          + "a ratio near 16 means the O(n²) front-removal regressed")
+        XCTAssertLessThan(
+            large / max(small, 1e-9),
+            8.0,
+            "decode time must scale ~linearly in frame count (got \(large / small)× for 4× frames) — "
+                + "a ratio near 16 means the O(n²) front-removal regressed",
+        )
     }
 
     private func drainTime(_ make: () -> Data) throws -> Double {
@@ -85,7 +87,7 @@ final class FrameDecoderCursorTests: XCTestCase {
     func testWireMessageEncodePrefixEqualsPayloadLength() throws {
         let samples: [WireMessage] = [
             .output(seq: 42, bytes: Data("hello".utf8)),
-            .output(seq: 1, bytes: Data()),                 // empty payload edge
+            .output(seq: 1, bytes: Data()), // empty payload edge
             .exit(code: 137),
             .input(Data([0x1B, 0x5B, 0x41])),
             .resize(cols: 200, rows: 50, pxWidth: 1, pxHeight: 2),
@@ -104,7 +106,8 @@ final class FrameDecoderCursorTests: XCTestCase {
                 | (UInt32(f[f.startIndex + 2]) << 8) | UInt32(f[f.startIndex + 3])
             XCTAssertEqual(Int(prefix), f.count - 4, "back-patched prefix must equal payload length for \(m)")
             // And it must still decode back to the same message.
-            var d = FrameDecoder(); d.append(f)
+            var d = FrameDecoder()
+            d.append(f)
             XCTAssertEqual(try d.nextMessage(), m)
             XCTAssertNil(try d.nextMessage())
         }
@@ -118,7 +121,7 @@ final class FrameDecoderCursorTests: XCTestCase {
             .channelOpenAck(channelID: 2, accepted: true),
             .channelOpenAck(channelID: 3, accepted: false),
             .channelData(channelID: 4, payload: Data("payload-bytes".utf8)),
-            .channelData(channelID: 5, payload: Data()),    // empty payload edge
+            .channelData(channelID: 5, payload: Data()), // empty payload edge
             .channelClose(channelID: 6),
             .windowAdjust(channelID: 7, bytesToAdd: 262_144),
         ]
@@ -128,7 +131,8 @@ final class FrameDecoderCursorTests: XCTestCase {
             let prefix = (UInt32(f[f.startIndex]) << 24) | (UInt32(f[f.startIndex + 1]) << 16)
                 | (UInt32(f[f.startIndex + 2]) << 8) | UInt32(f[f.startIndex + 3])
             XCTAssertEqual(Int(prefix), f.count - 4, "back-patched mux prefix must equal inner length for \(fr)")
-            var d = MuxFrameDecoder(); d.append(f)
+            var d = MuxFrameDecoder()
+            d.append(f)
             XCTAssertEqual(try d.nextFrame(), fr)
             XCTAssertNil(try d.nextFrame())
         }
@@ -150,7 +154,7 @@ final class FrameDecoderCursorTests: XCTestCase {
     }
 
     func testMuxFrameDecoderDecodesManySmallFramesIdenticallyInOneChunk() throws {
-        let (expected, bytes) = smallMuxFrames(12_000)
+        let (expected, bytes) = smallMuxFrames(12000)
         var decoder = MuxFrameDecoder()
         decoder.append(bytes)
         var decoded: [MuxFrame] = []
@@ -160,7 +164,7 @@ final class FrameDecoderCursorTests: XCTestCase {
     }
 
     func testMuxFrameDecoderDecodesIdenticallyAcrossArbitrarySplits() throws {
-        let (expected, bytes) = smallMuxFrames(3_000)
+        let (expected, bytes) = smallMuxFrames(3000)
         var decoder = MuxFrameDecoder()
         var decoded: [MuxFrame] = []
         var i = bytes.startIndex
@@ -175,10 +179,13 @@ final class FrameDecoderCursorTests: XCTestCase {
     }
 
     func testMuxFrameDecoderScalesLinearlyNotQuadratically() throws {
-        let small = try muxDrainTime { smallMuxFrames(8_000).bytes }
-        let large = try muxDrainTime { smallMuxFrames(32_000).bytes }
-        XCTAssertLessThan(large / max(small, 1e-9), 8.0,
-                          "mux decode time must scale ~linearly (got \(large/small)× for 4× frames)")
+        let small = try muxDrainTime { smallMuxFrames(8000).bytes }
+        let large = try muxDrainTime { smallMuxFrames(32000).bytes }
+        XCTAssertLessThan(
+            large / max(small, 1e-9),
+            8.0,
+            "mux decode time must scale ~linearly (got \(large / small)× for 4× frames)",
+        )
     }
 
     private func muxDrainTime(_ make: () -> Data) throws -> Double {

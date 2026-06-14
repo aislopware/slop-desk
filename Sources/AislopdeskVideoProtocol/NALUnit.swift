@@ -38,7 +38,7 @@ public enum NALUnit {
                 Int(avcc[p + 3])
             guard length > 0, offset + lengthPrefixSize + length <= count else { break }
             let start = p + lengthPrefixSize
-            units.append(Data(avcc[start ..< start + length]))
+            units.append(Data(avcc[start..<start + length]))
             offset += lengthPrefixSize + length
         }
         return units

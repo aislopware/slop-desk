@@ -1,11 +1,10 @@
-import XCTest
 import AislopdeskProtocol
+import XCTest
 @testable import AislopdeskTransport
 
 /// Smoke tests so the target compiles and runs. Full transport behaviour
 /// (framing over NWConnection, replay-after-drop, reconnect resume) lands in WF-2.
 final class AislopdeskTransportSmokeTests: XCTestCase {
-
     func testReplayBufferCapsAreContractValues() {
         XCTAssertEqual(ReplayBuffer.maxBackupBytes, 64 * 1024 * 1024)
         XCTAssertEqual(ReplayBuffer.offlineGateBytes, 4 * 1024 * 1024)

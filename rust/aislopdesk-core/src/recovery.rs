@@ -8,7 +8,9 @@
 use crate::bytes::{ByteReader, ByteWriter};
 use crate::error::{Result, VideoProtocolError};
 
-/// A client→host network-feedback telemetry report. Eleven fixed-width `u32`s; all fields
+/// A client→host network-feedback telemetry report.
+///
+/// Eleven fixed-width `u32`s; all fields
 /// are RELATIVE (windowed counters / a host-stamp echo / client-local deltas) so the host
 /// derives RTT in its own clock with no cross-machine skew.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -40,19 +42,19 @@ pub struct NetworkStatsReport {
 impl NetworkStatsReport {
     /// Detector state from bits 0-1 of `owd_trend_flags` (0 normal / 1 over / 2 under).
     #[must_use]
-    pub fn owd_trend_state_raw(&self) -> u8 {
+    pub const fn owd_trend_state_raw(&self) -> u8 {
         (self.owd_trend_flags as u8) & 0x3
     }
 
     /// Detector sample count from bits 8-15 of `owd_trend_flags` (saturated at 255).
     #[must_use]
-    pub fn owd_trend_deltas(&self) -> u32 {
+    pub const fn owd_trend_deltas(&self) -> u32 {
         (self.owd_trend_flags >> 8) & 0xFF
     }
 
     /// `owd_trend_milli` reinterpreted as the signed milli-trend it carries.
     #[must_use]
-    pub fn owd_trend_modified_milli_signed(&self) -> i32 {
+    pub const fn owd_trend_modified_milli_signed(&self) -> i32 {
         self.owd_trend_milli as i32
     }
 }
@@ -94,7 +96,7 @@ impl RecoveryMessage {
 
     /// The on-wire message-type byte.
     #[must_use]
-    pub fn message_type(&self) -> u8 {
+    pub const fn message_type(&self) -> u8 {
         match self {
             Self::Ack { .. } => 1,
             Self::RequestLtrRefresh { .. } => 2,
@@ -144,7 +146,7 @@ impl RecoveryMessage {
     /// Parses a recovery message. An unknown type, a short body, OR trailing bytes are
     /// malformed — the trailing-bytes rejection is load-bearing for the host's
     /// byte-keyed request dedup.
-    pub fn decode(data: &[u8]) -> Result<RecoveryMessage> {
+    pub fn decode(data: &[u8]) -> Result<Self> {
         let mut r = ByteReader::new(data);
         let kind = r.read_u8()?;
         let message = match kind {

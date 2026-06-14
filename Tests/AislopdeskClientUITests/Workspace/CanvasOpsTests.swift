@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pure unit tests for ``Canvas`` queries + mutations + camera/arrange (docs/30 §3, §9.1). No client,
@@ -7,7 +7,6 @@ import CoreGraphics
 /// (z-order determinism, min-size floor, the `removing → nil` tab-empties contract, lossless dedup,
 /// the pan-only camera with no scale term).
 final class CanvasOpsTests: XCTestCase {
-
     private let eps: CGFloat = 1e-6
 
     /// A PaneID whose UUID string sorts by `n` — so z-tie-break order is predictable in tests.
@@ -27,7 +26,7 @@ final class CanvasOpsTests: XCTestCase {
         let canvas = Canvas(items: [
             item(3, f0, z: 2),
             item(1, f0, z: 0),
-            item(2, f0, z: 0),   // tie with pid(1) at z=0 → pid(1) first
+            item(2, f0, z: 0), // tie with pid(1) at z=0 → pid(1) first
         ])
         XCTAssertEqual(canvas.allIDs(), [pid(1), pid(2), pid(3)])
     }
@@ -66,7 +65,12 @@ final class CanvasOpsTests: XCTestCase {
         let dup = pid(7)
         let canvas = Canvas(items: [
             CanvasItem(id: dup, spec: PaneSpec(kind: .terminal, title: "first"), frame: f0, z: 0),
-            CanvasItem(id: dup, spec: PaneSpec(kind: .claudeCode, title: "second"), frame: CGRect(x: 50, y: 60, width: 300, height: 300), z: 1),
+            CanvasItem(
+                id: dup,
+                spec: PaneSpec(kind: .claudeCode, title: "second"),
+                frame: CGRect(x: 50, y: 60, width: 300, height: 300),
+                z: 1,
+            ),
         ])
         var seen = Set<PaneID>()
         let deduped = canvas.dedupingItemIDs(seen: &seen)
@@ -85,7 +89,11 @@ final class CanvasOpsTests: XCTestCase {
 
     func testAddingPlacesFrontmostNearFocused() throws {
         let canvas = Canvas(items: [item(1, f0, z: 0)])
-        let (next, newID) = canvas.adding(PaneSpec(kind: .terminal, title: "new"), near: pid(1), viewport: CGSize(width: 1280, height: 800))
+        let (next, newID) = canvas.adding(
+            PaneSpec(kind: .terminal, title: "new"),
+            near: pid(1),
+            viewport: CGSize(width: 1280, height: 800),
+        )
         XCTAssertEqual(next.itemCount, 2)
         XCTAssertTrue(next.contains(newID))
         XCTAssertEqual(next.item(newID)?.z, 1, "new item is frontmost (maxZ+1)")
@@ -114,10 +122,14 @@ final class CanvasOpsTests: XCTestCase {
 
     func testMovingByAndTo() {
         let canvas = Canvas(items: [item(1, CGRect(x: 100, y: 100, width: 640, height: 420), z: 0)])
-        XCTAssertEqual(canvas.moving(pid(1), by: CGSize(width: 30, height: -20)).frame(of: pid(1))?.origin,
-                       CGPoint(x: 130, y: 80))
-        XCTAssertEqual(canvas.moving(pid(1), to: CGPoint(x: 5, y: 6)).frame(of: pid(1))?.origin,
-                       CGPoint(x: 5, y: 6))
+        XCTAssertEqual(
+            canvas.moving(pid(1), by: CGSize(width: 30, height: -20)).frame(of: pid(1))?.origin,
+            CGPoint(x: 130, y: 80),
+        )
+        XCTAssertEqual(
+            canvas.moving(pid(1), to: CGPoint(x: 5, y: 6)).frame(of: pid(1))?.origin,
+            CGPoint(x: 5, y: 6),
+        )
     }
 
     func testMovingNonFiniteDeltaIsSanitized() {
@@ -180,8 +192,10 @@ final class CanvasOpsTests: XCTestCase {
     }
 
     func testNeedsRecenter() {
-        let canvas = Canvas(items: [item(1, CGRect(x: 0, y: 0, width: 200, height: 200), z: 0)],
-                            camera: CanvasCamera(origin: CGPoint(x: 5000, y: 5000)))
+        let canvas = Canvas(
+            items: [item(1, CGRect(x: 0, y: 0, width: 200, height: 200), z: 0)],
+            camera: CanvasCamera(origin: CGPoint(x: 5000, y: 5000)),
+        )
         XCTAssertTrue(canvas.needsRecenter(viewport: CGSize(width: 800, height: 600)), "panned into empty space")
         XCTAssertFalse(canvas.camera(.zero).needsRecenter(viewport: CGSize(width: 800, height: 600)))
     }
@@ -201,8 +215,11 @@ final class CanvasOpsTests: XCTestCase {
         let frames = tidy.items.map(\.frame)
         for i in frames.indices {
             for j in (i + 1)..<frames.count {
-                XCTAssertTrue(frames[i].intersection(frames[j]).isNull || frames[i].intersection(frames[j]).isEmpty,
-                              "tidied items must not overlap")
+                let overlap = frames[i].intersection(frames[j])
+                XCTAssertTrue(
+                    overlap.isNull || overlap.isEmpty,
+                    "tidied items must not overlap",
+                )
             }
         }
     }

@@ -1,7 +1,7 @@
-import XCTest
-import Foundation
 import AislopdeskProtocol
 import AislopdeskTransport
+import Foundation
+import XCTest
 @testable import AislopdeskClient
 
 /// Pins the inbox + wake batch-drain contract that replaced the per-chunk `output`
@@ -10,7 +10,6 @@ import AislopdeskTransport
 /// appended just before the wake stream finishes (exit) is still drainable (the
 /// final-drain contract), (4) `takeOutputBatch` empties the inbox atomically.
 final class AislopdeskClientBatchDrainTests: XCTestCase {
-
     func testAckAdvancesWithoutAnyConsumption() async throws {
         let transport = RecordingTransport()
         let client = AislopdeskClient(makeTransport: { transport })
@@ -18,7 +17,7 @@ final class AislopdeskClientBatchDrainTests: XCTestCase {
 
         // Deliver 1..5 with NO takeOutputBatch — ack semantics must be wire-time.
         for seq in 1...5 {
-            await client._handleInboundForTesting(.output(seq: Int64(seq), bytes: Data("x".utf8)))
+            await client.handleInboundForTesting(.output(seq: Int64(seq), bytes: Data("x".utf8)))
         }
         let contiguous = await client.highestContiguousSeq
         XCTAssertEqual(contiguous, 5, "contiguous high-water tracks wire delivery, not consumption")
@@ -30,13 +29,13 @@ final class AislopdeskClientBatchDrainTests: XCTestCase {
         await client.close()
     }
 
-    func testBacklogCrossesAsOneBatchInFIFOOrder() async throws {
+    func testBacklogCrossesAsOneBatchInFIFOOrder() async {
         let client = AislopdeskClient(makeTransport: { RecordingTransport() })
 
         // Park no consumer; push a burst, then drain once.
         let chunks = (1...20).map { Data("chunk-\($0);".utf8) }
         for (i, chunk) in chunks.enumerated() {
-            await client._handleInboundForTesting(.output(seq: Int64(i + 1), bytes: chunk))
+            await client.handleInboundForTesting(.output(seq: Int64(i + 1), bytes: chunk))
         }
         let batch = await client.takeOutputBatch()
         XCTAssertEqual(batch, chunks, "whole backlog in one batch, FIFO order")
@@ -47,12 +46,12 @@ final class AislopdeskClientBatchDrainTests: XCTestCase {
         await client.close()
     }
 
-    func testWakeCoalescesBurstIntoSingleSignal() async throws {
+    func testWakeCoalescesBurstIntoSingleSignal() async {
         let client = AislopdeskClient(makeTransport: { RecordingTransport() })
 
         // Push a burst BEFORE any consumer exists: bufferingNewest(1) retains exactly one wake.
         for seq in 1...10 {
-            await client._handleInboundForTesting(.output(seq: Int64(seq), bytes: Data([UInt8(seq)])))
+            await client.handleInboundForTesting(.output(seq: Int64(seq), bytes: Data([UInt8(seq)])))
         }
 
         var wakes = 0
@@ -60,7 +59,7 @@ final class AislopdeskClientBatchDrainTests: XCTestCase {
         for await _ in client.outputWakeups {
             wakes += 1
             drained += await client.takeOutputBatch()
-            if wakes == 1 { break }   // one wake must have carried the whole burst
+            if wakes == 1 { break } // one wake must have carried the whole burst
         }
         XCTAssertEqual(drained.count, 10, "one coalesced wake announces the whole burst")
 
@@ -81,9 +80,9 @@ final class AislopdeskClientBatchDrainTests: XCTestCase {
 
         // Tail chunks immediately followed by exit — the wake stream finishes right after
         // the appends; the final drain must still deliver every byte.
-        await client._handleInboundForTesting(.output(seq: 1, bytes: Data("tail-".utf8)))
-        await client._handleInboundForTesting(.output(seq: 2, bytes: Data("bytes".utf8)))
-        await client._handleInboundForTesting(.exit(code: 0))
+        await client.handleInboundForTesting(.output(seq: 1, bytes: Data("tail-".utf8)))
+        await client.handleInboundForTesting(.output(seq: 2, bytes: Data("bytes".utf8)))
+        await client.handleInboundForTesting(.exit(code: 0))
 
         try await waitUntil(timeout: .seconds(5)) { sink.bytes == Data("tail-bytes".utf8) }
         XCTAssertEqual(sink.bytes, Data("tail-bytes".utf8), "no tail loss across the finish")
@@ -100,7 +99,7 @@ final class AislopdeskClientBatchDrainTests: XCTestCase {
     func testReconnectClearsUndrainedInbox() async throws {
         let client = AislopdeskClient(makeTransport: { RecordingTransport() })
         try await client.connect(host: "h", port: 1)
-        await client._handleInboundForTesting(.output(seq: 1, bytes: Data("dead-session".utf8)))
+        await client.handleInboundForTesting(.output(seq: 1, bytes: Data("dead-session".utf8)))
 
         // Reconnect WITHOUT draining: the stale entry must be gone afterwards.
         try await client.connect(host: "h", port: 1)
@@ -108,7 +107,7 @@ final class AislopdeskClientBatchDrainTests: XCTestCase {
         XCTAssertTrue(batch.isEmpty, "the dead session's undrained entries never cross a reconnect")
 
         // And the fresh session's first output still flows normally.
-        await client._handleInboundForTesting(.output(seq: 1, bytes: Data("fresh".utf8)))
+        await client.handleInboundForTesting(.output(seq: 1, bytes: Data("fresh".utf8)))
         let fresh = await client.takeOutputBatch()
         XCTAssertEqual(fresh, [Data("fresh".utf8)])
         await client.close()
@@ -132,24 +131,38 @@ final class AislopdeskClientBatchDrainTests: XCTestCase {
             continuation = c
         }
 
-        func connect(host: String, port: UInt16, resume: UUID, lastReceivedSeq: Int64, handshakeTimeout: Duration) async throws {
+        func connect(
+            host _: String,
+            port _: UInt16,
+            resume _: UUID,
+            lastReceivedSeq _: Int64,
+            handshakeTimeout _: Duration,
+        ) {
             _sessionID = UUID()
         }
-        func sendInput(_ bytes: Data) async throws {}
-        func sendResize(cols: UInt16, rows: UInt16, pxWidth: UInt16, pxHeight: UInt16) async throws {}
-        func sendAck(seq: Int64) async throws { ackedSeqs.append(seq) }
-        func sendBye() async throws {}
-        func close() async { continuation.finish() }
+
+        func sendInput(_: Data) {}
+        func sendResize(cols _: UInt16, rows _: UInt16, pxWidth _: UInt16, pxHeight _: UInt16) {}
+        func sendAck(seq: Int64) { ackedSeqs.append(seq) }
+        func sendBye() {}
+        func close() { continuation.finish() }
     }
 
     private final class ByteSink: @unchecked Sendable {
         private let lock = NSLock()
         private var data = Data()
-        func append(_ d: Data) { lock.lock(); data.append(d); lock.unlock() }
-        var bytes: Data { lock.lock(); defer { lock.unlock() }; return data }
+        func append(_ d: Data) { lock.lock()
+            data.append(d)
+            lock.unlock()
+        }
+
+        var bytes: Data { lock.lock()
+            defer { lock.unlock() }
+            return data
+        }
     }
 
-    private func waitUntil(timeout: Duration, _ condition: @escaping @Sendable () -> Bool) async throws {
+    private func waitUntil(timeout: Duration, _ condition: @Sendable () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: timeout)
         while ContinuousClock.now < deadline {
             if condition() { return }

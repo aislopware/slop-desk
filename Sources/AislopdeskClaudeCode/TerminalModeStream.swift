@@ -17,14 +17,16 @@ public final class TerminalModeStream: @unchecked Sendable {
     public let events: AsyncStream<TerminalModeEvent>
 
     public init() {
-        var cont: AsyncStream<TerminalModeEvent>.Continuation!
-        self.events = AsyncStream { cont = $0 }
-        self.continuation = cont
+        var cont: AsyncStream<TerminalModeEvent>.Continuation?
+        events = AsyncStream { cont = $0 }
+        guard let cont else { preconditionFailure("AsyncStream build closure runs synchronously during init") }
+        continuation = cont
     }
 
     /// The current terminal mode snapshot.
     public var mode: TerminalMode {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return tracker.mode
     }
 

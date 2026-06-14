@@ -13,7 +13,6 @@ import XCTest
 /// - A rapid `begin()` sequence keeps only the latest token current; all prior ones are rejected
 ///   (this is precisely how a superseded async `becomeFirstResponder` callback gets dropped).
 final class FocusGenerationGuardTests: XCTestCase {
-
     /// `begin()` increments monotonically and returns the new current token (1, 2, 3, …).
     func testBeginBumpsAndReturnsCurrent() {
         var guardState = FocusGenerationGuard()
@@ -30,10 +29,10 @@ final class FocusGenerationGuardTests: XCTestCase {
     /// the core "drop the stale becomeFirstResponder callback" behaviour.
     func testEarlierTokenIsRejectedAfterNewerBegin() {
         var guardState = FocusGenerationGuard()
-        let stale = guardState.begin()            // generation 1, captured by an in-flight callback
+        let stale = guardState.begin() // generation 1, captured by an in-flight callback
         XCTAssertTrue(guardState.isCurrent(stale), "freshly minted token is current")
 
-        let fresh = guardState.begin()            // generation 2 — supersedes the in-flight one
+        let fresh = guardState.begin() // generation 2 — supersedes the in-flight one
         XCTAssertFalse(guardState.isCurrent(stale), "the older token is now stale → rejected")
         XCTAssertTrue(guardState.isCurrent(fresh), "only the latest token is current")
     }
@@ -48,12 +47,12 @@ final class FocusGenerationGuardTests: XCTestCase {
 
     /// A rapid `begin()` burst (A→B→C→…) keeps ONLY the latest token current; every prior token is
     /// rejected. This is the multi-focus-change race: only the last-requested pane wins.
-    func testRapidBeginSequenceKeepsOnlyLatestCurrent() {
+    func testRapidBeginSequenceKeepsOnlyLatestCurrent() throws {
         var guardState = FocusGenerationGuard()
         var tokens: [Int] = []
         for _ in 0..<10 { tokens.append(guardState.begin()) }
 
-        let latest = tokens.last!
+        let latest = try XCTUnwrap(tokens.last)
         XCTAssertTrue(guardState.isCurrent(latest), "the last token in the burst is current")
         for stale in tokens.dropLast() {
             XCTAssertFalse(guardState.isCurrent(stale), "every superseded token (\(stale)) is rejected")

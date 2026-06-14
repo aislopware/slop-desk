@@ -86,7 +86,7 @@ impl Default for TrendlineEstimator {
 impl TrendlineEstimator {
     /// A fresh estimator (verdict `Normal`, threshold at [`INITIAL_THRESHOLD`]).
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             state: State::Normal,
             modified_trend: 0.0,
@@ -239,10 +239,8 @@ impl TrendlineEstimator {
     /// No samples yet ⇒ stale. The `>` mirrors [`note`](Self::note)'s reset condition exactly.
     #[must_use]
     pub fn is_stale(&self, now_ms: f64) -> bool {
-        match self.prev_arrival_ms {
-            Some(prev) => now_ms - prev > RESET_GAP_MS,
-            None => true,
-        }
+        self.prev_arrival_ms
+            .is_none_or(|prev| now_ms - prev > RESET_GAP_MS)
     }
 
     /// Clears the regression context but KEEPS the adapted threshold.
@@ -308,7 +306,7 @@ impl TrendSampler {
     }
 
     /// `true` exactly once per strictly-newer frame id (and never for `send_ts == 0`).
-    pub fn should_sample(&mut self, frame_id: u32, send_ts: u32) -> bool {
+    pub const fn should_sample(&mut self, frame_id: u32, send_ts: u32) -> bool {
         if send_ts == 0 {
             return false;
         }

@@ -30,12 +30,12 @@ impl DecodeFrontier {
 
     /// The highest frame ID that has decoded so far, or `None` before the first decode.
     #[must_use]
-    pub const fn last_decoded_frame_id(&self) -> Option<u32> {
+    pub const fn last_decoded_frame_id(self) -> Option<u32> {
         self.last_decoded_frame_id
     }
 
     /// Folds one successfully-decoded frame. Keep-newest, wrap-aware; older/equal IDs are no-ops.
-    pub fn note_decoded(&mut self, frame_id: u32) {
+    pub const fn note_decoded(&mut self, frame_id: u32) {
         if let Some(current) = self.last_decoded_frame_id {
             if distance_wrapped(frame_id, current) <= 0 {
                 return;
@@ -48,7 +48,7 @@ impl DecodeFrontier {
     /// [`RecoveryMessage::NO_FRAME_DECODED_SENTINEL`] when nothing has decoded yet (frame IDs
     /// start at 0, so 0 can never be the sentinel).
     #[must_use]
-    pub fn wire_value(&self) -> u32 {
+    pub fn wire_value(self) -> u32 {
         self.last_decoded_frame_id
             .unwrap_or(RecoveryMessage::NO_FRAME_DECODED_SENTINEL)
     }

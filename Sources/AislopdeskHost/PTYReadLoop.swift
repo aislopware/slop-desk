@@ -49,21 +49,24 @@ public final class PTYReadLoop: @unchecked Sendable {
     ///     its return (no-buffer relay). Bridging into an actor is the caller's job.
     ///   - onEOF: called once when the master reaches EOF / errors (the child closed
     ///     its tty — typically it has exited).
+    @preconcurrency
     public init(
         fd: Int32,
         onChunk: @escaping @Sendable (Data) -> Void,
-        onEOF: @escaping @Sendable () -> Void
+        onEOF: @escaping @Sendable () -> Void,
     ) {
         self.fd = fd
         self.onChunk = onChunk
         self.onEOF = onEOF
-        self.queue = DispatchQueue(label: "aislopdesk.host.pty.read", qos: .userInteractive)
+        queue = DispatchQueue(label: "aislopdesk.host.pty.read", qos: .userInteractive)
     }
 
     /// Starts the read loop on the user-interactive queue. Idempotent.
     public func start() {
         gate.lock()
-        guard !started, !stopped else { gate.unlock(); return }
+        guard !started, !stopped else { gate.unlock()
+            return
+        }
         started = true
         gate.unlock()
         queue.async { [weak self] in self?.runLoop() }
@@ -90,14 +93,15 @@ public final class PTYReadLoop: @unchecked Sendable {
 
     private func runLoop() {
         let buffer = UnsafeMutableRawPointer.allocate(
-            byteCount: Self.readChunkSize, alignment: MemoryLayout<UInt8>.alignment)
+            byteCount: Self.readChunkSize, alignment: MemoryLayout<UInt8>.alignment,
+        )
         defer { buffer.deallocate() }
 
         while true {
             // Gate: park (zero master syscalls) while paused so the kernel PTY buffer
             // fills and backpressures the shell. Wake on resume or stop.
             gate.lock()
-            while paused && !stopped {
+            while paused, !stopped {
                 gate.wait()
             }
             if stopped {

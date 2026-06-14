@@ -1,6 +1,6 @@
 #if os(macOS)
-import Foundation
 import AppKit
+import Foundation
 
 /// Polls the macOS general pasteboard while the app is active and pushes each NEW string clip into the
 /// store's ``WorkspaceStore/clipboardRing`` — so "Paste Recent" can replay something you copied a few
@@ -10,6 +10,7 @@ import AppKit
 /// `NSPasteboard.changeCount` is cheap: a single integer read per tick, and the string is fetched only
 /// when the count actually advances. Modeled on ``SystemDialogMonitor``: the app scene owns a
 /// `.task { await monitor.run() }`; the loop ends when that task is cancelled.
+@preconcurrency
 @MainActor
 public final class ClipboardMonitor {
     private weak var store: WorkspaceStore?
@@ -17,15 +18,17 @@ public final class ClipboardMonitor {
     private let pasteboard: NSPasteboard
     private var lastChangeCount: Int
 
-    public init(store: WorkspaceStore,
-                pollGap: Duration = .seconds(1),
-                pasteboard: NSPasteboard = .general) {
+    public init(
+        store: WorkspaceStore,
+        pollGap: Duration = .seconds(1),
+        pasteboard: NSPasteboard = .general,
+    ) {
         self.store = store
         self.pollGap = pollGap
         self.pasteboard = pasteboard
         // Seed with the CURRENT count so the clip already on the board at launch isn't retro-captured
         // (the ring is "what you copied while the app watched", not a one-shot snapshot).
-        self.lastChangeCount = pasteboard.changeCount
+        lastChangeCount = pasteboard.changeCount
     }
 
     /// Polls until the owning Task is cancelled. Each tick, if the pasteboard advanced, records its

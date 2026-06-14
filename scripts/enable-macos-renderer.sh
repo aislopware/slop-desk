@@ -32,12 +32,12 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SPEC="$REPO_ROOT/Apps/ClientApp-macOS/project.yml"
-XCFRAMEWORK="$REPO_ROOT/ThirdParty/ghostty/libghostty.xcframework"
+SPEC="${REPO_ROOT}/Apps/ClientApp-macOS/project.yml"
+XCFRAMEWORK="${REPO_ROOT}/ThirdParty/ghostty/libghostty.xcframework"
 
 # ── 1. Preflight: the xcframework must exist with a macos-arm64 slice ───────────────────────
-if [[ ! -d "$XCFRAMEWORK" ]]; then
-  echo "ERROR: $XCFRAMEWORK is missing." >&2
+if [[ ! -d "${XCFRAMEWORK}" ]]; then
+  echo "ERROR: ${XCFRAMEWORK} is missing." >&2
   echo "       Build it first on a macOS host with a <= 15.x SDK (or this 26.5 host via the" >&2
   echo "       SDK-shim recipe), then re-run:" >&2
   echo "         bash ThirdParty/ghostty/build-libghostty.sh" >&2
@@ -45,15 +45,15 @@ if [[ ! -d "$XCFRAMEWORK" ]]; then
 fi
 # Accept either the native single slice (macos-arm64) or the universal build's macOS slice
 # (macos-arm64_x86_64) — the app pins ARCHS=arm64 and both carry an arm64 slice.
-if [[ ! -d "$XCFRAMEWORK/macos-arm64" && ! -d "$XCFRAMEWORK/macos-arm64_x86_64" ]]; then
-  echo "ERROR: $XCFRAMEWORK has no macOS arm64 slice (macos-arm64 or macos-arm64_x86_64)." >&2
+if [[ ! -d "${XCFRAMEWORK}/macos-arm64" && ! -d "${XCFRAMEWORK}/macos-arm64_x86_64" ]]; then
+  echo "ERROR: ${XCFRAMEWORK} has no macOS arm64 slice (macos-arm64 or macos-arm64_x86_64)." >&2
   echo "       The macOS app pins ARCHS=arm64 and needs that slice. Rebuild the xcframework:" >&2
   echo "         bash ThirdParty/ghostty/build-libghostty.sh                 # native (macos only)" >&2
   echo "         XCFRAMEWORK_TARGET=universal bash ThirdParty/ghostty/build-libghostty.sh  # + iOS" >&2
   exit 1
 fi
 
-if ! command -v xcodegen >/dev/null 2>&1; then
+if ! command -v xcodegen > /dev/null 2>&1; then
   echo "ERROR: xcodegen not found on PATH (install: brew install xcodegen)." >&2
   exit 1
 fi
@@ -61,7 +61,7 @@ fi
 # ── 2. Inject the renderer wiring (idempotent) ──────────────────────────────────────────────
 # We edit in Python (yaml round-trip would reorder/strip comments; a structural insert keyed on
 # the placeholder anchors is precise and idempotent). Each insert is guarded by a presence check.
-SPEC="$SPEC" python3 - <<'PY'
+SPEC="${SPEC}" python3 - << 'PY'
 import os, sys
 
 spec_path = os.environ["SPEC"]
@@ -156,10 +156,10 @@ else:
 PY
 
 # ── 3. Regenerate the .xcodeproj from the now-enabled spec ───────────────────────────────────
-echo "==> xcodegen generate --spec $SPEC"
-xcodegen generate --spec "$SPEC"
+echo "==> xcodegen generate --spec ${SPEC}"
+xcodegen generate --spec "${SPEC}"
 
-cat <<EOF
+cat << EOF
 ==> macOS renderer ENABLED.
     Build:   xcodebuild -project Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj \\
                -scheme ClientApp-macOS -destination 'generic/platform=macOS' \\

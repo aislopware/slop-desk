@@ -1,5 +1,5 @@
-import Foundation
 import CoreGraphics
+import Foundation
 
 // MARK: - CanvasSnap (pure smart-snap solver for canvas drags)
 
@@ -62,7 +62,7 @@ public enum CanvasSnap {
             gridEngage: CGFloat = 6,
             gridRelease: CGFloat = 9,
             snapsToPanes: Bool = true,
-            snapsToGrid: Bool = true
+            snapsToGrid: Bool = true,
         ) {
             self.engage = engage
             self.release = release
@@ -75,7 +75,7 @@ public enum CanvasSnap {
         }
 
         /// Everything off — the escape hatch for the "hold ⌘ to drag freely" modifier.
-        public static let disabled = Config(snapsToPanes: false, snapsToGrid: false)
+        public static let disabled = Self(snapsToPanes: false, snapsToGrid: false)
     }
 
     // MARK: Guides
@@ -83,8 +83,11 @@ public enum CanvasSnap {
     /// The candidate class that produced a guide — also the near-tie priority (lower raw = stronger)
     /// and the view's style cue (centers draw dashed, the Keynote distinction).
     public enum GuideKind: Int, Sendable, Equatable, Hashable, Comparable {
-        case gutter = 0, edge, center, viewportEdge
-        public static func < (lhs: GuideKind, rhs: GuideKind) -> Bool { lhs.rawValue < rhs.rawValue }
+        case gutter = 0
+        case edge
+        case center
+        case viewportEdge
+        public static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
     }
 
     /// One alignment guide line the view draws while a pane-derived snap is ACTIVE: a 1-D position on
@@ -163,26 +166,50 @@ public enum CanvasSnap {
         others: [CGRect],
         viewport: CGRect? = nil,
         config: Config,
-        previous: Resolution? = nil
+        previous: Resolution? = nil,
     ) -> Resolution {
-        let xCandidates = moveCandidates(axis: .x, proposed: proposed, others: others, viewport: viewport, config: config)
-        let yCandidates = moveCandidates(axis: .y, proposed: proposed, others: others, viewport: viewport, config: config)
+        let xCandidates = moveCandidates(
+            axis: .x,
+            proposed: proposed,
+            others: others,
+            viewport: viewport,
+            config: config,
+        )
+        let yCandidates = moveCandidates(
+            axis: .y,
+            proposed: proposed,
+            others: others,
+            viewport: viewport,
+            config: config,
+        )
 
-        let x = resolveAxis(values: AxisValues(min: proposed.minX, mid: proposed.midX, max: proposed.maxX),
-                            candidates: xCandidates, previous: previous?.stickX, config: config,
-                            gridEdge: .min)
-        let y = resolveAxis(values: AxisValues(min: proposed.minY, mid: proposed.midY, max: proposed.maxY),
-                            candidates: yCandidates, previous: previous?.stickY, config: config,
-                            gridEdge: .min)
+        let x = resolveAxis(
+            values: AxisValues(min: proposed.minX, mid: proposed.midX, max: proposed.maxX),
+            candidates: xCandidates,
+            previous: previous?.stickX,
+            config: config,
+            gridEdge: .min,
+        )
+        let y = resolveAxis(
+            values: AxisValues(min: proposed.minY, mid: proposed.midY, max: proposed.maxY),
+            candidates: yCandidates,
+            previous: previous?.stickY,
+            config: config,
+            gridEdge: .min,
+        )
 
         let snapped = sanitizedPreservingSize(proposed.offsetBy(dx: x.delta, dy: y.delta))
         return Resolution(
             frame: snapped,
-            guides: guides(for: snapped, xCandidates: xCandidates, yCandidates: yCandidates,
-                           xSnapped: x.stick != nil && !(x.stick!.isGrid),
-                           ySnapped: y.stick != nil && !(y.stick!.isGrid)),
+            guides: guides(
+                for: snapped,
+                xCandidates: xCandidates,
+                yCandidates: yCandidates,
+                xSnapped: x.stick.map { !$0.isGrid } ?? false,
+                ySnapped: y.stick.map { !$0.isGrid } ?? false,
+            ),
             stickX: x.stick,
-            stickY: y.stick
+            stickY: y.stick,
         )
     }
 
@@ -199,7 +226,7 @@ public enum CanvasSnap {
         viewport: CGRect? = nil,
         minSize: CGSize = Canvas.minItemSize,
         config: Config,
-        previous: Resolution? = nil
+        previous: Resolution? = nil,
     ) -> Resolution {
         var left = proposed.minX
         var right = proposed.maxX
@@ -222,12 +249,22 @@ public enum CanvasSnap {
             let valid: (CGFloat) -> Bool = movesLeft
                 ? { target in right - target >= minSize.width }
                 : { target in target - left >= minSize.width }
-            xCandidates = resizeCandidates(axis: .x, ownEdge: ownEdge, others: others,
-                                           viewport: viewport, config: config).filter { valid($0.target) }
+            xCandidates = resizeCandidates(
+                axis: .x,
+                ownEdge: ownEdge,
+                others: others,
+                viewport: viewport,
+                config: config,
+            ).filter { valid($0.target) }
             let own = movesLeft ? left : right
-            let r = resolveEdge(own: own, ownEdge: ownEdge, candidates: xCandidates,
-                                previous: previous?.stickX, config: config,
-                                gridValid: valid)
+            let r = resolveEdge(
+                own: own,
+                ownEdge: ownEdge,
+                candidates: xCandidates,
+                previous: previous?.stickX,
+                config: config,
+                gridValid: valid,
+            )
             if movesLeft { left += r.delta } else { right += r.delta }
             stickX = r.stick
         }
@@ -236,12 +273,22 @@ public enum CanvasSnap {
             let valid: (CGFloat) -> Bool = movesTop
                 ? { target in bottom - target >= minSize.height }
                 : { target in target - top >= minSize.height }
-            yCandidates = resizeCandidates(axis: .y, ownEdge: ownEdge, others: others,
-                                           viewport: viewport, config: config).filter { valid($0.target) }
+            yCandidates = resizeCandidates(
+                axis: .y,
+                ownEdge: ownEdge,
+                others: others,
+                viewport: viewport,
+                config: config,
+            ).filter { valid($0.target) }
             let own = movesTop ? top : bottom
-            let r = resolveEdge(own: own, ownEdge: ownEdge, candidates: yCandidates,
-                                previous: previous?.stickY, config: config,
-                                gridValid: valid)
+            let r = resolveEdge(
+                own: own,
+                ownEdge: ownEdge,
+                candidates: yCandidates,
+                previous: previous?.stickY,
+                config: config,
+                gridValid: valid,
+            )
             if movesTop { top += r.delta } else { bottom += r.delta }
             stickY = r.stick
         }
@@ -249,11 +296,15 @@ public enum CanvasSnap {
         let snapped = sanitizedPreservingSize(CGRect(x: left, y: top, width: right - left, height: bottom - top))
         return Resolution(
             frame: snapped,
-            guides: guides(for: snapped, xCandidates: xCandidates, yCandidates: yCandidates,
-                           xSnapped: stickX != nil && !(stickX!.isGrid),
-                           ySnapped: stickY != nil && !(stickY!.isGrid)),
+            guides: guides(
+                for: snapped,
+                xCandidates: xCandidates,
+                yCandidates: yCandidates,
+                xSnapped: stickX.map { !$0.isGrid } ?? false,
+                ySnapped: stickY.map { !$0.isGrid } ?? false,
+            ),
             stickX: stickX,
-            stickY: stickY
+            stickY: stickY,
         )
     }
 
@@ -268,9 +319,9 @@ public enum CanvasSnap {
 
         func value(_ edge: Stick.OwnEdge) -> CGFloat {
             switch edge {
-            case .min: return min
-            case .mid: return mid
-            case .max: return max
+            case .min: min
+            case .mid: mid
+            case .max: max
             }
         }
     }
@@ -287,10 +338,10 @@ public enum CanvasSnap {
     /// All MOVE candidates for one axis (gutter + edge + center per other rect, plus viewport).
     private static func moveCandidates(
         axis: Axis,
-        proposed: CGRect,
+        proposed _: CGRect,
         others: [CGRect],
         viewport: CGRect?,
-        config: Config
+        config: Config,
     ) -> [Candidate] {
         guard config.snapsToPanes else { return [] }
         var result: [Candidate] = []
@@ -309,8 +360,12 @@ public enum CanvasSnap {
             result.append(Candidate(ownEdge: .mid, target: mid, kind: .center, span: span))
         }
         if let viewport {
-            result.append(contentsOf: viewportCandidates(axis: axis, viewport: viewport,
-                                                         config: config, includeCenter: true))
+            result.append(contentsOf: viewportCandidates(
+                axis: axis,
+                viewport: viewport,
+                config: config,
+                includeCenter: true,
+            ))
         }
         return result
     }
@@ -322,7 +377,7 @@ public enum CanvasSnap {
         ownEdge: Stick.OwnEdge,
         others: [CGRect],
         viewport: CGRect?,
-        config: Config
+        config: Config,
     ) -> [Candidate] {
         guard config.snapsToPanes else { return [] }
         var result: [Candidate] = []
@@ -337,9 +392,13 @@ public enum CanvasSnap {
             }
         }
         if let viewport {
-            result.append(contentsOf: viewportCandidates(axis: axis, viewport: viewport,
-                                                         config: config, includeCenter: false)
-                .filter { $0.ownEdge == ownEdge })
+            result.append(contentsOf: viewportCandidates(
+                axis: axis,
+                viewport: viewport,
+                config: config,
+                includeCenter: false,
+            )
+            .filter { $0.ownEdge == ownEdge })
         }
         return result
     }
@@ -349,7 +408,7 @@ public enum CanvasSnap {
         axis: Axis,
         viewport: CGRect,
         config: Config,
-        includeCenter: Bool
+        includeCenter: Bool,
     ) -> [Candidate] {
         let inset = viewport.insetBy(dx: config.gutter, dy: config.gutter)
         let (lo, mid, hi) = edges(of: inset, axis: axis)
@@ -367,15 +426,15 @@ public enum CanvasSnap {
 
     private static func edges(of rect: CGRect, axis: Axis) -> (CGFloat, CGFloat, CGFloat) {
         switch axis {
-        case .x: return (rect.minX, rect.midX, rect.maxX)
-        case .y: return (rect.minY, rect.midY, rect.maxY)
+        case .x: (rect.minX, rect.midX, rect.maxX)
+        case .y: (rect.minY, rect.midY, rect.maxY)
         }
     }
 
     private static func perpendicularSpan(of rect: CGRect, axis: Axis) -> ClosedRange<CGFloat> {
         switch axis {
-        case .x: return rect.minY...rect.maxY
-        case .y: return rect.minX...rect.maxX
+        case .x: rect.minY...rect.maxY
+        case .y: rect.minX...rect.maxX
         }
     }
 
@@ -404,7 +463,7 @@ public enum CanvasSnap {
     private static func selectBest(
         _ candidates: [Candidate],
         own: (Stick.OwnEdge) -> CGFloat,
-        engage: CGFloat
+        engage: CGFloat,
     ) -> (candidate: Candidate, delta: CGFloat)? {
         var minAbs = CGFloat.infinity
         for candidate in candidates {
@@ -436,7 +495,7 @@ public enum CanvasSnap {
         candidates: [Candidate],
         previous: Stick?,
         config: Config,
-        gridEdge: Stick.OwnEdge
+        gridEdge: Stick.OwnEdge,
     ) -> AxisResolution {
         // 1. A held stick persists while the RAW position is within its release threshold — even if a
         //    nearer candidate appeared (no mid-hold re-targeting; deterministic feel) — but only while
@@ -453,7 +512,7 @@ public enum CanvasSnap {
         if config.snapsToPanes, let best = selectBest(candidates, own: values.value, engage: config.engage) {
             return AxisResolution(
                 delta: best.delta,
-                stick: Stick(ownEdge: best.candidate.ownEdge, target: best.candidate.target, isGrid: false)
+                stick: Stick(ownEdge: best.candidate.ownEdge, target: best.candidate.target, isGrid: false),
             )
         }
         // 3. Grid fallback (fallback ONLY — never competes with an engaged pane/viewport candidate).
@@ -475,7 +534,7 @@ public enum CanvasSnap {
         candidates: [Candidate],
         previous: Stick?,
         config: Config,
-        gridValid: (CGFloat) -> Bool
+        gridValid: (CGFloat) -> Bool,
     ) -> AxisResolution {
         if let previous, previous.ownEdge == ownEdge {
             let release = previous.isGrid ? config.gridRelease : config.release
@@ -487,7 +546,7 @@ public enum CanvasSnap {
         if config.snapsToPanes, let best = selectBest(candidates, own: { _ in own }, engage: config.engage) {
             return AxisResolution(
                 delta: best.delta,
-                stick: Stick(ownEdge: ownEdge, target: best.candidate.target, isGrid: false)
+                stick: Stick(ownEdge: ownEdge, target: best.candidate.target, isGrid: false),
             )
         }
         if config.snapsToGrid, config.gridSpacing > 0 {
@@ -513,7 +572,7 @@ public enum CanvasSnap {
         xCandidates: [Candidate],
         yCandidates: [Candidate],
         xSnapped: Bool,
-        ySnapped: Bool
+        ySnapped: Bool,
     ) -> [Guide] {
         guard xSnapped || ySnapped else { return [] }
         let epsilon: CGFloat = 0.5
@@ -528,15 +587,23 @@ public enum CanvasSnap {
             var byEdge: [Stick.OwnEdge: (span: ClosedRange<CGFloat>, kind: GuideKind)] = [:]
             for candidate in xCandidates where abs(candidate.target - values.value(candidate.ownEdge)) <= epsilon {
                 if let existing = byEdge[candidate.ownEdge] {
-                    byEdge[candidate.ownEdge] = (union(existing.span, candidate.span), min(existing.kind, candidate.kind))
+                    byEdge[candidate.ownEdge] = (
+                        union(existing.span, candidate.span),
+                        min(existing.kind, candidate.kind),
+                    )
                 } else {
                     byEdge[candidate.ownEdge] = (candidate.span, candidate.kind)
                 }
             }
             for (edge, info) in byEdge {
                 let full = union(info.span, snapped.minY...snapped.maxY)
-                result.append(Guide(orientation: .vertical, position: values.value(edge),
-                                    start: full.lowerBound, end: full.upperBound, kind: info.kind))
+                result.append(Guide(
+                    orientation: .vertical,
+                    position: values.value(edge),
+                    start: full.lowerBound,
+                    end: full.upperBound,
+                    kind: info.kind,
+                ))
             }
         }
         if ySnapped {
@@ -544,15 +611,23 @@ public enum CanvasSnap {
             var byEdge: [Stick.OwnEdge: (span: ClosedRange<CGFloat>, kind: GuideKind)] = [:]
             for candidate in yCandidates where abs(candidate.target - values.value(candidate.ownEdge)) <= epsilon {
                 if let existing = byEdge[candidate.ownEdge] {
-                    byEdge[candidate.ownEdge] = (union(existing.span, candidate.span), min(existing.kind, candidate.kind))
+                    byEdge[candidate.ownEdge] = (
+                        union(existing.span, candidate.span),
+                        min(existing.kind, candidate.kind),
+                    )
                 } else {
                     byEdge[candidate.ownEdge] = (candidate.span, candidate.kind)
                 }
             }
             for (edge, info) in byEdge {
                 let full = union(info.span, snapped.minX...snapped.maxX)
-                result.append(Guide(orientation: .horizontal, position: values.value(edge),
-                                    start: full.lowerBound, end: full.upperBound, kind: info.kind))
+                result.append(Guide(
+                    orientation: .horizontal,
+                    position: values.value(edge),
+                    start: full.lowerBound,
+                    end: full.upperBound,
+                    kind: info.kind,
+                ))
             }
         }
         // Deterministic order for the view's ForEach + test assertions.

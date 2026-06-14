@@ -1,7 +1,7 @@
-import XCTest
-import Foundation
 import AislopdeskProtocol
 import AislopdeskTransport
+import Foundation
+import XCTest
 @testable import AislopdeskClient
 
 /// Regression suite for the **zombie-transport reconnect races** (deep-hunt R5, rank 1 — merges the
@@ -20,32 +20,34 @@ import AislopdeskTransport
 /// Every test LOOPS (200×) to shake the interleaving — a single green run masked a 2/5 flake on the
 /// sibling ``ConnectionRegistry`` dead-eviction race last round, so concurrency fixes get a stress loop.
 final class AislopdeskClientReconnectRaceTests: XCTestCase {
-
     /// `close()` while a `connect()` is suspended mid-handshake must tear the freshly-built transport
     /// down (releasing its channel), never adopt it.
-    func testCloseDuringInflightConnectTearsDownNewTransportNoZombie() async throws {
+    func testCloseDuringInflightConnectTearsDownNewTransportNoZombie() async {
         for _ in 0..<200 {
             let rec = TransportRecorder()
             let client = AislopdeskClient(makeTransport: { rec.make() })
 
             let connectTask = Task { try? await client.connect(host: "h", port: 1) }
-            await rec.waitForStarted(1)          // connect() is now suspended at the handshake gate
-            await client.close()                  // reentrant close while the connect is in flight
-            await rec.releaseAll()                // let the handshake complete and resume connect()
+            await rec.waitForStarted(1) // connect() is now suspended at the handshake gate
+            await client.close() // reentrant close while the connect is in flight
+            await rec.releaseAll() // let the handshake complete and resume connect()
             _ = await connectTask.value
 
-            let live = await client._hasLiveTransportForTesting
+            let live = await client.hasLiveTransportForTesting
             XCTAssertFalse(live, "a connect superseded by close() must NOT adopt its transport (zombie)")
             let closes = await rec.totalCloseCount()
-            XCTAssertEqual(closes, rec.builtCount,
-                           "every transport built during the doomed connect must be closed (channel released)")
+            XCTAssertEqual(
+                closes,
+                rec.builtCount,
+                "every transport built during the doomed connect must be closed (channel released)",
+            )
             XCTAssertGreaterThanOrEqual(rec.builtCount, 1)
         }
     }
 
     /// `pause()` while a `connect()` is in flight must discard the new transport; a later `resume()`
     /// then cleanly rebuilds and adopts one.
-    func testPauseDuringInflightConnectDiscardsTransportAndResumeRebuilds() async throws {
+    func testPauseDuringInflightConnectDiscardsTransportAndResumeRebuilds() async {
         for _ in 0..<200 {
             let rec = TransportRecorder()
             let client = AislopdeskClient(makeTransport: { rec.make() })
@@ -56,17 +58,17 @@ final class AislopdeskClientReconnectRaceTests: XCTestCase {
             await rec.releaseAll()
             _ = await connectTask.value
 
-            let liveAfterPause = await client._hasLiveTransportForTesting
+            let liveAfterPause = await client.hasLiveTransportForTesting
             XCTAssertFalse(liveAfterPause, "a connect superseded by pause() must NOT adopt its transport")
             let closesAfterPause = await rec.totalCloseCount()
             XCTAssertEqual(closesAfterPause, 1, "the transport built during the paused connect is closed")
 
             // resume() must rebuild a fresh transport and adopt it.
             let resumeTask = Task { try? await client.resume() }
-            await rec.waitForStarted(2)            // the resume's NEW transport reached the gate
+            await rec.waitForStarted(2) // the resume's NEW transport reached the gate
             await rec.releaseAll()
             _ = await resumeTask.value
-            let liveAfterResume = await client._hasLiveTransportForTesting
+            let liveAfterResume = await client.hasLiveTransportForTesting
             XCTAssertTrue(liveAfterResume, "resume() after a paused-mid-connect adopts a live transport")
             await client.close()
         }
@@ -74,20 +76,20 @@ final class AislopdeskClientReconnectRaceTests: XCTestCase {
 
     /// Two `connect()` calls overlapping in flight (the reconnect-supervisor-vs-`resume()` hazard):
     /// exactly ONE transport is adopted; the superseded one is torn down. Never two live, never a leak.
-    func testConcurrentConnectsAdoptExactlyOneAndTearDownTheOther() async throws {
+    func testConcurrentConnectsAdoptExactlyOneAndTearDownTheOther() async {
         for _ in 0..<200 {
             let rec = TransportRecorder()
             let client = AislopdeskClient(makeTransport: { rec.make() })
 
             let c1 = Task { try? await client.connect(host: "h", port: 1) }
-            await rec.waitForStarted(1)            // c1 claimed generation 1, suspended at its gate
+            await rec.waitForStarted(1) // c1 claimed generation 1, suspended at its gate
             let c2 = Task { try? await client.connect(host: "h", port: 1) }
-            await rec.waitForStarted(2)            // c2 claimed generation 2 (supersedes c1)
+            await rec.waitForStarted(2) // c2 claimed generation 2 (supersedes c1)
             await rec.releaseAll()
             _ = await c1.value
             _ = await c2.value
 
-            let live = await client._hasLiveTransportForTesting
+            let live = await client.hasLiveTransportForTesting
             XCTAssertTrue(live, "the winning (latest-generation) connect adopts its transport")
             let closes = await rec.totalCloseCount()
             XCTAssertEqual(closes, 1, "exactly the superseded transport is torn down (no zombie, no double-live)")
@@ -125,8 +127,16 @@ final class AislopdeskClientReconnectRaceTests: XCTestCase {
             continuation = c
         }
 
-        func connect(host: String, port: UInt16, resume: UUID, lastReceivedSeq: Int64, handshakeTimeout: Duration) async throws {
-            if released { applyIdentity(resume: resume, lastReceivedSeq: lastReceivedSeq); return }
+        func connect(
+            host _: String,
+            port _: UInt16,
+            resume: UUID,
+            lastReceivedSeq: Int64,
+            handshakeTimeout _: Duration,
+        ) async throws {
+            if released { applyIdentity(resume: resume, lastReceivedSeq: lastReceivedSeq)
+                return
+            }
             // Install the gate FIRST, then signal "started" — so the test's waitForStarted→releaseAll
             // can never observe the start before the continuation it needs to resume exists.
             try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
@@ -144,14 +154,18 @@ final class AislopdeskClientReconnectRaceTests: XCTestCase {
 
         func release() {
             released = true
-            if let c = gate { gate = nil; c.resume() }
+            if let c = gate { gate = nil
+                c.resume()
+            }
         }
 
-        func sendInput(_ bytes: Data) async throws {}
-        func sendResize(cols: UInt16, rows: UInt16, pxWidth: UInt16, pxHeight: UInt16) async throws {}
-        func sendAck(seq: Int64) async throws {}
-        func sendBye() async throws {}
-        func close() async { _closeCount += 1; continuation.finish() }
+        func sendInput(_: Data) {}
+        func sendResize(cols _: UInt16, rows _: UInt16, pxWidth _: UInt16, pxHeight _: UInt16) {}
+        func sendAck(seq _: Int64) {}
+        func sendBye() {}
+        func close() { _closeCount += 1
+            continuation.finish()
+        }
     }
 
     /// Collects the transports the client builds and counts handshake starts, so the test can release
@@ -164,17 +178,32 @@ final class AislopdeskClientReconnectRaceTests: XCTestCase {
         func make() -> GatedTransport {
             let t = GatedTransport(onStarted: { [weak self] in
                 guard let self else { return }
-                self.lock.lock(); self.startedCount += 1; self.lock.unlock()
+                lock.lock()
+                startedCount += 1
+                lock.unlock()
             })
-            lock.lock(); transports.append(t); lock.unlock()
+            lock.lock()
+            transports.append(t)
+            lock.unlock()
             return t
         }
 
-        var builtCount: Int { lock.lock(); defer { lock.unlock() }; return transports.count }
-        private var snapshot: [GatedTransport] { lock.lock(); defer { lock.unlock() }; return transports }
+        var builtCount: Int { lock.lock()
+            defer { lock.unlock() }
+            return transports.count
+        }
+
+        private var snapshot: [GatedTransport] { lock.lock()
+            defer { lock.unlock() }
+            return transports
+        }
+
         // Sync reader — NSLock.lock()/unlock() are unavailable from async contexts, so the async
         // poll loop reads the counter through this non-async helper.
-        private func readStarted() -> Int { lock.lock(); defer { lock.unlock() }; return startedCount }
+        private func readStarted() -> Int { lock.lock()
+            defer { lock.unlock() }
+            return startedCount
+        }
 
         func waitForStarted(_ n: Int) async {
             while true {

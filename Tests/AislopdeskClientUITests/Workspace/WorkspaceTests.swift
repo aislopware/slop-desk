@@ -13,7 +13,6 @@ import XCTest
 /// - `focusing(_:)` only takes if the pane is on the canvas (no-op otherwise).
 /// - `defaultWorkspace()` is exactly one focused "Terminal" pane on a single canvas, not maximized.
 final class WorkspaceTests: XCTestCase {
-
     // MARK: - Fixtures
 
     /// Builds a workspace of `n` terminal panes (titled t0…t(n-1)) on a single canvas with the first
@@ -23,7 +22,7 @@ final class WorkspaceTests: XCTestCase {
             (PaneID(), PaneSpec(kind: .terminal, title: "t\(i)"))
         }
         let ws = Workspace.make(panes: panes, focused: panes.first?.0)
-        return (ws, panes.map { $0.0 })
+        return (ws, panes.map(\.0))
     }
 
     // MARK: - defaultWorkspace
@@ -31,7 +30,7 @@ final class WorkspaceTests: XCTestCase {
     func testDefaultWorkspaceIsOneFocusedTerminalPane() {
         let ws = Workspace.defaultWorkspace()
         XCTAssertEqual(ws.schemaVersion, Workspace.currentSchemaVersion)
-        XCTAssertEqual(ws.schemaVersion, 9)   // 9: Workspace.snippets (command macros)
+        XCTAssertEqual(ws.schemaVersion, 9) // 9: Workspace.snippets (command macros)
 
         // A single terminal pane on the canvas, focused, not maximized, ungrouped.
         XCTAssertEqual(ws.canvas.itemCount, 1)
@@ -65,7 +64,7 @@ final class WorkspaceTests: XCTestCase {
         let (afterFirst, first) = ws.addingGroup(name: "alpha")
         let (afterSecond, second) = afterFirst.addingGroup(name: "beta")
 
-        XCTAssertEqual(afterSecond.groups.map { $0.id }, [first, second], "append order is preserved")
+        XCTAssertEqual(afterSecond.groups.map(\.id), [first, second], "append order is preserved")
         XCTAssertEqual(afterSecond.groupIndex(of: first), 0)
         XCTAssertEqual(afterSecond.groupIndex(of: second), 1)
     }
@@ -154,8 +153,8 @@ final class WorkspaceTests: XCTestCase {
         // Move g0 (index 0) to the end (destination 3 in SwiftUI onMove terms).
         let result = c.movingGroup(from: IndexSet(integer: 0), to: 3)
 
-        XCTAssertEqual(result.groups.map { $0.id }, [g1, g2, g0], "groups reorder by identity")
-        XCTAssertEqual(result.groups.map { $0.name }, ["g1", "g2", "g0"])
+        XCTAssertEqual(result.groups.map(\.id), [g1, g2, g0], "groups reorder by identity")
+        XCTAssertEqual(result.groups.map(\.name), ["g1", "g2", "g0"])
     }
 
     // MARK: - focus (pure)
@@ -202,8 +201,8 @@ final class WorkspaceTests: XCTestCase {
     func testNormalizingFocusRepairsDanglingFocusAndMaximize() {
         let (base, ids) = makeWorkspace(2)
         var ws = base
-        ws.focusedPane = PaneID()        // points at a pane not on the canvas
-        ws.maximizedPane = PaneID()      // dangling maximize
+        ws.focusedPane = PaneID() // points at a pane not on the canvas
+        ws.maximizedPane = PaneID() // dangling maximize
         let result = ws.normalizingFocus()
 
         XCTAssertEqual(result.focusedPane, ids[0], "dangling focus repoints to the first pane")

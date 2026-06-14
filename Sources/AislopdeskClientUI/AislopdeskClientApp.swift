@@ -1,14 +1,14 @@
 #if canImport(SwiftUI)
-import SwiftUI
 import AislopdeskClient
 import AislopdeskInspector
 import AislopdeskTransport
+import SwiftUI
 #if os(iOS)
-import UIKit   // UIDevice.current.userInterfaceIdiom — the per-device live-video cap signal at init
+import UIKit // UIDevice.current.userInterfaceIdiom — the per-device live-video cap signal at init
 #endif
 #if os(macOS)
-import AppKit  // NSApplication — AUTOMATION-ONLY window-front so an autoconnect launch goes live in one shot
-import UserNotifications   // explicit OSC 9/777 child notifications → local UNUserNotification
+import AppKit // NSApplication — AUTOMATION-ONLY window-front so an autoconnect launch goes live in one shot
+import UserNotifications // explicit OSC 9/777 child notifications → local UNUserNotification
 #endif
 
 /// The Aislopdesk client app scene, shared by both Xcode app targets (ClientApp-macOS,
@@ -99,7 +99,7 @@ public struct AislopdeskClientApp: App {
         // The ONE app-global connection (docs/31). Seed its target from the env in automation (so
         // check-macos.sh/check-video.sh keep working), else from the persisted `Workspace.connection`,
         // else the default. Every pane reads `connection.target` for its host/ports.
-        let restored = persistence?.load()   // nil in automation ⇒ bootstrap replaces it anyway
+        let restored = persistence?.load() // nil in automation ⇒ bootstrap replaces it anyway
         let env = ProcessInfo.processInfo.environment
         let seedTarget: ConnectionTarget = isAutomation
             ? (WorkspaceStore.videoTarget(from: env)?.0 ?? WorkspaceStore.terminalTarget(from: env) ?? .default)
@@ -110,7 +110,7 @@ public struct AislopdeskClientApp: App {
             makeSession: WorkspaceStore.liveMakeSession(
                 makeInspector: WorkspaceStore.liveMakeInspector,
                 muxRegistry: muxRegistry,
-                target: { appConnection.target }
+                target: { appConnection.target },
             ),
             liveVideoCap: liveVideoCap,
             persistence: persistence,
@@ -118,7 +118,7 @@ public struct AislopdeskClientApp: App {
             // SwiftUI dismantle → VideoWindowPipeline.deactivate() → detached session.stop() (which
             // closes the 2 UDP NWConnections + VTDecompressionSession + display link) actually
             // releases the stack before a same-tick sibling is admitted (avoids a transient cap+1).
-            videoTeardownSettle: .milliseconds(250)
+            videoTeardownSettle: .milliseconds(250),
         )
         // Automation seams (docs/22 §7): only when the env vars are present do we let the bootstrap
         // REPLACE the restored workspace with the autoconnect/video shape (a normal launch restores the
@@ -147,12 +147,12 @@ public struct AislopdeskClientApp: App {
         let router = PaneNotificationRouter()
         router.onReveal = { [weak store] idString in store?.revealPane(byIDString: idString) }
         UNUserNotificationCenter.current().delegate = router
-        Self.notificationRouter = router   // retain it for the app's lifetime
+        Self.notificationRouter = router // retain it for the app's lifetime
         store.onPaneNotification = { paneID, paneTitle, title, body in
             // Respect the user's toggle (default ON); read at fire-time so a settings change applies live.
             guard SettingsKey.oscNotificationsEnabled else { return }
             explicitNotifier.notifyExplicit(
-                paneIDKey: paneID.raw.uuidString, paneTitle: paneTitle, title: title, body: body
+                paneIDKey: paneID.raw.uuidString, paneTitle: paneTitle, title: title, body: body,
             )
         }
         #endif
@@ -165,7 +165,7 @@ public struct AislopdeskClientApp: App {
                 if case .connected = appConnection?.status { return true }
                 return false
             },
-            target: { [weak appConnection] in appConnection?.target ?? .default }
+            target: { [weak appConnection] in appConnection?.target ?? .default },
         )
         let launchMonitor = AppLaunchMonitor(
             store: store,
@@ -173,7 +173,7 @@ public struct AislopdeskClientApp: App {
                 if case .connected = appConnection?.status { return true }
                 return false
             },
-            target: { [weak appConnection] in appConnection?.target ?? .default }
+            target: { [weak appConnection] in appConnection?.target ?? .default },
         )
         _store = State(initialValue: store)
         _connection = State(initialValue: appConnection)
@@ -195,7 +195,7 @@ public struct AislopdeskClientApp: App {
                 // anyway with no discovery seam registered.
                 .task {
                     let flag = ProcessInfo.processInfo.environment["AISLOPDESK_SYSTEM_DIALOG_PANES"]
-                    guard flag != "0" else { return }                       // env override: explicitly disabled
+                    guard flag != "0" else { return } // env override: explicitly disabled
                     // The user-facing toggle (Settings ▸ Advanced, default ON) gates it now; the env var
                     // remains a test override (`0` off / `force` on). `force` bypasses both the toggle and
                     // the automation skip below.
@@ -204,14 +204,14 @@ public struct AislopdeskClientApp: App {
                     guard !Self.hasAutomationEnvironment() || flag == "force" else { return }
                     await dialogMonitor.run()
                 }
-                #if os(macOS)
+            #if os(macOS)
                 // The clipboard-ring poller, scoped to the scene. Skipped under automation (no need to
                 // capture the test rig's clipboard).
                 .task {
                     guard !Self.hasAutomationEnvironment() else { return }
                     await clipboardMonitor.run()
                 }
-                #endif
+            #endif
                 // The layout auto-switch poller (host app launch → preset). Inert unless a preset has a
                 // trigger and the feature is on. Skipped under automation.
                 .task {
@@ -224,8 +224,8 @@ public struct AislopdeskClientApp: App {
                 .task {
                     guard Self.hasAutomationEnvironment() else { return }
                     let env = ProcessInfo.processInfo.environment
-                    if (env["AISLOPDESK_AUTOCONNECT_HOST"]?.isEmpty == false) {
-                        await connection.connect()   // terminal automation: pin the TCP mux
+                    if env["AISLOPDESK_AUTOCONNECT_HOST"]?.isEmpty == false {
+                        await connection.connect() // terminal automation: pin the TCP mux
                     } else {
                         // Video-only automation (check-video.sh): the video host serves UDP only and runs
                         // no TCP listener, so there is no mux to pin. Mark connected so the gate dismisses
@@ -233,7 +233,7 @@ public struct AislopdeskClientApp: App {
                         connection.markConnectedForAutomation()
                     }
                 }
-                #if os(macOS)
+            #if os(macOS)
                 // AUTOMATION ONLY (env-gated): bring the window to front + make it key at launch so the
                 // NavigationSplitView detail subtree appears and the .remoteGUI pane's connect-on-appear
                 // trigger fires WITHOUT a manual front/Open click — so an autoconnect run (check-video.sh
@@ -253,7 +253,7 @@ public struct AislopdeskClientApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                     store.saveImmediately()
                 }
-                #endif
+            #endif
         }
         // The native command surface (docs/22 §5): a Pane + Tab menu on macOS, the hardware-keyboard
         // ⌘-hold HUD on iPadOS — both driven by the SAME ⌘/⌥-prefixed shortcuts as
@@ -264,7 +264,7 @@ public struct AislopdeskClientApp: App {
         // state + an overlay), so it is wired there, not here.
         .commands { WorkspaceCommands() }
         #if os(macOS)
-        .windowResizability(.contentSize)
+            .windowResizability(.contentSize)
         #endif
 
         #if os(macOS)
@@ -276,7 +276,9 @@ public struct AislopdeskClientApp: App {
 
     /// Whether any of the automation env vars (`AISLOPDESK_AUTOCONNECT_*` / `AISLOPDESK_VIDEO_AUTOCONNECT_*`)
     /// are set. Gates the bootstrap so a normal launch restores the persisted workspace untouched.
-    private static func hasAutomationEnvironment(_ env: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+    private static func hasAutomationEnvironment(_ env: [String: String] = ProcessInfo.processInfo
+        .environment) -> Bool
+    {
         let keys = [
             "AISLOPDESK_AUTOCONNECT_HOST",
             "AISLOPDESK_VIDEO_AUTOCONNECT_HOST",

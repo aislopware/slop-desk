@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins the **command-routing** contract (docs/30 §7): the one tested `apply(_:to:)` free function
@@ -14,14 +14,13 @@ import CoreGraphics
 /// seam under test, identical to what a `Button` action in ``WorkspaceCommands`` invokes.
 @MainActor
 final class CommandRoutingTests: XCTestCase {
-
     // MARK: - Fixtures
 
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
         WorkspaceStore(
             restoring: restoring,
             makeSession: { FakePaneSession($0) },
-            liveVideoCap: 2
+            liveVideoCap: 2,
         )
     }
 
@@ -35,9 +34,9 @@ final class CommandRoutingTests: XCTestCase {
     private func reportTwoPaneLayout(_ store: WorkspaceStore, left: PaneID, right: PaneID) {
         store.updateSolvedLayout(SolvedLayout(
             frames: [
-                left:  CGRect(x: 0,   y: 0, width: 100, height: 100),
+                left: CGRect(x: 0, y: 0, width: 100, height: 100),
                 right: CGRect(x: 100, y: 0, width: 100, height: 100),
-            ]
+            ],
         ))
     }
 
@@ -63,7 +62,7 @@ final class CommandRoutingTests: XCTestCase {
     func testApplyTidyArrangesWithoutChangingPaneSet() {
         let store = makeStore()
         apply(.newPane(.terminal), to: store)
-        apply(.newPane(.terminal), to: store)                          // three panes
+        apply(.newPane(.terminal), to: store) // three panes
         XCTAssertEqual(paneIDs(store).count, 3)
 
         apply(.tidy, to: store)
@@ -97,7 +96,7 @@ final class CommandRoutingTests: XCTestCase {
     func testApplyCenterAllMovesOnlyCamera() {
         let store = makeStore()
         apply(.newPane(.terminal), to: store)
-        apply(.newPane(.terminal), to: store)                          // three panes spread across the canvas
+        apply(.newPane(.terminal), to: store) // three panes spread across the canvas
         let focused = store.workspace.focusedPane
         let panesBefore = paneIDs(store)
 
@@ -112,7 +111,7 @@ final class CommandRoutingTests: XCTestCase {
     /// `apply(.closePane)` removes the focused pane from a multi-pane canvas and re-points focus.
     func testApplyClosePaneRemovesFocusedPane() {
         let store = makeStore()
-        apply(.newPane(.terminal), to: store)                          // two panes, the new one focused
+        apply(.newPane(.terminal), to: store) // two panes, the new one focused
         XCTAssertEqual(paneIDs(store).count, 2)
         let closing = store.workspace.focusedPane
 
@@ -139,8 +138,10 @@ final class CommandRoutingTests: XCTestCase {
 
         XCTAssertEqual(store.workspace.groups.count, 1, "newGroup appended a group")
         XCTAssertEqual(paneIDs(store), panesBefore, "newGroup must not change the pane set")
-        XCTAssertTrue(store.workspace.groups.first.map { store.workspace.canvas.ids(inGroup: $0.id).isEmpty } ?? false,
-                      "with no selection the group is empty")
+        XCTAssertTrue(
+            store.workspace.groups.first.map { store.workspace.canvas.ids(inGroup: $0.id).isEmpty } ?? false,
+            "with no selection the group is empty",
+        )
         XCTAssertEqual(store.allSessions.count, sessionsBefore, "newGroup must not touch the registry")
     }
 
@@ -148,7 +149,7 @@ final class CommandRoutingTests: XCTestCase {
     /// intent) instead of the old invisible empty-group dead-end.
     func testApplyNewGroupGroupsTheSelection() {
         let store = makeStore()
-        apply(.newPane(.terminal), to: store)                 // two panes
+        apply(.newPane(.terminal), to: store) // two panes
         let ids = paneIDs(store)
         store.setSelection(Set(ids))
 
@@ -162,18 +163,18 @@ final class CommandRoutingTests: XCTestCase {
 
     /// `groupSelection()` assigns every selected pane (in canvas order) to one new group and clears the
     /// selection; the pane set + registry are untouched (grouping is metadata).
-    func testGroupSelectionAssignsAllSelectedAndClearsSelection() {
+    func testGroupSelectionAssignsAllSelectedAndClearsSelection() throws {
         let store = makeStore()
         apply(.newPane(.terminal), to: store)
-        apply(.newPane(.terminal), to: store)                 // three panes
+        apply(.newPane(.terminal), to: store) // three panes
         let ids = paneIDs(store)
         let sessionsBefore = store.allSessions.count
-        store.setSelection([ids[0], ids[2]])                  // two of three
+        store.setSelection([ids[0], ids[2]]) // two of three
 
         let gid = store.groupSelection(name: "G")
 
         XCTAssertNotNil(gid)
-        XCTAssertEqual(Set(store.workspace.canvas.ids(inGroup: gid!)), Set([ids[0], ids[2]]))
+        XCTAssertEqual(try Set(store.workspace.canvas.ids(inGroup: XCTUnwrap(gid))), Set([ids[0], ids[2]]))
         XCTAssertNil(store.workspace.group(ofPane: ids[1]), "the unselected pane stays ungrouped")
         XCTAssertTrue(store.selectedPanes.isEmpty)
         XCTAssertEqual(paneIDs(store), ids, "grouping never changes the pane set")
@@ -184,7 +185,7 @@ final class CommandRoutingTests: XCTestCase {
         let store = makeStore()
         XCTAssertNil(store.groupSelection(), "no selection → nil, no group created")
         XCTAssertTrue(store.workspace.groups.isEmpty)
-        apply(.groupSelection, to: store)                     // also a no-op via the command
+        apply(.groupSelection, to: store) // also a no-op via the command
         XCTAssertTrue(store.workspace.groups.isEmpty)
     }
 
@@ -196,29 +197,44 @@ final class CommandRoutingTests: XCTestCase {
 
     func testRecentPaneSwitchChordsAreBound() {
         let interp = CommandInterpreter()
-        XCTAssertEqual(interp.feed(KeyChord(character: ";", [.option, .command])), .switchRecentPane(forward: false),
-                       "⌥⌘; goes to the previously-focused pane")
-        XCTAssertEqual(interp.feed(KeyChord(character: ";", [.option, .command, .shift])), .switchRecentPane(forward: true),
-                       "⌥⇧⌘; walks back toward newer")
+        XCTAssertEqual(
+            interp.feed(KeyChord(character: ";", [.option, .command])),
+            .switchRecentPane(forward: false),
+            "⌥⌘; goes to the previously-focused pane",
+        )
+        XCTAssertEqual(
+            interp.feed(KeyChord(character: ";", [.option, .command, .shift])),
+            .switchRecentPane(forward: true),
+            "⌥⇧⌘; walks back toward newer",
+        )
     }
 
     func testGroupCycleAndRunLastSnippetChordsAreBound() {
         // Pins both the modifier set AND the forward flag — a transposed ]/[ or a wrong modifier would
         // otherwise slip past the cheat-sheet drift guard (which only checks each command HAS a row).
         let interp = CommandInterpreter()
-        XCTAssertEqual(interp.feed(KeyChord(character: "]", [.control, .command])), .cycleFocusInGroup(forward: true),
-                       "⌃⌘] cycles forward within the group")
-        XCTAssertEqual(interp.feed(KeyChord(character: "[", [.control, .command])), .cycleFocusInGroup(forward: false),
-                       "⌃⌘[ cycles back within the group")
-        XCTAssertEqual(interp.feed(KeyChord(character: "r", [.option, .command])), .runLastSnippet,
-                       "⌥⌘R re-fires the last snippet")
+        XCTAssertEqual(
+            interp.feed(KeyChord(character: "]", [.control, .command])),
+            .cycleFocusInGroup(forward: true),
+            "⌃⌘] cycles forward within the group",
+        )
+        XCTAssertEqual(
+            interp.feed(KeyChord(character: "[", [.control, .command])),
+            .cycleFocusInGroup(forward: false),
+            "⌃⌘[ cycles back within the group",
+        )
+        XCTAssertEqual(
+            interp.feed(KeyChord(character: "r", [.option, .command])),
+            .runLastSnippet,
+            "⌥⌘R re-fires the last snippet",
+        )
     }
 
     /// The pure group arithmetic the sidebar / store funnel through:
     /// `addGroup` → `assignPane` → `renameGroup` → `removeGroup` (members survive ungrouped).
     func testGroupArithmeticAssignsRenamesAndRemoves() {
         let store = makeStore()
-        apply(.newPane(.terminal), to: store)                          // two panes on the canvas
+        apply(.newPane(.terminal), to: store) // two panes on the canvas
         let ids = paneIDs(store)
         let pane = ids[0]
 
@@ -273,8 +289,8 @@ final class CommandRoutingTests: XCTestCase {
 
     func testApplyFocusDirectionMovesGeometrically() {
         let store = makeStore()
-        apply(.newPane(.terminal), to: store)                          // two panes
-        let ids = paneIDs(store)                            // z-order: [original, new]
+        apply(.newPane(.terminal), to: store) // two panes
+        let ids = paneIDs(store) // z-order: [original, new]
         let left = ids[0], right = ids[1]
         reportTwoPaneLayout(store, left: left, right: right)
 
@@ -293,7 +309,7 @@ final class CommandRoutingTests: XCTestCase {
         apply(.newPane(.terminal), to: store)
         let focusedBefore = store.workspace.focusedPane
 
-        apply(.focus(.left), to: store)                     // no updateSolvedLayout called
+        apply(.focus(.left), to: store) // no updateSolvedLayout called
 
         XCTAssertEqual(store.workspace.focusedPane, focusedBefore, "no layout ⇒ no directional move")
     }
@@ -303,7 +319,7 @@ final class CommandRoutingTests: XCTestCase {
     func testApplyCycleFocusWrapsThroughPanes() {
         let store = makeStore()
         apply(.newPane(.terminal), to: store)
-        let ids = paneIDs(store)                            // [a, b]
+        let ids = paneIDs(store) // [a, b]
         let a = ids[0], b = ids[1]
         store.focus(a)
 
@@ -353,11 +369,11 @@ final class CommandRoutingTests: XCTestCase {
         store.handle(for: id) as? FakePaneSession
     }
 
-    func testFocusClearsTheNewlyFocusedPanesBell() {
+    func testFocusClearsTheNewlyFocusedPanesBell() throws {
         let store = makeStore()
-        apply(.newPane(.terminal), to: store)              // two panes; the new one is focused
+        apply(.newPane(.terminal), to: store) // two panes; the new one is focused
         let ids = paneIDs(store)
-        let other = ids.first { $0 != store.focusedPane }!
+        let other = try XCTUnwrap(ids.first { $0 != store.focusedPane })
         // The background pane rings.
         fake(store, other)?.bellPending = true
         XCTAssertTrue(fake(store, other)?.bellPending ?? false)
@@ -367,12 +383,12 @@ final class CommandRoutingTests: XCTestCase {
         XCTAssertFalse(fake(store, other)?.bellPending ?? true)
     }
 
-    func testBellPersistsWhileTheRingingPaneStaysUnfocused() {
+    func testBellPersistsWhileTheRingingPaneStaysUnfocused() throws {
         let store = makeStore()
         apply(.newPane(.terminal), to: store)
         let ids = paneIDs(store)
-        let focused = store.focusedPane!
-        let background = ids.first { $0 != focused }!
+        let focused = try XCTUnwrap(store.focusedPane)
+        let background = try XCTUnwrap(ids.first { $0 != focused })
         fake(store, background)?.bellPending = true
         // Focusing the ALREADY-focused pane is a no-op and must not clear a different pane's bell.
         store.focus(focused)

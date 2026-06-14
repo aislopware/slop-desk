@@ -1,12 +1,11 @@
-import XCTest
 import AislopdeskProtocol
 import AislopdeskTransport
+import XCTest
 @testable import AislopdeskHost
 
 /// Smoke tests so the target compiles and basic wiring holds. Real PTY spawn + relay
 /// + backpressure live in `PTYProcessTests` / `RelayBackpressureTests`.
 final class AislopdeskHostSmokeTests: XCTestCase {
-
     func testPTYProcessInstantiatesWithUnsetFDAndPID() {
         let pty = PTYProcess()
         XCTAssertEqual(pty.masterFD, -1)
@@ -26,8 +25,11 @@ final class AislopdeskHostSmokeTests: XCTestCase {
         // path (single source of truth) — the client renders with libghostty.
         XCTAssertEqual(env["TERM"], "xterm-ghostty")
         XCTAssertEqual(env["TERM"], HostEnvironment.defaultTerm)
-        XCTAssertEqual(env["TERM"], ClaudeCodeProfile.Term.ghostty.rawValue,
-                       "plain-shell TERM must share the ClaudeCodeProfile ghostty source of truth")
+        XCTAssertEqual(
+            env["TERM"],
+            ClaudeCodeProfile.Term.ghostty.rawValue,
+            "plain-shell TERM must share the ClaudeCodeProfile ghostty source of truth",
+        )
         XCTAssertEqual(env["COLORTERM"], "truecolor")
         XCTAssertEqual(env["NCURSES_NO_UTF8_ACS"], "1")
         XCTAssertEqual(env["LANG"], "en_US.UTF-8")
@@ -39,7 +41,7 @@ final class AislopdeskHostSmokeTests: XCTestCase {
         // (xterm-256color, #54700) symmetrically with ClaudeCodeProfile's toggle.
         let env = HostEnvironment.curated(
             parent: ["PATH": "/usr/bin"],
-            term: ClaudeCodeProfile.Term.xterm256.rawValue
+            term: ClaudeCodeProfile.Term.xterm256.rawValue,
         )
         XCTAssertEqual(env["TERM"], "xterm-256color")
     }
@@ -53,8 +55,11 @@ final class AislopdeskHostSmokeTests: XCTestCase {
             "PATH": "/usr/bin", "TERMINFO": "/opt/ghostty/share/terminfo",
             "TERMINFO_DIRS": "/opt/ghostty/share/terminfo:/usr/share/terminfo",
         ])
-        XCTAssertEqual(withVars["TERMINFO"], "/opt/ghostty/share/terminfo",
-                       "the child inherits the same terminfo dir the probe validated")
+        XCTAssertEqual(
+            withVars["TERMINFO"],
+            "/opt/ghostty/share/terminfo",
+            "the child inherits the same terminfo dir the probe validated",
+        )
         XCTAssertEqual(withVars["TERMINFO_DIRS"], "/opt/ghostty/share/terminfo:/usr/share/terminfo")
         let withoutVars = HostEnvironment.curated(parent: ["PATH": "/usr/bin"])
         XCTAssertNil(withoutVars["TERMINFO"], "absent in the parent → not fabricated")
@@ -80,11 +85,12 @@ final class AislopdeskHostSmokeTests: XCTestCase {
         XCTAssertEqual(
             parsed.launchMode,
             .claudeCode(ClaudeCodeProfile(term: .xterm256)),
-            "--claude --xterm256 must select the claudeCode launch mode with TERM=xterm-256color"
+            "--claude --xterm256 must select the claudeCode launch mode with TERM=xterm-256color",
         )
         // Spell the TERM out explicitly so a regression in the toggle is obvious.
         guard case let .claudeCode(profile) = parsed.launchMode else {
-            return XCTFail("expected claudeCode launch mode")
+            XCTFail("expected claudeCode launch mode")
+            return
         }
         XCTAssertEqual(profile.term, .xterm256)
         XCTAssertEqual(profile.term.rawValue, "xterm-256color")
@@ -108,14 +114,14 @@ final class AislopdeskHostSmokeTests: XCTestCase {
 
     func testParsePortAndShellAlongsideClaude() throws {
         let parsed = try XCTUnwrap(
-            HostdArguments.parse(["aislopdesk-hostd", "--port", "9001", "--shell", "/bin/bash", "--claude"])
+            HostdArguments.parse(["aislopdesk-hostd", "--port", "9001", "--shell", "/bin/bash", "--claude"]),
         )
         XCTAssertEqual(parsed.port, 9001)
         XCTAssertEqual(parsed.shell, "/bin/bash")
         XCTAssertEqual(parsed.launchMode, .claudeCode(ClaudeCodeProfile(term: .ghostty)))
     }
 
-    // MARK: --inspector / --transcript (inspector server)
+    // MARK: - -inspector / --transcript (inspector server)
 
     func testParseDefaultsDisableInspector() throws {
         let parsed = try XCTUnwrap(HostdArguments.parse(["aislopdesk-hostd"]))
@@ -137,7 +143,7 @@ final class AislopdeskHostSmokeTests: XCTestCase {
 
     func testParseTranscriptPathImpliesInspector() throws {
         let parsed = try XCTUnwrap(
-            HostdArguments.parse(["aislopdesk-hostd", "--transcript", "/tmp/session.jsonl"])
+            HostdArguments.parse(["aislopdesk-hostd", "--transcript", "/tmp/session.jsonl"]),
         )
         XCTAssertEqual(parsed.transcriptPath, "/tmp/session.jsonl")
         XCTAssertTrue(parsed.inspectorEnabled, "--transcript implies --inspector")

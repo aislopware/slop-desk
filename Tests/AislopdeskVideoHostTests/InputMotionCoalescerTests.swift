@@ -1,6 +1,6 @@
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoHost
-import AislopdeskVideoProtocol
 
 /// PURE motion-coalescer tests (the input-latency fix). Verifies that consecutive
 /// same-class pointer-motion runs collapse to their latest WITHOUT reordering across any
@@ -12,13 +12,17 @@ final class InputMotionCoalescerTests: XCTestCase {
     private func drag(_ id: Double, _ b: MouseButton = .left) -> InputEvent {
         .mouseDrag(button: b, normalized: VideoPoint(x: id, y: id), clickCount: 1, modifiers: [], tag: 0)
     }
+
     private func down(_ b: MouseButton = .left) -> InputEvent {
         .mouseDown(button: b, normalized: VideoPoint(x: 0, y: 0), clickCount: 1, modifiers: [], tag: 0)
     }
+
     private func up(_ b: MouseButton = .left) -> InputEvent {
         .mouseUp(button: b, normalized: VideoPoint(x: 0, y: 0), clickCount: 1, modifiers: [], tag: 0)
     }
-    private func scroll(_ dy: Double) -> InputEvent { .scroll(dx: 0, dy: dy, normalized: VideoPoint(x: 0, y: 0), tag: 0) }
+
+    private func scroll(_ dy: Double)
+        -> InputEvent { .scroll(dx: 0, dy: dy, normalized: VideoPoint(x: 0, y: 0), tag: 0) }
     private func key(_ kc: UInt16) -> InputEvent { .key(keyCode: kc, down: true, modifiers: [], tag: 0) }
     private func text(_ s: String) -> InputEvent { .text(s, tag: 0) }
 
@@ -37,14 +41,16 @@ final class InputMotionCoalescerTests: XCTestCase {
     func testNeverReordersAcrossMouseDown() {
         XCTAssertEqual(
             coalesce([move(0.1), move(0.2), down(), move(0.3), up()]),
-            [move(0.2), down(), move(0.3), up()])
+            [move(0.2), down(), move(0.3), up()],
+        )
     }
 
     /// Drags collapse to latest but stay strictly between down and up (clickState framing).
     func testDownDragUpFramingPreserved() {
         XCTAssertEqual(
             coalesce([down(), drag(0.1), drag(0.2), drag(0.3), up()]),
-            [down(), drag(0.3), up()])
+            [down(), drag(0.3), up()],
+        )
     }
 
     /// A hover-run and a drag-run never merge; a class change is a flush boundary.
@@ -57,8 +63,11 @@ final class InputMotionCoalescerTests: XCTestCase {
     /// collapse — but the surviving event keeps the latest button (matches absolute latest-wins;
     /// real streams never interleave two held buttons mid-run).
     func testTrailingMotionRunFlushed() {
-        XCTAssertEqual(coalesce([down(), move(0.1), move(0.2)]), [down(), move(0.2)],
-                       "a batch ending in a motion run still emits the latest position")
+        XCTAssertEqual(
+            coalesce([down(), move(0.1), move(0.2)]),
+            [down(), move(0.2)],
+            "a batch ending in a motion run still emits the latest position",
+        )
     }
 
     func testKeyScrollTextNeverDropped() {
@@ -106,13 +115,19 @@ final class InputMotionCoalescerTests: XCTestCase {
 
     // MARK: helpers
 
-    private func isMove(_ e: InputEvent) -> Bool { if case .mouseMove = e { return true }; return false }
-    private func isDrag(_ e: InputEvent) -> Bool { if case .mouseDrag = e { return true }; return false }
+    private func isMove(_ e: InputEvent) -> Bool { if case .mouseMove = e { return true }
+        return false
+    }
+
+    private func isDrag(_ e: InputEvent) -> Bool { if case .mouseDrag = e { return true }
+        return false
+    }
+
     private func nonMotion(_ events: [InputEvent]) -> [InputEvent] { events.filter { !isMove($0) && !isDrag($0) } }
     private func hasAdjacentSameClassMotion(_ events: [InputEvent]) -> Bool {
         for i in 1..<max(1, events.count) where i < events.count {
-            if isMove(events[i]) && isMove(events[i - 1]) { return true }
-            if isDrag(events[i]) && isDrag(events[i - 1]) { return true }
+            if isMove(events[i]), isMove(events[i - 1]) { return true }
+            if isDrag(events[i]), isDrag(events[i - 1]) { return true }
         }
         return false
     }
@@ -123,10 +138,10 @@ private struct SeededRNG: RandomNumberGenerator {
     private var state: UInt64
     init(seed: UInt64) { state = seed }
     mutating func next() -> UInt64 {
-        state &+= 0x9E3779B97F4A7C15
+        state &+= 0x9E37_79B9_7F4A_7C15
         var z = state
-        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
-        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
         return z ^ (z >> 31)
     }
 }

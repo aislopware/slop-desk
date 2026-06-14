@@ -63,4 +63,3 @@ public struct IdleReapDecider<FlowID: Hashable & Sendable>: Sendable {
     /// Test / introspection: the current record for `id`, if any.
     public func record(_ id: FlowID) -> Record? { flows[id] }
 }
-

@@ -40,26 +40,26 @@ enum PanePresentation {
         let duration: String
         if ms < 1000 {
             duration = "\(ms)ms"
-        } else if ms < 60_000 {
+        } else if ms < 60000 {
             duration = String(format: "%.1fs", Double(ms) / 1000)
         } else {
             let totalSeconds = ms / 1000
             duration = "\(totalSeconds / 60)m \(totalSeconds % 60)s"
         }
-        guard let code = exitCode else { return duration }   // host reported no exit code
+        guard let code = exitCode else { return duration } // host reported no exit code
         return code == 0 ? "✓ \(duration)" : "✗ exit \(code) · \(duration)"
     }
 
     /// The display title: the LIVE OSC 0/2 terminal title when the shell has set one, else the static
     /// `spec.title` (whitespace-only titles fall back so a pane is never blank).
     static func displayTitle(_ handle: (any PaneSessionHandle)?, spec: PaneSpec) -> String {
-        let raw: String
-        if let live = (handle as? LivePaneSession)?.terminalModel?.title,
-           !live.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            raw = live
-        } else {
-            raw = spec.title
-        }
+        let raw: String =
+            if let live = (handle as? LivePaneSession)?.terminalModel?.title,
+            !live.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                live
+            } else {
+                spec.title
+            }
         // A remote shell controls the OSC title; mask any secret before it lands on the sidebar / pill /
         // bookmark name (the title flows to several persistent surfaces). Gated so it is an opt-out.
         return SettingsKey.redactSecretsEnabled ? SecretRedactor.redact(raw) : raw
@@ -145,63 +145,64 @@ struct FloatingPaneHandle: View {
         .frame(height: Self.pillHeight)
         .frame(minWidth: 44)
         #if os(macOS)
-        // Constraint 5 (the BUG-2 class): a scroll over the pill must PAN THE CANVAS, not be
-        // swallowed — the proven gripBase/old-header pattern (a real NSView wins scroll hit-testing;
-        // it overrides ONLY scrollWheel, so the SwiftUI drag/tap on top are untouched).
-        .background { ScrollPanForwarder(store: store) }
+            // Constraint 5 (the BUG-2 class): a scroll over the pill must PAN THE CANVAS, not be
+            // swallowed — the proven gripBase/old-header pattern (a real NSView wins scroll hit-testing;
+            // it overrides ONLY scrollWheel, so the SwiftUI drag/tap on top are untouched).
+            .background { ScrollPanForwarder(store: store) }
         #endif
-        .background(hovering ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(.ultraThinMaterial), in: Capsule())
-        .overlay { Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
+            .background(hovering ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(.ultraThinMaterial), in: Capsule())
+            .overlay { Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
         // Taller hit target than the visual pill: 44×28 on macOS (pointer-precise); 44pt tall on iOS
         // (the HIG touch minimum — the extra reach over the top terminal row converts a near-miss
         // selection into a successful pill grab, and the 10pt dead zone absorbs tap jitter).
         #if os(iOS)
-        .padding(.vertical, 12)
+            .padding(.vertical, 12)
         #else
-        .padding(.vertical, 4)
+            .padding(.vertical, 4)
         #endif
-        .contentShape(Rectangle())
-        // Quiet when idle; fully opaque when it matters. A pane in trouble — or one actively running
-        // a command — is NEVER 70%-transparent.
-        .opacity(trouble || running || bellRang || hovering || menuShown || isFocused ? 1 : 0.7)
-        .animation(.easeOut(duration: 0.12), value: bellRang)
-        .animation(.easeOut(duration: 0.12), value: trouble)
-        .animation(.easeOut(duration: 0.12), value: running)
-        .animation(.easeOut(duration: 0.12), value: laggy)
-        .animation(.easeOut(duration: 0.12), value: hovering)
-        // The latch: engage past 110ms, release under 90ms; drop instantly when not connected.
-        .onChange(of: latency ?? 0) { _, ms in
-            if status.phase != .connected { laggyLatched = false }
-            else if !laggyLatched, ms > 110 { laggyLatched = true }
-            else if laggyLatched, ms < 90 { laggyLatched = false }
-        }
-        .onHover { inside in
-            hovering = inside
-            #if os(macOS)
-            if inside { (isMaximized ? NSCursor.arrow : NSCursor.openHand).push() } else { NSCursor.pop() }
-            #endif
-        }
-        .popover(isPresented: $menuShown, arrowEdge: .bottom) {
-            // NOTE: deliberately NO `.onDisappear { store.focus(id) }` here — the main window's
-            // first responder survives the popover's key-window stint, and re-focusing would RAISE
-            // this pane, stealing focus/z from whatever the user clicked to dismiss the popover.
-            PaneMenuView(id: id, spec: spec, handle: handle, store: store, isPresented: $menuShown)
-                #if os(iOS)
-                .presentationCompactAdaptation(.popover)
+            .contentShape(Rectangle())
+            // Quiet when idle; fully opaque when it matters. A pane in trouble — or one actively running
+            // a command — is NEVER 70%-transparent.
+            .opacity(trouble || running || bellRang || hovering || menuShown || isFocused ? 1 : 0.7)
+            .animation(.easeOut(duration: 0.12), value: bellRang)
+            .animation(.easeOut(duration: 0.12), value: trouble)
+            .animation(.easeOut(duration: 0.12), value: running)
+            .animation(.easeOut(duration: 0.12), value: laggy)
+            .animation(.easeOut(duration: 0.12), value: hovering)
+            // The latch: engage past 110ms, release under 90ms; drop instantly when not connected.
+            .onChange(of: latency ?? 0) { _, ms in
+                if status.phase != .connected { laggyLatched = false } else if !laggyLatched,
+                                                                               ms > 110 { laggyLatched = true }
+                else if laggyLatched,
+                        ms < 90 { laggyLatched = false }
+            }
+            .onHover { inside in
+                hovering = inside
+                #if os(macOS)
+                if inside { (isMaximized ? NSCursor.arrow : NSCursor.openHand).push() } else { NSCursor.pop() }
                 #endif
-        }
-        .help(helpText)
-        // ONE accessibility element with the live state folded into the label (children are visual
-        // duplicates), activatable: VoiceOver reads title + status + activity and can open the menu.
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(axLabel(status: status, running: running, latency: latency)))
-        .accessibilityHint(Text(isMaximized ? "Activate for pane actions"
-                                            : "Drag to move the pane; activate for pane actions"))
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction {
-            store.focus(id)
-            menuShown = true
-        }
+            }
+            .popover(isPresented: $menuShown, arrowEdge: .bottom) {
+                // NOTE: deliberately NO `.onDisappear { store.focus(id) }` here — the main window's
+                // first responder survives the popover's key-window stint, and re-focusing would RAISE
+                // this pane, stealing focus/z from whatever the user clicked to dismiss the popover.
+                PaneMenuView(id: id, spec: spec, handle: handle, store: store, isPresented: $menuShown)
+                #if os(iOS)
+                    .presentationCompactAdaptation(.popover)
+                #endif
+            }
+            .help(helpText)
+            // ONE accessibility element with the live state folded into the label (children are visual
+            // duplicates), activatable: VoiceOver reads title + status + activity and can open the menu.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(axLabel(status: status, running: running, latency: latency)))
+            .accessibilityHint(Text(isMaximized ? "Activate for pane actions"
+                    : "Drag to move the pane; activate for pane actions"))
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                store.focus(id)
+                menuShown = true
+            }
     }
 
     /// The quiet at-a-glance pane title (the old header's job): always on iOS (no hover there);
@@ -255,12 +256,16 @@ struct FloatingPaneHandle: View {
     /// look merely idle while its session is dying).
     static func isTrouble(_ status: PaneConnectionStatus) -> Bool {
         switch status.phase {
-        case .connecting, .reconnecting, .unreachable, .failed: return true
-        case .connected, .idle, .none: return false
+        case .connecting,
+             .reconnecting,
+             .unreachable,
+             .failed: true
+        case .connected,
+             .idle,
+             .none: false
         }
     }
 
-    @ViewBuilder
     private func statusText(_ status: PaneConnectionStatus) -> some View {
         Group {
             if status.phase == .reconnecting, let nextRetry = status.nextRetry {
@@ -283,9 +288,9 @@ struct FloatingPaneHandle: View {
 
     private func statusColor(_ status: PaneConnectionStatus) -> Color {
         switch status.phase {
-        case .connecting: return .secondary
-        case .reconnecting: return .orange
-        default: return .red
+        case .connecting: .secondary
+        case .reconnecting: .orange
+        default: .red
         }
     }
 
@@ -402,9 +407,11 @@ struct PaneMenuView: View {
                 Divider().padding(.vertical, 4)
             }
 
-            row(isZoomed ? "Restore" : "Maximize",
-                systemImage: isZoomed ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right") {
-                store.focus(id)        // maximize acts on the focused pane — ensure it's this one first
+            row(
+                isZoomed ? "Restore" : "Maximize",
+                systemImage: isZoomed ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+            ) {
+                store.focus(id) // maximize acts on the focused pane — ensure it's this one first
                 store.toggleZoom()
             }
             row("Center in View", systemImage: "scope") {
@@ -463,7 +470,7 @@ struct PaneMenuView: View {
         .confirmationDialog(
             "Paste as Keystrokes?",
             isPresented: Binding(get: { pendingPaste != nil }, set: { if !$0 { pendingPaste = nil } }),
-            presenting: pendingPaste
+            presenting: pendingPaste,
         ) { pending in
             if pending.risk != .tooLarge {
                 Button("Paste Anyway", role: .destructive) {
@@ -576,19 +583,19 @@ struct PaneMenuView: View {
     private static func pasteWarning(_ risk: PasteRisk) -> String {
         switch risk {
         case .secretIntoInsecureField:
-            return "The clipboard looks like a secret, but this isn’t a password field — it may be typed where it shows in plain text. Paste anyway?"
+            "The clipboard looks like a secret, but this isn’t a password field — it may be typed "
+                + "where it shows in plain text. Paste anyway?"
         case .bulkIntoSecureField:
-            return "You’re about to type many lines / a large blob into a password field. That’s usually a mis-paste. Paste anyway?"
+            "You’re about to type many lines / a large blob into a password field. That’s usually a mis-paste. Paste anyway?"
         case .tooLarge:
-            return "The clipboard is too long to type as keystrokes safely."
+            "The clipboard is too long to type as keystrokes safely."
         case .ok:
-            return ""
+            ""
         }
     }
 
     /// A submenu listing the recent clips; choosing one replays it into `remote` as keystrokes. Each
     /// row shows a single-line preview (truncated) — never the full secret.
-    @ViewBuilder
     private func pasteRecentMenu(into remote: RemoteWindowModel) -> some View {
         Menu {
             ForEach(Array(store.clipboardRing.enumerated()), id: \.offset) { _, clip in
@@ -677,7 +684,6 @@ struct PaneMenuView: View {
                 .padding(.vertical, 2)
                 .padding(.horizontal, 2)
         }
-
     }
 
     /// The interaction prefs the canvas consumes live (also the iOS snap-disable path; the same
@@ -685,18 +691,20 @@ struct PaneMenuView: View {
     private var snapToggles: some View {
         VStack(alignment: .leading, spacing: 2) {
             Toggle("Snap to Panes", isOn: $snapPanes)
-                #if os(macOS)
+            #if os(macOS)
                 .help("Magnetic alignment to other panes. Hold ⌘ while dragging to bypass.")
-                #endif
+            #endif
             Toggle("Snap to Grid", isOn: $snapGrid)
-                #if os(macOS)
+            #if os(macOS)
                 .help("Quantize free drags to the 16pt grid. Hold ⌘ while dragging to bypass.")
-                #endif
+            #endif
             Toggle("Show Grid", isOn: $showGrid)
             Toggle("Keep From Overlapping", isOn: $nonOverlap)
-                #if os(macOS)
-                .help("Windows slide along each other and groups part to make room, instead of overlapping. Hold ⌘ while dragging to bypass.")
-                #endif
+            #if os(macOS)
+                .help(
+                    "Windows slide along each other and groups part to make room, instead of overlapping. Hold ⌘ while dragging to bypass.",
+                )
+            #endif
         }
         #if os(macOS)
         .toggleStyle(.checkbox)
@@ -709,8 +717,11 @@ struct PaneMenuView: View {
     /// reconnect loop (force a retry NOW), and deliberate idle.
     private var canReconnect: Bool {
         switch status.phase {
-        case .idle, .reconnecting, .unreachable, .failed: return true
-        default: return false
+        case .idle,
+             .reconnecting,
+             .unreachable,
+             .failed: true
+        default: false
         }
     }
 
@@ -719,12 +730,11 @@ struct PaneMenuView: View {
     /// One menu row. Dismisses the popover FIRST, then mutates on the next runloop turn — a mutation
     /// like `closePane` removes the popover's anchor, and tearing the anchor down mid-dismissal is
     /// the kind of AppKit edge this sidesteps for free.
-    @ViewBuilder
     private func row(
         _ title: String,
         systemImage: String,
         role: ButtonRole? = nil,
-        action: @escaping @MainActor () -> Void
+        action: @escaping @MainActor () -> Void,
     ) -> some View {
         Button(role: role) {
             isPresented = false

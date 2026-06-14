@@ -1,6 +1,6 @@
 #if canImport(SwiftUI)
-import SwiftUI
 import AislopdeskTerminal
+import SwiftUI
 
 /// The **seam** between the SwiftUI client and the terminal pixels.
 ///
@@ -70,6 +70,7 @@ public struct BuildStatusPlaceholderView: TerminalRenderingView {
 /// ``shared`` at launch to a factory that builds its Metal-hosted `GhosttyTerminalView`; the
 /// library calls ``make(model:)`` and falls back to the ``BuildStatusPlaceholderView`` when no
 /// factory was registered. This is the documented extension point.
+@preconcurrency
 @MainActor
 public final class TerminalRendererFactory {
     /// The app-registered factory (set once at launch). `nil` → use the placeholder.

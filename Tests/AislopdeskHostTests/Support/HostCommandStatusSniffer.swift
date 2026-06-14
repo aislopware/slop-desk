@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskProtocol
+import Foundation
 
 /// A **non-destructive** sibling of ``HostTitleBellSniffer`` that observes (never consumes)
 /// the host's outbound PTY byte stream and recognizes the **OSC 133** semantic command marks
@@ -47,9 +47,9 @@ import AislopdeskProtocol
 /// is only ever called from the single serial `PTYReadLoop` `onChunk` sink, but the lock makes
 /// it safe to capture in the `@Sendable` closure regardless — mirrors the title sniffer).
 public final class HostCommandStatusSniffer: @unchecked Sendable {
-
     /// - Parameter clock: the wall-clock source for C→D duration. Injectable so a test advances
     ///   it deterministically; defaults to `Date.init` in production.
+    @preconcurrency
     public init(clock: @escaping @Sendable () -> Date = { Date() }) {
         self.clock = clock
     }
@@ -95,14 +95,14 @@ public final class HostCommandStatusSniffer: @unchecked Sendable {
 
     private static let esc: UInt8 = 0x1B
     private static let bel: UInt8 = 0x07
-    private static let rightBracket: UInt8 = 0x5D  // ']'
-    private static let backslash: UInt8 = 0x5C     // '\'
+    private static let rightBracket: UInt8 = 0x5D // ']'
+    private static let backslash: UInt8 = 0x5C // '\'
     // String-sequence introducers (R9 #4): DCS `ESC P`, SOS `ESC X`, PM `ESC ^`, APC `ESC _` — their body
     // is swallowed to ST/BEL, so an embedded `133;C/D` run inside one must NOT be parsed as an OSC 133 mark.
-    private static let dcs: UInt8 = 0x50           // 'P'
-    private static let sos: UInt8 = 0x58           // 'X'
-    private static let pm: UInt8 = 0x5E            // '^'
-    private static let apc: UInt8 = 0x5F           // '_'
+    private static let dcs: UInt8 = 0x50 // 'P'
+    private static let sos: UInt8 = 0x58 // 'X'
+    private static let pm: UInt8 = 0x5E // '^'
+    private static let apc: UInt8 = 0x5F // '_'
 
     // MARK: Observe
 
@@ -140,7 +140,10 @@ public final class HostCommandStatusSniffer: @unchecked Sendable {
             case Self.rightBracket:
                 state = .osc
                 oscBuffer.removeAll(keepingCapacity: true)
-            case Self.dcs, Self.sos, Self.pm, Self.apc:
+            case Self.dcs,
+                 Self.sos,
+                 Self.pm,
+                 Self.apc:
                 // R9 #4 (security): DCS/SOS/PM/APC string body is swallowed to ST/BEL, emitting nothing —
                 // so a malicious remote program cannot embed an `ESC]133;C/D` run inside a string sequence
                 // to fabricate a phantom running/idle status (with attacker-chosen exit code + duration).
@@ -229,7 +232,7 @@ public final class HostCommandStatusSniffer: @unchecked Sendable {
 
     private func finishOSC(into messages: inout [WireMessage]) {
         defer { oscBuffer.removeAll(keepingCapacity: true) }
-        let payload = String(decoding: oscBuffer, as: UTF8.self)
+        let payload = String(bytes: oscBuffer, encoding: .utf8) ?? ""
         // Expected: "133;A" | "133;B" | "133;C" | "133;D" | "133;D;<exit>" (+ extra ;k=v).
         let fields = payload.split(separator: ";", omittingEmptySubsequences: false)
         guard fields.count >= 2, fields[0] == "133" else { return }

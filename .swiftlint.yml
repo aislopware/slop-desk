@@ -1,0 +1,244 @@
+# SwiftLint — maximal-strict lint/bug configuration. Pairs with .swiftformat:
+# SwiftFormat OWNS formatting; SwiftLint owns lint/bug/consistency rules. The two
+# are kept non-conflicting — every formatting-adjacent SwiftLint rule that would
+# fight the formatter is disabled below (with the reason).
+#
+# Philosophy (see also docs / the chore/strict-tooling setup):
+#   * Every opt-in + analyzer rule is ON ("maximal") …
+#   * … minus a curated disabled set: rules that fight SwiftFormat, contradict
+#     another enabled rule, or target frameworks this repo does not use.
+#   * Correctness / consistency rules are enforced to ZERO (CI runs --strict).
+#   * Size/complexity METRIC rules are regression-guards: thresholds are set just
+#     above the current code's profile so working, tested realtime code is not
+#     force-refactored, while future bloat is caught.
+
+opt_in_rules:
+  - all
+
+analyzer_rules:
+  - all
+
+# Run lint over these roots (CLI also passes paths; this scopes editor plugins).
+included:
+  - Sources
+  - Tests
+  - Apps
+
+excluded:
+  - .build
+  - .build-ios-rel
+  - .build-ios-studio
+  - DerivedData
+  - ThirdParty
+  - rust
+  - Apps/ClientApp-iOS/ClientApp-iOS.xcodeproj
+  - Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj
+  - Apps/HostApp-macOS/HostApp-macOS.xcodeproj
+  # Validation harness: a closed-loop test instrument (not shipped product), test-adjacent
+  # like the Tests tree — its scaffolding/size is by design, so don't strict-lint it.
+  - Sources/aislopdesk-loopback-validate
+
+disabled_rules:
+  # ---- SwiftFormat owns formatting (don't let SwiftLint fight the formatter) ----
+  - attributes                              # swiftformat: funcAttributes/typeAttributes
+  - closure_end_indentation                 # swiftformat: indent
+  - indentation_width                       # swiftformat: indent
+  - literal_expression_end_indentation      # swiftformat: indent
+  - modifier_order                          # swiftformat: modifierOrder
+  - multiline_arguments                     # swiftformat: wrapArguments
+  - multiline_arguments_brackets            # swiftformat: wrapArguments
+  - multiline_function_chains               # swiftformat: wrap
+  - multiline_literal_brackets              # swiftformat: wrapCollections
+  - multiline_parameters                    # swiftformat: wrapParameters
+  - multiline_parameters_brackets           # swiftformat: wrapParameters
+  - operator_usage_whitespace               # swiftformat: spaceAroundOperators
+  - period_spacing                          # swiftformat: spaceAroundComments/period
+  - sorted_imports                          # swiftformat: importGrouping
+  - trailing_closure                        # swiftformat owns closure style
+  - unneeded_parentheses_in_closure_argument # swiftformat: redundantParens
+  - vertical_parameter_alignment_on_call    # swiftformat: wrapArguments
+  - vertical_whitespace_closing_braces      # swiftformat: blankLinesAtEndOfScope
+  - vertical_whitespace_opening_braces      # swiftformat: blankLinesAtStartOfScope
+  - let_var_whitespace                      # swiftformat owns blank-line policy
+  - multiline_call_arguments                # swiftformat: wrapArguments owns call wrapping
+  - opening_brace                           # swiftformat: wrapMultilineStatementBraces puts `{` on its
+                                            # own line after a wrapped condition — opening_brace fights it
+  - statement_position                      # swiftformat: elseOnSameLine owns else/catch placement
+  - switch_case_alignment                   # swiftformat owns switch/case layout (incl. compact forms)
+
+  # ---- Contradicts another ENABLED rule or the formatter's `--self remove` ----
+  - explicit_self                           # opposite of swiftformat --self remove + redundant_self
+  - explicit_type_interface                 # opposite of redundant_type_annotation
+  - no_extension_access_modifier            # opposite of extension_access_modifier (we keep ACL on extension)
+  - contrasted_opening_brace                # opposite of opening_brace (we use K&R same-line)
+  - switch_case_on_newline                  # fights swiftformat compact switch-expressions (`case x: y`)
+  - vertical_whitespace_between_cases        # fights the dense codec switch tables
+
+  # ---- Pure preference / ACL-or-ordering churn with no bug value on this repo ----
+  - explicit_acl                            # ACL on every decl — codebase uses implicit internal
+  - explicit_top_level_acl                  # ditto, top level
+  - explicit_enum_raw_value                 # forces raw values on enums
+  - file_types_order                        # whole-file declaration reordering
+  - type_contents_order                     # whole-type member reordering
+  - sorted_enum_cases                       # reordering enum cases can change raw values
+  - conditional_returns_on_newline          # style churn
+  - one_declaration_per_file                # one type per file — incompatible with this layout
+  - discouraged_default_parameter           # anti-idiom: default parameters are good Swift
+  - prefixed_toplevel_constant              # Hungarian `k`-prefix constants
+  - no_grouping_extension                   # bans same-file extension grouping (used intentionally)
+  - file_header                             # no enforced header (swiftformat --header ignore)
+
+  # ---- Domain noise: wire/codec/math constants are legion, not a bug signal ----
+  - no_magic_numbers
+  - number_separator
+
+  # ---- False-positive on this codebase's custom Int `count` properties ----
+  # empty_count rewrites `count == 0` -> `isEmpty`, but many types here have a plain
+  # `var count = 0` stat accumulator (NOT a collection), so the autocorrect produces a
+  # non-compiling `isEmpty`. The rule can't tell the two apart; net-negative here.
+  - empty_count
+
+  # ---- Niche / leak-debug rule, not a production quality signal ----
+  - required_deinit                         # would require an explicit deinit on EVERY class
+
+  # ---- Frameworks this repo does not use (Quick / Nimble) ----
+  - nimble_operator
+  - prefer_nimble
+  - quick_discouraged_call
+  - quick_discouraged_focused_test
+  - quick_discouraged_pending_test
+
+  # ---- Writing `///` docs for all public API is a separate effort, not bug-catching ----
+  - missing_docs
+
+  # ==== Scoped out per the "sane scope" decision: style-noise / idiom-fighting / ====
+  # ==== formatter-redundant / separate-effort rules (NOT bug-catchers) ============
+  - trailing_comma                  # SwiftFormat owns trailing commas (--trailing-commas always)
+  - no_empty_block                  # empty `{}` no-op closures/handlers are overwhelmingly intentional
+  - anonymous_argument_in_multiline_closure # `$0` in multiline closures is idiomatic here
+  - variable_shadowing              # fights the idiomatic parse/builder local-shadows-property pattern
+  - file_name                       # files intentionally group several related types
+  - single_test_class               # one XCTestCase per file is needless churn
+  - function_default_parameter_at_end # default-before-trailing-closure is a legit signature
+  - multiple_closures_with_trailing_closure # readability preference, high churn
+  - convenience_type                # caseless-enum-vs-struct namespacing is a judgment call
+  - shorthand_argument              # `$0` style
+  - discouraged_none_name           # `none` enum cases are fine
+  - discouraged_optional_collection # nil vs empty is sometimes meaningful here
+  - discouraged_optional_boolean    # tri-state `Bool?` is occasionally intentional
+  - todo                            # TODO/FIXME are legitimate backlog markers in this repo
+  # ---- No-backcompat directive: wire/Codable formats may change freely ----
+  - raw_value_for_camel_cased_codable_enum # explicit raw values guard Codable stability — not needed
+  # ---- Accessibility is a dedicated pass, not lint cleanup (tracked separately) ----
+  - accessibility_label_for_image
+  - accessibility_trait_for_button
+  # ---- inclusive_language: most hits are OS/CG API terms (e.g. display "master") ----
+  - inclusive_language
+
+# ============================ Rule configuration ==============================
+
+# Correctness / consistency — keep STRICT (these stay at error/default and are
+# enforced to zero by `swiftlint --strict`).
+
+identifier_name:
+  # Scoped sanely: the single-char math/loop locals and the 2-char codec/geometry/
+  # domain vocab are idiomatic here AND mirror the Rust core's intentional short names
+  # (cb/cr, dx/dy, bw/bh, …), so exempt them. The rule still enforces naming CONVENTION
+  # — lowercase start (catches the `_fooForTesting` helpers and any Type-cased var) and
+  # a sane max length — so genuinely-unclear/non-conventional names are still flagged.
+  min_length:
+    warning: 2
+    error: 2
+  max_length:
+    warning: 50
+    error: 70
+  validates_start_with_lowercase: error
+  excluded:
+    - a
+    - b
+    - c
+    - d
+    - e
+    - f
+    - g
+    - h
+    - i
+    - j
+    - k
+    - l
+    - m
+    - n
+    - o
+    - p
+    - q
+    - r
+    - s
+    - t
+    - u
+    - v
+    - w
+    - x
+    - y
+    - z
+
+type_name:
+  max_length:
+    warning: 50
+    error: 60
+
+# Size / complexity METRIC rules — regression-guards (current code passes; tuned
+# just above the established profile so working realtime code is not force-split).
+line_length:
+  # SwiftFormat enforces 120 on CODE; it cannot break string literals, so the warn here
+  # at 140 only catches genuinely-long lines beyond the un-wrappable log/error strings.
+  warning: 140
+  error: 250
+  ignores_urls: true
+  ignores_comments: true       # the long-form documentation comments are a deliberate asset
+  ignores_interpolated_strings: true
+
+file_length:
+  warning: 2600
+  error: 3500
+  ignore_comment_only_lines: true
+
+# Wire enums legitimately carry one associated value per on-wire field (helloAck has 6).
+enum_case_associated_values_count:
+  warning: 8
+  error: 10
+
+# Size/complexity metrics are REGRESSION-GUARDS: thresholds sit just above the current
+# code's profile (incl. the validation-harness functions) so working, tested realtime
+# code is not force-refactored, while future bloat is caught.
+type_body_length:
+  warning: 1500
+  error: 2700
+
+function_body_length:
+  warning: 260
+  error: 1300
+
+closure_body_length:
+  warning: 150
+  error: 400
+
+cyclomatic_complexity:
+  warning: 30
+  error: 80
+  ignores_case_statements: true
+
+function_parameter_count:
+  warning: 8
+  error: 10
+
+large_tuple:
+  warning: 4   # 2-3 element tuples are idiomatic internal multi-returns here
+  error: 6
+
+nesting:
+  type_level:
+    warning: 4
+  function_level:
+    warning: 6
+
+reporter: "xcode"

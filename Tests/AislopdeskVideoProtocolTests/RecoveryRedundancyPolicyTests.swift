@@ -6,7 +6,6 @@ import XCTest
 /// before/after freeze math), the `RecoveryPolicy` loss-adaptive (halved) escalation clock, and
 /// the `LossObservationWindow` predicate gating it. All headless (no transport / wall clock).
 final class RecoveryRedundancyPolicyTests: XCTestCase {
-
     // MARK: RecoveryRequestRedundancy — offsets + clamps
 
     func testSendOffsetsForThreeCopies() {
@@ -24,7 +23,7 @@ final class RecoveryRedundancyPolicyTests: XCTestCase {
         XCTAssertEqual(RecoveryRequestRedundancy(copies: 1).sendOffsets, [0], "copies=1 ⇒ single immediate send")
     }
 
-    func testDefaultsAreThreeCopiesThreeMs() {
+    func testDefaultsAreThreeCopiesThreeMs() throws {
         let r = RecoveryRequestRedundancy()
         XCTAssertEqual(r.copies, 3)
         XCTAssertEqual(r.spacing, 0.003, accuracy: 1e-12)
@@ -32,16 +31,24 @@ final class RecoveryRedundancyPolicyTests: XCTestCase {
         // even with reorder skew; the cross-side coupling at every legal copies count is pinned in
         // RecoveryRequestDeduperTests.testRedundancySpreadVsDedupWindowCouplingAtDefaults (the host
         // window constant lives in AislopdeskVideoHost, unreachable from this leaf target).
-        XCTAssertLessThanOrEqual(r.sendOffsets.last!, 0.025 / 2)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(r.sendOffsets.last), 0.025 / 2)
     }
 
     // MARK: RecoveryRequestRedundancy — pⁿ math
 
     func testAllCopiesLostProbability() {
-        XCTAssertEqual(RecoveryRequestRedundancy.allCopiesLostProbability(perDatagramLoss: 0.09, copies: 3),
-                       7.29e-4, accuracy: 1e-9, "burst loss 9% → request lost drops 0.09 → 7.29e-4")
-        XCTAssertEqual(RecoveryRequestRedundancy.allCopiesLostProbability(perDatagramLoss: 0.42, copies: 1),
-                       0.42, accuracy: 1e-12, "(p, 1) = p — copies=1 is exactly today")
+        XCTAssertEqual(
+            RecoveryRequestRedundancy.allCopiesLostProbability(perDatagramLoss: 0.09, copies: 3),
+            7.29e-4,
+            accuracy: 1e-9,
+            "burst loss 9% → request lost drops 0.09 → 7.29e-4",
+        )
+        XCTAssertEqual(
+            RecoveryRequestRedundancy.allCopiesLostProbability(perDatagramLoss: 0.42, copies: 1),
+            0.42,
+            accuracy: 1e-12,
+            "(p, 1) = p — copies=1 is exactly today",
+        )
         XCTAssertEqual(RecoveryRequestRedundancy.allCopiesLostProbability(perDatagramLoss: 0.0, copies: 4), 0.0)
         XCTAssertEqual(RecoveryRequestRedundancy.allCopiesLostProbability(perDatagramLoss: 1.0, copies: 4), 1.0)
         // Out-of-range p clamps to [0, 1] (never a negative/exploding probability).
@@ -52,10 +59,18 @@ final class RecoveryRedundancyPolicyTests: XCTestCase {
     /// THE before/after freeze-time assertion: at p=5% and a 100 ms escalation delay, a single
     /// send leaks 5 ms of expected freeze per loss event; 3 copies leak 12.5 µs — 400× less.
     func testExpectedRequestLossFreezeBeforeAfter() {
-        let before = RecoveryRequestRedundancy.expectedRequestLossFreeze(perDatagramLoss: 0.05, copies: 1, escalationDelay: 0.1)
-        let after = RecoveryRequestRedundancy.expectedRequestLossFreeze(perDatagramLoss: 0.05, copies: 3, escalationDelay: 0.1)
-        XCTAssertEqual(before, 0.005, accuracy: 1e-12)      // 5 ms
-        XCTAssertEqual(after, 1.25e-5, accuracy: 1e-12)     // 12.5 µs
+        let before = RecoveryRequestRedundancy.expectedRequestLossFreeze(
+            perDatagramLoss: 0.05,
+            copies: 1,
+            escalationDelay: 0.1,
+        )
+        let after = RecoveryRequestRedundancy.expectedRequestLossFreeze(
+            perDatagramLoss: 0.05,
+            copies: 3,
+            escalationDelay: 0.1,
+        )
+        XCTAssertEqual(before, 0.005, accuracy: 1e-12) // 5 ms
+        XCTAssertEqual(after, 1.25e-5, accuracy: 1e-12) // 12.5 µs
         XCTAssertEqual(before / after, 400, accuracy: 1e-6)
     }
 
@@ -70,7 +85,8 @@ final class RecoveryRedundancyPolicyTests: XCTestCase {
                 XCTAssertEqual(
                     policy.shouldEscalateToIDR(elapsedSinceRequest: elapsed, rtt: rtt, observingLoss: false),
                     policy.shouldEscalateToIDR(elapsedSinceRequest: elapsed, rtt: rtt),
-                    "divergence at elapsed=\(elapsed) rtt=\(rtt)")
+                    "divergence at elapsed=\(elapsed) rtt=\(rtt)",
+                )
             }
         }
     }
@@ -102,8 +118,10 @@ final class RecoveryRedundancyPolicyTests: XCTestCase {
     func testLossyDeadlineNeverBelow60msAtRtt20() {
         let policy = RecoveryPolicy()
         for elapsed in stride(from: 0.0, to: 0.060, by: 0.001) {
-            XCTAssertFalse(policy.shouldEscalateToIDR(elapsedSinceRequest: elapsed, rtt: 0.02, observingLoss: true),
-                           "must not escalate at \(Int(elapsed * 1000)) ms (< the 60 ms floor)")
+            XCTAssertFalse(
+                policy.shouldEscalateToIDR(elapsedSinceRequest: elapsed, rtt: 0.02, observingLoss: true),
+                "must not escalate at \(Int(elapsed * 1000)) ms (< the 60 ms floor)",
+            )
         }
         XCTAssertTrue(policy.shouldEscalateToIDR(elapsedSinceRequest: 0.060, rtt: 0.02, observingLoss: true))
     }
@@ -131,8 +149,16 @@ final class RecoveryRedundancyPolicyTests: XCTestCase {
         XCTAssertEqual(RecoveryPolicy.escalationFloorSeconds(env: ["AISLOPDESK_ESCALATION_FLOOR_MS": "100"]), 0.1)
         XCTAssertEqual(RecoveryPolicy.escalationFloorSeconds(env: ["AISLOPDESK_ESCALATION_FLOOR_MS": "20"]), 0.02)
         XCTAssertEqual(RecoveryPolicy.escalationFloorSeconds(env: ["AISLOPDESK_ESCALATION_FLOOR_MS": "500"]), 0.5)
-        XCTAssertEqual(RecoveryPolicy.escalationFloorSeconds(env: ["AISLOPDESK_ESCALATION_FLOOR_MS": "19"]), 0.06, "below the clamp → default")
-        XCTAssertEqual(RecoveryPolicy.escalationFloorSeconds(env: ["AISLOPDESK_ESCALATION_FLOOR_MS": "501"]), 0.06, "above the clamp → default")
+        XCTAssertEqual(
+            RecoveryPolicy.escalationFloorSeconds(env: ["AISLOPDESK_ESCALATION_FLOOR_MS": "19"]),
+            0.06,
+            "below the clamp → default",
+        )
+        XCTAssertEqual(
+            RecoveryPolicy.escalationFloorSeconds(env: ["AISLOPDESK_ESCALATION_FLOOR_MS": "501"]),
+            0.06,
+            "above the clamp → default",
+        )
         XCTAssertEqual(RecoveryPolicy.escalationFloorSeconds(env: ["AISLOPDESK_ESCALATION_FLOOR_MS": "garbage"]), 0.06)
     }
 
@@ -164,7 +190,10 @@ final class RecoveryRedundancyPolicyTests: XCTestCase {
         w.noteEvent(now: 10.0)
         w.noteEvent(now: 10.1)
         XCTAssertTrue(w.isObservingLoss(now: 10.2))
-        XCTAssertFalse(w.isObservingLoss(now: 11.2), "both events now older than the window ⇒ back to the conservative clock")
+        XCTAssertFalse(
+            w.isObservingLoss(now: 11.2),
+            "both events now older than the window ⇒ back to the conservative clock",
+        )
     }
 
     func testCapacityDropsOldestKeepsNewest() {
@@ -177,7 +206,7 @@ final class RecoveryRedundancyPolicyTests: XCTestCase {
         var w2 = LossObservationWindow(windowSeconds: 0.05, minEvents: 2, capacity: 2)
         w2.noteEvent(now: 0.00)
         w2.noteEvent(now: 0.01)
-        w2.noteEvent(now: 0.02)   // evicts 0.00
+        w2.noteEvent(now: 0.02) // evicts 0.00
         XCTAssertTrue(w2.isObservingLoss(now: 0.05), "0.01 + 0.02 survive")
     }
 

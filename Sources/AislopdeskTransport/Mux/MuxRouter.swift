@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskProtocol
+import Foundation
 
 /// The routed decision for one decoded ``MuxFrame``.
 ///

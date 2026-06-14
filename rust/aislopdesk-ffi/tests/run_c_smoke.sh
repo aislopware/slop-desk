@@ -9,14 +9,14 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-crate_dir="$(dirname "$here")"
-workspace_dir="$(dirname "$crate_dir")"
-target_dir="$workspace_dir/target/debug"
-staticlib="$target_dir/libaislopdesk_ffi.a"
+crate_dir="$(dirname "${here}")"
+workspace_dir="$(dirname "${crate_dir}")"
+target_dir="${workspace_dir}/target/debug"
+staticlib="${target_dir}/libaislopdesk_ffi.a"
 out="$(mktemp -t aisd_smoke.XXXXXX)"
 
 echo "==> building staticlib"
-( cd "$workspace_dir" && cargo build -p aislopdesk-ffi )
+(cd "${workspace_dir}" && cargo build -p aislopdesk-ffi)
 
 # Native libs the Rust staticlib needs (`rustc --print native-static-libs`). On macOS `cc`
 # already links libSystem (which subsumes -lSystem/-lc/-lm), so we add only -lm to avoid a
@@ -24,18 +24,18 @@ echo "==> building staticlib"
 # where the boundary is consumed today.
 case "$(uname -s)" in
   Darwin) native_libs=(-lm) ;;
-  Linux)  native_libs=(-lpthread -ldl -lm) ;;
-  *)      native_libs=(-lm) ;;
+  Linux) native_libs=(-lpthread -ldl -lm) ;;
+  *) native_libs=(-lm) ;;
 esac
 
 echo "==> compiling + linking smoke.c"
 cc -std=c11 -Wall -Wextra -Werror \
-   -I "$crate_dir/include" \
-   "$here/smoke.c" "$staticlib" "${native_libs[@]}" \
-   -o "$out"
+  -I "${crate_dir}/include" \
+  "${here}/smoke.c" "${staticlib}" "${native_libs[@]}" \
+  -o "${out}"
 
 echo "==> running"
-"$out"
+"${out}"
 status=$?
-rm -f "$out"
-exit "$status"
+rm -f "${out}"
+exit "${status}"

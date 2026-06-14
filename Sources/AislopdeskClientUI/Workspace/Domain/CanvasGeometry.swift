@@ -1,5 +1,5 @@
-import Foundation
 import CoreGraphics
+import Foundation
 
 // MARK: - Resize anchors
 
@@ -7,9 +7,14 @@ import CoreGraphics
 /// edge(s) stay pinned; the anchored edge(s) follow the drag. This is the canvas analogue of the
 /// legacy `SplitContainer`'s divider gap — a pure value so the resize math is unit-tested with no view.
 public enum ResizeAnchor: Sendable, CaseIterable {
-    case topLeft, top, topRight
-    case left, right
-    case bottomLeft, bottom, bottomRight
+    case topLeft
+    case top
+    case topRight
+    case left
+    case right
+    case bottomLeft
+    case bottom
+    case bottomRight
 }
 
 // MARK: - Pure canvas geometry (the SplitContainer.applyingDelta analogue)
@@ -29,7 +34,7 @@ public enum CanvasGeometry {
             x: f.origin.x - camera.origin.x,
             y: f.origin.y - camera.origin.y,
             width: f.size.width,
-            height: f.size.height
+            height: f.size.height,
         )
     }
 
@@ -47,7 +52,7 @@ public enum CanvasGeometry {
         _ frame: CGRect,
         anchor: ResizeAnchor,
         by delta: CGSize,
-        minSize: CGSize
+        minSize: CGSize,
     ) -> CGRect {
         var left = frame.minX
         var right = frame.maxX
@@ -59,14 +64,38 @@ public enum CanvasGeometry {
         let movesTop: Bool
         let movesBottom: Bool
         switch anchor {
-        case .topLeft:     movesLeft = true;  movesRight = false; movesTop = true;  movesBottom = false
-        case .top:         movesLeft = false; movesRight = false; movesTop = true;  movesBottom = false
-        case .topRight:    movesLeft = false; movesRight = true;  movesTop = true;  movesBottom = false
-        case .left:        movesLeft = true;  movesRight = false; movesTop = false; movesBottom = false
-        case .right:       movesLeft = false; movesRight = true;  movesTop = false; movesBottom = false
-        case .bottomLeft:  movesLeft = true;  movesRight = false; movesTop = false; movesBottom = true
-        case .bottom:      movesLeft = false; movesRight = false; movesTop = false; movesBottom = true
-        case .bottomRight: movesLeft = false; movesRight = true;  movesTop = false; movesBottom = true
+        case .topLeft: movesLeft = true
+            movesRight = false
+            movesTop = true
+            movesBottom = false
+        case .top: movesLeft = false
+            movesRight = false
+            movesTop = true
+            movesBottom = false
+        case .topRight: movesLeft = false
+            movesRight = true
+            movesTop = true
+            movesBottom = false
+        case .left: movesLeft = true
+            movesRight = false
+            movesTop = false
+            movesBottom = false
+        case .right: movesLeft = false
+            movesRight = true
+            movesTop = false
+            movesBottom = false
+        case .bottomLeft: movesLeft = true
+            movesRight = false
+            movesTop = false
+            movesBottom = true
+        case .bottom: movesLeft = false
+            movesRight = false
+            movesTop = false
+            movesBottom = true
+        case .bottomRight: movesLeft = false
+            movesRight = true
+            movesTop = false
+            movesBottom = true
         }
 
         if movesLeft { left += delta.width }
@@ -80,8 +109,7 @@ public enum CanvasGeometry {
             else { right = left + minSize.width } // movesRight (or neither: pin left, grow right harmlessly)
         }
         if bottom - top < minSize.height {
-            if movesTop { top = bottom - minSize.height }
-            else { bottom = top + minSize.height }
+            if movesTop { top = bottom - minSize.height } else { bottom = top + minSize.height }
         }
 
         return Canvas.sanitize(CGRect(x: left, y: top, width: right - left, height: bottom - top))
@@ -108,14 +136,14 @@ public enum CanvasGeometry {
         existing: [CGRect],
         viewport: CGRect,
         size: CGSize,
-        cascade: CGFloat = Canvas.cascadeStep
+        cascade: CGFloat = Canvas.cascadeStep,
     ) -> CGRect {
-        let seedOrigin: CGPoint
-        if let near {
-            seedOrigin = CGPoint(x: near.origin.x + cascade, y: near.origin.y + cascade)
-        } else {
-            seedOrigin = CGPoint(x: viewport.midX - size.width / 2, y: viewport.midY - size.height / 2)
-        }
+        let seedOrigin =
+            if let near {
+                CGPoint(x: near.origin.x + cascade, y: near.origin.y + cascade)
+            } else {
+                CGPoint(x: viewport.midX - size.width / 2, y: viewport.midY - size.height / 2)
+            }
 
         var candidate = CGRect(origin: seedOrigin, size: size)
         var steps = 0
@@ -135,7 +163,7 @@ public enum CanvasGeometry {
                     x: viewport.minX + CGFloat(col) * stepX,
                     y: viewport.minY + CGFloat(row) * stepY,
                     width: size.width,
-                    height: size.height
+                    height: size.height,
                 )
                 if !collides(cell, with: existing) { return cell }
             }
@@ -174,7 +202,7 @@ public enum CanvasGeometry {
         camera: CanvasCamera,
         viewport: CGSize,
         focused: PaneID?,
-        margin: CGFloat = Canvas.cullMargin
+        margin: CGFloat = Canvas.cullMargin,
     ) -> [CanvasItem] {
         let viewportRect = CGRect(origin: camera.origin, size: viewport)
         let expanded = viewportRect.insetBy(dx: -margin, dy: -margin)
@@ -191,7 +219,7 @@ public enum CanvasGeometry {
     public static func viewportMembers(
         _ items: [CanvasItem],
         camera: CanvasCamera,
-        viewport: CGSize
+        viewport: CGSize,
     ) -> Set<PaneID> {
         let viewportRect = CGRect(origin: camera.origin, size: viewport)
         var members: Set<PaneID> = []
@@ -216,14 +244,15 @@ public enum CanvasGeometry {
     public static func overviewLayout(
         _ items: [CanvasItem],
         viewport: CGSize,
-        padding: CGFloat = 48
+        padding: CGFloat = 48,
     ) -> OverviewLayout {
         guard !items.isEmpty else { return OverviewLayout(scale: 1, cards: [:]) }
         // Bounding box of every pane in canvas space.
-        let minX = items.map { $0.frame.minX }.min()!
-        let minY = items.map { $0.frame.minY }.min()!
-        let maxX = items.map { $0.frame.maxX }.max()!
-        let maxY = items.map { $0.frame.maxY }.max()!
+        guard let minX = items.map(\.frame.minX).min(),
+              let minY = items.map(\.frame.minY).min(),
+              let maxX = items.map(\.frame.maxX).max(),
+              let maxY = items.map(\.frame.maxY).max()
+        else { return OverviewLayout(scale: 1, cards: [:]) }
         let bbox = CGRect(x: minX, y: minY, width: max(1, maxX - minX), height: max(1, maxY - minY))
         let availW = max(1, viewport.width - 2 * padding)
         let availH = max(1, viewport.height - 2 * padding)
@@ -239,7 +268,7 @@ public enum CanvasGeometry {
                 x: ox + (item.frame.minX - bbox.minX) * scale,
                 y: oy + (item.frame.minY - bbox.minY) * scale,
                 width: item.frame.width * scale,
-                height: item.frame.height * scale
+                height: item.frame.height * scale,
             )
         }
         return OverviewLayout(scale: scale, cards: cards)
@@ -269,7 +298,7 @@ public enum CanvasGeometry {
         _ items: [CanvasItem],
         camera: CanvasCamera,
         viewport: CGSize,
-        inset: CGFloat = 18
+        inset: CGFloat = 18,
     ) -> [OffscreenBeacon] {
         let viewportRect = CGRect(origin: camera.origin, size: viewport)
         let minX = inset, minY = inset

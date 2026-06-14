@@ -23,7 +23,7 @@ public enum AislopdeskTransportError: Error, Equatable, Sendable {
     case timedOut(String)
 }
 
-extension AislopdeskTransportError {
+public extension AislopdeskTransportError {
     /// Whether a ``listenerFailed(_:)`` detail string indicates the bind failed because the
     /// address/port is already in use (POSIX `EADDRINUSE`, errno 48). The host-app classifier uses
     /// this to tell the operator "Port N is already in use" (actionable: change the port / kill the
@@ -34,10 +34,10 @@ extension AislopdeskTransportError {
     /// "48" but are NOT EADDRINUSE. The errno is therefore matched only as a STANDALONE token
     /// (digit-bounded on both sides), in addition to the canonical "in use" phrase that
     /// `String(describing: NWError.posix(.EADDRINUSE))` produces.
-    public static func listenerDetailIndicatesAddressInUse(_ detail: String) -> Bool {
+    static func listenerDetailIndicatesAddressInUse(_ detail: String) -> Bool {
         let lower = detail.lowercased()
-        if lower.contains("in use") { return true }       // "Address already in use"
-        return Self.containsStandaloneNumber(lower, 48)    // numeric rendering, e.g. "posix(48)"
+        if lower.contains("in use") { return true } // "Address already in use"
+        return Self.containsStandaloneNumber(lower, 48) // numeric rendering, e.g. "posix(48)"
     }
 
     /// Whether a listener sitting in Network.framework's `.waiting` state — its retryable
@@ -62,14 +62,14 @@ extension AislopdeskTransportError {
     /// Pure (errno → Bool) so the "only EADDRINUSE is fatal; transient network errnos keep waiting"
     /// decision is unit-testable without standing up a real `NWListener` (the XCTest pool avoids real
     /// socket binds; the glue is exercised by the subprocess / hardware E2E paths).
-    public static func waitingErrnoIsFatalBindConflict(_ posixErrno: Int32) -> Bool {
-        posixErrno == EADDRINUSE   // 48 — the one waiting errno that never auto-recovers
+    static func waitingErrnoIsFatalBindConflict(_ posixErrno: Int32) -> Bool {
+        posixErrno == EADDRINUSE // 48 — the one waiting errno that never auto-recovers
     }
 
     /// True iff `s` contains the decimal `n` as a whole token — not as a substring of a longer run
     /// of digits. So `48` matches in `"errno 48"` / `"posix(48)"` but NOT in `"4843"` / `"148"` /
     /// `"1048576"`.
-    static func containsStandaloneNumber(_ s: String, _ n: Int) -> Bool {
+    internal static func containsStandaloneNumber(_ s: String, _ n: Int) -> Bool {
         let needle = String(n)
         var searchStart = s.startIndex
         while let range = s.range(of: needle, range: searchStart..<s.endIndex) {
@@ -77,7 +77,7 @@ extension AislopdeskTransportError {
                 || !s[s.index(before: range.lowerBound)].isNumber
             let afterOK = range.upperBound == s.endIndex
                 || !s[range.upperBound].isNumber
-            if beforeOK && afterOK { return true }
+            if beforeOK, afterOK { return true }
             searchStart = range.upperBound
         }
         return false
@@ -93,14 +93,14 @@ extension AislopdeskTransportError: LocalizedError {
     /// user-facing line only. Keep these terse + actionable (no internal endpoints / enum syntax).
     public var errorDescription: String? {
         switch self {
-        case .connectionFailed: return "Connection failed"
-        case .notConnected:     return "Not connected"
-        case .sendFailed:       return "Failed to send data"
-        case .receiveFailed:    return "Connection lost"
-        case .listenerFailed:   return "Could not start the listener (port in use?)"
-        case .handshakeFailed:  return "Handshake failed — is this an aislopdesk host?"
-        case .invalidState:     return "Connection is in an invalid state"
-        case .timedOut:         return "Connection timed out — host unreachable?"
+        case .connectionFailed: "Connection failed"
+        case .notConnected: "Not connected"
+        case .sendFailed: "Failed to send data"
+        case .receiveFailed: "Connection lost"
+        case .listenerFailed: "Could not start the listener (port in use?)"
+        case .handshakeFailed: "Handshake failed — is this an aislopdesk host?"
+        case .invalidState: "Connection is in an invalid state"
+        case .timedOut: "Connection timed out — host unreachable?"
         }
     }
 }

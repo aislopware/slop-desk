@@ -1,5 +1,5 @@
-import Foundation
 import AislopdeskVideoProtocol
+import Foundation
 
 // Pure, platform-free mux routing for the host video orchestrator. NO sockets, no
 // SCStream, no clock — exactly the discipline of ``InputDatagramRouter`` /
@@ -158,10 +158,11 @@ public struct VideoMuxRouter: Sendable {
         for decision: Decision,
         channel: VideoChannel,
         payloadIsHello: Bool,
-        payloadIsListRequest: Bool = false
+        payloadIsListRequest: Bool = false,
     ) -> BootstrapAction {
         switch decision {
-        case .rejectUnadmitted, .dropRetired:
+        case .rejectUnadmitted,
+             .dropRetired:
             // Both the never-seen and the retired (cross-process reuse) cases bootstrap (deliver +
             // stamp the reply flow) ONLY for a hello OR a window-LIST request on the control channel;
             // everything else drops without a stamp. A listWindows is delivered+stamped exactly like a
@@ -170,7 +171,9 @@ public struct VideoMuxRouter: Sendable {
             // retired right after the reply).
             let isBootstrapControl = channel == .control && (payloadIsHello || payloadIsListRequest)
             return isBootstrapControl ? .bootstrapDeliver : .dropNoStamp
-        case .dropDraining, .route, .drop:
+        case .dropDraining,
+             .route,
+             .drop:
             // A draining lane is mid-teardown — drop EVEN a hello (no false accept, no premature
             // re-mint). `.route` is the live path; `.drop` (empty datagram) never bootstraps.
             return .dropNoStamp

@@ -7,19 +7,19 @@ final class ToolCardPairingTests: XCTestCase {
     private func toolUseLine(id: String, name: String = "Bash") -> TranscriptLine {
         .assistant(AssistantLine(
             identity: LineIdentity(uuid: "u-\(id)"),
-            toolUses: [ToolUseBlock(id: id, name: name, input: .object(["x": .string("y")]))]
+            toolUses: [ToolUseBlock(id: id, name: name, input: .object(["x": .string("y")]))],
         ))
     }
 
     private func toolResultLine(id: String, output: String, isError: Bool) -> TranscriptLine {
         .user(UserLine(
             identity: LineIdentity(uuid: "r-\(id)"),
-            toolResults: [ToolResultBlock(toolUseID: id, content: output, isError: isError)]
+            toolResults: [ToolResultBlock(toolUseID: id, content: output, isError: isError)],
         ))
     }
 
     private func cards(_ events: [InspectorEvent]) -> [ToolCard] {
-        events.compactMap { if case let .toolCard(c) = $0 { return c } else { return nil } }
+        events.compactMap { if case let .toolCard(c) = $0 { c } else { nil } }
     }
 
     func testInOrderResultCompletesCard() {
@@ -95,7 +95,7 @@ final class ToolCardPairingTests: XCTestCase {
         let firstRes = toolResultLine(id: "first", output: "ok", isError: false)
         _ = b.ingest(line: first)
         _ = b.ingest(line: firstRes)
-        for i in 0 ..< 5_000 {
+        for i in 0..<5000 {
             _ = b.ingest(line: toolUseLine(id: "c\(i)"))
             _ = b.ingest(line: toolResultLine(id: "c\(i)", output: "ok", isError: false))
         }

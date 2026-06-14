@@ -1,12 +1,11 @@
-import XCTest
 import Foundation
+import XCTest
 @testable import AislopdeskClaudeCode
 
 /// WF-7 terminal-mode sniffer tests. The crown jewel is the SPLIT-BOUNDARY suite:
 /// feeding the SAME stream chunked at every adversarial boundary (mid-ESC, mid-CSI,
 /// mid-OSC, one byte at a time) MUST produce identical events to feeding it whole.
 final class TerminalModeTrackerTests: XCTestCase {
-
     private let ESC = "\u{1B}"
     private let BEL = "\u{07}"
 
@@ -80,7 +79,7 @@ final class TerminalModeTrackerTests: XCTestCase {
         let t = TerminalModeTracker()
         XCTAssertEqual(
             t.consume(Array("\(ESC)]133;D;1\(BEL)".utf8)),
-            [.commandFinished(exitCode: 1)]
+            [.commandFinished(exitCode: 1)],
         )
     }
 
@@ -88,7 +87,7 @@ final class TerminalModeTrackerTests: XCTestCase {
         let t = TerminalModeTracker()
         XCTAssertEqual(
             t.consume(Array("\(ESC)]133;D\(BEL)".utf8)),
-            [.commandFinished(exitCode: nil)]
+            [.commandFinished(exitCode: nil)],
         )
     }
 
@@ -97,7 +96,7 @@ final class TerminalModeTrackerTests: XCTestCase {
         let t = TerminalModeTracker()
         XCTAssertEqual(
             t.consume(Array("\(ESC)]133;A\(ESC)\\".utf8)),
-            [.promptStart]
+            [.promptStart],
         )
     }
 
@@ -106,7 +105,7 @@ final class TerminalModeTrackerTests: XCTestCase {
         let t = TerminalModeTracker()
         XCTAssertEqual(
             t.consume(Array("\(ESC)]133;D;0;aid=12345\(BEL)".utf8)),
-            [.commandFinished(exitCode: 0)]
+            [.commandFinished(exitCode: 0)],
         )
     }
 
@@ -116,11 +115,11 @@ final class TerminalModeTrackerTests: XCTestCase {
         let t = TerminalModeTracker()
         let stream =
             "welcome\n"
-            + "\(ESC)]133;A\(BEL)$ \(ESC)]133;B\(BEL)vim file\n\(ESC)]133;C\(BEL)"
-            + "\(ESC)[?1049h" // vim enters alt-screen
-            + "\(ESC)[2J~\n~\n"  // some vim drawing (unknown CSI + text)
-            + "\(ESC)[?1049l" // vim exits
-            + "\(ESC)]133;D;0\(BEL)"
+                + "\(ESC)]133;A\(BEL)$ \(ESC)]133;B\(BEL)vim file\n\(ESC)]133;C\(BEL)"
+                + "\(ESC)[?1049h" // vim enters alt-screen
+                + "\(ESC)[2J~\n~\n" // some vim drawing (unknown CSI + text)
+                + "\(ESC)[?1049l" // vim exits
+                + "\(ESC)]133;D;0\(BEL)"
         let events = t.consume(Array(stream.utf8))
         XCTAssertEqual(events, [
             .promptStart, .commandStart, .commandStarted,
@@ -135,13 +134,13 @@ final class TerminalModeTrackerTests: XCTestCase {
     func testSplitBoundaryEquivalenceForRichStream() {
         let stream =
             "boot\n"
-            + "\(ESC)]133;A\(BEL)user@host:~$ \(ESC)]133;B\(BEL)"
-            + "claude\n\(ESC)]133;C\(BEL)"
-            + "\(ESC)[?1049h"               // claude enters fullscreen
-            + "\(ESC)[1;1H\(ESC)[38;2;255;0;0mhello\(ESC)[0m" // SGR truecolor + cursor
-            + "\(ESC)]0;Claude Code\(BEL)"  // OSC 0 title (unknown OSC, must be skipped)
-            + "\(ESC)[?1049l"               // exit fullscreen
-            + "\(ESC)]133;D;42\(BEL)"
+                + "\(ESC)]133;A\(BEL)user@host:~$ \(ESC)]133;B\(BEL)"
+                + "claude\n\(ESC)]133;C\(BEL)"
+                + "\(ESC)[?1049h" // claude enters fullscreen
+                + "\(ESC)[1;1H\(ESC)[38;2;255;0;0mhello\(ESC)[0m" // SGR truecolor + cursor
+                + "\(ESC)]0;Claude Code\(BEL)" // OSC 0 title (unknown OSC, must be skipped)
+                + "\(ESC)[?1049l" // exit fullscreen
+                + "\(ESC)]133;D;42\(BEL)"
         let bytes = Array(stream.utf8)
         let expected = eventsWhole(bytes)
 
@@ -191,12 +190,12 @@ final class TerminalModeTrackerTests: XCTestCase {
     func testUnknownCSISequencesDoNotBreakTracking() {
         let t = TerminalModeTracker()
         let stream =
-            "\(ESC)[2J"            // clear screen (unknown to us)
-            + "\(ESC)[38;5;201m"   // 256-color SGR
-            + "\(ESC)[1;31;42m"    // SGR combo
-            + "\(ESC)[?2004h"      // bracketed paste mode ON (DEC private, NOT alt-screen)
-            + "\(ESC)[?25l"        // hide cursor (DEC private, NOT alt-screen)
-            + "\(ESC)[?1049h"      // the one we DO track
+            "\(ESC)[2J" // clear screen (unknown to us)
+            + "\(ESC)[38;5;201m" // 256-color SGR
+            + "\(ESC)[1;31;42m" // SGR combo
+            + "\(ESC)[?2004h" // bracketed paste mode ON (DEC private, NOT alt-screen)
+            + "\(ESC)[?25l" // hide cursor (DEC private, NOT alt-screen)
+            + "\(ESC)[?1049h" // the one we DO track
         let events = t.consume(Array(stream.utf8))
         // Only the 1049 enter should surface; ?2004 / ?25 must be ignored.
         XCTAssertEqual(events, [.enteredAltScreen])
@@ -206,10 +205,10 @@ final class TerminalModeTrackerTests: XCTestCase {
     func testUnknownOSCSequencesSkipped() {
         let t = TerminalModeTracker()
         let stream =
-            "\(ESC)]0;a window title\(BEL)"      // OSC 0 (title)
+            "\(ESC)]0;a window title\(BEL)" // OSC 0 (title)
             + "\(ESC)]8;;https://example.com\(BEL)" // OSC 8 (hyperlink)
-            + "\(ESC)]52;c;BASE64==\(BEL)"        // OSC 52 (clipboard)
-            + "\(ESC)]133;A\(BEL)"                // the one we track
+            + "\(ESC)]52;c;BASE64==\(BEL)" // OSC 52 (clipboard)
+            + "\(ESC)]133;A\(BEL)" // the one we track
         XCTAssertEqual(t.consume(Array(stream.utf8)), [.promptStart])
     }
 

@@ -1,5 +1,5 @@
-import SwiftUI
 import AislopdeskClientUI
+import SwiftUI
 #if canImport(AislopdeskVideoClient)
 import AislopdeskVideoClient
 #endif
@@ -63,7 +63,7 @@ struct ClientAppMain {
                     host: descriptor.host,
                     mediaPort: descriptor.mediaPort,
                     cursorPort: descriptor.cursorPort,
-                    windowID: descriptor.windowID
+                    windowID: descriptor.windowID,
                 )
                 return AnyView(VideoWindowView(
                     title: descriptor.title, connection: connection,
@@ -71,7 +71,8 @@ struct ClientAppMain {
                     onActivate: paneContext.onActivate,
                     onCanvasScroll: paneContext.onCanvasScroll,
                     onStreamNativeSize: paneContext.onStreamNativeSize,
-                    onKeyInjectorReady: paneContext.onKeyInjectorReady))
+                    onKeyInjectorReady: paneContext.onKeyInjectorReady,
+                ))
             }
             return AnyView(VideoWindowView(title: descriptor.title))
         }
@@ -87,11 +88,16 @@ struct ClientAppMain {
         MainActor.assumeIsolated {
             RemoteWindowDiscovery.shared = { host, mediaPort, cursorPort in
                 let windows = await VideoWindowDiscovery.discoverWindows(
-                    host: host, mediaPort: mediaPort, cursorPort: cursorPort
+                    host: host, mediaPort: mediaPort, cursorPort: cursorPort,
                 )
                 return windows.map {
-                    RemoteWindowSummary(windowID: $0.windowID, appName: $0.appName, title: $0.title,
-                                        width: $0.width, height: $0.height)
+                    RemoteWindowSummary(
+                        windowID: $0.windowID,
+                        appName: $0.appName,
+                        title: $0.title,
+                        width: $0.width,
+                        height: $0.height,
+                    )
                 }
             }
         }
@@ -103,11 +109,17 @@ struct ClientAppMain {
         MainActor.assumeIsolated {
             SystemDialogDiscovery.shared = { host, mediaPort, cursorPort in
                 let dialogs = await VideoWindowDiscovery.discoverSystemDialogs(
-                    host: host, mediaPort: mediaPort, cursorPort: cursorPort
+                    host: host, mediaPort: mediaPort, cursorPort: cursorPort,
                 )
                 return dialogs.map {
-                    SystemDialogInfo(windowID: $0.windowID, owner: $0.owner, title: $0.title,
-                                     width: $0.width, height: $0.height, isSecure: $0.isSecure)
+                    SystemDialogInfo(
+                        windowID: $0.windowID,
+                        owner: $0.owner,
+                        title: $0.title,
+                        width: $0.width,
+                        height: $0.height,
+                        isSecure: $0.isSecure,
+                    )
                 }
             }
         }

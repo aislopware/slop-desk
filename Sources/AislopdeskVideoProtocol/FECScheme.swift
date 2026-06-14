@@ -73,7 +73,7 @@ public struct XORParityFEC: FECScheme {
         var parities: [Data] = []
         var index = 0
         while index < dataFragments.count {
-            let group = Array(dataFragments[index ..< min(index + groupSize, dataFragments.count)])
+            let group = Array(dataFragments[index..<min(index + groupSize, dataFragments.count)])
             parities.append(Self.xorEncoded(group))
             index += groupSize
         }
@@ -87,7 +87,7 @@ public struct XORParityFEC: FECScheme {
         var index = 0
         while index < dataFragments.count {
             let upper = min(index + groupSize, dataFragments.count)
-            let range = index ..< upper
+            let range = index..<upper
             let missing = range.filter { result[$0] == nil }
             if missing.count == 1, groupIndex < parityFragments.count, let parity = parityFragments[groupIndex] {
                 // Recover the single hole: XOR the parity with the encoded survivors,
@@ -123,7 +123,7 @@ public struct XORParityFEC: FECScheme {
             Int(data[base + 3])
         guard length >= 0, 4 + length <= data.count else { return nil }
         let start = base + 4
-        return Data(data[start ..< start + length])
+        return Data(data[start..<start + length])
     }
 
     /// XOR of the length-prefixed encodings of a group, zero-padded to the longest.
@@ -133,7 +133,7 @@ public struct XORParityFEC: FECScheme {
         var acc = [UInt8](repeating: 0, count: width)
         for member in encoded {
             let base = member.startIndex
-            for i in 0 ..< member.count { acc[i] ^= member[base + i] }
+            for i in 0..<member.count { acc[i] ^= member[base + i] }
         }
         return Data(acc)
     }
@@ -146,10 +146,10 @@ public struct XORParityFEC: FECScheme {
         let width = max(parity.count, encodedSurvivors.map(\.count).max() ?? 0)
         var acc = [UInt8](repeating: 0, count: width)
         let pBase = parity.startIndex
-        for i in 0 ..< parity.count { acc[i] ^= parity[pBase + i] }
+        for i in 0..<parity.count { acc[i] ^= parity[pBase + i] }
         for member in encodedSurvivors {
             let base = member.startIndex
-            for i in 0 ..< member.count { acc[i] ^= member[base + i] }
+            for i in 0..<member.count { acc[i] ^= member[base + i] }
         }
         return Data(acc)
     }

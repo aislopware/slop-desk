@@ -1,6 +1,6 @@
-import Foundation
 import AislopdeskClaudeCode
 import AislopdeskClient
+import Foundation
 
 /// The external input affordance's view-model — a thin `@MainActor @Observable` shell around
 /// ``AislopdeskClaudeCode/InputBoxModel`` (which owns ALL the logic: the A/B1 affordance derived
@@ -17,6 +17,7 @@ import AislopdeskClient
 /// `commandRunning`, `lastExitCode`), the bound `compose` text field, and the wiring to
 /// `AislopdeskClient.sendInput` (recording sent bytes into the dedup ring in B1). The byte-level
 /// dedup + mode tracking stay in `AislopdeskClaudeCode` — this never re-implements them.
+@preconcurrency
 @MainActor
 @Observable
 public final class InputBarModel {
@@ -46,7 +47,7 @@ public final class InputBarModel {
 
     public init(box: InputBoxModel = InputBoxModel()) {
         self.box = box
-        self.affordance = box.affordance
+        affordance = box.affordance
     }
 
     /// Feeds an inbound `output` chunk through the model so the affordance + dedup track the

@@ -9,6 +9,7 @@ import SwiftUI
 /// wire (docs/31): ``refresh()`` queries them via ``RemoteWindowDiscovery`` and the panel shows a PICKER;
 /// tapping a row ``pick(_:)``s it and opens. A manual window-id field stays as a fallback for when
 /// discovery is unavailable (no host support / empty list / timeout).
+@preconcurrency
 @MainActor
 @Observable
 public final class RemoteWindowModel {
@@ -69,6 +70,7 @@ public final class RemoteWindowModel {
         public var typed: Int
         public var skipped: Int
     }
+
     public private(set) var pasteFeedback: PasteFeedback?
     @ObservationIgnored private var pasteFeedbackTask: Task<Void, Never>?
     private let pasteFeedbackDuration: Duration
@@ -111,7 +113,9 @@ public final class RemoteWindowModel {
     /// A CLEAN paste (every character mapped) clears any STALE banner from a prior skipped paste rather
     /// than leaving it up to time out — a successful paste should not keep showing the old warning.
     private func notePasteFeedback(typed: Int, skipped: Int) {
-        guard skipped > 0 else { dismissPasteFeedback(); return }
+        guard skipped > 0 else { dismissPasteFeedback()
+            return
+        }
         pasteFeedback = PasteFeedback(typed: typed, skipped: skipped)
         pasteFeedbackTask?.cancel()
         let d = pasteFeedbackDuration
@@ -127,13 +131,14 @@ public final class RemoteWindowModel {
         pasteFeedback = nil
     }
 
+    @preconcurrency
     public init(
         target: @escaping @MainActor () -> ConnectionTarget = { .default },
         windowID: String = "",
         title: String = "Remote window",
         appName: String = "",
         pasteInterval: Duration = .milliseconds(6),
-        pasteFeedbackDuration: Duration = .seconds(5)
+        pasteFeedbackDuration: Duration = .seconds(5),
     ) {
         self.target = target
         self.windowID = windowID
@@ -174,7 +179,7 @@ public final class RemoteWindowModel {
     /// case-insensitively in the title OR the app name (token-AND, the picker's filter-field policy;
     /// 10+ windows on a busy host made the unfiltered list scroll-blind). Pure + static for tests.
     public static func filtered(
-        _ windows: [RemoteWindowSummary], query: String
+        _ windows: [RemoteWindowSummary], query: String,
     ) -> [RemoteWindowSummary] {
         let tokens = query.lowercased().split(separator: " ").map(String.init)
         guard !tokens.isEmpty else { return windows }
@@ -218,13 +223,15 @@ public final class RemoteWindowModel {
             windowID: wid,
             host: t.host,
             mediaPort: t.mediaPort,
-            cursorPort: t.cursorPort
+            cursorPort: t.cursorPort,
         )
         // PANE REBIND: persist the now-live binding (app+title travel with the id so a future
         // restore can re-resolve it). Fired on every open — a re-pick updates the spec too.
-        onEndpointCommitted?(VideoEndpoint(windowID: wid,
-                                           title: title.isEmpty ? "window \(wid)" : title,
-                                           appName: appName))
+        onEndpointCommitted?(VideoEndpoint(
+            windowID: wid,
+            title: title.isEmpty ? "window \(wid)" : title,
+            appName: appName,
+        ))
     }
 
     // MARK: Stale-binding revalidation (PANE REBIND, 2026-06-12)
@@ -251,11 +258,11 @@ public final class RemoteWindowModel {
         guard let query = RemoteWindowDiscovery.shared, let wid = parsedWindowID else { return .skipped }
         let t = target()
         let windows = await query(t.host, t.mediaPort, t.cursorPort)
-        guard !windows.isEmpty else { return .skipped }   // unreachable/empty: not evidence of staleness
+        guard !windows.isEmpty else { return .skipped } // unreachable/empty: not evidence of staleness
         switch WindowRebind.resolve(windowID: wid, appName: appName, title: title, in: windows) {
         case .keep:
             return .kept
-        case .rebind(let window):
+        case let .rebind(window):
             close()
             pick(window)
             open()
@@ -385,13 +392,15 @@ public struct RemoteWindowPanel: View {
                 TextField("Filter by title or app", text: $filter)
                     .textFieldStyle(.roundedBorder)
                     .font(.callout)
-                    #if os(iOS)
+                #if os(iOS)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    #endif
+                #endif
                 windowList
             } else if model.isLoading {
-                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Loading windows…").foregroundStyle(.secondary) }
+                HStack(spacing: 8) { ProgressView().controlSize(.small)
+                    Text("Loading windows…").foregroundStyle(.secondary)
+                }
             }
 
             if let error = model.loadError {
@@ -433,10 +442,13 @@ public struct RemoteWindowPanel: View {
         return ScrollView {
             VStack(spacing: 0) {
                 if visible.isEmpty {
-                    Text(RemoteWindowModel.windowFilterEmptyMessage(filter: filter, totalCount: model.availableWindows.count))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(8)
+                    Text(RemoteWindowModel.windowFilterEmptyMessage(
+                        filter: filter,
+                        totalCount: model.availableWindows.count,
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(8)
                 }
                 ForEach(visible) { window in
                     Button {

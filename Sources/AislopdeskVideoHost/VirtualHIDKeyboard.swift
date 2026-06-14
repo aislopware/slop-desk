@@ -1,6 +1,6 @@
 #if os(macOS)
-import Foundation
 import AislopdeskVideoProtocol
+import Foundation
 
 /// Pure core of the **virtual-HID keyboard** path — the solution to "type into a macOS SecurityAgent
 /// login/password dialog from the remote client".
@@ -21,7 +21,6 @@ import AislopdeskVideoProtocol
 /// is pure + unit-tested off-device; the socket transport to the Karabiner daemon is a separate (gated)
 /// piece.
 public enum VirtualHIDKeyboard {
-
     // MARK: macOS virtual keycode → HID usage (page 0x07)
 
     /// USB HID Keyboard/Keypad usage for a macOS virtual keycode (`kVK_*`), or `nil` if unmapped. Covers
@@ -42,8 +41,8 @@ public enum VirtualHIDKeyboard {
     public static func modifierByte(_ m: InputModifiers) -> UInt8 {
         var b: UInt8 = 0
         if m.contains(.control) { b |= 0x01 }
-        if m.contains(.shift)   { b |= 0x02 }
-        if m.contains(.option)  { b |= 0x04 }
+        if m.contains(.shift) { b |= 0x02 }
+        if m.contains(.option) { b |= 0x04 }
         if m.contains(.command) { b |= 0x08 }
         return b
     }
@@ -56,7 +55,7 @@ public enum VirtualHIDKeyboard {
         var report: [UInt8] = [modifiers, 0x00, 0, 0, 0, 0, 0, 0]
         let sorted = keys.sorted()
         if sorted.count > 6 {
-            for i in 2..<8 { report[i] = 0x01 }   // ErrorRollOver
+            for i in 2..<8 { report[i] = 0x01 } // ErrorRollOver
         } else {
             for (i, k) in sorted.enumerated() { report[2 + i] = k }
         }
@@ -67,16 +66,16 @@ public enum VirtualHIDKeyboard {
 
     /// macOS virtual keycodes that are modifier keys (don't enter the key array).
     static let modifierKeys: Set<UInt16> = [
-        0x37,  // kVK_Command
-        0x36,  // kVK_RightCommand
-        0x38,  // kVK_Shift
-        0x3C,  // kVK_RightShift
-        0x3A,  // kVK_Option
-        0x3D,  // kVK_RightOption
-        0x3B,  // kVK_Control
-        0x3E,  // kVK_RightControl
-        0x39,  // kVK_CapsLock
-        0x3F,  // kVK_Function
+        0x37, // kVK_Command
+        0x36, // kVK_RightCommand
+        0x38, // kVK_Shift
+        0x3C, // kVK_RightShift
+        0x3A, // kVK_Option
+        0x3D, // kVK_RightOption
+        0x3B, // kVK_Control
+        0x3E, // kVK_RightControl
+        0x39, // kVK_CapsLock
+        0x3F, // kVK_Function
     ]
 
     /// macOS virtual keycode → HID usage (page 0x07). Source: the kVK_* constants ⟷ the USB HID Usage
@@ -186,9 +185,8 @@ public struct HIDKeyboardState: Equatable, Sendable {
             return VirtualHIDKeyboard.bootReport(modifiers: modByte, keys: Array(pressed))
         }
         guard let usage = VirtualHIDKeyboard.hidUsage(forVirtualKey: vk) else { return nil }
-        let changed: Bool
-        if down { changed = pressed.insert(usage).inserted }
-        else { changed = pressed.remove(usage) != nil }
+        let changed: Bool =
+            if down { pressed.insert(usage).inserted } else { pressed.remove(usage) != nil }
         // Always emit when a regular key toggles; also re-emit if only the modifier byte differs is
         // handled by the caller sending the modifier event. A no-op repeat (autorepeat down on an
         // already-pressed key) still re-emits so the host sees the key held.

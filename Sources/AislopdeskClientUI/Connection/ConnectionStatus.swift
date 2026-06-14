@@ -24,13 +24,13 @@ public enum ConnectionStatus: Sendable, Equatable {
 
     public var label: String {
         switch self {
-        case .disconnected: return "disconnected"
-        case .connecting: return "connecting"
-        case .connected: return "connected"
+        case .disconnected: "disconnected"
+        case .connecting: "connecting"
+        case .connected: "connected"
         case let .reconnecting(attempt, _):
-            return attempt > 0 ? "reconnecting (\(attempt))" : "reconnecting"
-        case .unreachable: return "unreachable"
-        case .failed(let m): return "failed: \(m)"
+            attempt > 0 ? "reconnecting (\(attempt))" : "reconnecting"
+        case .unreachable: "unreachable"
+        case let .failed(m): "failed: \(m)"
         }
     }
 }

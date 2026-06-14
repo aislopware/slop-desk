@@ -55,11 +55,14 @@ public struct LineAccumulator {
                 // This newline ends the over-long line we were discarding — resync, emit nothing.
                 skippingOverlongLine = false
             } else {
-                var bytes = Data(pending[searchStart ..< nlIndex])
-                if bytes.last == UInt8(ascii: "\r") { bytes.removeLast() }   // CRLF tolerance
+                var bytes = Data(pending[searchStart..<nlIndex])
+                if bytes.last == UInt8(ascii: "\r") { bytes.removeLast() } // CRLF tolerance
                 // Lossy UTF-8 (U+FFFD substitution) so a line with invalid bytes still SURFACES as a
                 // line (the caller maps an unparseable one to `.unknown`) rather than being silently
                 // dropped by a failed `String(data:encoding:)` — the never-miss-a-line contract (INSP-PARSE-3).
+                // The failable initializer the lint rule prefers returns nil on invalid UTF-8 (would drop the
+                // line and break the INSP-PARSE-3 regression test), so the lossy decode is mandatory here.
+                // swiftlint:disable:next optional_data_string_conversion
                 lines.append(String(decoding: bytes, as: UTF8.self))
             }
             searchStart = pending.index(after: nlIndex)
@@ -72,7 +75,7 @@ public struct LineAccumulator {
         } else {
             // Drop everything up to the last completed line; keep the trailing partial.
             if searchStart > pending.startIndex {
-                pending.removeSubrange(pending.startIndex ..< searchStart)
+                pending.removeSubrange(pending.startIndex..<searchStart)
             }
             // Cap the surviving partial: if it has grown past the cap with no newline, discard it and
             // enter skip mode so the rest of the over-long line (until its newline) is dropped instead

@@ -36,7 +36,6 @@ public struct ScreenInfo: Equatable, Sendable {
 ///
 /// All functions are pure and exhaustively tested (single + multi-monitor + Retina).
 public enum CoordinateMapping {
-
     /// Step 2 — maps a normalised (0..1) window point to a host-window point in
     /// **CG top-left** space, ready for `CGEvent(mouseCursorPosition:)` /
     /// `CGWarpMouseCursorPosition`. No Y flip, no scale (doc 05 §2).
@@ -78,12 +77,12 @@ public enum CoordinateMapping {
     public static func backingScaleFactor(
         forWindowBoundsCG windowBoundsCG: VideoRect,
         screens: [ScreenInfo],
-        primaryHeight: Double
+        primaryHeight: Double,
     ) -> Double? {
         // Delegated to the Rust core (see `windowPoint`); the screens array is borrowed for the
         // call only. Returns nil for no overlap, exactly as the native loop did.
         RustVideoFFI.coordBackingScaleFactor(
-            windowBoundsCG: windowBoundsCG, screens: screens, primaryHeight: primaryHeight
+            windowBoundsCG: windowBoundsCG, screens: screens, primaryHeight: primaryHeight,
         )
     }
 
@@ -96,7 +95,7 @@ public enum CoordinateMapping {
     public static func windowPoint(
         pixel: VideoPoint,
         windowBoundsCG: VideoRect,
-        backingScaleFactor scale: Double
+        backingScaleFactor scale: Double,
     ) -> VideoPoint {
         // Delegated to the Rust core (see `windowPoint`).
         RustVideoFFI.coordWindowPoint(pixel: pixel, windowBoundsCG: windowBoundsCG, backingScaleFactor: scale)

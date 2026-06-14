@@ -47,7 +47,7 @@ impl<FlowID: Eq + Hash + Clone> IdleReapDecider<FlowID> {
 
     /// The configured idle threshold in seconds.
     #[must_use]
-    pub fn idle_timeout(&self) -> f64 {
+    pub const fn idle_timeout(&self) -> f64 {
         self.idle_timeout
     }
 

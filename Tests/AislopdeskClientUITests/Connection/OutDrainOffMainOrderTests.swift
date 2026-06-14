@@ -1,7 +1,7 @@
-import XCTest
-import Foundation
 import AislopdeskProtocol
 import AislopdeskTransport
+import Foundation
+import XCTest
 @testable import AislopdeskClient
 @testable import AislopdeskClientUI
 
@@ -12,13 +12,12 @@ import AislopdeskTransport
 /// residual flush, residual `.input` dropped, trailing `.resize` flushed.
 @MainActor
 final class OutDrainOffMainOrderTests: XCTestCase {
-
     func testKeystrokeOrderSurvivesJitteredTransportOffMain() async throws {
         let rec = JitterRecorder()
         let terminal = TerminalViewModel()
         let vm = ConnectionViewModel(
             terminal: terminal, target: { ConnectionTarget(host: "h", port: 1) },
-            makeClient: { AislopdeskClient(makeTransport: { rec.makeTransport() }) }
+            makeClient: { AislopdeskClient(makeTransport: { rec.makeTransport() }) },
         )
         await vm.connect()
 
@@ -28,22 +27,25 @@ final class OutDrainOffMainOrderTests: XCTestCase {
             let byte = UInt8(i % 251)
             terminal.sendInput(Data([byte]))
             accumulated.append(byte)
-            if i % 37 == 0 { terminal.sendResize(cols: UInt16(80 + i % 40), rows: 24) }
+            if i.isMultiple(of: 37) { terminal.sendResize(cols: UInt16(80 + i % 40), rows: 24) }
         }
         let expected = accumulated
 
         try await waitUntil(timeout: .seconds(10)) { rec.inputBytes == expected }
-        XCTAssertEqual(rec.inputBytes, expected,
-                       "wire byte order == main-actor call order (single off-main consumer, no per-event Tasks)")
+        XCTAssertEqual(
+            rec.inputBytes,
+            expected,
+            "wire byte order == main-actor call order (single off-main consumer, no per-event Tasks)",
+        )
         await vm.disconnect()
     }
 
-    func testTeardownAwaitsDrainNoDuplicationAndFlushesTrailingResize() async throws {
+    func testTeardownAwaitsDrainNoDuplicationAndFlushesTrailingResize() async {
         let rec = JitterRecorder()
         let terminal = TerminalViewModel()
         let vm = ConnectionViewModel(
             terminal: terminal, target: { ConnectionTarget(host: "h", port: 1) },
-            makeClient: { AislopdeskClient(makeTransport: { rec.makeTransport() }) }
+            makeClient: { AislopdeskClient(makeTransport: { rec.makeTransport() }) },
         )
         await vm.connect()
 
@@ -57,8 +59,11 @@ final class OutDrainOffMainOrderTests: XCTestCase {
         // residual inputs by design — never reorder or duplicate them).
         let delivered = rec.inputBytes
         XCTAssertLessThanOrEqual(delivered.count, 50)
-        XCTAssertEqual(delivered, Data((0..<UInt8(delivered.count)).map { $0 }),
-                       "delivered prefix is exactly the call-order prefix — no reorder, no duplicates")
+        XCTAssertEqual(
+            delivered,
+            Data((0..<UInt8(delivered.count)).map(\.self)),
+            "delivered prefix is exactly the call-order prefix — no reorder, no duplicates",
+        )
         XCTAssertEqual(rec.resizes.last?.cols, 123, "the trailing resize always reaches the host (control path)")
         XCTAssertEqual(rec.resizes.last?.rows, 45)
     }
@@ -69,10 +74,26 @@ final class OutDrainOffMainOrderTests: XCTestCase {
         private let lock = NSLock()
         private var bytes = Data()
         private var sizes: [(cols: UInt16, rows: UInt16)] = []
-        var inputBytes: Data { lock.lock(); defer { lock.unlock() }; return bytes }
-        var resizes: [(cols: UInt16, rows: UInt16)] { lock.lock(); defer { lock.unlock() }; return sizes }
-        func recordInput(_ d: Data) { lock.lock(); bytes.append(d); lock.unlock() }
-        func recordResize(_ c: UInt16, _ r: UInt16) { lock.lock(); sizes.append((c, r)); lock.unlock() }
+        var inputBytes: Data { lock.lock()
+            defer { lock.unlock() }
+            return bytes
+        }
+
+        var resizes: [(cols: UInt16, rows: UInt16)] { lock.lock()
+            defer { lock.unlock() }
+            return sizes
+        }
+
+        func recordInput(_ d: Data) { lock.lock()
+            bytes.append(d)
+            lock.unlock()
+        }
+
+        func recordResize(_ c: UInt16, _ r: UInt16) { lock.lock()
+            sizes.append((c, r))
+            lock.unlock()
+        }
+
         func makeTransport() -> JitterTransport { JitterTransport(recorder: self) }
     }
 
@@ -92,25 +113,35 @@ final class OutDrainOffMainOrderTests: XCTestCase {
             inbound = AsyncThrowingStream { c = $0 }
             continuation = c
         }
-        func connect(host: String, port: UInt16, resume: UUID, lastReceivedSeq: Int64, handshakeTimeout: Duration) async throws {
+
+        func connect(
+            host _: String,
+            port _: UInt16,
+            resume _: UUID,
+            lastReceivedSeq _: Int64,
+            handshakeTimeout _: Duration,
+        ) {
             _sessionID = UUID()
         }
-        func sendInput(_ bytes: Data) async throws {
+
+        func sendInput(_ bytes: Data) async {
             // Deterministic jitter: every 3rd send suspends, giving an unordered design
             // every opportunity to scramble. The single sequential drain must not.
             counter += 1
-            if counter % 3 == 0 { try? await Task.sleep(for: .milliseconds(2)) }
+            if counter.isMultiple(of: 3) { try? await Task.sleep(for: .milliseconds(2)) }
             recorder.recordInput(bytes)
         }
-        func sendResize(cols: UInt16, rows: UInt16, pxWidth: UInt16, pxHeight: UInt16) async throws {
+
+        func sendResize(cols: UInt16, rows: UInt16, pxWidth _: UInt16, pxHeight _: UInt16) {
             recorder.recordResize(cols, rows)
         }
-        func sendAck(seq: Int64) async throws {}
-        func sendBye() async throws {}
-        func close() async { continuation.finish() }
+
+        func sendAck(seq _: Int64) {}
+        func sendBye() {}
+        func close() { continuation.finish() }
     }
 
-    private func waitUntil(timeout: Duration, _ condition: @escaping @Sendable () -> Bool) async throws {
+    private func waitUntil(timeout: Duration, _ condition: @Sendable () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: timeout)
         while ContinuousClock.now < deadline {
             if condition() { return }
@@ -118,5 +149,6 @@ final class OutDrainOffMainOrderTests: XCTestCase {
         }
         if !condition() { throw OffMainOrderTestError.timedOut }
     }
+
     private enum OffMainOrderTestError: Error { case timedOut }
 }

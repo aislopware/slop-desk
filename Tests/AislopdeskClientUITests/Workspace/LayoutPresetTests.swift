@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins named layout presets: snapshot the current canvas under a name, switch contexts (tears down +
@@ -7,7 +7,6 @@ import CoreGraphics
 /// Codable round-trip.
 @MainActor
 final class LayoutPresetTests: XCTestCase {
-
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
         WorkspaceStore(restoring: restoring, makeSession: { FakePaneSession($0) }, liveVideoCap: 5)
     }
@@ -15,15 +14,23 @@ final class LayoutPresetTests: XCTestCase {
     private func twoPaneWorkspace() -> (Workspace, PaneID, PaneID) {
         let a = PaneID(), b = PaneID()
         let items = [
-            CanvasItem(id: a, spec: PaneSpec(kind: .terminal, title: "A"),
-                       frame: CGRect(x: 0, y: 0, width: 480, height: 320), z: 0),
-            CanvasItem(id: b, spec: PaneSpec(kind: .claudeCode, title: "B"),
-                       frame: CGRect(x: 600, y: 0, width: 480, height: 320), z: 1),
+            CanvasItem(
+                id: a,
+                spec: PaneSpec(kind: .terminal, title: "A"),
+                frame: CGRect(x: 0, y: 0, width: 480, height: 320),
+                z: 0,
+            ),
+            CanvasItem(
+                id: b,
+                spec: PaneSpec(kind: .claudeCode, title: "B"),
+                frame: CGRect(x: 600, y: 0, width: 480, height: 320),
+                z: 1,
+            ),
         ]
         return (Workspace(canvas: Canvas(items: items), focusedPane: a), a, b)
     }
 
-    func testSaveSnapshotsCanvasGroupsAndFocus() {
+    func testSaveSnapshotsCanvasGroupsAndFocus() throws {
         let (ws, a, _) = twoPaneWorkspace()
         let store = makeStore(restoring: ws)
         let gid = store.addGroup(name: "G")
@@ -32,7 +39,7 @@ final class LayoutPresetTests: XCTestCase {
         store.saveLayoutPreset(name: "work")
 
         XCTAssertEqual(store.layoutPresetNames, ["work"])
-        let preset = store.workspace.layoutPresets.first!
+        let preset = try XCTUnwrap(store.workspace.layoutPresets.first)
         XCTAssertEqual(preset.canvas.items.count, 2)
         XCTAssertEqual(preset.groups.count, 1)
         XCTAssertEqual(preset.focusedPane, a)
@@ -49,20 +56,20 @@ final class LayoutPresetTests: XCTestCase {
         let (ws, _, b) = twoPaneWorkspace()
         let store = makeStore(restoring: ws)
         store.saveLayoutPreset(name: "work")
-        store.closePane(b)   // now one pane
+        store.closePane(b) // now one pane
         store.saveLayoutPreset(name: "work")
         XCTAssertEqual(store.layoutPresetNames, ["work"], "same name overwrites, not appends")
         XCTAssertEqual(store.workspace.layoutPresets.first?.canvas.items.count, 1)
     }
 
-    func testSwitchReplacesCanvasWithFreshIdsAndRebuildsSessions() async {
+    func testSwitchReplacesCanvasWithFreshIdsAndRebuildsSessions() async throws {
         let (ws, _, _) = twoPaneWorkspace()
         let store = makeStore(restoring: ws)
         store.saveLayoutPreset(name: "two")
-        let savedIDs = Set(store.workspace.layoutPresets.first!.canvas.items.map(\.id))
+        let savedIDs = try Set(XCTUnwrap(store.workspace.layoutPresets.first?.canvas.items.map(\.id)))
 
         // Mutate the live canvas, then switch back to the saved "two".
-        store.addPane(kind: .terminal)   // now 3 panes
+        store.addPane(kind: .terminal) // now 3 panes
         XCTAssertEqual(store.workspace.canvas.items.count, 3)
         store.switchToLayoutPreset(name: "two")
         await store.quiesce()
@@ -90,12 +97,12 @@ final class LayoutPresetTests: XCTestCase {
         XCTAssertEqual(Set(store.layoutPresetNames), Set(["a", "b"]), "presets survive a switch")
     }
 
-    func testEphemeralPanesAreStrippedFromSnapshot() {
+    func testEphemeralPanesAreStrippedFromSnapshot() throws {
         let (ws, _, _) = twoPaneWorkspace()
         let store = makeStore(restoring: ws)
         store.addSystemDialogPane(windowID: 9, owner: "SecurityAgent", title: "sudo", isSecure: true)
         store.saveLayoutPreset(name: "work")
-        let kinds = store.workspace.layoutPresets.first!.canvas.items.map(\.spec.kind)
+        let kinds = try XCTUnwrap(store.workspace.layoutPresets.first?.canvas.items.map(\.spec.kind))
         XCTAssertFalse(kinds.contains(.systemDialog), "an auto-managed dialog pane must not be saved")
     }
 
@@ -103,11 +110,11 @@ final class LayoutPresetTests: XCTestCase {
         let (ws, _, _) = twoPaneWorkspace()
         let store = makeStore(restoring: ws)
         store.saveLayoutPreset(name: "work")
-        store.switchToLayoutPreset(name: "nope")   // unknown — no-op, no trap
+        store.switchToLayoutPreset(name: "nope") // unknown — no-op, no trap
         XCTAssertEqual(store.workspace.canvas.items.count, 2)
         store.deleteLayoutPreset(name: "work")
         XCTAssertTrue(store.layoutPresetNames.isEmpty)
-        store.deleteLayoutPreset(name: "work")     // already gone — no-op
+        store.deleteLayoutPreset(name: "work") // already gone — no-op
     }
 
     func testPresetsSurviveCodableRoundTrip() throws {

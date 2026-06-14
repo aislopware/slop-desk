@@ -25,7 +25,7 @@ public enum InputRouting {
         /// `characters` ignoring modifiers (UIKit `UIKey.charactersIgnoringModifiers`).
         public var charactersIgnoringModifiers: String
         public var control: Bool
-        public var option: Bool    // Alt
+        public var option: Bool // Alt
         public var command: Bool
         /// Shift. Deliberately NOT consulted by ``route(_:)`` (a shifted printable letter must still
         /// flow through the IME proxy), only by the special-key byte encoder — UIKit reports the same
@@ -42,7 +42,7 @@ public enum InputRouting {
             option: Bool = false,
             command: Bool = false,
             shift: Bool = false,
-            isSpecial: Bool = false
+            isSpecial: Bool = false,
         ) {
             self.characters = characters
             self.charactersIgnoringModifiers = charactersIgnoringModifiers ?? characters

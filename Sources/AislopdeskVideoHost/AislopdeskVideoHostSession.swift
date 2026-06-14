@@ -1,9 +1,9 @@
 #if os(macOS)
-import Foundation
-import ScreenCaptureKit
-import CoreMedia
-import OSLog
 import AislopdeskVideoProtocol
+import CoreMedia
+import Foundation
+import OSLog
+import ScreenCaptureKit
 
 /// The host-side session orchestrator for the GUI video path (PATH 2 / Phase 4).
 ///
@@ -76,9 +76,11 @@ public actor AislopdeskVideoHostSession {
     /// Gap between paced chunks. 0.5 ms × (97/8 ≈ 12 chunks) ≈ 6 ms to drain a heartbeat IDR — well
     /// under the 16 ms frame interval, so the consumer never falls behind. Override µs via `AISLOPDESK_PACE_US`.
     private static let paceGapNanos: UInt64 = {
-        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_PACE_US"], let v = UInt64(s), v >= 1, v <= 10_000 { return v * 1_000 }
+        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_PACE_US"], let v = UInt64(s), v >= 1,
+           v <= 10000 { return v * 1000 }
         return 500_000
     }()
+
     /// RC-2 (2026-06-09 smoothness): RATE-PROPORTIONAL pacing. The fixed `paceGapNanos` (0.5ms) drains an
     /// 8-fragment (~9600-byte) chunk ~13× FASTER than a 12Mbps link can absorb → a big frame blasts
     /// ~146Mbps into the link → self-inflicted burst loss (measured 10–14% on a real scroll) → ABR
@@ -88,9 +90,10 @@ public actor AislopdeskVideoHostSession {
     /// Parsec's window-AIMD-paced send — it never puts more bytes/sec on the wire than the link drains.
     /// An explicit `AISLOPDESK_PACE_US` still pins a static gap (overrides adaptive, for A/B).
     private static let pacingAdaptive: Bool = {
-        if ProcessInfo.processInfo.environment["AISLOPDESK_PACE_US"] != nil { return false }   // explicit static pin wins
+        if ProcessInfo.processInfo.environment["AISLOPDESK_PACE_US"] != nil { return false } // explicit static pin wins
         return ProcessInfo.processInfo.environment["AISLOPDESK_PACE_ADAPTIVE"] != "0"
     }()
+
     /// Link-rate fallback when the ABR target is not yet known (ABR off / pre-warmup).
     private static let pacingFallbackBps = 12_000_000
     /// Pace at this MULTIPLE of the live ABR target (`AISLOPDESK_PACE_RATE_X`, default 2.5, clamp
@@ -104,6 +107,7 @@ public actor AislopdeskVideoHostSession {
         }
         return 2.5
     }()
+
     /// Clamp the adaptive gap: never faster than 0.2ms (a high ABR target would otherwise ≈0 it), never
     /// slower than 40ms/chunk (a collapsed-to-floor ABR must not serialize a frame into a multi-second stall).
     private static let pacingGapFloorNanos: UInt64 = 200_000
@@ -124,6 +128,7 @@ public actor AislopdeskVideoHostSession {
         }
         return 12_000_000
     }()
+
     /// FPS GOVERNOR (2026-06-11) — regular-cadence content/congestion-adaptive fps, the successor
     /// of the retired `AdaptiveFPSController` (whose alternating skip delivered irregular
     /// 16.7/33.3 ms intervals = the PRIMARY cadence khựng; deleted with `AISLOPDESK_ADAPTIVE_FPS`).
@@ -143,9 +148,15 @@ public actor AislopdeskVideoHostSession {
     /// `targetBps × rateMultiplier`, clamped to `[floorNanos, ceilNanos]`. `targetBps <= 0` ⇒ `fallbackBps`.
     /// `rateMultiplier` (≥1) is the burst-vs-serialization dial: 1 = exact link rate (max frame ~27ms at
     /// 40Mbps — backlogs the consumer), 2.5 (default) = max frame ~10ms while bursts stay 2.5× sustained.
-    static func adaptivePaceGapNanos(targetBps: Int, fallbackBps: Int, chunkFragments: Int,
-                                     datagramSize: Int, floorNanos: UInt64, ceilNanos: UInt64,
-                                     rateMultiplier: Double = 1.0) -> UInt64 {
+    static func adaptivePaceGapNanos(
+        targetBps: Int,
+        fallbackBps: Int,
+        chunkFragments: Int,
+        datagramSize: Int,
+        floorNanos: UInt64,
+        ceilNanos: UInt64,
+        rateMultiplier: Double = 1.0,
+    ) -> UInt64 {
         let bps = targetBps > 0 ? targetBps : fallbackBps
         guard bps > 0 else { return ceilNanos }
         let effectiveBps = Double(bps) * max(1.0, rateMultiplier.isFinite ? rateMultiplier : 1.0)
@@ -154,6 +165,7 @@ public actor AislopdeskVideoHostSession {
         guard gap.isFinite, gap >= 0 else { return ceilNanos }
         return max(floorNanos, min(UInt64(min(gap, Double(ceilNanos))), ceilNanos))
     }
+
     /// KEYFRAME DUPLICATE-SEND (F3 flicker fix, 2026-06-08). Forward redundancy by REPETITION: re-send a
     /// keyframe's datagrams a second time (paced + time-separated) so a large IDR survives a time-correlated
     /// burst loss that the single-loss XOR FEC cannot repair. This is the only host-only, REORDER-FREE way
@@ -190,15 +202,16 @@ public actor AislopdeskVideoHostSession {
             config.bucketCapacity = min(4, max(1, v))
         }
         if let s = env["AISLOPDESK_IDR_REFILL_MS"], let v = Double(s), v.isFinite {
-            config.refillTokensPerSecond = 1000.0 / min(5_000, max(100, v))
+            config.refillTokensPerSecond = 1000.0 / min(5000, max(100, v))
         }
         if let s = env["AISLOPDESK_IDR_GRACE_MS"], let v = Double(s), v.isFinite {
-            let pinned = min(1_000, max(0, v)) / 1000.0
+            let pinned = min(1000, max(0, v)) / 1000.0
             config.graceFloorSeconds = pinned
             config.graceCeilSeconds = pinned
         }
         return config
     }()
+
     /// NETWORK-FEEDBACK TELEMETRY (the network-feedback channel). DEFAULT ON; disable with
     /// `AISLOPDESK_NETSTATS=0`. When ON, every outgoing video fragment is stamped with the host-relative
     /// send time and the host folds the client's periodic NetworkStats reports into a NetworkEstimate
@@ -224,14 +237,14 @@ public actor AislopdeskVideoHostSession {
     /// sends tier 0 (the configured `fec.groupSize`, 5 in prod) → spare flag bits stay zero → the wire is
     /// byte-identical to the pre-WF-4 path. Needs telemetry reports to ever change tier (if the client
     /// sets `AISLOPDESK_NETSTATS=0` no reports arrive ⇒ the tier stays at the today-default tier 0, never OFF).
-    // DEFAULT ON since 2026-06-11 (self-heal era): on a clean path (loss EWMA <0.2%) the tier
-    // relaxes toward less parity — the standing 20% overhead is paid ONLY while loss exists. The
-    // ~1s one-step-per-report re-escalation window at loss onset is covered by AISLOPDESK_SELF_HEAL
-    // (any whole-frame loss self-heals ≤K frames with no round-trip) + client recovery + kfDup.
-    // FEC LADDER FLOOR (2026-06-11 telemetry round): relaxation now FLOORS at g10 (tier 2, ~10%
-    // overhead) — the measured 18 OFF-tier visits on the 0.1-0.6%-baseline path produced 102
-    // unrecovered losses / 65 decode-fails in 169s. `AISLOPDESK_FEC_ALLOW_OFF=1` restores the old
-    // walk to OFF; `AISLOPDESK_ADAPTIVE_FEC=0` restores the static always-g5 tier.
+    /// DEFAULT ON since 2026-06-11 (self-heal era): on a clean path (loss EWMA <0.2%) the tier
+    /// relaxes toward less parity — the standing 20% overhead is paid ONLY while loss exists. The
+    /// ~1s one-step-per-report re-escalation window at loss onset is covered by AISLOPDESK_SELF_HEAL
+    /// (any whole-frame loss self-heals ≤K frames with no round-trip) + client recovery + kfDup.
+    /// FEC LADDER FLOOR (2026-06-11 telemetry round): relaxation now FLOORS at g10 (tier 2, ~10%
+    /// overhead) — the measured 18 OFF-tier visits on the 0.1-0.6%-baseline path produced 102
+    /// unrecovered losses / 65 decode-fails in 169s. `AISLOPDESK_FEC_ALLOW_OFF=1` restores the old
+    /// walk to OFF; `AISLOPDESK_ADAPTIVE_FEC=0` restores the static always-g5 tier.
     private static let adaptiveFECEnabled = ProcessInfo.processInfo.environment["AISLOPDESK_ADAPTIVE_FEC"] != "0"
     /// WF-6 (#8) FULL-RANGE COLOR. DEFAULT OFF; enable with `AISLOPDESK_FULL_RANGE=1`. ONE flag flips ALL
     /// FOUR atomic points together: (1) the capturer's NV12 pixel-format variant, (2) the encoder's
@@ -296,6 +309,7 @@ public actor AislopdeskVideoHostSession {
            let v = Double(s), v >= 0, v <= 200 { return v / 1000.0 }
         return 0.025
     }()
+
     /// WF-2 ADAPTIVE BITRATE controller (only seeded when `AISLOPDESK_ABR=1`). A pure value type re-seeded
     /// at every encoder build so a resize re-anchors it to the new resolution's ceiling. `nil` ⇒ ABR
     /// off or no encoder yet ⇒ no actuation.
@@ -320,7 +334,7 @@ public actor AislopdeskVideoHostSession {
     /// ACKNOWLEDGED, both bounded. Only mutated when `AISLOPDESK_LTR=1`; inert (never recorded/acked) when
     /// off, so a `.refreshLTR` decision always falls back to a real IDR.
     private var ltrController = LTRController()
-    nonisolated private func dbg(_ message: @autoclosure () -> String) {
+    private nonisolated func dbg(_ message: @autoclosure () -> String) {
         guard Self.debugStderr else { return }
         FileHandle.standardError.write(Data("aislopdesk-videohostd[session]: \(message())\n".utf8))
     }
@@ -423,23 +437,31 @@ public actor AislopdeskVideoHostSession {
     ///   - window: the desktop-independent window to remote.
     ///   - transport: the UDP datagram transport (production: a ``VideoMuxChannelTransport`` lane on the shared ``NWVideoMuxDatagramTransport``).
     ///   - fec: optional FEC scheme for the video packetizer (default 20% XOR parity).
-    public init(window: SCWindow, transport: any VideoDatagramTransport, fec: FECScheme? = XORParityFEC(), captureScale: Double = 2.0, captureSizeOverride: VideoSize? = nil, bitrate: Int = VideoEncoder.bitrateBitsPerSecond, fps: Int = 60) {
+    public init(
+        window: SCWindow,
+        transport: any VideoDatagramTransport,
+        fec: FECScheme? = XORParityFEC(),
+        captureScale: Double = 2.0,
+        captureSizeOverride: VideoSize? = nil,
+        bitrate: Int = VideoEncoder.bitrateBitsPerSecond,
+        fps: Int = 60,
+    ) {
         self.window = window
         self.transport = transport
         self.captureScale = max(1.0, captureScale)
         self.captureSizeOverride = captureSizeOverride
         self.bitrate = bitrate
         self.fps = max(1, fps)
-        self.governedFps = max(1, fps)
-        self.stateMachine = VideoSessionStateMachine(fullRange: Self.fullRange)
+        governedFps = max(1, fps)
+        stateMachine = VideoSessionStateMachine(fullRange: Self.fullRange)
         // AISLOPDESK_FEC=0 (latency A/B, 2026-06-11): drop the 20% XOR parity entirely — Parsec ships
         // ZERO video FEC and relies on LTR/IDR recovery alone. Parity costs +20% datagrams per
         // frame (+1 pacing chunk ≈ +1.5ms lane serialization, sent AFTER the data) on EVERY frame
         // to save the occasional loss-recovery round-trip. The client reads the FEC tier per
         // fragment, so a parity-less stream is wire-compatible with an unchanged client.
         let fecDisabled = ProcessInfo.processInfo.environment["AISLOPDESK_FEC"] == "0"
-        self.packetizer = VideoPacketizer(fec: fecDisabled ? nil : fec)
-        self.fecGroupSize = fec?.groupSize ?? 1
+        packetizer = VideoPacketizer(fec: fecDisabled ? nil : fec)
+        fecGroupSize = fec?.groupSize ?? 1
     }
 
     // MARK: Lifecycle
@@ -465,8 +487,8 @@ public actor AislopdeskVideoHostSession {
             for await _ in wakeups {
                 guard let self else { break }
                 let batch = queue.drainAll()
-                if batch.isEmpty { continue }   // a coalesced wakeup an earlier drain already emptied
-                await self.receiveBatch(batch)
+                if batch.isEmpty { continue } // a coalesced wakeup an earlier drain already emptied
+                await receiveBatch(batch)
             }
         }
         // Enqueue THEN signal on the transport's serial receive queue, so the consumer always
@@ -492,7 +514,13 @@ public actor AislopdeskVideoHostSession {
                 let batch = eq.drainAll()
                 // Process IN ORDER (the FIFO carried encode order from the serial VT callback).
                 for frame in batch {
-                    await self.onEncodedFrame(avcc: frame.avcc, keyframe: frame.keyframe, crisp: frame.crisp, ltrToken: frame.ltrToken, ackedAnchored: frame.ackedAnchored)
+                    await onEncodedFrame(
+                        avcc: frame.avcc,
+                        keyframe: frame.keyframe,
+                        crisp: frame.crisp,
+                        ltrToken: frame.ltrToken,
+                        ackedAnchored: frame.ackedAnchored,
+                    )
                 }
             }
         }
@@ -546,17 +574,22 @@ public actor AislopdeskVideoHostSession {
                 // Gate on streaming (matches `InputDatagramRouter.route`) and decode here so the
                 // run can be coalesced. A malformed datagram is dropped, never crashes the receiver.
                 guard stateMachine.mediaFlowing else { continue }
-                do { inputRun.append(try InputEvent.decode(data)) }
-                catch { log.error("dropping input datagram: undecodable") }
+                do { try inputRun.append(InputEvent.decode(data)) } catch {
+                    log.error("dropping input datagram: undecodable")
+                }
             case .control:
-                let run = inputRun; inputRun = []
+                let run = inputRun
+                inputRun = []
                 await injectCoalesced(run)
                 await handleControl(data)
             case .recovery:
-                let run = inputRun; inputRun = []
+                let run = inputRun
+                inputRun = []
                 await injectCoalesced(run)
                 handleRecovery(data)
-            case .video, .geometry, .cursor:
+            case .video,
+                 .geometry,
+                 .cursor:
                 // Host does not receive these (host→client). Ignore defensively.
                 break
             }
@@ -596,7 +629,13 @@ public actor AislopdeskVideoHostSession {
             // capture it — mirrors `inject(_:raiseFirst:)`'s `guard let injector` pattern.
             guard stateMachine.mediaFlowing, let injector else { return }
             if Self.inputTrace {
-                FileHandle.standardError.write(Data("aislopdesk-videohostd[inject]: focusWindow → proactive raise (async, window=\(window.windowID))\n".utf8))
+                FileHandle.standardError
+                    .write(
+                        Data(
+                            "aislopdesk-videohostd[inject]: focusWindow → proactive raise (async, window=\(window.windowID))\n"
+                                .utf8,
+                        ),
+                    )
             }
             // FIRE-AND-FORGET (the "click bị delay" fix): never AWAIT the AX raise. On an AX-slow target
             // it costs ≈1s, and the input path must not block on it. `raiseTargetWindow()` self-throttles
@@ -607,30 +646,40 @@ public actor AislopdeskVideoHostSession {
             return
         }
         let bounds = currentWindowBoundsCG()
-        let effects = stateMachine.handleControl(message, windowBoundsCG: bounds, resolveCaptureSize: { [window, captureSizeOverride] requestedWindowID, viewport in
-            // Accept only the window this session was created for; size the capture to
-            // the real window backing store (clamp the requested viewport to it).
-            guard requestedWindowID == UInt32(window.windowID) else { return nil }
-            // Prefer the daemon's achieved post-move size (feature #1 VD): a window resized DOWN to
-            // fit the VD must be captured + acked at its NEW point size, not the stale `SCWindow.frame`
-            // enumeration snapshot — else the SCStream over-crops and the client's input-mapping
-            // denominator desyncs. `nil` (no VD move) ⇒ `window.frame` as before.
-            let sourcePoints = captureSizeOverride ?? VideoSize(width: window.frame.width, height: window.frame.height)
-            let w = UInt16(max(1, min(Double(UInt16.max), sourcePoints.width.rounded())))
-            let h = UInt16(max(1, min(Double(UInt16.max), sourcePoints.height.rounded())))
-            _ = viewport // viewport informs client-side scaling; host captures native window pixels.
-            return (w, h)
-        }, resolveResizeSize: { [window] requestedWindowID, desired in
-            // Accept only the session's window; sanity-clamp the desired POINT size into a
-            // valid, non-zero, UInt16-safe range. This is a POLICY pre-clamp only — the AX
-            // read-back in `apply(.resizeCapture)` is the AUTHORITATIVE achieved size (the
-            // window may further clamp to its own min/max). Min 1×1; max ceilinged at the
-            // UInt16 wire limit (the clamp already enforces it).
-            guard requestedWindowID == UInt32(window.windowID) else { return nil }
-            return SizeNegotiation.clamp(desired: desired,
-                                         min: VideoSize(width: 1, height: 1),
-                                         max: VideoSize(width: Double(UInt16.max), height: Double(UInt16.max)))
-        })
+        let effects = stateMachine.handleControl(
+            message,
+            windowBoundsCG: bounds,
+            resolveCaptureSize: { [window, captureSizeOverride] requestedWindowID, viewport in
+                // Accept only the window this session was created for; size the capture to
+                // the real window backing store (clamp the requested viewport to it).
+                guard requestedWindowID == UInt32(window.windowID) else { return nil }
+                // Prefer the daemon's achieved post-move size (feature #1 VD): a window resized DOWN to
+                // fit the VD must be captured + acked at its NEW point size, not the stale `SCWindow.frame`
+                // enumeration snapshot — else the SCStream over-crops and the client's input-mapping
+                // denominator desyncs. `nil` (no VD move) ⇒ `window.frame` as before.
+                let sourcePoints = captureSizeOverride ?? VideoSize(
+                    width: window.frame.width,
+                    height: window.frame.height,
+                )
+                let w = UInt16(max(1, min(Double(UInt16.max), sourcePoints.width.rounded())))
+                let h = UInt16(max(1, min(Double(UInt16.max), sourcePoints.height.rounded())))
+                _ = viewport // viewport informs client-side scaling; host captures native window pixels.
+                return (w, h)
+            },
+            resolveResizeSize: { [window] requestedWindowID, desired in
+                // Accept only the session's window; sanity-clamp the desired POINT size into a
+                // valid, non-zero, UInt16-safe range. This is a POLICY pre-clamp only — the AX
+                // read-back in `apply(.resizeCapture)` is the AUTHORITATIVE achieved size (the
+                // window may further clamp to its own min/max). Min 1×1; max ceilinged at the
+                // UInt16 wire limit (the clamp already enforces it).
+                guard requestedWindowID == UInt32(window.windowID) else { return nil }
+                return SizeNegotiation.clamp(
+                    desired: desired,
+                    min: VideoSize(width: 1, height: 1),
+                    max: VideoSize(width: Double(UInt16.max), height: Double(UInt16.max)),
+                )
+            },
+        )
         for effect in effects { await apply(effect) }
         // CONCURRENCY-HOST-1: a clean `bye` re-arms the session to `.listening` and tears down
         // capture (above), but the pinned UDP flow slot stays pinned (UDP has no FIN) — so a
@@ -651,7 +700,7 @@ public actor AislopdeskVideoHostSession {
     // (verified across Sources + Tests) and a misleading docstring, so it was removed rather than kept
     // as a confusing public no-op.
 
-    private func inject(_ event: InputEvent, raiseFirst: Bool) async {
+    private func inject(_ event: InputEvent, raiseFirst: Bool) {
         guard let injector else { return }
         // CLICK-LATENCY FIX (the "click bị delay" bug, proven on-device). The AX raise is ~6–10
         // SYNCHRONOUS cross-process IPC calls; against an AX-slow target app each hits the messaging
@@ -669,7 +718,8 @@ public actor AislopdeskVideoHostSession {
             inputNeedsRaise = false
             let injectorRef = injector
             if Self.inputTrace {
-                FileHandle.standardError.write(Data("aislopdesk-videohostd[inject]: raiseFirst dispatched async (event=\(event))\n".utf8))
+                FileHandle.standardError
+                    .write(Data("aislopdesk-videohostd[inject]: raiseFirst dispatched async (event=\(event))\n".utf8))
             }
             Task { @MainActor in injectorRef.raiseTargetWindow() }
         }
@@ -690,27 +740,30 @@ public actor AislopdeskVideoHostSession {
         if Self.inputTrace {
             // GROUND TRUTH for the reorder fix: every injected event in strict order, numbered.
             injectTraceSeq += 1
-            FileHandle.standardError.write(Data("aislopdesk-videohostd[inject #\(injectTraceSeq)]: \(Self.inputName(event))\n".utf8))
+            FileHandle.standardError
+                .write(Data("aislopdesk-videohostd[inject #\(injectTraceSeq)]: \(Self.inputName(event))\n".utf8))
             return
         }
         guard Self.debugStderr else { return }
         switch event {
-        case .mouseMove, .mouseDrag:
+        case .mouseMove,
+             .mouseDrag:
             dbgInputCount += 1
             if dbgInputCount % 25 == 1 { dbg("inject \(Self.inputName(event)) (pointer sample #\(dbgInputCount))") }
         default:
             dbg("inject \(Self.inputName(event))")
         }
     }
+
     private static func inputName(_ event: InputEvent) -> String {
         switch event {
-        case .mouseMove: return "mouseMove"
-        case .mouseDrag(let b, _, _, _, _): return "mouseDrag(\(b))"
-        case .mouseDown(let b, _, let c, _, _): return "mouseDown(\(b),clicks=\(c))"
-        case .mouseUp(let b, _, let c, _, _): return "mouseUp(\(b),clicks=\(c))"
-        case .scroll: return "scroll"
-        case .key(let kc, let down, _, _): return "key(\(kc),\(down ? "down" : "up"))"
-        case .text: return "text"
+        case .mouseMove: "mouseMove"
+        case let .mouseDrag(b, _, _, _, _): "mouseDrag(\(b))"
+        case let .mouseDown(b, _, c, _, _): "mouseDown(\(b),clicks=\(c))"
+        case let .mouseUp(b, _, c, _, _): "mouseUp(\(b),clicks=\(c))"
+        case .scroll: "scroll"
+        case let .key(kc, down, _, _): "key(\(kc),\(down ? "down" : "up"))"
+        case .text: "text"
         }
     }
 
@@ -724,7 +777,7 @@ public actor AislopdeskVideoHostSession {
 
     private func handleRecovery(_ data: Data) {
         switch recoveryRouter.route(datagram: data, mediaFlowing: stateMachine.mediaFlowing) {
-        case .forceKeyframe(let lastDecoded):
+        case let .forceKeyframe(lastDecoded):
             // Component 5: drop byte-identical redundant copies (client sends 3× per logical
             // request). A duplicate is dbg-logged and ignored — the first copy already acted.
             guard recoveryDeduper.admit(data, now: ProcessInfo.processInfo.systemUptime) else {
@@ -735,7 +788,7 @@ public actor AislopdeskVideoHostSession {
             // immediately instead of waiting for the ~1s heartbeat IDR — admission-gated by the
             // delivery-keyed RecoveryIDRPolicy (component 2; legacy capturer gate when V2 off).
             gateRecoveryIDR(lastDecoded: lastDecoded)
-        case .refreshLTR(let lastDecoded):
+        case let .refreshLTR(lastDecoded):
             // Component 5: same dedup gate — REQUIRED here (no cooldown exists on the LTR path,
             // so copies straddling a capture-frame boundary would encode a second ForceLTRRefresh).
             guard recoveryDeduper.admit(data, now: ProcessInfo.processInfo.systemUptime) else {
@@ -755,7 +808,7 @@ public actor AislopdeskVideoHostSession {
             case .idr:
                 gateRecoveryIDR(lastDecoded: lastDecoded)
             }
-        case .ack(let streamSeq):
+        case let .ack(streamSeq):
             // Component 2: a keyframe decode-ack (the client now acks EVERY decoded keyframe, not
             // just LTR-flagged frames) feeds the delivery-keyed cooldown. Unconditional — NOT gated
             // on `Self.ltrEnabled`: ring-matching inside the policy rejects non-keyframe ids, and
@@ -777,24 +830,30 @@ public actor AislopdeskVideoHostSession {
                 dbg("recovery ack frameID=\(streamSeq) → staged LTR token \(token)")
             }
             log.debug("recovery ack streamSeq=\(streamSeq, privacy: .public)")
-        case .reshipCursorShape(let shapeID):
+        case let .reshipCursorShape(shapeID):
             // FIX B self-heal: the client lost this shape's one-shot bitmap (or it never fit
             // one datagram). Re-emit it through the SAME shape handler so it rides the cursor
             // socket again as a `CursorShapeMessage`; the client cache re-insert is idempotent.
             dbg("recovery requestCursorShape \(shapeID) — re-shipping cursor shape")
             cursorSampler?.reshipShape(shapeID)
-        case .networkStats(let report):
+        case let .networkStats(report):
             // Network-feedback telemetry: fold a clock-skew-free estimate (host-clock RTT + loss +
             // jitter trend) and LOG it. MAINTAIN+LOG only this phase — nothing consumes the estimate
             // to alter the stream yet. `AISLOPDESK_NETSTATS=0` ⇒ the client reports latestHostSendTs=0 ⇒
             // computeRTTMillis returns nil ⇒ the RTT term is skipped (loss/jitter still fold).
-            let rtt = NetworkEstimate.computeRTTMillis(hostNowMs: hostRelativeMillis(),
-                                                       latestHostSendTs: report.latestHostSendTs,
-                                                       clientHoldMs: report.clientHoldMs)
-            networkEstimate.fold(rttMillis: rtt, framesReceived: report.framesReceived,
-                                 unrecovered: report.unrecovered, owdJitterMicros: report.owdJitterMicros,
-                                 owdTrendState: report.owdTrendStateRaw,
-                                 owdTrendModifiedMilli: report.owdTrendModifiedMilliSigned)
+            let rtt = NetworkEstimate.computeRTTMillis(
+                hostNowMs: hostRelativeMillis(),
+                latestHostSendTs: report.latestHostSendTs,
+                clientHoldMs: report.clientHoldMs,
+            )
+            networkEstimate.fold(
+                rttMillis: rtt,
+                framesReceived: report.framesReceived,
+                unrecovered: report.unrecovered,
+                owdJitterMicros: report.owdJitterMicros,
+                owdTrendState: report.owdTrendStateRaw,
+                owdTrendModifiedMilli: report.owdTrendModifiedMilliSigned,
+            )
             // WF-4 ADAPTIVE FEC: pick the per-frame group-size tier from the freshly-folded loss EWMA.
             // Hysteretic + one-step-clamped (anti-flap) inside the pure policy. Updated ONLY here, inside
             // a real report → it can't move before there is loss data (inert when no reports arrive).
@@ -804,10 +863,15 @@ public actor AislopdeskVideoHostSession {
                 // `AISLOPDESK_FEC_ALLOW_OFF=1` restores the old OFF walk) and an unrecovered-loss
                 // report doubles the relax dwell for the next sticky window — both inside the pure
                 // policy; this site only feeds it the report's unrecovered evidence.
-                let next = AdaptiveFECPolicy.nextTierState(forLossRate: networkEstimate.lossRate, state: fecTierState,
-                                                           sawUnrecoveredLoss: report.unrecovered > 0)
+                let next = AdaptiveFECPolicy.nextTierState(
+                    forLossRate: networkEstimate.lossRate,
+                    state: fecTierState,
+                    sawUnrecoveredLoss: report.unrecovered > 0,
+                )
                 if next.tier != fecTierState.tier {
-                    dbg("adaptive-fec: tier \(fecTierState.tier) → \(next.tier) (lossEWMA=\(String(format: "%.4f", networkEstimate.lossRate)))")
+                    dbg(
+                        "adaptive-fec: tier \(fecTierState.tier) → \(next.tier) (lossEWMA=\(String(format: "%.4f", networkEstimate.lossRate)))",
+                    )
                 }
                 fecTierState = next
             }
@@ -824,10 +888,16 @@ public actor AislopdeskVideoHostSession {
                 let decision = ctrl.decide(networkEstimate)
                 let target = decision.target
                 congestionController = ctrl
-                if LiveCongestionController.isMaterialChange(previous: lastActuatedBitrate, target: target, ceiling: ctrl.ceiling) {
+                if LiveCongestionController.isMaterialChange(
+                    previous: lastActuatedBitrate,
+                    target: target,
+                    ceiling: ctrl.ceiling,
+                ) {
                     lastActuatedBitrate = target
                     encoder?.setLiveBitrate(target)
-                    dbg("abr: actuate target=\(target) ceiling=\(ctrl.ceiling) floor=\(ctrl.floor) current=\(ctrl.current) ticks=\(ctrl.ticks) knee=\(ctrl.kneeBps.map(String.init) ?? "-") reason=\(decision.reason.rawValue)")
+                    dbg(
+                        "abr: actuate target=\(target) ceiling=\(ctrl.ceiling) floor=\(ctrl.floor) current=\(ctrl.current) ticks=\(ctrl.ticks) knee=\(ctrl.kneeBps.map(String.init) ?? "-") reason=\(decision.reason.rawValue)",
+                    )
                 }
             }
             // FPS GOVERNOR: tick on the same ~50 ms report clock, AFTER the ABR block so it reacts
@@ -839,7 +909,8 @@ public actor AislopdeskVideoHostSession {
                     lastLossSample: networkEstimate.lastLossSample,
                     smoothedRTTMillis: networkEstimate.smoothedRTTMillis,
                     minRTTMillis: networkEstimate.minRTTMillis,
-                    abrCurrent: congestionController?.current, abrCeiling: congestionController?.ceiling)
+                    abrCurrent: congestionController?.current, abrCeiling: congestionController?.ceiling,
+                )
                 let newFps = gov.onTick(targetBps: lastActuatedBitrate, congested: congested)
                 let offeredBps = Int(gov.bytesPerFrameEWMA * 8 * Double(governedFps))
                 fpsGovernor = gov
@@ -847,14 +918,19 @@ public actor AislopdeskVideoHostSession {
                     let old = governedFps
                     governedFps = newFps
                     actuateGovernedFps(newFps)
-                    dbg("fps-governor: \(old) → \(newFps) (offered≈\(offeredBps)bps target=\(lastActuatedBitrate) congested=\(congested))")
+                    dbg(
+                        "fps-governor: \(old) → \(newFps) (offered≈\(offeredBps)bps target=\(lastActuatedBitrate) congested=\(congested))",
+                    )
                 }
             }
             // Precompute display strings so the log interpolation captures only plain Strings.
             let rttStr = rtt.map { String($0) } ?? "nil"
             let smoothedStr = String(format: "%.1f", networkEstimate.smoothedRTTMillis)
             let lossStr = String(format: "%.3f", networkEstimate.lossRate)
-            let minRTTStr = networkEstimate.minRTTMillis.isFinite ? String(format: "%.1f", networkEstimate.minRTTMillis) : "inf"
+            let minRTTStr = networkEstimate.minRTTMillis.isFinite ? String(
+                format: "%.1f",
+                networkEstimate.minRTTMillis,
+            ) : "inf"
             let rising = networkEstimate.owdGradientRising
             // Component 3 (delay-gradient): the client trendline verdict, for the A/B logs.
             let trendStr = String(format: "%.2f", networkEstimate.owdTrendModified)
@@ -865,9 +941,14 @@ public actor AislopdeskVideoHostSession {
             // boundaries), depth= (live pacer depth gauge; 0 = no pacer). LOG-ONLY this phase
             // (component 3 owns the NetworkEstimate fold path), but it makes every feel-test a
             // measurement session: promotions must co-occur with loss/RTT events, never clean.
-            log.info("netstats rx: rttSample=\(rttStr, privacy: .public)ms smoothedRTT=\(smoothedStr, privacy: .public)ms loss=\(lossStr, privacy: .public) rising=\(rising, privacy: .public) trend=\(trendStr, privacy: .public) tstate=\(tstate, privacy: .public) tdeltas=\(tdeltas, privacy: .public) late=\(report.pacerLateFrames, privacy: .public) gaps=\(report.pacerPresentGaps, privacy: .public) depth=\(report.pacerDepth, privacy: .public)")
-            dbg("netstats rx: frames=\(report.framesReceived) fec=\(report.fecRecovered) lost=\(report.unrecovered) hostTs=\(report.latestHostSendTs) hold=\(report.clientHoldMs)ms jitter=\(report.owdJitterMicros)us → rtt=\(rttStr)ms smoothedRTT=\(smoothedStr)ms minRTT=\(minRTTStr)ms loss=\(lossStr) rising=\(rising) trend=\(trendStr) tstate=\(tstate) tdeltas=\(tdeltas) late=\(report.pacerLateFrames) gaps=\(report.pacerPresentGaps) depth=\(report.pacerDepth)")
-        case .drop(let reason):
+            log
+                .info(
+                    "netstats rx: rttSample=\(rttStr, privacy: .public)ms smoothedRTT=\(smoothedStr, privacy: .public)ms loss=\(lossStr, privacy: .public) rising=\(rising, privacy: .public) trend=\(trendStr, privacy: .public) tstate=\(tstate, privacy: .public) tdeltas=\(tdeltas, privacy: .public) late=\(report.pacerLateFrames, privacy: .public) gaps=\(report.pacerPresentGaps, privacy: .public) depth=\(report.pacerDepth, privacy: .public)",
+                )
+            dbg(
+                "netstats rx: frames=\(report.framesReceived) fec=\(report.fecRecovered) lost=\(report.unrecovered) hostTs=\(report.latestHostSendTs) hold=\(report.clientHoldMs)ms jitter=\(report.owdJitterMicros)us → rtt=\(rttStr)ms smoothedRTT=\(smoothedStr)ms minRTT=\(minRTTStr)ms loss=\(lossStr) rising=\(rising) trend=\(trendStr) tstate=\(tstate) tdeltas=\(tdeltas) late=\(report.pacerLateFrames) gaps=\(report.pacerPresentGaps) depth=\(report.pacerDepth)",
+            )
+        case let .drop(reason):
             log.error("dropping recovery datagram: \(reason)")
         case .ignoreNotStreaming:
             break
@@ -892,9 +973,11 @@ public actor AislopdeskVideoHostSession {
             capturer.requestKeyframe()
             return
         }
-        let verdict = recoveryIDRPolicy.decide(now: ProcessInfo.processInfo.systemUptime,
-                                               clientLastDecoded: lastDecoded,
-                                               smoothedRTTSeconds: networkEstimate.smoothedRTTMillis / 1000.0)
+        let verdict = recoveryIDRPolicy.decide(
+            now: ProcessInfo.processInfo.systemUptime,
+            clientLastDecoded: lastDecoded,
+            smoothedRTTSeconds: networkEstimate.smoothedRTTMillis / 1000.0,
+        )
         if case .grant = verdict {
             capturer.requestKeyframe()
         } else {
@@ -971,10 +1054,10 @@ public actor AislopdeskVideoHostSession {
 
     private func apply(_ effect: VideoSessionStateMachine.Effect) async {
         switch effect {
-        case .sendControl(let message):
+        case let .sendControl(message):
             dbg("→ sending control: \(String(describing: message))")
             transport.send(scheduler.scheduleControl(message).bytes, on: .control)
-        case .startCapture(_, let width, let height):
+        case let .startCapture(_, width, height):
             dbg("effect startCapture \(width)x\(height) — bringing up live capture/encode")
             await startLiveComponents(width: Int(width), height: Int(height))
             // FPS GOVERNOR: announce the session's content cadence up front (+dup) so the
@@ -984,7 +1067,7 @@ public actor AislopdeskVideoHostSession {
         case .stopCapture:
             dbg("effect stopCapture")
             await teardownLiveComponents()
-        case .resizeCapture(let width, let height, let epoch):
+        case let .resizeCapture(width, height, epoch):
             await applyResize(width: width, height: height, epoch: epoch)
         }
     }
@@ -1054,8 +1137,21 @@ public actor AislopdeskVideoHostSession {
         //    the OLD encoder running — degrade to no-resize, never to a dead session.
         // WF-2: the new resolution has a new ceiling — re-seed the controller to it once the new
         //    encoder is actually installed (below), so the controller re-anchors after a resize.
-        let ceiling = LiveBitratePolicy.targetBitrate(pixelWidth: pixelWidth, pixelHeight: pixelHeight, fps: fps, floor: bitrate)
-        let newEncoder = VideoEncoder(width: pixelWidth, height: pixelHeight, bitrate: ceiling, fps: fps, fullRange: Self.fullRange, ltrEnabled: Self.ltrEnabled, outputHandler: makeEncoderOutputHandler())
+        let ceiling = LiveBitratePolicy.targetBitrate(
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight,
+            fps: fps,
+            floor: bitrate,
+        )
+        let newEncoder = VideoEncoder(
+            width: pixelWidth,
+            height: pixelHeight,
+            bitrate: ceiling,
+            fps: fps,
+            fullRange: Self.fullRange,
+            ltrEnabled: Self.ltrEnabled,
+            outputHandler: makeEncoderOutputHandler(),
+        )
         do {
             try newEncoder.createLiveSession()
         } catch {
@@ -1076,7 +1172,12 @@ public actor AislopdeskVideoHostSession {
         //    false ⇒ forced IDR on its first frame for free, and avoids the per-frame
         //    encoder-ref swap race entirely.
         let logCallback = log
-        let newCapturer = WindowCapturer(fps: fps, captureScale: captureScale, fullRange: Self.fullRange, preferDisplayAnchored: captureSizeOverride != nil) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
+        let newCapturer = WindowCapturer(
+            fps: fps,
+            captureScale: captureScale,
+            fullRange: Self.fullRange,
+            preferDisplayAnchored: captureSizeOverride != nil,
+        ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
             do {
                 if ltrRefresh {
                     try newEncoder.encodeLiveLTRRefresh(pixelBuffer: pixelBuffer, presentationTime: pts)
@@ -1085,7 +1186,11 @@ public actor AislopdeskVideoHostSession {
                 } else if compact {
                     try newEncoder.encodeCompactKeyframe(pixelBuffer: pixelBuffer, presentationTime: pts)
                 } else {
-                    try newEncoder.encodeLive(pixelBuffer: pixelBuffer, presentationTime: pts, forceKeyframe: forceKeyframe)
+                    try newEncoder.encodeLive(
+                        pixelBuffer: pixelBuffer,
+                        presentationTime: pts,
+                        forceKeyframe: forceKeyframe,
+                    )
                 }
             } catch {
                 logCallback.error("live encode (post-resize) failed: \(String(describing: error))")
@@ -1112,16 +1217,19 @@ public actor AislopdeskVideoHostSession {
         // Only the NEWEST epoch may install — abort a stale one (re-read the SM under actor
         // isolation: `epoch >= stateMachine.lastResizeEpoch`).
         guard stateMachine.mediaFlowing, capturer === oldCapturer, encoder === oldEncoder,
-              epoch >= stateMachine.lastResizeEpoch else {
-            dbg("resizeCapture epoch=\(epoch) — superseded/stale during oldCapturer.stop (lastEpoch=\(stateMachine.lastResizeEpoch)); aborting install")
+              epoch >= stateMachine.lastResizeEpoch
+        else {
+            dbg(
+                "resizeCapture epoch=\(epoch) — superseded/stale during oldCapturer.stop (lastEpoch=\(stateMachine.lastResizeEpoch)); aborting install",
+            )
             return
         }
 
         // Install the new components, then bring the new SCStream up at the achieved pixel size.
-        self.encoder = newEncoder
-        seedCongestionController(ceiling: ceiling)   // WF-2: re-anchor the controller to the new resolution's ceiling
-        resetLTRForNewEncoder()                      // WF-8: the new VT session holds no acked LTRs — invalidate the acked-set
-        self.capturer = newCapturer
+        encoder = newEncoder
+        seedCongestionController(ceiling: ceiling) // WF-2: re-anchor the controller to the new resolution's ceiling
+        resetLTRForNewEncoder() // WF-8: the new VT session holds no acked LTRs — invalidate the acked-set
+        capturer = newCapturer
         // FPS GOVERNOR: a fresh capturer/encoder start at the base fps — re-apply the live
         // governed state (governor state itself persists across resize: path knowledge). No
         // client message — the cadence is unchanged.
@@ -1133,7 +1241,9 @@ public actor AislopdeskVideoHostSession {
         do {
             nonisolated(unsafe) let w = captureWindow
             try await newCapturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
-            dbg("resize: new SCStream started (\(pixelWidth)x\(pixelHeight) px @\(captureScale)×, \(achievedWidth)x\(achievedHeight) pt) epoch=\(epoch)")
+            dbg(
+                "resize: new SCStream started (\(pixelWidth)x\(pixelHeight) px @\(captureScale)×, \(achievedWidth)x\(achievedHeight) pt) epoch=\(epoch)",
+            )
         } catch {
             log.error("resize capturer start failed: \(String(describing: error))")
             dbg("resizeCapture epoch=\(epoch) — new capturer START FAILED")
@@ -1148,14 +1258,18 @@ public actor AislopdeskVideoHostSession {
             // If the rollback/restart itself fails, log + leave the (dead) refs cleared rather than
             // crash. Do NOT send an ack (no new-size stream came up).
             await rollBackWindow(toPoints: preResizePoints, watcher: watcher, epoch: epoch)
-            await restartOldSizeCapture(points: preResizePoints, epoch: epoch,
-                                        deadCapturer: newCapturer, deadEncoder: newEncoder)
+            await restartOldSizeCapture(
+                points: preResizePoints,
+                epoch: epoch,
+                deadCapturer: newCapturer,
+                deadEncoder: newEncoder,
+            )
             return
         }
         // Identity guard (symmetric to `startLiveComponents`): a superseding teardown/start during
         // `newCapturer.start` means our refs are no longer installed — tear down the orphan stream
         // and do NOT ack (a newer owner is live).
-        guard self.capturer === newCapturer else {
+        guard capturer === newCapturer else {
             dbg("resize superseded during capturer.start — tearing down orphaned new stream")
             await newCapturer.stop()
             return
@@ -1199,8 +1313,12 @@ public actor AislopdeskVideoHostSession {
     /// refs + log rather than leave a dead capturer installed (no crash). Symmetric to the
     /// startLiveComponents post-await identity guard: if a superseding owner installed its own
     /// capturer while we were suspended, tear down our orphan and leave theirs.
-    private func restartOldSizeCapture(points: VideoSize, epoch: UInt32,
-                                       deadCapturer: WindowCapturer, deadEncoder: VideoEncoder) async {
+    private func restartOldSizeCapture(
+        points: VideoSize,
+        epoch: UInt32,
+        deadCapturer: WindowCapturer,
+        deadEncoder: VideoEncoder,
+    ) async {
         // FIX #5 (review + confirm-dry audit): we reached here THROUGH `rollBackWindow`'s
         // `await MainActor.run` suspension, across which EITHER (a) a `bye`/reap/`stop()` teardown
         // ran on a separate Task (→ mediaFlowing false, refs nil'd) OR (b) a NEWER resize installed
@@ -1212,30 +1330,52 @@ public actor AislopdeskVideoHostSession {
         // (the failed capturer has no SCStream; deadEncoder.deinit invalidates its VTCompressionSessions).
         guard stateMachine.mediaFlowing,
               capturer === deadCapturer, encoder === deadEncoder,
-              epoch >= stateMachine.lastResizeEpoch else {
+              epoch >= stateMachine.lastResizeEpoch
+        else {
             dbg("resizeCapture epoch=\(epoch) — superseded/torn-down during rollback; skip recovery restart")
             return
         }
         // Drop the dead refs the failed resize left installed before rebuilding.
-        self.encoder = nil
-        self.capturer = nil
+        encoder = nil
+        capturer = nil
         let pixelWidth = max(1, Int((points.width * captureScale).rounded()))
         let pixelHeight = max(1, Int((points.height * captureScale).rounded()))
 
         // WF-2: this recovery rebuild uses the OLD (pre-resize) pixel size — re-seed the controller to
         // its ceiling once installed so it re-anchors to the size actually being captured.
-        let ceiling = LiveBitratePolicy.targetBitrate(pixelWidth: pixelWidth, pixelHeight: pixelHeight, fps: fps, floor: bitrate)
-        let rebuiltEncoder = VideoEncoder(width: pixelWidth, height: pixelHeight, bitrate: ceiling, fps: fps, fullRange: Self.fullRange, ltrEnabled: Self.ltrEnabled, outputHandler: makeEncoderOutputHandler())
+        let ceiling = LiveBitratePolicy.targetBitrate(
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight,
+            fps: fps,
+            floor: bitrate,
+        )
+        let rebuiltEncoder = VideoEncoder(
+            width: pixelWidth,
+            height: pixelHeight,
+            bitrate: ceiling,
+            fps: fps,
+            fullRange: Self.fullRange,
+            ltrEnabled: Self.ltrEnabled,
+            outputHandler: makeEncoderOutputHandler(),
+        )
         do {
             try rebuiltEncoder.createLiveSession()
         } catch {
-            log.error("resize recovery: old-size encoder rebuild failed: \(String(describing: error)) — capture stays down")
+            log
+                .error(
+                    "resize recovery: old-size encoder rebuild failed: \(String(describing: error)) — capture stays down",
+                )
             dbg("resizeCapture epoch=\(epoch) — old-size encoder rebuild FAILED; capture remains down")
             return
         }
 
         let logCallback = log
-        let rebuiltCapturer = WindowCapturer(fps: fps, captureScale: captureScale, fullRange: Self.fullRange, preferDisplayAnchored: captureSizeOverride != nil) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
+        let rebuiltCapturer = WindowCapturer(
+            fps: fps,
+            captureScale: captureScale,
+            fullRange: Self.fullRange,
+            preferDisplayAnchored: captureSizeOverride != nil,
+        ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
             do {
                 if ltrRefresh {
                     try rebuiltEncoder.encodeLiveLTRRefresh(pixelBuffer: pixelBuffer, presentationTime: pts)
@@ -1244,16 +1384,20 @@ public actor AislopdeskVideoHostSession {
                 } else if compact {
                     try rebuiltEncoder.encodeCompactKeyframe(pixelBuffer: pixelBuffer, presentationTime: pts)
                 } else {
-                    try rebuiltEncoder.encodeLive(pixelBuffer: pixelBuffer, presentationTime: pts, forceKeyframe: forceKeyframe)
+                    try rebuiltEncoder.encodeLive(
+                        pixelBuffer: pixelBuffer,
+                        presentationTime: pts,
+                        forceKeyframe: forceKeyframe,
+                    )
                 }
             } catch {
                 logCallback.error("live encode (post-resize recovery) failed: \(String(describing: error))")
             }
         }
-        self.encoder = rebuiltEncoder
-        seedCongestionController(ceiling: ceiling)   // WF-2: re-anchor the controller to the rebuilt (old-size) ceiling
-        resetLTRForNewEncoder()                      // WF-8: the rebuilt VT session holds no acked LTRs — invalidate the acked-set
-        self.capturer = rebuiltCapturer
+        encoder = rebuiltEncoder
+        seedCongestionController(ceiling: ceiling) // WF-2: re-anchor the controller to the rebuilt (old-size) ceiling
+        resetLTRForNewEncoder() // WF-8: the rebuilt VT session holds no acked LTRs — invalidate the acked-set
+        capturer = rebuiltCapturer
         // FPS GOVERNOR: re-apply the live governed state to the rebuilt components (see applyResize).
         if Self.fpsGovernorEnabled, governedFps != fps {
             rebuiltCapturer.setGovernedFPS(governedFps)
@@ -1263,9 +1407,14 @@ public actor AislopdeskVideoHostSession {
         do {
             nonisolated(unsafe) let w = captureWindow
             try await rebuiltCapturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
-            dbg("resizeCapture epoch=\(epoch) — recovered: old-size capture restarted (\(pixelWidth)x\(pixelHeight) px)")
+            dbg(
+                "resizeCapture epoch=\(epoch) — recovered: old-size capture restarted (\(pixelWidth)x\(pixelHeight) px)",
+            )
         } catch {
-            log.error("resize recovery: old-size capturer start failed: \(String(describing: error)) — capture stays down")
+            log
+                .error(
+                    "resize recovery: old-size capturer start failed: \(String(describing: error)) — capture stays down",
+                )
             dbg("resizeCapture epoch=\(epoch) — old-size capturer restart FAILED; capture remains down")
             if capturer === rebuiltCapturer { capturer = nil }
             if encoder === rebuiltEncoder { encoder = nil }
@@ -1278,7 +1427,9 @@ public actor AislopdeskVideoHostSession {
         guard capturer === rebuiltCapturer, stateMachine.mediaFlowing else {
             dbg("resizeCapture epoch=\(epoch) — recovery superseded/torn-down during start; tearing down orphan")
             await rebuiltCapturer.stop()
-            if capturer === rebuiltCapturer { capturer = nil; encoder = nil }
+            if capturer === rebuiltCapturer { capturer = nil
+                encoder = nil
+            }
             return
         }
     }
@@ -1298,8 +1449,21 @@ public actor AislopdeskVideoHostSession {
         // be provisioned proportionally or the rate cap starves scroll frames → stutter (`bitrate` is the floor).
         // WF-2: this resolution-aware result is BOTH the encoder bitrate AND the congestion controller's
         // ceiling (the controller may never exceed it). Hoist it so we can seed the controller below.
-        let ceiling = LiveBitratePolicy.targetBitrate(pixelWidth: pixelWidth, pixelHeight: pixelHeight, fps: fps, floor: bitrate)
-        let encoder = VideoEncoder(width: pixelWidth, height: pixelHeight, bitrate: ceiling, fps: fps, fullRange: Self.fullRange, ltrEnabled: Self.ltrEnabled, outputHandler: makeEncoderOutputHandler())
+        let ceiling = LiveBitratePolicy.targetBitrate(
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight,
+            fps: fps,
+            floor: bitrate,
+        )
+        let encoder = VideoEncoder(
+            width: pixelWidth,
+            height: pixelHeight,
+            bitrate: ceiling,
+            fps: fps,
+            fullRange: Self.fullRange,
+            ltrEnabled: Self.ltrEnabled,
+            outputHandler: makeEncoderOutputHandler(),
+        )
         do {
             try encoder.createLiveSession()
         } catch {
@@ -1308,8 +1472,8 @@ public actor AislopdeskVideoHostSession {
             return
         }
         self.encoder = encoder
-        seedCongestionController(ceiling: ceiling)   // WF-2: anchor the controller to this build's ceiling
-        resetLTRForNewEncoder()                      // WF-8: anchor the LTR acked-set to this build (clears any prior-client acks on actor reuse)
+        seedCongestionController(ceiling: ceiling) // WF-2: anchor the controller to this build's ceiling
+        resetLTRForNewEncoder() // WF-8: anchor the LTR acked-set to this build (clears any prior-client acks on actor reuse)
         // FPS GOVERNOR: fresh session ⇒ fresh governor at the base fps (nil when the flag is off ⇒
         // no fold, no tick, no gate — byte-identical host).
         fpsGovernor = Self.fpsGovernorEnabled ? FPSGovernor(baseFps: fps) : nil
@@ -1322,7 +1486,12 @@ public actor AislopdeskVideoHostSession {
         // `@unchecked Sendable` and thread-safe for `encodeLive`. The encoded OUTPUT is
         // what hops back to the actor (`onEncodedFrame`) to packetize + send.
         let logCallback = log
-        let capturer = WindowCapturer(fps: fps, captureScale: captureScale, fullRange: Self.fullRange, preferDisplayAnchored: captureSizeOverride != nil) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
+        let capturer = WindowCapturer(
+            fps: fps,
+            captureScale: captureScale,
+            fullRange: Self.fullRange,
+            preferDisplayAnchored: captureSizeOverride != nil,
+        ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
             do {
                 if ltrRefresh {
                     try encoder.encodeLiveLTRRefresh(pixelBuffer: pixelBuffer, presentationTime: pts)
@@ -1331,7 +1500,11 @@ public actor AislopdeskVideoHostSession {
                 } else if compact {
                     try encoder.encodeCompactKeyframe(pixelBuffer: pixelBuffer, presentationTime: pts)
                 } else {
-                    try encoder.encodeLive(pixelBuffer: pixelBuffer, presentationTime: pts, forceKeyframe: forceKeyframe)
+                    try encoder.encodeLive(
+                        pixelBuffer: pixelBuffer,
+                        presentationTime: pts,
+                        forceKeyframe: forceKeyframe,
+                    )
                 }
             } catch {
                 logCallback.error("live encode failed: \(String(describing: error))")
@@ -1340,7 +1513,10 @@ public actor AislopdeskVideoHostSession {
         self.capturer = capturer
 
         // Geometry watcher → geometry datagrams + keep input/cursor bounds in sync.
-        let geometryWatcher = WindowGeometryWatcher(windowID: window.windowID, pid: window.owningApplication?.processID ?? 0) { [weak self] message in
+        let geometryWatcher = WindowGeometryWatcher(
+            windowID: window.windowID,
+            pid: window.owningApplication?.processID ?? 0,
+        ) { [weak self] message in
             guard let self else { return }
             Task { await self.onGeometry(message) }
         }
@@ -1350,7 +1526,7 @@ public actor AislopdeskVideoHostSession {
         // feature env is on. The handler hops onto the actor; ``onAssociatedUnion`` decides whether
         // the union differs from the live region enough to rebuild.
         dialogExpandArmed = (captureSizeOverride != nil) && Self.dialogExpandEnabled
-        captureRegionGlobal = nil   // a fresh/reused session starts captured at the plain window frame
+        captureRegionGlobal = nil // a fresh/reused session starts captured at the plain window frame
         if dialogExpandArmed {
             geometryWatcher.setAssociatedUnionHandler { [weak self] unionGlobal in
                 guard let self else { return }
@@ -1371,8 +1547,12 @@ public actor AislopdeskVideoHostSession {
         self.cursorSampler = cursorSampler
 
         // Input injector (created with the window pid + bounds).
-        self.injector = InputInjector(pid: window.owningApplication?.processID ?? 0, windowID: window.windowID, windowBoundsCG: bounds)
-        self.inputNeedsRaise = true
+        injector = InputInjector(
+            pid: window.owningApplication?.processID ?? 0,
+            windowID: window.windowID,
+            windowBoundsCG: bounds,
+        )
+        inputNeedsRaise = true
 
         // Bring the live sources up. `window` is an AppKit/SCK type (not Sendable);
         // it is owned only by this actor and handed to the capturer here. The capture
@@ -1392,7 +1572,9 @@ public actor AislopdeskVideoHostSession {
             // exit). So guard the post-await start on identity: only proceed if `self.capturer` is
             // still the instance THIS invocation installed.
             try await capturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
-            dbg("SCStream capture started (\(pixelWidth)x\(pixelHeight) px @\(captureScale)×, \(width)x\(height) pt) — awaiting frames")
+            dbg(
+                "SCStream capture started (\(pixelWidth)x\(pixelHeight) px @\(captureScale)×, \(width)x\(height) pt) — awaiting frames",
+            )
         } catch {
             log.error("capturer start failed: \(String(describing: error))")
             dbg("SCStream capture START FAILED: \(String(describing: error))")
@@ -1407,7 +1589,7 @@ public actor AislopdeskVideoHostSession {
         // installed now). All 5 component types are `final class`, so `===` is valid.
         guard self.capturer === capturer else {
             dbg("startLiveComponents superseded during capturer.start — tearing down orphaned instances")
-            await capturer.stop()      // async: stops the SCStream we just brought up (stream = nil)
+            await capturer.stop() // async: stops the SCStream we just brought up (stream = nil)
             cursorSampler.stop()
             geometryWatcher.stop()
             // `encoder`/`injector` are inert until the (now-skipped) capture/input path drives
@@ -1467,7 +1649,13 @@ public actor AislopdeskVideoHostSession {
         let wakeup = encodedWakeup
         return { avcc, keyframe, mode, ltrToken, ackedAnchored in
             // Enqueue THEN signal (no lost wakeup): the consumer always drains after the last append.
-            queue?.append(EncodedFrameQueue.Frame(avcc: avcc, keyframe: keyframe, crisp: mode == .crisp, ltrToken: ltrToken, ackedAnchored: ackedAnchored))
+            queue?.append(EncodedFrameQueue.Frame(
+                avcc: avcc,
+                keyframe: keyframe,
+                crisp: mode == .crisp,
+                ltrToken: ltrToken,
+                ackedAnchored: ackedAnchored,
+            ))
             wakeup?.yield()
         }
     }
@@ -1485,7 +1673,7 @@ public actor AislopdeskVideoHostSession {
             fpsGovernor = gov
         }
         encodedFrameCount += 1
-        if encodedFrameCount == 1 || encodedFrameCount % 15 == 0 {
+        if encodedFrameCount == 1 || encodedFrameCount.isMultiple(of: 15) {
             dbg("encoded+sent frame #\(encodedFrameCount) (\(avcc.count)B, keyframe=\(keyframe), crisp=\(crisp))")
         }
         // Stamp the host-relative send time on every fragment of this frame (the network-feedback
@@ -1526,10 +1714,20 @@ public actor AislopdeskVideoHostSession {
         // packetize increments (the same race-free discipline as the LTR record above). kfDup's
         // second copy reuses the same frameID, so there is nothing extra to record for it.
         if keyframe {
-            recoveryIDRPolicy.noteKeyframeSent(frameID: packetizer.peekNextFrameID,
-                                               now: ProcessInfo.processInfo.systemUptime)
+            recoveryIDRPolicy.noteKeyframeSent(
+                frameID: packetizer.peekNextFrameID,
+                now: ProcessInfo.processInfo.systemUptime,
+            )
         }
-        let fragments = packetizer.packetize(frame: avcc, keyframe: keyframe, crisp: crisp, hostSendTsMillis: sendTs, fecTier: tier, isLTR: isLTR, ackedAnchored: ackedAnchored)
+        let fragments = packetizer.packetize(
+            frame: avcc,
+            keyframe: keyframe,
+            crisp: crisp,
+            hostSendTsMillis: sendTs,
+            fecTier: tier,
+            isLTR: isLTR,
+            ackedAnchored: ackedAnchored,
+        )
         // Interleave transmission column-major across FEC groups so an adjacent-loss BURST spreads to
         // distinct groups (each recoverable by single-loss XOR) instead of wiping one group. Header
         // `fragIndex`/grouping is unchanged, so the client (reassembles by index, reorder-tolerant) is
@@ -1538,12 +1736,13 @@ public actor AislopdeskVideoHostSession {
         // reproduce on the current codebase. WF-4: interleave by the SAME per-frame group size the parity
         // used (OFF tier ⇒ g=1 ⇒ no-op; tier 0 ⇒ fecGroupSize ⇒ identical).
         let interleaveGroup = AdaptiveFECPolicy.groupSize(forTier: tier, default: fecGroupSize) ?? 1
-        let ordered = Self.interleaveTransmit ? FragmentInterleaver.interleave(fragments, groupSize: interleaveGroup) : fragments
+        let ordered = Self.interleaveTransmit ? FragmentInterleaver
+            .interleave(fragments, groupSize: interleaveGroup) : fragments
         let outgoings = scheduler.scheduleFrame(ordered)
         if Self.debugStderr {
             let now = ProcessInfo.processInfo.systemUptime
             if dbgLastFrameSendAt > 0, now - dbgLastFrameSendAt > 0.028 {
-                dbg("send gap \(Int((now - dbgLastFrameSendAt) * 1000))ms")   // khựng-ladder stage 2
+                dbg("send gap \(Int((now - dbgLastFrameSendAt) * 1000))ms") // khựng-ladder stage 2
             }
             dbgLastFrameSendAt = now
         }
@@ -1555,22 +1754,33 @@ public actor AislopdeskVideoHostSession {
             // measured path carries 30Mbps at the same weather-loss as 5Mbps (rate-independent).
             let paceTargetBps = keyframe ? max(lastActuatedBitrate, Self.kfPaceFloorBps) : lastActuatedBitrate
             let gapNanos: UInt64 = !Self.paceSend ? 0 : (Self.pacingAdaptive
-                ? Self.adaptivePaceGapNanos(targetBps: paceTargetBps, fallbackBps: Self.pacingFallbackBps,
-                                            chunkFragments: Self.paceChunkFragments, datagramSize: VideoPacketizer.maxDatagramSize,
-                                            floorNanos: Self.pacingGapFloorNanos, ceilNanos: Self.pacingGapCeilNanos,
-                                            rateMultiplier: Self.paceRateMultiplier)
+                ? Self.adaptivePaceGapNanos(
+                    targetBps: paceTargetBps,
+                    fallbackBps: Self.pacingFallbackBps,
+                    chunkFragments: Self.paceChunkFragments,
+                    datagramSize: VideoPacketizer.maxDatagramSize,
+                    floorNanos: Self.pacingGapFloorNanos,
+                    ceilNanos: Self.pacingGapCeilNanos,
+                    rateMultiplier: Self.paceRateMultiplier,
+                )
                 : Self.paceGapNanos)
-            sendLane.enqueue(VideoSendLane.Job(outgoings: outgoings, gapNanos: gapNanos,
-                                               chunkFragments: Self.paceChunkFragments))
+            sendLane.enqueue(VideoSendLane.Job(
+                outgoings: outgoings,
+                gapNanos: gapNanos,
+                chunkFragments: Self.paceChunkFragments,
+            ))
             // F3 keyframe DUPLICATE-SEND, lane edition: the second copy is just another in-order job
             // with a leading time-separation gap. Throttle state stays actor-owned.
             if Self.kfDup, keyframe {
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - lastKeyframeDupTime >= Self.kfDupMinInterval {
                     lastKeyframeDupTime = now
-                    sendLane.enqueue(VideoSendLane.Job(outgoings: outgoings, gapNanos: gapNanos,
-                                                       chunkFragments: Self.paceChunkFragments,
-                                                       leadingDelayNanos: Self.paceGapNanos))
+                    sendLane.enqueue(VideoSendLane.Job(
+                        outgoings: outgoings,
+                        gapNanos: gapNanos,
+                        chunkFragments: Self.paceChunkFragments,
+                        leadingDelayNanos: Self.paceGapNanos,
+                    ))
                 }
             }
             return
@@ -1587,7 +1797,7 @@ public actor AislopdeskVideoHostSession {
             let now = ProcessInfo.processInfo.systemUptime
             if now - lastKeyframeDupTime >= Self.kfDupMinInterval {
                 lastKeyframeDupTime = now
-                try? await Task.sleep(nanoseconds: Self.paceGapNanos)   // time-separate the two copies
+                try? await Task.sleep(nanoseconds: Self.paceGapNanos) // time-separate the two copies
                 if stateMachine.mediaFlowing { await sendPaced(outgoings) }
             }
         }
@@ -1602,10 +1812,15 @@ public actor AislopdeskVideoHostSession {
             // RC-2: rate-proportional gap (drain a chunk at ≈ the live link rate) instead of the fixed
             // 0.5ms burst. Computed once per frame from the current ABR target.
             let gapNanos: UInt64 = Self.pacingAdaptive
-                ? Self.adaptivePaceGapNanos(targetBps: lastActuatedBitrate, fallbackBps: Self.pacingFallbackBps,
-                                            chunkFragments: Self.paceChunkFragments, datagramSize: VideoPacketizer.maxDatagramSize,
-                                            floorNanos: Self.pacingGapFloorNanos, ceilNanos: Self.pacingGapCeilNanos,
-                                            rateMultiplier: Self.paceRateMultiplier)
+                ? Self.adaptivePaceGapNanos(
+                    targetBps: lastActuatedBitrate,
+                    fallbackBps: Self.pacingFallbackBps,
+                    chunkFragments: Self.paceChunkFragments,
+                    datagramSize: VideoPacketizer.maxDatagramSize,
+                    floorNanos: Self.pacingGapFloorNanos,
+                    ceilNanos: Self.pacingGapCeilNanos,
+                    rateMultiplier: Self.paceRateMultiplier,
+                )
                 : Self.paceGapNanos
             // ABSOLUTE-DEADLINE schedule (same rationale as VideoSendLane.transmit): a relative
             // sub-ms Task.sleep oversleeps by Darwin's ~1ms quantum and the overshoot accumulates
@@ -1618,7 +1833,9 @@ public actor AislopdeskVideoHostSession {
             while i < outgoings.count {
                 let end = min(i + Self.paceChunkFragments, outgoings.count)
                 var j = i
-                while j < end { transport.send(outgoings[j].bytes, on: outgoings[j].channel); j += 1 }
+                while j < end { transport.send(outgoings[j].bytes, on: outgoings[j].channel)
+                    j += 1
+                }
                 i = end
                 chunk += 1
                 if i < outgoings.count {
@@ -1651,8 +1868,12 @@ public actor AislopdeskVideoHostSession {
             // moved window (no-op in `.window` mode). Unstructured on purpose: the SCStream config
             // update must not block the geometry fan-out; the capturer no-ops if torn down.
             if let capturer {
-                let frameCG = CGRect(x: bounds.origin.x, y: bounds.origin.y,
-                                     width: bounds.size.width, height: bounds.size.height)
+                let frameCG = CGRect(
+                    x: bounds.origin.x,
+                    y: bounds.origin.y,
+                    width: bounds.size.width,
+                    height: bounds.size.height,
+                )
                 Task { await capturer.updateDisplayAnchoredOrigin(windowFrameCG: frameCG) }
             }
         }
@@ -1692,17 +1913,25 @@ public actor AislopdeskVideoHostSession {
         let windowFrame = currentWindowBoundsCG().cgRect
         let region = regionGlobal ?? windowFrame
         // Display under the region centre (the VD); needed for the display-local sourceRect.
-        var did = CGDirectDisplayID(0); var count: UInt32 = 0
+        var did = CGDirectDisplayID(0)
+        var count: UInt32 = 0
         let center = CGPoint(x: region.midX, y: region.midY)
         guard CGGetDisplaysWithPoint(center, 1, &did, &count) == .success, count > 0 else {
-            dbg("dialog-expand: no display under region centre — skipped"); return
+            dbg("dialog-expand: no display under region centre — skipped")
+            return
         }
         let db = CGDisplayBounds(did)
         let override: WindowCapturer.CaptureRegionOverride? = regionGlobal.map {
             WindowCapturer.CaptureRegionOverride(
                 displayID: did,
-                displayLocalRect: CGRect(x: $0.minX - db.minX, y: $0.minY - db.minY, width: $0.width, height: $0.height),
-                globalRect: $0)
+                displayLocalRect: CGRect(
+                    x: $0.minX - db.minX,
+                    y: $0.minY - db.minY,
+                    width: $0.width,
+                    height: $0.height,
+                ),
+                globalRect: $0,
+            )
         }
         let pointW = max(1, Int(region.width.rounded())), pointH = max(1, Int(region.height.rounded()))
         let pixelWidth = max(1, Int((Double(pointW) * captureScale).rounded()))
@@ -1711,33 +1940,64 @@ public actor AislopdeskVideoHostSession {
         let epoch = captureRegionEpoch
 
         // b. New encoder at the region pixel size (abort cleanly on failure — keep the old one).
-        let ceiling = LiveBitratePolicy.targetBitrate(pixelWidth: pixelWidth, pixelHeight: pixelHeight, fps: fps, floor: bitrate)
-        let newEncoder = VideoEncoder(width: pixelWidth, height: pixelHeight, bitrate: ceiling, fps: fps, fullRange: Self.fullRange, ltrEnabled: Self.ltrEnabled, outputHandler: makeEncoderOutputHandler())
+        let ceiling = LiveBitratePolicy.targetBitrate(
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight,
+            fps: fps,
+            floor: bitrate,
+        )
+        let newEncoder = VideoEncoder(
+            width: pixelWidth,
+            height: pixelHeight,
+            bitrate: ceiling,
+            fps: fps,
+            fullRange: Self.fullRange,
+            ltrEnabled: Self.ltrEnabled,
+            outputHandler: makeEncoderOutputHandler(),
+        )
         do { try newEncoder.createLiveSession() } catch {
-            log.error("dialog-expand encoder create failed: \(String(describing: error)) — keeping old"); return
+            log.error("dialog-expand encoder create failed: \(String(describing: error)) — keeping old")
+            return
         }
         // c. New capturer bound to the new encoder, with the region override.
         let logCallback = log
-        let newCapturer = WindowCapturer(fps: fps, captureScale: captureScale, fullRange: Self.fullRange, preferDisplayAnchored: captureSizeOverride != nil) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
+        let newCapturer = WindowCapturer(
+            fps: fps,
+            captureScale: captureScale,
+            fullRange: Self.fullRange,
+            preferDisplayAnchored: captureSizeOverride != nil,
+        ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
             do {
                 if ltrRefresh { try newEncoder.encodeLiveLTRRefresh(pixelBuffer: pixelBuffer, presentationTime: pts) }
-                else if crisp { try newEncoder.encodeLiveCrispKeyframe(pixelBuffer: pixelBuffer, presentationTime: pts) }
-                else if compact { try newEncoder.encodeCompactKeyframe(pixelBuffer: pixelBuffer, presentationTime: pts) }
-                else { try newEncoder.encodeLive(pixelBuffer: pixelBuffer, presentationTime: pts, forceKeyframe: forceKeyframe) }
+                else if crisp { try newEncoder.encodeLiveCrispKeyframe(
+                    pixelBuffer: pixelBuffer,
+                    presentationTime: pts,
+                )
+                } else if compact { try newEncoder.encodeCompactKeyframe(
+                    pixelBuffer: pixelBuffer,
+                    presentationTime: pts,
+                )
+                } else { try newEncoder.encodeLive(
+                    pixelBuffer: pixelBuffer,
+                    presentationTime: pts,
+                    forceKeyframe: forceKeyframe,
+                ) }
             } catch { logCallback.error("dialog-expand encode failed: \(String(describing: error))") }
         }
         await oldCapturer.stop()
         oldEncoder.completeFrames()
         // Supersede guard (mirrors applyResize FIX #1): a bye/stop/resize raced our suspension.
         guard stateMachine.mediaFlowing, capturer === oldCapturer, encoder === oldEncoder else {
-            dbg("dialog-expand: superseded during oldCapturer.stop — aborting install"); return
+            dbg("dialog-expand: superseded during oldCapturer.stop — aborting install")
+            return
         }
-        self.encoder = newEncoder
+        encoder = newEncoder
         seedCongestionController(ceiling: ceiling)
         resetLTRForNewEncoder()
-        self.capturer = newCapturer
+        capturer = newCapturer
         if Self.fpsGovernorEnabled, governedFps != fps {
-            newCapturer.setGovernedFPS(governedFps); newEncoder.setExpectedFrameRate(governedFps)
+            newCapturer.setGovernedFPS(governedFps)
+            newEncoder.setExpectedFrameRate(governedFps)
         }
         // Re-origin the input + cursor mapping to the captured region so a click in the dialog area
         // (which may sit left/above the window) maps to the correct GLOBAL point. Contracting back
@@ -1751,17 +2011,26 @@ public actor AislopdeskVideoHostSession {
         do {
             nonisolated(unsafe) let w = captureWindow
             try await newCapturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight, region: override)
-            dbg("dialog-expand: capture region \(regionGlobal == nil ? "→ window frame" : "→ union") \(pointW)x\(pointH)pt (\(pixelWidth)x\(pixelHeight)px) epoch=\(epoch)")
+            dbg(
+                "dialog-expand: capture region \(regionGlobal == nil ? "→ window frame" : "→ union") \(pointW)x\(pointH)pt (\(pixelWidth)x\(pixelHeight)px) epoch=\(epoch)",
+            )
         } catch {
             log.error("dialog-expand capturer start failed: \(String(describing: error))")
-            if capturer === newCapturer { capturer = nil; encoder = nil }
+            if capturer === newCapturer { capturer = nil
+                encoder = nil
+            }
             return
         }
-        guard self.capturer === newCapturer else {
-            dbg("dialog-expand: superseded during start — tearing down orphan"); await newCapturer.stop(); return
+        guard capturer === newCapturer else {
+            dbg("dialog-expand: superseded during start — tearing down orphan")
+            await newCapturer.stop()
+            return
         }
-        await apply(.sendControl(.resizeAck(captureWidth: UInt16(min(Double(UInt16.max), Double(pointW))),
-                                            captureHeight: UInt16(min(Double(UInt16.max), Double(pointH))), epoch: epoch)))
+        await apply(.sendControl(.resizeAck(
+            captureWidth: UInt16(min(Double(UInt16.max), Double(pointW))),
+            captureHeight: UInt16(min(Double(UInt16.max), Double(pointH))),
+            epoch: epoch,
+        )))
     }
 
     private func onCursorUpdate(_ update: CursorUpdate) {
@@ -1783,7 +2052,7 @@ public actor AislopdeskVideoHostSession {
         let bytes = scheduler.scheduleCursor(.shape(shape)).bytes
         transport.send(bytes, on: .cursor)
         Task { // inherits this actor's isolation; re-checks liveness after the gap so a
-               // bye/stop teardown racing the delay aborts cleanly
+            // bye/stop teardown racing the delay aborts cleanly
             try? await Task.sleep(nanoseconds: 25_000_000)
             guard stateMachine.mediaFlowing else { return }
             transport.send(bytes, on: .cursor)
@@ -1799,8 +2068,10 @@ public actor AislopdeskVideoHostSession {
 
     private func boundsFromGeometry(_ message: WindowGeometryMessage) -> VideoRect? {
         switch message {
-        case .bounds(let r): return r
-        case .move, .resize, .title: return geometryWatcher?.currentBoundsCG()
+        case let .bounds(r): r
+        case .move,
+             .resize,
+             .title: geometryWatcher?.currentBoundsCG()
         }
     }
 }
@@ -1817,13 +2088,16 @@ private final class InboundQueue: @unchecked Sendable {
 
     /// Append one datagram. Called on the transport's serial receive queue; O(1), never blocks.
     func append(_ channel: VideoChannel, _ data: Data) {
-        lock.lock(); items.append((channel, data)); lock.unlock()
+        lock.lock()
+        items.append((channel, data))
+        lock.unlock()
     }
 
     /// Atomically take and clear the whole backlog (arrival order). An empty result means a
     /// coalesced wakeup whose datagrams an earlier drain already consumed.
     func drainAll() -> [(VideoChannel, Data)] {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         let out = items
         items = []
         return out
@@ -1840,7 +2114,7 @@ private final class InboundQueue: @unchecked Sendable {
 final class EncodedFrameQueue: @unchecked Sendable {
     /// One encoded frame: the AVCC bytes + keyframe/crisp flags the packetizer needs, plus the WF-8
     /// LTR ack token (non-nil only when this is a Long-Term-Reference frame and AISLOPDESK_LTR is on).
-    struct Frame: Sendable {
+    struct Frame {
         let avcc: Data
         let keyframe: Bool
         let crisp: Bool
@@ -1857,13 +2131,16 @@ final class EncodedFrameQueue: @unchecked Sendable {
 
     /// Append one encoded frame. Called on the VT serial output queue; O(1), never blocks.
     func append(_ frame: Frame) {
-        lock.lock(); items.append(frame); lock.unlock()
+        lock.lock()
+        items.append(frame)
+        lock.unlock()
     }
 
     /// Atomically take and clear the whole backlog (encode order preserved). An empty result means
     /// a coalesced wakeup whose frames an earlier drain already consumed.
     func drainAll() -> [Frame] {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         let out = items
         items = []
         return out

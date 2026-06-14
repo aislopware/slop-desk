@@ -33,19 +33,19 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SPEC="$REPO_ROOT/Apps/ClientApp-iOS/project.yml"
-XCFRAMEWORK="$REPO_ROOT/ThirdParty/ghostty/libghostty.xcframework"
+SPEC="${REPO_ROOT}/Apps/ClientApp-iOS/project.yml"
+XCFRAMEWORK="${REPO_ROOT}/ThirdParty/ghostty/libghostty.xcframework"
 
 # ── 1. Preflight: the xcframework must exist with both iOS slices ────────────────────────────
-if [[ ! -d "$XCFRAMEWORK" ]]; then
-  echo "ERROR: $XCFRAMEWORK is missing." >&2
+if [[ ! -d "${XCFRAMEWORK}" ]]; then
+  echo "ERROR: ${XCFRAMEWORK} is missing." >&2
   echo "       Build the UNIVERSAL xcframework first (it carries the iOS slices):" >&2
   echo "         XCFRAMEWORK_TARGET=universal bash ThirdParty/ghostty/build-libghostty.sh" >&2
   exit 1
 fi
 for slice in ios-arm64 ios-arm64-simulator; do
-  if [[ ! -d "$XCFRAMEWORK/$slice" ]]; then
-    echo "ERROR: $XCFRAMEWORK has no '$slice' slice." >&2
+  if [[ ! -d "${XCFRAMEWORK}/${slice}" ]]; then
+    echo "ERROR: ${XCFRAMEWORK} has no '${slice}' slice." >&2
     echo "       The iOS app needs both ios-arm64 (device) and ios-arm64-simulator. Build the" >&2
     echo "       UNIVERSAL xcframework (the default 'native' target is macOS-only):" >&2
     echo "         XCFRAMEWORK_TARGET=universal bash ThirdParty/ghostty/build-libghostty.sh" >&2
@@ -53,13 +53,13 @@ for slice in ios-arm64 ios-arm64-simulator; do
   fi
 done
 
-if ! command -v xcodegen >/dev/null 2>&1; then
+if ! command -v xcodegen > /dev/null 2>&1; then
   echo "ERROR: xcodegen not found on PATH (install: brew install xcodegen)." >&2
   exit 1
 fi
 
 # ── 2. Inject the renderer wiring (idempotent) ──────────────────────────────────────────────
-SPEC="$SPEC" python3 - <<'PY'
+SPEC="${SPEC}" python3 - << 'PY'
 import os, sys
 
 spec_path = os.environ["SPEC"]
@@ -149,10 +149,10 @@ else:
 PY
 
 # ── 3. Regenerate the .xcodeproj from the now-enabled spec ───────────────────────────────────
-echo "==> xcodegen generate --spec $SPEC"
-xcodegen generate --spec "$SPEC"
+echo "==> xcodegen generate --spec ${SPEC}"
+xcodegen generate --spec "${SPEC}"
 
-cat <<EOF
+cat << EOF
 ==> iOS renderer ENABLED.
     Build (simulator, unsigned; ARCHS=arm64 is pinned in the spec):
       xcodebuild -project Apps/ClientApp-iOS/ClientApp-iOS.xcodeproj -scheme ClientApp-iOS \\

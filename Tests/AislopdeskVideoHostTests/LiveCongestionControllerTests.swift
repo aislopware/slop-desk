@@ -12,28 +12,46 @@ import XCTest
 /// mirroring ``LiveBitratePolicyTests`` (which assumes `AISLOPDESK_BPP` unset). They reference the static
 /// tunables symbolically so they stay correct even if a default is changed.
 final class LiveCongestionControllerTests: XCTestCase {
-
     // A representative 2× HiDPI ceiling (≈45 Mbps) so the percentages are realistic.
     private let ceiling = 45_000_000
 
     /// Builds a `NetworkEstimate` with chosen loss / RTT congestion characteristics by folding
     /// crafted reports. Loss is EWMA-damped, so to reach a target loss we fold a steady stream.
-    private func estimate(lossSamples: Double = 0, folds: Int = 0,
-                          rttCongested: Bool = false) -> NetworkEstimate {
+    private func estimate(
+        lossSamples: Double = 0,
+        folds: Int = 0,
+        rttCongested: Bool = false,
+    ) -> NetworkEstimate {
         var est = NetworkEstimate()
         // Seed a clean baseline RTT (minRTT = 50) so the RTT-congestion predicate has a baseline.
         for _ in 0..<max(1, folds) {
             if rttCongested {
                 // Drive smoothedRTT well above minRTT*1.25 with a rising jitter gradient.
-                est.fold(rttMillis: 50, framesReceived: 1000,
-                         unrecovered: UInt32((lossSamples * 1000).rounded()), owdJitterMicros: 100)
-                est.fold(rttMillis: 50, framesReceived: 1000,
-                         unrecovered: UInt32((lossSamples * 1000).rounded()), owdJitterMicros: 200)
-                est.fold(rttMillis: 500, framesReceived: 1000,
-                         unrecovered: UInt32((lossSamples * 1000).rounded()), owdJitterMicros: 9000)
+                est.fold(
+                    rttMillis: 50,
+                    framesReceived: 1000,
+                    unrecovered: UInt32((lossSamples * 1000).rounded()),
+                    owdJitterMicros: 100,
+                )
+                est.fold(
+                    rttMillis: 50,
+                    framesReceived: 1000,
+                    unrecovered: UInt32((lossSamples * 1000).rounded()),
+                    owdJitterMicros: 200,
+                )
+                est.fold(
+                    rttMillis: 500,
+                    framesReceived: 1000,
+                    unrecovered: UInt32((lossSamples * 1000).rounded()),
+                    owdJitterMicros: 9000,
+                )
             } else {
-                est.fold(rttMillis: 50, framesReceived: 1000,
-                         unrecovered: UInt32((lossSamples * 1000).rounded()), owdJitterMicros: 100)
+                est.fold(
+                    rttMillis: 50,
+                    framesReceived: 1000,
+                    unrecovered: UInt32((lossSamples * 1000).rounded()),
+                    owdJitterMicros: 100,
+                )
             }
         }
         return est
@@ -41,9 +59,17 @@ final class LiveCongestionControllerTests: XCTestCase {
 
     /// Drive the controller past warmup with neutral (no-action) reports so subsequent reports act.
     /// `gradientCutEnabled` defaults to the production env default (OFF in the test environment).
-    private func warmedController(ceiling: Int, floor: Int? = nil,
-                                  gradientCutEnabled: Bool = LiveCongestionController.gradientCutEnabledDefault) -> LiveCongestionController {
-        var ctrl = floor.map { LiveCongestionController(ceiling: ceiling, floor: $0, gradientCutEnabled: gradientCutEnabled) }
+    private func warmedController(
+        ceiling: Int,
+        floor: Int? = nil,
+        gradientCutEnabled: Bool = LiveCongestionController
+            .gradientCutEnabledDefault,
+    ) -> LiveCongestionController {
+        var ctrl = floor.map { LiveCongestionController(
+            ceiling: ceiling,
+            floor: $0,
+            gradientCutEnabled: gradientCutEnabled,
+        ) }
             ?? LiveCongestionController(ceiling: ceiling, gradientCutEnabled: gradientCutEnabled)
         let clean = estimate(lossSamples: 0, folds: 1)
         for _ in 0..<LiveCongestionController.warmupTicks { _ = ctrl.onReport(clean) }
@@ -60,8 +86,14 @@ final class LiveCongestionControllerTests: XCTestCase {
         for _ in 0..<baselineFolds {
             est.fold(rttMillis: 50, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100)
         }
-        est.fold(rttMillis: rawRTT, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100,
-                 owdTrendState: overusing ? 1 : 0, owdTrendModifiedMilli: overusing ? 80_000 : 0)
+        est.fold(
+            rttMillis: rawRTT,
+            framesReceived: 1000,
+            unrecovered: 0,
+            owdJitterMicros: 100,
+            owdTrendState: overusing ? 1 : 0,
+            owdTrendModifiedMilli: overusing ? 80000 : 0,
+        )
         return est
     }
 
@@ -116,8 +148,11 @@ final class LiveCongestionControllerTests: XCTestCase {
         let lossy = estimate(lossSamples: 0.05, folds: 8, rttCongested: true)
         let before = ctrl.current
         let after = ctrl.onReport(lossy)
-        XCTAssertEqual(after, max(ctrl.floor, Int(Double(before) * LiveCongestionController.decreaseFactor)),
-                       "ordinary corroborated congestion → current *= decreaseFactor")
+        XCTAssertEqual(
+            after,
+            max(ctrl.floor, Int(Double(before) * LiveCongestionController.decreaseFactor)),
+            "ordinary corroborated congestion → current *= decreaseFactor",
+        )
         XCTAssertLessThan(after, before)
     }
 
@@ -127,8 +162,11 @@ final class LiveCongestionControllerTests: XCTestCase {
         let severe = estimate(lossSamples: 0.5, folds: 12)
         let before = ctrl.current
         let after = ctrl.onReport(severe)
-        XCTAssertEqual(after, max(ctrl.floor, Int(Double(before) * LiveCongestionController.severeDecreaseFactor)),
-                       "sustained catastrophic loss → current *= severeDecreaseFactor (halve)")
+        XCTAssertEqual(
+            after,
+            max(ctrl.floor, Int(Double(before) * LiveCongestionController.severeDecreaseFactor)),
+            "sustained catastrophic loss → current *= severeDecreaseFactor (halve)",
+        )
         // Severe drop is steeper than an ordinary corroborated drop from the same point.
         var ordinaryCtrl = warmedController(ceiling: ceiling)
         let ordinary = ordinaryCtrl.onReport(estimate(lossSamples: 0.05, folds: 8, rttCongested: true))
@@ -146,8 +184,11 @@ final class LiveCongestionControllerTests: XCTestCase {
         for _ in 0..<(LiveCongestionController.rttStreakTicks - 1) {
             XCTAssertEqual(ctrl.onReport(rtt), before, "sub-streak inflation must not decrease (nor climb)")
         }
-        XCTAssertLessThan(ctrl.onReport(rtt), before,
-                          "inflation sustained for the full streak is a congestion signal → decrease")
+        XCTAssertLessThan(
+            ctrl.onReport(rtt),
+            before,
+            "inflation sustained for the full streak is a congestion signal → decrease",
+        )
     }
 
     /// REGRESSION (2026-06-10 live log): a clean low-latency LAN (minRTT ≈ 5ms, smoothedRTT wobbling
@@ -157,15 +198,22 @@ final class LiveCongestionControllerTests: XCTestCase {
     func testCleanLANJitterNeverDecreases() {
         var ctrl = LiveCongestionController(ceiling: ceiling)
         var est = NetworkEstimate()
-        est.fold(rttMillis: 5, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 10_000)
+        est.fold(rttMillis: 5, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 10000)
         // Live-measured shape: RTT samples 5–16ms, jitter wobbling so the gradient flag flips.
         let rtts = [7, 12, 9, 15, 6, 11, 5, 16, 8, 13]
-        let jitters: [UInt32] = [9_000, 14_000, 11_000, 13_500, 10_000, 12_500]
+        let jitters: [UInt32] = [9000, 14000, 11000, 13500, 10000, 12500]
         for i in 0..<200 {
-            est.fold(rttMillis: rtts[i % rtts.count], framesReceived: 1000, unrecovered: 0,
-                     owdJitterMicros: jitters[i % jitters.count])
-            XCTAssertEqual(ctrl.onReport(est), ceiling,
-                           "LAN scheduling wobble under the absolute slack must never leave the ceiling")
+            est.fold(
+                rttMillis: rtts[i % rtts.count],
+                framesReceived: 1000,
+                unrecovered: 0,
+                owdJitterMicros: jitters[i % jitters.count],
+            )
+            XCTAssertEqual(
+                ctrl.onReport(est),
+                ceiling,
+                "LAN scheduling wobble under the absolute slack must never leave the ceiling",
+            )
         }
     }
 
@@ -186,19 +234,27 @@ final class LiveCongestionControllerTests: XCTestCase {
             let before = ctrl.current
             // Expected proportional sizing from the ACTING report's own estimate.
             let raw = (est.minRTTMillis + LiveCongestionController.rttSlackMillis) / est.smoothedRTTMillis
-            let factor = min(LiveCongestionController.rttDecreaseCapFactor,
-                             max(LiveCongestionController.rttDecreaseFloorFactor, raw))
+            let factor = min(
+                LiveCongestionController.rttDecreaseCapFactor,
+                max(LiveCongestionController.rttDecreaseFloorFactor, raw),
+            )
             let after = ctrl.onReport(est)
             if after < before {
                 decreaseTicks.append(i)
-                XCTAssertEqual(after, max(ctrl.floor, Int(Double(before) * factor)),
-                               "every RTT decrease is sized by the measured queue, clamped")
+                XCTAssertEqual(
+                    after,
+                    max(ctrl.floor, Int(Double(before) * factor)),
+                    "every RTT decrease is sized by the measured queue, clamped",
+                )
             }
         }
         XCTAssertGreaterThanOrEqual(decreaseTicks.count, 2, "a persistent queue is CHASED, not waited out")
         for pair in zip(decreaseTicks, decreaseTicks.dropFirst()) {
-            XCTAssertGreaterThanOrEqual(pair.1 - pair.0, LiveCongestionController.cutHoldTicks,
-                "RTT decreases are spaced by cutHoldTicks — no per-report cascade")
+            XCTAssertGreaterThanOrEqual(
+                pair.1 - pair.0,
+                LiveCongestionController.cutHoldTicks,
+                "RTT decreases are spaced by cutHoldTicks — no per-report cascade",
+            )
         }
     }
 
@@ -217,13 +273,23 @@ final class LiveCongestionControllerTests: XCTestCase {
             let before = ctrl.current
             let raw = (est.minRTTMillis + LiveCongestionController.rttSlackMillis) / est.smoothedRTTMillis
             let after = ctrl.onReport(est)
-            if after < before { firstDecrease = (before, after, raw); break }
+            if after < before { firstDecrease = (before, after, raw)
+                break
+            }
         }
-        guard let hard = firstDecrease else { return XCTFail("sustained 80ms over a 5ms baseline must decrease") }
-        XCTAssertLessThan(hard.factor, LiveCongestionController.rttDecreaseFloorFactor,
-                          "precondition: the raw factor is below the clamp floor")
-        XCTAssertEqual(hard.after, Int(Double(hard.before) * LiveCongestionController.rttDecreaseFloorFactor),
-                       "a huge queue cuts at the hard clamp floor in one step")
+        guard let hard = firstDecrease else { XCTFail("sustained 80ms over a 5ms baseline must decrease")
+            return
+        }
+        XCTAssertLessThan(
+            hard.factor,
+            LiveCongestionController.rttDecreaseFloorFactor,
+            "precondition: the raw factor is below the clamp floor",
+        )
+        XCTAssertEqual(
+            hard.after,
+            Int(Double(hard.before) * LiveCongestionController.rttDecreaseFloorFactor),
+            "a huge queue cuts at the hard clamp floor in one step",
+        )
 
         // Gentle end: LOW baseline (~10ms — the absolute 15ms slack governs, the proportional
         // fraction is sub-floor there) with smoothed crossing the min+15 gate fast enough to
@@ -239,14 +305,21 @@ final class LiveCongestionControllerTests: XCTestCase {
         for _ in 0..<40 {
             est2.fold(rttMillis: 31, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100)
             let before = gentle.current
-            let raw = (est2.minRTTMillis + LiveCongestionController.effectiveSlackMillis(minRTTMillis: est2.minRTTMillis)) / est2.smoothedRTTMillis
+            let raw = (est2.minRTTMillis + LiveCongestionController
+                .effectiveSlackMillis(minRTTMillis: est2.minRTTMillis)) / est2.smoothedRTTMillis
             let after = gentle.onReport(est2)
             if after < before {
                 sawGentleDecrease = true
-                XCTAssertGreaterThan(raw, LiveCongestionController.rttDecreaseCapFactor,
-                                     "precondition: the raw factor is above the gentle cap")
-                XCTAssertEqual(after, Int(Double(before) * LiveCongestionController.rttDecreaseCapFactor),
-                               "barely-over-threshold inflation trims at the gentle cap, never deeper")
+                XCTAssertGreaterThan(
+                    raw,
+                    LiveCongestionController.rttDecreaseCapFactor,
+                    "precondition: the raw factor is above the gentle cap",
+                )
+                XCTAssertEqual(
+                    after,
+                    Int(Double(before) * LiveCongestionController.rttDecreaseCapFactor),
+                    "barely-over-threshold inflation trims at the gentle cap, never deeper",
+                )
                 break
             }
         }
@@ -280,18 +353,24 @@ final class LiveCongestionControllerTests: XCTestCase {
         let fullStep = max(1, ceiling / LiveCongestionController.increaseDivisor)
         let cautiousStep = max(1, fullStep / LiveCongestionController.kneeCautionDivisor)
         var sawFull = false, sawCautious = false
-        for _ in 0..<2_000 {
+        for _ in 0..<2000 {
             est.fold(rttMillis: 50, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100)
             let before = ctrl.current
             let after = ctrl.onReport(est)
             guard after > before else { continue }
             if before < knee {
-                XCTAssertEqual(after - before, fullStep,
-                               "below the knee the climb uses the FULL additive step")
+                XCTAssertEqual(
+                    after - before,
+                    fullStep,
+                    "below the knee the climb uses the FULL additive step",
+                )
                 sawFull = true
             } else {
-                XCTAssertEqual(after - before, cautiousStep,
-                               "at/above the knee the climb uses the cautious step")
+                XCTAssertEqual(
+                    after - before,
+                    cautiousStep,
+                    "at/above the knee the climb uses the cautious step",
+                )
                 sawCautious = true
             }
             // Stop only after a couple of CAUTIOUS steps (a full step overshooting the knee must not
@@ -314,9 +393,13 @@ final class LiveCongestionControllerTests: XCTestCase {
         for _ in 0..<10 {
             est.fold(rttMillis: 300, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100)
             let before = ctrl.current
-            if ctrl.onReport(est) < before { afterFirstCut = ctrl.current; break }
+            if ctrl.onReport(est) < before { afterFirstCut = ctrl.current
+                break
+            }
         }
-        guard let cut = afterFirstCut else { return XCTFail("a rising queue must cut") }
+        guard let cut = afterFirstCut else { XCTFail("a rising queue must cut")
+            return
+        }
         // The queue now DRAINS: samples fall away BELOW the smoothed level, so the smoothed EWMA
         // falls monotonically — yet stays far above both inflation gates for many reports. (Samples
         // above the still-climbing EWMA would read as a RISING trend — that catchup phase may
@@ -326,8 +409,11 @@ final class LiveCongestionControllerTests: XCTestCase {
             rtt = max(6, rtt - 12)
             est.fold(rttMillis: rtt, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100)
             _ = ctrl.onReport(est)
-            XCTAssertGreaterThanOrEqual(ctrl.current, cut,
-                "a draining queue (falling smoothed trend) never re-cuts, however inflated the level still is")
+            XCTAssertGreaterThanOrEqual(
+                ctrl.current,
+                cut,
+                "a draining queue (falling smoothed trend) never re-cuts, however inflated the level still is",
+            )
         }
     }
 
@@ -377,7 +463,9 @@ final class LiveCongestionControllerTests: XCTestCase {
         for _ in 0..<20 {
             est.fold(rttMillis: 120, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100)
             let before = ctrl.current
-            if ctrl.onReport(est) < before { cut = true; break }
+            if ctrl.onReport(est) < before { cut = true
+                break
+            }
         }
         XCTAssertTrue(cut, "smoothed ≥ min + 0.75×min on a 40ms baseline is a real queue → cuts")
     }
@@ -431,8 +519,11 @@ final class LiveCongestionControllerTests: XCTestCase {
         let probed = ctrl.onReport(clean)
         XCTAssertGreaterThan(probed, dropped, "past the hold-down, a clean link climbs additively")
         let step = max(1, ceiling / LiveCongestionController.increaseDivisor)
-        XCTAssertLessThanOrEqual(probed - dropped, step * (LiveCongestionController.holdTicks + 1),
-                                 "recovery is additive, not a jump back to the ceiling")
+        XCTAssertLessThanOrEqual(
+            probed - dropped,
+            step * (LiveCongestionController.holdTicks + 1),
+            "recovery is additive, not a jump back to the ceiling",
+        )
     }
 
     func testRecoveryNeverExceedsCeiling() {
@@ -440,7 +531,7 @@ final class LiveCongestionControllerTests: XCTestCase {
         // Drop once, then feed a long clean stream — the rate climbs but clamps AT the ceiling.
         _ = ctrl.onReport(estimate(lossSamples: 0.5, folds: 12))
         let clean = estimate(lossSamples: 0, folds: 1)
-        for _ in 0..<10_000 { _ = ctrl.onReport(clean) }
+        for _ in 0..<10000 { _ = ctrl.onReport(clean) }
         XCTAssertEqual(ctrl.current, ceiling, "additive recovery clamps at the ceiling, never above")
     }
 
@@ -470,8 +561,11 @@ final class LiveCongestionControllerTests: XCTestCase {
         est.fold(rttMillis: 50, framesReceived: 1000, unrecovered: 1000, owdJitterMicros: 100)
         XCTAssertEqual(ctrl.onReport(est), ceiling, "an uncorroborated spike is weather — no decrease")
         // The EWMA tail lingers above the ORDINARY threshold for many reports — none may decrease.
-        XCTAssertGreaterThan(est.lossRate, LiveCongestionController.lossThreshold,
-                             "EWMA loss lingers above threshold after the spike (the old cascade trap)")
+        XCTAssertGreaterThan(
+            est.lossRate,
+            LiveCongestionController.lossThreshold,
+            "EWMA loss lingers above threshold after the spike (the old cascade trap)",
+        )
         for _ in 0..<60 {
             est.fold(rttMillis: 50, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100)
             XCTAssertEqual(ctrl.onReport(est), ceiling, "the decaying EWMA tail must not decrease either")
@@ -493,13 +587,19 @@ final class LiveCongestionControllerTests: XCTestCase {
             if firstHalveTick == nil, ctrl.current < ceiling { firstHalveTick = i }
         }
         XCTAssertNotNil(firstHalveTick, "a sustained collapse is detected within the first hold-down window")
-        XCTAssertEqual(ctrl.current, max(ctrl.floor, Int(Double(ceiling) * LiveCongestionController.severeDecreaseFactor)),
-                       "exactly ONE halving within the hold-down window — no per-report cascade")
+        XCTAssertEqual(
+            ctrl.current,
+            max(ctrl.floor, Int(Double(ceiling) * LiveCongestionController.severeDecreaseFactor)),
+            "exactly ONE halving within the hold-down window — no per-report cascade",
+        )
         // Collapse ends; the EWMA tail (still > 0.25 for a few reports) must not halve again before
         // the hold-down expires.
         steppedClean(&est, &ctrl, count: 3)
-        XCTAssertGreaterThanOrEqual(ctrl.current, max(ctrl.floor, Int(Double(ceiling) * LiveCongestionController.severeDecreaseFactor)),
-                                    "the post-collapse EWMA tail never pushes below the single halving")
+        XCTAssertGreaterThanOrEqual(
+            ctrl.current,
+            max(ctrl.floor, Int(Double(ceiling) * LiveCongestionController.severeDecreaseFactor)),
+            "the post-collapse EWMA tail never pushes below the single halving",
+        )
     }
 
     /// REGRESSION (finding 3): a no-op decrease at the floor must NOT re-arm the hold-down. After the
@@ -515,8 +615,11 @@ final class LiveCongestionControllerTests: XCTestCase {
         }
         XCTAssertEqual(ctrl.current, ctrl.floor, "sustained severe loss pins the rate at the floor")
         // The hold-down must point at/behind NOW — no-op decreases at the floor did not push it ahead.
-        XCTAssertLessThanOrEqual(ctrl.holdUntilTick, ctrl.ticks,
-            "no-op decreases at the floor do not extend the hold-down into the future")
+        XCTAssertLessThanOrEqual(
+            ctrl.holdUntilTick,
+            ctrl.ticks,
+            "no-op decreases at the floor do not extend the hold-down into the future",
+        )
         // Recovery starts as soon as the catastrophic EWMA decays under its gate (~11 clean reports
         // from lossRate ≈ 1.0; the catastrophic branch keeps selecting no-op floor decreases until
         // then) — NOT after an extra hold-down window (which would be 20 more).
@@ -525,8 +628,11 @@ final class LiveCongestionControllerTests: XCTestCase {
             _ = ctrl.onReport(est)
         }
         est.fold(rttMillis: 50, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100)
-        XCTAssertGreaterThan(ctrl.onReport(est), ctrl.floor,
-            "recovery climbs once the EWMA clears (hold-down was not extended at the floor)")
+        XCTAssertGreaterThan(
+            ctrl.onReport(est),
+            ctrl.floor,
+            "recovery climbs once the EWMA clears (hold-down was not extended at the floor)",
+        )
     }
 
     // MARK: LOSS-TOLERANCE #4 — weather loss (rate-independent, flat RTT) never gives up bitrate
@@ -541,10 +647,17 @@ final class LiveCongestionControllerTests: XCTestCase {
         // A 10-second weather episode: per-report raw loss wandering 3–9%, RTT pinned at baseline.
         let lossPerMille: [UInt32] = [30, 90, 42, 60, 86, 33, 77, 51]
         for i in 0..<200 {
-            est.fold(rttMillis: 50, framesReceived: 1000, unrecovered: lossPerMille[i % lossPerMille.count],
-                     owdJitterMicros: 300)
-            XCTAssertEqual(ctrl.onReport(est), ceiling,
-                           "rate-independent weather loss at flat RTT must never leave the ceiling")
+            est.fold(
+                rttMillis: 50,
+                framesReceived: 1000,
+                unrecovered: lossPerMille[i % lossPerMille.count],
+                owdJitterMicros: 300,
+            )
+            XCTAssertEqual(
+                ctrl.onReport(est),
+                ceiling,
+                "rate-independent weather loss at flat RTT must never leave the ceiling",
+            )
         }
     }
 
@@ -554,8 +667,11 @@ final class LiveCongestionControllerTests: XCTestCase {
         // fires on the FIRST such report (no rttStreakTicks wait; the streak gate is RTT-alone).
         let congested = estimate(lossSamples: 0.05, folds: 4, rttCongested: true)
         let before = ctrl.current
-        XCTAssertLessThan(ctrl.onReport(congested), before,
-                          "loss + queue evidence = real congestion → immediate decrease")
+        XCTAssertLessThan(
+            ctrl.onReport(congested),
+            before,
+            "loss + queue evidence = real congestion → immediate decrease",
+        )
     }
 
     func testCatastrophicLossHalvesEvenAtFlatRTT() {
@@ -566,8 +682,11 @@ final class LiveCongestionControllerTests: XCTestCase {
         let catastrophic = estimate(lossSamples: 0.30, folds: 16)
         XCTAssertGreaterThan(catastrophic.lossRate, LiveCongestionController.catastrophicLossThreshold)
         let after = ctrl.onReport(catastrophic)
-        XCTAssertEqual(after, max(ctrl.floor, Int(Double(ceiling) * LiveCongestionController.severeDecreaseFactor)),
-                       "sustained catastrophic loss halves even with no RTT evidence")
+        XCTAssertEqual(
+            after,
+            max(ctrl.floor, Int(Double(ceiling) * LiveCongestionController.severeDecreaseFactor)),
+            "sustained catastrophic loss halves even with no RTT evidence",
+        )
     }
 
     // MARK: CUT-CASCADE FIX (2026-06-11) — one multiplicative cut per spacing window, loss included
@@ -596,8 +715,11 @@ final class LiveCongestionControllerTests: XCTestCase {
             _ = ctrl.onReport(est)
         }
         let oneCut = max(ctrl.floor, Int(Double(before) * LiveCongestionController.decreaseFactor))
-        XCTAssertEqual(ctrl.current, oneCut,
-                       "a multi-report burst inside one spacing window = exactly ONE ×0.85 cut — no per-report cascade, no raw-sample halve")
+        XCTAssertEqual(
+            ctrl.current,
+            oneCut,
+            "a multi-report burst inside one spacing window = exactly ONE ×0.85 cut — no per-report cascade, no raw-sample halve",
+        )
         XCTAssertGreaterThan(ctrl.current, ctrl.floor, "the burst must NOT cascade to the floor")
     }
 
@@ -621,8 +743,11 @@ final class LiveCongestionControllerTests: XCTestCase {
         est.fold(rttMillis: 80, framesReceived: 2, unrecovered: 1, owdJitterMicros: 500)
         XCTAssertLessThan(est.lossRate, LiveCongestionController.catastrophicLossThreshold)
         let after = ctrl.onReport(est)
-        XCTAssertEqual(after, max(ctrl.floor, Int(Double(ceiling) * LiveCongestionController.decreaseFactor)),
-                       "raw-severe corroborated loss takes the ordinary ×0.85 step, never the ×0.5 fast-halve")
+        XCTAssertEqual(
+            after,
+            max(ctrl.floor, Int(Double(ceiling) * LiveCongestionController.decreaseFactor)),
+            "raw-severe corroborated loss takes the ordinary ×0.85 step, never the ×0.5 fast-halve",
+        )
     }
 
     /// A genuinely PERSISTENT corroborated-loss episode (sub-catastrophic) is still chased — it cuts
@@ -644,8 +769,11 @@ final class LiveCongestionControllerTests: XCTestCase {
         }
         XCTAssertGreaterThanOrEqual(cutTicks.count, 2, "a persistent episode is chased, not waited out")
         for pair in zip(cutTicks, cutTicks.dropFirst()) {
-            XCTAssertGreaterThanOrEqual(pair.1 - pair.0, LiveCongestionController.cutHoldTicks,
-                                        "loss cuts share the cutHoldTicks spacing — never per-report")
+            XCTAssertGreaterThanOrEqual(
+                pair.1 - pair.0,
+                LiveCongestionController.cutHoldTicks,
+                "loss cuts share the cutHoldTicks spacing — never per-report",
+            )
         }
     }
 
@@ -654,7 +782,7 @@ final class LiveCongestionControllerTests: XCTestCase {
     func testDecreaseNeverBelowFloor() {
         var ctrl = warmedController(ceiling: ceiling)
         let severe = estimate(lossSamples: 0.5, folds: 12)
-        for _ in 0..<10_000 { _ = ctrl.onReport(severe) }
+        for _ in 0..<10000 { _ = ctrl.onReport(severe) }
         XCTAssertEqual(ctrl.current, ctrl.floor, "sustained severe loss floors at `floor`, never below")
         XCTAssertGreaterThanOrEqual(ctrl.current, LiveBitratePolicy.minimumBitrate)
         XCTAssertGreaterThan(ctrl.current, 0, "the rate is NEVER 0")
@@ -666,7 +794,7 @@ final class LiveCongestionControllerTests: XCTestCase {
         var ctrl = LiveCongestionController(ceiling: ceiling)
         // Default estimate: loss 0, minRTT == .infinity (no valid RTT sample), no rising gradient.
         let blind = NetworkEstimate()
-        for _ in 0..<1_000 { _ = ctrl.onReport(blind) }
+        for _ in 0..<1000 { _ = ctrl.onReport(blind) }
         XCTAssertEqual(ctrl.current, ceiling, "no positive evidence → never decreases; pinned at ceiling")
     }
 
@@ -675,7 +803,7 @@ final class LiveCongestionControllerTests: XCTestCase {
         var est = NetworkEstimate()
         for _ in 0..<20 { est.fold(rttMillis: nil, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100) }
         var ctrl = LiveCongestionController(ceiling: ceiling)
-        for _ in 0..<1_000 { _ = ctrl.onReport(est) }
+        for _ in 0..<1000 { _ = ctrl.onReport(est) }
         XCTAssertEqual(ctrl.current, ceiling, "loss==0 + no RTT → no decrease ever")
     }
 
@@ -683,16 +811,28 @@ final class LiveCongestionControllerTests: XCTestCase {
 
     func testChurnGateSuppressesTinyChanges() {
         // A sub-5%-of-ceiling, sub-500kbps move is NOT material.
-        XCTAssertFalse(LiveCongestionController.isMaterialChange(previous: 45_000_000, target: 45_100_000, ceiling: ceiling))
+        XCTAssertFalse(LiveCongestionController.isMaterialChange(
+            previous: 45_000_000,
+            target: 45_100_000,
+            ceiling: ceiling,
+        ))
         // A move ≥ 5% of ceiling IS material.
-        XCTAssertTrue(LiveCongestionController.isMaterialChange(previous: 45_000_000, target: 42_000_000, ceiling: ceiling))
+        XCTAssertTrue(LiveCongestionController.isMaterialChange(
+            previous: 45_000_000,
+            target: 42_000_000,
+            ceiling: ceiling,
+        ))
     }
 
     func testChurnGateAbsoluteFloorForSmallCeiling() {
         // With a small ceiling, 5% is tiny — the absolute 500kbps floor governs instead.
         let small = 4_000_000
         // 5% of 4M = 200k < 500k floor → a 300k move is NOT material (governed by the 500k floor).
-        XCTAssertFalse(LiveCongestionController.isMaterialChange(previous: 4_000_000, target: 3_700_000, ceiling: small))
+        XCTAssertFalse(LiveCongestionController.isMaterialChange(
+            previous: 4_000_000,
+            target: 3_700_000,
+            ceiling: small,
+        ))
         // A 600k move clears the 500k floor → material.
         XCTAssertTrue(LiveCongestionController.isMaterialChange(previous: 4_000_000, target: 3_400_000, ceiling: small))
     }
@@ -701,10 +841,14 @@ final class LiveCongestionControllerTests: XCTestCase {
         // The additive step (~3% of ceiling) is sub-material per tick, but a couple of ticks against
         // the LAST ACTUATED rate cross the 5% gate — the reason the host tracks lastActuatedBitrate.
         let step = ceiling / LiveCongestionController.increaseDivisor // ~3.125%
-        XCTAssertFalse(LiveCongestionController.isMaterialChange(previous: ceiling - step, target: ceiling, ceiling: ceiling),
-                       "one additive tick is below the churn gate")
-        XCTAssertTrue(LiveCongestionController.isMaterialChange(previous: ceiling - 2 * step, target: ceiling, ceiling: ceiling),
-                      "two accumulated additive ticks cross the churn gate")
+        XCTAssertFalse(
+            LiveCongestionController.isMaterialChange(previous: ceiling - step, target: ceiling, ceiling: ceiling),
+            "one additive tick is below the churn gate",
+        )
+        XCTAssertTrue(
+            LiveCongestionController.isMaterialChange(previous: ceiling - 2 * step, target: ceiling, ceiling: ceiling),
+            "two accumulated additive ticks cross the churn gate",
+        )
     }
 
     // MARK: Component 3 — delay-gradient early cut (AISLOPDESK_ABR_GRAD, instance-level A/B)
@@ -712,11 +856,15 @@ final class LiveCongestionControllerTests: XCTestCase {
     /// The default ships OFF (HW-feel-test convention) — and these tests assume `AISLOPDESK_ABR_GRAD`
     /// is unset, like every other tunable in this file.
     func testGradientFlagDefaultsOff() {
-        XCTAssertFalse(LiveCongestionController.gradientCutEnabledDefault,
-                       "AISLOPDESK_ABR_GRAD must be unset in the test environment; the default ships OFF")
+        XCTAssertFalse(
+            LiveCongestionController.gradientCutEnabledDefault,
+            "AISLOPDESK_ABR_GRAD must be unset in the test environment; the default ships OFF",
+        )
         XCTAssertFalse(LiveCongestionController(ceiling: ceiling).gradientCutEnabled)
-        XCTAssertTrue(LiveCongestionController(ceiling: ceiling, gradientCutEnabled: true).gradientCutEnabled,
-                      "the instance-level knob overrides the env default (harness A/B)")
+        XCTAssertTrue(
+            LiveCongestionController(ceiling: ceiling, gradientCutEnabled: true).gradientCutEnabled,
+            "the instance-level knob overrides the env default (harness A/B)",
+        )
     }
 
     /// THE point of the gradient path: ONE report with trend OVERUSING + a raw-RTT-corroborated
@@ -727,12 +875,18 @@ final class LiveCongestionControllerTests: XCTestCase {
         let est = gradientEstimate(rawRTT: 200, overusing: true)
         // Precondition: the smoothed path is NOT yet authorized on this estimate.
         let slack = LiveCongestionController.effectiveSlackMillis(minRTTMillis: est.minRTTMillis)
-        XCTAssertLessThanOrEqual(est.smoothedRTTMillis, est.minRTTMillis + slack,
-                                 "precondition: smoothed RTT below the absolute-slack gate")
+        XCTAssertLessThanOrEqual(
+            est.smoothedRTTMillis,
+            est.minRTTMillis + slack,
+            "precondition: smoothed RTT below the absolute-slack gate",
+        )
         let before = ctrl.current
         let after = ctrl.onReport(est)
-        XCTAssertEqual(after, max(ctrl.floor, Int(Double(before) * LiveCongestionController.gradientDecreaseFactor)),
-                       "one overusing+corroborated report cuts ×gradientDecreaseFactor")
+        XCTAssertEqual(
+            after,
+            max(ctrl.floor, Int(Double(before) * LiveCongestionController.gradientDecreaseFactor)),
+            "one overusing+corroborated report cuts ×gradientDecreaseFactor",
+        )
         XCTAssertLessThan(after, before)
     }
 
@@ -740,11 +894,17 @@ final class LiveCongestionControllerTests: XCTestCase {
     /// gates (a flat or rejected sample = no fresh level evidence = no cut).
     func testGradientCutRequiresRawRTTCorroboration() {
         var flatRaw = warmedController(ceiling: ceiling, gradientCutEnabled: true)
-        XCTAssertEqual(flatRaw.onReport(gradientEstimate(rawRTT: 50, overusing: true)), ceiling,
-                       "overusing at a FLAT raw RTT never cuts (the 4G-wobble guard)")
+        XCTAssertEqual(
+            flatRaw.onReport(gradientEstimate(rawRTT: 50, overusing: true)),
+            ceiling,
+            "overusing at a FLAT raw RTT never cuts (the 4G-wobble guard)",
+        )
         var rejectedRaw = warmedController(ceiling: ceiling, gradientCutEnabled: true)
-        XCTAssertEqual(rejectedRaw.onReport(gradientEstimate(rawRTT: nil, overusing: true)), ceiling,
-                       "a rejected raw sample (lastRTTSampleMillis nil) never authorizes a cut")
+        XCTAssertEqual(
+            rejectedRaw.onReport(gradientEstimate(rawRTT: nil, overusing: true)),
+            ceiling,
+            "a rejected raw sample (lastRTTSampleMillis nil) never authorizes a cut",
+        )
     }
 
     /// The no-cascade invariant extends to the gradient: a persisting overuse re-cuts at most once
@@ -753,42 +913,69 @@ final class LiveCongestionControllerTests: XCTestCase {
         var ctrl = warmedController(ceiling: ceiling, gradientCutEnabled: true)
         var est = NetworkEstimate()
         for _ in 0..<8 { est.fold(rttMillis: 50, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100) }
-        est.fold(rttMillis: 200, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100,
-                 owdTrendState: 1, owdTrendModifiedMilli: 80_000)
+        est.fold(
+            rttMillis: 200,
+            framesReceived: 1000,
+            unrecovered: 0,
+            owdJitterMicros: 100,
+            owdTrendState: 1,
+            owdTrendModifiedMilli: 80000,
+        )
         XCTAssertLessThan(ctrl.onReport(est), ceiling, "the first cut of the episode is immediate")
         var cutTicks: [Int] = []
         var last = ctrl.current
         for i in 1...(LiveCongestionController.cutHoldTicks * 2) {
-            est.fold(rttMillis: 200, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100,
-                     owdTrendState: 1, owdTrendModifiedMilli: 80_000)
+            est.fold(
+                rttMillis: 200,
+                framesReceived: 1000,
+                unrecovered: 0,
+                owdJitterMicros: 100,
+                owdTrendState: 1,
+                owdTrendModifiedMilli: 80000,
+            )
             let after = ctrl.onReport(est)
             if after < last { cutTicks.append(i) }
             last = after
         }
         XCTAssertFalse(cutTicks.isEmpty, "a persisting overuse re-cuts at the window edge")
-        XCTAssertGreaterThanOrEqual(cutTicks[0], LiveCongestionController.cutHoldTicks,
-                                    "no second cut inside the cutHold window")
+        XCTAssertGreaterThanOrEqual(
+            cutTicks[0],
+            LiveCongestionController.cutHoldTicks,
+            "no second cut inside the cutHold window",
+        )
         for pair in zip(cutTicks, cutTicks.dropFirst()) {
-            XCTAssertGreaterThanOrEqual(pair.1 - pair.0, LiveCongestionController.cutHoldTicks,
-                                        "every consecutive cut pair is spaced by the shared window")
+            XCTAssertGreaterThanOrEqual(
+                pair.1 - pair.0,
+                LiveCongestionController.cutHoldTicks,
+                "every consecutive cut pair is spaced by the shared window",
+            )
         }
     }
 
     /// A/B purity: with the gate OFF (the production default), a controller fed overusing reports is
     /// tick-for-tick identical to one fed the same telemetry without trend fields.
     func testGradientDisabledIsByteIdenticalToToday() {
-        var withTrend = LiveCongestionController(ceiling: ceiling)   // env default = OFF
+        var withTrend = LiveCongestionController(ceiling: ceiling) // env default = OFF
         var noTrend = LiveCongestionController(ceiling: ceiling)
         var estA = NetworkEstimate()
         var estB = NetworkEstimate()
         for i in 0..<60 {
-            let rtt = i % 5 == 0 ? 200 : 50
-            let lost: UInt32 = i % 7 == 0 ? 30 : 0
-            estA.fold(rttMillis: rtt, framesReceived: 1000, unrecovered: lost, owdJitterMicros: 100,
-                      owdTrendState: 1, owdTrendModifiedMilli: 99_000)
+            let rtt = i.isMultiple(of: 5) ? 200 : 50
+            let lost: UInt32 = i.isMultiple(of: 7) ? 30 : 0
+            estA.fold(
+                rttMillis: rtt,
+                framesReceived: 1000,
+                unrecovered: lost,
+                owdJitterMicros: 100,
+                owdTrendState: 1,
+                owdTrendModifiedMilli: 99000,
+            )
             estB.fold(rttMillis: rtt, framesReceived: 1000, unrecovered: lost, owdJitterMicros: 100)
-            XCTAssertEqual(withTrend.onReport(estA), noTrend.onReport(estB),
-                           "tick \(i): disabled gradient must not change any decision")
+            XCTAssertEqual(
+                withTrend.onReport(estA),
+                noTrend.onReport(estB),
+                "tick \(i): disabled gradient must not change any decision",
+            )
         }
         XCTAssertEqual(withTrend, noTrend, "full controller state identical with the gate off")
     }
@@ -803,10 +990,19 @@ final class LiveCongestionControllerTests: XCTestCase {
         var est = NetworkEstimate()
         for _ in 0..<8 { est.fold(rttMillis: 50, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100) }
         for _ in 0..<(LiveCongestionController.holdTicks + 10) {
-            est.fold(rttMillis: 50, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100,
-                     owdTrendState: 1, owdTrendModifiedMilli: 80_000)
-            XCTAssertEqual(ctrl.onReport(est), cut,
-                           "overuse detected (flat raw ⇒ no cut authorized) ⇒ no climb either")
+            est.fold(
+                rttMillis: 50,
+                framesReceived: 1000,
+                unrecovered: 0,
+                owdJitterMicros: 100,
+                owdTrendState: 1,
+                owdTrendModifiedMilli: 80000,
+            )
+            XCTAssertEqual(
+                ctrl.onReport(est),
+                cut,
+                "overuse detected (flat raw ⇒ no cut authorized) ⇒ no climb either",
+            )
         }
         // Contrast: the detector clears ⇒ the very same level-clean reports climb.
         est.fold(rttMillis: 50, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100)
@@ -830,20 +1026,37 @@ final class LiveCongestionControllerTests: XCTestCase {
         var ctrl = warmedController(ceiling: ceiling, gradientCutEnabled: true)
         var est = NetworkEstimate()
         for _ in 0..<8 { est.fold(rttMillis: 50, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100) }
-        est.fold(rttMillis: 200, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100,
-                 owdTrendState: 1, owdTrendModifiedMilli: 80_000)
+        est.fold(
+            rttMillis: 200,
+            framesReceived: 1000,
+            unrecovered: 0,
+            owdJitterMicros: 100,
+            owdTrendState: 1,
+            owdTrendModifiedMilli: 80000,
+        )
         let afterGradient = ctrl.onReport(est)
         XCTAssertEqual(afterGradient, Int(Double(ceiling) * LiveCongestionController.gradientDecreaseFactor))
         XCTAssertNil(ctrl.kneeBps)
         var cutTick: Int?
         for i in 1...(LiveCongestionController.cutHoldTicks + 2) {
-            est.fold(rttMillis: 250, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100,
-                     owdTrendState: 1, owdTrendModifiedMilli: 80_000)
+            est.fold(
+                rttMillis: 250,
+                framesReceived: 1000,
+                unrecovered: 0,
+                owdJitterMicros: 100,
+                owdTrendState: 1,
+                owdTrendModifiedMilli: 80000,
+            )
             let before = ctrl.current
-            if ctrl.onReport(est) < before { cutTick = i; break }
+            if ctrl.onReport(est) < before { cutTick = i
+                break
+            }
         }
-        XCTAssertEqual(cutTick, LiveCongestionController.cutHoldTicks,
-                       "the standing queue's next cut fires exactly at the shared window edge")
+        XCTAssertEqual(
+            cutTick,
+            LiveCongestionController.cutHoldTicks,
+            "the standing queue's next cut fires exactly at the shared window edge",
+        )
         XCTAssertNotNil(ctrl.kneeBps, "the queue-corroborated follow-up cut sets the knee")
     }
 
@@ -870,8 +1083,11 @@ final class LiveCongestionControllerTests: XCTestCase {
         let gDecision = gradient.decide(gEst)
         XCTAssertLessThan(gDecision.target, ceiling, "precondition: the gradient cut landed")
         XCTAssertEqual(gDecision.reason, .gradient, "a gradient-authorized cut is attributed to .gradient")
-        XCTAssertEqual(gDecision.target, control.onReport(gEst),
-                       "decide() and onReport() are the same control law (fix 4 changes no behaviour)")
+        XCTAssertEqual(
+            gDecision.target,
+            control.onReport(gEst),
+            "decide() and onReport() are the same control law (fix 4 changes no behaviour)",
+        )
 
         // RTT-streak arm (gradient gate OFF, no trend fields): sustained smoothed inflation for
         // rttStreakTicks consecutive reports ⇒ the proportional delay-targeting cut.
@@ -883,7 +1099,10 @@ final class LiveCongestionControllerTests: XCTestCase {
         for _ in 0..<(LiveCongestionController.rttStreakTicks + 2) {
             est.fold(rttMillis: 400, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100)
             let d = rttCtrl.decide(est)
-            if d.target < cutTarget { cutTarget = d.target; lastReason = d.reason; break }
+            if d.target < cutTarget { cutTarget = d.target
+                lastReason = d.reason
+                break
+            }
         }
         XCTAssertLessThan(cutTarget, ceiling, "precondition: the RTT cut landed")
         XCTAssertEqual(lastReason, .rttStreak, "a sustained-RTT proportional cut is attributed to .rttStreak")

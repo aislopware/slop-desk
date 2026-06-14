@@ -1,6 +1,6 @@
 #if canImport(QuartzCore) && canImport(Metal) && canImport(VideoToolbox)
-import Foundation
 import AislopdeskVideoProtocol
+import Foundation
 
 /// The shared-flow seam the ``VideoConnectionRegistry`` refcounts — the UDP-mux
 /// counterpart of the TCP-mux `MuxNWConnection`. The production conformer is
@@ -10,7 +10,11 @@ public protocol VideoMuxClientFlowing: AnyObject, Sendable {
     /// Opens the shared media + cursor connections once (idempotent).
     func startIfNeeded()
     /// Registers a lane's inbound sinks (demuxed by channelID) + primes its cursor flow.
-    func registerLane(channelID: UInt32, onMedia: @escaping @Sendable (VideoChannel, Data) -> Void, onCursor: @escaping @Sendable (Data) -> Void)
+    func registerLane(
+        channelID: UInt32,
+        onMedia: @escaping @Sendable (VideoChannel, Data) -> Void,
+        onCursor: @escaping @Sendable (Data) -> Void,
+    )
     /// Removes a lane's sinks.
     func unregisterLane(channelID: UInt32)
     /// Sends one datagram for `channelID` on `channel` (channelID-stamped).
@@ -41,6 +45,7 @@ extension NWVideoMuxClientFlow: VideoMuxClientFlowing {}
 /// endpoint bookkeeping are plain main-actor reads. Acquiring / releasing a lane is
 /// synchronous bookkeeping (the flow's own socket ops are async inside `Network.framework`),
 /// so it fits the synchronous construction site.
+@preconcurrency
 @MainActor
 public final class VideoConnectionRegistry {
     private struct Entry {
@@ -60,13 +65,15 @@ public final class VideoConnectionRegistry {
     /// The base is masked well below `UInt32.max` so a long-lived client's `&+= 1` cannot wrap into a
     /// sibling's range within any realistic session (a client opens far fewer than the ~0xF0000000
     /// headroom of lanes). Still strictly monotonic within the process (the property the router needs).
-    private var nextChannelID: UInt32 = UInt32.random(in: 1...0x0FFF_FFFF)
+    private var nextChannelID: UInt32 = .random(in: 1...0x0FFF_FFFF)
 
     /// Builds a fresh shared flow for an endpoint. Injected so tests substitute an in-memory flow.
-    private let makeFlow: @MainActor (_ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16) -> VideoMuxClientFlowing
+    private let makeFlow: @MainActor (_ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16)
+        -> VideoMuxClientFlowing
 
+    @preconcurrency
     public init(
-        makeFlow: @escaping @MainActor (String, UInt16, UInt16) -> VideoMuxClientFlowing
+        makeFlow: @escaping @MainActor (String, UInt16, UInt16) -> VideoMuxClientFlowing,
     ) {
         self.makeFlow = makeFlow
     }
@@ -132,6 +139,7 @@ public struct VideoMuxAcquisition: Sendable {
     }
 }
 
+@preconcurrency
 @MainActor
 public enum VideoMuxInstaller {
     /// Installs the PRODUCTION shared-flow registry on the video pipeline — the one app-glue site

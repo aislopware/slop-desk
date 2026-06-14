@@ -1,7 +1,7 @@
 #if canImport(SwiftUI)
-import SwiftUI
-import Foundation
 import AislopdeskInspector
+import Foundation
+import SwiftUI
 
 // MARK: - PaneLeafView (WF5 — the real content seams per kind)
 
@@ -39,12 +39,12 @@ struct PaneLeafView: View {
     /// The single-focus arbiter for the iOS multi-visible (iPad-regular) path (docs/22 §7). Passed by
     /// the regular ``PaneTreeView`` so each visible terminal host routes first-responder through it;
     /// `nil` on the compact single-host carousel (no race to coordinate).
-    var focusCoordinator: PaneFocusCoordinator? = nil
+    var focusCoordinator: PaneFocusCoordinator?
     /// The store, threaded so a `.remoteGUI` leaf routes video activation through
     /// ``WorkspaceStore/activateVideo(_:)`` (the cap-enforcing seam). Optional so faked-handle /
     /// preview paths still construct a leaf; when `nil` the remote-GUI leaf falls back to direct
     /// activation (no cap — only the no-store preview case).
-    var store: WorkspaceStore? = nil
+    var store: WorkspaceStore?
     /// True when the OWNER already presents the `.failed`/`.unreachable` affordance (the canvas
     /// ``PaneDeadScrim``) — suppresses the in-leaf orange failure banner so the reason is stated
     /// once. The neutral "Session ended" banner is never suppressed (the scrim never covers it).
@@ -71,11 +71,21 @@ struct PaneLeafView: View {
     private func content(for live: LivePaneSession) -> some View {
         switch live.kind {
         case .terminal:
-            TerminalPaneView(live: live, spec: spec, isFocused: isFocused, focusCoordinator: focusCoordinator,
-                             suppressFailureBanner: suppressFailureBanner)
+            TerminalPaneView(
+                live: live,
+                spec: spec,
+                isFocused: isFocused,
+                focusCoordinator: focusCoordinator,
+                suppressFailureBanner: suppressFailureBanner,
+            )
         case .claudeCode:
-            ClaudeCodePaneView(live: live, spec: spec, isFocused: isFocused, focusCoordinator: focusCoordinator,
-                               suppressFailureBanner: suppressFailureBanner)
+            ClaudeCodePaneView(
+                live: live,
+                spec: spec,
+                isFocused: isFocused,
+                focusCoordinator: focusCoordinator,
+                suppressFailureBanner: suppressFailureBanner,
+            )
         case .remoteGUI:
             RemoteGUIPaneView(live: live, store: store)
         case .systemDialog:
@@ -116,10 +126,10 @@ struct PaneLeafView: View {
 
     private var kindLabel: String {
         switch spec.kind {
-        case .terminal:     return "terminal"
-        case .claudeCode:   return "claude"
-        case .remoteGUI:    return "remote"
-        case .systemDialog: return "dialog"
+        case .terminal: "terminal"
+        case .claudeCode: "claude"
+        case .remoteGUI: "remote"
+        case .systemDialog: "dialog"
         }
     }
 
@@ -134,10 +144,10 @@ struct PaneLeafView: View {
     /// the chrome header, and the sidebar agree.
     static func icon(for kind: PaneKind) -> String {
         switch kind {
-        case .terminal:     return "terminal"
-        case .claudeCode:   return "sparkles"
-        case .remoteGUI:    return "macwindow.on.rectangle"
-        case .systemDialog: return "lock.shield"
+        case .terminal: "terminal"
+        case .claudeCode: "sparkles"
+        case .remoteGUI: "macwindow.on.rectangle"
+        case .systemDialog: "lock.shield"
         }
     }
 }
@@ -154,7 +164,7 @@ private struct SecureDialogHintBar: View {
             .background(.ultraThinMaterial, in: Capsule())
             .foregroundStyle(.secondary)
             .padding(.bottom, 8)
-            .allowsHitTesting(false)   // never swallow a click meant for the dialog's Cancel/OK
+            .allowsHitTesting(false) // never swallow a click meant for the dialog's Cancel/OK
     }
 }
 
@@ -186,7 +196,7 @@ private struct TerminalContentView: View {
     var isFocused: Bool = true
     /// The single-focus arbiter forwarded to the iOS ``InputBarView`` → ``TerminalInputHost`` so the
     /// host registers under this pane's id (docs/22 §7). `nil` ⇒ direct-claim (compact / macOS).
-    var focusCoordinator: PaneFocusCoordinator? = nil
+    var focusCoordinator: PaneFocusCoordinator?
     /// True when the canvas ``PaneDeadScrim`` already presents the failure (suppresses the orange
     /// banner branch only — the neutral "Session ended" notice always shows).
     var suppressFailureBanner: Bool = false
@@ -250,7 +260,7 @@ private struct TerminalContentView: View {
                             model: inputBar,
                             client: live.connection?.activeClient,
                             paneID: live.id,
-                            focusCoordinator: focusCoordinator
+                            focusCoordinator: focusCoordinator,
                         )
                     }
                 }
@@ -311,13 +321,15 @@ private struct TerminalContentView: View {
         // auto-connected. Wait briefly for the session to materialize (no-op when already ready).
         var connection = live.connection
         var spins = 0
-        while connection == nil, spins < 100 {           // up to ~2s
+        while connection == nil, spins < 100 { // up to ~2s
             try? await Task.sleep(nanoseconds: 20_000_000)
             if Task.isCancelled { return }
             connection = live.connection
             spins += 1
         }
-        guard let connection else { clog("connection nil after \(spins) spins → return"); return }
+        guard let connection else { clog("connection nil after \(spins) spins → return")
+            return
+        }
         clog("ready after \(spins) spins, status=\(String(describing: connection.status))")
         // Only connect a freshly-materialized idle pane; never re-dial a live/connecting one (a tab
         // switch re-runs `.task`, and `.id(PaneID)` keeps this view stable across reshapes). The
@@ -349,7 +361,7 @@ private struct TerminalContentView: View {
         guard case .connected = connection.status,
               let cmd = env["AISLOPDESK_AUTOTYPE"], !cmd.isEmpty,
               let terminalModel = live.terminalModel else { return }
-        try? await Task.sleep(nanoseconds: 1_500_000_000)   // let the remote prompt come up
+        try? await Task.sleep(nanoseconds: 1_500_000_000) // let the remote prompt come up
         terminalModel.sendInput(Data((cmd + "\n").utf8))
     }
 }
@@ -359,11 +371,16 @@ private struct TerminalPaneView: View {
     let live: LivePaneSession
     let spec: PaneSpec
     var isFocused: Bool = true
-    var focusCoordinator: PaneFocusCoordinator? = nil
+    var focusCoordinator: PaneFocusCoordinator?
     var suppressFailureBanner: Bool = false
     var body: some View {
-        TerminalContentView(live: live, spec: spec, isFocused: isFocused, focusCoordinator: focusCoordinator,
-                            suppressFailureBanner: suppressFailureBanner)
+        TerminalContentView(
+            live: live,
+            spec: spec,
+            isFocused: isFocused,
+            focusCoordinator: focusCoordinator,
+            suppressFailureBanner: suppressFailureBanner,
+        )
     }
 }
 
@@ -384,7 +401,7 @@ private struct ClaudeCodePaneView: View {
     /// renderer drives the macOS first responder from workspace intent).
     var isFocused: Bool = true
     /// The single-focus arbiter forwarded to the embedded terminal composition (docs/22 §7).
-    var focusCoordinator: PaneFocusCoordinator? = nil
+    var focusCoordinator: PaneFocusCoordinator?
     /// Threaded through to the embedded terminal (see ``PaneLeafView/suppressFailureBanner``).
     var suppressFailureBanner: Bool = false
     /// Per-pane VIEW state: whether the inspector is shown. Local to this leaf — lost on a true
@@ -408,9 +425,14 @@ private struct ClaudeCodePaneView: View {
     private var content: some View {
         #if os(macOS)
         HStack(spacing: 0) {
-            TerminalContentView(live: live, spec: spec, isFocused: isFocused, focusCoordinator: focusCoordinator,
-                                suppressFailureBanner: suppressFailureBanner)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            TerminalContentView(
+                live: live,
+                spec: spec,
+                isFocused: isFocused,
+                focusCoordinator: focusCoordinator,
+                suppressFailureBanner: suppressFailureBanner,
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             if showInspector, let model = live.inspector {
                 Divider()
                 InspectorPanel(model: model)
@@ -418,14 +440,19 @@ private struct ClaudeCodePaneView: View {
             }
         }
         #else
-        TerminalContentView(live: live, spec: spec, isFocused: isFocused, focusCoordinator: focusCoordinator,
-                            suppressFailureBanner: suppressFailureBanner)
-            .sheet(isPresented: $showInspector) {
-                if let model = live.inspector {
-                    InspectorPanel(model: model)
-                        .presentationDetents([.medium, .large])
-                }
+        TerminalContentView(
+            live: live,
+            spec: spec,
+            isFocused: isFocused,
+            focusCoordinator: focusCoordinator,
+            suppressFailureBanner: suppressFailureBanner,
+        )
+        .sheet(isPresented: $showInspector) {
+            if let model = live.inspector {
+                InspectorPanel(model: model)
+                    .presentationDetents([.medium, .large])
             }
+        }
         #endif
     }
 
@@ -439,7 +466,7 @@ private struct ClaudeCodePaneView: View {
             } label: {
                 Label(
                     "Inspector",
-                    systemImage: showInspector ? "sidebar.right" : "sidebar.squares.right"
+                    systemImage: showInspector ? "sidebar.right" : "sidebar.squares.right",
                 )
                 .labelStyle(.iconOnly)
             }
@@ -480,7 +507,7 @@ enum RemoteGUIDisplay: Equatable {
     ///   admits the now-configured pane and flips `admitted` true — F1: the form must not disappear
     ///   the instant the endpoint becomes valid);
     /// - else (configured AND no free slot) ⇒ `.gated` (admission was genuinely refused by the cap).
-    static func resolve(admitted: Bool, configured: Bool, hasFreeSlot: Bool) -> RemoteGUIDisplay {
+    static func resolve(admitted: Bool, configured: Bool, hasFreeSlot: Bool) -> Self {
         if admitted { return .live }
         guard configured else { return .entryForm }
         return hasFreeSlot ? .entryForm : .gated
@@ -584,7 +611,7 @@ private struct RemoteGUIPaneView: View {
                 // session comes up (and nil on teardown). Park it on the pane's model so the pill's
                 // "Paste as Keystrokes" can drive the secure-input-aware key path.
                 model?.keyInjector = injector
-            }
+            },
         )
     }
 
@@ -599,7 +626,9 @@ private struct RemoteGUIPaneView: View {
                 // the AUTOCONNECT path never connects. The panel itself shows the form vs. live video off
                 // `model.active`; admission only gates whether `open()` was allowed to run. (The manual
                 // dial-in flow stays in `.live` throughout, which is why it was never affected.)
-                if RemoteGUIDisplay.resolve(admitted: admitted, configured: configured, hasFreeSlot: hasFreeSlot) == .gated {
+                if RemoteGUIDisplay
+                    .resolve(admitted: admitted, configured: configured, hasFreeSlot: hasFreeSlot) == .gated
+                {
                     gatedPlaceholder
                 } else {
                     // Thread the canvas pane behaviour through: only the ACTIVE pane swallows
@@ -615,7 +644,9 @@ private struct RemoteGUIPaneView: View {
         // Activate on appear (decode only the on-screen pane), deactivate on disappear (battery).
         // Routed through the store so `liveVideoCap` is enforced; the no-store preview path activates
         // directly. The store reads `isVideoActive` to count concurrent live video panes.
-        .onAppear { cancelPendingTeardown(); activate() }
+        .onAppear { cancelPendingTeardown()
+            activate()
+        }
         // Backstop for .onAppear: a configured (restored / autoconnect) pane is ALREADY configured at
         // mount, so `.onChange(of: configured)` never fires, and `.onAppear` alone is unreliable — it is
         // deferred until the NavigationSplitView detail subtree is actually displayed, so an autoconnect
@@ -623,7 +654,9 @@ private struct RemoteGUIPaneView: View {
         // live. `.task` runs reliably on view-install; `activate()` is cap-checked + the `!admitted`
         // guard makes the double-trigger idempotent (an unconfigured pane still no-ops → entry form, so
         // the manual dial-in flow is unchanged). This is the one-shot autoconnect fix.
-        .task { cancelPendingTeardown(); if !admitted { activate() } }
+        .task { cancelPendingTeardown()
+            if !admitted { activate() }
+        }
         .onDisappear { scheduleTeardown() }
         // F1 — a fresh pane's .onAppear ran while the model was still UNconfigured (`canOpen == false`),
         // so `activate()` never admitted it and there was no re-attempt once the user finished typing a
@@ -747,9 +780,12 @@ struct PaneRecoveryBanner: View {
     /// this internal type so the projection is unit-testable without rendering the view.
     static func reason(for status: ConnectionViewModel.Status) -> String? {
         switch status {
-        case .failed(let message): return message
-        case .unreachable:         return "Host unreachable — the connection could not be re-established."
-        case .disconnected, .connecting, .connected, .reconnecting: return nil
+        case let .failed(message): message
+        case .unreachable: "Host unreachable — the connection could not be re-established."
+        case .disconnected,
+             .connecting,
+             .connected,
+             .reconnecting: nil
         }
     }
 

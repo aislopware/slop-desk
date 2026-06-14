@@ -28,10 +28,15 @@ public enum WindowRebind {
         case unresolved
     }
 
-    public static func resolve(windowID: UInt32, appName: String, title: String,
-                               in windows: [RemoteWindowSummary]) -> Resolution {
+    public static func resolve(
+        windowID: UInt32,
+        appName: String,
+        title: String,
+        in windows: [RemoteWindowSummary],
+    ) -> Resolution {
         if let current = windows.first(where: { $0.windowID == windowID }),
-           appName.isEmpty || current.appName == appName {
+           appName.isEmpty || current.appName == appName
+        {
             return .keep
         }
         // Id stale (or recycled by another app). Without a saved app name there is nothing safe

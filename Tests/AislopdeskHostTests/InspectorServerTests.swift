@@ -6,7 +6,6 @@ import XCTest
 /// ``ByteChannel`` via the ``InspectorServer/serve(channel:)`` test seam — NO real
 /// `NWListener`, NO `claude` process, NO HostServer. The replay log is fed directly.
 final class InspectorServerTests: XCTestCase {
-
     private func msg(_ text: String) -> InspectorEvent {
         .message(MessageEvent(role: .assistant, text: text))
     }
@@ -15,7 +14,7 @@ final class InspectorServerTests: XCTestCase {
     /// a hang fails the test rather than the suite.
     private func collect(
         _ client: InspectorClient,
-        count: Int
+        count: Int,
     ) async throws -> [InspectorEvent] {
         let stream = await client.events()
         let task = Task { () -> [InspectorEvent] in
@@ -49,7 +48,7 @@ final class InspectorServerTests: XCTestCase {
         let server = InspectorServer(
             terminalPort: 7420,
             replayLog: replayLog,
-            keepAliveInterval: .milliseconds(50)
+            keepAliveInterval: .milliseconds(50),
         )
 
         let (hostChannel, clientChannel) = LoopbackByteChannel.pair()
@@ -80,7 +79,7 @@ final class InspectorServerTests: XCTestCase {
         let server = InspectorServer(
             terminalPort: 7420,
             replayLog: replayLog,
-            keepAliveInterval: .milliseconds(20) // fast keep-alives
+            keepAliveInterval: .milliseconds(20), // fast keep-alives
         )
 
         let (hostChannel, clientChannel) = LoopbackByteChannel.pair()
@@ -111,7 +110,7 @@ final class InspectorServerTests: XCTestCase {
         let server = InspectorServer(
             terminalPort: 7420,
             replayLog: replayLog,
-            keepAliveInterval: .seconds(60) // no keep-alive interference in this window
+            keepAliveInterval: .seconds(60), // no keep-alive interference in this window
         )
 
         let (hostChannel, clientChannel) = LoopbackByteChannel.pair()
@@ -153,7 +152,7 @@ final class InspectorServerTests: XCTestCase {
         let server = InspectorServer(
             terminalPort: 7420,
             replayLog: replayLog,
-            keepAliveInterval: .milliseconds(20) // fast keep-alives (so a leak would keep firing)
+            keepAliveInterval: .milliseconds(20), // fast keep-alives (so a leak would keep firing)
         )
 
         let (hostChannel, clientChannel) = LoopbackByteChannel.pair()
@@ -197,7 +196,7 @@ final class InspectorServerTests: XCTestCase {
         let finalCount = await replayLog.subscriberCount
         XCTAssertEqual(
             finalCount, 0,
-            "serve must detach the replay-log subscriber on client disconnect"
+            "serve must detach the replay-log subscriber on client disconnect",
         )
     }
 
@@ -206,7 +205,7 @@ final class InspectorServerTests: XCTestCase {
         _ what: String,
         _ condition: () async -> Bool,
         file: StaticString = #filePath,
-        line: UInt = #line
+        line: UInt = #line,
     ) async throws {
         for _ in 0..<400 {
             if await condition() { return }

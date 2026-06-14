@@ -1,5 +1,5 @@
-import XCTest
 import CoreGraphics
+import XCTest
 @testable import AislopdeskClientUI
 
 /// Pins ``SystemDialogMonitor``'s reconcile diff, focusing on the RESPAWN fix: a dialog pane the user
@@ -8,7 +8,6 @@ import CoreGraphics
 /// gets that grace window first. Uses an injected clock so the suppression is deterministic.
 @MainActor
 final class SystemDialogRespawnTests: XCTestCase {
-
     /// A controllable clock for the suppression window.
     private final class TestClock {
         var now = Date(timeIntervalSinceReferenceDate: 0)
@@ -20,13 +19,17 @@ final class SystemDialogRespawnTests: XCTestCase {
         WorkspaceStore(restoring: nil, makeSession: { FakePaneSession($0) }, liveVideoCap: 5)
     }
 
-    private func makeMonitor(_ store: WorkspaceStore, clock: TestClock, suppression: TimeInterval = 10) -> SystemDialogMonitor {
+    private func makeMonitor(
+        _ store: WorkspaceStore,
+        clock: TestClock,
+        suppression: TimeInterval = 10,
+    ) -> SystemDialogMonitor {
         SystemDialogMonitor(
             store: store,
             isConnected: { true },
             target: { .default },
             respawnSuppression: suppression,
-            clock: clock.date
+            clock: clock.date,
         )
     }
 
@@ -39,22 +42,24 @@ final class SystemDialogRespawnTests: XCTestCase {
     }
 
     func testSpawnsAndClosesWithTheHostDialog() {
-        let store = makeStore(); let clock = TestClock()
+        let store = makeStore()
+        let clock = TestClock()
         let monitor = makeMonitor(store, clock: clock)
 
         monitor.reconcileForTesting([dialog(1)])
         XCTAssertEqual(dialogPaneIDs(store).count, 1, "a present dialog spawns a pane")
 
-        monitor.reconcileForTesting([])   // dialog gone host-side
+        monitor.reconcileForTesting([]) // dialog gone host-side
         XCTAssertEqual(dialogPaneIDs(store).count, 0, "the pane closes with the dialog")
     }
 
-    func testManualCloseRespawnsAfterSuppressionWindow() {
-        let store = makeStore(); let clock = TestClock()
+    func testManualCloseRespawnsAfterSuppressionWindow() throws {
+        let store = makeStore()
+        let clock = TestClock()
         let monitor = makeMonitor(store, clock: clock, suppression: 10)
 
         monitor.reconcileForTesting([dialog(1)])
-        let firstPane = dialogPaneIDs(store).first!
+        let firstPane = try XCTUnwrap(dialogPaneIDs(store).first)
 
         // User manually closes the dialog pane while the host dialog is STILL present.
         store.closePane(firstPane)
@@ -73,14 +78,15 @@ final class SystemDialogRespawnTests: XCTestCase {
         XCTAssertNotEqual(dialogPaneIDs(store).first, firstPane, "respawn is a fresh pane")
     }
 
-    func testManualCloseStateResetsWhenDialogLeavesHostSide() {
-        let store = makeStore(); let clock = TestClock()
+    func testManualCloseStateResetsWhenDialogLeavesHostSide() throws {
+        let store = makeStore()
+        let clock = TestClock()
         let monitor = makeMonitor(store, clock: clock, suppression: 10)
 
         monitor.reconcileForTesting([dialog(1)])
-        store.closePane(dialogPaneIDs(store).first!)
+        try store.closePane(XCTUnwrap(dialogPaneIDs(store).first))
         clock.advance(2)
-        monitor.reconcileForTesting([dialog(1)])   // still suppressed → no pane
+        monitor.reconcileForTesting([dialog(1)]) // still suppressed → no pane
         XCTAssertEqual(dialogPaneIDs(store).count, 0)
 
         // The dialog leaves host-side, then a NEW dialog with the same windowID appears: it must spawn
@@ -91,11 +97,12 @@ final class SystemDialogRespawnTests: XCTestCase {
     }
 
     func testNoRespawnWhilePaneIsStillOpen() {
-        let store = makeStore(); let clock = TestClock()
+        let store = makeStore()
+        let clock = TestClock()
         let monitor = makeMonitor(store, clock: clock)
         monitor.reconcileForTesting([dialog(1)])
         clock.advance(100)
-        monitor.reconcileForTesting([dialog(1)])   // pane still open → idempotent
+        monitor.reconcileForTesting([dialog(1)]) // pane still open → idempotent
         XCTAssertEqual(dialogPaneIDs(store).count, 1, "an open pane is never duplicated")
     }
 }

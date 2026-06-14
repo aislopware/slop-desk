@@ -1,5 +1,5 @@
-import Foundation
 import CoreGraphics
+import Foundation
 
 // MARK: - CanvasNonOverlap (pure non-overlapping layout solver for canvas drags)
 
@@ -44,8 +44,8 @@ public enum CanvasNonOverlap {
         /// by UUID string.
         var orderKey: String {
             switch self {
-            case .pane(let id):  return "0:" + id.raw.uuidString
-            case .group(let id): return "1:" + id.raw.uuidString
+            case let .pane(id): "0:" + id.raw.uuidString
+            case let .group(id): "1:" + id.raw.uuidString
             }
         }
     }
@@ -90,7 +90,7 @@ public enum CanvasNonOverlap {
             maxSlidePasses: Int = 4,
             maxRelaxIterations: Int = 32,
             insertCoverage: CGFloat = 0.5,
-            enabled: Bool = true
+            enabled: Bool = true,
         ) {
             self.gutter = gutter
             self.skin = skin
@@ -101,7 +101,7 @@ public enum CanvasNonOverlap {
         }
 
         /// Everything off — the ⌘ / setting-off bypass (matches ``CanvasSnap/Config/disabled``).
-        public static let disabled = Config(enabled: false)
+        public static let disabled = Self(enabled: false)
     }
 
     // MARK: Results
@@ -142,8 +142,15 @@ public enum CanvasNonOverlap {
         var pass = 0
         while pass < config.maxSlidePasses, hypot(remaining.dx, remaining.dy) > config.skin {
             pass += 1
-            guard let hit = earliestHit(origin: origin, size: size, velocity: remaining, bodies: sorted, config: config) else {
-                origin.x += remaining.dx; origin.y += remaining.dy
+            guard let hit = earliestHit(
+                origin: origin,
+                size: size,
+                velocity: remaining,
+                bodies: sorted,
+                config: config,
+            ) else {
+                origin.x += remaining.dx
+                origin.y += remaining.dy
                 remaining = .zero
                 break
             }
@@ -173,7 +180,8 @@ public enum CanvasNonOverlap {
         // S = the bodies the target actually OVERLAPS (positive area) — a within-gutter brush is "resting
         // flush" (slide's job), not an insert.
         let overlappers = bodies.filter { intersectionArea(target, $0.rect) > 0 }
-        guard !overlappers.isEmpty, intentArmed(target: target, overlappers: overlappers, config: config) else { return nil }
+        guard !overlappers.isEmpty,
+              intentArmed(target: target, overlappers: overlappers, config: config) else { return nil }
         return separate(pinnedID: draggedID, pinnedRect: target, bodies: bodies, config: config)
     }
 
@@ -197,11 +205,13 @@ public enum CanvasNonOverlap {
             var separatedAny = false
             for i in working.indices {
                 for j in (i + 1)..<working.count {
-                    guard let sep = separation(working[i].rect, working[j].rect, gutter: config.gutter) else { continue }
+                    guard let sep = separation(working[i].rect, working[j].rect, gutter: config.gutter)
+                    else { continue }
                     let wi: CGFloat = working[i].pinned ? 0 : 1
                     let wj: CGFloat = working[j].pinned ? 0 : 1
                     let wsum = wi + wj
-                    guard wsum > 0 else { continue } // two pinned bodies cannot be separated (never happens: only one is pinned)
+                    guard wsum > 0
+                    else { continue } // two pinned bodies cannot be separated (never happens: only one is pinned)
                     separatedAny = true
                     working[i].rect = working[i].rect.offsetBy(dx: sep.dx * (wi / wsum), dy: sep.dy * (wi / wsum))
                     working[j].rect = working[j].rect.offsetBy(dx: -sep.dx * (wj / wsum), dy: -sep.dy * (wj / wsum))
@@ -229,7 +239,13 @@ public enum CanvasNonOverlap {
     /// analogue for a resize — the box yields rather than overlapping. Order-independent (each edge takes
     /// a min/max over all bodies). Identity when disabled or nothing is in the way; SHRINKING is never
     /// constrained (the moving edge recedes away from neighbours).
-    public static func clampResize(_ frame: CGRect, anchor: ResizeAnchor, bodies: [Body], minSize: CGSize, config: Config) -> CGRect {
+    public static func clampResize(
+        _ frame: CGRect,
+        anchor: ResizeAnchor,
+        bodies: [Body],
+        minSize: CGSize,
+        config: Config,
+    ) -> CGRect {
         guard config.enabled, !bodies.isEmpty else { return frame }
         let g = config.gutter
         let movesLeft = anchor == .topLeft || anchor == .left || anchor == .bottomLeft
@@ -240,8 +256,8 @@ public enum CanvasNonOverlap {
         var left = frame.minX, right = frame.maxX, top = frame.minY, bottom = frame.maxY
         for body in bodies {
             let b = body.rect
-            let vShare = frame.minY < b.maxY && b.minY < frame.maxY  // share a Y span → vertical edges collide
-            let hShare = frame.minX < b.maxX && b.minX < frame.maxX  // share an X span → horizontal edges collide
+            let vShare = frame.minY < b.maxY && b.minY < frame.maxY // share a Y span → vertical edges collide
+            let hShare = frame.minX < b.maxX && b.minX < frame.maxX // share an X span → horizontal edges collide
             if movesRight, vShare, b.minX > left, b.minX - g < right {
                 right = Swift.max(left + minSize.width, Swift.min(right, b.minX - g))
             }
@@ -268,7 +284,7 @@ public enum CanvasNonOverlap {
         guard coverage >= config.insertCoverage else { return false }
 
         let centerInside = overlappers.contains { $0.rect.contains(CGPoint(x: target.midX, y: target.midY)) }
-        let left  = overlappers.contains { $0.rect.midX < target.midX && verticalSpansOverlap($0.rect, target) }
+        let left = overlappers.contains { $0.rect.midX < target.midX && verticalSpansOverlap($0.rect, target) }
         let right = overlappers.contains { $0.rect.midX > target.midX && verticalSpansOverlap($0.rect, target) }
         let above = overlappers.contains { $0.rect.midY < target.midY && horizontalSpansOverlap($0.rect, target) }
         let below = overlappers.contains { $0.rect.midY > target.midY && horizontalSpansOverlap($0.rect, target) }
@@ -289,9 +305,8 @@ public enum CanvasNonOverlap {
         guard overlapX > 0, overlapY > 0 else { return nil }
         if overlapX < overlapY || (overlapX == overlapY && abs(a.midX - b.midX) >= abs(a.midY - b.midY)) {
             return CGVector(dx: a.midX <= b.midX ? -overlapX : overlapX, dy: 0)
-        } else {
-            return CGVector(dx: 0, dy: a.midY <= b.midY ? -overlapY : overlapY)
         }
+        return CGVector(dx: 0, dy: a.midY <= b.midY ? -overlapY : overlapY)
     }
 
     /// Pops a box at `origin` (size `size`) gutter-clear of every body, iterating a few passes so a box
@@ -306,7 +321,8 @@ public enum CanvasNonOverlap {
             for body in bodies {
                 let box = CGRect(origin: o, size: size)
                 if let sep = separation(box, body.rect, gutter: config.gutter) {
-                    o.x += sep.dx; o.y += sep.dy
+                    o.x += sep.dx
+                    o.y += sep.dy
                     moved = true
                 }
             }
@@ -321,15 +337,24 @@ public enum CanvasNonOverlap {
     /// so the choice is deterministic. `normal` points away from the obstacle (the slide back-off
     /// direction).
     private static func earliestHit(
-        origin: CGPoint, size: CGSize, velocity: CGVector, bodies: [Body], config: Config
+        origin: CGPoint, size: CGSize, velocity: CGVector, bodies: [Body], config: Config,
     ) -> (t: CGFloat, axis: Axis, normal: CGVector)? {
         let c0 = CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
         var best: (t: CGFloat, axis: Axis, normal: CGVector, key: String)?
         for body in bodies {
-            let expanded = body.rect.insetBy(dx: -(size.width / 2 + config.gutter),
-                                             dy: -(size.height / 2 + config.gutter))
+            let expanded = body.rect.insetBy(
+                dx: -(size.width / 2 + config.gutter),
+                dy: -(size.height / 2 + config.gutter),
+            )
             guard let hit = sweptCenter(c0: c0, velocity: velocity, box: expanded) else { continue }
-            if best == nil || hit.t < best!.t - 1e-9 || (abs(hit.t - best!.t) <= 1e-9 && body.id.orderKey < best!.key) {
+            let isBetter: Bool =
+                if let current = best {
+                    hit.t < current.t - 1e-9
+                        || (abs(hit.t - current.t) <= 1e-9 && body.id.orderKey < current.key)
+                } else {
+                    true
+                }
+            if isBetter {
                 best = (hit.t, hit.axis, hit.normal, body.id.orderKey)
             }
         }
@@ -340,7 +365,11 @@ public enum CanvasNonOverlap {
     /// Swept point-vs-AABB (slab method). Returns the earliest entry time in `[0, 1)` at which the point
     /// `c0` moving by `velocity` enters `box`, plus the contact axis and the outward normal — or `nil`
     /// when the path does not enter the box during this move.
-    static func sweptCenter(c0: CGPoint, velocity: CGVector, box: CGRect) -> (t: CGFloat, axis: Axis, normal: CGVector)? {
+    static func sweptCenter(
+        c0: CGPoint,
+        velocity: CGVector,
+        box: CGRect,
+    ) -> (t: CGFloat, axis: Axis, normal: CGVector)? {
         // Per-axis (entry, exit) parameter window. A zero-velocity axis is "inside its slab for all time"
         // only when the point already lies within it, else there is no collision at all.
         func slab(p: CGFloat, v: CGFloat, lo: CGFloat, hi: CGFloat) -> (entry: CGFloat, exit: CGFloat)? {
@@ -363,9 +392,8 @@ public enum CanvasNonOverlap {
         let t = Swift.max(0, entry)
         if xs.entry > ys.entry {
             return (t, .x, CGVector(dx: velocity.dx > 0 ? -1 : 1, dy: 0))
-        } else {
-            return (t, .y, CGVector(dx: 0, dy: velocity.dy > 0 ? -1 : 1))
         }
+        return (t, .y, CGVector(dx: 0, dy: velocity.dy > 0 ? -1 : 1))
     }
 
     // MARK: - Small helpers

@@ -1,5 +1,5 @@
-import XCTest
 import Foundation
+import XCTest
 @testable import AislopdeskProtocol
 
 /// Pins `WireMessage.wireByteCount == encode().count` for EVERY variant — the receive-side
@@ -7,7 +7,6 @@ import Foundation
 /// encoded frame, so any drift slowly stalls (under-credit) or unbounds (over-credit) the
 /// window.
 final class WireMessageWireByteCountTests: XCTestCase {
-
     func testWireByteCountMatchesEncodeForEveryVariant() {
         let payloads: [Data] = [
             Data(),
@@ -28,7 +27,7 @@ final class WireMessageWireByteCountTests: XCTestCase {
             .ack(seq: 7),
             .bye,
             .ping(timestampMS: 0), .ping(timestampMS: UInt64.max),
-            .pong(timestampMS: 12_345),
+            .pong(timestampMS: 12345),
             .helloAck(sessionID: UUID(), resumeFromSeq: 3, returningClient: true),
             .helloAck(sessionID: UUID(), resumeFromSeq: 0, returningClient: false),
             .title(""),
@@ -42,11 +41,17 @@ final class WireMessageWireByteCountTests: XCTestCase {
             .notification(title: "", body: "done"),
             .notification(title: "CI", body: "green ✅ — đa byte"),
             .notification(title: "only title", body: ""),
-            .notification(title: String(repeating: "T", count: 70_000), body: "overlong title is clamped"),  // wireByteCount must track the clamp
+            .notification(
+                title: String(repeating: "T", count: 70000),
+                body: "overlong title is clamped",
+            ), // wireByteCount must track the clamp
         ]
         for message in messages {
-            XCTAssertEqual(message.wireByteCount, message.encode().count,
-                           "wireByteCount must equal encode().count for \(message)")
+            XCTAssertEqual(
+                message.wireByteCount,
+                message.encode().count,
+                "wireByteCount must equal encode().count for \(message)",
+            )
         }
     }
 }
