@@ -448,11 +448,16 @@ public actor AislopdeskVideoHostSession {
     /// - Parameters:
     ///   - window: the desktop-independent window to remote.
     ///   - transport: the UDP datagram transport (production: a ``VideoMuxChannelTransport`` lane on the shared ``NWVideoMuxDatagramTransport``).
-    ///   - fec: optional FEC scheme for the video packetizer (default 20% XOR parity).
+    ///   - fec: optional FEC scheme for the video packetizer. The DEFAULT is the process's env-gated
+    ///     scheme (``AdaptiveFECPolicy/makeFECScheme()``): the production `m == 1` XOR-equivalent
+    ///     unless `AISLOPDESK_FEC_M >= 2` activates a fixed multi-loss `[k + m, k]` Reed-Solomon code
+    ///     (`k = AISLOPDESK_FEC_K`). With `m > 1` the host forces tier 0 / group_size = k on every
+    ///     frame (see ``AdaptiveFECPolicy/wireTier(adaptiveTier:)``); the CLIENT must read the SAME
+    ///     env and be deployed together (the parity-fragment count per group changes on the wire).
     public init(
         window: SCWindow,
         transport: any VideoDatagramTransport,
-        fec: FECScheme? = XORParityFEC(),
+        fec: FECScheme? = AdaptiveFECPolicy.makeFECScheme(),
         captureScale: Double = 2.0,
         captureSizeOverride: VideoSize? = nil,
         resizePointLimit: VideoSize? = nil,
@@ -1809,7 +1814,12 @@ public actor AislopdeskVideoHostSession {
         // latestHostSendTs=0 → the host's RTT fold is skipped.
         let sendTs: UInt32 = Self.telemetryEnabled ? hostRelativeMillis() : 0
         // WF-4: the per-frame FEC tier. Adaptive OFF ⇒ always tier 0 (= configured g5) ⇒ byte-identical.
-        let tier = Self.adaptiveFECEnabled ? fecTierState.tier : AdaptiveFECPolicy.defaultTier
+        // MULTI-LOSS (AISLOPDESK_FEC_M>=2): `wireTier` FORCES tier 0 for every frame so the per-frame
+        // group size resolves to the codec's `k` (the Cauchy matrix has exactly k columns / clamps to
+        // min(g,k), so m>1 REQUIRES group_size == k). The dynamic adaptive tiers (g2/g3/g10/OFF) are
+        // NOT used when m>1. With m==1 this passes the adaptive tier through unchanged (byte-identical).
+        let adaptiveTier = Self.adaptiveFECEnabled ? fecTierState.tier : AdaptiveFECPolicy.defaultTier
+        let tier = AdaptiveFECPolicy.wireTier(adaptiveTier: adaptiveTier)
         // WF-8: if this is an LTR frame (AISLOPDESK_LTR on AND the encoder surfaced an ack token), record the
         // frameID↔token mapping (read the frameID the packetizer is ABOUT to assign, BEFORE packetize
         // increments it) so a later client ack(frameID) can fold the token, AND mark every fragment

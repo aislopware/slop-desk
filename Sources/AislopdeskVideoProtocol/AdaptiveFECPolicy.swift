@@ -22,6 +22,100 @@ public enum AdaptiveFECPolicy {
     /// to the pre-adaptive path when the host always sends it.
     public static let defaultTier: UInt8 = 0
 
+    // MARK: Multi-loss Reed-Solomon activation (AISLOPDESK_FEC_M / AISLOPDESK_FEC_K)
+
+    /// The env-gated multi-loss FEC configuration: the parity-shards-per-group `m` and the
+    /// FIXED data-group size `k` the host packetizer + client reassembler both build from.
+    ///
+    /// DEFAULT `m == 1`: the production XOR-equivalent / byte-identical wire. The whole adaptive
+    /// path (per-frame tiers, the loss→tier ladder, OFF/g10/g3/g2) is UNTOUCHED — every method below
+    /// behaves exactly as before, the golden vectors are unchanged, and a mixed fleet interoperates
+    /// (tier 0 frames decode on any host/client).
+    ///
+    /// When `AISLOPDESK_FEC_M >= 2` it activates a true `[k + m, k]` Reed-Solomon code that recovers up
+    /// to `m` losses PER GROUP (which `m == 1`/XOR provably cannot). The constraint that makes this
+    /// safe: the `m >= 2` Cauchy encode matrix has EXACTLY `k` columns and the codec clamps a per-call
+    /// group size to `min(g, k)`, so for `m > 1` the per-frame group size MUST equal `k`. The host
+    /// therefore forces a FIXED `(k, m)` with `group_size == k` for EVERY frame (it sends the
+    /// today-default tier 0, whose wire mapping resolves to the endpoint's configured `fec.groupSize`,
+    /// which is `k`) instead of the dynamic per-tier adaptive group sizes — see ``wireTier(adaptiveTier:)``.
+    ///
+    /// DEPLOY-TOGETHER: with `m > 1` the parity-fragment COUNT PER GROUP changes on the wire (a group
+    /// now carries `m` parity shards, not 1). The host and the client MUST read the SAME
+    /// `AISLOPDESK_FEC_M` / `AISLOPDESK_FEC_K` and be deployed together — a host emitting `m` parity to
+    /// a client reassembler built for a different `m` mis-maps the parity boundary and fails to repair.
+    /// Tier 0 / default `m == 1` stays the mixed-fleet interop baseline; only flip `m > 1` on a
+    /// host+client pair you control and ship as one unit.
+    public enum MultiLossFEC {
+        /// Allowed range for the parity-shard count `m` (the per-group loss-recovery budget). The
+        /// upper bound is conservative (8 parity shards is already heavy redundancy); the GF(2^8)
+        /// field bound `k + m <= 255` is enforced jointly below.
+        public static let mRange = 1...8
+        /// Allowed range for the fixed data-group size `k` (= the codec's column count when `m > 1`).
+        /// Floored at 2 (a 1-data-shard group is degenerate) and capped at 64 (well within MTU-bound
+        /// fragment counts), with `k + m <= 255` enforced jointly.
+        public static let kRange = 2...64
+        /// The default fixed group size when multi-loss is active but `AISLOPDESK_FEC_K` is unset (5 ⇒
+        /// the prod default, 20% parity at `m == 1`; `m/k` overhead at `m > 1`).
+        public static let defaultK = 5
+
+        /// The resolved parity count `m` (clamped to ``mRange``; `1` = inactive / unchanged wire),
+        /// read once from `AISLOPDESK_FEC_M` at process start (env static — fixed for the lifetime, so
+        /// host and client never disagree mid-session).
+        public static let parityCount = resolveParityCount(env: ProcessInfo.processInfo.environment)
+        /// The resolved fixed group size `k` (clamped to ``kRange`` and to `255 - m`), read once from
+        /// `AISLOPDESK_FEC_K`. Only consulted when ``parityCount`` `>= 2`.
+        public static let groupSize = resolveGroupSize(env: ProcessInfo.processInfo.environment)
+        /// Whether multi-loss recovery is active (`AISLOPDESK_FEC_M >= 2`).
+        public static var isActive: Bool { parityCount >= 2 }
+
+        /// PURE resolution of `AISLOPDESK_FEC_M` (testable without process state): parse, default 1,
+        /// clamp to ``mRange``. A non-numeric / out-of-range value clamps to the nearest bound.
+        public static func resolveParityCount(env: [String: String]) -> Int {
+            guard let raw = env["AISLOPDESK_FEC_M"], let m = Int(raw) else { return 1 }
+            return min(max(m, mRange.lowerBound), mRange.upperBound)
+        }
+
+        /// PURE resolution of `AISLOPDESK_FEC_K` (testable without process state): parse, default
+        /// ``defaultK``, clamp to ``kRange``, then cap so `k + m <= 255` (the GF(2^8) field bound) for
+        /// the resolved `m`. With `m == 1` the cap is inert (k <= 64 already satisfies k+1 <= 255).
+        public static func resolveGroupSize(env: [String: String]) -> Int {
+            let m = resolveParityCount(env: env)
+            let raw = env["AISLOPDESK_FEC_K"].flatMap { Int($0) } ?? defaultK
+            let clamped = min(max(raw, kRange.lowerBound), kRange.upperBound)
+            return min(clamped, 255 - m) // joint GF(2^8) bound k + m <= 255
+        }
+    }
+
+    /// Builds the process's configured ``FECScheme``: the env-gated multi-loss Reed-Solomon codec when
+    /// `AISLOPDESK_FEC_M >= 2` (a FIXED `[k + m, k]` with `k = AISLOPDESK_FEC_K`), else the production
+    /// `m == 1` default (XOR-equivalent, byte-identical wire). The DEFAULT-ARGUMENT for the host
+    /// packetizer's and the client reassembler's `fec:` so BOTH ends resolve the SAME env at the SAME
+    /// site — there is no way to build one end multi-loss and the other single-loss within a process.
+    ///
+    /// `m == 1` returns `RustReedSolomonFEC(groupSize: 5, parityCount: 1)` — bit-for-bit the legacy
+    /// default `XORParityFEC()`.
+    public static func makeFECScheme() -> FECScheme {
+        if MultiLossFEC.isActive {
+            return RustReedSolomonFEC(groupSize: MultiLossFEC.groupSize, parityCount: MultiLossFEC.parityCount)
+        }
+        return RustReedSolomonFEC()
+    }
+
+    /// The wire FEC tier the host must stamp on EVERY frame given the active scheme.
+    ///
+    /// When multi-loss is active (`m >= 2`) this is FORCED to ``defaultTier`` (tier 0), whose wire
+    /// mapping (``groupSize(forTier:default:)``) resolves to the endpoint's configured `fec.groupSize`
+    /// — i.e. exactly `k`. This pins the per-frame group size to `k` for every frame (the `m > 1`
+    /// codec REQUIRES `group_size == k`, since its Cauchy matrix has `k` columns and clamps `g` to
+    /// `min(g, k)`); the dynamic adaptive tiers (g2/g3/g10/OFF) must NOT be used, as a `group_size != k`
+    /// would feed the decoder a window the matrix was never built for and silently fail to repair.
+    ///
+    /// When `m == 1` this returns `adaptiveTier` unchanged, so the adaptive-FEC path is byte-identical.
+    public static func wireTier(adaptiveTier: UInt8) -> UInt8 {
+        MultiLossFEC.isActive ? defaultTier : adaptiveTier
+    }
+
     // MARK: A. Wire codec (host packetize + client reassemble)
 
     /// Maps a wire tier index to the FEC group size both ends must use, or `nil` for the

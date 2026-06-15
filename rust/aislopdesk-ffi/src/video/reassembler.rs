@@ -444,4 +444,207 @@ mod tests {
             aisd_reassembler_free(r);
         }
     }
+
+    // ----- Multi-loss (m > 1) ACTIVATION: full FFI send→receive round-trip -------------------
+    //
+    // The load-bearing proof through the REAL C ABI on BOTH ends: the send path
+    // (`aisd_packetize`, built `(k, m)`, fec_group_size = k) and the receive path
+    // (`aisd_reassembler_new(k, m, ...)` + `aisd_reassembler_ingest`). This is the property the
+    // production `m == 1` / XOR wire CANNOT deliver (one loss per group max).
+
+    /// Packetizes `frame` through `aisd_packetize` and returns the encoded wire datagrams as `Vec`s.
+    /// `interleave` runs the burst-resilient transmit reorder (the production default), keyed by k.
+    unsafe fn ffi_packetize(
+        p: *mut super::super::packetizer::AisdVideoPacketizer,
+        frame: &[u8],
+        k: usize,
+        interleave: bool,
+    ) -> Vec<Vec<u8>> {
+        use super::super::packetizer::{AisdPacketizeOptions, aisd_packetize};
+        let opts = AisdPacketizeOptions {
+            keyframe: 1,
+            crisp: 0,
+            is_ltr: 0,
+            acked_anchored: 0,
+            fec_tier: 0, // tier 0 ⇒ group size resolves to the codec's k (the m>1 requirement)
+            interleave: u8::from(interleave),
+            host_send_ts_millis: 0,
+            fec_group_size: k, // fixed group_size = k for m>1
+        };
+        let mut out = crate::AisdBytesArray::EMPTY;
+        let status = unsafe { aisd_packetize(p, frame.as_ptr(), frame.len(), opts, &mut out) };
+        assert_eq!(status, AISD_OK);
+        let datagrams: Vec<Vec<u8>> =
+            unsafe { (0..out.count).map(|i| view(*out.items.add(i))).collect() };
+        unsafe { crate::aisd_bytes_array_free(&mut out) };
+        datagrams
+    }
+
+    /// Ingests a raw wire datagram through `aisd_reassembler_ingest`, returning the result.
+    unsafe fn ffi_ingest(r: *mut AisdReassembler, datagram: &[u8]) -> AisdReassemblyResult {
+        let mut out = AisdReassemblyResult::empty(AISD_REASSEMBLY_STALE);
+        let status =
+            unsafe { aisd_reassembler_ingest(r, datagram.as_ptr(), datagram.len(), &mut out) };
+        assert_eq!(status, AISD_OK);
+        out
+    }
+
+    /// The flat parity/data classification + `frag_index` of a wire datagram (header byte 12 bit1 =
+    /// parity, bytes 8..10 BE = `frag_index`).
+    fn classify(datagram: &[u8]) -> (bool, u16) {
+        let frag_index = u16::from_be_bytes([datagram[8], datagram[9]]);
+        let is_parity = datagram[12] & (1 << 1) != 0;
+        (is_parity, frag_index)
+    }
+
+    #[test]
+    fn ffi_m2_recovers_two_losses_per_group_round_trip() {
+        unsafe {
+            use super::super::packetizer::{aisd_video_packetizer_free, aisd_video_packetizer_new};
+            let k = 5usize;
+            let m = 2usize;
+            // 10 data fragments ⇒ exactly two full groups of k=5; each group emits m=2 parity.
+            let frame = vec![0xABu8; VideoPacketizer::MAX_PAYLOAD_SIZE * (2 * k)];
+            let p = aisd_video_packetizer_new(k, m);
+            let datagrams = ffi_packetize(p, &frame, k, false);
+            let data_count = datagrams.iter().filter(|d| !classify(d).0).count();
+            let parity_count = datagrams.iter().filter(|d| classify(d).0).count();
+            assert_eq!(data_count, 2 * k, "two groups of k data fragments");
+            assert_eq!(parity_count, 2 * m, "two groups × m=2 parity shards");
+
+            // Drop 2 DISTINCT data fragments in EACH group (a 2-loss burst per group).
+            let drop: std::collections::HashSet<u16> = [0, 1, 5, 7].into_iter().collect();
+            let survivors: Vec<&Vec<u8>> = datagrams
+                .iter()
+                .filter(|d| {
+                    let (is_parity, idx) = classify(d);
+                    is_parity || !drop.contains(&idx)
+                })
+                .collect();
+
+            let r = aisd_reassembler_new(k, m, 2);
+            let mut completed: Option<AisdReassemblyResult> = None;
+            for d in survivors {
+                let out = ffi_ingest(r, d);
+                if out.kind == AISD_REASSEMBLY_COMPLETED {
+                    completed = Some(out);
+                }
+            }
+            let done = completed.expect("m=2 recovers 2 losses per group");
+            assert_eq!(view(done.avcc), frame, "reassembled frame byte-identical");
+            assert_eq!(done.recovered_via_fec, 1, "completed via FEC recovery");
+            crate::aisd_bytes_free(done.avcc);
+            aisd_reassembler_free(r);
+            aisd_video_packetizer_free(p);
+        }
+    }
+
+    #[test]
+    fn ffi_m1_control_cannot_recover_two_losses_per_group() {
+        unsafe {
+            use super::super::packetizer::{aisd_video_packetizer_free, aisd_video_packetizer_new};
+            // Same 2-loss-per-group pattern on an m == 1 (XOR) wire: provably unrecoverable.
+            let k = 5usize;
+            let frame = vec![0xCDu8; VideoPacketizer::MAX_PAYLOAD_SIZE * (2 * k)];
+            let p = aisd_video_packetizer_new(k, 1);
+            let datagrams = ffi_packetize(p, &frame, k, false);
+            let drop: std::collections::HashSet<u16> = [0, 1, 5, 7].into_iter().collect();
+            let survivors: Vec<&Vec<u8>> = datagrams
+                .iter()
+                .filter(|d| {
+                    let (is_parity, idx) = classify(d);
+                    is_parity || !drop.contains(&idx)
+                })
+                .collect();
+            let r = aisd_reassembler_new(k, 1, 2);
+            for d in survivors {
+                let out = ffi_ingest(r, d);
+                assert_ne!(
+                    out.kind, AISD_REASSEMBLY_COMPLETED,
+                    "XOR cannot recover 2/group"
+                );
+            }
+            // Advance the frontier with a newer frame ⇒ the unrecoverable frame is dropped.
+            let next = vec![0xEFu8; VideoPacketizer::MAX_PAYLOAD_SIZE];
+            for d in &ffi_packetize(p, &next, k, false) {
+                let _ = ffi_ingest(r, d);
+            }
+            let mut lost = 0u32;
+            assert_eq!(aisd_reassembler_next_dropped(r, &mut lost), 1);
+            assert_eq!(lost, 0, "frame 0 dropped, not wedged");
+            aisd_reassembler_free(r);
+            aisd_video_packetizer_free(p);
+        }
+    }
+
+    #[test]
+    fn ffi_m2_three_losses_in_one_group_fail_gracefully() {
+        unsafe {
+            use super::super::packetizer::{aisd_video_packetizer_free, aisd_video_packetizer_new};
+            let k = 5usize;
+            let m = 2usize;
+            let frame = vec![0x42u8; VideoPacketizer::MAX_PAYLOAD_SIZE * (2 * k)];
+            let p = aisd_video_packetizer_new(k, m);
+            let datagrams = ffi_packetize(p, &frame, k, false);
+            // 3 holes (> m) in group 0; group 1 clean.
+            let drop: std::collections::HashSet<u16> = [0, 1, 2].into_iter().collect();
+            let survivors: Vec<&Vec<u8>> = datagrams
+                .iter()
+                .filter(|d| {
+                    let (is_parity, idx) = classify(d);
+                    is_parity || !drop.contains(&idx)
+                })
+                .collect();
+            let r = aisd_reassembler_new(k, m, 2);
+            for d in survivors {
+                let out = ffi_ingest(r, d);
+                assert_ne!(out.kind, AISD_REASSEMBLY_COMPLETED, "3 > m=2 unrecoverable");
+            }
+            // Graceful drop once the frontier advances — reaching here proves no panic.
+            let next = vec![0x99u8; VideoPacketizer::MAX_PAYLOAD_SIZE];
+            for d in &ffi_packetize(p, &next, k, false) {
+                let _ = ffi_ingest(r, d);
+            }
+            let mut lost = 0u32;
+            assert_eq!(aisd_reassembler_next_dropped(r, &mut lost), 1);
+            assert_eq!(lost, 0);
+            aisd_reassembler_free(r);
+            aisd_video_packetizer_free(p);
+        }
+    }
+
+    #[test]
+    fn ffi_m2_recovers_two_losses_per_group_with_interleave() {
+        unsafe {
+            use super::super::packetizer::{aisd_video_packetizer_free, aisd_video_packetizer_new};
+            // The PRODUCTION send path runs the burst-resilient interleave (default ON). The
+            // reassembler keys by frag_index, so the reorder is transparent — m=2 still recovers a
+            // 2-loss-per-group burst when the survivors arrive in interleaved transmit order.
+            let k = 5usize;
+            let m = 2usize;
+            let frame = vec![0x7Eu8; VideoPacketizer::MAX_PAYLOAD_SIZE * (2 * k)];
+            let p = aisd_video_packetizer_new(k, m);
+            let datagrams = ffi_packetize(p, &frame, k, true); // interleaved transmit order
+            let drop: std::collections::HashSet<u16> = [0, 1, 5, 7].into_iter().collect();
+            // Feed survivors IN THE INTERLEAVED ORDER the packetizer produced (no re-sort).
+            let r = aisd_reassembler_new(k, m, 2);
+            let mut completed: Option<AisdReassemblyResult> = None;
+            for d in &datagrams {
+                let (is_parity, idx) = classify(d);
+                if !is_parity && drop.contains(&idx) {
+                    continue; // dropped data fragment
+                }
+                let out = ffi_ingest(r, d);
+                if out.kind == AISD_REASSEMBLY_COMPLETED {
+                    completed = Some(out);
+                }
+            }
+            let done = completed.expect("m=2 recovers 2/group even in interleaved order");
+            assert_eq!(view(done.avcc), frame, "reassembled frame byte-identical");
+            assert_eq!(done.recovered_via_fec, 1);
+            crate::aisd_bytes_free(done.avcc);
+            aisd_reassembler_free(r);
+            aisd_video_packetizer_free(p);
+        }
+    }
 }
