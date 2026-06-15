@@ -11,11 +11,12 @@
 
 use aislopdesk_ffi::{
     aisd_bytes_free, aisd_frame_decoder_append, aisd_frame_decoder_free, aisd_frame_decoder_new,
-    aisd_frame_decoder_next, aisd_seq_distance, aisd_wire_message_decode, aisd_wire_message_encode,
-    aisd_wire_message_free, AisdBytes, AisdWireMessage, AISD_EMPTY, AISD_ERR_FRAME_TOO_LARGE,
-    AISD_ERR_INVALID_ARGUMENT, AISD_ERR_MALFORMED, AISD_ERR_NULL, AISD_ERR_TRUNCATED,
-    AISD_ERR_UNKNOWN_TYPE, AISD_OK, AISD_WIRE_ACK, AISD_WIRE_BELL, AISD_WIRE_BYE,
-    AISD_WIRE_COMMAND_STATUS, AISD_WIRE_EXIT, AISD_WIRE_HELLO, AISD_WIRE_HELLO_ACK,
+    aisd_frame_decoder_next, aisd_seq_distance, aisd_wire_data_frame_encode_into,
+    aisd_wire_data_frame_view, aisd_wire_message_decode, aisd_wire_message_encode,
+    aisd_wire_message_free, AisdBytes, AisdDataFrameView, AisdWireMessage, AISD_EMPTY,
+    AISD_ERR_FRAME_TOO_LARGE, AISD_ERR_INVALID_ARGUMENT, AISD_ERR_MALFORMED, AISD_ERR_NULL,
+    AISD_ERR_TRUNCATED, AISD_ERR_UNKNOWN_TYPE, AISD_OK, AISD_WIRE_ACK, AISD_WIRE_BELL,
+    AISD_WIRE_BYE, AISD_WIRE_COMMAND_STATUS, AISD_WIRE_EXIT, AISD_WIRE_HELLO, AISD_WIRE_HELLO_ACK,
     AISD_WIRE_INPUT, AISD_WIRE_NOTIFICATION, AISD_WIRE_OUTPUT, AISD_WIRE_PING, AISD_WIRE_PONG,
     AISD_WIRE_RESIZE, AISD_WIRE_TITLE,
 };
@@ -518,6 +519,146 @@ fn decode_single_payload_matches_encode() {
 
         aisd_wire_message_free(&mut out);
         aisd_bytes_free(frame);
+    }
+}
+
+// ---- Zero-copy DATA-frame path (aisd_wire_data_frame_encode_into / _view) -----------------
+
+#[test]
+fn data_frame_zero_copy_matches_owned_encode_and_round_trips() {
+    unsafe {
+        let cases: [(u8, i64, &[u8]); 4] = [
+            (AISD_WIRE_OUTPUT, 99, b"hello world"),
+            (AISD_WIRE_OUTPUT, i64::MAX, b""),
+            (AISD_WIRE_INPUT, 0, &[0x1b, 0x5b, 0x41]),
+            (AISD_WIRE_INPUT, 0, b""),
+        ];
+        for (tag, seq, payload) in cases {
+            // The zero-copy frame must be byte-identical to the owned wire-message encode.
+            let owned = AisdWireMessage {
+                tag,
+                seq,
+                data: borrow(payload),
+                ..base()
+            };
+            let mut want = AisdBytes::EMPTY;
+            assert_eq!(aisd_wire_message_encode(&owned, &mut want), AISD_OK);
+            let want_bytes = view(want);
+            aisd_bytes_free(want);
+
+            let mut buf = vec![0u8; want_bytes.len()];
+            let mut written = 0usize;
+            assert_eq!(
+                aisd_wire_data_frame_encode_into(
+                    tag,
+                    seq,
+                    payload.as_ptr(),
+                    payload.len(),
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    &mut written,
+                ),
+                AISD_OK
+            );
+            assert_eq!(written, want_bytes.len(), "written len for tag {tag}");
+            assert_eq!(
+                buf, want_bytes,
+                "zero-copy frame == owned encode for tag {tag}"
+            );
+
+            // The borrowed view reads the bulk bytes back without a copy (payload = frame minus prefix).
+            let body = &buf[4..];
+            let mut dv = AisdDataFrameView {
+                tag: 0,
+                seq: 0,
+                bytes: core::ptr::null(),
+                bytes_len: 0,
+            };
+            assert_eq!(
+                aisd_wire_data_frame_view(body.as_ptr(), body.len(), &mut dv),
+                AISD_OK
+            );
+            assert_eq!(dv.tag, tag);
+            if tag == AISD_WIRE_OUTPUT {
+                assert_eq!(dv.seq, seq);
+            }
+            let got = if dv.bytes.is_null() {
+                Vec::new()
+            } else {
+                core::slice::from_raw_parts(dv.bytes, dv.bytes_len).to_vec()
+            };
+            assert_eq!(got, payload, "borrowed bulk bytes for tag {tag}");
+        }
+    }
+}
+
+#[test]
+fn data_frame_view_routes_control_and_guards() {
+    unsafe {
+        // A control payload (bye = 13) → tag 0: the caller decodes it through the owned path.
+        let bye = [AISD_WIRE_BYE];
+        let mut dv = AisdDataFrameView {
+            tag: 9,
+            seq: 7,
+            bytes: core::ptr::null(),
+            bytes_len: 0,
+        };
+        assert_eq!(
+            aisd_wire_data_frame_view(bye.as_ptr(), bye.len(), &mut dv),
+            AISD_OK
+        );
+        assert_eq!(dv.tag, 0, "control frame reported as tag 0");
+
+        // Empty payload → truncated; null payload with len != 0 → null guard.
+        assert_eq!(
+            aisd_wire_data_frame_view(core::ptr::null(), 0, &mut dv),
+            AISD_ERR_TRUNCATED
+        );
+        assert_eq!(
+            aisd_wire_data_frame_view(core::ptr::null(), 1, &mut dv),
+            AISD_ERR_NULL
+        );
+
+        // encode-into guards: non-DATA tag and a too-small buffer both → invalid argument.
+        let mut buf = [0u8; 4];
+        let mut w = 0usize;
+        assert_eq!(
+            aisd_wire_data_frame_encode_into(
+                AISD_WIRE_EXIT,
+                0,
+                core::ptr::null(),
+                0,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut w,
+            ),
+            AISD_ERR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            aisd_wire_data_frame_encode_into(
+                AISD_WIRE_OUTPUT,
+                0,
+                b"x".as_ptr(),
+                1,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut w,
+            ),
+            AISD_ERR_INVALID_ARGUMENT,
+            "output frame needs 14 bytes; a 4-byte out is too small"
+        );
+        assert_eq!(
+            aisd_wire_data_frame_encode_into(
+                AISD_WIRE_OUTPUT,
+                0,
+                core::ptr::null(),
+                0,
+                core::ptr::null_mut(),
+                0,
+                &mut w,
+            ),
+            AISD_ERR_NULL
+        );
     }
 }
 

@@ -115,6 +115,36 @@ AisdStatus aisd_wire_message_decode(const uint8_t *payload, size_t len, AisdWire
 /* Release the owned buffers inside a decoded message (its `data`/`data2`). Idempotent. */
 void aisd_wire_message_free(AisdWireMessage *msg);
 
+/* ---- Zero-copy DATA-frame path (Output/Input; single payload copy) ----------------- */
+
+/*
+ * A borrowed view of a DATA-channel payload (Output/Input). `bytes` points INTO the caller's
+ * payload buffer (NOT owned, never free it) and is valid only while that buffer lives. `tag` is
+ * 1 (output) or 3 (input) for a DATA frame, or 0 when the payload is a control message the caller
+ * must decode via aisd_wire_message_decode. Field order MUST match the Rust struct AisdDataFrameView.
+ */
+typedef struct AisdDataFrameView {
+    uint8_t tag;          /* 1=output, 3=input, 0=not a DATA frame (use the owned decode) */
+    int64_t seq;          /* Output.seq (0 otherwise)                                     */
+    const uint8_t *bytes; /* borrowed bulk bytes (NULL when empty)                        */
+    size_t bytes_len;
+} AisdDataFrameView;
+
+/* Frame a DATA message (tag 1 output uses seq; tag 3 input ignores it) whose bulk payload is
+ * borrowed, writing [u32 BE len][type][seq?][payload] into `out` with ONE payload copy. On AISD_OK,
+ * *written = frame length. Size `out` to the message's wireByteCount. Returns AISD_ERR_NULL or
+ * AISD_ERR_INVALID_ARGUMENT (non-DATA tag / out too small). */
+AisdStatus aisd_wire_data_frame_encode_into(uint8_t tag, int64_t seq, const uint8_t *payload,
+                                            size_t payload_len, uint8_t *out, size_t out_cap,
+                                            size_t *written);
+
+/* Parse a complete payload ([type][body...], no length prefix) into a borrowed *out view. On
+ * AISD_OK: tag 1/3 = a DATA frame whose `bytes` borrow into `payload` (copy them out before
+ * `payload` is freed; never free `bytes`); tag 0 = a control message (decode via
+ * aisd_wire_message_decode). Returns AISD_ERR_TRUNCATED (empty / short Output header) or
+ * AISD_ERR_NULL. */
+AisdStatus aisd_wire_data_frame_view(const uint8_t *payload, size_t len, AisdDataFrameView *out);
+
 /* ---- Streaming frame decoder (opaque handle) --------------------------------------- */
 
 typedef struct AisdFrameDecoder AisdFrameDecoder;

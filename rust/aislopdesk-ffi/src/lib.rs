@@ -496,6 +496,124 @@ pub unsafe extern "C" fn aisd_wire_message_free(msg: *mut AisdWireMessage) {
 }
 
 // ---------------------------------------------------------------------------------------
+// Zero-copy DATA-frame path (Output/Input) — single payload copy, matching the native shell
+// ---------------------------------------------------------------------------------------
+
+/// A borrowed view of a DATA-channel payload (`Output`/`Input`) for the zero-copy decode path.
+///
+/// `bytes` points INTO the caller-supplied payload buffer (it is NOT owned and must NOT be freed);
+/// it is valid only for as long as that buffer lives. `tag` is `1` (output) or `3` (input) for a
+/// DATA frame, or `0` when the payload is a control message the caller must decode through
+/// [`aisd_wire_message_decode`]. Field order MUST match the C header's `AisdDataFrameView`.
+#[repr(C)]
+pub struct AisdDataFrameView {
+    /// `1` = output, `3` = input, `0` = not a DATA frame (use the owned decode).
+    pub tag: u8,
+    /// `Output.seq` (`0` for input or a non-DATA frame).
+    pub seq: i64,
+    /// Borrowed bulk payload bytes (null when empty), pointing into the input payload.
+    pub bytes: *const u8,
+    /// Number of bytes at `bytes`.
+    pub bytes_len: usize,
+}
+
+/// Frames a borrowed-payload DATA message (`Output`/`Input`) into `out` with one payload copy.
+///
+/// `tag = 1` (output) uses `seq`; `tag = 3` (input) ignores it. The frame is the complete
+/// `[u32 BE len][type][seq?][payload]`.
+///
+/// On [`AISD_OK`], `*written` receives the frame length. The caller sizes `out` to the message's
+/// `wire_byte_count` (`out_cap` must be at least that). Returns [`AISD_ERR_NULL`] for a null
+/// argument or [`AISD_ERR_INVALID_ARGUMENT`] for a non-DATA `tag` or an `out` too small. Wraps
+/// [`WireMessage::encode_data_frame_into`].
+///
+/// # Safety
+/// `out`/`written` must be valid, writable pointers; a non-empty `payload` must point to
+/// `payload_len` readable bytes and `out` to `out_cap` writable bytes.
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn aisd_wire_data_frame_encode_into(
+    tag: u8,
+    seq: i64,
+    payload: *const u8,
+    payload_len: usize,
+    out: *mut u8,
+    out_cap: usize,
+    written: *mut usize,
+) -> AisdStatus {
+    if out.is_null() || written.is_null() || (payload.is_null() && payload_len != 0) {
+        return AISD_ERR_NULL;
+    }
+    let payload_slice = if payload_len == 0 {
+        &[][..]
+    } else {
+        core::slice::from_raw_parts(payload, payload_len)
+    };
+    let out_slice = core::slice::from_raw_parts_mut(out, out_cap);
+    let n = WireMessage::encode_data_frame_into(tag, seq, payload_slice, out_slice);
+    if n == 0 {
+        // A non-DATA tag, or an out buffer smaller than the frame — both caller errors.
+        return AISD_ERR_INVALID_ARGUMENT;
+    }
+    written.write(n);
+    AISD_OK
+}
+
+/// Parses a complete payload (`[type byte][body…]`, WITHOUT the length prefix) into a borrowed
+/// [`AisdDataFrameView`] for the zero-copy decode path.
+///
+/// On [`AISD_OK`], `*out` is populated: `tag` `1`/`3` means a DATA frame whose `bytes` borrow into
+/// `payload` (copy them out before `payload` is freed; never free `bytes`); `tag == 0` means a
+/// control message the caller must decode through [`aisd_wire_message_decode`]. Returns
+/// [`AISD_ERR_TRUNCATED`] for an empty payload or a truncated `Output` header, or
+/// [`AISD_ERR_NULL`] for a null argument. Wraps [`WireMessage::data_frame_view`].
+///
+/// # Safety
+/// `out` must be writable; if `len != 0`, `payload` must point to `len` readable bytes. The
+/// returned `bytes` pointer is only valid while `payload` stays alive and unmodified.
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn aisd_wire_data_frame_view(
+    payload: *const u8,
+    len: usize,
+    out: *mut AisdDataFrameView,
+) -> AisdStatus {
+    if out.is_null() || (payload.is_null() && len != 0) {
+        return AISD_ERR_NULL;
+    }
+    let slice = if len == 0 {
+        &[][..]
+    } else {
+        core::slice::from_raw_parts(payload, len)
+    };
+    match WireMessage::data_frame_view(slice) {
+        Ok(Some(v)) => {
+            out.write(AisdDataFrameView {
+                tag: v.tag,
+                seq: v.seq,
+                bytes: if v.bytes.is_empty() {
+                    core::ptr::null()
+                } else {
+                    v.bytes.as_ptr()
+                },
+                bytes_len: v.bytes.len(),
+            });
+            AISD_OK
+        }
+        Ok(None) => {
+            out.write(AisdDataFrameView {
+                tag: 0,
+                seq: 0,
+                bytes: core::ptr::null(),
+                bytes_len: 0,
+            });
+            AISD_OK
+        }
+        Err(error) => status_for_error(&error),
+    }
+}
+
+// ---------------------------------------------------------------------------------------
 // Streaming frame decoder (opaque handle — the canonical "Rust owns the pipeline" boundary)
 // ---------------------------------------------------------------------------------------
 

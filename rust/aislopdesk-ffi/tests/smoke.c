@@ -251,6 +251,41 @@ int main(void) {
     CHECK(aisd_input_event_encode(&bad_button, &junk3) == AISD_ERR_INVALID_ARGUMENT,
           "input rejects out-of-range button");
 
+    /* 8. Zero-copy DATA-frame path: frame an output in C, confirm it matches the owned encode,
+     * then read the bulk bytes back through the borrowed view (no copy). */
+    uint8_t pay[5] = {'v', 't', 0x1b, '[', 'J'};
+    int64_t out_seq = 7;
+    AisdWireMessage om;
+    memset(&om, 0, sizeof(om));
+    om.tag = AISD_WIRE_OUTPUT;
+    om.seq = out_seq;
+    om.data.ptr = pay;
+    om.data.len = sizeof(pay);
+    AisdBytes want = {NULL, 0, 0};
+    CHECK(aisd_wire_message_encode(&om, &want) == AISD_OK, "owned output encode");
+
+    uint8_t frame_buf[64];
+    size_t written = 0;
+    CHECK(aisd_wire_data_frame_encode_into(AISD_WIRE_OUTPUT, out_seq, pay, sizeof(pay), frame_buf,
+                                           sizeof(frame_buf), &written) == AISD_OK,
+          "data_frame encode_into ok");
+    CHECK(written == want.len && memcmp(frame_buf, want.ptr, want.len) == 0,
+          "zero-copy frame == owned encode");
+    aisd_bytes_free(want);
+
+    AisdDataFrameView dv;
+    memset(&dv, 0, sizeof(dv));
+    CHECK(aisd_wire_data_frame_view(frame_buf + 4, written - 4, &dv) == AISD_OK, "data_frame_view ok");
+    CHECK(dv.tag == AISD_WIRE_OUTPUT && dv.seq == out_seq && dv.bytes_len == sizeof(pay) &&
+              memcmp(dv.bytes, pay, sizeof(pay)) == 0,
+          "borrowed view exposes seq + bulk bytes");
+
+    uint8_t bye_payload = AISD_WIRE_BYE;
+    AisdDataFrameView cv;
+    memset(&cv, 0, sizeof(cv));
+    CHECK(aisd_wire_data_frame_view(&bye_payload, 1, &cv) == AISD_OK && cv.tag == 0,
+          "control payload reported as tag 0");
+
     if (failures == 0) {
         printf("aislopdesk-ffi C smoke: OK\n");
         return 0;

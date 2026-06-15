@@ -6,28 +6,17 @@ import Foundation
 /// All `import CAislopdeskFFI` (and the unsafe pointer marshaling it requires) is
 /// contained in this file; the rest of `AislopdeskProtocol` calls these typed, safe
 /// wrappers, which forward `WireMessage` encode/decode to the codec in the Rust core
-/// (`aislopdesk-core`). Cross-language golden parity (the `golden_parity` test against the
-/// `aislopdesk-corevectors` corpus, re-checked through these wrappers by
-/// `RustWireParityTests`) pins the codec's byte/bit output, so the macOS/iOS app and a
-/// future Android client run *the identical algorithm bytes* from the one shared core.
+/// (`aislopdesk-core`) — the single source of truth (there is no native Swift codec).
+/// Cross-language golden parity (the `golden_parity` test against the `aislopdesk-corevectors`
+/// corpus) pins the codec's byte/bit output, and the Swift marshaling here is pinned to the wire
+/// format by `RustWireCodecTests`, so the macOS/iOS app and a future Android client run *the
+/// identical algorithm bytes* from the one shared core.
 ///
 /// Memory contract (mirrors `aislopdesk_ffi.h`): buffers passed *in* are borrowed for the
 /// call only (`cap == 0`, Rust copies and never frees them); any `AisdBytes` the library
 /// returns owns a Rust allocation and is released with `aisd_bytes_free` /
 /// `aisd_wire_message_free` before the wrapper returns.
 enum RustFFI {
-    /// Bulk DATA payloads (`.output`/`.input` bytes, or a decode payload) larger than this
-    /// are framed in the Swift shell's zero-copy buffer path rather than marshaled across
-    /// the C ABI into the core.
-    ///
-    /// Benchmarked (`RustWireBenchTests`, Mac Studio): routing to the core is *faster* for
-    /// control messages and small data (≈0.2–0.5×), but the FFI's extra buffer copies regress
-    /// the shell's hand-optimized zero-copy framing above ~16 KiB (≈5–7× at 64–128 KiB).
-    /// 8 KiB keeps a safety margin below that crossover, so the common case + all control
-    /// traffic get the core's speedup while a bulk PTY-output flood stays on the zero-copy
-    /// path (the no-perf-rule).
-    static let payloadThreshold = 8 * 1024
-
     /// Wrap-aware signed 32-bit sequence distance `a - b` (positive ⇒ `a` is ahead).
     static func seqDistance(_ a: UInt32, _ b: UInt32) -> Int32 {
         aisd_seq_distance(a, b)
@@ -35,10 +24,50 @@ enum RustFFI {
 
     // MARK: - WireMessage encode / decode
 
-    /// Encodes a ``WireMessage`` into a complete length-prefixed wire frame via the Rust
-    /// core's codec. On the (unreachable, for any valid message) FFI failure it falls back
-    /// to the in-process ``WireMessage/encodeNative()`` encoder rather than aborting the send.
+    /// Encodes a ``WireMessage`` into a complete length-prefixed wire frame — the Rust core is the
+    /// single source of truth. The bulk DATA variants (`.output`/`.input`) take the zero-copy
+    /// single-payload-copy path; every control message goes through the flat-struct encoder (its
+    /// payloads are tiny, so the marshaling copies are negligible).
     static func encodeFrame(_ message: WireMessage) -> Data {
+        switch message {
+        case let .output(seq, bytes):
+            encodeDataFrame(tag: 1, seq: seq, payload: bytes, frameSize: message.wireByteCount)
+        case let .input(bytes):
+            encodeDataFrame(tag: 3, seq: 0, payload: bytes, frameSize: message.wireByteCount)
+        default:
+            encodeControlFrame(message)
+        }
+    }
+
+    /// Frames a DATA-channel message (`.output`/`.input`) directly into a pre-sized buffer with a
+    /// SINGLE payload copy, matching the native encoder's cost. `frameSize` is the message's
+    /// `wireByteCount` (the exact frame length). Wraps `aisd_wire_data_frame_encode_into`.
+    private static func encodeDataFrame(tag: UInt8, seq: Int64, payload: Data, frameSize: Int) -> Data {
+        var frame = Data(count: frameSize)
+        let written: Int = frame.withUnsafeMutableBytes { (out: UnsafeMutableRawBufferPointer) -> Int in
+            guard let outBase = out.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                preconditionFailure("RustFFI: \(frameSize)-byte frame buffer has a nil baseAddress")
+            }
+            var n = 0
+            let status: AisdStatus = payload.withUnsafeBytes { (p: UnsafeRawBufferPointer) -> AisdStatus in
+                aisd_wire_data_frame_encode_into(
+                    tag, seq, p.baseAddress?.assumingMemoryBound(to: UInt8.self), p.count,
+                    outBase, out.count, &n,
+                )
+            }
+            guard status == AISD_OK else {
+                preconditionFailure("aisd_wire_data_frame_encode_into failed (status \(status))")
+            }
+            return n
+        }
+        precondition(written == frameSize, "RustFFI: data frame wrote \(written), expected \(frameSize)")
+        return frame
+    }
+
+    /// Encodes a control ``WireMessage`` through the Rust core's flat-struct codec. Encoding a valid
+    /// message cannot fail (tags are valid; Swift `String`s are valid UTF-8), so the guard traps
+    /// rather than masking corruption with a second codec.
+    private static func encodeControlFrame(_ message: WireMessage) -> Data {
         var m = AisdWireMessage()
         m.tag = message.messageType
         var buf0: Data?
@@ -100,9 +129,7 @@ enum RustFFI {
                 var out = AisdBytes()
                 let status = aisd_wire_message_encode(&m, &out)
                 guard status == AISD_OK else {
-                    // Unreachable for any valid WireMessage (tags valid; Swift Strings are
-                    // valid UTF-8). Fall back rather than abort the send path.
-                    return message.encodeNative()
+                    preconditionFailure("aisd_wire_message_encode failed for a valid message (status \(status))")
                 }
                 defer { aisd_bytes_free(out) }
                 return dataFrom(out)
@@ -110,10 +137,44 @@ enum RustFFI {
         }
     }
 
-    /// Decodes a complete payload (`[type byte][body…]`, no length prefix) into a
-    /// ``WireMessage`` via the Rust core's codec. Throws the same ``AislopdeskError`` cases
-    /// the in-process ``WireMessage/decodeNative(payload:)`` reader does.
+    /// Decodes a complete payload (`[type byte][body…]`, no length prefix) into a ``WireMessage``
+    /// — the Rust core is the single source of truth. The bulk DATA variants (`.output`/`.input`)
+    /// take the zero-copy borrowed-view path (one payload copy into the message's `Data`); control
+    /// messages decode through the flat-struct codec. Throws ``AislopdeskError`` (`.truncated`,
+    /// `.unknownMessageType`, `.malformedBody`) exactly as the wire format requires.
     static func decodePayload(_ payload: Data) throws -> WireMessage {
+        var view = AisdDataFrameView(tag: 0, seq: 0, bytes: nil, bytes_len: 0)
+        var bulk: Data?
+        let status: AisdStatus = payload.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> AisdStatus in
+            let base = raw.baseAddress?.assumingMemoryBound(to: UInt8.self)
+            let st = aisd_wire_data_frame_view(base, raw.count, &view)
+            // Copy the borrowed bulk bytes ONCE, while `payload` is alive (the view points into it).
+            if st == AISD_OK, view.tag == 1 || view.tag == 3 {
+                if let p = view.bytes, view.bytes_len > 0 {
+                    bulk = Data(bytes: p, count: view.bytes_len)
+                } else {
+                    bulk = Data()
+                }
+            }
+            return st
+        }
+        switch status {
+        case AISD_OK:
+            switch view.tag {
+            case 1: return .output(seq: view.seq, bytes: bulk ?? Data())
+            case 3: return .input(bulk ?? Data())
+            default: return try decodeControlPayload(payload) // tag 0 — a control message
+            }
+        case AISD_ERR_TRUNCATED:
+            throw AislopdeskError.truncated
+        default:
+            // AISD_ERR_NULL is unreachable: payload.withUnsafeBytes always yields a valid base/len.
+            throw AislopdeskError.truncated
+        }
+    }
+
+    /// Decodes a control payload (any non-DATA type) through the Rust core's flat-struct codec.
+    private static func decodeControlPayload(_ payload: Data) throws -> WireMessage {
         var out = AisdWireMessage()
         let status: AisdStatus = payload.withUnsafeBytes { raw in
             let base = raw.baseAddress?.assumingMemoryBound(to: UInt8.self)
