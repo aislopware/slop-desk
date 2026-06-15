@@ -207,6 +207,7 @@ func runScenario(
     loss: LossModel,
     fullRange: Bool = false,
     interleave: Bool = false,
+    fecParity: Int = 1,
 ) -> ScenarioStats {
     var stats = ScenarioStats(name: name)
     let sink = FrameSink()
@@ -224,8 +225,12 @@ func runScenario(
         return stats
     }
 
-    let pk = VideoPacketizer(fec: XORParityFEC(groupSize: 5))
-    var ra = FrameReassembler(fec: XORParityFEC(groupSize: 5))
+    // `fecParity` (m) selects the parity-shard count per group: m == 1 is the XOR-equivalent single-hole
+    // codec (the default that ALL prior scenarios use, byte-identical wire); m >= 2 enables Reed-Solomon
+    // multi-loss recovery (recovers up to m holes per group of 5). The packetizer reads `m` from the FEC
+    // object at construction, so a single shared scheme value drives both send (parity emit) and recover.
+    let pk = VideoPacketizer(fec: RustReedSolomonFEC(groupSize: 5, parityCount: fecParity))
+    var ra = FrameReassembler(fec: RustReedSolomonFEC(groupSize: 5, parityCount: fecParity))
     let dec = VideoDecoder(decodedFrameHandler: { _ in decodedCounter.value += 1 })
     dec.outputFullRange = fullRange
 
@@ -3766,6 +3771,41 @@ if smoke {
         tier: 0,
         loss: .wireBurst(start: 1, len: 3),
         interleave: true,
+    ))
+
+    // ── RS MULTI-LOSS (m > 1) investigation: the SAME adjacent-datagram burst as scenario 8 (which
+    // m == 1 XOR cannot recover — 2 holes in one group), now with NO interleave so the recovery is done
+    // by the Reed-Solomon parity DEPTH alone, not by spreading the holes across groups. m == 2 must heal
+    // 2 holes/group; m == 3 must heal 3 holes/group; an over-budget burst (3 holes vs m == 2) must drop
+    // gracefully (recover nothing for the over-budget groups, never crash).
+    print("=== RS m=2 burst-2, NO interleave (g5) — 2 holes/group, RS DEPTH recovers (XOR scenario 8 fails) ===")
+    allStats.append(runScenario(
+        name: "RS m=2 burst-2 NO interleave g5",
+        frames: frameCount,
+        tier: 0,
+        loss: .wireBurst(start: 1, len: 2),
+        interleave: false,
+        fecParity: 2,
+    ))
+
+    print("=== RS m=3 burst-3, NO interleave (g5) — 3 holes/group, RS DEPTH recovers ===")
+    allStats.append(runScenario(
+        name: "RS m=3 burst-3 NO interleave g5",
+        frames: frameCount,
+        tier: 0,
+        loss: .wireBurst(start: 1, len: 3),
+        interleave: false,
+        fecParity: 3,
+    ))
+
+    print("=== RS m=2 burst-3, NO interleave (g5) — 3 holes > m=2 budget → expect GRACEFUL DROP (control) ===")
+    allStats.append(runScenario(
+        name: "RS m=2 burst-3 NO interleave g5",
+        frames: frameCount,
+        tier: 0,
+        loss: .wireBurst(start: 1, len: 3),
+        interleave: false,
+        fecParity: 2,
     ))
 
     print("=== 6. LTR HW (record -> ack -> ForceLTRRefresh -> decode) ===")
