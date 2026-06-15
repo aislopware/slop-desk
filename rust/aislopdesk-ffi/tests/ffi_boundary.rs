@@ -13,10 +13,11 @@ use aislopdesk_ffi::video::{
     aisd_decode_gate_free, aisd_decode_gate_max_lost_frame_id, aisd_decode_gate_min_lost_frame_id,
     aisd_decode_gate_mode, aisd_decode_gate_new, aisd_decode_gate_note_decode_succeeded,
     aisd_decode_gate_note_hard_decode_failure, aisd_decode_gate_note_loss,
-    aisd_decode_gate_verdict, aisd_owd_late_detector_free, aisd_owd_late_detector_new,
-    aisd_owd_late_detector_note, aisd_recovery_deduper_admit, aisd_recovery_deduper_free,
-    aisd_recovery_deduper_new, aisd_recovery_message_decode, aisd_recovery_message_encode,
-    aisd_static_idr_decider_free, aisd_static_idr_decider_heartbeat,
+    aisd_decode_gate_verdict, aisd_input_button_balance_free, aisd_input_button_balance_held_mask,
+    aisd_input_button_balance_new, aisd_input_button_balance_plan, aisd_owd_late_detector_free,
+    aisd_owd_late_detector_new, aisd_owd_late_detector_note, aisd_recovery_deduper_admit,
+    aisd_recovery_deduper_free, aisd_recovery_deduper_new, aisd_recovery_message_decode,
+    aisd_recovery_message_encode, aisd_static_idr_decider_free, aisd_static_idr_decider_heartbeat,
     aisd_static_idr_decider_last_complete_encode, aisd_static_idr_decider_new,
     aisd_static_idr_decider_on_complete_frame, aisd_static_idr_decider_quiet_window,
     aisd_static_idr_decider_record_synthetic, aisd_static_idr_decider_should_reencode,
@@ -1142,5 +1143,37 @@ fn owd_late_detector_opaque_handle_flags_spikes_and_frees() {
             aisd_owd_late_detector_note(core::ptr::null_mut(), 0.0, 0, interval, &mut dev),
             0
         );
+    }
+}
+
+#[test]
+fn input_button_balance_opaque_handle_balances_and_frees() {
+    unsafe {
+        let b = aisd_input_button_balance_new();
+        assert!(!b.is_null());
+        // Clean left click: posts, held then cleared.
+        let p = aisd_input_button_balance_plan(b, 2, 0); // MOUSE_DOWN, left
+        assert_eq!(p.has_pre_release, 0);
+        assert_eq!(p.suppress, 0);
+        assert_eq!(aisd_input_button_balance_held_mask(b), 0b001);
+        // Stuck down (lost up) pre-releases.
+        let p = aisd_input_button_balance_plan(b, 2, 0);
+        assert_eq!(p.has_pre_release, 1);
+        assert_eq!(p.pre_release_button, 0);
+        // Up releases; a duplicate up is suppressed.
+        assert_eq!(aisd_input_button_balance_plan(b, 3, 0).suppress, 0); // MOUSE_UP
+        assert_eq!(aisd_input_button_balance_held_mask(b), 0);
+        assert_eq!(aisd_input_button_balance_plan(b, 3, 0).suppress, 1);
+        // Independent right + other tracking via the bitmask.
+        let _ = aisd_input_button_balance_plan(b, 2, 1); // right down
+        let _ = aisd_input_button_balance_plan(b, 2, 2); // other down
+        assert_eq!(aisd_input_button_balance_held_mask(b), 0b110);
+        aisd_input_button_balance_free(b);
+        aisd_input_button_balance_free(core::ptr::null_mut()); // no-op
+                                                               // A null handle returns the default plan and an empty mask.
+        let p = aisd_input_button_balance_plan(core::ptr::null_mut(), 3, 0);
+        assert_eq!(p.has_pre_release, 0);
+        assert_eq!(p.suppress, 0);
+        assert_eq!(aisd_input_button_balance_held_mask(core::ptr::null()), 0);
     }
 }

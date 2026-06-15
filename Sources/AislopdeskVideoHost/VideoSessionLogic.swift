@@ -381,9 +381,35 @@ public enum InputInjectorRaisePolicy {
 /// logically HELD so a fresh `mouseDown` for an already-held button can emit a synthetic
 /// release FIRST — guaranteeing a click never begins inside a stuck selection. Only
 /// down/up mutate the held set; moves/drags/scroll/keys/text pass through unchanged.
-public struct InputButtonBalance: Sendable, Equatable {
-    public private(set) var held: Set<MouseButton> = []
-    public init() {}
+///
+/// The bookkeeping ALGORITHM (the held-set fold) lives in the Rust core
+/// (`aislopdesk_core::input_button_balance`, the SINGLE SOURCE OF TRUTH shared with Android over
+/// the C ABI); this class is a thin owner of the opaque core handle, reached via
+/// ``RustVideoHostFFI``. It is a `final class` (not the former value struct) so it can own the
+/// handle and free it in `deinit`. `@unchecked Sendable` is sound because the single owner
+/// (``InputInjector``) serializes every call under its `balanceLock` (and the tests run on one
+/// thread), so no two threads race the handle.
+public final class InputButtonBalance: @unchecked Sendable {
+    private let handle: OpaquePointer
+
+    /// The logically-held buttons, reconstructed from the core's bitmask. Mirrors the former
+    /// `Set<MouseButton>` (the golden-parity tests read `held.contains` / `held.isEmpty` / `held`).
+    public var held: Set<MouseButton> {
+        let mask = RustVideoHostFFI.inputButtonBalanceHeldMask(handle)
+        var set: Set<MouseButton> = []
+        if mask & 0b001 != 0 { set.insert(.left) }
+        if mask & 0b010 != 0 { set.insert(.right) }
+        if mask & 0b100 != 0 { set.insert(.other) }
+        return set
+    }
+
+    public init() {
+        handle = RustVideoHostFFI.inputButtonBalanceNew()
+    }
+
+    deinit {
+        RustVideoHostFFI.inputButtonBalanceFree(handle)
+    }
 
     /// What to do before injecting `event`.
     public struct Plan: Equatable, Sendable {
@@ -406,25 +432,22 @@ public struct InputButtonBalance: Sendable, Equatable {
     /// Folds `event` into the held set and returns the injection plan. A `mouseDown` for an
     /// already-held button asks for a pre-release (then stays held — the fresh down owns it);
     /// a `mouseUp` for a HELD button releases it (post it); a `mouseUp` for a button NOT held
-    /// is a redundant/duplicate up and is SUPPRESSED; everything else passes through.
-    public mutating func plan(for event: InputEvent) -> Plan {
-        switch event {
-        case let .mouseDown(button, _, _, _, _):
-            let stuck = held.contains(button)
-            held.insert(button)
-            return Plan(preRelease: stuck ? button : nil)
-        case let .mouseUp(button, _, _, _, _):
-            if held.remove(button) != nil {
-                return Plan() // first up for a held button — release it
+    /// is a redundant/duplicate up and is SUPPRESSED; everything else passes through. Delegates
+    /// to the Rust core (only the event variant + button drive the decision).
+    public func plan(for event: InputEvent) -> Plan {
+        let button: UInt8 =
+            switch event {
+            case let .mouseDown(b, _, _, _, _),
+                 let .mouseUp(b, _, _, _, _),
+                 let .mouseDrag(b, _, _, _, _):
+                b.rawValue
+            default:
+                0
             }
-            return Plan(suppress: true) // duplicate / orphan up — drop it (idempotent)
-        case .mouseMove,
-             .mouseDrag,
-             .scroll,
-             .key,
-             .text:
-            return Plan()
-        }
+        let result = RustVideoHostFFI.inputButtonBalancePlan(
+            handle, kind: event.messageType, button: button,
+        )
+        return Plan(preRelease: result.preRelease, suppress: result.suppress)
     }
 }
 

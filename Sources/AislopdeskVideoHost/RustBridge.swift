@@ -1,3 +1,4 @@
+import AislopdeskVideoProtocol
 import CAislopdeskFFI
 import CoreGraphics
 import Foundation
@@ -277,6 +278,37 @@ public enum RustVideoHostFFI {
         hasRetainedBuffer: Bool,
     ) -> Bool {
         aisd_static_idr_decider_should_reencode(handle, now, forcedLatched ? 1 : 0, hasRetainedBuffer ? 1 : 0) != 0
+    }
+
+    // MARK: - input_button_balance (opaque handle; host input-injection button balance)
+
+    /// Creates a button-balance owned by the Rust core; release with `inputButtonBalanceFree`.
+    /// Wraps `aisd_input_button_balance_new` (never returns null).
+    static func inputButtonBalanceNew() -> OpaquePointer {
+        aisd_input_button_balance_new()
+    }
+
+    /// Destroys a balance handle. Wraps `aisd_input_button_balance_free`.
+    static func inputButtonBalanceFree(_ handle: OpaquePointer) {
+        aisd_input_button_balance_free(handle)
+    }
+
+    /// Folds one event (`kind` = `AISD_INPUT_*`, `button` = raw 0/1/2) and returns its plan as
+    /// `(preRelease, suppress)`. Wraps `aisd_input_button_balance_plan`.
+    static func inputButtonBalancePlan(
+        _ handle: OpaquePointer,
+        kind: UInt8,
+        button: UInt8,
+    ) -> (preRelease: MouseButton?, suppress: Bool) {
+        let plan = aisd_input_button_balance_plan(handle, kind, button)
+        let preRelease = plan.has_pre_release != 0 ? MouseButton(rawValue: plan.pre_release_button) : nil
+        return (preRelease, plan.suppress != 0)
+    }
+
+    /// The held buttons as a bitmask (bit0=left, bit1=right, bit2=other). Wraps
+    /// `aisd_input_button_balance_held_mask`.
+    static func inputButtonBalanceHeldMask(_ handle: OpaquePointer) -> UInt8 {
+        aisd_input_button_balance_held_mask(handle)
     }
 
     /// Flattens a `CGRect` into the C-ABI `AisdRect` (x, y, width, height — all `Double`).

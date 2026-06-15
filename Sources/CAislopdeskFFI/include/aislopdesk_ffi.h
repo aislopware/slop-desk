@@ -734,6 +734,30 @@ void aisd_owd_late_detector_free(AisdOwdLateDetector *detector);
 uint8_t aisd_owd_late_detector_note(AisdOwdLateDetector *detector, double arrival_ms,
                                     uint32_t send_ts, double interval_ms, double *out_deviation);
 
+/* ---- input_button_balance (opaque handle; host input-injection button-balance) ---- */
+
+/* The injection plan for one event (mirrors the Swift Plan). */
+typedef struct AisdInputPlan {
+    uint8_t has_pre_release;    /* 1 => pre-release pre_release_button before the event */
+    uint8_t pre_release_button; /* raw 0=left/1=right/2=other; valid iff has_pre_release */
+    uint8_t suppress;           /* 1 => do not post the event at all */
+} AisdInputPlan;
+
+typedef struct AisdInputButtonBalance AisdInputButtonBalance;
+
+/* Creates a fresh balance (nothing held). Destroy with aisd_input_button_balance_free. */
+AisdInputButtonBalance *aisd_input_button_balance_new(void);
+/* Destroys a balance from aisd_input_button_balance_new. No-op on NULL. */
+void aisd_input_button_balance_free(AisdInputButtonBalance *balance);
+
+/* Folds one event (kind = AISD_INPUT_*, button = raw 0/1/2) and returns the plan. A NULL handle
+ * returns the default plan (post, no pre-release). */
+AisdInputPlan aisd_input_button_balance_plan(AisdInputButtonBalance *balance, uint8_t kind,
+                                             uint8_t button);
+
+/* Held buttons as a bitmask: bit0=left, bit1=right, bit2=other. 0 for empty / NULL handle. */
+uint8_t aisd_input_button_balance_held_mask(const AisdInputButtonBalance *balance);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

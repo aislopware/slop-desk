@@ -521,6 +521,24 @@ int main(void) {
     CHECK(aisd_owd_late_detector_note(NULL, 0.0, 0, owd_interval, &owd_dev) == 0,
           "null detector never late");
 
+    /* 17. input_button_balance opaque handle: plan struct + held mask + null guards. */
+    AisdInputButtonBalance *ibb = aisd_input_button_balance_new();
+    CHECK(ibb != NULL, "input button balance new");
+    AisdInputPlan ip = aisd_input_button_balance_plan(ibb, AISD_INPUT_MOUSE_DOWN, 0);
+    CHECK(ip.has_pre_release == 0 && ip.suppress == 0, "clean down posts");
+    CHECK(aisd_input_button_balance_held_mask(ibb) == 0x01, "left held");
+    ip = aisd_input_button_balance_plan(ibb, AISD_INPUT_MOUSE_DOWN, 0);
+    CHECK(ip.has_pre_release == 1 && ip.pre_release_button == 0, "stuck down pre-releases left");
+    ip = aisd_input_button_balance_plan(ibb, AISD_INPUT_MOUSE_UP, 0);
+    CHECK(ip.suppress == 0 && aisd_input_button_balance_held_mask(ibb) == 0, "up releases left");
+    ip = aisd_input_button_balance_plan(ibb, AISD_INPUT_MOUSE_UP, 0);
+    CHECK(ip.suppress == 1, "duplicate up suppressed");
+    aisd_input_button_balance_free(ibb);
+    aisd_input_button_balance_free(NULL); /* no-op */
+    ip = aisd_input_button_balance_plan(NULL, AISD_INPUT_MOUSE_UP, 0);
+    CHECK(ip.has_pre_release == 0 && ip.suppress == 0, "null balance default plan");
+    CHECK(aisd_input_button_balance_held_mask(NULL) == 0, "null balance empty mask");
+
     if (failures == 0) {
         printf("aislopdesk-ffi C smoke: OK\n");
         return 0;
