@@ -461,6 +461,7 @@ fn video_control_parity() {
                         width: u16v(d, "width"),
                         height: u16v(d, "height"),
                         is_secure: boolv(d, "isSecure"),
+                        keystrokes_blocked: boolv(d, "keystrokesBlocked"),
                     })
                     .collect(),
             ),

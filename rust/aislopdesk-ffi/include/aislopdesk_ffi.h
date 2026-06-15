@@ -316,8 +316,9 @@ void aisd_input_event_free(AisdInputEvent *msg);
 
 /*
  * One window/dialog summary record — the element type of the WINDOW_LIST / SYSTEM_DIALOG_LIST
- * arrays. Both lists share it: WINDOW_LIST → `name` is the app name, `is_secure` unused (0);
- * SYSTEM_DIALOG_LIST → `name` is the owning process, `is_secure` = Secure Event Input. On a
+ * arrays. Both lists share it: WINDOW_LIST → `name` is the app name, `is_secure`/`keystrokes_blocked`
+ * unused (0); SYSTEM_DIALOG_LIST → `name` is the owning process, `is_secure` is the secure-prompt
+ * CLASS flag and `keystrokes_blocked` is the live "synthetic typing dropped right now" flag. On a
  * decode the `name`/`title` buffers own Rust allocations (released by aisd_video_control_free);
  * on an encode input they are borrowed {ptr,len} (cap ignored) or {NULL,0,0}. Field order MUST
  * match the Rust #[repr(C)] struct AisdVideoSummary exactly.
@@ -326,8 +327,9 @@ typedef struct AisdVideoSummary {
     uint32_t window_id;
     uint16_t width;
     uint16_t height;
-    uint8_t is_secure; /* SYSTEM_DIALOG_LIST flag (0/1); 0 (unused) for WINDOW_LIST */
-    AisdBytes name;    /* app name (WINDOW_LIST) / owner (SYSTEM_DIALOG_LIST)       */
+    uint8_t is_secure;         /* SYSTEM_DIALOG_LIST secure-prompt CLASS flag (0/1); 0 for WINDOW_LIST */
+    uint8_t keystrokes_blocked; /* SYSTEM_DIALOG_LIST live "typing dropped now" flag (0/1); 0 for WINDOW_LIST */
+    AisdBytes name;            /* app name (WINDOW_LIST) / owner (SYSTEM_DIALOG_LIST)                 */
     AisdBytes title;
 } AisdVideoSummary;
 

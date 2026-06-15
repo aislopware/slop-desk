@@ -85,6 +85,35 @@ final class SystemDialogDetectorTests: XCTestCase {
         )))
     }
 
+    // keystrokesBlocked: a secure prompt with Secure Event Input LIVE and no virtual HID → blocked.
+    func testKeystrokesBlockedWhenSecureAndSEIActive() {
+        XCTAssertTrue(SystemDialogDetector.keystrokesBlocked(
+            isSecure: true, secureInputActive: true, virtualKeyboardAvailable: false,
+        ))
+    }
+
+    // The `do shell script with admin` prompt: secure CLASS but Secure Event Input NOT active →
+    // synthetic typing lands → NOT blocked (the badge-accuracy fix — no false "view-only").
+    func testKeystrokesNotBlockedWhenSEIInactive() {
+        XCTAssertFalse(SystemDialogDetector.keystrokesBlocked(
+            isSecure: true, secureInputActive: false, virtualKeyboardAvailable: false,
+        ))
+    }
+
+    // A virtual-HID keyboard bypasses Secure Event Input → typable even with SEI live → not blocked.
+    func testKeystrokesNotBlockedWhenVirtualHIDAvailable() {
+        XCTAssertFalse(SystemDialogDetector.keystrokesBlocked(
+            isSecure: true, secureInputActive: true, virtualKeyboardAvailable: true,
+        ))
+    }
+
+    // A non-secure dialog is never input-blocked regardless of the live state.
+    func testKeystrokesNotBlockedForNonSecureDialog() {
+        XCTAssertFalse(SystemDialogDetector.keystrokesBlocked(
+            isSecure: false, secureInputActive: true, virtualKeyboardAvailable: false,
+        ))
+    }
+
     // detect() filters a mixed snapshot down to just the system prompts, order preserved.
     func testDetectFiltersMixedSnapshot() {
         let windows = [

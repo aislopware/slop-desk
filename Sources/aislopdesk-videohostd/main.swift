@@ -25,6 +25,7 @@ import Foundation
 import AislopdeskVideoHost
 import AislopdeskVideoProtocol
 import AppKit
+import Carbon.HIToolbox // IsSecureEventInputEnabled()
 import ScreenCaptureKit
 
 // MARK: - Arguments
@@ -307,6 +308,15 @@ func systemDialogSummaries() async -> [SystemDialogSummary] {
             frame: w.frame,
         )
     }
+    // The LIVE truth for the client's "view-only — type on the host" badge: read Secure Event Input
+    // ONCE per poll (a cheap global-state read) and pair it with whether a virtual-HID keyboard is
+    // available to bypass it (mirrors `InputInjector`'s `AISLOPDESK_VIRTUAL_HID` gate). A secure-CLASS
+    // prompt whose Secure Event Input is NOT active (e.g. `do shell script with administrator
+    // privileges`) is `isSecure == true` but NOT keystroke-blocked — synthetic typing lands, so the
+    // badge must not claim "view-only". Computed here, NOT in the pure classifier (it is live runtime
+    // state, not a property of the window snapshot).
+    let secureInputActive = IsSecureEventInputEnabled()
+    let virtualKeyboardAvailable = ProcessInfo.processInfo.environment["AISLOPDESK_VIRTUAL_HID"] == "1"
     return SystemDialogDetector.detect(snaps).prefix(16).map {
         SystemDialogSummary(
             windowID: $0.windowID,
@@ -315,6 +325,11 @@ func systemDialogSummaries() async -> [SystemDialogSummary] {
             width: UInt16(clamping: $0.width),
             height: UInt16(clamping: $0.height),
             isSecure: $0.isSecure,
+            keystrokesBlocked: SystemDialogDetector.keystrokesBlocked(
+                isSecure: $0.isSecure,
+                secureInputActive: secureInputActive,
+                virtualKeyboardAvailable: virtualKeyboardAvailable,
+            ),
         )
     }
 }

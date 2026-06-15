@@ -172,6 +172,30 @@ pub fn detect_default(windows: &[WindowSnapshot]) -> Vec<Dialog> {
     detect(windows, MIN_SIZE)
 }
 
+/// Whether synthetic client keystrokes will be DROPPED for a surfaced dialog RIGHT NOW.
+///
+/// The live truth behind the client's "type the password on the host" hint, distinct from the static
+/// [`Dialog::is_secure`] classification. `is_secure` is the dialog CLASS (a `SecurityAgent`/`coreauthd`
+/// password field); it is `true` even for a `do shell script with administrator privileges` prompt
+/// that still accepts synthetic typing. `secure_input_active` is the host's LIVE
+/// `IsSecureEventInputEnabled()` reading — `true` only while the OS is routing the keyboard directly to
+/// a secure field, the one case `CGEvent` keystrokes are dropped. `virtual_keyboard_available` is
+/// whether a `DriverKit` virtual-HID keyboard can bypass Secure Event Input (the host `InputInjector`
+/// can type into a secure field through it).
+///
+/// Keystrokes are blocked iff the dialog is a secure-class prompt AND Secure Event Input is actually
+/// active AND no virtual-HID keyboard can reach around it. A secure-CLASS dialog whose Secure Event
+/// Input is NOT active (`secure_input_active == false`) is typable from the client → not blocked.
+/// Pure.
+#[must_use]
+pub const fn keystrokes_blocked(
+    is_secure: bool,
+    secure_input_active: bool,
+    virtual_keyboard_available: bool,
+) -> bool {
+    is_secure && secure_input_active && !virtual_keyboard_available
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,6 +542,34 @@ mod tests {
             snap(2, "Finder", "com.apple.finder", true, 900.0, 600.0, ""),
         ];
         assert_eq!(detect_default(&windows), Vec::<Dialog>::new());
+    }
+
+    // ----- keystrokes_blocked policy (live Secure-Event-Input, NOT the static class) -----
+
+    // The real login/unlock prompt: secure class + Secure Event Input live + no virtual HID → blocked.
+    #[test]
+    fn keystrokes_blocked_when_secure_and_sei_active() {
+        assert!(keystrokes_blocked(true, true, false));
+    }
+
+    // The `do shell script with admin` prompt: secure CLASS but Secure Event Input NOT active →
+    // synthetic typing lands → NOT blocked (the badge fix: no false "view-only").
+    #[test]
+    fn keystrokes_not_blocked_when_sei_inactive() {
+        assert!(!keystrokes_blocked(true, false, false));
+    }
+
+    // A virtual-HID keyboard bypasses Secure Event Input → typable even with SEI live → not blocked.
+    #[test]
+    fn keystrokes_not_blocked_when_virtual_hid_available() {
+        assert!(!keystrokes_blocked(true, true, true));
+    }
+
+    // A non-secure dialog is never input-blocked regardless of the live state.
+    #[test]
+    fn keystrokes_not_blocked_for_non_secure_dialog() {
+        assert!(!keystrokes_blocked(false, true, false));
+        assert!(!keystrokes_blocked(false, false, false));
     }
 
     // detect: mixed input → accepts in original index order (filter only).

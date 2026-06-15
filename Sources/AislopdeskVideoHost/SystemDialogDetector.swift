@@ -101,5 +101,24 @@ public enum SystemDialogDetector {
     public static func detect(_ windows: [WindowSnapshot], minSize: Int = minSize) -> [Dialog] {
         windows.compactMap { classify($0, minSize: minSize) }
     }
+
+    /// Whether synthetic client keystrokes will be DROPPED for a surfaced dialog RIGHT NOW — the live
+    /// truth behind the client's "type the password on the host" badge, distinct from the static
+    /// ``Dialog/isSecure`` classification. Mirrors `aislopdesk_core::system_dialog_detector::keystrokes_blocked`.
+    ///
+    /// `isSecure` is the dialog CLASS (a `SecurityAgent`/`coreauthd` password field); it is `true` even
+    /// for a `do shell script with administrator privileges` prompt that still accepts synthetic typing.
+    /// `secureInputActive` is the host's LIVE `IsSecureEventInputEnabled()` reading — `true` only while
+    /// the OS routes the keyboard straight to a secure field (the one case `CGEvent` keystrokes drop).
+    /// `virtualKeyboardAvailable` is whether a DriverKit virtual-HID keyboard can bypass Secure Event
+    /// Input (the host ``InputInjector`` types into a secure field through it). Blocked iff secure-class
+    /// AND Secure Event Input is actually active AND no virtual-HID can reach around it. Pure.
+    public static func keystrokesBlocked(
+        isSecure: Bool,
+        secureInputActive: Bool,
+        virtualKeyboardAvailable: Bool,
+    ) -> Bool {
+        isSecure && secureInputActive && !virtualKeyboardAvailable
+    }
 }
 #endif

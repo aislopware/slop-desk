@@ -524,10 +524,18 @@ public final class WorkspaceStore {
     /// Spawns an EPHEMERAL ``PaneKind/systemDialog`` pane streaming host window `windowID` (a SecurityAgent
     /// login/password prompt etc.) and returns its id so the monitor can ``closePane(_:)`` it when the
     /// dialog goes away. Auto-streams (the spec carries the windowID, so no picker) and is NEVER persisted
-    /// (``persistableWorkspace()`` strips it). `isSecure` flags a password/auth dialog — the pane shows a
-    /// "view-only — type on the host" hint, the HW-proven truth (synthetic keystrokes are OS-dropped).
+    /// (``persistableWorkspace()`` strips it). `isSecure` flags a password/auth CLASS dialog (drives the
+    /// paste-guard); `keystrokesBlocked` is the LIVE truth that synthetic typing is dropped right now —
+    /// only then does the pane show the "view-only — type on the host" badge (a secure-class prompt with
+    /// Secure Event Input off is typable, so no badge).
     @discardableResult
-    public func addSystemDialogPane(windowID: UInt32, owner: String, title: String, isSecure: Bool) -> PaneID {
+    public func addSystemDialogPane(
+        windowID: UInt32,
+        owner: String,
+        title: String,
+        isSecure: Bool,
+        keystrokesBlocked: Bool,
+    ) -> PaneID {
         let label = title.isEmpty ? owner : "\(owner) — \(title)"
         let spec = PaneSpec(
             kind: .systemDialog,
@@ -542,9 +550,9 @@ public final class WorkspaceStore {
         if workspace.maximizedPane != nil { workspace.maximizedPane = nil }
         recenterIfOffscreen(id, viewport: viewport)
         reconcile()
-        // isSecure is a pure-live property (never persisted), so set it on the just-materialized session
-        // directly rather than threading it through the Codable spec.
-        (registry[id] as? LivePaneSession)?.markSystemDialog(isSecure: isSecure)
+        // isSecure / keystrokesBlocked are pure-live properties (never persisted), so set them on the
+        // just-materialized session directly rather than threading them through the Codable spec.
+        (registry[id] as? LivePaneSession)?.markSystemDialog(isSecure: isSecure, keystrokesBlocked: keystrokesBlocked)
         return id
     }
 

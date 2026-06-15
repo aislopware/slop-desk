@@ -11,7 +11,8 @@
 
 use aislopdesk_ffi::video::{
     aisd_video_control_decode, aisd_video_control_encode, aisd_video_control_free,
-    AisdVideoControl, AisdVideoSummary, AISD_VIDEO_CONTROL_WINDOW_LIST,
+    AisdVideoControl, AisdVideoSummary, AISD_VIDEO_CONTROL_SYSTEM_DIALOG_LIST,
+    AISD_VIDEO_CONTROL_WINDOW_LIST,
 };
 use aislopdesk_ffi::{
     aisd_bytes_free, aisd_frame_decoder_append, aisd_frame_decoder_free, aisd_frame_decoder_new,
@@ -727,7 +728,8 @@ const fn control_base() -> AisdVideoControl {
     }
 }
 
-/// One borrowed summary record (the strings are copied by `encode`, never freed by Rust).
+/// One borrowed summary record (the strings are copied by `encode`, never freed by Rust). The two
+/// dialog flags default off (a `WindowList` record never uses them).
 const fn summary(
     window_id: u32,
     width: u16,
@@ -740,6 +742,7 @@ const fn summary(
         width,
         height,
         is_secure: 0,
+        keystrokes_blocked: 0,
         name: borrow(name),
         title: borrow(title),
     }
@@ -780,6 +783,62 @@ fn video_control_window_list_round_trips_and_owned_array_frees() {
         aisd_video_control_free(&mut out); // idempotent: a second free is a no-op
         assert!(out.records.is_null());
         assert_eq!(out.records_len, 0);
+        aisd_bytes_free(frame);
+    }
+}
+
+#[test]
+fn video_control_system_dialog_list_carries_both_flags_independently() {
+    unsafe {
+        // A blocked login prompt and a secure-CLASS admin-auth prompt that is still typable — the
+        // two flags must survive the boundary INDEPENDENTLY (the badge-accuracy fix).
+        let blocked = AisdVideoSummary {
+            window_id: 9,
+            width: 400,
+            height: 200,
+            is_secure: 1,
+            keystrokes_blocked: 1,
+            name: borrow(b"SecurityAgent"),
+            title: borrow(b""),
+        };
+        let typable = AisdVideoSummary {
+            window_id: 10,
+            width: 420,
+            height: 220,
+            is_secure: 1,
+            keystrokes_blocked: 0,
+            name: borrow(b"SecurityAgent"),
+            title: borrow(b"Authorize"),
+        };
+        let recs = [blocked, typable];
+        let mut msg = control_base();
+        msg.kind = AISD_VIDEO_CONTROL_SYSTEM_DIALOG_LIST;
+        msg.records = recs.as_ptr().cast_mut();
+        msg.records_len = recs.len();
+
+        let mut frame = AisdBytes::EMPTY;
+        assert_eq!(aisd_video_control_encode(&msg, &mut frame), AISD_OK);
+
+        let mut out = control_base();
+        assert_eq!(
+            aisd_video_control_decode(frame.ptr, frame.len, &mut out),
+            AISD_OK
+        );
+        assert_eq!(out.records_len, 2);
+        let decoded = core::slice::from_raw_parts(out.records, out.records_len);
+        assert_eq!(
+            (decoded[0].is_secure, decoded[0].keystrokes_blocked),
+            (1, 1),
+            "blocked login prompt"
+        );
+        assert_eq!(
+            (decoded[1].is_secure, decoded[1].keystrokes_blocked),
+            (1, 0),
+            "secure-class but typable"
+        );
+        assert_eq!(view(decoded[1].title), b"Authorize");
+
+        aisd_video_control_free(&mut out);
         aisd_bytes_free(frame);
     }
 }

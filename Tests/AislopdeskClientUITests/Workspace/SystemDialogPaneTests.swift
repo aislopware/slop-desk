@@ -20,7 +20,13 @@ final class SystemDialogPaneTests: XCTestCase {
     func testAddSystemDialogPaneCreatesBoundFocusedLeaf() {
         let store = makeStore()
         let before = store.workspace.canvas.allIDs().count
-        let id = store.addSystemDialogPane(windowID: 1966, owner: "SecurityAgent", title: "", isSecure: true)
+        let id = store.addSystemDialogPane(
+            windowID: 1966,
+            owner: "SecurityAgent",
+            title: "",
+            isSecure: true,
+            keystrokesBlocked: true,
+        )
         XCTAssertEqual(store.workspace.canvas.allIDs().count, before + 1)
         let spec = store.workspace.canvas.spec(for: id)
         XCTAssertEqual(spec?.kind, .systemDialog)
@@ -32,14 +38,26 @@ final class SystemDialogPaneTests: XCTestCase {
     // The dialog title is folded into the label when present.
     func testTitleFoldedIntoLabel() {
         let store = makeStore()
-        let id = store.addSystemDialogPane(windowID: 7, owner: "SecurityAgent", title: "Unlock", isSecure: true)
+        let id = store.addSystemDialogPane(
+            windowID: 7,
+            owner: "SecurityAgent",
+            title: "Unlock",
+            isSecure: true,
+            keystrokesBlocked: true,
+        )
         XCTAssertEqual(store.workspace.canvas.spec(for: id)?.title, "SecurityAgent — Unlock")
     }
 
     // closePane removes the ephemeral pane (the monitor's dismiss path).
     func testClosingDialogPaneRemovesIt() {
         let store = makeStore()
-        let id = store.addSystemDialogPane(windowID: 1966, owner: "SecurityAgent", title: "", isSecure: true)
+        let id = store.addSystemDialogPane(
+            windowID: 1966,
+            owner: "SecurityAgent",
+            title: "",
+            isSecure: true,
+            keystrokesBlocked: true,
+        )
         XCTAssertTrue(store.workspace.canvas.contains(id))
         store.closePane(id)
         XCTAssertFalse(store.workspace.canvas.contains(id))
@@ -58,7 +76,13 @@ final class SystemDialogPaneTests: XCTestCase {
         let store = makeStore(persistence: persistence)
         let terminalCount = kinds(store).count(where: { $0 == .terminal })
         XCTAssertGreaterThan(terminalCount, 0, "the default workspace has a terminal pane")
-        store.addSystemDialogPane(windowID: 1966, owner: "SecurityAgent", title: "", isSecure: true)
+        store.addSystemDialogPane(
+            windowID: 1966,
+            owner: "SecurityAgent",
+            title: "",
+            isSecure: true,
+            keystrokesBlocked: true,
+        )
         XCTAssertTrue(kinds(store).contains(.systemDialog), "the dialog pane is live on the canvas")
 
         store.saveImmediately()

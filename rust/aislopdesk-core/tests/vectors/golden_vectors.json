@@ -4900,13 +4900,23 @@
         {
           "height": 200,
           "isSecure": true,
+          "keystrokesBlocked": true,
           "owner": "SecurityAgent",
           "title": "",
           "width": 400,
           "windowID": 9
+        },
+        {
+          "height": 220,
+          "isSecure": true,
+          "keystrokesBlocked": false,
+          "owner": "SecurityAgent",
+          "title": "Authorize",
+          "width": 420,
+          "windowID": 10
         }
       ],
-      "hex": "0c000100000009019000c801000d53656375726974794167656e740000",
+      "hex": "0c000200000009019000c80101000d53656375726974794167656e7400000000000a01a400dc0100000d53656375726974794167656e740009417574686f72697a65",
       "variant": "systemDialogList"
     }
   ],

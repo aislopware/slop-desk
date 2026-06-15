@@ -368,7 +368,13 @@ final class WorkspaceTransferTests: XCTestCase {
     func testEphemeralPanesNeverExported() throws {
         let a = term(0, "a")
         let src = store([a], focus: a.id)
-        src.addSystemDialogPane(windowID: 7, owner: "SecurityAgent", title: "Authenticate", isSecure: true)
+        src.addSystemDialogPane(
+            windowID: 7,
+            owner: "SecurityAgent",
+            title: "Authenticate",
+            isSecure: true,
+            keystrokesBlocked: true,
+        )
         let decoded = WorkspaceTransfer.decode(src.exportWorkspaceData())
         XCTAssertNotNil(decoded)
         XCTAssertFalse(

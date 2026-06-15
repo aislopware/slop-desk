@@ -340,6 +340,37 @@ int main(void) {
     CHECK(wl_out.records == NULL && wl_out.records_len == 0, "free nulls the record array");
     aisd_bytes_free(wl_frame);
 
+    /* systemDialogList: a secure-CLASS prompt whose Secure Event Input is OFF (typing works) —
+     * is_secure=1 but keystrokes_blocked=0. Proves the new flag has the right C-struct offset and
+     * round-trips INDEPENDENTLY of is_secure across the real C ABI. */
+    const char *sd_owner = "SecurityAgent";
+    AisdVideoSummary sd_rec;
+    memset(&sd_rec, 0, sizeof(sd_rec));
+    sd_rec.window_id = 777;
+    sd_rec.width = 420;
+    sd_rec.height = 220;
+    sd_rec.is_secure = 1;
+    sd_rec.keystrokes_blocked = 0;
+    sd_rec.name.ptr = (uint8_t *)sd_owner;
+    sd_rec.name.len = strlen(sd_owner);
+    AisdVideoControl sdl;
+    memset(&sdl, 0, sizeof(sdl));
+    sdl.kind = AISD_VIDEO_CONTROL_SYSTEM_DIALOG_LIST;
+    sdl.records = &sd_rec;
+    sdl.records_len = 1;
+    AisdBytes sdl_frame = {NULL, 0, 0};
+    CHECK(aisd_video_control_encode(&sdl, &sdl_frame) == AISD_OK, "systemDialogList encode ok");
+    AisdVideoControl sdl_out;
+    memset(&sdl_out, 0, sizeof(sdl_out));
+    CHECK(aisd_video_control_decode(sdl_frame.ptr, sdl_frame.len, &sdl_out) == AISD_OK,
+          "systemDialogList decode ok");
+    CHECK(sdl_out.records_len == 1 && sdl_out.records != NULL &&
+              sdl_out.records[0].window_id == 777 && sdl_out.records[0].is_secure == 1 &&
+              sdl_out.records[0].keystrokes_blocked == 0,
+          "secure-class + typable (is_secure=1, keystrokes_blocked=0) round-trips independently");
+    aisd_video_control_free(&sdl_out);
+    aisd_bytes_free(sdl_frame);
+
     if (failures == 0) {
         printf("aislopdesk-ffi C smoke: OK\n");
         return 0;

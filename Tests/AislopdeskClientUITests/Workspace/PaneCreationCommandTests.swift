@@ -131,7 +131,13 @@ final class PaneCreationCommandTests: XCTestCase {
 
     func testEphemeralPaneDoesNotDuplicate() {
         let store = makeStore()
-        let dialogID = store.addSystemDialogPane(windowID: 7, owner: "SecurityAgent", title: "auth", isSecure: true)
+        let dialogID = store.addSystemDialogPane(
+            windowID: 7,
+            owner: "SecurityAgent",
+            title: "auth",
+            isSecure: true,
+            keystrokesBlocked: true,
+        )
         XCTAssertNil(store.duplicatePane(dialogID))
     }
 

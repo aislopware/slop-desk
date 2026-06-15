@@ -49,7 +49,7 @@ import Foundation
 /// type 10 streamCadence: UInt16 fps
 /// type 11 listSystemDialogs: (no body)
 /// type 12 systemDialogList:  UInt16 count | per record: UInt32 id | UInt16 w | UInt16 h
-///                            | UInt8 isSecure | lp owner | lp title
+///                            | UInt8 isSecure | UInt8 keystrokesBlocked | lp owner | lp title
 /// ```
 ///
 /// Liveness keepalive (additive after the resize pair — CONCURRENCY-HOST-1 crash-without-bye):
@@ -98,18 +98,37 @@ public struct SystemDialogSummary: Equatable, Sendable {
     public var title: String
     public var width: UInt16
     public var height: UInt16
-    /// HW-proven (probe 2026-06-12): a `SecurityAgent`-class dialog raises system Secure Event Input —
-    /// the host can CAPTURE it (pixels stream fine) but synthetic keystrokes are OS-dropped, so the
-    /// password can't be TYPED from the client. The pane shows a "view-only — type on the host" hint.
+    /// The dialog is a Secure-Event-Input CLASS prompt (a `SecurityAgent`/`coreauthd` password/auth
+    /// field). A static classification of the WINDOW — it does NOT mean keystrokes are blocked right
+    /// now: a password field can be present while Secure Event Input is off (e.g. a `do shell script
+    /// with administrator privileges` prompt, which DOES accept synthetic typing). Drives the client
+    /// paste-guard's "is this a password field?" reasoning, NOT the view-only badge.
     public var isSecure: Bool
+    /// Whether synthetic client keystrokes are DROPPED for this dialog RIGHT NOW — the live truth the
+    /// client's "view-only — type the password on the host" badge reflects. The host computes it at
+    /// send time from the live `IsSecureEventInputEnabled()` (and whether a virtual-HID keyboard can
+    /// bypass it), so it is `true` only while the OS is actually routing the keyboard to a secure
+    /// field. Distinct from ``isSecure``: a secure-CLASS prompt whose Secure Event Input is not active
+    /// is `isSecure == true` but `keystrokesBlocked == false` (typing from the client works) — the
+    /// case that made the badge misleading before this flag existed.
+    public var keystrokesBlocked: Bool
 
-    public init(windowID: UInt32, owner: String, title: String, width: UInt16, height: UInt16, isSecure: Bool) {
+    public init(
+        windowID: UInt32,
+        owner: String,
+        title: String,
+        width: UInt16,
+        height: UInt16,
+        isSecure: Bool,
+        keystrokesBlocked: Bool,
+    ) {
         self.windowID = windowID
         self.owner = owner
         self.title = title
         self.width = width
         self.height = height
         self.isSecure = isSecure
+        self.keystrokesBlocked = keystrokesBlocked
     }
 }
 

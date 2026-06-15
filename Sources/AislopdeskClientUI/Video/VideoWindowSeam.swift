@@ -181,17 +181,31 @@ public struct SystemDialogInfo: Sendable, Equatable, Identifiable {
     public var title: String
     public var width: UInt16
     public var height: UInt16
-    /// `true` ⇒ a Secure-Event-Input (password/auth) dialog: view + click work, typing is OS-blocked.
+    /// `true` ⇒ a Secure-Event-Input CLASS (password/auth) dialog. A static classification — it does
+    /// NOT mean typing is blocked right now (drives the paste-guard's "password field?" reasoning).
     public var isSecure: Bool
+    /// `true` ⇒ synthetic client keystrokes are DROPPED for this dialog RIGHT NOW (live Secure Event
+    /// Input, no virtual-HID bypass) — the truth the "view-only — type on the host" badge reflects.
+    /// Distinct from ``isSecure``: a secure-class prompt with Secure Event Input off is typable.
+    public var keystrokesBlocked: Bool
     public var id: UInt32 { windowID }
 
-    public init(windowID: UInt32, owner: String, title: String, width: UInt16, height: UInt16, isSecure: Bool) {
+    public init(
+        windowID: UInt32,
+        owner: String,
+        title: String,
+        width: UInt16,
+        height: UInt16,
+        isSecure: Bool,
+        keystrokesBlocked: Bool,
+    ) {
         self.windowID = windowID
         self.owner = owner
         self.title = title
         self.width = width
         self.height = height
         self.isSecure = isSecure
+        self.keystrokesBlocked = keystrokesBlocked
     }
 
     /// A pane label: "owner — title" (title omitted when empty).

@@ -87,9 +87,16 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     private var wasVideoActiveBeforePause = false
 
     /// SYSTEM-DIALOG: `true` when this is a ``PaneKind/systemDialog`` pane streaming a Secure-Event-Input
-    /// (password/auth) prompt — the pane shows a "view-only — type on the host" hint, the HW-proven truth.
-    /// A pure-live property the store sets via ``markSystemDialog(isSecure:)`` (never persisted).
+    /// CLASS (password/auth) prompt. A static classification — it drives the paste-guard's "password
+    /// field?" reasoning, NOT the view-only badge. A pure-live property the store sets via
+    /// ``markSystemDialog(isSecure:keystrokesBlocked:)`` (never persisted).
     public private(set) var isSecureDialog = false
+
+    /// SYSTEM-DIALOG: `true` when synthetic client keystrokes are DROPPED for this dialog RIGHT NOW
+    /// (live Secure Event Input, no virtual-HID bypass) — the pane shows the "view-only — type on the
+    /// host" badge ONLY then. Distinct from ``isSecureDialog``: a secure-class prompt whose Secure
+    /// Event Input is off is typable, so no badge. A pure-live property (never persisted).
+    public private(set) var keystrokesBlocked = false
 
     /// PANE REBIND: whether the one-shot stale-binding revalidation already ran for this session
     /// (only the RESTORED binding is suspect — see ``maybeRevalidateBinding(_:)``).
@@ -272,7 +279,10 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// SYSTEM-DIALOG: flag a just-spawned ``PaneKind/systemDialog`` session as a secure (password/auth)
     /// prompt so the pane view shows the "view-only — type on the host" hint. Set by the store right after
     /// materialization (the flag is pure-live, not carried in the persisted spec).
-    func markSystemDialog(isSecure: Bool) { isSecureDialog = isSecure }
+    func markSystemDialog(isSecure: Bool, keystrokesBlocked: Bool) {
+        isSecureDialog = isSecure
+        self.keystrokesBlocked = keystrokesBlocked
+    }
 
     // MARK: - Inspector second channel
 

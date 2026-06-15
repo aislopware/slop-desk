@@ -89,11 +89,14 @@ struct PaneLeafView: View {
         case .remoteGUI:
             RemoteGUIPaneView(live: live, store: store)
         case .systemDialog:
-            // Same live video view as a remote-GUI pane; a secure (password/auth) prompt gets the
-            // honest "view-only — type on the host" hint (synthetic keystrokes are OS-dropped).
+            // Same live video view as a remote-GUI pane. The "view-only — type on the host" badge is
+            // shown ONLY when keystrokes are ACTUALLY blocked right now (live Secure Event Input), NOT
+            // merely because it is a password-CLASS prompt: a `do shell script with administrator
+            // privileges` dialog is a password field whose Secure Event Input is off, so synthetic
+            // typing from the client lands — showing the badge there would be a false "view-only".
             RemoteGUIPaneView(live: live, store: store)
                 .overlay(alignment: .bottom) {
-                    if live.isSecureDialog { SecureDialogHintBar() }
+                    if live.keystrokesBlocked { SecureDialogHintBar() }
                 }
         }
     }

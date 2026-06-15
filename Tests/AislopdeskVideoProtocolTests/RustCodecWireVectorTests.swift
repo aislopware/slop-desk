@@ -236,9 +236,11 @@ final class RustCodecWireVectorTests: XCTestCase {
     }
 
     /// Pins the nested-array `windowList` / `systemDialogList` layout: `u16 count` then per record
-    /// `u32 id | u16 w | u16 h | (u8 isSecure) | u16-len-prefixed name | u16-len-prefixed title`. A
-    /// known vector independently verifies the FFI record-array marshaling (field order across the
-    /// boundary), which a round-trip alone could not catch if a field were swapped symmetrically.
+    /// `u32 id | u16 w | u16 h | (u8 isSecure | u8 keystrokesBlocked) | lp name | lp title`. A known
+    /// vector independently verifies the FFI record-array marshaling (field order across the
+    /// boundary), which a round-trip alone could not catch if a field were swapped symmetrically —
+    /// here especially the TWO adjacent dialog flag bytes (`isSecure` then `keystrokesBlocked`),
+    /// pinned to DIFFERENT values so a swap would change the bytes.
     func testVideoControlListWireVectors() throws {
         let windowList = VideoControlMessage.windowList([
             WindowSummary(windowID: 1, appName: "Hi", title: "", width: 0x0102, height: 0x0304),
@@ -255,8 +257,14 @@ final class RustCodecWireVectorTests: XCTestCase {
         XCTAssertEqual(Array(windowList.encode()), windowExpected)
         XCTAssertEqual(try VideoControlMessage.decode(Data(windowExpected)), windowList)
 
+        // A secure-CLASS prompt that is still TYPABLE (isSecure=true, keystrokesBlocked=false) — the
+        // `do shell script with administrator privileges` case. The two flag bytes differ (0x01 then
+        // 0x00), so the vector catches a symmetric swap of the two.
         let dialogList = VideoControlMessage.systemDialogList([
-            SystemDialogSummary(windowID: 1, owner: "Hi", title: "", width: 0x0102, height: 0x0304, isSecure: true),
+            SystemDialogSummary(
+                windowID: 1, owner: "Hi", title: "", width: 0x0102, height: 0x0304,
+                isSecure: true, keystrokesBlocked: false,
+            ),
         ])
         let dialogExpected: [UInt8] = [
             0x0C, // type = systemDialogList
@@ -265,6 +273,7 @@ final class RustCodecWireVectorTests: XCTestCase {
             0x01, 0x02, // width
             0x03, 0x04, // height
             0x01, // isSecure
+            0x00, // keystrokesBlocked
             0x00, 0x02, 0x48, 0x69, // owner len 2 + "Hi"
             0x00, 0x00, // title len 0
         ]

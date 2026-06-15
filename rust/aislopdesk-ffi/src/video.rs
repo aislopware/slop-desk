@@ -688,10 +688,12 @@ pub const AISD_VIDEO_CONTROL_SYSTEM_DIALOG_LIST: u8 = 12;
 /// `WindowList` / `SystemDialogList` record arrays.
 ///
 /// Both list variants share this struct: for a `WindowList` record `name` is the application
-/// name and `is_secure` is unused (`0`); for a `SystemDialogList` record `name` is the owning
-/// process and `is_secure` reflects Secure Event Input. On a decode `out` the `name` / `title`
-/// buffers own Rust allocations (released together by [`aisd_video_control_free`]); on an encode
-/// input they are borrowed `(ptr, len)` (`cap` ignored) or [`AisdBytes::EMPTY`].
+/// name and `is_secure` / `keystrokes_blocked` are unused (`0`); for a `SystemDialogList` record
+/// `name` is the owning process, `is_secure` is the secure-prompt CLASS flag and
+/// `keystrokes_blocked` is the live "synthetic typing is dropped right now" flag. On a decode `out`
+/// the `name` / `title` buffers own Rust allocations (released together by
+/// [`aisd_video_control_free`]); on an encode input they are borrowed `(ptr, len)` (`cap` ignored)
+/// or [`AisdBytes::EMPTY`].
 #[repr(C)]
 pub struct AisdVideoSummary {
     /// Host `CGWindowID`.
@@ -700,8 +702,12 @@ pub struct AisdVideoSummary {
     pub width: u16,
     /// Window/dialog height in points.
     pub height: u16,
-    /// `SystemDialogList` Secure-Event-Input flag (`0`/`1`); unused (`0`) for `WindowList`.
+    /// `SystemDialogList` secure-prompt CLASS flag (`0`/`1`); unused (`0`) for `WindowList`.
     pub is_secure: u8,
+    /// `SystemDialogList` live "synthetic keystrokes dropped right now" flag (`0`/`1`); unused (`0`)
+    /// for `WindowList`. Distinct from `is_secure` (the static class) — see
+    /// [`SystemDialogSummary::keystrokes_blocked`](aislopdesk_core::video_control::SystemDialogSummary).
+    pub keystrokes_blocked: u8,
     /// `WindowList` app name / `SystemDialogList` owner (UTF-8; owned out / borrowed in).
     pub name: AisdBytes,
     /// The window/dialog title (UTF-8; owned out / borrowed in).
@@ -847,6 +853,7 @@ unsafe fn c_to_dialog_summaries(
             width: r.width,
             height: r.height,
             is_secure: r.is_secure != 0,
+            keystrokes_blocked: r.keystrokes_blocked != 0,
         });
     }
     Ok(out)
@@ -920,6 +927,7 @@ fn summary_to_c(
     width: u16,
     height: u16,
     is_secure: bool,
+    keystrokes_blocked: bool,
     name: &str,
     title: &str,
 ) -> AisdVideoSummary {
@@ -928,6 +936,7 @@ fn summary_to_c(
         width,
         height,
         is_secure: u8::from(is_secure),
+        keystrokes_blocked: u8::from(keystrokes_blocked),
         name: bytes_from_vec(name.as_bytes().to_vec()),
         title: bytes_from_vec(title.as_bytes().to_vec()),
     }
@@ -990,7 +999,17 @@ fn video_control_to_c(message: &VideoControlMessage) -> AisdVideoControl {
         VideoControlMessage::WindowList(windows) => {
             let recs: Vec<AisdVideoSummary> = windows
                 .iter()
-                .map(|w| summary_to_c(w.window_id, w.width, w.height, false, &w.app_name, &w.title))
+                .map(|w| {
+                    summary_to_c(
+                        w.window_id,
+                        w.width,
+                        w.height,
+                        false,
+                        false,
+                        &w.app_name,
+                        &w.title,
+                    )
+                })
                 .collect();
             let (ptr, len) = summaries_into_raw(recs);
             out.records = ptr;
@@ -1005,6 +1024,7 @@ fn video_control_to_c(message: &VideoControlMessage) -> AisdVideoControl {
                         d.width,
                         d.height,
                         d.is_secure,
+                        d.keystrokes_blocked,
                         &d.owner,
                         &d.title,
                     )
@@ -2365,6 +2385,7 @@ mod tests {
                     width: 1200,
                     height: 800,
                     is_secure: 0,
+                    keystrokes_blocked: 0,
                     name: borrow(chrome.as_bytes()),
                     title: borrow(tab.as_bytes()),
                 },
@@ -2373,6 +2394,7 @@ mod tests {
                     width: 80,
                     height: 24,
                     is_secure: 0,
+                    keystrokes_blocked: 0,
                     name: borrow(term.as_bytes()),
                     title: borrow(b""), // empty title
                 },
@@ -2434,14 +2456,29 @@ mod tests {
     fn video_control_round_trips_system_dialog_list_and_empty() {
         unsafe {
             let owner = "SecurityAgent";
-            let recs = [AisdVideoSummary {
-                window_id: 9,
-                width: 400,
-                height: 200,
-                is_secure: 1,
-                name: borrow(owner.as_bytes()),
-                title: borrow(b""),
-            }];
+            // Two records pinning the two flags INDEPENDENTLY across the boundary: a blocked login
+            // prompt (is_secure=1, keystrokes_blocked=1) and a secure-CLASS admin-auth prompt whose
+            // Secure Event Input is off so typing works (is_secure=1, keystrokes_blocked=0).
+            let recs = [
+                AisdVideoSummary {
+                    window_id: 9,
+                    width: 400,
+                    height: 200,
+                    is_secure: 1,
+                    keystrokes_blocked: 1,
+                    name: borrow(owner.as_bytes()),
+                    title: borrow(b""),
+                },
+                AisdVideoSummary {
+                    window_id: 10,
+                    width: 420,
+                    height: 220,
+                    is_secure: 1,
+                    keystrokes_blocked: 0,
+                    name: borrow(owner.as_bytes()),
+                    title: borrow(b"Authorize"),
+                },
+            ];
             let c = AisdVideoControl {
                 kind: AISD_VIDEO_CONTROL_SYSTEM_DIALOG_LIST,
                 records: recs.as_ptr().cast_mut(),
@@ -2450,14 +2487,26 @@ mod tests {
             };
             let mut frame = AisdBytes::EMPTY;
             assert_eq!(aisd_video_control_encode(&c, &mut frame), AISD_OK);
-            let core = VideoControlMessage::SystemDialogList(vec![SystemDialogSummary {
-                window_id: 9,
-                owner: owner.to_owned(),
-                title: String::new(),
-                width: 400,
-                height: 200,
-                is_secure: true,
-            }]);
+            let core = VideoControlMessage::SystemDialogList(vec![
+                SystemDialogSummary {
+                    window_id: 9,
+                    owner: owner.to_owned(),
+                    title: String::new(),
+                    width: 400,
+                    height: 200,
+                    is_secure: true,
+                    keystrokes_blocked: true,
+                },
+                SystemDialogSummary {
+                    window_id: 10,
+                    owner: owner.to_owned(),
+                    title: "Authorize".to_owned(),
+                    width: 420,
+                    height: 220,
+                    is_secure: true,
+                    keystrokes_blocked: false,
+                },
+            ]);
             assert_eq!(view(frame), core.encode());
             let mut out = AisdVideoControl::zeroed();
             assert_eq!(
@@ -2465,7 +2514,16 @@ mod tests {
                 AISD_OK
             );
             let decoded = core::slice::from_raw_parts(out.records, out.records_len);
-            assert_eq!(decoded[0].is_secure, 1, "Secure Event Input flag survives");
+            assert_eq!(
+                decoded[0].is_secure, 1,
+                "Secure Event Input class flag survives"
+            );
+            assert_eq!(decoded[0].keystrokes_blocked, 1, "blocked flag survives");
+            assert_eq!(
+                (decoded[1].is_secure, decoded[1].keystrokes_blocked),
+                (1, 0),
+                "secure-class but typable survives independently"
+            );
             assert_eq!(view(decoded[0].name), owner.as_bytes());
             aisd_video_control_free(&mut out);
             crate::aisd_bytes_free(frame);
@@ -2513,6 +2571,7 @@ mod tests {
                 width: 0,
                 height: 0,
                 is_secure: 0,
+                keystrokes_blocked: 0,
                 name: borrow(&invalid),
                 title: borrow(b""),
             }];

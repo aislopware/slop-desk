@@ -39,8 +39,19 @@ pub struct SystemDialogSummary {
     pub width: u16,
     /// Dialog height in points.
     pub height: u16,
-    /// True when the dialog raises Secure Event Input (pixels stream, keystrokes dropped).
+    /// True when the dialog is a Secure-Event-Input CLASS prompt (a `SecurityAgent`/`coreauthd`
+    /// password/auth field). A static classification of the WINDOW — it does NOT mean keystrokes
+    /// are blocked right now (a password field can be present while Secure Event Input is off, e.g.
+    /// a `do shell script with administrator privileges` prompt, which accepts synthetic typing).
+    /// Drives the client paste-guard's "is this a password field?" reasoning.
     pub is_secure: bool,
+    /// True when synthetic client keystrokes will be DROPPED for this dialog RIGHT NOW — the live
+    /// truth behind the client's "type the password on the host" hint. Computed by the host at send
+    /// time from the live `IsSecureEventInputEnabled()` (and whether a virtual-HID keyboard can
+    /// bypass it), NOT from the dialog class. Distinct from [`is_secure`](Self::is_secure): a secure
+    /// CLASS dialog whose Secure Event Input is not actually active is `is_secure == true` but
+    /// `keystrokes_blocked == false` (typing from the client works).
+    pub keystrokes_blocked: bool,
 }
 
 /// A session bring-up / control message.
@@ -201,6 +212,7 @@ impl VideoControlMessage {
                     w.put_u16(dialog.width);
                     w.put_u16(dialog.height);
                     w.put_u8(u8::from(dialog.is_secure));
+                    w.put_u8(u8::from(dialog.keystrokes_blocked));
                     w.put_length_prefixed_str(&dialog.owner);
                     w.put_length_prefixed_str(&dialog.title);
                 }
@@ -298,6 +310,7 @@ impl VideoControlMessage {
                     let width = r.read_u16()?;
                     let height = r.read_u16()?;
                     let is_secure = r.read_u8()? != 0;
+                    let keystrokes_blocked = r.read_u8()? != 0;
                     let owner = r.read_length_prefixed_str()?;
                     let title = r.read_length_prefixed_str()?;
                     dialogs.push(SystemDialogSummary {
@@ -307,6 +320,7 @@ impl VideoControlMessage {
                         width,
                         height,
                         is_secure,
+                        keystrokes_blocked,
                     });
                 }
                 Ok(Self::SystemDialogList(dialogs))
@@ -381,14 +395,29 @@ mod tests {
 
     #[test]
     fn round_trips_system_dialog_list() {
-        let m = VideoControlMessage::SystemDialogList(vec![SystemDialogSummary {
-            window_id: 9,
-            owner: "SecurityAgent".to_owned(),
-            title: String::new(),
-            width: 400,
-            height: 200,
-            is_secure: true,
-        }]);
+        // Two records pinning the two flags INDEPENDENTLY: a real secure prompt with input blocked,
+        // and a secure-class prompt whose Secure Event Input is not active (typing works) — the
+        // `do shell script with administrator privileges` case the badge fix targets.
+        let m = VideoControlMessage::SystemDialogList(vec![
+            SystemDialogSummary {
+                window_id: 9,
+                owner: "SecurityAgent".to_owned(),
+                title: String::new(),
+                width: 400,
+                height: 200,
+                is_secure: true,
+                keystrokes_blocked: true,
+            },
+            SystemDialogSummary {
+                window_id: 10,
+                owner: "SecurityAgent".to_owned(),
+                title: "Authorize".to_owned(),
+                width: 420,
+                height: 220,
+                is_secure: true,
+                keystrokes_blocked: false,
+            },
+        ]);
         round_trip(&m);
     }
 

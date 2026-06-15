@@ -280,12 +280,14 @@ enum RustVideoFFI {
     // MARK: - video_control (PATH-2 session bring-up + window/dialog discovery lists)
 
     /// The fields common to a `windowList` / `systemDialogList` record, unified so the two list
-    /// variants share one marshaling path (`isSecure` is meaningful only for a system dialog).
+    /// variants share one marshaling path (`isSecure` / `keystrokesBlocked` are meaningful only for a
+    /// system dialog).
     private struct SummaryParts {
         let windowID: UInt32
         let width: UInt16
         let height: UInt16
         let isSecure: Bool
+        let keystrokesBlocked: Bool
         let name: String
         let title: String
     }
@@ -339,14 +341,15 @@ enum RustVideoFFI {
             return encodeRecords(kind: message.messageType, windows.map {
                 SummaryParts(
                     windowID: $0.windowID, width: $0.width, height: $0.height,
-                    isSecure: false, name: $0.appName, title: $0.title,
+                    isSecure: false, keystrokesBlocked: false, name: $0.appName, title: $0.title,
                 )
             })
         case let .systemDialogList(dialogs):
             return encodeRecords(kind: message.messageType, dialogs.map {
                 SummaryParts(
                     windowID: $0.windowID, width: $0.width, height: $0.height,
-                    isSecure: $0.isSecure, name: $0.owner, title: $0.title,
+                    isSecure: $0.isSecure, keystrokesBlocked: $0.keystrokesBlocked,
+                    name: $0.owner, title: $0.title,
                 )
             })
         }
@@ -392,6 +395,7 @@ enum RustVideoFFI {
                     width: part.width,
                     height: part.height,
                     is_secure: part.isSecure ? 1 : 0,
+                    keystrokes_blocked: part.keystrokesBlocked ? 1 : 0,
                     name: bytes(spans[index].nameOffset, spans[index].nameLen),
                     title: bytes(spans[index].titleOffset, spans[index].titleLen),
                 )
@@ -466,6 +470,7 @@ enum RustVideoFFI {
                     SystemDialogSummary(
                         windowID: $0.window_id, owner: string(from: $0.name), title: string(from: $0.title),
                         width: $0.width, height: $0.height, isSecure: $0.is_secure != 0,
+                        keystrokesBlocked: $0.keystrokes_blocked != 0,
                     )
                 })
             }
