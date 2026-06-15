@@ -153,7 +153,9 @@ public final class FramePacer: @unchecked Sendable {
     // CRITICAL: the anchor advances by the SCHEDULED deadline, never the actual present time,
     // so a late tick cannot accumulate schedule drift. Latest-frame-wins on the single pending
     // slot (a post-stall bunch shows the newest frame, not a fast-forward replay).
-    // Enabled via `AISLOPDESK_PACER=deadline`; `AISLOPDESK_PLAYOUT_MS` tunes the delay (default 20).
+    // DEFAULT ON (HW-validated: present-gaps 0.37%→0%, max hold 258ms→91ms over NetBird vs the
+    // arrival path); `AISLOPDESK_PACER=arrival` restores present-on-arrival, `AISLOPDESK_PLAYOUT_MS`
+    // tunes the delay (default 10 ≈ 0.6 frame).
     private let deadlineMode: Bool
     /// The content-rhythm interval (deadline mode). MUTABLE since the FPS governor (2026-06-11):
     /// a host `streamCadence` message rebases it via ``setContentFps(_:)``. Read in ``submit(_:)``

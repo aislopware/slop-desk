@@ -1185,7 +1185,7 @@ public actor AislopdeskVideoHostSession {
             fps: fps,
             captureScale: captureScale,
             fullRange: Self.fullRange,
-            preferDisplayAnchored: captureSizeOverride != nil,
+            preferDisplayAnchored: true, // low-latency default (see WindowCapturer.preferDisplayAnchored)
         ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
             do {
                 if ltrRefresh {
@@ -1383,7 +1383,7 @@ public actor AislopdeskVideoHostSession {
             fps: fps,
             captureScale: captureScale,
             fullRange: Self.fullRange,
-            preferDisplayAnchored: captureSizeOverride != nil,
+            preferDisplayAnchored: true, // low-latency default (see WindowCapturer.preferDisplayAnchored)
         ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
             do {
                 if ltrRefresh {
@@ -1499,7 +1499,7 @@ public actor AislopdeskVideoHostSession {
             fps: fps,
             captureScale: captureScale,
             fullRange: Self.fullRange,
-            preferDisplayAnchored: captureSizeOverride != nil,
+            preferDisplayAnchored: true, // low-latency default (see WindowCapturer.preferDisplayAnchored)
         ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
             do {
                 if ltrRefresh {
@@ -1975,7 +1975,7 @@ public actor AislopdeskVideoHostSession {
             fps: fps,
             captureScale: captureScale,
             fullRange: Self.fullRange,
-            preferDisplayAnchored: captureSizeOverride != nil,
+            preferDisplayAnchored: true, // low-latency default (see WindowCapturer.preferDisplayAnchored)
         ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
             do {
                 if ltrRefresh { try newEncoder.encodeLiveLTRRefresh(pixelBuffer: pixelBuffer, presentationTime: pts) }

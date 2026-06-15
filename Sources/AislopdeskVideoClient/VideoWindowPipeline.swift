@@ -221,12 +221,17 @@ final class VideoWindowPipeline {
             displayMaxHz: displayMaxHz,
             floor: maxFrameRate,
         )
-        // DEADLINE PACER (AISLOPDESK_PACER=deadline; see the FramePacer header): schedule presentation
-        // on the CONTENT rhythm with a small playout delay (AISLOPDESK_PLAYOUT_MS, default 20) instead
-        // of on arrival events — the research-validated fix for jitter-induced "bunched frame"
-        // stutter (WebRTC VCMTiming / Moonlight model).
-        let deadlineMode = env["AISLOPDESK_PACER"]?.lowercased() == "deadline"
-        let playoutMs = env["AISLOPDESK_PLAYOUT_MS"].flatMap(Double.init) ?? 20.0
+        // DEADLINE PACER (default ON; see the FramePacer header): schedule presentation on the CONTENT
+        // rhythm with a small playout delay (AISLOPDESK_PLAYOUT_MS) instead of on arrival events — the
+        // research-validated fix for jitter-induced "bunched frame" stutter (WebRTC VCMTiming / Moonlight
+        // model). HW-validated on the 2-machine rig over NetBird: at playout 10ms it drove client
+        // present-gaps 0.37%→0% and cut the max hold spike 258ms→91ms vs present-on-arrival, matching
+        // Parsec's feel on the same link (the arrival path scanned network jitter straight to the eye).
+        // `AISLOPDESK_PACER=arrival` restores the present-on-arrival path; `AISLOPDESK_PLAYOUT_MS` tunes
+        // the buffer (default 10 ≈ 0.6 frame, below perceptual lag, covers most of the measured ~11ms
+        // owd-jitter). Deadline mode pins depth 1 (adaptive-depth + present-on-arrival are inert here).
+        let deadlineMode = env["AISLOPDESK_PACER"].map { $0.lowercased() == "deadline" } ?? true
+        let playoutMs = env["AISLOPDESK_PLAYOUT_MS"].flatMap(Double.init) ?? 10.0
         let contentFps = env["AISLOPDESK_CONTENT_FPS"].flatMap(Double.init) ?? 60.0
         let pacer = FramePacer(
             maxFrameRate: tickRate,

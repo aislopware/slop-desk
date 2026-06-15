@@ -343,10 +343,12 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// WF-6 (#8): capture NV12 in the FULL-RANGE pixel-format variant when true (else the VideoRange
     /// variant — today). Threaded into ``makeConfiguration``; default false ⇒ byte-identical capture.
     private let fullRange: Bool
-    /// True when the daemon parked this window on the virtual display (the session's
-    /// `captureSizeOverride != nil`) — the no-env default then prefers `.displayIncluding`
-    /// (see ``resolveCaptureMode(envValue:preferDisplayAnchored:)``). Default false so the
-    /// check-video CLI / non-VD paths keep today's `.window` capture.
+    /// Prefer display-anchored capture (`.displayIncluding`) over the per-window compositor
+    /// (`.window`) when no env override is set — see ``resolveCaptureMode(envValue:preferDisplayAnchored:)``.
+    /// The live session passes `true`: display-anchored is ≈15ms lower glass-to-glass (one 60Hz slot)
+    /// AND occlusion-proof (composites only the target window + children), so it is the default for
+    /// every served window. `AISLOPDESK_DISPLAY_CAPTURE=window` forces the old per-window path; the
+    /// init default stays `false` so the bare check-video CLI keeps `.window`.
     private let preferDisplayAnchored: Bool
 
     public init(
