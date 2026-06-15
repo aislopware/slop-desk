@@ -60,6 +60,13 @@ public struct AislopdeskClientApp: App {
     @State private var lifecycleTask: Task<Void, Never>?
 
     public init() {
+        // Promote `AISLOPDESK_<KEY>=<VALUE>` launch arguments into the process environment BEFORE any
+        // env-gated knob is read. A GUI app launched via LaunchServices (`open`) gets a SANITIZED
+        // environment that drops `launchctl setenv`, so over an SSH/remote launch the ONLY channel that
+        // survives is `--args`. This makes every `ProcessInfo.processInfo.environment` flag (renderer
+        // `AISLOPDESK_NO_VSYNC`, pacer `AISLOPDESK_ADAPTIVE_DEPTH`/`_JITTER_DEPTH`, …) settable remotely
+        // for on-device A/B, matching how `automationInputs` already overlays the same args for the seam.
+        Self.applyLaunchArgumentEnvironment()
         // Build the store exactly once with the production session factory. `makeInspector` is now the
         // live builder (`WorkspaceStore.liveMakeInspector`): a `.claudeCode` pane's read-only inspector
         // second channel (NWConnection #2) is an `NWByteChannel` → `InspectorClient` over the
@@ -274,6 +281,19 @@ public struct AislopdeskClientApp: App {
         // into real, discoverable @AppStorage settings (SettingsKey is the shared source of truth).
         Settings { SettingsView() }
         #endif
+    }
+
+    /// Promotes every `AISLOPDESK_<KEY>=<VALUE>` launch argument into the process environment via
+    /// `setenv`, so env-gated runtime knobs read through `ProcessInfo.processInfo.environment` honour
+    /// values passed by `open --args`. Needed because a LaunchServices GUI launch sanitises the
+    /// inherited environment (dropping `launchctl setenv`), leaving `--args` as the only remote channel.
+    private static func applyLaunchArgumentEnvironment() {
+        for arg in CommandLine.arguments.dropFirst() {
+            guard arg.hasPrefix("AISLOPDESK_"), let eq = arg.firstIndex(of: "=") else { continue }
+            let key = String(arg[..<eq])
+            let value = String(arg[arg.index(after: eq)...])
+            setenv(key, value, 1)
+        }
     }
 
     /// Whether any of the automation env vars (`AISLOPDESK_AUTOCONNECT_*` / `AISLOPDESK_VIDEO_AUTOCONNECT_*`)
