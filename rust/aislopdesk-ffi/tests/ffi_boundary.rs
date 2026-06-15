@@ -48,9 +48,9 @@ use aislopdesk_ffi::video::{
     aisd_static_idr_decider_record_synthetic, aisd_static_idr_decider_should_reencode,
     aisd_system_dialog_classify, aisd_system_dialog_free, aisd_system_dialog_min_size,
     aisd_video_control_decode, aisd_video_control_encode, aisd_video_control_free,
-    aisd_video_mux_router_admit, aisd_video_mux_router_begin_drain,
-    aisd_video_mux_router_bootstrap_action, aisd_video_mux_router_end_drain,
-    aisd_video_mux_router_free, aisd_video_mux_router_is_admitted,
+    aisd_video_mux_header_decode, aisd_video_mux_header_encode, aisd_video_mux_router_admit,
+    aisd_video_mux_router_begin_drain, aisd_video_mux_router_bootstrap_action,
+    aisd_video_mux_router_end_drain, aisd_video_mux_router_free, aisd_video_mux_router_is_admitted,
     aisd_video_mux_router_is_draining, aisd_video_mux_router_new, aisd_video_mux_router_retire,
     aisd_video_mux_router_route, aisd_video_packetizer_free, aisd_video_packetizer_new,
     aisd_video_packetizer_peek_next_frame_id, aisd_video_packetizer_peek_next_stream_seq,
@@ -2018,6 +2018,92 @@ fn packetize_over_the_c_abi() {
         aisd_video_packetizer_free(pn);
         aisd_video_packetizer_free(core::ptr::null_mut()); // no-op
     }
+}
+
+/// `aisd_video_mux_header_encode` / `_decode`: the per-datagram channelID prefix over the C ABI —
+/// the caller-out encode (no alloc) round-trips through the borrow+offset decode, the wire is
+/// byte-identical to the core codec, and the null / truncated / undersized guards hold.
+#[test]
+fn video_mux_header_over_the_c_abi() {
+    use aislopdesk_core::mux_header::video_mux_header;
+
+    // Caller-out encode of `[u32 BE channelID]` into a sized buffer, then the caller copies its
+    // payload — exactly the Swift framing shape. The full datagram is byte-identical to the core
+    // codec's `encode` (the single source of truth the muxBare golden vector pins).
+    let payload = [9u8, 8, 7, 6, 5];
+    let mut datagram = vec![0u8; 4 + payload.len()];
+    let mut written = 0usize;
+    assert_eq!(
+        unsafe {
+            aisd_video_mux_header_encode(
+                0x0102_0304,
+                datagram.as_mut_ptr(),
+                datagram.len(),
+                &mut written,
+            )
+        },
+        AISD_OK
+    );
+    assert_eq!(written, 4);
+    datagram[4..].copy_from_slice(&payload);
+    assert_eq!(datagram, video_mux_header::encode(0x0102_0304, &payload));
+
+    // Borrow+offset decode recovers the channelID and the payload offset (always 4).
+    let mut channel_id = 0u32;
+    let mut offset = 0usize;
+    assert_eq!(
+        unsafe {
+            aisd_video_mux_header_decode(
+                datagram.as_ptr(),
+                datagram.len(),
+                &mut channel_id,
+                &mut offset,
+            )
+        },
+        AISD_OK
+    );
+    assert_eq!(channel_id, 0x0102_0304);
+    assert_eq!(offset, 4);
+    assert_eq!(&datagram[offset..], &payload);
+
+    // A < 4-byte datagram is truncated (out-params untouched); empty (null, len 0) too.
+    channel_id = 77;
+    offset = 77;
+    assert_eq!(
+        unsafe {
+            aisd_video_mux_header_decode([1u8, 2, 3].as_ptr(), 3, &mut channel_id, &mut offset)
+        },
+        AISD_ERR_TRUNCATED
+    );
+    assert_eq!((channel_id, offset), (77, 77));
+    assert_eq!(
+        unsafe { aisd_video_mux_header_decode(core::ptr::null(), 0, &mut channel_id, &mut offset) },
+        AISD_ERR_TRUNCATED
+    );
+
+    // Undersized encode buffer is truncated, nothing written; null guards report NULL.
+    let mut small = [0u8; 3];
+    written = 9;
+    assert_eq!(
+        unsafe { aisd_video_mux_header_encode(1, small.as_mut_ptr(), small.len(), &mut written) },
+        AISD_ERR_TRUNCATED
+    );
+    assert_eq!(written, 9);
+    assert_eq!(
+        unsafe { aisd_video_mux_header_encode(1, core::ptr::null_mut(), 4, &mut written) },
+        AISD_ERR_NULL
+    );
+    assert_eq!(
+        unsafe {
+            aisd_video_mux_header_decode(datagram.as_ptr(), 4, core::ptr::null_mut(), &mut offset)
+        },
+        AISD_ERR_NULL
+    );
+    // null datagram with a nonzero len cannot be read => NULL.
+    assert_eq!(
+        unsafe { aisd_video_mux_header_decode(core::ptr::null(), 4, &mut channel_id, &mut offset) },
+        AISD_ERR_NULL
+    );
 }
 
 /// `aisd_frame_hash_nv12`: the NEON NV12 frame hash over BORROWED plane pointers — determinism,

@@ -978,6 +978,31 @@ void aisd_scroll_reprojector_note_real_frame(AisdScrollReprojector *reprojector)
  * focus. No-op on NULL. */
 void aisd_scroll_reprojector_reset(AisdScrollReprojector *reprojector);
 
+/* ---- mux_header (per-datagram UDP channel-mux prefix; the live `[u32 BE channelID][payload]`) ---- */
+
+/* Byte length of the big-endian u32 channelID prefix every muxed video datagram carries (4). Size
+ * a framing buffer to AISD_VIDEO_MUX_CHANNEL_ID_LENGTH + payload_len; a decode reports this as the
+ * payload offset. */
+#define AISD_VIDEO_MUX_CHANNEL_ID_LENGTH 4u
+
+/* Writes the 4-byte big-endian channel_id prefix into the front of a caller buffer (caller-out; no
+ * allocation). The caller sizes `out` to AISD_VIDEO_MUX_CHANNEL_ID_LENGTH + payload_len, stamps the
+ * prefix here, then copies its own payload after — reproducing `[u32 BE channelID][payload]` with no
+ * per-packet heap. On AISD_OK *written receives the bytes written (always 4). Returns AISD_ERR_NULL
+ * for a null out / written, or AISD_ERR_TRUNCATED when out_cap < 4 (nothing written). */
+AisdStatus aisd_video_mux_header_encode(uint32_t channel_id, uint8_t *out, size_t out_cap,
+                                        size_t *written);
+
+/* Parses the leading channelID prefix of a muxed datagram, borrowing it (no allocation). On AISD_OK
+ * *out_channel_id receives the u32 lane id and *out_payload_offset the byte offset where the opaque
+ * payload begins (always 4); the caller forms its own zero-copy payload slice as
+ * datagram[*out_payload_offset..]. Returns AISD_ERR_NULL for a null out-param (or a null datagram
+ * with a nonzero len), or AISD_ERR_TRUNCATED when fewer than 4 bytes are present (a corrupt single
+ * datagram never crashes the receiver). On any non-OK return the out-params are untouched. datagram
+ * may be NULL only when len == 0. */
+AisdStatus aisd_video_mux_header_decode(const uint8_t *datagram, size_t len, uint32_t *out_channel_id,
+                                        size_t *out_payload_offset);
+
 /* ---- fec (opaque handle; NEON-backed Reed-Solomon erasure codec) ---- */
 
 /* An immutable NEON-backed Reed-Solomon codec with k data + m parity shards per group (a group

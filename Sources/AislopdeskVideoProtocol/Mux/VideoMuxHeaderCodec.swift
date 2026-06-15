@@ -37,22 +37,26 @@ public enum VideoMuxHeaderCodec {
 
     /// Prepends `channelID` to an opaque media/cursor payload:
     /// `[UInt32 BE channelID][payload...]`. The `payload` is carried verbatim.
+    ///
+    /// Routed through the Rust core (`RustVideoFFI.encodeMuxHeader`) — the single source of truth
+    /// shared with the Android shell — so the 4-byte prefix is produced by the identical codec. The
+    /// FFI is caller-out (it stamps only the 4 prefix bytes into a buffer this side sizes), so there
+    /// is no per-packet heap allocation on the Rust side and the wire bytes are unchanged.
     public static func encode(channelID: UInt32, payload: Data) -> Data {
-        var out = Data(capacity: channelIDLength + payload.count)
-        out.appendBE(channelID)
-        out.append(payload)
-        return out
+        RustVideoFFI.encodeMuxHeader(channelID: channelID, payload: payload)
     }
 
     /// Splits a muxed datagram into its leading `channelID` and the opaque remainder.
+    ///
+    /// Routed through the Rust core (`RustVideoFFI.decodeMuxHeader`): the FFI borrows the datagram
+    /// and returns the channelID + the payload offset, and the zero-copy remainder slice is formed
+    /// from that offset (as the native `VideoByteReader.remaining()` did).
     ///
     /// - Throws: ``VideoProtocolError/truncated`` if fewer than 4 bytes are present (a
     ///   corrupt single datagram must never crash the receiver — same contract as
     ///   ``FrameFragment/decode(_:)``).
     public static func decode(_ datagram: Data) throws -> (channelID: UInt32, payload: Data) {
-        var reader = VideoByteReader(datagram)
-        let channelID = try reader.readUInt32()
-        return (channelID, reader.remaining())
+        try RustVideoFFI.decodeMuxHeader(datagram)
     }
 }
 

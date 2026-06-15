@@ -149,6 +149,54 @@ enum RustVideoFFI {
         }
     }
 
+    // MARK: - mux_header (the per-datagram `[u32 BE channelID][payload]` prefix; the live video wire)
+
+    /// Stamps the 4-byte big-endian channelID prefix in FRONT of `payload` through the Rust core —
+    /// the single source of truth shared with the Android shell. The framing buffer is allocated
+    /// ONCE (`channelIDLength + payload.count`); the FFI writes only the 4 prefix bytes (caller-out,
+    /// no per-packet heap on the Rust side), then the payload is copied after. Byte-identical to the
+    /// prior native `appendBE` framing (the `muxBare` golden vector pins it). Encoding cannot fail
+    /// for a buffer we sized ourselves, so the guard traps rather than masking corruption.
+    static func encodeMuxHeader(channelID: UInt32, payload: Data) -> Data {
+        let prefix = Int(AISD_VIDEO_MUX_CHANNEL_ID_LENGTH)
+        var framed = Data(count: prefix + payload.count)
+        var written = 0
+        framed.withUnsafeMutableBytes { raw in
+            let status = aisd_video_mux_header_encode(
+                channelID, raw.bindMemory(to: UInt8.self).baseAddress, raw.count, &written,
+            )
+            guard status == AISD_OK, written == prefix else {
+                preconditionFailure("aisd_video_mux_header_encode failed for a sized buffer (status \(status))")
+            }
+        }
+        // Copy the opaque payload after the prefix (the payload is the caller's, never the codec's).
+        if !payload.isEmpty {
+            framed.replaceSubrange((framed.startIndex + prefix)..., with: payload)
+        }
+        return framed
+    }
+
+    /// Splits a muxed datagram into its leading channelID and the opaque remainder through the Rust
+    /// core. The FFI borrows the datagram and returns the channelID + the payload byte offset
+    /// (always `channelIDLength`); the payload sub-slice is formed here as a zero-copy `Data` view,
+    /// exactly as the prior native `VideoByteReader.remaining()` did.
+    ///
+    /// - Throws: ``VideoProtocolError/truncated`` when fewer than 4 bytes are present (a corrupt
+    ///   single datagram must never crash the receiver — same contract as before).
+    static func decodeMuxHeader(_ datagram: Data) throws -> (channelID: UInt32, payload: Data) {
+        var channelID: UInt32 = 0
+        var offset = 0
+        let status: AisdStatus = datagram.withUnsafeBytes { raw in
+            aisd_video_mux_header_decode(
+                raw.bindMemory(to: UInt8.self).baseAddress, raw.count, &channelID, &offset,
+            )
+        }
+        guard status == AISD_OK else { throw VideoProtocolError.truncated }
+        // The payload begins `offset` bytes in; a zero-copy `Data` sub-view over the same storage.
+        let payload = datagram[(datagram.startIndex + offset)...]
+        return (channelID, Data(payload))
+    }
+
     // MARK: - window_geometry (move/resize/bounds/title; one owned title buffer)
 
     /// Encodes a window-geometry message through the Rust core — the single source of truth.

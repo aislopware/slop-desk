@@ -146,4 +146,67 @@ final class VideoMuxHeaderCodecTests: XCTestCase {
         XCTAssertEqual(channelID, 7)
         XCTAssertEqual(rest, inner, "peeling the channelID yields the byte-identical today [tag][payload]")
     }
+
+    // MARK: Differential — the Rust-routed codec is byte-identical to the prior native framing
+
+    /// The OLD native framing, reproduced verbatim from the pre-port `VideoMuxHeaderCodec` body
+    /// (`appendBE` for encode, `VideoByteReader` for decode). The live `VideoMuxHeaderCodec` now
+    /// delegates to the Rust core; this reference exists ONLY so the differential below can prove
+    /// the new path is byte-for-byte the same as the framing it replaced.
+    private enum NativeMuxReference {
+        static func encode(channelID: UInt32, payload: Data) -> Data {
+            var out = Data(capacity: 4 + payload.count)
+            out.appendBE(channelID)
+            out.append(payload)
+            return out
+        }
+
+        static func decode(_ datagram: Data) throws -> (channelID: UInt32, payload: Data) {
+            var reader = VideoByteReader(datagram)
+            let channelID = try reader.readUInt32()
+            return (channelID, reader.remaining())
+        }
+    }
+
+    func testRustMuxFramingIsByteIdenticalToTheNativeReference() throws {
+        // A corpus spanning channelID edge values (0, 1, max, mixed bytes) × payload shapes (empty,
+        // one byte, a 1500-byte burst, a real control/cursor payload).
+        let channelIDs: [UInt32] = [0, 1, 7, 0x0102_0304, 0xAABB_CCDD, .max]
+        let payloads: [Data] = [
+            Data(),
+            Data([0xFF]),
+            Data((0..<1500).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ 7) }),
+            VideoControlMessage.bye.encode(),
+            CursorUpdate(position: VideoPoint(x: 1920, y: 1080), shapeID: 42, hotspot: VideoPoint(x: 8, y: 8)).encode(),
+        ]
+        for channelID in channelIDs {
+            for payload in payloads {
+                // Encode: the Rust-routed wire is byte-identical to the native reference.
+                let rust = VideoMuxHeaderCodec.encode(channelID: channelID, payload: payload)
+                let native = NativeMuxReference.encode(channelID: channelID, payload: payload)
+                XCTAssertEqual(rust, native, "encode differs for channelID \(channelID), \(payload.count)B")
+
+                // Decode the native bytes through the Rust path: same channelID + payload as the
+                // native decoder, proving the borrow+offset decode reproduces `remaining()`.
+                let (rustID, rustPayload) = try VideoMuxHeaderCodec.decode(native)
+                let (nativeID, nativePayload) = try NativeMuxReference.decode(native)
+                XCTAssertEqual(rustID, nativeID)
+                XCTAssertEqual(rustPayload, nativePayload)
+                XCTAssertEqual(rustID, channelID)
+                XCTAssertEqual(rustPayload, payload)
+            }
+        }
+
+        // Truncation parity: both reject a < 4-byte datagram with `.truncated`.
+        for short in [Data(), Data([0x01]), Data([0x01, 0x02, 0x03])] {
+            XCTAssertThrowsError(try VideoMuxHeaderCodec.decode(short)) { XCTAssertEqual(
+                $0 as? VideoProtocolError,
+                .truncated,
+            ) }
+            XCTAssertThrowsError(try NativeMuxReference.decode(short)) { XCTAssertEqual(
+                $0 as? VideoProtocolError,
+                .truncated,
+            ) }
+        }
+    }
 }

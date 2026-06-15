@@ -351,8 +351,11 @@ public final class MetalVideoRenderer {
         // the last frame translates between real codec frames. reprojOffset is (0,0) when the feature
         // is off ⇒ uv unchanged ⇒ identical output. A sample that now falls OUTSIDE the texture (the
         // newly-revealed disocclusion edge) returns BLACK instead of clamp_to_edge's smeared border.
+        // The clamp-to-black is GATED on a non-zero offset: when the feature is off (and only then)
+        // the branch is skipped entirely, so a zoom+max-pan UV that rounds to exactly the texture
+        // edge samples via clamp_to_edge byte-for-byte as before — true OFF-path identity.
         uv += reprojOffset;
-        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+        if (any(reprojOffset != 0.0) && (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)) {
             return float4(0.0, 0.0, 0.0, 1.0);
         }
         float y = lumaTex.sample(s, uv).r;

@@ -972,6 +972,49 @@ int main(void) {
         free(big);
     }
 
+    /* ---- mux_header: the per-datagram channelID prefix (caller-out encode + borrow decode) ---- */
+    {
+        /* Caller-out encode of [u32 BE channelID] into a sized buffer, then copy the payload. */
+        const uint8_t payload[5] = {9, 8, 7, 6, 5};
+        uint8_t datagram[4 + 5];
+        size_t written = 0;
+        CHECK(aisd_video_mux_header_encode(0x01020304u, datagram, sizeof(datagram), &written) == AISD_OK,
+              "mux header encode ok");
+        CHECK(written == AISD_VIDEO_MUX_CHANNEL_ID_LENGTH, "mux header wrote 4 prefix bytes");
+        memcpy(datagram + 4, payload, sizeof(payload));
+        const uint8_t expect[9] = {1, 2, 3, 4, 9, 8, 7, 6, 5};
+        CHECK(memcmp(datagram, expect, sizeof(expect)) == 0, "mux header prefix is big-endian");
+
+        /* Borrow+offset decode recovers the channelID and the payload offset (always 4). */
+        uint32_t channel_id = 0;
+        size_t offset = 0;
+        CHECK(aisd_video_mux_header_decode(datagram, sizeof(datagram), &channel_id, &offset) == AISD_OK,
+              "mux header decode ok");
+        CHECK(channel_id == 0x01020304u, "mux header channelID round-trips");
+        CHECK(offset == 4 && memcmp(datagram + offset, payload, sizeof(payload)) == 0,
+              "payload offset is 4 + payload borrows correctly");
+
+        /* A < 4-byte datagram is truncated; out-params untouched. */
+        const uint8_t three[3] = {1, 2, 3};
+        channel_id = 77;
+        offset = 77;
+        CHECK(aisd_video_mux_header_decode(three, 3, &channel_id, &offset) == AISD_ERR_TRUNCATED,
+              "short datagram truncated");
+        CHECK(channel_id == 77 && offset == 77, "truncated leaves out-params untouched");
+
+        /* Undersized encode buffer truncated (nothing written); null guards report NULL. */
+        uint8_t small[3];
+        written = 9;
+        CHECK(aisd_video_mux_header_encode(1, small, sizeof(small), &written) == AISD_ERR_TRUNCATED,
+              "undersized encode buffer truncated");
+        CHECK(written == 9, "truncated encode leaves *written untouched");
+        CHECK(aisd_video_mux_header_encode(1, NULL, 4, &written) == AISD_ERR_NULL, "encode null out");
+        CHECK(aisd_video_mux_header_decode(datagram, 4, NULL, &offset) == AISD_ERR_NULL,
+              "decode null channelID out");
+        CHECK(aisd_video_mux_header_decode(NULL, 4, &channel_id, &offset) == AISD_ERR_NULL,
+              "decode null datagram with nonzero len");
+    }
+
     if (failures == 0) {
         printf("aislopdesk-ffi C smoke: OK\n");
         return 0;
