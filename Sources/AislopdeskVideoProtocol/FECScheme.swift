@@ -122,9 +122,11 @@ enum RustFECBridge {
     /// array out into `[Data]`. Wraps `aisd_fec_parity` / `aisd_bytes_array_free`.
     static func parity(codec: OpaquePointer, dataFragments: [Data], groupSize: Int) -> [Data] {
         guard !dataFragments.isEmpty else { return [] }
-        // Borrow each shard's bytes for the duration of the call (no copy). Nested `withUnsafeBytes`
-        // closures keep every backing buffer alive while the C ABI reads them.
-        return withBorrowedShards(dataFragments) { borrowed in
+        // Stage every shard's bytes into ONE owned contiguous buffer, then borrow `AisdBytes`
+        // pointing into it. O(1) stack regardless of fragment count (a per-fragment-recursive borrow
+        // overflowed the ~512KB production stack on large keyframes). The single flat-buffer memcpy
+        // is negligible next to the codec work, and the C ABI only READS these (borrowed in).
+        return withStagedShards(dataFragments) { borrowed in
             var out = AisdBytesArray()
             let status = borrowed.withUnsafeBufferPointer { buf in
                 aisd_fec_parity(codec, buf.baseAddress, buf.count, groupSize, &out)
@@ -158,8 +160,8 @@ enum RustFECBridge {
         let parityBytes: [Data] = parityFragments.map { $0 ?? Data() }
         let parityCount = parityFragments.count
 
-        withBorrowedShards(dataBytes) { dataBorrowed in
-            withBorrowedShards(parityBytes) { parityBorrowed in
+        withStagedShards(dataBytes) { dataBorrowed in
+            withStagedShards(parityBytes) { parityBorrowed in
                 // `data` is read AND written by the C ABI (recovered holes become owned buffers),
                 // so it is a mutable copy of the borrowed views.
                 var data = dataBorrowed
@@ -199,34 +201,44 @@ enum RustFECBridge {
 
     // MARK: Marshaling helpers
 
-    /// Runs `body` with `fragments` exposed as a borrowed `[AisdBytes]` (each `{ptr,len,cap:0}`
-    /// pointing INTO the corresponding `Data`'s storage). Recurses so EVERY `Data`'s
-    /// `withUnsafeBytes` stays open for the whole call — the C ABI never frees these (borrowed in).
-    private static func withBorrowedShards<R>(_ fragments: [Data], _ body: ([AisdBytes]) -> R) -> R {
-        var borrowed = [AisdBytes]()
-        borrowed.reserveCapacity(fragments.count)
-        return build(fragments, index: 0, into: &borrowed, body)
-    }
-
-    /// Recursive worker for ``withBorrowedShards(_:_:)``: opens each `Data`'s storage in turn,
-    /// appending a borrowed `AisdBytes`, then invokes `body` once all are live.
-    private static func build<R>(
-        _ fragments: [Data],
-        index: Int,
-        into borrowed: inout [AisdBytes],
-        _ body: ([AisdBytes]) -> R,
-    ) -> R {
-        if index == fragments.count { return body(borrowed) }
-        let data = fragments[index]
-        if data.isEmpty {
-            borrowed.append(AisdBytes(ptr: nil, len: 0, cap: 0))
-            return build(fragments, index: index + 1, into: &borrowed, body)
+    /// Runs `body` with `fragments` exposed as a borrowed `[AisdBytes]` (each `{ptr,len,cap:0}`),
+    /// where every shard's bytes live in ONE owned contiguous staging buffer that outlives the call.
+    ///
+    /// This is ITERATIVE — O(1) stack regardless of fragment count. (The previous
+    /// per-fragment-recursive borrow nested one open `withUnsafeBytes` closure per fragment, so the
+    /// stack grew with the frame size and overflowed the ~512KB production stack — a host/client
+    /// SIGSEGV on a 1MB+ keyframe.) The single staging copy is cheap relative to the codec work, and
+    /// every `AisdBytes` carries `cap == 0`, so the C ABI treats them as caller-owned (read-only,
+    /// never freed). The staging buffer is held alive for the entire `body` via `withUnsafeBytes`.
+    private static func withStagedShards<R>(_ fragments: [Data], _ body: ([AisdBytes]) -> R) -> R {
+        // Lay every shard end-to-end in one buffer, recording each shard's [offset, length).
+        var staging = [UInt8]()
+        staging.reserveCapacity(fragments.reduce(0) { $0 + $1.count })
+        var offsets = [Int]()
+        offsets.reserveCapacity(fragments.count)
+        var lengths = [Int]()
+        lengths.reserveCapacity(fragments.count)
+        for data in fragments {
+            offsets.append(staging.count)
+            lengths.append(data.count)
+            if !data.isEmpty { staging.append(contentsOf: data) }
         }
-        return data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> R in
-            // The pointer is borrowed for the call only; cap 0 marks it caller-owned (never freed).
-            let ptr = UnsafeMutablePointer(mutating: raw.bindMemory(to: UInt8.self).baseAddress)
-            borrowed.append(AisdBytes(ptr: ptr, len: raw.count, cap: 0))
-            return build(fragments, index: index + 1, into: &borrowed, body)
+        // One stable base address for the whole staging buffer; derive each shard pointer from it.
+        return staging.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> R in
+            var borrowed = [AisdBytes]()
+            borrowed.reserveCapacity(fragments.count)
+            for i in 0..<fragments.count {
+                let len = lengths[i]
+                // An empty shard carries a null pointer (len 0); a present shard points into staging.
+                // `baseAddress` is non-nil whenever any shard has bytes (len > 0 ⇒ a non-empty buffer).
+                var ptr: UnsafeMutablePointer<UInt8>?
+                if len > 0, let base = raw.baseAddress {
+                    ptr = UnsafeMutablePointer(mutating: base.advanced(by: offsets[i])
+                        .assumingMemoryBound(to: UInt8.self))
+                }
+                borrowed.append(AisdBytes(ptr: ptr, len: len, cap: 0))
+            }
+            return body(borrowed)
         }
     }
 
