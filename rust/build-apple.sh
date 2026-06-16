@@ -18,9 +18,33 @@ PKG_DIR="$(cd .. && pwd)"
 echo "==> cargo build --release -p aislopdesk-ffi (host: $(rustc -vV | sed -n 's/host: //p'))"
 cargo build --release -p aislopdesk-ffi
 
-# Keep the SwiftPM-visible header byte-identical to the Rust-side source of truth.
+# The C header is GENERATED from the Rust `#[repr(C)]` / `extern "C"` surface — Rust is the source
+# of truth (cf. convention 3 + docs/DECISIONS.md). cbindgen is a build/dev tool only; it ships
+# NOTHING into libaislopdesk_ffi.a. A CI drift-gate (`make check` + the `rust` CI job) re-generates
+# and fails on any diff, so include/aislopdesk_ffi.h can never be hand-edited out of sync.
 SRC_HEADER="${RUST_DIR}/aislopdesk-ffi/include/aislopdesk_ffi.h"
 DST_HEADER="${PKG_DIR}/Sources/CAislopdeskFFI/include/aislopdesk_ffi.h"
+CBINDGEN_TOML="${RUST_DIR}/aislopdesk-ffi/cbindgen.toml"
+
+if command -v cbindgen > /dev/null 2>&1; then
+  echo "==> cbindgen: regenerating aislopdesk-ffi/include/aislopdesk_ffi.h ($(cbindgen --version))"
+  # Stderr carries only the known-benign warnings documented in cbindgen.toml; surface it only if
+  # generation actually fails (a real failure still aborts via the non-zero exit + `set -e`).
+  cbindgen_err="$(mktemp)"
+  if ! cbindgen --config "${CBINDGEN_TOML}" --crate aislopdesk-ffi --output "${SRC_HEADER}" \
+    "${RUST_DIR}/aislopdesk-ffi" 2> "${cbindgen_err}"; then
+    cat "${cbindgen_err}" >&2
+    rm -f "${cbindgen_err}"
+    echo "==> ERROR: cbindgen header generation failed" >&2
+    exit 1
+  fi
+  rm -f "${cbindgen_err}"
+else
+  echo "==> WARNING: cbindgen not found; using the committed header as-is (run 'make install-tools')." >&2
+  echo "    The CI drift-gate will still catch a stale header." >&2
+fi
+
+# Keep the SwiftPM-visible header byte-identical to the Rust-side source of truth.
 if ! cmp -s "${SRC_HEADER}" "${DST_HEADER}"; then
   echo "==> syncing header -> Sources/CAislopdeskFFI/include/aislopdesk_ffi.h"
   cp "${SRC_HEADER}" "${DST_HEADER}"

@@ -10,17 +10,23 @@ use aislopdesk_core::decode_gate::{
     DecodeGate, Mode as DecodeGateMode, Verdict as DecodeGateVerdict,
 };
 
+// The `u32` suffix on the values below is load-bearing: cbindgen preserves it as a `u` suffix in
+// the generated header (`#define … 0u`), so Swift's clang importer types these macros as `UInt32` —
+// matching the `u32`-returning `aisd_decode_gate_{mode,verdict}` so the Swift `switch` over them
+// compiles. (Unlike the `u8` discriminant groups, which Swift wraps as `UInt8(AISD_…)`, these are
+// matched directly.) Do NOT drop the suffix.
+
 /// [`DecodeGateMode::Open`] discriminant — chain intact, everything submits.
-pub const AISD_DECODE_GATE_MODE_OPEN: u32 = 0;
+pub const AISD_DECODE_GATE_MODE_OPEN: u32 = 0u32;
 /// [`DecodeGateMode::BrokenChain`] discriminant — loss since the last anchor, session alive.
-pub const AISD_DECODE_GATE_MODE_BROKEN_CHAIN: u32 = 1;
+pub const AISD_DECODE_GATE_MODE_BROKEN_CHAIN: u32 = 1u32;
 /// [`DecodeGateMode::NeedKeyframe`] discriminant — session torn down / never configured.
-pub const AISD_DECODE_GATE_MODE_NEED_KEYFRAME: u32 = 2;
+pub const AISD_DECODE_GATE_MODE_NEED_KEYFRAME: u32 = 2u32;
 
 /// [`DecodeGateVerdict::Submit`] discriminant — feed this frame to the decoder.
-pub const AISD_DECODE_GATE_VERDICT_SUBMIT: u32 = 0;
+pub const AISD_DECODE_GATE_VERDICT_SUBMIT: u32 = 0u32;
 /// [`DecodeGateVerdict::Drop`] discriminant — drop this frame (would tear the session down).
-pub const AISD_DECODE_GATE_VERDICT_DROP: u32 = 1;
+pub const AISD_DECODE_GATE_VERDICT_DROP: u32 = 1u32;
 
 /// Opaque client drop-until-anchor decode gate.
 ///

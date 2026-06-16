@@ -27,7 +27,12 @@ use aislopdesk_core::mux_header::{CHANNEL_ID_LENGTH, video_mux_header};
 ///
 /// Exposed so the caller can size its framing buffer (`CHANNEL_ID_LENGTH + payload.len`) and know
 /// the payload offset a decode reports.
-pub const AISD_VIDEO_MUX_CHANNEL_ID_LENGTH: usize = CHANNEL_ID_LENGTH;
+///
+/// Written as a literal (not `= CHANNEL_ID_LENGTH`) so cbindgen emits the value `4` into the C
+/// header instead of an unresolved cross-crate symbol; the `const _` guard in the test module
+/// below makes drift from the core's [`CHANNEL_ID_LENGTH`] a compile error, so the literal can
+/// never silently disagree.
+pub const AISD_VIDEO_MUX_CHANNEL_ID_LENGTH: usize = 4;
 
 /// Writes the 4-byte big-endian `channel_id` prefix into the front of a caller buffer (caller-out;
 /// no allocation).
@@ -115,6 +120,10 @@ mod tests {
     // Driving the C ABI from tests means `&mut x` coercions.
     #![allow(clippy::borrow_as_ptr)]
     use super::*;
+
+    // The C-ABI constant is a hand-written literal (so cbindgen emits `4`, not a cross-crate
+    // symbol); pin it to the core's source of truth so the two can never silently diverge.
+    const _: () = assert!(AISD_VIDEO_MUX_CHANNEL_ID_LENGTH == CHANNEL_ID_LENGTH);
 
     /// Encodes `[channelID][payload]` exactly as the caller does: stamp the 4-byte prefix into a
     /// sized buffer, then append the payload.

@@ -53,8 +53,20 @@ fix: fmt ## Format + apply all safe lint autofixes
 
 # ---------------------------------------------------------------------------- #
 # Linting (no writes) — the CI gate
-.PHONY: lint lint-swift lint-rust lint-shell lint-python
-lint: lint-swift lint-rust lint-shell lint-python ## Run every linter strictly
+.PHONY: lint lint-swift lint-rust lint-shell lint-python check-ffi-header
+lint: lint-swift lint-rust lint-shell lint-python check-ffi-header ## Run every linter strictly
+
+# C header drift-gate: include/aislopdesk_ffi.h is GENERATED from the Rust #[repr(C)]/extern "C"
+# surface (Rust = SoT), so a hand-edit or a forgotten regen must fail. Re-generate to a temp file and
+# compare byte-for-byte against the committed header (mirrors the golden_parity philosophy).
+check-ffi-header: ## Verify the generated C header is in sync with the Rust SoT (cbindgen)
+	@command -v cbindgen > /dev/null 2>&1 || { echo "cbindgen not installed — run 'make install-tools'"; exit 1; }
+	cd $(RUST_DIR) && cbindgen --config aislopdesk-ffi/cbindgen.toml --crate aislopdesk-ffi \
+		--output /tmp/aislopdesk_ffi.gen.h aislopdesk-ffi 2> /dev/null
+	@cmp -s $(RUST_DIR)/aislopdesk-ffi/include/aislopdesk_ffi.h /tmp/aislopdesk_ffi.gen.h \
+		|| { echo "ERROR: C header drift — run 'bash rust/build-apple.sh' and commit the regenerated header:"; \
+		     diff -u $(RUST_DIR)/aislopdesk-ffi/include/aislopdesk_ffi.h /tmp/aislopdesk_ffi.gen.h; exit 1; }
+	@echo "C header in sync with the Rust source of truth"
 
 lint-swift: ## SwiftFormat --lint + SwiftLint --strict
 	swiftformat $(SWIFTFMT_PATHS) --lint
@@ -99,6 +111,10 @@ test: ## swift test + rust test
 install-tools: hooks ## Install all required tools (brew + cargo) and the git hooks
 	brew install swiftlint swiftformat shellcheck shfmt ruff cargo-deny prek
 	cargo install cargo-machete
+	# cbindgen generates the C ABI header from Rust (build/dev tool only — ships nothing in the
+	# staticlib). Pinned: its output formatting is version-sensitive, so an unpinned bump would
+	# re-noise the whole header and trip the drift-gate.
+	cargo install cbindgen --version 0.29.4 --locked
 	rustup component add rustfmt clippy
 
 hooks: ## Install the prek git hooks (pre-commit + pre-push)

@@ -33,6 +33,14 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace
+      - name: C header drift-gate (cbindgen — Rust is the SoT for the C ABI)
+        run: |
+          cargo install cbindgen --version 0.29.4 --locked
+          cbindgen --config aislopdesk-ffi/cbindgen.toml --crate aislopdesk-ffi \
+            --output /tmp/aislopdesk_ffi.gen.h aislopdesk-ffi 2>/dev/null
+          cmp aislopdesk-ffi/include/aislopdesk_ffi.h /tmp/aislopdesk_ffi.gen.h \
+            || { echo "::error::C header drift — run 'bash rust/build-apple.sh' and commit the regenerated header"; \
+                 diff -u aislopdesk-ffi/include/aislopdesk_ffi.h /tmp/aislopdesk_ffi.gen.h; exit 1; }
       - name: cargo-deny
         run: |
           cargo install cargo-deny --locked
