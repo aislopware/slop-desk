@@ -3,6 +3,7 @@
 # Transient out-of-tree build dirs (e.g. .build-ios-rel/, .build-ios-studio/) —
 # alternate SwiftPM/Xcode output roots; derived artifacts, never committed.
 .build-*/
+hid-bridge/build/
 DerivedData/
 *.o
 *.swiftmodule
