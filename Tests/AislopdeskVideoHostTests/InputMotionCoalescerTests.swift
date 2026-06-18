@@ -87,6 +87,50 @@ final class InputMotionCoalescerTests: XCTestCase {
         XCTAssertEqual(coalesce(batch), [move(0.1), key(10), move(0.2), scroll(3), text("a"), move(0.4)])
     }
 
+    // MARK: scroll coalescing (the scroll-flood fix; coalesceScroll: true)
+
+    private func scrollP(_ dy: Double, phase: UInt8 = 2, momentum: UInt8 = 0, continuous: Bool = true)
+        -> InputEvent
+    {
+        .scroll(
+            dx: 0, dy: dy, normalized: VideoPoint(x: 0, y: 0),
+            scrollPhase: phase, momentumPhase: momentum, continuous: continuous, tag: 0,
+        )
+    }
+
+    private func coalesceS(_ b: [InputEvent]) -> [InputEvent] {
+        InputMotionCoalescer.coalesce(b, coalesceScroll: true)
+    }
+
+    /// The core fix: a same-phase scroll run collapses to ONE event whose delta is the SUM (total
+    /// scroll travel is preserved — keep-latest would silently drop distance).
+    func testScrollRunSumsDeltasWhenEnabled() {
+        XCTAssertEqual(coalesceS([scrollP(1), scrollP(2), scrollP(3)]), [scrollP(6)])
+    }
+
+    /// DEFAULT (coalesceScroll: false) is unchanged: scroll stays a hard per-delta barrier.
+    func testScrollUncoalescedByDefault() {
+        XCTAssertEqual(coalesce([scrollP(1), scrollP(2), scrollP(3)]), [scrollP(1), scrollP(2), scrollP(3)])
+    }
+
+    /// Phase transitions are flush boundaries: a `began`(1) and `ended`(4) singleton never merge
+    /// into the `changed`(2) bulk run — the gesture structure (and total travel) is preserved.
+    func testScrollPhaseTransitionsAreBoundaries() {
+        let batch = [scrollP(0, phase: 1), scrollP(2), scrollP(3), scrollP(0, phase: 4)]
+        XCTAssertEqual(coalesceS(batch), [scrollP(0, phase: 1), scrollP(5), scrollP(0, phase: 4)])
+    }
+
+    /// A momentum-continue coast run sums on its own, distinct from the finger `changed` run.
+    func testMomentumRunSumsSeparately() {
+        let batch = [scrollP(2), scrollP(2), scrollP(1, phase: 0, momentum: 2), scrollP(1, phase: 0, momentum: 2)]
+        XCTAssertEqual(coalesceS(batch), [scrollP(4), scrollP(2, phase: 0, momentum: 2)])
+    }
+
+    /// Scroll summing never reorders across a non-scroll barrier (key/down stay framed).
+    func testScrollSumNeverReordersAcrossBarrier() {
+        XCTAssertEqual(coalesceS([scrollP(1), scrollP(2), key(10), scrollP(3)]), [scrollP(3), key(10), scrollP(3)])
+    }
+
     func testEmptyAndSingleEvent() {
         XCTAssertEqual(coalesce([]), [])
         XCTAssertEqual(coalesce([down()]), [down()], "identity for a single non-motion event")

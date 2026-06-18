@@ -9,7 +9,9 @@ use crate::{
     copy_in, drop_bytes,
 };
 use aislopdesk_core::geometry::{VideoRect, VideoSize};
-use aislopdesk_core::video_control::{SystemDialogSummary, VideoControlMessage, WindowSummary};
+use aislopdesk_core::video_control::{
+    MaskRect, SystemDialogSummary, VideoControlMessage, WindowSummary,
+};
 
 /// [`VideoControlMessage::Hello`] discriminator (`kind`).
 pub const AISD_VIDEO_CONTROL_HELLO: u8 = 1;
@@ -35,6 +37,25 @@ pub const AISD_VIDEO_CONTROL_STREAM_CADENCE: u8 = 10;
 pub const AISD_VIDEO_CONTROL_LIST_SYSTEM_DIALOGS: u8 = 11;
 /// [`VideoControlMessage::SystemDialogList`] discriminator.
 pub const AISD_VIDEO_CONTROL_SYSTEM_DIALOG_LIST: u8 = 12;
+/// [`VideoControlMessage::ScrollOffset`] discriminator.
+pub const AISD_VIDEO_CONTROL_SCROLL_OFFSET: u8 = 13;
+/// [`VideoControlMessage::ContentMask`] discriminator.
+pub const AISD_VIDEO_CONTROL_CONTENT_MASK: u8 = 14;
+
+/// One opaque content rectangle (capture PIXEL coords) — the element type of the `ContentMask`
+/// rect array. Plain POD (no owned buffers), so the array needs no per-element free.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct AisdMaskRect {
+    /// Left edge in capture pixels.
+    pub x: u16,
+    /// Top edge in capture pixels.
+    pub y: u16,
+    /// Width in capture pixels.
+    pub width: u16,
+    /// Height in capture pixels.
+    pub height: u16,
+}
 
 /// One window/dialog summary record, flattened for the C ABI — the element type of the
 /// `WindowList` / `SystemDialogList` record arrays.
@@ -66,8 +87,9 @@ pub struct AisdVideoSummary {
 /// `0` and the record array is empty (`records` null, `records_len` 0). Field usage:
 /// `HELLO` → `protocol_version`/`requested_window_id`/`viewport_*`; `HELLO_ACK` → `accepted`/
 /// `stream_id`/`capture_*`/`full_range`/`bounds_*`; `RESIZE_REQUEST` → `desired_*`/`epoch`;
-/// `RESIZE_ACK` → `capture_*`/`epoch`; `STREAM_CADENCE` → `fps`; `WINDOW_LIST` /
-/// `SYSTEM_DIALOG_LIST` → `records`/`records_len`; the zero-body kinds use none. On a decode `out`
+/// `RESIZE_ACK` → `capture_*`/`epoch`; `STREAM_CADENCE` → `fps`; `SCROLL_OFFSET` → `scroll_dx`/`scroll_dy`; `WINDOW_LIST` /
+/// `SYSTEM_DIALOG_LIST` → `records`/`records_len`; `CONTENT_MASK` → `mask_rects`/`mask_rects_len`;
+/// the zero-body kinds use none. On a decode `out`
 /// the `records` array owns a Rust allocation (released by [`aisd_video_control_free`]); on an
 /// encode input it is a borrowed `(records, records_len)` the library copies and never frees.
 /// Field order MUST match the C header's `AisdVideoControl`.
@@ -109,10 +131,18 @@ pub struct AisdVideoControl {
     pub epoch: u32,
     /// `STREAM_CADENCE.fps` (content cadence in frames per second).
     pub fps: u16,
+    /// `SCROLL_OFFSET.dx` — horizontal content shift in pixels (signed; `0` for the v1 host).
+    pub scroll_dx: i16,
+    /// `SCROLL_OFFSET.dy` — vertical content shift in pixels (signed; positive = content moved DOWN).
+    pub scroll_dy: i16,
     /// `WINDOW_LIST` / `SYSTEM_DIALOG_LIST` record array (owned out / borrowed in; null otherwise).
     pub records: *mut AisdVideoSummary,
     /// Number of records at `records`.
     pub records_len: usize,
+    /// `CONTENT_MASK` rect array (owned out / borrowed in; null otherwise).
+    pub mask_rects: *mut AisdMaskRect,
+    /// Number of rects at `mask_rects`.
+    pub mask_rects_len: usize,
 }
 
 impl AisdVideoControl {
@@ -137,8 +167,12 @@ impl AisdVideoControl {
             desired_h: 0.0,
             epoch: 0,
             fps: 0,
+            scroll_dx: 0,
+            scroll_dy: 0,
             records: core::ptr::null_mut(),
             records_len: 0,
+            mask_rects: core::ptr::null_mut(),
+            mask_rects_len: 0,
         }
     }
 }
@@ -252,6 +286,17 @@ unsafe fn c_to_video_control(m: &AisdVideoControl) -> Result<VideoControlMessage
         }
         AISD_VIDEO_CONTROL_FOCUS_WINDOW => VideoControlMessage::FocusWindow,
         AISD_VIDEO_CONTROL_STREAM_CADENCE => VideoControlMessage::StreamCadence { fps: m.fps },
+        AISD_VIDEO_CONTROL_SCROLL_OFFSET => VideoControlMessage::ScrollOffset {
+            dx: m.scroll_dx,
+            dy: m.scroll_dy,
+        },
+        AISD_VIDEO_CONTROL_CONTENT_MASK => {
+            // SAFETY: per the contract, a content-mask `kind`'s rects cover `mask_rects_len`
+            // readable values.
+            VideoControlMessage::ContentMask(unsafe {
+                c_to_mask_rects(m.mask_rects, m.mask_rects_len)
+            })
+        }
         AISD_VIDEO_CONTROL_LIST_SYSTEM_DIALOGS => VideoControlMessage::ListSystemDialogs,
         AISD_VIDEO_CONTROL_SYSTEM_DIALOG_LIST => {
             // SAFETY: per the contract, a list `kind`'s records cover `records_len` readable values.
@@ -262,6 +307,49 @@ unsafe fn c_to_video_control(m: &AisdVideoControl) -> Result<VideoControlMessage
         _ => return Err(AISD_ERR_INVALID_ARGUMENT),
     };
     Ok(message)
+}
+
+/// Rebuilds the core [`MaskRect`] list from a borrowed C rect array (plain POD copy).
+///
+/// # Safety
+/// If `len != 0` and `rects` is non-null, it must point to `len` readable [`AisdMaskRect`] values.
+unsafe fn c_to_mask_rects(rects: *const AisdMaskRect, len: usize) -> Vec<MaskRect> {
+    if len == 0 || rects.is_null() {
+        return Vec::new();
+    }
+    // SAFETY: per the contract, a non-null `rects` covers `len` readable rect values.
+    unsafe { core::slice::from_raw_parts(rects, len) }
+        .iter()
+        .map(|r| MaskRect::new(r.x, r.y, r.width, r.height))
+        .collect()
+}
+
+/// Moves a `Vec` of mask rects across the boundary as a raw `(ptr, len)` the caller releases via
+/// [`aisd_video_control_free`]. An empty vec yields `(null, 0)` (no allocation). POD elements, so
+/// the free side just drops the boxed slice (no per-element cleanup).
+fn mask_rects_into_raw(rects: Vec<AisdMaskRect>) -> (*mut AisdMaskRect, usize) {
+    if rects.is_empty() {
+        return (core::ptr::null_mut(), 0);
+    }
+    let len = rects.len();
+    let mut boxed = rects.into_boxed_slice();
+    let ptr = boxed.as_mut_ptr();
+    core::mem::forget(boxed);
+    (ptr, len)
+}
+
+/// Reconstructs and drops the owned mask-rect array behind a decoded [`AisdVideoControl`]. No-op on
+/// a null pointer. POD elements need no inner free.
+///
+/// # Safety
+/// `ptr` / `len` must be an array previously produced by [`mask_rects_into_raw`] and not yet freed.
+unsafe fn drop_mask_rects(ptr: *mut AisdMaskRect, len: usize) {
+    if ptr.is_null() || len == 0 {
+        return;
+    }
+    // SAFETY: per the contract, `(ptr, len)` is a live `mask_rects_into_raw` boxed slice
+    // (`into_boxed_slice` makes `cap == len`, so this reconstructs the exact allocation).
+    drop(unsafe { Box::from_raw(core::ptr::slice_from_raw_parts_mut(ptr, len)) });
 }
 
 /// Moves a `Vec` of summary records across the boundary as a raw `(ptr, len)` the caller releases
@@ -352,6 +440,24 @@ fn video_control_to_c(message: &VideoControlMessage) -> AisdVideoControl {
             out.epoch = *epoch;
         }
         VideoControlMessage::StreamCadence { fps } => out.fps = *fps,
+        VideoControlMessage::ScrollOffset { dx, dy } => {
+            out.scroll_dx = *dx;
+            out.scroll_dy = *dy;
+        }
+        VideoControlMessage::ContentMask(rects) => {
+            let recs: Vec<AisdMaskRect> = rects
+                .iter()
+                .map(|r| AisdMaskRect {
+                    x: r.x,
+                    y: r.y,
+                    width: r.width,
+                    height: r.height,
+                })
+                .collect();
+            let (ptr, len) = mask_rects_into_raw(recs);
+            out.mask_rects = ptr;
+            out.mask_rects_len = len;
+        }
         VideoControlMessage::WindowList(windows) => {
             let recs: Vec<AisdVideoSummary> = windows
                 .iter()
@@ -487,6 +593,11 @@ pub unsafe extern "C" fn aisd_video_control_free(msg: *mut AisdVideoControl) {
     unsafe { drop_summaries(m.records, m.records_len) };
     m.records = core::ptr::null_mut();
     m.records_len = 0;
+    // SAFETY: `(mask_rects, mask_rects_len)` is the array `video_control_to_c` allocated (or
+    // `(null, 0)`), freed exactly once — the reset makes a second call a no-op (idempotent).
+    unsafe { drop_mask_rects(m.mask_rects, m.mask_rects_len) };
+    m.mask_rects = core::ptr::null_mut();
+    m.mask_rects_len = 0;
 }
 
 #[cfg(test)]
@@ -588,6 +699,13 @@ mod tests {
                 ..AisdVideoControl::zeroed()
             };
             let cadence_core = VideoControlMessage::StreamCadence { fps: 60 };
+            let scroll_c = AisdVideoControl {
+                kind: AISD_VIDEO_CONTROL_SCROLL_OFFSET,
+                scroll_dx: -5,
+                scroll_dy: 42,
+                ..AisdVideoControl::zeroed()
+            };
+            let scroll_core = VideoControlMessage::ScrollOffset { dx: -5, dy: 42 };
 
             for (c, core) in [
                 (hello_c, hello_core),
@@ -595,6 +713,7 @@ mod tests {
                 (rreq_c, rreq_core),
                 (rack_c, rack_core),
                 (cadence_c, cadence_core),
+                (scroll_c, scroll_core),
             ] {
                 let mut frame = AisdBytes::EMPTY;
                 assert_eq!(aisd_video_control_encode(&c, &mut frame), AISD_OK);
@@ -620,6 +739,8 @@ mod tests {
                 assert_eq!(out.desired_h, c.desired_h);
                 assert_eq!(out.epoch, c.epoch);
                 assert_eq!(out.fps, c.fps);
+                assert_eq!(out.scroll_dx, c.scroll_dx);
+                assert_eq!(out.scroll_dy, c.scroll_dy);
                 assert!(out.records.is_null(), "no records for a scalar variant");
                 aisd_video_control_free(&mut out); // a scalar decode owns nothing — still a no-op
                 crate::aisd_bytes_free(frame);
@@ -798,6 +919,84 @@ mod tests {
             );
             assert_eq!(empty_out.records_len, 0);
             assert!(empty_out.records.is_null());
+            aisd_video_control_free(&mut empty_out); // no-op
+            crate::aisd_bytes_free(empty_frame);
+        }
+    }
+
+    #[test]
+    fn video_control_round_trips_content_mask_and_empty() {
+        unsafe {
+            let rects = [
+                AisdMaskRect {
+                    x: 0,
+                    y: 0,
+                    width: 2880,
+                    height: 1800,
+                },
+                AisdMaskRect {
+                    x: 96,
+                    y: 1406,
+                    width: 538,
+                    height: 172,
+                },
+            ];
+            let c = AisdVideoControl {
+                kind: AISD_VIDEO_CONTROL_CONTENT_MASK,
+                mask_rects: rects.as_ptr().cast_mut(),
+                mask_rects_len: rects.len(),
+                ..AisdVideoControl::zeroed()
+            };
+            let mut frame = AisdBytes::EMPTY;
+            assert_eq!(aisd_video_control_encode(&c, &mut frame), AISD_OK);
+            let core = VideoControlMessage::ContentMask(vec![
+                MaskRect::new(0, 0, 2880, 1800),
+                MaskRect::new(96, 1406, 538, 172),
+            ]);
+            assert_eq!(view(frame), core.encode(), "FFI encode == core encode");
+
+            let mut out = AisdVideoControl::zeroed();
+            assert_eq!(
+                aisd_video_control_decode(frame.ptr, frame.len, &mut out),
+                AISD_OK
+            );
+            assert_eq!(out.kind, AISD_VIDEO_CONTROL_CONTENT_MASK);
+            assert_eq!(out.mask_rects_len, 2);
+            let decoded = core::slice::from_raw_parts(out.mask_rects, out.mask_rects_len);
+            assert_eq!((decoded[0].width, decoded[0].height), (2880, 1800));
+            assert_eq!(
+                (
+                    decoded[1].x,
+                    decoded[1].y,
+                    decoded[1].width,
+                    decoded[1].height
+                ),
+                (96, 1406, 538, 172)
+            );
+            aisd_video_control_free(&mut out);
+            aisd_video_control_free(&mut out); // idempotent
+            assert!(out.mask_rects.is_null());
+            assert_eq!(out.mask_rects_len, 0);
+            crate::aisd_bytes_free(frame);
+
+            // Empty mask (contracted state) → [type][count=0], decodes to a null rect array.
+            let empty = AisdVideoControl {
+                kind: AISD_VIDEO_CONTROL_CONTENT_MASK,
+                ..AisdVideoControl::zeroed()
+            };
+            let mut empty_frame = AisdBytes::EMPTY;
+            assert_eq!(aisd_video_control_encode(&empty, &mut empty_frame), AISD_OK);
+            assert_eq!(
+                view(empty_frame),
+                VideoControlMessage::ContentMask(vec![]).encode()
+            );
+            let mut empty_out = AisdVideoControl::zeroed();
+            assert_eq!(
+                aisd_video_control_decode(empty_frame.ptr, empty_frame.len, &mut empty_out),
+                AISD_OK
+            );
+            assert_eq!(empty_out.mask_rects_len, 0);
+            assert!(empty_out.mask_rects.is_null());
             aisd_video_control_free(&mut empty_out); // no-op
             crate::aisd_bytes_free(empty_frame);
         }

@@ -135,6 +135,16 @@ public actor AislopdeskVideoClientSession {
         /// folds it into the deadline pacer's adaptive playout buffer (`FramePacer.notePlayoutJitter`)
         /// so the jitter-absorption delay auto-tunes to the link. Synchronous, lock-guarded.
         public var notePlayoutJitter: (@Sendable (Double) -> Void)?
+        /// Scroll reprojection (2026-06-16): a host-measured per-frame scroll offset (normalized
+        /// ×10000, signed `dx`/`dy`). The pipeline converts it to a reprojector velocity so the last
+        /// frame warps between codec frames (`VideoWindowPipeline.applyHostScrollOffset`). `nil` ⇒ no
+        /// reprojector attached. Sent only while scroll reprojection is on.
+        public var applyScrollOffset: (@Sendable (Int16, Int16) -> Void)?
+        /// Content-mask transparency (2026-06-17): the opaque-content rects (capture PIXELS) the host
+        /// sent after a DIALOG-EXPAND region change. The pipeline forwards them to the Metal renderer,
+        /// which alpha-masks everything OUTSIDE the rects (a popup overhanging the window floats over
+        /// the canvas instead of a black bar). An EMPTY list clears the mask. `nil` ⇒ no renderer.
+        public var applyContentMask: (@Sendable ([MaskRect]) -> Void)?
         @preconcurrency
         public init(
             submitDecodedFrame: @escaping @Sendable (CVImageBuffer) -> Void,
@@ -146,6 +156,8 @@ public actor AislopdeskVideoClientSession {
             readPacerTelemetry: (@Sendable () -> PacerTelemetrySnapshot)? = nil,
             noteNetworkLate: (@Sendable () -> Void)? = nil,
             notePlayoutJitter: (@Sendable (Double) -> Void)? = nil,
+            applyScrollOffset: (@Sendable (Int16, Int16) -> Void)? = nil,
+            applyContentMask: (@Sendable ([MaskRect]) -> Void)? = nil,
         ) {
             self.submitDecodedFrame = submitDecodedFrame
             self.applyCursor = applyCursor
@@ -156,6 +168,8 @@ public actor AislopdeskVideoClientSession {
             self.readPacerTelemetry = readPacerTelemetry
             self.noteNetworkLate = noteNetworkLate
             self.notePlayoutJitter = notePlayoutJitter
+            self.applyScrollOffset = applyScrollOffset
+            self.applyContentMask = applyContentMask
         }
     }
 
@@ -194,6 +208,24 @@ public actor AislopdeskVideoClientSession {
 
     /// The decoder is created on an accepted helloAck (never in a test).
     private var decoder: VideoDecoder?
+
+    /// DECODE-OFFQUEUE (2026-06-18). The synchronous VT decode (~8ms/frame, ``VideoDecoder/decode``) ran
+    /// ON this session actor, blocking fragment ingest (+ contending with the 120 Hz cursor / FEC) → the
+    /// HW-measured ~98ms ingest-gap jitter on a clean LAN (host send was steady) = the residual
+    /// "occasional chậm". When ON, the decode runs on a dedicated SERIAL queue (in submit order → the
+    /// pacer still receives frames in order) and only the cheap, order-insensitive post-decode bookkeeping
+    /// hops back to the actor; the actor's ingest/reassembly is never blocked by decode. DEFAULT OFF
+    /// (byte-identical: inline decode on the actor). `AISLOPDESK_DECODE_OFFQUEUE=1` enables. The client
+    /// analog of the host's encode-offqueue.
+    private static let decodeOffQueue = ProcessInfo.processInfo.environment["AISLOPDESK_DECODE_OFFQUEUE"] == "1"
+    /// Serial queue owning the off-queue VT decode (incl. its keyframe reconfigure + `invalidateSession`),
+    /// so the decoder stays single-threaded. `.userInteractive` to match the latency-critical path.
+    private let decodeQueue = DispatchQueue(label: "aislopdesk.client.decode", qos: .userInteractive)
+    /// Carries a (single-owner, value-type) ``ReassembledFrame`` across the decode-queue hop Sendable-clean.
+    private struct DecodeWork: @unchecked Sendable { let frame: ReassembledFrame }
+    /// The decode result hopped back to the actor for bookkeeping. The error is carried as a string so the
+    /// hop stays `Sendable`; `.failed` has already run `invalidateSession()` on the decode queue.
+    private enum DecodeOutcome { case success, awaitingKeyframe, failed(String) }
 
     /// Decoded-frame geometry, used for the cursor placement scale. The capture size
     /// is the host's window-point size; the layer size is the on-screen point size.
@@ -862,27 +894,61 @@ public actor AislopdeskVideoClientSession {
             }
             return
         }
+        // The decoded NV12 size becomes the cursor-scale denominator. Cheap, actor-only.
+        updateDecodedSize(from: frame)
+        if Self.decodeOffQueue {
+            // OFF-QUEUE: run the blocking VT decode on the serial decode queue so it never blocks
+            // fragment ingest; hop only the (cheap, order-insensitive) bookkeeping back to the actor.
+            // `submitDecodedFrame` fires INSIDE decode() in serial order → the pacer still receives
+            // frames in order. `invalidateSession` (hard-fail) runs on the queue too, keeping the
+            // decoder single-owner.
+            let dec = decoder
+            let work = DecodeWork(frame: frame)
+            decodeQueue.async { [weak self] in
+                let outcome: DecodeOutcome
+                do {
+                    try dec.decode(work.frame)
+                    outcome = .success
+                } catch VideoDecoderError.awaitingKeyframe {
+                    outcome = .awaitingKeyframe
+                } catch {
+                    dec.invalidateSession() // FIX #3 — on the decode queue (decoder single-owner)
+                    outcome = .failed(String(describing: error))
+                }
+                guard let self else { return }
+                Task { await self.finishDecode(work.frame, outcome) }
+            }
+            return
+        }
+        // LEGACY (default, byte-identical): inline synchronous decode on the actor.
+        let outcome: DecodeOutcome
         do {
-            // The decoded NV12 size becomes the cursor-scale denominator.
-            updateDecodedSize(from: frame)
             try decoder.decode(frame)
+            outcome = .success
+        } catch VideoDecoderError.awaitingKeyframe {
+            outcome = .awaitingKeyframe
+        } catch {
+            decoder.invalidateSession() // FIX #3 — rebuild on the next (even byte-identical) keyframe
+            outcome = .failed(String(describing: error))
+        }
+        finishDecode(frame, outcome)
+    }
+
+    /// Post-decode bookkeeping (decode-frontier / decode-gate reopen / WF-8 LTR+keyframe ack / self-heal +
+    /// escalation clock). Extracted so it runs either inline (legacy) or hopped back from the decode queue
+    /// (``decodeOffQueue``). Order-insensitive — the frontier takes the newest id, the ack is per-frame,
+    /// the gate reopen + escalation checks are idempotent — so an out-of-order decode-queue hop is safe.
+    /// `.failed` has already run `invalidateSession()` (decoder single-owner) before reaching here.
+    private func finishDecode(_ frame: ReassembledFrame, _ outcome: DecodeOutcome) {
+        switch outcome {
+        case .success:
             // Component 2: advance the decode frontier — the context every recovery request carries.
             frontier.noteDecoded(frameID: frame.frameID)
-            // Cascade fix: a successful decode may re-open the gate (keyframe, or an anchor newer
-            // than every recorded loss — the same proof `escalation.frameDecoded` uses).
+            // Cascade fix: a successful decode may re-open the gate (keyframe / newer-than-every-loss anchor).
             decodeGate.noteDecodeSucceeded(frameID: frame.frameID, keyframe: frame.keyframe)
-            // WF-8: on a SUCCESSFUL decode of an LTR-flagged frame, ACK it so the host learns the
-            // client now HOLDS this long-term reference and may ForceLTRRefresh against it (the
-            // ACKED-ONLY invariant — we ack ONLY frames we actually decoded, never merely received
-            // fragments of). The ack rides the dedicated `.recovery` channel; its `streamSeq` wire
-            // field carries the FRAME ID for WF-8 (the dead ack path repurposed — see
-            // RecoveryMessage.ack).
-            // COMPONENT 2 EXTENSION: also ack every decoded KEYFRAME (one ~5-byte datagram per rare
-            // keyframe) — the host's delivery-keyed recovery-IDR cooldown folds it via a ring-matched
-            // `noteKeyframeDelivered` (an id that is not a sent keyframe is a no-op there, and
-            // `ltrController.ackFrame` already no-ops on unknown ids), so this is safe with
-            // AISLOPDESK_LTR off too. If VT happens to LTR-flag an IDR this is the same single ack as
-            // before — the host fold is idempotent.
+            // WF-8 + Component-2: ACK every decoded LTR-flagged frame AND every decoded keyframe on the
+            // dedicated `.recovery` channel (ACKED-ONLY — we ack only frames we actually decoded) so the
+            // host may ForceLTRRefresh against it / fold its recovery-IDR cooldown. Host fold is idempotent.
             if frame.isLTR || frame.keyframe {
                 transport.send(RecoveryMessage.ack(streamSeq: frame.frameID).encode(), on: .recovery)
                 dbg("acked #\(frame.frameID) (kf=\(frame.keyframe) ltr=\(frame.isLTR)) — decoder now holds it")
@@ -891,67 +957,35 @@ public actor AislopdeskVideoClientSession {
             if dbgDecodeCount == 1 || dbgDecodeCount.isMultiple(of: 15) {
                 dbg("DECODED frame #\(dbgDecodeCount) (keyframe=\(frame.keyframe)) → submitted to pacer/render")
             }
-            // SELF-HEAL: a successful NON-keyframe decode that is newer than every loss in the
-            // armed episode proves the chain re-anchored (a delta referencing a lost frame throws —
-            // HW-measured), so end the episode without waiting for a keyframe. This is what lets
-            // the host's cadence/recovery LTR refresh actually REPLACE the forced IDR.
+            // SELF-HEAL: a successful NON-keyframe decode newer than every loss in the armed episode proves
+            // the chain re-anchored (a delta referencing a lost frame throws) → end the episode, no keyframe.
             if !frame.keyframe, escalation.frameDecoded(frameID: frame.frameID) {
                 dbg("recovery episode healed by frame #\(frame.frameID) (no IDR needed)")
             }
-            // A successful keyframe ends the recovery episode and disarms the clock,
-            // so the next loss starts a fresh 2·RTT escalation window.
+            // A successful keyframe ends the recovery episode + measures a real RTT (request→recovering
+            // keyframe, clamped [5ms,2s], EWMA-smoothed) and disarms the escalation clock for the next loss.
             if frame.keyframe {
-                // REVIVE updateRTTEstimate (previously had zero call sites): the recovery
-                // round-trip the client already tracks IS a real measured RTT — request sent at
-                // `firstRequestTime`, recovering keyframe decoded now. It is an UPPER BOUND (it
-                // includes host encode latency), which makes the 2·RTT escalation timer slightly
-                // more conservative — the safe direction. Clamp [5 ms, 2 s] so a pathological
-                // sample can't disable escalation; the EWMA in updateRTTEstimate smooths it. This
-                // replaces the static 0.05 s as the steady-state value (0.05 s stays only as the
-                // pre-measurement bootstrap). No host→client echo exists this phase, so this
-                // client-local measurement is the available RTT signal.
                 if let first = escalation.firstRequestTime {
                     let rttSample = FramePacer.currentHostTimeSeconds() - first
                     updateRTTEstimate(min(2.0, max(0.005, rttSample)))
                 }
                 escalation.keyframeDecoded()
             }
-        } catch VideoDecoderError.awaitingKeyframe {
-            // A delta arrived before the first IDR — drop it and ask for a keyframe ONCE; the
-            // gate (needKeyframe) absorbs the rest of the pre-IDR deltas, re-requesting at the
-            // escalation cadence instead of once per frame.
+        case .awaitingKeyframe:
+            // A delta arrived before the first IDR — drop it + request a keyframe ONCE; the gate absorbs
+            // the rest of the pre-IDR deltas (re-requesting at the escalation cadence, not per frame).
             decodeGate.noteAwaitingKeyframe()
             dbg("decode: awaiting keyframe (delta dropped) → requesting IDR")
             requestIDR()
-        } catch {
-            log.error("decode failed: \(String(describing: error))")
-            // FORENSICS (2026-06-12): -12909s now occur on a loss-free wire (~1/6s under active
-            // scroll) — the next log session must be able to separate corrupt-complete frames
-            // (FEC mis-recovery? truncation?) from reference-misses (stale-LTR refresh?). Print
-            // the frame's full identity with the failure.
+        case let .failed(desc):
+            log.error("decode failed: \(desc)")
+            // FORENSICS: separate corrupt-complete frames (FEC mis-recovery / truncation) from reference
+            // misses. VIDEO-CLIENT-1: a hard failure isn't surfaced by the reassembler (it reported
+            // `.completed`), so re-anchor via IDR; the session was already invalidated (FIX #3) so the next
+            // byte-identical recovery keyframe rebuilds a fresh session.
             dbg(
-                "DECODE FAILED: \(String(describing: error)) frame=#\(frame.frameID) kf=\(frame.keyframe) ltr=\(frame.isLTR) fec=\(frame.recoveredViaFEC) crisp=\(frame.crisp) bytes=\(frame.avcc.count) gate=\(decodeGate.mode) frontier=\(frontier.wireValue)",
+                "DECODE FAILED: \(desc) frame=#\(frame.frameID) kf=\(frame.keyframe) ltr=\(frame.isLTR) fec=\(frame.recoveredViaFEC) crisp=\(frame.crisp) bytes=\(frame.avcc.count) gate=\(decodeGate.mode) frontier=\(frontier.wireValue)",
             )
-            // VIDEO-CLIENT-1: a hard decode failure (corrupt-but-complete AVCC / decoder
-            // malfunction — e.g. an FEC mis-recovery that passes the length check, or
-            // VTDecompressionSession returning kVTVideoDecoderMalfunctionErr) is NOT surfaced by
-            // the fragment-level reassembler — it reported the frame `.completed`, so the
-            // loss-driven recovery never armed. Re-anchor the stream by requesting an IDR, exactly
-            // like the `awaitingKeyframe` path above; otherwise the pacer re-presents the last good
-            // frame indefinitely (especially once the host window goes static and stops producing
-            // frames). Idempotent on the host — the escalation tracker dedups duplicate requests.
-            //
-            // FIX #3: a HARD failure can leave the VTDecompressionSession itself in a dead
-            // state. On a fixed capture size the forced recovery IDR carries
-            // BYTE-IDENTICAL VPS/SPS/PPS → needsReconfigure=false → the
-            // SAME malfunctioning session would be reused forever (pane frozen permanently).
-            // Force a session rebuild here so the next keyframe — even byte-identical — re-runs
-            // configure() against a FRESH session. Done BEFORE requestIDR() so the rebuild is in
-            // place by the time the recovery keyframe arrives. (The healthy heartbeat-IDR reuse
-            // path / BUG-I is untouched: only a decode FAILURE clears the cached parameter sets.)
-            decoder.invalidateSession()
-            // Cascade fix: the session is gone — only a keyframe can re-anchor now. The gate
-            // drops everything else (no more per-delta awaitingKeyframe → requestIDR spam).
             decodeGate.noteHardDecodeFailure()
             requestIDR()
         }
@@ -1337,6 +1371,15 @@ public actor AislopdeskVideoClientSession {
             // Depth v3: the owd-late threshold scales with the content interval.
             contentIntervalMs = 1000.0 / max(1.0, Double(fps))
             gui.applyStreamCadence?(Int(fps))
+        case let .applyScrollOffset(dx, dy):
+            // Scroll reprojection: forward the host-measured normalized offset to the GUI layer
+            // (the pipeline converts it to a reprojector velocity).
+            gui.applyScrollOffset?(dx, dy)
+        case let .applyContentMask(rects):
+            // Transparency mask after a DIALOG-EXPAND region change: forward the opaque-content rects
+            // to the GUI layer (the renderer alpha-masks everything outside them). Empty ⇒ clear.
+            dbg("contentMask → \(rects.count) opaque rect(s)")
+            gui.applyContentMask?(rects)
         }
     }
 

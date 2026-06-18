@@ -280,6 +280,45 @@ public final class VideoEncoder: @unchecked Sendable {
     /// ``currentLiveBitrate()`` and applies the newest value on restore, so the controller can never
     /// clobber the relaxed crisp/compact config mid-IDR and the bracket never reverts the controller.
     private var bracketDepth = 0
+    /// Last per-frame adaptive `MaxAllowedFrameQP` actually written (bitrateLock-guarded). Skips the
+    /// redundant VTSessionSetProperty + CFNumber bridge when the smoothed QP is unchanged (the common
+    /// static/typing case → QP pinned at qp_sharp). INVALIDATED to nil by every crisp/compact bracket
+    /// restore (which writes the static ceiling) so the next live frame always re-applies its own QP.
+    private var lastAdaptiveQP: Int?
+
+    /// COMPACT LAZY-RESTORE (2026-06-18, HW-measured). The compact recovery IDR relaxes the session
+    /// QP/rate then drained twice (`VTCompressionSessionCompleteFrames`) to isolate the IDR before
+    /// restoring — but each drain blocked the SCStream capture queue ~115ms (probe E6b: 24 stalls>100ms),
+    /// and under the lossy-WAN recovery-IDR storm (~6 IDR/s) those drains ARE the scroll "giật". Instead,
+    /// when ``compactLazyRestore`` is on, the compact IDR encodes under the relaxed config and DEFERS the
+    /// restore to the next live encode (no drain): the small compact IDR finishes well within the ~16ms
+    /// before the next delta, so it keeps its compact size, and the next delta restores live config first.
+    /// `bitrateLock`-guarded. `AISLOPDESK_COMPACT_LAZY_RESTORE=0` reverts to the (drain-bracketed) path.
+    private static let compactLazyRestore =
+        ProcessInfo.processInfo.environment["AISLOPDESK_COMPACT_LAZY_RESTORE"] != "0"
+    private var pendingCompactRestore = false
+
+    /// Restore the live config after a lazy-restore compact IDR — called at the START of every encode
+    /// entry so the relaxed config never bleeds past the single IDR. No-op unless a compact IDR deferred
+    /// its restore. Mirrors the compact bracket's `defer` body (idempotent RC writes).
+    private func restorePendingCompactBracket() {
+        bitrateLock.lock()
+        guard pendingCompactRestore else { bitrateLock.unlock()
+            return
+        }
+        pendingCompactRestore = false
+        let live = liveBitrate
+        let sess = liveSession
+        bitrateLock.unlock()
+        guard let sess else { return }
+        set(sess, kVTCompressionPropertyKey_MaxAllowedFrameQP, Self.maxAllowedFrameQP as CFNumber)
+        set(sess, kVTCompressionPropertyKey_AverageBitRate, live as CFNumber)
+        set(sess, kVTCompressionPropertyKey_DataRateLimits, Self.dataRateLimits(bytesPerSecond: live / 8))
+        bitrateLock.lock()
+        bracketDepth -= 1
+        lastAdaptiveQP = nil
+        bitrateLock.unlock()
+    }
 
     public init(
         width: Int,
@@ -762,6 +801,7 @@ public final class VideoEncoder: @unchecked Sendable {
     /// ships a normal keyframe (visible: the `crisp=…` log byte size stays ~live-keyframe-sized).
     public func encodeLiveCrispKeyframe(pixelBuffer: CVPixelBuffer, presentationTime: CMTime) throws {
         guard let session = liveSession else { throw VideoEncoderError.sessionCreateFailed(-12903) }
+        restorePendingCompactBracket() // settle any prior lazy compact bracket before relaxing for crisp
         // WF-2: mark a bracket active so a concurrent setLiveBitrate (host actor) skips its own RC
         // writes; the restore defer below re-applies the controller's latest rate.
         bitrateLock.lock()
@@ -795,6 +835,7 @@ public final class VideoEncoder: @unchecked Sendable {
             set(session, kVTCompressionPropertyKey_DataRateLimits, Self.dataRateLimits(bytesPerSecond: live / 8))
             bitrateLock.lock()
             bracketDepth -= 1
+            lastAdaptiveQP = nil // bracket restored the static ceiling → next live frame re-applies its QP
             bitrateLock.unlock()
         }
         // 3. Encode the forced crisp keyframe.
@@ -822,6 +863,27 @@ public final class VideoEncoder: @unchecked Sendable {
     ///      client decoder rebuild. Best-effort sets: a rejected change just ships a normal-size IDR.
     public func encodeCompactKeyframe(pixelBuffer: CVPixelBuffer, presentationTime: CMTime) throws {
         guard let session = liveSession else { throw VideoEncoderError.sessionCreateFailed(-12903) }
+        restorePendingCompactBracket() // settle any prior lazy bracket before starting a new one
+        // LAZY-RESTORE path (default): relax → encode the IDR → DEFER the restore to the next live
+        // encode, with NO synchronous CompleteFrames drain (the capture-stall source). The compact IDR
+        // is small, so it finishes under the relaxed config within the ~16ms before the next delta.
+        if Self.compactLazyRestore {
+            bitrateLock.lock()
+            bracketDepth += 1
+            pendingCompactRestore = true
+            bitrateLock.unlock()
+            set(session, kVTCompressionPropertyKey_AverageBitRate, Self.compactBitrate as CFNumber)
+            set(session, kVTCompressionPropertyKey_MaxAllowedFrameQP, Self.compactMaxQP as CFNumber)
+            try encode(
+                session: session,
+                pixelBuffer: pixelBuffer,
+                presentationTime: presentationTime,
+                forceKeyframe: true,
+                mode: .live,
+            )
+            return // restore happens at the next encodeLive (restorePendingCompactBracket)
+        }
+        // LEGACY drain-bracketed path (AISLOPDESK_COMPACT_LAZY_RESTORE=0).
         // WF-2: mark a bracket active (see encodeLiveCrispKeyframe) — restore re-applies the live rate.
         bitrateLock.lock()
         bracketDepth += 1
@@ -842,6 +904,7 @@ public final class VideoEncoder: @unchecked Sendable {
             set(session, kVTCompressionPropertyKey_DataRateLimits, Self.dataRateLimits(bytesPerSecond: live / 8))
             bitrateLock.lock()
             bracketDepth -= 1
+            lastAdaptiveQP = nil // bracket restored the static ceiling → next live frame re-applies its QP
             bitrateLock.unlock()
         }
         try encode(
@@ -859,14 +922,21 @@ public final class VideoEncoder: @unchecked Sendable {
     /// Encodes a live frame on Session A. `forceKeyframe` sets the IDR frame property
     /// (heartbeat / loss recovery). The pixel buffer is the NV12 `CVPixelBuffer`
     /// handed straight from `WindowCapturer` (zero-copy).
-    public func encodeLive(pixelBuffer: CVPixelBuffer, presentationTime: CMTime, forceKeyframe: Bool) throws {
+    public func encodeLive(
+        pixelBuffer: CVPixelBuffer,
+        presentationTime: CMTime,
+        forceKeyframe: Bool,
+        perFrameMaxQP: Int? = nil,
+    ) throws {
         guard let session = liveSession else { throw VideoEncoderError.sessionCreateFailed(-12903) }
+        restorePendingCompactBracket() // restore live config left relaxed by a prior lazy compact IDR
         try encode(
             session: session,
             pixelBuffer: pixelBuffer,
             presentationTime: presentationTime,
             forceKeyframe: forceKeyframe,
             mode: .live,
+            perFrameMaxQP: perFrameMaxQP,
         )
     }
 
@@ -878,6 +948,7 @@ public final class VideoEncoder: @unchecked Sendable {
     /// gate). The actor only calls this when ``LTRController/hasAckedToken`` is true.
     public func encodeLiveLTRRefresh(pixelBuffer: CVPixelBuffer, presentationTime: CMTime) throws {
         guard let session = liveSession else { throw VideoEncoderError.sessionCreateFailed(-12903) }
+        restorePendingCompactBracket() // restore live config left relaxed by a prior lazy compact IDR
         try encode(
             session: session,
             pixelBuffer: pixelBuffer,
@@ -895,7 +966,24 @@ public final class VideoEncoder: @unchecked Sendable {
         forceKeyframe: Bool,
         mode: Mode,
         forceLTRRefresh: Bool = false,
+        perFrameMaxQP: Int? = nil,
     ) throws {
+        // ADAPTIVE-QP (AISLOPDESK_ADAPTIVE_QP): apply the per-frame change-driven QP ceiling on the
+        // LIVE delta path only, and ONLY when no crisp/compact bracket already owns the QP property
+        // (bracketDepth>0). A small change carries a low (sharp) ceiling, a burst carries the higher
+        // configured ceiling. Best-effort (the `set` helper tolerates a -12900 reject); no restore —
+        // the next live frame sets its own, and a bracket restores the static ceiling when it runs.
+        if let q = perFrameMaxQP {
+            bitrateLock.lock()
+            // Skip the set when not in a bracket AND the QP is unchanged from the last applied one —
+            // avoids a per-frame VTSessionSetProperty + CFNumber bridge on static/typing (QP pinned).
+            let shouldSet = bracketDepth == 0 && lastAdaptiveQP != q
+            if shouldSet { lastAdaptiveQP = q }
+            bitrateLock.unlock()
+            if shouldSet {
+                set(session, kVTCompressionPropertyKey_MaxAllowedFrameQP, q as CFNumber)
+            }
+        }
         var props: [CFString: Any] = [:]
         if forceKeyframe { props[kVTEncodeFrameOptionKey_ForceKeyFrame] = true }
         if ltrEnabled {

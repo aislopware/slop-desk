@@ -71,6 +71,64 @@ pub unsafe extern "C" fn aisd_capture_union_region(
     ))
 }
 
+/// The OPAQUE content rectangles of the capture region (window frame + qualifying popups).
+///
+/// The target window frame + each qualifying same-pid popup in front of it, every rect clamped to
+/// the display. Wraps [`capture_region::content_rects`] — the per-rect form the client masks the
+/// black flank with.
+///
+/// CALLER-ARENA: fills up to `out_cap` rects into the caller-owned `out_rects` buffer and returns
+/// the TOTAL count (so the caller can tell it was truncated). The caller reads
+/// `min(returned, out_cap)` rects; nothing is heap-allocated or needs freeing. `windows_in_front`
+/// is borrowed for the call only. Pass [`capture_region::DEFAULT_MIN_OVERLAP_FRACTION`] (`0.30`).
+///
+/// # Safety
+/// If `windows_count != 0`, `windows_in_front` must point to `windows_count` readable
+/// [`AisdCaptureWindowSnapshot`] values; if `out_cap != 0`, `out_rects` must point to `out_cap`
+/// writable [`AisdRect`] values.
+#[must_use]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aisd_capture_content_rects(
+    target_frame: AisdRect,
+    target_window_id: u32,
+    target_pid: i32,
+    windows_in_front: *const AisdCaptureWindowSnapshot,
+    windows_count: usize,
+    display_bounds: AisdRect,
+    min_overlap_fraction: f64,
+    out_rects: *mut AisdRect,
+    out_cap: usize,
+) -> usize {
+    let core_windows: Vec<capture_region::WindowSnapshot> =
+        if windows_count == 0 || windows_in_front.is_null() {
+            Vec::new()
+        } else {
+            // SAFETY: `windows_in_front` is non-null per the guard and covers `windows_count`
+            // readable `AisdCaptureWindowSnapshot` values per the contract.
+            unsafe { core::slice::from_raw_parts(windows_in_front, windows_count) }
+                .iter()
+                .map(|w| w.to_core())
+                .collect()
+        };
+    let rects = capture_region::content_rects(
+        target_frame.to_core(),
+        target_window_id,
+        target_pid,
+        &core_windows,
+        display_bounds.to_core(),
+        min_overlap_fraction,
+    );
+    if !out_rects.is_null() && out_cap > 0 {
+        let n = rects.len().min(out_cap);
+        // SAFETY: `out_rects` covers `out_cap` writable `AisdRect` per the contract; `n <= out_cap`.
+        let out = unsafe { core::slice::from_raw_parts_mut(out_rects, n) };
+        for (slot, r) in out.iter_mut().zip(rects.iter()) {
+            *slot = AisdRect::from_core(*r);
+        }
+    }
+    rects.len()
+}
+
 /// Hysteresis gate for capture retargeting.
 ///
 /// Returns `1` if `desired` differs from `current` by more than `min_delta` on any edge, else
@@ -156,6 +214,72 @@ mod tests {
             aisd_capture_union_region(target, 1, 42, core::ptr::null(), 0, display, 0.30)
         };
         assert_eq!(none.width.to_bits(), target.width.to_bits());
+    }
+
+    #[test]
+    fn capture_content_rects_fills_caller_arena() {
+        let target = AisdRect {
+            x: 0.0,
+            y: 30.0,
+            width: 1440.0,
+            height: 900.0,
+        };
+        let display = AisdRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+        };
+        // A same-pid pop-up menu (layer 101) overhanging the window bottom.
+        let front = [AisdCaptureWindowSnapshot {
+            window_id: 4215,
+            owner_pid: 42,
+            layer: 101,
+            frame: AisdRect {
+                x: 48.0,
+                y: 733.0,
+                width: 269.0,
+                height: 283.0,
+            },
+        }];
+        let mut buf = [AisdRect {
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
+        }; 8];
+        let n = unsafe {
+            aisd_capture_content_rects(
+                target,
+                983,
+                42,
+                front.as_ptr(),
+                1,
+                display,
+                0.30,
+                buf.as_mut_ptr(),
+                buf.len(),
+            )
+        };
+        assert_eq!(n, 2, "window + popup");
+        assert_eq!(buf[0].width.to_bits(), 1440.0_f64.to_bits());
+        assert_eq!(buf[1].x.to_bits(), 48.0_f64.to_bits());
+        assert_eq!(buf[1].height.to_bits(), 283.0_f64.to_bits());
+        // Truncation: cap 1 returns total 2 but writes only the window.
+        let n2 = unsafe {
+            aisd_capture_content_rects(
+                target,
+                983,
+                42,
+                front.as_ptr(),
+                1,
+                display,
+                0.30,
+                buf.as_mut_ptr(),
+                1,
+            )
+        };
+        assert_eq!(n2, 2, "returns the TOTAL even when truncated");
     }
 
     #[test]

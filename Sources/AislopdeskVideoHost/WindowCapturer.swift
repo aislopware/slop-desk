@@ -76,6 +76,10 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         _ crisp: Bool,
         _ compact: Bool,
         _ ltrRefresh: Bool,
+        // ADAPTIVE-QP: the per-frame `MaxAllowedFrameQP` ceiling for the LIVE delta encode (sharp on a
+        // small change, graded blur on a burst), or nil to leave the configured ceiling. Set only on
+        // the live delta path; nil on the crisp/compact/static-timer paths (they own their own QP).
+        _ perFrameMaxQP: Int?,
     ) -> Void
 
     /// Whether the static-IDR timer upgrades its re-encode to a CRISP near-lossless frame
@@ -94,6 +98,151 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// decider + the hash kernel are unit-tested. `AISLOPDESK_STATIC_SUPPRESS=1` enables it.
     private static let staticSuppressEnabled =
         ProcessInfo.processInfo.environment["AISLOPDESK_STATIC_SUPPRESS"] == "1"
+
+    /// EVENT-DRIVEN CRISP RE-ANCHOR (default OFF; 2026-06-16 latency-first reframe). When enabled, each
+    /// `.complete` frame's NV12 planes are hashed (NEON) and `stillCrispThreshold` consecutive byte-
+    /// identical frames trigger the crisp re-anchor IMMEDIATELY (``StillnessCrispDecider``) instead of
+    /// waiting the full ~300ms wall-clock quiet window — re-sharpen lands ~1-2 frames after motion visibly
+    /// stops WHEN SCK re-delivers the static frame (otherwise the StaticIDRDecider quiet-window timer is
+    /// the fallback). DEFAULT OFF: it adds a per-`.complete`-frame hash on the userInteractive capture
+    /// queue, and P1 input latency must not pay unmeasured hot-path work — flip ON only after a HW A/B
+    /// confirms the hash cost is negligible (the NEON kernel is built to be). `AISLOPDESK_STILL_CRISP=1`
+    /// enables; `AISLOPDESK_STILL_CRISP_FRAMES` overrides the threshold (default 2, clamp 1…30).
+    private static let stillCrispEnabled =
+        ProcessInfo.processInfo.environment["AISLOPDESK_STILL_CRISP"] == "1"
+    private static let stillCrispThreshold: Int = {
+        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_STILL_CRISP_FRAMES"], let v = Int(s) {
+            return min(30, max(1, v))
+        }
+        return 2
+    }()
+
+    /// SCROLL REPROJECTION (default OFF). When enabled, each `.complete` frame's content scroll vs the
+    /// PREVIOUS frame is MEASURED (NEON per-row hash + the pure shift estimator) and the offset is sent
+    /// to the client, which warps the last frame by it between codec frames so editor scroll looks local
+    /// (``ScrollReprojector``). DEFAULT OFF ⇒ no measurement, byte-identical. `AISLOPDESK_SCROLL_REPROJECT=1`
+    /// (set on BOTH host + client). Confidence-gated so typing / non-scroll motion never reprojects.
+    private static let scrollReprojectEnabled =
+        ProcessInfo.processInfo.environment["AISLOPDESK_SCROLL_REPROJECT"] == "1"
+
+    /// ADAPTIVE-QP (default OFF). When enabled, each `.complete` frame's CHANGE magnitude vs the
+    /// previous frame (NEON per-row hash → changed-row fraction) drives the live frame's
+    /// `MaxAllowedFrameQP` ceiling: a small change (caret move, few chars) is pinned to a LOW (sharp)
+    /// ceiling RC cannot coarsen past — even under a tight WAN budget — while a burst rides up to the
+    /// configured ceiling (graded blur). Generalizes the crisp-on-FULL-static refresh to the common
+    /// "almost-static editing" case. DEFAULT OFF ⇒ no measurement, byte-identical. Host-only, no wire.
+    /// `AISLOPDESK_ADAPTIVE_QP=1`; `AISLOPDESK_AQP_SHARP` (sharp ceiling, default 22),
+    /// `AISLOPDESK_AQP_BLO_MILLI`/`_BHI_MILLI` (change-fraction band ×1000, default 20/300).
+    private static let adaptiveQPEnabled =
+        ProcessInfo.processInfo.environment["AISLOPDESK_ADAPTIVE_QP"] == "1"
+    private static let adaptiveQPSharp: Int = {
+        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_AQP_SHARP"], let v = Int(s) {
+            return min(51, max(1, v))
+        }
+        return 22
+    }()
+
+    private static let adaptiveQPBLoMilli: UInt32 = {
+        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_AQP_BLO_MILLI"], let v = UInt32(s) {
+            return min(1000, v)
+        }
+        return 20
+    }()
+
+    private static let adaptiveQPBHiMilli: UInt32 = {
+        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_AQP_BHI_MILLI"], let v = UInt32(s) {
+            return min(1000, v)
+        }
+        return 300
+    }()
+
+    /// TRUE IDLE-SKIP (default OFF). Parsec sends ZERO packets when the screen is static; on our
+    /// VD/`displayIncluding` capture path SCK sometimes re-delivers byte-identical `.complete` frames
+    /// that SCK does NOT mark `.idle`, so without this they get re-encoded + re-sent — a wasteful drip
+    /// Parsec never pays. When enabled, a frame the adaptive-QP NEON measurement reports as TRULY idle
+    /// (`measured && changeMilli == 0`, i.e. every row-hash identical to the previous frame) and that
+    /// carries no pending obligation (keyframe / recovery / heartbeat — peeked, never drained) is
+    /// dropped before the encode hand-off. CRITICAL: a skipped frame does NOT re-anchor
+    /// `staticIDRDecider` (the quiet-window clock is allowed to go stale) so the ~300ms crisp refresh
+    /// still fires on a genuinely-static window — the exact invariant the retired `STATIC_SUPPRESS`
+    /// gate violated (it re-anchored on every dropped duplicate → the quiet window never opened → the
+    /// stream froze). REUSES the adaptive-QP measurement, so it needs `AISLOPDESK_ADAPTIVE_QP=1` too.
+    /// Gate OFF ⇒ `idleSkip` is always false ⇒ byte-identical to today. `AISLOPDESK_IDLE_SKIP=1`.
+    private static let idleSkipEnabled =
+        ProcessInfo.processInfo.environment["AISLOPDESK_IDLE_SKIP"] == "1"
+
+    /// Pure eligibility for an idle-skip: a REAL measurement (`measured`) with zero changed rows.
+    /// The `measured` guard rejects the FFI's degenerate-frame fallback (which also reports change 0
+    /// but on an unmeasurable frame) so a genuinely-unknown frame is never mistaken for idle.
+    static func idleSkipEligible(measured: Bool, changeMilli: UInt32) -> Bool {
+        measured && changeMilli == 0
+    }
+
+    /// SCROLL-FPS CAP (default OFF, `AISLOPDESK_SCROLL_FPS`=N): during sustained FAST scroll (changed-row
+    /// fraction ≥ `scrollMotionThresholdMilli`) encode only ~N of the 60 captured fps (even Bresenham
+    /// decimation), so the HW encoder never overruns the 16.7 ms frame budget — the involuntary-VT-drop
+    /// source at higher capture scales. Even pacing at a lower rate beats stuttery 60-with-random-drops.
+    /// REQUIRES the change measurement (`AISLOPDESK_ADAPTIVE_QP=1` or idle-skip). Only ordinary live
+    /// frames decimate; a pending forced/recovery/heartbeat always passes. Slow scroll / caret (low
+    /// `changeMilli`) NEVER triggers (no slow-scroll regression). No rebuild ⇒ no hitch. `0` ⇒ disabled.
+    static let scrollFps: Int = {
+        guard let s = ProcessInfo.processInfo.environment["AISLOPDESK_SCROLL_FPS"], let v = Int(s), v > 0
+        else { return 0 }
+        return v
+    }()
+
+    /// Changed-row fraction (milli, 0–1000) at/above which a frame counts as FAST scroll for the
+    /// scroll-fps cap. Default 120 (≈12% of rows changed) — well above caret/typing, around real scroll.
+    static let scrollMotionThresholdMilli: UInt32 = {
+        guard let s = ProcessInfo.processInfo.environment["AISLOPDESK_SCROLL_MOTION_MILLI"], let v = UInt32(s)
+        else { return 120 }
+        return v
+    }()
+
+    /// Consecutive fast-scroll frames required before decimation engages (debounce — a single flick
+    /// frame is never dropped).
+    static let scrollMotionSustainFrames = 2
+
+    /// SCStream `queueDepth` (default 5, was 3). The VT encode runs synchronously on the capture
+    /// sample-handler queue, so a deeper SCK surface queue prevents a single slow (fat scroll-burst)
+    /// encode from stalling the next capture delivery (the measured capture-gap). `AISLOPDESK_CAPTURE_QUEUE_DEPTH`
+    /// overrides (clamp 2…12).
+    static let captureQueueDepth: Int = {
+        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_CAPTURE_QUEUE_DEPTH"], let v = Int(s) {
+            return min(12, max(2, v))
+        }
+        return 5
+    }()
+
+    /// ENCODE DECOUPLING (default OFF, A/B via `AISLOPDESK_ENCODE_OFFQUEUE=1`). The VT encode runs
+    /// SYNCHRONOUSLY in the SCStream sample handler, so during heavy scroll a per-frame encode that
+    /// spikes past the ~16ms budget makes the handler fall progressively behind → SCStream holds
+    /// surfaces → the measured 150–230ms capture gaps (the frame-smoothness "giật"). When ON, the
+    /// handler instead COPIES the frame (~1ms) and hands the encode to a dedicated serial queue, then
+    /// returns immediately → SCStream delivers at a steady 60Hz; encode runs in parallel, in PTS order.
+    /// A bounded pending count drops ordinary deltas (never forced/recovery frames) if the encoder
+    /// can't keep up — congestion-dropping at the encoder, not stalling capture (the P-chain stays
+    /// intact, so no client decode break). `AISLOPDESK_ENCODE_QUEUE_MAX` overrides the bound (clamp 1…12).
+    static let encodeOffQueueEnabled =
+        ProcessInfo.processInfo.environment["AISLOPDESK_ENCODE_OFFQUEUE"] == "1"
+    /// DIAGNOSTIC (overnight capture-cadence root-cause): force a compact recovery IDR every Nth live
+    /// frame, so the loss-driven recovery-IDR storm is reproducible deterministically on localhost
+    /// (no real loss needed). `AISLOPDESK_FORCE_COMPACT_EVERY=N`; 0/unset = off (byte-identical).
+    static let forceCompactEvery: Int = {
+        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_FORCE_COMPACT_EVERY"], let v = Int(s), v > 0 {
+            return v
+        }
+        return 0
+    }()
+
+    private var forceCompactCounter = 0
+
+    static let maxEncodePending: Int = {
+        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_ENCODE_QUEUE_MAX"], let v = Int(s) {
+            return min(12, max(1, v))
+        }
+        return 3
+    }()
 
     /// SELF-HEAL cadence (2026-06-11, Parsec-style ack-anchored healing — HW-validated in
     /// `aislopdesk-loopback-validate --ack-ref` arms L/M/N/O): every `selfHealEvery`-th LIVE delta is
@@ -115,13 +264,82 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             if v == 0 { return 0 }
             return min(120, max(2, v))
         }
-        return 6
+        // Default raised 6 → 30 (2026-06-16 latency-first reframe). Self-heal protects in-MOTION frames,
+        // which the coding reframe deliberately lets blur/drop and re-sharpen — so heal far less often
+        // (~+1.6% stream bytes at K=30 vs +8.2% at K=6). The static-window crisp re-anchor (~300ms,
+        // StaticIDRDecider) already covers the "stop and read" case faster; a lost motion frame just
+        // waits at most K frames (~1s @30fps) for the next refresh, which is acceptable while moving.
+        return 30
     }()
 
     private let log = Logger(subsystem: "aislopdesk.video.host", category: "WindowCapturer")
     private let frameQueue = DispatchQueue(label: "aislopdesk.video.capture", qos: .userInteractive)
     private var stream: SCStream?
     private let frameHandler: FrameHandler
+
+    /// Moves a single-owner `CVPixelBuffer` copy across the encode-queue hop. `CVPixelBuffer` is not
+    /// `Sendable`; the copy has exactly one owner (just allocated), so the transfer is safe.
+    private struct SendableBuffer: @unchecked Sendable { let value: CVPixelBuffer }
+
+    /// ENCODE DECOUPLING (gated): a dedicated SERIAL queue the encode runs on when
+    /// `encodeOffQueueEnabled`, so the capture handler returns immediately (no synchronous encode
+    /// blocking SCStream delivery). nil ⇒ inline encode on the capture queue (legacy). `userInteractive`
+    /// to match the capture queue's priority.
+    private lazy var encodeQueue: DispatchQueue? =
+        Self.encodeOffQueueEnabled ? DispatchQueue(label: "com.aislopdesk.encode", qos: .userInteractive) : nil
+    /// Frames dispatched to `encodeQueue` but not yet encoded (lock-guarded — incremented on the
+    /// capture queue, decremented on the encode queue). Caps the encode backlog.
+    private let encodePendingLock = NSLock()
+    private var encodePending = 0
+    private var encodeBacklogDropped = 0
+
+    /// Hand a frame to the encoder — inline (legacy) or, when `encodeOffQueueEnabled`, COPIED and
+    /// dispatched to the serial `encodeQueue` so capture delivery is never blocked by encode time.
+    /// Ordinary deltas are DROPPED when the encode backlog is full (`maxEncodePending`); a forced
+    /// keyframe/crisp/compact/LTR-refresh is always submitted (recovery/sharpness anchor).
+    private func handOffToEncoder(
+        _ buffer: CVPixelBuffer,
+        pts: CMTime,
+        forceKeyframe: Bool,
+        crisp: Bool,
+        compact: Bool,
+        ltrRefresh: Bool,
+        perFrameMaxQP: Int?,
+    ) {
+        guard let encodeQueue else {
+            frameHandler(buffer, pts, forceKeyframe, crisp, compact, ltrRefresh, perFrameMaxQP)
+            return
+        }
+        let forced = forceKeyframe || crisp || compact || ltrRefresh
+        encodePendingLock.lock()
+        if !forced, encodePending >= Self.maxEncodePending {
+            encodePendingLock.unlock()
+            encodeBacklogDropped += 1
+            if encodeBacklogDropped.isMultiple(of: 600) {
+                let dropped = encodeBacklogDropped
+                log.notice("encode-offqueue: \(dropped) deltas dropped (encoder backlog full)")
+            }
+            return // encoder can't keep up — drop this delta (P-chain intact), never stall capture
+        }
+        encodePending += 1
+        encodePendingLock.unlock()
+        guard let copy = Self.copyPixelBuffer(buffer) else {
+            encodePendingLock.lock()
+            encodePending -= 1
+            encodePendingLock.unlock()
+            return
+        }
+        let handler = frameHandler
+        // The copy is a fresh single-owner buffer; moving it to the serial encode queue is safe.
+        let boxed = SendableBuffer(value: copy)
+        encodeQueue.async { [weak self] in
+            handler(boxed.value, pts, forceKeyframe, crisp, compact, ltrRefresh, perFrameMaxQP)
+            guard let self else { return }
+            encodePendingLock.lock()
+            encodePending -= 1
+            encodePendingLock.unlock()
+        }
+    }
 
     /// Last time we forced a heartbeat IDR (uptime seconds).
     private var lastHeartbeat: TimeInterval = 0
@@ -207,6 +425,36 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// Count of `.complete` frames suppressed as pixel-identical duplicates; logged periodically so
     /// a HW session can measure the re-delivery rate. frameQueue-owned.
     private var completeButDuplicateCount: UInt64 = 0
+    /// Count of `.complete` frames dropped by the true-idle-skip gate (`idleSkipEnabled`); logged
+    /// periodically so a HW session can confirm zero-on-static. frameQueue-owned.
+    private var idleSkippedCount: UInt64 = 0
+    /// Scroll-fps-cap state (frameQueue-owned): `scrollMotionRun` counts consecutive fast-scroll frames
+    /// (debounce); `scrollPhase` is the Bresenham accumulator that keeps ~`scrollFps` of `fps`;
+    /// `scrollDecimatedCount` logs how many motion frames were dropped to hold the cap.
+    private var scrollMotionRun = 0
+    private var scrollPhase = 0
+    private var scrollDecimatedCount: UInt64 = 0
+    /// Previous frame's FULL NV12 hash (luma+chroma) for the chroma-aware idle-skip drop. frameQueue-owned.
+    private var lastIdleFullHash: UInt64?
+    /// EVENT-DRIVEN CRISP state (gated on `stillCrispEnabled`). frameQueue-owned (the capture callback +
+    /// the IDR timer run on the same queue), so no lock. Inert when the gate is OFF (no hash computed).
+    private var stillnessDecider = StillnessCrispDecider()
+    /// Hash of the immediately previous `.complete` frame, for the stillness count, or nil before the
+    /// first. Distinct from `lastSubmittedFrameHash` (which tracks the last SUBMITTED frame for dedup).
+    private var lastStillnessHash: UInt64?
+    /// SCROLL REPROJECTION callback (gated on `scrollReprojectEnabled`): called on `frameQueue` with the
+    /// measured per-frame offset (normalized ×10000, signed) when scrolling — the session sends it as a
+    /// `ScrollOffset` control message. `nil` ⇒ no send. frameQueue-confined.
+    var onScrollOffset: (@Sendable (Int16, Int16) -> Void)?
+    /// True while the last sent scroll offset was non-zero — so exactly one `(0,0)` is emitted when
+    /// scroll stops (arming the client reprojector's decay) instead of spamming it on every static frame.
+    private var lastScrollWasNonZero = false
+    /// ADAPTIVE-QP (gated on `adaptiveQPEnabled`): the per-frame QP ceiling computed from this frame's
+    /// change magnitude, staged here and read at the live encode hand-off. frameQueue-owned.
+    private var pendingAdaptiveQP: Int?
+    /// Asymmetric-EMA'd adaptive QP ceiling — snaps DOWN to a sharper ceiling instantly, eases UP to a
+    /// blurrier one over ~3 frames (avoids QP shimmer on borderline activity). frameQueue-owned.
+    private var adaptiveQPSmoothed: Int?
     /// KHỰNG-ladder stage 1 (AISLOPDESK_VIDEO_DEBUG): last DELIVERED-frame time, frameQueue-owned.
     static let dbgGapEnabled = ProcessInfo.processInfo.environment["AISLOPDESK_VIDEO_DEBUG"] != nil
     private var lastDeliveredAt: Double = 0
@@ -325,6 +573,25 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// so FIFO + monotonic PTS w.r.t. real frames is preserved.
     private func onIDRTimerTick() {
         let now = Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1_000_000_000.0
+        // EVENT-DRIVEN crisp (gated): if a run of byte-identical .complete frames already proved the
+        // screen is at rest, fire the crisp re-anchor NOW without waiting the wall-clock quiet window.
+        // A crisp keyframe is a superset of any pending recovery latch, so drain those too (satisfied);
+        // recordSynthetic re-anchors the normal static cadence so this never double-emits.
+        if Self.stillCrispEnabled,
+           stillnessDecider.shouldFireCrisp(restThreshold: Self.stillCrispThreshold),
+           let buf = cachedPixelBuffer
+        {
+            _ = takePendingForcedKeyframe()
+            _ = takePendingLTRRefresh()
+            stillnessDecider.noteCrispFired()
+            staticIDRDecider.recordSynthetic(now: now)
+            lastKeyframeEmit = now
+            handOffToEncoder(
+                buf, pts: syntheticPTS(), forceKeyframe: true, crisp: Self.crispWhenStatic,
+                compact: false, ltrRefresh: false, perFrameMaxQP: nil,
+            )
+            return
+        }
         let forcedKeyframe = takePendingForcedKeyframe() // drain the keyframe latch
         // WF-8: a STATIC window has no live delta to ride an LTR refresh, so on this path an LTR
         // request degrades to the same crisp/compact re-anchor as a forced keyframe — drain it and
@@ -357,13 +624,14 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // same live session → no client decoder rebuild). `AISLOPDESK_CRISP=0` falls back to a plain IDR.
         // Static (at-rest) path: crisp (sharp) when enabled, never compact — at rest there is no live
         // delta competing for the wire, so the larger near-lossless IDR is not a burst-loss risk.
-        frameHandler(
+        handOffToEncoder(
             buf,
-            syntheticPTS(),
-            true,
-            Self.crispWhenStatic,
-            false,
-            false,
+            pts: syntheticPTS(),
+            forceKeyframe: true,
+            crisp: Self.crispWhenStatic,
+            compact: false,
+            ltrRefresh: false,
+            perFrameMaxQP: nil, // static-timer crisp path owns its own QP (crisp bracket) — no adaptive ceiling
         ) // force IDR, same hand-off as live path (never an LTR refresh on the static path)
     }
 
@@ -397,7 +665,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     private let preferDisplayAnchored: Bool
 
     public init(
-        fps: Int = 60,
+        fps: Int = 30,
         captureScale: Double = 1.0,
         fullRange: Bool = false,
         preferDisplayAnchored: Bool = false,
@@ -413,11 +681,15 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         self.captureScale = max(1.0, captureScale)
         self.fullRange = fullRange
         self.frameHandler = frameHandler
-        // Cap quietWindow at 1s (F2): the decider's quietWindow gates shouldReencode, so a longer
-        // heartbeat must NOT stretch the timer-path recovery-suppression window — recovery stays responsive.
+        // Quiet window gates shouldReencode (the crisp re-anchor): coding-tool reframe defaults it to
+        // 300ms (was 1.0s) so text re-sharpens fast after motion stops, clamped to the heartbeat so a
+        // longer heartbeat never stretches the timer-path recovery-suppression window. AISLOPDESK_QUIET_MS.
         staticIDRDecider = StaticIDRDecider(
             heartbeat: Self.heartbeatIDRInterval,
-            quietWindow: min(1.0, Self.heartbeatIDRInterval),
+            quietWindow: Self.resolveQuietWindow(
+                envValue: ProcessInfo.processInfo.environment["AISLOPDESK_QUIET_MS"],
+                heartbeat: Self.heartbeatIDRInterval,
+            ),
         )
         super.init()
     }
@@ -435,7 +707,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     public static func makeConfiguration(
         width: Int,
         height: Int,
-        fps: Int = 60,
+        fps: Int = 30,
         captureScale: Double = 1.0,
         fullRange: Bool = false,
     ) -> SCStreamConfiguration {
@@ -452,9 +724,11 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // to BGRA capture per the SDK header — a no-op for our NV12 path, set for
         // intent).
         config.showMouseClicks = false
-        // Cap at `fps` (default 60 — Parsec-class smoothness for scroll/motion; 30 was visibly
-        // steppier). macOS 15+ silently defaults to 1/60; idle-skip keeps a static window near-zero
-        // regardless of the cap (doc 02 §3.1).
+        // Cap at `fps` (default 30 — a coding tool, not a game stream; 60 reachable via --fps for
+        // smoother motion). NOTE the capture ceiling stays at 2× the encode fps (≈60Hz @ fps=30 — see
+        // resolveCaptureHz) so a changed frame (e.g. a typed character) is still picked up within ~16ms
+        // and not quantized to the 33ms encode slot; only the ENCODE rate (and thus bitrate) drops.
+        // macOS 15+ silently defaults to 1/60; idle-skip keeps a static window near-zero regardless (doc 02 §3.1).
         // LAT (2026-06-10, env AISLOPDESK_CAPTURE_HZ): the capture min-interval normally matches the
         // encode fps, which QUANTIZES when SCK may deliver a fresh composite (a change landing
         // just after a slot waits out the rest of it). A HIGHER capture ceiling lets SCK hand
@@ -471,7 +745,12 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             fps: fps,
         )
         config.minimumFrameInterval = CMTime(value: 1, timescale: Int32(captureHz))
-        config.queueDepth = 3 // 2-3 for low latency (doc 02 §3.1)
+        // queueDepth 3 → 5 (2026-06-17): the encode runs SYNCHRONOUSLY on this SCStream sample-handler
+        // queue, so one fat scroll-burst frame's `VTCompressionSessionEncodeFrame` blocked the next
+        // capture delivery once it over-ran ~`interval × (depth−1)` → the measured 61ms capture-gap.
+        // A deeper queue lets SCK buffer more surfaces while an encode is in flight, so a single slow
+        // frame becomes a brief blur instead of a capture freeze. `AISLOPDESK_CAPTURE_QUEUE_DEPTH` overrides.
+        config.queueDepth = Self.captureQueueDepth
         config.width = width
         config.height = height
         config.colorSpaceName = CGColorSpace.sRGB
@@ -515,6 +794,36 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     static func resolveCaptureHz(envValue: String?, fps: Int) -> Int {
         if let envValue, let v = Int(envValue) { return min(240, max(15, v)) }
         return min(240, max(1, fps) * 2)
+    }
+
+    /// PURE quiet-window resolution (CRISP re-sharpen latency, 2026-06-16 latency-first reframe).
+    ///
+    /// How long after the last real `.complete` frame the static-IDR timer waits before emitting the
+    /// crisp near-lossless re-anchor. Lower = text sharpens sooner after a scroll/motion burst stops
+    /// ("vừa dừng là nét"); too low risks firing crisp during a one-frame pause mid-motion. The coding
+    /// reframe drops it 1.0s → 300ms (the explicit re-sharpen target). `AISLOPDESK_QUIET_MS` overrides
+    /// (MILLISECONDS), clamped [50ms, heartbeat] — never longer than the heartbeat (a longer window would
+    /// stretch the timer-path recovery suppression; see `StaticIDRDecider`).
+    static func resolveQuietWindow(envValue: String?, heartbeat: TimeInterval) -> TimeInterval {
+        let floor = 0.05
+        let ceil = max(floor, heartbeat)
+        if let envValue, let ms = Double(envValue) {
+            return min(ceil, max(floor, ms / 1000.0))
+        }
+        return min(ceil, max(floor, 0.3))
+    }
+
+    /// PURE static-IDR poll-tick resolution. The frameQueue timer polls the decider (recovery latch +
+    /// idle service + the crisp re-anchor) every tick; the decider only EMITS when due, so sub-cadence
+    /// ticks are cheap no-ops. Tightened 250ms → 80ms (2026-06-16) so worst-case time-to-crisp ≈
+    /// quietWindow + tick ≈ 0.38s. `AISLOPDESK_IDR_TICK_MS` overrides (MILLISECONDS), clamped [20ms, 1s].
+    static func resolveIDRPollTick(envValue: String?) -> TimeInterval {
+        let floor = 0.02
+        let ceil = 1.0
+        if let envValue, let ms = Double(envValue) {
+            return min(ceil, max(floor, ms / 1000.0))
+        }
+        return 0.08
     }
 
     /// Creates the content filter for one desktop-independent window. Captures the
@@ -689,13 +998,14 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // static window (only `.idle` frames) this is the ONLY path that can produce an IDR for
         // a joining / loss-recovering client.
         //
-        // Fixed 0.25s poll, DECOUPLED from the heartbeat (F2): with a multi-second heartbeat the timer
-        // must still poll the recovery latch + service a truly-idle window promptly. The decider only
-        // EMITS when >= heartbeat has elapsed, so sub-cadence ticks are cheap no-ops; a fixed small tick
-        // keeps recovery/idle latency low regardless of the (now longer) heartbeat cadence.
-        let tick = 0.25
+        // Small poll, DECOUPLED from the heartbeat (F2): with a multi-second heartbeat the timer must
+        // still poll the recovery latch + service a truly-idle window promptly. The decider only EMITS
+        // when due, so sub-cadence ticks are cheap no-ops. Tightened 0.25s → 80ms (2026-06-16) so the
+        // crisp re-anchor lands ≈ quietWindow + tick (~0.38s) after motion stops. AISLOPDESK_IDR_TICK_MS.
+        let tick = Self.resolveIDRPollTick(envValue: ProcessInfo.processInfo.environment["AISLOPDESK_IDR_TICK_MS"])
+        let leewayMs = max(8, Int((tick * 1000.0) / 4.0))
         let timer = DispatchSource.makeTimerSource(queue: frameQueue)
-        timer.schedule(deadline: .now() + tick, repeating: tick, leeway: .milliseconds(50))
+        timer.schedule(deadline: .now() + tick, repeating: tick, leeway: .milliseconds(leewayMs))
         timer.setEventHandler { [weak self] in self?.onIDRTimerTick() }
         timer.resume()
         idrTimer = timer
@@ -897,8 +1207,145 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // synthetic-PTS high-water mark so a later synthetic frame stays strictly past every real
         // frame (§5). All on `frameQueue`. >90% of frames are idle, so this copy lands only on the
         // rare real frame that already pays for an encode.
-        cachedPixelBuffer = Self.copyPixelBuffer(pixelBuffer)
-        staticIDRDecider.onCompleteFrame(now: now)
+        // SCROLL REPROJECTION (gated): measure the TRUE per-frame content scroll between the PREVIOUS
+        // cached frame and this one and send it to the client (which warps the last frame by it between
+        // codec frames). Done BEFORE cachedPixelBuffer is overwritten, so it is still the previous frame.
+        // Only sends on a confident non-zero shift, plus one (0,0) when scroll stops (decay arm).
+        if Self.scrollReprojectEnabled, let prev = cachedPixelBuffer {
+            let (dx, dy) = Self.measureScrollOffset(prev: prev, cur: pixelBuffer)
+            if dx != 0 || dy != 0 {
+                onScrollOffset?(dx, dy)
+                lastScrollWasNonZero = true
+            } else if lastScrollWasNonZero {
+                onScrollOffset?(0, 0)
+                lastScrollWasNonZero = false
+            }
+        }
+        // ADAPTIVE-QP (gated): measure this frame's change magnitude vs the PREVIOUS frame and stage the
+        // per-frame QP ceiling (sharp on a small change, graded blur on a burst). BEFORE cachedPixelBuffer
+        // is overwritten, so it is still the previous frame. Asymmetric-EMA: snap to sharper instantly,
+        // ease to blurrier slowly (no QP shimmer). Read at the live encode hand-off (`encodeBelowGate`).
+        // Adaptive-QP AND true-idle-skip both reuse ONE NEON change measurement vs the previous frame.
+        // Run it when either feature is on. `measured` is true only on a real (non-fallback) measurement,
+        // so the FFI's degenerate-frame fallback (also change 0) can never be mistaken for idle.
+        var changeMilli: UInt32 = 0
+        var measured = false
+        if Self.adaptiveQPEnabled || Self.idleSkipEnabled, let prev = cachedPixelBuffer,
+           let m = Self.measureAdaptiveQP(prev: prev, cur: pixelBuffer)
+        {
+            measured = true
+            changeMilli = m.changeMilli
+            if Self.adaptiveQPEnabled {
+                let rawQP = m.qp
+                let smoothed: Int =
+                    if let s = adaptiveQPSmoothed {
+                        rawQP <= s ? rawQP : s + max(1, (rawQP - s) / 3)
+                    } else {
+                        rawQP
+                    }
+                adaptiveQPSmoothed = smoothed
+                pendingAdaptiveQP = smoothed
+                if Self.dbgGapEnabled {
+                    FileHandle.standardError
+                        .write(Data("aislopdesk-videohostd[aqp]: rawQP=\(rawQP) smoothed=\(smoothed)\n".utf8))
+                }
+            } else {
+                pendingAdaptiveQP = nil
+            }
+        } else {
+            pendingAdaptiveQP = nil
+        }
+        // LATENCY (2026-06-18, Rank 1): defer the `cachedPixelBuffer` COPY to function exit so it no longer
+        // blocks the encode-submit critical path. The cache (IDR-heartbeat / crisp / dialog-union) is read
+        // only on LATER timer ticks, never by THIS frame's encode (which is handed `pixelBuffer` directly).
+        // `defer` fires on EVERY exit — idle-skip / scroll-fps / static-suppress / governor-gate returns AND
+        // the encode path — so the cache updates on all paths exactly as before; only its ORDER vs the inline
+        // encode changes (the encoder sees the frame ~0.5–2ms sooner). Placed AFTER the measure-vs-prev reads
+        // above so scroll-reproject + adaptive-QP still compare against the PREVIOUS frame.
+        defer { cachedPixelBuffer = Self.copyPixelBuffer(pixelBuffer) }
+
+        // TRUE IDLE-SKIP decision (default OFF): drop a frame ONLY when it is byte-identical to the
+        // previous one by the FULL NV12 hash (luma+chroma, `hashFrame`) — so a chroma-only change (a
+        // syntax-highlight color flip, theme toggle) is NOT mistaken for idle (the luma-only `changeMilli`
+        // would miss it) — AND it carries no pending obligation. The cheap luma `idleSkipEligible`
+        // pre-check (the adaptive-QP changed-row fraction) gates the full-hash compute. A skipped frame
+        // must NOT re-anchor `staticIDRDecider` below — leaving the quiet-window clock stale lets the
+        // ~300ms crisp refresh fire on a static window (the anti-freeze invariant STATIC_SUPPRESS violated).
+        var idleSkip = false
+        if Self.idleSkipEnabled,
+           Self.idleSkipEligible(measured: measured, changeMilli: changeMilli),
+           let fullHash = Self.hashFrame(pixelBuffer),
+           fullHash != RustVideoHostFFI.frameHashSentinel
+        {
+            idleSkip = lastIdleFullHash == fullHash
+                && staticSuppressDecider.shouldSuppress(
+                    hashEqualToLast: true, // full-frame (luma+chroma) hash equality already proven above
+                    isFirstFrame: !hasEmittedFirstFrame,
+                    forcedKeyframePending: peekPendingForcedKeyframe(),
+                    recoveryPending: peekPendingLTRRefresh(),
+                    heartbeatDue: peekHeartbeatDue(now: now),
+                    ltrRefreshDue: false,
+                    selfHealDue: false,
+                )
+            lastIdleFullHash = fullHash
+        }
+        if !idleSkip {
+            staticIDRDecider.onCompleteFrame(now: now)
+        }
+
+        // EVENT-DRIVEN crisp (gated): feed this frame's hash-equality to the stillness decider so a run
+        // of byte-identical .complete re-deliveries can trip the crisp re-anchor before the quiet window
+        // (the IDR timer drains it). Runs BEFORE the suppression block so the decider sees every frame.
+        if Self.stillCrispEnabled,
+           let frameHash = Self.hashFrame(pixelBuffer),
+           frameHash != RustVideoHostFFI.frameHashSentinel
+        {
+            stillnessDecider.onFrame(hashEqualToPrevious: lastStillnessHash == frameHash)
+            lastStillnessHash = frameHash
+        }
+
+        // TRUE IDLE-SKIP (default OFF): drop this byte-identical, obligation-free frame entirely — no
+        // encode, no packetize, no send (Parsec's zero-on-static). The cache + stillness feed above ran
+        // first (so the crisp triggers stay healthy) and `staticIDRDecider` was deliberately NOT
+        // re-anchored, so the quiet-window crisp still fires ~300ms after the screen truly settles.
+        if idleSkip {
+            idleSkippedCount += 1
+            if idleSkippedCount.isMultiple(of: 600) {
+                let dropped = idleSkippedCount
+                log.notice("idle-skip: \(dropped) true-idle frames dropped (zero packets while static)")
+            }
+            return
+        }
+
+        // SCROLL-FPS CAP (default OFF): hold ~scrollFps of the captured fps during sustained FAST scroll
+        // so the HW encoder never overruns the budget (the involuntary-VT-drop source at higher capture
+        // scales). Bresenham-even decimation; only ordinary live frames drop — a pending forced/recovery/
+        // heartbeat always passes — and slow scroll / caret (low changeMilli) never triggers. No rebuild.
+        if Self.scrollFps > 0, Self.scrollFps < fps,
+           measured, changeMilli >= Self.scrollMotionThresholdMilli
+        {
+            scrollMotionRun = min(scrollMotionRun + 1, 1_000_000)
+        } else {
+            scrollMotionRun = 0
+        }
+        if scrollMotionRun >= Self.scrollMotionSustainFrames,
+           !peekPendingForcedKeyframe(), !peekPendingLTRRefresh(), !peekHeartbeatDue(now: now)
+        {
+            scrollPhase += Self.scrollFps
+            if scrollPhase >= fps {
+                scrollPhase -= fps // KEEP this frame
+            } else {
+                scrollDecimatedCount += 1
+                if scrollDecimatedCount.isMultiple(of: 600) {
+                    let dropped = scrollDecimatedCount
+                    let cap = Self.scrollFps
+                    log.notice("scroll-fps: \(dropped) fast-scroll frames decimated to ~\(cap)fps")
+                }
+                return // SKIP — even-decimate this fast-scroll frame (no encode/packetize/send)
+            }
+        } else {
+            scrollPhase = 0 // reset the accumulator when not decimating
+        }
 
         // STATIC-FRAME SUPPRESSION (default OFF). Hash THIS frame's locked NV12 planes (zero-copy,
         // NEON) and, when it is pixel-identical to the last SUBMITTED frame and no forced obligation
@@ -1068,7 +1515,17 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // deadline minimumFrameInterval × (queueDepth − 1) (WWDC22 s10155).
         // A live (motion) frame is NEVER crisp — motion must stay low-latency; only the static
         // timer above upgrades to a crisp refresh.
-        frameHandler(pixelBuffer, encodePTS, forceKeyframe, false, compact, ltrRefresh)
+        // DIAGNOSTIC force-compact storm (AISLOPDESK_FORCE_COMPACT_EVERY): reproduce the loss-driven
+        // recovery-IDR storm on localhost. Only when no real obligation is already set.
+        var forceCompact = compact
+        if Self.forceCompactEvery > 0, !forceKeyframe, !ltrRefresh, !compact {
+            forceCompactCounter += 1
+            if forceCompactCounter.isMultiple(of: Self.forceCompactEvery) { forceCompact = true }
+        }
+        handOffToEncoder(
+            pixelBuffer, pts: encodePTS, forceKeyframe: forceKeyframe, crisp: false,
+            compact: forceCompact, ltrRefresh: ltrRefresh, perFrameMaxQP: pendingAdaptiveQP,
+        )
     }
 
     // MARK: GATED-TAIL FLUSH (FPS governor, 2026-06-11)
@@ -1174,6 +1631,79 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// borrows them for the call only), then unlocks. The hash reads only the VISIBLE `width` bytes
     /// of each row, so it is independent of plane padding. Returns nil on a lock failure / missing
     /// luma plane (the caller then simply does not suppress). Called only when suppression is enabled.
+    /// SCROLL REPROJECTION: measure the dominant per-frame VERTICAL content shift between `prev` and
+    /// `cur` (NV12 luma planes), returned as a signed NORMALIZED offset in ten-thousandths of the frame
+    /// HEIGHT (×10000). `(0, 0)` when the planes differ in size, a lock fails, or the shift is not
+    /// confident (typing / non-scroll). Both planes are locked read-only for the call only. `dx` is
+    /// always `0` on the v1 host (vertical scroll only). frameQueue-confined.
+    private static func measureScrollOffset(prev: CVPixelBuffer, cur: CVPixelBuffer) -> (Int16, Int16) {
+        let w = CVPixelBufferGetWidthOfPlane(cur, 0)
+        let h = CVPixelBufferGetHeightOfPlane(cur, 0)
+        guard w > 0, h > 0,
+              CVPixelBufferGetWidthOfPlane(prev, 0) == w,
+              CVPixelBufferGetHeightOfPlane(prev, 0) == h
+        else { return (0, 0) }
+        guard CVPixelBufferLockBaseAddress(prev, .readOnly) == kCVReturnSuccess else { return (0, 0) }
+        defer { CVPixelBufferUnlockBaseAddress(prev, .readOnly) }
+        guard CVPixelBufferLockBaseAddress(cur, .readOnly) == kCVReturnSuccess else { return (0, 0) }
+        defer { CVPixelBufferUnlockBaseAddress(cur, .readOnly) }
+        guard let pBase = CVPixelBufferGetBaseAddressOfPlane(prev, 0),
+              let cBase = CVPixelBufferGetBaseAddressOfPlane(cur, 0)
+        else { return (0, 0) }
+        let pStride = CVPixelBufferGetBytesPerRowOfPlane(prev, 0)
+        let cStride = CVPixelBufferGetBytesPerRowOfPlane(cur, 0)
+        // Search up to a quarter-frame scroll per frame (covers a fast flick at 30 fps).
+        let maxShift = max(8, h / 4)
+        if Self.dbgGapEnabled {
+            FileHandle.standardError.write(Data(
+                "aislopdesk-videohostd[scroll]: measure w=\(w) h=\(h) pStride=\(pStride) cStride=\(cStride) maxShift=\(maxShift)\n"
+                    .utf8,
+            ))
+        }
+        let (shift, confMilli) = RustVideoHostFFI.estimateScrollShift(
+            prevY: pBase, prevStride: pStride, curY: cBase, curStride: cStride,
+            width: w, height: h, maxShift: maxShift,
+        )
+        if Self.dbgGapEnabled {
+            FileHandle.standardError
+                .write(Data("aislopdesk-videohostd[scroll]: shift=\(shift) conf=\(confMilli)\n".utf8))
+        }
+        guard confMilli >= 500, shift != 0 else { return (0, 0) }
+        let normMilli = (Double(shift) / Double(h) * 10000.0).rounded()
+        let dy = Int16(max(-32767.0, min(32767.0, normMilli)))
+        return (0, dy)
+    }
+
+    /// ADAPTIVE-QP: compute the per-frame `MaxAllowedFrameQP` ceiling from the change magnitude between
+    /// `prev` and `cur` (NV12 luma planes) via the NEON per-row hash + the pure core curve. `nil` when
+    /// the planes differ in size or a lock fails (caller then leaves the configured ceiling). Both
+    /// planes are locked read-only for the call only. frameQueue-confined.
+    private static func measureAdaptiveQP(prev: CVPixelBuffer, cur: CVPixelBuffer)
+        -> (qp: Int, changeMilli: UInt32)?
+    {
+        let w = CVPixelBufferGetWidthOfPlane(cur, 0)
+        let h = CVPixelBufferGetHeightOfPlane(cur, 0)
+        guard w > 0, h > 0,
+              CVPixelBufferGetWidthOfPlane(prev, 0) == w,
+              CVPixelBufferGetHeightOfPlane(prev, 0) == h
+        else { return nil }
+        guard CVPixelBufferLockBaseAddress(prev, .readOnly) == kCVReturnSuccess else { return nil }
+        defer { CVPixelBufferUnlockBaseAddress(prev, .readOnly) }
+        guard CVPixelBufferLockBaseAddress(cur, .readOnly) == kCVReturnSuccess else { return nil }
+        defer { CVPixelBufferUnlockBaseAddress(cur, .readOnly) }
+        guard let pBase = CVPixelBufferGetBaseAddressOfPlane(prev, 0),
+              let cBase = CVPixelBufferGetBaseAddressOfPlane(cur, 0)
+        else { return nil }
+        let (qp, changeMilli) = RustVideoHostFFI.adaptiveFrameQP(
+            prevY: pBase, prevStride: CVPixelBufferGetBytesPerRowOfPlane(prev, 0),
+            curY: cBase, curStride: CVPixelBufferGetBytesPerRowOfPlane(cur, 0),
+            width: w, height: h,
+            qpSharp: adaptiveQPSharp, qpMax: VideoEncoder.maxAllowedFrameQP,
+            bLoMilli: adaptiveQPBLoMilli, bHiMilli: adaptiveQPBHiMilli,
+        )
+        return (qp, changeMilli)
+    }
+
     private static func hashFrame(_ pixelBuffer: CVPixelBuffer) -> UInt64? {
         guard CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess else { return nil }
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }

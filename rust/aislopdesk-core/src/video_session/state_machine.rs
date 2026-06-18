@@ -279,7 +279,11 @@ impl VideoSessionStateMachine {
             | VideoControlMessage::ListWindows
             | VideoControlMessage::WindowList(_)
             | VideoControlMessage::ListSystemDialogs
-            | VideoControlMessage::SystemDialogList(_) => Vec::new(),
+            | VideoControlMessage::SystemDialogList(_)
+            // `scrollOffset` + `contentMask` are host→client (reprojection hint / transparency mask)
+            // and never arrive at the host SM.
+            | VideoControlMessage::ScrollOffset { .. }
+            | VideoControlMessage::ContentMask(_) => Vec::new(),
         }
     }
 

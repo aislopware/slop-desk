@@ -248,4 +248,30 @@ public final class VideoPacketizer: @unchecked Sendable {
             interleave: interleave,
         ))
     }
+
+    /// Send-path fast path: the finished wire datagrams as raw `[Data]`, skipping the
+    /// `FrameFragment` parse + re-encode the host send never needs (see
+    /// ``RustVideoFFI/packetizeRaw(_:frame:opts:)``). Byte-identical to `packetize(...).map { $0.encode() }`
+    /// — pinned by `PacketizeRawByteIdentityTests`.
+    public func packetizeRaw(
+        frame: Data,
+        keyframe: Bool,
+        crisp: Bool = false,
+        hostSendTsMillis: UInt32 = 0,
+        fecTier: UInt8 = AdaptiveFECPolicy.defaultTier,
+        isLTR: Bool = false,
+        ackedAnchored: Bool = false,
+        interleave: Bool = false,
+    ) -> [Data] {
+        RustVideoFFI.packetizeRaw(handle, frame: frame, opts: RustVideoFFI.PacketizeOptions(
+            keyframe: keyframe,
+            crisp: crisp,
+            hostSendTsMillis: hostSendTsMillis,
+            fecTier: fecTier,
+            isLTR: isLTR,
+            ackedAnchored: ackedAnchored,
+            fecGroupSize: fec?.groupSize ?? 0,
+            interleave: interleave,
+        ))
+    }
 }

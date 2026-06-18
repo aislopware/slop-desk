@@ -453,6 +453,12 @@ enum RustVideoFFI {
         case let .streamCadence(fps):
             c.fps = fps
             return emitVideoControl(&c)
+        case let .scrollOffset(dx, dy):
+            c.scroll_dx = dx
+            c.scroll_dy = dy
+            return emitVideoControl(&c)
+        case let .contentMask(rects):
+            return encodeMaskRects(kind: message.messageType, rects)
         case let .windowList(windows):
             return encodeRecords(kind: message.messageType, windows.map {
                 SummaryParts(
@@ -522,6 +528,19 @@ enum RustVideoFFI {
         }
     }
 
+    /// Marshals a content-mask rect list (POD — no owned strings, unlike `encodeRecords`) and
+    /// encodes it. The C rect array is borrowed for the call; Rust copies it during the encode.
+    private static func encodeMaskRects(kind: UInt8, _ rects: [MaskRect]) -> Data {
+        var c = AisdVideoControl()
+        c.kind = kind
+        var cRects = rects.map { AisdMaskRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
+        return cRects.withUnsafeMutableBufferPointer { buf -> Data in
+            c.mask_rects = buf.baseAddress
+            c.mask_rects_len = buf.count
+            return emitVideoControl(&c)
+        }
+    }
+
     /// Decodes a PATH-2 video control message through the Rust core, throwing the same
     /// ``VideoProtocolError`` cases the native decoder did (`.malformed` for a non-finite
     /// coordinate / unknown type, `.truncated` for a short body; record strings decode lossily).
@@ -579,6 +598,12 @@ enum RustVideoFFI {
                 return .streamCadence(fps: out.fps)
             case 11:
                 return .listSystemDialogs
+            case 13:
+                return .scrollOffset(dx: out.scroll_dx, dy: out.scroll_dy)
+            case 14:
+                return .contentMask(maskRects(from: out).map {
+                    MaskRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height)
+                })
             default:
                 return .systemDialogList(summaries(from: out).map {
                     SystemDialogSummary(
@@ -599,6 +624,13 @@ enum RustVideoFFI {
     private static func summaries(from control: AisdVideoControl) -> [AisdVideoSummary] {
         guard let base = control.records, control.records_len > 0 else { return [] }
         return (0..<control.records_len).map { base[$0] }
+    }
+
+    /// Reads the decoded content-mask rect array (`mask_rects`/`mask_rects_len`) into a Swift array.
+    /// Valid until the caller's `aisd_video_control_free`.
+    private static func maskRects(from control: AisdVideoControl) -> [AisdMaskRect] {
+        guard let base = control.mask_rects, control.mask_rects_len > 0 else { return [] }
+        return (0..<control.mask_rects_len).map { base[$0] }
     }
 
     /// Copies a returned `AisdBytes` UTF-8 payload into a `String` (empty for the null buffer).
@@ -940,7 +972,54 @@ enum RustVideoFFI {
     /// `opts.fecGroupSize == 0` ⇒ the codec's default `k`. Wraps `aisd_packetize` /
     /// `aisd_bytes_array_free`.
     static func packetize(_ handle: OpaquePointer, frame: Data, opts: PacketizeOptions) -> [FrameFragment] {
-        let cOpts = AisdPacketizeOptions(
+        let cOpts = cPacketizeOptions(opts)
+        var out = AisdBytesArray()
+        let status: AisdStatus = frame.withUnsafeBytes { raw in
+            aisd_packetize(handle, raw.bindMemory(to: UInt8.self).baseAddress, raw.count, cOpts, &out)
+        }
+        // The only non-OK return is a null handle / out, neither reachable here — surface as empty.
+        guard status == AISD_OK else { return [] }
+        defer { aisd_bytes_array_free(&out) }
+        return decodeFragments(out)
+    }
+
+    /// Like ``packetize(_:frame:opts:)`` but returns the FINISHED wire datagrams as raw `[Data]`,
+    /// skipping the parse-into-`FrameFragment`-then-re-encode round-trip the host send path does not
+    /// need: it sends every fragment on the SAME `.video` channel via `FrameFragment.encode()`, which
+    /// is the exact inverse of the decode → the bytes are identical to these. One copy per datagram
+    /// instead of decode+struct-alloc+re-encode+alloc ⇒ ~3× fewer allocs/frame on the send path
+    /// (several ms off dense IDR/kfDup bursts). Byte-identity vs the old path is unit-pinned
+    /// (`PacketizeRawByteIdentityTests`). `packetize` (-> `[FrameFragment]`) stays for the loopback
+    /// validator + reassembler tests, which DO read fragment fields.
+    static func packetizeRaw(_ handle: OpaquePointer, frame: Data, opts: PacketizeOptions) -> [Data] {
+        let cOpts = cPacketizeOptions(opts)
+        var out = AisdBytesArray()
+        let status: AisdStatus = frame.withUnsafeBytes { raw in
+            aisd_packetize(handle, raw.bindMemory(to: UInt8.self).baseAddress, raw.count, cOpts, &out)
+        }
+        guard status == AISD_OK else { return [] }
+        defer { aisd_bytes_array_free(&out) }
+        return rawDatagrams(out)
+    }
+
+    /// Flattens a returned `AisdBytesArray` of finished wire datagrams into `[Data]` (one copy each,
+    /// NO parse). A null/zero-length element is skipped (never produced by the core, defensive).
+    private static func rawDatagrams(_ array: AisdBytesArray) -> [Data] {
+        let count = array.count
+        guard let items = array.items, count > 0 else { return [] }
+        var out: [Data] = []
+        out.reserveCapacity(count)
+        for i in 0..<count {
+            let b = items[i]
+            guard let ptr = b.ptr, b.len > 0 else { continue }
+            out.append(Data(bytes: ptr, count: b.len))
+        }
+        return out
+    }
+
+    /// Shared `PacketizeOptions` → C-ABI struct, so `packetize` and `packetizeRaw` can never drift.
+    private static func cPacketizeOptions(_ opts: PacketizeOptions) -> AisdPacketizeOptions {
+        AisdPacketizeOptions(
             keyframe: opts.keyframe ? 1 : 0,
             crisp: opts.crisp ? 1 : 0,
             is_ltr: opts.isLTR ? 1 : 0,
@@ -950,14 +1029,6 @@ enum RustVideoFFI {
             host_send_ts_millis: opts.hostSendTsMillis,
             fec_group_size: opts.fecGroupSize,
         )
-        var out = AisdBytesArray()
-        let status: AisdStatus = frame.withUnsafeBytes { raw in
-            aisd_packetize(handle, raw.bindMemory(to: UInt8.self).baseAddress, raw.count, cOpts, &out)
-        }
-        // The only non-OK return is a null handle / out, neither reachable here — surface as empty.
-        guard status == AISD_OK else { return [] }
-        defer { aisd_bytes_array_free(&out) }
-        return decodeFragments(out)
     }
 
     /// Reorders already-encoded wire fragments into burst-resilient transmit order (m-aware) —

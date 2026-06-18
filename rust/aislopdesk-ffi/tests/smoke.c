@@ -152,6 +152,13 @@ int main(void) {
     AisdRect noneuni = aisd_capture_union_region(target, 1, 42, NULL, 0, display, 0.30);
     CHECK(noneuni.width == 800.0, "capture_union_region with no panels = target");
 
+    AisdCaptureWindowSnapshot popup[1] = {{4215, 42, 101, {148.0, 600.0, 200.0, 300.0}}};
+    AisdRect crects[8];
+    size_t ncrects = aisd_capture_content_rects(target, 1, 42, popup, 1, display, 0.30, crects, 8);
+    CHECK(ncrects == 2, "capture_content_rects = window + layer-101 popup");
+    CHECK(crects[0].width == 800.0 && crects[1].width == 200.0,
+          "capture_content_rects lists window then popup individually");
+
     AisdRect ca = {0.0, 0.0, 100.0, 100.0};
     AisdRect cb = {0.0, 0.0, 120.0, 100.0};
     CHECK(aisd_capture_should_retarget(ca, cb, 8.0) == 1, "capture_should_retarget over delta");
@@ -360,6 +367,29 @@ int main(void) {
     aisd_video_control_free(&wl_out); /* idempotent */
     CHECK(wl_out.records == NULL && wl_out.records_len == 0, "free nulls the record array");
     aisd_bytes_free(wl_frame);
+
+    /* 9b. video_control: the POD nested-array contentMask — borrow rects in, decode into an owned
+     * array, then free it. */
+    AisdMaskRect mrects[2] = {{0, 0, 2880, 1800}, {96, 1406, 538, 172}};
+    AisdVideoControl cm;
+    memset(&cm, 0, sizeof(cm));
+    cm.kind = AISD_VIDEO_CONTROL_CONTENT_MASK;
+    cm.mask_rects = mrects;
+    cm.mask_rects_len = 2;
+    AisdBytes cm_frame = {NULL, 0, 0};
+    CHECK(aisd_video_control_encode(&cm, &cm_frame) == AISD_OK, "contentMask encode ok");
+    AisdVideoControl cm_out;
+    memset(&cm_out, 0, sizeof(cm_out));
+    CHECK(aisd_video_control_decode(cm_frame.ptr, cm_frame.len, &cm_out) == AISD_OK,
+          "contentMask decode ok");
+    CHECK(cm_out.kind == AISD_VIDEO_CONTROL_CONTENT_MASK && cm_out.mask_rects_len == 2 &&
+              cm_out.mask_rects != NULL && cm_out.mask_rects[0].width == 2880 &&
+              cm_out.mask_rects[1].x == 96 && cm_out.mask_rects[1].height == 172,
+          "contentMask rect fields round-trip");
+    aisd_video_control_free(&cm_out);
+    aisd_video_control_free(&cm_out); /* idempotent */
+    CHECK(cm_out.mask_rects == NULL && cm_out.mask_rects_len == 0, "free nulls the mask array");
+    aisd_bytes_free(cm_frame);
 
     /* 10. system_dialog_detector: classify a SecurityAgent prompt (secure, owned owner buffer),
      * and confirm a normal app window classifies AISD_EMPTY. */

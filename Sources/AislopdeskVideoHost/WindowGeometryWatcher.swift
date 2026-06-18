@@ -39,7 +39,9 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
     /// GLOBAL-point union whenever it changes beyond hysteresis. Off (nil) ⇒ zero extra work. The
     /// union math lives in the Rust core (`aislopdesk_core::capture_region`, via the C ABI); this
     /// method only feeds it the `CGWindowListCopyWindowInfo` snapshot. queue-confined.
-    public typealias UnionHandler = @Sendable (CGRect) -> Void
+    /// `(unionGlobal, contentRectsGlobal)` — the capture-region bounding union AND the individual
+    /// opaque content rects (window + popups, global points) the client masks the black flank with.
+    public typealias UnionHandler = @Sendable (CGRect, [CGRect]) -> Void
     private var associatedUnionHandler: UnionHandler?
     private var lastUnionEmitted: CGRect = .null
     private var unionPollCounter = 0
@@ -153,7 +155,16 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         let baseline = lastUnionEmitted.isNull ? targetFrame : lastUnionEmitted
         guard RustVideoHostFFI.captureShouldRetarget(current: baseline, desired: union) else { return }
         lastUnionEmitted = union
-        handler(union)
+        // The INDIVIDUAL opaque rects (window + popups) so the client can mask the black flank
+        // between them — the union bbox alone can't express the hole beside a narrow popup.
+        let contentRects = RustVideoHostFFI.captureContentRects(
+            targetFrame: targetFrame,
+            targetWindowID: UInt32(windowID),
+            targetPID: Int32(pid),
+            windowsInFront: inFront,
+            displayBounds: displayBounds,
+        )
+        handler(union, contentRects)
     }
 
     /// Emits a title change if the window's title differs from the last seen value.

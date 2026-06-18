@@ -68,6 +68,15 @@ public struct VideoClientStateMachine: Sendable {
         /// deadline-mode interval + adaptive-jitter seconds→frames conversion). Duplicate
         /// deliveries (the host dup-sends ×2 for loss tolerance) are idempotent.
         case applyStreamCadence(UInt16)
+        /// Apply a host-measured scroll offset to the client's scroll reprojector (warp the last frame
+        /// between codec frames). `(dx, dy)` are signed NORMALIZED shifts in ten-thousandths of the
+        /// frame extent (±10000 ≈ ±1.0); `(0, 0)` arms the reprojector's decay (scroll stopped).
+        case applyScrollOffset(Int16, Int16)
+        /// Apply the opaque-content rect set (capture PIXELS) the host sent after a capture-region
+        /// change: the renderer masks everything OUTSIDE these rects to transparent (so a popup
+        /// overhanging the window floats over the canvas instead of a black bar). An EMPTY list
+        /// clears the mask (whole frame opaque — the contracted/default state).
+        case applyContentMask([MaskRect])
     }
 
     /// `start()` was called: send the hello, move to `.connecting`.
@@ -122,6 +131,18 @@ public struct VideoClientStateMachine: Sendable {
             // dropped (the host never sends it; defensive against a corrupt body that still parsed).
             guard state == .streaming, fps >= 1 else { return [] }
             return [.applyStreamCadence(fps)]
+        case let .scrollOffset(dx, dy):
+            // Host→client scroll-reprojection hint. Only meaningful while streaming; (0,0) still
+            // flows (it arms the reprojector's decay when scroll stops). A stray/late hint after
+            // teardown is inert.
+            guard state == .streaming else { return [] }
+            return [.applyScrollOffset(dx, dy)]
+        case let .contentMask(rects):
+            // Host→client transparency mask after a DIALOG-EXPAND region change. Only meaningful
+            // while streaming; an empty list clears the mask. A stray/late mask after teardown is
+            // inert.
+            guard state == .streaming else { return [] }
+            return [.applyContentMask(rects)]
         case .hello,
              .resizeRequest,
              .keepalive,

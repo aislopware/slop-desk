@@ -109,6 +109,9 @@ fn i64v(r: &Value, k: &str) -> i64 {
 fn i32v(r: &Value, k: &str) -> i32 {
     i64v(r, k) as i32
 }
+fn i16v(r: &Value, k: &str) -> i16 {
+    i64v(r, k) as i16
+}
 fn strv<'a>(r: &'a Value, k: &str) -> &'a str {
     r[k].as_str().unwrap()
 }
@@ -450,6 +453,25 @@ fn video_control_parity() {
             "streamCadence" => VideoControlMessage::StreamCadence {
                 fps: u16v(r, "fps"),
             },
+            "scrollOffset" => VideoControlMessage::ScrollOffset {
+                dx: i16v(r, "dx"),
+                dy: i16v(r, "dy"),
+            },
+            "contentMask" => VideoControlMessage::ContentMask(
+                r["rects"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|m| {
+                        aislopdesk_core::video_control::MaskRect::new(
+                            u16v(m, "x"),
+                            u16v(m, "y"),
+                            u16v(m, "w"),
+                            u16v(m, "h"),
+                        )
+                    })
+                    .collect(),
+            ),
             "listSystemDialogs" => VideoControlMessage::ListSystemDialogs,
             "systemDialogList" => VideoControlMessage::SystemDialogList(
                 r["dialogs"]

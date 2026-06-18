@@ -38,10 +38,12 @@ final class StreamCadenceCodecTests: XCTestCase {
         XCTAssertThrowsError(try VideoControlMessage.decode(Data([10, 0x00])))
     }
 
-    /// The decoder's `default` arm still drops a type PAST the highest defined (12 = systemDialogList) as
-    /// `.malformed` — the forward-compatibility contract (a future control type claims 13+).
+    /// The decoder's `default` arm still drops a type PAST the highest defined (14 = contentMask) as
+    /// `.malformed` — the forward-compatibility contract (a future control type claims 15+). Types 13
+    /// (scrollOffset) and 14 (contentMask) are now DEFINED, so a bare type byte for them throws
+    /// `.truncated` (short body), not `.malformed`; the "unknown type" probe must sit past the max.
     func testUnknownTypePastDefinedStillThrowsMalformed() {
-        XCTAssertThrowsError(try VideoControlMessage.decode(Data([13]))) { error in
+        XCTAssertThrowsError(try VideoControlMessage.decode(Data([15]))) { error in
             guard case VideoProtocolError.malformed = error else {
                 return XCTFail("unknown type must throw .malformed, got \(error)")
             }

@@ -47,6 +47,12 @@ final class VideoWindowPipeline {
     /// integrates + applies it on between-content ticks and resets it on a real frame) and fed the
     /// local scroll velocity from ``scroll(dx:dy:...)``. v1 is CLIENT-ONLY — no wire change.
     private var reprojector: ScrollReprojector?
+    /// Content fps captured at activate() — converts a host per-frame scroll offset to a reprojector
+    /// velocity (norm/sec = norm-per-frame × fps). See ``applyHostScrollOffset(dx:dy:)``.
+    private var reprojectionContentFps: Double = 30.0
+    /// Set once the host starts sending measured scroll offsets — silences the local trackpad GUESS
+    /// (``feedReprojectionVelocity``) so the two velocity sources don't fight (host-truth wins).
+    private var hostScrollOffsetActive = false
     /// Resolved once: whether the reprojection feature is enabled (env read at first access). Default
     /// OFF, so the existing identity-skip / re-show is unchanged and the present bytes are identical.
     private static let reprojectEnabled = ProcessInfo.processInfo.environment["AISLOPDESK_SCROLL_REPROJECT"] == "1"
@@ -149,7 +155,7 @@ final class VideoWindowPipeline {
         view: HostView,
         videoLayer: CAMetalLayer,
         connection: VideoWindowConnection?,
-        maxFrameRate: Double = 60.0,
+        maxFrameRate: Double = 30.0,
     ) {
         guard let connection else { return } // no live host: chrome only (placeholder owns the idle UI)
         if activeConnection == connection, session != nil { return }
@@ -186,13 +192,12 @@ final class VideoWindowPipeline {
         let jitterMax = env["AISLOPDESK_JITTER_MAX"].flatMap(Int.init).map { min(16, max(1, $0)) } ?? 5
         // Component 4 (adaptive pacer depth, 2026-06-11): network-late driven 1↔2 depth boost
         // (PacerDepthPolicy — pay latency only AFTER observed network lates, refund after a clean
-        // dwell). v2's present-gap promotion pinned the depth at 2 on sub-cadence content
-        // (structural — see PacerDepthPolicy header); v3 (2026-06-12) promotes on owd spikes
-        // (`OwdLateDetector`), which can't self-sustain or misread content cadence — so the boost
-        // is now DEFAULT ON (`AISLOPDESK_ADAPTIVE_DEPTH=0` restores fixed depth 1 for A/B).
-        // TELEMETRY is NOT gated by this — the policy's late/gap counters always run and ride
-        // every NetworkStats report.
-        let adaptiveDepth = env["AISLOPDESK_ADAPTIVE_DEPTH"].map { !($0 == "0" || $0.lowercased() == "false") } ?? true
+        // dwell). It engages in present-on-arrival mode (was inert under the old deadline default).
+        // 2026-06-16 latency-first reframe: with present-on-arrival now the DEFAULT, this boost would
+        // re-add a latency frame on owd spikes — exactly what the reframe removes — so it is now DEFAULT
+        // OFF (depth pinned at 1). `AISLOPDESK_ADAPTIVE_DEPTH=1` restores the owd-driven 1↔2 boost for a
+        // jittery-link A/B. TELEMETRY is NOT gated by this — the policy's late/gap counters always run.
+        let adaptiveDepth = env["AISLOPDESK_ADAPTIVE_DEPTH"].map { $0 == "1" || $0.lowercased() == "true" } ?? false
         let depthPolicyConfig = PacerDepthPolicy.Config.fromEnvironment(env)
         // Adaptive jitter buffer (default OFF ⇒ fixed depth exactly as today). When on, the pacer
         // self-measures decoded-frame arrival jitter and floats the depth between 1 and jitterMax:
@@ -231,16 +236,16 @@ final class VideoWindowPipeline {
             displayMaxHz: displayMaxHz,
             floor: maxFrameRate,
         )
-        // DEADLINE PACER (default ON; see the FramePacer header): schedule presentation on the CONTENT
-        // rhythm with a small playout delay (AISLOPDESK_PLAYOUT_MS) instead of on arrival events — the
-        // research-validated fix for jitter-induced "bunched frame" stutter (WebRTC VCMTiming / Moonlight
-        // model). HW-validated on the 2-machine rig over NetBird: at playout 10ms it drove client
-        // present-gaps 0.37%→0% and cut the max hold spike 258ms→91ms vs present-on-arrival, matching
-        // Parsec's feel on the same link (the arrival path scanned network jitter straight to the eye).
-        // `AISLOPDESK_PACER=arrival` restores the present-on-arrival path; `AISLOPDESK_PLAYOUT_MS` tunes
-        // the buffer (default 10 ≈ 0.6 frame, below perceptual lag, covers most of the measured ~11ms
-        // owd-jitter). Deadline mode pins depth 1 (adaptive-depth + present-on-arrival are inert here).
-        let deadlineMode = env["AISLOPDESK_PACER"].map { $0.lowercased() == "deadline" } ?? true
+        // DEADLINE PACER (default OFF since the 2026-06-16 latency-first reframe). The deadline pacer
+        // schedules presentation on the CONTENT rhythm with a small playout delay — research-validated
+        // (WebRTC VCMTiming / Moonlight) against jitter-induced "bunched frame" stutter, and HW-validated
+        // over NetBird (present-gaps 0.37%→0%, max hold 258→91ms). BUT it adds a standing playout buffer
+        // to the keypress→echo loop, and this is a CODING tool: input latency outranks motion smoothness,
+        // and transient scroll blur is acceptable (the static screen re-sharpens fast — see StaticIDRDecider).
+        // So the DEFAULT is now present-on-arrival (deadlineMode=false) — a decoded frame shows on the next
+        // display tick, no playout hold. `AISLOPDESK_PACER=deadline` restores the smoothness-tuned deadline
+        // pacer for a jittery-WAN A/B (`AISLOPDESK_PLAYOUT_MS` then tunes its buffer).
+        let deadlineMode = env["AISLOPDESK_PACER"].map { $0.lowercased() == "deadline" } ?? false
         // ADAPTIVE PLAYOUT (default ON): the playout buffer auto-tunes to the live network jitter
         // (clamp(k·jitter + base, [floor, ceil]) in rust-core) — a clean LAN floats down to ~floor (low
         // latency), a jittery WAN inflates for smoothness. A fixed value is wrong across links. HW-
@@ -256,7 +261,10 @@ final class VideoWindowPipeline {
         let playoutBaseMs = env["AISLOPDESK_PLAYOUT_BASE_MS"].flatMap(Double.init) ?? 4.0
         let playoutFloorMs = env["AISLOPDESK_PLAYOUT_FLOOR_MS"].flatMap(Double.init) ?? 4.0
         let playoutCeilMs = env["AISLOPDESK_PLAYOUT_CEIL_MS"].flatMap(Double.init) ?? 35.0
-        let contentFps = env["AISLOPDESK_CONTENT_FPS"].flatMap(Double.init) ?? 60.0
+        // Cold-start content fps (coding-tool default 30, matching the host); the host's `streamCadence`
+        // control message rebases this live via `setContentFps`, so a host/client default mismatch only
+        // affects the brief pre-announce window. AISLOPDESK_CONTENT_FPS overrides.
+        let contentFps = env["AISLOPDESK_CONTENT_FPS"].flatMap(Double.init) ?? 30.0
         // SCROLL-HINT REPROJECTION (default OFF): build the Rust-core offset law for this pane and the
         // main-actor closure that applies its offset to the renderer (+ optionally re-presents). When
         // the gate is off `reprojector`/`applyReprojection` stay nil ⇒ the pacer skips every reproject
@@ -270,6 +278,7 @@ final class VideoWindowPipeline {
             let r = ScrollReprojector(maxBand: maxBand, decaySeconds: decaySeconds)
             reprojector = r
             self.reprojector = r
+            reprojectionContentFps = contentFps
             applyReprojection = { offset in
                 // Main-confined: the pacer's tick runs on the display-link main run loop (see the
                 // renderCallback note), so the renderer (which is @MainActor) is safe to touch here.
@@ -404,6 +413,16 @@ final class VideoWindowPipeline {
                 // Adaptive playout: live jitter EWMA → the deadline pacer's auto-tuned buffer.
                 // Lock-guarded, no main hop; the pacer's cadence gate throttles the recompute.
                 pacer.notePlayoutJitter(jitterSeconds)
+            },
+            applyScrollOffset: { [weak self] dx, dy in
+                // Scroll reprojection (host-truth): hop to the main actor and feed the reprojector the
+                // host-MEASURED offset (replaces the local trackpad guess, which snapped badly).
+                Task { @MainActor in self?.applyHostScrollOffset(dx: dx, dy: dy) }
+            },
+            applyContentMask: { [weak self] rects in
+                // Transparency mask after a DIALOG-EXPAND region change: hop to main and hand the
+                // opaque-content rects to the renderer (it alpha-masks the black flank). Empty clears.
+                Task { @MainActor in self?.applyHostContentMask(rects) }
             },
         )
 
@@ -623,8 +642,32 @@ final class VideoWindowPipeline {
     /// platform scroll/momentum codes (`began/changed` ⇒ active, momentum `begin/continue` ⇒
     /// momentum, either `ended` ⇒ arm the decay). SIGN/GAIN are the HW-tunable visual-feel part; the
     /// headless guarantee is only that the feed is gated off by default.
-    private func feedReprojectionVelocity(dx: Double, dy: Double, scrollPhase: UInt8, momentumPhase: UInt8) {
+    /// SCROLL REPROJECTION (host-truth, 2026-06-16): apply a host-MEASURED per-frame scroll offset as
+    /// the reprojector's velocity, replacing the local trackpad GUESS (the guess snapped badly because
+    /// the host applies momentum/accel/clamping the client cannot know). `dx`/`dy` are signed
+    /// NORMALIZED shifts over ONE frame in ten-thousandths of the frame extent; velocity (norm/sec) =
+    /// norm-per-frame × contentFps. `(0, 0)` arms the decay (scroll stopped). No-op unless the feature
+    /// is on (`reprojector` nil). Main-confined.
+    /// Apply the host's opaque-content rect set to the renderer (transparency mask). The renderer
+    /// alpha-masks everything outside the rects so a popup overhanging the window floats over the
+    /// canvas instead of a black bar. An empty list clears the mask (whole frame opaque). The pacer
+    /// re-presents the last frame each vsync, so the mask applies live even on a static window.
+    func applyHostContentMask(_ rects: [MaskRect]) {
+        renderer?.contentMask = rects
+    }
+
+    func applyHostScrollOffset(dx: Int16, dy: Int16) {
         guard let reprojector else { return }
+        hostScrollOffsetActive = true // from now on the local trackpad guess is silenced
+        let normX = Double(dx) / 10000.0
+        let normY = Double(dy) / 10000.0
+        let fps = max(1.0, reprojectionContentFps)
+        let phase: ScrollReprojector.Phase = (dx != 0 || dy != 0) ? .active : .ended
+        reprojector.noteVelocity(vx: normX * fps, vy: normY * fps, phase: phase)
+    }
+
+    private func feedReprojectionVelocity(dx: Double, dy: Double, scrollPhase: UInt8, momentumPhase: UInt8) {
+        guard let reprojector, !hostScrollOffsetActive else { return }
         let phase = Self.reprojectionPhase(scrollPhase: scrollPhase, momentumPhase: momentumPhase)
         let now = FramePacer.currentHostTimeSeconds()
         // First event of a gesture (or after a long idle) has no Δt → carry zero velocity but still
@@ -855,7 +898,10 @@ final class VideoWindowPipeline {
         let stream = AsyncStream<@Sendable () async -> Void> { continuation in
             self.outboundContinuation = continuation
         }
-        outboundConsumer = Task { [weak self] in
+        // `.high` priority: the keypress/mouse → encode → UDP-send hop is tiny but latency-critical
+        // (P1 — input must feel instant), so it must not queue behind ambient pool/UI work. Mirrors the
+        // two inbound pumps (AislopdeskVideoHostSession / AislopdeskVideoClientSession), both `.high`.
+        outboundConsumer = Task(priority: .high) { [weak self] in
             for await action in stream {
                 if Task.isCancelled { break }
                 await action()

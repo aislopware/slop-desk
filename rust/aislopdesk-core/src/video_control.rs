@@ -25,6 +25,39 @@ pub struct WindowSummary {
     pub height: u16,
 }
 
+/// One opaque content rectangle in a [`VideoControlMessage::ContentMask`], in capture-local
+/// PIXEL coords (top-left origin, matching the decoded frame's texture space).
+///
+/// When the host DIALOG-EXPANDs the capture region to cover a pop-up / dialog overhanging the
+/// streamed window, the rectangular captured frame contains empty area (`SCStream` fills it
+/// black) flanking the popup. The host sends the set of rects that are REAL content (the
+/// window block + each popup) so the client masks everything else to alpha 0 — the popup then
+/// floats over the canvas instead of sitting in a black bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaskRect {
+    /// Left edge in capture pixels.
+    pub x: u16,
+    /// Top edge in capture pixels.
+    pub y: u16,
+    /// Width in capture pixels.
+    pub width: u16,
+    /// Height in capture pixels.
+    pub height: u16,
+}
+
+impl MaskRect {
+    /// Builds a mask rect.
+    #[must_use]
+    pub const fn new(x: u16, y: u16, width: u16, height: u16) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+}
+
 /// One host-side SYSTEM dialog/prompt in a [`VideoControlMessage::SystemDialogList`]
 /// response (e.g. a `SecurityAgent` password prompt).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +139,22 @@ pub enum VideoControlMessage {
     ListSystemDialogs,
     /// Host → client: the currently-open system dialogs.
     SystemDialogList(Vec<SystemDialogSummary>),
+    /// Host → client: the per-frame content scroll offset (pixels) the host measured between the
+    /// previous and current captured frames — drives client-side scroll reprojection (warp the last
+    /// frame by this on spare display ticks). Signed pixel shifts; `(0, 0)` = no confident scroll
+    /// this frame. Inert to an old peer (unknown type → dropped). Sent only while reprojection is on.
+    ScrollOffset {
+        /// Horizontal content shift in pixels (positive = content moved right). `0` for the v1 host.
+        dx: i16,
+        /// Vertical content shift in pixels (positive = content moved DOWN).
+        dy: i16,
+    },
+    /// Host → client: the opaque content sub-rectangles within the captured frame (capture PIXEL
+    /// coords). After a DIALOG-EXPAND, the rectangular frame has empty area flanking the popup;
+    /// this lists the rects that are real content (window block + popups) so the client masks the
+    /// rest transparent. An EMPTY list ⇒ the whole frame is opaque (the contracted / default
+    /// state). Sent on every capture-region change; inert to an old peer (unknown type → dropped).
+    ContentMask(Vec<MaskRect>),
 }
 
 impl VideoControlMessage {
@@ -125,13 +174,15 @@ impl VideoControlMessage {
             Self::StreamCadence { .. } => 10,
             Self::ListSystemDialogs => 11,
             Self::SystemDialogList(_) => 12,
+            Self::ScrollOffset { .. } => 13,
+            Self::ContentMask(_) => 14,
         }
     }
 
     /// Serialises the message. For list messages the CALLER must cap the list to fit one
     /// UDP datagram (control is not packetized); the count is truncated to `u16`.
     #[must_use]
-    #[allow(clippy::too_many_lines)] // one flat match over 12 wire variants reads clearest inline.
+    #[allow(clippy::too_many_lines)] // one flat match over all wire variants reads clearest inline.
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ByteWriter::new();
         w.put_u8(self.message_type());
@@ -194,6 +245,20 @@ impl VideoControlMessage {
                 }
             }
             Self::StreamCadence { fps } => w.put_u16(*fps),
+            Self::ScrollOffset { dx, dy } => {
+                // i16 → u16 is a bit-preserving reinterpret; the decoder casts back.
+                w.put_u16(dx.cast_unsigned());
+                w.put_u16(dy.cast_unsigned());
+            }
+            Self::ContentMask(rects) => {
+                w.put_u16(rects.len() as u16);
+                for rect in rects {
+                    w.put_u16(rect.x);
+                    w.put_u16(rect.y);
+                    w.put_u16(rect.width);
+                    w.put_u16(rect.height);
+                }
+            }
             Self::SystemDialogList(dialogs) => {
                 w.put_u16(dialogs.len() as u16);
                 for dialog in dialogs {
@@ -211,7 +276,7 @@ impl VideoControlMessage {
 
     /// Parses a control message. An unknown type byte is malformed; list records are read
     /// without pre-allocating against the untrusted count, so each short read fails fast.
-    #[allow(clippy::too_many_lines)] // one flat match over 12 wire variants reads clearest inline.
+    #[allow(clippy::too_many_lines)] // one flat match over all wire variants reads clearest inline.
     pub fn decode(data: &[u8]) -> Result<Self> {
         let mut r = ByteReader::new(data);
         let kind = r.read_u8()?;
@@ -289,6 +354,22 @@ impl VideoControlMessage {
             }
             9 => Ok(Self::FocusWindow),
             10 => Ok(Self::StreamCadence { fps: r.read_u16()? }),
+            13 => Ok(Self::ScrollOffset {
+                dx: r.read_u16()?.cast_signed(),
+                dy: r.read_u16()?.cast_signed(),
+            }),
+            14 => {
+                let count = r.read_u16()?;
+                let mut rects = Vec::new();
+                for _ in 0..count {
+                    let x = r.read_u16()?;
+                    let y = r.read_u16()?;
+                    let width = r.read_u16()?;
+                    let height = r.read_u16()?;
+                    rects.push(MaskRect::new(x, y, width, height));
+                }
+                Ok(Self::ContentMask(rects))
+            }
             11 => Ok(Self::ListSystemDialogs),
             12 => {
                 let count = r.read_u16()?;
@@ -356,6 +437,41 @@ mod tests {
         round_trip(&VideoControlMessage::FocusWindow);
         round_trip(&VideoControlMessage::StreamCadence { fps: 60 });
         round_trip(&VideoControlMessage::ListSystemDialogs);
+        round_trip(&VideoControlMessage::ScrollOffset { dx: -5, dy: 42 });
+        round_trip(&VideoControlMessage::ScrollOffset { dx: 0, dy: 0 });
+        round_trip(&VideoControlMessage::ScrollOffset {
+            dx: i16::MIN,
+            dy: i16::MAX,
+        });
+    }
+
+    #[test]
+    fn round_trips_content_mask() {
+        // Empty (contracted state) → whole frame opaque.
+        round_trip(&VideoControlMessage::ContentMask(vec![]));
+        // Window block + popup (real HW geometry, 2× pixels): window 2880×1800, menu overhang.
+        round_trip(&VideoControlMessage::ContentMask(vec![
+            MaskRect::new(0, 0, 2880, 1800),
+            MaskRect::new(96, 1406, 538, 172),
+        ]));
+        // Extremes survive the u16 round-trip.
+        round_trip(&VideoControlMessage::ContentMask(vec![MaskRect::new(
+            u16::MAX,
+            0,
+            u16::MAX,
+            1,
+        )]));
+    }
+
+    #[test]
+    fn bogus_content_mask_count_fails_fast_not_oom() {
+        // type 14, count = 65535, but no rects → truncated on the first rect read (no pre-alloc).
+        let mut bytes = vec![14u8];
+        bytes.extend_from_slice(&u16::MAX.to_be_bytes());
+        assert!(matches!(
+            VideoControlMessage::decode(&bytes),
+            Err(VideoProtocolError::Truncated)
+        ));
     }
 
     #[test]

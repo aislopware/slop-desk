@@ -64,6 +64,76 @@ public enum RustVideoHostFFI {
         )
     }
 
+    /// SCROLL REPROJECTION (2026-06-16): the dominant VERTICAL content shift (pixel rows) between two
+    /// locked NV12 luma planes (the previous + current captured frames), via the NEON per-row hasher +
+    /// the pure core estimator (`aisd_estimate_scroll_shift_nv12`). Returns `(shift, confidenceMilli)`
+    /// — `shift` positive = content moved DOWN; `confidenceMilli` ∈ 0…1000 (the caller gates on it).
+    /// Pointers are borrowed for the call only. `(0, 0)` on a null/degenerate input (never a crash).
+    static func estimateScrollShift(
+        prevY: UnsafeRawPointer,
+        prevStride: Int,
+        curY: UnsafeRawPointer,
+        curStride: Int,
+        width: Int,
+        height: Int,
+        maxShift: Int,
+    ) -> (shift: Int32, confidenceMilli: UInt32) {
+        var shift: Int32 = 0
+        var conf: UInt32 = 0
+        _ = aisd_estimate_scroll_shift_nv12(
+            prevY.assumingMemoryBound(to: UInt8.self),
+            prevStride,
+            curY.assumingMemoryBound(to: UInt8.self),
+            curStride,
+            width,
+            height,
+            maxShift,
+            &shift,
+            &conf,
+        )
+        return (shift, conf)
+    }
+
+    // A 1:1 mirror of the wide C ABI signature, hence the parameter count.
+    // swiftlint:disable function_parameter_count
+    /// ADAPTIVE QP (2026-06-16): the per-frame `MaxAllowedFrameQP` ceiling for "sharp on a small
+    /// change, blur graded by burst" — NEON per-row hash of both planes → changed-row fraction → the
+    /// pure core curve (`aisd_adaptive_frame_qp_nv12`). Returns `(qp, changeMilli)`: `qp` is the
+    /// ceiling to set on the live frame; `changeMilli` is the measured change fraction ×1000 (logging).
+    /// Pointers borrowed for the call only. On a degenerate input → `qp == qpMax` (no narrowing).
+    static func adaptiveFrameQP(
+        prevY: UnsafeRawPointer,
+        prevStride: Int,
+        curY: UnsafeRawPointer,
+        curStride: Int,
+        width: Int,
+        height: Int,
+        qpSharp: Int,
+        qpMax: Int,
+        bLoMilli: UInt32,
+        bHiMilli: UInt32,
+    ) -> (qp: Int, changeMilli: UInt32) {
+        var qp: UInt8 = 0
+        var chg: UInt32 = 0
+        _ = aisd_adaptive_frame_qp_nv12(
+            prevY.assumingMemoryBound(to: UInt8.self),
+            prevStride,
+            curY.assumingMemoryBound(to: UInt8.self),
+            curStride,
+            width,
+            height,
+            UInt8(clamping: qpSharp),
+            UInt8(clamping: qpMax),
+            bLoMilli,
+            bHiMilli,
+            &qp,
+            &chg,
+        )
+        return (Int(qp), chg)
+    }
+
+    // swiftlint:enable function_parameter_count
+
     // MARK: - window_placement (pure, flat-struct; HiDPI VD-park path)
 
     /// Clamp `windowSize` DOWN to `displayBounds` (never enlarge) and place it at the display's
@@ -171,6 +241,43 @@ public enum RustVideoHostFFI {
             )
         }
         return cgRect(out)
+    }
+
+    /// The OPAQUE content rectangles of the capture region (window frame + qualifying same-pid
+    /// popups), each clamped to the display — the per-rect form the client masks the black flank
+    /// with. Wraps `aisd_capture_content_rects` (caller-arena; capped at 16 rects, ample for a
+    /// window + nested menus). Returns the rects that fit (the total may exceed 16 only pathologically).
+    static func captureContentRects(
+        targetFrame: CGRect,
+        targetWindowID: UInt32,
+        targetPID: Int32,
+        windowsInFront: [CaptureWindow],
+        displayBounds: CGRect,
+        minOverlapFraction: Double = 0.30,
+    ) -> [CGRect] {
+        let cWindows = windowsInFront.map {
+            AisdCaptureWindowSnapshot(
+                window_id: $0.windowID,
+                owner_pid: $0.ownerPID,
+                layer: $0.layer,
+                frame: aisdRect($0.frame),
+            )
+        }
+        // Cap MUST match the client shader's `MetalVideoRenderer.maxMaskRects` (8): a rect the host
+        // sends past the client's loop bound would be masked transparent = real content disappears.
+        let cap = 8
+        var out = [AisdRect](repeating: AisdRect(x: 0, y: 0, width: 0, height: 0), count: cap)
+        let total = cWindows.withUnsafeBufferPointer { buf in
+            out.withUnsafeMutableBufferPointer { obuf in
+                aisd_capture_content_rects(
+                    aisdRect(targetFrame), targetWindowID, targetPID,
+                    buf.baseAddress, buf.count,
+                    aisdRect(displayBounds), minOverlapFraction,
+                    obuf.baseAddress, obuf.count,
+                )
+            }
+        }
+        return (0..<min(total, cap)).map { cgRect(out[$0]) }
     }
 
     /// Hysteresis gate: `true` if `desired` differs from `current` by more than `minDelta` on any

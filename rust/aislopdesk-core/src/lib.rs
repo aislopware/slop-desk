@@ -34,6 +34,7 @@
 
 pub mod adaptive_fec;
 pub mod adaptive_playout;
+pub mod adaptive_qp;
 pub mod bytes;
 pub mod capture_region;
 pub mod coordinate_mapping;
@@ -72,6 +73,7 @@ pub mod recovery_request_deduper;
 pub mod recovery_router;
 pub mod rs_matrix;
 pub mod scroll_reprojection;
+pub mod scroll_shift;
 pub mod seq;
 pub mod static_idr_decider;
 pub mod system_dialog_detector;

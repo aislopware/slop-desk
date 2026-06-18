@@ -115,6 +115,25 @@ public struct SystemDialogSummary: Equatable, Sendable {
     }
 }
 
+/// One opaque content rectangle in a ``VideoControlMessage/contentMask(_:)`` — capture PIXEL
+/// coords (top-left origin), the texture space the client's decoder produces. After the host
+/// DIALOG-EXPANDs the capture region to cover a pop-up overhanging the streamed window, the
+/// rectangular frame has empty area flanking the popup; the host lists the rects that are REAL
+/// content (the window block + each popup) so the client masks the rest transparent.
+public struct MaskRect: Equatable, Sendable {
+    public var x: UInt16
+    public var y: UInt16
+    public var width: UInt16
+    public var height: UInt16
+
+    public init(x: UInt16, y: UInt16, width: UInt16, height: UInt16) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
+}
+
 public enum VideoControlMessage: Equatable, Sendable {
     /// Client → host: open a session for `requestedWindowID`, sized to `viewport`.
     case hello(protocolVersion: UInt16, requestedWindowID: UInt32, viewport: VideoSize)
@@ -172,6 +191,18 @@ public enum VideoControlMessage: Equatable, Sendable {
     /// Host → client: the currently-open system dialogs, in response to ``listSystemDialogs``. The client
     /// streams each by sending a normal `hello` for its `windowID`.
     case systemDialogList([SystemDialogSummary])
+    /// Host → client: the per-frame content scroll offset (pixels) the host measured between captured
+    /// frames — drives client-side scroll reprojection (warp the last frame by this on spare 120 Hz
+    /// display ticks so editor scroll looks local). Signed pixel shifts; `(0, 0)` = no confident scroll
+    /// this frame. Sent only while reprojection is on; inert to an old peer (unknown type → dropped).
+    case scrollOffset(dx: Int16, dy: Int16)
+    /// Host → client: the opaque content sub-rectangles within the captured frame (capture PIXEL
+    /// coords). After a DIALOG-EXPAND the rectangular frame has empty area flanking the popup; this
+    /// lists the rects that are real content (window block + popups) so the client masks the rest
+    /// transparent (the popup floats over the canvas instead of a black bar). An EMPTY list ⇒ the
+    /// whole frame is opaque (the contracted / default state). Sent on every capture-region change;
+    /// inert to an old peer (unknown type → dropped).
+    case contentMask([MaskRect])
 
     public var messageType: UInt8 {
         switch self {
@@ -187,6 +218,8 @@ public enum VideoControlMessage: Equatable, Sendable {
         case .streamCadence: 10
         case .listSystemDialogs: 11
         case .systemDialogList: 12
+        case .scrollOffset: 13
+        case .contentMask: 14
         }
     }
 

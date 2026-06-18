@@ -38,11 +38,13 @@ struct VideoHostdArguments {
     var cursorPort: UInt16 = 9001
     var scale: Double = 1.0 // capture at window-points × scale PIXELS (1 = point-res/light; raise for sharper)
     var bitrateMbps: Int = 12 // live-encoder target bitrate (Mbps); raise for crisper text
-    var fps: Int = 60 // capture + encoder frame-rate cap; 60 = smooth scroll/motion, 30 = lighter
+    var fps: Int = 30 // encoder frame-rate cap (coding tool, not game stream); --fps 60 for smoother motion
     // Feature #1: create a HiDPI 2× virtual display and move each remoted window onto it, so the
     // window renders at REAL Retina backing (sharp text) instead of point-res-upscale on a 1× host.
-    // Env `AISLOPDESK_VD=1` is an A/B default; `--virtual-display` forces it on.
-    var virtualDisplay = false
+    // DEFAULT ON since the 2026-06-16 sharp-text reframe — it is the single biggest text-sharpness lever
+    // and was a silent footgun when a deploy forgot the flag. `--no-virtual-display` / `AISLOPDESK_VD=0`
+    // disables it (e.g. a headless/SSH run with no GUI session, where it would just fall back to 1×).
+    var virtualDisplay = true
     var vdPointWidth = 1920 // VD logical (point) size; windows larger than this are resized to fit
     var vdPointHeight = 1080
 
@@ -60,10 +62,13 @@ struct VideoHostdArguments {
           --bitrate N        live-encoder target bitrate in Mbps (default 12; higher = crisper text,
                              but the low-latency rate-control caps keyframe growth — for truly sharp
                              text raise --scale instead, or use an all-intra mode)
-          --fps N            capture + encoder frame-rate cap (default 60; 30 = lighter/less smooth)
-          --virtual-display  create a HiDPI 2× virtual display and move each remoted window onto it
-                             so it renders at REAL Retina backing (razor-sharp text) instead of a
-                             point-resolution upscale. Falls back to 1× if unavailable. (env AISLOPDESK_VD=1)
+          --fps N            encoder frame-rate cap (default 30 — a coding tool, not a game stream;
+                             pass 60 for smoother motion)
+          --virtual-display  force-create a HiDPI 2× virtual display (DEFAULT ON) and move each remoted
+                             window onto it so it renders at REAL Retina backing (razor-sharp text)
+                             instead of a point-resolution upscale. Falls back to 1× if unavailable.
+          --no-virtual-display  disable the virtual display (capture the real 1× display; softer text).
+                             Also via AISLOPDESK_VD=0.
           --vd-point-size WxH  virtual-display logical size in points (default 1920x1080 → 3840x2160 px)
 
         Needs Screen-Recording (capture) + Accessibility & Post-Event (input) TCC, and a
@@ -73,6 +78,7 @@ struct VideoHostdArguments {
 
     static func parse(_ argv: [String]) -> Self? {
         var a = Self()
+        var vdExplicit = false // an explicit --virtual-display / --no-virtual-display CLI flag wins over env
         var i = 1
         func next() -> String? { i + 1 < argv.count ? argv[i + 1] : nil }
         while i < argv.count {
@@ -107,7 +113,12 @@ struct VideoHostdArguments {
                 guard let v = next(), let n = Int(v), n >= 1, n <= 120 else { return nil }
                 a.fps = n
                 i += 1
-            case "--virtual-display": a.virtualDisplay = true
+            case "--virtual-display":
+                a.virtualDisplay = true
+                vdExplicit = true
+            case "--no-virtual-display":
+                a.virtualDisplay = false
+                vdExplicit = true
             case "--vd-point-size":
                 // Parse WxH (e.g. 1920x1080).
                 guard let v = next() else { return nil }
@@ -123,9 +134,12 @@ struct VideoHostdArguments {
             }
             i += 1
         }
-        // Env A/B default: AISLOPDESK_VD=1 enables the virtual display without a CLI flag (--virtual-display
-        // still forces it on regardless).
-        if ProcessInfo.processInfo.environment["AISLOPDESK_VD"] == "1" { a.virtualDisplay = true }
+        // Env override (only when no explicit CLI flag was given): AISLOPDESK_VD=0 disables the now-default
+        // virtual display (any other value keeps it on). A `--virtual-display`/`--no-virtual-display` flag
+        // always wins over the env.
+        if !vdExplicit, let vd = ProcessInfo.processInfo.environment["AISLOPDESK_VD"] {
+            a.virtualDisplay = (vd != "0")
+        }
         // The daemon ALWAYS runs the UDP-mux path: it mints a per-channel session from EACH client
         // hello's own windowID (the §2 asymmetry: two panes watch different windows over one shared
         // flow), so no fixed window arg is required (one may still be passed to validate at --list
@@ -195,12 +209,27 @@ func resolvePaneCapture(
         if liveVDID != 0 { log("mux: could not move window \(requestedWindowID) onto the VD — capturing at 1×") }
         return (fallbackScale, nil, nil)
     }
-    // Capture scale tracks the VD's REAL backing scale (single source of truth — no duplicated `2.0`).
+    // Capture scale tracks the VD's REAL backing scale (single source of truth — no duplicated `2.0`),
+    // unless AISLOPDESK_CAPTURE_SCALE forces a lower one: capturing at 1× DOWNSCALES the 2× VD render
+    // (supersampled — sharper text than a native-1× render) for a ~4× cheaper encode that sustains
+    // 60fps. The client re-sharpens (AISLOPDESK_SHARPEN). Trades pixel-perfect text for smoothness.
+    let vdScale = Double(max(1, liveVDScale))
     return (
-        Double(max(1, liveVDScale)),
+        resolveCaptureScaleOverride(vdScale: vdScale),
         VideoSize(width: Double(achieved.width), height: Double(achieved.height)),
         VideoSize(width: Double(vdPointWidth), height: Double(vdPointHeight)),
     )
+}
+
+/// Optional capture-scale override (`AISLOPDESK_CAPTURE_SCALE`), clamped to `[1, vdScale]`. Unset ⇒
+/// the VD's backing scale (today's 2×). Set to `1` ⇒ encode at 1× (downscaled from the 2× VD), the
+/// smoothness-over-sharpness lever measured to keep the HW encoder under the 60fps frame budget.
+@Sendable
+func resolveCaptureScaleOverride(vdScale: Double) -> Double {
+    guard let s = ProcessInfo.processInfo.environment["AISLOPDESK_CAPTURE_SCALE"],
+          let v = Double(s), v >= 1
+    else { return vdScale }
+    return min(vdScale, v)
 }
 
 // Live ScreenCaptureKit capture needs a window-server connection. A bare command-line binary
@@ -573,7 +602,7 @@ Task {
                     )
                 }
             } else {
-                log("virtual display unavailable — falling back to 1× real-display capture")
+                log("WARNING: virtual display unavailable — capturing 1×, text SOFT. Set AISLOPDESK_VD=0 to silence.")
             }
         }
 

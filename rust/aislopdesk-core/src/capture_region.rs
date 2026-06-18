@@ -11,7 +11,9 @@
 //! The association is by **owning process**: the open/save panel is attributed to the
 //! host app's own pid (HW-verified 2026-06-12: a Chrome file dialog enumerates as
 //! `pid==Chrome, layer==0, name=="Open"`). So a panel qualifies when it is a DIFFERENT
-//! window owned by the SAME pid, on the normal window layer (`0`), overlapping the target
+//! window owned by the SAME pid, on an *associatable* layer ([`is_associatable_layer`]:
+//! `0` for sheets/dialogs, `101` for pop-up / context menus — HW-verified 2026-06-17 a VS
+//! Code gear menu enumerates as `pid==Code, layer==101`), overlapping the target
 //! by ≥ `min_overlap_fraction` of the smaller rect's area. Plus a hysteresis gate for
 //! committing a region change ([`should_retarget`]) and the re-origin decision while a
 //! union region is active ([`should_reorigin_to_window_on_geometry`]).
@@ -33,6 +35,22 @@ pub const DEFAULT_MIN_OVERLAP_FRACTION: f64 = 0.30;
 /// Per-edge hysteresis threshold (points) for [`should_retarget`]. The Swift shell uses
 /// this as the default argument (`8`).
 pub const DEFAULT_MIN_DELTA: f64 = 8.0;
+
+/// Whether a CG window level counts as "attached" to the streamed window for capture-region
+/// expansion.
+///
+/// `0` (`kCGNormalWindowLevel`) — file/save/print sheets & dialogs the OS attributes to the
+/// app's own pid. `101` (`kCGPopUpMenuWindowLevel`) — pop-up / context / dropdown menus that
+/// render as a SEPARATE same-pid window and can overhang the streamed window (HW-measured
+/// 2026-06-17: VS Code's gear "Manage" menu enumerates at layer `101`).
+///
+/// DELIBERATELY excludes the menu bar (`24`), Dock (`20`), and tooltips / status windows
+/// (`25`): those are system chrome or transient — unioning them would drag the crop onto the
+/// top strip (menu bar) or churn the encoder open/closed on every hover (tooltips).
+#[must_use]
+pub const fn is_associatable_layer(layer: i64) -> bool {
+    layer == 0 || layer == 101
+}
 
 /// One on-screen window, as read from `CGWindowListCopyWindowInfo` (CG top-left points).
 /// The host shell marshals each `CGWindowList` row into this over the C ABI.
@@ -69,8 +87,9 @@ impl WindowSnapshot {
 /// dialog, or the dialog fits inside the window.
 ///
 /// A window qualifies as an attached panel when it is: a DIFFERENT window than the target,
-/// owned by `target_pid`, on the normal window layer (`0` — excludes the menu bar / Dock /
-/// backstop / tooltips at other levels), and overlapping the target by a meaningful
+/// owned by `target_pid`, on an associatable layer ([`is_associatable_layer`] — `0` sheets /
+/// dialogs, `101` pop-up menus; still excludes the menu bar / Dock / tooltips / status at
+/// other levels), and overlapping the target by a meaningful
 /// fraction (≥ `min_overlap_fraction` of the SMALLER rect's area — skips an incidental 1px
 /// edge touch from a sibling window). The whole panel frame joins the union even where it
 /// overhangs the window.
@@ -100,8 +119,12 @@ pub fn union_region(
             .unwrap_or(VideoRect::NULL);
     }
     for w in windows_in_front {
-        // `guard w.windowID != targetWindowID, w.ownerPID == targetPID, w.layer == 0 else { continue }`.
-        if w.window_id == target_window_id || w.owner_pid != target_pid || w.layer != 0 {
+        // `guard w.windowID != targetWindowID, w.ownerPID == targetPID,
+        //        isAssociatableLayer(w.layer) else { continue }`.
+        if w.window_id == target_window_id
+            || w.owner_pid != target_pid
+            || !is_associatable_layer(w.layer)
+        {
             continue;
         }
         // `let inter = w.frame.intersection(targetFrame); guard !inter.isNull else { continue }`
@@ -133,6 +156,63 @@ pub fn union_region(
             .intersection(&display_bounds)
             .unwrap_or(VideoRect::NULL)
     })
+}
+
+/// The list of OPAQUE content rectangles within the capture region: the target window frame
+/// followed by each qualifying associated panel/popup, every rect clamped to `display_bounds`.
+///
+/// Same qualification rule as [`union_region`] (different window, same `target_pid`, associatable
+/// layer, overlap ≥ `min_overlap_fraction`). Where [`union_region`] returns the bounding box,
+/// this returns the INDIVIDUAL rects so the client can mask the empty area BETWEEN them (the
+/// black flank beside a narrow popup) to transparent — the union bounding box alone can't express
+/// that hole. Front-to-back order, target first. A rect whose clamp to the display is null is
+/// dropped; an empty result means nothing is on the display.
+#[must_use]
+pub fn content_rects(
+    target_frame: VideoRect,
+    target_window_id: u32,
+    target_pid: i32,
+    windows_in_front: &[WindowSnapshot],
+    display_bounds: VideoRect,
+    min_overlap_fraction: f64,
+) -> Vec<VideoRect> {
+    let mut rects = Vec::new();
+    if let Some(clamped) = target_frame.intersection(&display_bounds) {
+        rects.push(clamped);
+    }
+    let target_area = target_frame.width() * target_frame.height();
+    // Mirror union_region's NaN-skips-guard semantics: with a zero/NaN target area no popup
+    // qualifies (the overlap fraction is undefined), so return just the target.
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
+    if !(target_area > 0.0) {
+        return rects;
+    }
+    for w in windows_in_front {
+        if w.window_id == target_window_id
+            || w.owner_pid != target_pid
+            || !is_associatable_layer(w.layer)
+        {
+            continue;
+        }
+        let Some(inter) = w.frame.intersection(&target_frame) else {
+            continue;
+        };
+        let inter_area = inter.width() * inter.height();
+        let w_area = w.frame.width() * w.frame.height();
+        let smaller_area = if w_area < target_area {
+            w_area
+        } else {
+            target_area
+        };
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        if !(smaller_area > 0.0) || !(inter_area / smaller_area >= min_overlap_fraction) {
+            continue;
+        }
+        if let Some(clamped) = w.frame.intersection(&display_bounds) {
+            rects.push(clamped);
+        }
+    }
+    rects
 }
 
 /// Hysteresis gate for committing a region change.
@@ -247,7 +327,10 @@ mod tests {
         assert_eq!(out, TARGET);
     }
 
-    /// `testNonZeroLayerIgnored`: non-zero layers (menu bar, Dock, tooltips) are excluded.
+    /// `testNonZeroLayerIgnored` (golden vector `nonZeroLayer`): a tooltip / status window at
+    /// layer `25` is NOT an associatable layer → excluded (would otherwise churn the encoder
+    /// on every hover). Layer 101 (pop-up menus) IS associatable — see
+    /// [`popup_menu_layer_101_expands_union`].
     #[test]
     fn non_zero_layer_ignored() {
         let tooltip = WindowSnapshot::new(99, PID, 25, r(100.0, 100.0, 900.0, 700.0));
@@ -260,6 +343,89 @@ mod tests {
             DEFAULT_MIN_OVERLAP_FRACTION,
         );
         assert_eq!(out, TARGET);
+    }
+
+    /// A pop-up / context menu (layer `101`) overhanging the streamed window expands the union
+    /// so the overhang is captured instead of cropped. EXACT HW measurement (2026-06-17):
+    /// VS Code window `[0,30 1440x900]`, gear menu `[48,733 269x283]` (layer 101, same pid),
+    /// display 1920×1080. The menu overlaps the window ~70% (passes the 0.30 area gate); only
+    /// the old `layer != 0` filter excluded it. With `layer == 0` (pre-fix) the menu is
+    /// skipped → union == TARGET (height 900) and the test FAILS — proving the fix is live.
+    #[test]
+    fn popup_menu_layer_101_expands_union() {
+        let window = r(0.0, 30.0, 1440.0, 900.0);
+        let display = r(0.0, 0.0, 1920.0, 1080.0);
+        let menu = WindowSnapshot::new(4215, PID, 101, r(48.0, 733.0, 269.0, 283.0));
+        let out = union_region(
+            window,
+            983,
+            PID,
+            &[menu],
+            display,
+            DEFAULT_MIN_OVERLAP_FRACTION,
+        );
+        // union: x[0,1440] y[30,1016] = (0,30,1440,986); fits the 1080-tall display.
+        assert_eq!(out, r(0.0, 30.0, 1440.0, 986.0));
+    }
+
+    /// The menu bar (layer `24`), even same-pid and overlapping, is NOT associatable → excluded
+    /// (otherwise a top-anchored window would drag the crop up onto the system menu strip).
+    #[test]
+    fn menu_bar_layer_24_ignored() {
+        let menu_bar = WindowSnapshot::new(7, PID, 24, r(0.0, 100.0, 1920.0, 400.0));
+        let out = union_region(
+            TARGET,
+            TARGET_WID,
+            PID,
+            &[menu_bar],
+            DISPLAY,
+            DEFAULT_MIN_OVERLAP_FRACTION,
+        );
+        assert_eq!(out, TARGET);
+    }
+
+    /// `content_rects` returns [window, popup] individually (not the bounding box) so the client
+    /// can mask the black flank beside the narrow popup. Real HW geometry (2026-06-17).
+    #[test]
+    fn content_rects_lists_window_then_popup() {
+        let window = r(0.0, 30.0, 1440.0, 900.0);
+        let display = r(0.0, 0.0, 1920.0, 1080.0);
+        let menu = WindowSnapshot::new(4215, PID, 101, r(48.0, 733.0, 269.0, 283.0));
+        let out = content_rects(
+            window,
+            983,
+            PID,
+            &[menu],
+            display,
+            DEFAULT_MIN_OVERLAP_FRACTION,
+        );
+        assert_eq!(out, vec![window, r(48.0, 733.0, 269.0, 283.0)]);
+    }
+
+    /// No qualifying popup → just the window frame (clamped). A non-associatable layer is dropped.
+    #[test]
+    fn content_rects_excludes_non_associatable_layer() {
+        let tooltip = WindowSnapshot::new(99, PID, 25, r(100.0, 100.0, 900.0, 700.0));
+        let out = content_rects(
+            TARGET,
+            TARGET_WID,
+            PID,
+            &[tooltip],
+            DISPLAY,
+            DEFAULT_MIN_OVERLAP_FRACTION,
+        );
+        assert_eq!(out, vec![TARGET]);
+    }
+
+    /// `is_associatable_layer` accepts only `{0, 101}`; the chrome levels stay out.
+    #[test]
+    fn associatable_layer_set() {
+        assert!(is_associatable_layer(0)); // normal / dialogs & sheets
+        assert!(is_associatable_layer(101)); // kCGPopUpMenuWindowLevel
+        assert!(!is_associatable_layer(20)); // Dock
+        assert!(!is_associatable_layer(24)); // menu bar
+        assert!(!is_associatable_layer(25)); // tooltip / status
+        assert!(!is_associatable_layer(3)); // floating
     }
 
     /// `testSliverOverlapIgnored`: an incidental sliver below the fraction is ignored.

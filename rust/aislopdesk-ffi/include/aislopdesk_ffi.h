@@ -346,6 +346,16 @@
 #define AISD_VIDEO_CONTROL_SYSTEM_DIALOG_LIST 12
 
 /*
+ [`VideoControlMessage::ScrollOffset`] discriminator.
+ */
+#define AISD_VIDEO_CONTROL_SCROLL_OFFSET 13
+
+/*
+ [`VideoControlMessage::ContentMask`] discriminator.
+ */
+#define AISD_VIDEO_CONTROL_CONTENT_MASK 14
+
+/*
  [`MuxDecision::Route`] discriminant — route to the lane (channel id echoes the caller's input).
  */
 #define AISD_MUX_DECISION_ROUTE 0
@@ -1289,14 +1299,38 @@ typedef struct AisdVideoSummary {
 } AisdVideoSummary;
 
 /*
+ One opaque content rectangle (capture PIXEL coords) — the element type of the `ContentMask`
+ rect array. Plain POD (no owned buffers), so the array needs no per-element free.
+ */
+typedef struct AisdMaskRect {
+    /*
+     Left edge in capture pixels.
+     */
+    uint16_t x;
+    /*
+     Top edge in capture pixels.
+     */
+    uint16_t y;
+    /*
+     Width in capture pixels.
+     */
+    uint16_t width;
+    /*
+     Height in capture pixels.
+     */
+    uint16_t height;
+} AisdMaskRect;
+
+/*
  A PATH-2 video control message, flattened for the C ABI.
 
  `kind` (`AISD_VIDEO_CONTROL_*`) selects which fields are meaningful; unused numeric fields are
  `0` and the record array is empty (`records` null, `records_len` 0). Field usage:
  `HELLO` → `protocol_version`/`requested_window_id`/`viewport_*`; `HELLO_ACK` → `accepted`/
  `stream_id`/`capture_*`/`full_range`/`bounds_*`; `RESIZE_REQUEST` → `desired_*`/`epoch`;
- `RESIZE_ACK` → `capture_*`/`epoch`; `STREAM_CADENCE` → `fps`; `WINDOW_LIST` /
- `SYSTEM_DIALOG_LIST` → `records`/`records_len`; the zero-body kinds use none. On a decode `out`
+ `RESIZE_ACK` → `capture_*`/`epoch`; `STREAM_CADENCE` → `fps`; `SCROLL_OFFSET` → `scroll_dx`/`scroll_dy`; `WINDOW_LIST` /
+ `SYSTEM_DIALOG_LIST` → `records`/`records_len`; `CONTENT_MASK` → `mask_rects`/`mask_rects_len`;
+ the zero-body kinds use none. On a decode `out`
  the `records` array owns a Rust allocation (released by [`aisd_video_control_free`]); on an
  encode input it is a borrowed `(records, records_len)` the library copies and never frees.
  Field order MUST match the C header's `AisdVideoControl`.
@@ -1375,6 +1409,14 @@ typedef struct AisdVideoControl {
      */
     uint16_t fps;
     /*
+     `SCROLL_OFFSET.dx` — horizontal content shift in pixels (signed; `0` for the v1 host).
+     */
+    int16_t scroll_dx;
+    /*
+     `SCROLL_OFFSET.dy` — vertical content shift in pixels (signed; positive = content moved DOWN).
+     */
+    int16_t scroll_dy;
+    /*
      `WINDOW_LIST` / `SYSTEM_DIALOG_LIST` record array (owned out / borrowed in; null otherwise).
      */
     struct AisdVideoSummary *records;
@@ -1382,6 +1424,14 @@ typedef struct AisdVideoControl {
      Number of records at `records`.
      */
     size_t records_len;
+    /*
+     `CONTENT_MASK` rect array (owned out / borrowed in; null otherwise).
+     */
+    struct AisdMaskRect *mask_rects;
+    /*
+     Number of rects at `mask_rects`.
+     */
+    size_t mask_rects_len;
 } AisdVideoControl;
 
 /*
@@ -1791,6 +1841,33 @@ struct AisdRect aisd_capture_union_region(struct AisdRect target_frame,
                                           size_t windows_count,
                                           struct AisdRect display_bounds,
                                           double min_overlap_fraction);
+
+/*
+ The OPAQUE content rectangles of the capture region (window frame + qualifying popups).
+
+ The target window frame + each qualifying same-pid popup in front of it, every rect clamped to
+ the display. Wraps [`capture_region::content_rects`] — the per-rect form the client masks the
+ black flank with.
+
+ CALLER-ARENA: fills up to `out_cap` rects into the caller-owned `out_rects` buffer and returns
+ the TOTAL count (so the caller can tell it was truncated). The caller reads
+ `min(returned, out_cap)` rects; nothing is heap-allocated or needs freeing. `windows_in_front`
+ is borrowed for the call only. Pass [`capture_region::DEFAULT_MIN_OVERLAP_FRACTION`] (`0.30`).
+
+ # Safety
+ If `windows_count != 0`, `windows_in_front` must point to `windows_count` readable
+ [`AisdCaptureWindowSnapshot`] values; if `out_cap != 0`, `out_rects` must point to `out_cap`
+ writable [`AisdRect`] values.
+ */
+size_t aisd_capture_content_rects(struct AisdRect target_frame,
+                                  uint32_t target_window_id,
+                                  int32_t target_pid,
+                                  const struct AisdCaptureWindowSnapshot *windows_in_front,
+                                  size_t windows_count,
+                                  struct AisdRect display_bounds,
+                                  double min_overlap_fraction,
+                                  struct AisdRect *out_rects,
+                                  size_t out_cap);
 
 /*
  Hysteresis gate for capture retargeting.
@@ -2761,6 +2838,68 @@ void aisd_scroll_reprojector_note_real_frame(struct AisdScrollReprojector *repro
  `reprojector`, if non-null, must be a live handle.
  */
 void aisd_scroll_reprojector_reset(struct AisdScrollReprojector *reprojector);
+
+/*
+ Estimates the dominant VERTICAL content shift (in pixel rows) between two NV12 luma planes — the
+ host-side scroll measurement that drives client reprojection.
+
+ `prev_y` / `cur_y` are two same-dimensioned luma planes (the previous and current captured
+ frames); `prev_stride` / `cur_stride` their byte strides; `width` / `height` the visible luma
+ size in pixels; `max_shift` bounds the search (rows). On [`AISD_OK`], `*out_shift` is the dominant
+ shift (positive = content moved DOWN: row `i` now equals the previous frame's row `i - shift`)
+ and `*out_confidence_milli` is the match fraction ×1000 (`0..=1000`). The CALLER gates (e.g. fire
+ only when `confidence_milli >= 500 && shift != 0`).
+
+ Returns [`AISD_ERR_NULL`] for a null pointer. A degenerate dimension (`width`/`height` 0, a
+ `stride < width`, or a `stride * height` overflow) yields [`AISD_OK`] with shift 0 / confidence 0
+ — a non-fault "no measurement". Never panics across the boundary.
+
+ # Safety
+ `prev_y` / `cur_y` must each point to at least `stride * height` readable, initialized bytes that
+ stay valid for the call (borrowed — never retained or freed). `out_shift` /
+ `out_confidence_milli` must be writable. No input pointer is ever written through.
+ */
+AisdStatus aisd_estimate_scroll_shift_nv12(const uint8_t *prev_y,
+                                           size_t prev_stride,
+                                           const uint8_t *cur_y,
+                                           size_t cur_stride,
+                                           size_t width,
+                                           size_t height,
+                                           size_t max_shift,
+                                           int32_t *out_shift,
+                                           uint32_t *out_confidence_milli);
+
+/*
+ Adaptive per-frame QP ceiling from the inter-frame change magnitude.
+
+ NEON per-row hash + the pure [`changed_fraction`] / [`adaptive_max_qp`] core laws — drives "sharp
+ on a small change, blur graded by burst" (`AISLOPDESK_ADAPTIVE_QP`). The host calls this every
+ `.complete` frame with the previous (`cachedPixelBuffer`) and current luma planes and sets the
+ returned QP as the live frame's `MaxAllowedFrameQP` ceiling.
+
+ `qp_sharp` (low/sharp end, ≤ `qp_max`), `qp_max` (the configured live ceiling), and the band
+ `[b_lo_milli, b_hi_milli]` (change-fraction thresholds ×1000) parameterise the curve. On
+ [`AISD_OK`], `*out_qp` is the ceiling to apply and `*out_change_milli` the measured change
+ fraction ×1000 (for logging/telemetry). A null pointer ⇒ [`AISD_ERR_NULL`]; a degenerate/absurd
+ dimension or stride overflow ⇒ [`AISD_OK`] with `qp = qp_max` (no adaptive narrowing — the safe
+ "use the static ceiling" fallback) and `change = 0`. Never panics across the boundary.
+
+ # Safety
+ `prev_y` / `cur_y` must each cover ≥ `stride * height` readable bytes valid for the call
+ (borrowed, never retained/freed); `out_qp` / `out_change_milli` must be writable.
+ */
+AisdStatus aisd_adaptive_frame_qp_nv12(const uint8_t *prev_y,
+                                       size_t prev_stride,
+                                       const uint8_t *cur_y,
+                                       size_t cur_stride,
+                                       size_t width,
+                                       size_t height,
+                                       uint8_t qp_sharp,
+                                       uint8_t qp_max,
+                                       uint32_t b_lo_milli,
+                                       uint32_t b_hi_milli,
+                                       uint8_t *out_qp,
+                                       uint32_t *out_change_milli);
 
 /*
  Creates a static-IDR decider. Destroy it with [`aisd_static_idr_decider_free`].

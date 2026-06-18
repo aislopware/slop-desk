@@ -67,6 +67,52 @@ public final class MetalVideoRenderer {
     /// per-frame coefficient uniform values differ, so no shader recompile is needed.
     public var colorRange: ColorRange = .video
 
+    /// CONTENT MASK (transparency, 2026-06-17): the opaque-content rects (capture PIXELS, top-left)
+    /// the host sent after a DIALOG-EXPAND region change — the window block + each popup. The
+    /// fragment shader masks every sample OUTSIDE these rects to alpha 0, so a popup overhanging the
+    /// window floats over the canvas instead of sitting in a black bar. EMPTY ⇒ no mask (whole frame
+    /// opaque, the default). Setting it toggles `metalLayer.isOpaque` so the alpha actually
+    /// composites; the pacer re-presents the last frame each vsync, so it applies live on a static
+    /// window. Capped at ``maxMaskRects`` (a window + nested menus never need more).
+    public var contentMask: [MaskRect] = [] {
+        didSet { metalLayer.isOpaque = contentMask.isEmpty }
+    }
+
+    /// Max opaque rects the shader loop handles (window + a few nested menus). Extra rects are
+    /// dropped — the overflow would fall back to transparent, never wrong-opaque.
+    static let maxMaskRects = 8
+
+    /// Unsharp-mask strength on the LUMA channel (`AISLOPDESK_SHARPEN`, default 0 = off). When the host
+    /// streams 1× (downscaled, for smoothness — `AISLOPDESK_CAPTURE_SCALE=1`) the upscaled text reads
+    /// soft; a luma unsharp pass crisps the edges back up (text = luma edges; chroma/images left
+    /// alone). It ENHANCES perceived sharpness, it cannot reconstruct the detail lost at 1×. Typical
+    /// 0.4–1.0; live-tunable since it's read per-render. `0` ⇒ byte-identical to before (no sharpen).
+    static let sharpenStrength: Float = {
+        guard let s = ProcessInfo.processInfo.environment["AISLOPDESK_SHARPEN"], let v = Float(s), v > 0
+        else { return 0 }
+        return min(4, v)
+    }()
+
+    /// How far the sharpen may OVERSHOOT the local [min,max] (`AISLOPDESK_SHARPEN_PUNCH`, 0…1, default 1).
+    /// `0` = pure RCAS (clamp to the local neighbourhood, ringing-free but gentle). `1` = clamp only to
+    /// [0,1] (classic unsharp — crisper/punchier, allows controlled halos). In between blends the two,
+    /// so it's a live "how aggressive" dial on top of `AISLOPDESK_SHARPEN`'s strength.
+    static let sharpenPunch: Float = {
+        guard let s = ProcessInfo.processInfo.environment["AISLOPDESK_SHARPEN_PUNCH"], let v = Float(s)
+        else { return 1 }
+        return min(1, max(0, v))
+    }()
+
+    /// Extra sharpen in DARK regions (`AISLOPDESK_SHARPEN_DARK`, default 0). Dark-mode text (light strokes
+    /// on a dark bg) softens more — thin strokes anti-alias to mid-grey at 1× and the eye is fussier about
+    /// edges on dark. This scales the luma sharpen by `1 + dark·(1 − localMean)`, so a dark neighbourhood
+    /// gets up to `(1+dark)×` the boost while bright areas are untouched. Live-tunable; 0 = uniform.
+    static let sharpenDark: Float = {
+        guard let s = ProcessInfo.processInfo.environment["AISLOPDESK_SHARPEN_DARK"], let v = Float(s), v > 0
+        else { return 0 }
+        return min(4, v)
+    }()
+
     public init?(metalLayer: CAMetalLayer) {
         guard let device = metalLayer.device ?? MTLCreateSystemDefaultDevice(),
               let commandQueue = device.makeCommandQueue()
@@ -171,7 +217,11 @@ public final class MetalVideoRenderer {
         let passDescriptor = MTLRenderPassDescriptor()
         passDescriptor.colorAttachments[0].texture = drawable.texture
         passDescriptor.colorAttachments[0].loadAction = .clear
-        passDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        // Clear alpha 0 while a content mask is active so uncovered area (letterbox bars + the masked
+        // flank the shader discards) is TRANSPARENT, not an opaque black bar; opaque black otherwise
+        // (the prior default — byte-identical when no mask).
+        let clearAlpha = contentMask.isEmpty ? 1.0 : 0.0
+        passDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: clearAlpha)
         passDescriptor.colorAttachments[0].storeAction = .store
 
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
@@ -244,6 +294,44 @@ public final class MetalVideoRenderer {
         // edge revealed by the shift) to black.
         var reproj = reprojectionOffset
         encoder.setFragmentBytes(&reproj, length: MemoryLayout<SIMD2<Float>>.size, index: 2)
+        // CONTENT MASK: normalize each opaque rect (capture pixels) to sample-UV space [0,1] using the
+        // decoded frame size, then hand the shader the rect list + count. The shader keeps a fragment
+        // OPAQUE only when its sampled UV is inside one of these rects; everything else → alpha 0. The
+        // mask test uses the SAME (zoom/pan/reproj-adjusted) UV the texture is sampled at, so the mask
+        // tracks zoom/pan. Empty list ⇒ count 0 ⇒ the shader leaves every fragment opaque.
+        var maskRects = [SIMD4<Float>]()
+        if !contentMask.isEmpty, width > 0, height > 0 {
+            let fw = Float(width), fh = Float(height)
+            for r in contentMask.prefix(Self.maxMaskRects) {
+                let x0 = Float(r.x) / fw, y0 = Float(r.y) / fh
+                let x1 = Float(UInt32(r.x) + UInt32(r.width)) / fw
+                let y1 = Float(UInt32(r.y) + UInt32(r.height)) / fh
+                maskRects.append(SIMD4<Float>(x0, y0, x1, y1))
+            }
+        }
+        var maskCount = Int32(maskRects.count)
+        encoder.setFragmentBytes(&maskCount, length: MemoryLayout<Int32>.size, index: 4)
+        // Unsharp-mask strength (luma); 0 ⇒ shader skips the pass = byte-identical output.
+        var sharpen = Self.sharpenStrength
+        encoder.setFragmentBytes(&sharpen, length: MemoryLayout<Float>.size, index: 5)
+        // Overshoot/punch dial (0=RCAS clamp to local [min,max], 1=naive clamp to [0,1]).
+        var punch = Self.sharpenPunch
+        encoder.setFragmentBytes(&punch, length: MemoryLayout<Float>.size, index: 6)
+        // Dark-region sharpen boost (dark-mode text legibility).
+        var dark = Self.sharpenDark
+        encoder.setFragmentBytes(&dark, length: MemoryLayout<Float>.size, index: 7)
+        // Luma texel size (1/decoded-size), hoisted OUT of the per-fragment sharpen loop (was recomputed
+        // via get_width()/reciprocal per pixel). Chroma texel = 2× this (4:2:0 half-res).
+        var lumaTexel = SIMD2<Float>(width > 0 ? 1.0 / Float(width) : 0, height > 0 ? 1.0 / Float(height) : 0)
+        encoder.setFragmentBytes(&lumaTexel, length: MemoryLayout<SIMD2<Float>>.stride, index: 8)
+        if maskRects.isEmpty {
+            var dummy = SIMD4<Float>(0, 0, 0, 0) // keep buffer(3) bound (validation) though count 0 skips it
+            encoder.setFragmentBytes(&dummy, length: MemoryLayout<SIMD4<Float>>.stride, index: 3)
+        } else {
+            maskRects.withUnsafeBytes { raw in
+                if let base = raw.baseAddress { encoder.setFragmentBytes(base, length: raw.count, index: 3) }
+            }
+        }
         // WF-6 (#8): the YCbCr→RGB coefficients for the negotiated luma range, from the single pure
         // source of truth (YCbCrConversion). For `.video` these are exactly the prior hardcoded shader
         // literals → byte-identical GPU input on the default-OFF path. Only luma scale/bias differ for
@@ -343,23 +431,64 @@ public final class MetalVideoRenderer {
                                          texture2d<float> chromaTex [[texture(1)]],
                                          constant float4 &zoomPan [[buffer(0)]],
                                          constant YCbCrCoeffs &coeffs [[buffer(1)]],
-                                         constant float2 &reprojOffset [[buffer(2)]]) {
+                                         constant float2 &reprojOffset [[buffer(2)]],
+                                         constant float4 *maskRects [[buffer(3)]],
+                                         constant int &maskCount [[buffer(4)]],
+                                         constant float &sharpen [[buffer(5)]],
+                                         constant float &punch [[buffer(6)]],
+                                         constant float &dark [[buffer(7)]],
+                                         constant float2 &lumaTexel [[buffer(8)]]) {
         constexpr sampler s(filter::linear, address::clamp_to_edge);
         // zoomPan = (invZoom, panX, panY, _): crop the sampled UV around the panned centre.
         float2 uv = (in.uv - 0.5) * zoomPan.x + 0.5 + float2(zoomPan.y, zoomPan.z);
-        // SCROLL-HINT REPROJECTION: shift the sampled coordinate by the integrated scroll offset so
-        // the last frame translates between real codec frames. reprojOffset is (0,0) when the feature
-        // is off ⇒ uv unchanged ⇒ identical output. A sample that now falls OUTSIDE the texture (the
-        // newly-revealed disocclusion edge) returns BLACK instead of clamp_to_edge's smeared border.
-        // The clamp-to-black is GATED on a non-zero offset: when the feature is off (and only then)
-        // the branch is skipped entirely, so a zoom+max-pan UV that rounds to exactly the texture
-        // edge samples via clamp_to_edge byte-for-byte as before — true OFF-path identity.
+        // SCROLL REPROJECTION: shift the sampled coordinate by the integrated scroll offset so the last
+        // frame translates between codec frames. reprojOffset is (0,0) when the feature is off ⇒ uv
+        // unchanged ⇒ byte-identical output. The newly-revealed disocclusion edge now samples via the
+        // sampler's clamp_to_edge (the editor's near-uniform background row ≈ invisible) rather than hard
+        // BLACK — the black gutter was the single most objectionable scroll artifact (2026-06-16 reframe).
         uv += reprojOffset;
-        if (any(reprojOffset != 0.0) && (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)) {
-            return float4(0.0, 0.0, 0.0, 1.0);
-        }
         float y = lumaTex.sample(s, uv).r;
+        // UNSHARP MASK on luma (text = luma edges): crisp the upscaled 1× stream back up. Adds
+        // amount·(center − avg of 4 source-texel neighbours) to the centre luma. sharpen 0 ⇒ skipped
+        // ⇒ byte-identical. Chroma untouched, so images/colours are not over-sharpened.
+        if (sharpen > 0.0) {
+            float2 tx = lumaTexel; // hoisted draw-uniform (was 1.0/get_width per fragment)
+            float up = lumaTex.sample(s, uv + float2(0.0, -tx.y)).r;
+            float dn = lumaTex.sample(s, uv + float2(0.0,  tx.y)).r;
+            float lf = lumaTex.sample(s, uv + float2(-tx.x, 0.0)).r;
+            float rt = lumaTex.sample(s, uv + float2( tx.x, 0.0)).r;
+            // DARK-region boost: scale the luma sharpen up where the neighbourhood is dark (dark-mode
+            // light-on-dark text softens most). `dark`=0 ⇒ uniform. localMean doubles as the unsharp blur.
+            float localMean = 0.25 * (up + dn + lf + rt);
+            float effSharpen = sharpen * (1.0 + dark * (1.0 - localMean));
+            float sharpened = y + effSharpen * (y - localMean);
+            // RCAS-family RINGING LIMITER (2026-06-17, from the client-text-SR research): clamp the
+            // sharpened luma to the LOCAL 5-tap [min,max] so it can never overshoot the neighbourhood
+            // → no halos/ringing around high-contrast glyph or HEVC-block edges (the failure mode of a
+            // plain clamp-to-[0,1] unsharp). Same cost (reuses the 4 taps); steepens edges, invents nothing.
+            float mn = min(y, min(min(up, dn), min(lf, rt)));
+            float mx = max(y, max(max(up, dn), max(lf, rt)));
+            // PUNCH widens the limiter from the local [mn,mx] (ringing-free) toward [0,1] (crisp/punchy).
+            y = clamp(sharpened, mix(mn, 0.0, punch), mix(mx, 1.0, punch));
+        }
         float2 cbcr = chromaTex.sample(s, uv).rg;
+        // UNSHARP on CHROMA too: black text is a luma edge (sharpened above), but SYNTAX HIGHLIGHTING /
+        // dark-mode colour is a CHROMA edge — and chroma is 4:2:0 (half-res) so colour bleeds at glyph
+        // edges. Sharpening Cb/Cr around the neutral 0.5 tightens the colour transition → coloured text
+        // crisper (bounded by the half-res source — 4:4:4 would be the full fix). Same `sharpen` knob.
+        if (sharpen > 0.0) {
+            float2 ctx = lumaTexel * 2.0; // chroma is 4:2:0 half-res → 2× the luma texel
+            float2 cu = chromaTex.sample(s, uv + float2(0.0, -ctx.y)).rg;
+            float2 cd = chromaTex.sample(s, uv + float2(0.0,  ctx.y)).rg;
+            float2 cl = chromaTex.sample(s, uv + float2(-ctx.x, 0.0)).rg;
+            float2 crt = chromaTex.sample(s, uv + float2( ctx.x, 0.0)).rg;
+            float2 csharp = cbcr + sharpen * (cbcr - 0.25 * (cu + cd + cl + crt));
+            // Same RCAS-family local-[min,max] clamp per chroma channel → tightens the colour edge of
+            // syntax/dark-mode text with no colour-ringing/fringe beyond the existing local extremes.
+            float2 cmn = min(cbcr, min(min(cu, cd), min(cl, crt)));
+            float2 cmx = max(cbcr, max(max(cu, cd), max(cl, crt)));
+            cbcr = clamp(csharp, mix(cmn, float2(0.0), punch), mix(cmx, float2(1.0), punch));
+        }
         // BT.709 YCbCr -> RGB, coefficient-driven (WF-6 #8). For .video the values are the prior
         // hardcoded literals (lumaScale 255/219, lumaBias 16/255, chromaBias 128/255, crToR 1.5748,
         // cbToG 0.1873, crToG 0.4681, cbToB 1.8556) -> identical output. .full changes ONLY luma.
@@ -371,7 +500,26 @@ public final class MetalVideoRenderer {
         float r = yy + crToR * cr;
         float g = yy - cbToG * cb - crToG * cr;
         float b = yy + cbToB * cb;
-        return float4(r, g, b, 1.0);
+        // CONTENT MASK (transparency): when the host sent opaque-content rects, keep this fragment
+        // opaque ONLY if its sampled UV lies inside one of them; otherwise alpha 0 so the empty area
+        // flanking a popup shows the canvas instead of a black bar. maskCount 0 ⇒ no mask (opaque).
+        // Tested against `uv` (post zoom/pan/reproj) so the mask tracks the content under transforms.
+        float alpha = 1.0;
+        if (maskCount > 0) {
+            // A fragment stays opaque only if its sampled point is inside one content rect (window or
+            // popup, from the host's real `capture_region` rects); everything else (the empty area
+            // flanking a narrow popup) → alpha 0 = transparent. Rectangular test: the rounded corners
+            // of a window/menu leave a small black sliver — an accepted cosmetic edge, not masked
+            // (rounding them needs either a guessed radius or HEVC-with-alpha, both rejected). uv is
+            // post zoom/pan/reproj so the mask tracks the content under transforms.
+            bool inside = false;
+            for (int i = 0; i < maskCount; i++) {
+                float4 m = maskRects[i]; // (x0, y0, x1, y1) normalized
+                if (uv.x >= m.x && uv.x < m.z && uv.y >= m.y && uv.y < m.w) { inside = true; break; }
+            }
+            alpha = inside ? 1.0 : 0.0;
+        }
+        return float4(r * alpha, g * alpha, b * alpha, alpha);
     }
     """
 }

@@ -206,10 +206,13 @@ public struct VideoSessionStateMachine: Sendable {
         case .listWindows,
              .windowList,
              .listSystemDialogs,
-             .systemDialogList:
+             .systemDialogList,
+             .scrollOffset,
+             .contentMask:
             // Window-list AND system-dialog-list discovery are answered at the DAEMON level (session-less,
             // no capture mint) and never reach a session's state machine — defensive no-op here.
-            // `windowList`/`systemDialogList` are host→client and never arrive at the host at all.
+            // `windowList`/`systemDialogList`/`scrollOffset`/`contentMask` are host→client and never
+            // arrive at the host.
             return []
         }
     }
@@ -476,18 +479,58 @@ public struct InputMotionCoalescer: Sendable {
     /// change is a flush boundary, because a `.mouseDrag` carries a held button + clickState
     /// the host posts as `*MouseDragged`, while a `.mouseMove` is a bare hover `*MouseMoved` —
     /// collapsing across the boundary would drop the transition the target app needs.
-    private enum MotionClass: Equatable { case move, drag }
+    /// A coalescible run key. Move/drag never merge (a class change is a flush boundary, see below).
+    /// SCROLL (only when `coalesceScroll`) is keyed by its phase signature so a `began`/`ended`
+    /// singleton never merges into the `changed`/`momentum-continue` BULK run — only same-phase
+    /// consecutive scroll events merge, by SUMMING their (additive) deltas.
+    private enum RunKey: Equatable {
+        case move
+        case drag
+        case scroll(phase: UInt8, momentum: UInt8, continuous: Bool)
+    }
 
-    private static func motionClass(of event: InputEvent) -> MotionClass? {
+    private static func runKey(of event: InputEvent, coalesceScroll: Bool) -> RunKey? {
         switch event {
         case .mouseMove: .move
         case .mouseDrag: .drag
+        case let .scroll(_, _, _, scrollPhase, momentumPhase, continuous, _):
+            // SCROLL COALESCING (2026-06-17): a fast trackpad scroll + its OS momentum coast is a
+            // ~200/s event flood; uncoalesced, each becomes one synchronous `CGEvent.post` →
+            // WindowServer saturation → SCStream capture stalls (the measured 61ms capture-gap /
+            // 1210ms send-gap → the reversal hitch). Parsec/Sunshine (and macOS itself) downsample
+            // scroll to the refresh rate. When enabled, scroll becomes a coalescible class; OFF ⇒
+            // `nil` ⇒ scroll stays a hard barrier (byte-identical to the pre-fix behaviour).
+            coalesceScroll
+                ? .scroll(phase: scrollPhase, momentum: momentumPhase, continuous: continuous)
+                : nil
         case .mouseDown,
              .mouseUp,
-             .scroll,
              .key,
              .text: nil
         }
+    }
+
+    /// Merge the current run's `pending` with the next same-key event. Move/drag keep the LATEST
+    /// (absolute pointer position — older positions are superseded). Scroll SUMS dx/dy (scroll
+    /// deltas are ADDITIVE, so summing preserves total travel) while keeping the newest cursor
+    /// position + tag and the shared phase. This is the only safe scroll collapse: keep-latest
+    /// would silently drop scrolled distance.
+    private static func mergeRun(_ pending: InputEvent, _ next: InputEvent, key: RunKey) -> InputEvent {
+        if case .scroll = key,
+           case let .scroll(dx1, dy1, _, scrollPhase, momentumPhase, continuous, _) = pending,
+           case let .scroll(dx2, dy2, norm2, _, _, _, tag2) = next
+        {
+            return .scroll(
+                dx: dx1 + dx2,
+                dy: dy1 + dy2,
+                normalized: norm2,
+                scrollPhase: scrollPhase,
+                momentumPhase: momentumPhase,
+                continuous: continuous,
+                tag: tag2,
+            )
+        }
+        return next // move/drag: keep the latest position
     }
 
     /// Collapse consecutive same-class motion runs in `batch` to their latest, preserving the
@@ -498,31 +541,33 @@ public struct InputMotionCoalescer: Sendable {
     /// flushes BEFORE it, so a move that physically preceded a click is never emitted after the
     /// click. That keeps down→drag→up framing, ``InputButtonBalance``, and the stateless-drag
     /// contract intact (every down/up still reaches the injector exactly once, in order).
-    public static func coalesce(_ batch: [InputEvent]) -> [InputEvent] {
+    /// `coalesceScroll` (default false ⇒ byte-identical legacy behaviour) additionally collapses
+    /// consecutive same-phase SCROLL runs by summing their deltas (the scroll-flood fix).
+    public static func coalesce(_ batch: [InputEvent], coalesceScroll: Bool = false) -> [InputEvent] {
         guard batch.count > 1 else { return batch }
         var output: [InputEvent] = []
         output.reserveCapacity(batch.count)
-        var pending: InputEvent? // the latest buffered motion event in the current run
-        var pendingClass: MotionClass? // its class (nil ⇔ pending is nil)
+        var pending: InputEvent? // the buffered (latest move/drag, or summed scroll) event in the run
+        var pendingKey: RunKey? // its run key (nil ⇔ pending is nil)
         for event in batch {
-            if let cls = motionClass(of: event) {
-                if cls == pendingClass {
-                    pending = event // same run: keep only the latest
+            if let key = runKey(of: event, coalesceScroll: coalesceScroll) {
+                if key == pendingKey, let p = pending {
+                    pending = mergeRun(p, event, key: key) // same run: keep-latest (motion) or sum (scroll)
                 } else {
-                    if let p = pending { output.append(p) } // class change: flush the old run
+                    if let p = pending { output.append(p) } // class/phase change: flush the old run
                     pending = event
-                    pendingClass = cls
+                    pendingKey = key
                 }
             } else {
                 // Barrier: flush any buffered motion FIRST (order-preserving), then the barrier.
                 if let p = pending { output.append(p)
                     pending = nil
-                    pendingClass = nil
+                    pendingKey = nil
                 }
                 output.append(event)
             }
         }
-        if let p = pending { output.append(p) } // trailing motion run
+        if let p = pending { output.append(p) } // trailing motion/scroll run
         return output
     }
 }
@@ -813,6 +858,13 @@ public struct VideoSendScheduler: Sendable {
     /// a client on a lossless link can decode without waiting for parity (doc 17 §3.6).
     public func scheduleFrame(_ fragments: [FrameFragment]) -> [Outgoing] {
         fragments.map { Outgoing(channel: .video, bytes: $0.encode()) }
+    }
+
+    /// Send-path fast path: wrap already-finished wire datagrams (from ``VideoPacketizer/packetizeRaw``)
+    /// as `.video` outgoings WITHOUT the parse/re-encode round-trip. Same `.video` channel + byte order
+    /// as ``scheduleFrame``; the datagram bytes are byte-identical to `fragment.encode()` (unit-pinned).
+    public func scheduleFrameRaw(_ datagrams: [Data]) -> [Outgoing] {
+        datagrams.map { Outgoing(channel: .video, bytes: $0) }
     }
 
     /// Schedules a geometry update on the geometry channel.

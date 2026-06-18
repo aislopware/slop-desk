@@ -182,6 +182,37 @@ final class VideoClientStateMachineTests: XCTestCase {
         XCTAssertEqual(stopped.state, .stopped)
     }
 
+    // MARK: Content mask — host→client transparency rects
+
+    func testContentMaskWhileStreamingEmitsApplyContentMask() {
+        var sm = makeSM()
+        _ = sm.start()
+        _ = sm.handleControl(.helloAck(
+            accepted: true,
+            streamID: 1,
+            captureWidth: 800,
+            captureHeight: 600,
+            windowBoundsCG: VideoRect(x: 0, y: 0, width: 800, height: 600),
+            fullRange: false,
+        ))
+        let rects = [
+            MaskRect(x: 0, y: 0, width: 800, height: 600),
+            MaskRect(x: 10, y: 590, width: 100, height: 80),
+        ]
+        XCTAssertEqual(sm.handleControl(.contentMask(rects)), [.applyContentMask(rects)])
+        XCTAssertEqual(sm.state, .streaming, "a content mask does not change session state")
+        // An empty mask (contract → clear) still emits the effect so the renderer drops the mask.
+        XCTAssertEqual(sm.handleControl(.contentMask([])), [.applyContentMask([])])
+    }
+
+    func testContentMaskIgnoredWhenNotStreaming() {
+        // While connecting (pre-streaming) a stray content mask is inert.
+        var sm = makeSM()
+        _ = sm.start()
+        XCTAssertEqual(sm.state, .connecting)
+        XCTAssertTrue(sm.handleControl(.contentMask([MaskRect(x: 0, y: 0, width: 1, height: 1)])).isEmpty)
+    }
+
     func testResizeRequestNeverActedOnByClient() {
         // The client never RECEIVES a resizeRequest (host→client only is resizeAck) — defensive.
         var sm = makeSM()

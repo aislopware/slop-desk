@@ -272,6 +272,30 @@ final class RustCodecWireVectorTests: XCTestCase {
         XCTAssertEqual(try VideoControlMessage.decode(Data(dialogExpected)), dialogList)
     }
 
+    /// `contentMask` (type 14): `[type][count u16][per rect: x,y,w,h u16]`. A hand-computed vector
+    /// independently verifies the POD rect-array marshaling across the FFI (field order), which a
+    /// round-trip alone could miss if two fields were swapped symmetrically. The empty mask (the
+    /// contracted/default state, whole frame opaque) is `[type][count=0]`.
+    func testVideoControlContentMaskWireVector() throws {
+        let mask = VideoControlMessage.contentMask([
+            MaskRect(x: 0, y: 0, width: 2880, height: 1800),
+            MaskRect(x: 96, y: 1406, width: 538, height: 566),
+        ])
+        let expected: [UInt8] = [
+            0x0E, // type = contentMask
+            0x00, 0x02, // count = 2
+            0x00, 0x00, 0x00, 0x00, 0x0B, 0x40, 0x07, 0x08, // (0, 0, 2880, 1800)
+            0x00, 0x60, 0x05, 0x7E, 0x02, 0x1A, 0x02, 0x36, // (96, 1406, 538, 566)
+        ]
+        XCTAssertEqual(Array(mask.encode()), expected)
+        XCTAssertEqual(try VideoControlMessage.decode(Data(expected)), mask)
+
+        let empty = VideoControlMessage.contentMask([])
+        let emptyExpected: [UInt8] = [0x0E, 0x00, 0x00]
+        XCTAssertEqual(Array(empty.encode()), emptyExpected)
+        XCTAssertEqual(try VideoControlMessage.decode(Data(emptyExpected)), empty)
+    }
+
     // MARK: fuzz — arbitrary bytes must never crash the Rust-backed decoders.
 
     func testDecodersNeverCrashOnRandomBytes() {

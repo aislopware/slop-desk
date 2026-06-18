@@ -37,6 +37,9 @@ excluded:
   # Validation harness: a closed-loop test instrument (not shipped product), test-adjacent
   # like the Tests tree — its scaffolding/size is by design, so don't strict-lint it.
   - Sources/aislopdesk-loopback-validate
+  # Capture-cadence + latency diagnostic instruments (not shipped product) — same rationale as above.
+  - Sources/aislopdesk-capture-probe
+  - Sources/aislopdesk-fake-client
 
 disabled_rules:
   # ---- SwiftFormat owns formatting (don't let SwiftLint fight the formatter) ----

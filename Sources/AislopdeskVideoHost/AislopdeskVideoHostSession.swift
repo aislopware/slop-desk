@@ -129,6 +129,79 @@ public actor AislopdeskVideoHostSession {
         return 12_000_000
     }()
 
+    /// CONGESTION BACKPRESSURE (2026-06-17). The paced ``VideoSendLane`` is an unbounded FIFO: under a
+    /// sustained scroll burst (or a direction-reversal frame) the encoder produces 60fps faster than the
+    /// lane drains, the queue grows without bound, and end-to-end latency bloats to seconds (HW-measured
+    /// RTT 1475ms / client hold 2547ms on a 10ms link — the "chậm/khựng" that env-tuning could never fix,
+    /// because no rate-limit on a deep-buffered path triggers a loss-based backoff until the buffer is
+    /// already huge). The fix is the real-time discipline a streamer needs and Parsec has: when the lane
+    /// is backed up, DROP rather than queue. Specifically — when ``VideoSendLane/depth`` exceeds
+    /// ``backpressureDepth``, SKIP feeding the encoder (drop the capture frame BEFORE encode → the
+    /// encoder's P-frame reference chain stays intact, so the client never sees a decode break, unlike
+    /// dropping already-queued frames). fps gracefully dips-and-recovers under bursts; latency stays
+    /// bounded to ≈`depth` frame intervals. A frame carrying a forced obligation (keyframe / crisp /
+    /// compact / LTR-refresh) ALWAYS passes — those are recovery/sharpness anchors, never droppable.
+    /// DEFAULT ON; `AISLOPDESK_BACKPRESSURE=0` disables (reverts to the unbounded FIFO).
+    /// `AISLOPDESK_BACKPRESSURE_DEPTH` overrides the threshold (clamp 1…30).
+    private static let backpressureEnabled =
+        ProcessInfo.processInfo.environment["AISLOPDESK_BACKPRESSURE"] != "0"
+    private static let backpressureDepth: Int = {
+        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_BACKPRESSURE_DEPTH"], let v = Int(s) {
+            return min(30, max(1, v))
+        }
+        return 3
+    }()
+
+    /// SCROLL COALESCING (2026-06-17). A fast trackpad scroll + its OS momentum coast is a ~200/s
+    /// event flood; each delta was injected as its own synchronous `CGEvent.post` (the coalescer
+    /// treated `.scroll` as a non-mergeable barrier — only mouse-move collapsed). HW-measured: the
+    /// flood saturates the WindowServer → SCStream capture STALLS (61ms capture-gap / 1210ms
+    /// send-gap interleaved with the inject burst) → the scroll/reversal hitch + jerky host-side
+    /// scroll, the dominant "kém xa Parsec" gap once the send path was fixed. When ON, the drain
+    /// coalesces consecutive same-phase scroll deltas by SUMMING them → one smooth phased post per
+    /// drain (≈ refresh rate, what Parsec/Sunshine and macOS itself do), preserving total travel.
+    /// DEFAULT ON; `AISLOPDESK_SCROLL_COALESCE=0` reverts to the per-delta barrier (for A/B).
+    private static let scrollCoalesceEnabled =
+        ProcessInfo.processInfo.environment["AISLOPDESK_SCROLL_COALESCE"] != "0"
+
+    /// Minimum wall-clock interval between injected (summed) scroll events when coalescing is on.
+    /// The inbound datagrams are drained one-at-a-time (interleaved with recovery acks), so a pure
+    /// per-batch collapse never engages — this TIME GATE holds a delta accumulator ACROSS drains
+    /// and posts at most one summed scroll per interval (default 16ms ≈ 60/s = the refresh rate the
+    /// WindowServer downsamples to anyway), cutting the ~200/s `CGEvent.post` flood ~3-4×.
+    /// `AISLOPDESK_SCROLL_INJECT_MS` overrides (clamp 4…50).
+    private static let scrollInjectInterval: Double = {
+        if let s = ProcessInfo.processInfo.environment["AISLOPDESK_SCROLL_INJECT_MS"], let v = Double(s),
+           v >= 4, v <= 50 { return v / 1000.0 }
+        return 1.0 / 60.0
+    }()
+
+    /// Only the high-frequency CONTINUOUS phases accumulate: `scrollPhase == changed(2)` (finger drag)
+    /// or `momentumPhase == continue(2)` (inertial coast). began/ended/begin/end and discrete wheel
+    /// (phase 0) are gesture boundaries — injected immediately (after flushing any accumulator) so the
+    /// gesture structure + total travel are exact.
+    static func isCoalescableScrollPhase(scrollPhase: UInt8, momentumPhase: UInt8) -> Bool {
+        scrollPhase == 2 || momentumPhase == 2
+    }
+
+    /// PURE (unit-tested): should this captured frame be SKIPPED for congestion backpressure? Skip iff
+    /// backpressure is enabled, the lane is backed up beyond `depthThreshold`, AND the frame carries no
+    /// forced obligation. A forced keyframe/crisp/compact/LTR-refresh is a recovery or sharpness anchor
+    /// and must always reach the encoder — only ordinary live deltas are droppable.
+    static func backpressureSkip(
+        enabled: Bool,
+        laneDepth: Int,
+        depthThreshold: Int,
+        forceKeyframe: Bool,
+        crisp: Bool,
+        compact: Bool,
+        ltrRefresh: Bool,
+    ) -> Bool {
+        guard enabled else { return false }
+        if forceKeyframe || crisp || compact || ltrRefresh { return false }
+        return laneDepth > depthThreshold
+    }
+
     /// FPS GOVERNOR (2026-06-11) — regular-cadence content/congestion-adaptive fps, the successor
     /// of the retired `AdaptiveFPSController` (whose alternating skip delivered irregular
     /// 16.7/33.3 ms intervals = the PRIMARY cadence khựng; deleted with `AISLOPDESK_ADAPTIVE_FPS`).
@@ -380,7 +453,18 @@ public actor AislopdeskVideoHostSession {
     private let packetizer: VideoPacketizer
 
     // Live components, created on accept (never in a test).
-    private var capturer: WindowCapturer?
+    private var capturer: WindowCapturer? {
+        didSet {
+            // SCROLL REPROJECTION: wire every freshly-installed capturer to forward its host-measured
+            // per-frame scroll offset as a `ScrollOffset` control message. Set on EVERY (re)build —
+            // initial start, resize, encoder rebuild — so reprojection survives them. The capturer only
+            // measures + calls this when AISLOPDESK_SCROLL_REPROJECT=1, so this is inert otherwise.
+            capturer?.onScrollOffset = { [weak self] dx, dy in
+                Task { await self?.sendScrollOffset(dx: dx, dy: dy) }
+            }
+        }
+    }
+
     private var encoder: VideoEncoder?
     private var geometryWatcher: WindowGeometryWatcher?
     private var cursorSampler: CursorSampler?
@@ -400,6 +484,9 @@ public actor AislopdeskVideoHostSession {
     private var captureRegionEpoch: UInt32 = 1 << 24
     /// Re-entrancy guard so overlapping union polls can't launch concurrent region rebuilds.
     private var captureRegionRebuilding = false
+    /// Debounce timer for contracting the capture region back to the window frame (flicker cut — a
+    /// quick menu open→close must not rebuild the encoder twice). Cancelled by a fresh expand.
+    private var pendingContractTask: Task<Void, Never>?
     /// Feature gate: default ON when display-anchored (VD-parked); `AISLOPDESK_DIALOG_EXPAND=0` disables.
     static let dialogExpandEnabled = ProcessInfo.processInfo.environment["AISLOPDESK_DIALOG_EXPAND"] != "0"
 
@@ -462,7 +549,7 @@ public actor AislopdeskVideoHostSession {
         captureSizeOverride: VideoSize? = nil,
         resizePointLimit: VideoSize? = nil,
         bitrate: Int = VideoEncoder.bitrateBitsPerSecond,
-        fps: Int = 60,
+        fps: Int = 30,
     ) {
         self.window = window
         self.transport = transport
@@ -584,15 +671,32 @@ public actor AislopdeskVideoHostSession {
     /// recovery datagram is a flush BOUNDARY — the pending input run injects first (in arrival
     /// order), then the boundary is handled — so down/up/key ordering and ``InputButtonBalance``
     /// are never disturbed.
+    /// LATENCY (2026-06-18, debug-only): host-relative ms of the latest key/button-DOWN inject, for the
+    /// "i2h" (input→encoded) segment logged in ``onEncodedFrame``. Set ONLY under `debugStderr`; 0 ⇒ none
+    /// pending, so the i2h log is naturally debug-gated. Actor-isolated (set here, read in onEncodedFrame).
+    private var lastInputRxMs: UInt32 = 0
+
     private func receiveBatch(_ batch: [(VideoChannel, Data)]) async {
         var inputRun: [InputEvent] = []
+        var sawKeyOrButtonDown = false
         for (channel, data) in batch {
             switch channel {
             case .input:
                 // Gate on streaming (matches `InputDatagramRouter.route`) and decode here so the
                 // run can be coalesced. A malformed datagram is dropped, never crashes the receiver.
                 guard stateMachine.mediaFlowing else { continue }
-                do { try inputRun.append(InputEvent.decode(data)) } catch {
+                do {
+                    let event = try InputEvent.decode(data)
+                    // i2h: note a real key/mouse DOWN (NOT move/scroll/up) so the input→encoded segment is
+                    // keyed off the input that changes the screen + scroll bursts can't overwrite it.
+                    // Checked across the WHOLE batch (a down may inject mid-batch via the control/recovery arms).
+                    switch event {
+                    case .mouseDown,
+                         .key(_, true, _, _): sawKeyOrButtonDown = true
+                    default: break
+                    }
+                    inputRun.append(event)
+                } catch {
                     log.error("dropping input datagram: undecodable")
                 }
             case .control:
@@ -613,6 +717,33 @@ public actor AislopdeskVideoHostSession {
             }
         }
         await injectCoalesced(inputRun)
+        // i2h (debug-only): stamp the inject time of the latest key/button-down so `onEncodedFrame` logs the
+        // inject→encoded segment of input-to-photon. Same `hostRelativeMillis` clock as sendTs/RTT.
+        if Self.debugStderr, sawKeyOrButtonDown { lastInputRxMs = hostRelativeMillis() }
+    }
+
+    // SCROLL-COALESCE accumulator (time-gated, held ACROSS drains — see `scrollInjectInterval`).
+    // Sums continuous-phase scroll deltas; flushed (one summed CGEvent) at most once per interval,
+    // on any gesture boundary / non-scroll event, or at the end of a drain run.
+    private var scrollAccumDx: Double = 0
+    private var scrollAccumDy: Double = 0
+    private var scrollAccumTemplate: InputEvent? // newest phase/normalized/tag for the summed inject
+    private var lastScrollInjectUptime: Double = 0
+
+    /// Inject the accumulated (summed) scroll as one event, then clear the accumulator. No-op when
+    /// nothing is buffered. Preserves total scroll travel (deltas are additive).
+    private func flushPendingScroll() async {
+        guard case let .scroll(_, _, norm, scrollPhase, momentumPhase, continuous, tag) = scrollAccumTemplate
+        else { return }
+        let summed = InputEvent.scroll(
+            dx: scrollAccumDx, dy: scrollAccumDy, normalized: norm,
+            scrollPhase: scrollPhase, momentumPhase: momentumPhase, continuous: continuous, tag: tag,
+        )
+        scrollAccumDx = 0
+        scrollAccumDy = 0
+        scrollAccumTemplate = nil
+        let raiseFirst = InputDatagramRouter.raiseFirst(for: summed, needsRaise: inputNeedsRaise)
+        await inject(summed, raiseFirst: raiseFirst)
     }
 
     /// Collapses an arrival-ordered run of input events to its coalesced form and injects each,
@@ -620,11 +751,43 @@ public actor AislopdeskVideoHostSession {
     /// + focuses first (`alwaysRaises`), a coalesced motion run never does, and `inputNeedsRaise`
     /// is advanced between events (mouse-up re-arms it). Motion is the only class collapsed, so
     /// the raise/button-balance semantics for every down/up are byte-identical to the un-batched path.
+    ///
+    /// SCROLL COALESCING (2026-06-17): continuous-phase scroll deltas are SUMMED into a time-gated
+    /// accumulator (held across drains) and posted ≤ once per `scrollInjectInterval`, ending the
+    /// ~200/s `CGEvent` flood that saturated the WindowServer → SCStream capture stalls. A gesture
+    /// boundary (began/ended/wheel) or any non-scroll event flushes the accumulator FIRST, in order.
     private func injectCoalesced(_ run: [InputEvent]) async {
         guard !run.isEmpty else { return }
-        for event in InputMotionCoalescer.coalesce(run) {
+        for event in InputMotionCoalescer.coalesce(run, coalesceScroll: Self.scrollCoalesceEnabled) {
+            if Self.scrollCoalesceEnabled,
+               case let .scroll(dx, dy, norm, scrollPhase, momentumPhase, continuous, tag) = event,
+               Self.isCoalescableScrollPhase(scrollPhase: scrollPhase, momentumPhase: momentumPhase)
+            {
+                scrollAccumDx += dx
+                scrollAccumDy += dy
+                scrollAccumTemplate = .scroll(
+                    dx: 0, dy: 0, normalized: norm,
+                    scrollPhase: scrollPhase, momentumPhase: momentumPhase, continuous: continuous, tag: tag,
+                )
+                let now = ProcessInfo.processInfo.systemUptime
+                if now - lastScrollInjectUptime >= Self.scrollInjectInterval {
+                    lastScrollInjectUptime = now
+                    await flushPendingScroll()
+                }
+                continue
+            }
+            // Gesture boundary / non-scroll: flush any accumulated scroll FIRST (order-preserving).
+            await flushPendingScroll()
             let raiseFirst = InputDatagramRouter.raiseFirst(for: event, needsRaise: inputNeedsRaise)
             await inject(event, raiseFirst: raiseFirst)
+        }
+        // Trailing flush: if continuous scroll ended this run without a boundary event, don't strand
+        // the residual past the gate — but only flush when the gate has elapsed (else hold for the
+        // next drain to keep the ≤1/interval cap; the next scroll or a boundary will flush it).
+        let now = ProcessInfo.processInfo.systemUptime
+        if scrollAccumTemplate != nil, now - lastScrollInjectUptime >= Self.scrollInjectInterval {
+            lastScrollInjectUptime = now
+            await flushPendingScroll()
         }
     }
 
@@ -1045,6 +1208,15 @@ public actor AislopdeskVideoHostSession {
         }
     }
 
+    /// SCROLL REPROJECTION: send the host-measured per-frame scroll offset (normalized ×10000, signed)
+    /// to the client as a `ScrollOffset` control message. Fire-and-forget UDP (a single send, not
+    /// dup'd — it is a per-frame stream); a lost hint just costs one reproject frame (self-corrects on
+    /// the next real frame). No-op once the media flow has stopped.
+    func sendScrollOffset(dx: Int16, dy: Int16) {
+        guard stateMachine.mediaFlowing else { return }
+        transport.send(scheduler.scheduleControl(.scrollOffset(dx: dx, dy: dy)).bytes, on: .control)
+    }
+
     /// WF-8 self-audit fix: invalidate the LTR acked-set + frame map whenever a FRESH encoder /
     /// `VTCompressionSession` is installed (initial bring-up + both resize rebuild paths — the
     /// WF-8 counterpart of ``seedCongestionController``, called at the SAME install sites so the
@@ -1127,6 +1299,7 @@ public actor AislopdeskVideoHostSession {
             crisp: Bool,
             compact: Bool,
             ltrRefresh: Bool,
+            perFrameMaxQP: Int?,
             log: Logger,
         ) {
             lock.lock()
@@ -1145,7 +1318,12 @@ public actor AislopdeskVideoHostSession {
                 } else if compact {
                     try enc.encodeCompactKeyframe(pixelBuffer: pixelBuffer, presentationTime: pts)
                 } else {
-                    try enc.encodeLive(pixelBuffer: pixelBuffer, presentationTime: pts, forceKeyframe: forceKeyframe)
+                    try enc.encodeLive(
+                        pixelBuffer: pixelBuffer,
+                        presentationTime: pts,
+                        forceKeyframe: forceKeyframe,
+                        perFrameMaxQP: perFrameMaxQP,
+                    )
                 }
             } catch {
                 log.error("live encode failed: \(String(describing: error))")
@@ -1321,7 +1499,7 @@ public actor AislopdeskVideoHostSession {
             captureScale: captureScale,
             fullRange: Self.fullRange,
             preferDisplayAnchored: true, // low-latency default (see WindowCapturer.preferDisplayAnchored)
-        ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
+        ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh, perFrameMaxQP in
             newBox.encode(
                 pixelBuffer: pixelBuffer,
                 pts: pts,
@@ -1329,6 +1507,7 @@ public actor AislopdeskVideoHostSession {
                 crisp: crisp,
                 compact: compact,
                 ltrRefresh: ltrRefresh,
+                perFrameMaxQP: perFrameMaxQP,
                 log: logCallback,
             )
         }
@@ -1512,7 +1691,7 @@ public actor AislopdeskVideoHostSession {
             captureScale: captureScale,
             fullRange: Self.fullRange,
             preferDisplayAnchored: true, // low-latency default (see WindowCapturer.preferDisplayAnchored)
-        ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
+        ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh, perFrameMaxQP in
             do {
                 if ltrRefresh {
                     try rebuiltEncoder.encodeLiveLTRRefresh(pixelBuffer: pixelBuffer, presentationTime: pts)
@@ -1525,6 +1704,7 @@ public actor AislopdeskVideoHostSession {
                         pixelBuffer: pixelBuffer,
                         presentationTime: pts,
                         forceKeyframe: forceKeyframe,
+                        perFrameMaxQP: perFrameMaxQP,
                     )
                 }
             } catch {
@@ -1625,12 +1805,32 @@ public actor AislopdeskVideoHostSession {
         // `@unchecked Sendable` and thread-safe for `encodeLive`. The encoded OUTPUT is
         // what hops back to the actor (`onEncodedFrame`) to packetize + send.
         let logCallback = log
+        // CONGESTION BACKPRESSURE: capture the (thread-safe `.depth`) send-lane reference so the
+        // capture-queue closure can drop a delta BEFORE encode when the lane is backed up — bounding
+        // end-to-end latency under scroll bursts (see `backpressureSkip`). nil ⇒ no lane ⇒ never skips.
+        let backpressureLane = sendLane
         let capturer = WindowCapturer(
             fps: fps,
             captureScale: captureScale,
             fullRange: Self.fullRange,
             preferDisplayAnchored: true, // low-latency default (see WindowCapturer.preferDisplayAnchored)
-        ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
+        ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh, perFrameMaxQP in
+            if let lane = backpressureLane, Self.backpressureSkip(
+                enabled: Self.backpressureEnabled,
+                laneDepth: lane.depth,
+                depthThreshold: Self.backpressureDepth,
+                forceKeyframe: forceKeyframe,
+                crisp: crisp,
+                compact: compact,
+                ltrRefresh: ltrRefresh,
+            ) {
+                if Self
+                    .debugStderr
+                {
+                    logCallback.notice("backpressure skip: lane depth \(lane.depth) > \(Self.backpressureDepth)")
+                }
+                return // drop this delta before encode — the P-chain stays intact, latency bounded
+            }
             encoderBox.encode(
                 pixelBuffer: pixelBuffer,
                 pts: pts,
@@ -1638,6 +1838,7 @@ public actor AislopdeskVideoHostSession {
                 crisp: crisp,
                 compact: compact,
                 ltrRefresh: ltrRefresh,
+                perFrameMaxQP: perFrameMaxQP,
                 log: logCallback,
             )
         }
@@ -1659,9 +1860,9 @@ public actor AislopdeskVideoHostSession {
         dialogExpandArmed = (captureSizeOverride != nil) && Self.dialogExpandEnabled
         captureRegionGlobal = nil // a fresh/reused session starts captured at the plain window frame
         if dialogExpandArmed {
-            geometryWatcher.setAssociatedUnionHandler { [weak self] unionGlobal in
+            geometryWatcher.setAssociatedUnionHandler { [weak self] unionGlobal, contentRectsGlobal in
                 guard let self else { return }
-                Task { await self.onAssociatedUnion(unionGlobal) }
+                Task { await self.onAssociatedUnion(unionGlobal, contentRectsGlobal: contentRectsGlobal) }
             }
         }
 
@@ -1735,6 +1936,10 @@ public actor AislopdeskVideoHostSession {
     }
 
     private func teardownLiveComponents() async {
+        // Cancel the DIALOG-EXPAND contract debounce so a pending region contraction can't fire (rebuild)
+        // after teardown. Inert anyway ([weak self] + mediaFlowing-guarded), but cancel for consistency.
+        pendingContractTask?.cancel()
+        pendingContractTask = nil
         // Frames queued in the paced-send lane belong to the capture/encode generation being torn
         // down — drop them (a mid-pace job aborts at its next chunk boundary). The lane itself
         // survives for the next hello; `stop()` is what closes it.
@@ -1807,12 +2012,31 @@ public actor AislopdeskVideoHostSession {
         if encodedFrameCount == 1 || encodedFrameCount.isMultiple(of: 15) {
             dbg("encoded+sent frame #\(encodedFrameCount) (\(avcc.count)B, keyframe=\(keyframe), crisp=\(crisp))")
         }
+        // i2h (2026-06-18, debug-only): log the inject→encoded segment of input-to-photon. `lastInputRxMs`
+        // was set in `receiveBatch` on a key/mouse-DOWN; this is the FIRST encoded frame after it, so the
+        // delta ≈ host inject → app paints → SCK capture → encode. Combined with the client `pacer hold` +
+        // RTT it yields end-to-end input-to-photon. Reset to 0 ⇒ measured once per input, not every frame.
+        // Naturally debug-gated: lastInputRxMs is only ever set under `debugStderr`.
+        if lastInputRxMs != 0 {
+            let hostSegMs = Int(Int32(bitPattern: hostRelativeMillis() &- lastInputRxMs))
+            lastInputRxMs = 0
+            dbg("i2h ms=\(hostSegMs)")
+        }
         // Stamp the host-relative send time on every fragment of this frame (the network-feedback
         // channel). All fragments of one frame share one stamp; the ~≤6 ms pacing/kfDup bias is
         // sub-frame and acceptable (it makes the measured RTT a slight upper bound — the safe
         // direction). 0 when telemetry is disabled (AISLOPDESK_NETSTATS=0) → the client reports
         // latestHostSendTs=0 → the host's RTT fold is skipped.
         let sendTs: UInt32 = Self.telemetryEnabled ? hostRelativeMillis() : 0
+        // FRAME-TYPE PROTECTION MODEL (2026-06-16 latency-first reframe). The frame that MUST survive a
+        // WAN loss burst is the "sharp" one, and it already is protected: every keyframe — including the
+        // crisp QP18 static re-anchor, which encodes as an IDR ⇒ keyframe=true (VideoEncoder.keyframe =
+        // !notSync) — is DUPLICATE-SENT by kfDup. In-motion DELTAS are deliberately left on the cheap
+        // adaptive FEC ladder only (it relaxes toward g10 on a clean link and re-tightens on detected
+        // loss); the reframe accepts a lost delta blurring/glitching for ≤1 self-heal cadence and then
+        // re-sharpening, so we do NOT spend extra parity protecting motion frames. Fully cutting delta
+        // FEC (AISLOPDESK_FEC_ALLOW_OFF=1) stays OPT-IN: FEC/kfDup are load-bearing on a real lossy WAN
+        // (a past max-cut was a hard-negative revert), so flipping it needs a WAN A/B + loopback-validate.
         // WF-4: the per-frame FEC tier. Adaptive OFF ⇒ always tier 0 (= configured g5) ⇒ byte-identical.
         // MULTI-LOSS (AISLOPDESK_FEC_M>=2): `wireTier` FORCES tier 0 for every frame so the per-frame
         // group size resolves to the codec's `k` (the Cauchy matrix has exactly k columns / clamps to
@@ -1865,7 +2089,10 @@ public actor AislopdeskVideoHostSession {
         // white-screen was HW-investigated 2026-06-09 and does NOT reproduce on the current codebase.
         // The core keys the interleave by the SAME per-frame group size the parity used, m-aware (OFF
         // tier ⇒ no-op; tier 0 ⇒ the codec's group ⇒ byte-identical to the pre-port send order).
-        let ordered = packetizer.packetize(
+        // RAW send path (perf): get the finished wire datagrams directly — skip the parse-into-
+        // FrameFragment-then-re-encode round-trip the send never needs (byte-identical, unit-pinned by
+        // PacketizeRawByteIdentityTests). ~3× fewer allocs/frame, several ms off dense IDR/kfDup bursts.
+        let orderedRaw = packetizer.packetizeRaw(
             frame: avcc,
             keyframe: keyframe,
             crisp: crisp,
@@ -1875,7 +2102,7 @@ public actor AislopdeskVideoHostSession {
             ackedAnchored: ackedAnchored,
             interleave: Self.interleaveTransmit,
         )
-        let outgoings = scheduler.scheduleFrame(ordered)
+        let outgoings = scheduler.scheduleFrameRaw(orderedRaw)
         if Self.debugStderr {
             let now = ProcessInfo.processInfo.systemUptime
             if dbgLastFrameSendAt > 0, now - dbgLastFrameSendAt > 0.028 {
@@ -2022,7 +2249,7 @@ public actor AislopdeskVideoHostSession {
     /// the window, contract back to the window frame when it closes. Each transition is an encoder
     /// rebuild + IDR, so it is hysteresis-gated (the watcher only fires past `shouldRetarget`, and we
     /// re-check vs the LIVE region here — the watcher's baseline can lag a rebuild).
-    private func onAssociatedUnion(_ unionGlobal: CGRect) async {
+    private func onAssociatedUnion(_ unionGlobal: CGRect, contentRectsGlobal: [CGRect]) async {
         guard dialogExpandArmed, stateMachine.mediaFlowing, !captureRegionRebuilding else { return }
         let windowFrame = currentWindowBoundsCG().cgRect
         // The "natural" region is the window frame; a union strictly larger than it (a dialog
@@ -2033,7 +2260,30 @@ public actor AislopdeskVideoHostSession {
         // Contracting back to (approximately) the window frame ⇒ clear the override; else expand.
         let target: CGRect? = RustVideoHostFFI
             .captureShouldRetarget(current: desired, desired: windowFrame) ? desired : nil
-        await applyCaptureRegion(target)
+        if let target {
+            // EXPAND immediately, and cancel any pending contract (a popup re-opened inside the
+            // debounce window — no need to shrink-then-grow).
+            pendingContractTask?.cancel()
+            pendingContractTask = nil
+            await applyCaptureRegion(target, contentRectsGlobal: contentRectsGlobal)
+        } else {
+            // CONTRACT, debounced (~400 ms): a quick menu open→pick→close would otherwise rebuild
+            // the encoder twice (expand + contract = double flicker). Holding the expanded region a
+            // beat lets a re-open reuse it; a genuine close applies after the quiet window.
+            scheduleContract()
+        }
+    }
+
+    /// Debounced contract back to the plain window frame (see ``onAssociatedUnion``). The watcher
+    /// keeps polling, so if the region is still contracted after the quiet window we apply it; a new
+    /// expand cancels the pending task.
+    private func scheduleContract() {
+        pendingContractTask?.cancel()
+        pendingContractTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard let self, !Task.isCancelled else { return }
+            await applyCaptureRegion(nil, contentRectsGlobal: [])
+        }
     }
 
     /// DIALOG-EXPAND rebuild: re-point the capture at `regionGlobal` (nil ⇒ the plain window frame)
@@ -2041,7 +2291,7 @@ public actor AislopdeskVideoHostSession {
     /// capturer with a region override, ack) but skips the AX window resize (step a) — the window is
     /// untouched; only the captured RECT and the input/cursor mapping origin move. The client adopts
     /// the new size frame-gated and grows the pane for free (see the resize-path ack contract).
-    private func applyCaptureRegion(_ regionGlobal: CGRect?) async {
+    private func applyCaptureRegion(_ regionGlobal: CGRect?, contentRectsGlobal: [CGRect]) async {
         guard stateMachine.mediaFlowing, let oldCapturer = capturer, let oldEncoder = encoder,
               !captureRegionRebuilding else { return }
         captureRegionRebuilding = true
@@ -2104,7 +2354,7 @@ public actor AislopdeskVideoHostSession {
             captureScale: captureScale,
             fullRange: Self.fullRange,
             preferDisplayAnchored: true, // low-latency default (see WindowCapturer.preferDisplayAnchored)
-        ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh in
+        ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh, perFrameMaxQP in
             do {
                 if ltrRefresh { try newEncoder.encodeLiveLTRRefresh(pixelBuffer: pixelBuffer, presentationTime: pts) }
                 else if crisp { try newEncoder.encodeLiveCrispKeyframe(
@@ -2119,6 +2369,7 @@ public actor AislopdeskVideoHostSession {
                     pixelBuffer: pixelBuffer,
                     presentationTime: pts,
                     forceKeyframe: forceKeyframe,
+                    perFrameMaxQP: perFrameMaxQP,
                 ) }
             } catch { logCallback.error("dialog-expand encode failed: \(String(describing: error))") }
         }
@@ -2169,6 +2420,58 @@ public actor AislopdeskVideoHostSession {
             captureHeight: UInt16(min(Double(UInt16.max), Double(pointH))),
             epoch: epoch,
         )))
+        // TRANSPARENCY MASK: tell the client which capture-PIXEL rects are real content (window +
+        // popups) so it masks the black flank beside a narrow popup. A contract (regionGlobal nil)
+        // sends an EMPTY mask to clear it (the window-frame capture is fully opaque). Sent ×2 ~25 ms
+        // apart for loss tolerance (UDP control; the client's application is idempotent — last wins).
+        let maskRects = regionGlobal == nil
+            ? []
+            : Self.maskRects(
+                contentRectsGlobal: contentRectsGlobal,
+                region: region,
+                captureScale: captureScale,
+                pixelWidth: pixelWidth,
+                pixelHeight: pixelHeight,
+            )
+        await apply(.sendControl(.contentMask(maskRects)))
+        let maskMessage = VideoControlMessage.contentMask(maskRects).encode()
+        Task { // dup ~25 ms later (mirrors cursor-shape/cadence loss-tolerant resend)
+            try? await Task.sleep(nanoseconds: 25_000_000)
+            guard stateMachine.mediaFlowing, captureRegionGlobal == regionGlobal else { return }
+            transport.send(maskMessage, on: .control)
+        }
+    }
+
+    /// Converts the GLOBAL opaque content rects (window + popups) into capture-local PIXEL
+    /// ``MaskRect``s for the client's transparency mask: subtract the captured region origin, scale
+    /// by `captureScale`, clamp to the frame. A rect that clamps to empty (fully outside) is dropped.
+    /// `internal` (not `private`) so the pure conversion is unit-tested without a live session.
+    static func maskRects(
+        contentRectsGlobal: [CGRect],
+        region: CGRect,
+        captureScale: Double,
+        pixelWidth: Int,
+        pixelHeight: Int,
+    ) -> [MaskRect] {
+        let maxW = Double(pixelWidth), maxH = Double(pixelHeight)
+        var out: [MaskRect] = []
+        for r in contentRectsGlobal {
+            let x0 = ((r.minX - region.minX) * captureScale).rounded()
+            let y0 = ((r.minY - region.minY) * captureScale).rounded()
+            let x1 = ((r.maxX - region.minX) * captureScale).rounded()
+            let y1 = ((r.maxY - region.minY) * captureScale).rounded()
+            let cx0 = min(max(0, x0), maxW), cy0 = min(max(0, y0), maxH)
+            let cx1 = min(max(0, x1), maxW), cy1 = min(max(0, y1), maxH)
+            let w = cx1 - cx0, h = cy1 - cy0
+            guard w > 0, h > 0 else { continue }
+            out.append(MaskRect(
+                x: UInt16(min(Double(UInt16.max), cx0)),
+                y: UInt16(min(Double(UInt16.max), cy0)),
+                width: UInt16(min(Double(UInt16.max), w)),
+                height: UInt16(min(Double(UInt16.max), h)),
+            ))
+        }
+        return out
     }
 
     private func onCursorUpdate(_ update: CursorUpdate) {

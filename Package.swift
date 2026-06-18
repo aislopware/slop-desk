@@ -223,6 +223,11 @@ let package = Package(
         // by pane scaling. GUI+TCC-gated at runtime.
         .executableTarget(name: "aislopdesk-capture-probe", dependencies: ["AislopdeskVideoHost"]),
 
+        // Fake video client: a minimal UDP `hello` trigger that makes the real host start capturing a
+        // window, so the FULL host pipeline (capture→encode→FEC→send) runs on one machine without the
+        // GUI client. Diagnostic-only (overnight capture-cadence root-cause work). GUI+TCC at runtime.
+        .executableTarget(name: "aislopdesk-fake-client", dependencies: ["AislopdeskVideoProtocol"]),
+
         // Golden-vector dumper: emits the golden reference corpus for the Rust core's
         // parity test — a deterministic JSON corpus from the AislopdeskVideoProtocol codecs
         // + the pure realtime controllers (public API only) that the Rust `aislopdesk-core`
