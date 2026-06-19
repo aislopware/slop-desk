@@ -184,4 +184,25 @@ final class SplitNodeCodableTests: XCTestCase {
         // error (caught by the persistence layer), never trap.
         XCTAssertThrowsError(try decode("{\"bogus\":42}"))
     }
+
+    func testPathologicallyDeepJSONFailsSoftWithoutStackOverflow() throws {
+        // The decode recursion (`init(from:)`/`decodeRaw`) runs BEFORE `normalized()`'s depth cap applies,
+        // so the cap cannot be what protects decode from a stack-overflow on hostile/hand-edited JSON. The
+        // actual guard is JSONDecoder's OWN nesting bound (~512 levels): a JSON nested far past it is
+        // rejected by the parser with a clean `DecodingError` — `WorkspacePersistence.load()` catches that
+        // (→ default + `.corrupt` sidecar). This pins the fail-SOFT contract: a 2000-deep chain throws,
+        // never traps. (A depth comfortably within JSONDecoder's bound is exercised by the maxDepth test.)
+        func nested(_ depth: Int) -> String {
+            if depth == 0 { return leafJSON(UUID()) }
+            return """
+            {"split":{"axis":"horizontal","id":\(idJSON()),"children":[
+              {"weight":{"flex":1},"node":\(nested(depth - 1))}
+            ]}}
+            """
+        }
+        XCTAssertThrowsError(
+            try decode(nested(2000)),
+            "JSON nested past JSONDecoder's nesting bound is rejected (throws), never a stack overflow",
+        )
+    }
 }

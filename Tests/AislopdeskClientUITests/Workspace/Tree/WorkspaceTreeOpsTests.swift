@@ -203,8 +203,11 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     }
 
     func testCloseActivePanePicksASaneNeighbourFocus() throws {
-        // a|b|c with b focused; close b → focus should move to a or c (a survivor that is geometrically
-        // adjacent), never to a ghost.
+        // a|b|c (horizontal columns) with b focused; close b. The neighbour resolver tries directions in
+        // [.left, .right, .up, .down] order against the SOLVED layout, so the FIRST hit (left of b) wins:
+        // focus lands DETERMINISTICALLY on `a` (the left column), never `c` and never a ghost. Pinning the
+        // exact survivor (not merely "a or c") makes this fail if the neighbour pick regresses (e.g. flips
+        // to the right, or falls through to the first leaf).
         let (ws, a) = singleLeaf()
         let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         let (s2, c) = WorkspaceTreeOps.splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
@@ -212,8 +215,9 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         let s2b = WorkspaceTreeOps.focusPane(b, in: s2)
         let s3 = WorkspaceTreeOps.closePane(b, in: s2b)
         let focus = try XCTUnwrap(activeTab(s3).activePane)
-        XCTAssertTrue([a, c].contains(focus), "focus moves to a surviving neighbour, not a ghost")
-        XCTAssertTrue(s3.allPaneIDs().contains(focus))
+        XCTAssertEqual(focus, a, "focus moves to the LEFT neighbour (a), the first cardinal-direction hit")
+        XCTAssertNotEqual(focus, c, "the right column is not chosen — left is tried first")
+        XCTAssertTrue(s3.allPaneIDs().contains(focus), "the chosen focus is a surviving pane")
     }
 
     // MARK: Zoom — out of tree
@@ -314,6 +318,100 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         XCTAssertEqual(s1.sessions.count, 1, "the workspace always has ≥ 1 session")
         XCTAssertEqual(s1.allPaneIDs().count, 1)
         assertInvariant(s1)
+    }
+
+    // MARK: Break pane to a new tab
+
+    func testBreakPaneToTabMovesLeafIntoANewTabAndCollapsesSource() {
+        // a|b|c in one tab; break b into a new tab. The source tab collapses to a|c (b removed, rebalanced),
+        // a NEW tab holds b as its lone leaf and is selected, and the spec stays in the same session table.
+        let (ws, a) = singleLeaf()
+        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s2, c) = WorkspaceTreeOps.splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
+        XCTAssertEqual(s2.sessions[0].tabs.count, 1, "precondition: one multi-pane tab")
+
+        let s3 = WorkspaceTreeOps.breakPaneToTab(b, in: s2)
+        XCTAssertEqual(s3.sessions[0].tabs.count, 2, "a new tab is appended")
+        // Source tab (index 0) collapsed to a|c, b gone.
+        XCTAssertEqual(s3.sessions[0].tabs[0].root.allPaneIDs(), [a, c], "source tab keeps a and c, drops b")
+        // New tab (index 1) holds exactly b as a single leaf, and is the active tab.
+        XCTAssertEqual(s3.sessions[0].tabs[1].root, .leaf(b), "the new tab is b as a lone leaf")
+        XCTAssertEqual(s3.sessions[0].tabs[1].activePane, b, "b is active in its new tab")
+        XCTAssertEqual(s3.sessions[0].activeTabIndex, 1, "the freshly-broken tab is selected")
+        XCTAssertEqual(s3.spec(for: b)?.title, "b", "b's spec is preserved in the same session table")
+        assertInvariant(s3)
+    }
+
+    func testBreakPaneToTabIsNoOpForALoneLeaf() {
+        // A tab's only pane can't be broken out (nothing to break from) — the workspace is unchanged.
+        let (ws, a) = singleLeaf()
+        let after = WorkspaceTreeOps.breakPaneToTab(a, in: ws)
+        XCTAssertEqual(after, ws, "breaking out a tab's sole leaf is a no-op")
+        XCTAssertEqual(after.sessions[0].tabs.count, 1, "no new tab is created")
+    }
+
+    func testBreakPaneToTabIsNoOpForAnAbsentPane() {
+        let (ws, _) = singleLeaf()
+        let after = WorkspaceTreeOps.breakPaneToTab(PaneID(), in: ws)
+        XCTAssertEqual(after, ws, "breaking out a pane not in the workspace is a no-op")
+    }
+
+    // MARK: moveFocus facade (directional + cycle)
+
+    func testMoveFocusDirectionalResolvesGeometricNeighbour() throws {
+        // a|b horizontal columns, a focused. Move focus right against a real bounds rect → lands on b
+        // (the right column); move left from b → back to a.
+        let (ws, a) = singleLeaf()
+        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let withA = WorkspaceTreeOps.focusPane(a, in: s1)
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 400)
+
+        let movedRight = WorkspaceTreeOps.moveFocus(.right, bounds: bounds, in: withA)
+        XCTAssertEqual(try activeTab(movedRight).activePane, b, "move-right from the left column lands on the right")
+
+        let movedBack = WorkspaceTreeOps.moveFocus(.left, bounds: bounds, in: movedRight)
+        XCTAssertEqual(try activeTab(movedBack).activePane, a, "move-left from the right column returns to the left")
+    }
+
+    func testMoveFocusDirectionalIsNoOpAtAnEdge() {
+        // a|b horizontal, a focused; move LEFT → no neighbour to the left → workspace unchanged (no-op).
+        let (ws, a) = singleLeaf()
+        let (s1, _) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let withA = WorkspaceTreeOps.focusPane(a, in: s1)
+        let moved = WorkspaceTreeOps.moveFocus(.left, bounds: CGRect(x: 0, y: 0, width: 800, height: 400), in: withA)
+        XCTAssertEqual(moved, withA, "moving past the left edge is a no-op (no neighbour)")
+    }
+
+    func testMoveFocusCycleAdvancesAndWrapsThroughLeaves() throws {
+        // a|b|c (pre-order [a,b,c]); .next from a → b, from c wraps → a; .previous from a wraps → c.
+        let (ws, a) = singleLeaf()
+        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s2, c) = WorkspaceTreeOps.splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
+        let bounds = CGRect(x: 0, y: 0, width: 900, height: 400)
+
+        let fromA = WorkspaceTreeOps.focusPane(a, in: s2)
+        let next1 = WorkspaceTreeOps.moveFocus(.next, bounds: bounds, in: fromA)
+        XCTAssertEqual(try activeTab(next1).activePane, b, ".next from a → b")
+
+        let fromC = WorkspaceTreeOps.focusPane(c, in: s2)
+        let wrapped = WorkspaceTreeOps.moveFocus(.next, bounds: bounds, in: fromC)
+        XCTAssertEqual(try activeTab(wrapped).activePane, a, ".next from the last leaf wraps to the first")
+
+        let prevWrap = WorkspaceTreeOps.moveFocus(.previous, bounds: bounds, in: fromA)
+        XCTAssertEqual(try activeTab(prevWrap).activePane, c, ".previous from the first leaf wraps to the last")
+    }
+
+    func testMoveFocusIsNoOpForASinglePane() throws {
+        // A single-pane tab: any directional move has no neighbour → unchanged; .next/.previous cycle to
+        // the same lone leaf, so the active pane stays a (no crash, sane).
+        let (ws, a) = singleLeaf()
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 400)
+        for dir in [FocusDirection.left, .right, .up, .down] {
+            let moved = WorkspaceTreeOps.moveFocus(dir, bounds: bounds, in: ws)
+            XCTAssertEqual(moved, ws, "a single pane has no \(dir) neighbour → no-op")
+        }
+        let cycled = WorkspaceTreeOps.moveFocus(.next, bounds: bounds, in: ws)
+        XCTAssertEqual(try activeTab(cycled).activePane, a, ".next over a single leaf cycles back to itself")
     }
 
     // MARK: Move / swap

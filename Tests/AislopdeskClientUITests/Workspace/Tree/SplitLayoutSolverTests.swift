@@ -157,6 +157,56 @@ final class SplitLayoutSolverTests: XCTestCase {
         }
     }
 
+    // MARK: Fixed-weight bands (reachable via a hand-edited Codable file)
+
+    func testTwoFixedChildrenEachAtLeastTotalDoNotOverlapAndStayInBound() {
+        // `.fixed` is dormant in the MVP (only `.flex` is minted) but `SplitWeight.fixed` decodes from a
+        // hand-edited file, so a pathological all-fixed split is reachable. Two `.fixed` children each
+        // requesting the WHOLE bound (1000pt in a 1000pt bound) + a flex child: the solver must reserve
+        // each fixed child its PER-CHILD share (pass 1's running clamp) and emit the SAME share in pass 2,
+        // so the rects tile WITHOUT overlap and stay within the bound — never each capped at the whole bound.
+        let a = PaneID(), b = PaneID(), c = PaneID()
+        let root = SplitNode.split(id: SplitNodeID(), axis: .horizontal, children: [
+            WeightedChild(weight: .fixed(1000), node: .leaf(a)),
+            WeightedChild(weight: .fixed(1000), node: .leaf(b)),
+            WeightedChild(weight: .flex(1), node: .leaf(c)),
+        ])
+        let bound = CGRect(x: 0, y: 0, width: 1000, height: 400)
+        // minLeaf .zero so the assertion reads the raw partition, not the per-leaf floor.
+        let solved = SplitLayoutSolver.solve(root, in: bound, minLeaf: .zero)
+
+        let ra = solved[a] ?? .null
+        let rb = solved[b] ?? .null
+        let rc = solved[c] ?? .null
+
+        // Pairwise non-overlap (touching edges fine; real area overlap is the bug).
+        for (lhs, rhs) in [(ra, rb), (ra, rc), (rb, rc)] {
+            let inter = lhs.intersection(rhs)
+            let overlapArea = inter.isNull ? 0 : inter.width * inter.height
+            XCTAssertLessThan(overlapArea, 1.0, "fixed children must not overlap")
+        }
+        // The union of every leaf rect stays within the bound (no overflow past width 1000).
+        for r in [ra, rb, rc] {
+            XCTAssertGreaterThanOrEqual(r.minX, bound.minX - eps, "no rect starts left of the bound")
+            XCTAssertLessThanOrEqual(r.maxX, bound.maxX + eps, "no rect runs past the right edge of the bound")
+        }
+        // The flex child gets the leftover (here 0) — non-negative, never a negative extent.
+        XCTAssertGreaterThanOrEqual(rc.width, -eps, "the flex child width is non-negative")
+    }
+
+    func testFixedBandReservesItsShareThenFlexFillsTheRemainder() {
+        // A well-behaved fixed band: 200pt fixed + flex over a 1000pt bound → fixed=200, flex=800, abutting.
+        let fixed = PaneID(), flex = PaneID()
+        let root = SplitNode.split(id: SplitNodeID(), axis: .horizontal, children: [
+            WeightedChild(weight: .fixed(200), node: .leaf(fixed)),
+            WeightedChild(weight: .flex(1), node: .leaf(flex)),
+        ])
+        let solved = SplitLayoutSolver.solve(root, in: CGRect(x: 0, y: 0, width: 1000, height: 400), minLeaf: .zero)
+        XCTAssertEqual(solved[fixed]?.width ?? .nan, 200, accuracy: eps, "fixed band keeps its requested points")
+        XCTAssertEqual(solved[flex]?.width ?? .nan, 800, accuracy: eps, "flex fills the remainder")
+        XCTAssertEqual(solved[fixed]?.maxX ?? .nan, solved[flex]?.minX ?? .nan, accuracy: eps, "abutting, no gap")
+    }
+
     func testSolvedRectsFeedFocusResolver() {
         // The solver output is exactly the SolvedLayout FocusResolver consumes — moving right from the
         // left column lands on the right column.

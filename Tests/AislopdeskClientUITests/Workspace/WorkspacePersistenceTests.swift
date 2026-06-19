@@ -451,6 +451,121 @@ final class WorkspacePersistenceTests: XCTestCase {
         XCTAssertEqual(moved.canvas, c.canvas, "membership unchanged by a reorder")
     }
 
+    // MARK: - 8. W3 migration seams (peek / migrateV9toV10 / migrateToTree) — exposed, not yet on load()
+
+    /// `peekSchemaVersion` reads ONLY the version discriminator off raw bytes without a full typed decode:
+    /// 9 off a valid v9 ``Workspace`` JSON, 10 off a v10 ``TreeWorkspace`` JSON, and `nil` (validate-then-
+    /// drop) on garbage / a JSON object missing `schemaVersion`.
+    func testPeekSchemaVersionReadsVersionOrDropsCleanly() throws {
+        // A real v9 Workspace file.
+        let v9Data = try makeEncoder().encode(Workspace.defaultWorkspace())
+        XCTAssertEqual(WorkspacePersistence.peekSchemaVersion(in: v9Data), 9, "peeks 9 off a v9 Workspace file")
+
+        // A real v10 TreeWorkspace file (no canvas/groups — would FAIL a typed v9 decode).
+        let v10Data = try makeEncoder().encode(TreeWorkspace.defaultWorkspace())
+        XCTAssertEqual(WorkspacePersistence.peekSchemaVersion(in: v10Data), 10, "peeks 10 off a v10 Tree file")
+
+        // Garbage bytes → nil, never a throw.
+        XCTAssertNil(
+            WorkspacePersistence.peekSchemaVersion(in: Data("not json at all }{".utf8)),
+            "garbage bytes peek to nil (validate-then-drop, no throw)",
+        )
+        // A JSON object that simply lacks `schemaVersion` → nil.
+        XCTAssertNil(
+            WorkspacePersistence.peekSchemaVersion(in: Data("{\"foo\": 1}".utf8)),
+            "a JSON object missing schemaVersion peeks to nil",
+        )
+    }
+
+    /// `migrateV9toV10` decodes raw v9 bytes through the frozen mirror and migrates to a round-trippable
+    /// ``TreeWorkspace`` on good bytes, and returns `nil` on garbage.
+    func testMigrateV9toV10ProducesRoundTrippableTreeOrNil() throws {
+        let p0 = PaneID(), p1 = PaneID()
+        let v9 = Workspace.make(panes: [
+            (p0, PaneSpec(kind: .terminal, title: "shell")),
+            (p1, PaneSpec(kind: .claudeCode, title: "agent")),
+        ])
+        let data = try makeEncoder().encode(v9)
+        let tree = try XCTUnwrap(
+            WorkspacePersistence.migrateV9toV10(from: data),
+            "good v9 bytes migrate to a non-nil TreeWorkspace",
+        )
+        XCTAssertEqual(Set(tree.allPaneIDs()), Set([p0, p1]), "every pane survives the migration")
+        XCTAssertTrue(tree.isInvariantHeld(), "the migrated tree holds specs == leafIDs")
+        // Round-trippable: encode → decode == migrated.
+        let encoder = makeEncoder(sortedKeys: true)
+        let restored = try decoder.decode(TreeWorkspace.self, from: encoder.encode(tree))
+        XCTAssertEqual(restored, tree, "the migrated TreeWorkspace round-trips")
+
+        // Garbage bytes → nil.
+        XCTAssertNil(
+            WorkspacePersistence.migrateV9toV10(from: Data("garbage }{".utf8)),
+            "non-decodable bytes migrate to nil, never trap",
+        )
+    }
+
+    /// `WorkspaceSchemaMigration.migrateToTree` is the registered seam: non-nil for `from ∈ {5,8,9}`
+    /// (all decode through the v9 mirror — the documented "5...9 forward-tolerant" range), `nil` for
+    /// `from == 10` (already the tree shape — nothing to upgrade), and `nil` for an out-of-range version.
+    func testMigrateToTreeAcceptsV5ThroughV9AndRejectsOthers() throws {
+        let data = try makeEncoder().encode(Workspace.defaultWorkspace())
+        for from in [5, 8, 9] {
+            XCTAssertNotNil(
+                WorkspaceSchemaMigration.migrateToTree(data, from: from),
+                "from=\(from) decodes through the v9 mirror and migrates (5...9 forward-tolerant)",
+            )
+        }
+        XCTAssertNil(WorkspaceSchemaMigration.migrateToTree(data, from: 10), "from=10 is already the tree shape → nil")
+        for from in [0, 99] {
+            XCTAssertNil(
+                WorkspaceSchemaMigration.migrateToTree(data, from: from),
+                "from=\(from) is out of the forward-tolerant range → nil",
+            )
+        }
+        // Garbage bytes in the valid range still fail soft (nil, not a trap).
+        XCTAssertNil(
+            WorkspaceSchemaMigration.migrateToTree(Data("garbage }{".utf8), from: 9),
+            "garbage bytes in the 5...9 range migrate to nil",
+        )
+    }
+
+    /// A synthetic v5–v8-shaped file (OMITTING fields added in later schema bumps — e.g. `snippets`,
+    /// `layoutPresets`, `bookmarks`, `connection`) must still decode through the forward-tolerant frozen
+    /// ``WorkspaceV9`` mirror (those fields default) and migrate to a valid tree. Proves the documented
+    /// "5...9 forward-tolerant" claim with actual bytes, not just the version-int switch.
+    func testSyntheticOlderShapedFileDecodesThroughV9MirrorAndMigrates() throws {
+        let id = PaneID()
+        // A v5–v8-era file: schemaVersion + canvas + focusedPane + groups, but NO snippets / layoutPresets
+        // / bookmarks / connection / maximizedPane keys (those landed in later schema versions).
+        let json = """
+        {
+          "schemaVersion": 5,
+          "canvas": {
+            "camera": { "origin": { "x": 0, "y": 0 } },
+            "items": [
+              { "id": { "raw": "\(id.raw.uuidString)" }, "z": 0,
+                "frame": { "origin": {"x":0,"y":0}, "size": {"width":640,"height":420} },
+                "spec": { "kind": "terminal", "title": "legacy" } }
+            ]
+          },
+          "focusedPane": { "raw": "\(id.raw.uuidString)" },
+          "groups": []
+        }
+        """
+        let data = Data(json.utf8)
+        // It peeks as version 5 and routes through migrateToTree's 5...9 arm.
+        XCTAssertEqual(WorkspacePersistence.peekSchemaVersion(in: data), 5)
+        let tree = try XCTUnwrap(
+            WorkspaceSchemaMigration.migrateToTree(data, from: 5),
+            "an older-shaped file (omitting later fields) migrates through the v9 mirror",
+        )
+        XCTAssertEqual(tree.allPaneIDs(), [id], "the single legacy pane survives")
+        XCTAssertEqual(tree.spec(for: id)?.title, "legacy", "its spec is preserved")
+        XCTAssertTrue(tree.snippets.isEmpty, "the omitted snippets field defaulted to empty")
+        XCTAssertTrue(tree.layoutPresets.isEmpty, "the omitted layoutPresets field defaulted to empty")
+        XCTAssertTrue(tree.isInvariantHeld())
+    }
+
     // MARK: - Helpers
 
     private func tempURL(file _: StaticString = #filePath, line _: UInt = #line) throws -> URL {

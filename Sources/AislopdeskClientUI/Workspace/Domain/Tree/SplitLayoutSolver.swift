@@ -56,20 +56,28 @@ public enum SplitLayoutSolver {
     // MARK: Weight → extent partition
 
     /// The point-extent of each child along `axis` within `total` points: ``SplitWeight/fixed(_:)``
-    /// children are subtracted first (each capped so the fixed band never exceeds the bound), then the
-    /// flex children divide the remaining points in proportion to their (already-clamped) flex weights.
-    /// A degenerate all-zero-flex case falls back to an equal split so no pane vanishes. Pure. (The
-    /// partition is axis-agnostic — `total` is already the bound's length along the relevant axis.)
+    /// children are reserved first, each clamped against a RUNNING remaining-budget (so the fixed *sum*
+    /// never exceeds the bound and no two fixed bands overlap), then the flex children divide the points
+    /// left over in proportion to their (already-clamped) flex weights. A degenerate all-zero-flex case
+    /// falls back to an equal split so no pane vanishes. Pure. (The partition is axis-agnostic — `total`
+    /// is already the bound's length along the relevant axis.)
     private static func extents(for children: [WeightedChild], total: CGFloat) -> [CGFloat] {
-        // First pass: fixed points (clamped non-negative and ≤ remaining), and the flex weight sum.
+        // First pass: RESERVE each fixed child its per-child extent with a RUNNING clamp (so the fixed sum
+        // is ≤ total and no band overruns the bound), recording that exact extent per index. Pass 2 reuses
+        // it verbatim — emitting the same per-child share, NOT the whole bound — so the two passes are
+        // consistent by construction and `.fixed` children can never overlap or overflow.
         var fixedTotal: CGFloat = 0
         var flexSum = 0.0
-        for child in children {
+        // `fixedExtents[index]` holds the reserved extent for a `.fixed` child at that position (nil for flex).
+        var fixedExtents = [CGFloat?](repeating: nil, count: children.count)
+        for (index, child) in children.enumerated() {
             switch child.weight {
             case let .fixed(points):
-                // Ordered clamp into [0, remaining] — never let one fixed band overrun the bound.
+                // Ordered clamp into [0, remaining] — never let one fixed band overrun the bound. Record
+                // this exact reserved extent so pass 2 emits the SAME value (consistent by construction).
                 let remaining = Double.maximum(Double(total) - Double(fixedTotal), 0)
                 let p = Double.minimum(Double.maximum(points, 0), remaining)
+                fixedExtents[index] = CGFloat(p)
                 fixedTotal += CGFloat(p)
             case let .flex(w):
                 flexSum += Double.maximum(w, 0)
@@ -86,11 +94,12 @@ public enum SplitLayoutSolver {
 
         var extentsOut: [CGFloat] = []
         extentsOut.reserveCapacity(children.count)
-        for child in children {
+        for (index, child) in children.enumerated() {
             switch child.weight {
-            case let .fixed(points):
-                let p = Double.minimum(Double.maximum(points, 0), flexBudget + Double(fixedTotal))
-                extentsOut.append(CGFloat(p))
+            case .fixed:
+                // Reuse the per-child reserved extent from pass 1 (NOT the whole bound) so fixed bands tile
+                // without overlap. `fixedExtents[index]` is always set for a `.fixed` child (set above).
+                extentsOut.append(fixedExtents[index] ?? 0)
             case let .flex(w):
                 let share: Double
                 if flexSum > 0 {

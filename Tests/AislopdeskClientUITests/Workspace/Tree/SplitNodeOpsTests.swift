@@ -141,4 +141,69 @@ final class SplitNodeOpsTests: XCTestCase {
         ])
         XCTAssertEqual(three.swapping(a, c).allPaneIDs(), [c, b, a], "a and c exchanged, b fixed")
     }
+
+    // MARK: Adversarial inputs (must never trap; degenerate args are safe no-ops)
+
+    func testSwappingWithSelfIsNoOp() {
+        let a = PaneID(), b = PaneID()
+        let two = SplitNode.split(id: SplitNodeID(), axis: .horizontal, children: [
+            .init(weight: .flex(1), node: .leaf(a)),
+            .init(weight: .flex(1), node: .leaf(b)),
+        ])
+        XCTAssertEqual(two.swapping(a, a), two, "swapping a leaf with itself leaves the tree unchanged")
+    }
+
+    func testSwappingAbsentLeafIsNoOp() {
+        let a = PaneID(), b = PaneID(), ghost = PaneID()
+        let two = SplitNode.split(id: SplitNodeID(), axis: .horizontal, children: [
+            .init(weight: .flex(1), node: .leaf(a)),
+            .init(weight: .flex(1), node: .leaf(b)),
+        ])
+        XCTAssertEqual(two.swapping(a, ghost), two, "swapping with a leaf not in the tree is a no-op")
+    }
+
+    func testResizingAbsentSplitIDIsNoOp() {
+        let a = PaneID(), b = PaneID()
+        let two = SplitNode.split(id: SplitNodeID(), axis: .horizontal, children: [
+            .init(weight: .flex(1), node: .leaf(a)),
+            .init(weight: .flex(1), node: .leaf(b)),
+        ])
+        let resized = two.resizingDivider(splitID: SplitNodeID(), leadingIndex: 0, delta: 0.4)
+        XCTAssertEqual(resized, two, "resizing a split id absent from the tree leaves it unchanged")
+    }
+
+    func testResizingOutOfRangeChildIndexIsNoOp() {
+        let a = PaneID(), b = PaneID()
+        let sid = SplitNodeID()
+        let two = SplitNode.split(id: sid, axis: .horizontal, children: [
+            .init(weight: .flex(1), node: .leaf(a)),
+            .init(weight: .flex(1), node: .leaf(b)),
+        ])
+        // leadingIndex past the last divider (the pair leadingIndex/leadingIndex+1 is out of range).
+        XCTAssertEqual(
+            two.resizingDivider(splitID: sid, leadingIndex: 5, delta: 0.4), two,
+            "an out-of-range divider index is a safe no-op (weights unchanged)",
+        )
+        // A negative index is also safe (no trap, no change).
+        XCTAssertEqual(
+            two.resizingDivider(splitID: sid, leadingIndex: -1, delta: 0.4), two,
+            "a negative divider index is a safe no-op",
+        )
+        // The last child index has no trailing sibling → no-op.
+        XCTAssertEqual(
+            two.resizingDivider(splitID: sid, leadingIndex: 1, delta: 0.4), two,
+            "the trailing-most child has no divider after it → no-op",
+        )
+    }
+
+    func testRemovingNonExistentPaneIsNoOp() {
+        let a = PaneID(), b = PaneID(), ghost = PaneID()
+        let two = SplitNode.split(id: SplitNodeID(), axis: .horizontal, children: [
+            .init(weight: .flex(1), node: .leaf(a)),
+            .init(weight: .flex(1), node: .leaf(b)),
+        ])
+        XCTAssertEqual(two.removing(ghost), two, "removing a pane not in the tree returns the tree unchanged")
+        // Also no-op on a lone leaf for an absent id (must NOT collapse to nil).
+        XCTAssertEqual(SplitNode.leaf(a).removing(ghost), .leaf(a), "removing an absent id from a lone leaf is a no-op")
+    }
 }

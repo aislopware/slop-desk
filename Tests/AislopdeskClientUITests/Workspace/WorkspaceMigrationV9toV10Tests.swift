@@ -320,6 +320,50 @@ final class WorkspaceMigrationV9toV10Tests: XCTestCase {
         XCTAssertTrue(v10.isInvariantHeld())
     }
 
+    func testDanglingGroupIDPaneSurvivesAsUngrouped() throws {
+        // A pane whose groupID names a group NOT in v9.groups (hand-edited / partially-deleted file) must
+        // NOT be lost. The LIVE load path (`Workspace.normalizingGroups()`) resets such a dangling groupID
+        // to nil so the pane survives as ungrouped; the migration must mirror that, routing the pane into
+        // the leading "Main" tab rather than dropping its spec into an orphan that `.normalized()` deletes.
+        let realGroup = PaneGroup(name: "Real")
+        let pGrouped = PaneID() // a legitimately grouped pane
+        let pDangling = PaneID() // groupID names a missing group
+        let ghostGroupID = PaneGroupID() // referenced but absent from `groups`
+        let ws = Workspace(
+            canvas: Canvas(items: [
+                terminalItem(
+                    pGrouped,
+                    title: "in-real-group",
+                    frame: CGRect(x: 0, y: 0, width: 640, height: 420),
+                    z: 0,
+                    groupID: realGroup.id,
+                ),
+                terminalItem(
+                    pDangling,
+                    title: "orphaned-membership",
+                    frame: CGRect(x: 700, y: 0, width: 640, height: 420),
+                    z: 1,
+                    groupID: ghostGroupID,
+                ),
+            ]),
+            focusedPane: pGrouped,
+            groups: [realGroup], // ghostGroupID is deliberately absent
+        )
+        let data = try makeEncoder().encode(ws)
+        let v9 = try decoder.decode(WorkspaceV9.self, from: data)
+        let v10 = WorkspaceMigrationV9toV10.migrate(v9)
+
+        // The dangling-membership pane survives, with its spec intact.
+        XCTAssertTrue(v10.allPaneIDs().contains(pDangling), "a pane whose groupID names a missing group is NOT lost")
+        XCTAssertEqual(v10.spec(for: pDangling)?.title, "orphaned-membership", "its spec is preserved verbatim")
+        // It lands in the leading "Main" tab (treated as ungrouped), not a phantom group tab.
+        let session = try XCTUnwrap(v10.sessions.first)
+        XCTAssertEqual(session.tabs.map(\.title), ["Main", "Real"], "ghost group yields no tab; dangling pane → Main")
+        let mainTab = try XCTUnwrap(session.tabs.first { $0.title == "Main" })
+        XCTAssertEqual(mainTab.allPaneIDs(), [pDangling], "the dangling-membership pane is in the Main tab")
+        XCTAssertTrue(v10.isInvariantHeld(), "specs == leafIDs after migration (no orphan dropped)")
+    }
+
     func testEmptyGroupYieldsNoTab() throws {
         // A group with no members must NOT yield an empty tab (a live tab must have ≥ 1 pane).
         let live = PaneGroup(name: "Live")

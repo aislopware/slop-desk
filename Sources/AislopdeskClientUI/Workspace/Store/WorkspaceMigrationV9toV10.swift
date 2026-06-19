@@ -11,13 +11,16 @@ import Foundation
 /// - **One default ``Session``**, named from `v9.connection?.host ?? "Local"`, carrying `v9.connection`.
 /// - **Groups → tabs**: every ungrouped pane goes into a leading `"Main"` tab (omitted when nothing is
 ///   ungrouped); each ``PaneGroup`` becomes one ``Tab`` (group name → tab title, group order preserved).
-///   An EMPTY group (no member panes) yields **no** tab — a live tab must have ≥ 1 pane.
+///   An EMPTY group (no member panes) yields **no** tab — a live tab must have ≥ 1 pane. A pane whose
+///   `groupID` names a group NOT in `v9.groups` (a hand-edited / partially-deleted file) is treated as
+///   ungrouped (→ the "Main" tab), mirroring ``Workspace/normalizingGroups()`` so no pane is lost.
 /// - **Tab.root**: a tab's panes are arranged into a valid ``SplitNode`` — 1 pane → `.leaf`; ≥ 2 →
 ///   a flat, **even-weight** `.split(axis: .horizontal)`, ordered by `frame.minX` then `frame.minY` so the
 ///   layout (and round-trips) are deterministic.
 /// - **Specs preserved 1:1**: `Session.specs[paneID] = item.spec` for every leaf in that session — every
 ///   ``PaneID`` + ``PaneSpec`` survives verbatim. The dropped fields are `frame` / `z` / `groupID` /
-///   `camera` / `bookmarks` / `maximizedPane` (none are representable in the tree).
+///   `camera` / `bookmarks` (none are representable in the tree). `maximizedPane` is NOT dropped — it is
+///   carried onto the owning tab's `zoomedPane` (see "Active state carried" below).
 /// - **Active state carried**: `activePane = v9.focusedPane` when it lands in a tab; `zoomedPane =
 ///   v9.maximizedPane` when it lands in a tab; `activeTabIndex` follows the focused pane's owning tab.
 /// - **Client state carried**: `snippets` + `layoutPresets` (both schemas share these) are kept verbatim.
@@ -47,8 +50,17 @@ enum WorkspaceMigrationV9toV10 {
     /// spec side table, and the carried connection / active state.
     private static func makeSession(from v9: WorkspaceV9) -> Session {
         let items = v9.canvas.items
-        // Bucket panes by group, preserving group order; ungrouped → the "Main" bucket.
-        let ungrouped = items.filter { $0.groupID == nil }
+        // The set of groups that actually exist. A pane whose `groupID` names a group NOT in this set
+        // (hand-edited / partially-deleted file) must NOT be lost — the LIVE load path repairs it via
+        // `Workspace.normalizingGroups()` (resets the dangling membership to nil). Mirror that here so
+        // the dangling pane survives as ungrouped (→ the "Main" tab) instead of bucketing into NEITHER
+        // group nor ungrouped and becoming an orphan spec that `.normalized()` then deletes.
+        let validGroupIDs = Set(v9.groups.map(\.id))
+        // Bucket panes by group, preserving group order; ungrouped (incl. a dangling groupID) → "Main".
+        let ungrouped = items.filter { item in
+            guard let gid = item.groupID else { return true }
+            return !validGroupIDs.contains(gid)
+        }
         var tabs: [Tab] = []
 
         // Leading "Main" tab for ungrouped panes (only when there are any — never an empty tab).

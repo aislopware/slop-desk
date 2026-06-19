@@ -56,8 +56,16 @@ public extension SplitWeight {
 ///    registry is keyed 1:1 by `PaneID`).
 /// 6. **Clamp weights** — handled in `SplitWeight.init(from:)` (≥ ``SplitWeight/minWeight``, finite).
 ///
-/// A structurally invalid node (neither discriminator) throws a clean decode error so
-/// `WorkspacePersistence.load()` falls back to the default (+ `.corrupt` sidecar) — it never traps.
+/// **Decode-time stack safety is provided by JSONDecoder, NOT the ``SplitNode/maxDepth`` cap.** The raw
+/// `decodeRaw` recursion runs *before* `normalized()` applies the cap, so the cap alone would not stop a
+/// pathologically-nested hand-edited file from blowing the stack during decode. It does not have to:
+/// `JSONDecoder` enforces its OWN container-nesting bound (~512 levels) and rejects anything deeper with
+/// a clean `DecodingError` — the parser unwinds before the recursion can get pathological. So a hostile
+/// deep file (or a structurally invalid node with neither discriminator) throws a clean decode error and
+/// `WorkspacePersistence.load()` falls back to the default (+ `.corrupt` sidecar) — it never traps. The
+/// `maxDepth` cap is purely a *post-decode* repair, bounding the kept structure (so render/solver/ops
+/// recursion stays shallow), within whatever JSONDecoder already admitted. (Pinned by
+/// `SplitNodeCodableTests.testPathologicallyDeepJSONFailsSoftWithoutStackOverflow`.)
 extension SplitNode: Codable {
     private enum CodingKeys: String, CodingKey { case leaf, split }
     private enum SplitKeys: String, CodingKey { case id, axis, children }
