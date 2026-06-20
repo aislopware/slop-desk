@@ -161,6 +161,103 @@ public enum WorkspaceTreeOps {
         return copy
     }
 
+    /// Moves pane `pane` in `direction` by EXCHANGING it with its geometric neighbour on that side (Zellij
+    /// "move pane"): resolves the directional neighbour against the active tab solved into `bounds` (the same
+    /// geometry the user sees + ``moveFocus(_:bounds:in:)`` reads), then ``swapPanes(_:_:in:)`` the two.
+    /// `.next`/`.previous` and "no neighbour that side" are no-ops (returns `ws` unchanged). Because
+    /// `swapPanes` keeps the ``PaneID`` identity, `pane` stays the active pane after the move. Preserves the
+    /// invariant (specs + leaf set unchanged — only positions move).
+    public static func movePaneInDirection(
+        _ pane: PaneID,
+        _ direction: FocusDirection,
+        bounds: CGRect,
+        in ws: TreeWorkspace,
+    ) -> TreeWorkspace {
+        guard let (sIdx, tIdx) = locate(pane, in: ws) else { return ws }
+        switch direction {
+        case .next,
+             .previous:
+            return ws // directional move only — cycling has no "swap" meaning
+        case .left,
+             .right,
+             .up,
+             .down:
+            let tab = ws.sessions[sIdx].tabs[tIdx]
+            let frames = SplitLayoutSolver.solve(tab.root, in: bounds)
+            guard let neighbour = FocusResolver.neighbor(of: pane, direction, in: SolvedLayout(frames: frames)),
+                  neighbour != pane
+            else { return ws }
+            return swapPanes(pane, neighbour, in: ws)
+        }
+    }
+
+    // MARK: Resize the active pane (keyboard divider nudge)
+
+    /// Grows / shrinks pane `pane` along `direction` by nudging the divider of the nearest enclosing split
+    /// on the relevant axis (the keyboard counterpart to a drag-resize). `.left`/`.right` act on the nearest
+    /// enclosing **horizontal** split (width); `.up`/`.down` on the nearest **vertical** split (height).
+    /// `.right`/`.down` GROW the pane, `.left`/`.up` SHRINK it. `.next`/`.previous` and "no enclosing split"
+    /// are no-ops. The underlying ``resizeDivider(splitID:leadingChildIndex:delta:in:)`` is sum-preserving +
+    /// clamped at ``SplitWeight/minWeight``, so the active pane can never starve a sibling to nothing.
+    /// Preserves the invariant (the leaf set is unchanged).
+    public static func resizeActivePane(
+        _ pane: PaneID,
+        _ direction: FocusDirection,
+        step: Double,
+        in ws: TreeWorkspace,
+    ) -> TreeWorkspace {
+        let axis: SplitAxis
+        let grow: Bool
+        switch direction {
+        case .left: (axis, grow) = (.horizontal, false)
+        case .right: (axis, grow) = (.horizontal, true)
+        case .up: (axis, grow) = (.vertical, false)
+        case .down: (axis, grow) = (.vertical, true)
+        case .next,
+             .previous:
+            return ws
+        }
+        guard let (sIdx, tIdx) = locate(pane, in: ws),
+              let enclosing = ws.sessions[sIdx].tabs[tIdx].root.enclosingSplit(of: pane, axis: axis)
+        else { return ws }
+
+        let i = enclosing.childIndex
+        let lastIndex = enclosing.childCount - 1
+        // Map (grow/shrink, position) to which divider to nudge and by what signed delta so the ACTIVE pane
+        // grows/shrinks. For a non-last child the divider to its right (leadingIndex == i) governs it:
+        // a +delta there grows the leading (active) child. For the LAST child there is no divider to its
+        // right, so the i-1 divider governs it with the sign flipped (a −delta there grows the trailing
+        // (active) child).
+        let leadingIndex: Int
+        let delta: Double
+        if i < lastIndex {
+            leadingIndex = i
+            delta = grow ? step : -step
+        } else {
+            leadingIndex = i - 1
+            delta = grow ? -step : step
+        }
+        // Mutate the LOCATED tab directly (mirror swapPanes / balanceSplits) — not the active-tab-scoped
+        // resizeDivider — so the nudge lands even when `pane` is in a non-active tab.
+        var copy = ws
+        var tab = copy.sessions[sIdx].tabs[tIdx]
+        tab.root = tab.root.resizingDivider(splitID: enclosing.splitID, leadingIndex: leadingIndex, delta: delta)
+        copy.sessions[sIdx].tabs[tIdx] = tab
+        return copy
+    }
+
+    // MARK: Balance splits (tmux even-layout)
+
+    /// Resets every `.split`'s `.flex` children in the tab that owns `pane` to an EQUAL share (tmux
+    /// "select-layout even-*"), leaving `.fixed` bands untouched. The tree SHAPE and leaf set are unchanged
+    /// — only the weights equalize — so the invariant holds. No-op if `pane` is absent.
+    public static func balanceSplits(activeTabContaining pane: PaneID, in ws: TreeWorkspace) -> TreeWorkspace {
+        guard let (sIdx, tIdx) = locate(pane, in: ws) else { return ws }
+        var copy = ws
+        copy.sessions[sIdx].tabs[tIdx].root = copy.sessions[sIdx].tabs[tIdx].root.rebalanced()
+        return copy
+    }
+
     // MARK: Focus
 
     /// Focuses `target` (sets the owning tab's `activePane` and selects that session/tab). No-op if

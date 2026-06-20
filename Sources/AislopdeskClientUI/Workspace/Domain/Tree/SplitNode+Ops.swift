@@ -227,6 +227,62 @@ public extension SplitNode {
         }
     }
 
+    // MARK: Enclosing split on an axis (the keyboard-resize query)
+
+    /// The nearest ANCESTOR `.split` on `axis` that contains leaf `pane`, as `(splitID, childIndex,
+    /// childCount)` where `childIndex` is the position of the DIRECT child subtree (of that split) that
+    /// holds `pane` and `childCount` is that split's child count. `nil` if no ancestor split on `axis`
+    /// contains the pane (e.g. a sole leaf, or the pane only sits under the other axis). Pure.
+    ///
+    /// "Nearest" = the DEEPEST matching ancestor: a keyboard width-resize should nudge the divider closest
+    /// to the active pane, so we descend toward the leaf and return the last (deepest) split on `axis` whose
+    /// direct-child subtree still contains it.
+    func enclosingSplit(of pane: PaneID, axis: SplitAxis) -> (splitID: SplitNodeID, childIndex: Int, childCount: Int)? {
+        guard contains(pane) else { return nil }
+        var best: (splitID: SplitNodeID, childIndex: Int, childCount: Int)?
+        enclosingSplitImpl(pane, axis: axis, into: &best)
+        return best
+    }
+
+    /// Pre-order descent that records the DEEPEST matching split (overwrites a shallower hit) — so the
+    /// returned split is the one nearest the leaf. Pure.
+    private func enclosingSplitImpl(
+        _ pane: PaneID,
+        axis: SplitAxis,
+        into best: inout (splitID: SplitNodeID, childIndex: Int, childCount: Int)?,
+    ) {
+        guard case let .split(id, splitAxis, children) = self else { return }
+        // The direct-child subtree that holds the pane (there is exactly one — pane ids are unique).
+        guard let idx = children.firstIndex(where: { $0.node.contains(pane) }) else { return }
+        if splitAxis == axis {
+            // A match on this axis — record it, then keep descending so a DEEPER split on the same axis wins.
+            best = (id, idx, children.count)
+        }
+        children[idx].node.enclosingSplitImpl(pane, axis: axis, into: &best)
+    }
+
+    // MARK: Rebalance (tmux even-layout)
+
+    /// This subtree with every `.split`'s `.flex` children reset to an EQUAL `.flex(1)` share (recursively),
+    /// while `.fixed` children keep their points. The tree SHAPE and the leaf set/order are unchanged — only
+    /// the flex weights are equalized (the tmux "select-layout even-*" idiom). Pure.
+    func rebalanced() -> SplitNode {
+        switch self {
+        case .leaf:
+            return self
+        case let .split(id, axis, children):
+            let balancedChildren = children.map { child -> WeightedChild in
+                let newWeight: SplitWeight =
+                    switch child.weight {
+                    case .flex: .flex(1) // equal share — re-normalized proportionally at layout
+                    case .fixed: child.weight // fixed bands keep their points
+                    }
+                return WeightedChild(weight: newWeight, node: child.node.rebalanced())
+            }
+            return .split(id: id, axis: axis, children: balancedChildren)
+        }
+    }
+
     // MARK: Locate
 
     /// The first leaf of the tree in pre-order DFS (the sensible default focus / the "first survivor"). A

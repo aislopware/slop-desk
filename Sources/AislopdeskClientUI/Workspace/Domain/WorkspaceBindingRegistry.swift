@@ -19,6 +19,21 @@ public enum WorkspaceAction: Hashable, Sendable {
     // the active canvas pane on the retained-but-dead canvas path
     case breakPaneToTab // ⌃⌘T — eject the active pane into a new tab
 
+    // Move pane (Zellij "move pane" — swap with the geometric neighbour)
+    case movePaneLeft // ⌥⌘⇧←
+    case movePaneRight // ⌥⌘⇧→
+    case movePaneUp // ⌥⌘⇧↑
+    case movePaneDown // ⌥⌘⇧↓
+
+    // Resize pane (keyboard divider nudge — grow right/down, shrink left/up)
+    case resizePaneLeft // ⌃⌘←
+    case resizePaneRight // ⌃⌘→
+    case resizePaneUp // ⌃⌘↑
+    case resizePaneDown // ⌃⌘↓
+
+    // Balance (tmux even-layout)
+    case balancePanes // ⌃⌘=
+
     // Focus
     case focusLeft // ⌥⌘←
     case focusRight // ⌥⌘→
@@ -68,6 +83,15 @@ public extension WorkspaceAction {
              .closePane,
              .renamePane,
              .breakPaneToTab,
+             .movePaneLeft,
+             .movePaneRight,
+             .movePaneUp,
+             .movePaneDown,
+             .resizePaneLeft,
+             .resizePaneRight,
+             .resizePaneUp,
+             .resizePaneDown,
+             .balancePanes,
              .focusLeft,
              .focusRight,
              .focusUp,
@@ -179,6 +203,57 @@ public enum WorkspaceBindingRegistry {
             id: "pane.breakToTab", action: .breakPaneToTab, title: "Break Pane to Tab",
             category: .panes, chord: KeyChord(character: "t", [.control, .command]),
             symbol: "rectangle.portrait.and.arrow.right", keywords: "eject move detach pop out promote",
+        ),
+        // Move pane (Zellij "move pane" — swap with the geometric neighbour). ⌥⌘⇧+arrows = the focus chords
+        // (⌥⌘arrows) with ⇧ added, so they read as "carry the pane along the focus move" and stay distinct
+        // from both focus (no ⇧) and the ⌃⌘arrow resize chords below.
+        WorkspaceBinding(
+            id: "pane.moveLeft", action: .movePaneLeft, title: "Move Pane Left",
+            category: .panes, chord: KeyChord(.leftArrow, [.option, .command, .shift]),
+            symbol: "arrow.left.square", keywords: "swap reorder shift pane left",
+        ),
+        WorkspaceBinding(
+            id: "pane.moveRight", action: .movePaneRight, title: "Move Pane Right",
+            category: .panes, chord: KeyChord(.rightArrow, [.option, .command, .shift]),
+            symbol: "arrow.right.square", keywords: "swap reorder shift pane right",
+        ),
+        WorkspaceBinding(
+            id: "pane.moveUp", action: .movePaneUp, title: "Move Pane Up",
+            category: .panes, chord: KeyChord(.upArrow, [.option, .command, .shift]),
+            symbol: "arrow.up.square", keywords: "swap reorder shift pane up",
+        ),
+        WorkspaceBinding(
+            id: "pane.moveDown", action: .movePaneDown, title: "Move Pane Down",
+            category: .panes, chord: KeyChord(.downArrow, [.option, .command, .shift]),
+            symbol: "arrow.down.square", keywords: "swap reorder shift pane down",
+        ),
+        // Resize pane (keyboard divider nudge). ⌃⌘arrows — distinct from the ⌃⌘bracket block-jump chords
+        // (different keys) and grow the active pane toward the arrow (right/down) or shrink it (left/up).
+        WorkspaceBinding(
+            id: "pane.resizeLeft", action: .resizePaneLeft, title: "Shrink Pane Width",
+            category: .panes, chord: KeyChord(.leftArrow, [.control, .command]),
+            symbol: "arrow.left.and.line.vertical.and.arrow.right", keywords: "resize shrink narrower width divider",
+        ),
+        WorkspaceBinding(
+            id: "pane.resizeRight", action: .resizePaneRight, title: "Grow Pane Width",
+            category: .panes, chord: KeyChord(.rightArrow, [.control, .command]),
+            symbol: "arrow.right.and.line.vertical.and.arrow.left", keywords: "resize grow wider width divider",
+        ),
+        WorkspaceBinding(
+            id: "pane.resizeUp", action: .resizePaneUp, title: "Shrink Pane Height",
+            category: .panes, chord: KeyChord(.upArrow, [.control, .command]),
+            symbol: "arrow.up.and.line.horizontal.and.arrow.down", keywords: "resize shrink shorter height divider",
+        ),
+        WorkspaceBinding(
+            id: "pane.resizeDown", action: .resizePaneDown, title: "Grow Pane Height",
+            category: .panes, chord: KeyChord(.downArrow, [.control, .command]),
+            symbol: "arrow.down.and.line.horizontal.and.arrow.up", keywords: "resize grow taller height divider",
+        ),
+        // Balance (tmux even-layout): reset the active tab's split weights to equal. ⌃⌘= is otherwise unbound.
+        WorkspaceBinding(
+            id: "pane.balance", action: .balancePanes, title: "Balance Panes",
+            category: .panes, chord: KeyChord(character: "=", [.control, .command]),
+            symbol: "rectangle.split.2x2", keywords: "even equal distribute reset layout balance tile",
         ),
         // Tabs
         WorkspaceBinding(

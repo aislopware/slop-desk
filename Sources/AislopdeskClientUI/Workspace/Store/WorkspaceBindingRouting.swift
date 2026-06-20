@@ -55,6 +55,18 @@ public extension WorkspaceBindingRegistry {
         case .closePane: store.requestCloseActivePaneTree()
         case .renamePane: store.requestRenameActivePane()
         case .breakPaneToTab: store.breakActivePaneToTab()
+        // Move pane (swap with the geometric neighbour, against the reported layout)
+        case .movePaneLeft: store.swapActivePaneInDirection(.left)
+        case .movePaneRight: store.swapActivePaneInDirection(.right)
+        case .movePaneUp: store.swapActivePaneInDirection(.up)
+        case .movePaneDown: store.swapActivePaneInDirection(.down)
+        // Resize pane (keyboard divider nudge — structural, no geometry)
+        case .resizePaneLeft: store.resizeActivePane(.left)
+        case .resizePaneRight: store.resizeActivePane(.right)
+        case .resizePaneUp: store.resizeActivePane(.up)
+        case .resizePaneDown: store.resizeActivePane(.down)
+        // Balance (tmux even-layout)
+        case .balancePanes: store.balanceActivePaneSplits()
         // Focus
         case .focusLeft: store.moveFocusTreeUsingReportedLayout(.left)
         case .focusRight: store.moveFocusTreeUsingReportedLayout(.right)
@@ -106,6 +118,17 @@ public extension WorkspaceBindingRegistry {
         case .closePane: apply(.closePane, to: store)
         case .renamePane: apply(.renamePane, to: store)
         case .breakPaneToTab: break // no canvas analogue
+        // Tree-only pane management (move / resize / balance) — the flat canvas has no split tree to act on.
+        case .movePaneLeft,
+             .movePaneRight,
+             .movePaneUp,
+             .movePaneDown,
+             .resizePaneLeft,
+             .resizePaneRight,
+             .resizePaneUp,
+             .resizePaneDown,
+             .balancePanes:
+            break // no canvas analogue (tiled-split only)
         case .focusLeft: apply(.focus(.left), to: store)
         case .focusRight: apply(.focus(.right), to: store)
         case .focusUp: apply(.focus(.up), to: store)

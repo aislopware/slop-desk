@@ -221,7 +221,10 @@ type_body_length:
   # 1600 → 1610 (2026-06-20): WorkspaceStore needs ONE stored property for the WB3 block-bookmark /
   # jump-cursor seam (stored state can't live in the WorkspaceStore+Blocks extension); the body logic
   # for the feature lives in that extension, so this is a single declaration, not bloat.
-  warning: 1610
+  # 1610 → 1630 (2026-06-20): WorkspaceStore gains the keyboard pane-management entry points
+  # (swapActivePaneInDirection / resizeActivePane / balanceActivePaneSplits) — thin wrappers over the
+  # pure WorkspaceTreeOps that carry the geometry/active-pane resolution that can't live in the pure op.
+  warning: 1630
   error: 2700
 
 function_body_length:

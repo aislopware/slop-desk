@@ -2585,6 +2585,43 @@ public final class WorkspaceStore {
     /// Toggles render-only zoom on the active pane (the "zoom/maximize" command entry).
     public func toggleZoomActivePane() { toggleZoomTree() }
 
+    /// Moves (swaps) the active pane with its geometric neighbour in `direction` (Zellij "move pane"),
+    /// resolved against the bounds the active-tab view last reported via ``updateSolvedLayout(_:)`` — the
+    /// keyboard/menu/palette entry point that has no `GeometryReader` of its own. Mirrors
+    /// ``moveFocusTreeUsingReportedLayout(_:)``: a no-op until the view has reported a layout, and a no-op
+    /// when there is no neighbour on the requested side. The moved pane keeps focus (its `PaneID` is
+    /// unchanged, so reconcile is a registry no-op). No-op without an active pane.
+    public func swapActivePaneInDirection(_ direction: FocusDirection) {
+        guard let active = tree.activeSession?.activeTab?.activePane else { return }
+        guard let solved = lastSolvedLayout, !solved.frames.isEmpty else { return }
+        var bounds = CGRect.null
+        for rect in solved.frames.values { bounds = bounds.union(rect) }
+        guard !bounds.isNull, bounds.width > 0, bounds.height > 0 else { return }
+        tree = WorkspaceTreeOps.movePaneInDirection(active, direction, bounds: bounds, in: tree)
+        reconcileTree()
+    }
+
+    /// Resizes the active pane along `direction` by nudging the nearest enclosing split's divider
+    /// (`.right`/`.down` grow it, `.left`/`.up` shrink it) — the keyboard counterpart to a drag-resize.
+    /// STRUCTURAL (no geometry / solved layout needed): `.left`/`.right` act on the enclosing horizontal
+    /// split, `.up`/`.down` on the enclosing vertical split. The leaf set is unchanged, so reconcile is a
+    /// registry no-op. No-op without an active pane / no enclosing split. The op is sum-preserving + clamped
+    /// at the min-weight floor.
+    public func resizeActivePane(_ direction: FocusDirection, step: Double = 0.1) {
+        guard let active = tree.activeSession?.activeTab?.activePane else { return }
+        tree = WorkspaceTreeOps.resizeActivePane(active, direction, step: step, in: tree)
+        reconcileTree()
+    }
+
+    /// Resets the active tab's split weights to an EQUAL share (tmux "select-layout even-*"), leaving any
+    /// `.fixed` bands untouched. STRUCTURAL — the tree shape + leaf set are unchanged, so reconcile is a
+    /// registry no-op. No-op without an active pane.
+    public func balanceActivePaneSplits() {
+        guard let active = tree.activeSession?.activeTab?.activePane else { return }
+        tree = WorkspaceTreeOps.balanceSplits(activeTabContaining: active, in: tree)
+        reconcileTree()
+    }
+
     /// Selects the tab `delta` away from the active tab in the active session, clamped to the tab range
     /// (no wrap — a list stops at its ends, like the palette). The "next/prev tab" command entry. No-op
     /// without an active session.

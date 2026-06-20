@@ -191,6 +191,93 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(owningTab.allPaneIDs(), [moved], "the broken-out pane is alone in its new tab")
     }
 
+    // MARK: - Panes: move / resize / balance (keyboard pane management)
+
+    /// `.movePaneRight` swaps the active pane with its right neighbour (the leaf order flips); the moved pane
+    /// keeps focus (PaneID identity preserved). Proven to fail before the action + routing exist.
+    func testMovePaneRightSwapsActiveWithRightNeighbour() throws {
+        let store = makeTreeStore()
+        let a = leaves(store)[0]
+        route(.splitRight, store) // [a | b], b active
+        let b = try XCTUnwrap(activePane(store))
+        store.focusPaneTree(a) // make a active so we move IT right
+        store.updateSolvedLayout(SolvedLayout(frames: [
+            a: CGRect(x: 0, y: 0, width: 100, height: 100),
+            b: CGRect(x: 100, y: 0, width: 100, height: 100),
+        ]))
+
+        route(.movePaneRight, store)
+
+        XCTAssertEqual(store.tree.activeSession?.activeTab?.root.allPaneIDs(), [b, a], "a moved right past b")
+        XCTAssertEqual(activePane(store), a, "the moved pane keeps focus")
+    }
+
+    /// `.resizePaneRight` grows the active pane wider (a sum-preserving divider nudge) — the leaf set is
+    /// unchanged. Proven to fail before the action routes to `resizeActivePane`.
+    func testResizePaneRightGrowsActivePaneWidth() {
+        let store = makeTreeStore()
+        let a = leaves(store)[0]
+        route(.splitRight, store) // [a | b], b active
+        store.focusPaneTree(a)
+        guard case let .split(_, _, before)? = store.tree.activeSession?.activeTab?.root else {
+            XCTFail("expected split")
+            return
+        }
+        func flex(_ c: WeightedChild) -> Double { if case let .flex(w) = c.weight { return w }
+            return 0
+        }
+
+        route(.resizePaneRight, store)
+
+        guard case let .split(_, _, after)? = store.tree.activeSession?.activeTab?.root else {
+            XCTFail("expected split")
+            return
+        }
+        XCTAssertGreaterThan(flex(after[0]), flex(before[0]), "the active (leading) pane grew")
+        XCTAssertEqual(leaves(store).count, 2, "resize never changes the leaf set")
+    }
+
+    /// `.balancePanes` resets the active tab's split weights to equal after an off-balance nudge — the leaf
+    /// set is unchanged. Proven to fail before the action routes to `balanceActivePaneSplits`.
+    func testBalancePanesEqualizesActiveTabSplit() {
+        let store = makeTreeStore()
+        route(.splitRight, store) // [a | b]
+        guard case let .split(splitID, _, _)? = store.tree.activeSession?.activeTab?.root else {
+            XCTFail("expected split")
+            return
+        }
+        store.resizeDividerTree(splitID: splitID, leadingChildIndex: 0, delta: 0.4) // off-balance
+
+        route(.balancePanes, store)
+
+        guard case let .split(_, _, children)? = store.tree.activeSession?.activeTab?.root else {
+            XCTFail("expected split")
+            return
+        }
+        func flex(_ c: WeightedChild) -> Double { if case let .flex(w) = c.weight { return w }
+            return 0
+        }
+        XCTAssertEqual(flex(children[0]), flex(children[1]), accuracy: 1e-9, "balance equalized the two columns")
+        XCTAssertEqual(leaves(store).count, 2, "balance never changes the leaf set")
+    }
+
+    /// Pins the nine new pane-management chords to their documented defaults (move = ⌥⌘⇧arrows, resize =
+    /// ⌃⌘arrows, balance = ⌃⌘=) — distinct from focus (⌥⌘arrows) and the ⌃⌘bracket block jumps.
+    func testPaneManagementChordsAreTheDocumentedDefaults() {
+        func chord(_ action: WorkspaceAction) -> KeyChord? {
+            WorkspaceBindingRegistry.binding(for: action)?.chord
+        }
+        XCTAssertEqual(chord(.movePaneLeft), KeyChord(.leftArrow, [.option, .command, .shift]), "move left = ⌥⌘⇧←")
+        XCTAssertEqual(chord(.movePaneRight), KeyChord(.rightArrow, [.option, .command, .shift]), "move right = ⌥⌘⇧→")
+        XCTAssertEqual(chord(.movePaneUp), KeyChord(.upArrow, [.option, .command, .shift]), "move up = ⌥⌘⇧↑")
+        XCTAssertEqual(chord(.movePaneDown), KeyChord(.downArrow, [.option, .command, .shift]), "move down = ⌥⌘⇧↓")
+        XCTAssertEqual(chord(.resizePaneLeft), KeyChord(.leftArrow, [.control, .command]), "resize left = ⌃⌘←")
+        XCTAssertEqual(chord(.resizePaneRight), KeyChord(.rightArrow, [.control, .command]), "resize right = ⌃⌘→")
+        XCTAssertEqual(chord(.resizePaneUp), KeyChord(.upArrow, [.control, .command]), "resize up = ⌃⌘↑")
+        XCTAssertEqual(chord(.resizePaneDown), KeyChord(.downArrow, [.control, .command]), "resize down = ⌃⌘↓")
+        XCTAssertEqual(chord(.balancePanes), KeyChord(character: "=", [.control, .command]), "balance = ⌃⌘=")
+    }
+
     // MARK: - Sessions: new session changes the active session + materializes its leaf
 
     /// `.newSession` adds a session (one tab/leaf) and selects it; its leaf is materialized.
