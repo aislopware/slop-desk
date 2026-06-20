@@ -112,8 +112,8 @@ A follow-on requested in conversation; spiked → built → reviewed → fast-fo
 ## Addendum — three more follow-on features (same overnight session, "tiếp tục ý tưởng hay khác")
 
 Each was orchestrated as an **implement → 5-dimension adversarial review → verify → fix** workflow and committed
-only after I re-ran `make check` myself (lint + build + full suite + golden). **All three are client-only: no
-wire/host/FFI/golden/schema change; golden byte-identical every time.** Branch now **31 commits vs main, unpushed.**
+only after I re-ran `make check` myself (lint + build + full suite + golden). **All four are client-only: no
+wire/host/FFI/golden/schema change; golden byte-identical every time.** Branch now **33 commits vs main, unpushed.**
 
 1. **Blocks++** (`87c7223`) — the Warp block superpowers on top of the Blocks feature above:
    - **Re-run command** (`⌃⌘R` last-command + per-row button): `BlockReRunEncoder` re-injects the captured
@@ -142,10 +142,23 @@ wire/host/FFI/golden/schema change; golden byte-identical every time.** Branch n
      `resizeActivePane`, `rebalanced`) carry the tests; the 9 chords are pinned by `TreeCommandRoutingTests`.
    - Review: 11 → 4 confirmed → all fixed (resize now mutates the *located* tab not the active one; two real
      test-rigor holes closed).
+4. **Background-pane command-completion awareness** (`0f743e3`) — finishes the half-built "notify on finish"
+   (the `TODO(B3)` focus gate) and adds an in-app badge, consuming the existing `.commandStatus(.idle)` wire (OSC 133
+   exit + duration — zero new wire):
+   - **Focus-gated notification**: a long command now notifies **only when its pane is backgrounded** (no spam while
+     you watch it); the notify decision moved into the store so the gate applies, and the notification now embeds the
+     paneID so a **click reveals the pane** (was OSC-9-only before).
+   - **In-app ✓/✗ badge** on the tab + session sidebar (mirrors `AgentStatusDot`): set on a background completion
+     (failures always; successes only when long, to avoid `ls`/`cd` noise), cleared on focus / app-active.
+   - Pure `BackgroundCompletionPolicy` + store handler carry the tests; the `UNUserNotificationCenter` delivery +
+     SwiftUI badge are thin shims. Review: 12 findings → **0 confirmed**. `check-ios` BUILD SUCCEEDED (app/scenePhase touched).
 
-### Needs YOUR eyes-on for these three (still impossible headless)
+### Needs YOUR eyes-on for these four (still impossible headless)
 - **Blocks++**: re-run button + `⌃⌘R`; the all/failed/bookmarked filter + `⌃⌘⇧[`/`⌃⌘⇧]` jump-to-failed; star toggle +
   persistence across a relaunch (stars should NOT reappear on unrelated commands).
 - **Templates**: the Command Palette "Session Templates" section opens a multi-pane session that auto-`cd`s/runs the
   per-pane command; "Save Layout as Template…" round-trips.
 - **Pane management**: move/resize/balance chords on a real multi-pane tab (divider actually nudges; balance evens out).
+- **Completion awareness**: run a long command in a background pane → ✓/✗ badge appears on its tab/sidebar (clears on
+  focus) + a "command finished" notification fires (and **only** when that pane is NOT focused); clicking it reveals
+  the pane. Needs `SettingsKey.longCommandNotificationsEnabled` on + notification permission granted + OSC 133 shell-integration.
