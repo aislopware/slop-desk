@@ -1,5 +1,6 @@
 import AislopdeskHost
 import AislopdeskInspector
+import AislopdeskVideoProtocol
 import Foundation
 
 // aislopdesk-hostd — headless Aislopdesk host daemon (PTY + transport).
@@ -11,6 +12,19 @@ import Foundation
 
 let arguments = CommandLine.arguments
 let programName = arguments.first.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "aislopdesk-hostd"
+
+// W12 (decision #10): fold the `video-prefs.json` sidecar into `EnvConfig.overlay` at launch, BEFORE
+// any consumer reads a setting — here the agent-detection gates (`AISLOPDESK_AGENT_DETECT`/`_HOOKS`,
+// read below) resolve ProcessInfo env → overlay → default, so a GUI toggle applies on the next launch.
+// A real `AISLOPDESK_*` env var still wins (the sidecar only fills gaps). The same sidecar the
+// `aislopdesk-videohostd` daemon loads — both host daemons now honour the shared agent prefs. A
+// missing / corrupt sidecar is a no-op. (No live reload — the gates are read once.)
+let appliedHostPrefs = EnvBridge.loadDefaultSidecarIntoEnvConfig()
+if !appliedHostPrefs.isEmpty, ProcessInfo.processInfo.environment["AISLOPDESK_VIDEO_DEBUG"] != nil {
+    FileHandle.standardError.write(
+        Data("\(programName): applied video-prefs.json overlay → \(appliedHostPrefs.sorted())\n".utf8),
+    )
+}
 
 // W10 — `integration install|uninstall claude`: write/merge (or strip) the Claude Code hooks
 // config + hook script, then EXIT. This is a one-shot setup command, not the daemon path; it

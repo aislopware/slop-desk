@@ -248,7 +248,9 @@ final class VideoWindowPipeline {
         // So the DEFAULT is now present-on-arrival (deadlineMode=false) — a decoded frame shows on the next
         // display tick, no playout hold. `AISLOPDESK_PACER=deadline` restores the smoothness-tuned deadline
         // pacer for a jittery-WAN A/B (`AISLOPDESK_PLAYOUT_MS` then tunes its buffer).
-        let deadlineMode = env["AISLOPDESK_PACER"].map { $0.lowercased() == "deadline" } ?? false
+        // W12: resolve PACER / PLAYOUT_MS through `EnvConfig` (ProcessInfo env → settings overlay) so a
+        // GUI setting can drive them; an EMPTY overlay is byte-identical to the previous `env[...]` read.
+        let deadlineMode = EnvConfig.string("AISLOPDESK_PACER").map { $0.lowercased() == "deadline" } ?? false
         // ADAPTIVE PLAYOUT (default ON): the playout buffer auto-tunes to the live network jitter
         // (clamp(k·jitter + base, [floor, ceil]) in rust-core) — a clean LAN floats down to ~floor (low
         // latency), a jittery WAN inflates for smoothness. A fixed value is wrong across links. HW-
@@ -256,8 +258,8 @@ final class VideoWindowPipeline {
         // present-gaps 0% and no regression, WITHOUT a hardcoded constant. EXPLICIT AISLOPDESK_PLAYOUT_MS
         // forces a fixed buffer (adaptation off — the A/B escape hatch); absent, 10ms is only the
         // cold-start SEED. `AISLOPDESK_ADAPTIVE_PLAYOUT=0` disables it; floor/ceil/k/base are env-tunable.
-        let fixedPlayoutOverride = env["AISLOPDESK_PLAYOUT_MS"] != nil
-        let playoutMs = env["AISLOPDESK_PLAYOUT_MS"].flatMap(Double.init) ?? 10.0
+        let fixedPlayoutOverride = EnvConfig.string("AISLOPDESK_PLAYOUT_MS") != nil
+        let playoutMs = EnvConfig.string("AISLOPDESK_PLAYOUT_MS").flatMap(Double.init) ?? 10.0
         let adaptivePlayout = env["AISLOPDESK_ADAPTIVE_PLAYOUT"]
             .map { !($0 == "0" || $0.lowercased() == "false") } ?? true
         let playoutK = env["AISLOPDESK_PLAYOUT_K"].flatMap(Double.init) ?? 0.8

@@ -145,11 +145,12 @@ public final class PreferencesStore {
     /// Fold the video + agent prefs (and the raw overrides) into the process-wide ``EnvConfig`` overlay
     /// for the CLIENT-readable flags, and write the `video-prefs.json` SIDECAR for the host daemon.
     ///
-    /// The overlay precedence is typed-prefs (video ∪ agent) THEN the raw power-user overrides on top, so
-    /// an explicit `AISLOPDESK_*` typed by hand wins over the matching toggle. A real env var still wins
-    /// over both (``EnvConfig/string(_:)`` checks the overlay first, but the overlay is only populated
-    /// here from SETTINGS — we never clobber a deliberate `launchctl`/`--args` env on the CLIENT either,
-    /// because the overlay entries we write are settings, not env).
+    /// WITHIN the overlay, precedence is typed-prefs (video ∪ agent) THEN the raw power-user overrides on
+    /// top, so an explicit `AISLOPDESK_*` typed by hand in the Settings raw-overrides box wins over the
+    /// matching toggle. ACROSS tiers, a real `ProcessInfo` env var STILL wins over the whole overlay
+    /// (decision #16, `env → overlay → default`): ``EnvConfig/string(_:)`` checks the real env var FIRST
+    /// and only falls back to the overlay, so a deliberate `launchctl`/`--args` env on the CLIENT is never
+    /// clobbered by a persisted setting — consistent with the host sidecar's gap-fill.
     private func applyVideoAndAgent() {
         var overlay = EnvBridge.toEnv(video).merging(EnvBridge.toEnv(agent)) { _, new in new }
         for (key, value) in rawOverrides where !key.isEmpty { overlay[key] = value }

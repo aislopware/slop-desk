@@ -146,13 +146,22 @@ public enum LaunchPresetEngine {
 
     /// The bytes to type into a freshly-spawned pane: a `cd <cwd>\n` (only when a non-empty cwd is set)
     /// followed by `<command>\n` (only when a non-empty command is set). An empty command + empty cwd ⇒
-    /// no bytes (a plain shell pane). Reuses ``SendKeysParser`` so `<Enter>`-style tokens IN a command
-    /// still resolve, consistent with snippets.
+    /// no bytes (a plain shell pane).
+    ///
+    /// SECURITY: the `cd <cwd>` line is emitted as LITERAL UTF-8 bytes (NOT through ``SendKeysParser``).
+    /// The cwd is a filesystem PATH, never shell-control input — running it through `SendKeysParser`
+    /// would interpret `<Enter>`/`<cr>`/`<nl>` tokens INSIDE the (single-quoted) path, injecting a raw
+    /// 0x0D/0x0A that breaks out of the quoted `cd` line so the rest runs as a SEPARATE command (a cwd
+    /// of `/tmp/proj<Enter>rm -rf x` would execute `rm`). The quoting only escapes literal quotes, not
+    /// these tokens, so the path must bypass the token parser entirely. Only the `command` field —
+    /// intended shell input — legitimately goes through ``SendKeysParser`` (so `<Enter>`-style tokens IN
+    /// a command still resolve, consistent with snippets).
     public static func keystrokes(command: String, cwd: String?) -> [UInt8] {
         var out: [UInt8] = []
         if let cwd, !cwd.isEmpty {
-            // Quote the path so a cwd with spaces survives; SendKeysParser passes literal text through.
-            out += SendKeysParser.encode("cd \(shellQuoted(cwd))")
+            // Quote the path so a cwd with spaces survives, and emit the WHOLE `cd '<path>'` line as raw
+            // UTF-8 — never via SendKeysParser, whose `<…>` tokens would inject newlines into the path.
+            out += Array("cd \(shellQuoted(cwd))".utf8)
             out.append(0x0A) // newline
         }
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)

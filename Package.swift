@@ -75,9 +75,17 @@ let package = Package(
         // through the pure `ClaudeStatusMachine` to decide the type-26/27 CONTROL emissions. The
         // edge stays acyclic — AislopdeskAgentDetect depends on NOTHING (it physically cannot
         // import AislopdeskHost), and AislopdeskInspector still depends only on AislopdeskProtocol.
+        // W12: AislopdeskHost also depends on AislopdeskVideoProtocol for `EnvConfig` — the host's
+        // agent-detection gates (`AISLOPDESK_AGENT_DETECT`/`_HOOKS`) resolve through the settings overlay
+        // so a GUI toggle reaches them (it loads the same `video-prefs.json` sidecar). The edge is
+        // acyclic — AislopdeskVideoProtocol is the cross-platform PURE wire/settings leaf (deps only
+        // CAislopdeskSIMD) and never imports any host module.
         .target(
             name: "AislopdeskHost",
-            dependencies: ["AislopdeskTransport", "AislopdeskProtocol", "AislopdeskInspector", "AislopdeskAgentDetect"],
+            dependencies: [
+                "AislopdeskTransport", "AislopdeskProtocol", "AislopdeskInspector",
+                "AislopdeskAgentDetect", "AislopdeskVideoProtocol",
+            ],
         ),
 
         // Shared client: connection mgr, reconnect, input encoding. (WF-4.)
@@ -280,7 +288,9 @@ let package = Package(
         .testTarget(name: "AislopdeskTransportTests", dependencies: ["AislopdeskTransport"]),
         .testTarget(
             name: "AislopdeskHostTests",
-            dependencies: ["AislopdeskHost", "AislopdeskInspector", "AislopdeskAgentDetect"],
+            // W12: AislopdeskVideoProtocol for `EnvConfig` — the agent-gate reaches-consumer test sets
+            // `EnvConfig.overlay` and asserts the default-arg path (overlay → env) reaches the gate.
+            dependencies: ["AislopdeskHost", "AislopdeskInspector", "AislopdeskAgentDetect", "AislopdeskVideoProtocol"],
         ),
         // AislopdeskClientTests exercises the REAL PATH 1 e2e: a HostServer (AislopdeskHost) +
         // AislopdeskClient over loopback, so it depends on AislopdeskHost + AislopdeskTTY too.

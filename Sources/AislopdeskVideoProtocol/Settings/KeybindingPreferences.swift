@@ -38,6 +38,28 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
             self.control = control
         }
 
+        private enum CodingKeys: String, CodingKey {
+            case key
+            case command
+            case shift
+            case option
+            case control
+        }
+
+        /// Custom decode so a PERSISTED / hand-edited file with an uppercase `key` ("D") is normalised to
+        /// the same lowercase form the memberwise ``init(key:command:shift:option:control:)`` enforces —
+        /// otherwise the synthesised decoder would store "D" verbatim and ``canonical`` ("cmd+D") would
+        /// never match the lowercase chord the lookup compares against (a silently-dead override). The
+        /// other fields decode normally. (Encoding stays synthesised — `key` is already lowercased.)
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            key = try c.decode(String.self, forKey: .key).lowercased()
+            command = try c.decodeIfPresent(Bool.self, forKey: .command) ?? false
+            shift = try c.decodeIfPresent(Bool.self, forKey: .shift) ?? false
+            option = try c.decodeIfPresent(Bool.self, forKey: .option) ?? false
+            control = try c.decodeIfPresent(Bool.self, forKey: .control) ?? false
+        }
+
         /// Canonical, order-stable display/identity string (`"cmd+shift+d"`). Two chords with the same
         /// keys + modifiers produce the same string ⇒ usable as a conflict-detection key.
         public var canonical: String {

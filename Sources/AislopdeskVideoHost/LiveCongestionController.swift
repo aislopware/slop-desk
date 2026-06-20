@@ -563,7 +563,7 @@ public struct LiveCongestionController: Sendable, Equatable {
 
     // MARK: Env parsing helpers
 
-    // W12: resolve through `EnvConfig` (overlay → ProcessInfo env) so a GUI setting can override these
+    // W12: resolve through `EnvConfig` (ProcessInfo env → overlay) so a GUI setting can override these
     // tunables. With an EMPTY overlay `EnvConfig.string(key)` is byte-identical to the previous
     // `ProcessInfo.processInfo.environment[key]`, so the validate-then-default law below — and the
     // golden corpus that pins these defaults — is unchanged. (Validate-then-default: out-of-range or

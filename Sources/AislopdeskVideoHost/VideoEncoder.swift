@@ -1,4 +1,5 @@
 #if os(macOS)
+import AislopdeskVideoProtocol
 import CoreMedia
 import CoreVideo
 import Foundation
@@ -121,7 +122,10 @@ public final class VideoEncoder: @unchecked Sendable {
     /// link is CLEAN and auto-collapses to Min==Max==q (small frames) the moment the ABR reports
     /// congestion (RTT-streak / loss / gradient / catastrophic). `=0` forces the legacy pin. Only bites
     /// when ``constQP`` != nil.
-    static let qpDecouple: Bool = ProcessInfo.processInfo.environment["AISLOPDESK_QP_DECOUPLE"] != "0"
+    /// Resolves through ``EnvConfig`` (ProcessInfo env → overlay) — W12 — so a GUI setting can override
+    /// it; with an EMPTY overlay this is byte-identical to the previous `ProcessInfo` read (default-ON
+    /// `!= "0"` idiom preserved exactly).
+    static let qpDecouple: Bool = EnvConfig.boolDefaultOn("AISLOPDESK_QP_DECOUPLE")
 
     /// CRISP STATIC REFRESH (doc 17 §3.4 — Design A, single-session QP-bump, 2026-06-08).
     /// When the window goes static the heartbeat timer re-encodes the cached frame as a

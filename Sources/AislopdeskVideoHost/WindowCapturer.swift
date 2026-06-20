@@ -988,8 +988,10 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // A union region only makes sense in the display-including mode (it relies on
         // includeChildWindows compositing the dialog); force that mode when a region is supplied.
         let mode: CaptureMode = region != nil ? .displayIncluding
+            // W12: resolve through `EnvConfig` (ProcessInfo env → overlay) so a GUI setting can force
+            // the capture filter; an EMPTY overlay is byte-identical to the previous `ProcessInfo` read.
             : Self.resolveCaptureMode(
-                envValue: ProcessInfo.processInfo.environment["AISLOPDESK_DISPLAY_CAPTURE"],
+                envValue: EnvConfig.string("AISLOPDESK_DISPLAY_CAPTURE"),
                 preferDisplayAnchored: preferDisplayAnchored,
             )
         if mode != .window {

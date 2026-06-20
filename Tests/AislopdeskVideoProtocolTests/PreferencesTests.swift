@@ -48,6 +48,28 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(c.canonical, "shift+cmd+d") // stable modifier order
     }
 
+    /// P4 #15: a PERSISTED / hand-edited file with an UPPERCASE `key` must DECODE to the lowercase form
+    /// (the synthesised decoder would have stored "D" verbatim — a silently-dead override, since
+    /// `canonical` would be "cmd+D" and never match the lowercase chord the lookup compares). The custom
+    /// `init(from:)` normalises on decode. (Fails on the synthesised decoder.)
+    func testKeyChordDecodeLowercasesKey() throws {
+        let json = Data(#"{"key":"D","command":true,"shift":true,"option":false,"control":false}"#.utf8)
+        let chord = try JSONDecoder().decode(KeybindingPreferences.KeyChord.self, from: json)
+        XCTAssertEqual(chord.key, "d", "an uppercase persisted key must normalise to lowercase on decode")
+        XCTAssertEqual(chord.canonical, "shift+cmd+d")
+        // And it matches a chord built via the (already-lowercasing) memberwise init — so the lookup works.
+        XCTAssertEqual(chord, KeybindingPreferences.KeyChord(key: "d", command: true, shift: true))
+    }
+
+    /// The same normalisation applies through a full `KeybindingPreferences` decode + the `chord(for:)`
+    /// lookup, so an uppercase override in a persisted prefs file resolves correctly.
+    func testKeybindingPreferencesDecodeNormalisesKey() throws {
+        let json = Data(#"{"overrides":{"pane.splitRight":{"key":"D","command":true}}}"#.utf8)
+        let prefs = try JSONDecoder().decode(KeybindingPreferences.self, from: json)
+        XCTAssertEqual(prefs.chord(for: "pane.splitRight")?.key, "d")
+        XCTAssertEqual(prefs.chord(for: "pane.splitRight")?.canonical, "cmd+d")
+    }
+
     func testKeybindingPreferencesRoundTrip() throws {
         let prefs = KeybindingPreferences(overrides: [
             "pane.splitRight": .init(key: "d", command: true),

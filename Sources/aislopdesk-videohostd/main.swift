@@ -136,8 +136,9 @@ struct VideoHostdArguments {
         }
         // Env override (only when no explicit CLI flag was given): AISLOPDESK_VD=0 disables the now-default
         // virtual display (any other value keeps it on). A `--virtual-display`/`--no-virtual-display` flag
-        // always wins over the env.
-        if !vdExplicit, let vd = ProcessInfo.processInfo.environment["AISLOPDESK_VD"] {
+        // always wins over the env. W12: resolve through `EnvConfig` (ProcessInfo env → settings overlay)
+        // so a GUI toggle can drive it; an EMPTY overlay is byte-identical to the previous read.
+        if !vdExplicit, let vd = EnvConfig.string("AISLOPDESK_VD") {
             a.virtualDisplay = (vd != "0")
         }
         // The daemon ALWAYS runs the UDP-mux path: it mints a per-channel session from EACH client
@@ -152,7 +153,7 @@ struct VideoHostdArguments {
 
 // W12 (decision #10): fold the `video-prefs.json` sidecar into `EnvConfig.overlay` at launch, BEFORE
 // any consumer's `static let` (QPController / LiveCongestionController / …) is forced — they resolve
-// overlay → ProcessInfo env → default, so a GUI setting applies on the next connect. A real
+// ProcessInfo env → overlay → default, so a GUI setting applies on the next connect. A real
 // `AISLOPDESK_*` env var still wins (the sidecar only fills gaps). No live reload — the video flags
 // are read once; the UI says "applies on reconnect." A missing / corrupt sidecar is a no-op.
 let appliedVideoPrefs = EnvBridge.loadDefaultSidecarIntoEnvConfig()
@@ -238,7 +239,9 @@ func resolvePaneCapture(
 /// smoothness-over-sharpness lever measured to keep the HW encoder under the 60fps frame budget.
 @Sendable
 func resolveCaptureScaleOverride(vdScale: Double) -> Double {
-    guard let s = ProcessInfo.processInfo.environment["AISLOPDESK_CAPTURE_SCALE"],
+    // W12: resolve through `EnvConfig` (ProcessInfo env → settings overlay) so a GUI setting can
+    // override it; an EMPTY overlay is byte-identical to the previous `ProcessInfo` read.
+    guard let s = EnvConfig.string("AISLOPDESK_CAPTURE_SCALE"),
           let v = Double(s), v >= 1
     else { return vdScale }
     return min(vdScale, v)

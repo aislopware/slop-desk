@@ -61,11 +61,28 @@ public enum AdaptiveFECPolicy {
 
         /// The resolved parity count `m` (clamped to ``mRange``; `1` = inactive / unchanged wire),
         /// read once from `AISLOPDESK_FEC_M` at process start (env static — fixed for the lifetime, so
-        /// host and client never disagree mid-session).
-        public static let parityCount = resolveParityCount(env: ProcessInfo.processInfo.environment)
+        /// host and client never disagree mid-session). Resolves through ``EnvConfig`` (ProcessInfo
+        /// env → overlay) — W12 — so a GUI setting can override it; with an EMPTY overlay
+        /// ``configEnv`` is byte-identical to `ProcessInfo.processInfo.environment` for these two keys,
+        /// so this site (and the golden corpus pinning the defaults) is unchanged.
+        public static let parityCount = resolveParityCount(env: configEnv)
         /// The resolved fixed group size `k` (clamped to ``kRange`` and to `255 - m`), read once from
         /// `AISLOPDESK_FEC_K`. Only consulted when ``parityCount`` `>= 2`.
-        public static let groupSize = resolveGroupSize(env: ProcessInfo.processInfo.environment)
+        public static let groupSize = resolveGroupSize(env: configEnv)
+
+        /// The two FEC keys resolved through ``EnvConfig`` (ProcessInfo env → settings overlay), wrapped
+        /// back into the `[String: String]` shape the PURE resolvers consume — so the resolution law
+        /// stays in the unit-testable pure functions while the *source* of each key honours a GUI
+        /// override. An empty overlay ⇒ exactly the two `ProcessInfo` entries (or none), so the
+        /// resolvers behave byte-identically to the old `ProcessInfo.processInfo.environment` read.
+        /// `internal` (not `private`) so the reaches-consumer test can prove the overlay is consulted.
+        static var configEnv: [String: String] {
+            var env: [String: String] = [:]
+            if let m = EnvConfig.string("AISLOPDESK_FEC_M") { env["AISLOPDESK_FEC_M"] = m }
+            if let k = EnvConfig.string("AISLOPDESK_FEC_K") { env["AISLOPDESK_FEC_K"] = k }
+            return env
+        }
+
         /// Whether multi-loss recovery is active (`AISLOPDESK_FEC_M >= 2`).
         public static var isActive: Bool { parityCount >= 2 }
 

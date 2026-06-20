@@ -1,3 +1,4 @@
+import AislopdeskVideoProtocol
 import Foundation
 
 /// Builds the curated environment for a spawned login shell.
@@ -101,8 +102,14 @@ public enum HostEnvironment {
 
     /// Resolves whether agent detection (the foreground watcher) is enabled. Default-ON:
     /// only the exact string `"0"` disables it; anything else (unset, `"1"`, etc.) enables.
+    ///
+    /// W12: the default `environment` resolves through ``EnvConfig`` (ProcessInfo env → settings
+    /// overlay), so a GUI toggle in the agent settings (folded into the overlay from `video-prefs.json`)
+    /// reaches this host gate. With an EMPTY overlay the resolved entry is byte-identical to the
+    /// previous `ProcessInfo.processInfo.environment[key]`, so the default-ON `!= "0"` truth table is
+    /// unchanged. An explicit `environment:` argument (tests) bypasses the overlay entirely.
     public static func agentDetectEnabled(
-        environment: [String: String] = ProcessInfo.processInfo.environment,
+        environment: [String: String] = configEnv(agentDetectEnvKey),
     )
         -> Bool
     {
@@ -117,12 +124,27 @@ public enum HostEnvironment {
 
     /// Resolves whether the hook listener socket should be bound. Default-OFF: only `"1"`
     /// enables; anything else (unset, `"0"`) keeps it off (foreground watch still runs).
+    ///
+    /// W12: the default `environment` resolves through ``EnvConfig`` (ProcessInfo env → settings
+    /// overlay) — same as ``agentDetectEnabled(environment:)`` — so a GUI toggle reaches the gate; an EMPTY
+    /// overlay is byte-identical to the previous `ProcessInfo` read (default-OFF `== "1"` preserved).
     public static func agentHooksEnabled(
-        environment: [String: String] = ProcessInfo.processInfo.environment,
+        environment: [String: String] = configEnv(agentHooksEnvKey),
     )
         -> Bool
     {
         environment[agentHooksEnvKey] == "1"
+    }
+
+    /// The single `AISLOPDESK_*` key resolved through ``EnvConfig`` (ProcessInfo env →
+    /// settings overlay) and wrapped back into the `[String: String]` shape these gates index — so the gate's exact
+    /// truth table stays at the call site while the key's *source* honours a GUI override. An empty
+    /// overlay ⇒ at most the one `ProcessInfo` entry (or none), so the read is byte-identical to the
+    /// old `ProcessInfo.processInfo.environment` default. `public` only because it is referenced from a
+    /// `public` function's default-argument expression (evaluated at the call site).
+    public static func configEnv(_ key: String) -> [String: String] {
+        guard let value = EnvConfig.string(key) else { return [:] }
+        return [key: value]
     }
 
     /// The user's login shell path: `$SHELL` if set and absolute, else `/bin/zsh`.

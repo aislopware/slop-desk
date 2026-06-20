@@ -8,8 +8,16 @@ import Foundation
 /// `EnvConfig` interposes a process-wide OVERLAY: a `[String: String]` populated at `main()` (from a
 /// `video-prefs.json` sidecar for the host daemon, or from the client's live prefs) BEFORE any
 /// `static let` is forced. A site that resolves `EnvConfig.string(key)` instead of
-/// `ProcessInfo.processInfo.environment[key]` then sees overlay → env → (its own default), so a
+/// `ProcessInfo.processInfo.environment[key]` then sees env → overlay → (its own default), so a
 /// setting can override a flag without an env var.
+///
+/// PRECEDENCE (decision #16): a real `ProcessInfo` env var ALWAYS wins over the settings overlay,
+/// which wins over the compile-time default — `env → overlay → default`. This matches the host
+/// sidecar's gap-fill (``EnvBridge/loadSidecar(at:into:)`` skips a key a real env var already set) and
+/// the "an explicit env override is honoured" contract: a deliberate `AISLOPDESK_*=…` on the command
+/// line is the operator's escape hatch and is never silently overridden by a persisted setting. (The
+/// `rawOverrides` a user types in the Settings UI are part of the OVERLAY tier — they still yield to a
+/// real env var, by the same rule.)
 ///
 /// THE LOAD-BEARING INVARIANT: with an EMPTY overlay, `EnvConfig.string(k)` is byte-identical to
 /// `ProcessInfo.processInfo.environment[k]` — the same `Optional<String>`. So the golden-pinned
@@ -29,12 +37,15 @@ public enum EnvConfig {
     /// `static let` is forced. EMPTY in tests / the golden generator ⇒ pure-`ProcessInfo` behaviour.
     public nonisolated(unsafe) static var overlay: [String: String] = [:]
 
-    /// Resolve a raw config string: overlay → ProcessInfo env → `nil`. The ONE primitive every typed
-    /// accessor and every migrated call site funnels through. With an empty overlay this is, by
-    /// construction, `ProcessInfo.processInfo.environment[key]` — the behaviour-preservation proof.
+    /// Resolve a raw config string: ProcessInfo env → overlay → `nil` (decision #16). A real env var
+    /// ALWAYS wins over the settings overlay (matching the host sidecar gap-fill + the "explicit env
+    /// override is honoured" contract); the overlay only fills a key the operator did NOT set on the
+    /// command line. The ONE primitive every typed accessor and every migrated call site funnels
+    /// through. With an EMPTY overlay this is, by construction, `ProcessInfo.processInfo.environment[key]`
+    /// (env present ⇒ env; env absent ⇒ overlay is empty ⇒ `nil`) — the behaviour-preservation proof.
     public static func string(_ key: String) -> String? {
-        if let v = overlay[key] { return v }
-        return ProcessInfo.processInfo.environment[key]
+        if let v = ProcessInfo.processInfo.environment[key] { return v }
+        return overlay[key]
     }
 
     // MARK: Polarity-faithful boolean idioms

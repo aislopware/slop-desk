@@ -7,8 +7,9 @@ import XCTest
 /// With an EMPTY overlay, `EnvConfig.string(k)` MUST equal `ProcessInfo.processInfo.environment[k]`
 /// byte-for-byte, and the two polarity idioms (`!= "0"` default-ON / `== "1"` default-OFF) must match
 /// the legacy hand-written expression for missing / `"0"` / `"1"` / garbage values. Only then do the
-/// golden-pinned controllers resolve their compile-time defaults exactly as before. Then: an override
-/// in the overlay wins over the env (the new capability), and the typed accessors validate-then-default.
+/// golden-pinned controllers resolve their compile-time defaults exactly as before. Then: the overlay
+/// fills a key the env does NOT set (the new capability) — but a real env var STILL wins over the
+/// overlay (decision #16, `env → overlay → default`) — and the typed accessors validate-then-default.
 ///
 /// Test hygiene: the overlay is process-wide, so every test resets it in `setUp`/`tearDown`. The
 /// `ProcessInfo` env is read-only at runtime, so the "empty overlay ≡ ProcessInfo" assertions use the
@@ -105,23 +106,29 @@ final class EnvConfigTests: XCTestCase {
         XCTAssertTrue(EnvConfig.bool(offKey, default: false))
     }
 
-    // MARK: Overlay wins (the new capability)
+    // MARK: Overlay fills a gap (the new capability) — but a real env var STILL wins (decision #16)
 
-    func testOverlayOverridesEnv() {
+    /// The overlay supplies a value for a key the process env does NOT set — the settings-reach-flag
+    /// capability. (`AISLOPDESK_TEST_OVERRIDE` is not in a test process's environment.)
+    func testOverlayFillsAbsentKey() {
         let key = "AISLOPDESK_TEST_OVERRIDE"
         XCTAssertNil(EnvConfig.string(key)) // unset everywhere
         EnvConfig.overlay[key] = "42"
-        XCTAssertEqual(EnvConfig.string(key), "42")
+        XCTAssertEqual(EnvConfig.string(key), "42") // overlay fills the gap
         XCTAssertEqual(EnvConfig.int(key, default: 0), 42)
     }
 
-    /// An overlay entry shadows a REAL ProcessInfo value (proven against a key known to exist: PATH).
-    func testOverlayShadowsProcessInfo() {
+    /// PRECEDENCE (decision #16, P2): a real `ProcessInfo` env var WINS over the settings overlay —
+    /// `env → overlay → default`. Proven against a key guaranteed to exist (`PATH`): even with an
+    /// overlay entry present, the resolved value is the REAL env var, not the overlay. This matches the
+    /// host sidecar gap-fill (a real env var is never clobbered) and the "explicit env override is
+    /// honoured" contract — an operator's command-line `AISLOPDESK_*=…` always beats a persisted setting.
+    func testRealEnvVarWinsOverOverlay() {
         let real = ProcessInfo.processInfo.environment["PATH"]
         XCTAssertNotNil(real)
         XCTAssertEqual(EnvConfig.string("PATH"), real) // empty overlay ⇒ the real value
         EnvConfig.overlay["PATH"] = "/overlay/only"
-        XCTAssertEqual(EnvConfig.string("PATH"), "/overlay/only") // overlay wins
+        XCTAssertEqual(EnvConfig.string("PATH"), real) // real env var STILL wins — overlay ignored
     }
 
     // MARK: Typed accessors (validate-then-default)

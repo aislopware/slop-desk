@@ -215,6 +215,31 @@ final class MultiLossFECActivationTests: XCTestCase {
         XCTAssertEqual(scheme.groupSize, 5, "default scheme is the prod g5")
     }
 
+    // MARK: W12 — the settings overlay REACHES the FEC resolution (AISLOPDESK_FEC_M / _FEC_K)
+
+    /// REACHES-CONSUMER (P1): a Settings override folded into ``EnvConfig/overlay`` changes the env the
+    /// FEC resolvers read (`configEnv` → the pure `resolveParityCount`/`resolveGroupSize`), so a GUI
+    /// toggle of `AISLOPDESK_FEC_M` / `_FEC_K` actually moves the parity/group the codec is built with.
+    /// (The live `static let parityCount`/`groupSize` are forced once at process start by the same path,
+    /// so this asserts the resolution the host/client share — not a per-call re-read.) An EMPTY overlay
+    /// yields exactly today's default (m=1, k=5).
+    func testOverlayReachesFECResolution() {
+        let mlf = AdaptiveFECPolicy.MultiLossFEC.self
+        EnvConfig.overlay = [:]
+        defer { EnvConfig.overlay = [:] }
+
+        // Empty overlay (and no FEC env in the test runner) ⇒ today's default: m=1, k=5.
+        XCTAssertEqual(mlf.resolveParityCount(env: mlf.configEnv), 1, "empty overlay ⇒ default m=1")
+        XCTAssertEqual(mlf.resolveGroupSize(env: mlf.configEnv), 5, "empty overlay ⇒ default k=5")
+
+        // A settings override in the overlay is consulted by configEnv → the resolvers move.
+        EnvConfig.overlay["AISLOPDESK_FEC_M"] = "3"
+        EnvConfig.overlay["AISLOPDESK_FEC_K"] = "8"
+        XCTAssertEqual(mlf.configEnv["AISLOPDESK_FEC_M"], "3", "overlay value flows into configEnv")
+        XCTAssertEqual(mlf.resolveParityCount(env: mlf.configEnv), 3, "overlay AISLOPDESK_FEC_M=3 ⇒ m=3")
+        XCTAssertEqual(mlf.resolveGroupSize(env: mlf.configEnv), 8, "overlay AISLOPDESK_FEC_K=8 ⇒ k=8")
+    }
+
     /// SANITY: an m=2 frame with NO loss reassembles whole (the multi-parity append never corrupts a
     /// clean delivery) — guards against a packetizer/reassembler mismatch masking as "recovery".
     func testM2WholeFrameWithNoLossCompletes() throws {

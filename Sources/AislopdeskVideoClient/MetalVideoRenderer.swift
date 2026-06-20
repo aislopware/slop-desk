@@ -96,11 +96,18 @@ public final class MetalVideoRenderer {
     /// soft; a luma unsharp pass crisps the edges back up (text = luma edges; chroma/images left
     /// alone). It ENHANCES perceived sharpness, it cannot reconstruct the detail lost at 1×. Typical
     /// 0.4–1.0; live-tunable since it's read per-render. `0` ⇒ byte-identical to before (no sharpen).
-    static let sharpenStrength: Float = {
-        guard let s = ProcessInfo.processInfo.environment["AISLOPDESK_SHARPEN"], let v = Float(s), v > 0
+    static let sharpenStrength: Float = resolveSharpenStrength()
+
+    /// Resolve `AISLOPDESK_SHARPEN` through ``EnvConfig`` (ProcessInfo env → settings overlay) — W12 —
+    /// so a GUI slider can override it. The EXACT parse/clamp the old inline `static let` used (parse
+    /// `Float`; reject `<= 0` → 0 off; clamp `> 4` → 4): an EMPTY overlay + no env ⇒ `0`, byte-identical
+    /// to before. Extracted to a named function so the reaches-consumer test can drive it via the
+    /// overlay without forcing the (Metal-touching) renderer type.
+    static func resolveSharpenStrength() -> Float {
+        guard let s = EnvConfig.string("AISLOPDESK_SHARPEN"), let v = Float(s), v > 0
         else { return 0 }
         return min(4, v)
-    }()
+    }
 
     /// How far the sharpen may OVERSHOOT the local [min,max] (`AISLOPDESK_SHARPEN_PUNCH`, 0…1, default 1).
     /// `0` = pure RCAS (clamp to the local neighbourhood, ringing-free but gentle). `1` = clamp only to

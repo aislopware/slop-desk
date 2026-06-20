@@ -1,4 +1,5 @@
 #if os(macOS)
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskVideoHost
 
@@ -6,6 +7,56 @@ import XCTest
 /// `AISLOPDESK_DISPLAY_CAPTURE` A/B seam and the VD-parked default (docs: the tooltip
 /// 1px-shift fix — display-anchored crops are immune to the child-window bounding-rect nudge).
 final class CaptureModeResolutionTests: XCTestCase {
+    override func tearDown() {
+        EnvConfig.overlay = [:] // process-wide overlay — never leak across tests
+        super.tearDown()
+    }
+
+    // MARK: W12 — the settings overlay REACHES the capture-mode + QP-decouple consumers
+
+    /// REACHES-CONSUMER (P1): the live `WindowCapturer` call site now resolves
+    /// `AISLOPDESK_DISPLAY_CAPTURE` through ``EnvConfig`` (overlay → env). This asserts the integrated
+    /// expression the call site uses — `resolveCaptureMode(envValue: EnvConfig.string(...))` — so a GUI
+    /// override of the capture filter actually forces the mode. An EMPTY overlay (and no env in the test
+    /// runner) keeps today's VD-parked default.
+    func testOverlayReachesDisplayCaptureSelection() throws {
+        try XCTSkipIf(
+            ProcessInfo.processInfo.environment["AISLOPDESK_DISPLAY_CAPTURE"] != nil,
+            "a real env var would win over the overlay (decision #16)",
+        )
+        EnvConfig.overlay = [:]
+        // Empty overlay ⇒ today's default (VD-parked ⇒ display-including).
+        XCTAssertEqual(
+            WindowCapturer.resolveCaptureMode(
+                envValue: EnvConfig.string("AISLOPDESK_DISPLAY_CAPTURE"), preferDisplayAnchored: true,
+            ),
+            .displayIncluding,
+        )
+        // A settings override forces the window-composite mode even on a VD-parked window.
+        EnvConfig.overlay["AISLOPDESK_DISPLAY_CAPTURE"] = "window"
+        XCTAssertEqual(
+            WindowCapturer.resolveCaptureMode(
+                envValue: EnvConfig.string("AISLOPDESK_DISPLAY_CAPTURE"), preferDisplayAnchored: true,
+            ),
+            .window,
+            "overlay AISLOPDESK_DISPLAY_CAPTURE=window forces .window",
+        )
+    }
+
+    /// REACHES-CONSUMER (P1): the `VideoEncoder.qpDecouple` consumer resolves `AISLOPDESK_QP_DECOUPLE`
+    /// via `EnvConfig.boolDefaultOn` (the exact expression migrated at the `static let`). This asserts
+    /// that expression honours the overlay (default-ON: only `"0"` disables) — empty overlay ⇒ ON.
+    func testOverlayReachesQPDecoupleResolution() throws {
+        try XCTSkipIf(
+            ProcessInfo.processInfo.environment["AISLOPDESK_QP_DECOUPLE"] != nil,
+            "a real env var would win over the overlay (decision #16)",
+        )
+        EnvConfig.overlay = [:]
+        XCTAssertTrue(EnvConfig.boolDefaultOn("AISLOPDESK_QP_DECOUPLE"), "empty overlay ⇒ decouple ON (default)")
+        EnvConfig.overlay["AISLOPDESK_QP_DECOUPLE"] = "0"
+        XCTAssertFalse(EnvConfig.boolDefaultOn("AISLOPDESK_QP_DECOUPLE"), "overlay \"0\" ⇒ decouple OFF")
+    }
+
     /// `canResizeInPlace` gate — in-place `updateConfiguration` resize is allowed ONLY when the flag
     /// is on, the capture is display-anchored, and the crop is not a poller-owned union.
     func testCanResizeInPlaceGate() {

@@ -267,6 +267,10 @@ struct CommandPaletteView: View {
             // (WorkspaceRootView) so its `{{slots}}` are resolved before injection rather than sent
             // literally. Either way routes to the focused pane, or the broadcast group when armed.
             store.beginRunSnippet(id)
+        case let .launchPreset(id):
+            // Apply a launch preset: opens a new tab/pane(s) and runs the preset's command(s) once each
+            // PTY is live (the store defers the keystroke send). The expansion is pure (LaunchPresetEngine).
+            store.applyLaunchPreset(id)
         case let .action(action):
             // The live IDE shell: route through the SAME single-source-of-truth registry the menu bar +
             // chord dispatcher use. The palette/cheat-sheet view actions are no-ops from the palette
@@ -324,16 +328,17 @@ struct CommandPaletteView: View {
             switch store.liveModel {
             case .tree:
                 switch scope {
-                case .all: treeActionEntries + treeTabEntries + treeSessionEntries + snippetEntries + treePaneEntries
-                case .commands: treeActionEntries + snippetEntries
+                case .all: treeActionEntries + launchPresetEntries + treeTabEntries + treeSessionEntries +
+                    snippetEntries + treePaneEntries
+                case .commands: treeActionEntries + launchPresetEntries + snippetEntries
                 case .panes: treePaneEntries + treeTabEntries + treeSessionEntries
                 case .hostWindows: hostWindowEntries
                 }
             case .canvas:
                 switch scope {
-                case .all: commandEntries + layoutEntries + snippetEntries + groupEntries + paneEntries +
-                    bookmarkEntries + hostWindowEntries
-                case .commands: commandEntries + layoutEntries + snippetEntries
+                case .all: commandEntries + launchPresetEntries + layoutEntries + snippetEntries +
+                    groupEntries + paneEntries + bookmarkEntries + hostWindowEntries
+                case .commands: commandEntries + launchPresetEntries + layoutEntries + snippetEntries
                 case .panes: groupEntries + paneEntries + bookmarkEntries
                 case .hostWindows: hostWindowEntries
                 }
@@ -569,6 +574,23 @@ struct CommandPaletteView: View {
         }
     }
 
+    /// One entry per launch preset (built-ins + user-created). Selecting it opens a NEW TAB whose
+    /// pane(s) run the preset's command(s) — the "launch Claude / htop / git log into a fresh pane"
+    /// power feature (W14 #9). The store's ``WorkspaceStore/applyLaunchPreset(_:)`` does the materialize
+    /// + keystroke send (the pure expansion is ``LaunchPresetEngine``).
+    private var launchPresetEntries: [Entry] {
+        store.launchPresets.map { preset in
+            Entry(
+                id: "launchpreset.\(preset.id.uuidString)",
+                kind: .launchPreset(preset.id),
+                title: "Launch “\(preset.name)”",
+                subtitle: preset.command.isEmpty ? "New shell pane" : "Run: \(preset.command)",
+                symbol: preset.symbol,
+                keywords: "launch preset configuration new pane tab \(preset.command)",
+            )
+        }
+    }
+
     /// One "open this host window" entry per discovered host window. Selecting one spawns a Remote
     /// Window pane pre-bound to it. Built from the async-fetched ``hostWindows`` cache.
     private var hostWindowEntries: [Entry] {
@@ -691,6 +713,8 @@ struct CommandPaletteView: View {
             case switchLayout(String)
             /// Run a saved command snippet (by id) into the focused pane (or the broadcast group).
             case snippet(UUID)
+            /// Apply a launch preset (by id): opens a new tab/pane(s) and runs the preset's command(s).
+            case launchPreset(UUID)
             /// Run a TREE workspace action (routed via ``WorkspaceBindingRegistry``) — the live IDE shell.
             case action(WorkspaceAction)
             /// Focus a TREE leaf (the live IDE shell's per-pane jump).

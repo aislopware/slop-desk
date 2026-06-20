@@ -52,6 +52,59 @@ final class LaunchPresetEngineTests: XCTestCase {
         XCTAssertTrue(plan.panes[0].keystrokes.isEmpty)
     }
 
+    // MARK: SECURITY — cwd command injection (the cwd is a PATH, never SendKeysParser input)
+
+    /// REGRESSION (was a command-injection hole): a cwd containing a `SendKeysParser` token like
+    /// `<Enter>` must NOT inject a 0x0D/0x0A inside the quoted `cd` path. On the un-fixed code the cwd
+    /// was run through `SendKeysParser.encode`, which turned `<Enter>` into a literal newline mid-path,
+    /// breaking out of `cd '…'` so the remainder ran as a SEPARATE shell command.
+    func testCwdWithSendKeysTokenDoesNotInjectNewline() {
+        let preset = LaunchPreset(
+            name: "X", command: "ls",
+            workingDirectory: "/tmp/proj<Enter>rm -rf important",
+        )
+        let plan = LaunchPresetEngine.plan(for: preset)
+        let bytes = plan.panes[0].keystrokes
+        // The `cd` line is everything up to (and excluding) the FIRST real newline.
+        let firstNL = bytes.firstIndex(of: 0x0A) ?? bytes.endIndex
+        let cdLine = Array(bytes[bytes.startIndex..<firstNL])
+        // No raw CR/LF may appear inside that `cd` line — the `<Enter>` token stayed LITERAL in the path.
+        XCTAssertFalse(cdLine.contains(0x0D), "0x0D injected inside the cd path")
+        XCTAssertFalse(cdLine.contains(0x0A), "0x0A injected inside the cd path")
+        // The literal token survives verbatim inside the single-quoted path.
+        XCTAssertEqual(text(cdLine), "cd '/tmp/proj<Enter>rm -rf important'")
+        // Exactly one `cd` line + the command line: two newlines total, no injected third command.
+        XCTAssertEqual(bytes.count(where: { $0 == 0x0A }), 2)
+        XCTAssertEqual(text(bytes), "cd '/tmp/proj<Enter>rm -rf important'\nls\n")
+    }
+
+    /// The COMMAND field, by contrast, legitimately resolves `SendKeysParser` tokens (intended shell
+    /// input — a snippet-style `<Enter>` in a command IS meant to send a newline).
+    func testCommandWithSendKeysTokenResolves() {
+        let preset = LaunchPreset(name: "X", command: "echo hi<Enter>echo bye")
+        let plan = LaunchPresetEngine.plan(for: preset)
+        // <Enter> → 0x0D (CR) between the two echoes, then the trailing 0x0A from the line.
+        XCTAssertEqual(plan.panes[0].keystrokes, Array("echo hi".utf8) + [0x0D] + Array("echo bye".utf8) + [0x0A])
+    }
+
+    /// P4 #12: a preset with BOTH a token-bearing command AND a token-bearing cwd — the cwd token stays
+    /// LITERAL inside the quoted `cd` (security), while the command token resolves (intended input).
+    func testCommandAndCwdBothWithTokens() {
+        let preset = LaunchPreset(
+            name: "X", command: "echo hi<Enter>echo bye",
+            workingDirectory: "/tmp/p<Enter>j",
+        )
+        let plan = LaunchPresetEngine.plan(for: preset)
+        let bytes = plan.panes[0].keystrokes
+        // cd line: the cwd <Enter> is literal (no injected newline in the path).
+        let firstNL = bytes.firstIndex(of: 0x0A) ?? bytes.endIndex
+        XCTAssertEqual(text(Array(bytes[bytes.startIndex..<firstNL])), "cd '/tmp/p<Enter>j'")
+        // command line: the command <Enter> resolves to a CR; whole stream as expected.
+        let expected = Array("cd '/tmp/p<Enter>j'".utf8) + [0x0A]
+            + Array("echo hi".utf8) + [0x0D] + Array("echo bye".utf8) + [0x0A]
+        XCTAssertEqual(bytes, expected)
+    }
+
     // MARK: Two-pane (split) expansion
 
     func testSplitPresetMakesTwoPanesAndCarriesAxis() {
@@ -83,8 +136,19 @@ final class LaunchPresetEngineTests: XCTestCase {
         let names = LaunchPreset.builtIns.map(\.name)
         XCTAssertEqual(names, ["Claude Code", "htop", "Git log"])
         XCTAssertTrue(LaunchPreset.builtIns.allSatisfy(\.isBuiltIn))
-        // Stable UUIDs so a re-seed matches the same row (idempotent).
-        XCTAssertEqual(LaunchPreset.builtIns.map(\.id), LaunchPreset.builtIns.map(\.id))
+        // P4 #11: PIN the stable ids (not a self-comparison) — a re-seed / settings-reset matches the
+        // SAME row by id (idempotent, no duplicate). These literals must never drift, or a reset would
+        // duplicate built-ins on an existing workspace. The ids are the compile-time-constant literals in
+        // `LaunchPreset.builtIns`.
+        XCTAssertEqual(
+            LaunchPreset.builtIns.map { $0.id.uuidString.lowercased() },
+            [
+                "11111111-0000-4000-8000-000000000001",
+                "11111111-0000-4000-8000-000000000002",
+                "11111111-0000-4000-8000-000000000003",
+            ],
+            "built-in launch-preset UUIDs are frozen for idempotent re-seed",
+        )
     }
 
     func testClaudeCodeBuiltInRunsClaude() throws {

@@ -23,7 +23,7 @@ struct QPController: Equatable {
     static let downInterval: Int = envInt("AISLOPDESK_QP_DOWN_INTERVAL", 4, min: 1, max: 10000)
 
     /// Parse + CLAMP an int config value to `[min, max]`, falling back to `def`. Resolves through
-    /// ``EnvConfig`` (overlay → ProcessInfo env) instead of `ProcessInfo` directly — W12 — so a GUI
+    /// ``EnvConfig`` (ProcessInfo env → overlay) instead of `ProcessInfo` directly — W12 — so a GUI
     /// setting can override it. With an EMPTY overlay `EnvConfig.string(key)` is byte-identical to the
     /// previous `ProcessInfo.processInfo.environment[key]`, so this site (and the golden corpus that
     /// pins these defaults) is unchanged. NOTE: this site CLAMPS out-of-range values (it does not reject
