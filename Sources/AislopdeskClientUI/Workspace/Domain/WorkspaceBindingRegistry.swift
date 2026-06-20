@@ -64,6 +64,9 @@ public enum WorkspaceAction: Hashable, Sendable {
 
     // Sessions
     case newSession // ⌃⌘N
+
+    // Synchronized input (Zellij ToggleActiveSyncTab)
+    case toggleSyncInput // ⌘⇧I — broadcast keystrokes to every other pane in the active tab
 }
 
 public extension WorkspaceAction {
@@ -119,7 +122,8 @@ public extension WorkspaceAction {
              .selectTab,
              .closeTab,
              .toggleSidebar,
-             .newSession:
+             .newSession,
+             .toggleSyncInput: // the tab must exist, but the palette can still show it (mirrors .newTab)
             false
         }
     }
@@ -279,6 +283,12 @@ public enum WorkspaceBindingRegistry {
             id: "tab.close", action: .closeTab, title: "Close Tab",
             category: .tabs, chord: KeyChord(character: "w", [.command, .shift]),
             symbol: "xmark.rectangle", keywords: "close end terminate tab all panes",
+        ),
+        WorkspaceBinding(
+            id: "tab.syncInput", action: .toggleSyncInput, title: "Sync Input to All Panes",
+            category: .tabs, chord: KeyChord(character: "i", [.command, .shift]),
+            symbol: "keyboard.badge.ellipsis",
+            keywords: "sync broadcast input panes tab synchronize mirror zellij",
         ),
         // Sessions
         WorkspaceBinding(

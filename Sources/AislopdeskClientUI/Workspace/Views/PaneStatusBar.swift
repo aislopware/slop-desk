@@ -92,6 +92,19 @@ struct PaneStatusBar: View {
                 .foregroundStyle(ms > 100 ? AnyShapeStyle(.orange) : AnyShapeStyle(AislopdeskTheme.fgDim))
                 .help("Round-trip time to the host")
         }
+
+        // Sync-input chip: shown while per-tab sync is ON for the active pane's tab (⌘⇧I).
+        if let tabID = store.tree.activeSession?.activeTab?.id,
+           store.syncInputTabs.contains(tabID)
+        {
+            separator
+            Label("sync", systemImage: "keyboard.badge.ellipsis")
+                .font(.system(size: UIMetrics.fontMicro))
+                .foregroundStyle(AislopdeskTheme.accent)
+                .help(
+                    "Sync Input to All Panes is ON — keystrokes are mirrored to every pane in this tab (⌘⇧I to toggle)",
+                )
+        }
     }
 
     /// A 1px vertical separator between right-cluster items (Muxy `ProjectStatusBar.separator`), ~14pt tall.

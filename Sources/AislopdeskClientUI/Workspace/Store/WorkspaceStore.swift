@@ -1230,6 +1230,11 @@ public final class WorkspaceStore {
     /// (a synchronized-typing mode should not survive a relaunch and surprise you).
     public private(set) var broadcastActive: Bool = false
 
+    /// The set of tab IDs for which per-tab synchronized input is ON (Zellij `ToggleActiveSyncTab`): every
+    /// keystroke typed in the focused pane of a sync-armed tab is ALSO sent to every OTHER pane in that
+    /// same tab. Transient — never persisted (the same rationale as ``broadcastActive``).
+    public private(set) var syncInputTabs: Set<TabID> = []
+
     /// Arms / disarms broadcast input (⇧⌘B / Pane ▸ Broadcast Input).
     public func toggleBroadcast() { broadcastActive.toggle() }
 
@@ -1288,6 +1293,52 @@ public final class WorkspaceStore {
         let bytes = Array(data)
         var reached = 0
         for id in targets where id != sourceID {
+            registry[id]?.sendBytes(bytes)
+            reached += 1
+        }
+        return reached
+    }
+
+    /// Toggles per-tab synchronized input for `tabID` (Zellij `ToggleActiveSyncTab`). When ON, every
+    /// keystroke typed in any pane of the tab is also mirrored into the tab's other panes via
+    /// ``fanSyncInput(from:_:)``. Idempotent when called on the same tab twice (insert → remove cycle).
+    public func toggleSyncInput(tabID: TabID) {
+        if syncInputTabs.contains(tabID) {
+            syncInputTabs.remove(tabID)
+        } else {
+            syncInputTabs.insert(tabID)
+        }
+    }
+
+    /// The per-tab synchronized-input fan-out (Zellij `ToggleActiveSyncTab`): mirrors the bytes that the
+    /// source pane just sent to its own shell into every OTHER pane in the same tab, when sync is armed for
+    /// that tab. The source pane is intentionally SKIPPED (it already delivered locally via `inputSink`);
+    /// sibling delivery is through ``PaneSessionHandle/sendBytes(_:)`` (→ their input funnel). The existing
+    /// ``isFanningBroadcast`` guard doubles as the sync-input re-entry guard (both run on the same
+    /// `@MainActor` flat flag): a sibling's `sendInput` re-fires `broadcastTap`, which would call
+    /// `fanSyncInput` again — the guard collapses the re-entrant call to a no-op, preventing a fan-storm.
+    /// Returns the number of siblings reached (0 when disarmed, single-pane tab, or re-entrant).
+    @discardableResult
+    public func fanSyncInput(from sourceID: PaneID, _ data: Data) -> Int {
+        guard !data.isEmpty, !isFanningBroadcast else { return 0 }
+        // Resolve the containing tab by scanning sessions (tree-only; no canvas analogue).
+        guard let (_, tabID) = tree.tab(containing: sourceID) else { return 0 }
+        guard syncInputTabs.contains(tabID) else { return 0 }
+        // Find the Tab value to enumerate siblings.
+        var tab: Tab?
+        for session in tree.sessions {
+            if let found = session.tabs.first(where: { $0.id == tabID }) { tab = found
+                break
+            }
+        }
+        guard let tab else { return 0 }
+        let siblings = tab.allPaneIDs().filter { $0 != sourceID }
+        guard !siblings.isEmpty else { return 0 }
+        isFanningBroadcast = true
+        defer { isFanningBroadcast = false }
+        let bytes = Array(data)
+        var reached = 0
+        for id in siblings {
             registry[id]?.sendBytes(bytes)
             reached += 1
         }
@@ -2831,6 +2882,12 @@ public final class WorkspaceStore {
                 spec.resumeLastReceivedSeq = seq
             }
         }
+        // SYNC-INPUT (tree path, Zellij ToggleActiveSyncTab): when the per-tab sync flag is on, mirror this
+        // pane's keystrokes into every other pane in its tab via the same broadcastTap seam the canvas
+        // broadcast path uses. The `fanSyncInput` guard (shared `isFanningBroadcast` flag) prevents a
+        // sibling's re-entrant sendInput from looping back into another fan-out. A no-op while disarmed.
+        let terminal = (handle as? LivePaneSession)?.terminalModel
+        terminal?.broadcastTap = { [weak self] data in self?.fanSyncInput(from: id, data) }
         // WB3 BOOKMARKS: seed the pane's block model from persistence + wire its change closure to persist
         // back (the helper lives in WorkspaceStore+Blocks so this body stays under the lint ceiling).
         seedBlockBookmarks(id: id, handle: handle)

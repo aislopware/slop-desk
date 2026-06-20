@@ -97,6 +97,9 @@ public extension WorkspaceBindingRegistry {
         case .closeTab: store.closeActiveTab()
         // Sessions
         case .newSession: store.newSessionDefault()
+        // Synchronized input (Zellij ToggleActiveSyncTab)
+        case .toggleSyncInput:
+            if let tabID = store.tree.activeSession?.activeTab?.id { store.toggleSyncInput(tabID: tabID) }
         }
     }
 
@@ -152,6 +155,7 @@ public extension WorkspaceBindingRegistry {
              .prevTab,
              .selectTab,
              .closeTab: break // no canvas tab model
+        case .toggleSyncInput: break // no canvas analogue (tab-scoped, tree-only)
         }
     }
 }

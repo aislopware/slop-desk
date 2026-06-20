@@ -53,6 +53,8 @@ struct TabBarView: View {
         // across session switches — same identity, new `session:` value — so @State persists and a stale
         // TabID would silently swallow the edit).
         .onChange(of: session.id) { _, _ in renamingTab = nil }
+        // Animate the per-tab sync-input indicator (the keyboard.badge.ellipsis dot) appearing/disappearing.
+        .animation(.easeInOut(duration: 0.15), value: store.syncInputTabs)
     }
 
     /// Opens the inline rename for the requested tab (if it belongs to THIS session's strip) and clears the
@@ -94,12 +96,18 @@ struct TabBarView: View {
                 isActive: isActive,
                 agentStatus: store.rollupStatus(forTab: tab.id),
                 completion: store.rollupPendingCompletion(forTab: tab.id),
+                syncInputActive: store.syncInputTabs.contains(tab.id),
                 onSelect: { store.selectTab(index) },
                 onRename: { beginRename(tab) },
                 onClose: { store.closeTab(tab.id) },
             )
             .contextMenu {
                 Button("Rename…") { beginRename(tab) }
+                Divider()
+                let synced = store.syncInputTabs.contains(tab.id)
+                Button(synced ? "Stop Syncing Input" : "Sync Input to All Panes") {
+                    store.toggleSyncInput(tabID: tab.id)
+                }
                 Button("Close Tab", role: .destructive) { store.closeTab(tab.id) }
             }
         }
@@ -200,6 +208,8 @@ private struct TabCell: View {
     let isActive: Bool
     let agentStatus: ClaudeStatus
     let completion: PaneCompletionBadge?
+    /// Whether per-tab sync-input is ON for this cell's tab (⌘⇧I / Zellij ToggleActiveSyncTab).
+    var syncInputActive: Bool = false
     let onSelect: () -> Void
     let onRename: () -> Void
     let onClose: () -> Void
@@ -220,6 +230,7 @@ private struct TabCell: View {
                 .font(.system(size: UIMetrics.fontBody))
                 .foregroundStyle(isActive ? AislopdeskTheme.fg : AislopdeskTheme.fgMuted)
                 .overlay(alignment: .topTrailing) { unreadDot }
+                .overlay(alignment: .bottomLeading) { syncInputDot }
             AgentStatusDot(status: agentStatus, size: 6)
             CompletionBadge(badge: completion, size: 6)
             if !titleHidden {
@@ -271,6 +282,19 @@ private struct TabCell: View {
                 .fill(AislopdeskTheme.accent)
                 .frame(width: 6, height: 6)
                 .offset(x: 3, y: -3)
+        }
+    }
+
+    /// Bottom-leading sync-input indicator: a small `keyboard.badge.ellipsis` SF Symbol in accent colour
+    /// shown whenever ``syncInputActive`` is true, on both active and inactive tabs (sync is per-tab, so
+    /// it is visible at all times while armed). Mirrors the ``unreadDot`` overlay pattern.
+    @ViewBuilder
+    private var syncInputDot: some View {
+        if syncInputActive {
+            Image(systemName: "keyboard.badge.ellipsis")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(AislopdeskTheme.accent)
+                .offset(x: -3, y: 3)
         }
     }
 

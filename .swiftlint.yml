@@ -234,7 +234,12 @@ type_body_length:
   # 1680 → 1690 (2026-06-20): WorkspaceStore gains the `onResumeIdentitySnapshot` wire in
   # `wireMaterializedLeaf` (detach/reattach Stage 2, C2/C3) — mirrors the `onTitleChanged` pattern.
   # Wire-only closure, no new stored state.
-  warning: 1690
+  # 1690 → 1720 (2026-06-20): WorkspaceStore gains the sync-input feature stored state
+  # (`syncInputEnabled`, `syncInputSessions`) plus the `toggleSyncInput` / `isSyncInputActive`
+  # entry points — `@Observable` synthesises on stored properties so they must live in the main
+  # class body; all broadcast logic lives in `WorkspaceStore+SyncInput.swift`. Stored-property
+  # cluster only, not bloat.
+  warning: 1720
   error: 2700
 
 function_body_length:

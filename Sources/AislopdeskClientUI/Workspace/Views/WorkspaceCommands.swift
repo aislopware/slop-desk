@@ -150,6 +150,11 @@ public struct WorkspaceCommands: Commands {
 
         actionButton("New Session", .newSession)
         actionButton("Maximize Pane", .toggleZoom)
+        // Sync Input to All Panes (⌘⇧I): fan every keystroke in the active tab to all its sibling panes
+        // (zellij's ToggleActiveSyncTab). Sourced from the registry so the chord glyph + the fired chord
+        // can't drift — and so the chord actually dispatches (a registry binding fires ONLY via this menu;
+        // there is no NSEvent monitor). The live on/off state shows in the tab bar + pane status bar.
+        actionButton("Sync Input to All Panes", .toggleSyncInput)
 
         Divider()
 
