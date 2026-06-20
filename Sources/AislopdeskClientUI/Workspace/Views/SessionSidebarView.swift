@@ -40,6 +40,7 @@ struct SessionSidebarView: View {
     private func sessionRow(_ session: Session) -> some View {
         HStack(spacing: 8) {
             AgentStatusDot(status: store.rollupStatus(forSession: session.id), size: 8)
+            CompletionBadge(badge: store.rollupPendingCompletion(forSession: session.id), size: 8)
             if renamingSession == session.id {
                 TextField("Session", text: $renameText)
                     .textFieldStyle(.plain)

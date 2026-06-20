@@ -224,7 +224,11 @@ type_body_length:
   # 1610 → 1630 (2026-06-20): WorkspaceStore gains the keyboard pane-management entry points
   # (swapActivePaneInDirection / resizeActivePane / balanceActivePaneSplits) — thin wrappers over the
   # pure WorkspaceTreeOps that carry the geometry/active-pane resolution that can't live in the pure op.
-  warning: 1630
+  # 1630 → 1660 (2026-06-20): WorkspaceStore gains the B3 background-pane command-completion STORED state
+  # (panePendingCompletion + isAppActive[+didSet focus-clear] + onLongCommandNotify) — `@Observable`
+  # synthesises on stored properties so they can't live in WorkspaceStore+Completion.swift; ALL the badge
+  # query/setter/rollup/handler logic DOES live in that extension. Single declaration cluster, not bloat.
+  warning: 1660
   error: 2700
 
 function_body_length:

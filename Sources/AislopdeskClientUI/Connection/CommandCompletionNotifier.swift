@@ -19,6 +19,58 @@ public enum CommandNotificationPolicy {
     }
 }
 
+/// A small completion badge a BACKGROUND pane carries until you look at it: a green ✓ for a clean exit,
+/// a red ✗ for a failure. Pure value, `Sendable` so it crosses the store/view boundary freely.
+public enum PaneCompletionBadge: Equatable, Sendable {
+    /// The command exited 0 (or with no exit code) — a clean finish. ✓ green.
+    case success
+    /// The command exited non-zero — it failed. ✗ red.
+    case failure
+}
+
+/// The PURE decision shared by BOTH the background-pane completion badge AND the long-command
+/// notification's focus gate (the B3 gate). UN-free + clock-free so it is unit-tested without touching
+/// `UNUserNotificationCenter` (matching ``CommandNotificationPolicy``). The threshold is reused from
+/// ``CommandNotificationPolicy/longRunningThresholdMS`` so "long" means one thing everywhere.
+///
+/// The two surfaces differ deliberately:
+///  - **badge**: shows on an UNFOCUSED pane. A FAILURE badges immediately (even a quick failing `make`
+///    is worth surfacing on a backgrounded pane); a SUCCESS badges only when it was LONG, so a quick
+///    background `ls`/`cd` does not litter the sidebar.
+///  - **shouldNotify**: the B3 focus gate — a desktop notification fires only for an UNFOCUSED, LONG
+///    command while notifications are enabled (a foreground long command must not spam).
+public enum BackgroundCompletionPolicy {
+    /// The completion badge for a finished command, or `nil` for "no badge":
+    ///  - FOCUSED pane → always `nil` (you are already watching it; nothing to remember).
+    ///  - failure (`(exitCode ?? 0) != 0`) → `.failure` (regardless of duration).
+    ///  - success that ran ≥ `longThresholdMS` → `.success`.
+    ///  - a SHORT background success → `nil` (no `ls`/`cd` noise).
+    /// `exitCode == nil` is treated as a clean exit 0 (a completion with no carried code).
+    public static func badge(
+        exitCode: Int32?,
+        durationMS: UInt32,
+        isPaneFocused: Bool,
+        longThresholdMS: UInt32,
+    ) -> PaneCompletionBadge? {
+        guard !isPaneFocused else { return nil }
+        if (exitCode ?? 0) != 0 { return .failure }
+        return durationMS >= longThresholdMS ? .success : nil
+    }
+
+    /// The B3 focus gate for the long-command desktop notification: notify ONLY when the pane is
+    /// UNFOCUSED, the command was LONG (≥ `longThresholdMS`), and notifications are enabled. A foreground
+    /// long command (you watched it run) never notifies; a disabled toggle never notifies.
+    public static func shouldNotify(
+        durationMS: UInt32,
+        isPaneFocused: Bool,
+        enabled: Bool,
+        longThresholdMS: UInt32,
+    ) -> Bool {
+        guard enabled, !isPaneFocused else { return false }
+        return durationMS >= longThresholdMS
+    }
+}
+
 /// The PURE content policy for an EXPLICIT (OSC 9 / OSC 777) child-requested notification — the
 /// title-fallback rule, split out so it is unit-tested without `UNUserNotificationCenter`.
 public enum ExplicitNotificationContent {
@@ -42,6 +94,22 @@ public enum ExplicitNotificationContent {
         }
         // No title anywhere: promote the body so the alert is never blank.
         return (body, "")
+    }
+}
+
+/// The PURE `userInfo` builder for a long-command notification — split out so the "click reveals the
+/// originating pane" wiring is unit-tested without instantiating `UNUserNotificationCenter`. When a
+/// `paneIDKey` is present it embeds it under ``PaneNotificationRouter/paneIDUserInfoKey`` (so a click
+/// routes through the existing reveal path); a `nil` key yields an empty `userInfo` (no reveal target).
+///
+/// `#if`-unguarded (a pure `[String: String]` derivation) so it compiles + tests on every platform; the
+/// key string is duplicated here as a `String` literal-free reference only on macOS where the router
+/// type exists, so the helper takes the key as a parameter to stay portable.
+public enum LongCommandNotificationUserInfo {
+    /// `[paneIDUserInfoKey: paneIDKey]` when a key is supplied, else `[:]`.
+    public static func make(paneIDUserInfoKey: String, paneIDKey: String?) -> [String: String] {
+        guard let paneIDKey else { return [:] }
+        return [paneIDUserInfoKey: paneIDKey]
     }
 }
 
@@ -105,16 +173,18 @@ final class CommandCompletionNotifier {
 
     init() {}
 
-    /// Posts a "command finished" notification IFF `durationMS` clears the long-running
-    /// threshold. A no-op for quick commands. TODO(B3): gate on the app/pane being UNFOCUSED so
-    /// a foreground long command does not spam — left off for now so WF11 acceptance (which
-    /// expects the notification with the window up) can observe it.
-    func notifyIfLong(paneTitle: String, exitCode: Int32?, durationMS: UInt32) {
+    /// Posts a "command finished" notification IFF `durationMS` clears the long-running threshold. A
+    /// no-op for quick commands. The B3 focus gate (unfocused + enabled) is applied UPSTREAM in
+    /// ``WorkspaceStore`` so the store's focus state drives it; this poster keeps only the threshold
+    /// floor as a defence-in-depth guard. `paneIDKey` (the originating pane's id string) is embedded in
+    /// the notification's `userInfo` so a click reveals that pane via ``PaneNotificationRouter`` — `nil`
+    /// ⇒ no reveal target (e.g. an unresolved pane).
+    func notifyIfLong(paneTitle: String, exitCode: Int32?, durationMS: UInt32, paneIDKey: String? = nil) {
         guard CommandNotificationPolicy.shouldNotify(durationMS: durationMS) else { return }
 
         if granted != nil {
             // Already resolved — post (or no-op if denied) without re-prompting.
-            post(paneTitle: paneTitle, exitCode: exitCode, durationMS: durationMS)
+            post(paneTitle: paneTitle, exitCode: exitCode, durationMS: durationMS, paneIDKey: paneIDKey)
         } else {
             // Lazy authorization on the first long command. The completion handler is nonisolated
             // (Network/UN callback queue); hop back to the main actor carrying only Sendable values
@@ -123,19 +193,24 @@ final class CommandCompletionNotifier {
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { ok, _ in
                 Task { @MainActor [weak self] in
                     self?.granted = ok
-                    self?.post(paneTitle: paneTitle, exitCode: exitCode, durationMS: durationMS)
+                    self?.post(paneTitle: paneTitle, exitCode: exitCode, durationMS: durationMS, paneIDKey: paneIDKey)
                 }
             }
         }
     }
 
-    /// Builds + adds the notification request — a no-op unless authorization was granted.
-    private func post(paneTitle: String, exitCode: Int32?, durationMS: UInt32) {
+    /// Builds + adds the notification request — a no-op unless authorization was granted. Embeds
+    /// `paneIDKey` in `userInfo` (via the pure ``LongCommandNotificationUserInfo``) so a click reveals
+    /// the originating pane.
+    private func post(paneTitle: String, exitCode: Int32?, durationMS: UInt32, paneIDKey: String?) {
         guard granted == true else { return }
         let content = UNMutableNotificationContent()
         content.title = paneTitle.isEmpty ? "Command finished" : paneTitle
         let secs = Int((Double(durationMS) / 1000).rounded())
         content.body = "command finished (exit \(exitCode.map(String.init) ?? "?"), \(secs)s)"
+        content.userInfo = LongCommandNotificationUserInfo.make(
+            paneIDUserInfoKey: PaneNotificationRouter.paneIDUserInfoKey, paneIDKey: paneIDKey,
+        )
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }

@@ -62,12 +62,12 @@ public final class ConnectionViewModel {
     /// forwarded here; all other events still drive the chrome/terminal as before.
     public var onAgentSignal: ((_ event: AislopdeskClient.Event) -> Void)?
 
-    #if os(macOS)
-    /// Posts a local notification when a LONG-running command (OSC 133;D, ≥ ~10s) completes.
-    /// Best-effort + lazy-auth; macOS-only (iOS still builds). The in-app running indicator is
-    /// the primary deliverable and does not depend on this.
-    private let commandNotifier = CommandCompletionNotifier()
-    #endif
+    /// A finished command (OSC 133;D, wire type 23) — the lighter idle/completion signal carrying its
+    /// exit code + C→D duration. The store wires this to ``WorkspaceStore/handleCommandCompleted(id:exitCode:durationMS:paneTitle:)``
+    /// so the FOCUS GATE applies: a background completion badges the pane, and a backgrounded LONG command
+    /// fires the desktop notification (a foreground one does not). `nil` ⇒ no observer (the side-effect is
+    /// dropped). Cross-platform (the store owns the macOS-only poster behind its `onLongCommandNotify` sink).
+    public var onCommandCompleted: ((_ exitCode: Int32?, _ durationMS: UInt32) -> Void)?
 
     private var client: AislopdeskClient?
     /// Monotonic connect-attempt counter (R6 #1 — the VM analogue of `AislopdeskClient.connectGeneration`).
@@ -528,19 +528,13 @@ public final class ConnectionViewModel {
         case .exit:
             status = .disconnected
         case let .commandStatus(commandStatus):
-            // A finished command (OSC 133;D): best-effort long-command notification (macOS-only). The
-            // running/idle indicator itself is folded by the terminal model below — this branch only
-            // drives the notification side-effect.
+            // A finished command (OSC 133;D): route the completion to the store, which owns the FOCUS
+            // GATE (badge an unfocused pane; notify only for a backgrounded long command). Moving the
+            // notify decision off this VM is what lets a foreground long command stay silent — the VM
+            // does not know which leaf is active. The running/idle indicator itself is folded by the
+            // terminal model below — this branch only drives the completion side-effect.
             if case let .idle(exitCode, durationMS) = commandStatus {
-                #if os(macOS)
-                if SettingsKey.longCommandNotificationsEnabled {
-                    commandNotifier.notifyIfLong(
-                        paneTitle: terminal.title ?? "",
-                        exitCode: exitCode,
-                        durationMS: durationMS,
-                    )
-                }
-                #endif
+                onCommandCompleted?(exitCode, durationMS)
             }
         case let .notification(title, body):
             // An EXPLICIT child-requested notification (OSC 9 / OSC 777). Hand it to the store's

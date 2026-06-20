@@ -49,6 +49,7 @@ struct TabBarView: View {
     private func tabPill(tab: Tab, index: Int, isActive: Bool) -> some View {
         HStack(spacing: 6) {
             AgentStatusDot(status: store.rollupStatus(forTab: tab.id), size: 6)
+            CompletionBadge(badge: store.rollupPendingCompletion(forTab: tab.id), size: 6)
             if renamingTab == tab.id {
                 TextField("Tab", text: $renameText)
                     .textFieldStyle(.plain)

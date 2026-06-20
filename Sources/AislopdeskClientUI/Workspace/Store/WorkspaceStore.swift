@@ -2684,6 +2684,42 @@ public final class WorkspaceStore {
         return .none
     }
 
+    // MARK: - Background-pane command-completion awareness (B3 — badge + focus-gated notify)
+
+    /// The per-pane "a command finished while you were elsewhere" badge: a green ✓ / red ✗ a BACKGROUND
+    /// pane carries until you look at it (mirrors ``paneAgentStatus``). Set only for an UNFOCUSED pane,
+    /// cleared when the pane gains focus (or the app returns active). PRUNED to the live leaf set on every
+    /// reconcile alongside ``paneAgentStatus`` so a closed pane's entry drops out (no unbounded growth).
+    /// `internal(set)` (not `private(set)`) so the badge mutators in `WorkspaceStore+Completion.swift` (a
+    /// same-module extension in another file) can write it; still read-only to other modules.
+    public internal(set) var panePendingCompletion: [PaneID: PaneCompletionBadge] = [:]
+
+    /// Whether the app is foregrounded/active — fed from the SwiftUI `scenePhase` by the app shell
+    /// (`.active → true`, else `false`). Defaults `true` so a headless store (tests) treats the active
+    /// leaf as focused. Combined with the active-leaf identity it forms the "is this pane focused" gate
+    /// used by both the badge and the long-command notification.
+    public var isAppActive: Bool = true {
+        didSet {
+            // Returning to active means you are now looking at the focused leaf — clear its pending badge.
+            if isAppActive, !oldValue { clearActiveLeafCompletionBadge() }
+        }
+    }
+
+    /// The THIN long-command notification sink (the B3 delivery seam): the app sets it to call
+    /// `notifier.notifyIfLong(...)`. Kept off the store so `UNUserNotificationCenter` never enters the
+    /// store (→ the focus-gated handler stays unit-testable with a spy). `nil` in tests / headless ⇒ the
+    /// notification is dropped (the badge still updates). Carries the pane id STRING so a click reveals it.
+    public var onLongCommandNotify: ((
+        _ paneIDKey: String,
+        _ paneTitle: String,
+        _ exitCode: Int32?,
+        _ durationMS: UInt32,
+    ) -> Void)?
+
+    // The badge query/setter/rollup methods + the focus-gated `handleCommandCompleted` handler live in
+    // `WorkspaceStore+Completion.swift` (keeping this class under the type-body-length ceiling, like the
+    // WB2/WB3 block ops). The stored properties stay here because `@Observable` synthesises on them.
+
     // MARK: - reconcileTree (W4 seam → W5 LIVE path)
 
     /// The tree-driven counterpart of ``reconcile()`` (W4 seam, promoted to the LIVE path in W5), diffing
@@ -2717,6 +2753,9 @@ public final class WorkspaceStore {
         if let focused = tree.activeSession?.activeTab?.activePane, focusCoordinator.focusedPane != focused {
             focusCoordinator.focus(focused)
         }
+        // B3: a pane that just gained focus (selectTab / selectSession / focusPaneTree all route here)
+        // is now being watched — clear its pending command-completion badge.
+        clearActiveLeafCompletionBadge()
         scheduleSave()
     }
 
@@ -2748,6 +2787,14 @@ public final class WorkspaceStore {
         // ClaudeStatusMachine and mirror the result into `paneAgentStatus` (→ the sidebar/tab/chrome dots).
         connection?.onAgentSignal = { [weak self] event in
             self?.handleAgentSignal(id: id, event: event)
+        }
+        // B3 BACKGROUND-PANE COMMAND-COMPLETION: route a finished command (OSC 133;D, type 23) to the
+        // focus-gated store handler — badges an UNFOCUSED pane (✓/✗) and fires the long-command
+        // notification only when backgrounded (replaces the old direct notifier.notifyIfLong in the VM).
+        connection?.onCommandCompleted = { [weak self] exitCode, durationMS in
+            guard let self else { return }
+            let title = tree.spec(for: id)?.title ?? ""
+            handleCommandCompleted(id: id, exitCode: exitCode, durationMS: durationMS, paneTitle: title)
         }
         // WB3 BOOKMARKS: seed the pane's block model from persistence + wire its change closure to persist
         // back (the helper lives in WorkspaceStore+Blocks so this body stays under the lint ceiling).
@@ -2826,6 +2873,11 @@ public final class WorkspaceStore {
         // per-pane caches are pruned (the shared diff core).
         if !paneAgentStatus.isEmpty {
             paneAgentStatus = paneAgentStatus.filter { leafSet.contains($0.key) }
+        }
+        // Prune the per-pane completion badge for orphaned panes (same leak/stale-rollup hazard as the
+        // agent status above — a closed pane must not keep a ✓/✗ in a rollup).
+        if !panePendingCompletion.isEmpty {
+            panePendingCompletion = panePendingCompletion.filter { leafSet.contains($0.key) }
         }
 
         // 2. Orphans: remove from the registry synchronously (the registry is the source of truth for
@@ -2973,6 +3025,12 @@ public final class WorkspaceStore {
                 // CLAUDE AUTO-DETECT (W11): same agent-signal fold as the tree path's `wireMaterializedLeaf`.
                 connection?.onAgentSignal = { [weak self] event in
                     self?.handleAgentSignal(id: id, event: event)
+                }
+                // B3 BACKGROUND-PANE COMMAND-COMPLETION: same focus-gated completion route as the tree path.
+                connection?.onCommandCompleted = { [weak self] exitCode, durationMS in
+                    guard let self else { return }
+                    let title = spec(for: id)?.title ?? ""
+                    handleCommandCompleted(id: id, exitCode: exitCode, durationMS: durationMS, paneTitle: title)
                 }
             },
         )

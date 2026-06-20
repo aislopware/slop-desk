@@ -196,6 +196,14 @@ public struct AislopdeskClientApp: App {
                 paneIDKey: paneID.raw.uuidString, paneTitle: paneTitle, title: title, body: body,
             )
         }
+        // B3 LONG-COMMAND NOTIFICATION SINK: the store already applied the focus gate (unfocused + long +
+        // enabled), so this thin sink just posts — tagged with the pane id so a click reveals it (the same
+        // router already installed above). Reuses the notifier so its lazy-auth state is shared.
+        store.onLongCommandNotify = { paneIDKey, paneTitle, exitCode, durationMS in
+            explicitNotifier.notifyIfLong(
+                paneTitle: paneTitle, exitCode: exitCode, durationMS: durationMS, paneIDKey: paneIDKey,
+            )
+        }
         #endif
         // The system-dialog monitor (the "system popups in their own pane" feature): polls the host while
         // connected and auto-manages ephemeral dialog panes. `isConnected` reads the app connection status;
@@ -350,6 +358,11 @@ public struct AislopdeskClientApp: App {
     /// closed), then persist the tree; foreground → `resumeAll()` (byte-exact + inspector re-tail).
     /// On macOS scene phase is informational only.
     private func handleScenePhase(_ phase: ScenePhase) {
+        // B3: keep the store's app-active flag in step with the scene phase so the completion focus gate
+        // (badge an unfocused pane / notify only a backgrounded long command) knows whether the user is
+        // looking at the app. Setting it `true` on `.active` also clears the focused leaf's pending badge
+        // (the store's `isAppActive` didSet). Cross-platform — read before the per-platform fan-out below.
+        store.isAppActive = (phase == .active)
         #if os(iOS)
         // Chain behind the previous transition so a queued resume can't start until the preceding pause
         // has fully completed (and vice-versa). The new Task is @MainActor-isolated (inherits from this
