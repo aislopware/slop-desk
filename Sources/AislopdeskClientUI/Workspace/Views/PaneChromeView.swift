@@ -104,7 +104,16 @@ struct PaneChromeView<Content: View>: View {
             // is responsible for its own layer clipping.
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(AislopdeskTheme.bg)
+                // P3a PANE-CARD DEPTH: the content-card bg moves to the L2 token `DSColor.paneBg` (n2
+                // #17181C), one step lighter than the L1 window bg (n1), completing the surface-lightness
+                // ladder (gutter n0 < window n1 < pane-card n2). HONEST SCOPE: the libghostty IOSurface
+                // draws its OWN opaque content bg and covers essentially the whole card interior, so this
+                // n2 fill is SEEN only at the 8pt rounded-corner arcs + the 1pt frame between the IOSurface
+                // edge and the strokeBorder — the value is the consistent L2 token (a non-terminal/empty/
+                // loading pane, or the corner antialiasing, all read the same n2), not a dramatic change.
+                // Content stays FLAT OPAQUE: this swaps one opaque fill for another opaque sibling-lightness
+                // fill UNDER the existing clip/highlight/border overlays — no glass, no shadow, no new seam.
+                .background(DSColor.paneBg)
                 .clipShape(
                     RoundedRectangle(cornerRadius: AislopdeskTheme.Radius.pane, style: .continuous),
                 )

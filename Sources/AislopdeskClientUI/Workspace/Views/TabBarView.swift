@@ -6,16 +6,29 @@ import SwiftUI
 // MARK: - TabBarView (the active session's tab strip — Muxy-styled)
 
 /// The coding-IDE tab strip for the active session, REWRITTEN to match Muxy's `PaneTabStrip` (not stock
-/// pills): a solid `bg` row of RECTANGULAR `TabCell`s (active = `surface` fill + a 2pt `accent` bottom line
-/// when active+focused, the primary "this is the active tab" cue), 1pt `border` separators between cells,
-/// and a right-aligned group of split / zoom / new-tab `ChromeIconButton`s that act on the active pane (the
-/// per-pane header that used to host those was removed — Muxy has no per-pane header). Drives the store's
-/// tree ops (`selectTab` / `closeTab` / `newTab` / `renameTab` / `splitPaneTree` / `toggleZoomTree`).
+/// pills): a solid `bg` row of RECTANGULAR `TabCell`s (active = `activeFill` bg + the SINGLE active cue, a
+/// 2pt `accent` bottom line gated on active+key-window — it falls to the neutral `borderComponent` when the
+/// window is backgrounded, never falsely lit), 1pt `border` separators between cells, and a right-aligned
+/// group of split / zoom / new-tab `ChromeIconButton`s that act on the active pane (the per-pane header that
+/// used to host those was removed — Muxy has no per-pane header). Drives the store's tree ops (`selectTab` /
+/// `closeTab` / `newTab` / `renameTab` / `splitPaneTree` / `toggleZoomTree`).
+///
+/// P3a: the strip sits below a 2pt top inset (so cells aren't pinched under the floating traffic lights),
+/// migrates the cell text/spacing to the DS type ladder + 4pt spacing scale via the live-scale `.dsFont` /
+/// `.dsSpace` modifiers, animates the titled↔icon-only padding collapse with `DSMotion.layout`, and drops
+/// the redundant attention glow line (the wash + unread dot remain as the quieter background-tab signal).
 ///
 /// When `isWindowTitleBar` is set, the whole strip doubles as the window's custom title bar: the scroll
 /// region and the trailing controls cluster are backed by `WindowDragRepresentable(alwaysEnabled: true)` so
 /// empty space drags the window.
 struct TabBarView: View {
+    /// The 2pt top inset band above the cell row (base points, scaled live via `.dsSpace`). It is ADDITIVE
+    /// to the `DSSpace.tabHeight` cell row — the strip's net height is `DSSpace.tabHeight + topInset`. Named
+    /// (not a magic `2` inline) so ``TabCellViewModelTests`` can pin the additive-height arithmetic
+    /// `DSSpace.tabHeight + topInset == UIMetrics.titleBarHeight` (legacy 32) — the exact relationship the
+    /// earlier absorbed-inset bug broke (padding-before-frame is swallowed, not added). HW-only otherwise.
+    static let topInset: CGFloat = 2
+
     @Bindable var store: WorkspaceStore
     let session: Session
 
@@ -27,6 +40,17 @@ struct TabBarView: View {
     @State private var renameText: String = ""
 
     var body: some View {
+        // P3a TOP INSET: the cell row sits BELOW a 2pt inset inside the titlebar zone so the cells are not
+        // flush against the window edge / floating traffic lights (spec: "tabs aren't pinched under the
+        // lights"). HEIGHT MATH (the inset must be ADDITIVE, not absorbed): the cell row is constrained to
+        // `DSSpace.tabHeight` (30) FIRST via `.frame`, then `.dsSpace(.top, 2)` is applied AFTER it as the
+        // OUTER modifier — so the 2pt band sits OUTSIDE the constrained row (net height = 30 + 2 = 32,
+        // restoring the legacy titlebar height) instead of being swallowed into a 30pt frame (which would
+        // squeeze the row to 28). The bg + bottom border wrap the OUTER (32pt) box so the strip paints its
+        // full height including the inset. `.dsSpace(.top, 2)` is also the FIRST real consumer of the P1
+        // live-scale path (it reflows on a P5 density flip because the modifier reads
+        // @Environment(DSScale.self)). The whole strip stays a drag region (`.titleBarDrag`) so empty space,
+        // INCLUDING the 2pt inset band, still drags the window.
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
@@ -40,7 +64,16 @@ struct TabBarView: View {
             Spacer(minLength: 0)
             controls
         }
-        .frame(height: AislopdeskTheme.Metrics.tabHeight)
+        // Constrain the CELL ROW to the migrated height token (30 default) BEFORE the inset.
+        .frame(height: DSSpace.tabHeight)
+        // ADDITIVE top inset (outer) — net strip height = DSSpace.tabHeight + topInset = 30 + 2 = 32
+        // (≈ legacy titlebar height, pinned by TabCellViewModelTests.testStripNetHeightIsAdditive).
+        // SplitWorkspaceView.mainColumn's outer container lets the strip's intrinsic 32pt drive the row
+        // (`.fixedSize(vertical:)`) so the strip and its container agree (see the tab-height-token-split
+        // risk). NOTE: a direct DSSpace read is NOT live-reflowing on a P5 density flip — that needs a future
+        // `.dsFrame` helper; P3a proves the live-scale path for the TEXT + PADDING only (the inset + the cell
+        // padding), the strip HEIGHT token stays fixed until P5.
+        .dsSpace(.top, Self.topInset)
         .background(AislopdeskTheme.bg)
         .titleBarDrag(isWindowTitleBar)
         .overlay(alignment: .bottom) {
@@ -73,10 +106,16 @@ struct TabBarView: View {
             HStack(spacing: 0) {
                 TextField("Tab", text: $renameText)
                     .textFieldStyle(.plain)
-                    .font(.system(size: UIMetrics.fontBody))
-                    .foregroundStyle(AislopdeskTheme.fg)
+                    // P3a: migrate to the DS body type token (13pt SF, lh16) + textPrimary via the
+                    // live-scale `.dsFont` modifier (reads @Environment(DSScale.self)).
+                    .dsFont(.body)
+                    .foregroundStyle(DSColor.textPrimary)
                     .frame(minWidth: 60, maxWidth: 160)
-                    .padding(.horizontal, UIMetrics.spacing6)
+                    // P3a: migrate the rename field's horizontal padding off the legacy `UIMetrics.spacing6`
+                    // (scaled 12) onto the SAME live-scale `.dsSpace(.horizontal, 8)` path the titled tab
+                    // cell uses, so the whole cell reads from one token source (the DSSpace 4pt scale) and
+                    // reflows on a P5 density flip instead of leaking a legacy spacing rung.
+                    .dsSpace(.horizontal, 8)
                     .onSubmit { commitRename(tab.id) }
                     .onEscapeKey { renamingTab = nil }
                 #if os(iOS)
@@ -84,7 +123,8 @@ struct TabBarView: View {
                     .textInputAutocapitalization(.never)
                 #endif
             }
-            .frame(height: AislopdeskTheme.Metrics.tabHeight)
+            // P3a: match the migrated strip height token (the cell row + inline field must agree).
+            .frame(height: DSSpace.tabHeight)
             // The active inline-rename field background. P2 NOTE: `surface12` (the legacy fg·0.12 rung) now
             // flattens onto `activeFill` (white·0.08) — the DS semantic token set has no distinct 0.12 rung,
             // so this fill currently reads at the same weight as a resting selected tab. The field still
@@ -197,11 +237,16 @@ private extension View {
 // MARK: - TabCell (one rectangular Muxy tab)
 
 /// A single rectangular tab cell in the Muxy idiom: icon (+ a top-trailing unread/completion accent dot when
-/// inactive) + agent dot + title + (hover/active) close, with a `surface` fill + 2pt `accent` bottom line
-/// when active, a `hover` wash on hover, and a 1pt `border` trailing separator. Width clamps to Muxy's
-/// `minWidth 44 … maxWidth 200`; below `titleHideThreshold 80` the title hides to an icon-only chip. Its own
-/// `hovering` state keeps the close glyph + hover wash local (no parent re-render per pointer move).
-private struct TabCell: View {
+/// inactive) + agent dot + title + (hover/active) close, with an `activeFill` bg + the SINGLE active cue —
+/// a 2pt accent bottom line gated on (isActive && key window), falling to `borderComponent` when the window
+/// is backgrounded — a `hoverFill` wash on hover, and a 1pt `border` trailing separator. Width clamps to
+/// Muxy's `minWidth 44 … maxWidth 200`; below `titleHideThreshold 80` the title hides to an icon-only chip.
+/// Its own `hovering` state keeps the close glyph + hover wash local (no parent re-render per pointer move).
+///
+/// NOTE: `internal` (not `private`) so the PURE view-model transforms (``Self/activeCue(isActive:isKey:)``,
+/// ``Self/titleFont(isActive:)``, ``Self/titleColor(isActive:)``, ``Self/cueColor(_:)``) are reachable from
+/// the headless `TabCellViewModelTests` via `@testable import` — no SwiftUI layout is exercised there.
+struct TabCell: View {
     static let minWidth: CGFloat = 44
     static let maxWidth: CGFloat = 200
     static let titleHideThreshold: CGFloat = 80
@@ -218,6 +263,15 @@ private struct TabCell: View {
     let onClose: () -> Void
 
     @State private var hovering = false
+
+    #if os(macOS)
+    /// Whether THIS view's window is the key window. A FREE SwiftUI environment value (no NSWindow access,
+    /// hang-safe). The active-tab accent line gates on it so a BACKGROUNDED window's active tab falls to the
+    /// neutral `borderComponent` instead of staying falsely lit — the SAME gate ``PaneChromeView`` uses for
+    /// its focus ring (`isFocused && controlActiveState == .key`). On iOS this value is always `.active`, so
+    /// the `#else` branch of ``Self/activeCue(isActive:isKey:)`` lights on `isActive` alone there.
+    @Environment(\.controlActiveState) private var controlActiveState
+    #endif
     /// Seed at `maxWidth` so the title is SHOWN by default. A `0` sentinel latches the title hidden
     /// forever: hiding the title shrinks the cell below `titleHideThreshold`, so the GeometryReader
     /// re-measures it as narrow and never lifts the hide. Showing-by-default costs at most a one-frame
@@ -227,26 +281,85 @@ private struct TabCell: View {
     /// Below the threshold the cell collapses to an icon-only chip (Muxy hides the title on narrow tabs).
     private var titleHidden: Bool { measuredWidth < Self.titleHideThreshold }
 
+    // MARK: - Pure view-model transforms (unit-tested headlessly — no SwiftUI layout)
+
+    /// The single active-tab cue, a PURE function of (isActive, isKey). Mirrors ``PaneChromeView``'s
+    /// focus-ring gate exactly: active + key window ⇒ the 2pt `accent` line; active + BACKGROUNDED window ⇒
+    /// the line falls to the neutral `borderComponent` (never falsely lit, never dimming the other tabs);
+    /// inactive ⇒ no line. There is exactly ONE active cue now — the glow LINE (the redundant 3rd cue) is
+    /// dropped, and the active bg fill is the SAME for both window states (only the line colour moves), so a
+    /// backgrounded window's active tab keeps its `activeFill` bg and loses ONLY the accent line.
+    enum Cue: Equatable { case accent, neutral, none }
+
+    /// The active-cue decision. `isKey` is the macOS key-window flag; on iOS callers pass `true` (the
+    /// platform has no backgrounded-key distinction, so an active tab always lights — mirroring
+    /// ``PaneChromeView``'s `#else return isFocused`).
+    static func activeCue(isActive: Bool, isKey: Bool) -> Cue {
+        guard isActive else { return .none }
+        return isKey ? .accent : .neutral
+    }
+
+    /// Resolves a ``Cue`` to its line colour: `accent` ⇒ the DS solid accent; `neutral` ⇒ the neutral
+    /// component border (backgrounded-window fallback); `none` ⇒ clear (inactive, no line).
+    @MainActor
+    static func cueColor(_ cue: Cue) -> Color {
+        switch cue {
+        case .accent: DSColor.accentSolid
+        case .neutral: DSColor.borderComponent
+        case .none: .clear
+        }
+    }
+
+    /// The title's type token, a PURE function of `isActive`: the active tab is `DSFont.emphasis`
+    /// (13pt semibold) and an inactive tab is `DSFont.body` (13pt regular). The tab ICON weight-matches the
+    /// adjacent title via the same token so icon + text read as one type system.
+    static func titleFont(isActive: Bool) -> DSFont { isActive ? .emphasis : .body }
+
+    /// The title's colour, a PURE function of `isActive`: active ⇒ `textPrimary`; inactive ⇒ `textTertiary`
+    /// (the recessive resting state — NEVER a dim/opacity wash; the cue is the accent line, not dimming).
+    @MainActor
+    static func titleColor(isActive: Bool) -> Color {
+        isActive ? DSColor.textPrimary : DSColor.textTertiary
+    }
+
+    /// Whether the active line should LIGHT (accent), resolving the macOS key-window flag. Used by `body`.
+    private var resolvedCue: Cue {
+        #if os(macOS)
+        return Self.activeCue(isActive: isActive, isKey: controlActiveState == .key)
+        #else
+        return Self.activeCue(isActive: isActive, isKey: true)
+        #endif
+    }
+
     var body: some View {
         HStack(spacing: AislopdeskTheme.Space.m) {
             Image(systemName: icon)
-                .font(.system(size: UIMetrics.fontBody))
-                .foregroundStyle(isActive ? AislopdeskTheme.fg : AislopdeskTheme.fgMuted)
+                // P3a: weight-match the icon to the adjacent title via the SAME DS type token (semibold on
+                // active, regular on inactive) so icon + text read as one type system. `.dsFont` also sets
+                // the SF Symbol point size (13pt emphasis / body) live-scaled through @Environment.
+                .dsFont(Self.titleFont(isActive: isActive))
+                .foregroundStyle(Self.titleColor(isActive: isActive))
                 .overlay(alignment: .topTrailing) { unreadDot }
                 .overlay(alignment: .bottomLeading) { syncInputDot }
             AgentStatusDot(status: agentStatus, size: UIMetrics.scaled(6))
             CompletionBadge(badge: completion, size: UIMetrics.scaled(6))
             if !titleHidden {
                 Text(title)
-                    .font(.system(size: UIMetrics.fontBody))
+                    // P3a: active title = DSFont.emphasis (13pt semibold) textPrimary; inactive =
+                    // DSFont.body (13pt regular) textTertiary. Migrated to the live-scale `.dsFont` path.
+                    .dsFont(Self.titleFont(isActive: isActive))
                     .lineLimit(1)
                     .truncationMode(.head)
-                    .foregroundStyle(isActive ? AislopdeskTheme.fg : AislopdeskTheme.fgMuted)
+                    .foregroundStyle(Self.titleColor(isActive: isActive))
             }
             if !titleHidden { closeButton }
         }
-        .padding(.horizontal, titleHidden ? AislopdeskTheme.Space.s : AislopdeskTheme.Space.xl)
-        .frame(height: AislopdeskTheme.Metrics.tabHeight)
+        // P3a: tab-cell horizontal padding migrates to the spec's 8(titled)/4(icon-only) via the live-scale
+        // `.dsSpace` path (a tightening from the legacy 10/4), ANIMATED by DSMotion.layout so the
+        // titled↔icon-only collapse springs instead of jumping abruptly.
+        .dsSpace(.horizontal, titleHidden ? 4 : 8)
+        .animation(DSMotion.layout, value: titleHidden)
+        .frame(height: DSSpace.tabHeight)
         .frame(minWidth: Self.minWidth, maxWidth: Self.maxWidth)
         .background {
             GeometryReader { geo in
@@ -254,17 +367,22 @@ private struct TabCell: View {
                     .onChange(of: geo.size.width) { _, width in measuredWidth = width }
             }
         }
-        .background(isActive ? AislopdeskTheme.surface : (hovering ? AislopdeskTheme.hover : .clear))
-        // P3 TAB GLOW: when this tab's rolled-up agent status needs attention (blocked / done) a soft
-        // status-coloured wash + bottom glow line announces a BACKGROUND tab so the human notices it
-        // without first switching to it. Layered UNDER the active accent line so an active+attention tab
-        // still shows its accent focus cue on top. NEVER dims the tab.
+        // P3a: active-tab bg = DSColor.activeFill (white·0.08, == legacy surface, byte-identical so the
+        // resting fill is unchanged). The fill is the SAME in both key/backgrounded window states — only the
+        // accent LINE below moves — so a backgrounded window never dims the tab. NEVER an opacity dim.
+        .background(isActive ? DSColor.activeFill : (hovering ? DSColor.hoverFill : .clear))
+        // P3 TAB GLOW: a soft status-coloured wash announces a BACKGROUND tab that needs attention
+        // (blocked / done) so the human notices it without switching to it. This is a background-tab
+        // SUPERVISION cue (status colour), NOT the active/focus cue — kept per spec ("let the sidebar/pane
+        // attention ring own that" applies to the redundant glow LINE, which is dropped below). NEVER dims.
         .background(attentionGlowBackground)
-        .overlay(alignment: .bottom) { attentionGlowLine }
+        // P3a SINGLE ACTIVE CUE: the one 2pt accent line, gated on (isActive && controlActiveState == .key)
+        // via `resolvedCue`. Active + key ⇒ accent; active + backgrounded ⇒ falls to the neutral
+        // `borderComponent` (never falsely lit); inactive ⇒ clear. The redundant glow LINE + its pulse are
+        // removed (the wash above remains as the quieter background-attention signal).
         .overlay(alignment: .bottom) {
-            // The active-tab accent line — the primary focus cue (Muxy: 2pt accent bottom line).
             Rectangle()
-                .fill(isActive ? AislopdeskTheme.accent : .clear)
+                .fill(Self.cueColor(resolvedCue))
                 .frame(height: 2)
         }
         .overlay(alignment: .trailing) {
@@ -317,23 +435,10 @@ private struct TabCell: View {
         }
     }
 
-    /// A bright status-coloured bottom glow line on a tab needing attention — a stronger "look here" cue
-    /// than the dot for a BACKGROUND tab. Drawn under the active accent line so an active tab still shows
-    /// its accent on top. A `needsPermission` line breathes; a `done` line is steady.
-    @ViewBuilder
-    private var attentionGlowLine: some View {
-        if let color = attentionColor {
-            Rectangle()
-                .fill(color)
-                .frame(height: 2)
-                // A soft halo — kept restrained (radius 2 / opacity 0.4) so a row of several attention
-                // tabs reads as a calm set of glows, not a heavy stack. The 8% wash + solid 2pt line is
-                // already the primary cue; the halo just lifts it off the strip.
-                .shadow(color: color.opacity(0.4), radius: 2)
-                .modifier(TabAttentionPulse(active: agentStatus == .needsPermission))
-                .allowsHitTesting(false)
-        }
-    }
+    // P3a: the redundant THIRD active/attention cue — the bottom glow LINE + halo + `TabAttentionPulse`
+    // breathe — was removed (spec line 160: "Drop the third attention glow line; let the sidebar/pane
+    // attention ring own that"). The quieter background-attention signals remain: the `attentionGlowBackground`
+    // wash + the `unreadDot`. The single ACTIVE cue is now the gated accent line in `body`.
 
     /// Bottom-leading sync-input indicator: a small `keyboard.badge.ellipsis` SF Symbol in accent colour
     /// shown whenever ``syncInputActive`` is true, on both active and inactive tabs (sync is per-tab, so
@@ -373,26 +478,7 @@ private struct TabCell: View {
     }
 }
 
-// MARK: - TabAttentionPulse (gentle breathe for the BLOCKED tab glow line)
-
-/// The leaf-local breathe for the P3 tab attention glow line — the SAME sanctioned `repeatForever`
-/// pattern as the working dot: a single repeating `.easeInOut` opacity fade on a glow line (NOT on the
-/// keystroke/terminal path). Active for `needsPermission` (blocked, pulses); `done` is steady.
-private struct TabAttentionPulse: ViewModifier {
-    let active: Bool
-    @State private var breathing = false
-
-    func body(content: Content) -> some View {
-        if active {
-            content
-                // Match the house ``WorkingPulse`` cadence (floor 0.6, ~1.4s half-cycle) so the tab glow
-                // line inhales as calmly as the working dot rather than blinking.
-                .opacity(breathing ? 1.0 : 0.6)
-                .animation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true), value: breathing)
-                .onAppear { breathing = true }
-        } else {
-            content
-        }
-    }
-}
+// P3a: `TabAttentionPulse` (the breathe for the dropped tab attention glow LINE) was removed with the line
+// itself — the spec's single-active-cue rule retires the redundant 3rd cue. The pane attention ring keeps
+// its own `AttentionPulse` (in PaneChromeView); the tab background wash + unread dot are steady.
 #endif

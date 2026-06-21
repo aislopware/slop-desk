@@ -62,10 +62,17 @@ struct SplitWorkspaceView: View {
                     // Elevation: the sidebar is the RAISED level (one step above `bg`) so the reserved
                     // title-bar drag strip + sessions rail read as a distinct chrome surface.
                     .background(AislopdeskTheme.bgRaised)
-                    .overlay(alignment: .trailing) {
-                        Rectangle().fill(AislopdeskTheme.border).frame(width: 1)
-                    }
-                // The inter-column divider — drag to resize the sessions rail (clamped to the expanded bounds).
+                // P3a T-JUNCTION FIX: the sidebar's OWN trailing 1pt `border` overlay was REMOVED. The
+                // `PanelResizeHandle` below is itself a full-height 1pt `Rectangle` filled with the SAME
+                // `AislopdeskTheme.border` (ResizeHandle.body) sitting immediately to the sidebar's right,
+                // so the old overlay produced TWO adjacent identical vertical hairlines (sidebar-right border
+                // + handle line) — the real doubled-seam artifact. Dropping the sidebar overlay leaves the
+                // resize handle as the SINGLE element that owns the full-height vertical run at the
+                // sidebar↔mainColumn boundary. The tabstrip-bottom horizontal border (mainColumn) then butts
+                // cleanly into that one vertical at a true L-join — no doubled vertical, no inset notch.
+                //
+                // The inter-column divider — drag to resize the sessions rail (clamped to the expanded
+                // bounds). It now ALSO owns the column-boundary vertical hairline (its resting `border` fill).
                 PanelResizeHandle(
                     axis: .horizontal,
                     edge: .trailing,
@@ -150,9 +157,28 @@ struct SplitWorkspaceView: View {
                     #endif
                     TabBarView(store: store, session: session, isWindowTitleBar: true)
                 }
-                .frame(height: AislopdeskTheme.Metrics.tabHeight)
+                // P3a: the strip-height container mirrors the strip's OWN additive height stack — the cell
+                // row is `DSSpace.tabHeight` (30) and the 2pt top inset is ADDITIVE on top, so the net is
+                // 30 + 2 = 32 (≈ legacy titlebar height, and aligned with the sidebar drag strip's
+                // `UIMetrics.titleBarHeight` 32). If this container were pinned to a bare `DSSpace.tabHeight`
+                // (30) while the strip is 32, the 2pt inset band would be CLIPPED here (the tab-height-token-
+                // split risk). The strip applies its own `.frame(height:) + .dsSpace(.top, 2)` internally; we
+                // only need the container tall enough not to clip it — `.fixedSize(vertical:)` lets the
+                // strip's intrinsic 32pt drive the row so the two cannot disagree.
+                .fixedSize(horizontal: false, vertical: true)
                 .background(AislopdeskTheme.bg)
-                Rectangle().fill(AislopdeskTheme.border).frame(height: 1)
+                // P3a T-JUNCTION FIX: the tabstrip-bottom hairline butts FLUSH at mainColumn x=0 (NO leading
+                // inset). With the redundant sidebar-right border removed above, mainColumn x=0 sits exactly
+                // at the right edge of the single `PanelResizeHandle` vertical run, so the horizontal border
+                // forms a clean perpendicular L-join with that one vertical — there is no second vertical to
+                // double against, and no inset notch to open. (The earlier 1pt leading inset was WRONG: the
+                // resize handle — not the sidebar border — is the element interposed at mainColumn's leading
+                // edge, so an inset only clipped 1pt off the horizontal line over the handle rather than
+                // closing any doubling.) The strip border reaches the window edge whether the sidebar is
+                // shown or collapsed.
+                Rectangle()
+                    .fill(AislopdeskTheme.border)
+                    .frame(height: 1)
                 panesHost(activeTabID: activeTab.id)
                     // Outer half-gap so panes at the window edge float by the same amount as
                     // panes that are interior siblings — the tab strip / status bar / sidebar
