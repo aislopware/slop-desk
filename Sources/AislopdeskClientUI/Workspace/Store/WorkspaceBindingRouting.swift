@@ -74,6 +74,9 @@ public extension WorkspaceBindingRegistry {
         case .resizePaneDown: store.resizeActivePane(.down)
         // Balance (tmux even-layout)
         case .balancePanes: store.balanceActivePaneSplits()
+        // Layouts (tmux/zellij select-layout): cycle steps the presets, a named preset re-tiles directly.
+        case .cycleLayout: store.cycleLayout()
+        case let .applyLayout(preset): store.applyLayout(preset)
         // Focus
         case .focusLeft: store.moveFocusTreeUsingReportedLayout(.left)
         case .focusRight: store.moveFocusTreeUsingReportedLayout(.right)
@@ -150,7 +153,9 @@ public extension WorkspaceBindingRegistry {
              .resizePaneRight,
              .resizePaneUp,
              .resizePaneDown,
-             .balancePanes:
+             .balancePanes,
+             .cycleLayout,
+             .applyLayout:
             break // no canvas analogue (tiled-split only)
         case .focusLeft: apply(.focus(.left), to: store)
         case .focusRight: apply(.focus(.right), to: store)

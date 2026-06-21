@@ -272,6 +272,169 @@ public enum WorkspaceTreeOps {
         return copy
     }
 
+    // MARK: Layouts (select-layout parity — tmux/zellij re-tile)
+
+    /// The algorithmic re-tile layouts (tmux/zellij `select-layout`). The `allCases` order is the
+    /// ``cycleLayout(activeTabContaining:from:in:)`` step order.
+    ///
+    /// - ``evenHorizontal``: every leaf side-by-side in one row (a single `.horizontal` split).
+    /// - ``evenVertical``: every leaf stacked in one column (a single `.vertical` split).
+    /// - ``mainVertical``: the active leaf large on the LEFT, the rest evenly stacked on the right.
+    /// - ``mainHorizontal``: the active leaf large on TOP, the rest evenly in a row below.
+    /// - ``tiled``: a balanced grid (≈ even rows × cols) — the tmux "tiled" arrangement.
+    public enum LayoutPreset: String, CaseIterable, Sendable, Hashable {
+        case evenHorizontal
+        case evenVertical
+        case mainVertical
+        case mainHorizontal
+        case tiled
+    }
+
+    /// Re-tiles the tiled tree of the tab that owns `pane` into `preset`, **preserving every leaf
+    /// `PaneID`** (a pure geometry change — no surface is created or destroyed, so the store's reconcile
+    /// materializes/tears down nothing). The rebuilt tree resets all split weights to an EQUAL `.flex(1)`
+    /// share (any prior divider drags are intentionally discarded — `select-layout` semantics).
+    ///
+    /// The leaf ORDER is the tab's pre-order DFS (``SplitNode/allPaneIDs()``); for the `main-*` presets the
+    /// ACTIVE leaf (``Tab/activePane`` when it is a tiled leaf, else the first leaf) is moved to the front so
+    /// it becomes the large pane. FLOATING panes (`tab.floatingPanes`) are untouched — only `tab.root` is
+    /// rebuilt. A ZOOM is cleared first (re-tiling under a full-screen single-pane zoom is meaningless;
+    /// tmux's `select-layout` exits zoom). A tab with 0 or 1 tiled leaf is a NO-OP (returns `ws` unchanged —
+    /// a 1-child split would violate the ≥2-children invariant). No-op if `pane` is absent.
+    public static func applyLayout(
+        _ preset: LayoutPreset,
+        activeTabContaining pane: PaneID,
+        in ws: TreeWorkspace,
+    ) -> TreeWorkspace {
+        guard let (sIdx, tIdx) = locate(pane, in: ws) else { return ws }
+        let tab = ws.sessions[sIdx].tabs[tIdx]
+
+        // Collect the TILED leaves in pre-order DFS (floats are not in `tab.root`).
+        let dfs = tab.root.allPaneIDs()
+        guard dfs.count > 1 else { return ws } // 0/1 leaf → nothing to re-tile.
+
+        // The active leaf goes to the front for the main-* presets (only when it is actually a tiled leaf —
+        // a nil / floating activePane falls back to the first tiled leaf, the DFS head).
+        let active = tab.activePane.flatMap { dfs.contains($0) ? $0 : nil }
+        let leaves: [PaneID] =
+            switch preset {
+            case .mainVertical,
+                 .mainHorizontal:
+                if let active {
+                    [active] + dfs.filter { $0 != active }
+                } else {
+                    dfs
+                }
+            case .evenHorizontal,
+                 .evenVertical,
+                 .tiled:
+                dfs // even/tiled keep DFS order
+            }
+
+        var copy = ws
+        var newTab = tab
+        newTab.root = rebuild(preset, leaves: leaves)
+        newTab.zoomedPane = nil // un-zoom then tile (tmux select-layout exits zoom)
+        copy.sessions[sIdx].tabs[tIdx] = newTab
+        // The leaf set is identical, so this is a no-op for materialization, but keep it for parity-safety.
+        return copy.normalizingSpecs()
+    }
+
+    /// Advances one step through ``LayoutPreset/allCases`` from `current` (wrapping; `nil` → the first
+    /// preset) and re-tiles the tab owning `pane` into it, returning the new workspace + the applied preset
+    /// (the store stores it as the next cycle cursor). A 0/1-leaf tab still advances the returned preset (so
+    /// the cursor moves) but ``applyLayout(_:activeTabContaining:in:)`` leaves the tree a no-op. No-op
+    /// (returns `ws` + `current ?? .evenHorizontal`) if `pane` is absent.
+    public static func cycleLayout(
+        activeTabContaining pane: PaneID,
+        from current: LayoutPreset?,
+        in ws: TreeWorkspace,
+    ) -> (TreeWorkspace, LayoutPreset) {
+        let all = LayoutPreset.allCases
+        let idx = current.flatMap { all.firstIndex(of: $0) } ?? -1
+        let next = all[(idx + 1) % all.count]
+        return (applyLayout(next, activeTabContaining: pane, in: ws), next)
+    }
+
+    /// Builds the flat (depth ≤ 2) ``SplitNode`` tree for `preset` over `leaves` (caller guarantees
+    /// `leaves.count >= 2`). Every minted ``WeightedChild`` carries `.flex(1)` (re-normalized to an equal
+    /// share at solve time) and every `.split` gets a fresh out-of-tree ``SplitNodeID`` (reconcile keys on
+    /// ``PaneID``s, never split ids). Single-child intermediaries collapse to the bare leaf to honour the
+    /// `.split` ≥ 2-children invariant. Pure; the index math is integer arithmetic.
+    private static func rebuild(_ preset: LayoutPreset, leaves: [PaneID]) -> SplitNode {
+        switch preset {
+        case .evenHorizontal:
+            return flatSplit(.horizontal, leaves: leaves)
+        case .evenVertical:
+            return flatSplit(.vertical, leaves: leaves)
+        case .mainVertical:
+            // Active leaf large on the LEFT, the rest stacked on the right.
+            let rest = Array(leaves.dropFirst())
+            let right = flatSplit(.vertical, leaves: rest) // collapses to a bare leaf when rest.count == 1
+            return .split(
+                id: SplitNodeID(), axis: .horizontal,
+                children: [evenChild(.leaf(leaves[0])), evenChild(right)],
+            )
+        case .mainHorizontal:
+            // Active leaf large on TOP, the rest in a row below.
+            let rest = Array(leaves.dropFirst())
+            let bottom = flatSplit(.horizontal, leaves: rest)
+            return .split(
+                id: SplitNodeID(), axis: .vertical,
+                children: [evenChild(.leaf(leaves[0])), evenChild(bottom)],
+            )
+        case .tiled:
+            return tiled(leaves: leaves)
+        }
+    }
+
+    /// A `.split` along `axis` of `leaves` with equal `.flex(1)` weights — but a 1-element `leaves`
+    /// collapses to the bare leaf (never a 1-child split, which violates the ≥2-children invariant).
+    private static func flatSplit(_ axis: SplitAxis, leaves: [PaneID]) -> SplitNode {
+        if leaves.count == 1 { return .leaf(leaves[0]) }
+        return .split(id: SplitNodeID(), axis: axis, children: leaves.map { evenChild(.leaf($0)) })
+    }
+
+    /// A balanced grid (tmux "tiled"): `cols = ceil(sqrt(n))`, `rows = ceil(n / cols)`; an outer
+    /// `.vertical` split of `rows` row-nodes, each row a `.horizontal` split of its leaf slice. A grid /
+    /// row of one element collapses to the bare leaf.
+    ///
+    /// The leaves are spread across the rows as `rows` NEAR-EQUAL slices (the first `n % rows` rows get one
+    /// extra leaf) — the symmetric tmux `select-layout tiled` fill — rather than greedily packing every row
+    /// to `cols` and dumping the remainder in the last row (which makes a lopsided last row, e.g. n=7 →
+    /// `[3,3,1]` instead of the balanced `[3,2,2]`). Both keep the same leaf SET; this is purely the
+    /// cosmetic row distribution. `cols`/`rows` set how many rows exist; the per-row width is then balanced.
+    private static func tiled(leaves: [PaneID]) -> SplitNode {
+        let n = leaves.count
+        // Integer ceil(sqrt) and ceil division — pure index arithmetic (no float / fma concerns). The
+        // ceil-sqrt is computed by incrementing `cols` while `cols*cols < n` so there is no floating
+        // perfect-square rounding edge for large n.
+        var cols = 1
+        while cols * cols < n { cols += 1 }
+        let safeCols = max(cols, 1)
+        let rows = (n + safeCols - 1) / safeCols // ceil(n / cols)
+        let safeRows = max(rows, 1)
+        // Balance the n leaves across `safeRows` rows: `base` per row, the first `extra` rows get one more.
+        let base = n / safeRows
+        let extra = n % safeRows
+        var rowNodes: [SplitNode] = []
+        var start = 0
+        for r in 0..<safeRows {
+            let width = base + (r < extra ? 1 : 0)
+            let end = min(start + width, n)
+            let slice = Array(leaves[start..<end])
+            rowNodes.append(flatSplit(.horizontal, leaves: slice)) // a 1-leaf row collapses to the bare leaf
+            start = end
+        }
+        if rowNodes.count == 1 { return rowNodes[0] } // a single row IS the grid
+        return .split(id: SplitNodeID(), axis: .vertical, children: rowNodes.map { evenChild($0) })
+    }
+
+    /// A ``WeightedChild`` carrying `node` with the equal-share `.flex(1)` weight (the rebuilt-tree idiom).
+    private static func evenChild(_ node: SplitNode) -> WeightedChild {
+        WeightedChild(weight: .flex(1), node: node)
+    }
+
     // MARK: Focus
 
     /// Focuses `target` (sets the owning tab's `activePane` and selects that session/tab). No-op if

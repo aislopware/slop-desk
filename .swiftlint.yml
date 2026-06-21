@@ -248,7 +248,11 @@ type_body_length:
   # `updateFloatingBounds` (the float viewport now shares one coordinate space with the render model's
   # place-clamp) and the z-order `raiseFloating` / embed-anchor wiring in focusPaneTree·moveFloating·
   # embedFloating. `@Observable` synthesises on the stored property so it must live in the main body.
-  warning: 1780
+  # 1780 → 1800 (2026-06-21): WorkspaceStore gains the select-layout (tmux/zellij) entry points
+  # `applyLayout(_)` / `cycleLayout()` + the `lastAppliedLayout` cycle-cursor STORED state — thin
+  # wrappers over the pure `WorkspaceTreeOps.applyLayout`/`cycleLayout` that carry the active-pane
+  # resolution + the `tree`-setter (private(set), only settable in the main body) an extension can't reach.
+  warning: 1800
   error: 2700
 
 function_body_length:

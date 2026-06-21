@@ -36,6 +36,10 @@ public enum WorkspaceAction: Hashable, Sendable {
     // Balance (tmux even-layout)
     case balancePanes // ⌃⌘=
 
+    // Layouts (tmux/zellij select-layout — re-tile the active tab's panes)
+    case cycleLayout // ⌃⌘L — step through the algorithmic layout presets
+    case applyLayout(WorkspaceTreeOps.LayoutPreset) // a named preset (menu/palette only — no chord)
+
     // Focus
     case focusLeft // ⌥⌘←
     case focusRight // ⌥⌘→
@@ -106,6 +110,8 @@ public extension WorkspaceAction {
              .resizePaneUp,
              .resizePaneDown,
              .balancePanes,
+             .cycleLayout, // re-tiles the active tiled tab
+             .applyLayout, // re-tiles the active tiled tab into a named preset
              .focusLeft,
              .focusRight,
              .focusUp,
@@ -289,6 +295,18 @@ public enum WorkspaceBindingRegistry {
             id: "pane.balance", action: .balancePanes, title: "Balance Panes",
             category: .panes, chord: KeyChord(character: "=", [.control, .command]),
             symbol: "rectangle.split.2x2", keywords: "even equal distribute reset layout balance tile",
+        ),
+        // Layouts (tmux/zellij select-layout): ⌃⌘L cycles through the algorithmic re-tile presets
+        // (even-horizontal/vertical, main-vertical/horizontal, tiled). It parallels ⌃⌘= Balance Panes
+        // ("L = Layout"); ⌃⌘L is otherwise unbound (`l` appears in NO other chord). A registry binding
+        // fires ONLY via its menu item (no NSEvent monitor — same as float / sync-input), so the Pane menu's
+        // "Layouts ▸ Cycle Layout" item is what makes ⌃⌘L dispatch. The five NAMED presets are menu/palette
+        // only (`.applyLayout(_)`, no chord). Pinned unique by `TreeCommandRoutingTests`.
+        WorkspaceBinding(
+            id: "pane.cycleLayout", action: .cycleLayout, title: "Cycle Layout",
+            category: .panes, chord: KeyChord(character: "l", [.control, .command]),
+            symbol: "rectangle.3.group",
+            keywords: "layout retile arrange tile even main select-layout cycle zellij tmux",
         ),
         // Tabs
         WorkspaceBinding(

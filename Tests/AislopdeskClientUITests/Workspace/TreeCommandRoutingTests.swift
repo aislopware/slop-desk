@@ -261,6 +261,69 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(leaves(store).count, 2, "balance never changes the leaf set")
     }
 
+    // MARK: - Layouts (select-layout parity): routing + chord pin
+
+    /// `.applyLayout(.evenHorizontal)` re-tiles the active tab into a single horizontal split while keeping
+    /// the exact leaf set + every fake handle mounted (the no-teardown invariant). Proven to fail before the
+    /// action routes to `store.applyLayout(_)`.
+    func testApplyLayoutRetilesPreservingPanesAndHandles() {
+        let store = makeTreeStore()
+        route(.splitDown, store) // [a / b] — a vertical (stacked) split
+        route(.splitDown, store) // 3 leaves stacked
+        let before = Set(leaves(store))
+        XCTAssertEqual(before.count, 3)
+
+        route(.applyLayout(.evenHorizontal), store)
+
+        XCTAssertEqual(Set(leaves(store)), before, "re-tile keeps the EXACT leaf set (no teardown)")
+        guard case let .split(_, axis, children)? = store.tree.activeSession?.activeTab?.root else {
+            XCTFail("even-horizontal is a single split")
+            return
+        }
+        XCTAssertEqual(axis, .horizontal, "even-horizontal = side-by-side columns")
+        XCTAssertEqual(children.count, 3)
+        // Every surviving leaf still has its materialized handle (nothing was torn down + recreated).
+        for id in before { XCTAssertNotNil(store.handle(for: id), "leaf \(id) keeps its handle through a re-tile") }
+        XCTAssertEqual(store.allSessions.count, 3, "no handle materialized or destroyed by the re-tile")
+    }
+
+    /// `.cycleLayout` advances the layout each press (the leaf set never changes) — and the first press
+    /// applies the FIRST preset (even-horizontal). Proven to fail before `.cycleLayout` routes.
+    func testCycleLayoutSteppingKeepsLeafSet() {
+        let store = makeTreeStore()
+        route(.splitRight, store)
+        route(.splitRight, store) // 3 leaves
+        let before = Set(leaves(store))
+
+        route(.cycleLayout, store) // → even-horizontal (first preset)
+        XCTAssertEqual(Set(leaves(store)), before, "cycle keeps the leaf set")
+        if case let .split(_, axis, _)? = store.tree.activeSession?.activeTab?.root {
+            XCTAssertEqual(axis, .horizontal, "first cycle press applies even-horizontal")
+        } else {
+            XCTFail("expected a re-tiled split")
+        }
+
+        route(.cycleLayout, store) // → even-vertical
+        if case let .split(_, axis, _)? = store.tree.activeSession?.activeTab?.root {
+            XCTAssertEqual(axis, .vertical, "second cycle press applies even-vertical")
+        } else {
+            XCTFail("expected a re-tiled split")
+        }
+        XCTAssertEqual(Set(leaves(store)), before, "still the same leaf set after the second press")
+    }
+
+    /// Pins the Cycle Layout chord to its documented free default ⌃⌘L, and that the five named presets are
+    /// chord-LESS (menu/palette only) — a wrong-but-unique value would slip past the collision guard.
+    func testCycleLayoutChordIsControlCommandLAndPresetsHaveNoChord() {
+        func chord(_ action: WorkspaceAction) -> KeyChord? {
+            WorkspaceBindingRegistry.binding(for: action)?.chord
+        }
+        XCTAssertEqual(chord(.cycleLayout), KeyChord(character: "l", [.control, .command]), "cycle layout = ⌃⌘L")
+        for preset in WorkspaceTreeOps.LayoutPreset.allCases {
+            XCTAssertNil(chord(.applyLayout(preset)), "named preset \(preset) is menu/palette only — no chord")
+        }
+    }
+
     /// Pins the nine new pane-management chords to their documented defaults (move = ⌥⌘⇧arrows, resize =
     /// ⌃⌘arrows, balance = ⌃⌘=) — distinct from focus (⌥⌘arrows) and the ⌃⌘bracket block jumps.
     func testPaneManagementChordsAreTheDocumentedDefaults() {

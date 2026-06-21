@@ -2809,6 +2809,36 @@ public final class WorkspaceStore {
         reconcileTree()
     }
 
+    /// The cycle cursor for ``cycleLayout()`` — the last preset applied via the layout commands. UI-only
+    /// (not persisted, like the palette/cheat-sheet overlay state); after a manual split/close it may no
+    /// longer match the actual shape, but ``cycleLayout()`` just advances the enum deterministically, so it
+    /// self-heals on the next press.
+    private var lastAppliedLayout: WorkspaceTreeOps.LayoutPreset?
+
+    /// Re-tiles the active tab's tiled tree into `preset` (tmux/zellij `select-layout`), preserving every
+    /// pane `PaneID`. Un-zooms first (a re-tile under a full-screen zoom is meaningless). STRUCTURAL — the
+    /// leaf set is unchanged, so reconcile materializes/tears down nothing (the no-teardown invariant; every
+    /// surface stays mounted). No-op (a 0/1-leaf tab, or no active pane) leaves the tree unchanged.
+    public func applyLayout(_ preset: WorkspaceTreeOps.LayoutPreset) {
+        guard let active = tree.activeSession?.activeTab?.activePane else { return }
+        tree = WorkspaceTreeOps.applyLayout(preset, activeTabContaining: active, in: tree)
+        lastAppliedLayout = preset
+        reconcileTree()
+    }
+
+    /// Steps the active tab through the ``WorkspaceTreeOps/LayoutPreset`` presets (the "Cycle Layout"
+    /// command, ⌃⌘L), re-tiling into the next one each press. Un-zooms first. STRUCTURAL — the leaf set is
+    /// unchanged (no teardown). No-op without an active pane.
+    public func cycleLayout() {
+        guard let active = tree.activeSession?.activeTab?.activePane else { return }
+        let (next, applied) = WorkspaceTreeOps.cycleLayout(
+            activeTabContaining: active, from: lastAppliedLayout, in: tree,
+        )
+        tree = next
+        lastAppliedLayout = applied
+        reconcileTree()
+    }
+
     /// Selects the tab `delta` away from the active tab in the active session, clamped to the tab range
     /// (no wrap — a list stops at its ends, like the palette). The "next/prev tab" command entry. No-op
     /// without an active session.

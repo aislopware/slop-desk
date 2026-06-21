@@ -134,6 +134,20 @@ public struct WorkspaceCommands: Commands {
         actionButton("New Floating Pane", .spawnFloating)
         actionButton("Rename Tab…", .renamePane) // ITEM B1: ⌘⇧R renames the active tab on the tree shell
 
+        // Layouts (tmux/zellij select-layout): re-tile the active tab's panes into an algorithmic layout.
+        // The five named presets are menu/palette-only (no chord); "Cycle Layout" carries ⌃⌘L. A registry
+        // binding fires ONLY via its menu item (no NSEvent monitor — same as float / sync-input), so THIS
+        // submenu is what makes ⌃⌘L actually dispatch; the "Cycle Layout" item is REQUIRED.
+        Menu("Layouts") {
+            actionButton("Even Horizontal", .applyLayout(.evenHorizontal))
+            actionButton("Even Vertical", .applyLayout(.evenVertical))
+            actionButton("Main Vertical", .applyLayout(.mainVertical))
+            actionButton("Main Horizontal", .applyLayout(.mainHorizontal))
+            actionButton("Tiled", .applyLayout(.tiled))
+            Divider()
+            actionButton("Cycle Layout", .cycleLayout)
+        }
+
         Divider()
 
         actionButton("Focus Left", .focusLeft)
@@ -261,8 +275,10 @@ public struct WorkspaceCommands: Commands {
         // Viewport bookmarks: recall items are titled with the LIVE bookmark name (the focused
         // pane's title at save time) and disabled while their slot is empty; save items always
         // overwrite. The chords (⌘n / ⇧⌘n) derive from the bindings table like every other item.
-        // Named layout presets: switch to a saved canvas, or snapshot the current one.
-        Menu("Layouts") {
+        // Named layout presets: switch to a saved canvas, or snapshot the current one. Titled "Saved
+        // Layouts" so it never collides with the LIVE `.tree` shell's "Layouts" re-tile submenu (the two
+        // shells are mutually exclusive, but distinct titles keep the grep / revival clear).
+        Menu("Saved Layouts") {
             Button("Save Current Layout…") {
                 if let store { apply(.saveLayout, to: store) }
             }
