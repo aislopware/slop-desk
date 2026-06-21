@@ -25,6 +25,15 @@ public enum SettingsKey {
     public static let autoSwitchLayouts = "features.autoSwitchLayouts"
     public static let redactSecrets = "features.redactSecrets"
     public static let recordClipboardHistory = "features.recordClipboardHistory"
+    // Appearance / chrome
+    /// The active ``DSDensity`` tier rawValue. Mirrors ``DSDensity/storageKey`` (the SAME `UserDefaults`
+    /// key ``DSThemeStore`` reads at init + on a Settings change) so the picker, persistence, and the live
+    /// `DSScale`/height tokens all agree on one source.
+    public static let density = "appearance.density"
+    /// Whether the bottom ``PaneStatusBar`` is hidden (the chrome recedes toward pure terminal). Default OFF.
+    public static let hideStatusBar = "appearance.hideStatusBar"
+    /// Whether the per-block sticky command divider/header is shown over terminal panes. Default ON.
+    public static let showBlockDividers = "terminal.showBlockDividers"
 
     /// Whether a layout with a trigger app auto-switches when that app launches on the host (default
     /// ON — assigning a trigger is itself the opt-in). Read at fire-time.
@@ -62,6 +71,17 @@ public enum SettingsKey {
     /// History".
     public static var recordClipboardHistoryEnabled: Bool {
         UserDefaults.standard.object(forKey: recordClipboardHistory) as? Bool ?? true
+    }
+
+    /// Whether the bottom status bar is hidden (default OFF — the strip shows unless the user hides it).
+    /// Read at fire-time so a Settings change applies on the next render.
+    public static var hideStatusBarEnabled: Bool {
+        UserDefaults.standard.object(forKey: hideStatusBar) as? Bool ?? false
+    }
+
+    /// Whether the per-block command divider/header is shown (default ON). Read at fire-time.
+    public static var showBlockDividersEnabled: Bool {
+        UserDefaults.standard.object(forKey: showBlockDividers) as? Bool ?? true
     }
 
     /// The default kind for a generic "New Pane" (toolbar primary action / empty state), default
@@ -185,9 +205,20 @@ private struct GeneralSettingsPanel: View {
 /// and re-applies it LIVE (the Xcode-app `GhosttyTerminalView` reads ``TerminalConfigBroadcaster``).
 private struct TerminalSettingsPanel: View {
     @Bindable var store: PreferencesStore
+    @AppStorage(SettingsKey.showBlockDividers) private var showBlockDividers = true
 
     var body: some View {
         Form {
+            Section("Blocks") {
+                Toggle("Show command block dividers", isOn: $showBlockDividers)
+                Text(
+                    """
+                    Draws the slim per-command header/divider over each pane (Warp-style block chrome). \
+                    Turn off for chrome-less panes — the block list stays reachable via ⌃⌘O.
+                    """,
+                )
+                .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Font") {
                 TextField("Family", text: $store.terminal.fontFamily)
                 Stepper(
@@ -227,15 +258,49 @@ private struct TerminalSettingsPanel: View {
 
 // MARK: - Appearance
 
-/// Client-side appearance + privacy: redaction + clipboard-history gates (the legacy `@AppStorage`
-/// ``SettingsKey`` consumers). Interface-density / theme-pair knobs are placeholders until the IDE
-/// shell exposes them.
+/// Client-side appearance + privacy: the ``DSDensity`` interface-density tier (P5 — drives both the DS font/
+/// space multiplier AND the chrome row/tab/status-bar heights), the disappearing-chrome toggle (hide the
+/// status bar), and the redaction + clipboard-history privacy gates (the legacy `@AppStorage`
+/// ``SettingsKey`` consumers).
 private struct AppearanceSettingsPanel: View {
     @AppStorage(SettingsKey.redactSecrets) private var redactSecrets = true
     @AppStorage(SettingsKey.recordClipboardHistory) private var recordClipboard = true
+    @AppStorage(SettingsKey.hideStatusBar) private var hideStatusBar = false
+
+    /// The shared `@Observable` density/accent store, held as `@Bindable` so the panel TRACKS it (a `$theme.
+    /// density` binding both writes the live setter AND re-renders the picker if the tier ever changes from
+    /// another writer). The Settings scene is a SEPARATE window outside the `WorkspaceRootView` injection
+    /// scope, so this binds the process-wide singleton directly rather than reading `@Environment` (which
+    /// would be nil here). Its setter's `didSet` re-sets ``DSScale``'s LIVE multiplier AND persists the choice
+    /// to ``SettingsKey/density`` — ONE source of truth, no separate @AppStorage String to drift from it.
+    @Bindable private var theme = DSThemeStore.shared
 
     var body: some View {
         Form {
+            Section("Interface density") {
+                Picker("Density", selection: $theme.density) {
+                    ForEach(DSDensity.allCases, id: \.self) { tier in
+                        Text(tier.title).tag(tier)
+                    }
+                }
+                Text(
+                    """
+                    Reflows the whole chrome — tab/sidebar/status-bar fonts, padding AND row heights — from \
+                    one tier. Compact suits a dense coding session; Comfortable eases the spacing.
+                    """,
+                )
+                .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Chrome") {
+                Toggle("Hide status bar", isOn: $hideStatusBar)
+                Text(
+                    """
+                    Hides the bottom status strip so the workspace recedes toward pure terminal output. \
+                    The focused pane's RTT / agent state is still in the tab + sidebar.
+                    """,
+                )
+                .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Privacy") {
                 Toggle("Redact secrets in titles, notifications & clipboard previews", isOn: $redactSecrets)
                 Text(

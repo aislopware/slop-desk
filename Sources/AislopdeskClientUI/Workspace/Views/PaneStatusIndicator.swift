@@ -179,8 +179,19 @@ struct PaneStatusDot: View {
     /// an amber pulse ring overlays the connection dot to signal a RUNNING command. Defaults to
     /// `false` so every existing call site (which passes only `status`) is unchanged.
     var running: Bool = false
-    /// The dot diameter (the header uses 7; the rail uses the same for consistency).
+    /// The dot diameter as an UNSCALED base point size (the header uses 7; the rail uses the same for
+    /// consistency). P5: scaled live by ``scaledSize`` (the tracked `@Environment(DSScale.self)` multiplier)
+    /// so the dot reflows on a density-tier flip — callers pass the BASE (e.g. `7`), NOT `UIMetrics.scaled(7)`.
     var size: CGFloat = 7
+
+    /// The live density multiplier (OPTIONAL form — falls back to the shared instance when rendered outside
+    /// the injected scope rather than TRAPPING). Reading it records the dependency so the dot repaints on a
+    /// tier flip instead of freezing on the old static-var path.
+    @Environment(DSScale.self) private var scale: DSScale?
+
+    /// The diameter scaled by the live multiplier (single `*`, no FMA). Drives the circle + the ring/glyph
+    /// math so the whole dot reflows coherently.
+    private var scaledSize: CGFloat { size * (scale?.multiplier ?? DSScale.shared.multiplier) }
 
     /// The running ring is shown only when a command is actually executing on a LIVE connection —
     /// a disconnected/reconnecting pane shows its connection state, not a stale running cue.
@@ -216,7 +227,7 @@ struct PaneStatusDot: View {
                     TimelineView(.periodic(from: .now, by: 0.5)) { context in
                         Circle()
                             .stroke(Self.runningColor, lineWidth: 1.5)
-                            .frame(width: size + 4, height: size + 4)
+                            .frame(width: scaledSize + 4, height: scaledSize + 4)
                             .opacity(pulseOpacity(at: context.date))
                     }
                 }
@@ -227,7 +238,7 @@ struct PaneStatusDot: View {
             .overlay {
                 if showsErrorGlyph {
                     Image(systemName: "exclamationmark")
-                        .font(.system(size: size + 1, weight: .black))
+                        .font(.system(size: scaledSize + 1, weight: .black))
                         .foregroundStyle(.white)
                 }
             }
@@ -247,7 +258,7 @@ struct PaneStatusDot: View {
             // Use the premium SEMANTIC palette (status.semanticColor), not the raw system hues — so the
             // connection dot reads as one palette with the rest of the chrome.
             .fill(status.semanticColor)
-            .frame(width: size, height: size)
+            .frame(width: scaledSize, height: scaledSize)
     }
 
     /// A smooth 1s breathing ramp between 0.4 and 1.0, derived from wall-clock time so no per-frame

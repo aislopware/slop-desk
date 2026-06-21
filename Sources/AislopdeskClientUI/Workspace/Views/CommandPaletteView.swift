@@ -33,6 +33,8 @@ struct CommandPaletteView: View {
     /// Drives presentation. The palette dismisses by setting this to `false` (⎋, backdrop tap, or a
     /// run). Owned by the mounting view so the ⌘K shortcut toggles it.
     @Binding var isPresented: Bool
+    /// Reduce-Motion gate for the keep-selection-visible scroll animation.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The live query text.
     @State private var query: String = ""
@@ -182,8 +184,10 @@ struct CommandPaletteView: View {
                     .padding(DSSpace.s3)
                 }
                 // Keep the highlighted row visible as the user arrows through the list.
+                // P5 MOTION: the scroll-follow routes through DSMotion.appear, Reduce-Motion-gated to the
+                // near-instant crossfade so the list snaps without an eased scroll for a motion-sensitive user.
                 .onChange(of: selection) { _, new in
-                    withAnimation(.easeOut(duration: 0.12)) {
+                    withAnimation(DSMotion.resolve(DSMotion.appear, reduceMotion: reduceMotion)) {
                         proxy.scrollTo(new, anchor: .center)
                     }
                 }

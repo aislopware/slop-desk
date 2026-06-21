@@ -16,7 +16,9 @@ import SwiftUI
 struct AgentStatusDot: View {
     /// The rolled-up status to render. `.none` ⇒ nothing.
     let status: ClaudeStatus
-    /// The dot diameter (the sidebar uses a slightly larger dot than the pane chrome).
+    /// The dot diameter as an UNSCALED base point size (the sidebar uses a slightly larger dot than the pane
+    /// chrome). P5: the diameter is applied via the tracked `.dsScaledFrame(square:)` so the dot reflows LIVE
+    /// on a density-tier flip — callers pass the BASE (e.g. `8`), NOT a pre-scaled `UIMetrics.scaled(8)`.
     var size: CGFloat = 7
 
     var body: some View {
@@ -26,7 +28,9 @@ struct AgentStatusDot: View {
                 // repeatForever, NO symbolEffect, never on the keystroke / terminal-render path) so the
                 // in-flight cue is alive but calm. Every other state is steady.
                 .modifier(WorkingPulse(active: status == .working))
-                .frame(width: size, height: size)
+                // P5: tracked scaled frame (base `size` × the live density multiplier) so the dot reflows on a
+                // tier flip in lockstep with the surrounding `.dsFont` text instead of freezing.
+                .dsScaledFrame(square: size)
                 .help(Self.label(for: status))
                 .accessibilityLabel(Text("agent \(Self.label(for: status))"))
         } else {
@@ -69,34 +73,40 @@ struct AgentStatusDot: View {
 
 // MARK: - WorkingPulse (a gentle breathe for the WORKING dot only)
 
-/// Wraps the WORKING dot in a calm opacity breathe — a single repeating `.easeInOut` animation between
-/// `~0.65` and `1.0` over `~1.4s`, toggled by a local `@State` driven on `.onAppear`. This is the ONE
-/// place a `repeatForever` animation is acceptable on the chrome: it is a leaf indicator (a 7pt dot), NOT
-/// on the keystroke / echo latency path and not over the terminal/IOSurface, so the SwiftUI-interpolated
-/// fade is both correct (no strobe) and cheap. We deliberately do NOT use a `TimelineView` sampled at a
-/// coarse interval — that interpolates nothing between samples and renders a hard two-state flip, the
-/// opposite of the intended breathe. When `active` is false the receiver is returned untouched (steady).
+/// Wraps the WORKING dot in a calm opacity breathe — a single repeating opacity fade between `~0.65` and
+/// `1.0` on the ``DSMotion/attention`` token (the house repeatForever curve, shared with the sibling
+/// ``AttentionPulse``), toggled by a local `@State` driven on `.onAppear`. This is the ONE place a
+/// `repeatForever` animation is acceptable on the chrome: it is a leaf indicator (a 7pt dot), NOT on the
+/// keystroke / echo latency path and not over the terminal/IOSurface, so the SwiftUI-interpolated fade is
+/// both correct (no strobe) and cheap. We deliberately do NOT use a `TimelineView` sampled at a coarse
+/// interval — that interpolates nothing between samples and renders a hard two-state flip, the opposite of
+/// the intended breathe. When `active` is false — OR Reduce Motion is on — the receiver rests steady (the
+/// reduced-motion fallback for a continuously-repeating animation).
 private struct WorkingPulse: ViewModifier {
     let active: Bool
 
     /// Floor / ceiling of the breathe — a calm fade that never fully dims (the dot stays legible).
     private static let floor = 0.65
-    /// One half-cycle of the breathe; `autoreverses` doubles it to ~2.8s end-to-end so the pulse reads
-    /// as a slow, gentle inhale rather than a busy blink.
-    private static let period = 1.4
 
     @State private var breathing = false
+    /// Reduce-Motion gate: under the system preference the repeatForever breathe is DROPPED — the dot rests
+    /// steady at full opacity (legible, never pulsing), mirroring the sibling ``AttentionPulse`` fix per the
+    /// spec's "EVERY spring/translate gated → near-instant" rule (a `repeatForever` can't be made near-instant;
+    /// resting steady is the right fallback).
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
-        if active {
+        if active, !reduceMotion {
             content
                 .opacity(breathing ? 1.0 : Self.floor)
-                .animation(
-                    .easeInOut(duration: Self.period).repeatForever(autoreverses: true),
-                    value: breathing,
-                )
+                // P5 MOTION: the working-dot breathe is DSMotion.attention (the house repeatForever token).
+                // Under Reduce Motion the `!reduceMotion` guard above takes the steady branch (full-opacity,
+                // no pulse) — the spec's reduced-motion fallback for a continuously-repeating animation.
+                .animation(DSMotion.attention, value: breathing)
                 .onAppear { breathing = true }
         } else {
+            // Steady: either no agent is working, or Reduce Motion is on (the dot shows at full opacity but
+            // does not pulse).
             content
         }
     }

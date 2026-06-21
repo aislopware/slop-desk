@@ -186,6 +186,9 @@ struct SessionRow: View {
     let onRename: () -> Void
 
     @State private var hovered = false
+    /// Reduce-Motion gate: the sidebar-selection spring falls to a near-instant crossfade under the system
+    /// preference (via ``DSMotion/resolve(_:reduceMotion:)``).
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var displayName: String {
         session.name.isEmpty ? "Session" : session.name
@@ -275,7 +278,8 @@ struct SessionRow: View {
             Spacer(minLength: UIMetrics.spacing2)
 
             livenessGlyph
-            AgentStatusDot(status: agentStatus, size: UIMetrics.scaled(8))
+            // P5: pass the UNSCALED base (8) — AgentStatusDot applies the live scale via `.dsScaledFrame`.
+            AgentStatusDot(status: agentStatus, size: 8)
         }
         // P3b: row padding migrates to the 4pt scale via the live-scale `.dsSpace` path — 6pt H / 4pt V.
         .dsSpace(.horizontal, 6)
@@ -294,10 +298,15 @@ struct SessionRow: View {
             if isActive {
                 Rectangle()
                     .fill(DSColor.accentSolid)
-                    .frame(width: UIMetrics.scaled(3))
+                    // P5: tracked scaled width (base 3) so the accent bar reflows with the row on a tier flip.
+                    .dsScaledFrame(width: 3)
                     .allowsHitTesting(false)
             }
         }
+        // P5 MOTION: sidebar SELECTION springs via DSMotion.select (the selectionWash plate + 3pt accent
+        // leading bar move in on select), Reduce-Motion-gated to the near-instant crossfade. Keyed on
+        // `isActive` so it fires exactly on a select; additive (wash + bar), it never dims a peer row.
+        .animation(DSMotion.resolve(DSMotion.select, reduceMotion: reduceMotion), value: isActive)
         .contentShape(RoundedRectangle(cornerRadius: DSRadius.lg, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayName)
@@ -340,7 +349,10 @@ private struct SessionIcon: View {
                 .font(.system(size: UIMetrics.fontEmphasis, weight: .bold))
                 .foregroundStyle(letterForeground)
         }
-        .frame(width: UIMetrics.iconXXL, height: UIMetrics.iconXXL)
+        // P5: the icon tile size routes through the tracked `.dsScaledFrame(square:)` (base 28 = iconXXL/mult)
+        // so it reflows LIVE on a density-tier flip in lockstep with the row's `.dsFont`/`.dsSpace` text +
+        // padding — instead of freezing (the static-var `UIMetrics.iconXXL` read SwiftUI can't observe).
+        .dsScaledFrame(square: 28)
         .overlay {
             // Neutral hairline only — the row's leading accent bar (SessionRow) is the single "selected"
             // accent cue, so the icon never adds a second accent stroke.

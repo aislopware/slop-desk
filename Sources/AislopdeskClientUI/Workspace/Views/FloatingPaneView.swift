@@ -38,6 +38,8 @@ struct FloatingPaneView<Content: View>: View {
     @GestureState private var resizeDelta: FloatingResizeDelta = .zero
 
     @State private var hoveringStrip = false
+    /// Reduce-Motion gate for the card-reposition animation (DSMotion.layout → near-instant crossfade).
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The strip height (a slim title/grab bar — the only floating chrome that may be glass).
     private static var stripHeight: CGFloat { 26 }
@@ -95,7 +97,10 @@ struct FloatingPaneView<Content: View>: View {
         // The SE-corner resize grip (an overlay so it sits above the content's hit area).
         .overlay(alignment: .bottomTrailing) { resizeGrip }
         .position(x: frame.midX, y: frame.midY)
-        .animation(.easeOut(duration: 0.18), value: rect)
+        // P5 MOTION: a committed reposition (a new clamped `rect` from the render model) settles via
+        // DSMotion.layout (spring), Reduce-Motion-gated to the near-instant crossfade. Value-scoped to
+        // `rect` so it animates ONLY a committed move/resize, never the live un-committed drag preview.
+        .animation(DSMotion.resolve(DSMotion.layout, reduceMotion: reduceMotion), value: rect)
     }
 
     // MARK: Title strip (move + close/embed — the ONLY glass chrome)

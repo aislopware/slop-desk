@@ -19,6 +19,8 @@ final class SettingsKeyTests: XCTestCase {
             SettingsKey.autoSwitchLayouts,
             SettingsKey.redactSecrets,
             SettingsKey.recordClipboardHistory,
+            SettingsKey.hideStatusBar,
+            SettingsKey.showBlockDividers,
         ]
     }
 
@@ -60,6 +62,25 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertFalse(SettingsKey.redactSecretsEnabled)
         XCTAssertFalse(SettingsKey.recordClipboardHistoryEnabled)
         XCTAssertFalse(SettingsKey.autoSwitchLayoutsEnabled)
+    }
+
+    /// P5 disappearing-chrome toggles: `hideStatusBar` defaults OFF (the strip shows) and
+    /// `showBlockDividers` defaults ON (dividers shown), each respecting a persisted explicit value — the
+    /// toggle-persistence proof. The wire key strings are pinned so a rename can't split-brain the Settings
+    /// UI from the SplitWorkspaceView / TerminalScreenView consumers.
+    func testChromeTogglesDefaultsAndPersistence() {
+        // Defaults when unset.
+        XCTAssertFalse(SettingsKey.hideStatusBarEnabled, "status bar shows by default (hide is OFF)")
+        XCTAssertTrue(SettingsKey.showBlockDividersEnabled, "block dividers show by default")
+        // An explicit persisted value is respected (the toggle persists across reads).
+        UserDefaults.standard.set(true, forKey: SettingsKey.hideStatusBar)
+        UserDefaults.standard.set(false, forKey: SettingsKey.showBlockDividers)
+        XCTAssertTrue(SettingsKey.hideStatusBarEnabled)
+        XCTAssertFalse(SettingsKey.showBlockDividersEnabled)
+        // The wire keys are the single source of truth shared with the @AppStorage consumers.
+        XCTAssertEqual(SettingsKey.hideStatusBar, "appearance.hideStatusBar")
+        XCTAssertEqual(SettingsKey.showBlockDividers, "terminal.showBlockDividers")
+        XCTAssertEqual(SettingsKey.density, "appearance.density")
     }
 
     func testDefaultPaneKindDefaultsToTerminalAndRoundTrips() {

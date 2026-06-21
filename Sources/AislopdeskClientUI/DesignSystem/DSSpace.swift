@@ -1,5 +1,6 @@
 #if canImport(SwiftUI)
 import CoreGraphics
+import Foundation
 import SwiftUI
 
 // MARK: - DSSpace (LAYER 2 — the ONE 4pt-base spacing scale)
@@ -17,10 +18,10 @@ import SwiftUI
 /// the spec indicts for legacy ``UIMetrics``. So `height = DSSpace.statusBarHeight` / `.padding(DSSpace.s6)`
 /// / `.cornerRadius(DSRadius.sm)` wired STRAIGHT into view code will NOT live-repaint on a P5 density flip
 /// (only `.dsFont`/`.dsSpace`, which read `@Environment(DSScale.self)`, reflow). To get a tracked,
-/// live-reflowing geometry, consume these through a modifier that reads `@Environment(DSScale.self)` (e.g.
-/// `.dsSpace`, or a future `.dsFrame(height:)`/`.dsRadius` helper) — do NOT read the static var directly in
-/// a view body that must reflow. P3/P5 either funnels geometry through such tracked modifiers or accepts
-/// that a directly-read dimension is fixed until the next view-identity change.
+/// live-reflowing geometry, consume these through a modifier that reads the injected environment (e.g.
+/// `.dsSpace`, or the P5 `.dsFrame(height:)` helper below, which ALSO reads `@Environment(DSThemeStore.self)`
+/// because a chrome height's VALUE comes from the density TIER, not just the multiplier) — do NOT read the
+/// static var directly in a view body that must reflow. P5 funnels the chrome heights through `.dsFrame`.
 @preconcurrency @MainActor
 public enum DSSpace {
     public static var s0: CGFloat { DSScale.scaled(0) }
@@ -40,13 +41,26 @@ public enum DSSpace {
 
     // MARK: Density-driven layout tokens (default tier in P1; tier-driven in P5)
 
-    /// List-row height (default density 28). Resolves through ``DSThemeStore/shared`` `.density.rowHeight`
-    /// (there is no `DSDensity.current`; the active tier lives on the persisted ``DSThemeStore``).
-    public static var rowHeight: CGFloat { DSScale.scaled(DSThemeStore.shared.density.rowHeight) }
-    /// Tab-strip height (default density 30). Target-only in P1; legacy `Metrics.tabHeight` stays 32.
-    public static var tabHeight: CGFloat { DSScale.scaled(DSThemeStore.shared.density.tabHeight) }
-    /// Bottom status-bar height (default density 26). Legacy `Metrics.statusBarHeight` stays 28.
-    public static var statusBarHeight: CGFloat { DSScale.scaled(DSThemeStore.shared.density.statusBarHeight) }
+    /// The chrome HEIGHTS are driven by the active density TIER ALONE — NOT also multiplied by ``DSScale``.
+    ///
+    /// SINGLE DENSITY STEP (the fix for the double-scaling the review flagged): the per-tier height values
+    /// (`rowHeight` 24/28/32, `tabHeight` 28/30/34, `statusBarHeight` 24/26/28) ALREADY encode the density
+    /// progression — they ARE the spec density table. The ``DSScale`` multiplier (0.92/1.00/1.10) ALSO encodes
+    /// it, so wrapping the height in `DSScale.scaled(...)` would COMPOUND the two (comfortable tab → 34·1.10 =
+    /// 37.4 instead of the spec's 34; compact → 28·0.92 = 25.76 instead of 28). The spec pseudocode reads the
+    /// tier height UNSCALED (`DSDensity.current.tabHeight`), so the height comes PURELY from the tier here; the
+    /// multiplier remains the density driver for FONTS + PADDING only (via `.dsFont` / `.dsSpace`). The
+    /// ``DSFrameHeightModifier`` below applies the SAME unscaled rule on the live-reflow path.
+
+    /// List-row height — the active tier's `rowHeight` (24/28/32), UNSCALED. Resolves through
+    /// ``DSThemeStore/shared`` `.density.rowHeight` (there is no `DSDensity.current`; the active tier lives on
+    /// the persisted ``DSThemeStore``).
+    public static var rowHeight: CGFloat { DSThemeStore.shared.density.rowHeight }
+    /// Tab-strip height — the active tier's `tabHeight` (28/30/34), UNSCALED. Legacy `Metrics.tabHeight` stays 32.
+    public static var tabHeight: CGFloat { DSThemeStore.shared.density.tabHeight }
+    /// Bottom status-bar height — the active tier's `statusBarHeight` (24/26/28), UNSCALED. Legacy
+    /// `Metrics.statusBarHeight` stays 28.
+    public static var statusBarHeight: CGFloat { DSThemeStore.shared.density.statusBarHeight }
 
     /// The per-side pane gutter — 4pt (spec: paneGutter = space4(8)/2). Legacy `Space.paneGap` stays 7.
     public static var paneGutter: CGFloat { DSScale.scaled(4) }
@@ -115,6 +129,95 @@ public extension View {
     @MainActor
     func dsSpace(_ edges: Edge.Set = .all, _ base: CGFloat) -> some View {
         modifier(DSSpaceModifier(edges: edges, base: base))
+    }
+}
+
+// MARK: - dsScaledFrame ViewModifier (tracked fixed-pt geometry — the sidebar/status-bar reflow fix)
+
+/// Constrains a view to a fixed base size SCALED by the live `@Environment(DSScale.self)` multiplier — the
+/// tracked counterpart to a raw `UIMetrics.scaled(_:)` / `UIMetrics.iconXXL` read in a `.frame(...)`.
+///
+/// WHY (the P5 partial-reflow fix the review flagged): a chrome leaf whose only geometry is a fixed-pt size
+/// (a sidebar icon tile, a status/agent dot, the 3pt accent bar) read via `UIMetrics.scaled(_:)` resolves to
+/// the CORRECT value on a tier flip (since `UIScale.multiplier` now delegates to the live density tier) but
+/// is read inside a `static var`, which SwiftUI cannot observe — so the leaf FREEZES (does not repaint) until
+/// a view-identity change while the row's `.dsFont`/`.dsSpace` text/padding reflow, leaving the row
+/// half-scaled. Routing the size through this modifier records the `@Environment(DSScale.self)` dependency so
+/// the leaf repaints in lockstep. OPTIONAL form — falls back to the shared multiplier (correct value, only
+/// the live-repaint dependency lost) when rendered outside the injected scope rather than TRAPPING.
+@preconcurrency @MainActor
+public struct DSScaledFrameModifier: ViewModifier {
+    @Environment(DSScale.self) private var scale: DSScale?
+    /// The unscaled base WIDTH (nil ⇒ leave the width intrinsic).
+    let width: CGFloat?
+    /// The unscaled base HEIGHT (nil ⇒ leave the height intrinsic).
+    let height: CGFloat?
+
+    public func body(content: Content) -> some View {
+        // Read the injected multiplier so SwiftUI records the dependency (single `*`, no FMA). Scale each
+        // supplied base; a nil base leaves that dimension intrinsic.
+        let mult = scale?.multiplier ?? DSScale.shared.multiplier
+        return content.frame(width: width.map { $0 * mult }, height: height.map { $0 * mult })
+    }
+}
+
+public extension View {
+    /// Constrains the receiver to a fixed base size scaled live by `@Environment(DSScale.self)` — the tracked
+    /// replacement for `.frame(width: UIMetrics.scaled(w), height: UIMetrics.scaled(h))`. Pass UNSCALED base
+    /// points; the modifier applies the live density multiplier and repaints on a tier flip.
+    @MainActor
+    func dsScaledFrame(width: CGFloat? = nil, height: CGFloat? = nil) -> some View {
+        modifier(DSScaledFrameModifier(width: width, height: height))
+    }
+
+    /// Constrains the receiver to a scaled SQUARE of `side` base points (the common icon-tile / dot case).
+    @MainActor
+    func dsScaledFrame(square side: CGFloat) -> some View {
+        modifier(DSScaledFrameModifier(width: side, height: side))
+    }
+}
+
+// MARK: - dsFrame(height:) ViewModifier (the P5 live-reflowing CHROME HEIGHT — tracks DSThemeStore + DSScale)
+
+/// Constrains a view's height to a density-driven chrome height token (`tabHeight` / `statusBarHeight` /
+/// `rowHeight`), reading it through `@Environment(DSThemeStore.self)` so a P5 density TIER flip repaints the
+/// frame LIVE. This is the load-bearing fix the ``DSSpace`` contract note warns about: the height tokens
+/// (`DSSpace.tabHeight` etc.) are `static var` reads of `DSThemeStore.shared.density.<height>`, which
+/// SwiftUI cannot observe — so `.frame(height: DSSpace.tabHeight)` FREEZES until a view-identity change.
+///
+/// Unlike `.dsFont`/`.dsSpace` (which scale a base by the `DSScale` multiplier), a chrome HEIGHT comes
+/// PURELY from the active TIER (the spec density table, UNSCALED — see the ``rowHeight`` note above on why
+/// re-multiplying by the ``DSScale`` multiplier would double-count the density step). So this modifier reads
+/// the height from `@Environment(DSThemeStore.self)` (the tier → the height VALUE) and does NOT multiply by
+/// the multiplier. It ALSO observes `@Environment(DSScale.self)` purely so SwiftUI tracks that dependency too
+/// (a tier flip re-sets the multiplier via `DSThemeStore.density.didSet`, so tracking the store alone already
+/// covers the reflow, but reading the scale keeps the modifier consistent with `.dsFont`/`.dsSpace` and
+/// future-proofs a multiplier-only change). Both are OPTIONAL forms — they fall back to the shared singletons
+/// instead of TRAPPING when rendered outside the injected scope (only the live-repaint dependency is lost).
+@preconcurrency @MainActor
+public struct DSFrameHeightModifier: ViewModifier {
+    @Environment(DSThemeStore.self) private var theme: DSThemeStore?
+    @Environment(DSScale.self) private var scale: DSScale?
+    /// The density-height keypath (e.g. `\.tabHeight`) — the per-tier height to resolve (UNSCALED).
+    let height: KeyPath<DSDensity, CGFloat>
+
+    public func body(content: Content) -> some View {
+        // Read the tier for the height VALUE. Read the multiplier too so SwiftUI records BOTH dependencies
+        // (keeps this modifier consistent with `.dsFont`/`.dsSpace`), but DISCARD it from the height math: the
+        // chrome height is the tier value UNSCALED (re-multiplying would double-count the density step).
+        let density = (theme ?? DSThemeStore.shared).density
+        _ = (scale ?? DSScale.shared).multiplier // observed-only; intentionally not applied (see type doc).
+        return content.frame(height: density[keyPath: height])
+    }
+}
+
+public extension View {
+    /// Constrains the receiver to a density-driven chrome height token, live-reflowing on a P5 tier flip
+    /// (tracks `@Environment(DSThemeStore.self)` + `@Environment(DSScale.self)`). Pass a ``DSDensity``
+    /// height keypath, e.g. `.dsFrame(height: \.tabHeight)`.
+    @MainActor
+    func dsFrame(height: KeyPath<DSDensity, CGFloat>) -> some View {
+        modifier(DSFrameHeightModifier(height: height))
     }
 }
 #endif

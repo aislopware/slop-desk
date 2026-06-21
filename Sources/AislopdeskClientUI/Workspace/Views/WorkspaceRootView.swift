@@ -26,6 +26,8 @@ public struct WorkspaceRootView: View {
     /// The ONE app-global connection (docs/31): drives the modal connect-gate + the toolbar status.
     @Bindable var connection: AppConnection
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    /// Reduce-Motion gate for the connection-gate appear/dismiss fade.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The sidebar's visibility — `.automatic` by default (the system shows sidebar + detail on regular
     /// width and collapses on compact). Bound so the toolbar's sidebar toggle and the compact collapse
@@ -82,6 +84,12 @@ public struct WorkspaceRootView: View {
             // readers so it scopes the WHOLE tree, never inside a mount loop (zero edits to SplitTreeView /
             // the hostedTabs ZStack). This replaces the dead UIScale notification path (no view subscribed).
             .environment(DSScale.shared)
+            // P5: inject DSThemeStore alongside DSScale so the `.dsFrame(height:)` chrome heights (TabBar /
+            // PaneStatusBar) reflow LIVE on a density TIER flip — the height VALUE comes from the tier
+            // (DSThemeStore.density.<height>), which DSScale's multiplier alone cannot carry. Same injection
+            // point (strictly ABOVE the shell switch + the SplitTreeView no-teardown mount loop), so a tier
+            // flip is a pure geometry repaint that never changes the leaf PaneID set / tears down a surface.
+            .environment(DSThemeStore.shared)
         #if os(macOS)
             .frame(minWidth: 720, minHeight: 480)
             // ITEM #6: observe the outer window's width so the compact breakpoint keys on the whole window,
@@ -117,7 +125,9 @@ public struct WorkspaceRootView: View {
             }
             // The fade's missing driver: `.transition(.opacity)` alone pops without an animation tied to
             // the value that inserts/removes the gate. Value-scoped so nothing else animates off this.
-            .animation(.easeInOut(duration: 0.18), value: isConnected)
+            // P5 MOTION: DSMotion.appear (the gate fades in/out), Reduce-Motion-gated to the near-instant
+            // crossfade so a motion-sensitive user gets an instant swap rather than the eased fade.
+            .animation(DSMotion.resolve(DSMotion.appear, reduceMotion: reduceMotion), value: isConnected)
             // Latch "connected at least once" so the canvas mounts on first connect and stays mounted across
             // later drops (panes preserved; the gate just overlays). Seed it now in case we launch connected.
             .onChange(of: connection.status) { _, _ in if isConnected { hasConnectedOnce = true } }
@@ -368,6 +378,8 @@ private struct WorkspaceOverlayModals: ViewModifier {
     @Binding var showPalette: Bool
     @Binding var showCheatSheet: Bool
     @Binding var showPeekReply: Bool
+    /// Reduce-Motion gate for the three overlay appear/dismiss drivers.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content
@@ -376,10 +388,12 @@ private struct WorkspaceOverlayModals: ViewModifier {
             // P4 Peek & Reply (⌘⇧J): an inline-reply glass card over the oldest blocked pane. Empty branch
             // when hidden (zero cost), so an unconditional overlay is cheap — like the palette.
             .overlay { PeekReplyView(store: store, isPresented: $showPeekReply) }
-            // The palette's .scale(0.97)/.opacity entrance rides a soft, quick spring (spec F).
-            .animation(.smooth(duration: 0.16), value: showPalette)
-            .animation(.easeOut(duration: 0.12), value: showCheatSheet)
-            .animation(.smooth(duration: 0.16), value: showPeekReply)
+            // P5 MOTION: the overlay appear/dismiss drivers route through DSMotion.appear, Reduce-Motion-
+            // gated to the near-instant crossfade (so the scale/translate entrance never plays for a
+            // motion-sensitive user). Each is value-scoped so nothing else animates off these flags.
+            .animation(DSMotion.resolve(DSMotion.appear, reduceMotion: reduceMotion), value: showPalette)
+            .animation(DSMotion.resolve(DSMotion.appear, reduceMotion: reduceMotion), value: showCheatSheet)
+            .animation(DSMotion.resolve(DSMotion.appear, reduceMotion: reduceMotion), value: showPeekReply)
     }
 }
 

@@ -54,6 +54,10 @@ struct PaneChromeView<Content: View>: View {
     @Environment(\.controlActiveState) private var controlActiveState
     #endif
 
+    /// Reduce-Motion gate: the focus-ring spring + the attention-overlay fade fall to a near-instant
+    /// crossfade under the system preference (via ``DSMotion/resolve(_:reduceMotion:)``).
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// Whether the soft accent focus ring should show: the leaf is focused AND (on macOS) its window is key.
     /// SUPPRESSED for a floating mount — the floating card's own border is the focus authority there, so the
     /// inner chrome must not draw a second concentric ring.
@@ -84,7 +88,9 @@ struct PaneChromeView<Content: View>: View {
             // time so the "background pane" motivation is weaker, but the blocked/done cue on the visible
             // pane must not be lost. Same self-contained, status-gated, hit-test-disabled leaf overlay.
             .overlay(attentionOverlay)
-            .animation(.easeInOut(duration: 0.18), value: paneStatus)
+            // P5 MOTION: the attention-overlay fade routes through DSMotion.layout (spring), Reduce-Motion-
+            // gated to the near-instant crossfade. Keyed on `paneStatus` so it fades on a blocked/done flip.
+            .animation(DSMotion.resolve(DSMotion.layout, reduceMotion: reduceMotion), value: paneStatus)
         } else {
             // The IDE tree shell: CHROME-LESS pane body — no per-pane header, no opacity dim. The Warp
             // "floating card" look: 8pt continuous rounded corners floating on the sunken gutter that
@@ -139,7 +145,11 @@ struct PaneChromeView<Content: View>: View {
                                 : AnyShapeStyle(AislopdeskTheme.border),
                             lineWidth: ringActive ? 1.5 : 1,
                         )
-                        .animation(.easeInOut(duration: 0.15), value: ringActive),
+                        // P5 MOTION (the spec headline): the focus-ring colour+width transition is the pane
+                        // SELECTION cue, so it springs via DSMotion.select (slight overshoot reads premium on
+                        // dark) — Reduce-Motion-gated to the near-instant crossfade. ringActive logic + the
+                        // never-dim invariant are UNCHANGED; only the curve moves from the old easeInOut(0.15).
+                        .animation(DSMotion.resolve(DSMotion.select, reduceMotion: reduceMotion), value: ringActive),
                 )
                 // P3 ATTENTION RING: layered OUTSIDE the focus-ring overlay above so it shows EVEN WHEN
                 // UNFOCUSED (the whole point — notice a background pane). Gated purely on the pane's
@@ -152,10 +162,9 @@ struct PaneChromeView<Content: View>: View {
                 // A bare co-edge stroke would fully cover the 1.5pt focus ring; insetting keeps both legible
                 // so a focused+blocked pane unambiguously reads "this is the active pane AND it's blocked".
                 .overlay(attentionOverlay)
-                // Ease the attention overlay in/out (≤0.22s) so a status change fades like the focus ring
-                // rather than popping a heavy 2pt colored ring instantly. Keyed on `paneStatus` so it fires
-                // exactly on a blocked/done enter/clear.
-                .animation(.easeInOut(duration: 0.18), value: paneStatus)
+                // P5 MOTION: the attention-overlay fade routes through DSMotion.layout (spring), Reduce-Motion-
+                // gated to the near-instant crossfade. Keyed on `paneStatus` so it fades on a blocked/done flip.
+                .animation(DSMotion.resolve(DSMotion.layout, reduceMotion: reduceMotion), value: paneStatus)
         }
     }
 
@@ -518,22 +527,24 @@ private struct AttentionPulse: ViewModifier {
     /// ``WorkingPulse`` floor (`0.6` ≈ `0.65`) so a whole-pane ring inhales as calmly as the working dot
     /// rather than reading as a blink — only a touch deeper since "attention" is a hair more insistent.
     private static let floor = 0.6
-    /// One half-cycle; `autoreverses` doubles it to ~2.8s end-to-end — the same cadence as ``WorkingPulse``
-    /// so the pulse reads as a slow, insistent inhale rather than a busy blink.
-    private static let period = 1.4
 
     @State private var breathing = false
+    /// Reduce-Motion gate: under the system preference the repeatForever breathe is DROPPED — the ring stays
+    /// steady at full opacity (legible, never pulsing) per the spec's "spring/translate → near-instant" rule.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
-        if active {
+        if active, !reduceMotion {
             content
                 .opacity(breathing ? 1.0 : Self.floor)
-                .animation(
-                    .easeInOut(duration: Self.period).repeatForever(autoreverses: true),
-                    value: breathing,
-                )
+                // P5 MOTION: the blocked-pane attention pulse is DSMotion.attention (the repeatForever
+                // breathe). Under Reduce Motion the `!reduceMotion` guard above takes the steady branch
+                // instead, so a motion-sensitive user gets a static ring (the spec's reduced-motion fallback).
+                .animation(DSMotion.attention, value: breathing)
                 .onAppear { breathing = true }
         } else {
+            // Steady: either no attention needed, or Reduce Motion is on (the ring shows at full opacity but
+            // does not pulse).
             content
         }
     }

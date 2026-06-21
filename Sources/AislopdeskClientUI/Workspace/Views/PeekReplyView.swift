@@ -54,6 +54,8 @@ struct PeekReplyView: View {
     /// First-responder for the reply field so the overlay owns the keyboard the instant it appears (and so
     /// the local Esc / Enter / digit handlers receive their presses).
     @FocusState private var replyFocused: Bool
+    /// Reduce-Motion gate for the "sent" flash appear/revert (read from the instance methods below).
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         if isPresented {
@@ -288,7 +290,8 @@ struct PeekReplyView: View {
     /// compose the next reply. On the final send the overlay closes immediately, so no revert is needed.
     private func confirmAndAdvance(answered id: PaneID) {
         answered.insert(id)
-        withAnimation(.easeOut(duration: 0.16)) { sentConfirmation = true }
+        // P5 MOTION: the "Sent" flash appears via DSMotion.appear, Reduce-Motion-gated to the crossfade.
+        withAnimation(DSMotion.resolve(DSMotion.appear, reduceMotion: reduceMotion)) { sentConfirmation = true }
         if let next = store.peekReplyTargetPane(excluding: answered) {
             target = next
             replyFocused = true
@@ -305,7 +308,8 @@ struct PeekReplyView: View {
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1))
             guard isPresented else { return }
-            withAnimation(.easeOut(duration: 0.16)) { sentConfirmation = false }
+            // P5 MOTION: the flash reverts to the hint line via DSMotion.dismiss, Reduce-Motion-gated.
+            withAnimation(DSMotion.resolve(DSMotion.dismiss, reduceMotion: reduceMotion)) { sentConfirmation = false }
         }
     }
 

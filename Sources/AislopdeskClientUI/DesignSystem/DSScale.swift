@@ -1,5 +1,6 @@
 #if canImport(SwiftUI)
 import CoreGraphics
+import Foundation
 import SwiftUI
 
 // MARK: - DSScale (the live-scale fix)
@@ -14,10 +15,10 @@ import SwiftUI
 /// but never injected — ``UIMetrics`` reads `UIScale.shared.multiplier` inside *static* computed vars,
 /// which SwiftUI cannot observe, so `aislopdeskThemeDidChange` posts into the void (zero consumers).
 ///
-/// P1 BRIDGE: `DSScale.shared.multiplier` mirrors `UIScale.shared.preset.multiplier` so DS tokens scale
-/// identically to the legacy ``UIMetrics`` tokens while NO view consumes DS tokens yet. The semantic
-/// `regular`/`large`/`extraLarge` → density-tier swap is deferred to P5; the legacy ``UIScale`` stays
-/// intact for ``UIMetrics.scaled`` + ``WindowConfigurator``.
+/// P5: `DSScale.shared.multiplier` is now driven by the active ``DSDensity`` tier (via ``DSThemeStore``),
+/// NOT the legacy ``UIScale`` preset. ``UIScale/multiplier`` in turn DELEGATES to the same density tier
+/// (so the legacy ``UIMetrics`` tree and the DS tokens scale from ONE source and never diverge), while the
+/// legacy ``UIScale`` survives as a thin compat shim for ``WindowConfigurator`` (the traffic-light Y).
 @preconcurrency @MainActor
 @Observable
 public final class DSScale {
@@ -26,16 +27,17 @@ public final class DSScale {
 
     /// The density multiplier applied to every geometric token (fonts, spacing, radii).
     ///
-    /// P1 default 1.00 (matches today's `UIScale.defaultPreset`). It is a stored, observable property so
-    /// mutating it invalidates every view whose body read `@Environment(DSScale.self)` — the tracked
-    /// repaint path. In P1 it is seeded once from the legacy ``UIScale`` so the two systems never diverge.
+    /// P5 default 1.00 (the `.default` density tier). It is a stored, observable property so mutating it
+    /// invalidates every view whose body read `@Environment(DSScale.self)` — the tracked repaint path. It is
+    /// seeded once from the resolved ``DSDensity`` tier (env + persistence) and re-set live by
+    /// ``DSThemeStore``'s `density` `didSet` whenever the user (or env launch seed) changes the tier.
     public var multiplier: CGFloat
 
     private init() {
-        // P1 BRIDGE: seed from the legacy preset so a user who already chose Large/ExtraLarge gets DS
-        // tokens at the same scale as the legacy `UIMetrics` tokens. No view consumes DS tokens in P1,
-        // so this only matters for the unit-proof + forward-compat — but it keeps the two paths coherent.
-        multiplier = UIScale.shared.multiplier
+        // P5: seed from the resolved density tier (env launch-seed wins over persisted UserDefaults, else
+        // `.default`) so DS tokens AND the bridged legacy `UIMetrics` tokens scale from one source. The live
+        // re-set happens in DSThemeStore.density.didSet; this is the launch value.
+        multiplier = DSDensity.resolved().multiplier
     }
 
     /// Scales a base point value by the active multiplier.
@@ -47,25 +49,36 @@ public final class DSScale {
     }
 }
 
-// MARK: - DSDensity (semantic density tiers — vocabulary only in P1)
+// MARK: - DSDensity (semantic density tiers — wired to DSScale + heights in P5)
 
-/// The semantic density tiers that will REPLACE ``UIScale.Preset`` (`regular`/`large`/`extraLarge`) in
-/// P5. Each tier carries a `multiplier` plus row-height tokens so a density flip reflows the whole chrome
-/// — not just fonts (the legacy presets only touched the font multiplier, leaving heights fixed).
+/// The semantic density tiers that REPLACE ``UIScale.Preset`` (`regular`/`large`/`extraLarge`). Each tier
+/// carries a `multiplier` (fed to ``DSScale``) PLUS row-height tokens (`rowHeight`/`tabHeight`/
+/// `statusBarHeight`, read by ``DSSpace``) so a density flip reflows the WHOLE chrome — fonts + padding via
+/// the multiplier AND the chrome heights via the height tokens — not just fonts (the legacy presets only
+/// touched the font multiplier, leaving heights fixed).
 ///
-/// DEFINED in P1 as forward vocabulary; NOT wired to env / ``DSScale`` until P5. P1's `DSScale.multiplier`
-/// stays bridged to the legacy ``UIScale``.
+/// P5: wired to ``DSThemeStore`` (the persisted active tier) and to ``DSScale`` (the live multiplier).
+/// Resolved at ONE site, ``resolved(env:userDefaults:)``, called from `DSThemeStore.init`.
 public enum DSDensity: String, CaseIterable, Sendable {
     case compact
     case `default`
     case comfortable
 
-    /// The scale factor fed to ``DSScale`` (P5).
+    /// The scale factor fed to ``DSScale``.
     public var multiplier: CGFloat {
         switch self {
         case .compact: 0.92
         case .default: 1.00
         case .comfortable: 1.10
+        }
+    }
+
+    /// The Settings-picker label for this tier.
+    public var title: String {
+        switch self {
+        case .compact: "Compact"
+        case .default: "Default"
+        case .comfortable: "Comfortable"
         }
     }
 
@@ -95,6 +108,29 @@ public enum DSDensity: String, CaseIterable, Sendable {
         case .comfortable: 28
         }
     }
+
+    /// The `UserDefaults` key the chosen tier persists under (mirrored by ``SettingsKey/density`` so the
+    /// Settings picker writes the same key this factory reads).
+    static let storageKey = "appearance.density"
+
+    /// Resolves the active density tier from the env launch-seed, falling back to the persisted
+    /// `UserDefaults` value, else `.default`. Called ONCE from `DSThemeStore.init`.
+    ///
+    /// DEFAULT-OFF IDIOM (the load-bearing comparison): `AISLOPDESK_DENSITY == "1"` (or `"compact"`)
+    /// enables compact for power users; `"comfortable"` is the explicit opt-in to the comfortable tier.
+    /// Any UNSET or other value falls through to the persisted choice, else `.default` — it is `== "1"`
+    /// (NOT the default-ON `!= "0"`), so an unset env NEVER resolves to `.compact`.
+    public static func resolved(
+        env: [String: String] = ProcessInfo.processInfo.environment,
+        userDefaults: UserDefaults = .standard,
+    ) -> Self {
+        let raw = env["AISLOPDESK_DENSITY"]
+        if raw == "1" || raw == "compact" { return .compact }
+        if raw == "comfortable" { return .comfortable }
+        if raw == "default" { return .default }
+        // No env override (or any unrecognised value): fall through to the persisted choice, else .default.
+        return userDefaults.string(forKey: storageKey).flatMap(Self.init(rawValue:)) ?? .default
+    }
 }
 
 // MARK: - DSThemeStore (the optional accent override + density tier)
@@ -102,23 +138,42 @@ public enum DSDensity: String, CaseIterable, Sendable {
 /// The persisted, observable theme overrides: an optional user accent (nil ⇒ ``DSColor.accentSolid``
 /// falls back to ``DSPalette.a9``) and the active ``DSDensity`` tier.
 ///
-/// In P1 this is forward vocabulary: `accent` is `nil` (so `DSColor.accentSolid` resolves to `a9`) and
-/// `density` is `.default`. The wiring to env + persistence + the live density flip lands in P5.
+/// P5: `density` is PERSISTED (to `UserDefaults` under ``DSDensity/storageKey``) and DRIVES ``DSScale``.
+/// `init` resolves the launch tier via ``DSDensity/resolved(env:userDefaults:)`` (env launch-seed wins
+/// over the persisted value); a later in-Settings density change writes the binding (mirrored to the same
+/// key), and `density.didSet` re-sets `DSScale.shared.multiplier` LIVE + re-persists. `accent` stays a
+/// forward-vocabulary override (always `nil` until the accent picker ships).
 @preconcurrency @MainActor
 @Observable
 public final class DSThemeStore {
-    /// The process-wide theme store read by ``DSColor.accentSolid``.
+    /// The process-wide theme store read by ``DSColor.accentSolid`` + injected at ``WorkspaceRootView``.
     public static let shared = DSThemeStore()
 
-    /// The user's accent override. `nil` ⇒ the DS default indigo (``DSPalette.a9``). P1: always `nil`.
+    /// The user's accent override. `nil` ⇒ the DS default indigo (``DSPalette.a9``). Always `nil` today.
     public var accent: Color?
 
-    /// The active density tier. P1: `.default`.
-    public var density: DSDensity
+    /// The active density tier. Mutating it (Settings picker, or the resolved launch seed) re-sets
+    /// ``DSScale``'s live multiplier AND persists the choice — so one tier flip reflows fonts/padding (via
+    /// the multiplier) AND chrome heights (via the ``DSSpace`` height tokens that read `density.<height>`).
+    public var density: DSDensity {
+        didSet {
+            guard density != oldValue else { return }
+            // Drive the LIVE font/space/radius multiplier (the @Observable repaint path).
+            DSScale.shared.multiplier = density.multiplier
+            // Persist the choice so it survives relaunch (idempotent when the launch seed already matched).
+            defaults.set(density.rawValue, forKey: DSDensity.storageKey)
+        }
+    }
 
-    private init() {
+    @ObservationIgnored private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         accent = nil
-        density = .default
+        // Resolve the launch tier ONCE (env launch-seed wins over the persisted value, else .default). This
+        // does NOT go through `didSet` (it is the initial assignment), so DSScale is seeded separately in
+        // DSScale.init from the same `resolved()` source — the two agree at launch without a clobber loop.
+        density = DSDensity.resolved(userDefaults: defaults)
     }
 }
 #endif

@@ -47,7 +47,15 @@ public final class UIScale {
     /// The `UserDefaults` key the chosen preset is stored under.
     private static let storageKey = "aislopdesk.uiScale"
 
-    /// The active density. Persists to `UserDefaults` and posts `aislopdeskThemeDidChange` when changed.
+    /// The active density preset.
+    ///
+    /// ⚠️ WRITE-FROZEN POST-P5: P5 retired the Settings preset picker (replaced by the ``DSDensity`` density
+    /// picker), and `UIScale/multiplier` now delegates to the active density TIER — so NOTHING writes `preset`
+    /// at runtime any more; it is permanently `.regular`. Its `didSet` `save()` + `aislopdeskThemeDidChange`
+    /// post and the `aislopdesk.uiScale` `UserDefaults` key are therefore DEAD paths (kept only so a previously
+    /// persisted value still type-checks; the live density lives on ``DSDensity/storageKey``). The enum itself
+    /// survives ONLY as the ``WindowConfigurator`` traffic-light reconfigure trigger (`uiScalePreset`).
+    /// Persists to `UserDefaults` and posts `aislopdeskThemeDidChange` when changed (now unreachable).
     public var preset: Preset = UIScale.defaultPreset {
         didSet {
             guard !isLoading, preset != oldValue else { return }
@@ -57,7 +65,12 @@ public final class UIScale {
     }
 
     /// The current scale factor — the only thing `UIMetrics` needs.
-    public var multiplier: CGFloat { preset.multiplier }
+    ///
+    /// P5: DELEGATES to the active ``DSDensity`` tier (``DSThemeStore/shared`` `.density.multiplier`) rather
+    /// than the legacy `preset.multiplier`, so the legacy ``UIMetrics`` token tree and the DS tokens scale
+    /// from ONE source (the density tier) and can never diverge (the dual-multiplier geometric-incoherence
+    /// risk). The `preset` enum survives only as the ``WindowConfigurator`` reconfigure trigger.
+    public var multiplier: CGFloat { DSThemeStore.shared.density.multiplier }
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var isLoading = false

@@ -53,6 +53,10 @@ struct SplitWorkspaceView: View {
     /// the fix and removes the storm.
     @State private var visitedTabIDs: Set<TabID> = []
 
+    /// P5 disappearing-chrome: hide the bottom ``PaneStatusBar`` so the shell recedes toward pure terminal
+    /// output. Default OFF (the strip shows). `@AppStorage` so a Settings flip applies on the next render.
+    @AppStorage(SettingsKey.hideStatusBar) private var hideStatusBar = false
+
     var body: some View {
         HStack(spacing: 0) {
             // ⌘B collapses the rail AND its divider, leaving the main column full-width.
@@ -188,7 +192,12 @@ struct SplitWorkspaceView: View {
                     // so the window-edge gutter matches the inter-pane seam (one continuous sunken floor).
                     .background(AislopdeskTheme.bgSunken)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                PaneStatusBar(store: store)
+                // P5 disappearing-chrome: the status strip is hidden on demand so a confident dev tool
+                // recedes to pure terminal output. The focused pane's RTT / agent state stays in the tab +
+                // sidebar, so nothing is lost — only the always-on bottom chrome.
+                if !hideStatusBar {
+                    PaneStatusBar(store: store)
+                }
             }
             .background(AislopdeskTheme.bg)
             // Mark the now-visible tab visited (keep-alive) and prune ids whose tab was closed so the set

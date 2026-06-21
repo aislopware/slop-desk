@@ -47,6 +47,19 @@ public struct TerminalScreenView: View {
     private static let stickyHeaderEnabled =
         ProcessInfo.processInfo.environment["AISLOPDESK_STICKY_BLOCK_HEADER"] == "1"
 
+    /// P5 disappearing-chrome: the user toggle (Settings ▸ Terminal, default ON) that lets the block
+    /// divider/header recede on demand. It gates the ``StickyCommandHeader`` ADDITIVELY with the env opt-in
+    /// (`stickyHeaderEnabled`) — the header shows only when the env opt-in is set AND this toggle is ON — so
+    /// the Muxy-clean default (env unset ⇒ no header) is preserved while a user who opted in can still hide
+    /// it. `@AppStorage` so a Settings flip applies on the next render.
+    @AppStorage(SettingsKey.showBlockDividers) private var showBlockDividers = true
+
+    /// Reduce-Motion gate: the overlay appear/dismiss drivers (find bar, copy-mode panel, glitch caret) route
+    /// through ``DSMotion/resolve(_:reduceMotion:)`` so a motion-sensitive user gets the near-instant crossfade
+    /// instead of an `.easeInOut` slide. The `.move` TRANSLATE transitions also collapse to opacity-only under
+    /// the system preference (a sliding find-bar/copy-mode panel is exactly what the spec forbids there).
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     public init(model: TerminalViewModel, isFocused: Bool = true) {
         _model = State(initialValue: model)
         self.isFocused = isFocused
@@ -77,7 +90,7 @@ public struct TerminalScreenView: View {
             // WB2: the sticky command header — a slim overlay pinned at the TOP showing the CURRENT block's
             // command + running spinner / exit badge. DEFAULT-OFF (Muxy-clean panes); the block info lives
             // in the ⌃⌘O Command Navigator. Opt back in with AISLOPDESK_STICKY_BLOCK_HEADER=1.
-            if Self.stickyHeaderEnabled {
+            if Self.stickyHeaderEnabled, showBlockDividers {
                 StickyCommandHeader(model: model)
                     .frame(maxWidth: .infinity, alignment: .top)
             }
@@ -85,7 +98,8 @@ public struct TerminalScreenView: View {
             if isFindPresented {
                 TerminalFindBar(model: model, isPresented: $isFindPresented)
                     .frame(maxWidth: .infinity, alignment: .topTrailing)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    // Reduce Motion → opacity-only (no slide); otherwise the slide-down appear.
+                    .transition(overlayTransition)
             }
             // P5b: the modal copy-mode hint bar, pinned top-leading (so it never collides with the
             // top-trailing find bar, which copy-mode's `/` can open simultaneously). Documents the ABI
@@ -94,7 +108,8 @@ public struct TerminalScreenView: View {
             if isCopyModePresented {
                 CopyModeOverlay(copied: copyConfirmationVisible)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    // Reduce Motion → opacity-only (no slide); otherwise the slide-down appear.
+                    .transition(overlayTransition)
             }
         }
         // WB2: the Command Navigator popover (⌃⌘O / the chrome chip). A popover on macOS anchors near the
@@ -105,10 +120,13 @@ public struct TerminalScreenView: View {
         }
         // The visibility flips happen in plain (un-animated) model code — without an
         // animation bound to the VALUE the .transition above would be skipped and the
-        // caret would pop. Scoped to this value so nothing else animates.
-        .animation(.easeInOut(duration: 0.15), value: model.glitchCaretVisible)
-        .animation(.easeInOut(duration: 0.15), value: isFindPresented)
-        .animation(.easeInOut(duration: 0.15), value: isCopyModePresented)
+        // caret/bar would pop. Scoped to each value so nothing else animates. P5 MOTION: each driver routes
+        // through DSMotion.appear, Reduce-Motion-gated to the near-instant crossfade so a motion-sensitive
+        // user gets an instant state swap (and the `.move` translates above collapse to opacity-only). The
+        // value-scoped `.animation` is KEPT (not dropped) so the `.transition` still fires.
+        .animation(DSMotion.resolve(DSMotion.appear, reduceMotion: reduceMotion), value: model.glitchCaretVisible)
+        .animation(DSMotion.resolve(DSMotion.appear, reduceMotion: reduceMotion), value: isFindPresented)
+        .animation(DSMotion.resolve(DSMotion.appear, reduceMotion: reduceMotion), value: isCopyModePresented)
         .onAppear {
             // ⌘F / right-click "Find…" toggle the bar through the model's find request (set here so the
             // closure captures THIS pane's @State; the leaf's onRequestFind is set on the same model).
@@ -146,6 +164,14 @@ public struct TerminalScreenView: View {
             isCopyModePresented = false
         }
     }
+
+    /// The overlay appear/dismiss transition for the find bar + copy-mode panel: a slide-down-from-top
+    /// combined with opacity normally, collapsing to opacity-ONLY under Reduce Motion (the spec's "EVERY
+    /// translate gated → near-instant crossfade" rule — a sliding panel is exactly what a motion-sensitive
+    /// user must not get). Paired with the `DSMotion.resolve(DSMotion.appear, …)` driver above.
+    private var overlayTransition: AnyTransition {
+        reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity)
+    }
 }
 
 /// The glitch-window speculative caret (docs/17 §2.4): a dim pulsing bar, deliberately
@@ -153,15 +179,29 @@ public struct TerminalScreenView: View {
 /// the echo is in flight", never a position claim.
 struct GlitchCaretOverlay: View {
     @State private var pulsing = false
+    /// Reduce-Motion gate: under the system preference the continuously-repeating breathe is DROPPED — the
+    /// caret rests at a fixed mid opacity (legible, never pulsing), matching the ``AttentionPulse`` /
+    /// ``WorkingPulse`` steady-branch pattern (a `repeatForever` cannot be made near-instant; resting steady
+    /// is the correct fallback).
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 1.5)
-            .fill(.secondary.opacity(pulsing ? 0.45 : 0.18))
-            .frame(width: 7, height: 15)
-            .padding(12)
-            .animation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true), value: pulsing)
-            .onAppear { pulsing = true }
-            .accessibilityHidden(true)
+        if reduceMotion {
+            // Reduce Motion: a steady caret at a fixed opacity — no repeatForever breathe.
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(.secondary.opacity(0.3))
+                .frame(width: 7, height: 15)
+                .padding(12)
+                .accessibilityHidden(true)
+        } else {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(.secondary.opacity(pulsing ? 0.45 : 0.18))
+                .frame(width: 7, height: 15)
+                .padding(12)
+                .animation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true), value: pulsing)
+                .onAppear { pulsing = true }
+                .accessibilityHidden(true)
+        }
     }
 }
 

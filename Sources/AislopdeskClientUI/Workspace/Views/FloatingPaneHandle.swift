@@ -112,6 +112,8 @@ struct FloatingPaneHandle: View {
     /// Latched ">100ms" RTT badge with an engage/release band (110/90ms) so the pill width does not
     /// pop on every 3s sample when the RTT hovers at the boundary (the CanvasSnap hysteresis idea).
     @State private var laggyLatched = false
+    /// Reduce-Motion gate for the status-fade opacity transitions (DSMotion.hover → near-instant crossfade).
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Visual pill height (the hit target is taller — see the platform padding below).
     private static let pillHeight: CGFloat = 20
@@ -178,11 +180,13 @@ struct FloatingPaneHandle: View {
             // Quiet when idle; fully opaque when it matters. A pane in trouble — or one actively running
             // a command — is NEVER 70%-transparent.
             .opacity(trouble || running || bellRang || hovering || menuShown || isFocused ? 1 : 0.7)
-            .animation(.easeOut(duration: 0.12), value: bellRang)
-            .animation(.easeOut(duration: 0.12), value: trouble)
-            .animation(.easeOut(duration: 0.12), value: running)
-            .animation(.easeOut(duration: 0.12), value: laggy)
-            .animation(.easeOut(duration: 0.12), value: hovering)
+            // P5 MOTION: the pill's quiet↔opaque status fades route through DSMotion.hover, Reduce-Motion-
+            // gated to the near-instant crossfade. Each stays value-scoped so only its own flag animates.
+            .animation(DSMotion.resolve(DSMotion.hover, reduceMotion: reduceMotion), value: bellRang)
+            .animation(DSMotion.resolve(DSMotion.hover, reduceMotion: reduceMotion), value: trouble)
+            .animation(DSMotion.resolve(DSMotion.hover, reduceMotion: reduceMotion), value: running)
+            .animation(DSMotion.resolve(DSMotion.hover, reduceMotion: reduceMotion), value: laggy)
+            .animation(DSMotion.resolve(DSMotion.hover, reduceMotion: reduceMotion), value: hovering)
             // The latch: engage past 110ms, release under 90ms; drop instantly when not connected.
             .onChange(of: latency ?? 0) { _, ms in
                 if status.phase != .connected { laggyLatched = false } else if !laggyLatched,

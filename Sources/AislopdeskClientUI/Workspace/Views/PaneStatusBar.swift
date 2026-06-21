@@ -27,8 +27,17 @@ struct PaneStatusBar: View {
     /// nil window, nil only when no pane has ever been focused (truly empty workspace).
     private var resolvedPaneID: PaneID? { focusedPaneID ?? lastKnownPaneID }
 
+    /// The live density multiplier (OPTIONAL form — falls back to the shared instance rather than TRAPPING
+    /// when rendered outside the injected scope). P5: reading it inside `body` records the dependency so the
+    /// HStack's INNER item spacing reflows on a density-tier flip too (the horizontal PADDING reflows via the
+    /// tracked `.dsSpace` modifier; the spacing PARAMETER must be a value, so it scales through this).
+    @Environment(DSScale.self) private var scale: DSScale?
+
+    /// The inner HStack item spacing, scaled live (base 6 — the old fixed `Space.m`). Single `*`, no FMA.
+    private var itemSpacing: CGFloat { 6 * (scale?.multiplier ?? DSScale.shared.multiplier) }
+
     var body: some View {
-        HStack(spacing: AislopdeskTheme.Space.m) {
+        HStack(spacing: itemSpacing) {
             if let id = resolvedPaneID, let spec = store.tree.spec(for: id) {
                 content(id: id, spec: spec)
             } else {
@@ -36,10 +45,14 @@ struct PaneStatusBar: View {
                 Spacer()
             }
         }
-        .padding(.horizontal, AislopdeskTheme.Space.l)
+        // P5: the horizontal padding routes through the tracked `.dsSpace` path (base 8 = old `Space.l`) so it
+        // reflows live on a density-tier flip, instead of the fixed unscaled `AislopdeskTheme.Space.l` literal.
+        .dsSpace(.horizontal, 8)
         // P3b: the status bar is L3 chrome, so its height comes from the DS density token (default 26) and
-        // its bg is `DSColor.chrome` (n3), a step above the `paneBg` content it summarises.
-        .frame(height: DSSpace.statusBarHeight)
+        // its bg is `DSColor.chrome` (n3), a step above the `paneBg` content it summarises. P5: via the
+        // tracked `.dsFrame(height:)` so a density TIER flip reflows the strip height LIVE (reads
+        // @Environment(DSThemeStore.self) for the tier height + @Environment(DSScale.self) for the multiplier).
+        .dsFrame(height: \.statusBarHeight)
         .background(DSColor.chrome)
         .overlay(alignment: .top) {
             // The chrome-meets-content top hairline reads at `borderComponent` (white·0.11) — a visible
@@ -103,7 +116,8 @@ struct PaneStatusBar: View {
         // values `.monospacedDigit()`. Split by 1px separators, each with `DSSpace.s2` breathing room per
         // side. Order: PaneStatusDot · running · AgentStatusDot · RTT · sync · copy.
         separator
-        PaneStatusDot(status: status, running: running, size: UIMetrics.scaled(7))
+        // P5: pass the UNSCALED base (7) — PaneStatusDot applies the live scale via `.dsScaledFrame`.
+        PaneStatusDot(status: status, running: running, size: 7)
 
         if running {
             separator
@@ -118,7 +132,8 @@ struct PaneStatusBar: View {
         // The per-pane Claude/agent status dot (hidden when `.none`).
         if store.agentStatus(for: id) != .none {
             separator
-            AgentStatusDot(status: store.agentStatus(for: id), size: UIMetrics.scaled(7))
+            // P5: pass the UNSCALED base (7) — AgentStatusDot applies the live scale via `.dsScaledFrame`.
+            AgentStatusDot(status: store.agentStatus(for: id), size: 7)
         }
 
         // Live RTT (the same smoothed app-layer ping the old header showed): amber past 100ms. The label +

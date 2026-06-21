@@ -39,6 +39,9 @@ struct TabBarView: View {
     @State private var renamingTab: TabID?
     @State private var renameText: String = ""
 
+    /// Reduce-Motion gate for the sync-input dot appear (DSMotion.hover → near-instant crossfade).
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         // P3a TOP INSET: the cell row sits BELOW a 2pt inset inside the titlebar zone so the cells are not
         // flush against the window edge / floating traffic lights (spec: "tabs aren't pinched under the
@@ -64,15 +67,16 @@ struct TabBarView: View {
             Spacer(minLength: 0)
             controls
         }
-        // Constrain the CELL ROW to the migrated height token (30 default) BEFORE the inset.
-        .frame(height: DSSpace.tabHeight)
+        // Constrain the CELL ROW to the migrated height token (30 default) BEFORE the inset. P5: via the
+        // tracked `.dsFrame(height:)` so the row reflows LIVE on a density TIER flip (it reads
+        // @Environment(DSThemeStore.self) for the tier height + @Environment(DSScale.self) for the multiplier).
+        .dsFrame(height: \.tabHeight)
         // ADDITIVE top inset (outer) — net strip height = DSSpace.tabHeight + topInset = 30 + 2 = 32
         // (≈ legacy titlebar height, pinned by TabCellViewModelTests.testStripNetHeightIsAdditive).
         // SplitWorkspaceView.mainColumn's outer container lets the strip's intrinsic 32pt drive the row
         // (`.fixedSize(vertical:)`) so the strip and its container agree (see the tab-height-token-split
-        // risk). NOTE: a direct DSSpace read is NOT live-reflowing on a P5 density flip — that needs a future
-        // `.dsFrame` helper; P3a proves the live-scale path for the TEXT + PADDING only (the inset + the cell
-        // padding), the strip HEIGHT token stays fixed until P5.
+        // risk). P5: the strip HEIGHT now live-reflows on a density TIER flip via `.dsFrame(height:)` above
+        // (the tracked DSThemeStore + DSScale path) — the inset band tracks the same flip via `.dsSpace`.
         .dsSpace(.top, Self.topInset)
         .background(AislopdeskTheme.bg)
         .titleBarDrag(isWindowTitleBar)
@@ -87,7 +91,8 @@ struct TabBarView: View {
         // TabID would silently swallow the edit).
         .onChange(of: session.id) { _, _ in renamingTab = nil }
         // Animate the per-tab sync-input indicator (the keyboard.badge.ellipsis dot) appearing/disappearing.
-        .animation(.easeInOut(duration: 0.15), value: store.syncInputTabs)
+        // P5 MOTION: DSMotion.hover (0.13s easeOut), Reduce-Motion-gated to the near-instant crossfade.
+        .animation(DSMotion.resolve(DSMotion.hover, reduceMotion: reduceMotion), value: store.syncInputTabs)
     }
 
     /// Opens the inline rename for the requested tab (if it belongs to THIS session's strip) and clears the
@@ -123,8 +128,9 @@ struct TabBarView: View {
                     .textInputAutocapitalization(.never)
                 #endif
             }
-            // P3a: match the migrated strip height token (the cell row + inline field must agree).
-            .frame(height: DSSpace.tabHeight)
+            // P3a: match the migrated strip height token (the cell row + inline field must agree). P5: via
+            // the tracked `.dsFrame(height:)` so it reflows with the strip on a density TIER flip.
+            .dsFrame(height: \.tabHeight)
             // The active inline-rename field background. P2 NOTE: `surface12` (the legacy fg·0.12 rung) now
             // flattens onto `activeFill` (white·0.08) — the DS semantic token set has no distinct 0.12 rung,
             // so this fill currently reads at the same weight as a resting selected tab. The field still
@@ -272,6 +278,9 @@ struct TabCell: View {
     /// the `#else` branch of ``Self/activeCue(isActive:isKey:)`` lights on `isActive` alone there.
     @Environment(\.controlActiveState) private var controlActiveState
     #endif
+    /// Reduce-Motion gate: the titled↔icon-only padding spring + the active-cue accent-line spring fall to a
+    /// near-instant crossfade under the system preference (via ``DSMotion/resolve(_:reduceMotion:)``).
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Seed at `maxWidth` so the title is SHOWN by default. A `0` sentinel latches the title hidden
     /// forever: hiding the title shrinks the cell below `titleHideThreshold`, so the GeometryReader
     /// re-measures it as narrow and never lifts the hide. Showing-by-default costs at most a one-frame
@@ -341,7 +350,8 @@ struct TabCell: View {
                 .foregroundStyle(Self.titleColor(isActive: isActive))
                 .overlay(alignment: .topTrailing) { unreadDot }
                 .overlay(alignment: .bottomLeading) { syncInputDot }
-            AgentStatusDot(status: agentStatus, size: UIMetrics.scaled(6))
+            // P5: pass the UNSCALED base (6) — AgentStatusDot applies the live scale via `.dsScaledFrame`.
+            AgentStatusDot(status: agentStatus, size: 6)
             CompletionBadge(badge: completion, size: UIMetrics.scaled(6))
             if !titleHidden {
                 Text(title)
@@ -358,8 +368,8 @@ struct TabCell: View {
         // `.dsSpace` path (a tightening from the legacy 10/4), ANIMATED by DSMotion.layout so the
         // titled↔icon-only collapse springs instead of jumping abruptly.
         .dsSpace(.horizontal, titleHidden ? 4 : 8)
-        .animation(DSMotion.layout, value: titleHidden)
-        .frame(height: DSSpace.tabHeight)
+        .animation(DSMotion.resolve(DSMotion.layout, reduceMotion: reduceMotion), value: titleHidden)
+        .dsFrame(height: \.tabHeight)
         .frame(minWidth: Self.minWidth, maxWidth: Self.maxWidth)
         .background {
             GeometryReader { geo in
@@ -384,6 +394,11 @@ struct TabCell: View {
             Rectangle()
                 .fill(Self.cueColor(resolvedCue))
                 .frame(height: 2)
+                // P5 MOTION: the active-tab accent line is the tab SELECTION cue, so its colour move springs
+                // via DSMotion.select (slight overshoot reads premium on dark) — gated behind Reduce Motion
+                // (→ near-instant crossfade). Keyed on `resolvedCue` so it fires exactly on a select / key-
+                // window flip; it animates the CUE colour only, never an opacity dim of the other tabs.
+                .animation(DSMotion.resolve(DSMotion.select, reduceMotion: reduceMotion), value: resolvedCue)
         }
         .overlay(alignment: .trailing) {
             Rectangle().fill(AislopdeskTheme.border).frame(width: 1)
