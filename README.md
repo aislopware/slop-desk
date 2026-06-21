@@ -10,8 +10,9 @@ agents running on a workstation, supervised from a laptop or iPad with no percep
 Two things make that work:
 
 - The latency-sensitive code — every wire codec, FEC, frame reassembly, and the realtime
-  controllers — is a Rust core (`rust/aislopdesk-core`) behind a C ABI. The Swift/SwiftUI
-  apps are the platform shell around it (capture, hardware codec, Metal, input, PTY, UI).
+  controllers — is native Swift, the single source of truth, with no second implementation
+  and no FFI boundary. The Swift/SwiftUI apps are the platform shell around it (capture,
+  hardware codec, Metal, input, PTY, UI).
 - There is no app-layer encryption or auth. Aislopdesk expects to run on a trusted private
   network, normally a WireGuard mesh such as [NetBird](https://netbird.io) or Tailscale,
   which already provides end-to-end encryption, node identity, and per-port ACLs. The
@@ -63,18 +64,21 @@ The host rejects any version other than `1` rather than negotiating.
 
 ## Architecture
 
-`rust/aislopdesk-core` is the single source of truth for everything on the wire: the
-terminal and video codecs, FEC and frame reassembly, the realtime controllers (congestion
-and ABR, the fps governor, LTR, the decode gate and sequencer, the jitter pacer, the
-delay-gradient trendline, recovery admission), coordinate mapping, and the terminal/PTY
-protocol including its SSH-style channel mux and per-channel flow control. It is safe Rust
-with zero runtime dependencies and `#![forbid(unsafe_code)]`.
+Native Swift is the single source of truth for everything on the wire: the terminal and
+video codecs, FEC and frame reassembly, the realtime controllers (congestion and ABR, the
+fps governor, LTR, the decode gate and sequencer, the jitter pacer, the delay-gradient
+trendline, recovery admission), coordinate mapping, and the terminal/PTY protocol including
+its SSH-style channel mux and per-channel flow control. There is no second implementation to
+keep in sync and no FFI boundary; the wire is frozen by a golden corpus
+(`golden/golden_vectors.json`) so a refactor can't silently shift a byte.
 
-`rust/aislopdesk-ffi` is the only crate allowed `unsafe`: a thin C-ABI shim over the core
-that emits `libaislopdesk_ffi.a`. Its header is generated from the Rust surface by cbindgen
-and linked into SwiftPM through the `CAislopdeskFFI` target. The Swift codecs are one-line
-delegations into the core; a `golden_parity` test proves they stay byte-identical to it. The
-same core is meant to back a future Android client over the C ABI and JNI.
+The only non-Swift code is `Sources/CAislopdeskSIMD`: ONE aarch64 NEON kernel, the GF(2⁸)
+region multiply used by FEC, guarded `#if defined(__aarch64__)` with a scalar fallback
+otherwise. SwiftPM compiles it from source every build — no cbindgen, no marshalling, no
+prebuilt staticlib, no build ordering. Frame hashing is pure scalar Swift (xxHash64 is
+64-bit-multiply-heavy and Apple Silicon has no native 64-bit lane multiply, so the scalar
+path beats a synthesized-NEON fold). Both the NEON kernel and the scalar hash are pinned
+bit-for-bit against their scalar references by differential tests.
 
 ## Module map (SwiftPM)
 
@@ -82,37 +86,44 @@ same core is meant to back a future Android client over the C ABI and JNI.
 |--------|------|------|
 | `AislopdeskProtocol`     | lib  | Terminal wire format (framing, seq, hello/ack). No platform deps. |
 | `AislopdeskTransport`    | lib  | TCP channels, replay buffer, reconnect handshake. |
-| `AislopdeskHost`         | lib  | macOS host: PTY spawn/relay, session manager, Claude Code launch env. |
+| `AislopdeskHost`         | lib  | macOS host: PTY spawn/relay, session manager, agent-detect gates. |
 | `AislopdeskClient`       | lib  | Shared client: connection/reconnect, input, gap-free output stream. |
 | `AislopdeskTerminal`     | lib  | `TerminalSurface` seam (libghostty-backed in the GUI apps). |
 | `AislopdeskTTY`          | lib  | Local raw-mode termios + winsize for the CLI. |
 | `AislopdeskInspector`    | lib  | JSONL transcript tailer, typed events, read-only views. |
 | `AislopdeskClaudeCode`   | lib  | Claude Code integration: terminal-mode sniffer, input dedup/state. |
+| `AislopdeskAgentDetect`  | lib  | Headless per-pane Claude status machine + no-hooks manifest matcher. |
 | `AislopdeskClientUI`     | lib  | SwiftUI client views/view-models + iOS input host. |
 | `AislopdeskVideoProtocol`| lib  | Video wire format: packetizer, FEC, cursor/geometry/input codec. |
 | `AislopdeskVideoHost`    | lib  | macOS capture + encode + input injection + UDP host session. |
 | `AislopdeskVideoClient`  | lib  | macOS/iOS decode + Metal render + pacing + client session. |
+| `AislopdeskCtlCore`      | lib  | Pure `aislopdesk-ctl` core: arg parsing + NDJSON request/response. |
+| `CAislopdeskSIMD`        | C    | The only non-Swift code: the aarch64 NEON GF(2⁸) region-multiply kernel (scalar fallback). |
+| `CAislopdeskVirtualDisplay` | C | Private `CGVirtualDisplay*` headers for the host's 2× HiDPI virtual display. |
 | `aislopdesk-hostd`       | exec | Headless host daemon (terminal panes). |
 | `aislopdesk-client`      | exec | Interactive remote terminal client. |
+| `aislopdesk-ctl`         | exec | Agent-control CLI over the host's Unix-domain NDJSON socket. |
 | `aislopdesk-videohostd`  | exec | GUI-window host daemon (needs a GUI session + TCC). |
 | `aislopdesk-loopback-validate` | exec | Headless video-pipeline validator (real HW encode→decode, FEC, ABR). |
-| `aislopdesk-corevectors` | exec | Emits the golden corpus the Rust core's parity test consumes. |
-| `aislopdesk-framewatch`, `aislopdesk-capture-probe` | exec | Diagnostics: ScreenCaptureKit cadence, window capture. |
+| `aislopdesk-corevectors` | exec | Emits the golden corpus the golden-corpus check diffs against. |
+| `aislopdesk-bench`       | exec | Micro-benchmark for the hot paths (frame hash, GF region multiply, RS FEC). |
+| `aislopdesk-framewatch`, `aislopdesk-capture-probe`, `aislopdesk-fake-client` | exec | Diagnostics: ScreenCaptureKit cadence, window capture, host-side fake client. |
 
-The codecs, FEC, controllers, and terminal protocol are reached through `CAislopdeskFFI`,
-which links `libaislopdesk_ffi.a`. The package is 12 libraries, 8 executables, 10 test
-targets, and 2 C shims (`CAislopdeskFFI` plus a virtual-display shim,
-`CAislopdeskVirtualDisplay`).
+There is no FFI boundary: the codecs, FEC, controllers, and terminal protocol are native
+Swift, linked directly. The package is 14 Swift libraries, 10 executables, 12 test targets,
+and 2 C targets (`CAislopdeskSIMD`, the NEON kernel, plus `CAislopdeskVirtualDisplay`, a
+virtual-display header shim) — both compiled from source by SwiftPM.
 
 ## Build & run
 
-The libraries, CLIs, and tests are headless: no GUI, no libghostty, no signing. They do link
-the Rust core through `CAislopdeskFFI`, so build that staticlib once first.
+The libraries, CLIs, and tests are headless: no GUI, no libghostty, no signing. A clean
+checkout builds with no prerequisite — there is no Rust toolchain, no staticlib to
+pre-build, and no build ordering. The only C is the in-tree `CAislopdeskSIMD` target, which
+SwiftPM compiles from source.
 
 ```sh
-bash rust/build-apple.sh  # builds libaislopdesk_ffi.a (macOS arm64) and regenerates the C header
-swift build               # 12 libs + 8 executables
-swift test                # full suite (~2200 tests), headless
+swift build               # 14 libs + 10 executables (+ 2 C targets, built from source)
+swift test                # full suite (~2300 tests), headless
 scripts/check-ios.sh      # iOS-simulator typecheck of the #if os(iOS) sources (needs Xcode)
 ```
 
@@ -122,20 +133,23 @@ A terminal host:
 
 ```sh
 swift build -c release
-.build/release/aislopdesk-hostd --port 7420            # plain login shell
-.build/release/aislopdesk-hostd --port 7420 --claude   # launch Claude Code
+.build/release/aislopdesk-hostd --port 7420                 # plain login shell
+.build/release/aislopdesk-hostd --port 7420 --inspector     # + read-only inspector on port+1
 ```
 
 | Flag | Meaning |
 |------|---------|
-| `--port`, `-p` | TCP port to bind (omit → OS-chosen, logged to stderr). |
-| `--shell`      | Login shell to spawn (default: the user's). |
-| `--claude`     | Launch `claude` under the curated env instead of a plain shell. |
-| `--xterm256`   | With `--claude`, advertise `TERM=xterm-256color` instead of `xterm-ghostty`. |
+| `--port`, `-p` | TCP port to bind (default `7420`; `0` → OS-chosen, logged to stderr). |
+| `--shell`, `-s` | Login shell to spawn (default: the user's). |
+| `--inspector`  | Stand up the read-only structured inspector server on `port + 1`. |
+| `--transcript PATH` | Inject the Claude Code JSONL transcript path the inspector tails (implies `--inspector`). |
 
-Terminal sessions survive client disconnects: a returning client resumes byte-exact from the
-replay buffer, and long-offline sessions are reaped on an idle timeout. The host defaults to
-`TERM=xterm-ghostty`, probes terminfo at spawn, and falls back to `xterm-256color` when the
+Every channel spawns a plain login shell; the curated `--claude` launch mode is retired. A
+Claude session is now just a `.terminal` pane that runs `claude`, auto-detected by the
+host's process-watch and hook listener and offered client-side as a launch preset. Terminal
+sessions survive client disconnects: a returning client resumes byte-exact from the replay
+buffer, and long-offline sessions are reaped on an idle timeout. The host defaults to the
+libghostty `TERM`, probes terminfo at spawn, and falls back to `xterm-256color` when the
 ghostty entry is missing.
 
 A GUI-window host (needs Screen Recording + Accessibility, and a real GUI session — not
@@ -194,7 +208,7 @@ through the Remote-window sheet (host, ports, window id). Full recipe and caveat
 
 | Layer | State |
 |-------|-------|
-| Rust core + C ABI (codecs, FEC, controllers, terminal protocol) | Integrated; verified by cross-language golden parity, per-subsystem fuzz, and HW loopback. |
+| Native-Swift core (codecs, FEC, controllers, terminal protocol) | The single source of truth; wire frozen by the golden corpus, plus per-subsystem fuzz and HW loopback. |
 | Terminal panes end to end (protocol, transport, host PTY, client, reconnect) | Done; tested headlessly and on hardware. |
 | GUI-window panes (capture → encode → FEC/ABR → decode → render, input injection) | Running on hardware via the video host daemon and the client Remote-window panel. |
 | Inspector (JSONL tailer, event model, second channel) | Done; fixture-tested. |
@@ -211,7 +225,6 @@ Per-layer detail, test counts, and the hardware-verification checklist are in
 - [`docs/00-overview.md`](docs/00-overview.md) — architecture and every binding decision (read first).
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — the decision log.
 - [`docs/20-wire-protocol.md`](docs/20-wire-protocol.md) — the terminal-path wire protocol.
-- [`rust/README.md`](rust/README.md) — the Rust core and the C-ABI boundary.
 
 ## License
 
