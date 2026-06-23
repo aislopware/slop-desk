@@ -44,6 +44,13 @@ public final class OverlayCoordinator {
     /// Whether the Settings overlay is presented.
     public private(set) var settingsVisible = false
 
+    // MARK: Connect-to-Host state
+
+    /// Whether the Connect-to-Host overlay (the host/port editor) is presented. Opened by the top-bar
+    /// status pill and the "Connect to Host…" palette action — the only surfaces that let a user point the
+    /// client at a non-default host (the app-global ``AppConnection`` form is otherwise unbound by any view).
+    public private(set) var connectVisible = false
+
     // MARK: Cheat-sheet state
 
     /// Whether the keyboard cheat sheet (⌘/) is presented. Its rows are generated from
@@ -214,6 +221,9 @@ public final class OverlayCoordinator {
         case .openSettings:
             closePalette()
             openSettings()
+        case .openConnect:
+            closePalette()
+            openConnect()
         case .openCheatSheet:
             closePalette()
             openCheatSheet()
@@ -235,6 +245,11 @@ public final class OverlayCoordinator {
 
     public func openSettings() { settingsVisible = true }
     public func closeSettings() { settingsVisible = false }
+
+    // MARK: Connect-to-Host
+
+    public func openConnect() { connectVisible = true }
+    public func closeConnect() { connectVisible = false }
 
     // MARK: Cheat sheet (⌘/)
 

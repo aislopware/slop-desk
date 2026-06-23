@@ -8,6 +8,7 @@
 //   - ContextMenuModel action mapping (pane/tab item → store mutation).
 
 import AislopdeskAgentDetect
+import AislopdeskTransport
 import XCTest
 @testable import AislopdeskClientUI
 @testable import AislopdeskWorkspaceCore
@@ -401,6 +402,73 @@ final class TopBarConnectionPillTests: XCTestCase {
         let help = TopBarConnectionPill.help(host: "studio.local", status: .unreachable)
         XCTAssertTrue(help.contains("studio.local"))
         XCTAssertTrue(help.contains("Unreachable"))
+    }
+}
+
+// MARK: - Connect-to-Host overlay (the host/port editor — D1 connect surface)
+
+/// The rewrite deleted ConnectionGateView and left the app-global `AppConnection` form unbound by any view,
+/// so a non-default host could never be entered. These pin the restored connect surface: the palette
+/// "Connect to Host…" row opens the editor (and closes the palette), and the editor's Connect path is gated
+/// on `canConnect` with the why-disabled `validationHint`. Proven to FAIL before the action + overlay were
+/// wired (no "action.connect" row, no `connectVisible`/`openConnect()` on the coordinator).
+@MainActor
+final class ConnectHostOverlayLogicTests: XCTestCase {
+    /// A registry whose `makeConnection` always throws — drives the failure/transition logic with no socket.
+    private func failingRegistry() -> ConnectionRegistry {
+        ConnectionRegistry { _, _ in throw AislopdeskTransportError.timedOut("test: connect refused") }
+    }
+
+    func testConnectPaletteRowOpensConnectOverlayAndClosesPalette() throws {
+        let store = makeIdleStore()
+        let coordinator = OverlayCoordinator(store: store)
+        coordinator.openPalette()
+        let row = try XCTUnwrap(
+            ActionsPaletteSource.catalog.first { $0.id == "action.connect" },
+            "the catalog must carry a Connect-to-Host action row",
+        )
+        XCTAssertEqual(row.title, "Connect to Host…")
+        coordinator.run(row)
+        XCTAssertTrue(coordinator.connectVisible, "running the row opens the host editor")
+        XCTAssertFalse(coordinator.paletteVisible, "running the row closes the palette")
+    }
+
+    func testOpenAndCloseConnectToggleVisibility() {
+        let coordinator = OverlayCoordinator()
+        XCTAssertFalse(coordinator.connectVisible)
+        coordinator.openConnect()
+        XCTAssertTrue(coordinator.connectVisible)
+        coordinator.closeConnect()
+        XCTAssertFalse(coordinator.connectVisible)
+    }
+
+    /// The Connect button the overlay shows is gated on `canConnect`; an empty host disables it (with the
+    /// why-disabled hint), and a fully-parsed form enables it. The overlay reads exactly these.
+    func testConnectGateReflectsFormValidity() {
+        let c = AppConnection(registry: failingRegistry())
+        c.host = ""
+        XCTAssertFalse(c.canConnect)
+        XCTAssertEqual(c.validationHint, "Enter a host")
+
+        c.host = "studio.local"
+        c.port = "7799"
+        c.mediaPort = "9000"
+        c.cursorPort = "9001"
+        XCTAssertTrue(c.canConnect, "a fully-parsed form enables Connect")
+        XCTAssertNil(c.validationHint, "a valid form shows no why-disabled subtext")
+    }
+
+    /// The overlay's "Recent Hosts" pick fills the form (form-only — the user still presses Connect), which
+    /// is the `fillForm(from:)` the menu calls. A non-default host can thus be re-selected and dialed.
+    func testRecentHostPickFillsTheForm() {
+        let c = AppConnection(registry: failingRegistry())
+        let target = ConnectionTarget(host: "10.0.0.42", port: 7799, mediaPort: 9100, cursorPort: 9101)
+        c.fillForm(from: target)
+        XCTAssertEqual(c.host, "10.0.0.42")
+        XCTAssertEqual(c.port, "7799")
+        XCTAssertEqual(c.mediaPort, "9100")
+        XCTAssertEqual(c.cursorPort, "9101")
+        XCTAssertTrue(c.canConnect)
     }
 }
 

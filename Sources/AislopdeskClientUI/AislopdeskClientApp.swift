@@ -101,7 +101,8 @@ public struct AislopdeskClientApp: App {
         if isAutomation {
             store.bootstrapFromEnvironment()
         }
-        // Persist a committed target into the tree (so the gate prefills the last host next launch).
+        // Persist a committed target into the tree (so the Connect-to-Host editor prefills the last host
+        // next launch).
         appConnection.onTargetCommitted = { [weak store] target in store?.commitConnectionTarget(target) }
         // Gate the scene-level "Reconnect Pane" command on the app being connected.
         store.isAppConnected = { [weak appConnection] in
@@ -195,7 +196,9 @@ public struct AislopdeskClientApp: App {
                     await appLaunchMonitor.run()
                 }
                 // AUTOMATION ONLY (env-gated): auto-connect so an autoconnect launch goes live without a
-                // manual gate click (W9). A normal launch shows the gate prefilled and waits for Connect.
+                // manual click (W9). A normal launch silently re-connects the saved host (see the
+                // auto-reconnect task) or, on a fresh install, waits for the user to open the
+                // Connect-to-Host editor (the top-bar status pill / "Connect to Host…" palette action).
                 .task {
                     guard Self.hasAutomationEnvironment() else { return }
                     let env = WorkspaceStore.automationInputs()

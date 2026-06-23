@@ -203,8 +203,9 @@ public struct WorkspaceBinding: Sendable, Equatable {
 public enum WorkspaceBindingRegistry {
     /// The shipped binding table, in cheat-sheet / palette display order (panes, tabs, sessions, focus,
     /// view). `.selectTab(n)` for n=1…9 is generated (one chord each) but is NOT listed here — it is
-    /// expanded by ``selectTabBindings`` so the table stays readable; the menu/palette/cheat-sheet collapse
-    /// the nine slots to a representative row.
+    /// expanded by ``selectTabBindings`` so the table stays readable; the cheat sheet collapses the nine
+    /// slots to one representative row synthesized in ``groupedForDisplay`` (the menu builds its own "Select
+    /// Tab" submenu, the palette catalog omits the digits).
     public static let bindings: [WorkspaceBinding] = [
         // Panes
         WorkspaceBinding(
@@ -522,14 +523,32 @@ public enum WorkspaceBindingRegistry {
     // MARK: - Grouped display (the cheat sheet sections + palette catalog order)
 
     /// The bindings grouped by category in display order (panes, tabs, sessions, focus, view), with the
-    /// nine ⌘-digit select-tab chords collapsed into one representative "⌘1…⌘9" row in the Tabs group. The
-    /// SINGLE source the cheat sheet renders and the palette catalog iterates — so they cannot drift.
+    /// nine ⌘-digit select-tab chords collapsed into ONE representative "⌘1…⌘9" row SYNTHESIZED here (see
+    /// ``selectTabRepresentative``) and appended to the Tabs group — the real per-digit chords live only in
+    /// ``selectTabBindings`` (keyboard bank / chord table), never in this display set. The menu builds its
+    /// own "Select Tab" submenu and the palette catalog omits the digits, so this synthesized row is the
+    /// only place the family surfaces in the cheat sheet. The SINGLE source the cheat sheet renders and the
+    /// palette catalog iterates — so they cannot drift.
     /// `public` so the rebuilt ClientUI cheat-sheet overlay generates its rows from this one table.
     public static var groupedForDisplay: [(category: WorkspaceAction.Category, bindings: [WorkspaceBinding])] {
         WorkspaceAction.Category.allCases.compactMap { category in
-            let rows = bindings.filter { $0.category == category }
+            var rows = bindings.filter { $0.category == category }
+            if category == .tabs {
+                rows.append(selectTabRepresentative) // the collapsed ⌘1…⌘9 row the comments promise
+            }
             guard !rows.isEmpty else { return nil }
             return (category, rows)
         }
     }
+
+    /// The single collapsed representative for the nine generated ⌘1…⌘9 select-tab chords (display only —
+    /// the real per-digit chords live in ``selectTabBindings``). `.selectTab(1)` is a stand-in action; the
+    /// glyph range is hand-rendered into the title because one ``KeyChord`` can't represent the range, and
+    /// `chord: nil` keeps the overlay from rendering a separate (single-chord) hint chip.
+    static let selectTabRepresentative = WorkspaceBinding(
+        id: "tab.selectN", action: .selectTab(1),
+        title: "Select Tab (⌘1…⌘9)", category: .tabs,
+        chord: nil, symbol: "number.square",
+        keywords: "switch jump tab number digit 1 2 3 4 5 6 7 8 9",
+    )
 }

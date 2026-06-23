@@ -122,6 +122,12 @@ public struct ActionsPaletteSource: PaletteDataSource {
                 store.recordRecentCommand(.reconnectPane)
             },
         ),
+        // Connect to a (possibly non-default) host — the only entry point to the host/port editor besides
+        // the top-bar status pill. No registry chord ⇒ no hint chip.
+        PaletteItem(
+            id: "action.connect", icon: "network", title: "Connect to Host…",
+            subtitle: nil, shortcut: nil, filter: .actions, action: .openConnect,
+        ),
         PaletteItem(
             id: "action.openSettings", icon: "slider.horizontal.3", title: "Open Settings",
             subtitle: nil, shortcut: nil, filter: .actions, action: .openSettings,

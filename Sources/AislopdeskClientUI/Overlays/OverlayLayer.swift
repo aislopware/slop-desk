@@ -14,6 +14,8 @@ struct OverlayLayer: View {
     let store: WorkspaceStore
     /// The Settings model (UserDefaults-backed) — owned by the root so it persists across opens.
     @Bindable var settings: SettingsModel
+    /// The app-global connection — bound by the Connect-to-Host overlay (host/port editor).
+    @Bindable var connection: AppConnection
     var staticMirror: Bool = false
 
     var body: some View {
@@ -40,6 +42,16 @@ struct OverlayLayer: View {
 
             if coordinator.settingsVisible {
                 SettingsOverlay(model: settings, staticMirror: staticMirror, onClose: { coordinator.closeSettings() })
+            }
+
+            // The Connect-to-Host editor (top-bar pill + the "Connect to Host…" palette action) — the only
+            // surface that lets a user point the client at a non-default host.
+            if coordinator.connectVisible {
+                ConnectHostOverlay(
+                    connection: connection,
+                    staticMirror: staticMirror,
+                    onClose: { coordinator.closeConnect() },
+                )
             }
 
             // Keyboard cheat sheet (⌘/ + the palette "Keyboard Shortcuts" row) — registry-generated.

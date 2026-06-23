@@ -35,6 +35,9 @@ struct WindowTopBar: View {
     /// A manual-retry handler — non-`nil` ONLY for a give-up state (.failed/.unreachable), so the retry
     /// affordance is hidden when connected/connecting/reconnecting.
     var onReconnect: (() -> Void)?
+    /// Opens the Connect-to-Host editor (the host/port form). Wired to the status-pill body so the
+    /// read-only pill becomes the discoverable connect affordance (the only way to change the host).
+    var onOpenConnect: () -> Void = {}
 
     /// Left inset reserved for the macOS traffic lights (collapses on non-macOS).
     private var leadingInset: CGFloat {
@@ -100,13 +103,20 @@ struct WindowTopBar: View {
     /// button in a give-up state (`onReconnect != nil`). Surfaces a down/reconnecting host in the chrome.
     private var statusPill: some View {
         HStack(spacing: WarpSpace.xs) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: WarpSize.badge, height: WarpSize.badge)
-            Text(statusLabel)
-                .font(WarpType.ui(WarpType.overlineSize))
-                .foregroundStyle(theme.textSub)
-                .lineLimit(1)
+            // The dot + label are a button that opens the host/port editor (the connect affordance).
+            Button(action: onOpenConnect) {
+                HStack(spacing: WarpSpace.xs) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: WarpSize.badge, height: WarpSize.badge)
+                    Text(statusLabel)
+                        .font(WarpType.ui(WarpType.overlineSize))
+                        .foregroundStyle(theme.textSub)
+                        .lineLimit(1)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
             if let onReconnect {
                 IconButton(systemName: "arrow.clockwise", help: "Reconnect", action: onReconnect)
             }

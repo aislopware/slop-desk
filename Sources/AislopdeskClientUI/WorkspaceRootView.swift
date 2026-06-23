@@ -41,7 +41,7 @@ public struct WorkspaceRootView: View {
     public var body: some View {
         ZStack {
             chrome
-            OverlayLayer(coordinator: overlay, store: store, settings: settings)
+            OverlayLayer(coordinator: overlay, store: store, settings: settings, connection: connection)
         }
         .overlayCoordinator(overlay)
         .background(theme.background)
@@ -91,6 +91,9 @@ public struct WorkspaceRootView: View {
                 statusColor: connectionStatusColor,
                 statusHelp: connectionStatusHelp,
                 onReconnect: connectionReconnectAction,
+                // The status pill body opens the host/port editor — the discoverable way to point the
+                // client at a non-default host (D1 connect surface).
+                onOpenConnect: { overlay.openConnect() },
             )
             HStack(spacing: 0) {
                 if !store.sidebarCollapsed {

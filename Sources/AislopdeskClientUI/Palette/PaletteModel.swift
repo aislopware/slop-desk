@@ -55,6 +55,8 @@ public enum PaletteAction: Sendable {
     case selectFilter(QueryFilter)
     /// Open the Settings overlay (handled by the overlay coordinator).
     case openSettings
+    /// Open the Connect-to-Host overlay (the host/port editor — handled by the overlay coordinator).
+    case openConnect
     /// Open the keyboard cheat sheet overlay (handled by the overlay coordinator).
     case openCheatSheet
     /// Open the Remote-Window picker (L6 / W1 — handled by the overlay coordinator; a pick opens a

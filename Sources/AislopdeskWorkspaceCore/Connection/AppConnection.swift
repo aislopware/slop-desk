@@ -2,21 +2,22 @@ import AislopdeskTransport
 import Foundation
 
 /// The ONE app-global connection (docs/31): the single host the whole app talks to, fronted by the
-/// connect-gate. It owns the editable host/port form, the single ``ConnectionStatus`` the gate +
-/// toolbar render, and the lifecycle that PINS the shared mux up (via ``ConnectionRegistry/pin(host:port:)``)
+/// Connect-to-Host editor (the host/port overlay, opened from the top-bar status pill / palette). It owns
+/// the editable host/port form, the single ``ConnectionStatus`` the editor + toolbar render, and the
+/// lifecycle that PINS the shared mux up (via ``ConnectionRegistry/pin(host:port:)``)
 /// so the app is "connected" before any pane opens a channel and stays connected across closing the last
 /// pane. Panes are pure channels on this connection; `.remoteGUI` panes are lanes on the same host's UDP
 /// flow. The committed ``target`` is what every pane/video session reads for its host/ports.
 ///
-/// Reconnect is app-level: while connected it polls the registry's liveness and, on a drop, reappears the
-/// gate ("reconnecting…") and retries with backoff until it is back (or gives up to `.unreachable`, with a
-/// manual Retry). The per-pane ``ConnectionViewModel`` still re-opens each channel on the rebuilt mux —
+/// Reconnect is app-level: while connected it polls the registry's liveness and, on a drop, surfaces
+/// `.reconnecting` in the top-bar pill and retries with backoff until it is back (or gives up to
+/// `.unreachable`, with a manual Retry). The per-pane ``ConnectionViewModel`` still re-opens each channel on the rebuilt mux —
 /// the two cooperate via the registry's dead-eviction single-flight, so the mux is rebuilt exactly once.
 @preconcurrency
 @MainActor
 @Observable
 public final class AppConnection {
-    // MARK: Editable form fields (bound to the connect-gate)
+    // MARK: Editable form fields (bound to the Connect-to-Host editor)
 
     public var host: String
     public var port: String

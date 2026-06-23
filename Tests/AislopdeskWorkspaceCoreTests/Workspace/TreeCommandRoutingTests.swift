@@ -453,6 +453,28 @@ final class TreeCommandRoutingTests: XCTestCase {
         )
     }
 
+    /// The cheat sheet's SINGLE source (``groupedForDisplay``) must surface a Tabs-group row collapsing the
+    /// nine generated ⌘1…⌘9 select-tab chords — the doc contract (lines 204-207 / 524-526) promises one
+    /// representative row, yet the nine per-digit chords live only in ``selectTabBindings`` (absent from the
+    /// `bindings` table groupedForDisplay iterates). Without the synthesized representative, the cheat sheet
+    /// silently omits the whole "switch to tab N" family. FAILS on the un-fixed code (no such row exists).
+    func testGroupedForDisplaySurfacesCollapsedSelectTabRow() {
+        let tabs = WorkspaceBindingRegistry.groupedForDisplay.first { $0.category == .tabs }
+        XCTAssertNotNil(tabs, "the Tabs group is present in the cheat-sheet display set")
+        let selectTabRow = tabs?.bindings.first { $0.title.contains("⌘1…⌘9") }
+        XCTAssertNotNil(
+            selectTabRow,
+            "groupedForDisplay surfaces ONE representative ⌘1…⌘9 select-tab row (the doc-promised collapse)",
+        )
+        // The representative is display-only: chord:nil so the overlay renders the glyph baked into the
+        // title (no single-chord hint chip), and the real per-digit chords stay in selectTabBindings.
+        XCTAssertNil(selectTabRow?.chord, "the collapsed row carries no single chord (glyph is in the title)")
+        XCTAssertEqual(
+            WorkspaceBindingRegistry.selectTabBindings.count, 9,
+            "the nine real per-digit chords still live in selectTabBindings (not the display set)",
+        )
+    }
+
     /// C1: every chord-carrying binding the DISPATCHER sees (``allBindings``) is ⌘- or ⌥-prefixed (the
     /// load-bearing §5 conflict rule: a bare key / Ctrl-letter must fall through to the focused terminal).
     /// Iterating `allBindings` (not just `bindings`) covers the nine ⌘-digit select-tab chords too.
