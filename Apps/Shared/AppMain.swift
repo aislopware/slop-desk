@@ -1,12 +1,12 @@
-// TODO(L2): retarget to new AislopdeskClientUI scene.
-// L0 of the Warp-clone UI rewrite DELETED the old `AislopdeskClientUI` view target (incl.
-// `AislopdeskClientApp`) and extracted the proven logic + the injection SEAM types
-// (`TerminalRendererFactory`, `VideoWindowFactory`, `RemoteWindowDiscovery`, `SystemDialogDiscovery`,
-// `RemoteWindowSummary`, `SystemDialogInfo`) into the headless `AislopdeskWorkspaceCore`. This file is
-// part of the xcodegen Xcode app target (NOT `swift build`), so it does not block the headless gate, but
-// it is WIP until the rebuilt `AislopdeskClientUI` scene exists (L2). The five seam registrations below
-// are PRESERVED (the types live in WorkspaceCore now); only the final `AislopdeskClientApp.main()` call is
-// stubbed because that scene was deleted.
+// L2 of the Warp-clone UI rewrite RETARGETED this shell to the rebuilt `AislopdeskClientApp` scene
+// (in the `AislopdeskClientUI` library, over `AislopdeskWorkspaceCore` + `AislopdeskDesignSystem`). The
+// SEAM types (`TerminalRendererFactory`, `VideoWindowFactory`, `RemoteWindowDiscovery`,
+// `SystemDialogDiscovery`, `RemoteWindowSummary`, `SystemDialogInfo`) live in `AislopdeskWorkspaceCore`;
+// the five seam registrations below stay PRESERVED — only the production renderer/video/discovery
+// closures are injected here (the GUI app target links libghostty/AislopdeskVideoClient; the
+// cross-platform UI library cannot). This file is part of the xcodegen Xcode app target (NOT
+// `swift build`).
+import AislopdeskClientUI
 import AislopdeskWorkspaceCore
 import SwiftUI
 #if canImport(AislopdeskVideoClient)
@@ -33,10 +33,9 @@ import AislopdeskVideoClient
 ///        TerminalRendererFactory.shared = { model in AnyView(GhosttyTerminalView(model: model)) }
 @main
 struct ClientAppMain {
-    // TODO(L2): `main()` ends in a fatalError stub because the AislopdeskClientApp scene was deleted in
-    // L0. It still performs the five seam registrations (the load-bearing wiring); only the final scene
-    // launch is stubbed. This app target is NOT in `swift build`. Rebuild the scene in L2 to drop the stub.
-    // swiftlint:disable:next unavailable_function
+    // `main()` performs the five seam registrations (the load-bearing wiring that injects the production
+    // renderer/video/discovery closures the cross-platform UI library cannot reference) and then launches
+    // the rebuilt `AislopdeskClientApp` scene. This app target is NOT in `swift build`.
     static func main() {
         // PATH 1 (terminal, libghostty-only): register the production renderer. The
         // cross-platform `AislopdeskClientUI` library cannot reference `GhosttyTerminalView`
@@ -138,10 +137,8 @@ struct ClientAppMain {
         }
         #endif
 
-        // TODO(L2): retarget to the new AislopdeskClientUI scene. The old `AislopdeskClientApp.main()`
-        // (a SwiftUI `App` scene that lived in the deleted view target) is gone; the rebuilt scene over
-        // `AislopdeskWorkspaceCore` + the new `AislopdeskDesignSystem` will replace this. This app target
-        // is NOT compiled by `swift build`, so this stub does not affect the headless gate.
-        fatalError("AislopdeskClientApp scene was deleted in L0 — rebuild the SwiftUI scene in L2 (see TODO).")
+        // Launch the rebuilt SwiftUI scene (over `AislopdeskWorkspaceCore` + `AislopdeskDesignSystem`).
+        // `App.main()` runs the app run loop and never returns.
+        AislopdeskClientApp.main()
     }
 }

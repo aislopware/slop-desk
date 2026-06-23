@@ -159,8 +159,9 @@ import UserNotifications
 /// `@MainActor final class` because it caches authorization state across calls and is invoked
 /// from the `@MainActor` ``ConnectionViewModel`` events loop. (A class — not a struct — so the
 /// authorization cache mutated from the async `requestAuthorization` callback survives.)
+@preconcurrency
 @MainActor
-final class CommandCompletionNotifier {
+public final class CommandCompletionNotifier {
     /// Cached authorization result so we do not re-`requestAuthorization` on every long command
     /// (the OS only prompts once, but caching avoids the repeated round-trip and lets a denied
     /// user fall straight through). `nil` until the first request resolves.
@@ -171,7 +172,7 @@ final class CommandCompletionNotifier {
     /// rate-limited by the ~10s threshold, so it is not gated.)
     private var explicitLimiter = NotificationRateLimiter(now: ProcessInfo.processInfo.systemUptime)
 
-    init() {}
+    public init() {}
 
     /// Posts a "command finished" notification IFF `durationMS` clears the long-running threshold. A
     /// no-op for quick commands. The B3 focus gate (unfocused + enabled) is applied UPSTREAM in
@@ -179,7 +180,7 @@ final class CommandCompletionNotifier {
     /// floor as a defence-in-depth guard. `paneIDKey` (the originating pane's id string) is embedded in
     /// the notification's `userInfo` so a click reveals that pane via ``PaneNotificationRouter`` — `nil`
     /// ⇒ no reveal target (e.g. an unresolved pane).
-    func notifyIfLong(paneTitle: String, exitCode: Int32?, durationMS: UInt32, paneIDKey: String? = nil) {
+    public func notifyIfLong(paneTitle: String, exitCode: Int32?, durationMS: UInt32, paneIDKey: String? = nil) {
         guard CommandNotificationPolicy.shouldNotify(durationMS: durationMS) else { return }
 
         if granted != nil {
@@ -219,7 +220,7 @@ final class CommandCompletionNotifier {
     /// `userInfo` so a click can focus the originating pane (see ``PaneNotificationRouter``). Lazy-auth
     /// + best-effort like the long-command path; resolves the title fallback via the pure
     /// ``ExplicitNotificationContent``.
-    func notifyExplicit(paneIDKey: String, paneTitle: String, title: String, body: String) {
+    public func notifyExplicit(paneIDKey: String, paneTitle: String, title: String, body: String) {
         // Anti-flood: drop a notification that exceeds the burst/refill budget (a hostile process must
         // not be able to bury the user under alerts). Checked BEFORE auth so a flood can't even trigger
         // the first auth prompt repeatedly.

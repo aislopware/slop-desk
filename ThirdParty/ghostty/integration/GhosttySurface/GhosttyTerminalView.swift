@@ -73,7 +73,7 @@
 import SwiftUI
 import QuartzCore          // CAMetalLayer
 import AislopdeskTerminal       // TerminalSurface protocol
-import AislopdeskClientUI       // TerminalRenderingView, TerminalViewModel
+import AislopdeskWorkspaceCore  // TerminalRenderingView, TerminalViewModel, TerminalRendererFactory (L0 home)
 import CGhostty            // the clang module over ghostty.h (link "ghostty")
 
 #if os(macOS)

@@ -2321,7 +2321,7 @@ public final class WorkspaceStore {
     }
 
     /// The app target from the terminal-autoconnect env vars, or `nil`.
-    static func terminalTarget(from env: [String: String]) -> ConnectionTarget? {
+    public static func terminalTarget(from env: [String: String]) -> ConnectionTarget? {
         guard let host = env["AISLOPDESK_AUTOCONNECT_HOST"], !host.isEmpty,
               let portStr = env["AISLOPDESK_AUTOCONNECT_PORT"], let port = UInt16(portStr) else { return nil }
         return ConnectionTarget(host: host, port: port)
@@ -2330,7 +2330,7 @@ public final class WorkspaceStore {
     /// The app target + the per-pane window from the video-autoconnect env vars, or `nil`. The terminal
     /// port defaults (the video automation only specifies UDP ports); the app target carries the host +
     /// both UDP ports so the `.remoteGUI` pane rides the shared flow.
-    static func videoTarget(from env: [String: String]) -> (ConnectionTarget, VideoEndpoint)? {
+    public static func videoTarget(from env: [String: String]) -> (ConnectionTarget, VideoEndpoint)? {
         guard let host = env["AISLOPDESK_VIDEO_AUTOCONNECT_HOST"], !host.isEmpty,
               let mediaStr = env["AISLOPDESK_VIDEO_AUTOCONNECT_MEDIA_PORT"], let media = UInt16(mediaStr),
               let cursorStr = env["AISLOPDESK_VIDEO_AUTOCONNECT_CURSOR_PORT"], let cursor = UInt16(cursorStr),

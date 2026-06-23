@@ -35,10 +35,10 @@ targets:
       # `import CGhostty` resolves and `#if canImport(CGhostty)` flips true.
       - path: ../../ThirdParty/ghostty/integration/GhosttySurface
     dependencies:
-      # TODO(L2): retarget to the rebuilt AislopdeskClientUI scene. L0 replaced the view target with the
-      # headless AislopdeskWorkspaceCore (logic + seam types); this app is WIP until the L2 SwiftUI scene.
+      # The rebuilt SwiftUI scene (L2): AppMain launches `AislopdeskClientApp` from this product, which
+      # transitively pulls in AislopdeskWorkspaceCore (logic + seam types) + AislopdeskDesignSystem (tokens).
       - package: Aislopdesk
-        product: AislopdeskWorkspaceCore
+        product: AislopdeskClientUI
       # PATH 2 (GUI video path): links the client decode/render/cursor pipeline so
       # AppMain can register VideoWindowFactory.shared with the real VideoWindowView.
       # Carries VideoToolbox/Metal — never instantiated in tests, only at GUI launch.

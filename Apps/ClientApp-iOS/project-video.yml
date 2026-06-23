@@ -21,9 +21,10 @@ targets:
     sources:
       - path: ../Shared
     dependencies:
-      # TODO(L2): retarget to the rebuilt AislopdeskClientUI scene (L0 → AislopdeskWorkspaceCore). WIP.
+      # The rebuilt SwiftUI scene (L2): AppMain launches `AislopdeskClientApp` from this product, which
+      # transitively pulls in AislopdeskWorkspaceCore (logic + seam types) + AislopdeskDesignSystem (tokens).
       - package: Aislopdesk
-        product: AislopdeskWorkspaceCore
+        product: AislopdeskClientUI
       - package: Aislopdesk
         product: AislopdeskVideoClient
     info:
