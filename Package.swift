@@ -34,6 +34,9 @@ let package = Package(
         .library(name: "AislopdeskClaudeCode", targets: ["AislopdeskClaudeCode"]),
         .library(name: "AislopdeskAgentDetect", targets: ["AislopdeskAgentDetect"]),
         .library(name: "AislopdeskWorkspaceCore", targets: ["AislopdeskWorkspaceCore"]),
+        // L1 of the Warp-clone UI rewrite: the headless design-system tokens (Theme seeds + derivation
+        // + WarpTheme default + token scales + DesignTokens resolver). SwiftUI value types only.
+        .library(name: "AislopdeskDesignSystem", targets: ["AislopdeskDesignSystem"]),
         // PATH 2 (GUI video path, Phase 4 / WF-9).
         .library(name: "AislopdeskVideoProtocol", targets: ["AislopdeskVideoProtocol"]),
         .library(name: "AislopdeskVideoHost", targets: ["AislopdeskVideoHost"]),
@@ -163,6 +166,14 @@ let package = Package(
                 "AislopdeskVideoProtocol",
             ],
         ),
+
+        // Headless design-system (L1 of the Warp-clone UI rewrite): a faithful, ABSTRACTED port of
+        // Warp's seed-and-derive theme model. Imports SwiftUI ONLY for `Color`/`Font` value types —
+        // NO AppKit/UIKit, NO view bodies, NO GUI/VideoToolbox/Metal — so it builds + unit-tests fully
+        // headless (same discipline as the old DSColor*/DSScale* tests). `ColorU` RGBA8 + the verbatim
+        // blend/contrast math is the single source of truth; `WarpTheme` carries Warp's Dark seeds; a
+        // `Theme` protocol + `ThemeSeeds` allow future themes. Depends on nothing but SwiftUI (implicit).
+        .target(name: "AislopdeskDesignSystem"),
 
         // MARK: PATH 2 — GUI video path (Phase 4 / WF-9)
 
@@ -355,6 +366,12 @@ let package = Package(
                 "AislopdeskVideoProtocol",
             ],
         ),
+        // L1 design-system: pins the theme contract so it can't silently drift — hex round-trips, the
+        // verbatim blend math (fg@10% over #000 = #1A1A1A + numeric neutral_n), WarpTheme resolved Dark
+        // values (bg/fg/accent, derived neutrals/overlays, outline, selection, fixed ui_* literals), the
+        // token scales (sizes/radii), and the contrast text-tier pick on a dark bg. Headless.
+        .testTarget(name: "AislopdeskDesignSystemTests", dependencies: ["AislopdeskDesignSystem"]),
+
         // WF-9 GUI video path: ONLY the PURE AislopdeskVideoProtocol is unit-tested
         // (packetize/reassemble incl. fragment-loss → drop + recovery, FEC real
         // single-loss recovery, cursor codec round-trip + <64B size, coordinate
