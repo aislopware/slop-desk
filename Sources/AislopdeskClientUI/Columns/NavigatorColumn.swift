@@ -1,7 +1,10 @@
-// NavigatorColumn — the left sidebar navigator (REBUILD-V2, L2). A native `List(selection:)` bound to the
-// store: one selectable row per visible pane of the active session's tabs (via the kept-pure
-// `RailRowsBuilder`). Selecting a row makes its tab active and focuses its pane (so the content area shows
-// that tab). A "+" button opens a new tab. SYSTEM colours/SF Symbols/fonts only — NO design-system.
+// NavigatorColumn — the left sidebar navigator (REBUILD-V2, L2 → L7 otty restyle).
+//
+// A clean otty-style sidebar: a `ScrollView` of `OttySidebarRow` buttons (one per visible pane of the
+// active session's tabs, via the kept-pure `RailRowsBuilder`) under an `OttySectionHeader` ("Workspace" +
+// a "+" plate button). The background is left CLEAR so the hosting `NSSplitViewItem`'s native sidebar
+// vibrancy shows through (otty's "one shared material backdrop"); selection is a NEUTRAL gray plate (otty),
+// not the system accent highlight. Selecting a row makes its tab active and focuses its pane.
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -10,60 +13,42 @@ import SwiftUI
 struct NavigatorColumn: View {
     let store: WorkspaceStore
 
-    /// `selection` getter = the active tab's active pane; setter = select the row's tab + focus its pane.
-    /// (Both go through existing public store methods — `selectTab(_:)` + `focusPaneTree(_:)`.)
-    private var selection: Binding<PaneID?> {
-        Binding(
-            get: { store.tree.activeSession?.activeTab?.activePane },
-            set: { newValue in
-                guard let paneID = newValue else { return }
-                select(paneID)
-            },
-        )
+    /// The active tab's active pane — drives which row reads as selected.
+    private var selectedPane: PaneID? {
+        store.tree.activeSession?.activeTab?.activePane
     }
 
     var body: some View {
         let rows = RailRowsBuilder.rows(for: store)
-        List(selection: selection) {
-            Section {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 2) {
+                OttySectionHeader("Workspace") {
+                    OttyPlateButton(systemName: "plus", help: "New tab", plate: 20) {
+                        store.newTabDefault()
+                    }
+                }
                 if rows.isEmpty {
                     Label("No tabs open", systemImage: "square.split.2x1")
+                        .font(.system(size: Otty.Typeface.base))
                         .foregroundStyle(Otty.Text.secondary)
+                        .padding(.horizontal, Otty.Metric.space2)
+                        .padding(.vertical, 5)
                 } else {
                     ForEach(rows) { row in
-                        Label {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(row.title.isEmpty ? defaultTitle(for: row.kind) : row.title)
-                                    .lineLimit(1)
-                                if let subtitle = row.subtitle, !subtitle.isEmpty {
-                                    Text(subtitle)
-                                        .font(.caption)
-                                        .foregroundStyle(Otty.Text.secondary)
-                                        .lineLimit(1)
-                                        .truncationMode(.head)
-                                }
-                            }
-                        } icon: {
-                            Image(systemName: Self.symbol(for: row.kind))
-                        }
-                        .tag(row.id)
+                        OttySidebarRow(
+                            systemImage: Self.symbol(for: row.kind),
+                            title: row.title.isEmpty ? defaultTitle(for: row.kind) : row.title,
+                            subtitle: row.subtitle,
+                            isSelected: row.id == selectedPane,
+                            action: { select(row.id) },
+                        )
                     }
-                }
-            } header: {
-                HStack {
-                    Text("Workspace")
-                    Spacer(minLength: 0)
-                    Button {
-                        store.newTabDefault()
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    .buttonStyle(.plain)
-                    .help("New tab")
                 }
             }
+            .padding(Otty.Metric.space2)
         }
-        .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .background(.clear)
         #if os(iOS)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {

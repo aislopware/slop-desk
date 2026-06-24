@@ -89,7 +89,7 @@ struct PaneContainer: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Otty.Surface.card)
         // otty "floating card": a radius-8 rounded card with a 1px border — accent when focused, a quiet
-        // card hairline otherwise. Unfocused panes dim to 0.6 (otty's `⌘D` split treatment).
+        // card hairline otherwise.
         .clipShape(RoundedRectangle(cornerRadius: Otty.Metric.radiusCard, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Otty.Metric.radiusCard, style: .continuous)
@@ -98,11 +98,16 @@ struct PaneContainer: View {
                     lineWidth: Otty.Metric.cardBorderWidth,
                 ),
         )
+        .contentShape(Rectangle())
+        .onTapGesture { store.focusPaneTree(paneID) }
+        // Floating-card shadow + the unfocused dim (otty's `⌘D` split treatment).
         .shadow(color: Otty.State.shadow, radius: isFocused ? 6 : 3, y: 1)
         .opacity(isFocused ? 1 : Otty.Anim.unfocusedPaneOpacity)
         .animation(Otty.Anim.standard, value: isFocused)
-        .contentShape(Rectangle())
-        .onTapGesture { store.focusPaneTree(paneID) }
+        // The gutter that lets the shared backdrop wrap around the card (margin insets it from neighbours
+        // and the window edge — otty's signature "floating" look). Insets WITHIN the solver's leaf rect, so
+        // the absolute layout math is untouched.
+        .padding(Otty.Metric.space1)
     }
 }
 #endif
