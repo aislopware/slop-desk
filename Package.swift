@@ -177,7 +177,14 @@ let package = Package(
         // L0 ships a minimal placeholder scene; L1+ rebuild the real shell.
         .target(
             name: "AislopdeskClientUI",
-            dependencies: ["AislopdeskWorkspaceCore"],
+            dependencies: [
+                "AislopdeskWorkspaceCore",
+                // L1: the app scene builds the production per-host shared-connection pool with
+                // `ConnectionRegistry` + `LiveMuxConnectionFactory` (both live in Transport). These are
+                // a direct dependency of WorkspaceCore, but a `swift build` import needs the module
+                // declared here; this does NOT widen the headless graph (no HW deps in Transport).
+                "AislopdeskTransport",
+            ],
         ),
 
         // MARK: PATH 2 — GUI video path (Phase 4 / WF-9)
