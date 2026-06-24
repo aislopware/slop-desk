@@ -172,8 +172,10 @@ enum Otty {
     enum Metric {
         // Radii (from design-tokens.css)
         static let radiusCard: CGFloat = 8
+        static let radiusTab: CGFloat = 7 // the measured tab / sidebar-row card radius
         static let radiusControl: CGFloat = 6
         static let radiusItem: CGFloat = 6
+        static let radiusSmall: CGFloat = 4 // small inner plate (e.g. tab close-button hover)
         static let radiusPill: CGFloat = 20
 
         // 8pt spacing grid
@@ -200,9 +202,18 @@ enum Otty {
         static let iconSize: CGFloat = 13
     }
 
-    /// Typography — base 12 / small 10; UI = system, code = JetBrains Mono.
+    /// Typography scale — one named role per size; UI = system, code = JetBrains Mono. A closed scale (no
+    /// raw `.font(.system(size:))` literals in view code — `scripts/check-ds-leaks.sh` enforces it).
     enum Typeface {
+        /// Large empty-state / placeholder glyph (build-status / empty pane).
+        static let display: CGFloat = 40
+        /// Primary content + the command input field — the slightly-larger reading size.
+        static let body: CGFloat = 13
+        /// Default UI label size.
         static let base: CGFloat = 12
+        /// Secondary labels, chips, pills, tab titles.
+        static let footnote: CGFloat = 11
+        /// Captions, kbd hints, tab subtext.
         static let small: CGFloat = 10
         static let mono = "JetBrains Mono"
     }

@@ -12,6 +12,7 @@
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
 import Foundation
+import SFSafeSymbols
 import SwiftUI
 #if os(macOS)
 import AppKit // NSPasteboard for "Copy Path"
@@ -53,10 +54,10 @@ struct OttyTitlebar: View {
 
             // Left: new tab + sidebar toggle (toggle stays clickable while the sidebar is collapsed).
             HStack(spacing: 3) {
-                PlateIconButton(systemName: "plus") { store.newTabDefault() }
+                PlateIconButton(symbol: .plus) { store.newTabDefault() }
                     .opacity(chromeShown ? 1 : 0)
                     .allowsHitTesting(chromeShown)
-                PlateIconButton(systemName: "sidebar.left") { chrome.toggleSidebar() }
+                PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
                     .opacity(sidebarVisible ? (chromeShown ? 1 : 0) : 1)
                     .allowsHitTesting(sidebarVisible ? chromeShown : true)
                 Spacer(minLength: 0)
@@ -71,7 +72,7 @@ struct OttyTitlebar: View {
             // Right: Details toggle (stays visible while Details is open).
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
-                PlateIconButton(systemName: detailsVisible ? "sidebar.trailing" : "sidebar.right") {
+                PlateIconButton(symbol: detailsVisible ? .sidebarTrailing : .sidebarRight) {
                     chrome.toggleInspector()
                 }
                 .opacity(chromeShown || detailsVisible ? 1 : 0)
@@ -129,11 +130,11 @@ private struct TitleMenuButton: View {
         Button { show.toggle() } label: {
             HStack(spacing: 5) {
                 Text(title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: Otty.Typeface.body, weight: .medium))
                     .foregroundStyle(hover || show ? Otty.Text.primary : Otty.Text.secondary)
                     .lineLimit(1)
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 11, weight: .semibold))
+                Image(systemSymbol: .ellipsis)
+                    .font(.system(size: Otty.Typeface.footnote, weight: .semibold))
                     .foregroundStyle(Otty.Text.icon)
                     .opacity(hover || show ? 1 : 0)
             }
@@ -204,7 +205,7 @@ private struct TitleMenuSection: View {
     init(_ title: String) { self.title = title }
     var body: some View {
         Text(title)
-            .font(.system(size: 10, weight: .semibold))
+            .font(.system(size: Otty.Typeface.small, weight: .semibold))
             .tracking(0.4)
             .foregroundStyle(Otty.State.header)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -232,16 +233,17 @@ private struct TitleMenuRow: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 if let icon {
-                    Image(systemName: icon).font(.system(size: 12)).foregroundStyle(Otty.Text.icon).frame(width: 16)
+                    Image(systemName: icon).font(.system(size: Otty.Typeface.base)).foregroundStyle(Otty.Text.icon)
+                        .frame(width: 16)
                 }
                 Text(title)
-                    .font(.system(size: 12))
+                    .font(.system(size: Otty.Typeface.base))
                     .foregroundStyle(dim ? Otty.Text.secondary : Otty.Text.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 8)
                 if let shortcut {
-                    Text(shortcut).font(.system(size: 11)).foregroundStyle(Otty.Text.secondary)
+                    Text(shortcut).font(.system(size: Otty.Typeface.footnote)).foregroundStyle(Otty.Text.secondary)
                 }
             }
             .padding(.horizontal, 12).frame(height: 28)

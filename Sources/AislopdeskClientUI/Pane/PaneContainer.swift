@@ -57,10 +57,10 @@ struct PaneContainer: View {
     private var remotePlaceholder: some View {
         VStack(spacing: 12) {
             Image(systemSymbol: kind == .systemDialog ? .lockShield : .display)
-                .font(.system(size: 40, weight: .regular))
+                .font(.system(size: Otty.Typeface.display, weight: .regular))
                 .foregroundStyle(Otty.Text.secondary)
             Text(kind == .systemDialog ? "system dialog" : "remote window")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: Otty.Typeface.body, weight: .semibold))
                 .foregroundStyle(Otty.Text.primary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

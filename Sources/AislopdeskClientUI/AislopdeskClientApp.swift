@@ -17,6 +17,7 @@
 import AislopdeskTransport // ConnectionRegistry + LiveMuxConnectionFactory (the per-host shared mux pool)
 import AislopdeskWorkspaceCore
 import SwiftUI
+import SwiftUIIntrospect // reach THIS scene's NSWindow from the SwiftUI WindowGroup (no NSApplication.windows hack)
 #if os(iOS)
 import UIKit // UIDevice.current.userInterfaceIdiom — the per-device live-video cap signal at init
 #endif
@@ -221,11 +222,15 @@ public struct AislopdeskClientApp: App {
                 }
             #if os(macOS)
                 // AUTOMATION ONLY (W9): bring the window to front + make it key at launch so the content
-                // subtree appears and connect-on-appear fires WITHOUT a manual front/Open click.
-                .task {
-                    guard Self.hasAutomationEnvironment() else { return }
+                // subtree appears and connect-on-appear fires WITHOUT a manual front/Open click. We reach
+                // THIS scene's window via SwiftUIIntrospect rather than the fragile `NSApplication.shared
+                // .windows.first` (wrong once a second window exists). The closure fires exactly when the
+                // NSWindow is real, and `.introspect(.window)` is the sanctioned hook for any future
+                // WindowGroup-level config. `!isKeyWindow` makes the repeat-firing callback idempotent.
+                .introspect(.window, on: .macOS(.v14, .v15, .v26)) { window in
+                    guard Self.hasAutomationEnvironment(), !window.isKeyWindow else { return }
                     NSApplication.shared.activate(ignoringOtherApps: true)
-                    NSApplication.shared.windows.first?.makeKeyAndOrderFront(nil)
+                    window.makeKeyAndOrderFront(nil)
                 }
                 // macOS delivers no reliable flush on ⌘Q; flush the tree synchronously on termination.
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in

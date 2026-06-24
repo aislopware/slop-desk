@@ -37,7 +37,7 @@ struct NavigatorColumn: View {
             Color.clear.frame(height: 40) // reserve the titlebar / traffic-light strip
             HStack(spacing: 0) {
                 Text("TABS")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: Otty.Typeface.footnote, weight: .semibold))
                     .tracking(0.6)
                     .foregroundStyle(Otty.State.header)
                 Spacer(minLength: 0)
@@ -50,7 +50,7 @@ struct NavigatorColumn: View {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     if rows.isEmpty {
                         Text("No tabs open")
-                            .font(.system(size: 13))
+                            .font(.system(size: Otty.Typeface.body))
                             .foregroundStyle(Otty.Text.secondary)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 6)

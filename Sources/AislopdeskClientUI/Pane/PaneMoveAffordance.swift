@@ -19,6 +19,7 @@
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
+import SFSafeSymbols
 import SwiftUI
 
 /// The shared coordinate space the move gesture reports its location in — `SplitContainer` names its
@@ -234,10 +235,10 @@ struct PaneMoveOverlay: View {
 
     private var ghostChip: some View {
         HStack(spacing: 6) {
-            Image(systemName: Self.zoneIcon(drag.zone))
-                .font(.system(size: 11, weight: .semibold))
+            Image(systemSymbol: Self.zoneIcon(drag.zone))
+                .font(.system(size: Otty.Typeface.footnote, weight: .semibold))
             Text(Self.zoneLabel(drag.zone, title: sourceTitle))
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: Otty.Typeface.base, weight: .medium))
                 .lineLimit(1)
         }
         .foregroundStyle(drag.zone == .none ? Otty.Text.tertiary : Otty.Text.primary)
@@ -316,12 +317,12 @@ struct PaneMoveOverlay: View {
         }
     }
 
-    static func zoneIcon(_ zone: PaneDropZone) -> String {
+    static func zoneIcon(_ zone: PaneDropZone) -> SFSymbol {
         switch zone {
-        case .none: "xmark"
-        case .swap: "rectangle.2.swap"
-        case let .resplit(_, edge): edge.axis == .horizontal ? "rectangle.split.2x1" : "rectangle.split.1x2"
-        case let .dock(edge): edge.axis == .horizontal ? "rectangle.split.2x1" : "rectangle.split.1x2"
+        case .none: .xmark
+        case .swap: .rectangle2Swap
+        case let .resplit(_, edge): edge.axis == .horizontal ? .rectangleSplit2x1 : .rectangleSplit1x2
+        case let .dock(edge): edge.axis == .horizontal ? .rectangleSplit2x1 : .rectangleSplit1x2
         }
     }
 

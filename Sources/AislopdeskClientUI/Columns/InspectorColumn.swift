@@ -90,8 +90,8 @@ struct InspectorColumn: View {
             withAnimation(Otty.Anim.standard) { selected = tab }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: tab.icon).font(.system(size: 11, weight: .medium))
-                if active { Text(tab.title).font(.system(size: 11, weight: .medium)) }
+                Image(systemName: tab.icon).font(.system(size: Otty.Typeface.footnote, weight: .medium))
+                if active { Text(tab.title).font(.system(size: Otty.Typeface.footnote, weight: .medium)) }
             }
             .foregroundStyle(active ? Otty.Text.primary : Otty.Text.icon)
             .padding(.horizontal, active ? 8 : 6)

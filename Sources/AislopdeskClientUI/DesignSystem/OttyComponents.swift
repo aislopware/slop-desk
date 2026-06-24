@@ -56,7 +56,7 @@ struct OttyPill: View {
             }
             Text(text)
         }
-        .font(.system(size: Otty.Typeface.small + 1))
+        .font(.system(size: Otty.Typeface.footnote))
         .foregroundStyle(tint)
         .lineLimit(1)
         .padding(.horizontal, Otty.Metric.space2)

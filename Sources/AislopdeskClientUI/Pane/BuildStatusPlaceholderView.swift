@@ -11,6 +11,7 @@
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
+import SFSafeSymbols
 import SwiftUI
 
 /// The headless build-status placeholder for a terminal pane. Conforms to the seam's
@@ -25,14 +26,14 @@ struct BuildStatusPlaceholderView: TerminalRenderingView {
 
     var body: some View {
         VStack(spacing: 12) {
-            Image(systemName: "terminal")
-                .font(.system(size: 40, weight: .regular))
+            Image(systemSymbol: .appleTerminal)
+                .font(.system(size: Otty.Typeface.display, weight: .regular))
                 .foregroundStyle(.secondary)
             Text("terminal")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: Otty.Typeface.body, weight: .semibold))
                 .foregroundStyle(.primary)
             Text("Run ThirdParty/ghostty/build-libghostty.sh — the headless build renders this panel.")
-                .font(.system(size: 11))
+                .font(.system(size: Otty.Typeface.footnote))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             statusLine
@@ -49,7 +50,7 @@ struct BuildStatusPlaceholderView: TerminalRenderingView {
                 .fill(status.isLive ? Color.green : Color.secondary)
                 .frame(width: 7, height: 7)
             Text("\(status.label) · \(model.bytesReceived) bytes")
-                .font(.system(size: 11).monospaced())
+                .font(.system(size: Otty.Typeface.footnote).monospaced())
                 .foregroundStyle(.secondary)
         }
     }

@@ -13,6 +13,7 @@
 #if canImport(SwiftUI)
 import AislopdeskAgentDetect
 import AislopdeskWorkspaceCore
+import SFSafeSymbols
 import SwiftUI
 
 public struct WorkspaceRootView: View {
@@ -73,7 +74,7 @@ public struct WorkspaceRootView: View {
             }
         }
         ToolbarItem(placement: .primaryAction) {
-            Button { store.newTabDefault() } label: { Image(systemName: "plus") }
+            Button { store.newTabDefault() } label: { Image(systemSymbol: .plus) }
                 .help("New Tab")
         }
     }

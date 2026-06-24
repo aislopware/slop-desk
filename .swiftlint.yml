@@ -255,17 +255,21 @@ type_body_length:
   warning: 1800
   error: 2700
 
+# Error backstops tightened toward the warnings (2026-06-24): under `--strict` the WARNING is the binding
+# ceiling (the whole tree is green below it), so the old loose error caps (1300/400/80) only ever bit in
+# non-strict editor runs. Pulled down to just above each warning so the backstop is meaningful everywhere
+# without force-refactoring any working code (nothing sits between the warning and the new error).
 function_body_length:
   warning: 260
-  error: 1300
+  error: 320
 
 closure_body_length:
   warning: 150
-  error: 400
+  error: 200
 
 cyclomatic_complexity:
   warning: 30
-  error: 80
+  error: 45
   ignores_case_statements: true
 
 function_parameter_count:
@@ -274,7 +278,7 @@ function_parameter_count:
 
 large_tuple:
   warning: 4   # 2-3 element tuples are idiomatic internal multi-returns here
-  error: 6
+  error: 5
 
 nesting:
   type_level:

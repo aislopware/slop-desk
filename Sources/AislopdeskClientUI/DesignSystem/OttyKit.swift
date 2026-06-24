@@ -8,6 +8,7 @@
 //     geometry. Drives the titlebar chrome reveal without stealing the window-drag region.
 
 #if canImport(SwiftUI)
+import SFSafeSymbols
 import SwiftUI
 #if os(macOS)
 import AppKit
@@ -15,7 +16,7 @@ import AppKit
 
 /// otty's hover-plate icon button — a borderless SF-Symbol with a faint rounded hover plate (radius 6).
 struct PlateIconButton: View {
-    let systemName: String
+    let symbol: SFSymbol
     var size: CGFloat = Otty.Metric.iconSize
     var plate: CGFloat = Otty.Metric.plate
     var action: () -> Void = {}
@@ -24,7 +25,7 @@ struct PlateIconButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemName)
+            Image(systemSymbol: symbol)
                 .font(.system(size: size))
                 .foregroundStyle(Otty.Text.icon)
                 .frame(width: plate, height: plate)

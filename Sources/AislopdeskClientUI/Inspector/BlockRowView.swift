@@ -10,6 +10,7 @@
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
+import SFSafeSymbols
 import SwiftUI
 
 struct BlockRowView: View {
@@ -39,7 +40,7 @@ struct BlockRowView: View {
             }
             Spacer(minLength: 0)
             if isBookmarked {
-                Image(systemName: "star.fill")
+                Image(systemSymbol: .starFill)
                     .font(.caption2)
                     .foregroundStyle(Otty.Status.warn)
             }
@@ -61,7 +62,7 @@ struct BlockRowView: View {
             }
         }
         .frame(width: 18, height: 18)
-        .font(.system(size: 13))
+        .font(.system(size: Otty.Typeface.body))
     }
 
     /// The trailing caption: status label + an optional duration, both secondary + small.

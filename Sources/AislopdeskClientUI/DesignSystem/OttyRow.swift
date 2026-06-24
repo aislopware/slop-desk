@@ -65,7 +65,7 @@ struct OttySidebarRow: View {
 
     /// The selected row is otty's white card (fill + hairline border + faint shadow); hover is a flat plate.
     @ViewBuilder private var rowBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: Otty.Metric.radiusTab, style: .continuous)
         if isSelected {
             shape
                 .fill(Otty.Surface.selectedCard)
