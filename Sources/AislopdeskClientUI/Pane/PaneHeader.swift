@@ -43,8 +43,8 @@ struct PaneHeader: View {
     var body: some View {
         HStack(spacing: 6) {
             Text(title.isEmpty ? "Terminal" : title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
+                .font(.system(size: Otty.Typeface.base, weight: isActive ? .medium : .regular))
+                .foregroundStyle(isActive ? Otty.Text.primary : Otty.Text.secondary)
                 .lineLimit(1)
                 .truncationMode(.head)
             Spacer(minLength: 0)
@@ -56,25 +56,18 @@ struct PaneHeader: View {
                 headerButton("xmark", help: "Close pane", action: onClose)
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 28)
+        .padding(.horizontal, Otty.Metric.space2)
+        .frame(height: Otty.Metric.paneHeaderHeight)
         .frame(maxWidth: .infinity)
         .background(NativePaneColor.window)
-        .overlay(alignment: .bottom) { Divider() }
+        .overlay(alignment: .bottom) { Rectangle().fill(Otty.Line.divider).frame(height: Otty.Metric.hairline) }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        .animation(Otty.Anim.smallFade, value: revealed)
     }
 
     private func headerButton(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 16, height: 16)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
+        OttyPlateButton(systemName: systemName, help: help, action: action)
     }
 }
 #endif

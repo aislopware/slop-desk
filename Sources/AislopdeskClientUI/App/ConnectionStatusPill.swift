@@ -28,17 +28,17 @@ struct ConnectionStatusPill: View {
                     .fill(StatusPresentation.connectionColor(status))
                     .frame(width: 7, height: 7)
                 Text(host)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: Otty.Typeface.base, weight: .medium))
+                    .foregroundStyle(Otty.Text.primary)
                     .lineLimit(1)
                 Text(StatusPresentation.connectionLabel(status))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: Otty.Typeface.small + 1))
+                    .foregroundStyle(Otty.Text.secondary)
                     .lineLimit(1)
                 if case .connected = status, let pingMS {
                     Text("· \(Int(pingMS.rounded())) ms")
-                        .font(.system(size: 11).monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: Otty.Typeface.small + 1).monospacedDigit())
+                        .foregroundStyle(Otty.Text.secondary)
                         .lineLimit(1)
                 }
             }
@@ -47,7 +47,8 @@ struct ConnectionStatusPill: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .background(.quaternary, in: Capsule())
+        .background(Otty.Surface.element, in: Capsule())
+        .overlay(Capsule().strokeBorder(Otty.Line.subtle, lineWidth: 1))
         .help(StatusPresentation.connectionHelp(host: host, status: status))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(StatusPresentation.connectionHelp(host: host, status: status))

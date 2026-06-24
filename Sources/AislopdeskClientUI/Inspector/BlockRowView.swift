@@ -20,9 +20,9 @@ struct BlockRowView: View {
     /// The status tint: green for success, red for a failure, secondary while running.
     private var statusTint: Color {
         switch block.status {
-        case .running: .secondary
-        case .succeeded: .green
-        case .failed: .red
+        case .running: Otty.Text.secondary
+        case .succeeded: Otty.Status.ok
+        case .failed: Otty.Status.err
         }
     }
 
@@ -32,7 +32,7 @@ struct BlockRowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(block.commandText.isEmpty ? "(no command)" : block.commandText)
                     .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(block.commandText.isEmpty ? .secondary : .primary)
+                    .foregroundStyle(block.commandText.isEmpty ? Otty.Text.secondary : Otty.Text.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 caption
@@ -41,7 +41,7 @@ struct BlockRowView: View {
             if isBookmarked {
                 Image(systemName: "star.fill")
                     .font(.caption2)
-                    .foregroundStyle(.yellow)
+                    .foregroundStyle(Otty.Status.warn)
             }
         }
         .padding(.vertical, 2)
@@ -68,10 +68,10 @@ struct BlockRowView: View {
     private var caption: some View {
         HStack(spacing: 6) {
             Text(block.statusLabel)
-                .foregroundStyle(block.isFailed ? .red : .secondary)
+                .foregroundStyle(block.isFailed ? Otty.Status.err : Otty.Text.secondary)
             if let duration = block.durationLabel {
-                Text("·").foregroundStyle(.tertiary)
-                Text(duration).foregroundStyle(.secondary)
+                Text("·").foregroundStyle(Otty.Text.tertiary)
+                Text(duration).foregroundStyle(Otty.Text.secondary)
             }
         }
         .font(.caption)

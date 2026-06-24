@@ -1,38 +1,21 @@
-// NativePaneColor — cross-platform system colour aliases for the pane grid (REBUILD-V2, L2).
+// NativePaneColor — pane-grid colour aliases, now backed by the otty token layer (REBUILD-V2, L5).
 //
-// The pane views use only SYSTEM semantic colours; AppKit's `NSColor`-backed `Color(.windowBackgroundColor)`
-// family is macOS-only, so this one helper localizes the `#if os(macOS)` / UIKit fallback split. No
-// design-system, no custom tokens — these all resolve to the OS's auto dark/light system palette.
+// Previously these resolved to OS semantic colours (auto light/dark). They now map onto the PINNED
+// otty palette (`Otty.Surface` / `Otty.Divider`) so the chrome is the cohesive "clean like otty.sh"
+// dark theme on every host, light or dark — same rationale as the libghostty terminal-bg pin. The
+// alias names are kept so the 10 call sites need no change; the SOURCE of truth is `OttyDesign.swift`.
 
 #if canImport(SwiftUI)
 import SwiftUI
 
 enum NativePaneColor {
-    /// The chrome / window background (pane header, divider bands, empty content).
-    static var window: Color {
-        #if os(macOS)
-        Color(.windowBackgroundColor)
-        #else
-        Color(.systemBackground)
-        #endif
-    }
+    /// The chrome / window background (pane header, divider bands, empty content) — otty window backdrop.
+    static var window: Color { Otty.Surface.window }
 
-    /// The terminal / editable content surface background.
-    static var terminalBackground: Color {
-        #if os(macOS)
-        Color(.textBackgroundColor)
-        #else
-        Color(.secondarySystemBackground)
-        #endif
-    }
+    /// The terminal / editable content surface background — the floating card surface.
+    static var terminalBackground: Color { Otty.Surface.card }
 
-    /// The hairline separator colour.
-    static var separator: Color {
-        #if os(macOS)
-        Color(.separatorColor)
-        #else
-        Color(.separator)
-        #endif
-    }
+    /// The hairline separator colour — otty divider.
+    static var separator: Color { Otty.Line.divider }
 }
 #endif

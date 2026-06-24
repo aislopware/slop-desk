@@ -46,7 +46,7 @@ struct InspectorColumn: View {
             commandsSection
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(.thinMaterial)
+        .background(Otty.Surface.sidebar)
     }
 
     // MARK: Session
@@ -55,8 +55,8 @@ struct InspectorColumn: View {
         let status = connection.status
         return VStack(alignment: .leading, spacing: 8) {
             Text("Session")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .font(.system(size: Otty.Typeface.small, weight: .semibold))
+                .foregroundStyle(Otty.State.header)
                 .textCase(.uppercase)
 
             // Connection status — dot + label.
@@ -95,19 +95,19 @@ struct InspectorColumn: View {
                 }
             }
         }
-        .font(.system(size: 12))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .font(.system(size: Otty.Typeface.base))
+        .padding(.horizontal, Otty.Metric.space3)
+        .padding(.vertical, Otty.Metric.space2 + 2)
     }
 
-    /// A compact label/value row: a `.secondary` label on the left, the value trailing.
+    /// A compact label/value row: a secondary label on the left, the value trailing.
     private func sessionRow(_ label: String, @ViewBuilder value: () -> some View) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(label)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Otty.Text.secondary)
             Spacer(minLength: 8)
             value()
-                .foregroundStyle(.primary)
+                .foregroundStyle(Otty.Text.primary)
         }
     }
 

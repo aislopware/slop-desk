@@ -36,7 +36,7 @@ struct BlockOutputView: View {
         if isFetching {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text("Fetching output…").font(.callout).foregroundStyle(.secondary)
+                Text("Fetching output…").font(.callout).foregroundStyle(Otty.Text.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 8)
@@ -44,13 +44,17 @@ struct BlockOutputView: View {
             ScrollView([.vertical, .horizontal]) {
                 Text(text)
                     .font(.system(.callout, design: .monospaced))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Otty.Text.primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
             }
-            .background(NativePaneColor.terminalBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .background(Otty.Surface.element)
+            .clipShape(RoundedRectangle(cornerRadius: Otty.Metric.radiusControl))
+            .overlay(
+                RoundedRectangle(cornerRadius: Otty.Metric.radiusControl)
+                    .strokeBorder(Otty.Line.subtle, lineWidth: 1),
+            )
         } else if outputLen == 0 {
             note("No output", "The command produced no captured output.")
         } else {
@@ -63,7 +67,7 @@ struct BlockOutputView: View {
         HStack {
             Text("Output")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Otty.State.header)
             Spacer(minLength: 0)
             Button {
                 copy()
@@ -79,8 +83,8 @@ struct BlockOutputView: View {
 
     private func note(_ title: String, _ detail: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.callout).foregroundStyle(.secondary)
-            Text(detail).font(.caption).foregroundStyle(.tertiary)
+            Text(title).font(.callout).foregroundStyle(Otty.Text.secondary)
+            Text(detail).font(.caption).foregroundStyle(Otty.Text.tertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 6)

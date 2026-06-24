@@ -64,10 +64,10 @@ struct PaneContainer: View {
         VStack(spacing: 12) {
             Image(systemName: kind == .systemDialog ? "lock.shield" : "display")
                 .font(.system(size: 40, weight: .regular))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Otty.Text.secondary)
             Text(kind == .systemDialog ? "system dialog" : "remote window")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
+                .foregroundStyle(Otty.Text.primary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(NativePaneColor.terminalBackground)
@@ -87,12 +87,20 @@ struct PaneContainer: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(NativePaneColor.window)
-        // Native focus ring: accent stroke when focused, else a separator hairline.
+        .background(Otty.Surface.card)
+        // otty "floating card": a radius-8 rounded card with a 1px border — accent when focused, a quiet
+        // card hairline otherwise. Unfocused panes dim to 0.6 (otty's `⌘D` split treatment).
+        .clipShape(RoundedRectangle(cornerRadius: Otty.Metric.radiusCard, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(isFocused ? Color.accentColor : NativePaneColor.separator, lineWidth: 1),
+            RoundedRectangle(cornerRadius: Otty.Metric.radiusCard, style: .continuous)
+                .strokeBorder(
+                    isFocused ? Otty.State.accent : Otty.Line.card,
+                    lineWidth: Otty.Metric.cardBorderWidth,
+                ),
         )
+        .shadow(color: Otty.State.shadow, radius: isFocused ? 6 : 3, y: 1)
+        .opacity(isFocused ? 1 : Otty.Anim.unfocusedPaneOpacity)
+        .animation(Otty.Anim.standard, value: isFocused)
         .contentShape(Rectangle())
         .onTapGesture { store.focusPaneTree(paneID) }
     }

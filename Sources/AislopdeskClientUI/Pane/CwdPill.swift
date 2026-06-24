@@ -18,8 +18,8 @@ struct CwdPill: View {
     var body: some View {
         if let cwd, !cwd.isEmpty {
             Label(displayPath, systemImage: "folder")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+                .font(.system(size: Otty.Typeface.small + 1))
+                .foregroundStyle(Otty.Text.secondary)
                 .lineLimit(1)
                 .truncationMode(.head)
                 .help(cwd)

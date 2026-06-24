@@ -18,15 +18,15 @@ enum StatusPresentation {
         ConnectionPresenter.shortLabel(for: status)
     }
 
-    /// The status-dot colour — SYSTEM semantic only (auto dark/light).
+    /// The status-dot colour — otty status palette (cohesive on the active theme).
     static func connectionColor(_ status: ConnectionStatus) -> Color {
         switch status {
-        case .connected: .green
+        case .connected: Otty.Status.ok
         case .connecting,
-             .reconnecting: .yellow
+             .reconnecting: Otty.Status.warn
         case .failed,
-             .unreachable: .red
-        case .disconnected: .secondary
+             .unreachable: Otty.Status.err
+        case .disconnected: Otty.Text.secondary
         }
     }
 
@@ -57,14 +57,14 @@ enum StatusPresentation {
         }
     }
 
-    /// SYSTEM tint for an agent status (matches the docs/42 glyph palette: idle🟢 working🟡 done🔵 needs🔴).
+    /// otty-palette tint for an agent status (matches docs/42 glyph palette: idle🟢 working🟡 done🔵 needs🔴).
     static func agentTint(_ status: ClaudeStatus) -> Color {
         switch status {
-        case .none: .secondary
-        case .idle: .green
-        case .working: .yellow
-        case .done: .blue
-        case .needsPermission: .red
+        case .none: Otty.Text.secondary
+        case .idle: Otty.Status.ok
+        case .working: Otty.Status.warn
+        case .done: Otty.Status.info
+        case .needsPermission: Otty.Status.err
         }
     }
 

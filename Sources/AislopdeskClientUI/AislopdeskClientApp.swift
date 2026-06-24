@@ -172,6 +172,12 @@ public struct AislopdeskClientApp: App {
                 // L4: hand the single live PreferencesStore to deep views (the agent footer's W4
                 // notification dismissal/enable persistence reads it via `\.preferencesStore`).
                 .preferencesStore(preferences)
+                // L6: the otty chrome is a PINNED palette (default "Paper" — warm off-white + green accent).
+                // Pin the window's colour scheme to the active theme so every system semantic colour we don't
+                // tokenize resolves with the right contrast, and route the global tint to the otty accent so
+                // stock controls/selection adopt it.
+                .tint(Otty.State.accent)
+                .preferredColorScheme(Otty.colorScheme)
                 .onChange(of: scenePhase) { _, phase in handleScenePhase(phase) }
                 // System-dialog monitor poll loop, scoped to the scene. Skipped under automation / when
                 // AISLOPDESK_SYSTEM_DIALOG_PANES=0; inert anyway with no discovery seam registered.

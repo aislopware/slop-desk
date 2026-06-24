@@ -28,7 +28,7 @@ struct NavigatorColumn: View {
             Section {
                 if rows.isEmpty {
                     Label("No tabs open", systemImage: "square.split.2x1")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Otty.Text.secondary)
                 } else {
                     ForEach(rows) { row in
                         Label {
@@ -38,7 +38,7 @@ struct NavigatorColumn: View {
                                 if let subtitle = row.subtitle, !subtitle.isEmpty {
                                     Text(subtitle)
                                         .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(Otty.Text.secondary)
                                         .lineLimit(1)
                                         .truncationMode(.head)
                                 }
