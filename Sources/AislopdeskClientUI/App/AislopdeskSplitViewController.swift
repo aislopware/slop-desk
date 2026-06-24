@@ -63,6 +63,17 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         //    silhouette; revealed from the toolbar (L4a). Matches otty, whose Details panel is hidden until
         //    ⌘⇧R.
         let inspector = NSHostingController(rootView: InspectorColumn(store: store, connection: connection))
+
+        // Each column hosts SwiftUI in its own NSHostingController, which by DEFAULT insets its content below
+        // the window's titlebar safe area (the traffic-light strip). With `.hiddenTitleBar` that pushed every
+        // column's top chrome — the hover-reveal titlebar's centred title + Details toggle, and the sidebar's
+        // "TABS" header — a full row BELOW the traffic lights. Dropping the safe-area regions lets each column
+        // start at the window's top edge, so the titlebar's controls land ON the traffic-light row (each
+        // column still reserves its own titlebar-height strip at the top).
+        navigator.safeAreaRegions = []
+        content.safeAreaRegions = []
+        inspector.safeAreaRegions = []
+
         let inspectorItem = NSSplitViewItem(inspectorWithViewController: inspector)
         inspectorItem.minimumThickness = 240
         inspectorItem.isCollapsed = true

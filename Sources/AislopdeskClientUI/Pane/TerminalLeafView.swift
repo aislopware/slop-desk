@@ -1,8 +1,10 @@
 // TerminalLeafView — the content of a terminal pane leaf (REBUILD-V2, L2 MINIMAL). Composes, top→bottom:
 //   [ terminal surface seam (TerminalRendererFactory.make — the SEAM, else BuildStatusPlaceholderView) ]
-//   [ InputBar (over InputBarModel) ]
 // otty shows NO persistent cwd chrome in the resting window — the working-directory chip only appears in
-// menus/overlays — so there is no bottom cwd pill here.
+// menus/overlays — so there is no bottom cwd pill here. The bottom command `InputBar` is likewise NOT
+// mounted: otty has no persistent composer in the resting window (it toggles one with ⌘⇧E). `InputBar` /
+// `InputBarModel` stay in the tree for that future composer — re-mount it below the surface to restore a
+// persistent bar.
 //
 // SEAM usage: the terminal pixels come from `TerminalRendererFactory.make(model:isFocused:)`. The Xcode
 // app target injects the production `GhosttyTerminalView`; a headless `swift build` registers no factory,
@@ -14,7 +16,7 @@
 //
 // DEFERRED (clean seams, do NOT wire in L2):
 //   - TODO(L3): the `TerminalBlocksView` command-block decoration overlay.
-//   - TODO(L5): the `AgentInputFooter` (Claude bottom bar) below the InputBar.
+//   - TODO(L5): the `AgentInputFooter` (Claude bottom bar) at the pane bottom.
 //   - TODO(L5): the `FileExplorerPanel` side panel.
 
 #if canImport(SwiftUI)
@@ -35,10 +37,9 @@ struct TerminalLeafView: View {
             // TODO(L5): mount `FileExplorerPanel` beside the surface when the per-pane explorer is open.
             terminalSurface
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if let inputBar = live?.inputBar {
-                InputBar(model: inputBar, staticMirror: staticMirror)
-            }
-            // TODO(L5): mount `AgentInputFooter` here (under the InputBar, agent-gated).
+            // Bottom command `InputBar` intentionally NOT mounted — otty has no persistent composer in the
+            // resting window (toggled with ⌘⇧E). Re-add `InputBar(model:staticMirror:)` here to restore it.
+            // TODO(L5): mount `AgentInputFooter` at the pane bottom (agent-gated).
         }
         .background(NativePaneColor.terminalBackground)
         .task(id: live?.id) { await connectIfNeeded() }

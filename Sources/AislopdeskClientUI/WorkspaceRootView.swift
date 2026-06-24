@@ -2,10 +2,11 @@
 //
 // macOS: an `NSViewControllerRepresentable` (`WorkspaceSplitRepresentable`) owning an
 // `AislopdeskSplitViewController` (an `NSSplitViewController` with sidebar | content | inspector items,
-// each an `NSHostingController` over a SwiftUI column). Modelled on CodeEdit's split shell. The window
-// keeps its system titlebar (L1 removed `.hiddenTitleBar`), so the SwiftUI `.toolbar` items here render in
-// the system unified toolbar (sidebar/inspector toggles, "New Tab", a centre connection-status pill, and an
-// agent-status indicator). iOS: a stock `NavigationSplitView` over the same three columns + its own toolbar.
+// each an `NSHostingController` over a SwiftUI column). Modelled on CodeEdit's split shell. The window runs
+// `.windowStyle(.hiddenTitleBar)` — there is NO system unified toolbar; otty's own hover-reveal titlebar
+// (`OttyTitlebar`, hosted as a top overlay inside `ContentColumn`) IS the chrome (sidebar/Details toggles,
+// "New Tab", the centred title menu). iOS: a stock `NavigationSplitView` over the same three columns + its
+// own toolbar.
 //
 // NO custom design-system / token target (deleted in L0): SYSTEM semantic colours + fonts + SF Symbols.
 

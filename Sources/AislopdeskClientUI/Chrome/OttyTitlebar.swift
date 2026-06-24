@@ -38,9 +38,17 @@ struct OttyTitlebar: View {
     private var detailsVisible: Bool { !chrome.inspectorCollapsed }
 
     var body: some View {
-        ZStack {
+        // otty aligns the controls to the TRAFFIC-LIGHT row: top-anchored at `rowTop` so a 24pt plate's icon
+        // centres at y≈15 (the row the red/yellow/green buttons sit on), NOT the vertical centre of the 40pt
+        // strip — that is what kept the title + Details toggle a full row below the lights. When the sidebar
+        // is collapsed the content fills to the window's left edge, so the left group shifts right past the
+        // traffic lights (≈80pt) instead of colliding with them.
+        let rowTop: CGFloat = 3
+        let leftLead: CGFloat = sidebarVisible ? 12 : 80
+        return ZStack(alignment: .top) {
             #if os(macOS)
             TitlebarHoverCatcher { setHover($0) }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             #endif
 
             // Left: new tab + sidebar toggle (toggle stays clickable while the sidebar is collapsed).
@@ -53,10 +61,12 @@ struct OttyTitlebar: View {
                     .allowsHitTesting(sidebarVisible ? chromeShown : true)
                 Spacer(minLength: 0)
             }
-            .padding(.leading, 12)
+            .padding(.leading, leftLead)
+            .padding(.top, rowTop)
 
-            // Centre: the active title as a menu.
+            // Centre: the active title as a menu, on the traffic-light row.
             TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
+                .padding(.top, rowTop)
 
             // Right: Details toggle (stays visible while Details is open).
             HStack(spacing: 0) {
@@ -68,10 +78,11 @@ struct OttyTitlebar: View {
                 .allowsHitTesting(chromeShown || detailsVisible)
             }
             .padding(.trailing, 10)
+            .padding(.top, rowTop)
 
             keyboardShortcuts
         }
-        .frame(height: Otty.Metric.titlebarHeight)
+        .frame(height: Otty.Metric.titlebarHeight, alignment: .top)
         .animation(Otty.Anim.standard, value: sidebarVisible)
         .animation(Otty.Anim.standard, value: detailsVisible)
     }
