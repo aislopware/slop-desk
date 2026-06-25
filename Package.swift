@@ -205,6 +205,14 @@ let package = Package(
             name: "AislopdeskClientUI",
             dependencies: [
                 "AislopdeskWorkspaceCore",
+                // E4: the Details-Panel inspector views name the host-metadata `MetadataCodec` value types
+                // (process / port / dir / git-file) directly. Transitive via WorkspaceCore, but a
+                // `swift build` import needs the module declared here (same as Transport below).
+                "AislopdeskProtocol",
+                // E4/WI-6: `AgentSessionHistoryView` parses the raw `readAgentSession` JSONL through
+                // `AislopdeskInspector.TranscriptParser`. Transitive via WorkspaceCore, but a direct
+                // `import` needs the module declared here (same rationale as Protocol/Transport).
+                "AislopdeskInspector",
                 // L1: the app scene builds the production per-host shared-connection pool with
                 // `ConnectionRegistry` + `LiveMuxConnectionFactory` (both live in Transport). These are
                 // a direct dependency of WorkspaceCore, but a `swift build` import needs the module
@@ -434,7 +442,7 @@ let package = Package(
         // design-system tests were deleted with their views); L1+ re-add per-layer view-logic tests.
         .testTarget(
             name: "AislopdeskClientUITests",
-            dependencies: ["AislopdeskClientUI", "AislopdeskWorkspaceCore"],
+            dependencies: ["AislopdeskClientUI", "AislopdeskWorkspaceCore", "AislopdeskProtocol"],
         ),
 
         // WF-9 GUI video path: ONLY the PURE AislopdeskVideoProtocol is unit-tested

@@ -44,6 +44,12 @@ public protocol ClientTransporting: Sendable {
     /// Requests a Block's captured OUTPUT bytes (WB2, wire type 15 → host) on the CONTROL channel; the
     /// host replies with a `blockOutput` (type 29) the inbound stream surfaces. Default no-op (fakes).
     func sendRequestBlockOutput(index: UInt32) async throws
+    /// Requests host-side pane metadata (E4, wire type 16 → host) on the CONTROL channel: a `verb`
+    /// selects the operation (`MetadataVerb`), `requestID` correlates the reply, `payload` carries the
+    /// verb's argument (often empty — the pane rides the channel envelope). The host always replies with
+    /// a `metadataResponse` (type 30) the inbound stream surfaces, so the caller's pending-request
+    /// registry never hangs. Default no-op (fakes/tests that drive `metadataResponse` directly).
+    func sendMetadataRequest(requestID: UInt32, verb: UInt8, payload: Data) async throws
 
     /// Reports that the consumer actually CONSUMED `wireBytes` of data-class inbound
     /// (`output`/`exit`) — drives the mux receive-window re-grant (credit-at-consumption).
@@ -62,4 +68,7 @@ public extension ClientTransporting {
     /// Default no-op: only the mux transport carries the Block-output request (fakes/tests that drive
     /// `blockOutput` directly through the inbound stream don't need to send the request).
     func sendRequestBlockOutput(index _: UInt32) {}
+    /// Default no-op: only the mux transport carries the metadata request (fakes/tests that drive
+    /// `metadataResponse` directly through the inbound stream don't need to send the request).
+    func sendMetadataRequest(requestID _: UInt32, verb _: UInt8, payload _: Data) {}
 }

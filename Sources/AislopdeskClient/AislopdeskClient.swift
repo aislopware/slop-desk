@@ -91,6 +91,14 @@ public actor AislopdeskClient {
         /// preserved — the UI strips them for clipboard). An EMPTY `output` means the block was evicted
         /// from the host's ring or never existed → the UI shows "output no longer available", never hangs.
         case blockOutput(index: UInt32, output: Data)
+        /// A host metadata reply (E4 wire type 30, host → client), in reply to a
+        /// ``requestMetadata(requestID:verb:payload:)``. `requestID` echoes the request so the client's
+        /// ``MetadataRequestRegistry`` correlates it to one of several in-flight requests; `status` is the
+        /// raw ``MetadataStatus`` byte (0 ok / 1 notFound / 2 error / 3 unsupportedVerb — an unknown
+        /// future byte is treated as error); `payload` is the opaque, verb-specific bytes (a `MetadataCodec`
+        /// list, raw UTF-8, or raw file bytes) the typed `MetadataClient` decodes. The host ALWAYS replies
+        /// (status error/empty on any failure) so the registry never hangs.
+        case metadataResponse(requestID: UInt32, status: UInt8, payload: Data)
         /// The remote child process exited with `code`. Terminal — ``output`` finishes
         /// right after this is surfaced.
         case exit(code: Int32)
@@ -475,6 +483,11 @@ public actor AislopdeskClient {
             // BLOCK output (type 29): the reply to a requestBlockOutput. Surface the raw VT bytes; the
             // UI resolves the pending request (empty == evicted/unknown — the UI must not hang).
             eventBroadcaster.yield(.blockOutput(index: index, output: output))
+        case let .metadataResponse(requestID, status, payload):
+            // METADATA reply (type 30, E4): the reply to a requestMetadata. Surface the raw status byte +
+            // opaque payload verbatim; the UI's MetadataRequestRegistry correlates it by requestID and the
+            // typed MetadataClient decodes the payload (AislopdeskClient does not depend on MetadataCodec).
+            eventBroadcaster.yield(.metadataResponse(requestID: requestID, status: status, payload: payload))
         case let .pong(timestampMS):
             recordPong(sentAtMS: timestampMS)
         default:
@@ -622,6 +635,18 @@ public actor AislopdeskClient {
     public func requestBlockOutput(index: UInt32) async throws {
         guard let transport else { throw ClientError.invalidState("requestBlockOutput before connect") }
         try await transport.sendRequestBlockOutput(index: index)
+    }
+
+    /// Requests host-side pane metadata (E4, wire type 16) — fired by the typed ``MetadataClient`` façade
+    /// behind the Details Panel. `verb` selects the operation (``MetadataVerb``), `requestID` is a
+    /// client-chosen monotonic id the host echoes so the registry can correlate the reply, and `payload`
+    /// carries the verb's argument (empty for the pane-scoped verbs — the pane rides the channel
+    /// envelope). The host always replies with a `.metadataResponse` (type 30) the inbound pump surfaces;
+    /// the registry's 5 s timeout is the belt-and-braces guard for a dropped reply. Rides the CONTROL
+    /// channel, so it never head-of-line-blocks behind an output flood on DATA.
+    public func requestMetadata(requestID: UInt32, verb: UInt8, payload: Data) async throws {
+        guard let transport else { throw ClientError.invalidState("requestMetadata before connect") }
+        try await transport.sendMetadataRequest(requestID: requestID, verb: verb, payload: payload)
     }
 
     // MARK: iOS lifecycle seam ([17] §2.5)

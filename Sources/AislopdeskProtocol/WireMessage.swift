@@ -167,6 +167,46 @@ public enum WireMessage: Equatable, Sendable {
     ///   empty label is unambiguous.
     case claudeStatus(state: UInt8, kind: UInt8, label: String)
 
+    /// A generic host-metadata RPC **request** (E4, type 16, client → host, CONTROL). ONE shared
+    /// request/response pair (with ``metadataResponse(requestID:status:payload:)``) backs every
+    /// Details-Panel surface that reads host-side metadata — processes, listening ports, cwd,
+    /// git status/diff, lazy directory listings, agent-session files — instead of adding eight
+    /// frozen wire types. It is the exact structural twin of ``requestBlockOutput(index:)`` →
+    /// ``blockOutput(index:output:)`` (a client-chosen id + a length-prefixed reply payload).
+    ///
+    /// - `requestID` is a client-chosen monotonic `UInt32` correlating a reply to one of several
+    ///   in-flight requests (the panel may fire processes + ports + gitStatus at once). The host
+    ///   echoes it VERBATIM in the response (stateless responder, like ``pong(timestampMS:)``).
+    /// - `verb` selects the operation — the raw `UInt8` of ``MetadataVerb`` (`1` processes …
+    ///   `8` readAgentSession). The wire carries the RAW byte, NOT the enum (so an unknown future
+    ///   verb is forward-tolerantly carried; the host replies `status = unsupportedVerb`).
+    /// - `payload` is the verb's length-prefixed request argument (empty for the pane-scoped verbs;
+    ///   a UTF-8 path / id for the parameterized ones). It is OPAQUE to this envelope — the per-verb
+    ///   `MetadataCodec` validates it; the decoder only validates the declared length before reading.
+    ///
+    /// The pane identity rides the **mux channel envelope** (the channelID = the pane/PTY), exactly
+    /// as for types 26/27 — so the pane-scoped verbs need no pane field in the body. Additive within
+    /// wire version 1: a peer that does not know type 16 DROPS the frame (`unknownMessageType`),
+    /// never traps.
+    case metadataRequest(requestID: UInt32, verb: UInt8, payload: Data)
+
+    /// A generic host-metadata RPC **response** (E4, type 30, host → client, CONTROL), in reply to a
+    /// ``metadataRequest(requestID:verb:payload:)``. The host ALWAYS replies (so the client's
+    /// pending-request registry never hangs — `status = error` / empty payload on any failure).
+    ///
+    /// - `requestID` echoes the request's id verbatim (the correlation key).
+    /// - `status` is the raw `UInt8` of ``MetadataStatus`` (`0` ok / `1` notFound / `2` error /
+    ///   `3` unsupportedVerb). Carried as a raw byte — an unknown future status clamps to error
+    ///   client-side (forward-tolerant).
+    /// - `payload` is the verb-specific response body (a `MetadataCodec` list encoding, or raw
+    ///   opaque bytes for `cwd`/`gitDiff`/`readAgentSession`), length-prefixed and OPAQUE to this
+    ///   envelope; the typed `MetadataCodec`/client decoders validate it. The decoder validates the
+    ///   declared payload length before reading (never over-reads a hostile body).
+    ///
+    /// Additive within wire version 1: a peer that does not know type 30 DROPS the frame
+    /// (`unknownMessageType`), never traps. Rides CONTROL like the other inline signals.
+    case metadataResponse(requestID: UInt32, status: UInt8, payload: Data)
+
     /// The semantic state of the foreground command in a pane's shell (from OSC 133).
 
     /// The semantic state of the foreground command in a pane's shell (from OSC 133).
@@ -192,6 +232,7 @@ public enum WireMessage: Equatable, Sendable {
         case .bye: 13
         case .ping: 14
         case .requestBlockOutput: 15
+        case .metadataRequest: 16
         case .helloAck: 20
         case .title: 21
         case .bell: 22
@@ -202,6 +243,7 @@ public enum WireMessage: Equatable, Sendable {
         case .claudeStatus: 27
         case .commandBlock: 28
         case .blockOutput: 29
+        case .metadataResponse: 30
         }
     }
 
@@ -218,6 +260,7 @@ public enum WireMessage: Equatable, Sendable {
              .bye,
              .ping,
              .requestBlockOutput,
+             .metadataRequest,
              .helloAck,
              .title,
              .bell,
@@ -227,7 +270,8 @@ public enum WireMessage: Equatable, Sendable {
              .foregroundProcess,
              .claudeStatus,
              .commandBlock,
-             .blockOutput:
+             .blockOutput,
+             .metadataResponse:
             .control
         }
     }

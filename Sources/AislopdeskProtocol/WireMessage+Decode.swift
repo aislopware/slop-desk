@@ -58,6 +58,16 @@ extension WireMessage {
         case 15: // requestBlockOutput
             return try .requestBlockOutput(index: reader.readUInt32())
 
+        case 16: // metadataRequest
+            let requestID = try reader.readUInt32()
+            let verb = try reader.readUInt8()
+            // Validate the declared payload length BEFORE allocating/reading: readBytes throws
+            // `truncated` if the body is shorter than the declared count — never over-reading a
+            // hostile body. The payload is opaque here (the per-verb MetadataCodec validates it).
+            let payloadLen = try Int(reader.readUInt32())
+            let payload = try reader.readBytes(payloadLen)
+            return .metadataRequest(requestID: requestID, verb: verb, payload: payload)
+
         case 20: // helloAck
             let idBytes = try reader.readBytes(sessionIDByteCount)
             let resumeFromSeq = try reader.readInt64()
@@ -161,6 +171,16 @@ extension WireMessage {
             let outputLen = try Int(reader.readUInt32())
             let output = try reader.readBytes(outputLen)
             return .blockOutput(index: index, output: output)
+
+        case 30: // metadataResponse
+            let requestID = try reader.readUInt32()
+            let status = try reader.readUInt8()
+            // Validate the declared payload length BEFORE allocating/reading: readBytes throws
+            // `truncated` if the body is shorter than the declared count — never over-reading a
+            // hostile body. The payload is opaque here (the typed MetadataCodec/client validates it).
+            let payloadLen = try Int(reader.readUInt32())
+            let payload = try reader.readBytes(payloadLen)
+            return .metadataResponse(requestID: requestID, status: status, payload: payload)
 
         default:
             throw AislopdeskError.unknownMessageType(type)

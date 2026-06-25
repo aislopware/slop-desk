@@ -20,6 +20,21 @@ struct InspectorColumn: View {
 
     @State private var selected: DetailsTab = .info
 
+    /// Whether the "View Session History" viewer (`AgentSessionHistoryView`) is presented over the panel.
+    /// Set by the Info tab's agent-sessions action; the viewer binds the focused pane's model (its session
+    /// list + the `readAgentSession` fetch). E4/WI-6.
+    @State private var showSessionHistory = false
+
+    /// PER-PANE decoded host metadata (E4): processes / ports / git / files / cwd. One model per pane the
+    /// inspector has shown — so each pane RETAINS its data and a slow `refresh()` for the pane you just left
+    /// can never clobber the pane you switched TO (a single shared model would race two in-flight refreshes).
+    /// Pruned to live panes (a closed pane drops out) so the cache stays bounded.
+    @State private var models: [PaneID: PaneMetadataModel] = [:]
+    /// A stable, never-bound empty model rendered for the one frame before the focused pane's model is
+    /// created (the `.task` populates `models` off the body-update path), and when no pane is focused. Its
+    /// `nil` client makes every read an empty state — never a hang.
+    @State private var placeholder = PaneMetadataModel()
+
     private enum DetailsTab: String, CaseIterable, Identifiable {
         case info
         case git
@@ -60,6 +75,30 @@ struct InspectorColumn: View {
         return store.tree.activeSession?.specs[id]?.lastKnownCwd
     }
 
+    /// The focused pane's typed metadata façade, or `nil` while it is disconnected.
+    private var activeMetadataClient: MetadataClient? {
+        activeLive?.connection?.activeMetadataClient
+    }
+
+    /// Identity of "what the panel is showing": the focused pane AND its (re)connected metadata façade.
+    /// A change — switching panes, or a pane (re)connecting with a fresh `MetadataClient` — re-fires the
+    /// bind+refresh `.task` (which auto-cancels the prior, so a stale in-flight fetch can't land late).
+    private struct RefreshKey: Equatable {
+        let pane: PaneID?
+        let client: ObjectIdentifier?
+    }
+
+    private var refreshKey: RefreshKey {
+        RefreshKey(pane: activePaneID, client: activeMetadataClient.map { ObjectIdentifier($0) })
+    }
+
+    /// The focused pane's metadata model (its cached one, or the empty placeholder until the `.task` mints
+    /// it). The tabs always have a non-`nil` model to render, so there is no missing-data layout jump.
+    private var activeModel: PaneMetadataModel {
+        guard let id = activePaneID, let model = models[id] else { return placeholder }
+        return model
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -68,6 +107,43 @@ struct InspectorColumn: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Otty.Surface.sidebar)
+        .task(id: refreshKey) { await bindAndRefresh() }
+        .sheet(isPresented: $showSessionHistory) {
+            AgentSessionHistoryView(model: activeModel, onClose: { showSessionHistory = false })
+        }
+    }
+
+    /// Binds the focused pane's metadata model to its façade and fetches its Info/Git/Files data, then
+    /// mirrors the host-resolved cwd into the pane's `lastKnownCwd` (so the titlebar / rail / palette pick it
+    /// up). Each pane has its OWN model, so a stale in-flight refresh writes to the pane you left, never the
+    /// one you switched to. A disconnected pane (`nil` client) just clears its model — no fetch, no hang.
+    private func bindAndRefresh() async {
+        pruneClosedPaneModels()
+        guard let id = activePaneID else { return }
+        let model: PaneMetadataModel
+        if let existing = models[id] {
+            model = existing
+        } else {
+            model = PaneMetadataModel()
+            models[id] = model
+        }
+        let client = activeMetadataClient
+        model.setClient(client)
+        guard client != nil else { return }
+        await model.refresh()
+        if let cwd = model.cwd, !cwd.isEmpty {
+            store.setLastKnownCwd(cwd, for: id)
+        }
+    }
+
+    /// Drops models for panes the inspector once showed but that are now closed (no live session handle),
+    /// keeping the per-pane cache bounded. The active pane is always materialized, so a missing handle ⇒
+    /// the pane is gone.
+    private func pruneClosedPaneModels() {
+        for id in Array(models.keys) where store.handle(for: id) == nil {
+            models[id]?.setClient(nil)
+            models.removeValue(forKey: id)
+        }
     }
 
     // MARK: Segmented header (otty Details bar — active = icon+label pill, inactive = icon only)
@@ -107,17 +183,59 @@ struct InspectorColumn: View {
     @ViewBuilder private var content: some View {
         switch selected {
         case .info: infoContent
-        case .git: emptyState("No Changes", systemImage: "arrow.triangle.branch", note: "Git status will appear here")
-        case .files: emptyState("No Files", systemImage: "folder", note: "The working-directory tree will appear here")
+        // `.id(activePaneID)` resets each tab's local interaction state (selected diff file / find query)
+        // when the focused pane changes — `activeModel` already switches to that pane's data.
+        case .git: GitStatusView(model: activeModel).id(activePaneID)
+        case .files: RemoteFileTreeView(model: activeModel).id(activePaneID)
         }
     }
 
     private var infoContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             sessionSection
-            Rectangle().fill(Otty.Line.divider).frame(height: 1).padding(.horizontal, Otty.Metric.space3)
+            sectionDivider
+            ProcessPortsView(model: activeModel)
+                .padding(.bottom, Otty.Metric.space2)
+            if !activeModel.agentSessions.isEmpty {
+                sectionDivider
+                agentSessionsSection
+            }
+            sectionDivider
             commandsSection
         }
+    }
+
+    /// The Info-tab agent-history affordance (E4/WI-6): a "View Session History" action — otty's green
+    /// clock row — shown only when the pane project has captured agent sessions. Tapping it presents
+    /// `AgentSessionHistoryView` over the panel; the trailing count hints how many sessions are available.
+    private var agentSessionsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            OttySectionHeader("Sessions")
+            Button {
+                showSessionHistory = true
+            } label: {
+                HStack(spacing: Otty.Metric.space2) {
+                    Image(systemName: "clock.arrow.circlepath")
+                    Text("View Session History")
+                    Spacer(minLength: Otty.Metric.space2)
+                    Text(String(activeModel.agentSessions.count))
+                        .font(.system(size: Otty.Typeface.footnote))
+                        .foregroundStyle(Otty.Text.tertiary)
+                        .monospacedDigit()
+                }
+                .font(.system(size: Otty.Typeface.base))
+                .foregroundStyle(Otty.State.accent)
+                .padding(.horizontal, Otty.Metric.space3)
+                .padding(.vertical, 3)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.bottom, Otty.Metric.space2)
+    }
+
+    private var sectionDivider: some View {
+        Rectangle().fill(Otty.Line.divider).frame(height: 1).padding(.horizontal, Otty.Metric.space3)
     }
 
     private var sessionSection: some View {

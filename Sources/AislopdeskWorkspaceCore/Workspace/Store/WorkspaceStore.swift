@@ -3858,4 +3858,18 @@ public extension WorkspaceStore {
         }
         focusPaneTree(paneID)
     }
+
+    /// Persists the host-resolved working directory of a pane into ``PaneSpec/lastKnownCwd`` (E4): the
+    /// Details-Panel Info tab writes the `cwd` verb's result here so the titlebar / rail / palette mirror
+    /// the focused pane's remote cwd. Live-model-aware (routes through the same `updateSpecLive` wire as
+    /// `lastKnownTitle`); guarded against an unchanged value so a re-focus does NOT spend a reconcile.
+    func setLastKnownCwd(_ cwd: String, for paneID: PaneID) {
+        let current: String? =
+            switch liveModel {
+            case .tree: tree.spec(for: paneID)?.lastKnownCwd
+            case .canvas: workspace.canvas.spec(for: paneID)?.lastKnownCwd
+            }
+        guard current != cwd else { return }
+        updateSpecLive(paneID) { $0.lastKnownCwd = cwd }
+    }
 }

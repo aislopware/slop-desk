@@ -97,6 +97,10 @@ public final class ConnectionViewModel {
     public var onCommandCompleted: ((_ exitCode: Int32?, _ durationMS: UInt32) -> Void)?
 
     private var client: AislopdeskClient?
+    /// The pane's typed metadata façade (E4), created on connect bound to the live ``client`` and torn
+    /// down on disconnect. The inspector's ``PaneMetadataModel`` drives it; this VM folds the inbound
+    /// `.metadataResponse` events into its pending-request registry. `nil` while disconnected.
+    private var metadataClient: MetadataClient?
     /// Monotonic connect-attempt counter (R6 #1 — the VM analogue of `AislopdeskClient.connectGeneration`).
     /// `connect()`/`resume()` capture it before the long handshake `await`; a teardown / reconnect /
     /// second connect that lands during that suspension means the post-await `status`/`sessionID` writes
@@ -264,6 +268,10 @@ public final class ConnectionViewModel {
     /// The live client (so the input bar can `sendInput`). `nil` while disconnected.
     public var activeClient: AislopdeskClient? { client }
 
+    /// The pane's typed metadata façade (E4), or `nil` while disconnected. The Details-Panel
+    /// ``PaneMetadataModel`` binds to this to fetch processes/ports/cwd/git/files/sessions over the wire.
+    public var activeMetadataClient: MetadataClient? { metadataClient }
+
     // MARK: Lifecycle
 
     /// Opens this pane's CHANNEL on the shared mux at the current app target, starting reconnect
@@ -343,6 +351,14 @@ public final class ConnectionViewModel {
         terminal.requestBlockOutputSink = { [weak client] index in
             Task { try? await client?.requestBlockOutput(index: index) }
         }
+
+        // E4: the pane's metadata façade. Its `send` seam fires a `requestMetadata` on the CONTROL channel
+        // (wire type 16); the reply (type 30) is surfaced as a `.metadataResponse` event and folded into
+        // this façade's registry by `foldEvent` below. Captures `weak client` so a torn-down client is
+        // never targeted; the registry's timeout + a teardown `cancelAll()` guarantee no await hangs.
+        metadataClient = MetadataClient(send: { [weak client] requestID, verb, payload in
+            try? await client?.requestMetadata(requestID: requestID, verb: verb, payload: payload)
+        })
 
         // Single UI-layer events loop (chrome status + forward to the terminal model).
         observeEvents(client)
@@ -597,6 +613,12 @@ public final class ConnectionViewModel {
             // WB2 Warp-style Blocks (wire types 28/29): folded into the terminal model's per-pane block
             // store below (terminal.handle). The chrome status is unaffected.
             break
+        case let .metadataResponse(requestID, status, payload):
+            // E4 host metadata reply (wire type 30): correlate it to the pending request in the pane's
+            // metadata façade (the typed MetadataClient decodes the payload for the Details Panel). The
+            // chrome status is unaffected. A reply for an unknown/already-resolved id is dropped by the
+            // registry, so a stale type-30 after a pane switch is harmless.
+            metadataClient?.resolve(requestID: requestID, status: status, payload: payload)
         case let .title(text):
             // Persist the live shell title into the pane spec so a relaunch can restore it.
             // Empty strings are suppressed — the host emits "" on connect before the shell sets a real one.
@@ -673,6 +695,10 @@ public final class ConnectionViewModel {
         // WB2: drop the Block-output request sink too — a copy-output request after teardown then resolves
         // immediately as "unavailable" (no live client to ask) rather than targeting a closed client.
         terminal.requestBlockOutputSink = nil
+        // E4: cancel every in-flight metadata request (each resolves to empty so a Details-Panel fetch
+        // mid-teardown unblocks at once, not after the 5 s timeout) and drop the façade.
+        metadataClient?.cancelAll()
+        metadataClient = nil
         outWakeContinuation?.finish()
         outWakeContinuation = nil
         outDrainTask?.cancel()

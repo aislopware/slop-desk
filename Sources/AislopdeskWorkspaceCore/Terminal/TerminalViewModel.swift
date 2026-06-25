@@ -946,6 +946,11 @@ public final class TerminalViewModel {
             // WB2 Warp-style Blocks (wire types 28/29): the metadata upsert + the output-request resolve
             // both fold into the per-pane block store, which drives the navigator / sticky header / chip.
             blocks.handle(event)
+        case .metadataResponse:
+            // Host metadata reply (E4 wire type 30): correlated + decoded at the connection layer
+            // (ConnectionViewModel folds it into the pane's MetadataRequestRegistry). The terminal model
+            // holds no state for it.
+            break
         case let .exit(code):
             connectionStatus = .exited(code: code)
             // The shell died mid-"command" (e.g. `exit` itself emits OSC 133;C but never a

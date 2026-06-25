@@ -139,6 +139,10 @@ public actor MuxClientTransport: ClientTransporting {
         try await requireControl().send(.requestBlockOutput(index: index))
     }
 
+    public func sendMetadataRequest(requestID: UInt32, verb: UInt8, payload: Data) async throws {
+        try await requireControl().send(.metadataRequest(requestID: requestID, verb: verb, payload: payload))
+    }
+
     public func close() async {
         for task in forwarders { task.cancel() }
         forwarders.removeAll()

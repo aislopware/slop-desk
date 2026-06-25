@@ -114,6 +114,12 @@ final class MuxChannelSession: @unchecked Sendable {
     /// from the exit task. Guarded by `observersLock`.
     private var closeObservers: [UUID: @Sendable () -> Void] = [:]
 
+    /// E4 — a dedicated serial queue for the host metadata RPC's BLOCKING probe work (git/lsof/proc/
+    /// FileManager). Kept OFF the serial control loop so a slow `lsof` / `git` can never stall this
+    /// pane's resize/ack/ping; ``enqueueControl`` (lock-guarded) carries the response back. Serial so
+    /// concurrent metadata requests for one pane don't pile up subprocesses.
+    private let metadataQueue = DispatchQueue(label: "aislopdesk.host.metadata", qos: .userInitiated)
+
     private let taskLock = NSLock()
     private var replay: ReplayBuffer
     private let replayLock = NSLock()
@@ -494,6 +500,10 @@ final class MuxChannelSession: @unchecked Sendable {
                         // empty response if evicted / blocks disabled. Orders against nothing — like
                         // a ping, deliberately NO flushPendingResize so it can't defeat the debounce.
                         self.serveBlockOutput(index: index)
+                    case let .metadataRequest(requestID, verb, payload):
+                        // E4: serve the Details-Panel metadata RPC (type 30) off the metadata queue.
+                        // Orders against nothing — like blockOutput, NO flushPendingResize.
+                        self.serveMetadata(requestID: requestID, verb: verb, payload: payload)
                     default:
                         self.flushPendingResize()
                     }
@@ -750,6 +760,11 @@ final class MuxChannelSession: @unchecked Sendable {
                         self?.enqueueControl([.pong(timestampMS: timestampMS)])
                     case let .requestBlockOutput(index):
                         self?.serveBlockOutput(index: index)
+                    case let .metadataRequest(requestID, verb, payload):
+                        // E4: serve the metadata RPC on the rebind (reattach) loop too — without this
+                        // the Details Panel silently dies after a reconnect (the type-26/27 + blockOutput
+                        // duplicated-case shape). Orders against nothing — NO flushPendingResize.
+                        self?.serveMetadata(requestID: requestID, verb: verb, payload: payload)
                     default:
                         self?.flushPendingResize()
                     }
@@ -1246,6 +1261,26 @@ final class MuxChannelSession: @unchecked Sendable {
         let message = blockTracker?.serveOutput(index: index) ?? .blockOutput(index: index, output: Data())
         blocksLock.unlock()
         enqueueControl([message])
+    }
+
+    /// E4 — serves a `metadataRequest(requestID:verb:payload:)` by running the PURE
+    /// ``MetadataResponseBuilder`` over THIS pane's ``HostMetadataProbe`` (its `masterFD` + shell pid)
+    /// and enqueueing the resulting type-30 `metadataResponse` on the CONTROL sender. The probe's
+    /// git/lsof/proc work is BLOCKING, so it runs on ``metadataQueue`` (OFF the serial control loop) —
+    /// a slow query must never stall this pane's resize/ack/ping. ALWAYS replies (the builder maps any
+    /// failure — unknown verb / confinement rejection / missing cwd / query-nil — to a status byte +
+    /// empty payload), so the client's ``MetadataRequestRegistry`` never hangs waiting. Orders against
+    /// nothing (like a ping / blockOutput) — deliberately NO `flushPendingResize`.
+    private func serveMetadata(requestID: UInt32, verb: UInt8, payload: Data) {
+        let masterFD = pty.masterFD
+        let shellPID = pty.pid
+        metadataQueue.async { [weak self] in
+            guard let self else { return }
+            let probe = HostMetadataProbe(masterFD: masterFD, shellPID: shellPID)
+            let response = MetadataResponseBuilder(query: probe)
+                .response(requestID: requestID, verb: verb, payload: payload)
+            enqueueControl([response])
+        }
     }
 
     /// Atomically takes the whole pending control batch; `nil` when empty (drain re-parks).

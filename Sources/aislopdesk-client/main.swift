@@ -376,6 +376,10 @@ Task {
                 // Navigator / sticky header / copy-output). The raw-mode interactive CLI's local terminal
                 // already renders the OSC 133 marks natively, so the structured events are a no-op here.
                 break
+            case .metadataResponse:
+                // E4 host metadata replies (wire type 30) back the GUI Details Panel. The raw-mode CLI
+                // never issues a metadata request, so a reply is a no-op here.
+                break
             }
         }
     }

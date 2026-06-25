@@ -159,9 +159,9 @@ final class ClaudeWireCodecTests: XCTestCase {
 
     func testUnknownTypeByteDropsNotTraps() throws {
         // An older peer that does not know 26/27 (or any future tag) DROPS the frame via
-        // unknownMessageType — validate-then-drop, never a trap. (28/29 are now commandBlock/
-        // blockOutput, so use a still-unassigned tag.)
-        for unknown: UInt8 in [30, 99, 0, 255] {
+        // unknownMessageType — validate-then-drop, never a trap. (16/28/29/30 are now assigned
+        // metadata/block tags, so use a still-unassigned tag.)
+        for unknown: UInt8 in [31, 99, 0, 255] {
             XCTAssertThrowsError(try decodePayload([unknown, 0xAB, 0xCD])) { error in
                 XCTAssertEqual(error as? AislopdeskError, .unknownMessageType(unknown))
             }

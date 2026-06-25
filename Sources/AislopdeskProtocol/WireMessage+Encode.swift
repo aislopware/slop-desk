@@ -126,6 +126,24 @@ extension WireMessage {
             frame.appendBE(UInt32(truncatingIfNeeded: output.count))
             frame.append(output)
 
+        case let .metadataRequest(requestID, verb, payload):
+            // [UInt32 BE requestID][UInt8 verb][UInt32 BE payloadLen][payload bytes]. The payload is
+            // length-prefixed so the decoder validates the declared length before reading (never
+            // over-reads a hostile body); the inner per-verb MetadataCodec validates the bytes.
+            frame.appendBE(requestID)
+            frame.append(verb)
+            frame.appendBE(UInt32(truncatingIfNeeded: payload.count))
+            frame.append(payload)
+
+        case let .metadataResponse(requestID, status, payload):
+            // [UInt32 BE requestID][UInt8 status][UInt32 BE payloadLen][payload bytes]. Same shape as
+            // metadataRequest with a status byte in place of the verb; the payload is length-prefixed
+            // and opaque (a MetadataCodec list encoding or raw cwd/diff/session bytes).
+            frame.appendBE(requestID)
+            frame.append(status)
+            frame.appendBE(UInt32(truncatingIfNeeded: payload.count))
+            frame.append(payload)
+
         case .bell:
             break // empty body
 
@@ -238,6 +256,10 @@ public extension WireMessage {
                 // index + hasExit + Int32 + hasDuration + UInt32 + complete + outputLen + UInt16 len + cmd
                 4 + 1 + 4 + 1 + 4 + 1 + 4 + 2 + Self.clampedCommandText(commandText).utf8.count
             case let .blockOutput(_, output): 4 + 4 + output.count // index + UInt32 len + output bytes
+            case let .metadataRequest(_, _, payload): 4 + 1 + 4 + payload
+                .count // requestID + verb + UInt32 len + payload
+            case let .metadataResponse(_, _, payload): 4 + 1 + 4 + payload
+                .count // requestID + status + UInt32 len + payload
             case .helloAck: Self.sessionIDByteCount + 8 + 1 // UUID + Int64 + Bool
             case let .title(string): string.utf8.count
             case let .notification(title, bodyText): 2 + Self.clampedNotificationTitle(title).utf8.count + bodyText.utf8

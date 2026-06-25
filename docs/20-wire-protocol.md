@@ -87,6 +87,9 @@ UUIDs (`sessionID`) are sent as their **16 raw bytes** in canonical order (not a
 | 11 | `resize`   | client → host | control | `UInt16 cols` + `UInt16 rows` + `UInt16 pxWidth` + `UInt16 pxHeight` |
 | 12 | `ack`      | client → host | control | `Int64 seq` (highest contiguous output seq durably received) |
 | 13 | `bye`      | client → host | control | (empty) |
+| 14 | `ping`     | client → host | control | `UInt64 timestampMS` (BE) — the client's monotonic clock, echoed verbatim in `pong` |
+| 15 | `requestBlockOutput` | client → host | control | `UInt32 index` (BE) — the Block index whose captured output to fetch (→ `blockOutput`) |
+| 16 | `metadataRequest` | client → host | control | `UInt32 requestID` (BE) + `UInt8 verb` + `UInt32 payloadLen` (BE) + `payload` bytes (opaque) — the host metadata RPC (E4) |
 | 20 | `helloAck` | host → client | control | 16-byte `sessionID` + `Int64 resumeFromSeq` + `UInt8 returningClient` (0/1) |
 | 21 | `title`    | host → client | control | remaining bytes = UTF-8 window/title string |
 | 22 | `bell`     | host → client | control | (empty) |
@@ -95,6 +98,9 @@ UUIDs (`sessionID`) are sent as their **16 raw bytes** in canonical order (not a
 | 25 | `notification` | host → client | control | `UInt16 titleLen` (BE) + `title` UTF-8 + remaining bytes = `body` UTF-8 |
 | 26 | `foregroundProcess` | host → client | control | remaining bytes = UTF-8 PTY foreground-process basename (coarse Claude-Code watch; `""` clears) |
 | 27 | `claudeStatus` | host → client | control | `UInt8 state` + `UInt8 kind` + `UInt16 labelLen` (BE) + `label` UTF-8 (rich Claude-Code hook status) |
+| 28 | `commandBlock` | host → client | control | `UInt32 index` + `UInt8 hasExit` + `Int32 exitCode` (BE, 0 if absent) + `UInt8 hasDuration` + `UInt32 durationMS` (BE, 0 if absent) + `UInt8 complete` + `UInt32 outputLen` (BE) + `UInt16 cmdLen` (BE) + `commandText` UTF-8 (Warp-style Block metadata) |
+| 29 | `blockOutput` | host → client | control | `UInt32 index` + `UInt32 outputLen` (BE) + `output` bytes (RAW VT, not UTF-8) — reply to `requestBlockOutput` |
+| 30 | `metadataResponse` | host → client | control | `UInt32 requestID` (BE) + `UInt8 status` + `UInt32 payloadLen` (BE) + `payload` bytes (opaque) — reply to `metadataRequest` (E4) |
 
 `protocolVersion` is currently **1** (`Aislopdesk.protocolVersion`). There is **no version
 negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` whose
@@ -162,10 +168,45 @@ negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` who
     on a basename edge, type 27 only when the `(state, kind, label)` triple changes — an idle
     `claude` never spams identical frames.
 
-The next free host → client CONTROL type byte is **28**. (It was reserved for a W14 OSC-8 hyperlink type,
-but W14 ships OSC-8 click-to-open via **libghostty's own hit-testing** — `GHOSTTY_ACTION_OPEN_URL` /
-`GHOSTTY_ACTION_MOUSE_OVER_LINK` — so **no wire change was needed** and 28 is left free. See
-DECISIONS.md "W14 terminal parity".)
+- **`metadataRequest` (16) and `metadataResponse` (30) are the generic host-metadata RPC** (E4,
+  CONTROL). ONE shared request/response pair backs every Details-Panel surface that reads host-side
+  metadata — processes, listening ports, cwd, git status/diff, lazy directory listings, agent-session
+  files — instead of adding ~8 frozen wire types. They are the structural twin of
+  `requestBlockOutput` (15) → `blockOutput` (29). They are **additive within wire version 1**: a peer
+  that does not know either type DROPS the frame (`unknownMessageType`) — validate-then-drop, never a
+  trap. The pane identity is carried by the mux channel envelope, not in either body, so the
+  pane-scoped verbs need no pane field.
+  - **`metadataRequest`** body = `[UInt32 BE requestID][UInt8 verb][UInt32 BE payloadLen][payload]`.
+    `requestID` is a client-chosen monotonic `UInt32` correlating a reply to one of several in-flight
+    requests; the host echoes it **verbatim** (stateless responder, like `pong`). `verb` is the raw
+    `UInt8` of `MetadataVerb`: `1` processes, `2` ports, `3` cwd, `4` gitStatus (subsumes branch +
+    remote + ahead/behind + changed files), `5` gitDiff, `6` listDirectory, `7` listAgentSessions,
+    `8` readAgentSession. `payload` is the verb's length-prefixed argument — empty for the pane-scoped
+    verbs (`processes`/`ports`/`cwd`/`gitStatus`), a UTF-8 path/id for the parameterized ones
+    (`gitDiff`/`listDirectory`/`listAgentSessions`/`readAgentSession`).
+  - **`metadataResponse`** body = `[UInt32 BE requestID][UInt8 status][UInt32 BE payloadLen][payload]`.
+    The host **always replies** (so the client's pending-request registry never hangs — `status =
+    error`/empty on any failure). `status` is the raw `UInt8` of `MetadataStatus`: `0` ok, `1`
+    notFound, `2` error, `3` unsupportedVerb. `payload` is the verb-specific response — a per-verb
+    `MetadataCodec` list encoding (`ProcessList`/`PortList`/`DirListing`/`GitStatus`/`AgentSessionList`,
+    documented with the codecs) or raw opaque bytes for `cwd`/`gitDiff`/`readAgentSession`.
+  - The `verb`/`status` bytes are carried RAW (forward-tolerant): an unknown future `verb` is answered
+    `unsupportedVerb`, an unknown future `status` clamps to error client-side — neither traps. The
+    decoder **validates the declared `payloadLen` before reading** (a short body → `truncated`, never
+    an over-read of a hostile datagram); the `payload` is OPAQUE to this envelope (the per-verb
+    `MetadataCodec` / typed client decoders validate the inner bytes, with strict UTF-8 on string
+    fields). The **host also treats the request `payload` as untrusted**: path args are confined to the
+    pane's cwd subtree (reject `..` escapes / absolute paths outside the repo root) and entry counts /
+    byte sizes are capped before reading, so a hostile `listDirectory("/etc")` /
+    `readAgentSession("../../secrets")` cannot exfiltrate arbitrary host files. Both ride the
+    head-of-line-independent CONTROL channel like `title`/`commandStatus` and are **not**
+    sequenced/replayed.
+
+The next free **client → host** CONTROL type byte is **17** (10–16 used). The next free
+**host → client** CONTROL type byte is **31** (20–30 used). (Byte 28 was once reserved for a W14 OSC-8
+hyperlink type, but W14 ships OSC-8 click-to-open via **libghostty's own hit-testing** —
+`GHOSTTY_ACTION_OPEN_URL` / `GHOSTTY_ACTION_MOUSE_OVER_LINK` — so no wire change was needed; 28 was
+later taken by the Warp-style `commandBlock`. See DECISIONS.md "W14 terminal parity".)
 
 ## 5. Seq / ack / replay semantics
 

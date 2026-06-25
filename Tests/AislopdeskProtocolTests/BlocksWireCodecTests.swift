@@ -242,7 +242,8 @@ final class BlocksWireCodecTests: XCTestCase {
 
     func testUnknownTypeDropsNotTraps() throws {
         // A peer that does not know 15/28/29 DROPS the frame via unknownMessageType, never traps.
-        for unknown: UInt8 in [30, 16, 17, 200] {
+        // (16/30 are now metadataRequest/metadataResponse, so use still-unassigned tags.)
+        for unknown: UInt8 in [31, 17, 18, 200] {
             XCTAssertThrowsError(try decodePayload([unknown, 0xAB, 0xCD])) { error in
                 XCTAssertEqual(error as? AislopdeskError, .unknownMessageType(unknown))
             }

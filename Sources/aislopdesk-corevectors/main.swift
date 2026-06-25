@@ -864,6 +864,132 @@ root["blocksWireMessages"] = [
     ),
 ]
 
+// E4 — host metadata RPC envelope (terminal CONTROL). ONE generic request/response pair carrying a
+// verb/status byte + a client-chosen requestID + an opaque length-prefixed payload (the per-verb
+// MetadataCodec rides inside, pinned by its OWN samples in WI-2).
+// type 16 metadataRequest (c→h): body = [UInt32 BE requestID][UInt8 verb][UInt32 BE payloadLen][payload].
+// type 30 metadataResponse (h→c): body = [UInt32 BE requestID][UInt8 status][UInt32 BE payloadLen][payload].
+// verb / status carry the RAW byte (forward-tolerant of an unknown value).
+let metaDiffPath = Data("Sources/main.swift".utf8)
+let metaUnicodePayload = Data("héllo · 文字 🚀".utf8)
+root["metadataWireMessages"] = [
+    // request: empty payload (pane-scoped verb), min requestID.
+    wmRecord(
+        "metadataRequest",
+        .metadataRequest(requestID: 0, verb: 1, payload: Data()),
+        ["requestId": UInt32(0), "verb": Int(1), "payloadHex": ""],
+    ),
+    // request: parameterized verb (gitDiff) with a UTF-8 path payload, mid requestID.
+    wmRecord(
+        "metadataRequest",
+        .metadataRequest(requestID: 0x0102_0304, verb: 5, payload: metaDiffPath),
+        ["requestId": UInt32(0x0102_0304), "verb": Int(5), "payloadHex": hex(metaDiffPath)],
+    ),
+    // request: unknown future verb byte + arbitrary bytes, max requestID (forward-tolerance pin).
+    wmRecord(
+        "metadataRequest",
+        .metadataRequest(requestID: UInt32.max, verb: 200, payload: Data([0x00, 0xFF, 0x80, 0x7F])),
+        ["requestId": UInt32.max, "verb": Int(200), "payloadHex": hex([0x00, 0xFF, 0x80, 0x7F])],
+    ),
+    // response: ok, empty payload (e.g. an empty list / cleared field).
+    wmRecord(
+        "metadataResponse",
+        .metadataResponse(requestID: 0, status: 0, payload: Data()),
+        ["requestId": UInt32(0), "status": Int(0), "payloadHex": ""],
+    ),
+    // response: ok with a raw opaque payload (e.g. cwd / gitDiff bytes).
+    wmRecord(
+        "metadataResponse",
+        .metadataResponse(requestID: 7, status: 0, payload: Data([0xAA, 0xBB, 0xCC])),
+        ["requestId": UInt32(7), "status": Int(0), "payloadHex": hex([0xAA, 0xBB, 0xCC])],
+    ),
+    // response: unsupportedVerb, empty payload (host did not recognize the verb).
+    wmRecord(
+        "metadataResponse",
+        .metadataResponse(requestID: 42, status: 3, payload: Data()),
+        ["requestId": UInt32(42), "status": Int(3), "payloadHex": ""],
+    ),
+    // response: unknown future status byte + a multi-byte UTF-8 payload (forward-tolerance pin).
+    wmRecord(
+        "metadataResponse",
+        .metadataResponse(requestID: 99, status: 200, payload: metaUnicodePayload),
+        ["requestId": UInt32(99), "status": Int(200), "payloadHex": hex(metaUnicodePayload)],
+    ),
+]
+
+// E4 / WI-2 — the per-verb MetadataCodec payload encodings that ride INSIDE the opaque metadataResponse
+// payload. These PIN the exact bytes of every structured list codec (manual BE, [UInt16 count]-prefixed,
+// length-prefixed UTF-8 strings) so a refactor cannot silently shift a field. The cwd / gitDiff /
+// readAgentSession verbs carry RAW bytes (no nested codec) and so have no sample here.
+func mcRecord(_ kind: String, _ hexStr: String, _ note: String) -> [String: Any] {
+    ["kind": kind, "hex": hexStr, "note": note]
+}
+
+root["metadataCodecPayloads"] = [
+    // ProcessList ([UInt16 count] then [UInt32 pid][UInt32 uptimeSec][UInt16 nameLen][name]).
+    mcRecord("processList", hex(MetadataCodec.encodeProcessList([])), "empty"),
+    mcRecord(
+        "processList",
+        hex(MetadataCodec.encodeProcessList([
+            .init(pid: 0x0102_0304, uptimeSec: 42, name: "-zsh"),
+            .init(pid: 0xDEAD_BEEF, uptimeSec: 3600, name: "claude 🚀"),
+        ])),
+        "two entries; unicode name",
+    ),
+    // PortList ([UInt16 count] then [UInt16 port][UInt8 proto][UInt16 nameLen][procName]).
+    mcRecord("portList", hex(MetadataCodec.encodePortList([])), "empty (No listening ports)"),
+    mcRecord(
+        "portList",
+        hex(MetadataCodec.encodePortList([
+            .init(port: 8080, proto: 0, procName: "node"),
+            .init(port: 53, proto: 1, procName: "mDNSResponder"),
+        ])),
+        "tcp + udp entries",
+    ),
+    // DirListing ([UInt16 count] then [UInt8 isDir][UInt16 nameLen][leafName]).
+    mcRecord(
+        "dirListing",
+        hex(MetadataCodec.encodeDirListing([
+            .init(isDir: true, name: "Sources"),
+            .init(isDir: false, name: "README.md"),
+            .init(isDir: true, name: "docs"),
+        ])),
+        "dir/file leaf names",
+    ),
+    // GitStatus ([UInt8 hasRepo]; if repo: branch, remote, [Int32 ahead][Int32 behind], file list).
+    mcRecord("gitStatus", hex(MetadataCodec.encodeGitStatus(.noRepo)), "no repo (single 0x00 byte)"),
+    mcRecord(
+        "gitStatus",
+        hex(MetadataCodec.encodeGitStatus(.init(
+            hasRepo: true,
+            branch: "main",
+            remoteURL: "git@github.com:aislopware/aislopdesk.git",
+            ahead: 3,
+            behind: 0,
+            files: [
+                .init(statusCode: 0x12, path: "Sources/main.swift"),
+                .init(statusCode: 0xFF, path: "docs/x.md"),
+            ],
+        ))),
+        "repo: branch+remote+ahead/behind+files",
+    ),
+    // AgentSessionList ([UInt16 count] then kind, id, title, cwd, [Int64 mtimeMS]).
+    mcRecord(
+        "agentSessionList",
+        hex(MetadataCodec.encodeAgentSessionList([
+            .init(
+                agentKindByte: 0,
+                id: "9f3c",
+                title: "Fix the wire codec",
+                cwd: "/Users/me/project",
+                mtimeMS: 1_749_700_000_123,
+            ),
+            .init(agentKindByte: 1, id: "c42", title: "", cwd: "/tmp/x", mtimeMS: -1),
+        ])),
+        "claude + codex sessions",
+    ),
+]
+
 // MARK: AislopdeskProtocol — MuxEnvelopeCodec.encode (byte parity)
 
 func muxRecord(_ kind: String, _ f: MuxFrame, _ fields: [String: Any]) -> [String: Any] {
