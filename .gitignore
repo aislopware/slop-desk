@@ -48,3 +48,8 @@ ThirdParty/ghostty/GhosttyKit.xcframework/
 # matches the exact ".xcframework/" directory boundary, not ".xcframework.<suffix>".
 ThirdParty/ghostty/*.xcframework*
 .work/
+
+# otty-clone reference demo videos (kept on disk for reference, too large for git)
+docs/otty-clone/screenshots/*.mp4
+docs/otty-clone/screenshots/*.mov
+docs/otty-clone/screenshots/*.webm
