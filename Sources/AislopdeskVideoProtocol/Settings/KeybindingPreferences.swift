@@ -31,11 +31,33 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
             option: Bool = false,
             control: Bool = false,
         ) {
-            self.key = key.lowercased()
+            self.key = Self.canonicalKey(key)
             self.command = command
             self.shift = shift
             self.option = option
             self.control = control
+        }
+
+        /// Normalise a base-key spelling to the ONE canonical token: lowercased, with the named-key ALIAS
+        /// spellings otty also accepts (`pgup`/`pageup`, `pgdn`/`pagedown`, `enter`/`return`,
+        /// `leftarrow`/`left`, `rightarrow`/`right`, `uparrow`/`up`, `downarrow`/`down`) folded to the single
+        /// token the dispatcher's reverse bridge emits (`KeyChord.asPreferencesChord` →
+        /// `preferencesKeyToken`: `"pageup"`, `"return"`, `"left"`, …). WITHOUT this fold a config line like
+        /// `keybind = cmd+pgup:text:x` would store under key `"pgup"` while a live ⌘PageUp keystroke produces
+        /// key `"pageup"` — a permanent miss that silently kills the literal-byte / `unbind:` half of
+        /// ES-E1-6. Single printable characters (already lowercased) pass through unchanged; an unmapped
+        /// multi-char token (e.g. `space`) is left as-is (it has no registry `Key`, so it can't match anyway).
+        private static func canonicalKey(_ key: String) -> String {
+            switch key.lowercased() {
+            case "enter": "return"
+            case "leftarrow": "left"
+            case "rightarrow": "right"
+            case "uparrow": "up"
+            case "downarrow": "down"
+            case "pgup": "pageup"
+            case "pgdn": "pagedown"
+            case let other: other
+            }
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -46,14 +68,15 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
             case control
         }
 
-        /// Custom decode so a PERSISTED / hand-edited file with an uppercase `key` ("D") is normalised to
-        /// the same lowercase form the memberwise ``init(key:command:shift:option:control:)`` enforces —
-        /// otherwise the synthesised decoder would store "D" verbatim and ``canonical`` ("cmd+D") would
-        /// never match the lowercase chord the lookup compares against (a silently-dead override). The
-        /// other fields decode normally. (Encoding stays synthesised — `key` is already lowercased.)
+        /// Custom decode so a PERSISTED / hand-edited file with an uppercase `key` ("D") or an alias named-key
+        /// spelling ("PGUP") is normalised to the same canonical form the memberwise
+        /// ``init(key:command:shift:option:control:)`` enforces (via ``canonicalKey(_:)``) — otherwise the
+        /// synthesised decoder would store the verbatim spelling and ``canonical`` would never match the
+        /// canonical chord the lookup compares against (a silently-dead override). The other fields decode
+        /// normally. (Encoding stays synthesised — `key` is already canonical.)
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            key = try c.decode(String.self, forKey: .key).lowercased()
+            key = try Self.canonicalKey(c.decode(String.self, forKey: .key))
             command = try c.decodeIfPresent(Bool.self, forKey: .command) ?? false
             shift = try c.decodeIfPresent(Bool.self, forKey: .shift) ?? false
             option = try c.decodeIfPresent(Bool.self, forKey: .option) ?? false

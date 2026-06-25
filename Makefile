@@ -50,8 +50,8 @@ fix: fmt ## Format + apply all safe lint autofixes
 
 # ---------------------------------------------------------------------------- #
 # Linting (no writes) — the CI gate
-.PHONY: lint lint-swift lint-shell lint-python lint-ds-leaks
-lint: lint-swift lint-shell lint-python lint-ds-leaks ## Run every linter strictly
+.PHONY: lint lint-swift lint-shell lint-python lint-ds-leaks lint-menu-shortcutless
+lint: lint-swift lint-shell lint-python lint-ds-leaks lint-menu-shortcutless ## Run every linter strictly
 
 lint-swift: ## SwiftFormat --lint + SwiftLint --strict
 	swiftformat $(SWIFTFMT_PATHS) --lint
@@ -61,6 +61,11 @@ lint-swift: ## SwiftFormat --lint + SwiftLint --strict
 # file (text-only, no compile — runs in the lint gate, not the build gate). See scripts/check-ds-leaks.sh.
 lint-ds-leaks: ## Design-system token-leak ratchet (raw font/radius literals)
 	bash scripts/check-ds-leaks.sh
+
+# Menu-bar shortcut-LESS RATCHET (E1 N6): fail on a `.keyboardShortcut(` in the discoverability-only
+# WorkspaceCommands.swift — the NSEvent dispatcher owns chords (text-only, no compile). See the script.
+lint-menu-shortcutless: ## Menu-bar shortcut-less ratchet (no .keyboardShortcut in WorkspaceCommands)
+	bash scripts/check-menu-shortcutless.sh
 
 lint-shell: ## shellcheck + shfmt --diff
 	@[ -n "$(SHELL_FILES)" ] && shellcheck $(SHELL_FILES) || true

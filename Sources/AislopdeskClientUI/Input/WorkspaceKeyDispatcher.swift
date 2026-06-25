@@ -39,6 +39,17 @@ final class WorkspaceKeyDispatcher {
     private let toggleCheatSheet: (() -> Void)?
     private let toggleFind: (() -> Void)?
     private let togglePeekReply: (() -> Void)?
+    /// The Details/inspector panel toggle (otty ⌘⇧R). View-owned `@State` (`WorkspaceChromeState`), so it is
+    /// passed in as a closure. The chrome state is created INSIDE `WorkspaceRootView` (after the dispatcher is
+    /// built at app `init`), so the root view installs the real closure via ``setToggleDetailsPanel(_:)`` on
+    /// appear; until then it is `nil` ⇒ `.toggleDetailsPanel` is a graceful no-op (never a dead chord).
+    private var toggleDetailsPanel: (() -> Void)?
+    /// The left sidebar / Tabs-panel toggle (otty ⌘⇧L). Same view-owned `@State` story as the Details toggle:
+    /// the macOS sidebar collapse is `WorkspaceChromeState.sidebarCollapsed` (the native split reads it), NOT
+    /// the legacy `store.sidebarCollapsed`, so the root view installs the real closure via
+    /// ``setToggleSidebar(_:)`` on appear. Until then `nil` ⇒ `.toggleSidebar` falls back to the store flag in
+    /// `route` (a non-trapping graceful op), never a dead chord.
+    private var toggleSidebar: (() -> Void)?
 
     /// The pure prefix machine (B2). Its sequence resolver reads the override-aware `resolvedSequenceTable`
     /// (single-chord fallback to `resolvedChordTable`) so a rebind — single OR multi-key — takes effect; the
@@ -58,12 +69,16 @@ final class WorkspaceKeyDispatcher {
         toggleCheatSheet: (() -> Void)? = nil,
         toggleFind: (() -> Void)? = nil,
         togglePeekReply: (() -> Void)? = nil,
+        toggleDetailsPanel: (() -> Void)? = nil,
+        toggleSidebar: (() -> Void)? = nil,
     ) {
         self.store = store
         self.togglePalette = togglePalette
         self.toggleCheatSheet = toggleCheatSheet
         self.toggleFind = toggleFind
         self.togglePeekReply = togglePeekReply
+        self.toggleDetailsPanel = toggleDetailsPanel
+        self.toggleSidebar = toggleSidebar
         // The prefix machine resolves a post-prefix key against the override-aware SEQUENCE table FIRST (so a
         // multi-key prefix sequence whose tail key is not a standalone binding still fires), falling back to
         // the SINGLE-CHORD table (so the seeded ⌃A→⌘D, where ⌘D is also a standalone chord, keeps working and
@@ -78,6 +93,18 @@ final class WorkspaceKeyDispatcher {
     /// Re-point the configured prefix (a settings change moved it off ⌃A). Keeps the app monitor and the
     /// per-surface interceptors arming on ONE shared prefix.
     func setPrefix(_ chord: KeyChord) { machine.prefix = chord }
+
+    /// Install the Details/inspector toggle once the `WorkspaceChromeState` exists (the root view wires this
+    /// to `chrome.toggleInspector` on appear). Without it, ⌘⇧R resolves to `.toggleDetailsPanel` and is
+    /// swallowed but no-ops — so the titlebar SwiftUI shortcut can't own it either; this closure makes ⌘⇧R
+    /// actually toggle the Details panel (otty parity).
+    func setToggleDetailsPanel(_ toggle: @escaping () -> Void) { toggleDetailsPanel = toggle }
+
+    /// Install the left sidebar / Tabs-panel toggle once the `WorkspaceChromeState` exists (the root view
+    /// wires this to `chrome.toggleSidebar` on appear). Without it, ⌘⇧L resolves to `.toggleSidebar` and
+    /// `route` falls back to the legacy `store.sidebarCollapsed` (which nothing reads on macOS) — so this
+    /// closure makes ⌘⇧L actually collapse the native sidebar item (otty "Toggle Tabs Panel" parity).
+    func setToggleSidebar(_ toggle: @escaping () -> Void) { toggleSidebar = toggle }
 
     /// Install the `.keyDown` local monitor. Returning `nil` from the handler SWALLOWS the event; returning
     /// the event passes it through to the focused responder (the terminal / video pane).
@@ -174,6 +201,8 @@ final class WorkspaceKeyDispatcher {
             toggleCheatSheet: toggleCheatSheet,
             toggleFind: toggleFind,
             togglePeekReply: togglePeekReply,
+            toggleDetailsPanel: toggleDetailsPanel,
+            toggleSidebar: toggleSidebar,
         )
     }
 }

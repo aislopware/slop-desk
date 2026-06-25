@@ -270,11 +270,11 @@ public extension CommandInterpreter {
         map[KeyChord(character: "g", [.control, .command])] = .newGroup
         map[KeyChord(character: "g", [.option, .command])] = .groupSelection
 
-        // Geometric focus move: ⌥⌘ + arrows.
-        map[KeyChord(.leftArrow, [.option, .command])] = .focus(.left)
-        map[KeyChord(.rightArrow, [.option, .command])] = .focus(.right)
-        map[KeyChord(.upArrow, [.option, .command])] = .focus(.up)
-        map[KeyChord(.downArrow, [.option, .command])] = .focus(.down)
+        // Geometric focus move: ⌃⌘ + arrows (otty's documented default — spec/reference__keybindings.md:82-85).
+        map[KeyChord(.leftArrow, [.control, .command])] = .focus(.left)
+        map[KeyChord(.rightArrow, [.control, .command])] = .focus(.right)
+        map[KeyChord(.upArrow, [.control, .command])] = .focus(.up)
+        map[KeyChord(.downArrow, [.control, .command])] = .focus(.down)
 
         // Centre the camera: ⌥⌘C on the focused pane, ⌥⇧⌘C on all panes (⌥⌘ avoids the ⌘C copy chord).
         map[KeyChord(character: "c", [.option, .command])] = .centerFocusedPane

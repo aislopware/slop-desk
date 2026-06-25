@@ -458,8 +458,8 @@ final class TreeCommandRoutingTests: XCTestCase {
         }
     }
 
-    /// Pins the nine new pane-management chords to their documented defaults (move = ⌥⌘⇧arrows, resize =
-    /// ⌃⌘arrows, balance = ⌃⌘=) — distinct from focus (⌥⌘arrows) and the ⌃⌘bracket block jumps.
+    /// Pins the nine new pane-management chords to their otty-documented defaults (move = ⌥⌘⇧arrows,
+    /// divider-move = ⌃⌘⇧arrows, balance = ⌃⌘=) — distinct from focus (⌃⌘arrows) and the ⌃⌘bracket block jumps.
     func testPaneManagementChordsAreTheDocumentedDefaults() {
         func chord(_ action: WorkspaceAction) -> KeyChord? {
             WorkspaceBindingRegistry.binding(for: action)?.chord
@@ -468,10 +468,21 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(chord(.movePaneRight), KeyChord(.rightArrow, [.option, .command, .shift]), "move right = ⌥⌘⇧→")
         XCTAssertEqual(chord(.movePaneUp), KeyChord(.upArrow, [.option, .command, .shift]), "move up = ⌥⌘⇧↑")
         XCTAssertEqual(chord(.movePaneDown), KeyChord(.downArrow, [.option, .command, .shift]), "move down = ⌥⌘⇧↓")
-        XCTAssertEqual(chord(.resizePaneLeft), KeyChord(.leftArrow, [.control, .command]), "resize left = ⌃⌘←")
-        XCTAssertEqual(chord(.resizePaneRight), KeyChord(.rightArrow, [.control, .command]), "resize right = ⌃⌘→")
-        XCTAssertEqual(chord(.resizePaneUp), KeyChord(.upArrow, [.control, .command]), "resize up = ⌃⌘↑")
-        XCTAssertEqual(chord(.resizePaneDown), KeyChord(.downArrow, [.control, .command]), "resize down = ⌃⌘↓")
+        // Move divider = ⌃⌘⇧arrows (otty spec/reference__keybindings.md:86-89).
+        XCTAssertEqual(
+            chord(.resizePaneLeft),
+            KeyChord(.leftArrow, [.control, .command, .shift]),
+            "divider left = ⌃⌘⇧←",
+        )
+        XCTAssertEqual(
+            chord(.resizePaneRight), KeyChord(.rightArrow, [.control, .command, .shift]), "divider right = ⌃⌘⇧→",
+        )
+        XCTAssertEqual(chord(.resizePaneUp), KeyChord(.upArrow, [.control, .command, .shift]), "divider up = ⌃⌘⇧↑")
+        XCTAssertEqual(
+            chord(.resizePaneDown),
+            KeyChord(.downArrow, [.control, .command, .shift]),
+            "divider down = ⌃⌘⇧↓",
+        )
         XCTAssertEqual(chord(.balancePanes), KeyChord(character: "=", [.control, .command]), "balance = ⌃⌘=")
     }
 
@@ -569,20 +580,27 @@ final class TreeCommandRoutingTests: XCTestCase {
     /// chords the `bindings` table omits) has a stable, unique id and (for the chord-carrying ones) a unique
     /// chord. Iterating only `bindings` (the old test) missed the nine digit chords the dispatcher actually
     /// routes, so a collision among them — or with a ⌘-digit elsewhere — could slip past. We ALSO assert
-    /// `chordTable.count == #chord-bearing allBindings`, proving no two entries collapsed onto one chord (the
-    /// dict would silently drop a duplicate).
+    /// `chordTable.count == #chord-bearing allBindings + #aliasChords`, proving no two entries collapsed onto
+    /// one chord (the dict would silently drop a duplicate) while accounting for the display-less aliases.
     func testRegistryBindingsHaveUniqueIDsAndChords() {
         let ids = WorkspaceBindingRegistry.allBindings.map(\.id)
         XCTAssertEqual(Set(ids).count, ids.count, "all binding ids (incl. select-tab digits) are unique")
 
         let chords = WorkspaceBindingRegistry.allBindings.compactMap(\.chord)
         XCTAssertEqual(Set(chords).count, chords.count, "no two bindings share a chord (conflict-free)")
-        // The chord → action table is built from allBindings; if two entries shared a chord, the dict would
-        // collapse them and its count would drop below the number of chord-bearing bindings.
+        // An alias chord (e.g. ⌘+ → increaseFontSize) shares its ACTION, not its chord, with a real binding,
+        // so it must not collide with any registered chord — else it would shadow/overwrite a live binding.
+        let aliases = WorkspaceBindingRegistry.aliasChords
+        XCTAssertTrue(
+            Set(aliases.keys).isDisjoint(with: Set(chords)),
+            "alias chords never collide with a registered binding's chord",
+        )
+        // The chord → action table is built from allBindings ∪ aliasChords; if two entries shared a chord the
+        // dict would collapse them, dropping the count below (#chord-bearing bindings + #aliases).
         XCTAssertEqual(
             WorkspaceBindingRegistry.chordTable.count,
-            chords.count,
-            "every chord-bearing binding has its OWN chordTable entry (no collision collapsed two)",
+            chords.count + aliases.count,
+            "every chord-bearing binding + every alias has its OWN chordTable entry (no collision collapsed two)",
         )
     }
 
@@ -643,15 +661,20 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(chord(.closePane), KeyChord(character: "w", [.command]), "close pane = ⌘W")
         XCTAssertEqual(chord(.splitRight), KeyChord(character: "d", [.command]), "split right = ⌘D")
         XCTAssertEqual(chord(.splitDown), KeyChord(character: "d", [.command, .shift]), "split down = ⌘⇧D")
-        XCTAssertEqual(chord(.focusLeft), KeyChord(.leftArrow, [.option, .command]), "focus left = ⌥⌘←")
-        XCTAssertEqual(chord(.toggleZoom), KeyChord(.return, [.option, .command]), "zoom = ⌥⌘↩")
+        XCTAssertEqual(chord(.focusLeft), KeyChord(.leftArrow, [.control, .command]), "focus left = ⌃⌘← (otty)")
+        XCTAssertEqual(chord(.toggleZoom), KeyChord(.return, [.command, .shift]), "zoom = ⌘⇧↩ (otty)")
         // E1 re-scope (ES-E1-2 / DECISIONS): tab cycling moved to ⌘⇧]/⌘⇧[ (was ⌘]/⌘[ under the old Muxy
         // parity); plain ⌘]/⌘[ now drive sequential PANE cycling (`focus.cycleNext`/`focus.cyclePrev`), matching
         // otty's reference table. These pins are ours to re-scope.
         XCTAssertEqual(chord(.nextTab), KeyChord(character: "]", [.command, .shift]), "next tab = ⌘⇧] (E1 re-scope)")
         XCTAssertEqual(chord(.prevTab), KeyChord(character: "[", [.command, .shift]), "prev tab = ⌘⇧[ (E1 re-scope)")
         XCTAssertEqual(chord(.closeTab), KeyChord(character: "w", [.command, .shift]), "close tab = ⌘⇧W")
-        XCTAssertEqual(chord(.toggleSidebar), KeyChord(character: "b", [.command]), "toggle sidebar = ⌘B")
+        // E1 review fix (otty parity): the sidebar toggle was ⌘B, which routed to the LEGACY
+        // `store.sidebarCollapsed` the native split shell never reads (a DEAD chord). Re-bound to otty's
+        // ⌘⇧L "Toggle Tabs Panel" (spec/reference__keybindings.md:66), routed through a `chrome` view-closure.
+        XCTAssertEqual(
+            chord(.toggleSidebar), KeyChord(character: "l", [.command, .shift]), "toggle sidebar = ⌘⇧L (otty)",
+        )
         XCTAssertEqual(chord(.newSession), KeyChord(character: "n", [.control, .command]), "new session = ⌃⌘N")
         XCTAssertEqual(chord(.selectTab(1)), KeyChord(character: "1", [.command]), "select tab 1 = ⌘1")
         XCTAssertEqual(chord(.selectTab(9)), KeyChord(character: "9", [.command]), "select tab 9 = ⌘9")

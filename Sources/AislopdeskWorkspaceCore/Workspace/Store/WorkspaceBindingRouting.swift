@@ -4,7 +4,7 @@ import Foundation
 // MARK: - WorkspaceBindingRegistry routing (the action → store-op dispatch)
 
 /// The routing half of the single-source-of-truth registry (docs/42 §W6): dispatches a pure
-/// ``WorkspaceAction`` to the matching ``WorkspaceStore`` mutation. The menu bar, the ⌘K palette rows, the
+/// ``WorkspaceAction`` to the matching ``WorkspaceStore`` mutation. The menu bar, the ⌘⇧P palette rows, the
 /// hardware-keyboard dispatcher, and the routing tests ALL funnel through this one function — so the chord
 /// → action → mutation chain lives in one auditable place (mirroring the canvas ``apply(_:to:)``).
 ///
@@ -25,19 +25,23 @@ public extension WorkspaceBindingRegistry {
         toggleCheatSheet: (() -> Void)? = nil,
         toggleFind: (() -> Void)? = nil,
         togglePeekReply: (() -> Void)? = nil,
+        toggleDetailsPanel: (() -> Void)? = nil,
+        toggleSidebar: (() -> Void)? = nil,
     ) {
         switch store.liveModel {
         case .tree:
             routeTree(
                 action, to: store, togglePalette: togglePalette,
                 toggleCheatSheet: toggleCheatSheet, toggleFind: toggleFind,
-                togglePeekReply: togglePeekReply,
+                togglePeekReply: togglePeekReply, toggleDetailsPanel: toggleDetailsPanel,
+                toggleSidebar: toggleSidebar,
             )
         case .canvas:
             routeCanvas(
                 action, to: store, togglePalette: togglePalette,
                 toggleCheatSheet: toggleCheatSheet, toggleFind: toggleFind,
-                togglePeekReply: togglePeekReply,
+                togglePeekReply: togglePeekReply, toggleDetailsPanel: toggleDetailsPanel,
+                toggleSidebar: toggleSidebar,
             )
         }
     }
@@ -51,6 +55,8 @@ public extension WorkspaceBindingRegistry {
         toggleCheatSheet: (() -> Void)?,
         toggleFind: (() -> Void)?,
         togglePeekReply: (() -> Void)?,
+        toggleDetailsPanel: (() -> Void)?,
+        toggleSidebar: (() -> Void)?,
     ) {
         switch action {
         // Panes
@@ -110,7 +116,17 @@ public extension WorkspaceBindingRegistry {
         case .find: if let toggleFind { toggleFind() } else { store.requestFindInActivePane() }
         // Copy Mode (P5b): arm modal keyboard scrollback navigation over the active terminal pane.
         case .toggleCopyMode: store.requestCopyModeInActivePane()
-        case .toggleSidebar: store.toggleSidebarCollapsed()
+        // Toggle Tabs Panel (otty ⌘⇧L): the LEFT sidebar collapse on the macOS shell is VIEW @State
+        // (`WorkspaceChromeState.sidebarCollapsed`, read by the native split controller) — NOT the legacy
+        // `store.sidebarCollapsed`, which nothing reads on macOS. So it is a passed-in closure (like
+        // `.toggleDetailsPanel`). When no closure is supplied (the headless / test / iOS default) fall back to
+        // the store flag so the action is a non-trapping graceful op (and any store-flag reader still toggles).
+        case .toggleSidebar:
+            if let toggleSidebar { toggleSidebar() } else { store.toggleSidebarCollapsed() }
+        // Toggle Details Panel (otty ⌘⇧R): the right-hand inspector is VIEW @State (`WorkspaceChromeState`),
+        // not store state, so it is a passed-in closure (like the palette / cheat-sheet toggles). `nil` (the
+        // headless / test default) keeps it a graceful no-op — never a dead chord.
+        case .toggleDetailsPanel: toggleDetailsPanel?()
         // Blocks (WB2): the navigator toggle + jump-to-block both target the active terminal pane via the store.
         case .commandNavigator: store.requestBlockNavigatorInActivePane()
         case .jumpPreviousBlock: store.jumpToBlockInActivePane(delta: -1)
@@ -185,6 +201,8 @@ public extension WorkspaceBindingRegistry {
         toggleCheatSheet: (() -> Void)?,
         toggleFind: (() -> Void)?,
         togglePeekReply: (() -> Void)?,
+        toggleDetailsPanel: (() -> Void)?,
+        toggleSidebar: (() -> Void)?,
     ) {
         switch action {
         case .splitRight,
@@ -230,7 +248,11 @@ public extension WorkspaceBindingRegistry {
         // Copy Mode (P5b): the canvas path resolves the active pane via canvas focus, so the same store hook
         // arms copy-mode there too (a no-op for a non-terminal active pane / empty shell).
         case .toggleCopyMode: store.requestCopyModeInActivePane()
-        case .toggleSidebar: break // sidebar is tree-shell only
+        // Sidebar is the tree-shell chrome; the canvas path still toggles it via the closure (the live macOS
+        // app wires `chrome.toggleSidebar`). `nil` (the canvas test default) is a graceful no-op.
+        case .toggleSidebar: toggleSidebar?()
+        // Details panel is a view overlay (tree-shell chrome); the canvas path still toggles it via the closure.
+        case .toggleDetailsPanel: toggleDetailsPanel?()
         // Blocks (WB2): the canvas path is retained-but-dead; route through the same store hooks (they
         // resolve the active pane via the canvas focus, so the navigator/jump still work there).
         case .commandNavigator: store.requestBlockNavigatorInActivePane()

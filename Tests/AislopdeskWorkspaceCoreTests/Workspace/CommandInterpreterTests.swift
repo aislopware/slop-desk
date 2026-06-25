@@ -43,11 +43,11 @@ final class CommandInterpreterTests: XCTestCase {
             (KeyChord(character: "w", [.command]), .closePane),
             // New group.
             (KeyChord(character: "g", [.control, .command]), .newGroup),
-            // Geometric focus.
-            (KeyChord(.leftArrow, [.option, .command]), .focus(.left)),
-            (KeyChord(.rightArrow, [.option, .command]), .focus(.right)),
-            (KeyChord(.upArrow, [.option, .command]), .focus(.up)),
-            (KeyChord(.downArrow, [.option, .command]), .focus(.down)),
+            // Geometric focus — ⌃⌘arrows (otty default).
+            (KeyChord(.leftArrow, [.control, .command]), .focus(.left)),
+            (KeyChord(.rightArrow, [.control, .command]), .focus(.right)),
+            (KeyChord(.upArrow, [.control, .command]), .focus(.up)),
+            (KeyChord(.downArrow, [.control, .command]), .focus(.down)),
             // Cycle focus.
             (KeyChord(character: "]", [.command]), .cycleFocus(forward: true)),
             (KeyChord(character: "[", [.command]), .cycleFocus(forward: false)),

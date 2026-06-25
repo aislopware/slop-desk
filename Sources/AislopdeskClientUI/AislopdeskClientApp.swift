@@ -76,13 +76,27 @@ public struct AislopdeskClientApp: App {
         // Build the GUI Settings store FIRST so its apply paths run before the video pipeline / any
         // `static let` env flag is forced (folds persisted prefs into `EnvConfig.overlay`).
         let preferences = PreferencesStore()
-        // E1/WI-6: fold the otty-style `~/.config/aislopdesk/config.toml` keybind lines (the `text:` / `csi:`
-        // / `esc:` / `unbind:` directives) into the live keybindings so ES-E1-6 is reachable end-to-end —
-        // setting `keybindings` republishes the merged model to `WorkspaceBindingRegistry.activeOverrides`
-        // via the store's `didSet`, which the dispatcher reads BEFORE the action table. A missing/broken
-        // file is a no-op (validate-then-drop), so a fresh install is behaviour-identical.
+        // E1/WI-6 + WI-2: fold the otty-style `~/.config/aislopdesk/config.toml` keybind lines into the live
+        // keybindings so ES-E1-6 is reachable end-to-end — setting `keybindings` republishes the merged model
+        // to `WorkspaceBindingRegistry.activeOverrides` via the store's `didSet`, which the dispatcher reads
+        // BEFORE the action table. The `text:` / `csi:` / `esc:` / `unbind:` directives need no registry and
+        // fold inside the loader; the NAMED / parameterized directives (`cmd+t:new_tab`, `cmd+1:goto_tab:1`)
+        // are resolved HERE via the production `resolveNamedBinding` hook — the loader lives in
+        // `AislopdeskVideoProtocol` (which must not import the registry), so the app layer (which imports
+        // `AislopdeskWorkspaceCore`) supplies the action-name → bindingID table. An unknown / out-of-range
+        // name resolves to `nil` and the line is dropped (validate-then-drop, no trap). A missing/broken file
+        // is a no-op, so a fresh install is behaviour-identical.
         if let configURL = KeybindConfigLoader.defaultConfigURL() {
-            let merged = KeybindConfigLoader.loadFile(at: configURL, into: preferences.keybindings)
+            let merged = KeybindConfigLoader.loadFile(
+                at: configURL,
+                into: preferences.keybindings,
+                resolveNamedBinding: { named in
+                    guard let bindingID = WorkspaceBindingRegistry.bindingID(
+                        forConfigName: named.id, arg: named.arg,
+                    ) else { return nil }
+                    return (bindingID: bindingID, chord: named.chord)
+                },
+            )
             if merged != preferences.keybindings { preferences.keybindings = merged }
         }
         _preferences = State(initialValue: preferences)
@@ -212,9 +226,27 @@ public struct AislopdeskClientApp: App {
         #endif
     }
 
+    /// The root IDE shell. On macOS it hands the root view installers that wire ⌘⇧R (otty Toggle Details
+    /// Panel) and ⌘⇧L (otty Toggle Tabs Panel / sidebar) to the view's `WorkspaceChromeState` toggles ON THE
+    /// app-level `keyDispatcher`, so each chord routes through the SAME NSEvent monitor that owns every other
+    /// chord (the legacy `store.sidebarCollapsed` is not read on macOS); iOS has no dispatcher.
+    @ViewBuilder
+    private var workspaceRootView: some View {
+        #if os(macOS)
+        WorkspaceRootView(
+            store: store,
+            connection: connection,
+            installDetailsToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleDetailsPanel(toggle) },
+            installSidebarToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleSidebar(toggle) },
+        )
+        #else
+        WorkspaceRootView(store: store, connection: connection)
+        #endif
+    }
+
     public var body: some Scene {
         WindowGroup {
-            WorkspaceRootView(store: store, connection: connection)
+            workspaceRootView
                 // L4: hand the single live PreferencesStore to deep views (the agent footer's W4
                 // notification dismissal/enable persistence reads it via `\.preferencesStore`).
                 .preferencesStore(preferences)
@@ -299,6 +331,12 @@ public struct AislopdeskClientApp: App {
         .windowResizability(.automatic)
         // G1: open at the odiff reference geometry (1280×800) so a fresh window matches the reference.
         .defaultSize(width: 1280, height: 800)
+        // E1/N6 (OPTIONAL): the discoverability-only menu bar over the SAME binding registry the dispatcher
+        // reads. Each item routes through `WorkspaceBindingRegistry.route` with NO `.keyboardShortcut` — the
+        // `NSEvent` monitor (`keyDispatcher`) owns chord dispatch (incl. the multi-key prefix), so a menu
+        // shortcut would double-fire / swallow a prefix tail. The overlay toggles are nil in E1 (those
+        // overlays land in later epics) → those actions stay graceful no-ops via `route`, never dead items.
+        .commands { WorkspaceCommands(store: store) }
         #endif
 
         // D4: the GUI Settings surface (⌘,). A STOCK SwiftUI `Settings` scene — the main window is

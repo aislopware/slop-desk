@@ -49,7 +49,10 @@ public extension WorkspaceBindingRegistry {
         resolvedChordTable(overrides: activeOverrides)
     }
 
-    /// The override-aware chord table against an explicit override set (pure, testable).
+    /// The override-aware chord table against an explicit override set (pure, testable). Folds in
+    /// ``aliasChords`` (the ⌘+ font-increase alias, etc.) AFTER the resolved bindings — but only onto a chord
+    /// the user has not rebound onto, so an override always wins (the alias is a free second chord, never a
+    /// squatter). This is the table the live dispatcher reads, so the aliases fire at runtime too.
     static func resolvedChordTable(overrides: KeybindingPreferences) -> [KeyChord: WorkspaceAction] {
         var map: [KeyChord: WorkspaceAction] = [:]
         for binding in allBindings {
@@ -57,6 +60,7 @@ public extension WorkspaceBindingRegistry {
                 map[chord] = binding.action
             }
         }
+        for (chord, action) in aliasChords where map[chord] == nil { map[chord] = action }
         return map
     }
 

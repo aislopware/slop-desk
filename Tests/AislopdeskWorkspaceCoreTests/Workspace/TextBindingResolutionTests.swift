@@ -119,4 +119,43 @@ final class TextBindingResolutionTests: XCTestCase {
             "the dispatcher checks isUnbound BEFORE the action table, so ⌘D is suppressed",
         )
     }
+
+    // MARK: - Alias-spelling normalisation (regression — alias chords were silently dead)
+
+    /// A `text:` / `csi:` binding authored through the PRODUCTION loader with an ALIAS named-key spelling
+    /// (`pgup`, `leftarrow`, …) resolves for the CANONICAL live-keystroke chord the dispatcher produces.
+    /// `KeybindConfigLoader.apply` stores the parsed chord under the canonical token (folded by
+    /// `KeybindingPreferences.KeyChord.init`), so `cmd+pgup:text:x` and a live ⌘PageUp key the SAME
+    /// `textBindings` entry. FAILS before the fix: the chord stored verbatim as `"pgup"` never matched the
+    /// dispatcher's `"pageup"` token (`asPreferencesChord`/`preferencesKeyToken`) → a permanent miss.
+    func testAliasSpelledTextBindingResolvesForCanonicalChord() {
+        WorkspaceBindingRegistry.activeOverrides = KeybindConfigLoader.apply(
+            configText: """
+            keybind = cmd+pgup:text:x
+            keybind = ctrl+leftarrow:csi:1;5D
+            """,
+        )
+        XCTAssertEqual(
+            WorkspaceBindingRegistry.textBinding(for: KeyChord(.pageUp, [.command]))?.payload, [0x78],
+            "cmd+pgup must resolve for the dispatcher's canonical ⌘PageUp chord",
+        )
+        XCTAssertEqual(
+            WorkspaceBindingRegistry.textBinding(for: KeyChord(.leftArrow, [.control]))?.payload,
+            [0x1B, 0x5B, 0x31, 0x3B, 0x35, 0x44], // ESC [ 1 ; 5 D
+            "ctrl+leftarrow must resolve for the dispatcher's canonical ⌃Left chord",
+        )
+    }
+
+    /// An `unbind:` authored with an alias spelling suppresses the CANONICAL live chord — `unbind:cmd+enter`
+    /// stores under `"return"`, so a live ⌘Return is recognised as unbound. FAILS before the fix (stored
+    /// verbatim as `"enter"`, never matching the dispatcher's `"return"` token).
+    func testAliasSpelledUnbindRecognisesCanonicalChord() {
+        WorkspaceBindingRegistry.activeOverrides = KeybindConfigLoader.apply(
+            configText: "keybind = unbind:cmd+enter",
+        )
+        XCTAssertTrue(
+            WorkspaceBindingRegistry.isUnbound(KeyChord(.return, [.command])),
+            "unbind:cmd+enter must suppress the dispatcher's canonical ⌘Return chord",
+        )
+    }
 }

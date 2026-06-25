@@ -21,10 +21,28 @@ public struct WorkspaceRootView: View {
     let connection: AppConnection
     /// The two split-collapse flags the toolbar toggles drive (owned here, read by the representable).
     @State private var chrome = WorkspaceChromeState()
+    /// Installs the Details-panel toggle on the app-level keybinding dispatcher. The dispatcher is built at
+    /// app `init` (before this view's `chrome` exists), so on appear the root view hands it
+    /// `chrome.toggleInspector` and ⌘⇧R (otty's Toggle Details Panel) routes through the SAME NSEvent monitor
+    /// that owns every other chord. `nil` (the default / iOS / tests) leaves the chord a graceful no-op. A
+    /// plain closure keeps `WorkspaceKeyDispatcher` internal (no public-API widening).
+    private let installDetailsToggle: ((@escaping () -> Void) -> Void)?
+    /// Installs the sidebar / Tabs-panel toggle on the app-level keybinding dispatcher (same late-wiring story
+    /// as `installDetailsToggle`): on appear the root view hands it `chrome.toggleSidebar` so ⌘⇧L (otty's
+    /// Toggle Tabs Panel) flips the LIVE `chrome.sidebarCollapsed` the native split reads — not the legacy
+    /// `store.sidebarCollapsed` (which nothing reads on macOS). `nil` (the default / iOS / tests) is a no-op.
+    private let installSidebarToggle: ((@escaping () -> Void) -> Void)?
 
-    public init(store: WorkspaceStore, connection: AppConnection) {
+    public init(
+        store: WorkspaceStore,
+        connection: AppConnection,
+        installDetailsToggle: ((@escaping () -> Void) -> Void)? = nil,
+        installSidebarToggle: ((@escaping () -> Void) -> Void)? = nil,
+    ) {
         self.store = store
         self.connection = connection
+        self.installDetailsToggle = installDetailsToggle
+        self.installSidebarToggle = installSidebarToggle
     }
 
     /// The active tab's active pane's live session, if materialized — the source of the active pane's ping
@@ -46,6 +64,11 @@ public struct WorkspaceRootView: View {
         // titlebar (`OttyTitlebar`, hosted inside `ContentColumn`) IS the chrome.
         WorkspaceSplitRepresentable(store: store, connection: connection, chrome: chrome)
             .ignoresSafeArea()
+            // Wire ⌘⇧R (Toggle Details) + ⌘⇧L (Toggle Tabs Panel / sidebar) to the live chrome once it
+            // exists. The dispatcher is built at app `init` (before `chrome`), so we hand it the toggles here
+            // — `[chrome]` captures the same @Observable instance the representable + titlebar read, so the
+            // NSEvent chord and the titlebar button drive ONE flag.
+            .onAppear { wireChromeToggles() }
         #else
         NavigationSplitView {
             NavigatorColumn(store: store)
@@ -57,6 +80,17 @@ public struct WorkspaceRootView: View {
         .toolbar { iosToolbar }
         #endif
     }
+
+    #if os(macOS)
+    /// Hand the app-level dispatcher the chrome toggles (Details ⌘⇧R + sidebar ⌘⇧L), each bound to THIS
+    /// view's live `chrome`. Called on appear (the dispatcher predates `chrome`, so the closures are installed
+    /// late). `[chrome]` captures the same `@Observable` instance the representable + titlebar read, so each
+    /// NSEvent chord and the matching titlebar button flip ONE flag.
+    private func wireChromeToggles() {
+        installDetailsToggle? { [chrome] in chrome.toggleInspector() }
+        installSidebarToggle? { [chrome] in chrome.toggleSidebar() }
+    }
+    #endif
 
     #if os(iOS)
     @ToolbarContentBuilder

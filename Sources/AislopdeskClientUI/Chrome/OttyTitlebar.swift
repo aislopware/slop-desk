@@ -87,23 +87,19 @@ struct OttyTitlebar: View {
             }
             .padding(.trailing, 10)
             .padding(.top, rowTop)
-
-            keyboardShortcuts
         }
         .frame(height: Otty.Metric.titlebarHeight, alignment: .top)
         .animation(Otty.Anim.standard, value: sidebarVisible)
         .animation(Otty.Anim.standard, value: detailsVisible)
     }
 
-    /// Hidden always-present buttons carrying otty's chrome shortcuts (⌘⇧L sidebar, ⌘⇧R Details).
-    private var keyboardShortcuts: some View {
-        ZStack {
-            Button("") { chrome.toggleSidebar() }.keyboardShortcut("l", modifiers: [.command, .shift])
-            Button("") { chrome.toggleInspector() }.keyboardShortcut("r", modifiers: [.command, .shift])
-        }
-        .opacity(0)
-        .allowsHitTesting(false)
-    }
+    // NOTE: the titlebar carries NO hidden SwiftUI `.keyboardShortcut` for the chrome chords. Both ⌘⇧L
+    // "Toggle Tabs Panel" (sidebar) and ⌘⇧R "Toggle Details Panel" are owned by the app-level
+    // `WorkspaceKeyDispatcher` NSEvent monitor (registry actions `.toggleSidebar` / `.toggleDetailsPanel`,
+    // wired to `chrome.toggleSidebar` / `chrome.toggleInspector` in `WorkspaceRootView`). A SwiftUI shortcut
+    // here would be DEAD — the monitor swallows the chord before the responder chain sees it — so we keep a
+    // SINGLE owner per chord. The visible plate buttons (the Details toggle above, the sidebar toggle on the
+    // left row) still drive the same `chrome` flags on click.
 
     /// otty's reveal timing: fade-in 0.15s on enter; on exit, dwell 0.40s then fade-out 0.20s (keeps the
     /// controls clickable while the pointer travels to them).

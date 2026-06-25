@@ -39,6 +39,35 @@ final class KeybindConfigLoaderTests: XCTestCase {
         )
     }
 
+    /// An ALIAS named-key spelling (`pgup`, `pgdn`, `enter`, `leftarrow`, …) is stored under the SAME
+    /// canonical token the live dispatcher produces (`pageup`, `pagedown`, `return`, `left`, …) — folded by
+    /// `KeybindingPreferences.KeyChord.init`. FAILS before the fix: the chord was stored verbatim under
+    /// `"pgup"`/`"enter"`, so a live ⌘PageUp/⌘Return keystroke (which only ever produces the canonical token
+    /// via `asPreferencesChord`) could never hit the `textBindings`/`unbinds` entry — the binding parsed yet
+    /// was permanently dead.
+    func testAliasNamedKeySpellingsAreStoredCanonically() {
+        let prefs = KeybindConfigLoader.apply(
+            configText: """
+            keybind = cmd+pgup:text:x
+            keybind = ctrl+leftarrow:csi:1;5D
+            keybind = unbind:cmd+enter
+            """,
+        )
+        // Stored under the canonical token (what the dispatcher emits) …
+        XCTAssertEqual(
+            prefs.textBindings[.init(key: "pageup", command: true)]?.payload, [0x78],
+            "cmd+pgup must store under the canonical \"pageup\" token",
+        )
+        XCTAssertEqual(
+            prefs.textBindings[.init(key: "left", control: true)]?.kind, .csi,
+            "ctrl+leftarrow must store under the canonical \"left\" token",
+        )
+        XCTAssertTrue(
+            prefs.unbinds.contains(.init(key: "return", command: true)),
+            "unbind:cmd+enter must store under the canonical \"return\" token",
+        )
+    }
+
     // MARK: unbind: → unbinds (the disable-a-default half)
 
     /// `keybind = unbind:cmd+d` inserts ⌘D into `unbinds` so the dispatcher passes the chord through instead
@@ -144,6 +173,72 @@ final class KeybindConfigLoaderTests: XCTestCase {
         )
         XCTAssertTrue(prefs.overrides.isEmpty)
         XCTAssertTrue(prefs.unbinds.contains(.init(key: "q", command: true)))
+    }
+
+    // MARK: WI-2 — the production-shaped resolver folds otty named/param actions end-to-end
+
+    /// A hand-built stand-in for the production `WorkspaceBindingRegistry.bindingID(forConfigName:arg:)`
+    /// resolver installed at launch (`AislopdeskClientApp.swift`). The VideoProtocol test target cannot import
+    /// `AislopdeskWorkspaceCore` (the registry lives there — the very reason the loader takes a closure hook),
+    /// so this mirrors the table's CONTRACT: bare names map to ids, `goto_tab:N` (N ∈ 1…9) expands per-digit,
+    /// and an unknown name / out-of-range arg resolves to `nil` (drop, no trap). It is deliberately NOT the
+    /// registry — it is a faithful fake of the shape WI-2 wires, so these loader-level cases stay in-module.
+    private func handBuiltResolver(
+        _ named: KeybindConfigLoader.NamedBinding,
+    ) -> (bindingID: String, chord: KeybindingPreferences.KeyChord)? {
+        let bareTable: [String: String] = [
+            "new_tab": "tab.new",
+            "close_pane": "pane.close",
+            "split_right": "pane.splitRight",
+        ]
+        let bindingID: String? =
+            if named.id == "goto_tab" {
+                if let arg = named.arg, let n = Int(arg), (1...9).contains(n) {
+                    "tab.select.\(n)"
+                } else {
+                    nil
+                }
+            } else {
+                bareTable[named.id]
+            }
+        guard let id = bindingID else { return nil }
+        return (bindingID: id, chord: named.chord)
+    }
+
+    /// A bare named action (`cmd+t:new_tab`) folds into `overrides` under the resolved bindingID with the
+    /// trigger chord — the end-to-end fold the launch-time resolver performs (ES-E1-6's named half). The
+    /// `text:`/`unbind:` directives stay empty (this line is a pure override).
+    func testNamedBindingFoldsIntoOverridesViaResolver() {
+        let prefs = KeybindConfigLoader.apply(
+            configText: "keybind = cmd+t:new_tab",
+            resolveNamedBinding: handBuiltResolver,
+        )
+        XCTAssertEqual(prefs.overrides["tab.new"], .init(key: "t", command: true))
+        XCTAssertEqual(prefs.overrides.count, 1)
+        XCTAssertTrue(prefs.textBindings.isEmpty)
+        XCTAssertTrue(prefs.unbinds.isEmpty)
+    }
+
+    /// The parameterized `goto_tab:N` action folds per-digit: `cmd+3:goto_tab:3` → `overrides["tab.select.3"]`
+    /// on ⌘3 (the resolver expands the arg into the per-digit registry id).
+    func testParameterizedGotoTabFoldsPerDigitViaResolver() {
+        let prefs = KeybindConfigLoader.apply(
+            configText: "keybind = cmd+3:goto_tab:3",
+            resolveNamedBinding: handBuiltResolver,
+        )
+        XCTAssertEqual(prefs.overrides["tab.select.3"], .init(key: "3", command: true))
+        XCTAssertEqual(prefs.overrides.count, 1)
+    }
+
+    /// An UNKNOWN named action (`cmd+t:frobnicate`) the resolver maps to `nil` is dropped — no stray override,
+    /// no trap (validate-then-drop). Revert-to-confirm-fail: a resolver that force-unwrapped its lookup would
+    /// crash here instead of dropping.
+    func testUnknownNamedBindingIsDropped() {
+        let prefs = KeybindConfigLoader.apply(
+            configText: "keybind = cmd+t:frobnicate",
+            resolveNamedBinding: handBuiltResolver,
+        )
+        XCTAssertTrue(prefs.overrides.isEmpty)
     }
 
     // MARK: file I/O entry (missing / present)

@@ -17,8 +17,9 @@ public enum WorkspaceAction: Hashable, Sendable {
     case splitLeft // ⌘⌥D — split the active pane, inserting the new pane on the LEADING (left) side
     case splitUp // ⌘⌥⇧D — split the active pane, inserting the new pane on the LEADING (top) side
     case closePane // ⌘W  — close the active pane (cascades the tab/session)
-    case renamePane // ⌘⇧R — rename the active TAB on the tree shell (opens its tab-strip inline field);
-    // the active canvas pane on the retained-but-dead canvas path
+    case renamePane // (no otty default chord) — rename the active TAB on the tree shell (opens its
+    // tab-strip inline field); the active canvas pane on the retained-but-dead canvas path. Reachable from
+    // the title menu / context menu / palette only (otty ships no rename chord — ⌘⇧R is Toggle Details).
     case breakPaneToTab // ⌃⌘T — eject the active pane into a new tab
     case toggleFloat // ⌘⇧F — float / embed the active pane (zellij toggle-float)
     case spawnFloating // ⌃⌘F — spawn a new floating scratch pane
@@ -52,11 +53,12 @@ public enum WorkspaceAction: Hashable, Sendable {
 
     // View
     case toggleZoom // ⌥⌘↩ — maximize / restore the active pane (render-only)
-    case commandPalette // ⌘K — show/hide the ⌘K command palette
+    case commandPalette // ⌘⇧P — show/hide the command palette (otty's documented default)
     case cheatSheet // ⌘/ — show/hide the keyboard cheat sheet
     case find // ⌘F — show/hide the find-in-terminal bar over the active pane (W14 #5)
     case toggleCopyMode // ⌘⇧C — enter modal keyboard copy-mode over the active pane's scrollback (P5b)
-    case toggleSidebar // ⌘B — show/hide the sessions sidebar
+    case toggleSidebar // ⌘⇧L — show/hide the sessions sidebar (otty "Toggle Tabs Panel")
+    case toggleDetailsPanel // ⌘⇧R — show/hide the right-hand Details / inspector panel (otty parity)
     case openQuickly // ⌘⇧O — open the fuzzy "open quickly" file/symbol switcher (E11 stub)
 
     // View — viewport scroll (E1 ES-E1-3; named-key chords — the §5 prefix exemption)
@@ -68,7 +70,7 @@ public enum WorkspaceAction: Hashable, Sendable {
     case commandJumpNext // ⌘PageDown — jump to the NEXT shell prompt (reuses jumpToBlock(+1))
 
     // View — font size (E1 ES-E1-4; libghostty render-only, no PTY reflow)
-    case increaseFontSize // ⌘= (and the auto-shifted ⌘+) — bump the active pane's render font size
+    case increaseFontSize // ⌘= / ⌘+ — bump the active pane's render font size (⌘+ via `aliasChords`)
     case decreaseFontSize // ⌘- — shrink the active pane's render font size
     case resetFontSize // ⌘0 — reset the active pane's render font size to the configured default
 
@@ -185,6 +187,7 @@ public extension WorkspaceAction {
              .closeTab,
              .reopenClosed, // restores a closed pane into the active tab — acts on history, not a live pane
              .toggleSidebar,
+             .toggleDetailsPanel, // a window-scope panel toggle — needs no active pane
              .openQuickly, // a global fuzzy switcher — needs no active pane
              .newSession,
              .spawnFloating, // creates its own pane — needs none
@@ -257,17 +260,17 @@ public struct WorkspaceBinding: Sendable, Equatable {
 // MARK: - WorkspaceBindingRegistry (the ONE source of truth)
 
 /// The single source of truth for the IDE-shell command surface (docs/42 §W6): ONE ``bindings`` table
-/// that the menu bar (``WorkspaceCommands``), the ⌘K command palette (``CommandPaletteView``), the ⌘/
+/// that the menu bar (``WorkspaceCommands``), the ⌘⇧P command palette (``CommandPaletteView``), the ⌘/
 /// cheat sheet (``KeyboardCheatSheet``), and the routing tests ALL read — so a chord, a menu item, a
 /// palette row, and a cheat-sheet glyph can never drift apart (and C4 settings has one table to make
 /// user-editable).
 ///
 /// Every chord is ⌘- or ⌥-prefixed (the load-bearing §5 conflict rule: a bare key / Ctrl-letter falls
 /// through to the focused terminal), and no two bindings share a chord — both pinned by
-/// `TreeCommandRoutingTests`. The chords mirror coding-IDE / multiplexer norms (VS Code / WezTerm /
-/// Zellij): ⌘T new tab, ⌘W close, ⌘D split-right, ⌘⇧D split-down, ⌥⌘+arrows focus, ⌥⌘↩ zoom, ⌘⇧]/⌘⇧[
-/// next/prev tab, ⌘1…9 select tab, ⌃⌘N new session, ⌘⇧R rename, ⌃⌘T break-pane-to-tab, ⌘K palette, ⌘/
-/// cheat sheet.
+/// `TreeCommandRoutingTests`. The chords mirror otty's reference keymap: ⌘T new tab, ⌘W close, ⌘D
+/// split-right, ⌘⇧D split-down, ⌃⌘+arrows focus, ⌥⌘↩ zoom, ⌘⇧]/⌘⇧[ next/prev tab, ⌘1…9 select tab,
+/// ⌃⌘N new session, ⌘⇧L toggle Tabs panel, ⌘⇧R toggle Details panel, ⌃⌘T break-pane-to-tab, ⌘⇧P palette,
+/// ⌘/ cheat sheet. Rename has no otty default chord — it is menu / palette / context-menu only (`chord: nil`).
 public enum WorkspaceBindingRegistry {
     /// The shipped binding table, in cheat-sheet / palette display order (panes, tabs, sessions, focus,
     /// view). `.selectTab(n)` for n=1…9 is generated (one chord each) but is NOT listed here — it is
@@ -304,9 +307,12 @@ public enum WorkspaceBindingRegistry {
             category: .panes, chord: KeyChord(character: "w", [.command]),
             symbol: "xmark", keywords: "quit kill end terminate remove",
         ),
+        // Rename has NO otty default chord (⌘⇧R is otty's Toggle Details Panel — see `view.toggleDetails`).
+        // It is reachable from the title menu / context menu / palette only; `chord: nil` surfaces the row
+        // (cheat sheet / menu / palette) without binding a key. Pinned chord-less by `E1KeymapParityTests`.
         WorkspaceBinding(
             id: "pane.rename", action: .renamePane, title: "Rename Tab",
-            category: .panes, chord: KeyChord(character: "r", [.command, .shift]),
+            category: .panes, chord: nil,
             symbol: "pencil", keywords: "title label name tab",
         ),
         WorkspaceBinding(
@@ -350,27 +356,32 @@ public enum WorkspaceBindingRegistry {
             category: .panes, chord: KeyChord(.downArrow, [.option, .command, .shift]),
             symbol: "arrow.down.square", keywords: "swap reorder shift pane down",
         ),
-        // Resize pane (keyboard divider nudge). ⌃⌘arrows — distinct from the ⌃⌘bracket block-jump chords
-        // (different keys) and grow the active pane toward the arrow (right/down) or shrink it (left/up).
+        // Move divider (keyboard divider nudge). otty's "Move divider up/down/left/right" = ⌃⌘⇧arrows
+        // (spec/reference__keybindings.md:86-89, customization__custom-keybindings.md:78-81) — distinct from
+        // focus (⌃⌘arrows). Grows the active pane toward the arrow (right/down) or shrinks it (left/up).
         WorkspaceBinding(
-            id: "pane.resizeLeft", action: .resizePaneLeft, title: "Shrink Pane Width",
-            category: .panes, chord: KeyChord(.leftArrow, [.control, .command]),
-            symbol: "arrow.left.and.line.vertical.and.arrow.right", keywords: "resize shrink narrower width divider",
+            id: "pane.resizeLeft", action: .resizePaneLeft, title: "Move Divider Left",
+            category: .panes, chord: KeyChord(.leftArrow, [.control, .command, .shift]),
+            symbol: "arrow.left.and.line.vertical.and.arrow.right",
+            keywords: "resize shrink narrower width divider move",
         ),
         WorkspaceBinding(
-            id: "pane.resizeRight", action: .resizePaneRight, title: "Grow Pane Width",
-            category: .panes, chord: KeyChord(.rightArrow, [.control, .command]),
-            symbol: "arrow.right.and.line.vertical.and.arrow.left", keywords: "resize grow wider width divider",
+            id: "pane.resizeRight", action: .resizePaneRight, title: "Move Divider Right",
+            category: .panes, chord: KeyChord(.rightArrow, [.control, .command, .shift]),
+            symbol: "arrow.right.and.line.vertical.and.arrow.left",
+            keywords: "resize grow wider width divider move",
         ),
         WorkspaceBinding(
-            id: "pane.resizeUp", action: .resizePaneUp, title: "Shrink Pane Height",
-            category: .panes, chord: KeyChord(.upArrow, [.control, .command]),
-            symbol: "arrow.up.and.line.horizontal.and.arrow.down", keywords: "resize shrink shorter height divider",
+            id: "pane.resizeUp", action: .resizePaneUp, title: "Move Divider Up",
+            category: .panes, chord: KeyChord(.upArrow, [.control, .command, .shift]),
+            symbol: "arrow.up.and.line.horizontal.and.arrow.down",
+            keywords: "resize shrink shorter height divider move",
         ),
         WorkspaceBinding(
-            id: "pane.resizeDown", action: .resizePaneDown, title: "Grow Pane Height",
-            category: .panes, chord: KeyChord(.downArrow, [.control, .command]),
-            symbol: "arrow.down.and.line.horizontal.and.arrow.up", keywords: "resize grow taller height divider",
+            id: "pane.resizeDown", action: .resizePaneDown, title: "Move Divider Down",
+            category: .panes, chord: KeyChord(.downArrow, [.control, .command, .shift]),
+            symbol: "arrow.down.and.line.horizontal.and.arrow.up",
+            keywords: "resize grow taller height divider move",
         ),
         // Balance (tmux even-layout): reset the active tab's split weights to equal. ⌃⌘= is otherwise unbound.
         WorkspaceBinding(
@@ -454,25 +465,27 @@ public enum WorkspaceBindingRegistry {
             category: .sessions, chord: KeyChord(character: "n", [.control, .command]),
             symbol: "macwindow.badge.plus", keywords: "host connection add open create workspace",
         ),
-        // Focus
+        // Focus pane up/down/left/right — otty's documented default ⌃⌘arrows
+        // (spec/reference__keybindings.md:82-85, customization__custom-keybindings.md:74-77). The single most
+        // load-bearing pane-navigation chord set; the divider-move family sits on ⌃⌘⇧arrows above.
         WorkspaceBinding(
             id: "focus.left", action: .focusLeft, title: "Focus Left",
-            category: .focus, chord: KeyChord(.leftArrow, [.option, .command]),
+            category: .focus, chord: KeyChord(.leftArrow, [.control, .command]),
             symbol: "arrow.left", keywords: "move navigate pane",
         ),
         WorkspaceBinding(
             id: "focus.right", action: .focusRight, title: "Focus Right",
-            category: .focus, chord: KeyChord(.rightArrow, [.option, .command]),
+            category: .focus, chord: KeyChord(.rightArrow, [.control, .command]),
             symbol: "arrow.right", keywords: "move navigate pane",
         ),
         WorkspaceBinding(
             id: "focus.up", action: .focusUp, title: "Focus Up",
-            category: .focus, chord: KeyChord(.upArrow, [.option, .command]),
+            category: .focus, chord: KeyChord(.upArrow, [.control, .command]),
             symbol: "arrow.up", keywords: "move navigate pane",
         ),
         WorkspaceBinding(
             id: "focus.down", action: .focusDown, title: "Focus Down",
-            category: .focus, chord: KeyChord(.downArrow, [.option, .command]),
+            category: .focus, chord: KeyChord(.downArrow, [.control, .command]),
             symbol: "arrow.down", keywords: "move navigate pane",
         ),
         // Sequential pane cycle (E1 ES-E1-2): ⌘]/⌘[ step focus through the active tab's panes in DFS order
@@ -489,14 +502,19 @@ public enum WorkspaceBindingRegistry {
             symbol: "arrow.backward", keywords: "cycle previous pane focus sequential rotate back",
         ),
         // View
+        // Zoom / unzoom split — otty's documented default ⌘⇧↩ (spec/reference__keybindings.md:78,
+        // customization__custom-keybindings.md:70). Toggles a single pane to fill the tab.
         WorkspaceBinding(
             id: "view.zoom", action: .toggleZoom, title: "Maximize Pane",
-            category: .view, chord: KeyChord(.return, [.option, .command]),
+            category: .view, chord: KeyChord(.return, [.command, .shift]),
             symbol: "arrow.up.left.and.arrow.down.right", keywords: "fullscreen full screen zoom expand enlarge",
         ),
+        // Command Palette ⌘⇧P — otty's documented default (spec/reference__keybindings.md:42,
+        // spec/user-interface__command-palette.md:5/9/35 "Opened with ⌘⇧P from anywhere"). ⌘⇧P is FREE (no
+        // other `p` chord). Pinned by `E1KeymapParityTests`; the otty-divergence history is in DECISIONS.md.
         WorkspaceBinding(
             id: "view.palette", action: .commandPalette, title: "Command Palette",
-            category: .view, chord: KeyChord(character: "k", [.command]),
+            category: .view, chord: KeyChord(character: "p", [.command, .shift]),
             symbol: "command", keywords: "search run quickly open actions",
         ),
         WorkspaceBinding(
@@ -519,10 +537,27 @@ public enum WorkspaceBindingRegistry {
             symbol: "doc.on.clipboard",
             keywords: "copy mode scrollback keyboard navigate select yank vi tmux zellij",
         ),
+        // Toggle Tabs Panel ⌘⇧L — otty's reference default (spec/reference__keybindings.md:66 "Toggle tabs
+        // panel | ⌘⇧L"; line 201 "⌘⇧L … map to sidebar … toggles"). RE-BOUND from the old ⌘B: ⌘B routed to
+        // `store.toggleSidebarCollapsed()`, a LEGACY flag the native split shell never reads (the macOS
+        // collapse is driven by `WorkspaceChromeState.sidebarCollapsed`), so ⌘B was a DEAD chord. Now ⌘⇧L
+        // routes through a `toggleSidebar` view-closure (like `.toggleDetailsPanel`) onto the live chrome
+        // flag, and the titlebar's redundant SwiftUI ⌘⇧L shortcut is dropped (single owner). ⌘⇧L is FREE
+        // (no other `l` chord; ⌃⌘L is Cycle Layout). Pinned by E1KeymapParityTests.
         WorkspaceBinding(
-            id: "view.toggleSidebar", action: .toggleSidebar, title: "Toggle Sidebar",
-            category: .view, chord: KeyChord(character: "b", [.command]),
-            symbol: "sidebar.left", keywords: "sidebar sessions rail hide show collapse",
+            id: "view.toggleSidebar", action: .toggleSidebar, title: "Toggle Tabs Panel",
+            category: .view, chord: KeyChord(character: "l", [.command, .shift]),
+            symbol: "sidebar.left", keywords: "sidebar sessions tabs panel rail hide show collapse",
+        ),
+        // Toggle Details Panel ⌘⇧R — otty's reference default (spec/reference__keybindings.md:67; the
+        // command-palette.png screenshot shows "Toggle Details Panel" with chips ⇧⌘R). The titlebar's
+        // matching hidden SwiftUI .keyboardShortcut was DEAD because the NSEvent dispatcher swallowed ⌘⇧R
+        // first (it was bound to rename); routing it through `toggleDetailsPanel` (a view-@State closure,
+        // like the palette / cheat-sheet toggles) makes ⌘⇧R own the Details panel. Pinned by E1KeymapParityTests.
+        WorkspaceBinding(
+            id: "view.toggleDetails", action: .toggleDetailsPanel, title: "Toggle Details Panel",
+            category: .view, chord: KeyChord(character: "r", [.command, .shift]),
+            symbol: "sidebar.right", keywords: "details inspector panel right pane hide show collapse",
         ),
         // Blocks (WB2): the Command Navigator toggle + jump-to-block prev/next. ⌃⌘O / ⌃⌘[ / ⌃⌘] are all
         // ⌘-prefixed (the §5 conflict rule) and collision-free against the rest of the table (tab cycling
@@ -596,9 +631,12 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: KeyChord(.pageDown, [.command]),
             symbol: "chevron.down.circle", keywords: "jump next command prompt block osc133 down",
         ),
-        // E1 font size (ES-E1-4): ⌘= bumps (the auto-shifted ⌘+ lands on the same base key `=`), ⌘- shrinks,
-        // ⌘0 resets. ⌘0 is FREE (the select-tab digits start at ⌘1). libghostty rescales glyphs WITHIN the
-        // pane box, so no PTY grid reflow from the font step alone. Target the active terminal pane.
+        // E1 font size (ES-E1-4): ⌘= bumps, ⌘- shrinks, ⌘0 resets. ⌘0 is FREE (the select-tab digits start
+        // at ⌘1). The `+` glyph (otty's ⌘+) does NOT fold onto `=` for free — on a US/ANSI layout ⌘+ is
+        // delivered as `+`+⇧ (or keypad `+`), which `charactersIgnoringModifiers` keys as a DISTINCT chord —
+        // so ``aliasChords`` adds those two spellings → `.increaseFontSize` (no extra display row). libghostty
+        // rescales glyphs WITHIN the pane box, so no PTY grid reflow from the font step alone. Target the
+        // active terminal pane.
         WorkspaceBinding(
             id: "view.fontIncrease", action: .increaseFontSize, title: "Increase Font Size",
             category: .view, chord: KeyChord(character: "=", [.command]),
@@ -660,14 +698,36 @@ public enum WorkspaceBindingRegistry {
         allBindings.first { $0.action == action }
     }
 
-    /// The chord → action lookup table (drives the keyboard dispatcher). Built from ``allBindings`` so the
-    /// keyboard layer reads the SAME source as the menu/palette/cheat sheet. For a multi-key binding this
-    /// maps its PREFIX (head) chord — the prefix dispatcher then walks the rest via ``sequenceTable``.
+    /// Extra chord → action ALIASES that fire an existing action from a SECOND chord, WITHOUT minting a
+    /// display row (so the cheat sheet / palette / menu still show the ONE canonical binding). Folded into
+    /// ``chordTable`` + ``resolvedChordTable`` so the keyboard dispatcher resolves them, but NOT into
+    /// ``allBindings`` / ``groupedForDisplay`` — the chord-uniqueness guard runs over `allBindings`, so an
+    /// alias here is intentionally outside it (it shares its ACTION, not its chord, with the canonical row).
+    ///
+    /// E1 ES-E1-4: the font-increase chord is canonically ⌘= (no ⇧), but otty's spec / muscle memory is the
+    /// `+` glyph (`⌘+`). On a US/ANSI layout `+` IS Shift-`=`, and `charactersIgnoringModifiers` ignores
+    /// ⌘/⌥/⌃ but NOT ⇧ — so physically pressing ⌘+ delivers the character `"+"` with ⇧ set, i.e.
+    /// `KeyChord(character: "+", [.command, .shift])`, NOT ⌘=. Without this alias that chord is unbound and
+    /// ⌘+ leaks to the PTY (the font never grows). We alias BOTH spellings the OS can deliver for ⌘+: the
+    /// shifted main-row `+` (`⌘⇧+`) and the (unshifted) keypad `+` (`⌘+`). `KeyChord.init(character:)`
+    /// lower-cases, which is a no-op for `+`, so both spellings key cleanly.
+    public static let aliasChords: [KeyChord: WorkspaceAction] = [
+        KeyChord(character: "+", [.command, .shift]): .increaseFontSize, // ⌘+ = ⌘⇧= on a US/ANSI layout
+        KeyChord(character: "+", [.command]): .increaseFontSize, // keypad + (no ⇧ reported)
+    ]
+
+    /// The chord → action lookup table (drives the keyboard dispatcher). Built from ``allBindings`` (so the
+    /// keyboard layer reads the SAME source as the menu/palette/cheat sheet) plus ``aliasChords`` (extra
+    /// chords that fire an existing action without a display row). For a multi-key binding this maps its
+    /// PREFIX (head) chord — the prefix dispatcher then walks the rest via ``sequenceTable``.
     public static var chordTable: [KeyChord: WorkspaceAction] {
         var map: [KeyChord: WorkspaceAction] = [:]
         for binding in allBindings {
             if let chord = binding.chord { map[chord] = binding.action }
         }
+        // Aliases never overwrite a real binding (they target an existing action from a free second chord),
+        // but fold them AFTER so the table is the union the dispatcher resolves.
+        for (chord, action) in aliasChords where map[chord] == nil { map[chord] = action }
         return map
     }
 

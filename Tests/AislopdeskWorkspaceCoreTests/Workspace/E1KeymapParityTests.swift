@@ -116,6 +116,37 @@ final class E1KeymapParityTests: XCTestCase {
         XCTAssertEqual(chord(.cyclePanePrev), KeyChord(character: "[", [.command]), "cycle pane prev = ⌘[")
     }
 
+    /// Focus-pane directional chords, the divider-move family, and zoom match otty's documented defaults
+    /// (spec/reference__keybindings.md:78,82-89; customization__custom-keybindings.md:70,74-81). Focus = the
+    /// single most load-bearing pane-navigation chord set: ⌃⌘arrows (NOT ⌥⌘arrows). Move-divider = ⌃⌘⇧arrows
+    /// (NOT plain ⌃⌘arrows — those are focus). Zoom = ⌘⇧↩ (NOT ⌥⌘↩). A transposed modifier slips past the
+    /// uniqueness guard (it only catches a COLLISION), so pin the exact values. FAILS on the pre-fix chords
+    /// (focus on ⌥⌘arrows, divider on ⌃⌘arrows, zoom on ⌥⌘↩).
+    func testFocusDividerAndZoomChordsMatchOttyDefaults() {
+        // Focus pane up/down/left/right = ⌃⌘arrows.
+        XCTAssertEqual(chord(.focusLeft), KeyChord(.leftArrow, [.control, .command]), "focus left = ⌃⌘←")
+        XCTAssertEqual(chord(.focusRight), KeyChord(.rightArrow, [.control, .command]), "focus right = ⌃⌘→")
+        XCTAssertEqual(chord(.focusUp), KeyChord(.upArrow, [.control, .command]), "focus up = ⌃⌘↑")
+        XCTAssertEqual(chord(.focusDown), KeyChord(.downArrow, [.control, .command]), "focus down = ⌃⌘↓")
+        // Move divider up/down/left/right = ⌃⌘⇧arrows.
+        XCTAssertEqual(
+            chord(.resizePaneLeft),
+            KeyChord(.leftArrow, [.control, .command, .shift]),
+            "divider left = ⌃⌘⇧←",
+        )
+        XCTAssertEqual(
+            chord(.resizePaneRight), KeyChord(.rightArrow, [.control, .command, .shift]), "divider right = ⌃⌘⇧→",
+        )
+        XCTAssertEqual(chord(.resizePaneUp), KeyChord(.upArrow, [.control, .command, .shift]), "divider up = ⌃⌘⇧↑")
+        XCTAssertEqual(
+            chord(.resizePaneDown),
+            KeyChord(.downArrow, [.control, .command, .shift]),
+            "divider down = ⌃⌘⇧↓",
+        )
+        // Zoom / unzoom split = ⌘⇧↩.
+        XCTAssertEqual(chord(.toggleZoom), KeyChord(.return, [.command, .shift]), "zoom = ⌘⇧↩")
+    }
+
     /// The split-left/up chords (ES-E1-1): ⌘⌥D / ⌘⌥⇧D — ⌥+ the ⌘D / ⌘⇧D right/down splits.
     func testSplitLeftUpChordsMatchTable() {
         XCTAssertEqual(chord(.splitLeft), KeyChord(character: "d", [.command, .option]), "split left = ⌘⌥D")
@@ -133,6 +164,156 @@ final class E1KeymapParityTests: XCTestCase {
         XCTAssertEqual(chord(.increaseFontSize), KeyChord(character: "=", [.command]), "font increase = ⌘=")
         XCTAssertEqual(chord(.decreaseFontSize), KeyChord(character: "-", [.command]), "font decrease = ⌘-")
         XCTAssertEqual(chord(.resetFontSize), KeyChord(character: "0", [.command]), "font reset = ⌘0")
+    }
+
+    /// ES-E1-4 requires "when I press ⌘+ … the terminal font grows". The canonical chord is ⌘= (no ⇧), but on
+    /// a US/ANSI layout `+` IS Shift-`=`: `charactersIgnoringModifiers` ignores ⌘/⌥/⌃ but NOT ⇧, so physically
+    /// pressing ⌘+ delivers the character `"+"` with ⇧ set — `KeyChord(character: "+", [.command, .shift])` —
+    /// NOT ⌘=. Without an alias that chord is unbound and ⌘+ leaks to the PTY. The registry's `aliasChords`
+    /// folds BOTH ⌘+ spellings (shifted main-row `+`, keypad `+`) → `.increaseFontSize` in the chord table, so
+    /// ⌘+ grows the font. FAILS on the pre-fix code (only the literal ⌘= chord resolved; ⌘+ was unbound).
+    func testCmdPlusResolvesToIncreaseFontSize() {
+        // The two chord shapes the OS can deliver for ⌘+ both resolve to font-increase.
+        XCTAssertEqual(
+            WorkspaceBindingRegistry.chordTable[KeyChord(character: "+", [.command, .shift])], .increaseFontSize,
+            "⌘+ (delivered as ⌘⇧+ on a US/ANSI layout) grows the font",
+        )
+        XCTAssertEqual(
+            WorkspaceBindingRegistry.chordTable[KeyChord(character: "+", [.command])], .increaseFontSize,
+            "keypad ⌘+ (no ⇧ reported) grows the font",
+        )
+        // The live dispatcher reads the OVERRIDE-AWARE table; the alias must be present there too (default,
+        // no overrides) so the runtime path — not just the static table — resolves ⌘+.
+        XCTAssertEqual(
+            WorkspaceBindingRegistry.resolvedChordTable[KeyChord(character: "+", [.command, .shift])],
+            .increaseFontSize,
+            "⌘+ resolves to font-increase in the override-aware table the dispatcher reads",
+        )
+        // The canonical ⌘= still works, and the canonical display binding is unchanged (no duplicate row).
+        XCTAssertEqual(
+            WorkspaceBindingRegistry.chordTable[KeyChord(character: "=", [.command])], .increaseFontSize,
+            "the canonical ⌘= chord still grows the font",
+        )
+        XCTAssertEqual(
+            chord(.increaseFontSize), KeyChord(character: "=", [.command]),
+            "the canonical display binding stays ⌘= (the alias adds no display row)",
+        )
+    }
+
+    /// `route(.increaseFontSize, …)` from the ⌘+ alias chord runs through the SAME routing as ⌘= — it is a
+    /// graceful no-op against a non-live FakePaneSession surface (font scaling needs libghostty), but must not
+    /// trap or mutate the tree. Pins that the aliased chord drives the real action, not a dead path.
+    func testIncreaseFontSizeFromAliasRoutesWithoutTrap() throws {
+        let store = makeTreeStore()
+        let action = try XCTUnwrap(
+            WorkspaceBindingRegistry.chordTable[KeyChord(character: "+", [.command, .shift])],
+            "⌘+ is bound to an action",
+        )
+        let before = store.tree
+        WorkspaceBindingRegistry.route(action, to: store) // must not trap
+        XCTAssertEqual(store.tree, before, "font-increase is a render-only op — the tree is unchanged")
+    }
+
+    // MARK: - otty default-keymap parity: command palette ⌘⇧P + Toggle Details ⌘⇧R + chord-less rename
+
+    /// The Command Palette is bound to otty's documented default ⌘⇧P, NOT the coding-IDE ⌘K
+    /// (spec/reference__keybindings.md:42, spec/user-interface__command-palette.md:5/9/35 "Opened with ⌘⇧P
+    /// from anywhere"). FAILS on the pre-fix code (palette was ⌘K). Also asserts ⌘K no longer fires the palette.
+    func testCommandPaletteIsCmdShiftP() {
+        XCTAssertEqual(
+            chord(.commandPalette), KeyChord(character: "p", [.command, .shift]),
+            "command palette = ⌘⇧P (otty default)",
+        )
+        XCTAssertNotEqual(
+            chord(.commandPalette), KeyChord(character: "k", [.command]),
+            "command palette must NOT be the old ⌘K coding-IDE chord",
+        )
+        // The chord table resolves ⌘⇧P → the palette, and ⌘K resolves to nothing (freed).
+        XCTAssertEqual(
+            WorkspaceBindingRegistry.chordTable[KeyChord(character: "p", [.command, .shift])], .commandPalette,
+            "⌘⇧P routes to the command palette",
+        )
+        XCTAssertNil(
+            WorkspaceBindingRegistry.chordTable[KeyChord(character: "k", [.command])],
+            "⌘K is freed — it no longer maps to any action",
+        )
+    }
+
+    /// otty binds ⌘⇧R to "Toggle Details Panel" (spec/reference__keybindings.md:67; the command-palette.png
+    /// screenshot shows "Toggle Details Panel" with chips ⇧⌘R). The new `.toggleDetailsPanel` action OWNS ⌘⇧R,
+    /// and Rename — which previously squatted on ⌘⇧R and suppressed the titlebar's Details toggle — now has NO
+    /// default chord (otty ships no rename chord). FAILS on the pre-fix code (no `.toggleDetailsPanel`; rename
+    /// was ⌘⇧R).
+    func testToggleDetailsOwnsCmdShiftRAndRenameIsChordLess() {
+        XCTAssertEqual(
+            chord(.toggleDetailsPanel), KeyChord(character: "r", [.command, .shift]),
+            "toggle Details panel = ⌘⇧R (otty default)",
+        )
+        XCTAssertEqual(
+            WorkspaceBindingRegistry.chordTable[KeyChord(character: "r", [.command, .shift])], .toggleDetailsPanel,
+            "⌘⇧R routes to Toggle Details Panel — NOT rename",
+        )
+        // Rename is still a REGISTERED, routable action (title menu / context menu / palette), but chord-LESS.
+        let rename = WorkspaceBindingRegistry.binding(for: .renamePane)
+        XCTAssertNotNil(rename, "rename is still a registered binding (menu / palette reachable)")
+        XCTAssertNil(rename?.chord, "rename carries NO default chord (otty has no rename chord; ⌘⇧R is Details)")
+    }
+
+    /// `.toggleDetailsPanel` routes through `route(_:to:)` without trapping — it is a VIEW @State toggle
+    /// (`WorkspaceChromeState`), so a `nil` closure (the headless default) is a graceful no-op that never
+    /// mutates the tree. FAILS on the pre-fix code (no `.toggleDetailsPanel` case to route).
+    func testToggleDetailsPanelRoutesWithoutTrappingOrMutatingTree() {
+        let store = makeTreeStore()
+        let before = store.tree
+        WorkspaceBindingRegistry.route(.toggleDetailsPanel, to: store) // nil closure → graceful no-op
+        XCTAssertEqual(store.tree, before, "Toggle Details is a view toggle — the tree is unchanged")
+
+        // With a closure supplied, the route fires it (the live app wires `chrome.toggleInspector`).
+        var fired = 0
+        WorkspaceBindingRegistry.route(.toggleDetailsPanel, to: store, toggleDetailsPanel: { fired += 1 })
+        XCTAssertEqual(fired, 1, "the supplied Details-toggle closure fires exactly once")
+    }
+
+    /// E1 review fix: ⌘B "Toggle Sidebar" was a DEAD chord on macOS — it routed to
+    /// `store.toggleSidebarCollapsed()`, a LEGACY flag the native split shell never reads (the macOS sidebar
+    /// collapse is `WorkspaceChromeState.sidebarCollapsed`). Re-bound to otty's ⌘⇧L "Toggle Tabs Panel" and
+    /// routed (like `.toggleDetailsPanel`) through a `toggleSidebar` VIEW closure the live app wires to
+    /// `chrome.toggleSidebar`. Pins (1) the chord is ⌘⇧L, NOT ⌘B; (2) the action DRIVES the supplied closure
+    /// (the live collapse flag), not just the dead store flag. FAILS on the pre-fix code (chord was ⌘B; the
+    /// route had no `toggleSidebar` closure and flipped only the unread store flag).
+    func testToggleSidebarIsCmdShiftLAndDrivesTheSuppliedClosure() {
+        // (1) the chord is otty's ⌘⇧L, and the old ⌘B no longer fires the sidebar.
+        XCTAssertEqual(
+            chord(.toggleSidebar), KeyChord(character: "l", [.command, .shift]),
+            "toggle sidebar = ⌘⇧L (otty Toggle Tabs Panel)",
+        )
+        XCTAssertEqual(
+            WorkspaceBindingRegistry.chordTable[KeyChord(character: "l", [.command, .shift])], .toggleSidebar,
+            "⌘⇧L routes to Toggle Tabs Panel",
+        )
+        XCTAssertNil(
+            WorkspaceBindingRegistry.chordTable[KeyChord(character: "b", [.command])],
+            "⌘B is freed — it no longer maps to the (dead) sidebar toggle",
+        )
+
+        // (2) the action drives the SUPPLIED closure — the live `chrome.sidebarCollapsed` flip, not the
+        // legacy store flag. This is the crux: ⌘⇧L must reach the flag the native split actually reads.
+        let store = makeTreeStore()
+        let before = store.tree
+        var fired = 0
+        WorkspaceBindingRegistry.route(.toggleSidebar, to: store, toggleSidebar: { fired += 1 })
+        XCTAssertEqual(fired, 1, "the supplied sidebar-toggle closure fires exactly once")
+        XCTAssertEqual(store.tree, before, "Toggle Tabs Panel is a view toggle — the tree is unchanged")
+    }
+
+    /// Without a `toggleSidebar` closure (the headless / test default) `.toggleSidebar` must still be a
+    /// non-trapping graceful op — it falls back to the legacy store flag so the action is never DEAD/trapping.
+    /// (On macOS the live app always supplies the closure; this pins the fallback path only.)
+    func testToggleSidebarFallsBackGracefullyWithoutClosure() {
+        let store = makeTreeStore()
+        let before = store.sidebarCollapsed
+        WorkspaceBindingRegistry.route(.toggleSidebar, to: store) // nil closure → store-flag fallback
+        XCTAssertEqual(store.sidebarCollapsed, !before, "the no-closure fallback still flips the store flag (no trap)")
     }
 
     /// The delegated-stub chords (ES-E1-5): reopen ⌘⇧T, open-quickly ⌘⇧O, composer ⌘⇧E, queue ⌘⇧M, send-to-
