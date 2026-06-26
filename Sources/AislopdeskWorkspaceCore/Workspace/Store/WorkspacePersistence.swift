@@ -253,11 +253,73 @@ public struct WorkspacePersistence: @unchecked Sendable {
     /// persistence handle and will autosave the default tree over `workspace.json` — cannot PERMANENTLY
     /// destroy the user's last saved session. Bounded to one fixed-name sidecar (overwrites any prior copy).
     /// A missing file (a genuine first launch) is a no-op — there is nothing to preserve.
+    ///
+    /// **Idempotent across repeated new-window launches.** A PERSISTENT `On Launch = New Window` setting fires
+    /// this on EVERY launch, so a naive always-overwrite would lose data permanently: launch 1 snapshots the
+    /// REAL session into `.previous`, the store then autosaves a fresh DEFAULT over `workspace.json`; launch 2
+    /// would snapshot that throwaway default over `.previous`, clobbering the real-session backup with no
+    /// recovery. The guard therefore SKIPS the snapshot when `workspace.json` is already a fresh
+    /// ``TreeWorkspace/defaultWorkspace()``-shaped tree (the throwaway the store just autosaved) — and ONLY then,
+    /// because ``isDefaultTreeShape(_:)`` matches the re-seedable default down to its empty additive ``PaneSpec``
+    /// fields, so a real single-un-renamed-terminal session (which carries a `lastKnownCwd` / `resumeSessionID`
+    /// hint worth preserving) is NOT mistaken for the throwaway. The sidecar therefore always preserves the
+    /// most-recent session that has anything worth recovering, never being overwritten by a default a later
+    /// launch re-seeds anyway.
     public func snapshotPreviousSession() {
         guard fileManager.fileExists(atPath: fileURL.path) else { return } // first launch: nothing to back up
+        // Idempotency guard: a default-shaped `workspace.json` is the throwaway tree the store autosaved over
+        // the real session on a PRIOR new-window launch — re-snapshotting it would overwrite the real session
+        // already preserved in `.previous` with a useless default. A default is always re-seedable, so skip
+        // (validate-then-drop: an unreadable/corrupt file is NOT default-shaped → it is preserved aside).
+        if let data = try? Data(contentsOf: fileURL),
+           let tree = try? JSONDecoder().decode(TreeWorkspace.self, from: data),
+           Self.isDefaultTreeShape(tree)
+        {
+            return
+        }
         let sidecar = previousSessionURL
         try? fileManager.removeItem(at: sidecar)
         try? fileManager.copyItem(at: fileURL, to: sidecar)
+    }
+
+    /// Whether `tree` is the EXACT fresh-default tree the store autosaves over a real session on a `.newWindow`
+    /// launch — one "Local" session, one tab, one terminal leaf titled "Terminal", AND that leaf's spec carrying
+    /// none of the additive persistence fields — ignoring only the random ids ``TreeWorkspace/defaultWorkspace()``
+    /// mints on every call (so a value `==` is impossible). The idempotency guard in ``snapshotPreviousSession()``
+    /// uses it to AVOID clobbering a real session already in the sidecar with a throwaway default on a repeated
+    /// new-window launch. Only the session content distinguishes a real session from the default, so app-config
+    /// presets/snippets are intentionally NOT part of the test.
+    ///
+    /// **The additive-field check is load-bearing, not decorative.** Structural shape ALONE is the single most
+    /// common REAL workspace — one un-renamed terminal in a project dir — and that session is NOT throwaway: it
+    /// carries a `lastKnownCwd` (its subtitle hint) and, for a detached host session, a `resumeSessionID` /
+    /// `resumeLastReceivedSeq` (its Stage-2 reattach handle). The raw-decode guard runs BEFORE the load-time
+    /// `lastKnownTitle → title` promotion, so its `title` is still "Terminal" even when the user has seen a real
+    /// shell title. Matching on shape alone would mis-classify that session as the default and SKIP its snapshot,
+    /// letting the store's first `.newWindow` autosave overwrite `workspace.json` with the throwaway default —
+    /// the precise permanent loss the sidecar exists to prevent. Requiring every additive field to be empty keeps
+    /// the repeated-launch idempotency win (the store's autosaved default is all-nil, so it still matches) while
+    /// only ever skipping a genuinely re-seedable default.
+    static func isDefaultTreeShape(_ tree: TreeWorkspace) -> Bool {
+        guard tree.sessions.count == 1,
+              let session = tree.sessions.first,
+              session.name == "Local",
+              session.tabs.count == 1,
+              tree.allPaneIDs().count == 1,
+              let leaf = tree.allPaneIDs().first,
+              let spec = tree.spec(for: leaf),
+              spec.kind == .terminal,
+              spec.title == "Terminal",
+              // Additive PaneSpec fields must ALL be empty — a real un-renamed terminal that has been connected
+              // (cwd subtitle hint, detach/reattach handle, floated, or a video binding) is NOT the throwaway
+              // default and must still be snapshotted aside before the autosave clobbers it.
+              spec.video == nil,
+              spec.resumeSessionID == nil,
+              spec.resumeLastReceivedSeq == nil,
+              spec.lastKnownCwd == nil,
+              spec.lastKnownTitle == nil,
+              spec.floatingFrame == nil else { return false }
+        return true
     }
 
     /// The tree counterpart of ``resetToDefault()``: copy the unrestorable file aside to the single

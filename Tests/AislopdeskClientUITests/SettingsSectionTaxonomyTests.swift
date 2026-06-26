@@ -5,6 +5,16 @@
 // section. This pins the set + order + titles + otty sidebar glyphs against an INDEPENDENT expectation
 // table (not the enum's own derivation), so dropping, reordering, renaming, or re-iconing a section fails
 // the build — exactly as `SettingsKeyTests.testSettingsKeyStringsAreStable` pins the key strings.
+//
+// SECTION-CONTENT GAPS ARE INTENTIONAL (the per-section bodies are `private` to `SettingsView.swift`, so the
+// gaps are pinned by the doc-comment notes on each tab struct rather than by an assertion here — recorded for
+// a reviewer auditing this anti-drift file): Editor + Recipes stay RESERVED/empty (no file-editor / recipe
+// library); Shell → NOTIFICATIONS surfaces only the two rows backed by real behaviour (the rest of otty's
+// NOTIFICATION + TAB BADGE groups deferred-until-backed); General OMITS otty's Auto-Update / Language /
+// "Quit When All Windows Closed" (N/A for a single-user remote tool) and ADDS the aislopdesk-specific Privacy
+// & New Panes group; Appearance → TABS is VERTICAL-TABS-ONLY by product decision (otty's horizontal
+// Tabs Top / Tabs Bottom LAYOUT selector is dropped, not missing) with Auto-Hide-Tabs-Panel + Window-Size
+// deferred. None of these are regressions; see the matching struct doc-comments in `SettingsView.swift`.
 
 #if canImport(SwiftUI)
 import XCTest

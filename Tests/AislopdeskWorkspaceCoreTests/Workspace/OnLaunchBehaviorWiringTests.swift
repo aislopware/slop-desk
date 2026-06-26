@@ -161,6 +161,110 @@ final class OnLaunchBehaviorWiringTests: XCTestCase {
         )
     }
 
+    /// ROBUSTNESS — repeated `.newWindow` launches must NOT clobber the preserved real session. A PERSISTENT
+    /// `On Launch = New Window` setting fires `snapshotPreviousSession()` on EVERY launch, so a naive
+    /// always-overwrite snapshot loses data permanently across the sequence: launch 1 snapshots the REAL session
+    /// into `.previous`, the store autosaves a fresh DEFAULT over `workspace.json`; launch 2 would then snapshot
+    /// that throwaway default over `.previous`, destroying the real-session backup with no recovery. The
+    /// idempotency guard skips re-snapshotting when `workspace.json` is already a fresh default, so the
+    /// most-recent NON-DEFAULT session stays recoverable across any number of new-window launches.
+    ///
+    /// Revert-to-confirm-fail: with the old always-overwrite `snapshotPreviousSession()`, launch 2 copies the
+    /// default tree over `.previous`, so the recovered session name is the default "Local", NOT the marker — the
+    /// final assertion FAILS. With the guard the marker survives and it PASSES.
+    func testRepeatedNewWindowLaunchesPreserveRealSessionInSidecar() throws {
+        let marker = "Survivor-Session-Marker"
+        let (persistence, dir) = try makeMarkedPersistence(marker: marker)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Launch 1: `.newWindow` snapshots the REAL (marked) session aside, then the store autosaves a fresh
+        // default over `workspace.json`.
+        XCTAssertNil(WorkspacePersistence.launchTree(behavior: .newWindow, persistence: persistence))
+        try persistence.save(TreeWorkspace.defaultWorkspace().normalized())
+
+        // After launch 1: the sidecar holds the real session, `workspace.json` holds the throwaway default.
+        XCTAssertEqual(
+            WorkspacePersistence(fileURL: persistence.previousSessionURL).loadTree().activeSession?.name,
+            marker,
+            "after launch 1 the sidecar must hold the real session",
+        )
+        XCTAssertNotEqual(
+            persistence.loadTree().activeSession?.name, marker,
+            "after launch 1 the primary file is the throwaway default, not the real session",
+        )
+
+        // Launch 2: `.newWindow` again. The idempotency guard must SKIP re-snapshotting (the primary file is a
+        // fresh default), so the real session in the sidecar is NOT overwritten by the default. The store then
+        // autosaves the fresh default once more.
+        XCTAssertNil(WorkspacePersistence.launchTree(behavior: .newWindow, persistence: persistence))
+        try persistence.save(TreeWorkspace.defaultWorkspace().normalized())
+
+        // The REAL session must STILL be recoverable from the sidecar after the second new-window launch.
+        let recovered = WorkspacePersistence(fileURL: persistence.previousSessionURL).loadTree()
+        XCTAssertEqual(
+            recovered.activeSession?.name, marker,
+            "a persistent On Launch = New Window must not clobber the real-session backup across launches",
+        )
+    }
+
+    /// REGRESSION — a REAL single-un-renamed-terminal session is NOT the throwaway default merely because it
+    /// shares the default's STRUCTURAL shape. The most common real workspace is one un-renamed terminal in a
+    /// project dir: its leaf spec carries a `lastKnownCwd` (the subtitle hint) and, for a detached host session,
+    /// a `resumeSessionID` reattach handle — while its `title` is still "Terminal" (the raw-decode idempotency
+    /// guard runs BEFORE the load-time `lastKnownTitle → title` promotion). A `.newWindow` launch must snapshot it
+    /// aside before the store autosaves the fresh default over `workspace.json`, exactly as it does a renamed
+    /// session, or the cwd/resume hints are PERMANENTLY lost.
+    ///
+    /// Revert-to-confirm-fail: with the old shape-only `isDefaultTreeShape` (no additive-field check), this tree
+    /// matches the default ⇒ `snapshotPreviousSession()` SKIPS the copy ⇒ no sidecar, and the recovery assertions
+    /// below FAIL. With the tightened guard the session is preserved aside and they PASS.
+    func testNewWindowPreservesRealSingleTerminalWithCwdHint() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aislopdesk-onlaunch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let persistence = WorkspacePersistence(fileURL: dir.appendingPathComponent("workspace.json"))
+
+        // A tree that is STRUCTURALLY the default shape (one "Local" session, one tab, one "Terminal" leaf) but is
+        // a REAL connected session — its leaf carries a `lastKnownCwd` subtitle hint. The title stays "Terminal"
+        // because the raw-decode guard runs before the load-time `lastKnownTitle → title` promotion.
+        var tree = TreeWorkspace.defaultWorkspace().normalized()
+        let leaf = try XCTUnwrap(tree.allPaneIDs().first)
+        let cwd = "/Users/me/project-with-unsaved-context"
+        tree.sessions[0].specs[leaf]?.lastKnownCwd = cwd
+        try persistence.save(tree)
+
+        // Direct contract pin: a cwd-bearing real session is NOT default-shaped, while the pure re-seedable
+        // default still IS (so the repeated-launch idempotency win survives the tightening).
+        XCTAssertFalse(
+            WorkspacePersistence.isDefaultTreeShape(tree),
+            "a real single terminal with a lastKnownCwd hint must not be classified as the throwaway default",
+        )
+        XCTAssertTrue(
+            WorkspacePersistence.isDefaultTreeShape(TreeWorkspace.defaultWorkspace().normalized()),
+            "the pure all-nil default must still be classified as the re-seedable default (idempotency win)",
+        )
+
+        // `.newWindow` must snapshot this real session aside (it is NOT the throwaway default).
+        XCTAssertNil(WorkspacePersistence.launchTree(behavior: .newWindow, persistence: persistence))
+
+        // Emulate the store's first autosave overwriting the primary file with a fresh default.
+        try persistence.save(TreeWorkspace.defaultWorkspace().normalized())
+        let primaryLeaf = try XCTUnwrap(persistence.loadTree().allPaneIDs().first)
+        XCTAssertNil(
+            persistence.loadTree().spec(for: primaryLeaf)?.lastKnownCwd,
+            "the autosave overwrote the primary workspace.json with the fresh default (no cwd hint)",
+        )
+
+        // The real session's cwd hint must still be recoverable from the `.previous` sidecar.
+        let recovered = WorkspacePersistence(fileURL: persistence.previousSessionURL).loadTree()
+        let recoveredLeaf = try XCTUnwrap(recovered.allPaneIDs().first)
+        XCTAssertEqual(
+            recovered.spec(for: recoveredLeaf)?.lastKnownCwd, cwd,
+            "a real single-un-renamed-terminal session must be preserved aside on a .newWindow launch",
+        )
+    }
+
     /// A genuine first launch (no `workspace.json` yet) writes NO sidecar — there is nothing to preserve, and
     /// `snapshotPreviousSession()` must not fabricate an empty/garbage `.previous` file.
     func testNewWindowFirstLaunchWritesNoSidecar() throws {

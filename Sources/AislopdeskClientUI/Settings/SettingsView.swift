@@ -374,6 +374,13 @@ struct SettingsSectionContent: View {
 /// pane kind. All fire-time `Defaults.Keys` (bound via `@Default(.key)`) — applied LIVE. NOTE: the
 /// NOTIFICATION group is NOT here — otty homes it under **Shell** (`notification-setting.png` shows the
 /// NOTIFICATION + TAB BADGE groups on the Shell page), so it lives in `ShellSettingsTab`.
+///
+/// INTENTIONAL OMISSIONS (pinned, not a regression): otty's General page (`launch-option.png`) also carries an
+/// UPDATE group (Auto Update), a Language picker, and a "Quit When All Windows Closed" row. aislopdesk drops
+/// all three on purpose — Auto-Update and Language are N/A for a single-user remote-coding tool that is not a
+/// self-updating, localized consumer app (no in-app updater, English-only UI), and the quit-policy row has no
+/// backing behaviour here. Conversely, the **Privacy & New Panes** group (Redact secrets / Default pane kind)
+/// is aislopdesk-SPECIFIC — it has no otty counterpart and is deliberately added, not a stray.
 private struct GeneralSettingsTab: View {
     /// The fire-time keys are NOT in the typed models, so bind the global `Defaults.Keys` directly through
     /// the type-safe `@Default(.key)` wrapper (the default lives in the key declaration, not here). General
@@ -446,9 +453,26 @@ private struct ShellSettingsTab: View {
 
     var body: some View {
         Form {
+            // INTENTIONAL SUBSET (pinned, not a regression): otty's NOTIFICATION group has ~6 rows (Allow App
+            // Notifications, Notify on Command Finish, Notify on Error Exit, Notify on Watch Finish, a Notify
+            // While Foreground banner-behaviour picker, Bounce Dock Icon) plus a separate TAB BADGE group
+            // (`notification-setting.png`). aislopdesk surfaces ONLY the two rows backed by real behaviour: the
+            // OSC 9/777 escape-sequence gate (≈ otty's "Allow App Notifications") and the long-running-command
+            // completion notice (≈ otty's "Notify on Command Finish"). The rest — the TAB BADGE group,
+            // dock-bounce, the foreground-banner picker, and per-event (error-exit / watch-finish) toggles —
+            // are DEFERRED-until-backed: there is no notification dispatcher behind them yet, so adding the
+            // toggles would lie about behaviour. The two labels below are aligned toward otty's wording only as
+            // far as stays honest about what actually fires.
             Section("Notifications") {
-                Toggle("Explicit notifications (OSC 9 / 777)", isOn: $oscNotifications)
-                Toggle("Long-command completion", isOn: $longCommandNotifications)
+                Toggle("Allow app notifications (OSC 9 / 777)", isOn: $oscNotifications)
+                Toggle("Notify on long-command completion", isOn: $longCommandNotifications)
+                Text(
+                    "aislopdesk surfaces the subset of otty's NOTIFICATION group backed by real behaviour. Tab "
+                        + "badge, dock-bounce, the foreground-banner picker, and per-event toggles are deferred "
+                        + "until there is a notification dispatcher behind them.",
+                )
+                .font(.system(size: Otty.Typeface.footnote))
+                .foregroundStyle(Otty.Text.secondary)
                 timingFooter(.live)
             }
 
@@ -618,6 +642,14 @@ private struct AppearanceSettingsTab: View {
 
     var body: some View {
         Form {
+            // PRODUCT DECISION (pinned, NOT a regression): otty's Appearance page (`tab-setting.png`) opens
+            // with a LAYOUT selector — Vertical Tabs / Tabs Top / Tabs Bottom. aislopdesk is VERTICAL-TABS-ONLY
+            // by deliberate product decision: the horizontal tab bar is dropped from this clone, so there is no
+            // layout selector to surface and a future reviewer must NOT read the missing horizontal-layout
+            // option as a gap to backfill. otty's `tab-setting.png` also carries an "Auto Hide Tabs Panel" row
+            // (sidebar-layout-only) and a WINDOW group with a "Window Size" picker; both are DEFERRED-until-
+            // backed — there is no auto-hide policy or remember-window-size behaviour behind them yet, so we
+            // omit the controls rather than ship dead UI.
             Section("Tabs") {
                 Picker("New tab position", selection: $newTabPosition) {
                     Text("Automatic").tag(NewTabPosition.auto)
