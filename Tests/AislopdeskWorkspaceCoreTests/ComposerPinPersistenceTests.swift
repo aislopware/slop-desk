@@ -75,6 +75,27 @@ final class ComposerPinPersistenceTests: XCTestCase {
         XCTAssertFalse(SettingsKey.isComposerPinned(paneID: id), "unpinning removes the persisted entry")
     }
 
+    /// Closing a pane (the orphan/`teardown()` seam — `WorkspaceStore.reconcile` drops a leaf no longer in
+    /// the tree) PRUNES that pane's persisted pin, so a closed pane's dead `PaneID` can't accumulate in the
+    /// set unbounded. REVERT-TO-CONFIRM-FAIL: without the `setComposerPinned(false,…)` in
+    /// `LivePaneSession.teardown`, the pin survives the close and this final assert fails.
+    func testTeardownPrunesPersistedPinForClosedPane() async throws {
+        let id = PaneID()
+        SettingsKey.setComposerPinned(true, paneID: id)
+
+        let session = makeSession()
+        session.adopt(id: id)
+        try XCTUnwrap(session.composer)
+        XCTAssertTrue(SettingsKey.isComposerPinned(paneID: id), "pinned before close")
+
+        await session.teardown()
+
+        XCTAssertFalse(
+            SettingsKey.isComposerPinned(paneID: id),
+            "closing the pane prunes its dead PaneID from the persisted pin set",
+        )
+    }
+
     /// Restoring an unpinned pane neither pins nor re-persists: `adopt` reads the (empty) set, leaves the
     /// composer unpinned, and the wired `onPinnedChange` is the ONLY writer — so a plain materialization
     /// doesn't pollute the persisted set.

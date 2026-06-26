@@ -10,8 +10,12 @@ import Foundation
 /// the durable ``LivePaneSession`` wires to the pane's `InputBarModel.sendText`/`sendRaw`
 /// (E12 WI-4). That keeps composer output on the **one** per-pane ordered-OUT FIFO + B1
 /// echo-dedup ring — never a second socket, never an unstructured `Task` that could reorder
-/// against renderer keystrokes (docs/29). `send` is `nil` while the pane is disconnected; a
-/// send/dispatch then keeps the draft / queued item rather than dropping it.
+/// against renderer keystrokes (docs/29). The `guard let send` in ``sendDraft()`` / ``dispatch()`` is a
+/// DEFENSIVE guard for a model with **no sink wired** — a headless test, a SwiftUI preview, or a
+/// never-adopted model — NOT a live in-production disconnect path: `LivePaneSession.make` wires `send`
+/// once at construction and never clears it, so in production it is always non-nil. Disconnect
+/// resilience is the input bar's job (the `ReplayBuffer` / ordered-OUT FIFO holds un-acked bytes); the
+/// composer just hands every byte to the always-present sink in call order.
 ///
 /// Because the model lives on the durable `LivePaneSession` (panes mount at opacity-0 and are
 /// never torn down across tab switches — see memory), `draft` and the queue survive tab
@@ -81,17 +85,20 @@ public final class ComposerModel {
     /// The single OUT sink. Every composer/queue byte funnels SYNCHRONOUSLY through here, on
     /// the main actor, in call order — wired by `LivePaneSession` to the pane's
     /// `InputBarModel.sendText`/`sendRaw` so composer bytes ride the SAME per-pane ordered-OUT
-    /// FIFO + B1 echo-dedup ring as renderer keystrokes (docs/29). `nil` while the pane is
-    /// disconnected — a send/dispatch then keeps the draft / queued item instead of dropping
-    /// it. `@ObservationIgnored`: wiring, not view state.
+    /// FIFO + B1 echo-dedup ring as renderer keystrokes (docs/29). In production this is wired once
+    /// at `LivePaneSession.make` and stays non-nil for the pane's life (it does not go nil on a
+    /// transport disconnect — the input bar / `ReplayBuffer` absorbs that); `nil` only for a model with
+    /// no sink (headless test / preview / never-adopted), where the `guard let send` keeps the
+    /// draft / queued item instead of trapping. `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var send: ((Data) -> Void)?
 
     /// The caret / selection in ``draft`` as a UTF-16 range (matching `NSTextView`/`UITextView`
-    /// `selectedRange`). The hosted text-view coordinator (``ComposerTextView``) keeps this current so a
-    /// paste — both the in-field `⌘V` and the right-click "Paste and continue in Composer" seam (which has
-    /// no live responder) — splices at the caret via ``insert(_:at:)`` instead of appending. `nil` ⇒ no live
-    /// caret yet ⇒ append at the end of ``draft`` (a fresh, never-focused composer). `@ObservationIgnored`:
-    /// the view WRITES this, so it must not invalidate the field mid-edit.
+    /// `selectedRange`). The hosted text view (`ComposerTextView`, an `NSTextView`/`UITextView` subclass in
+    /// `AislopdeskClientUI`) mirrors its `selectedRange` here on every selection change so a paste — both
+    /// the in-field `⌘V` and the right-click "Paste and continue in Composer" seam (which has no live
+    /// responder) — splices at the caret via ``insert(_:at:)`` instead of appending. `nil` ⇒ no live caret
+    /// yet ⇒ append at the end of ``draft`` (a fresh, never-focused composer). `@ObservationIgnored`: the
+    /// view WRITES this, so it must not invalidate the field mid-edit.
     @ObservationIgnored public var selection: NSRange?
 
     /// Per-pane "is the owning pane idle RIGHT NOW?" probe, injected by ``LivePaneSession`` (true when the
@@ -160,13 +167,15 @@ public final class ComposerModel {
     /// line (a raw `\n` submits early — a shell runs each line, the Claude Code TUI fires on the
     /// first). The client adds the markers; the host never does — mirroring the existing paste
     /// path. It then clears the draft and hides. A blank / whitespace-only / bare-newline draft
-    /// is a no-op (nothing is sent and the draft is left untouched). With no sink (disconnected)
-    /// the draft is preserved. On a real send it also docks a floating composer back (clears
+    /// is a no-op (nothing is sent and the draft is left untouched). With no sink wired (a
+    /// headless/preview model — see ``send``) the draft is preserved. On a real send it also docks a floating composer back (clears
     /// ``isFloating``) — the otty "sending docks the float back into the pane" rule; ``isPinned``
     /// is unaffected.
     public func sendDraft() {
         guard !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        guard let send else { return } // disconnected — keep the draft for a reconnect.
+        guard let send else { return } // DEFENSIVE: no sink wired (headless/preview) — keep the draft. In
+        // production `send` is always wired, so this never fires; a transport disconnect is absorbed by the
+        // input bar / ReplayBuffer downstream, not by nilling this sink.
         // A multi-line draft rides as one inert DEC bracketed-paste block so embedded newlines
         // stay live-input-inert; a single-line draft is byte-identical to a typed line.
         let payload = draft.contains(where: \.isNewline) ? PasteTransform.bracketed(draft) : draft
@@ -273,7 +282,7 @@ public final class ComposerModel {
     /// Dispatches the next queued prompt at a turn-finished edge (see the two-signal mapping in the type
     /// doc): the normal-pane OSC-133;A prompt mark, or the agent-pane `claudeStatus → .done` transition. The
     /// finished turn clears the in-flight latch, then the head item (if any) is dispatched, one item per
-    /// edge, FIFO. A no-op when the queue is empty. With no sink (disconnected) the queue is left intact so
+    /// edge, FIFO. A no-op when the queue is empty. With no sink wired (headless/preview) the queue is left intact so
     /// nothing is lost.
     public func notePromptIdle() {
         dispatchInFlight = false // the turn that was in flight (if any) finished.
@@ -284,7 +293,8 @@ public final class ComposerModel {
     /// in-flight so a kickstart can't double-send. Shared by ``notePromptIdle()`` (turn-finished edge) and
     /// the ``enqueueDraft()`` kickstart. A no-op (no latch) when the queue is empty or there is no sink.
     private func dispatch() {
-        guard let send else { return } // disconnected — keep the queued items.
+        guard let send else { return } // DEFENSIVE: no sink wired (headless/preview) — keep the queued
+        // items. Always non-nil in production (wired once at `LivePaneSession.make`), so this never fires.
         guard let bytes = promptQueue.dispatchNext() else { return }
         dispatchInFlight = true
         send(bytes)

@@ -398,8 +398,9 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
 
     /// See ``PaneSessionIDAdopting``. The store re-points a freshly-built session at its leaf id.
     ///
-    /// E12 WI-6 — the per-pane Composer PIN persistence is keyed by the stable leaf ``PaneID`` (which
-    /// survives the persistence round-trip as the tree's `{"leaf":"<uuid>"}`), so adoption is the right
+    /// E12 WI-6 — the per-pane Composer PIN persistence is keyed by the stable leaf ``PaneID``, which
+    /// survives the workspace-tree persistence round-trip (the current tree model is ``SplitNode``, whose
+    /// `.leaf(PaneID)` case carries the id verbatim through encode/decode). So adoption is the right
     /// moment to (1) RESTORE a persisted pin — re-pinning the RIGHT pane on a fresh launch and opening the
     /// bar so it visibly rides along (the otty "pinned state is persisted" rule) — and (2) wire forward
     /// persistence on later toggles. The restore runs BEFORE wiring ``ComposerModel/onPinnedChange`` so it
@@ -637,5 +638,12 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             remoteWindow?.close()
             isVideoActive = false
         }
+        // E12 WI-6: the pane is gone for good → PRUNE its persisted Composer PIN so a closed pane's dead
+        // ``PaneID`` can't accumulate in the persisted set unbounded. teardown() is reached ONLY on the
+        // orphan/close path (`WorkspaceStore.reconcile` drops a leaf no longer in the tree) — NOT on
+        // `pause()` (iOS background) or app quit (`quiesce()` only awaits in-flight teardowns) — so a still-
+        // open pinned Composer keeps its pin across relaunch; only an actually-closed pane is forgotten,
+        // which also keeps the pin set consistent with the tree (the leaf is gone from both).
+        if composer != nil { SettingsKey.setComposerPinned(false, paneID: id) }
     }
 }
