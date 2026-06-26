@@ -99,4 +99,56 @@ final class OnLaunchBehaviorWiringTests: XCTestCase {
         XCTAssertNil(WorkspacePersistence.launchTree(behavior: .restoreLastSession, persistence: nil))
         XCTAssertNil(WorkspacePersistence.launchTree(behavior: .newWindow, persistence: nil))
     }
+
+    /// DATA-LOSS FOOTGUN GUARD: a `.newWindow` launch must NOT silently + permanently destroy the user's last
+    /// saved session. The store keeps the live persistence handle, so its first debounced `save()` overwrites
+    /// `workspace.json` with the fresh default tree; `launchTree(.newWindow)` therefore snapshots the existing
+    /// `workspace.json` aside to the `.previous` sidecar FIRST, so the prior session stays recoverable.
+    ///
+    /// This test simulates the full sequence — persist a marked tree, run the `.newWindow` launch branch, then
+    /// emulate the store's first autosave overwriting `workspace.json` with a fresh default — and asserts the
+    /// marked session is still recoverable from the sidecar.
+    ///
+    /// Revert-to-confirm-fail: with the old `case .newWindow: nil` (no `snapshotPreviousSession()`), no sidecar
+    /// is written, so the overwrite leaves the marked tree unrecoverable and BOTH assertions below FAIL.
+    func testNewWindowLaunchPreservesPriorSessionInSidecar() throws {
+        let marker = "Doomed-Session-Marker"
+        let (persistence, dir) = try makeMarkedPersistence(marker: marker)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // The `.newWindow` launch branch runs (returns nil → store would seed a fresh default).
+        XCTAssertNil(WorkspacePersistence.launchTree(behavior: .newWindow, persistence: persistence))
+
+        // Emulate the store's first debounced autosave: the live handle overwrites `workspace.json` with the
+        // fresh default tree — exactly the write that, pre-fix, PERMANENTLY destroyed the saved session.
+        try persistence.save(TreeWorkspace.defaultWorkspace().normalized())
+
+        // The prior (marked) session must still be recoverable from the `.previous` sidecar.
+        let sidecar = persistence.previousSessionURL
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: sidecar.path),
+            ".newWindow must snapshot the saved session aside before the store autosaves over it",
+        )
+        let recovered = WorkspacePersistence(fileURL: sidecar).loadTree()
+        XCTAssertEqual(
+            recovered.activeSession?.name, marker,
+            "the previously-persisted session must be recoverable from the sidecar after a .newWindow launch",
+        )
+    }
+
+    /// A genuine first launch (no `workspace.json` yet) writes NO sidecar — there is nothing to preserve, and
+    /// `snapshotPreviousSession()` must not fabricate an empty/garbage `.previous` file.
+    func testNewWindowFirstLaunchWritesNoSidecar() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aislopdesk-onlaunch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let persistence = WorkspacePersistence(fileURL: dir.appendingPathComponent("workspace.json"))
+
+        XCTAssertNil(WorkspacePersistence.launchTree(behavior: .newWindow, persistence: persistence))
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: persistence.previousSessionURL.path),
+            "a first launch (no saved file) must not write a sidecar",
+        )
+    }
 }

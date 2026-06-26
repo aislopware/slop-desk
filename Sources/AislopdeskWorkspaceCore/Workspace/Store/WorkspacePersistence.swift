@@ -214,21 +214,50 @@ public struct WorkspacePersistence: @unchecked Sendable {
     ///   `workspace.json`) this is `nil` and the store's bootstrap seeds the tree.
     /// - ``OnLaunchBehavior/newWindow`` → return `nil`, so the store seeds ``TreeWorkspace/defaultWorkspace()``
     ///   (one fresh "Local" session with a single terminal pane) instead of restoring — picking "New Window"
-    ///   genuinely opens a fresh window rather than being a silent no-op.
+    ///   genuinely opens a fresh window rather than being a silent no-op. **DATA-LOSS GUARD:** the store keeps
+    ///   the LIVE persistence handle, so its first debounced `save()` would atomically overwrite
+    ///   `workspace.json` with the fresh default tree — permanently destroying the user's last saved session
+    ///   with no recovery copy. Before returning `nil` we therefore snapshot the existing `workspace.json`
+    ///   aside to the fixed-name ``previousSessionURL`` sidecar (``snapshotPreviousSession()``), so the prior
+    ///   session stays recoverable — the same non-destructive discipline as the `.corrupt` reset path.
     ///
-    /// Pure aside from the read (`loadTree` is a non-mutating decode), so the launch branch is unit-testable
-    /// against a temp-file persistence seam — no window / store / UI is constructed (the hang-safety rule).
+    /// Aside from the read (`loadTree` is a non-mutating decode) and the `.newWindow` sidecar copy, this is
+    /// pure, so the launch branch is unit-testable against a temp-file persistence seam — no window / store /
+    /// UI is constructed (the hang-safety rule).
     public static func launchTree(
         behavior: OnLaunchBehavior, persistence: Self?,
     ) -> TreeWorkspace? {
         switch behavior {
         case .restoreLastSession:
             // Restore the persisted shape (nil under automation ⇒ the store's bootstrap replaces it anyway).
-            persistence?.loadTree()
+            return persistence?.loadTree()
         case .newWindow:
-            // Do NOT restore: nil ⇒ the store seeds `TreeWorkspace.defaultWorkspace()` (a fresh single pane).
-            nil
+            // Snapshot the saved session aside FIRST so the store's first autosave (which will overwrite
+            // `workspace.json` with the fresh default tree) cannot permanently destroy it — then do NOT
+            // restore: nil ⇒ the store seeds `TreeWorkspace.defaultWorkspace()` (a fresh single pane).
+            persistence?.snapshotPreviousSession()
+            return nil
         }
+    }
+
+    /// The fixed-name sidecar holding the LAST saved session, written by ``snapshotPreviousSession()`` just
+    /// before an `On Launch = New Window` launch lets the store autosave a fresh default tree over
+    /// `workspace.json`. Sibling of `workspace.json` (`workspace.previous.json`) so a single fixed-name copy
+    /// is overwritten each time — no unbounded accumulation — and the prior session is always recoverable.
+    public var previousSessionURL: URL {
+        fileURL.deletingPathExtension().appendingPathExtension("previous.json")
+    }
+
+    /// Non-destructive `On Launch = New Window` guard: best-effort copy the current `workspace.json` aside to
+    /// the fixed-name ``previousSessionURL`` sidecar so a fresh-window launch — which keeps the live
+    /// persistence handle and will autosave the default tree over `workspace.json` — cannot PERMANENTLY
+    /// destroy the user's last saved session. Bounded to one fixed-name sidecar (overwrites any prior copy).
+    /// A missing file (a genuine first launch) is a no-op — there is nothing to preserve.
+    public func snapshotPreviousSession() {
+        guard fileManager.fileExists(atPath: fileURL.path) else { return } // first launch: nothing to back up
+        let sidecar = previousSessionURL
+        try? fileManager.removeItem(at: sidecar)
+        try? fileManager.copyItem(at: fileURL, to: sidecar)
     }
 
     /// The tree counterpart of ``resetToDefault()``: copy the unrestorable file aside to the single

@@ -2,7 +2,8 @@
 //
 // iOS has no `Settings` scene (⌘, opens a separate, system-chromed window only on macOS), so the client's
 // settings surface on iOS is an in-app SHEET, presented from the `WorkspaceRootView` toolbar gear. The
-// macOS two-column sidebar (`SettingsView`'s `TabView`) does not map to compact width, so this wraps the
+// macOS two-column navigator (`SettingsView`'s search pill + icon/label rows + content pane) does not map to
+// compact width, so this wraps the
 // SAME per-section structs in a `NavigationStack` + `List`-of-sections (the standard iOS Settings idiom):
 // each section is a `NavigationLink` row that pushes its `SettingsSectionContent` body.
 //

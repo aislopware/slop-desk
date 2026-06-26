@@ -1,4 +1,4 @@
-// SettingsView — the SwiftUI Settings surface (REBUILD-V2, WS-D / D4; E7 8-section taxonomy).
+// SettingsView — the SwiftUI Settings surface (REBUILD-V2, WS-D / D4; E7 9-section taxonomy).
 //
 // A two-column Settings window whose right column is a THIN `@Bindable` binding over the one live
 // `@Observable` `PreferencesStore`. Each section edits a slice of the typed prefs models
@@ -17,16 +17,18 @@
 // config KEYS show) — otty surfaces both, and so do we.
 //
 // E7 reorg: the old 5-tab strip (General / Terminal / Video / Keybindings / Advanced) is reshaped into
-// otty's 8 sections (`SettingsSection`): General / Shell / Controls / Editor / Appearance / Agents /
-// Keybindings / Advanced. Groups relocate to their otty home proven by the screenshots: terminal FONT
-// (family + size) + the CURSOR group (style + blink) → **Appearance** (`font-setting.png` / `cursor-style.png`
-// both show them under Appearance); SCROLLBACK → **Controls** (`spec/terminal-features__scroll.md`: Settings
-// → Controls → Scroll); theme → Appearance; agent host flags → Agents. otty's **Editor** section is the
-// built-in FILE-editor's settings (Soft Wrap / Line Numbers / Tab Size — `editor-settings.png`), which
-// aislopdesk has no equivalent for, so it stays RESERVED/empty (a deferral placeholder, not terminal-render
-// prefs). The 5 orphan toggles + the Controls/Scroll/Copy toggles are surfaced via `@Default(.key)`; the
-// Video HOST flags (QP/FEC/pacer/sharpen) have no otty section, so they fold into Advanced as a
-// "Video (host)" sub-section (real functionality — not dropped).
+// otty's 9 sections (`SettingsSection`): General / Shell / Controls / Editor / Agents / Appearance /
+// Recipes / Key Bindings / Advanced. Groups relocate to their otty home proven by the screenshots: terminal
+// FONT (family + size) + the CURSOR group (style + blink) → **Appearance** (`font-setting.png` /
+// `cursor-style.png` both show them under Appearance); SCROLLBACK → **Controls** (`spec/terminal-features__
+// scroll.md`: Settings → Controls → Scroll); theme → Appearance; agent host flags → Agents; the Close
+// Confirmation pickers (Closing Tab / Closing Window) → **General** (`launch-option.png` shows them on the
+// General page). otty's **Editor** section is the built-in FILE-editor's settings (Soft Wrap / Line Numbers /
+// Tab Size — `editor-settings.png`) and **Recipes** is a saved-command library (`all-settings.png`), neither
+// of which aislopdesk has an equivalent for, so both stay RESERVED/empty (deferral placeholders, kept 1:1 in
+// the navigator, not terminal-render prefs). The 5 orphan toggles + the Controls/Scroll/Copy toggles are
+// surfaced via `@Default(.key)`; the Video HOST flags (QP/FEC/pacer/sharpen) have no otty section, so they
+// fold into Advanced as a "Video (host)" sub-section (real functionality — not dropped).
 //
 // SURFACING: the main window is `.hiddenTitleBar` and `OverlayCoordinator` is NOT yet mounted, so this
 // rides a STOCK SwiftUI `Settings` scene (`AislopdeskSettingsScene`) — ⌘, opens a separate, system-chromed
@@ -78,48 +80,56 @@ public struct AislopdeskSettingsScene: Scene {
 }
 #endif
 
-// MARK: - Settings taxonomy (the 8 otty sections — one source for the macOS tab strip + the iOS list)
+// MARK: - Settings taxonomy (the 9 otty sections — one source for the macOS navigator + the iOS list)
 
-/// The otty settings taxonomy — 8 sections, each rendered as a `TabView` tab on macOS (and, once WI-5
-/// lands, a navigation row in the iOS sheet). The title + otty sidebar `systemImage` live here as the ONE
-/// source so the macOS tab strip and the (future) iOS list never drift; `SettingsSectionTaxonomyTests` pins
-/// the set + order against an accidental drop/reorder/icon-swap.
+/// The otty settings taxonomy — 9 sections, each rendered as an icon+label row in the macOS two-column
+/// navigator (and, once WI-5 lands, a navigation row in the iOS sheet). The title + otty sidebar
+/// `systemImage` live here as the ONE source so the macOS navigator and the (future) iOS list never drift;
+/// `SettingsSectionTaxonomyTests` pins
+/// the set + order against an accidental drop/reorder/icon-swap. Order + glyphs mirror otty's sidebar
+/// (`docs/otty-clone/screenshots/all-settings.png`): General, Shell, Controls, Editor, Agents, Appearance,
+/// Recipes, Key Bindings, Advanced.
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general
     case shell
     case controls
     case editor
-    case appearance
     case agents
+    case appearance
+    case recipes
     case keybindings
     case advanced
 
     var id: String { rawValue }
 
-    /// The tab label (and iOS row title).
+    /// The navigator row label (and iOS row title).
     var title: String {
         switch self {
         case .general: "General"
         case .shell: "Shell"
         case .controls: "Controls"
         case .editor: "Editor"
-        case .appearance: "Appearance"
         case .agents: "Agents"
-        case .keybindings: "Keybindings"
+        case .appearance: "Appearance"
+        case .recipes: "Recipes"
+        case .keybindings: "Key Bindings"
         case .advanced: "Advanced"
         }
     }
 
-    /// The otty sidebar glyph for the section (SF Symbol name).
+    /// The otty sidebar glyph for the section (SF Symbol name), matched to otty's sidebar as closely as SF
+    /// Symbols allow: General = `exclamationmark.circle`, Controls = `flag` (pennant/pointer), Agents =
+    /// `powerplug`, Recipes = `book`, Key Bindings = `bolt` (lightning).
     var systemImage: String {
         switch self {
-        case .general: "gearshape"
+        case .general: "exclamationmark.circle"
         case .shell: "terminal"
-        case .controls: "cursorarrow"
+        case .controls: "flag"
         case .editor: "doc.text"
+        case .agents: "powerplug"
         case .appearance: "paintpalette"
-        case .agents: "cpu"
-        case .keybindings: "keyboard"
+        case .recipes: "book"
+        case .keybindings: "bolt"
         case .advanced: "wrench"
         }
     }
@@ -183,7 +193,7 @@ private struct TimingChip: View {
     }
 }
 
-// MARK: - The tabbed Settings view
+// MARK: - The two-column Settings view
 
 /// The Settings body: a flat two-column layout (otty fidelity) — a left navigator (search pill + icon+label
 /// section rows) and the selected section's content on the right. The section set + order + icons are driven
@@ -329,14 +339,14 @@ private struct SettingsSidebarRow: View {
     }
 }
 
-// MARK: - Shared per-section content (one dispatch for the macOS tab strip + the iOS sheet)
+// MARK: - Shared per-section content (one dispatch for the macOS navigator + the iOS sheet)
 
 /// Resolves a ``SettingsSection`` to its per-section body. The ONE place the section → struct mapping lives,
-/// so the macOS `TabView` (`SettingsView`) and the iOS `SettingsSheet` (WI-5) render byte-identical section
-/// content. The per-section structs stay `private` to this file; this `internal` view is how the iOS sheet
-/// (a separate file) reaches them without widening their visibility. `selectedSection` threads the shared
-/// `TabView` selection so the Advanced All-Settings ✎ jump can repoint the strip (a no-op on the iOS list,
-/// where the jump is deferred — see WI-3).
+/// so the macOS two-column navigator (`SettingsView`) and the iOS `SettingsSheet` (WI-5) render
+/// byte-identical section content. The per-section structs stay `private` to this file; this `internal` view
+/// is how the iOS sheet (a separate file) reaches them without widening their visibility. `selectedSection`
+/// threads the shared navigator selection so the Advanced All-Settings ✎ jump can repoint the navigator to
+/// the owning section (a no-op on the iOS list, where the jump is deferred — see WI-3).
 struct SettingsSectionContent: View {
     let section: SettingsSection
     @Bindable var store: PreferencesStore
@@ -348,8 +358,9 @@ struct SettingsSectionContent: View {
         case .shell: ShellSettingsTab()
         case .controls: ControlsSettingsTab(store: store)
         case .editor: EditorSettingsTab()
-        case .appearance: AppearanceSettingsTab(store: store)
         case .agents: AgentsSettingsTab(store: store)
+        case .appearance: AppearanceSettingsTab(store: store)
+        case .recipes: RecipesSettingsTab()
         case .keybindings: KeybindingsSettingsTab(store: store)
         case .advanced: AdvancedSettingsTab(store: store, selectedSection: $selectedSection)
         }
@@ -358,13 +369,17 @@ struct SettingsSectionContent: View {
 
 // MARK: - General section
 
-/// General: On-Launch behaviour (O1), notifications (OSC 9/777 + long-command), privacy (redact secrets),
-/// and the default pane kind. All fire-time `Defaults.Keys` (bound via `@Default(.key)`) — applied LIVE.
+/// General: On-Launch behaviour (O1), the tab/window close-confirmation policies (otty puts the Close
+/// Confirmation group on the General page — `launch-option.png`), notifications (OSC 9/777 + long-command),
+/// privacy (redact secrets), and the default pane kind. All fire-time `Defaults.Keys` (bound via
+/// `@Default(.key)`) — applied LIVE.
 private struct GeneralSettingsTab: View {
     /// The fire-time keys are NOT in the typed models, so bind the global `Defaults.Keys` directly through
     /// the type-safe `@Default(.key)` wrapper (the default lives in the key declaration, not here). General
     /// has no typed-model field, so it takes no `store` — all rows are fire-time `Defaults.Keys`.
     @Default(.onLaunch) private var onLaunch
+    @Default(.closeConfirmTab) private var closeConfirmTab
+    @Default(.closeConfirmWindow) private var closeConfirmWindow
     @Default(.oscNotifications) private var oscNotifications
     @Default(.longCommandNotifications) private var longCommandNotifications
     @Default(.redactSecrets) private var redactSecrets
@@ -377,6 +392,12 @@ private struct GeneralSettingsTab: View {
                     Text("Restore Last Session").tag(OnLaunchBehavior.restoreLastSession)
                     Text("New Window").tag(OnLaunchBehavior.newWindow)
                 }
+                timingFooter(.live)
+            }
+
+            Section("Close Confirmation") {
+                Picker("Closing Tab", selection: $closeConfirmTab) { closeConfirmOptions }
+                Picker("Closing Window", selection: $closeConfirmWindow) { closeConfirmOptions }
                 timingFooter(.live)
             }
 
@@ -397,20 +418,24 @@ private struct GeneralSettingsTab: View {
         }
         .formStyle(.grouped)
     }
+
+    @ViewBuilder private var closeConfirmOptions: some View {
+        Text("Running Process").tag(CloseConfirmationPolicy.process)
+        Text("Always").tag(CloseConfirmationPolicy.always)
+        Text("Multiple Tabs").tag(CloseConfirmationPolicy.multipleTabs)
+    }
 }
 
 // MARK: - Shell section
 
-/// Shell: the otty window/tab/split working-directory policy, the new-tab insertion position, and the
-/// tab/window close-confirmation policies. Each reads a fire-time `Defaults.Key` consumed at the new-tab /
-/// close fire-site, so they apply LIVE (on the next ⌘T / close).
+/// Shell: the otty window/tab/split working-directory policy and the new-tab insertion position. Each reads
+/// a fire-time `Defaults.Key` consumed at the new-tab fire-site, so they apply LIVE (on the next ⌘T). The
+/// close-confirmation policies live under **General** (otty's `launch-option.png`), not here.
 private struct ShellSettingsTab: View {
     @Default(.workingDirectoryNewWindow) private var workingDirNewWindow
     @Default(.workingDirectoryNewTab) private var workingDirNewTab
     @Default(.workingDirectoryNewSplit) private var workingDirNewSplit
     @Default(.newTabPosition) private var newTabPosition
-    @Default(.closeConfirmTab) private var closeConfirmTab
-    @Default(.closeConfirmWindow) private var closeConfirmWindow
 
     /// The two policy choices the picker surfaces. A custom-path policy (set from the config / Advanced
     /// editor) is shown as `home` here; editing the path lands in WI-3's All-Settings raw editor.
@@ -437,12 +462,6 @@ private struct ShellSettingsTab: View {
                 }
                 timingFooter(.live)
             }
-
-            Section("Close Confirmation") {
-                Picker("Closing Tab", selection: $closeConfirmTab) { closeConfirmOptions }
-                Picker("Closing Window", selection: $closeConfirmWindow) { closeConfirmOptions }
-                timingFooter(.live)
-            }
         }
         .formStyle(.grouped)
     }
@@ -450,12 +469,6 @@ private struct ShellSettingsTab: View {
     @ViewBuilder private var workingDirOptions: some View {
         Text("Same as Current").tag(WorkingDirChoice.inherit)
         Text("Home Directory").tag(WorkingDirChoice.home)
-    }
-
-    @ViewBuilder private var closeConfirmOptions: some View {
-        Text("Running Process").tag(CloseConfirmationPolicy.process)
-        Text("Always").tag(CloseConfirmationPolicy.always)
-        Text("Multiple Tabs").tag(CloseConfirmationPolicy.multipleTabs)
     }
 
     /// Bridge the `WorkingDirectoryPolicy.rawConfig` String key to the 2-way picker: `inherit` ↔ `inherit`,
@@ -550,6 +563,34 @@ private struct EditorSettingsTab: View {
                     "Editor settings (Soft Wrap, Line Numbers, Tab Size, …) configure a built-in file editor, "
                         + "which aislopdesk does not have yet. Terminal font, cursor, and scrollback live under "
                         + "Appearance and Controls.",
+                )
+                .font(.system(size: Otty.Typeface.footnote))
+                .foregroundStyle(Otty.Text.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+// MARK: - Recipes section (RESERVED — deferred)
+
+/// Recipes is RESERVED/empty by design — kept in the taxonomy so the navigator stays 1:1 with otty's
+/// (`docs/otty-clone/screenshots/all-settings.png` shows a Recipes section, book glyph, between Appearance
+/// and Key Bindings). In otty, Recipes is a saved-command / snippet library; aislopdesk has no equivalent
+/// yet, so — exactly like the Editor placeholder — there are NO settings to surface here and we deliberately
+/// do NOT backfill it. The section fills in if/when a recipe library lands (otty-clone backlog); it is pinned
+/// by `SettingsSectionTaxonomyTests`.
+private struct RecipesSettingsTab: View {
+    var body: some View {
+        Form {
+            Section("Recipes") {
+                LabeledContent("Recipe library") {
+                    Text("Not available")
+                        .foregroundStyle(Otty.Text.tertiary)
+                }
+                Text(
+                    "Recipes are a saved-command library, which aislopdesk does not have yet. This section is "
+                        + "reserved to stay 1:1 with otty's navigator.",
                 )
                 .font(.system(size: Otty.Typeface.footnote))
                 .foregroundStyle(Otty.Text.secondary)
@@ -695,7 +736,7 @@ private struct KeybindingsSettingsTab: View {
 /// a "Video (host)" sub-section — real functionality, reconnect-tagged + symmetric-FEC-warned.
 private struct AdvancedSettingsTab: View {
     @Bindable var store: PreferencesStore
-    /// The shared `TabView` selection — threaded into the All-Settings list so a ✎ jump can repoint the strip.
+    /// The shared navigator selection — threaded into the All-Settings list so a ✎ jump can repoint it.
     @Binding var selectedSection: SettingsSection
 
     #if os(macOS)

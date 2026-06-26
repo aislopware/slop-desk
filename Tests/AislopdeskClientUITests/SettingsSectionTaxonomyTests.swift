@@ -1,4 +1,4 @@
-// SettingsSectionTaxonomyTests (E7 WI-2) — the anti-drift pin for the otty 8-section Settings taxonomy.
+// SettingsSectionTaxonomyTests (E7 WI-2) — the anti-drift pin for the otty 9-section Settings taxonomy.
 //
 // The macOS tab strip and the (future) iOS settings sheet both drive their sections from `SettingsSection`
 // (`Settings/SettingsView.swift`), so a single source can't render an out-of-order / missing / re-iconed
@@ -14,20 +14,21 @@ final class SettingsSectionTaxonomyTests: XCTestCase {
     /// The otty taxonomy, frozen: ordered (rawValue, title, systemImage). Edited only with an intentional
     /// taxonomy change (and a matching screenshot/spec update).
     private static let expected: [(raw: String, title: String, icon: String)] = [
-        ("general", "General", "gearshape"),
+        ("general", "General", "exclamationmark.circle"),
         ("shell", "Shell", "terminal"),
-        ("controls", "Controls", "cursorarrow"),
+        ("controls", "Controls", "flag"),
         ("editor", "Editor", "doc.text"),
+        ("agents", "Agents", "powerplug"),
         ("appearance", "Appearance", "paintpalette"),
-        ("agents", "Agents", "cpu"),
-        ("keybindings", "Keybindings", "keyboard"),
+        ("recipes", "Recipes", "book"),
+        ("keybindings", "Key Bindings", "bolt"),
         ("advanced", "Advanced", "wrench"),
     ]
 
     func testSectionTaxonomyIsPinned() {
         let cases = SettingsSection.allCases
-        XCTAssertEqual(cases.count, Self.expected.count, "the taxonomy must have exactly 8 sections")
-        XCTAssertEqual(cases.count, 8)
+        XCTAssertEqual(cases.count, Self.expected.count, "the taxonomy must have exactly 9 sections")
+        XCTAssertEqual(cases.count, 9)
         for (section, want) in zip(cases, Self.expected) {
             XCTAssertEqual(section.rawValue, want.raw, "section order / rawValue drifted")
             XCTAssertEqual(section.title, want.title, "title drifted for \(want.raw)")
@@ -57,8 +58,8 @@ final class SettingsSectionTaxonomyTests: XCTestCase {
         let iosVisible = SettingsSection.allCases.filter { !$0.isMacOSOnly }.map(\.rawValue)
         XCTAssertEqual(
             iosVisible,
-            ["general", "shell", "controls", "editor", "appearance", "agents", "advanced"],
-            "the iOS sheet shows the seven cross-platform sections in taxonomy order",
+            ["general", "shell", "controls", "editor", "agents", "appearance", "recipes", "advanced"],
+            "the iOS sheet shows the eight cross-platform sections in taxonomy order",
         )
     }
 }
