@@ -201,18 +201,24 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
     /// `jumpToNavigatorBlockInActivePane(index:)` — the load-bearing half that had ZERO coverage. It must
     /// resolve the block's NEWEST-FIRST position in `navigatorBlocks` (not use the raw index as the delta)
     /// and route through the shared absolute re-anchor (`scroll_to_bottom` then `jump_to_prompt:-pos`).
-    /// Blocks index-ascending → navigatorBlocks newest-first `[5,4,3,2,1]`; block index 3 is at pos 2 → delta
-    /// `-2`. A regression that used the raw index as the delta would emit `jump_to_prompt:-3` and FAIL here.
+    ///
+    /// ORDERING-ASYMMETRIC on its own: seed an ODD count of 7 and target an OFF-CENTRE index (3, not the
+    /// pivot 4) so newest-first and oldest-first resolve to DIFFERENT positions. Blocks index-ascending →
+    /// navigatorBlocks newest-first `[7,6,5,4,3,2,1]`; block index 3 is at pos 4 → delta `-4`. Under a flipped
+    /// (oldest-first `[1,2,3,4,5,6,7]`) resolution index 3 would be at pos 2 → `-2`, so this case FAILS directly
+    /// on a swapped ordering — it no longer relies on the separate ends test. (A regression that used the raw
+    /// index as the delta would emit `jump_to_prompt:-3` and also FAIL here.)
     func testJumpToNavigatorBlockResolvesNewestFirstPositionForIndex() throws {
         let store = makeStore()
-        let session = try seedBlocks(store, [ok(1), ok(2), ok(3), ok(4), ok(5)])
+        let session = try seedBlocks(store, [ok(1), ok(2), ok(3), ok(4), ok(5), ok(6), ok(7)])
         let recorder = try XCTUnwrap(session.surfaceRecorder)
 
         store.jumpToNavigatorBlockInActivePane(index: 3)
 
         XCTAssertEqual(
-            recorder.actions, ["scroll_to_bottom", "jump_to_prompt:-2"],
-            "the Outline jump re-anchors to the bottom then steps to block 3's newest-first position (pos 2)",
+            recorder.actions, ["scroll_to_bottom", "jump_to_prompt:-4"],
+            "block 3 is at newest-first pos 4 (delta -4); oldest-first would be pos 2 (-2), so a flipped "
+                + "ordering fails THIS case directly",
         )
     }
 

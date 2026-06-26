@@ -33,6 +33,20 @@ public struct WorkspaceRootView: View {
     #if os(iOS)
     /// Whether the iOS settings sheet (WI-5) is presented — flipped by the toolbar gear, read by the `.sheet`.
     @State private var showSettings = false
+    /// ES-E9-5 (iOS reveal): on COMPACT width a three-column `NavigationSplitView` collapses to a single
+    /// stack, so a `Details: *` jump that only set `details.selected` would switch an OFF-SCREEN column — the
+    /// reveal half was inert (nothing read `chrome.inspectorCollapsed` on iOS). This binding maps that SAME
+    /// reveal flag to the split's `preferredCompactColumn`: when a command reveals the panel
+    /// (`inspectorCollapsed == false`) the `.detail` (Inspector) column is surfaced on compact width; manual
+    /// back-navigation writes the flag back. (Regular width always shows the detail column, so this is a no-op
+    /// there.) Reading `chrome` here ties the body to the flag the install closure flips.
+    private var detailsCompactColumnBinding: Binding<NavigationSplitViewColumn> {
+        Binding(
+            get: { Self.compactColumn(inspectorCollapsed: chrome.inspectorCollapsed) },
+            set: { chrome.inspectorCollapsed = ($0 != .detail) },
+        )
+    }
+
     /// The single live preferences store, injected once at the WindowGroup root (`\.preferencesStore`) and
     /// handed to the iOS ``SettingsSheet``. `nil` (no scene injection / a preview) → the gear presents nothing.
     @Environment(\.preferencesStore) private var preferencesStore
@@ -110,7 +124,7 @@ public struct WorkspaceRootView: View {
         // NSEvent chord and the titlebar button drive ONE flag.
         .onAppear { wireChromeToggles() }
         #else
-        NavigationSplitView {
+        NavigationSplitView(preferredCompactColumn: detailsCompactColumnBinding) {
             NavigatorColumn(store: store)
         } content: {
             ContentColumn(store: store, connection: connection, chrome: chrome)
@@ -153,8 +167,7 @@ public struct WorkspaceRootView: View {
         // the representable + the hosted `InspectorColumn` read, so a routed `selectDetailsTab(_:)` switches
         // the visible tab and un-collapses the inspector split item in one shot.
         installSelectDetailsTab? { [chrome, details] tab in
-            details.selected = tab
-            chrome.inspectorCollapsed = false
+            Self.revealDetailsTab(tab, chrome: chrome, details: details)
         }
         // Route the palette's chrome-toggle rows through the SAME live `chrome` the chords + titlebar drive,
         // so "Toggle Tabs Panel"/"Toggle Details Panel" from the palette flip the flag the split + the ✓ read
@@ -173,9 +186,29 @@ public struct WorkspaceRootView: View {
     /// SAME instances both inspector mounts read, so the visible tab switches in one shot.
     private func wireOverlaySelectDetailsTab() {
         overlay.selectDetailsTab = { [chrome, details] tab in
-            details.selected = tab
-            chrome.inspectorCollapsed = false
+            Self.revealDetailsTab(tab, chrome: chrome, details: details)
         }
+    }
+
+    /// The single source of truth for what a `Details: *` jump DOES to the shared workspace state: switch the
+    /// visible Details tab AND reveal the panel. Both install paths (the macOS chord/menu in
+    /// `wireChromeToggles()` and the cross-platform overlay in `wireOverlaySelectDetailsTab()`) call this, so
+    /// they can never drift to "selects the tab but forgets to reveal" — the bug that left the iOS reveal half
+    /// inert. The reveal flag (`inspectorCollapsed = false`) drives the macOS split item AND, on iOS compact
+    /// width, `detailsCompactColumnBinding` → the `.detail` column. Static + cross-platform so the contract is
+    /// unit-testable without a live view (see `OverlayCoordinatorMountTests`).
+    static func revealDetailsTab(_ tab: DetailsPanelTab, chrome: WorkspaceChromeState, details: DetailsPanelState) {
+        details.selected = tab
+        chrome.inspectorCollapsed = false
+    }
+
+    /// Pure map from the shared `inspectorCollapsed` reveal flag to the iOS `NavigationSplitView` compact
+    /// column: a revealed Details panel (`!collapsed`) surfaces the `.detail` (Inspector) column on compact
+    /// width; collapsed leaves the `.content` column up. Drives `detailsCompactColumnBinding` (iOS). Kept
+    /// cross-platform (`NavigationSplitViewColumn` exists on macOS too) so the iOS reveal mapping is unit-tested
+    /// in the macOS `swift test` Gate, not only at iOS compile time.
+    static func compactColumn(inspectorCollapsed: Bool) -> NavigationSplitViewColumn {
+        inspectorCollapsed ? .content : .detail
     }
 
     #if os(iOS)

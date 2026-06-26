@@ -274,6 +274,52 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         )
     }
 
+    #if canImport(SwiftUI)
+    /// ES-E9-5 (the iOS reveal half — finding #1): the install closure both platforms wire
+    /// (`WorkspaceRootView.revealDetailsTab`, bound in `wireOverlaySelectDetailsTab()`) must set BOTH the
+    /// selected tab AND the reveal flag (`inspectorCollapsed = false`) — the reveal half was inert on iOS
+    /// because nothing read that flag (now `detailsCompactColumnBinding` maps it to the compact `.detail`
+    /// column). Drives the FULL production seam: run the `Details: Outline` palette row through the coordinator
+    /// wired exactly as the root view does, from a resting state (panel HIDDEN, a DIFFERENT tab selected) so the
+    /// assertion proves the command moved both. Revert-to-confirm-fail: a regression that drops
+    /// `chrome.inspectorCollapsed = false` from `revealDetailsTab` (leaving the iOS reveal a silent no-op) fails
+    /// the second assertion; a wrong-tab mapping fails the first.
+    func testDetailsCommandSelectsTabAndRevealsPanelOnBothPlatforms() throws {
+        let (overlay, _) = makeCoordinator()
+        let chrome = WorkspaceChromeState()
+        let details = DetailsPanelState()
+        // Resting state: the Details panel is hidden and a DIFFERENT tab is selected.
+        chrome.inspectorCollapsed = true
+        details.selected = .info
+        // Bind the coordinator the way `WorkspaceRootView.wireOverlaySelectDetailsTab()` does.
+        overlay.selectDetailsTab = { WorkspaceRootView.revealDetailsTab($0, chrome: chrome, details: details) }
+
+        let row = try XCTUnwrap(
+            ActionsPaletteSource.catalog.first { $0.id == "action.detailsOutline" },
+            "the catalog has the Details: Outline row",
+        )
+        overlay.run(row)
+
+        XCTAssertEqual(details.selected, .outline, "running Details: Outline selects the Outline tab")
+        XCTAssertFalse(
+            chrome.inspectorCollapsed,
+            "...AND reveals the panel — the flag the iOS compact reveal (preferredCompactColumn) reads, so the "
+                + "command is not a silent no-op on compact width",
+        )
+
+        // The iOS reveal map the binding's getter uses: revealed ⇒ `.detail` column on compact; hidden ⇒
+        // `.content`. Pins the pure mapping the `detailsCompactColumnBinding` depends on (compiled for iOS).
+        XCTAssertEqual(
+            WorkspaceRootView.compactColumn(inspectorCollapsed: chrome.inspectorCollapsed), .detail,
+            "a revealed Details panel surfaces the .detail (Inspector) column on iOS compact width",
+        )
+        XCTAssertEqual(
+            WorkspaceRootView.compactColumn(inspectorCollapsed: true), .content,
+            "a collapsed Details panel leaves the .content column up on iOS compact width",
+        )
+    }
+    #endif
+
     // MARK: - ES-E2-1: the keyboard selection stays valid when the query narrows (the clamp fix)
 
     /// The bug: the palette's keyboard selection index isn't reset when the query changes, so after a query
