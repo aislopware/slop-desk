@@ -195,6 +195,62 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         )
     }
 
+    // MARK: - E9: Jump to a specific Outline block (jumpToNavigatorBlockInActivePane)
+
+    /// E9 (ES-E9-2): clicking an Outline row jumps the scrollback to that block via
+    /// `jumpToNavigatorBlockInActivePane(index:)` — the load-bearing half that had ZERO coverage. It must
+    /// resolve the block's NEWEST-FIRST position in `navigatorBlocks` (not use the raw index as the delta)
+    /// and route through the shared absolute re-anchor (`scroll_to_bottom` then `jump_to_prompt:-pos`).
+    /// Blocks index-ascending → navigatorBlocks newest-first `[5,4,3,2,1]`; block index 3 is at pos 2 → delta
+    /// `-2`. A regression that used the raw index as the delta would emit `jump_to_prompt:-3` and FAIL here.
+    func testJumpToNavigatorBlockResolvesNewestFirstPositionForIndex() throws {
+        let store = makeStore()
+        let session = try seedBlocks(store, [ok(1), ok(2), ok(3), ok(4), ok(5)])
+        let recorder = try XCTUnwrap(session.surfaceRecorder)
+
+        store.jumpToNavigatorBlockInActivePane(index: 3)
+
+        XCTAssertEqual(
+            recorder.actions, ["scroll_to_bottom", "jump_to_prompt:-2"],
+            "the Outline jump re-anchors to the bottom then steps to block 3's newest-first position (pos 2)",
+        )
+    }
+
+    /// The OLDEST block (index 1) is at the deepest newest-first position (pos 4) → delta `-4`; the NEWEST
+    /// (index 5) is at pos 0, so its jump leaves the viewport at the bottom (no `jump_to_prompt` step). Pins
+    /// both ends of the position resolution so a swapped ordering (oldest-first) would fail.
+    func testJumpToNavigatorBlockHandlesOldestAndNewestEnds() throws {
+        let store = makeStore()
+        let session = try seedBlocks(store, [ok(1), ok(2), ok(3), ok(4), ok(5)])
+        let recorder = try XCTUnwrap(session.surfaceRecorder)
+
+        store.jumpToNavigatorBlockInActivePane(index: 1) // oldest → pos 4
+        XCTAssertEqual(
+            recorder.actions, ["scroll_to_bottom", "jump_to_prompt:-4"],
+            "the oldest block is the deepest newest-first position (4 prompts up)",
+        )
+
+        recorder.resetActions()
+        store.jumpToNavigatorBlockInActivePane(index: 5) // newest → pos 0 (delta 0, the step is skipped)
+        XCTAssertEqual(
+            recorder.actions, ["scroll_to_bottom"],
+            "the newest block is at the bottom anchor — re-anchor only, no jump_to_prompt step",
+        )
+    }
+
+    /// An evicted / never-seen index is a graceful no-op — no surface action, no trap (the Outline can hold a
+    /// row whose block has since rolled out of the navigator window). FAILS if the guard that requires the
+    /// index to resolve to a position were dropped (it would emit a stray re-anchor or trap).
+    func testJumpToNavigatorBlockUnknownIndexIsANoOp() throws {
+        let store = makeStore()
+        let session = try seedBlocks(store, [ok(1), ok(2), ok(3)])
+        let recorder = try XCTUnwrap(session.surfaceRecorder)
+
+        store.jumpToNavigatorBlockInActivePane(index: 99) // never-seen / evicted index
+
+        XCTAssertTrue(recorder.actions.isEmpty, "an unknown/evicted index emits no surface action (never traps)")
+    }
+
     /// Jump-to-failed with NO failures is a no-op (cursor untouched, no surface action).
     func testJumpFailedWithNoFailuresIsANoOp() throws {
         let store = makeStore()

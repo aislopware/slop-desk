@@ -116,6 +116,12 @@ public final class OverlayCoordinator {
     /// Toggles the right Details / inspector panel. Bound by ``WorkspaceRootView`` to `chrome.toggleInspector()`
     /// (the same live flag ⌘⇧R + the titlebar button drive). No-op by default (iOS / tests / previews).
     @ObservationIgnored public var toggleInspector: @MainActor () -> Void = {}
+    /// Jumps the right Details / inspector panel to a specific tab AND reveals it (E9/WI-7, ES-E9-5). Bound by
+    /// ``WorkspaceRootView`` (on BOTH platforms) to set the shared `DetailsPanelState.selected` + un-collapse
+    /// the inspector (`chrome.inspectorCollapsed = false`). The palette's four `Details: *` rows AND the macOS
+    /// View ▸ Details: * menu rows both route here, so every surface drives the same live state. No-op by
+    /// default (tests / previews / a pre-`onAppear` scene).
+    @ObservationIgnored public var selectDetailsTab: @MainActor (DetailsPanelTab) -> Void = { _ in }
 
     // MARK: Modal gate
 
@@ -342,6 +348,9 @@ public final class OverlayCoordinator {
             if !keepOpen { closePalette() }
         case .toggleInspector:
             toggleInspector()
+            if !keepOpen { closePalette() }
+        case let .selectDetailsTab(tab):
+            selectDetailsTab(tab)
             if !keepOpen { closePalette() }
         case let .selectFilter(filter):
             paletteFilter = filter

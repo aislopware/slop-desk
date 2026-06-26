@@ -219,6 +219,61 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         )
     }
 
+    // MARK: - ES-E9-5: the four `Details: *` jump commands surface in the palette + run on both platforms
+
+    /// THE out-of-box pin (ES-E9-5, finding #2 / #4): the ⌘⇧P command-palette catalog now ENUMERATES the four
+    /// `Details: Info/Outline/Git/Files` jump commands under the VIEW category, each carrying the matching
+    /// `.selectDetailsTab(tab)` action. FAILS on the un-fixed code (the rows did not exist in the catalog, and
+    /// `PaletteAction.selectDetailsTab` had no case) — so the commands were dead out-of-box (chord: nil + not
+    /// in the palette). Revert-to-confirm-fail: removing any of the four rows drops its `catalog.first` to nil.
+    func testPaletteCatalogEnumeratesTheFourDetailsTabCommands() throws {
+        let expected: [(id: String, title: String, tab: DetailsPanelTab)] = [
+            ("action.detailsInfo", "Details: Info", .info),
+            ("action.detailsOutline", "Details: Outline", .outline),
+            ("action.detailsGit", "Details: Git", .git),
+            ("action.detailsFiles", "Details: Files", .files),
+        ]
+        for (id, title, tab) in expected {
+            let row = try XCTUnwrap(
+                ActionsPaletteSource.catalog.first { $0.id == id },
+                "the ⌘⇧P palette catalog enumerates the '\(title)' jump command",
+            )
+            XCTAssertEqual(row.title, title, "the \(tab) Details row's title")
+            XCTAssertEqual(row.category, .view, "the \(tab) Details row groups under VIEW")
+            guard case let .selectDetailsTab(actionTab) = row.action else {
+                XCTFail("the '\(title)' row runs a .selectDetailsTab action")
+                continue
+            }
+            XCTAssertEqual(actionTab, tab, "the '\(title)' row selects the \(tab) tab (no wrong-tab mapping)")
+        }
+    }
+
+    /// The CLOSED loop: RUNNING each `Details: *` palette row through the coordinator routes its tab to the
+    /// injected `selectDetailsTab` closure (the SAME live `DetailsPanelState` + chrome the ⌘⇧R toggle + the
+    /// View menu rows drive) — EXACTLY the tab the row carries, in order, no off-by-one. This is the pure
+    /// routing seam the GUI binds in `WorkspaceRootView.wireOverlaySelectDetailsTab()`; it FAILS on the
+    /// un-fixed code (no `.selectDetailsTab` run-arm fires the closure, so `captured` stays empty).
+    func testRunningEachDetailsPaletteRowFiresSelectDetailsTabWithTheRightTab() throws {
+        let (overlay, _) = makeCoordinator()
+        var captured: [DetailsPanelTab] = []
+        overlay.selectDetailsTab = { captured.append($0) }
+
+        let rows: [(id: String, tab: DetailsPanelTab)] = [
+            ("action.detailsInfo", .info),
+            ("action.detailsOutline", .outline),
+            ("action.detailsGit", .git),
+            ("action.detailsFiles", .files),
+        ]
+        for (id, _) in rows {
+            let row = try XCTUnwrap(ActionsPaletteSource.catalog.first { $0.id == id })
+            overlay.run(row)
+        }
+        XCTAssertEqual(
+            captured, rows.map(\.tab),
+            "each Details: * palette row routes its own tab to the injected selectDetailsTab closure",
+        )
+    }
+
     // MARK: - ES-E2-1: the keyboard selection stays valid when the query narrows (the clamp fix)
 
     /// The bug: the palette's keyboard selection index isn't reset when the query changes, so after a query

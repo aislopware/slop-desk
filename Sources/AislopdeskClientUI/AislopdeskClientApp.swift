@@ -420,6 +420,11 @@ public struct AislopdeskClientApp: App {
                 togglePalette: { [overlayCoordinator] in overlayCoordinator.togglePalette() },
                 toggleCheatSheet: { [overlayCoordinator] in overlayCoordinator.toggleCheatSheet() },
                 toggleGlobalSearch: { [overlayCoordinator] in overlayCoordinator.toggleGlobalSearch() },
+                // E9/WI-7 (ES-E9-5): the four View ▸ Details: * menu rows route through the SAME injected
+                // coordinator closure the palette rows + the user-bindable chord drive (installed by
+                // `WorkspaceRootView.wireChromeToggles` → sets `DetailsPanelState.selected` + reveals the
+                // panel). Without this the menu rows were inert (`selectDetailsTab` was nil).
+                selectDetailsTab: { [overlayCoordinator] tab in overlayCoordinator.selectDetailsTab(tab) },
             )
             // E7 WI-4: File ▸ Export/Import Workspace (optional parity). Shortcut-LESS — the NSEvent
             // dispatcher owns chords (DECISIONS N6); a hostile import is a no-op + toast, never a crash.

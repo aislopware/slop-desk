@@ -124,6 +124,10 @@ public struct WorkspaceRootView: View {
         .overlay {
             OverlayHostView(store: store, connection: connection, coordinator: overlay)
         }
+        // ES-E9-5: wire the four `Details: *` palette commands to the live `chrome`/`details` on iOS too (the
+        // palette is cross-platform; iOS has no NSEvent dispatcher, so the palette + this closure ARE the
+        // surface). The macOS path wires the same closure in `wireChromeToggles()`.
+        .onAppear { wireOverlaySelectDetailsTab() }
         // WI-5: the toolbar gear presents the in-app settings sheet (iOS has no `Settings` scene). The sheet
         // hosts the same cross-platform section structs as the macOS strip. The live `WorkspaceStore` rides
         // the `\.workspaceStore` slot so Advanced → Workspace export/import works on iOS too.
@@ -157,8 +161,22 @@ public struct WorkspaceRootView: View {
         // (not the dead `store.sidebarCollapsed`). Bound here because `chrome` predates the app-built overlay.
         overlay.toggleSidebar = { [chrome] in chrome.toggleSidebar() }
         overlay.toggleInspector = { [chrome] in chrome.toggleInspector() }
+        wireOverlaySelectDetailsTab()
     }
     #endif
+
+    /// Cross-platform (ES-E9-5): bind the overlay coordinator's `selectDetailsTab` to THIS view's live
+    /// `chrome`/`details` so the command palette's four `Details: *` rows — and, on macOS, the View ▸
+    /// Details: * menu rows routed through the same coordinator closure (threaded in `AislopdeskClientApp`) —
+    /// set the shared `DetailsPanelState.selected` AND reveal the panel. The palette is cross-platform, so the
+    /// four commands run on iOS too (where there is no NSEvent dispatcher). `[chrome, details]` captures the
+    /// SAME instances both inspector mounts read, so the visible tab switches in one shot.
+    private func wireOverlaySelectDetailsTab() {
+        overlay.selectDetailsTab = { [chrome, details] tab in
+            details.selected = tab
+            chrome.inspectorCollapsed = false
+        }
+    }
 
     #if os(iOS)
     @ToolbarContentBuilder

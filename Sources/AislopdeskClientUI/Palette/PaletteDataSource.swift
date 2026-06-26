@@ -153,6 +153,33 @@ public struct ActionsPaletteSource: PaletteDataSource {
             subtitle: nil, shortcut: glyph(.toggleDetailsPanel), filter: .actions, category: .view,
             action: .toggleInspector,
         ),
+        // E9/WI-7 (ES-E9-5): otty's four UNBOUND `Details: *` jump commands surfaced in the palette (otty
+        // lists unbound commands there, so they are runnable out-of-box with NO default chord). Each switches
+        // the right-hand Details panel to a specific tab AND reveals it, routed by the coordinator to the
+        // injected `selectDetailsTab` closure — the SAME live `DetailsPanelState` + chrome the ⌘⇧R toggle and
+        // the View ▸ Details: * menu rows drive. The palette is cross-platform, so these run on iOS too. The
+        // glyph derives from the registry (chord: nil ⇒ `nil` ⇒ no hint chip, since they ship unbound). The
+        // icons mirror the four registry rows' symbols.
+        PaletteItem(
+            id: "action.detailsInfo", icon: "info.circle", title: "Details: Info",
+            subtitle: nil, shortcut: glyph(.selectDetailsTab(.info)), filter: .actions, category: .view,
+            action: .selectDetailsTab(.info),
+        ),
+        PaletteItem(
+            id: "action.detailsOutline", icon: "list.bullet", title: "Details: Outline",
+            subtitle: nil, shortcut: glyph(.selectDetailsTab(.outline)), filter: .actions, category: .view,
+            action: .selectDetailsTab(.outline),
+        ),
+        PaletteItem(
+            id: "action.detailsGit", icon: "arrow.triangle.branch", title: "Details: Git",
+            subtitle: nil, shortcut: glyph(.selectDetailsTab(.git)), filter: .actions, category: .view,
+            action: .selectDetailsTab(.git),
+        ),
+        PaletteItem(
+            id: "action.detailsFiles", icon: "folder", title: "Details: Files",
+            subtitle: nil, shortcut: glyph(.selectDetailsTab(.files)), filter: .actions, category: .view,
+            action: .selectDetailsTab(.files),
+        ),
         // Connect to a (possibly non-default) host — the only entry point to the host/port editor besides
         // the top-bar status pill. No registry chord ⇒ no hint chip.
         PaletteItem(

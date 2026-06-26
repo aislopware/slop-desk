@@ -7,20 +7,23 @@ import Foundation
 /// view's `Gutter → colour` map — the classification itself is headlessly unit-tested. Mirrors the
 /// ``MetadataFormatting/uptime(_:)`` precedent (a single coarse unit; integer arithmetic only — no float).
 public enum OutlinePresentation {
-    /// otty-style relative time from `from` to `now`: sub-second → "now", then "34s" / "4m" / "2h" / "3d"
-    /// (a SINGLE coarse unit — the same glanceable shape as ``MetadataFormatting/uptime(_:)``). The Date
-    /// delta is truncated to whole seconds ONCE; all bucketing is integer division + ordered integer
-    /// comparison (no float `<`/`>`, per the codebase float-math convention). A `from` in the future (clock
-    /// skew) clamps to "now" rather than emitting a negative string.
+    /// otty-style relative time from `from` to `now`: sub-second → "now", then "34s ago" / "4m ago" /
+    /// "2h ago" / "3d ago" — the Outline row's exact shape (outline-panel.png + `user-interface__outline.md`
+    /// / `user-interface__details-panel.md`: "4m ago" / "7h ago" / "7s ago"). It carries the "ago" suffix
+    /// that ``MetadataFormatting/uptime(_:)`` (the Process-section uptime) does NOT — that bare form is the
+    /// uptime callers' contract, while THIS is read only by the Outline (`OutlineView`), so the suffix lives
+    /// here. A SINGLE coarse unit; the Date delta is truncated to whole seconds ONCE and all bucketing is
+    /// integer division + ordered integer comparison (no float `<`/`>`, per the codebase float-math
+    /// convention). A `from` in the future (clock skew) clamps to "now" rather than emitting a negative string.
     public static func relativeTime(from: Date, now: Date) -> String {
         let seconds = max(0, Int(now.timeIntervalSince(from)))
         if seconds == 0 { return "now" }
-        if seconds < 60 { return "\(seconds)s" }
+        if seconds < 60 { return "\(seconds)s ago" }
         let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes)m" }
+        if minutes < 60 { return "\(minutes)m ago" }
         let hours = minutes / 60
-        if hours < 24 { return "\(hours)h" }
-        return "\(hours / 24)d"
+        if hours < 24 { return "\(hours)h ago" }
+        return "\(hours / 24)d ago"
     }
 
     /// The Outline row's exit-status gutter bucket — grey while running, green on success, red on a

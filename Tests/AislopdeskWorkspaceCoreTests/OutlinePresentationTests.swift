@@ -12,19 +12,20 @@ final class OutlinePresentationTests: XCTestCase {
         func rel(_ ago: TimeInterval) -> String {
             OutlinePresentation.relativeTime(from: now.addingTimeInterval(-ago), now: now)
         }
-        // The boundary table from the plan.
+        // The boundary table from the plan — the Outline row carries the "ago" suffix (outline-panel.png /
+        // user-interface__outline.md / user-interface__details-panel.md), except the sub-second "now".
         XCTAssertEqual(rel(0), "now")
-        XCTAssertEqual(rel(59), "59s")
-        XCTAssertEqual(rel(60), "1m")
-        XCTAssertEqual(rel(3599), "59m")
-        XCTAssertEqual(rel(3600), "1h")
-        XCTAssertEqual(rel(86399), "23h")
-        XCTAssertEqual(rel(86400), "1d")
-        // The spec's example shapes ("now"/"34s"/"4m"/"2h"/"3d").
-        XCTAssertEqual(rel(34), "34s")
-        XCTAssertEqual(rel(240), "4m")
-        XCTAssertEqual(rel(7200), "2h")
-        XCTAssertEqual(rel(259_200), "3d")
+        XCTAssertEqual(rel(59), "59s ago")
+        XCTAssertEqual(rel(60), "1m ago")
+        XCTAssertEqual(rel(3599), "59m ago")
+        XCTAssertEqual(rel(3600), "1h ago")
+        XCTAssertEqual(rel(86399), "23h ago")
+        XCTAssertEqual(rel(86400), "1d ago")
+        // The spec's example shapes ("now"/"34s ago"/"4m ago"/"2h ago"/"3d ago").
+        XCTAssertEqual(rel(34), "34s ago")
+        XCTAssertEqual(rel(240), "4m ago")
+        XCTAssertEqual(rel(7200), "2h ago")
+        XCTAssertEqual(rel(259_200), "3d ago")
     }
 
     func testRelativeTimeTruncatesSubSecondToNow() {
