@@ -92,6 +92,22 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
     /// Cursor glide animation (otty `cursor.animation`), default ``CursorAnimation/off``.
     public var cursorAnimation: CursorAnimation
 
+    // E12 (Composer): CLIENT-only composer prefs (otty "Composer max height" + the persisted pin flag).
+    // Live client UI prefs — NOT host `AgentPreferences`, no `video-prefs.json` sidecar, no env overlay, no
+    // golden corpus (decision #6). Both are OPTIONAL so an absent value falls back to the documented default
+    // (no migration needed when a stored prefs blob predates E12 — `nil` decodes cleanly).
+    /// The fraction of the pane's height the Composer field grows to before it switches to internal scroll
+    /// (otty "Composer max height", value unspecified on the docs page → default ``defaultComposerMaxHeightFraction``,
+    /// ~0.4). `nil` = use the default; a stored value is clamped into `0.15…0.9` at the read site.
+    public var composerMaxHeightFraction: Double?
+    /// Whether the Composer is PINNED (rides along across tab switches via a window-level mount, E12 WI-6).
+    /// `nil` = not pinned (the default). Persisted so a pinned Composer survives an app relaunch.
+    public var composerPinned: Bool?
+
+    /// The default Composer max-height fraction when ``composerMaxHeightFraction`` is unset (~0.4 of the pane
+    /// height — the value suggested by the Composer docs page, which leaves the number unspecified).
+    public static let defaultComposerMaxHeightFraction: Double = 0.4
+
     public init(
         fontFamily: String = "SF Mono",
         fontSize: Double = 13,
@@ -106,6 +122,8 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         cursorTextColor: String = "",
         cursorOpacity: Double = 1.0,
         cursorAnimation: CursorAnimation = .off,
+        composerMaxHeightFraction: Double? = nil,
+        composerPinned: Bool? = nil,
     ) {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
@@ -120,5 +138,15 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         self.cursorTextColor = cursorTextColor
         self.cursorOpacity = cursorOpacity
         self.cursorAnimation = cursorAnimation
+        self.composerMaxHeightFraction = composerMaxHeightFraction
+        self.composerPinned = composerPinned
+    }
+
+    /// The resolved Composer max-height fraction — the stored ``composerMaxHeightFraction`` clamped into a
+    /// sane `0.15…0.9` band, or ``defaultComposerMaxHeightFraction`` when unset. The view multiplies this by
+    /// the live pane height to get the field's max height (then internal scroll). Ordered min/max (NaN-safe).
+    public var resolvedComposerMaxHeightFraction: Double {
+        guard let fraction = composerMaxHeightFraction else { return Self.defaultComposerMaxHeightFraction }
+        return Double.minimum(0.9, Double.maximum(0.15, fraction))
     }
 }

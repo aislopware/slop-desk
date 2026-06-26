@@ -1,3 +1,4 @@
+import AislopdeskVideoProtocol
 import Defaults
 import Foundation
 
@@ -111,6 +112,15 @@ public enum SettingsKey {
     public static let hideStatusBar = "appearance.hideStatusBar"
     /// Whether the per-block sticky command divider/header is shown over terminal panes. Default ON.
     public static let showBlockDividers = "terminal.showBlockDividers"
+    // E12 (Composer / Prompt Queue). Fire-time `Defaults.Keys` flags — like the E8 Controls knobs they are
+    // NEVER folded into the env overlay / sidecar (golden-safe by construction). They MIRROR the typed
+    // `TerminalPreferences.composer*` client-pref fields; the leaf view reads these fire-time accessors so it
+    // doesn't have to thread `PreferencesStore` down the pane subtree.
+    /// otty "Composer max height" — the fraction of the pane height the Composer grows to before internal
+    /// scroll. Default ``TerminalPreferences/defaultComposerMaxHeightFraction`` (~0.4).
+    public static let composerMaxHeight = "composer.maxHeightFraction"
+    /// Whether the Composer is PINNED (rides along across tab switches, E12 WI-6). Default OFF.
+    public static let composerPinned = "composer.pinned"
     // Shell / window behaviour
     /// Where a new tab is inserted in the active session's tab bar (otty `new-tab-position`). Stored as the
     /// ``NewTabPosition`` rawValue (`auto`/`end`/`after-current`); default `.auto` (= append). Read at the
@@ -182,6 +192,25 @@ public enum SettingsKey {
 
     /// Whether the per-block command divider/header is shown (default ON). Read at fire-time.
     public static var showBlockDividersEnabled: Bool { Defaults[.showBlockDividers] }
+
+    /// The resolved Composer max-height fraction (otty "Composer max height", E12) — the persisted value
+    /// clamped into a sane `0.15…0.9` band, or ``TerminalPreferences/defaultComposerMaxHeightFraction`` (~0.4)
+    /// when unset. The leaf multiplies this by the live pane height to size the Composer field (then internal
+    /// scroll). Ordered min/max (NaN-safe — never a bare `<`/`>` ternary).
+    public static var composerMaxHeightFraction: Double {
+        Double.minimum(0.9, Double.maximum(0.15, Defaults[.composerMaxHeight]))
+    }
+
+    /// Whether the Composer is PINNED across tab switches (E12 WI-6), default OFF. Read at fire-time.
+    public static var composerPinnedEnabled: Bool { Defaults[.composerPinned] }
+
+    /// PERSISTS the Composer PIN preference (E12 WI-6) so a pinned Composer survives an app relaunch
+    /// (the otty "pinned state is persisted as a user preference" rule). Written by the client UI when a
+    /// composer becomes / stops being pinned; mirrors the typed ``TerminalPreferences/composerPinned``
+    /// client-pref field. Idempotent — writing the same value is a `Defaults` no-op.
+    public static func setComposerPinnedEnabled(_ pinned: Bool) {
+        Defaults[.composerPinned] = pinned
+    }
 
     /// The default kind for a generic "New Pane" (toolbar primary action / empty state), default
     /// `.terminal`. The ⌥⌘N per-kind shortcut is unaffected. A stale persisted `"claudeCode"` value (the
@@ -340,6 +369,13 @@ public extension Defaults.Keys {
     static let recordClipboardHistory = Key<Bool>(SettingsKey.recordClipboardHistory, default: true)
     static let hideStatusBar = Key<Bool>(SettingsKey.hideStatusBar, default: false)
     static let showBlockDividers = Key<Bool>(SettingsKey.showBlockDividers, default: true)
+    // E12 Composer / Prompt Queue — fire-time flags, never folded into the env overlay / sidecar (golden-safe).
+    // The max-height default mirrors `TerminalPreferences.defaultComposerMaxHeightFraction` (one source).
+    static let composerMaxHeight = Key<Double>(
+        SettingsKey.composerMaxHeight,
+        default: TerminalPreferences.defaultComposerMaxHeightFraction,
+    )
+    static let composerPinned = Key<Bool>(SettingsKey.composerPinned, default: false)
     static let defaultPaneKind = Key<PaneKind>(SettingsKey.defaultPaneKindKey, default: .terminal)
     static let newTabPosition = Key<NewTabPosition>(SettingsKey.newTabPositionKey, default: .auto)
     // Sidebar tab grouping / sort (otty sort-hamburger, E6) stored as the bare enum rawValue. Group default

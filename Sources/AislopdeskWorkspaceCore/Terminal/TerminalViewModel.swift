@@ -210,6 +210,29 @@ public final class TerminalViewModel {
     @ObservationIgnored public var onRequestFindNext: (() -> Void)?
     @ObservationIgnored public var onRequestFindPrev: (() -> Void)?
 
+    /// E12 ES-E12-1: the ⌘⇧E "Composer" action — toggles the multi-line Composer bar over THIS pane. The
+    /// durable ``ComposerModel`` (on the pane's ``LivePaneSession``) owns the visible/draft state; this
+    /// callback lets the leaf view move keyboard focus INTO the composer field when it opens (the
+    /// ``onRequestFind`` pattern — the store reaches it via ``WorkspaceStore/requestComposerInActivePane()``).
+    /// `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers (never invoked).
+    @ObservationIgnored public var onRequestComposer: (() -> Void)?
+
+    /// E12 ES-E12-5: the ⌘⇧M "Prompt Queue" action — opens the Composer in queue-input mode over THIS pane
+    /// (placeholder + `↩`-adds-a-line). Same view-focus seam as ``onRequestComposer`` (the store reaches it
+    /// via ``WorkspaceStore/requestPromptQueueInActivePane()``). `@ObservationIgnored`: wiring, not view
+    /// state. Nil for headless/preview callers (never invoked).
+    @ObservationIgnored public var onRequestPromptQueue: (() -> Void)?
+
+    /// E12: the NORMAL-pane Prompt-Queue idle trigger. Fired once each time the client ``modeTracker`` sees
+    /// an OSC-133;A prompt mark (`ESC]133;A`) WHILE on the main screen (`.shellPrompt`) — i.e. the shell has
+    /// returned to an idle prompt. The pane's ``LivePaneSession`` wires it to the composer's
+    /// `notePromptIdle()`, which dispatches the next queued prompt (one per idle, FIFO). This is the literal
+    /// otty "next idle prompt" trigger; the AGENT (alt-screen Claude Code) pane has no OSC-133 marks, so its
+    /// faithful equivalent is the host's `claudeStatus → .idle` transition (``LivePaneSession``). Gated on
+    /// `.shellPrompt` so an alt-screen TUI's embedded/own prompt marks never double-fire it. No behaviour
+    /// change while nil (headless/preview). `@ObservationIgnored`: wiring, not view state.
+    @ObservationIgnored public var onPromptIdle: (() -> Void)?
+
     /// E5 (find + global search) surface seams over the active ``TerminalSurfaceActions`` conformer (production
     /// ``GhosttySurface``): the flat scrollback text mirror the find bar / global search scan, and the
     /// passthrough to libghostty's own in-surface search bindings (`search:`/`navigate_search:`/`end_search`/
@@ -858,7 +881,18 @@ public final class TerminalViewModel {
         // Alt-screen tracking is fed UNCONDITIONALLY: the public `isAlternateScreen` accessor (read by the
         // E8 paste / backspace / scroll-past gates) must be fresh even when the glitch caret is off (its
         // default). The tracker's `memchr` skim makes a ground-content pass one `memchr` per chunk.
-        for chunk in chunks { modeTracker.consume(chunk) }
+        for chunk in chunks {
+            let modeEvents = modeTracker.consume(chunk)
+            // E12 NORMAL-pane Prompt-Queue idle dispatch: an OSC-133;A prompt mark on the MAIN screen means
+            // the shell is back at an idle prompt (the literal otty "next idle prompt" trigger). Fire the
+            // queue's idle signal so it dispatches the next queued prompt. GATED on `.shellPrompt` so an
+            // alt-screen TUI's own prompt marks don't double-fire it (the alt-screen / agent-pane idle path
+            // is `claudeStatus → .idle`, wired in LivePaneSession). No-op when `onPromptIdle` is nil
+            // (headless/preview); the `nil` short-circuit keeps the ground-content pass free of extra work.
+            if onPromptIdle != nil, modeTracker.mode == .shellPrompt, modeEvents.contains(.promptStart) {
+                onPromptIdle?()
+            }
+        }
         // Glitch caret (docs/31 #3): host output is the ground truth — ANY ingest hides the caret (the
         // entire reconciliation policy: we never painted characters, so a "misprediction" can only ever be
         // a caret shown one output-gap too long).

@@ -51,6 +51,15 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// terminal connection (the `.terminal` kind).
     public let inputBar: InputBarModel?
 
+    /// E12: the per-pane Composer (`⌘⇧E`) + Prompt Queue (`⌘⇧M`) view-model. DURABLE on this session — like
+    /// ``inputBar``, it survives tab switches and pause/resume (panes mount at opacity-0, never torn down),
+    /// so a draft / queued prompts persist. Present for `.terminal` panes; `nil` for the video kinds
+    /// (`.remoteGUI` / `.systemDialog`). Its single OUT sink rides the pane's ONE ordered-OUT FIFO via the
+    /// input bar (NOT a second socket), and BOTH idle signals drain its queue: the NORMAL-pane OSC-133;A
+    /// (``TerminalViewModel/onPromptIdle``, wired in ``makeTerminal``) and the AGENT-pane
+    /// `claudeStatus → .idle` (``applyDetectedStatus``).
+    public let composer: ComposerModel?
+
     /// The read-only structured inspector for a terminal pane (NWConnection #2). `nil` for non-terminal
     /// kinds (`.remoteGUI` / `.systemDialog`). Present for EVERY `.terminal` pane now (W11) because any
     /// terminal can become a Claude session at runtime; the second channel itself is only SUBSCRIBED
@@ -191,6 +200,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         kind: PaneKind,
         connection: ConnectionViewModel?,
         inputBar: InputBarModel?,
+        composer: ComposerModel?,
         inspector: InspectorViewModel?,
         inspectorClient: InspectorClient?,
         remoteWindow: RemoteWindowModel?,
@@ -202,6 +212,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         self.kind = kind
         self.connection = connection
         self.inputBar = inputBar
+        self.composer = composer
         self.inspector = inspector
         self.inspectorClient = inspectorClient
         self.remoteWindow = remoteWindow
@@ -305,11 +316,25 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         // (docs/29 dual-OUT-drain reorder fix). Weak: the sink must not retain the model.
         inputBar.sendSink = { [weak terminal] data in terminal?.sendInput(data) }
 
+        // E12 Composer (⌘⇧E) + Prompt Queue (⌘⇧M): per-pane, durable on this session. Its single OUT sink
+        // funnels through the SAME input bar — `sendRaw(record: true)` so a composer submit / a dispatched
+        // queued prompt gets the SAME ordered-OUT FIFO + B1 echo-dedup as a typed line (never a second
+        // socket, never an unstructured Task — the docs/29 reorder class). Weak so the sink can't retain
+        // the input bar.
+        let composer = ComposerModel()
+        composer.send = { [weak inputBar] data in inputBar?.sendRaw([UInt8](data), record: true) }
+        // NORMAL-pane idle dispatch (the literal otty trigger): the client modeTracker fires `onPromptIdle`
+        // on an OSC-133;A prompt mark (the shell is back at an idle prompt) → drain the next queued prompt.
+        // The AGENT-pane (alt-screen Claude Code, no OSC-133 marks) idle path is `claudeStatus → .idle` in
+        // `applyDetectedStatus`. Weak so the callback can't retain the composer.
+        terminal.onPromptIdle = { [weak composer] in composer?.notePromptIdle() }
+
         return LivePaneSession(
             id: PaneID(),
             kind: spec.kind,
             connection: connection,
             inputBar: inputBar,
+            composer: composer,
             inspector: InspectorViewModel(),
             inspectorClient: nil, // opened lazily by subscribeInspector() once claudeStatus ≠ .none
             remoteWindow: nil,
@@ -343,6 +368,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             kind: spec.kind,
             connection: nil,
             inputBar: nil,
+            composer: nil, // a video pane has no terminal → no Composer / Prompt Queue
             inspector: nil,
             inspectorClient: nil,
             remoteWindow: model,
@@ -443,6 +469,12 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         let isActive = newStatus != .none
         guard claudeStatus != newStatus else { return } // dedupe identical updates (no churn)
         claudeStatus = newStatus
+        // E12 AGENT-pane idle dispatch: alt-screen Claude Code emits no OSC-133 prompt marks, so its
+        // "went idle between turns" signal is the host's transition INTO `.idle`. The dedupe guard above
+        // already ruled out a no-op repeat, so reaching `.idle` here is a genuine edge → drain the next
+        // queued prompt, exactly like the normal-pane OSC-133;A path (`TerminalViewModel.onPromptIdle`).
+        // Pure dispatch through the composer's ordered-OUT sink — no UI, no socket of its own.
+        if newStatus == .idle { composer?.notePromptIdle() }
         if !wasActive, isActive {
             // A claude just appeared in this terminal → open the read-only inspector second channel.
             inspectorTask?.cancel()

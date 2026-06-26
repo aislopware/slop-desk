@@ -208,11 +208,12 @@ public extension WorkspaceBindingRegistry {
         // `requestFindInActivePane()`), so ⌘⇧J does something useful rather than nothing.
         case .peekAndReply:
             if let p = toggles.peekReply { p() } else { store.jumpToOldestAttentionPane() }
-        // Agents (E1-registered; behaviour lands in E12/E13). Each is a routable graceful no-op stub until the
-        // owning epic threads its seam — registered so the chord is LIVE (never dead), per ES-E1-5. E12 wires
-        // composer / prompt-queue, E13 wires send-to-chat (each will route to its own store op / overlay toggle).
-        case .composer: break
-        case .promptQueue: break
+        // Agents (E12 Composer / Prompt Queue): route to the active-pane composer ops — ⌘⇧E toggles the
+        // Composer, ⌘⇧M opens it in Prompt-Queue input mode (both a graceful no-op off-terminal). `.sendToChat`
+        // STAYS a routable no-op stub — its behaviour lands in E13 (agent send-to-chat), not E12 (ES-E1-5
+        // keeps the chord LIVE, never dead).
+        case .composer: store.requestComposerInActivePane()
+        case .promptQueue: store.requestPromptQueueInActivePane()
         case .sendToChat: break
         }
     }
@@ -313,11 +314,12 @@ public extension WorkspaceBindingRegistry {
         // P4 Peek & Reply is a view overlay; the canvas path still toggles it (the overlay's own selector
         // returns nil under .canvas, where there is no attention rollup, so it opens read-only / no-ops).
         case .peekAndReply: toggles.peekReply?()
-        // Agents (E12/E13): no canvas analogue — the agent surfaces are tree-shell only. Graceful no-ops here.
-        case .composer,
-             .promptQueue,
-             .sendToChat:
-            break
+        // Agents (E12 Composer / Prompt Queue): the canvas path resolves the active pane via canvas focus,
+        // so the same store ops toggle/open the composer there too (a graceful no-op for a non-terminal /
+        // empty canvas). `.sendToChat` STAYS inert — its behaviour lands in E13.
+        case .composer: store.requestComposerInActivePane()
+        case .promptQueue: store.requestPromptQueueInActivePane()
+        case .sendToChat: break
         }
     }
 }

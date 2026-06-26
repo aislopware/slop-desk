@@ -92,6 +92,66 @@ final class ClaudeStatusWiringTests: XCTestCase {
         XCTAssertEqual(session.foregroundProcessName, "grep", "only the display name changed")
     }
 
+    // MARK: - E12: agent-pane Prompt-Queue idle dispatch (claudeStatus → .idle drains the queue)
+
+    /// E12 — the AGENT-pane idle trigger: alt-screen Claude Code emits no OSC-133 marks, so its "went idle
+    /// between turns" signal is the host's type-27 transition INTO `.idle`. On that edge the session drains
+    /// exactly the head queued prompt through the composer's ordered-OUT sink (the same path a typed line
+    /// takes). REVERT-TO-CONFIRM-FAIL: without the `if newStatus == .idle { composer?.notePromptIdle() }`
+    /// line in `applyDetectedStatus` nothing is dispatched.
+    func testAgentIdleTransitionDispatchesHeadQueuedPrompt() throws {
+        let session = makeTerminalSession()
+        let composer = try XCTUnwrap(session.composer, "a .terminal session carries a composer")
+        var captured: [Data] = []
+        // The composer's OUT sink funnels through the input bar → terminal.sendInput → inputSink.
+        session.terminalModel?.inputSink = { captured.append($0) }
+
+        composer.draft = "first\nsecond"
+        composer.enqueueDraft() // two queued prompts
+        XCTAssertEqual(composer.promptQueue.items.count, 2)
+
+        session.feedAgentSignal(.claudeStatus(state: 1, kind: 0, label: "")) // state 1 = .idle → drain ONE
+        XCTAssertEqual(captured, [Data("first\r".utf8)], "the idle edge dispatches the head prompt + CR")
+        XCTAssertEqual(composer.promptQueue.items.count, 1, "exactly one item drained; the rest remain")
+    }
+
+    /// A NON-idle transition (`.working`) must NOT drain the queue — only the `.idle` edge dispatches.
+    func testAgentNonIdleTransitionDoesNotDispatch() throws {
+        let session = makeTerminalSession()
+        let composer = try XCTUnwrap(session.composer)
+        var captured: [Data] = []
+        session.terminalModel?.inputSink = { captured.append($0) }
+        composer.draft = "queued"
+        composer.enqueueDraft()
+
+        session.feedAgentSignal(.claudeStatus(state: 3, kind: 0, label: "")) // state 3 = .working
+        XCTAssertTrue(captured.isEmpty, "a non-idle (.working) transition does not drain the queue")
+        XCTAssertEqual(composer.promptQueue.items.count, 1, "the queued prompt waits for the idle edge")
+    }
+
+    /// Each GENUINE idle EDGE dispatches one prompt, FIFO; a deduped repeat `.idle` (no edge) does not
+    /// re-dispatch — so two prompts need two real working→idle cycles, matching otty's one-per-idle cadence.
+    func testEachAgentIdleEdgeDispatchesOnePromptInOrder() throws {
+        let session = makeTerminalSession()
+        let composer = try XCTUnwrap(session.composer)
+        var captured: [Data] = []
+        session.terminalModel?.inputSink = { captured.append($0) }
+        composer.draft = "one\ntwo"
+        composer.enqueueDraft()
+
+        session.feedAgentSignal(.claudeStatus(state: 1, kind: 0, label: "")) // → .idle (edge) → "one"
+        session.feedAgentSignal(.claudeStatus(state: 1, kind: 0, label: "")) // dedupe (no edge) → nothing
+        XCTAssertEqual(captured, [Data("one\r".utf8)], "a deduped repeat .idle does not re-dispatch")
+
+        session.feedAgentSignal(.claudeStatus(state: 3, kind: 0, label: "")) // → .working (a new turn)
+        session.feedAgentSignal(.claudeStatus(state: 1, kind: 0, label: "")) // → .idle again (edge) → "two"
+        XCTAssertEqual(
+            captured, [Data("one\r".utf8), Data("two\r".utf8)],
+            "each genuine working→idle edge drains exactly one queued prompt, in order",
+        )
+        XCTAssertTrue(composer.promptQueue.isEmpty, "both queued prompts dispatched")
+    }
+
     /// An unknown / future urgency byte degrades to `.none` (forward-tolerant validate-then-repair) —
     /// a hostile or newer datagram must never trap the client.
     func testUnknownStateByteDegradesToNone() {

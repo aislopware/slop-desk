@@ -186,10 +186,16 @@ public extension WorkspaceAction {
              .increaseFontSize,
              .decreaseFontSize,
              .resetFontSize,
+             // E12 Composer (⌘⇧E) / Prompt Queue (⌘⇧M) act on the ACTIVE pane's session (compose → its PTY,
+             // queue → its idle dispatch); `sendToChat` carries the active pane's selection. Same
+             // graceful-no-op family as the block / find affordances above (per E12-carryovers the composer
+             // targets the active pane, NOT a global surface).
+             .composer,
+             .promptQueue,
              .sendToChat:
-            // Block / find / scroll / font affordances target the active TERMINAL pane (its blocks /
-            // scrollback / prompt marks / glyphs), so they need one — but they degrade gracefully (a
-            // no-pane shell just no-ops), so they are not greyed out aggressively.
+            // Block / find / scroll / font / composer affordances target the active TERMINAL pane (its
+            // blocks / scrollback / prompt marks / glyphs / PTY), so they need one — but they degrade
+            // gracefully (a no-pane shell just no-ops), so they are not greyed out aggressively.
             true
         case .commandPalette,
              .cheatSheet,
@@ -209,9 +215,7 @@ public extension WorkspaceAction {
              .spawnFloating, // creates its own pane — needs none
              .toggleSyncInput, // the tab must exist, but the palette can still show it (mirrors .newTab)
              .jumpToAttention, // acts globally across all tabs/sessions — needs no active pane
-             .peekAndReply, // acts globally (targets the oldest attention pane) — needs no active pane
-             .composer, // opens a global agent composer — needs no active pane
-             .promptQueue: // opens the global agent prompt queue — needs no active pane
+             .peekAndReply: // acts globally (targets the oldest attention pane) — needs no active pane
             false
         }
     }

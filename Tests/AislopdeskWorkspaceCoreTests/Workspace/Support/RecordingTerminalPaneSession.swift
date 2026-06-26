@@ -87,13 +87,21 @@ final class RecordingSurfaceActions: TerminalSurface, TerminalSurfaceActions, @u
 @MainActor
 @Observable
 final class RecordingTerminalPaneSession: @MainActor PaneSessionHandle, @MainActor Identifiable,
-    PaneSessionIDAdopting, TerminalModelProviding
+    PaneSessionIDAdopting, TerminalModelProviding, ComposerProviding
 {
     private(set) var id: PaneID
     let kind: PaneKind
 
     /// The real per-pane terminal model for a `.terminal` pane; `nil` otherwise (matches `LivePaneSession`).
     let terminalModel: TerminalViewModel?
+
+    /// E12: the real per-pane Composer for a `.terminal` pane; `nil` otherwise (matches `LivePaneSession`).
+    /// So the E12 active-pane composer routing (`requestComposerInActivePane` / `requestPromptQueueInActivePane`)
+    /// is exercisable end-to-end through the `ComposerProviding` seam without a socket.
+    let composer: ComposerModel?
+
+    /// `ComposerProviding`: the composer the store's active-pane composer ops resolve.
+    var composerModel: ComposerModel? { composer }
 
     /// The recording surface backing `terminalModel` (so a test reads `surfaceRecorder.actions`).
     let surfaceRecorder: RecordingSurfaceActions?
@@ -112,11 +120,19 @@ final class RecordingTerminalPaneSession: @MainActor PaneSessionHandle, @MainAct
             let model = TerminalViewModel(surface: recorder)
             surfaceRecorder = recorder
             terminalModel = model
+            // E12: a real per-pane composer whose OUT sink also funnels through the recorded input path, so a
+            // routing/idle-dispatch test can observe both the composer state AND the bytes it emits.
+            let box = ComposerModel()
+            composer = box
+            // Only NOW may the OUT-path closures capture `self`: definite-initialization requires every
+            // stored `let` (incl. `composer`) assigned before a `[weak self]` capture forms a reference.
             // Wire the OUT path so `sendInput` is observable (production wires this on connect).
             model.inputSink = { [weak self] data in self?.sentInput.append(data) }
+            box.send = { [weak self] data in self?.sentInput.append(data) }
         } else {
             surfaceRecorder = nil
             terminalModel = nil
+            composer = nil
         }
     }
 

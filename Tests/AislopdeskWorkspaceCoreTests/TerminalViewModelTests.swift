@@ -169,6 +169,55 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertNil(model.lastCommand)
     }
 
+    // MARK: E12 — OSC-133;A → onPromptIdle (the NORMAL-pane Prompt-Queue idle trigger)
+
+    /// `ESC]133;A BEL` — an OSC-133 prompt-start mark on the MAIN screen (a fresh model is `.shellPrompt`).
+    /// The shell is back at an idle prompt → `onPromptIdle` fires exactly once (the literal otty "next idle
+    /// prompt" trigger the Prompt Queue drains on). REVERT-TO-CONFIRM-FAIL: without the `onPromptIdle?()`
+    /// call in `ingestPass` the count stays 0.
+    func testPromptStartOnMainScreenFiresOnPromptIdle() {
+        let model = TerminalViewModel()
+        var idleCount = 0
+        model.onPromptIdle = { idleCount += 1 }
+        // ESC ] 1 3 3 ; A BEL — a real OSC-133;A prompt mark.
+        model.ingestOutput(Data([0x1B, 0x5D] + Array("133;A".utf8) + [0x07]))
+        XCTAssertEqual(idleCount, 1, "an OSC-133;A on the main screen fires onPromptIdle exactly once")
+    }
+
+    /// The dispatch is GATED on `.shellPrompt`: an OSC-133;A WHILE the host is on the ALT screen (a
+    /// fullscreen TUI / Claude Code, entered via `ESC[?1049h`) must NOT fire `onPromptIdle` — the
+    /// agent-pane idle path is `claudeStatus → .idle` (LivePaneSession), not this OSC mark.
+    /// REVERT-TO-CONFIRM-FAIL: dropping the `modeTracker.mode == .shellPrompt` guard fires it here.
+    func testPromptStartOnAltScreenDoesNotFireOnPromptIdle() {
+        let model = TerminalViewModel()
+        var idleCount = 0
+        model.onPromptIdle = { idleCount += 1 }
+        model.ingestOutput(Data([0x1B, 0x5B] + Array("?1049h".utf8))) // ESC [ ?1049h → enter alt screen
+        XCTAssertTrue(model.isAlternateScreen, "precondition: on the alt screen")
+        model.ingestOutput(Data([0x1B, 0x5D] + Array("133;A".utf8) + [0x07])) // a 133;A on the alt screen
+        XCTAssertEqual(idleCount, 0, "a 133;A on the alt screen must not fire onPromptIdle (gated on .shellPrompt)")
+    }
+
+    /// A 133;A EMBEDDED in an opaque DCS string body (`ESC P … 133;A … ESC \`) is swallowed by the
+    /// tracker's string-consume guard — no `.promptStart` event, so `onPromptIdle` must NOT fire (a
+    /// conformant terminal treats the whole string as opaque; an embedded marker can't be a real prompt).
+    func testEmbeddedPromptMarkInDCSStringDoesNotFireOnPromptIdle() {
+        let model = TerminalViewModel()
+        var idleCount = 0
+        model.onPromptIdle = { idleCount += 1 }
+        // ESC P (DCS) … a fake "133;A" inside the string body … ESC \ (ST) — opaque, no marker fires.
+        model.ingestOutput(Data([0x1B, 0x50] + Array("133;A".utf8) + [0x1B, 0x5C]))
+        XCTAssertEqual(idleCount, 0, "a 133;A inside an opaque DCS string body is not a prompt mark")
+    }
+
+    /// Nil callback (the headless/preview default) is inert — feeding an OSC-133;A neither crashes nor has
+    /// any effect when `onPromptIdle` was never wired.
+    func testPromptIdleWithoutCallbackIsInert() {
+        let model = TerminalViewModel()
+        model.ingestOutput(Data([0x1B, 0x5D] + Array("133;A".utf8) + [0x07])) // no onPromptIdle wired
+        XCTAssertNil(model.onPromptIdle)
+    }
+
     func testDeliberateResetWipesStaleFramebufferOnFirstFreshOutput() {
         // REGRESSION: a deliberate reconnect (⇧⌘R / the recovery banner's Retry) of an exited pane left the
         // dead session's framebuffer on the ALWAYS-MOUNTED surface, then grafted the new prompt onto it,
