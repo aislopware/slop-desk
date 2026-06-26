@@ -88,10 +88,14 @@ struct GlobalSearchView: View {
                 .foregroundStyle(Otty.Text.primary)
                 .tint(Otty.State.accent) // the active caret is the accent colour (otty parity)
                 .focused($queryFocused)
-                // The query text sits inside a FILLED, hairline-bordered rounded plate (global-search.png) —
-                // the EXACT treatment `TerminalFindBar.queryField` gives its field (same `Surface.card` fill +
-                // `radiusSmall` + `Line.subtle` hairline), so the two search surfaces read identically. The
-                // `Aa` / `.*` pills stay OUTSIDE this plate (they are siblings in the HStack, not wrapped here).
+                // The query text sits inside a FILLED, hairline-bordered rounded plate (global-search.png): the
+                // same `Surface.card` fill + `radiusSmall` as `TerminalFindBar.queryField`, but PLUS its own
+                // `Line.subtle` hairline. That extra ring is INTENTIONALLY context-different, NOT an asymmetry to
+                // "fix": this overlay's field sits on bare `Surface.window`, so it needs its own border to read as a
+                // field plate; the find bar's field sits inside an already `Line.subtle`-bordered `Surface.element`
+                // card (TerminalFindBar.swift:227-230), so a second ring there would double the border and risk
+                // find.png fidelity. Do NOT add a border to `queryField` to "match" this. Both readings are
+                // screenshot-faithful. The `Aa` / `.*` pills stay OUTSIDE this plate (siblings in the HStack).
                 .padding(.horizontal, Otty.Metric.space2)
                 .padding(.vertical, Otty.Metric.space1)
                 .background(Otty.Surface.card, in: RoundedRectangle(cornerRadius: Otty.Metric.radiusSmall))
