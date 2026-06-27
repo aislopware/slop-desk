@@ -128,6 +128,49 @@ final class ReopenClosedTabTreeTests: XCTestCase {
         XCTAssertTrue(store.recentlyClosedTabs.isEmpty, "both records consumed")
     }
 
+    // MARK: - Index-addressed reopen (E11 review fix: Recent rows reopen the RIGHT tab)
+
+    /// `reopenClosedTab(at:)` reopens EXACTLY the tab at the given LIFO index, not always the newest. Close
+    /// A,B,C,D (leaving E so the session never re-seeds), so the LIFO (newest-first) is D(0),C(1),B(2),A(3);
+    /// `reopenClosedTab(at: 2)` must restore B — the second-OLDEST close. The default `reopenLastClosedPane()`
+    /// (= `at: 0`) would restore D, so asserting B here FAILS against the old `popLast()`-everything routing
+    /// the Recent rows used (revert-to-confirm-fail: replace the body with `reopenLastClosedPane()` → "B" ≠ "D").
+    func testReopenClosedTabAtIndexRestoresThatTabNotTheNewest() {
+        let (ws, tabIDs, _) = tabbedWorkspace(["A", "B", "C", "D", "E"])
+        let store = makeTreeStore(restoringTree: ws)
+        store.closeTab(tabIDs[0]) // A
+        store.closeTab(tabIDs[1]) // B
+        store.closeTab(tabIDs[2]) // C
+        store.closeTab(tabIDs[3]) // D
+        XCTAssertEqual(store.recentlyClosedTabs.count, 4, "A,B,C,D captured (oldest→newest)")
+
+        let reopened = store.reopenClosedTab(at: 2) // LIFO top is D(0); index 2 = B (second-oldest)
+
+        XCTAssertEqual(activeTabTitle(store), "B", "index 2 reopens B (NOT the newest D the old popLast did)")
+        XCTAssertNotNil(reopened, "the restored tab's active pane id is returned")
+        XCTAssertEqual(store.recentlyClosedTabs.count, 3, "exactly B's record is consumed")
+        XCTAssertFalse(store.recentlyClosedTabs.contains { $0.tab.title == "B" }, "B is no longer on the LIFO")
+        XCTAssertTrue(
+            ["A", "C", "D"].allSatisfy { t in store.recentlyClosedTabs.contains { $0.tab.title == t } },
+            "the other three records survive untouched",
+        )
+    }
+
+    /// An out-of-range LIFO index (≥ count, or negative) is a graceful `nil` no-op — never a trap and never a
+    /// reopen of an adjacent tab. Pins the bounds check the picker relies on (a row index over UI state).
+    func testReopenClosedTabOutOfRangeIndexIsANoOp() {
+        let (ws, tabIDs, _) = tabbedWorkspace(["A", "B", "C"])
+        let store = makeTreeStore(restoringTree: ws)
+        store.closeTab(tabIDs[0]) // one record on the LIFO
+        XCTAssertEqual(store.recentlyClosedTabs.count, 1)
+
+        XCTAssertNil(store.reopenClosedTab(at: 5), "index past the end is nil")
+        XCTAssertNil(store.reopenClosedTab(at: -1), "a negative index is nil")
+
+        XCTAssertEqual(store.recentlyClosedTabs.count, 1, "no record consumed by an out-of-range reopen")
+        XCTAssertEqual(store.tree.activeSession?.tabs.count, 2, "the tree is untouched")
+    }
+
     // MARK: - Vanished owning session → fallback to active
 
     /// A reopen whose owning session was closed (here: emptied by closing its last tab) lands the tab in

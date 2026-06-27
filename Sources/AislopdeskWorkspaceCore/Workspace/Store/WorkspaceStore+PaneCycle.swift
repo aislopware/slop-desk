@@ -27,17 +27,32 @@ public extension WorkspaceStore {
         WorkspaceTreeOps.cyclePaneTarget(forward: forward, in: tree)
     }
 
-    /// Reopens the most recently CLOSED tree tab (the ⌘⇧T "Reopen Closed Tab" chord, E3 WI-3). Pops the
-    /// last ``RecentlyClosedTab`` off the in-memory ``recentlyClosedTabs`` LIFO and re-inserts it via
-    /// ``WorkspaceTreeOps/insertTab(_:specs:at:in:)`` at the configured ``NewTabPosition`` — restoring the
-    /// whole tab (its split tree + every pane's spec, keeping the original ``PaneID``s). The tab lands back
-    /// in its OWNING session when that session is still alive; otherwise (the session was closed while the
-    /// record sat on the LIFO) it falls back to the active session. A graceful no-op when the LIFO is
-    /// empty. The reopened session is FRESH — scrollback does not survive a close, by design (mirroring the
-    /// canvas single-slot ``WorkspaceStore/reopenClosedPane()``). (The canvas path's single-slot
-    /// ``WorkspaceStore/reopenClosedPane()`` is a separate, retained-but-dead mechanism.)
+    /// Reopens the most recently CLOSED tree tab (the ⌘⇧T "Reopen Closed Tab" chord, E3 WI-3). Delegates to
+    /// the index-addressed ``reopenClosedTab(at:)`` with LIFO index `0` (the top of the stack — the tab a
+    /// `popLast()` would have returned), so the chord and the Open-Quickly "Recent" rows share ONE reopen
+    /// path. A graceful no-op when the LIFO is empty.
     func reopenLastClosedPane() {
-        guard let record = recentlyClosedTabs.popLast() else { return }
+        reopenClosedTab(at: 0)
+    }
+
+    /// Reopens the recently-closed tab at LIFO `lifoIndex` (0 = most-recently closed, the top of the stack;
+    /// 1 = the one closed before it; …) — the index-addressed reopen the Open-Quickly **Recent** rows route
+    /// through so row N reopens EXACTLY tab N, not always the newest (the bug a plain `popLast()` caused for
+    /// every row but the first). Removes that record from the in-memory ``recentlyClosedTabs`` LIFO and
+    /// re-inserts it via ``WorkspaceTreeOps/insertTab(_:specs:at:in:)`` at the configured ``NewTabPosition``
+    /// — restoring the whole tab (its split tree + every pane's spec, keeping the original ``PaneID``s). The
+    /// tab lands back in its OWNING session when that session is still alive; otherwise (the session was
+    /// closed while the record sat on the LIFO) it falls back to the active session. The reopened session is
+    /// FRESH — scrollback does not survive a close, by design. An out-of-range `lifoIndex` (including a
+    /// negative one) is a graceful no-op returning `nil` — never a trap (the picker passes a row-derived
+    /// index over untrusted-ish UI state). Returns the active ``PaneID`` of the reopened tab, or `nil` on a
+    /// no-op.
+    @discardableResult
+    func reopenClosedTab(at lifoIndex: Int) -> PaneID? {
+        // LIFO index → array index: the stack TOP (index 0) is the LAST element (appended oldest→newest).
+        let arrayIndex = recentlyClosedTabs.count - 1 - lifoIndex
+        guard recentlyClosedTabs.indices.contains(arrayIndex) else { return nil }
+        let record = recentlyClosedTabs.remove(at: arrayIndex)
         // Land the restored tab back in its owning session when it still exists; `insertTab` inserts into
         // whichever session is active, so re-point the active session first (the fallback when the owner
         // vanished is simply to leave the active session as-is).
@@ -52,5 +67,6 @@ public extension WorkspaceStore {
         // and lands in "Today" under By-Date, instead of sorting last on a nil recency.
         if let newTabID = tree.activeSession?.activeTab?.id { stampTabActivity(newTabID) }
         reconcileTree()
+        return tree.activeSession?.activeTab?.activePane
     }
 }

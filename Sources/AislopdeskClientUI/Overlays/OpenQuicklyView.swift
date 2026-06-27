@@ -254,6 +254,23 @@ struct OpenQuicklyView: View {
                     .monospacedDigit()
             }
             badge(item.badge)
+            #if os(iOS)
+            // iOS touch fallback for the ⌘K Actions popover (E11 iOS flag — the chord needs a hardware
+            // keyboard, so every chord-only affordance gets a tap fallback): a trailing ellipsis selects
+            // this row then opens its Actions popover (anchored on the now-selected row). macOS keeps the
+            // ⌘K chord and shows no button (the affordance is hidden behind `#if os(iOS)`).
+            Button {
+                selection = selectableIndex
+                actionsVisible = true
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: Otty.Typeface.body))
+                    .foregroundStyle(Otty.Text.secondary)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Actions")
+            #endif
         }
         .padding(.horizontal, Otty.Metric.space3)
         .frame(height: 38)
@@ -398,6 +415,21 @@ struct OpenQuicklyView: View {
         typealias RowAction = LinkActionActuator.RowAction
         switch item.act {
         case let .jumpTo(jumpAct):
+            // A Current COMMAND row (otty: "Re-Run in Current Pane · Re-Run in New Tab · Copy Command", per
+            // the spec Actions table + ES-E11-3) gets the verbatim-re-run action set, NOT the generic
+            // Jump-to+Copy the shared Jump-To table returns. "Re-Run in New Tab" is a deliberate deferral
+            // (no defer-bytes-into-a-fresh-PTY store hook exists; pinned in docs/DECISIONS.md) — omitted, not
+            // shipped as a dead row. Prompt/path/url/file rows keep the shared Jump-To table below.
+            if item.kind == .command {
+                return [
+                    RowAction(title: "Re-Run in Current Pane", symbol: "arrow.clockwise") {
+                        store.reRunCommandInActivePane(item.title)
+                    },
+                    RowAction(title: "Copy Command", symbol: "doc.on.doc") {
+                        LinkActionActuator.copyToPasteboard(item.title)
+                    },
+                ]
+            }
             let jumpItem = JumpToItem(
                 id: item.id,
                 kind: jumpToKind(item.kind),
@@ -407,8 +439,13 @@ struct OpenQuicklyView: View {
             )
             return LinkActionActuator.rowActions(for: jumpItem, store: store, model: activeModel)
         case let .focusPane(id):
-            var actions = [RowAction(title: "Switch to Pane", symbol: "arrow.right.to.line") {
-                store.focusPaneTree(id)
+            // otty Tab actions = "Close Tab · Move Tab to New Window · Reveal CWD in Finder · Copy CWD Path".
+            // "Move Tab to New Window" is N/A in this single-window vertical-rail model (pinned N/A in
+            // docs/DECISIONS.md — not a dead row); "Switch to Pane" is DROPPED (↩ already switches, so it was
+            // a redundant duplicate of the default action). Close routes through the busy-shell/close-confirm
+            // path so a dirty/busy pane still prompts.
+            var actions = [RowAction(title: "Close Pane", symbol: "xmark") {
+                store.requestClosePaneTree(id)
             }]
             if let cwd = item.subtitle {
                 actions.append(RowAction(title: "Reveal CWD in Finder", symbol: "folder") {
@@ -450,9 +487,11 @@ struct OpenQuicklyView: View {
                 LinkActionActuator.copyToPasteboard(sessionID)
             })
             return actions
-        case .reopenRecentTab:
+        case let .reopenRecentTab(index):
+            // Reopen EXACTLY this row's tab by its carried LIFO index (row N reopens tab N) — NOT always the
+            // most-recently-closed one the old `reopenLastClosedPane()` popped regardless of which row fired.
             var actions = [RowAction(title: "Reopen Tab", symbol: "arrow.uturn.left") {
-                store.reopenLastClosedPane()
+                store.reopenClosedTab(at: index)
             }]
             if let cwd = item.subtitle {
                 actions.append(RowAction(title: "Copy CWD Path", symbol: "doc.on.doc") {
@@ -717,10 +756,10 @@ struct OpenQuicklyView: View {
             LinkActionActuator.actuate(.changeDirectoryPTY(path), model: activeModel)
         case let .resumeAgent(sessionID, cwd):
             resumeAgent(sessionID: sessionID, cwd: cwd)
-        case .reopenRecentTab:
-            // The store reopens the LIFO top (`reopenLastClosedPane`); the deeper rows are listed for parity
-            // but reopen the most-recently-closed tab (an index-addressed reopen is a later store hook).
-            store.reopenLastClosedPane()
+        case let .reopenRecentTab(index):
+            // Reopen EXACTLY the picked Recent row's tab by its carried LIFO index (row N reopens tab N), not
+            // always the most-recently-closed one — the index-addressed store hook.
+            store.reopenClosedTab(at: index)
         case let .jumpTo(jumpAct):
             switch jumpAct {
             case let .block(index):

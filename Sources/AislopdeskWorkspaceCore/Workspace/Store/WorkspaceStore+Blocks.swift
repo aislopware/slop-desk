@@ -176,6 +176,20 @@ public extension WorkspaceStore {
         model.sendInput(bytes)
     }
 
+    /// Re-runs an EXPLICIT captured command `text` (the Open-Quickly **Current** filter's Command-row
+    /// "Re-Run in Current Pane" action, E11 WI-6) by re-injecting it verbatim into the active pane's shell —
+    /// the SAME ``BlockReRunEncoder`` verbatim-UTF-8 path ``reRunLastCommandInActivePane()`` uses (strip any
+    /// trailing CR/LF, append exactly one `0x0A`; NEVER ``SendKeysParser``, so a literal `"<Enter>"` in the
+    /// captured text can't be turned into a control byte — the injection-safety invariant). Distinct from
+    /// the latest-block re-run only in that the caller names the command (a picked Current row, not the tail
+    /// of the block list). A no-op when there is no live terminal pane or the command is empty/whitespace
+    /// (the encoder returns `nil`). No wire change — funnels through ``TerminalViewModel/sendInput(_:)`` like
+    /// ordinary keystrokes.
+    func reRunCommandInActivePane(_ text: String) {
+        guard let model = activeTerminalModel, let bytes = BlockReRunEncoder.bytes(for: text) else { return }
+        model.sendInput(bytes)
+    }
+
     // MARK: - WB3: Jump to previous / next FAILED block
 
     /// Jumps the active pane's viewport to the next (`forward`) / previous (`!forward`) FAILED block from
