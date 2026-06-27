@@ -1412,10 +1412,11 @@ final class GhosttyLayerBackedView: NSView {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
         case let .changeDirectoryPTY(path):
-            // `cd <single-quoted path>\n` as raw bytes — the existing terminal OUT path (mapping note: cd is
-            // verbatim UTF-8). Single-quote so spaces / shell metacharacters in the path land literally.
-            let line = "cd " + Self.shellSingleQuoted(path) + "\n"
-            model?.sendInput(Data(line.utf8))
+            // `cd '<path>' 2>/dev/null || cd '<parent>'\n` as raw bytes — the existing terminal OUT path
+            // (mapping note: cd is verbatim UTF-8). The shared ``LinkActionPolicy/changeDirectoryCommandLine``
+            // single-quotes the operands AND falls back to the parent folder so a FILE path (e.g. a stripped
+            // `path:line:col`) does not `cd: not a directory`. ALL THREE actuators share this one idiom.
+            model?.sendInput(Data(LinkActionPolicy.changeDirectoryCommandLine(path).utf8))
         case let .openURLClient(urlString):
             if let url = URL(string: urlString) { NSWorkspace.shared.open(url) }
         case let .openHost(path):
@@ -1423,12 +1424,6 @@ final class GhosttyLayerBackedView: NSView {
         case let .revealHost(path):
             model?.onRequestRevealHostPath?(path)
         }
-    }
-
-    /// POSIX single-quote a path so it survives the shell verbatim: wrap in `'…'` and rewrite each embedded
-    /// `'` as `'\''` (close-quote, escaped-quote, reopen-quote). Safe for spaces, `$`, `` ` ``, `;`, etc.
-    private static func shellSingleQuoted(_ path: String) -> String {
-        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// Dispatches a path/URL context-menu item (tagged by ``TerminalContextMenu/LinkItem`` rawValue) for the

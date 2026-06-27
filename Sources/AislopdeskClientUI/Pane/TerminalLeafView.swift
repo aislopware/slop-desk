@@ -504,19 +504,17 @@ struct TerminalLeafView: View {
     }
 
     /// Map a hint `intent` on a detected `link` to a ``LinkAction`` through the SAME pure ``LinkActionPolicy``
-    /// the ⌘click (open) / Jump-To (copy) / ⌘⇧click (reveal) paths use — open = best handler, copy = copy
-    /// path/URL, reveal = reveal-in-Finder (a no-op for a URL, which has no Finder target).
+    /// the Jump-To (copy) / ⌘⇧click (reveal) paths use — open = best handler, copy = copy path/URL, reveal =
+    /// reveal-in-Finder (a no-op for a URL, which has no Finder target). The OPEN intent is an EXPLICIT open
+    /// (⌘⇧J Hint-to-Open), so it routes through the config-INDEPENDENT ``LinkActionPolicy/explicitOpenAction``
+    /// — NOT the configurable ⌘click gesture, which would silently copy / no-op under `link-cmd-click =
+    /// copy/nothing` (the E10 review bug). The mouse ⌘click / ⌘⇧click in the renderer keeps the gesture path.
     private static func linkAction(for intent: HintIntent, link: DetectedLink) -> LinkAction {
         switch intent {
-        case .open: LinkActionPolicy.action(for: .commandClick, link: link, config: liveLinkConfig())
+        case .open: LinkActionPolicy.explicitOpenAction(link: link)
         case .copy: LinkActionPolicy.action(for: .copyPath, link: link)
         case .reveal: LinkActionPolicy.action(for: .revealInFinder, link: link)
         }
-    }
-
-    /// The live link config (otty `link-cmd-click` / `link-cmd-shift-click`), resolved fire-time from Settings.
-    private static func liveLinkConfig() -> LinkActionConfig {
-        LinkActionConfig(cmdClick: SettingsKey.linkCmdClick, cmdShiftClick: SettingsKey.linkCmdShiftClick)
     }
 
     /// The thin platform dispatch behind a resolved ``LinkAction`` (mirrors the renderer's `performLinkAction` /
@@ -529,7 +527,7 @@ struct TerminalLeafView: View {
         case let .copyPathClient(text):
             copyToPasteboard(text)
         case let .changeDirectoryPTY(path):
-            model.sendInput(Data(("cd " + shellSingleQuoted(path) + "\n").utf8))
+            model.sendInput(Data(LinkActionPolicy.changeDirectoryCommandLine(path).utf8))
         case let .openURLClient(urlString):
             openURLString(urlString)
         case let .openHost(path):
@@ -556,11 +554,6 @@ struct TerminalLeafView: View {
             }
         }
         model.sendInput(Data((resolved + "\n").utf8))
-    }
-
-    /// POSIX single-quote a path so it survives the shell verbatim (the renderer's idiom).
-    private static func shellSingleQuoted(_ path: String) -> String {
-        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// Open a URL string on the CLIENT (a URL / IP is host-agnostic). A no-op for an unparseable string.

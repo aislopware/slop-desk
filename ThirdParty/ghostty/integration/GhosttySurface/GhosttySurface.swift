@@ -694,14 +694,74 @@ public final class GhosttySurface: @MainActor TerminalSurface, FeedBackpressurin
     // the overlays read `nil`/`[]` and simply do not render (the honest ceiling, never a faked underline).
 
     /// The VISIBLE viewport rows top→bottom (NOT the retained scrollback — that is
-    /// ``scrollbackTextLines()``).
+    /// ``scrollbackTextLines()``), ONE entry per DISPLAYED grid row so the array index EQUALS the grid row.
     ///
-    /// Mirror of ``scrollbackTextLines()`` but reads `GHOSTTY_POINT_VIEWPORT` instead of
-    /// `GHOSTTY_POINT_SCREEN`, so only the visible grid is returned (top-left → bottom-right via the
-    /// coord hints). libghostty owns the returned buffer, so we copy + `free_text` on every path (the
-    /// `defer`). Returns `[]` when the surface is gone or the read fails (validate-then-drop).
+    /// E10 review FINDING 3 — the overlay-geometry contract. `ghostty_surface_read_text` over a multi-row
+    /// VIEWPORT selection returns logically-UNWRAPPED lines (the correct COPY semantics — that is exactly
+    /// what ``scrollbackTextLines()`` wants, so it stays untouched). But a soft-wrapped line occupying 2+
+    /// grid rows then collapses to ONE array entry, shifting every later entry UP versus the actual grid
+    /// AND pushing the long line's own `colStart` past the grid width. The E10 overlays (WI-5 ⌘-hold
+    /// underline, WI-9 Hint Mode) index THIS array as the visible grid row via `metrics.rect(row:…)`, so a
+    /// soft-wrapped URL/path — precisely the content these features target — would misalign. The fix is a
+    /// PER-GRID-ROW read: each visible row is read with its OWN single-row selection
+    /// (`GHOSTTY_POINT_COORD_EXACT`, top-left `(0, r)` → bottom-right `(cols-1, r)`). A selection bounded to
+    /// one grid row reads only that row's cells — never the unwrapped logical line — so the array index now
+    /// maps 1:1 to the grid row even across a soft-wrapped line.
+    ///
+    /// The grid extent comes from the measured ``ghostty_surface_size`` (falling back to the mirrored
+    /// `cols`/`rows` seed before the first layout). If it is not yet known we degrade to the old
+    /// whole-viewport read (``viewportTextRowsUnwrapped(_:)``) rather than render no overlay at all.
+    ///
+    /// The row→pixel mapping is now strictly per-grid-row; full VISUAL proof of the alignment is the GUI
+    /// gate (`scripts/check-macos.sh`) — a GUI-only residual the headless core cannot pixel-verify, but the
+    /// per-grid-row read is the correct fix. libghostty owns each returned buffer ⇒ copy + `free_text` on
+    /// every path (validate-then-drop).
     public func viewportTextRows() -> [String] {
         guard let s = surface else { return [] }
+        let sz = ghostty_surface_size(s)   // header 1177 → ghostty_surface_size_s
+        let gridCols = sz.columns > 0 ? Int(sz.columns) : Int(cols)
+        let gridRows = sz.rows > 0 ? Int(sz.rows) : Int(rows)
+        // Extent not yet measured: degrade to the unwrapped whole-viewport read (a transient pre-layout
+        // state) rather than return [] and blank the overlay.
+        guard gridCols > 0, gridRows > 0 else { return viewportTextRowsUnwrapped(s) }
+        var out: [String] = []
+        out.reserveCapacity(gridRows)
+        for row in 0..<gridRows {
+            out.append(readViewportRow(s, row: row, cols: gridCols))
+        }
+        return out
+    }
+
+    /// Reads ONE visible grid row (`row`, 0-based) as text via a single-row VIEWPORT selection. The EXACT
+    /// coord uses the explicit `x`/`y` fields (unlike the TOP_LEFT/BOTTOM_RIGHT extreme hints, which ignore
+    /// them), so the selection is bounded to row `row`, columns `0 ..< cols`, and reads only that grid row's
+    /// cells — never the unwrapped logical line. A failed / empty read yields `""` (an empty grid row),
+    /// preserving the array-index ⟷ grid-row alignment. libghostty owns the buffer ⇒ copy + `free_text`.
+    private func readViewportRow(_ s: ghostty_surface_t, row: Int, cols: Int) -> String {
+        var sel = ghostty_selection_s()
+        sel.top_left.tag = GHOSTTY_POINT_VIEWPORT
+        sel.top_left.coord = GHOSTTY_POINT_COORD_EXACT
+        sel.top_left.x = 0
+        sel.top_left.y = UInt32(row)
+        sel.bottom_right.tag = GHOSTTY_POINT_VIEWPORT
+        sel.bottom_right.coord = GHOSTTY_POINT_COORD_EXACT
+        sel.bottom_right.x = UInt32(cols - 1)
+        sel.bottom_right.y = UInt32(row)
+        sel.rectangle = false
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_text(s, sel, &text) else { return "" }   // header 1220
+        defer { ghostty_surface_free_text(s, &text) }                       // libghostty owns the buffer
+        guard let ptr = text.text else { return "" }
+        // A single-row selection returns just that row; strip a lone trailing newline if one is appended.
+        var line = String(cString: ptr)
+        if line.hasSuffix("\n") { line.removeLast() }
+        return line
+    }
+
+    /// FALLBACK only (see ``viewportTextRows()``): the original single whole-viewport read split on `\n`.
+    /// Used ONLY when the grid extent is not yet measured (pre-first-layout). It carries the documented
+    /// soft-wrap mis-alignment, so it is a transient pre-layout degradation, never the steady state.
+    private func viewportTextRowsUnwrapped(_ s: ghostty_surface_t) -> [String] {
         var sel = ghostty_selection_s()
         sel.top_left.tag = GHOSTTY_POINT_VIEWPORT
         sel.top_left.coord = GHOSTTY_POINT_COORD_TOP_LEFT

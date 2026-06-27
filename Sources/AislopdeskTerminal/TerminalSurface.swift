@@ -142,6 +142,21 @@ public struct TerminalCellMetrics: Sendable, Equatable {
         let width = cellWidth * CGFloat(colEnd - colStart)
         return CGRect(x: x, y: y, width: width, height: cellHeight)
     }
+
+    /// The ``rect(row:colStart:colEnd:)`` for a span CLAMPED to the visible grid, or `nil` when the span
+    /// starts at or beyond the last visible column (`colStart >= cols`) — so a decoration is NEVER drawn
+    /// off-screen-right. `colEnd` is clamped to ``cols`` (a span that runs past the grid edge is trimmed to
+    /// the edge). The E10 overlays (WI-5 underline, WI-9 hint labels) map every span through THIS, not the
+    /// raw ``rect`` — defence in depth for the per-grid-row viewport read (FINDING 3): even if a span's
+    /// `colStart` lands past the grid width (e.g. a long line whose own `colStart` would otherwise overshoot)
+    /// it is skipped rather than painted in the void. A degenerate clamp (`colEnd <= colStart` after
+    /// clamping) also returns `nil`.
+    public func clampedRect(row: Int, colStart: Int, colEnd: Int) -> CGRect? {
+        guard cols > 0, colStart >= 0, colStart < cols else { return nil }
+        let clampedEnd = min(colEnd, cols)
+        guard clampedEnd > colStart else { return nil }
+        return rect(row: row, colStart: colStart, colEnd: clampedEnd)
+    }
 }
 
 /// The OPTIONAL capability seam (mirrors ``TerminalSurfaceActions``) that exposes the visible

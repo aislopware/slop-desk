@@ -387,22 +387,22 @@ struct JumpToView: View {
         act(rows[selection])
     }
 
-    /// Run a row's default action: a command/prompt jumps the scrollback; a link opens (⌘click-equivalent).
+    /// Run a row's default action: a command/prompt jumps the scrollback; a link OPENS. ↩ is an EXPLICIT open
+    /// intent (the footer reads "Open ↩"), so it routes through the config-INDEPENDENT
+    /// ``LinkActionPolicy/explicitOpenAction`` — NOT the configurable ⌘click gesture, which would silently
+    /// copy / no-op under `link-cmd-click = copy/nothing` (the E10 review bug). The ⌘K Actions popover keeps
+    /// the per-item menu set (`rowActions`), which is already config-independent.
     private func act(_ item: JumpToItem) {
         switch item.act {
         case let .block(index):
             store.jumpToNavigatorBlockInActivePane(index: index)
         case let .link(link):
-            actuate(LinkActionPolicy.action(for: .commandClick, link: link, config: liveLinkConfig()))
+            actuate(LinkActionPolicy.explicitOpenAction(link: link))
         }
         close()
     }
 
     private func close() { coordinator.closeJumpTo() }
-
-    private func liveLinkConfig() -> LinkActionConfig {
-        LinkActionConfig(cmdClick: SettingsKey.linkCmdClick, cmdShiftClick: SettingsKey.linkCmdShiftClick)
-    }
 
     /// Actuate a resolved ``LinkAction`` — the thin platform dispatch behind the pure ``LinkActionPolicy``,
     /// mirroring the renderer's `performLinkAction`: copy → client pasteboard; cd → **verbatim UTF-8**
@@ -415,8 +415,7 @@ struct JumpToView: View {
         case let .copyPathClient(text):
             copyToPasteboard(text)
         case let .changeDirectoryPTY(path):
-            let line = "cd " + Self.shellSingleQuoted(path) + "\n"
-            activeModel?.sendInput(Data(line.utf8))
+            activeModel?.sendInput(Data(LinkActionPolicy.changeDirectoryCommandLine(path).utf8))
         case let .openURLClient(urlString):
             guard let url = URL(string: urlString) else { return }
             #if canImport(AppKit)
@@ -429,12 +428,6 @@ struct JumpToView: View {
         case let .revealHost(path):
             activeModel?.onRequestRevealHostPath?(path)
         }
-    }
-
-    /// POSIX single-quote a path so it survives the shell verbatim (the renderer's idiom): wrap in `'…'` and
-    /// rewrite each embedded `'` as `'\''`. Safe for spaces, `$`, `` ` ``, `;`, etc.
-    private static func shellSingleQuoted(_ path: String) -> String {
-        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// Copy text to the platform pasteboard (the Outline row "Copy" idiom). A no-op for empty text.

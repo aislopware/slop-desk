@@ -82,6 +82,35 @@ final class TerminalCellMetricsTests: XCTestCase {
         XCTAssertEqual(moved, CGRect(x: 116, y: 216, width: 8, height: 16))
     }
 
+    // MARK: - clampedRect (FINDING 3 defence — never draw a span off-screen-right)
+
+    /// A span fully inside the grid is unchanged — `clampedRect` equals the raw `rect`.
+    func testClampedRectInsideGridEqualsRawRect() {
+        let metrics = TerminalCellMetrics(cellWidth: 8, cellHeight: 16, cols: 80, rows: 24)
+        XCTAssertEqual(
+            metrics.clampedRect(row: 1, colStart: 2, colEnd: 5),
+            metrics.rect(row: 1, colStart: 2, colEnd: 5),
+            "a span within the grid is not altered by the clamp",
+        )
+    }
+
+    /// A span starting AT or BEYOND the last visible column is SKIPPED (nil) — never painted in the void to
+    /// the right of the terminal. Revert-to-confirm-fail: a clamp that returned `rect(...)` here would draw
+    /// off-screen. `cols == 4` ⇒ valid columns are 0...3, so colStart 4 (and 5) are out.
+    func testClampedRectStartingPastGridIsSkipped() {
+        let metrics = TerminalCellMetrics(cellWidth: 8, cellHeight: 16, cols: 4, rows: 24)
+        XCTAssertNil(metrics.clampedRect(row: 0, colStart: 4, colEnd: 6), "colStart == cols is off-screen → nil")
+        XCTAssertNil(metrics.clampedRect(row: 0, colStart: 5, colEnd: 9), "colStart > cols is off-screen → nil")
+    }
+
+    /// A span whose `colEnd` overruns the grid edge is TRIMMED to `cols`, not drawn past it. colStart 2,
+    /// colEnd 10 with cols 4 ⇒ width spans 2..<4 = 2 cells = 16pt (NOT 8*(10−2) = 64pt).
+    func testClampedRectTrimsColEndToGridWidth() {
+        let metrics = TerminalCellMetrics(cellWidth: 8, cellHeight: 16, cols: 4, rows: 24)
+        let rect = metrics.clampedRect(row: 0, colStart: 2, colEnd: 10)
+        XCTAssertEqual(rect, CGRect(x: 16, y: 0, width: 16, height: 16), "colEnd is clamped to the grid width")
+    }
+
     func testDefaultOriginIsZero() {
         // The convenience init defaults originX/originY to 0 — the GUI viewport origin (the surface
         // fills its hosting view), so a metrics built without an explicit origin maps from (0, 0).

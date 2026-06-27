@@ -88,6 +88,17 @@ public enum LinkActionPolicy {
         }
     }
 
+    /// Resolve an EXPLICIT open intent on `link` — the keyboard-only affordances that MEAN "open": Hint-to-Open
+    /// (⌘⇧J) and the Jump-To row default (↩). otty: these always OPEN (a path on the host, a URL on the
+    /// client) — they are NOT governed by `link-cmd-click`, which only configures the MOUSE ⌘click gesture.
+    /// This is exactly the menu-item ``TerminalContextMenu/LinkItem/open`` resolution; naming it gives BOTH
+    /// keyboard actuators one config-INDEPENDENT entry so neither can drift back onto the configurable gesture
+    /// (the E10 review bug: a `link-cmd-click = copy/nothing` made ⌘⇧J / ↩ silently copy / no-op). Pinned by
+    /// ``LinkActionPolicyTests`` (revert-to-confirm-fail: it stays `.openHost`/`.openURLClient` under any config).
+    public static func explicitOpenAction(link: DetectedLink) -> LinkAction {
+        action(for: .open, link: link)
+    }
+
     /// Resolve a right-click context-menu item on `link` (``TerminalContextMenu/LinkItem``). The menu
     /// only offers reveal / cd for path kinds (see ``TerminalContextMenu/linkItems(for:)``), so a URL +
     /// reveal/cd is defensively ``LinkAction/nothing``.
@@ -139,4 +150,38 @@ public enum LinkActionPolicy {
     /// could derive one, else the raw matched text (the host expands `~`/cwd + validates). Never reads
     /// the disk.
     static func effectivePath(_ link: DetectedLink) -> String { link.resolvedAbsolute ?? link.raw }
+
+    // MARK: - "Change Directory Here" actuation idiom (E10 review fix — cd a FILE → its parent folder)
+
+    /// The verbatim-UTF-8 shell line that points the focused PTY at `path`, falling back to the path's PARENT
+    /// folder when `path` is a FILE — otty: "cd the focused terminal to the path (**or its parent folder**)".
+    /// A bare `cd '<file>'` errors `cd: not a directory` for the headline `path:line:col` compiler-output case
+    /// (the detector already stripped the `:line:col`, leaving a file), so the line tries the path first and,
+    /// only if that fails, its dir: `cd '<path>' 2>/dev/null || cd '<parent>'\n`. For a real directory the
+    /// first `cd` succeeds and the fallback never runs. Both operands are single-quote-escaped so spaces / `$`
+    /// / `;` land literally. ALL THREE actuators (TerminalLeafView, JumpToView, GhosttyTerminalView) emit this
+    /// one string (`Data(line.utf8)`) so the idiom cannot drift; NEVER via `SendKeysParser` (cd is verbatim).
+    /// Pinned by ``LinkActionPolicyTests`` (revert-to-confirm-fail vs the old bare `cd '<file>'`).
+    public static func changeDirectoryCommandLine(_ path: String) -> String {
+        "cd " + shellSingleQuoted(path) + " 2>/dev/null || cd " + shellSingleQuoted(posixParent(path)) + "\n"
+    }
+
+    /// The POSIX-`dirname` of `path`, computed PURELY (no disk access): the path with its last component
+    /// dropped. A trailing slash is ignored (`/a/b/c/` → `/a/b`); the parent of a root-level entry is `/`
+    /// (`/a` → `/`); a bare name with no slash is the current dir `.` (`file` → `.`); root stays root.
+    /// Pinned by ``LinkActionPolicyTests``.
+    public static func posixParent(_ path: String) -> String {
+        var p = Substring(path)
+        // Drop a trailing slash run, but never collapse root "/" itself.
+        while p.count > 1, p.last == "/" { p = p.dropLast() }
+        guard let slash = p.lastIndex(of: "/") else { return "." }
+        if slash == p.startIndex { return "/" } // the only "/" is the leading one → parent is root
+        return String(p[p.startIndex..<slash])
+    }
+
+    /// POSIX single-quote `s` so it survives the shell verbatim: wrap in `'…'` and rewrite each embedded `'`
+    /// as `'\''` (close-quote, escaped-quote, reopen-quote). Safe for spaces, `$`, `` ` ``, `;`, etc.
+    static func shellSingleQuoted(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
 }

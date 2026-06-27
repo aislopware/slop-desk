@@ -59,7 +59,12 @@ struct LinkHighlightOverlay: View {
             Canvas { context, _ in
                 let shading = GraphicsContext.Shading.color(accent)
                 for link in links {
-                    let rect = metrics.rect(row: link.row, colStart: link.colStart, colEnd: link.colEnd)
+                    // CLAMP to the visible grid (FINDING 3 defence): skip a span that starts off-screen-right
+                    // and trim one that overruns the grid edge, so a soft-wrap-shifted span is never drawn in
+                    // the void to the right of the terminal.
+                    guard let rect = metrics.clampedRect(
+                        row: link.row, colStart: link.colStart, colEnd: link.colEnd,
+                    ) else { continue }
                     // Underline along the cell's bottom edge (1pt inset so it sits just under the glyph, not
                     // clipped at the row boundary). Plain `-` (no `addingProduct`/`fma` — CLAUDE.md §2 habit).
                     let baseline = rect.maxY - 1

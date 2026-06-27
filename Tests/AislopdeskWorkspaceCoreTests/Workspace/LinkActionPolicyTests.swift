@@ -194,4 +194,69 @@ final class LinkActionPolicyTests: XCTestCase {
         XCTAssertEqual(LinkActionConfig.default.cmdClick, .open)
         XCTAssertEqual(LinkActionConfig.default.cmdShiftClick, .revealFinder)
     }
+
+    // MARK: - Explicit open intent (⌘⇧J Hint-to-Open, Jump-To ↩) ignores `link-cmd-click` (review finding 4)
+
+    /// The EXPLICIT open affordances (Hint-to-Open, Jump-To ↩) must OPEN regardless of `link-cmd-click` — that
+    /// setting governs only the MOUSE ⌘click gesture. Revert-to-confirm-fail: it fails on the old actuators
+    /// that resolved the explicit open via `.commandClick` + config, which under `.copy`/`.nothing` returned
+    /// `.copyPathClient`/`.nothing` (a silent copy / no-op). Proven here by contrasting the two policy entries.
+    func testExplicitOpenIntentIgnoresCmdClickConfig() {
+        for cmd in LinkCmdClick.allCases {
+            let cfg = config(cmd, .revealFinder)
+            for path in pathKinds {
+                let expected = LinkAction.openHost(LinkActionPolicy.effectivePath(path))
+                XCTAssertEqual(
+                    LinkActionPolicy.explicitOpenAction(link: path), expected,
+                    "explicit open on \(path.kind) must open on the host under link-cmd-click=\(cmd)",
+                )
+            }
+            for u in [url, mailto] {
+                XCTAssertEqual(LinkActionPolicy.explicitOpenAction(link: u), .openURLClient(u.raw))
+            }
+            // The divergence the bug rode on: the configurable gesture would copy / no-op under these settings,
+            // but the explicit-open entry does not.
+            if cmd == .copy {
+                XCTAssertEqual(
+                    LinkActionPolicy.action(for: .commandClick, link: absolute, config: cfg),
+                    .copyPathClient("/usr/local/bin"),
+                )
+            } else if cmd == .nothing {
+                XCTAssertEqual(LinkActionPolicy.action(for: .commandClick, link: absolute, config: cfg), .nothing)
+            }
+        }
+    }
+
+    // MARK: - "Change Directory Here" → parent folder for a FILE (review finding 1)
+
+    func testPosixParentDropsLastComponent() {
+        XCTAssertEqual(LinkActionPolicy.posixParent("/a/b/c"), "/a/b")
+        XCTAssertEqual(LinkActionPolicy.posixParent("/a/b/c/"), "/a/b") // trailing slash ignored
+        XCTAssertEqual(LinkActionPolicy.posixParent("/a"), "/") // root-level entry → root
+        XCTAssertEqual(LinkActionPolicy.posixParent("file"), ".") // no slash → current dir
+        XCTAssertEqual(LinkActionPolicy.posixParent("/"), "/") // root stays root
+    }
+
+    /// A FILE path (the headline `path:line:col` case resolves to a file once the suffix is stripped) must emit
+    /// a cd line that FALLS BACK to the parent folder, so the shell never errors `cd: not a directory`.
+    /// Revert-to-confirm-fail: fails on the old bare `cd '<file>'\n` idiom.
+    func testChangeDirectoryCommandLineFallsBackToParentForFile() {
+        XCTAssertEqual(
+            LinkActionPolicy.changeDirectoryCommandLine("/home/me/src/lib.rs"),
+            "cd '/home/me/src/lib.rs' 2>/dev/null || cd '/home/me/src'\n",
+        )
+    }
+
+    /// A plain DIRECTORY link still cds into the path itself (it is the first, succeeding operand). Single
+    /// quotes in the path are safely escaped in BOTH operands.
+    func testChangeDirectoryCommandLineUsesPathForDirectoryAndEscapesQuotes() {
+        XCTAssertEqual(
+            LinkActionPolicy.changeDirectoryCommandLine("/usr/local/bin"),
+            "cd '/usr/local/bin' 2>/dev/null || cd '/usr/local'\n",
+        )
+        XCTAssertEqual(
+            LinkActionPolicy.changeDirectoryCommandLine("/a/it's/x"),
+            "cd '/a/it'\\''s/x' 2>/dev/null || cd '/a/it'\\''s'\n",
+        )
+    }
 }

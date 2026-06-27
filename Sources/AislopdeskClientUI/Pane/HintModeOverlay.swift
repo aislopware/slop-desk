@@ -61,12 +61,15 @@ struct HintModeOverlay: View {
                 // + `.offset` so each badge's top-left lands at its `(colStart, row)` cell — plain `*`/`+` cell
                 // math lives in `TerminalCellMetrics.rect`). Dimmed when the typed first letter rules it out.
                 ForEach(Array(zip(targets, labels).enumerated()), id: \.offset) { _, pair in
-                    let rect = metrics.rect(
+                    // CLAMP to the visible grid (FINDING 3 defence): a target whose first cell lands
+                    // off-screen-right (a soft-wrap-shifted span) is SKIPPED, never anchored in the void.
+                    if let rect = metrics.clampedRect(
                         row: pair.0.row, colStart: pair.0.colStart, colEnd: pair.0.colEnd,
-                    )
-                    HintLabelBadge(label: pair.1, typed: typed, dimmed: !matched.contains(pair.1))
-                        .offset(x: rect.minX, y: rect.minY)
-                        .onTapGesture { model.confirmHintTarget(pair.0) } // iOS tap-on-label fallback
+                    ) {
+                        HintLabelBadge(label: pair.1, typed: typed, dimmed: !matched.contains(pair.1))
+                            .offset(x: rect.minX, y: rect.minY)
+                            .onTapGesture { model.confirmHintTarget(pair.0) } // iOS tap-on-label fallback
+                    }
                 }
             }
             .overlay(alignment: .topTrailing) {
