@@ -155,6 +155,57 @@ final class ThemeTOMLParserTests: XCTestCase {
         XCTAssertEqual(doc?.palette.count, 16)
     }
 
+    // MARK: single-quoted (literal) strings — the Alacritty idiom
+
+    /// TOML LITERAL strings (`'…'`) carry a `'#rrggbb'` hex with a `#` that must NOT be eaten as a comment, and
+    /// a trailing `# comment` after the closing quote IS still stripped. REVERT-TO-CONFIRM-FAIL: without literal
+    /// support `stripComment` truncates the value at the `#` and the document drops.
+    func testSingleQuotedLiteralHexParsesAndHashIsNotAComment() {
+        let toml = """
+        [terminal]
+        foreground = '#E0E0FF' # the text colour
+        background = '#0A0A14'
+        \(Self.darkPaletteTOML)
+        """
+        let doc = ThemeTOMLParser.parse(toml, fallbackName: "literal")
+        XCTAssertEqual(doc?.foreground, "E0E0FF", "the `#` inside a single-quoted literal is a hex, not a comment")
+        XCTAssertEqual(doc?.background, "0A0A14")
+        XCTAssertEqual(doc?.palette.count, 16)
+        XCTAssertEqual(doc?.isValid, true)
+    }
+
+    /// A single-quoted value that parses as a literal but is NOT a clean hex still DROPS the whole document
+    /// (validate-then-drop survives the new literal-string path).
+    func testMalformedSingleQuotedValueStillDrops() {
+        let toml = """
+        [terminal]
+        foreground = '#ZZZZZZ'
+        background = '#000000'
+        \(Self.darkPaletteTOML)
+        """
+        XCTAssertNil(ThemeTOMLParser.parse(toml, fallbackName: "badliteral"))
+    }
+
+    // MARK: stable slug from the on-disk file name
+
+    /// The slug tracks the FILE NAME (the `.ottytheme` basename passed as `fallbackName`), not the mutable
+    /// `[meta] name` — so a persisted `customLightSlug`/`customDarkSlug` keeps resolving after a display-name
+    /// change. REVERT-TO-CONFIRM-FAIL: deriving the slug from `displayName` yields `"renamed-theme"`.
+    func testSlugDerivesFromFileNameNotDisplayName() {
+        let toml = """
+        [meta]
+        name = "Renamed Theme"
+
+        [terminal]
+        foreground = "#FFFFFF"
+        background = "#000000"
+        \(Self.darkPaletteTOML)
+        """
+        let doc = ThemeTOMLParser.parse(toml, fallbackName: "my-cool-theme")
+        XCTAssertEqual(doc?.displayName, "Renamed Theme")
+        XCTAssertEqual(doc?.slug, "my-cool-theme", "slug tracks the file name, not the display name")
+    }
+
     // MARK: inheritance
 
     private func parentDocument() -> ThemeDocument {

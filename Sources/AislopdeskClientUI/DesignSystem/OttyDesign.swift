@@ -57,6 +57,11 @@ struct OttyTheme {
     let selected: Color // selected row background
     let header: Color // section header text
     let accent: Color // active-state accent (Paper = green, Dark = system blue)
+    /// The active-state accent as a canonical 6-hex string (no `#`) — MIRRORS ``accent``'s colour. Carried so
+    /// the Theme-editor Duplicate path can re-emit the SOURCE theme's accent into the new `.ottytheme` instead
+    /// of letting ``OttyTheme/init(document:)``'s bg/fg derivation fall through to the (wrong-hue) ANSI
+    /// "blue"-slot — e.g. so a duplicated Monokai keeps its cyan accent, not the filter's orange.
+    let accentHex: String
     let accentMuted: Color // active-state background wash
     let panelShadow: Color // floating-card / panel drop shadow
 
@@ -114,6 +119,7 @@ struct OttyTheme {
         selected: Color(ottyHex: 0xE7E5DF),
         header: Color(ottyHex: 0xC9C6BE),
         accent: Color(ottyHex: 0x2B5A38), // green (ui-accent, measured)
+        accentHex: "2B5A38",
         accentMuted: .black.opacity(0.06),
         panelShadow: .black.opacity(0.12),
         isLight: true,
@@ -155,6 +161,7 @@ struct OttyTheme {
         selected: .white.opacity(0.08),
         header: Color(ottyHex: 0x8A8A8A),
         accent: Color(ottyHex: 0x007AFF), // system blue
+        accentHex: "007AFF",
         accentMuted: .white.opacity(0.08),
         panelShadow: .black.opacity(0.40),
         isLight: false,
@@ -223,6 +230,7 @@ struct OttyTheme {
             selected: line.opacity(s.isLight ? 0.07 : 0.09),
             header: Color(ottyHex: s.tertiary),
             accent: Color(ottyHex: s.accent),
+            accentHex: hex6(s.accent),
             accentMuted: line.opacity(s.isLight ? 0.06 : 0.10),
             panelShadow: Color.black.opacity(s.isLight ? 0.12 : 0.40),
             isLight: s.isLight,
@@ -362,6 +370,7 @@ extension OttyTheme {
             selected: line.opacity(light ? 0.07 : 0.09),
             header: Color(ottyHex: tertiaryHex),
             accent: Color(ottyHex: accentHex),
+            accentHex: Self.hex6(accentHex),
             accentMuted: line.opacity(light ? 0.06 : 0.10),
             panelShadow: Color.black.opacity(light ? 0.12 : 0.40),
             isLight: light,

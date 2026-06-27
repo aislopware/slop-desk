@@ -20,20 +20,23 @@ import Foundation
 
 /// Ligature mode (otty `font-ligatures`, `customization__fonts.md`). Maps to libghostty `font-feature`.
 public enum FontLigatures: String, Codable, Sendable, Equatable, CaseIterable {
-    /// No ligation (the default). The builder emits NO `font-feature` line for `off` (byte-identical to the
-    /// pre-E15 output; aislopdesk's default font has no ligatures, so the font's own default governs).
+    /// No ligation (the default). Unlike the other render prefs, `off` is NOT a no-op: fonts that ship
+    /// programming ligatures (Fira Code, JetBrains Mono, Cascadia Code, …) enable `calt` BY DEFAULT in their
+    /// GSUB table, so emitting nothing would leave their ligatures ON. To truly turn ligatures OFF the
+    /// builder emits the DISABLING features — ghostty documents `-calt, -liga, -dlig` for exactly this (see
+    /// `Config.zig` `font-feature`: "To generally disable most ligatures, use `-calt, -liga, -dlig`").
     case off
     /// Standard + contextual alternates (`=>`, `!=`, `>=`, …) → `font-feature = calt`.
     case calt
     /// Everything in ``calt`` plus discretionary ligatures → `font-feature = calt,dlig`.
     case dlig
 
-    /// The otty-faithful base libghostty `font-feature` tokens for this mode. NOTE: the builder does NOT
-    /// emit the `off` value (`-calt,-liga`) — `off` is the default and emitting it would break the pre-E15
-    /// byte-identity guard; it is kept here as the documented faithful mapping for any explicit future use.
+    /// The libghostty `font-feature` tokens for this mode. `off` emits the DISABLING set `-calt,-liga,-dlig`
+    /// (so a ligature-shipping font is actually un-ligated); `calt`/`dlig` opt in. The verified key + the
+    /// `±feat` token syntax are pinned by `Config.zig`'s `font-feature` (a `RepeatableString`).
     public var baseFeatures: [String] {
         switch self {
-        case .off: ["-calt", "-liga"]
+        case .off: ["-calt", "-liga", "-dlig"]
         case .calt: ["calt"]
         case .dlig: ["calt", "dlig"]
         }

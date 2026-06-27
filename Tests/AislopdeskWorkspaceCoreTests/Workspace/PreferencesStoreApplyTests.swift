@@ -19,6 +19,8 @@ final class PreferencesStoreApplyTests: XCTestCase {
         EnvConfig.overlay = [:]
         WorkspaceBindingRegistry.activeOverrides = KeybindingPreferences()
         AppearanceApplier.apply = nil
+        AppearanceApplier.resolveTerminalColors = nil
+        AppearanceApplier.resolveActiveThemeSlug = nil
         super.tearDown()
     }
 
@@ -92,6 +94,40 @@ final class PreferencesStoreApplyTests: XCTestCase {
         XCTAssertTrue(config.contains("copy-on-select = "), "the Copy-on-Select control line is emitted via the store")
         XCTAssertTrue(config.contains("mouse-reporting = "), "the Allow-Mouse-Capture control line is emitted")
         XCTAssertTrue(config.contains("keybind = shift+left="), "the ⇧+arrow select keybind is emitted")
+    }
+
+    /// E15 item 8: the per-SCOPE (Light/Dark-theme) font override REACHES the live terminal. With Global
+    /// (`terminal.fontFamily`) unset, the active slot's `appearance.themeFonts[slug]` resolves into the
+    /// builder's primary `font-family` line. Pre-fix the override was persisted but the builder read the raw
+    /// `terminal.fontFamily`, so the per-scope font never applied (revert-to-confirm-fail).
+    func testPerScopeThemeFontReachesTheBuilderOutput() {
+        // The GUI hook reports the active slot's resolved theme slug.
+        AppearanceApplier.resolveActiveThemeSlug = { "dracula" }
+        let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil)
+        // Global unset (so the per-theme override wins — otty "Global overrides theme" precedence) + a
+        // per-theme font for the active slug.
+        store.terminal.fontFamily = ""
+        store.appearance.themeFonts = ["dracula": "Fira Code"]
+
+        let config = TerminalConfigBroadcaster.shared.configString
+        XCTAssertTrue(
+            config.contains("font-family = Fira Code"),
+            "the active scope's per-theme font reaches the live terminal config",
+        )
+    }
+
+    /// With a non-empty Global `terminal.fontFamily`, the Global font WINS over the per-theme override
+    /// (otty's "Global overrides theme; takes priority everywhere") — the resolved override equals the Global
+    /// family, so the builder emits it.
+    func testGlobalFontWinsOverPerScopeFont() {
+        AppearanceApplier.resolveActiveThemeSlug = { "dracula" }
+        let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil)
+        store.terminal.fontFamily = "JetBrains Mono"
+        store.appearance.themeFonts = ["dracula": "Fira Code"]
+
+        let config = TerminalConfigBroadcaster.shared.configString
+        XCTAssertTrue(config.contains("font-family = JetBrains Mono"), "a set Global font overrides the per-theme one")
+        XCTAssertFalse(config.contains("font-family = Fira Code"), "the per-theme font is suppressed by Global")
     }
 
     // MARK: Appearance (D2 — client chrome; NEVER touches the overlay/sidecar)

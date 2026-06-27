@@ -29,6 +29,27 @@ final class ThemeEditorDuplicationTests: XCTestCase {
         XCTAssertEqual(doc.selectionBackground, theme.selectionBackgroundHex)
     }
 
+    /// Duplicating a built-in PRESERVES its chrome accent. Monokai's accent (cyan, #78DCE8) is NOT in the ANSI
+    /// "blue" palette slot (idx 4 = the filter's ORANGE), so a materialise that left `accent` unset would let
+    /// ``OttyTheme/init(document:)`` derive the accent from palette[4] and silently flip cyan → orange. The
+    /// materialised document must carry the source accent, and the rebuilt chrome theme must keep cyan.
+    /// REVERT-TO-CONFIRM-FAIL: drop `accent: theme.accentHex` from `init(materializing:)` and this fails (the
+    /// rebuilt accent becomes the orange palette[4]).
+    func testMaterializeBuiltinPreservesChromeAccent() {
+        let theme = OttyTheme.monokaiProClassic
+        let doc = ThemeDocument(materializing: theme, displayName: "Copy", slug: "copy")
+
+        XCTAssertEqual(doc.accent, "78DCE8", "the duplicate carries the source chrome accent (cyan), not nil")
+        XCTAssertEqual(doc.accent, theme.accentHex)
+
+        let rebuilt = OttyTheme(document: doc)
+        XCTAssertEqual(rebuilt.accentHex, "78DCE8", "the rebuilt chrome keeps the cyan accent")
+        XCTAssertNotEqual(
+            rebuilt.accentHex, theme.ansiPalette[4],
+            "must NOT fall through to the orange ANSI blue-slot (palette[4])",
+        )
+    }
+
     /// A light built-in materialises into the LIGHT slot (so Duplicate of a light theme stays light).
     func testMaterializeLightBuiltinIsLightMode() {
         let doc = ThemeDocument(

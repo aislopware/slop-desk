@@ -1,3 +1,4 @@
+import AislopdeskVideoProtocol
 import XCTest
 @testable import AislopdeskWorkspaceCore
 
@@ -6,10 +7,11 @@ import XCTest
 /// ``WorkspaceStore/scrollActivePane(_:)``), observed on a ``RecordingTerminalPaneSession`` that carries a
 /// REAL ``TerminalViewModel`` whose `surface` is a recording ``TerminalSurfaceActions``.
 ///
-/// These pin the EXACT libghostty named binding action each hook fires (`increase_font_size`,
-/// `scroll_page_fractional:-0.9`, `scroll_to_top`, …) — a swapped sign on page up/down or a wrong action
-/// string would fail here. They drive the store methods DIRECTLY (the registry actions + routing land in a
-/// later E1 work item); the hooks are the WI-3 deliverable, so the direct call is the right seam to pin.
+/// The SCROLL hooks pin the EXACT libghostty named binding action (`scroll_page_fractional:-0.9`,
+/// `scroll_to_top`, …) — a swapped page sign would fail here. The FONT hooks (E15 item 9) no longer touch the
+/// surface: they route ⌘±/⌘0 through the ``WorkspaceStore/onFontSizeStep`` seam to the single source of truth
+/// (`PreferencesStore.terminal.fontSize`, the Settings "Size" stepper's value), so they are pinned on the
+/// seam + the persisted size. They drive the store methods DIRECTLY (the registry routing is pinned elsewhere).
 ///
 /// HANG-SAFE: the recording session uses a headless ``RecordingSurfaceActions`` (no `GhosttySurface` /
 /// VideoToolbox / Metal / SCStream) — the hang-safety rule holds.
@@ -38,23 +40,56 @@ final class FontScrollHookTests: XCTestCase {
         try XCTUnwrap(activeSession(store).surfaceRecorder)
     }
 
-    // MARK: - Font size (ES-E1-4)
+    // MARK: - Font size (ES-E1-4 / E15 item 9 — single source of truth)
 
-    /// The three font hooks fire the matching libghostty action strings, in call order — pins ⌘=/⌘-/⌘0 →
-    /// `increase_font_size` / `decrease_font_size` / `reset_font_size`. A wrong/misspelled string would fail.
-    func testFontHooksFireTheLibghosttyFontActions() throws {
+    private func makeIsolatedDefaults(_ name: String = #function) -> UserDefaults {
+        let suite = "FontScrollHookTest." + name
+        let d = UserDefaults(suiteName: suite)!
+        d.removePersistentDomain(forName: suite)
+        return d
+    }
+
+    /// The three font hooks route ⌘=/⌘-/⌘0 through the ``WorkspaceStore/onFontSizeStep`` seam, in call order —
+    /// NOT libghostty's internal `increase_font_size` (which the Settings stepper can't see → the desync this
+    /// fixes). The surface receives NO font action now: the font size is driven by the single source of truth
+    /// (`PreferencesStore.terminal.fontSize`) instead. Revert-to-confirm-fail vs the old surface-action path.
+    func testFontHooksRouteThroughTheFontSizeSeamInOrder() throws {
         let store = makeStore()
         let recorder = try activeRecorder(store)
+        var steps: [FontSizeStep] = []
+        store.onFontSizeStep = { steps.append($0) }
 
         store.increaseFontInActivePane()
         store.decreaseFontInActivePane()
         store.resetFontInActivePane()
 
-        XCTAssertEqual(
-            recorder.actions,
-            ["increase_font_size", "decrease_font_size", "reset_font_size"],
-            "font hooks fire the libghostty font-size binding actions in order",
-        )
+        XCTAssertEqual(steps, [.increase, .decrease, .reset], "font hooks route the zoom intents in order")
+        XCTAssertTrue(recorder.actions.isEmpty, "font zoom no longer drives libghostty's internal font size")
+    }
+
+    /// THE item-9 regression test: a ⌘±/⌘0 zoom UPDATES the persisted Settings font size (the single source of
+    /// truth the "Size" stepper binds), so the two never desync. Wires the seam to a live ``PreferencesStore``
+    /// exactly as the app shell does. ⌘+ bumps +1, ⌘- back, ⌘0 resets to the default size.
+    func testFontZoomUpdatesPreferencesFontSizeSingleSourceOfTruth() {
+        let store = makeStore()
+        let prefs = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil, applyOnInit: false)
+        store.onFontSizeStep = { step in
+            switch step {
+            case .increase: prefs.increaseFontSize()
+            case .decrease: prefs.decreaseFontSize()
+            case .reset: prefs.resetFontSize()
+            }
+        }
+        let base = prefs.terminal.fontSize
+
+        store.increaseFontInActivePane()
+        XCTAssertEqual(prefs.terminal.fontSize, base + 1, "⌘+ bumps the persisted Settings font size")
+        store.decreaseFontInActivePane()
+        XCTAssertEqual(prefs.terminal.fontSize, base, "⌘- steps it back — stepper stays in sync")
+
+        prefs.terminal.fontSize = 20
+        store.resetFontInActivePane()
+        XCTAssertEqual(prefs.terminal.fontSize, TerminalPreferences().fontSize, "⌘0 resets to the default size")
     }
 
     // MARK: - Viewport scroll (ES-E1-3)
@@ -104,6 +139,8 @@ final class FontScrollHookTests: XCTestCase {
         let active = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
         let guiSession = try XCTUnwrap(store.handle(for: active) as? RecordingTerminalPaneSession)
         XCTAssertNil(guiSession.terminalModel, "the active pane is non-terminal (no model)")
+        var fontSteps = 0
+        store.onFontSizeStep = { _ in fontSteps += 1 }
 
         // None of these trap or touch a (non-existent) seam.
         store.increaseFontInActivePane()
@@ -114,6 +151,7 @@ final class FontScrollHookTests: XCTestCase {
         store.scrollActivePane(.top)
         store.scrollActivePane(.bottom)
 
+        XCTAssertEqual(fontSteps, 0, "⌘± is a no-op off-terminal — the font-size seam never fires")
         XCTAssertNil(guiSession.surfaceRecorder, "a non-terminal pane has no recording surface to fire into")
     }
 }

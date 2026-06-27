@@ -97,8 +97,10 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
     // env overrides / `video-prefs.json` / golden corpus. Every default value below is the one that emits NO
     // new libghostty line, so a default-constructed value stays byte-identical to the pre-E15 builder output
     // (the regression guard). The enums + their token mapping live in ``TerminalFontSettings``.
-    /// Comma-separated fallback font families (libghostty `font-family-fallback`); used when the primary font
-    /// lacks a glyph (CJK, Nerd-Font icons). Empty (the default) ⇒ no line.
+    /// Comma-separated fallback font families; used when the primary font lacks a glyph (CJK, Nerd-Font
+    /// icons). ghostty has NO `font-family-fallback` key — each entry is emitted as a REPEATED `font-family`
+    /// line after the primary (`font-family` is a `RepeatableString`; see ``TerminalConfigBuilder``). Empty
+    /// (the default) ⇒ only the primary `font-family` line.
     public var fontFamilyFallback: String
     /// Explicit bold face family (libghostty `font-family-bold`). Emitted ONLY when ``autoMatchWeightStyle``
     /// is OFF and non-empty (otty surfaces the four manual face pickers only when auto-match is off).
@@ -196,5 +198,79 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         self.fontBlink = fontBlink
         self.fontBlending = fontBlending
         self.lineHeight = lineHeight
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case fontFamily
+        case fontSize
+        case fontWeight
+        case theme
+        case background
+        case foreground
+        case cursorStyle
+        case cursorBlink
+        case scrollbackLines
+        case cursorColor
+        case cursorTextColor
+        case cursorOpacity
+        case cursorAnimation
+        case fontFamilyFallback
+        case fontFamilyBold
+        case fontFamilyItalic
+        case fontFamilyBoldItalic
+        case autoMatchWeightStyle
+        case fontLigatures
+        case fontLigaturesAlphabet
+        case fontBold
+        case fontItalic
+        case fontUnderline
+        case fontBlink
+        case fontBlending
+        case lineHeight
+    }
+
+    /// ADDITIVE-TOLERANT decoding (NOT a migration — no-backcompat rule preserved). Each field is
+    /// `decodeIfPresent ?? <default>`, so a stored blob written before a field existed (e.g. an existing
+    /// user's terminal prefs from before the E15 font-parity fields landed) DECODES SUCCESSFULLY with the
+    /// new fields defaulted — it does NOT decode-fail and reset every terminal pref once on upgrade. The
+    /// defaults are sourced from a default-constructed value so they can never drift from the memberwise
+    /// init. GENUINE corruption still resets: a key that is PRESENT but holds an invalid value (e.g. an
+    /// unknown `cursorStyle` raw) throws from `decodeIfPresent`, so `PreferencesStore.decode`'s `try?`
+    /// falls back to the default — the validate-then-default discipline for hostile/stale data is intact.
+    /// Mirrors the established ``KeybindingPreferences`` `decodeIfPresent` precedent.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Self()
+        try self.init(
+            fontFamily: c.decodeIfPresent(String.self, forKey: .fontFamily) ?? d.fontFamily,
+            fontSize: c.decodeIfPresent(Double.self, forKey: .fontSize) ?? d.fontSize,
+            fontWeight: c.decodeIfPresent(String.self, forKey: .fontWeight) ?? d.fontWeight,
+            theme: c.decodeIfPresent(String.self, forKey: .theme) ?? d.theme,
+            background: c.decodeIfPresent(String.self, forKey: .background) ?? d.background,
+            foreground: c.decodeIfPresent(String.self, forKey: .foreground) ?? d.foreground,
+            cursorStyle: c.decodeIfPresent(CursorStyle.self, forKey: .cursorStyle) ?? d.cursorStyle,
+            cursorBlink: c.decodeIfPresent(CursorBlink.self, forKey: .cursorBlink) ?? d.cursorBlink,
+            scrollbackLines: c.decodeIfPresent(Int.self, forKey: .scrollbackLines) ?? d.scrollbackLines,
+            cursorColor: c.decodeIfPresent(String.self, forKey: .cursorColor) ?? d.cursorColor,
+            cursorTextColor: c.decodeIfPresent(String.self, forKey: .cursorTextColor) ?? d.cursorTextColor,
+            cursorOpacity: c.decodeIfPresent(Double.self, forKey: .cursorOpacity) ?? d.cursorOpacity,
+            cursorAnimation: c.decodeIfPresent(CursorAnimation.self, forKey: .cursorAnimation) ?? d.cursorAnimation,
+            fontFamilyFallback: c.decodeIfPresent(String.self, forKey: .fontFamilyFallback) ?? d.fontFamilyFallback,
+            fontFamilyBold: c.decodeIfPresent(String.self, forKey: .fontFamilyBold) ?? d.fontFamilyBold,
+            fontFamilyItalic: c.decodeIfPresent(String.self, forKey: .fontFamilyItalic) ?? d.fontFamilyItalic,
+            fontFamilyBoldItalic: c.decodeIfPresent(String.self, forKey: .fontFamilyBoldItalic)
+                ?? d.fontFamilyBoldItalic,
+            autoMatchWeightStyle: c.decodeIfPresent(Bool.self, forKey: .autoMatchWeightStyle)
+                ?? d.autoMatchWeightStyle,
+            fontLigatures: c.decodeIfPresent(FontLigatures.self, forKey: .fontLigatures) ?? d.fontLigatures,
+            fontLigaturesAlphabet: c.decodeIfPresent(Bool.self, forKey: .fontLigaturesAlphabet)
+                ?? d.fontLigaturesAlphabet,
+            fontBold: c.decodeIfPresent(FontStyleMode.self, forKey: .fontBold) ?? d.fontBold,
+            fontItalic: c.decodeIfPresent(FontStyleMode.self, forKey: .fontItalic) ?? d.fontItalic,
+            fontUnderline: c.decodeIfPresent(Bool.self, forKey: .fontUnderline) ?? d.fontUnderline,
+            fontBlink: c.decodeIfPresent(Bool.self, forKey: .fontBlink) ?? d.fontBlink,
+            fontBlending: c.decodeIfPresent(FontBlending.self, forKey: .fontBlending) ?? d.fontBlending,
+            lineHeight: c.decodeIfPresent(LineHeightMode.self, forKey: .lineHeight) ?? d.lineHeight,
+        )
     }
 }

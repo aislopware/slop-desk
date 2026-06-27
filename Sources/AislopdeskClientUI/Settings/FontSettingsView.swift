@@ -535,8 +535,8 @@ private struct FontFamilyComboBox: View {
 // MARK: - FallbackListEditor (the comma-separated fallback list)
 
 /// The Fallback scope's list editor: each existing fallback family as a removable "Aa" row, plus an add
-/// combobox. Reads/writes the comma-separated ``TerminalPreferences/fontFamilyFallback`` (what the builder
-/// emits as `font-family-fallback`).
+/// combobox. Reads/writes the comma-separated ``TerminalPreferences/fontFamilyFallback`` (which the builder
+/// emits as the repeated-`font-family` fallback chain — ghostty has no `font-family-fallback` key).
 private struct FallbackListEditor: View {
     @Binding var raw: String
     @State private var draft = ""

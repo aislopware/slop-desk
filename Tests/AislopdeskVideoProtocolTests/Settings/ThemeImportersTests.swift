@@ -231,6 +231,61 @@ final class ThemeImportersTests: XCTestCase {
         XCTAssertNil(ThemeImporters.importAlacritty(text, fallbackName: "nobright"))
     }
 
+    /// Alacritty themes online idiomatically SINGLE-QUOTE their `'#rrggbb'` hex colours (TOML literal strings).
+    /// The importer must accept them — the `#` inside a literal is a hex, not a comment. REVERT-TO-CONFIRM-FAIL:
+    /// without literal-string support the colour values truncate at the `#` and the whole import drops.
+    func testImportAlacrittyAcceptsSingleQuotedLiteralHex() {
+        var text = """
+        [colors.primary]
+        background = '#1d1f21' # the backdrop
+        foreground = '#c5c8c6'
+
+        [colors.cursor]
+        cursor = '#ffffff'
+
+        [colors.selection]
+        background = '#444444'
+
+        [colors.normal]
+
+        """
+        let normal = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]
+        for (offset, name) in normal.enumerated() {
+            text += "\(name) = '#\(String(format: "%02X", offset))0000'\n"
+        }
+        text += "\n[colors.bright]\n"
+        for (offset, name) in normal.enumerated() {
+            text += "\(name) = '#\(String(format: "%02X", offset + 8))0000'\n"
+        }
+
+        guard let doc = ThemeImporters.importAlacritty(text, fallbackName: "Single") else {
+            XCTFail("expected a valid single-quoted Alacritty import")
+            return
+        }
+        XCTAssertEqual(doc.foreground, "c5c8c6")
+        XCTAssertEqual(doc.background, "1d1f21", "the `#` inside the single-quoted literal was not eaten")
+        XCTAssertEqual(doc.cursor, "ffffff")
+        XCTAssertEqual(doc.selectionBackground, "444444")
+        XCTAssertEqual(doc.palette.count, 16)
+        XCTAssertEqual(doc.palette[0], "000000")
+        XCTAssertEqual(doc.palette[15], "0F0000")
+        XCTAssertTrue(doc.isValid)
+    }
+
+    /// Even with single-quoted literals, a malformed colour (not a clean hex) still DROPS the document —
+    /// validate-then-drop survives the new literal-string path.
+    func testImportAlacrittySingleQuotedMalformedDrops() {
+        let text = """
+        [colors.primary]
+        background = '#zzzzzz'
+        foreground = '#c5c8c6'
+
+        [colors.normal]
+        black = '#000000'
+        """
+        XCTAssertNil(ThemeImporters.importAlacritty(text, fallbackName: "bad"))
+    }
+
     // MARK: - Ghostty
 
     func testImportGhosttyParsesIndexedPaletteAndBareHex() {

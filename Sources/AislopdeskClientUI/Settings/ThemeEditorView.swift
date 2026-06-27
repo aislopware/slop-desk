@@ -45,9 +45,12 @@ extension ThemeDocument {
     /// Materialise a built-in (or any resolved) ``OttyTheme`` into a fresh ``ThemeDocument`` for Duplicate:
     /// the terminal palette (`foreground`/`background`/the 16-entry ANSI `palette`/`selection`/`cursor`) comes
     /// straight from the theme's already-canonical 6-hex fields, so the copy renders byte-identical TERMINAL
-    /// cells; the CHROME roles are intentionally left unset so ``OttyTheme/init(document:)`` re-derives them
-    /// from `background`/`foreground` with the same structural opacities the built-in used (identical chrome
-    /// geometry). Pure — no AppKit — so the Duplicate path is headlessly unit-testable.
+    /// cells. The structural CHROME surfaces (window/sidebar/tab/panel) are intentionally left unset so
+    /// ``OttyTheme/init(document:)`` re-derives them from `background`/`foreground` with the same opacities the
+    /// built-in used (identical chrome geometry). The `accent` IS carried explicitly, though: its derivation
+    /// otherwise falls through to the ANSI "blue" palette slot, which on a Monokai filter is ORANGE — so an
+    /// unset accent would silently flip a duplicated Monokai's chrome accent from cyan to orange. Pure — no
+    /// AppKit — so the Duplicate path is headlessly unit-testable.
     init(materializing theme: OttyTheme, displayName: String, slug: String) {
         self.init(
             displayName: displayName,
@@ -59,6 +62,7 @@ extension ThemeDocument {
             cursor: theme.cursorHex,
             cursorText: theme.cursorTextHex,
             selectionBackground: theme.selectionBackgroundHex,
+            accent: theme.accentHex,
         )
     }
 }
@@ -76,6 +80,14 @@ struct ThemeEditorView: View {
     @State private var editingDocument: ThemeDocument?
     /// A transient status line under the action row (import result / write failure). Cleared on the next action.
     @State private var statusMessage: String?
+
+    #if os(macOS)
+    /// A trailing-debounce handle for swatch `ColorPicker` edits: each drag tick updates ``editingDocument``
+    /// (the live in-memory preview the swatch grid reads) and (re)arms this task; the EXPENSIVE persist (disk
+    /// write + library rescan + app-wide surface reflow via ``persistEdit(_:)``) runs only ONCE the drag
+    /// settles (≈ commit), never per tick. Cancelled / flushed when edit mode ends or the active theme changes.
+    @State private var pendingPersist: Task<Void, Never>?
+    #endif
 
     var body: some View {
         Section {
@@ -409,7 +421,7 @@ struct ThemeEditorView: View {
                 guard var document = editingDocument else { return }
                 document[keyPath: keyPath] = newColor.cursorHexString
                 editingDocument = document
-                persistEdit(document)
+                schedulePersist() // live preview now; debounced disk write + reflow on drag-end
             },
         )
     }
@@ -428,7 +440,7 @@ struct ThemeEditorView: View {
                 guard var document = editingDocument else { return }
                 document[keyPath: keyPath] = newColor.cursorHexString
                 editingDocument = document
-                persistEdit(document)
+                schedulePersist() // live preview now; debounced disk write + reflow on drag-end
             },
         )
     }
@@ -444,7 +456,7 @@ struct ThemeEditorView: View {
                 guard var document = editingDocument, document.palette.indices.contains(index) else { return }
                 document.palette[index] = newColor.cursorHexString
                 editingDocument = document
-                persistEdit(document)
+                schedulePersist() // live preview now; debounced disk write + reflow on drag-end
             },
         )
     }
@@ -467,11 +479,35 @@ struct ThemeEditorView: View {
         }
     }
 
+    /// (Re)arm the trailing debounce: a swatch ColorPicker drag already updated ``editingDocument`` (live
+    /// preview), so here we only schedule the EXPENSIVE ``persistEdit(_:)`` to run once the drag goes quiet for
+    /// a short window (≈ a commit). Each tick cancels the prior task, so disk/rescan/reflow fire ONCE per drag,
+    /// not per pixel. Reads the SETTLED ``editingDocument`` at fire time.
+    private func schedulePersist() {
+        pendingPersist?.cancel()
+        pendingPersist = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 200_000_000) // 200ms quiet window ≈ drag-end
+            guard !Task.isCancelled, let document = editingDocument else { return }
+            pendingPersist = nil
+            persistEdit(document)
+        }
+    }
+
+    /// Commit any in-flight (debounced) swatch edit IMMEDIATELY, before leaving edit mode or switching the
+    /// active theme — so the last drag is never lost to a cancelled pending task.
+    private func flushPendingPersist() {
+        guard pendingPersist != nil else { return }
+        pendingPersist?.cancel()
+        pendingPersist = nil
+        if let document = editingDocument { persistEdit(document) }
+    }
+
     // MARK: - Edit / Duplicate / Open Folder / Import (macOS)
 
     private func toggleEdit() {
         statusMessage = nil
         if isEditingActive {
+            flushPendingPersist() // commit the last live swatch edit before leaving edit mode
             editingDocument = nil
         } else if let slug = activeCustomSlug {
             editingDocument = ThemeCatalog.shared.customDocument(slug: slug)
@@ -481,6 +517,7 @@ struct ThemeEditorView: View {
     /// Duplicate the active theme into a fresh, slug-unique custom `.ottytheme`, activate it, and drop into
     /// edit mode (otty's Duplicate flow). A built-in is materialised from its palette; a custom is copied.
     private func duplicateActive() {
+        flushPendingPersist() // commit any in-flight edit on the current theme before duplicating
         statusMessage = nil
         let baseName: String
         var copy: ThemeDocument
@@ -528,6 +565,7 @@ struct ThemeEditorView: View {
 
     /// Open a panel for `format`, import the chosen file into the themes folder, re-scan, and activate it.
     private func importTheme(format: ThemeImporters.Format) {
+        flushPendingPersist() // commit any in-flight edit before switching to the imported theme
         statusMessage = nil
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false

@@ -69,14 +69,29 @@ public enum TerminalConfigBuilder {
         keybinds: [String] = [],
         backgroundOverride: String? = nil,
         foregroundOverride: String? = nil,
+        fontFamilyOverride: String? = nil,
         paletteOverride: [String]? = nil,
         selectionBackgroundOverride: String? = nil,
         controls: TerminalControlsConfig? = nil,
     ) -> String {
         var lines: [String] = []
 
-        let family = prefs.fontFamily.trimmingCharacters(in: .whitespaces)
-        if !family.isEmpty { lines.append("font-family = \(family)") }
+        // The PRIMARY font family — the per-scope resolved family (``PreferencesStore`` passes the active
+        // Light/Dark-theme override via `fontFamilyOverride`) wins over the pref's own; an empty value is
+        // skipped (the "unset honoured" rule — an empty `font-family =` would CLEAR Ghostty's default).
+        let family = resolved(fontFamilyOverride, or: prefs.fontFamily)
+        if !family.isEmpty {
+            lines.append("font-family = \(family)")
+            // E15 (font-fallback fix): ghostty has NO `font-family-fallback` key — `font-family` is a
+            // `RepeatableString` and the FALLBACK CHAIN is expressed by REPEATING `font-family` (Config.zig:
+            // "This configuration can be repeated multiple times to specify preferred fallback fonts when the
+            // requested codepoint is not available in the primary font"). So each comma-separated fallback
+            // family becomes another `font-family =` line, in order, AFTER the primary — the J5 CJK/Nerd-Font
+            // coverage. Only emitted when the primary is present (the first `font-family` must be the primary).
+            for fallback in fallbackFamilies(prefs.fontFamilyFallback) {
+                lines.append("font-family = \(fallback)")
+            }
+        }
         lines.append("font-size = \(formatSize(prefs.fontSize))")
         let weight = prefs.fontWeight.trimmingCharacters(in: .whitespaces)
         if !weight.isEmpty { lines.append("font-style = \(weight)") }
@@ -124,16 +139,17 @@ public enum TerminalConfigBuilder {
         return lines.joined(separator: "\n")
     }
 
-    /// Append the E15 FONT-PARITY lines (`font-family-fallback`, the per-face families, `font-feature`,
-    /// `font-style-bold/italic` + `font-synthetic-style`, `adjust-cell-height`, `font-thicken`) read from
-    /// `prefs`. Every line is GATED on the setting being NON-default, so a default-constructed `prefs` adds
-    /// nothing and the build stays byte-identical to the pre-E15 output. Only keys verified to exist are
+    /// Append the E15 FONT-PARITY lines (the per-face families, `font-feature`, `font-style-bold/italic` +
+    /// `font-synthetic-style`, `adjust-cell-height`, `font-thicken`) read from `prefs`. The fallback chain is
+    /// NOT here — it rides repeated `font-family` lines in ``string(for:)`` (ghostty has no
+    /// `font-family-fallback` key). `font-feature` is ALWAYS emitted (off = the disabling set); the rest are
+    /// GATED on the setting being NON-default. Only keys verified to exist are
     /// emitted; otty's underline-off / SGR blink / `srgb-over`·`linear`·`perceptual` blending are persisted
     /// but intentionally NOT emitted (deferred-apply — decision #5).
     private static func appendFontParity(_ lines: inout [String], prefs: TerminalPreferences) {
-        // Fallback families (CJK / icon coverage). Empty (default) ⇒ skip (the "unset honoured" rule).
-        let fallback = prefs.fontFamilyFallback.trimmingCharacters(in: .whitespaces)
-        if !fallback.isEmpty { lines.append("font-family-fallback = \(fallback)") }
+        // NOTE: the fallback CHAIN (CJK / Nerd-Font icon coverage) is NOT emitted here — ghostty has no
+        // `font-family-fallback` key; the chain is repeated `font-family =` lines emitted next to the primary
+        // family in ``string(for:)`` (Config.zig: `font-family` is a `RepeatableString`).
         // Explicit per-face families surface ONLY when "Auto-match weight & style" is OFF (otty shows the
         // three manual pickers only then); each empty face is skipped.
         if !prefs.autoMatchWeightStyle {
@@ -144,18 +160,13 @@ public enum TerminalConfigBuilder {
             let boldItalic = prefs.fontFamilyBoldItalic.trimmingCharacters(in: .whitespaces)
             if !boldItalic.isEmpty { lines.append("font-family-bold-italic = \(boldItalic)") }
         }
-        // Ligatures → `font-feature`. `off` (default) emits NOTHING (byte-identical; the font's own default
-        // governs — aislopdesk's default SF Mono has no ligatures). `calt`/`dlig` opt in, and the alphabet
-        // flag extends ligation to alphabetic runs (otty `font-ligatures-alphabet`).
-        switch prefs.fontLigatures {
-        case .off:
-            break
-        case .calt,
-             .dlig:
-            var features = prefs.fontLigatures.baseFeatures
-            if prefs.fontLigaturesAlphabet { features.append("liga") }
-            lines.append("font-feature = \(features.joined(separator: ","))")
-        }
+        // Ligatures → `font-feature` (always emitted). `off` emits the DISABLING set `-calt,-liga,-dlig` so a
+        // font that ships ligatures (Fira Code / JetBrains Mono — `calt` is default-ON in their GSUB) is
+        // actually un-ligated; `calt`/`dlig` opt in, and the alphabet flag extends ligation to alphabetic runs
+        // (otty `font-ligatures-alphabet`) — but only when ligatures are ON (off stays off).
+        var features = prefs.fontLigatures.baseFeatures
+        if prefs.fontLigatures != .off, prefs.fontLigaturesAlphabet { features.append("liga") }
+        lines.append("font-feature = \(features.joined(separator: ","))")
         // Bold / italic FACE mode. `off` disables the face (`font-style-{kind} = false`); the `primaryOnly` /
         // `synthetic` modes feed a SINGLE combined `font-synthetic-style` key (avoid a duplicate key). `auto`
         // (default) contributes nothing.
@@ -263,6 +274,16 @@ public enum TerminalConfigBuilder {
             let action = c.shiftArrowSelect ? "adjust_selection:\(dir)" : "unbind"
             lines.append("keybind = shift+\(dir)=\(action)")
         }
+    }
+
+    /// Split the otty comma-separated fallback-family string into ordered, trimmed, non-empty family names.
+    /// Each becomes a repeated `font-family =` line after the primary (ghostty's fallback chain). A blank /
+    /// all-whitespace entry is dropped (validate-then-skip), so `"PingFang SC, , Symbols Nerd Font"` yields
+    /// two families.
+    static func fallbackFamilies(_ raw: String) -> [String] {
+        raw.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
     }
 
     /// The `true` / `false` token for a libghostty boolean config value.

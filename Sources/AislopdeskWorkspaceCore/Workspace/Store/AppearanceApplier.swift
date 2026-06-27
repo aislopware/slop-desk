@@ -27,6 +27,14 @@ public enum AppearanceApplier {
     /// the terminal config so the terminal CELLS adopt the same flat palette as the chrome (otty flat design).
     /// `nil` (headless / pre-launch) ⇒ the terminal keeps the ``TerminalPreferences`` colours, unchanged.
     public static var resolveTerminalColors: (() -> ResolvedTerminalTheme?)?
+
+    /// Registered by `AislopdeskClientUI`: returns the slug of the theme ACTIVE under the current OS appearance
+    /// — `ThemeStore.shared.active.id`, which already resolves the dual-slot / `.system` selection to a concrete
+    /// light/dark theme (built-in id or custom slug). ``PreferencesStore`` keys the per-theme font override
+    /// (`appearance.themeFonts[slug]`) by this when rebuilding the terminal config, so the Font → Light/Dark
+    /// scope font reaches the live terminal (E15 ES-E15-4 — pure ``FontScopeResolver`` precedence). `nil`
+    /// (headless / pre-launch) ⇒ no per-scope lookup, the Global ``TerminalPreferences/fontFamily`` stands.
+    public static var resolveActiveThemeSlug: (() -> String?)?
 }
 
 /// The active theme's TERMINAL-cell colours, resolved by the GUI layer for ``PreferencesStore`` to thread into

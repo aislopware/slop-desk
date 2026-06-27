@@ -71,9 +71,14 @@ public enum ThemeTOMLParser {
             ?? toml.color("terminal", "selection-background")
             ?? base?.selectionBackground
 
+        // STABLE slug from the on-disk FILE NAME (the `.ottytheme` basename), not the display name: a custom
+        // theme is written as `<slug>.ottytheme`, so the file name IS its identity. Deriving the slug from the
+        // mutable `[meta] name` would make a persisted `customLightSlug`/`customDarkSlug` unresolvable the
+        // moment the display name changed. The standalone parser tests (no `fallbackName`) keep deriving from
+        // the display name.
         return ThemeDocument(
             displayName: displayName,
-            slug: ThemeDocument.slug(from: displayName),
+            slug: ThemeDocument.slug(from: fallbackName ?? displayName),
             mode: resolveMode(toml: toml, base: base),
             foreground: toml.color("terminal", "foreground") ?? base?.foreground ?? "",
             background: toml.color("terminal", "background") ?? base?.background ?? "",
@@ -294,6 +299,11 @@ struct ParsedTOML {
             return .string(unquoted)
         }
 
+        if trimmed.hasPrefix("'") {
+            guard let unquoted = unquoteLiteral(trimmed) else { return nil }
+            return .string(unquoted)
+        }
+
         if trimmed == "true" { return .bool(true) }
         if trimmed == "false" { return .bool(false) }
         if let number = Double(trimmed) { return .number(number) }
@@ -325,19 +335,34 @@ struct ParsedTOML {
         return out
     }
 
-    /// Split `text` on `separator`, ignoring separators inside `"…"` strings or nested `[…]` brackets.
+    /// Strip a surrounding pair of SINGLE quotes — a TOML LITERAL string. There are NO escapes inside a literal
+    /// (a backslash is a literal backslash) and a `#` is NOT a comment, so Alacritty's idiomatic `'#rrggbb'`
+    /// hex colours survive verbatim. `nil` when the input is not a well-formed `'…'`.
+    static func unquoteLiteral(_ raw: String) -> String? {
+        guard raw.count >= 2, raw.hasPrefix("'"), raw.hasSuffix("'") else { return nil }
+        return String(raw.dropFirst().dropLast())
+    }
+
+    /// Split `text` on `separator`, ignoring separators inside `"…"` / `'…'` strings or nested `[…]` brackets.
     static func splitTopLevel(_ text: String, separator: Character) -> [String] {
         var parts: [String] = []
         var current = ""
         var depth = 0
         var inString = false
+        var inLiteral = false
         var escaped = false
         for char in text {
-            if inString {
+            if inLiteral {
+                current.append(char)
+                if char == "'" { inLiteral = false } // literal: no escapes
+            } else if inString {
                 current.append(char)
                 if escaped { escaped = false }
                 else if char == "\\" { escaped = true }
                 else if char == "\"" { inString = false }
+            } else if char == "'" {
+                inLiteral = true
+                current.append(char)
             } else if char == "\"" {
                 inString = true
                 current.append(char)
@@ -359,13 +384,18 @@ struct ParsedTOML {
     }
 
     /// Remove a trailing `#` comment from one physical line — but only when the `#` is OUTSIDE a quoted string
-    /// (so a `"#FF6188"` hex value survives intact).
+    /// (so a `"#FF6188"` basic-string OR a `'#FF6188'` literal-string hex value survives intact). Inside a
+    /// single-quoted LITERAL there are no escapes and `#` is never a comment (TOML literal-string semantics).
     static func stripComment(_ line: String) -> String {
         var out = ""
         var inString = false
+        var inLiteral = false
         var escaped = false
         for char in line {
-            if inString {
+            if inLiteral {
+                out.append(char)
+                if char == "'" { inLiteral = false } // literal: no escapes, no `#` comment
+            } else if inString {
                 out.append(char)
                 if escaped { escaped = false }
                 else if char == "\\" { escaped = true }
@@ -374,6 +404,7 @@ struct ParsedTOML {
                 break
             } else {
                 if char == "\"" { inString = true }
+                else if char == "'" { inLiteral = true }
                 out.append(char)
             }
         }
@@ -385,12 +416,17 @@ struct ParsedTOML {
     static func bracketBalance(_ text: String) -> Int {
         var depth = 0
         var inString = false
+        var inLiteral = false
         var escaped = false
         for char in text {
-            if inString {
+            if inLiteral {
+                if char == "'" { inLiteral = false }
+            } else if inString {
                 if escaped { escaped = false }
                 else if char == "\\" { escaped = true }
                 else if char == "\"" { inString = false }
+            } else if char == "'" {
+                inLiteral = true
             } else if char == "\"" {
                 inString = true
             } else if char == "[" {

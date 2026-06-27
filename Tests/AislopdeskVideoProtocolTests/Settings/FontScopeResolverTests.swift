@@ -108,7 +108,7 @@ final class FontScopeResolverTests: XCTestCase {
         )
         XCTAssertEqual(
             FontScopeResolver.lightSlotSlug(AppearancePreferences()),
-            "monokai-classic", "an unset light slot ⇒ the compile-time default",
+            "monokai-classic-light", "an unset light slot follows the OS ⇒ the OS-light default",
         )
         // An empty (not nil) custom slug is treated as unset → the built-in id.
         XCTAssertEqual(

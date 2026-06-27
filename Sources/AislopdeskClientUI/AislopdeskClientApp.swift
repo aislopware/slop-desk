@@ -87,6 +87,10 @@ public struct AislopdeskClientApp: App {
                 selectionBackground: theme.selectionBackgroundHex,
             )
         }
+        // E15 ES-E15-4: the per-scope (Light/Dark-theme) font override reaches the live terminal. The active
+        // slot's resolved theme slug (`ThemeStore.active.id` — dual-slot / `.system` already concrete) keys
+        // `appearance.themeFonts`, which `PreferencesStore.applyTerminal` looks up via `FontScopeResolver`.
+        AppearanceApplier.resolveActiveThemeSlug = { ThemeStore.shared.active.id }
         // E15 WI-6: build the custom-theme catalog (scan `~/.config/aislopdesk/themes/` — `[]` on iOS) and
         // wire it as the `ThemeStore` custom-resolution seam BEFORE the first `PreferencesStore` apply below, so
         // a persisted `.custom` light/dark slot resolves to its scanned `ThemeDocument` on the very first frame
@@ -184,6 +188,16 @@ public struct AislopdeskClientApp: App {
         store.isAppConnected = { [weak appConnection] in
             if case .connected = appConnection?.status { return true }
             return false
+        }
+        // E15 item 9: ⌘+/⌘-/⌘0 zoom the terminal via the SINGLE source of truth (`terminal.fontSize`) so the
+        // Settings "Size" stepper stays in sync (the zoom rebuilds the libghostty config + reflows the PTY grid
+        // — a font-SIZE change is correctly NOT grid-preserving). Wired to the live `PreferencesStore`.
+        store.onFontSizeStep = { [weak preferences] step in
+            switch step {
+            case .increase: preferences?.increaseFontSize()
+            case .decrease: preferences?.decreaseFontSize()
+            case .reset: preferences?.resetFontSize()
+            }
         }
 
         // E2/WI-1: the single overlay coordinator. Built HERE — after the store + app connection exist — so

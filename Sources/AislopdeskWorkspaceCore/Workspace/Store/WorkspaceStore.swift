@@ -3836,6 +3836,12 @@ public final class WorkspaceStore {
     /// shared mux behind the connect-gate). `nil` in tests / headless ⇒ no gating (the prior behavior).
     public var isAppConnected: (@MainActor () -> Bool)?
 
+    /// The ⌘+ / ⌘- / ⌘0 font-zoom seam — wired by the app shell to the live ``PreferencesStore`` so a zoom
+    /// mutates the SINGLE source of truth (`terminal.fontSize`), keeping the Settings "Size" stepper in sync
+    /// (E15 item 9). The store fires it ONLY for a terminal active pane (the no-op-off-terminal contract the
+    /// FontScroll hooks already hold). `nil` in tests / headless ⇒ the zoom is a clean no-op.
+    public var onFontSizeStep: ((FontSizeStep) -> Void)?
+
     /// Commits the app-global connection ``ConnectionTarget`` into the persisted ``Workspace/connection``
     /// (called by ``AppConnection/onTargetCommitted`` on a successful connect) so the connect-gate
     /// prefills the last-used host next launch. Debounced-saves like any other mutation.
@@ -3851,12 +3857,6 @@ public final class WorkspaceStore {
             tree.sessions[sIdx].connection = target
         }
         scheduleSave()
-    }
-
-    /// Whether `id` is the SOLE pane on the canvas — so closing it empties the workspace (the "Add a
-    /// pane" empty state). Lets the pane chrome label the close button honestly.
-    public func isOnlyLeaf(_ id: PaneID) -> Bool {
-        workspace.canvas.contains(id) && workspace.canvas.itemCount == 1
     }
 
     /// A neighbour to refocus on after closing `id`, resolved geometrically against the last solved

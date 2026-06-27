@@ -166,14 +166,16 @@ final class TerminalConfigBuilderTests: XCTestCase {
     // MARK: - E15 WI-2: byte-identical pre-E15 guard
 
     /// The load-bearing regression guard: a default-constructed `TerminalPreferences` with NO E15 args
-    /// (palette / selection nil) reproduces the EXACT pre-E15 builder output — NONE of the new E15 keys
-    /// appear. FAILS if any font-parity / palette default accidentally emits a line. (Mirrors the E8
-    /// `controls: nil` byte-for-byte guard.)
-    func testPreE15DefaultPathIsByteIdentical() {
+    /// (palette / selection nil) reproduces the EXACT default builder output. The ONLY E15 key in the default
+    /// output is `font-feature = -calt,-liga,-dlig` — the ligature-DISABLING set (the `off` default truly
+    /// turns ligatures off, including for a font that ships them; item 7). No per-face / palette /
+    /// cell-height / thicken default leaks a line. FAILS if any other font-parity default emits.
+    func testDefaultPathEmitsTheExpectedLinesExactly() {
         let expected = [
             "font-family = SF Mono",
             "font-size = 13",
             "font-style = regular",
+            "font-feature = -calt,-liga,-dlig",
             "theme = Aislopdesk Dark",
             "background = FCFBF9",
             "foreground = 37352F",
@@ -255,13 +257,35 @@ final class TerminalConfigBuilderTests: XCTestCase {
 
     // MARK: - E15 WI-2: font-parity keys
 
-    /// `font-family-fallback` emits only when non-empty.
-    func testFontFamilyFallbackEmitsWhenNonEmpty() {
-        let with = parse(TerminalConfigBuilder
-            .string(for: TerminalPreferences(fontFamilyFallback: "PingFang SC, Symbols Nerd Font")))
-        XCTAssertEqual(with["font-family-fallback"], "PingFang SC, Symbols Nerd Font")
-        let without = parse(TerminalConfigBuilder.string(for: TerminalPreferences()))
-        XCTAssertNil(without["font-family-fallback"], "the default empty fallback emits nothing")
+    /// The fallback chain (item 6): ghostty has NO `font-family-fallback` key — the chain is REPEATED
+    /// `font-family =` lines (the primary first, then each fallback in order), since `font-family` is a
+    /// `RepeatableString` in Config.zig. A blank entry in the comma list is dropped (validate-then-skip).
+    func testFontFamilyFallbackEmitsRepeatedFontFamilyLinesInOrder() {
+        let config = TerminalConfigBuilder.string(for: TerminalPreferences(
+            fontFamily: "JetBrains Mono",
+            fontFamilyFallback: "PingFang SC, , Symbols Nerd Font",
+        ))
+        let familyLines = config.split(separator: "\n").filter { $0.hasPrefix("font-family = ") }.map(String.init)
+        XCTAssertEqual(
+            familyLines,
+            ["font-family = JetBrains Mono", "font-family = PingFang SC", "font-family = Symbols Nerd Font"],
+            "primary first, then each non-empty fallback as its own repeated font-family line",
+        )
+        // The dead key must NOT appear anywhere.
+        XCTAssertFalse(config.contains("font-family-fallback"), "the non-existent ghostty key is never emitted")
+        // The default empty fallback emits ONLY the single primary font-family line.
+        let plain = TerminalConfigBuilder.string(for: TerminalPreferences(fontFamily: "Menlo"))
+            .split(separator: "\n").filter { $0.hasPrefix("font-family = ") }
+        XCTAssertEqual(plain, ["font-family = Menlo"], "no fallback ⇒ a single font-family line")
+    }
+
+    /// The fallback chain is suppressed when the primary family is empty — the first `font-family` MUST be the
+    /// primary (the "unset honoured" rule), so an empty primary emits neither it nor the fallbacks.
+    func testFallbackChainSuppressedWhenPrimaryEmpty() {
+        let config = TerminalConfigBuilder.string(for: TerminalPreferences(
+            fontFamily: "  ", fontFamilyFallback: "PingFang SC",
+        ))
+        XCTAssertFalse(config.contains("font-family"), "an empty primary suppresses the whole font-family chain")
     }
 
     /// The explicit per-face families surface ONLY when Auto-match is OFF (otty shows them only then).
@@ -281,12 +305,15 @@ final class TerminalConfigBuilderTests: XCTestCase {
         XCTAssertNil(off["font-family-bold-italic"], "an empty bold-italic face is skipped")
     }
 
-    /// Ligatures → `font-feature`: off emits NOTHING (byte-identical default), calt → `calt`, dlig →
-    /// `calt,dlig`; the alphabet flag appends `liga`. FAILS on a builder that emits a feature for off.
+    /// Ligatures → `font-feature` (item 7): `off` emits the DISABLING set `-calt,-liga,-dlig` (so a font that
+    /// ships ligatures is actually un-ligated — Config.zig documents exactly this), `calt` → `calt`, `dlig` →
+    /// `calt,dlig`; the alphabet flag appends `liga` ONLY when ligatures are on. FAILS on a builder that emits
+    /// nothing for `off` (the old dead behaviour).
     func testLigatureModesMapToFontFeature() {
-        XCTAssertNil(
+        XCTAssertEqual(
             parse(TerminalConfigBuilder.string(for: TerminalPreferences(fontLigatures: .off)))["font-feature"],
-            "off emits no font-feature (the font's own default governs)",
+            "-calt,-liga,-dlig",
+            "off DISABLES ligatures (does not silently emit nothing)",
         )
         XCTAssertEqual(
             parse(TerminalConfigBuilder.string(for: TerminalPreferences(fontLigatures: .calt)))["font-feature"], "calt",
@@ -300,12 +327,26 @@ final class TerminalConfigBuilderTests: XCTestCase {
                 fontLigatures: .calt, fontLigaturesAlphabet: true,
             )))["font-feature"], "calt,liga", "the alphabet flag appends liga",
         )
-        // Alphabet has no effect while ligatures are off (off stays unligated).
-        XCTAssertNil(
+        // Alphabet has no effect while ligatures are off — off stays the disabling set (no `liga`).
+        XCTAssertEqual(
             parse(TerminalConfigBuilder.string(for: TerminalPreferences(
                 fontLigatures: .off, fontLigaturesAlphabet: true,
-            )))["font-feature"], "off + alphabet still emits nothing",
+            )))["font-feature"], "-calt,-liga,-dlig", "off + alphabet still disables (no liga added)",
         )
+    }
+
+    /// The per-scope font override (item 8): a non-nil `fontFamilyOverride` REPLACES the pref's primary
+    /// `font-family` (the seam `PreferencesStore` drives from the active theme slot's `themeFonts` entry); an
+    /// empty / nil override keeps the pref's own family.
+    func testFontFamilyOverrideReplacesPrimaryFamily() {
+        let overridden = TerminalConfigBuilder.string(
+            for: TerminalPreferences(fontFamily: "SF Mono"), fontFamilyOverride: "Fira Code",
+        ).split(separator: "\n").first { $0.hasPrefix("font-family = ") }
+        XCTAssertEqual(overridden, "font-family = Fira Code", "a non-empty override wins over the pref family")
+        let kept = TerminalConfigBuilder.string(
+            for: TerminalPreferences(fontFamily: "SF Mono"), fontFamilyOverride: "   ",
+        ).split(separator: "\n").first { $0.hasPrefix("font-family = ") }
+        XCTAssertEqual(kept, "font-family = SF Mono", "a blank override keeps the pref's own family")
     }
 
     /// Bold / italic FACE modes: `off` → `font-style-{kind} = false`; `primaryOnly` / `synthetic` feed a

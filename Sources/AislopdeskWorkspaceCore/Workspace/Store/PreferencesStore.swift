@@ -172,10 +172,24 @@ public final class PreferencesStore {
         // namespace — NOT the per-instance injected `defaults`, which stays test-isolated for the typed
         // models), so read them from `.standard`; the builder maps an absent key to its declared default.
         let controls = TerminalControls.from(defaults: .standard)
+        // E15 ES-E15-4: resolve the per-SCOPE font family. The Font → Light/Dark-Theme tabs persist a font
+        // keyed by the slot's theme slug in `appearance.themeFonts`; that override never reached the live
+        // terminal before (the builder read `terminal.fontFamily` raw). Resolve it via the pure
+        // ``FontScopeResolver`` precedence (a non-empty Global `terminal.fontFamily` wins everywhere — otty's
+        // "Global overrides theme"; else the ACTIVE slot's per-theme font; else fall back to the Global
+        // value), keyed by the GUI-resolved active theme slug. `nil` hook (headless) ⇒ Global stands, so a
+        // default build is byte-identical.
+        let resolvedFontFamily = FontScopeResolver.resolvedFamily(
+            global: terminal.fontFamily,
+            themeFonts: appearance.themeFonts,
+            slug: AppearanceApplier.resolveActiveThemeSlug?(),
+            fallback: terminal.fontFamily,
+        )
         let config = TerminalConfigBuilder.string(
             for: terminal,
             backgroundOverride: themeColors?.background,
             foregroundOverride: themeColors?.foreground,
+            fontFamilyOverride: resolvedFontFamily,
             // E15 WI-3: the active theme's ANSI palette + selection colour reach the terminal cells. Both are
             // optional and validate-then-drop in the builder, so a `nil` themeColors (headless / no GUI hook)
             // or a theme with no palette is byte-identical to the pre-E15 build.
@@ -193,6 +207,38 @@ public final class PreferencesStore {
     /// `Defaults.observe` wiring in the store, by design, to keep it test-isolated).
     public func refreshTerminalControls() {
         applyTerminal()
+    }
+
+    // MARK: Font-size zoom (⌘+ / ⌘- / ⌘0 — single source of truth)
+
+    /// The point-size step + clamp the ⌘± zoom shares with the Settings → Appearance → Text "Size" stepper
+    /// (`8...32`, step `1`), so the two stay on the SAME scale and never desync.
+    static let fontSizeStep: Double = 1
+    static let fontSizeRange: ClosedRange<Double> = 8...32
+
+    /// ⌘+ / ⌘= — bump the terminal font size one step. Mutates the SINGLE source of truth
+    /// (``terminal``.`fontSize`), whose `didSet` rebuilds the libghostty config + reflows the live surface —
+    /// the SAME path the Settings "Size" stepper drives, so the stepper stays in sync (and vice-versa). A
+    /// font-SIZE change DOES reflow the remote PTY grid (the cell box resizes → SIGWINCH); that is correct,
+    /// not a bug (only font FAMILY/STYLE rebuilds are grid-preserving). Clamped to ``fontSizeRange``.
+    public func increaseFontSize() { setFontSize(terminal.fontSize + Self.fontSizeStep) }
+
+    /// ⌘- — shrink the terminal font size one step (single source of truth; see ``increaseFontSize()``).
+    public func decreaseFontSize() { setFontSize(terminal.fontSize - Self.fontSizeStep) }
+
+    /// ⌘0 — reset the terminal font size to the configured default (``TerminalPreferences`` default size).
+    public func resetFontSize() { setFontSize(TerminalPreferences().fontSize) }
+
+    /// Set the terminal font size, clamped NaN-faithfully to ``fontSizeRange`` (``Double/maximum(_:_:)`` /
+    /// ``Double/minimum(_:_:)``, never a bare ternary). A no-op when the clamped value is unchanged (so a ⌘±
+    /// at the clamp boundary doesn't churn the broadcaster). The `terminal` `didSet` persists + re-applies.
+    private func setFontSize(_ size: Double) {
+        let clamped = Double.maximum(
+            Self.fontSizeRange.lowerBound,
+            Double.minimum(Self.fontSizeRange.upperBound, size),
+        )
+        guard clamped != terminal.fontSize else { return }
+        terminal.fontSize = clamped
     }
 
     /// Map the WorkspaceCore fire-time ``TerminalControls`` bundle to the leaf ``TerminalControlsConfig`` the

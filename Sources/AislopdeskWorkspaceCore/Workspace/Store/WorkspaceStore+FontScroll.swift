@@ -1,6 +1,20 @@
 import AislopdeskTerminal
 import Foundation
 
+// MARK: - FontSizeStep (the ⌘+ / ⌘- / ⌘0 font-zoom intent the active-pane hooks route through)
+
+/// The three font-zoom intents ⌘+/⌘-/⌘0 fire. The store routes them through ``WorkspaceStore/onFontSizeStep``
+/// to the live ``PreferencesStore`` (the single source of truth for `terminal.fontSize`), so the Settings
+/// "Size" stepper stays in sync — never libghostty's INTERNAL font-size state, which the stepper can't see.
+public enum FontSizeStep: Equatable, Sendable {
+    /// ⌘+ / ⌘= — one step larger.
+    case increase
+    /// ⌘- — one step smaller.
+    case decrease
+    /// ⌘0 — reset to the configured default size.
+    case reset
+}
+
 // MARK: - ScrollAction (the named viewport-scroll the E1 ⇧PageUp/Down + ⇧Home/End chords route through)
 
 /// The four viewport-scroll intents the E1 keymap binds to the named scroll keys (⇧PageUp/PageDown →
@@ -51,26 +65,34 @@ public enum ScrollAction: Equatable, Sendable {
 /// unit-testable against a recording ``TerminalSurfaceActions`` fake (the hang-safety rule: no real
 /// `GhosttySurface` in a test).
 public extension WorkspaceStore {
-    /// ⌘= (and the auto-shifted ⌘+) — bumps the active pane's render font size one step via libghostty's
-    /// `increase_font_size`. A larger font fits FEWER cells in the same pane pixel box, so the PTY grid
-    /// (cols/rows) shrinks and the remote PTY IS reflowed via SIGWINCH (correcting ES-E1-4's earlier
-    /// "without reflowing the PTY grid" note — a font step is NOT grid-preserving). A no-op for a
-    /// non-terminal pane / no seam.
+    /// ⌘= (and the auto-shifted ⌘+) — bumps the terminal render font size one step. Routes through the
+    /// ``onFontSizeStep`` seam to the live ``PreferencesStore`` (`terminal.fontSize`, the SINGLE source of
+    /// truth) — NOT libghostty's internal `increase_font_size`, which the Settings "Size" stepper can't see
+    /// and so desynced from it. A larger font fits FEWER cells in the same pane pixel box, so the PTY grid
+    /// (cols/rows) shrinks and the remote PTY IS reflowed via SIGWINCH — a font-SIZE step is NOT
+    /// grid-preserving (only font FAMILY/STYLE rebuilds are). A no-op for a non-terminal active pane / no seam.
     func increaseFontInActivePane() {
-        performActiveSurfaceAction("increase_font_size")
+        stepActivePaneFontSize(.increase)
     }
 
-    /// ⌘- — shrinks the active pane's render font size one step (`decrease_font_size`). Same reflow property
-    /// as ``increaseFontInActivePane()`` (a smaller font fits MORE cells → the grid grows → SIGWINCH). A
-    /// no-op for a non-terminal pane / no seam.
+    /// ⌘- — shrinks the terminal render font size one step. Same source-of-truth + reflow property as
+    /// ``increaseFontInActivePane()`` (a smaller font fits MORE cells → the grid grows → SIGWINCH).
     func decreaseFontInActivePane() {
-        performActiveSurfaceAction("decrease_font_size")
+        stepActivePaneFontSize(.decrease)
     }
 
-    /// ⌘0 — resets the active pane's render font size to the configured default (`reset_font_size`). A no-op
-    /// for a non-terminal pane / no seam.
+    /// ⌘0 — resets the terminal render font size to the configured default. Same source-of-truth path as
+    /// ``increaseFontInActivePane()``.
     func resetFontInActivePane() {
-        performActiveSurfaceAction("reset_font_size")
+        stepActivePaneFontSize(.reset)
+    }
+
+    /// Fire `step` at the ``onFontSizeStep`` seam, but ONLY when the active pane is a TERMINAL — preserving the
+    /// no-op-off-terminal contract the surface-action hooks held (a `.remoteGUI` / `.systemDialog` / empty /
+    /// headless pane has no `activeTerminalModel`, so ⌘± does nothing there, exactly as before).
+    private func stepActivePaneFontSize(_ step: FontSizeStep) {
+        guard activeTerminalModel != nil else { return }
+        onFontSizeStep?(step)
     }
 
     /// Scrolls the active pane's viewport per the named ``ScrollAction`` (⇧PageUp/Down → page up/down,

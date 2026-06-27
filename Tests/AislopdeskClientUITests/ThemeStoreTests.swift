@@ -32,10 +32,15 @@ final class ThemeStoreTests: XCTestCase {
         XCTAssertFalse(store.active.isLight, ".dark maps to the dark theme")
         store.apply(.paper)
         XCTAssertTrue(store.active.isLight, ".paper maps to the light theme")
-        // nil (appearance reset/unset) falls back to the compile-time default Monokai Pro Classic.
-        store.active = .dark
+        // nil (appearance reset/unset) now FOLLOWS the OS — the picker presents an unset slot as "System": dark
+        // OS → the dark default, light OS → the light default. The probe is stubbed for determinism.
+        store.osIsDark = { true }
+        store.active = .paper
         store.apply(nil)
-        XCTAssertEqual(store.active.id, "monokai-classic", "nil falls back to the default Monokai Pro Classic")
+        XCTAssertEqual(store.active.id, "monokai-classic", "nil in dark mode → the dark default")
+        store.osIsDark = { false }
+        store.apply(nil)
+        XCTAssertEqual(store.active.id, "monokai-classic-light", "nil in light mode → the light default")
     }
 
     /// Each theme carries the libghostty terminal bg/fg matching its chrome window colour (flat design): a

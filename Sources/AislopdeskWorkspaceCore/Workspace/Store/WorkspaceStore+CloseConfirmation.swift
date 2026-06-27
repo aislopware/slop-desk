@@ -73,4 +73,10 @@ public extension WorkspaceStore {
         pendingClose = nil
         pendingTabCloseID = tabID
     }
+
+    /// Whether `id` is the SOLE pane on the canvas — so closing it empties the workspace (the "Add a
+    /// pane" empty state). Lets the pane chrome label the close button honestly.
+    func isOnlyLeaf(_ id: PaneID) -> Bool {
+        workspace.canvas.contains(id) && workspace.canvas.itemCount == 1
+    }
 }

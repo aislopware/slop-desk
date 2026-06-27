@@ -6,12 +6,20 @@ import XCTest
 final class ThemeResolutionTests: XCTestCase {
     // MARK: Single / primary slot (useSeparateDarkTheme OFF or unset)
 
-    /// The all-`nil` default appearance resolves to the compile-time default Monokai Pro Classic for BOTH OS
-    /// appearances — the legacy behaviour (one fixed dark default, no follow-OS) preserved.
-    func testDefaultAppearanceIsClassicRegardlessOfOS() {
+    /// The all-`nil` default appearance (FRESH INSTALL) FOLLOWS the OS — the picker presents an unset light slot
+    /// as "System", so the resolver must render the light default in light mode and the dark default in dark
+    /// mode, NOT a fixed dark theme regardless of OS appearance (ES-E15). REVERT-TO-CONFIRM-FAIL: the old
+    /// `builtinID(for: nil)` returning a fixed `defaultDarkID` fails the light-mode case below.
+    func testDefaultAppearanceFollowsOSForBothAppearances() {
         let def = AppearancePreferences()
-        XCTAssertEqual(ThemeResolution.activeRef(appearance: def, osIsDark: false), .builtin("monokai-classic"))
-        XCTAssertEqual(ThemeResolution.activeRef(appearance: def, osIsDark: true), .builtin("monokai-classic"))
+        XCTAssertEqual(
+            ThemeResolution.activeRef(appearance: def, osIsDark: false), .builtin("monokai-classic-light"),
+            "fresh install in LIGHT mode → the light default",
+        )
+        XCTAssertEqual(
+            ThemeResolution.activeRef(appearance: def, osIsDark: true), .builtin("monokai-classic"),
+            "fresh install in DARK mode → the dark default",
+        )
     }
 
     /// A concrete single-slot choice (separate-dark OFF) applies for EVERY OS appearance — it does NOT follow
@@ -91,8 +99,9 @@ final class ThemeResolutionTests: XCTestCase {
     // MARK: builtinID mapping
 
     func testBuiltinIDMapping() {
+        // An unset slot (nil) follows the OS, exactly like `.system` (the picker shows it as "System").
         XCTAssertEqual(ThemeResolution.builtinID(for: nil, osIsDark: true), "monokai-classic")
-        XCTAssertEqual(ThemeResolution.builtinID(for: nil, osIsDark: false), "monokai-classic")
+        XCTAssertEqual(ThemeResolution.builtinID(for: nil, osIsDark: false), "monokai-classic-light")
         XCTAssertEqual(ThemeResolution.builtinID(for: .system, osIsDark: true), "monokai-classic")
         XCTAssertEqual(ThemeResolution.builtinID(for: .system, osIsDark: false), "monokai-classic-light")
         XCTAssertEqual(ThemeResolution.builtinID(for: .monokaiProSpectrum, osIsDark: true), "monokai-spectrum")
