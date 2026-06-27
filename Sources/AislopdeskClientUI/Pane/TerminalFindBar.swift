@@ -59,6 +59,11 @@ final class TerminalFindBarModel {
     /// Bumped on every (re)open so the view re-asserts its `@FocusState` even when the bar is already mounted
     /// (⌘F while the bar is open should re-focus the field, but `.onAppear` won't fire again).
     private(set) var focusToken = 0
+    /// The SEARCH DIRECTION the bar was opened in (E17 ES-E17-2 / WI-5): `/`-opened (and ⌘F) search FORWARD
+    /// (`false`); a copy-mode `?` opens it BACKWARD (`true`, via ``open(backward:)``). It biases vi's `n`/`N`:
+    /// ``next()`` (vi `n`) steps in this direction, ``previous()`` (vi `N`) against it — so after `?foo`, `n`
+    /// walks UP the buffer and `N` walks down (vim parity), while a forward search keeps the natural sense.
+    private(set) var searchBackward = false
     /// The pane's terminal model — the scrollback mirror + the libghostty `search:` / `navigate_search:` /
     /// `end_search` passthrough. Weak (owned by the live session); `@ObservationIgnored` — pure wiring.
     @ObservationIgnored private weak var model: TerminalViewModel?
@@ -71,7 +76,10 @@ final class TerminalFindBarModel {
 
     /// ⌘F / Find… — open (or re-focus) the bar, refreshing the scrollback mirror snapshot the counter counts
     /// (divergence #2: libghostty owns the live in-surface highlight; this snapshot owns the `N of M` count).
-    func open() {
+    /// `backward` seeds the SEARCH DIRECTION (default forward for ⌘F / `/`; a copy-mode `?` passes `true`) so the
+    /// subsequent `n`/`N` step relative to it — see ``searchBackward`` / ``next()`` / ``previous()``.
+    func open(backward: Bool = false) {
+        searchBackward = backward
         controller.setLines(model?.searchScrollbackLines() ?? [])
         armSearch()
         visible = true
@@ -98,21 +106,30 @@ final class TerminalFindBarModel {
         armSearch()
     }
 
-    /// ↩ / ⌘G — advance the selection (wraps past the last) + move the live grid to the new match. Opens the
-    /// bar first if it is closed (faithful "find next opens find"). Literal mode steps libghostty's own
-    /// `navigate_search:next`; regex mode scrolls to the controller's match row (see ``navigateToCurrentMatch``).
+    /// ↩ / ⌘G / vi `n` — step to the next match IN THE SEARCH DIRECTION + move the live grid to it. Opens the
+    /// bar first if it is closed (faithful "find next opens find"), PRESERVING the current direction. For a
+    /// forward search this advances (down); for a `?`-opened backward search it RETREATS (up) — vim's "`n`
+    /// repeats the search in its original direction".
     func next() {
-        if !visible { open() }
-        controller.next()
-        navigateToCurrentMatch(forward: true)
+        if !visible { open(backward: searchBackward) }
+        step(forward: !searchBackward)
     }
 
-    /// ⇧↩ / ⇧⌘G — retreat the selection (wraps past the first) + move the live grid to the new match. Opens
-    /// the bar first if it is closed. Literal mode steps `navigate_search:previous`; regex mode scrolls to row.
+    /// ⇧↩ / ⇧⌘G / vi `N` — step to the next match AGAINST the search direction + move the live grid to it.
+    /// Opens the bar first if it is closed, preserving direction. Forward search → retreat (up); backward search
+    /// → advance (down) — vim's "`N` repeats the search in the opposite direction".
     func previous() {
-        if !visible { open() }
-        controller.previous()
-        navigateToCurrentMatch(forward: false)
+        if !visible { open(backward: searchBackward) }
+        step(forward: searchBackward)
+    }
+
+    /// Step the selection one match `forward` (down) or backward (up) + drive the live grid to it. The single
+    /// place `next()`/`previous()` resolve to a concrete direction: the controller advances/retreats its match
+    /// index and ``navigateToCurrentMatch(forward:)`` moves the grid the matching way. Literal mode steps
+    /// libghostty's own `navigate_search:next`/`previous`; regex mode scrolls to the controller's match row.
+    private func step(forward: Bool) {
+        if forward { controller.next() } else { controller.previous() }
+        navigateToCurrentMatch(forward: forward)
     }
 
     /// Drive the live grid to the controller's current match. LITERAL mode delegates to libghostty's own

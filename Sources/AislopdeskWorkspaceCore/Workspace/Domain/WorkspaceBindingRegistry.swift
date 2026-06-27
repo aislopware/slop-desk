@@ -59,7 +59,11 @@ public enum WorkspaceAction: Hashable, Sendable {
     case findNext // ⌘G — advance to the NEXT find match (opens the find bar if closed)
     case findPrev // ⇧⌘G — step to the PREVIOUS find match (opens the find bar if closed)
     case globalSearch // ⇧⌘F — show/hide the cross-tab Global Search results surface (E5 ES-E5-5)
-    case toggleCopyMode // ⌘⇧C — enter modal keyboard copy-mode over the active pane's scrollback (P5b)
+    case toggleCopyMode // ⌘⇧C (+ ⌃⇧Space alias) — enter modal keyboard vi / copy-mode over the active pane (P5b)
+    // Vi Mode Key Hints (E17 ES-E17-2): toggle the active pane's `⌘/` vi key-hint reference bar. A palette /
+    // menu command (chord: nil — the live `⌘/` is owned by `.cheatSheet`, contextually) so the hint bar is
+    // discoverable, not only reachable via the contextual chord while already in vi mode.
+    case toggleViKeyHints
     // Read-Only mode (E17 ES-E17-1): toggle the active pane's READ-ONLY input gate — every outbound input
     // path (keys / paste / IME commit / mouse-report / click-to-move / drop / sync-broadcast) is dropped +
     // beeps once while output keeps streaming. otty documents NO default chord; reachable via the menu +
@@ -178,6 +182,9 @@ public extension WorkspaceAction {
              .findNext,
              .findPrev,
              .toggleCopyMode,
+             // Vi Mode Key Hints toggles the ACTIVE terminal pane's `⌘/` hint bar — needs a pane, degrades
+             // gracefully (an empty / non-terminal shell, or a pane not in vi mode, just no-ops), same family.
+             .toggleViKeyHints,
              // Read-only gates the ACTIVE terminal pane's input — needs a pane, but degrades gracefully
              // (an empty / non-terminal shell just no-ops), so it rides the same family, not greyed out.
              .toggleReadOnly,
@@ -601,15 +608,31 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: KeyChord(character: "f", [.command, .shift]),
             symbol: "magnifyingglass.circle", keywords: "global search all tabs scrollback grep cross pane find",
         ),
-        // Copy Mode (P5b): modal keyboard scrollback navigation (tmux/zellij copy-mode). ⌘⇧C is FREE —
-        // `c` appears in NO other binding, and ⌘⇧C does not collide with the system plain ⌘C copy (a
-        // different modifier set, handled by the terminal's own copy responder). Verified unique by the
-        // chord-uniqueness guard.
+        // Vi Mode (P5b / E17 WI-5): modal keyboard scrollback navigation (the otty "Vi Mode" / tmux-zellij
+        // copy-mode). otty's documented entry chord is ⌃⇧Space; aislopdesk's canonical DISPLAY chord stays the
+        // pre-existing ⌘⇧C (so existing muscle memory / the menu glyph are unchanged), and ⌃⇧Space is folded in
+        // as a SECOND resolving chord via ``aliasChords`` (no extra display row — the ⌘+ font-increase idiom).
+        // The title is "Vi Mode" (otty parity) with "copy mode" kept in the keywords so palette search for the
+        // old name still finds it. ⌘⇧C is FREE — `c` appears in NO other binding, and ⌘⇧C does not collide with
+        // the system plain ⌘C copy (a different modifier set, handled by the terminal's own copy responder).
+        // Verified unique by the chord-uniqueness guard.
         WorkspaceBinding(
-            id: "view.copyMode", action: .toggleCopyMode, title: "Copy Mode",
+            id: "view.copyMode", action: .toggleCopyMode, title: "Vi Mode",
             category: .view, chord: KeyChord(character: "c", [.command, .shift]),
             symbol: "doc.on.clipboard",
-            keywords: "copy mode scrollback keyboard navigate select yank vi tmux zellij",
+            keywords: "vi mode copy mode scrollback keyboard navigate select yank visual control shift space tmux zellij",
+        ),
+        // Vi Mode Key Hints (E17 ES-E17-2 / WI-5): the `⌘/` reference-card toggle, surfaced as a DISCOVERABLE
+        // palette / menu command (not only the contextual `⌘/` that fires while in vi mode). `chord: nil` — the
+        // live chord `⌘/` is owned by `view.cheatSheet` (it does double duty contextually: cheat sheet normally,
+        // this hint bar while in vi mode), so a second registered chord would collide; the row is reachable via
+        // the palette / menu and toggles the active pane's hint bar (a graceful no-op outside vi mode, where the
+        // bar is gated off). The glyph `⌘/` is named in the keywords for discovery.
+        WorkspaceBinding(
+            id: "view.viKeyHints", action: .toggleViKeyHints, title: "Vi Mode Key Hints",
+            category: .view, chord: nil,
+            symbol: "keyboard.badge.eye",
+            keywords: "vi mode key hints reference card cheat shortcuts copy mode command slash toggle bar",
         ),
         // Read-Only mode (E17 ES-E17-1): toggle the active pane's input gate. otty documents NO default
         // chord — the feature is reachable via the menu (otty's "Shell → Read Only"; aislopdesk surfaces it
@@ -834,9 +857,16 @@ public enum WorkspaceBindingRegistry {
     /// ⌘+ leaks to the PTY (the font never grows). We alias BOTH spellings the OS can deliver for ⌘+: the
     /// shifted main-row `+` (`⌘⇧+`) and the (unshifted) keypad `+` (`⌘+`). `KeyChord.init(character:)`
     /// lower-cases, which is a no-op for `+`, so both spellings key cleanly.
+    ///
+    /// E17 ES-E17-2 / WI-5: otty's documented Vi Mode entry chord is ⌃⇧Space. aislopdesk's canonical Vi-Mode
+    /// binding (`view.copyMode`) DISPLAYS ⌘⇧C, so ⌃⇧Space is folded in here as a SECOND resolving chord onto the
+    /// same `.toggleCopyMode` action — exactly like the ⌘+ font-increase alias (no extra display row, shares the
+    /// ACTION not the chord). Space is the NAMED `.space` key (the macOS normalizer maps keyCode 49 → `.space`
+    /// only with a non-shift modifier, so a bare Space still types); ⌃⇧Space is otherwise unbound (no collision).
     public static let aliasChords: [KeyChord: WorkspaceAction] = [
         KeyChord(character: "+", [.command, .shift]): .increaseFontSize, // ⌘+ = ⌘⇧= on a US/ANSI layout
         KeyChord(character: "+", [.command]): .increaseFontSize, // keypad + (no ⇧ reported)
+        KeyChord(.space, [.control, .shift]): .toggleCopyMode, // ⌃⇧Space = otty's Vi Mode entry (alias of ⌘⇧C)
     ]
 
     /// The chord → action lookup table (drives the keyboard dispatcher). Built from ``allBindings`` (so the
@@ -903,6 +933,7 @@ public enum WorkspaceBindingRegistry {
         case let .character(c): c.uppercased()
         case .tab: "⇥"
         case .return: "↩"
+        case .space: "␣"
         case .leftArrow: "←"
         case .rightArrow: "→"
         case .upArrow: "↑"

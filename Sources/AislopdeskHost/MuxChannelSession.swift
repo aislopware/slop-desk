@@ -603,8 +603,32 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Called opportunistically right after writing client input to the PTY (where `ECHO` flips fastest
     /// around a password prompt) and from the foreground poll backstop. Cheap (one `tcgetattr` syscall).
     private func sampleEcho(masterFD: Int32) {
-        let echoOn = PTYEchoProbe.echoEnabled(masterFD: masterFD)
+        foldEchoSample(echoOn: PTYEchoProbe.echoEnabled(masterFD: masterFD))
+    }
+
+    /// Folds one already-resolved `echoOn` bool through the detector and enqueues a type-31 on an edge
+    /// (the detector dedupes — unchanged echo emits nothing). Split out from ``sampleEcho(masterFD:)`` so the
+    /// OS probe and the pure fold are separable (the fold is exercised directly by tests via a seam).
+    private func foldEchoSample(echoOn: Bool) {
         echoDetectLock.lock()
+        let message = echoDetector.sample(echoOn: echoOn)
+        echoDetectLock.unlock()
+        if let message { enqueueControl([message]) }
+    }
+
+    /// E17 / ES-E17-4 — on a client (re)attach, RE-ESTABLISH the client's echo truth. The detector is
+    /// edge-triggered against `lastEmitted`, and the client resets `hostNoEcho = false` on reconnect, so if a
+    /// no-echo prompt (sudo / ssh / `read -s`) is up ACROSS the reattach the host would see no edge and emit
+    /// nothing — leaving the client's AUTO Secure Keyboard Entry disengaged for the rest of the password entry
+    /// (keystrokes UNPROTECTED). Echo state is, BY DESIGN, NOT in the replayed output byte stream (it is a host
+    /// termios `ECHO` line-discipline attribute carried ONLY as a type-31), so it can be re-established for a
+    /// returning client ONLY by a fresh type-31. Re-anchoring the detector to the canonical echo-on baseline
+    /// then folding the CURRENT probed echo forces a fresh type-31 iff the live echo still deviates — re-sending
+    /// no-echo truth to the freshly-attached client. The re-anchor is the load-bearing step: without it the
+    /// re-fold of an unchanged state is a no-op (the ES-E17-4 bug).
+    private func reestablishEchoOnReattach(echoOn: Bool) {
+        echoDetectLock.lock()
+        echoDetector = EchoModeDetector(initialEcho: true)
         let message = echoDetector.sample(echoOn: echoOn)
         echoDetectLock.unlock()
         if let message { enqueueControl([message]) }
@@ -749,6 +773,15 @@ final class MuxChannelSession: @unchecked Sendable {
                 }
             }
         }
+
+        // E17 / ES-E17-4 — RE-ESTABLISH the client's echo truth on reattach (mirrors how the PTY size is
+        // re-asserted on reconnect): re-anchor the edge-triggered detector and re-emit a fresh type-31 for the
+        // CURRENT probed echo so a no-echo prompt that is up across this reattach re-engages the client's AUTO
+        // Secure Keyboard Entry (which reset to echo-on on reconnect). Done AFTER the `controlOut.removeAll()`
+        // above (so the fresh type-31 is not wiped) and AFTER the control sender + its wake continuation are
+        // rebuilt above (so the `enqueueControl` wake is delivered and drained, not dropped onto a nil
+        // continuation). See ``reestablishEchoOnReattach(echoOn:)`` for the full rationale.
+        reestablishEchoOnReattach(echoOn: PTYEchoProbe.echoEnabled(masterFD: pty.masterFD))
 
         // Restart the input task (reads from the NEW data sub-channel).
         let masterFD = pty.masterFD
@@ -1489,6 +1522,13 @@ final class MuxChannelSession: @unchecked Sendable {
     func enqueueControlForTesting(_ messages: [WireMessage]) { enqueueControl(messages) }
     func takeControlBatchForTesting() -> [WireMessage]? { takeControlBatch() }
     static var maxControlOutQueuedForTesting: Int { maxControlOutQueued }
+
+    /// E17 / ES-E17-4 echo seams — drive the pure echo fold and the reattach re-establishment with an
+    /// INJECTED `echoOn` (no PTY probe), so the edge-trigger dedupe AND the reattach re-emit are provable
+    /// headlessly via ``takeControlBatchForTesting()``. ``reestablishEchoOnReattachForTesting`` exercises the
+    /// EXACT production method ``rebindRelay`` calls, so reverting its re-anchor breaks both together.
+    func foldEchoSampleForTesting(echoOn: Bool) { foldEchoSample(echoOn: echoOn) }
+    func reestablishEchoOnReattachForTesting(echoOn: Bool) { reestablishEchoOnReattach(echoOn: echoOn) }
 
     /// WB1 — drive the real `feedBlocks` glue (segmenter tap → enqueueControl) WITHOUT a PTY/read
     /// loop, so the type-28 emission + the byte-identical-when-off contract are provable headlessly.

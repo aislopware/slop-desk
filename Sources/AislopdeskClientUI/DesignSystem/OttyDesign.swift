@@ -475,6 +475,14 @@ enum Otty {
         static var warn: Color { Otty.theme.statusWarn }
         static var err: Color { Otty.theme.statusErr }
         static var info: Color { Otty.theme.statusInfo }
+
+        /// FIXED security-blue — theme-INDEPENDENT (NOT derived from `Otty.theme`), unlike ``info``. The
+        /// secure-input pill must read as the SAME vivid royal-blue on every theme so it can never be confused
+        /// with the theme accent: under the default Monokai Pro seed `statusInfo` collapses to the cyan accent
+        /// (`info == accent == 0x78DCE8`), which would make a theme-derived security badge indistinguishable
+        /// from the accent. Pinned to `secure-input.png`'s royal-blue (#2D6FE8) — a mid royal-blue that keeps
+        /// white pill text legible on BOTH light and dark themes. Never re-route this through the theme.
+        static let secureInput = Color(ottyHex: 0x2D6FE8)
     }
 
     /// Geometry — theme-independent. Radii + the 8pt grid + chrome dimensions.

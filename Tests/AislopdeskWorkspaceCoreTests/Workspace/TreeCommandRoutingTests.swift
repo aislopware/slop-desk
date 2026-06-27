@@ -677,6 +677,54 @@ final class TreeCommandRoutingTests: XCTestCase {
         }
     }
 
+    /// E17 ES-E17-2 / WI-5: otty's Vi Mode entry chord ⌃⇧Space resolves (through the dispatcher's
+    /// ``resolvedChordTable``, which folds ``aliasChords``) to `.toggleCopyMode` — the SAME action as the
+    /// canonical ⌘⇧C display chord. Space is the NAMED `.space` key (keyCode 49), and ⌃⇧Space must be free.
+    /// Revert-to-confirm-fail: before the alias existed, ⌃⇧Space resolved to `nil` and the command was titled
+    /// "Copy Mode" with no "vi" surface name.
+    func testViModeEntryChordAndTitle() {
+        // ⌃⇧Space was unbound before this fix (no collision with another binding's chord).
+        let viChord = KeyChord(.space, [.control, .shift])
+        let plainChords = WorkspaceBindingRegistry.allBindings.compactMap(\.chord)
+        XCTAssertFalse(plainChords.contains(viChord), "⌃⇧Space is FREE — no registered binding already owns it")
+        // The dispatcher's resolved table folds the alias → it fires Vi / Copy mode.
+        XCTAssertEqual(
+            WorkspaceBindingRegistry.resolvedChordTable[viChord], .toggleCopyMode,
+            "⌃⇧Space (otty Vi Mode entry) resolves to the vi/copy-mode action via the alias",
+        )
+        // The command is discoverable as "Vi Mode", keeping "copy mode" as a search synonym.
+        let binding = WorkspaceBindingRegistry.binding(for: .toggleCopyMode)
+        XCTAssertEqual(binding?.title, "Vi Mode", "the command surfaces as 'Vi Mode' (otty parity)")
+        XCTAssertEqual(binding?.chord, KeyChord(character: "c", [.command, .shift]), "the display chord stays ⌘⇧C")
+        XCTAssertTrue(
+            binding?.keywords?.contains("copy mode") == true,
+            "'copy mode' stays a keyword so existing palette search still finds it",
+        )
+    }
+
+    /// E17 ES-E17-2 / WI-5: the "Vi Mode Key Hints" command is DISCOVERABLE (a registry row in the View group,
+    /// chord-less because `⌘/` is owned by the cheat sheet) and routes to the active pane's hint-bar toggle.
+    /// Revert-to-confirm-fail: before this fix there was no `.toggleViKeyHints` action / row, so the hint bar was
+    /// reachable only via the contextual `⌘/` while already in vi mode (binding(for:) would be `nil`).
+    func testViModeKeyHintsCommandIsDiscoverableAndRoutes() throws {
+        let binding = try XCTUnwrap(
+            WorkspaceBindingRegistry.binding(for: .toggleViKeyHints),
+            "the Vi Mode Key Hints command has a registry row",
+        )
+        XCTAssertEqual(binding.title, "Vi Mode Key Hints")
+        XCTAssertEqual(binding.category, .view)
+        XCTAssertNil(binding.chord, "chord-less — ⌘/ is owned by the cheat sheet (contextual)")
+        // It is surfaced in the palette/cheat-sheet display set (the View group).
+        let viewRows = WorkspaceBindingRegistry.groupedForDisplay.first { $0.category == .view }?.bindings ?? []
+        XCTAssertTrue(
+            viewRows.contains { $0.action == .toggleViKeyHints },
+            "the command appears in the View group's display rows (palette / cheat sheet)",
+        )
+        // (The end-to-end ROUTING of `.toggleViKeyHints` onto a live model's hint bar is pinned by
+        // `ViKeyHintsRoutingTests.testViKeyHintsCommandRoutesToActivePaneHintBar`, which uses a real-model
+        // session — `FakePaneSession` here carries no `TerminalViewModel`.)
+    }
+
     /// The chord table resolves the documented coding-IDE defaults — pins the exact chords the cheat sheet
     /// advertises so a transposed modifier can't slip past the "every action has a row" drift guard.
     func testDefaultChordsMatchTheDocumentedTable() {

@@ -90,9 +90,12 @@ struct ReadOnlyPill: View {
 /// The `🛡 SECURE INPUT` pill (E17 ES-E17-4 / WI-7) — shown in the pane's top-trailing overlay while macOS
 /// Secure Keyboard Entry is active for the pane (the host is at a no-echo password prompt and Auto Secure
 /// Input is on, OR the manual toggle is on) AND the secure-input INDICATOR setting is on. Faithful to
-/// `secure-input.png`: a VIVID-BLUE FILLED pill (the `Otty.Status.info` system-blue, distinct from the
-/// theme accent — the screenshot is the green-accent Paper theme yet the pill is blue) carrying a WHITE
-/// filled lock-shield + the uppercase `SECURE INPUT` label in white.
+/// `secure-input.png`: a VIVID-BLUE FILLED pill in the FIXED security-blue `Otty.Status.secureInput`
+/// (#2D6FE8) — a theme-INDEPENDENT token, NOT the theme-derived `Otty.Status.info`. The pill must stay a
+/// constant royal-blue on every theme so it can never collapse into the theme accent: the shipped default
+/// Monokai Pro seed has `info == accent == cyan`, which would make a theme-derived security badge invisible
+/// against the accent (the screenshot is the green-accent Paper theme yet the pill is the same blue).
+/// Carries a WHITE filled lock-shield + the uppercase `SECURE INPUT` label in white.
 ///
 /// Unlike ``ReadOnlyPill`` there is no `×`: secure input is a SAFETY indicator the user does not dismiss with
 /// a click (the auto path clears when the password prompt ends; the manual path clears via the Edit-menu /
@@ -100,6 +103,12 @@ struct ReadOnlyPill: View {
 /// HIDDEN while read-only is on (no input path can fire there, so the secure-input cue is moot), mirroring
 /// the spec's "those pills hide under read-only".
 struct SecureInputPill: View {
+    /// The pill's FIXED fill — the theme-INDEPENDENT security-blue `Otty.Status.secureInput` (#2D6FE8), NOT
+    /// the theme-derived `Otty.Status.info`. Exposed as a single source so the view and its colour test read
+    /// the SAME token (mirroring `ToastStackView.tint(for:)`): a regression that re-routed the fill back through
+    /// the theme accent fails the test that pins this against the fixed token and asserts it ≠ the Monokai accent.
+    static var fillColor: Color { Otty.Status.secureInput }
+
     var body: some View {
         HStack(spacing: Otty.Metric.space1) {
             // The white lock-shield — `secure-input.png` shows a filled shield-with-lock, the macOS
@@ -116,9 +125,9 @@ struct SecureInputPill: View {
         }
         .padding(.horizontal, Otty.Metric.space2)
         .padding(.vertical, Otty.Metric.space1)
-        // VIVID-BLUE FILLED chip (the security-status blue, NOT the theme accent) — the screenshot's bold
-        // royal-blue badge. A small shadow lifts it off busy terminal output.
-        .background(Otty.Status.info, in: .rect(cornerRadius: Otty.Metric.radiusControl))
+        // VIVID-BLUE FILLED chip in the FIXED security-blue (theme-INDEPENDENT, never the theme accent) — the
+        // screenshot's bold royal-blue badge. A small shadow lifts it off busy terminal output.
+        .background(Self.fillColor, in: .rect(cornerRadius: Otty.Metric.radiusControl))
         .shadow(color: Otty.State.shadow, radius: 4, x: 0, y: 1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Secure input")

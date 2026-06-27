@@ -84,13 +84,39 @@ final class TerminalViewModelViMotionTests: XCTestCase {
         XCTAssertEqual(model.viPendingCount, 9999, "an absurd count is clamped to the ceiling")
     }
 
-    /// `n`/`N` are directional (no magnitude), so the count REPEATS the action — `2n` steps two matches.
+    /// `n`/`N` are directional (no magnitude), so the count REPEATS the action — `2n` steps two matches. With
+    /// NO find bar wired (the headless fallback: ``onRequestFindNext`` nil) `n` drives libghostty's own forward
+    /// nav, so `2n` records two `navigate_search:next` on the surface.
     func testSearchNavRepeatsUnderCount() {
         let (model, rec) = makeModel()
         model.handleCopyModeKey(.char("2", control: false, shift: false))
         model.handleCopyModeKey(.char("n", control: false, shift: false))
         XCTAssertEqual(
             rec.actions, ["navigate_search:next", "navigate_search:next"], "2n steps two matches forward",
+        )
+    }
+
+    /// E17 WI-5 — when a find bar IS wired, vi `n`/`N` route through the DIRECTION-AWARE find-next/prev seam
+    /// (the same hooks ⌘G / ⇧⌘G use → the bar's `next()`/`previous()`, which bias on `searchBackward`), NOT a
+    /// hardcoded forward `navigate_search:next` on the surface. This is what lets a `?`-opened backward search
+    /// make `n` walk up and `N` walk down: the bar owns the concrete direction. The count still repeats the
+    /// step. Revert-to-confirm-fail: the pre-fix handler called `actions.performBindingAction("navigate_search:
+    /// next")` directly, so it NEVER invoked these hooks and DID record on the surface — both `XCTAssertEqual`
+    /// on the counters AND the `rec.actions.isEmpty` assert fail on the un-fixed code.
+    func testViNextPrevRouteThroughDirectionAwareFindHooks() {
+        let (model, rec) = makeModel()
+        var nextCalls = 0
+        var prevCalls = 0
+        model.onRequestFindNext = { nextCalls += 1 }
+        model.onRequestFindPrev = { prevCalls += 1 }
+        model.handleCopyModeKey(.char("2", control: false, shift: false))
+        model.handleCopyModeKey(.char("n", control: false, shift: false)) // 2n → two forward-direction steps
+        model.handleCopyModeKey(.char("N", control: false, shift: true)) // N → one against-direction step
+        XCTAssertEqual(nextCalls, 2, "2n steps the find-next seam twice (the bar owns the concrete direction)")
+        XCTAssertEqual(prevCalls, 1, "N steps the find-prev seam once")
+        XCTAssertTrue(
+            rec.actions.isEmpty,
+            "vi n/N must route through the find bar, never bypass it with a hardcoded navigate_search",
         )
     }
 

@@ -105,6 +105,10 @@ public struct KeyChord: Hashable, Sendable {
         case character(Character)
         case tab
         case `return`
+        /// The Space bar as a NAMED key (keyCode 49), NOT a `.character(" ")` — the macOS normalizer rejects a
+        /// whitespace character, so a Space chord must be a named key (like Tab/Return). Only ever bound with a
+        /// non-shift modifier (otty's Vi Mode entry is ⌃⇧Space); a bare/⇧-only Space stays normal typing.
+        case space
         case leftArrow
         case rightArrow
         case upArrow
@@ -220,6 +224,7 @@ public final class CommandInterpreter {
             case let .character(c): String(c)
             case .tab: "\u{F700}tab"
             case .return: "\u{F700}return"
+            case .space: "\u{F700}space"
             case .leftArrow: "\u{F700}left"
             case .rightArrow: "\u{F700}right"
             case .upArrow: "\u{F700}up"

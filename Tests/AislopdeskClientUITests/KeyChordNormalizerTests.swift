@@ -118,6 +118,26 @@ final class KeyChordNormalizerTests: XCTestCase {
         ))
     }
 
+    /// E17 ES-E17-2 / WI-5: ⌃⇧Space (otty's Vi Mode entry, keyCode 49) maps to the NAMED `.space` chord so the
+    /// dispatcher's `resolvedChordTable` alias resolves it. A bare Space / ⇧-only Space (no ⌃/⌥/⌘) stays normal
+    /// typing → `nil`, so the modified-only mapping never swallows the space bar. Revert-to-fail: before adding
+    /// the keyCode-49 case, ⌃⇧Space fell to the whitespace rejection and yielded `nil` (the Vi Mode chord was
+    /// unreachable on macOS).
+    func testControlShiftSpaceMapsToNamedSpaceChord() {
+        XCTAssertEqual(
+            KeyChordNormalizer.chord(
+                charactersIgnoringModifiers: " ", keyCode: 49, modifierFlags: mods(shift: true, control: true),
+            ),
+            KeyChord(.space, [.shift, .control]),
+            "⌃⇧Space maps to the named .space chord (otty Vi Mode entry)",
+        )
+        // ⇧-only Space (no ⌃/⌥/⌘) is still typing — it must NOT become a chord.
+        XCTAssertNil(
+            KeyChordNormalizer.chord(charactersIgnoringModifiers: " ", keyCode: 49, modifierFlags: mods(shift: true)),
+            "a ⇧-only Space is normal typing, not a chord",
+        )
+    }
+
     /// `literalBytes(for:)` maps a Ctrl-letter prefix to its C0 byte (tmux send-prefix): ⌃A → 0x01, ⌃B → 0x02.
     func testLiteralBytesForControlLetterPrefix() {
         XCTAssertEqual(KeyChordNormalizer.literalBytes(for: KeyChord(character: "a", [.control])), [0x01])

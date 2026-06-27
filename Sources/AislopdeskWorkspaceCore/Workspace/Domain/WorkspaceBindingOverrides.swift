@@ -167,6 +167,7 @@ public extension KeyChord {
         case let .character(c): String(c) // already lowercased by KeyChord.init
         case .tab: "tab"
         case .return: "return"
+        case .space: "space"
         case .leftArrow: "left"
         case .rightArrow: "right"
         case .upArrow: "up"
@@ -203,6 +204,7 @@ public extension KeybindingPreferences.KeyChord {
         case "return",
              "enter": return .return
         case "tab": return .tab
+        case "space": return .space
         case "left",
              "leftarrow": return .leftArrow
         case "right",

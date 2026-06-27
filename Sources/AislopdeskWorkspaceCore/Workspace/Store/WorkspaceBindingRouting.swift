@@ -141,6 +141,10 @@ public extension WorkspaceBindingRegistry {
         case .globalSearch: toggles.globalSearch?()
         // Copy Mode (P5b): arm modal keyboard scrollback navigation over the active terminal pane.
         case .toggleCopyMode: store.requestCopyModeInActivePane()
+        // Vi Mode Key Hints (E17 ES-E17-2 / WI-5): the DISCOVERABLE palette / menu command toggles the active
+        // pane's vi key-hint bar directly (the same seam the contextual `⌘/` fires). A graceful no-op for an
+        // empty / non-terminal pane; outside vi mode the bar stays gated off.
+        case .toggleViKeyHints: store.toggleViKeyHintsInActivePane()
         // Read-Only (E17 ES-E17-1): toggle the active pane's input gate via the store (so the pill ×, the
         // View-menu item, and the command-palette term all converge on the one `paneReadOnly` source of
         // truth). A graceful no-op for an empty / non-terminal shell.
@@ -302,6 +306,9 @@ public extension WorkspaceBindingRegistry {
         // Copy Mode (P5b): the canvas path resolves the active pane via canvas focus, so the same store hook
         // arms copy-mode there too (a no-op for a non-terminal active pane / empty shell).
         case .toggleCopyMode: store.requestCopyModeInActivePane()
+        // Vi Mode Key Hints (E17 ES-E17-2 / WI-5): the canvas path uses the SAME store seam as the tree path to
+        // toggle the active pane's vi key-hint bar (a no-op for a non-terminal / empty active pane).
+        case .toggleViKeyHints: store.toggleViKeyHintsInActivePane()
         // Read-Only (E17 ES-E17-1): the canvas path resolves the active pane via canvas focus, so the same
         // store seam toggles the input gate there too (a no-op for a non-terminal active pane / empty shell).
         case .toggleReadOnly: store.toggleReadOnlyInActivePane()

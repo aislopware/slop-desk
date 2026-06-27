@@ -232,6 +232,10 @@ struct TerminalLeafView: View {
         let bar = findBar
         bar.attach(model)
         model.onRequestFind = { bar.open() }
+        // E17 ES-E17-2 / WI-5: copy-mode `?` opens the SAME bar biased BACKWARD so its `n`/`N` step against the
+        // forward sense (vim parity). Without this the `?` handler falls back to `onRequestFind` (forward) and
+        // the backward bias never lands.
+        model.onRequestFindBackward = { bar.open(backward: true) }
         model.onRequestFindNext = { bar.next() }
         model.onRequestFindPrev = { bar.previous() }
     }
@@ -241,6 +245,7 @@ struct TerminalLeafView: View {
         findBar.attach(nil)
         guard let model = live?.terminalModel else { return }
         model.onRequestFind = nil
+        model.onRequestFindBackward = nil
         model.onRequestFindNext = nil
         model.onRequestFindPrev = nil
     }

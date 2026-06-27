@@ -96,6 +96,47 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
+    /// E17 ES-E17-2 / WI-5: a copy-mode `?` opens the bar in BACKWARD direction (``open(backward:)``), and the
+    /// bar's vi `n`/`N` then step RELATIVE to that direction — `n` (``next()``) walks AGAINST the natural sense
+    /// (`navigate_search:previous`, up the buffer) and `N` (``previous()``) WITH it (`navigate_search:next`,
+    /// down). Vim parity: `n` repeats a search in its original direction, `N` opposite.
+    ///
+    /// Revert-to-confirm-fail: the pre-fix `next()`/`previous()` IGNORED direction — `next()` always fired
+    /// `navigate_search:next` and `previous()` always `navigate_search:previous` — so after a BACKWARD open the
+    /// first two assertions below (next ⇒ previous, prev ⇒ next) fail (and `open(backward:)` didn't even exist).
+    func testBackwardSearchInvertsNextAndPrevDirection() {
+        withBar(lines: ["docs", "docs", "docs"]) { bar, surface in
+            bar.open(backward: true) // copy-mode `?` bias
+            XCTAssertTrue(bar.searchBackward, "? opens the bar searching BACKWARD")
+            bar.setQuery("docs")
+
+            surface.resetActions() // drop the open/query priming so we assert only the n/N nav window
+            bar.next() // vi `n` under a backward search → step UP the buffer
+            bar.previous() // vi `N` under a backward search → step DOWN the buffer
+            XCTAssertEqual(
+                surface.actions,
+                ["navigate_search:previous", "navigate_search:next"],
+                "backward search inverts n/N: n steps backward (previous), N steps forward (next)",
+            )
+        }
+    }
+
+    /// Companion guard: a FORWARD search (the ⌘F / `/` default, `searchBackward == false`) keeps the natural
+    /// sense — `next()` (vi `n`) steps `navigate_search:next` and `previous()` (vi `N`) `navigate_search:previous`
+    /// — so the direction fix never regresses the common forward path.
+    func testForwardSearchKeepsNaturalNextPrevDirection() {
+        withBar(lines: ["docs", "docs", "docs"]) { bar, surface in
+            bar.open() // ⌘F / `/` — forward by default
+            XCTAssertFalse(bar.searchBackward, "⌘F / `/` opens the bar searching FORWARD")
+            bar.setQuery("docs")
+
+            surface.resetActions()
+            bar.next()
+            bar.previous()
+            XCTAssertEqual(surface.actions, ["navigate_search:next", "navigate_search:previous"])
+        }
+    }
+
     /// ES-E5-3 (find-next-opens-find): ⌘G with the bar closed OPENS it (faithful otty behaviour).
     func testNextOpensBarWhenClosed() {
         withBar(lines: ["docs"]) { bar, _ in

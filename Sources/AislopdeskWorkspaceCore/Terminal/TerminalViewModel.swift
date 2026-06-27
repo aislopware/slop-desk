@@ -550,11 +550,11 @@ public final class TerminalViewModel {
             (onRequestFindBackward ?? onRequestFind)?() // backward bias (falls back to the same bar)
         case .char("n", control: false, shift: false):
             let count = copyModeState.consumeCount()
-            for _ in 0..<count { actions?.performBindingAction("navigate_search:next") }
+            for _ in 0..<count { stepFindInSearchDirection(actions, reverse: false) }
         case .char("n", control: false, shift: true),
              .char("N", control: false, _):
             let count = copyModeState.consumeCount()
-            for _ in 0..<count { actions?.performBindingAction("navigate_search:previous") }
+            for _ in 0..<count { stepFindInSearchDirection(actions, reverse: true) }
         // Yank: copies the mouse-made selection / visible scrollback, then EXITS vi mode (spec).
         case .char("y", control: false, _),
              .enter:
@@ -566,6 +566,22 @@ public final class TerminalViewModel {
             exitCopyMode() // resets all vi state (count/visual/hints) via ``resetViState()``
         default:
             break // swallow every other key (consumed while in mode — nothing reaches the shell)
+        }
+    }
+
+    /// vi `n` / `N` — step the find IN (`reverse: false`) or AGAINST (`reverse: true`) the find bar's current
+    /// SEARCH DIRECTION (E17 ES-E17-2 / WI-5). Routes through the SAME direction-aware seam as ⌘G / ⇧⌘G
+    /// (``onRequestFindNext`` / ``onRequestFindPrev`` → the find bar's `next()` / `previous()`, which bias on
+    /// `searchBackward`), so after a copy-mode `?foo` the bar — not this handler — owns the concrete direction:
+    /// `n` walks UP the buffer and `N` walks down (vim parity). It must NOT hardcode `navigate_search:next`,
+    /// which always steps forward regardless of how the search was opened. Falls back to libghostty's own
+    /// forward/back nav (the pre-E17 behavior) ONLY when no find bar is wired (headless / preview), where there
+    /// is no search direction to honor anyway.
+    private func stepFindInSearchDirection(_ actions: TerminalSurfaceActions?, reverse: Bool) {
+        if let hook = reverse ? onRequestFindPrev : onRequestFindNext {
+            hook()
+        } else {
+            actions?.performBindingAction(reverse ? "navigate_search:previous" : "navigate_search:next")
         }
     }
 

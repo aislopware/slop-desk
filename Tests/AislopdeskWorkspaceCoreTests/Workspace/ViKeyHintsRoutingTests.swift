@@ -63,6 +63,22 @@ final class ViKeyHintsRoutingTests: XCTestCase {
         XCTAssertEqual(cheatSheetToggles, 0, "and does NOT open the global keyboard cheat sheet")
     }
 
+    /// E17 ES-E17-2 / WI-5: the DISCOVERABLE "Vi Mode Key Hints" command (`.toggleViKeyHints`, palette / menu —
+    /// distinct from the contextual `⌘/`) routes to the active pane's hint-bar toggle and is its own inverse, so
+    /// the bar is reachable WITHOUT first being in vi mode via the contextual chord. Revert-to-fail: before the
+    /// action / route existed this case won't compile (and there was no palette-discoverable hint-bar command).
+    func testViKeyHintsCommandRoutesToActivePaneHintBar() throws {
+        let store = makeRecordingStore()
+        let model = try XCTUnwrap(activeModel(store))
+        XCTAssertFalse(model.showViKeyHints, "the hint bar is off by default")
+
+        WorkspaceBindingRegistry.route(.toggleViKeyHints, to: store)
+        XCTAssertTrue(model.showViKeyHints, "the Vi Mode Key Hints command toggles the active pane's hint bar on")
+
+        WorkspaceBindingRegistry.route(.toggleViKeyHints, to: store)
+        XCTAssertFalse(model.showViKeyHints, "and the command is its own inverse")
+    }
+
     /// Out of vi mode, routing `.cheatSheet` opens the global cheat sheet (the view-owned toggle) and leaves the
     /// vi key-hint bar untouched — the contextual branch only fires inside copy-mode.
     func testCheatSheetRoutesToGlobalSheetOutsideCopyMode() throws {

@@ -66,6 +66,12 @@ enum KeyChordNormalizer {
         case 121: return KeyChord(.pageDown, mods)
         case 115: return KeyChord(.home, mods)
         case 119: return KeyChord(.end, mods)
+        // Space (keyCode 49) maps to the NAMED `.space` chord ONLY when a non-shift modifier (⌃/⌥/⌘) is held —
+        // otty's Vi Mode entry is ⌃⇧Space. A BARE or ⇧-only Space is normal typing and must reach the terminal,
+        // so it falls through to the whitespace rejection below → `nil` (preserving the bare-space passthrough
+        // boundary the dispatcher relies on; a shifted-but-modifierless Space still types a space).
+        case 49 where modifierFlags.control || modifierFlags.option || modifierFlags.command:
+            return KeyChord(.space, mods)
         default: break
         }
 

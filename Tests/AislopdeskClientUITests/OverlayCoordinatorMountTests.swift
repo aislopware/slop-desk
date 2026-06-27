@@ -494,17 +494,17 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         let rows = WorkspaceBindingRegistry.groupedForDisplay.flatMap(\.bindings)
 
         // The chord-less rows in the display table are EXACTLY the representative + Rename Tab + Close Tab +
-        // the four E9 Details-tab jump commands + the two E17 view toggles (all palette/menu-only, no key).
+        // the four E9 Details-tab jump commands + the three E17 view toggles (all palette/menu-only, no key).
         let chordLessIDs = Set(rows.filter { $0.chord == nil }.map(\.id))
         XCTAssertEqual(
             chordLessIDs,
             [
                 "tab.selectN", "pane.rename", "tab.close",
                 "view.detailsInfo", "view.detailsOutline", "view.detailsGit", "view.detailsFiles",
-                "view.readOnly", "view.secureKeyboardEntry",
+                "view.readOnly", "view.secureKeyboardEntry", "view.viKeyHints",
             ],
             "the no-chip rows: collapsed select-tab representative + chord-less Rename/Close Tab + the four "
-                + "Details-tab jumps + the two E17 Read Only / Secure Keyboard Entry view toggles",
+                + "Details-tab jumps + the three E17 Read Only / Secure Keyboard Entry / Vi Key Hints view toggles",
         )
 
         // Every chord-bearing row resolves a non-empty glyph (the chips) — no drift between display + chord.

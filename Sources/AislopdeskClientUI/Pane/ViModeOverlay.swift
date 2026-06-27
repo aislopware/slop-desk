@@ -18,9 +18,11 @@
 //
 // HONESTY (the "nothing is a dead key" rule + the documented libghostty ceiling): the ``ViKeyHintBar`` lists
 // ONLY the keys ``TerminalViewModel/handleCopyModeKey(_:)`` actually wires in aislopdesk's copy-mode — a faithful
-// SUBSET of full vi. Column / word / screen motions (`h`/`l`, `w`/`b`/`e`, `0`/`$`/`^`, `H`/`M`/`L`) and Hint
-// Mode (`f`) are NOT wired (the pinned fork exposes no programmatic cursor-move / set-selection action — see
-// DECISIONS.md E17), so they are deliberately omitted rather than advertised as dead keys.
+// SUBSET of full vi. Column / word / screen motions (`h`/`l`, `w`/`b`/`e`, `0`/`$`/`^`, `H`/`M`/`L`), Hint
+// Mode (`f`) AND the visual anchor-swap (`o`) are NOT wired — the pinned fork exposes no programmatic
+// cursor-move / set-selection / swap-ends action (Binding.zig has `adjust_selection` + `select_all` but no
+// swap-ends; see DECISIONS.md E17, which pins `o` as a documented NO-OP) — so they are deliberately omitted
+// rather than advertised as dead keys.
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -138,7 +140,7 @@ struct ViKeyHintBar: View {
         var id: String { keys.joined(separator: " ") + "|" + label }
     }
 
-    private let motion: [Hint] = [
+    private static let motion: [Hint] = [
         Hint(keys: ["j", "k"], label: "Scroll line"),
         Hint(keys: ["⌃d", "⌃u"], label: "Half page"),
         Hint(keys: ["g", "G"], label: "Top / bottom"),
@@ -146,15 +148,17 @@ struct ViKeyHintBar: View {
         Hint(keys: ["1", "…", "9"], label: "Repeat count"),
     ]
 
-    private let selection: [Hint] = [
+    // `o` (swap selection ends) is DELIBERATELY ABSENT: it is a documented NO-OP (the pinned libghostty fork
+    // exposes no swap-ends / set-selection action — see the file header + DECISIONS.md E17), so listing it would
+    // advertise a dead key, exactly the omission this bar makes for the other unwired vi motions (h/l/w/b/e/…).
+    private static let selection: [Hint] = [
         Hint(keys: ["v"], label: "Visual"),
         Hint(keys: ["V"], label: "Visual line"),
         Hint(keys: ["⌃v"], label: "Visual block"),
-        Hint(keys: ["o"], label: "Swap ends"),
         Hint(keys: ["y", "↩"], label: "Yank + exit"),
     ]
 
-    private let search: [Hint] = [
+    private static let search: [Hint] = [
         Hint(keys: ["/"], label: "Find forward"),
         Hint(keys: ["?"], label: "Find backward"),
         Hint(keys: ["n", "N"], label: "Next / prev match"),
@@ -162,11 +166,18 @@ struct ViKeyHintBar: View {
         Hint(keys: ["⌘/"], label: "Toggle this bar"),
     ]
 
+    /// Every key chip the bar advertises, flattened across all columns (separator tokens like `…` excluded) —
+    /// the honesty surface a test reads to prove the bar lists ONLY wired keys (e.g. never the dead `o`). The
+    /// view body renders from the SAME static arrays, so this can never drift from what is shown.
+    static var advertisedKeys: [String] {
+        (motion + selection + search).flatMap(\.keys).filter { $0 != "…" }
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: Otty.Metric.space4) {
-            column("MOTION", motion)
-            column("SELECT", selection)
-            column("SEARCH", search)
+            column("MOTION", Self.motion)
+            column("SELECT", Self.selection)
+            column("SEARCH", Self.search)
         }
         .padding(.horizontal, Otty.Metric.space3)
         .padding(.vertical, Otty.Metric.space2)
