@@ -2834,6 +2834,17 @@ public final class WorkspaceStore {
         return bounds
     }
 
+    /// The active-tab floating layer as `(id, persisted frame)` pairs — the THIN reader the floating
+    /// renderer consumes. ``SplitContainer`` passes this straight into
+    /// ``SplitTreeRenderModel/layout(for:in:floating:minLeaf:dividerThickness:)``'s `floating:` arg, which
+    /// clamps each frame into the reported bounds and emits the `floatingLeaves` the ``FloatingPaneCard``
+    /// layer draws. Order = `tab.floatingPanes` (z-order, last = topmost); a `nil` frame (never placed) lets
+    /// the render model center a default. Mirrors ``embedFloating``'s spec reads — pure, no reconcile/mutation,
+    /// so the view stays a thin renderer (E21 WI-6).
+    public func floatingPanePairs(for tab: Tab) -> [(id: PaneID, frame: CGRect?)] {
+        tab.floatingPanes.map { (id: $0, frame: tree.spec(for: $0)?.floatingFrame) }
+    }
+
     /// Toggles the active tab's active pane between tiled and floating (the ⌥⌘F "Float Pane" entry; E5
     /// relocated it off ⌘⇧F to free that chord for Global Search). A
     /// no-op when there is no active pane, or when it is its tab's only tiled leaf (floating it would empty

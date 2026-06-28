@@ -272,7 +272,12 @@ type_body_length:
   # dict (`@Observable` synthesises on it, so it can't live in WorkspaceStore+Progress.swift — only the
   # handleProgress/progress(for:)/rollup logic does) plus its reconcile-prune + the `onProgressUpdate` mirror
   # wire in `wireMaterializedLeaf`. Single stored-property + wire-closure cluster, not bloat.
-  warning: 1920
+  # 1920 → 1930 (2026-06-28): E21 WI-6 — WorkspaceStore gains the pure reader `floatingPanePairs(for:)`,
+  # the THIN `(id, persisted frame)` pairing the floating renderer (`SplitContainer` → `FloatingPaneCard`)
+  # consumes. It sits with the rest of the floating cluster (`spawn·move·resize·embedFloating`, which set
+  # the `private(set) tree` and so already live in the main body); keeping the reader next to its mutators
+  # keeps the cluster cohesive. Single-helper growth, not bloat.
+  warning: 1930
   error: 2700
 
 # Error backstops tightened toward the warnings (2026-06-24): under `--strict` the WARNING is the binding

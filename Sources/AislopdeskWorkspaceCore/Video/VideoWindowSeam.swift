@@ -69,6 +69,13 @@ public struct RemotePaneContext {
     /// Whether this pane is the workspace's active/focused pane. The video view forwards pointer/scroll
     /// to the remote window ONLY when active; a non-active pane routes scroll to ``onCanvasScroll``.
     public var isActive: Bool
+    /// READ-ONLY INPUT GATE (E21 WI-3). `false` ⇒ a read-only `.remoteGUI` pane: the app-target video client
+    /// must forward NEITHER pointer/scroll NOR keycodes to the host while `!inputEnabled` — it gates every
+    /// forward on `isActive && inputEnabled` (a click may still ACTIVATE the workspace pane, but it is not
+    /// relayed to the remote window, the host window is not raised, and the paste-as-keystrokes sink is
+    /// cleared). Wire-compatible silence: read-only is enforced purely by NOT forwarding input — no
+    /// VideoControl change, no golden touch. Defaults `true` (a normal, writable pane).
+    public var inputEnabled: Bool
     /// Make this pane the workspace's active pane — called on click (mouseDown). For a GUI pane the host
     /// window is ALSO raised by the pane's own `focusWindow`; this sets the *workspace* focus.
     public var onActivate: () -> Void
@@ -89,21 +96,51 @@ public struct RemotePaneContext {
 
     public init(
         isActive: Bool = true,
+        inputEnabled: Bool = true,
         onActivate: @escaping () -> Void = {},
         onCanvasScroll: @escaping (CGSize) -> Void = { _ in },
         onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)? = nil,
         onKeyInjectorReady: ((((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?) -> Void)? = nil,
     ) {
         self.isActive = isActive
+        self.inputEnabled = inputEnabled
         self.onActivate = onActivate
         self.onCanvasScroll = onCanvasScroll
         self.onStreamNativeSize = onStreamNativeSize
         self.onKeyInjectorReady = onKeyInjectorReady
     }
 
-    /// The standalone default (no canvas around it): always active, no-op callbacks — for previews / sheet
-    /// hosts that render a `RemoteWindowPanel` directly.
+    /// The standalone default (no canvas around it): always active, INPUT-ENABLED, no-op callbacks — for
+    /// previews / sheet hosts that render a `RemoteWindowPanel` directly.
     public static var standalone: Self { Self() }
+
+    /// **E21 WI-3 — the read-only-gated video-leaf context derivation (the pure seam the leaf and its tests
+    /// share).** Maps a pane's `readOnly` policy onto the two input gates a `.remoteGUI` leaf needs, so the
+    /// SwiftUI `GuiLeafView` stays a thin renderer and the policy is unit-testable headlessly (no Metal/VT):
+    ///   • `inputEnabled = !readOnly` — the app-target client gates pointer/scroll/keycode forwarding on
+    ///     `isActive && inputEnabled`, so a read-only pane relays NOTHING to the host (wire-compatible silence).
+    ///   • `onKeyInjectorReady` clears the paste-as-keystrokes sink while read-only — it hands `bindKeyInjector`
+    ///     a `nil` sink (instead of the live one the video view publishes), so the model's
+    ///     ``RemoteWindowModel/canPasteKeystrokes`` is `false` and ``RemoteWindowModel/pasteAsKeystrokes(_:)``
+    ///     is inert. NO model→store coupling: the read-only state is resolved at the seam, not threaded into
+    ///     the model. `bindKeyInjector` is the leaf's `{ model?.keyInjector = $0 }` write.
+    public static func videoLeaf(
+        isActive: Bool,
+        readOnly: Bool,
+        onActivate: @escaping () -> Void = {},
+        onCanvasScroll: @escaping (CGSize) -> Void = { _ in },
+        onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)? = nil,
+        bindKeyInjector: @escaping (((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?) -> Void,
+    ) -> Self {
+        Self(
+            isActive: isActive,
+            inputEnabled: !readOnly,
+            onActivate: onActivate,
+            onCanvasScroll: onCanvasScroll,
+            onStreamNativeSize: onStreamNativeSize,
+            onKeyInjectorReady: { sink in bindKeyInjector(readOnly ? nil : sink) },
+        )
+    }
 }
 
 /// Injects the production remote-GUI-window video view when the app target provides

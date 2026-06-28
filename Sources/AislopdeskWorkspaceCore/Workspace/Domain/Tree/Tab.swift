@@ -13,8 +13,13 @@ import Foundation
 /// - ``zoomedPane`` — the **out-of-tree** zoom (WezTerm `TabInner.zoomed`): render-only, the tree is
 ///   untouched, all siblings stay mounted at `opacity 0` (the proven no-teardown trick). `nil` = normal
 ///   tiled view.
-/// - ``floatingPanes`` — SCHEMA-RESERVED overlay layer (docs/41 §7.3 / docs/42 Decisions.9); always `[]`
-///   in the MVP so reserving it now avoids a later migration.
+/// - ``floatingPanes`` — the overlay layer (docs/41 §7.3 / docs/42 Decisions.9). **LIVE since E21**: a pane
+///   id here is rendered as an in-app floating card stacked over the tiled tree (`FloatingPaneCard`,
+///   z-ordered last = topmost). The set is mutated by `WorkspaceTreeOps.toggleFloating` /
+///   `WorkspaceTreeOps.spawnFloating` (and `toggleFloating(embedAnchor:)` returns a card to the tile); its
+///   geometry rides each pane's ``PaneSpec/floatingFrame``. Kind-generic — a terminal, a local web pane, or a
+///   `.remoteGUI` video pane all float. Was `[]` through the MVP (schema-reserved since docs/42 to avoid a
+///   later migration); E21 made it the live float layer rather than adding a new field.
 ///
 /// A pane's ``PaneSpec`` is **not** stored here — the split tree holds only identity/geometry; specs live
 /// in the owning ``Session/specs`` side table (so a rename never churns a tree diff).
@@ -28,7 +33,9 @@ public struct Tab: Identifiable, Codable, Sendable, Equatable {
     public var activePane: PaneID?
     /// Out-of-tree zoom (render-only). `nil` = normal tiled view.
     public var zoomedPane: PaneID?
-    /// SCHEMA-RESERVED overlay layer (docs/42 Decisions.9). Always `[]` in the MVP.
+    /// Overlay layer (docs/42 Decisions.9). LIVE since E21: each id renders as a floating `FloatingPaneCard`
+    /// over the tiled tree; mutated by `WorkspaceTreeOps.toggleFloating`/`spawnFloating`. `[]` = no floating
+    /// panes (the steady state).
     public var floatingPanes: [PaneID]
 
     public init(
@@ -51,8 +58,9 @@ public struct Tab: Identifiable, Codable, Sendable, Equatable {
 // MARK: - Pure queries
 
 public extension Tab {
-    /// Every ``PaneID`` in this tab's tree, in pre-order DFS (the floating layer appended after the tree;
-    /// empty in the MVP). Drives the session/workspace `allPaneIDs()` and the specs == leafIDs invariant.
+    /// Every ``PaneID`` in this tab's tree, in pre-order DFS (the floating layer appended after the tree).
+    /// Drives the session/workspace `allPaneIDs()` and the specs == leafIDs invariant — so a floated pane
+    /// stays a first-class member (its spec is still required, it is still reconciled into the registry).
     func allPaneIDs() -> [PaneID] {
         root.allPaneIDs() + floatingPanes
     }

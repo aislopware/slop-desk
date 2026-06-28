@@ -41,7 +41,12 @@ struct SplitContainer: View {
     @ViewBuilder
     private func content(in bounds: CGRect) -> some View {
         if let tab {
-            let layout = SplitTreeRenderModel.layout(for: tab, in: bounds)
+            // E21 WI-6: feed the FLOATING overlay layer. The store's `floatingPanePairs(for:)` reads
+            // `tab.floatingPanes` × each spec's persisted `floatingFrame`; the render model clamps them into
+            // `bounds` and emits `floatingLeaves` (z-ordered, last = topmost), which `floatingLayer` draws as
+            // `FloatingPaneCard`s topmost in this ZStack. `floatingLeaves` is empty for a zoomed / float-less
+            // tab, so the non-floating path is byte-identical to before.
+            let layout = SplitTreeRenderModel.layout(for: tab, in: bounds, floating: store.floatingPanePairs(for: tab))
             let frames = Dictionary(layout.leaves.map { ($0.id, $0.rect) }, uniquingKeysWith: { a, _ in a })
             ZStack(alignment: .topLeading) {
                 ForEach(layout.leaves, id: \.id) { leaf in
@@ -62,11 +67,36 @@ struct SplitContainer: View {
                 }
                 // otty grab-handles + the live drag overlay (extracted to keep this ZStack type-checkable).
                 moveLayer(leaves: layout.leaves, frames: frames, container: bounds)
+                // FLOATING cards last → topmost over the tiled panes, dividers, and the move overlay.
+                floatingLayer(layout.floatingLeaves, container: bounds)
             }
             .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
             .coordinateSpace(name: PaneMoveSpace.name)
+            // Report the TRUE float viewport (the full container bounds) so the store's commit-clamp shares
+            // one coordinate space with the render model's place-clamp (no edge discrepancy). View-only — never
+            // reconciles. Skipped on the static snapshot path.
+            .onAppear { if !staticMirror { store.updateFloatingBounds(bounds) } }
+            .onChange(of: bounds) { _, newBounds in if !staticMirror { store.updateFloatingBounds(newBounds) } }
         } else {
             Color.clear
+        }
+    }
+
+    /// The floating overlay layer (E21 WI-6): one ``FloatingPaneCard`` per floating leaf, in z-order (the
+    /// render model emits them last = topmost). Extracted to keep the compositor ZStack type-checkable, like
+    /// ``moveLayer(leaves:frames:container:)``. Each card is keyed `.id(PaneID)` so its hosted surface is never
+    /// reconstructed across panes; the card itself bumps its z-order while a grab/resize drag is in flight.
+    private func floatingLayer(_ floats: [SplitTreeRenderModel.PlacedLeaf], container: CGRect) -> some View {
+        ForEach(floats, id: \.id) { leaf in
+            FloatingPaneCard(
+                store: store,
+                paneID: leaf.id,
+                frame: leaf.rect,
+                isFocused: leaf.id == focusedPane,
+                containerBounds: container,
+                staticMirror: staticMirror,
+            )
+            .id(leaf.id)
         }
     }
 

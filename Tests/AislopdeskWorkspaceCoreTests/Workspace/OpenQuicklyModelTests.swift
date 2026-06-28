@@ -500,4 +500,117 @@ final class OpenQuicklyModelTests: XCTestCase {
             "no title anywhere ⇒ the generic 'Tab' label, never a blank row",
         )
     }
+
+    // MARK: - E21 WI-2: remote-window / system-dialog differentiation in the Opened list
+
+    /// A backing terminal pane (the default `paneKind`) keeps the GENERIC pane chrome — the split glyph, the
+    /// "Pane" badge, and a cwd subtitle. Pins the un-changed path so the WI-2 differentiation can be added
+    /// without regressing the common terminal row. Revert-to-confirm-fail: a model that always emitted the
+    /// window glyph/badge would fail here.
+    func testPaneItemBackingTerminalKeepsGenericPaneChrome() {
+        let pid = PaneID(raw: UUID())
+        let row = OpenQuicklyModel.paneItem(paneID: pid, title: "zsh", cwd: "/work")
+        XCTAssertEqual(row.kind, .pane)
+        XCTAssertEqual(row.paneKind, .terminal, "the default backing kind is a terminal")
+        XCTAssertEqual(row.badge, "Pane", "a terminal pane is a generic 'Pane', not a window")
+        XCTAssertEqual(row.symbol, "rectangle.split.2x1", "a terminal pane keeps the split glyph")
+        XCTAssertEqual(row.subtitle, "/work", "a terminal pane's subtitle is its cwd")
+    }
+
+    /// A `.remoteGUI` backing pane reads as a WINDOW: the window glyph (`display`), a "Window" badge, and —
+    /// because a video pane has no shell cwd — the host/window title stands in as the subtitle. The
+    /// `OpenQuicklyKind` stays `.pane` and the `Act` stays the kind-generic `.focusPane`, so `↩` focuses the
+    /// pane exactly as a terminal row does. RED on un-fixed code (no `paneKind` thread ⇒ "Pane"/split/nil).
+    func testPaneItemRemoteGUIReadsAsAWindow() {
+        let pid = PaneID(raw: UUID())
+        let row = OpenQuicklyModel.paneItem(paneID: pid, title: "Safari — GitHub", cwd: nil, paneKind: .remoteGUI)
+        XCTAssertEqual(row.kind, .pane, "the row kind stays `.pane` so the Act is the kind-generic focus")
+        XCTAssertEqual(row.paneKind, .remoteGUI)
+        XCTAssertEqual(row.badge, "Window", "a `.remoteGUI` pane is badged a 'Window', not a 'Pane'")
+        XCTAssertEqual(row.symbol, "display", "a remote window uses the window glyph, not the split glyph")
+        XCTAssertEqual(row.subtitle, "Safari — GitHub", "no cwd ⇒ the host/window title is the subtitle")
+        if case let .focusPane(id) = row.act {
+            XCTAssertEqual(id, pid, "↩ on a remote-window row still focuses that exact pane")
+        } else {
+            XCTFail("a remote-window Opened row focuses its pane")
+        }
+    }
+
+    /// The auto `.systemDialog` video pane is differentiated too — the same window glyph, but a "Dialog" badge
+    /// (it streams a host SYSTEM prompt, not a user-picked window). Total mapping: both video kinds are windows.
+    func testPaneItemSystemDialogReadsAsADialog() {
+        let pid = PaneID(raw: UUID())
+        let row = OpenQuicklyModel.paneItem(paneID: pid, title: "Authenticate", cwd: nil, paneKind: .systemDialog)
+        XCTAssertEqual(row.paneKind, .systemDialog)
+        XCTAssertEqual(row.badge, "Dialog", "a `.systemDialog` pane is badged a 'Dialog'")
+        XCTAssertEqual(row.symbol, "display", "a dialog window uses the window glyph")
+        XCTAssertEqual(row.subtitle, "Authenticate", "no cwd ⇒ the dialog title is the subtitle")
+    }
+
+    /// A real cwd always wins over the host/window-title fallback (defensive — a video pane normally reports no
+    /// cwd, but the subtitle must never silently drop a working directory if one is present).
+    func testPaneItemVideoCwdWinsOverWindowSubtitle() {
+        let pid = PaneID(raw: UUID())
+        let row = OpenQuicklyModel.paneItem(paneID: pid, title: "Safari", cwd: "/tmp/x", paneKind: .remoteGUI)
+        XCTAssertEqual(row.subtitle, "/tmp/x", "a present cwd takes precedence over the window-title fallback")
+    }
+
+    /// Only the VIDEO kinds are windows — a non-video, non-terminal pane (`.web`/`.chooser`) keeps the generic
+    /// pane glyph/badge and, with no cwd, carries NO subtitle (no window-title fallback). Pins that the
+    /// differentiation is keyed on ``PaneKind/isVideo``, not "anything that is not a terminal".
+    func testPaneItemNonVideoKindsKeepGenericPaneChrome() {
+        let web = OpenQuicklyModel.paneItem(
+            paneID: PaneID(raw: UUID()),
+            title: "example.com",
+            cwd: nil,
+            paneKind: .web,
+        )
+        XCTAssertEqual(web.badge, "Pane", "a web pane is not a window")
+        XCTAssertEqual(web.symbol, "rectangle.split.2x1", "a web pane keeps the generic pane glyph")
+        XCTAssertNil(web.subtitle, "a non-video pane with no cwd carries no subtitle (no window-title fallback)")
+
+        let chooser = OpenQuicklyModel.paneItem(
+            paneID: PaneID(raw: UUID()),
+            title: "Choose…",
+            cwd: nil,
+            paneKind: .chooser,
+        )
+        XCTAssertEqual(chooser.badge, "Pane")
+        XCTAssertNil(chooser.subtitle)
+    }
+
+    /// `openedItems` threads `spec.kind` so a mixed tree yields a differentiated row per pane: the terminal row
+    /// keeps its generic chrome + cwd; the `.remoteGUI` row reads as a window (glyph + "Window" badge + a
+    /// host/window subtitle). End-to-end pin of the WI-2 thread. Revert-to-confirm-fail: dropping the `paneKind:`
+    /// argument in `openedItems` reverts the video row to "Pane"/split/nil and fails the window assertions.
+    func testOpenedItemsDifferentiatesVideoPanesFromTerminalPanes() {
+        let termID = PaneID(raw: UUID())
+        let videoID = PaneID(raw: UUID())
+        var termSpec = PaneSpec(kind: .terminal, title: "zsh")
+        termSpec.lastKnownCwd = "/work/proj"
+        let videoSpec = PaneSpec(
+            kind: .remoteGUI,
+            title: "Safari — GitHub",
+            video: VideoEndpoint(windowID: 5, title: "Safari — GitHub", appName: "Safari"),
+        )
+        let termTab = Tab(title: "T", root: .leaf(termID), activePane: termID)
+        let videoTab = Tab(title: "V", root: .leaf(videoID), activePane: videoID)
+        let session = Session(name: "s", tabs: [termTab, videoTab], specs: [termID: termSpec, videoID: videoSpec])
+        let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
+
+        let items = OpenQuicklyModel.openedItems(from: tree)
+        XCTAssertEqual(items.count, 2, "one Opened row per live pane — the terminal AND the remote window")
+        let termRow = items.first { $0.act == .focusPane(termID) }
+        let videoRow = items.first { $0.act == .focusPane(videoID) }
+
+        XCTAssertEqual(termRow?.badge, "Pane", "the terminal row keeps the generic pane badge")
+        XCTAssertEqual(termRow?.symbol, "rectangle.split.2x1", "the terminal row keeps the split glyph")
+        XCTAssertEqual(termRow?.subtitle, "/work/proj", "the terminal row's subtitle is its cwd")
+
+        XCTAssertEqual(videoRow?.kind, .pane, "the video row's OpenQuicklyKind stays `.pane` (kind-generic Act)")
+        XCTAssertEqual(videoRow?.paneKind, .remoteGUI, "openedItems threaded the spec's `.remoteGUI` kind")
+        XCTAssertEqual(videoRow?.badge, "Window", "the `.remoteGUI` row is badged a 'Window'")
+        XCTAssertEqual(videoRow?.symbol, "display", "the `.remoteGUI` row uses the window glyph")
+        XCTAssertEqual(videoRow?.subtitle, "Safari — GitHub", "no cwd ⇒ the host/window title is the subtitle")
+    }
 }

@@ -14,6 +14,8 @@ struct RailRow: Identifiable, Equatable {
     let tabID: TabID
     let kind: PaneKind
     let title: String
+    /// The row's muted second line (``OttyTabRow`` subtitle). Kind-generic ``PaneSpec/railSubtitle`` (E21
+    /// WI-5): a terminal's cwd, or a video pane's host-app/window label; `nil` ⇒ a single-line row.
     let subtitle: String?
     let status: ClaudeStatus
     /// The 1-based tab shortcut number — the ⌘1…⌘9 target = tab index+1 (E6 WI-2). Split-tab panes share
@@ -53,7 +55,16 @@ enum RailRowsBuilder {
                 let spec = session.specs[paneID]
                 let kind = spec?.kind ?? .terminal
                 let title = spec?.lastKnownTitle ?? spec?.title ?? ""
-                let subtitle = spec?.lastKnownCwd
+                // E21 WI-5: the second line is the kind-generic ``PaneSpec/railSubtitle`` — a terminal's cwd,
+                // or (for a `.remoteGUI`/`.systemDialog` video pane, which has no shell cwd) the host-side
+                // window's owning app name (falling back to the window title). So a remote window reads as a
+                // labelled WINDOW (title on line 1, host app on line 2) rather than a bare single line, instead
+                // of the pre-WI-5 always-nil cwd. The builder stays kind-generic — the policy lives in the pure
+                // `PaneSpec` derivation, not a branch here. (The coarse video-CONNECTION dot is deferred:
+                // `PaneConnectionStatus.from` returns `.none` for a video pane by design, and surfacing a live
+                // phase needs a `RemoteWindowModel`→store→row thread that would widen this WI past the gate;
+                // recorded as an E21 §7 follow-up.)
+                let subtitle = spec?.railSubtitle
                 let status = store.paneAgentStatus[paneID] ?? .none
                 let isSelected = tabIsActive && tab.activePane == paneID
                 // E6 WI-2: the `#N` is the TAB shortcut number (1-based), the trailing label is the host's

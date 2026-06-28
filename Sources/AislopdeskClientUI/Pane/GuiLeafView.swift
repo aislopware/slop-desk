@@ -42,6 +42,10 @@ struct GuiLeafView: View {
     let store: WorkspaceStore
     /// This pane's id — the activation + focus key.
     let paneID: PaneID
+    /// E21 WI-4 (ES-E21-2): the app-global connection host (`ConnectionTarget.host`) for the bottom status
+    /// bar's right field — empty when not yet connected / unknown (the strip then omits it). Passed down from
+    /// ``PaneContainer`` (which already resolves the same value for the terminal leaf).
+    var host: String = ""
 
     /// The pane's remote-window model (picker/open/close/keyInjector). `nil` for a non-video handle.
     private var model: RemoteWindowModel? { live?.remoteWindow }
@@ -59,28 +63,61 @@ struct GuiLeafView: View {
     }
 
     var body: some View {
-        content
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(NativePaneColor.terminalBackground)
-            // CAP ADMISSION (A2): request a slot on appear AND re-attempt whenever a sibling frees one
-            // (`videoPromotionGeneration` bumps). `.task(id:)` cancels+restarts on either change. NEVER
-            // calls `live.setVideoActive` directly — the store enforces the cap + tearingDownVideo
-            // accounting. iOS resume re-activates `wasVideoActiveBeforePause` inside `LivePaneSession.resume`,
-            // so this activate is idempotent there (an already-active pane returns true without churn).
-            .task(id: activationKey) {
-                guard !staticMirror, model != nil else { return }
-                _ = store.activateVideo(paneID)
+        VStack(spacing: 0) {
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // E21 WI-4 (ES-E21-2): the SAME flat ≤20pt bottom status bar a terminal leaf carries, so a focused
+            // `.remoteGUI` / `.systemDialog` pane is a first-class peer with the host + kind label visible. The
+            // pure ``StatusBarContent`` model gives a video pane an EMPTY cwd and OMITS the exit badge
+            // (``StatusBarContent/exitBadge(lastCommand:kind:)`` returns `.none` for a non-terminal kind), so only
+            // the "remote" / "dialog" label + the host render. `model: nil` (a video pane has no
+            // ``TerminalViewModel`` — the badge then follows the kind alone) and `hoverFullPath: nil` (no ⌘-hover
+            // links on a video surface). Gated `!staticMirror && !hideStatusBar`, exactly like ``TerminalLeafView``.
+            if showStatusBar {
+                StatusBarStrip(
+                    model: nil,
+                    cwd: nil,
+                    kind: paneKind,
+                    host: host,
+                    hoverFullPath: nil,
+                )
             }
-            // A tab-switch unmounts the leaf → free the cap slot (close/detach already flows through
-            // `reconcile` → `teardown`, this only handles the on-screen disappear, A5).
-            .onDisappear {
-                guard !staticMirror else { return }
-                store.deactivateVideo(paneID)
-            }
+        }
+        .background(NativePaneColor.terminalBackground)
+        // CAP ADMISSION (A2): request a slot on appear AND re-attempt whenever a sibling frees one
+        // (`videoPromotionGeneration` bumps). `.task(id:)` cancels+restarts on either change. NEVER
+        // calls `live.setVideoActive` directly — the store enforces the cap + tearingDownVideo
+        // accounting. iOS resume re-activates `wasVideoActiveBeforePause` inside `LivePaneSession.resume`,
+        // so this activate is idempotent there (an already-active pane returns true without churn).
+        .task(id: activationKey) {
+            guard !staticMirror, model != nil else { return }
+            _ = store.activateVideo(paneID)
+        }
+        // A tab-switch unmounts the leaf → free the cap slot (close/detach already flows through
+        // `reconcile` → `teardown`, this only handles the on-screen disappear, A5).
+        .onDisappear {
+            guard !staticMirror else { return }
+            store.deactivateVideo(paneID)
+        }
     }
 
     /// The `.task` identity: re-run admission when THIS session changes (mount) OR a sibling frees a slot.
     private var activationKey: String { "\(live?.id.hashValue ?? 0):\(store.videoPromotionGeneration)" }
+
+    /// E21 WI-4: whether the bottom status bar mounts on this video pane — NOT the static-mirror snapshot path
+    /// and the `Hide Status Bar` setting (``SettingsKey/hideStatusBarEnabled``) off. Mirrors ``TerminalLeafView``'s
+    /// gate minus the terminal-model requirement (a video pane has no `terminalModel`), so the strip rides the
+    /// live surface, the in-pane picker AND the cap-gated placeholder — the host + kind label apply in all three.
+    private var showStatusBar: Bool {
+        !staticMirror && !SettingsKey.hideStatusBarEnabled
+    }
+
+    /// E21 WI-4: the pane's kind for the status-bar label — the live session's kind once it materializes, else
+    /// the spec's kind from the store (so a not-yet-live `.systemDialog` still reads "dialog"), defaulting to
+    /// `.remoteGUI` (the only kinds routed to this leaf are `.remoteGUI` / `.systemDialog`).
+    private var paneKind: PaneKind {
+        live?.kind ?? store.tree.activeSession?.specs[paneID]?.kind ?? .remoteGUI
+    }
 
     @ViewBuilder private var content: some View {
         if staticMirror {
@@ -105,16 +142,23 @@ struct GuiLeafView: View {
     /// The live video surface — the gated `VideoWindowFactory` seam. The model already built the full
     /// descriptor (host + UDP ports resolved from the app target) at `open()` time, so we pass
     /// `model.active` straight through. `onStreamNativeSize: nil` letterboxes a TILED leaf via `.fit`.
+    ///
+    /// READ-ONLY (E21 WI-3): the per-render context is derived through ``RemotePaneContext/videoLeaf(...)``
+    /// from the pane's convergent read-only state (`store.isReadOnly(for:)`) — `inputEnabled = !readOnly`
+    /// gates the app-target client's pointer/keycode forwarding, and the helper CLEARS the paste-as-keystrokes
+    /// sink (binds `model.keyInjector = nil`) while read-only, so a locked remote window accepts no input via
+    /// either path. The context is rebuilt on every render, so a read-only flip re-evaluates both gates.
     @ViewBuilder private var liveSurface: some View {
         if let descriptor = model?.active {
             VideoWindowFactory.make(
                 descriptor,
-                context: RemotePaneContext(
+                context: RemotePaneContext.videoLeaf(
                     isActive: isFocused,
+                    readOnly: store.isReadOnly(for: paneID),
                     onActivate: { store.focusPaneTree(paneID) },
                     onCanvasScroll: { _ in },
                     onStreamNativeSize: nil,
-                    onKeyInjectorReady: { [weak model] sink in model?.keyInjector = sink },
+                    bindKeyInjector: { [weak model] sink in model?.keyInjector = sink },
                 ),
             )
         }

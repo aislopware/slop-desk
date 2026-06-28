@@ -142,4 +142,63 @@ final class ReadOnlyStoreTests: XCTestCase {
         XCTAssertFalse(store.paneReadOnly.contains(b), "the closed pane's read-only entry is pruned")
         XCTAssertTrue(store.paneReadOnly.contains(a), "the survivor keeps its lock")
     }
+
+    // MARK: - E21 WI-3 — read-only DRIVES the `.remoteGUI` video-input gate (the load-bearing one)
+
+    #if canImport(SwiftUI)
+    /// **E21 WI-3 — the read-only INPUT gate on the video seam.** A `.remoteGUI` pane has no live terminal
+    /// model, so `setPaneReadOnly` lands purely in the convergent ``WorkspaceStore/paneReadOnly`` set (the
+    /// set-only path). The pure ``RemotePaneContext/videoLeaf(isActive:readOnly:...)`` derivation `GuiLeafView`
+    /// uses maps that policy onto the app-target client's gate: `inputEnabled == !readOnly`. So a locked remote
+    /// window forwards NEITHER pointer/scroll NOR keycodes (wire-compatible silence). Fails on un-fixed code:
+    /// `RemotePaneContext.inputEnabled` / `.videoLeaf` did not exist, so a "read-only" remote window still
+    /// accepted input.
+    func testReadOnlyDerivesTheVideoInputGate() {
+        let store = makeFakeStore()
+        let video = store.newRemoteWindowTab(windowID: 7, title: "Safari", appName: "Safari")
+
+        // WRITABLE: the seam derivation enables input forwarding.
+        let writable = RemotePaneContext.videoLeaf(
+            isActive: true, readOnly: store.isReadOnly(for: video), bindKeyInjector: { _ in },
+        )
+        XCTAssertTrue(writable.inputEnabled, "a writable `.remoteGUI` pane forwards pointer/scroll/keycodes")
+
+        // LOCK (set-only path — a video pane carries no live `TerminalViewModel`).
+        store.setPaneReadOnly(video, true)
+        XCTAssertTrue(store.isReadOnly(for: video), "read-only records the `.remoteGUI` pane in the convergent set")
+
+        // READ-ONLY: the SAME derivation now disables the input gate.
+        let locked = RemotePaneContext.videoLeaf(
+            isActive: true, readOnly: store.isReadOnly(for: video), bindKeyInjector: { _ in },
+        )
+        XCTAssertFalse(locked.inputEnabled, "a read-only `.remoteGUI` pane forwards NO input (the app-target gate)")
+    }
+
+    /// **E21 WI-3 — read-only CLEARS the paste-as-keystrokes sink at the seam (no model→store coupling).**
+    /// The video view publishes a live key-injection sink through ``RemotePaneContext/onKeyInjectorReady``;
+    /// the `.videoLeaf` derivation hands the model a `nil` sink instead while read-only, so the model's
+    /// ``RemoteWindowModel/canPasteKeystrokes`` is `false` and ``RemoteWindowModel/pasteAsKeystrokes(_:)`` is
+    /// inert — WITHOUT the model ever learning the read-only state. Fails on un-fixed code, where the context
+    /// bound the published sink unconditionally (paste-as-keystrokes stayed live on a "read-only" pane).
+    func testReadOnlyClearsThePasteKeystrokesSinkAtTheSeam() {
+        let model = RemoteWindowModel(windowID: "7", title: "Safari")
+        model.open() // active != nil ⇒ canPasteKeystrokes now hinges purely on whether a sink is bound
+        XCTAssertNotNil(model.active, "the model is streaming, so only the sink gates paste-as-keystrokes")
+        let liveSink: (UInt16, Bool, Bool) -> Void = { _, _, _ in }
+
+        // WRITABLE: the seam binds the published sink → paste-as-keystrokes is possible.
+        RemotePaneContext.videoLeaf(
+            isActive: true, readOnly: false, bindKeyInjector: { model.keyInjector = $0 },
+        ).onKeyInjectorReady?(liveSink)
+        XCTAssertNotNil(model.keyInjector, "writable: the published sink reaches the model")
+        XCTAssertTrue(model.canPasteKeystrokes, "writable: paste-as-keystrokes is enabled")
+
+        // READ-ONLY: the seam withholds the sink (binds nil) EVEN THOUGH the view publishes a real one.
+        RemotePaneContext.videoLeaf(
+            isActive: true, readOnly: true, bindKeyInjector: { model.keyInjector = $0 },
+        ).onKeyInjectorReady?(liveSink)
+        XCTAssertNil(model.keyInjector, "read-only: the seam clears the model's key-injection sink")
+        XCTAssertFalse(model.canPasteKeystrokes, "read-only: paste-as-keystrokes is inert")
+    }
+    #endif
 }

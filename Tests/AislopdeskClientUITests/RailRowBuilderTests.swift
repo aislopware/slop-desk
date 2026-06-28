@@ -217,6 +217,31 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertTrue(RailRowsBuilder.filtered(rows, query: "zzz-nope").isEmpty)
     }
 
+    // MARK: - E21 WI-5: a `.remoteGUI` pane reads as a labelled window in the rail
+
+    /// A remote-window (`.remoteGUI`) pane is a first-class rail peer: its row carries the host-side APP name
+    /// as the muted second line — a video pane has no shell cwd, so the pre-E21-WI-5 builder (`spec?.lastKnownCwd`)
+    /// produced a `nil` subtitle (a bare single-line window row). The window title stays on line 1, and the
+    /// read-only lock flag still mirrors the store's convergent set kind-generically. Fails on the pre-WI-5
+    /// builder (nil video subtitle), so it is not tautological.
+    func testRemoteWindowRowGetsHostAppSubtitleAndLock() throws {
+        let store = makeStore()
+        let video = store.newRemoteWindowTab(windowID: 4242, title: "Docs", appName: "Safari")
+
+        let row = try XCTUnwrap(
+            RailRowsBuilder.rows(for: store).first { $0.id == video },
+            "the minted remote-window pane is enumerated as a first-class rail row",
+        )
+        XCTAssertEqual(row.kind, .remoteGUI, "the row keeps its video kind")
+        XCTAssertEqual(row.title, "Docs", "line 1 is the window title")
+        XCTAssertEqual(row.subtitle, "Safari", "line 2 is the host-side app name (was nil pre-WI-5)")
+        XCTAssertFalse(row.readOnly, "a fresh remote window is writable")
+
+        store.setPaneReadOnly(video, true)
+        let locked = try XCTUnwrap(RailRowsBuilder.rows(for: store).first { $0.id == video })
+        XCTAssertTrue(locked.readOnly, "the read-only lock flag is kind-generic on a video pane")
+    }
+
     // MARK: - WI-5: `sectioned` (search filter × store-derived grouping → rendered sections)
 
     /// A three-tab store with two distinct project cwds. Tabs 1+2 share `…/alpha`, tab 3 is `…/beta`. Returns

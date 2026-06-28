@@ -123,4 +123,45 @@ final class StatusBarModelTests: XCTestCase {
         XCTAssertEqual(content.cwdDisplay, "var/log")
         XCTAssertFalse(content.isPathHover)
     }
+
+    // MARK: - E21 WI-4 (ES-E21-2): first-class video-pane status content
+
+    /// A `.remoteGUI` video pane is a first-class status-bar citizen: the model labels it "remote", OMITS the
+    /// exit badge (a streamed window has no shell-exit concept), and leaves the cwd empty (a video pane reports
+    /// no OSC-7 dir), while still threading the connection host. This pins the exact `make` composition
+    /// ``GuiLeafView``'s `StatusBarStrip` mount relies on (the strip view itself is app-target / hang-unsafe to
+    /// instantiate). It fails if `paneKindLabel` ever drops `.remoteGUI` or `make` starts emitting an exit / cwd
+    /// for a non-terminal kind.
+    func testMakeRemoteGUIPaneHasRemoteLabelNoExitEmptyCwd() {
+        let content = StatusBarContent.make(
+            cwd: nil,
+            lastCommand: nil,
+            kind: .remoteGUI,
+            host: "mac-studio",
+            hoverFullPath: nil,
+        )
+        XCTAssertEqual(content.paneKind, "remote")
+        XCTAssertEqual(content.exit, .none)
+        XCTAssertTrue(content.cwdDisplay.isEmpty)
+        XCTAssertNil(content.fullCwd)
+        XCTAssertFalse(content.isPathHover)
+        XCTAssertEqual(content.host, "mac-studio")
+    }
+
+    /// A `.systemDialog` pane reads "dialog" (the system-password-dialog peer) with the same no-exit /
+    /// empty-cwd shape — and even a stale `lastCommand` tuple cannot light the badge, since the non-terminal
+    /// kind forces `.none` through `make` (not only through the lower-level `exitBadge`).
+    func testMakeSystemDialogPaneHasDialogLabelNoExitDespiteStaleCommand() {
+        let content = StatusBarContent.make(
+            cwd: nil,
+            lastCommand: (exitCode: 1, durationMS: 0),
+            kind: .systemDialog,
+            host: "",
+            hoverFullPath: nil,
+        )
+        XCTAssertEqual(content.paneKind, "dialog")
+        XCTAssertEqual(content.exit, .none)
+        XCTAssertTrue(content.cwdDisplay.isEmpty)
+        XCTAssertTrue(content.host.isEmpty)
+    }
 }

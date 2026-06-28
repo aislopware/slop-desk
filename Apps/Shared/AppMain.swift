@@ -78,10 +78,10 @@ struct ClientAppMain {
             // and the orchestrator-backed VideoWindowView(title:connection:). Otherwise the
             // chrome-only initializer (no live decode) — the seam's preview/placeholder path.
             //
-            // `paneContext` (active state + activate/canvas-scroll callbacks) is destructured into
-            // primitives here — `AislopdeskVideoClient` cannot import `AislopdeskClientUI` (the seam exists
-            // for exactly that reason), so the context type stays on the `AislopdeskClientUI` side and
-            // only its Bool + closures cross into `VideoWindowView`.
+            // `paneContext` (active state + the E21 WI-3 read-only `inputEnabled` gate + activate/canvas-
+            // scroll callbacks) is destructured into primitives here — `AislopdeskVideoClient` cannot import
+            // `AislopdeskClientUI` (the seam exists for exactly that reason), so the context type stays on the
+            // `AislopdeskClientUI` side and only its Bools + closures cross into `VideoWindowView`.
             if descriptor.hasEndpoint {
                 let connection = VideoWindowConnection(
                     host: descriptor.host,
@@ -92,6 +92,7 @@ struct ClientAppMain {
                 return AnyView(VideoWindowView(
                     title: descriptor.title, connection: connection,
                     isActive: paneContext.isActive,
+                    inputEnabled: paneContext.inputEnabled,
                     onActivate: paneContext.onActivate,
                     onCanvasScroll: paneContext.onCanvasScroll,
                     onStreamNativeSize: paneContext.onStreamNativeSize,

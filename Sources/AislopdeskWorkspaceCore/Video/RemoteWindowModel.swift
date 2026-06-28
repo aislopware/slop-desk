@@ -46,9 +46,16 @@ public final class RemoteWindowModel {
     /// teardown. Each call drives the host's per-event input path (`InputInjector.postKey`, plain
     /// `CGEvent`) — which types into `sudo` / SecurityAgent password fields (CGEvent keys reach the
     /// secure field even under Secure Event Input). `(keyCode, down, shift)`.
+    ///
+    /// READ-ONLY GATE (E21 WI-3): when the owning pane is read-only the SEAM clears this — `GuiLeafView`
+    /// derives the context through ``RemotePaneContext/videoLeaf(isActive:readOnly:...)``, which binds a
+    /// `nil` sink here instead of the live one. So paste-as-keystrokes is inert on a read-only pane
+    /// (``canPasteKeystrokes`` is then `false` and ``pasteAsKeystrokes(_:)`` no-ops) WITHOUT any
+    /// model→store coupling — the model never learns the read-only state; the seam withholds the sink.
     public var keyInjector: ((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?
 
-    /// Whether a paste-as-keystrokes is possible right now: streaming AND a live key sink is wired.
+    /// Whether a paste-as-keystrokes is possible right now: streaming AND a live key sink is wired. A
+    /// read-only pane has no sink (the seam withholds it, see ``keyInjector``), so this is `false` there.
     public var canPasteKeystrokes: Bool { active != nil && keyInjector != nil }
 
     /// The in-flight paste (cancelled if a new one starts or the pane tears down).

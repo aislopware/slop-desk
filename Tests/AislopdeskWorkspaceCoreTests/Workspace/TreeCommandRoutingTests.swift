@@ -542,6 +542,39 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertNotNil(store.tree.spec(for: newID)?.floatingFrame)
     }
 
+    /// E21 WI-6: `store.floatingPanePairs(for:)` is the THIN reader the floating renderer (`SplitContainer`
+    /// → `FloatingPaneCard`) consumes — it pairs each `tab.floatingPanes` id (z-order, last = topmost) with
+    /// its persisted `floatingFrame`, feeding `SplitTreeRenderModel.layout(...floating:)`. Pins: empty before
+    /// any float; after floating a terminal + spawning a `.remoteGUI` float, the pairs follow the z-order and
+    /// each carries the pane's spec frame. Proven to fail before the helper exists (compile) + behaviorally.
+    func testFloatingPanePairsReadsFloatingLayerInZOrder() throws {
+        let ws0 = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "a"))
+        let a = ws0.allPaneIDs()[0]
+        let (ws1, b) = WorkspaceTreeOps.splitPane(
+            a, axis: .horizontal, newSpec: PaneSpec(kind: .terminal, title: "b"), in: ws0,
+        )
+        let store = makeTreeStore(restoringTree: ws1)
+        let tab0 = try XCTUnwrap(store.tree.activeSession?.activeTab)
+        XCTAssertTrue(store.floatingPanePairs(for: tab0).isEmpty, "no floats → no pairs")
+
+        // Float b (⌥⌘F), then spawn a remote-window float → floatingPanes = [b, spawned] (spawned topmost).
+        store.focusPaneTree(b)
+        route(.toggleFloat, store)
+        store.spawnFloatingPane(kind: .remoteGUI)
+
+        let tab1 = try XCTUnwrap(store.tree.activeSession?.activeTab)
+        let pairs = store.floatingPanePairs(for: tab1)
+        XCTAssertEqual(pairs.count, 2, "both floats are paired")
+        XCTAssertEqual(pairs.map(\.id), tab1.floatingPanes, "pairs follow floatingPanes z-order (last = topmost)")
+        for pair in pairs {
+            XCTAssertEqual(
+                pair.frame, store.tree.spec(for: pair.id)?.floatingFrame,
+                "each pair carries the pane's persisted floatingFrame",
+            )
+        }
+        XCTAssertEqual(pairs.last?.id, tab1.floatingPanes.last, "the topmost (last-spawned) float is last in the pairs")
+    }
+
     // MARK: - Tabs: Close Window (⌘⇧W) routes to the window-close gate (E7 carry-over #5)
 
     /// `.closeWindow` (otty ⌘⇧W) routes to `store.requestCloseWindow()` — parking `pendingWindowClose` for the

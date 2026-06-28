@@ -19,6 +19,9 @@ public enum WebPanePlacement: Equatable, Sendable {
 /// The concrete action a `(zone, content)` pair resolves to — the PURE output of the drop policy, an
 /// instruction the actuator (E18 WI-6) carries out against the store / live terminal / metadata client.
 /// Carrying the action as a value (not actuating here) keeps the policy headless + table-testable.
+///
+/// The case set is terminal/web only — there is intentionally NO remote-window (`.remoteGUI`) creator (E21
+/// WI-7): a streamed host window is minted solely by the picker, never by a drop (see ``DropActionResolver``).
 public enum DropAction: Equatable, Sendable {
     /// Paste this text/path VERBATIM into the focused terminal (`TerminalViewModel.sendInput`, never
     /// `SendKeysParser`).
@@ -59,6 +62,17 @@ public enum DropAction: Equatable, Sendable {
 ///
 /// Text always pastes into the focused terminal regardless of zone (the spec lists identical green/blue
 /// behavior for a text snippet), so it is handled first as a catch-all.
+///
+/// **E21 exclusion — no drop-to-create a remote window (`.remoteGUI`).** A `.remoteGUI` pane is a real host
+/// window streamed over the PATH-2 UDP video path; it is minted ONLY by the picker / connect overlay
+/// (`WorkspaceStore.newRemoteWindowTab(windowID:title:appName:)`), NEVER by a file / URL / text drop. There is
+/// deliberately no remote-window arm in this table — ``DropAction`` carries terminal/web cases only — so no
+/// `(zone × content)` cell can spawn a video pane (pinned by `RemoteGUIFirstClassPeerTests`). Conversely a
+/// foreign drop ONTO an already-mounted `.remoteGUI` target self-guards: the actuator (`PaneDropReceiver`)
+/// holds a `nil` `terminalModel` for a video pane and every terminal actuator is `terminalModel?.…`
+/// (optional-chained), so the terminal-targeting actions (`injectText` / `hostOpen`) no-op without a crash,
+/// while the store-level split / reorder geometry stays kind-generic (a video pane tiles and splits as a
+/// first-class peer once minted — see `WorkspaceTreeOps.splitPane`). E21 WI-7.
 public enum DropActionResolver {
     public static func resolve(zone: DropZone, content: DroppedContent) -> DropAction? {
         // Text snippet: pastes into the focused terminal in EVERY zone ("Same" for both halves).

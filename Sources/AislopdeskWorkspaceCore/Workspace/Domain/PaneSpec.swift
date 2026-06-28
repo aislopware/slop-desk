@@ -256,6 +256,42 @@ extension PaneSpec: Codable {
     }
 }
 
+// MARK: - PaneSpec presentation derivations (E21 WI-5)
+
+public extension PaneSpec {
+    /// The sidebar-rail SECOND LINE for this pane (E21 WI-5) — the single, kind-generic source of truth the
+    /// native rail row (``RailRowsBuilder`` in `AislopdeskClientUI`) and any other surface bind their subtitle
+    /// to, so a `.remoteGUI` window is a first-class peer of a terminal in the rail (carry-overs §0).
+    ///
+    /// - A `.terminal` pane shows its last-known working directory (``lastKnownCwd``), or NOTHING when the cwd
+    ///   is unknown — a single-line row, never a blank second line.
+    /// - A VIDEO pane (`.remoteGUI`/`.systemDialog`) has no shell cwd, so the host-side window's owning APP
+    ///   name (``VideoEndpoint/appName``) stands in — falling back to the window ``VideoEndpoint/title`` when
+    ///   the app name is empty (a manual-id binding). A remote-window row then reads as a *labelled window*
+    ///   (its window title on line 1, the host app on line 2) rather than a bare single line.
+    /// - A real cwd, if ever present, always wins (the subtitle never silently drops a working directory).
+    ///
+    /// Pure + total — NO kind is dropped (the `default`/non-video arm just yields the cwd-or-nil a terminal
+    /// already used), so the builder stays kind-generic and never branches the whole row. Mirrors the
+    /// Open-Quickly subtitle discipline (``OpenQuicklyModel`` `paneRowSubtitle`), which carries the leaner
+    /// window-title fold; the rail gets this richer host-app line. A non-empty trimmed-presence check keeps an
+    /// empty field from rendering a blank line (the ``OpenQuicklyModel`` `nonEmpty` discipline).
+    var railSubtitle: String? {
+        if let cwd = Self.presentablePresence(lastKnownCwd) { return cwd }
+        guard kind.isVideo, let video else { return nil }
+        if let app = Self.presentablePresence(video.appName) { return app }
+        return Self.presentablePresence(video.title)
+    }
+
+    /// A trimmed-presence helper: `nil` for `nil`/blank, the trimmed string otherwise — so an empty/whitespace
+    /// field becomes "no subtitle", never a blank second line.
+    private static func presentablePresence(_ s: String?) -> String? {
+        guard let s else { return nil }
+        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 // MARK: - Focus intent
 
 /// A focus-movement intent, resolved geometrically against the solved layout (docs/22 §2.1).

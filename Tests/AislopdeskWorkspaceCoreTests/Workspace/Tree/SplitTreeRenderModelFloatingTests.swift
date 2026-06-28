@@ -84,6 +84,31 @@ final class SplitTreeRenderModelFloatingTests: XCTestCase {
         )
     }
 
+    func testFloatingRemoteGUIPaneEmitsAClampedLeafAtItsFrame() throws {
+        // E21 WI-6 / ES-E21-3: a `.remoteGUI` (streamed host window) pane floats exactly like a terminal —
+        // the render model is kind-AGNOSTIC, so once `WorkspaceTreeOps.toggleFloating` floats it (no kind
+        // guard) the floating leaf places at its clamped `floatingFrame`. This pins the end-to-end
+        // float → render path for a remote window ("`.remoteGUI` floats for free").
+        let ws0 = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "term"))
+        let term = ws0.allPaneIDs()[0]
+        // Two tiled leaves so floating one never empties the tree; the floated one is the remote window.
+        let (ws1, gui) = WorkspaceTreeOps.splitPane(
+            term, axis: .horizontal, newSpec: PaneSpec(kind: .remoteGUI, title: "Remote window"), in: ws0,
+        )
+        let frame = CGRect(x: 120, y: 90, width: 500, height: 360)
+        let floated = WorkspaceTreeOps.toggleFloating(gui, defaultFrame: frame, bounds: bounds, in: ws1)
+        let activeTab = try XCTUnwrap(floated.activeSession?.activeTab)
+        let pairs = activeTab.floatingPanes.map { (id: $0, frame: floated.spec(for: $0)?.floatingFrame) }
+        let layout = SplitTreeRenderModel.layout(for: activeTab, in: bounds, floating: pairs)
+        XCTAssertEqual(layout.floatingLeaves.count, 1, "the floated remote window is the one floating leaf")
+        let placed = try XCTUnwrap(layout.floatingLeaves.first { $0.id == gui })
+        XCTAssertEqual(
+            placed.rect, WorkspaceTreeOps.clampFloatingFrame(frame, in: bounds),
+            "the remote-window float places at its clamped frame (kind-agnostic)",
+        )
+        XCTAssertTrue(activeTab.root.contains(term), "the tiled sibling stays tiled")
+    }
+
     func testZoomSuppressesFloatingLeaves() {
         let a = PaneID(), b = PaneID(), f = PaneID()
         let root = SplitNode.split(id: SplitNodeID(), axis: .horizontal, children: [

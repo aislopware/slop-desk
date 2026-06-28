@@ -113,6 +113,9 @@ struct PaneContainer: View {
                 staticMirror: staticMirror,
                 store: store,
                 paneID: paneID,
+                // E21 WI-4 (ES-E21-2): feed the bottom status bar's host field — the app-global connection
+                // target persisted on the active session (same value the terminal leaf reads below).
+                host: store.tree.activeSession?.connection?.host ?? "",
             )
         } else {
             TerminalLeafView(

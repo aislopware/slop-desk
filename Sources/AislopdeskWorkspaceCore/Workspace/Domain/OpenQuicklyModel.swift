@@ -187,10 +187,30 @@ public struct OpenQuicklyItem: Identifiable, Equatable, Hashable, Sendable {
     public let searchText: String
     public let act: Act
 
-    /// The trailing type badge (delegates to ``kind``).
-    public var badge: String { kind.badge }
-    /// The leading icon symbol (delegates to ``kind``).
-    public var symbol: String { kind.symbol }
+    /// E21 WI-2: the WORKSPACE pane kind a `.pane` row is backed by. For a `.remoteGUI`/`.systemDialog` VIDEO
+    /// pane this differentiates the row's ``symbol``/``badge`` so a remote-window peer reads as a *window* (a
+    /// window glyph + a "Window"/"Dialog" badge) instead of a generic split "Pane", while ``act`` stays
+    /// kind-generic (`.focusPane` — `↩` focuses the pane exactly as a terminal row does). Defaults to
+    /// `.terminal`, the non-differentiating value, for every NON-pane source (folders / agents / recent /
+    /// current), where it is inert (those rows keep their ``OpenQuicklyKind`` chrome).
+    public let paneKind: PaneKind
+
+    /// The trailing type badge. A `.pane` row backed by a VIDEO pane reads as a *window* — "Window" for a
+    /// `.remoteGUI` and "Dialog" for the auto `.systemDialog` — so a remote-window peer is differentiated from
+    /// a generic terminal "Pane"; every other row delegates to its ``OpenQuicklyKind``. (E21 WI-2.)
+    public var badge: String {
+        switch paneKind {
+        case .remoteGUI: "Window"
+        case .systemDialog: "Dialog"
+        default: kind.badge
+        }
+    }
+
+    /// The leading icon symbol. A video pane (`.remoteGUI`/`.systemDialog`) uses the window glyph (`display`);
+    /// every other row delegates to its ``OpenQuicklyKind``. (E21 WI-2.)
+    public var symbol: String {
+        paneKind.isVideo ? "display" : kind.symbol
+    }
 
     public init(
         id: String,
@@ -200,6 +220,7 @@ public struct OpenQuicklyItem: Identifiable, Equatable, Hashable, Sendable {
         timestamp: Date?,
         searchText: String,
         act: Act,
+        paneKind: PaneKind = .terminal,
     ) {
         self.id = id
         self.kind = kind
@@ -208,6 +229,7 @@ public struct OpenQuicklyItem: Identifiable, Equatable, Hashable, Sendable {
         self.timestamp = timestamp
         self.searchText = searchText
         self.act = act
+        self.paneKind = paneKind
     }
 }
 
@@ -384,17 +406,39 @@ public enum OpenQuicklyModel {
 
     /// Build one **Opened** row for a live pane (the view enumerates `tree.sessions[].tabs[].root` panes).
     /// `↩` focuses the pane; title + cwd are both matchable.
-    public static func paneItem(paneID: PaneID, title: String, cwd: String?) -> OpenQuicklyItem {
+    ///
+    /// `paneKind` (E21 WI-2) differentiates a VIDEO pane (`.remoteGUI`/`.systemDialog`) so the row reads as a
+    /// *window* — a window glyph + a "Window"/"Dialog" badge + a host/window subtitle — while the ``Act`` stays
+    /// the kind-generic `.focusPane`. It defaults to `.terminal` (the non-differentiating value), so every
+    /// existing caller and every non-video pane keeps the generic "Pane" chrome.
+    public static func paneItem(
+        paneID: PaneID,
+        title: String,
+        cwd: String?,
+        paneKind: PaneKind = .terminal,
+    ) -> OpenQuicklyItem {
         let haystack = [title, cwd ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
         return OpenQuicklyItem(
             id: "pane:\(paneID.raw.uuidString)",
             kind: .pane,
             title: title,
-            subtitle: cwd,
+            subtitle: paneRowSubtitle(cwd: cwd, title: title, paneKind: paneKind),
             timestamp: nil,
             searchText: haystack,
             act: .focusPane(paneID),
+            paneKind: paneKind,
         )
+    }
+
+    /// The subtitle for an Opened pane row (E21 WI-2). A terminal pane shows its working directory (or nothing
+    /// when the cwd is unknown — never a blank line). A VIDEO pane (`.remoteGUI`/`.systemDialog`) has no shell
+    /// cwd, so the host/window ``title`` stands in: the row is then a labelled window (glyph + badge + subtitle),
+    /// never a bare single line. A real cwd, if present, always wins (the subtitle never silently drops a
+    /// working directory). The richer host/app-name subtitle for the sidebar lives in `RailRowsBuilder` (WI-5).
+    private static func paneRowSubtitle(cwd: String?, title: String, paneKind: PaneKind) -> String? {
+        if let cwd = nonEmpty(cwd) { return cwd }
+        guard paneKind.isVideo else { return nil }
+        return nonEmpty(title)
     }
 
     /// Build one **Recent** row for a recently-closed tab at LIFO `index` (0 = most-recently closed). `↩`
@@ -429,6 +473,11 @@ public enum OpenQuicklyModel {
                         paneID: paneID,
                         title: paneDisplayTitle(spec),
                         cwd: nonEmpty(spec?.lastKnownCwd),
+                        // E21 WI-2: thread the workspace pane kind so a `.remoteGUI`/`.systemDialog` row reads
+                        // as a window (glyph + "Window"/"Dialog" badge + host/window subtitle). Defaults to
+                        // `.terminal` when the spec side-table is momentarily missing (the same gap
+                        // ``paneDisplayTitle`` tolerates) — a spec-less pane stays a generic "Pane" row.
+                        paneKind: spec?.kind ?? .terminal,
                     ))
                 }
             }

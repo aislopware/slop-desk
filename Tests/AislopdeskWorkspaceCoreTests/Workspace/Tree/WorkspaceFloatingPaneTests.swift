@@ -86,6 +86,41 @@ final class WorkspaceFloatingPaneTests: XCTestCase {
         XCTAssertNil(try activeTab(after).zoomedPane, "floating the zoomed pane clears the dangling zoom")
     }
 
+    // MARK: kind-generic — a .remoteGUI pane floats / spawns like a terminal (E21 WI-6 / ES-E21-3)
+
+    func testToggleFloatingFloatsARemoteGUIPaneWithoutAKindGuard() throws {
+        // The float op must be KIND-GENERIC: a `.remoteGUI` (streamed host window) pane floats with NO kind
+        // guard, preserving its kind + stamping its frame — so "a remote window can be floated as a card" is
+        // satisfied for free. A kind guard excluding `.remoteGUI` would fail this.
+        let ws0 = TreeWorkspace.singlePane(spec: termSpec("term"))
+        let term = ws0.allPaneIDs()[0]
+        let (ws1, gui) = WorkspaceTreeOps.splitPane(
+            term, axis: .horizontal, newSpec: PaneSpec(kind: .remoteGUI, title: "win"), in: ws0,
+        )
+        let frame = CGRect(x: 80, y: 60, width: 600, height: 400)
+        let after = WorkspaceTreeOps.toggleFloating(gui, defaultFrame: frame, bounds: bounds, in: ws1)
+        let tab = try activeTab(after)
+        XCTAssertTrue(tab.floatingPanes.contains(gui), "the remote-window pane floated")
+        XCTAssertFalse(tab.root.contains(gui), "and left the tiled tree")
+        XCTAssertEqual(after.spec(for: gui)?.kind, .remoteGUI, "its kind survives the float (not coerced)")
+        XCTAssertEqual(after.spec(for: gui)?.floatingFrame, frame, "with the stamped frame")
+        assertInvariant(after)
+    }
+
+    func testSpawnFloatingMintsARemoteGUIFloatingPane() throws {
+        let (ws, _, _) = twoLeaves()
+        let frame = CGRect(x: 100, y: 100, width: 500, height: 350)
+        let (after, newID) = WorkspaceTreeOps.spawnFloating(
+            PaneSpec(kind: .remoteGUI, title: "win"), defaultFrame: frame, bounds: bounds, in: ws,
+        )
+        let tab = try activeTab(after)
+        XCTAssertTrue(tab.floatingPanes.contains(newID), "a brand-new floating remote-window pane")
+        XCTAssertFalse(tab.root.contains(newID), "the new pane is NOT in the tiled tree")
+        XCTAssertEqual(after.spec(for: newID)?.kind, .remoteGUI, "the spawned float keeps the requested kind")
+        XCTAssertEqual(after.spec(for: newID)?.floatingFrame, frame)
+        assertInvariant(after)
+    }
+
     // MARK: toggleFloating — embed back
 
     func testToggleFloatingEmbedsFloatBackIntoTreeAndClearsFrame() throws {
