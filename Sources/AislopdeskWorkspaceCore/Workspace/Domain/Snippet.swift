@@ -11,20 +11,103 @@ import Foundation
 ///   bytes, so a snippet can drive a TUI or chain commands (`git add -A<Enter>git commit<Enter>`).
 ///
 /// Codable + persisted on ``Workspace`` (like ``LayoutPreset`` / bookmarks). Pure value type.
+///
+/// Persistence note (no-backcompat): `alias` is a NEW, additive key. An old `Workspace.snippets` blob
+/// written before E16 carries no `alias`, so the custom decoder reads it `decodeIfPresent ?? ""` — a
+/// missing alias decodes to `""` ("no alias"), never a `keyNotFound` throw. No `Workspace.schemaVersion`
+/// bump is required for this additive field.
 public struct Snippet: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
     public var name: String
     public var body: String
+    /// The trigger word the user types at the shell prompt to expand `body` (the at-prompt
+    /// auto-expand feature). NO spaces — the ``Snippet/normalizeAlias(_:)`` normalizer strips every
+    /// whitespace scalar on construction, since the spec forbids spaces in an alias ("g co" → "gco").
+    /// An empty alias (`""`) means "no alias": the snippet runs by name only and is NEVER matched by
+    /// ``SnippetAliasIndex/match(typed:snippets:)``.
+    public var alias: String
 
-    public init(id: UUID = UUID(), name: String, body: String) {
+    public init(id: UUID = UUID(), name: String, body: String, alias: String = "") {
         self.id = id
         self.name = name
         self.body = body
+        self.alias = Self.normalizeAlias(alias)
+    }
+
+    /// Strips every whitespace / newline scalar from a raw alias — the spec forbids spaces in an alias, so
+    /// "g co" typed into the editor normalizes to "gco". Idempotent; the single source of alias hygiene
+    /// (construction, store CRUD, and decode all route through it).
+    public static func normalizeAlias(_ raw: String) -> String {
+        String(raw.unicodeScalars.filter { !CharacterSet.whitespacesAndNewlines.contains($0) })
     }
 
     /// The `{{placeholder}}` names the body references, in first-appearance order, deduped — drives the
     /// run-time value-entry sheet (and `placeholders.isEmpty` means a snippet can run straight from ⌘K).
     public var placeholders: [String] { SnippetExpander.placeholders(in: body) }
+}
+
+// MARK: - Snippet Codable (additive — `alias` is decodeIfPresent so pre-E16 blobs still load)
+
+public extension Snippet {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case body
+        case alias
+    }
+
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        body = try c.decode(String.self, forKey: .body)
+        // Additive + space-hygienic: a pre-E16 blob has no `alias` (→ ""), and any persisted value is
+        // re-normalized so an alias is space-free regardless of how it reached disk.
+        let rawAlias = try c.decodeIfPresent(String.self, forKey: .alias) ?? ""
+        alias = Self.normalizeAlias(rawAlias)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(body, forKey: .body)
+        try c.encode(alias, forKey: .alias)
+    }
+}
+
+// MARK: - SnippetAliasIndex (at-prompt alias lookup)
+
+/// Pure lookup that maps the in-progress shell line to the snippet whose `alias` the user has just typed —
+/// the at-prompt auto-expand trigger. The UI layer decides WHEN to call this (per-keystroke at an OSC-133
+/// prompt, or on an explicit trigger key); the model only answers "does the trailing word equal a known
+/// alias". No view, no store — table-tested.
+public enum SnippetAliasIndex {
+    /// Returns the snippet whose `alias` equals the trailing whitespace-delimited word of `typed`.
+    ///
+    /// Returns `nil` when:
+    /// - the trailing word matches no alias (unknown alias), or
+    /// - the alias would be only PART of a longer word — i.e. there is no word boundary in front of it, so
+    ///   "mygco" does NOT expand the `gco` alias (never corrupt ordinary typing), or
+    /// - `typed` is empty or ends in whitespace (no in-progress word to expand).
+    ///
+    /// Snippets with an empty alias never match. Matching is case-sensitive (shell aliases are).
+    public static func match(typed: String, snippets: [Snippet]) -> Snippet? {
+        let word = trailingWord(typed)
+        guard !word.isEmpty else { return nil }
+        return snippets.first { !$0.alias.isEmpty && $0.alias == word }
+    }
+
+    /// The maximal suffix of `typed` containing no whitespace — the in-progress shell "word". Empty when
+    /// `typed` is empty or ends in whitespace.
+    private static func trailingWord(_ typed: String) -> String {
+        var tail: [Unicode.Scalar] = []
+        for s in typed.unicodeScalars.reversed() {
+            if CharacterSet.whitespacesAndNewlines.contains(s) { break }
+            tail.append(s)
+        }
+        return String(String.UnicodeScalarView(tail.reversed()))
+    }
 }
 
 // MARK: - SnippetExpander (placeholder resolution)

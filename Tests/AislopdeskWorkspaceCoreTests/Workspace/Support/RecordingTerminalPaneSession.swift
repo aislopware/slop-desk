@@ -154,6 +154,15 @@ final class RecordingTerminalPaneSession: @MainActor PaneSessionHandle, @MainAct
 
     func adopt(id: PaneID) { self.id = id }
 
+    /// `PaneSessionHandle.sendBytes` — the raw outbound seam `LivePaneSession` routes to the terminal input
+    /// bar. Recorded into `sentInput` (the same log as the model's `sendInput`) so the recipe-restore cwd `cd`
+    /// (delivered via this path, like `deferInheritedCwd`) is observable. A non-text pane drops the bytes, as
+    /// the live handle does.
+    func sendBytes(_ bytes: [UInt8]) {
+        guard kind.canReceiveText else { return }
+        sentInput.append(Data(bytes))
+    }
+
     // PaneSessionHandle — inert lifecycle (the block routing never drives these). The `await Task.yield()`
     // satisfies the protocol's `async` signature without real work (and the async_without_await lint rule).
     var isVideoActive: Bool { false }

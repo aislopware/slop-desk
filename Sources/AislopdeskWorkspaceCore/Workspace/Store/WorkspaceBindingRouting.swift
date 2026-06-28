@@ -291,6 +291,12 @@ public extension WorkspaceBindingRegistry {
         case .forkInSplitRight: performFork(.splitRight, in: store)
         case .forkInSplitDown: performFork(.splitDown, in: store)
         case .forkInNewTab: performFork(.newTab, in: store)
+        // Recipes (E16 WI-8): ⌘S / File ▸ Recipe ▸ Save Recipe… requests the save sheet; File ▸ Recipe ▸
+        // Open Recipe… requests the open picker. Both flip a store `pending*` flag the app observes to present
+        // the matching sheet (WI-10); the save snapshots the live tree directly (NOT the dead canvas
+        // `saveLayout`). Window-scope (no active pane needed).
+        case .saveRecipe: store.requestSaveRecipe()
+        case .openRecipe: store.requestOpenRecipe()
         }
     }
 
@@ -434,6 +440,11 @@ public extension WorkspaceBindingRegistry {
              .forkInSplitDown,
              .forkInNewTab:
             break
+        // Recipes (E16 WI-8): the recipe save / open surfaces are model-agnostic (they read/mount the tree,
+        // which the store owns regardless of the live model), so the canvas path routes them identically —
+        // they flip the SAME store `pending*` flags the tree path does.
+        case .saveRecipe: store.requestSaveRecipe()
+        case .openRecipe: store.requestOpenRecipe()
         }
     }
 

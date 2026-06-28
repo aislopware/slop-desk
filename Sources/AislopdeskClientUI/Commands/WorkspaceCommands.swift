@@ -64,6 +64,10 @@ struct WorkspaceCommands: Commands {
     /// Window is a CHECKABLE toggle, ES-E2-3). Read from the live `chrome.pinned` at the scene's `.commands`
     /// site so the row re-renders its checkmark when the pin flips from the menu / palette / a bound chord.
     var pinWindowOn = false
+    /// E16 / WI-8: the File ▸ Recipe ▸ Save Snippet… entry opens the snippet editor (WI-7's `SnippetEditorSheet`,
+    /// wired app-side in WI-10). `nil` (the default) HIDES the row rather than shipping a dead button — the
+    /// Save / Open Recipe rows are always live (they route to the store's `pending*` flags).
+    var openSnippetEditor: (() -> Void)?
 
     var body: some Commands {
         // One top-level menu per display category, in the registry's display order. A `CommandMenu` inserts
@@ -80,6 +84,29 @@ struct WorkspaceCommands: Commands {
         commandMenu(for: .focus)
         commandMenu(for: .view)
         commandMenu(for: .agents)
+        recipeCommands
+    }
+
+    /// E16 / WI-8: the File ▸ Recipe submenu (Save Recipe… / Open Recipe… [/ Save Snippet…]) — all
+    /// shortcut-LESS (the NSEvent dispatcher owns ⌘S; the menu-shortcutless gate forbids `.keyboardShortcut`
+    /// here). Save / Open route through the SAME `WorkspaceBindingRegistry.route` the chord uses, flipping the
+    /// store's `pendingSaveRecipe` / `pendingOpenRecipe` the app observes to present the sheet (WI-10). The ⌘S
+    /// glyph is appended as a plain-text HINT (not a key equivalent), matching the menu's cheat-sheet idiom.
+    private var recipeCommands: some Commands {
+        CommandGroup(after: .newItem) {
+            Menu("Recipe") {
+                Button("Save Recipe…  ⌘S") {
+                    WorkspaceBindingRegistry.route(.saveRecipe, to: store)
+                }
+                Button("Open Recipe…") {
+                    WorkspaceBindingRegistry.route(.openRecipe, to: store)
+                }
+                if let openSnippetEditor {
+                    Divider()
+                    Button("Save Snippet…") { openSnippetEditor() }
+                }
+            }
+        }
     }
 
     /// One top-level `CommandMenu` for a display category, its rows pulled from ``WorkspaceBindingRegistry``'s

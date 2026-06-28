@@ -287,12 +287,35 @@ struct TerminalLeafView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        // E16 WI-9: the command-replay banner floats along the pane TOP (clear of the top-trailing pills) while
+        // a recipe replay in THIS pane is waiting on the user — Ask-Once (the default for opened files) before
+        // its single run, Manually before each command, or a shell-handoff pause. It is the ONLY live caller of
+        // `continueRecipeReplayInActivePane()`; without it those two modes queue their commands and never run.
+        // `RecipeReplayHUD` self-hides when `recipeReplayPrompt` is nil, but the leaf-side `showReplayHUD` gate
+        // drives the reveal/teardown animation (and keeps it out of the static-mirror snapshot path).
+        .overlay(alignment: .top) {
+            if showReplayHUD, let id = live?.id {
+                RecipeReplayHUD(store: store, paneID: id)
+                    .padding(Otty.Metric.space2)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
         .animation(Otty.Anim.reveal, value: findBar.visible)
         .animation(Otty.Anim.reveal, value: showReadOnlyPill)
         .animation(Otty.Anim.reveal, value: showSecureInputPill)
         .animation(Otty.Anim.reveal, value: showViModePill)
         .animation(Otty.Anim.reveal, value: showViHintBar)
+        .animation(Otty.Anim.reveal, value: showReplayHUD)
         .animation(Otty.Anim.reveal, value: navigatorChrome.isVisible)
+    }
+
+    /// Whether the command-replay banner (E16 WI-9) mounts over this pane: a live terminal pane, NOT the
+    /// static-mirror snapshot path, and the store has a pending replay prompt for it (Ask-Once / Manually
+    /// awaiting a confirm, or a shell-handoff pause). Reading the store's OBSERVABLE replay state here
+    /// re-renders the leaf so the banner reveals / hides as the machine advances.
+    private var showReplayHUD: Bool {
+        guard !staticMirror, let id = live?.id, live?.terminalModel != nil else { return false }
+        return store.recipeReplayPrompt(for: id) != nil
     }
 
     /// Whether the `🛡 SECURE INPUT` pill is shown (E17 ES-E17-4 / WI-7). Visible iff secure input is active for

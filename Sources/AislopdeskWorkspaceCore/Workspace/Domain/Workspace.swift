@@ -222,7 +222,7 @@ public extension Workspace {
         // verbatim — an unconditional re-mint made load() non-idempotent (every launch changed the ids).
         var seenSnippetIDs = Set<UUID>()
         copy.snippets = snippets
-            .map { seenSnippetIDs.insert($0.id).inserted ? $0 : Snippet(name: $0.name, body: $0.body) }
+            .map { seenSnippetIDs.insert($0.id).inserted ? $0 : Snippet(name: $0.name, body: $0.body, alias: $0.alias) }
         var seenPresetNames = Set<String>()
         copy.layoutPresets = layoutPresets.filter { seenPresetNames.insert($0.name).inserted }
         return copy

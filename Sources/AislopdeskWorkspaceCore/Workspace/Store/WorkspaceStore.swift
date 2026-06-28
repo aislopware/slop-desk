@@ -1479,23 +1479,26 @@ public final class WorkspaceStore {
     public var snippets: [Snippet] { workspace.snippets }
 
     /// A non-blank snippet display name (trimmed; an empty/whitespace name falls back to "Snippet" so the
-    /// palette never shows a blank "Run …" row — reachable from CRUD and from a merge-imported file).
-    static func snippetName(_ raw: String) -> String {
+    /// palette never shows a blank "Run …" row — reachable from CRUD and from a merge-imported file). `public`
+    /// because the ClientUI snippet surfaces (Settings → Recipes list, the snippet palette source) normalize
+    /// the display name through the SAME helper the store CRUD uses, so the two cannot drift.
+    public static func snippetName(_ raw: String) -> String {
         let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty ? "Snippet" : t
     }
 
     /// Saves a new snippet and returns it. Metadata-only mutation (leaf set unchanged) → reconcile persists.
+    /// `alias` is the optional at-prompt trigger word (spaces stripped by ``Snippet``; "" = no alias).
     @discardableResult
-    public func addSnippet(name: String, body: String) -> Snippet {
-        let snippet = Snippet(name: Self.snippetName(name), body: body)
+    public func addSnippet(name: String, body: String, alias: String = "") -> Snippet {
+        let snippet = Snippet(name: Self.snippetName(name), body: body, alias: alias)
         workspace.snippets.append(snippet)
         reconcile()
         return snippet
     }
 
-    /// Edits an existing snippet's name + body. No-op for an unknown id.
-    public func updateSnippet(_ id: UUID, name: String, body: String) {
+    /// Edits an existing snippet's name + body (+ alias). No-op for an unknown id.
+    public func updateSnippet(_ id: UUID, name: String, body: String, alias: String = "") {
         guard let i = workspace.snippets.firstIndex(where: { $0.id == id }) else { return }
         // Store the name VERBATIM here — this is the live-editing path, so a per-keystroke trim/substitute
         // would fight the typist (a trailing space gets deleted; clearing the field snaps to "Snippet").
@@ -1503,6 +1506,10 @@ public final class WorkspaceStore {
         // on add + import/load, where a one-shot clean-up is correct.
         workspace.snippets[i].name = name
         workspace.snippets[i].body = body
+        // The alias, unlike the name, IS normalized on every edit: the spec forbids spaces in an alias, so
+        // stripping whitespace per-keystroke is the correct UX (you cannot type a space into it) rather
+        // than a typist-fighting trim.
+        workspace.snippets[i].alias = Snippet.normalizeAlias(alias)
         reconcile()
     }
 
@@ -1626,7 +1633,7 @@ public final class WorkspaceStore {
                     base: Self.snippetName(s.name),
                     existing: Set(workspace.snippets.map(\.name)),
                 )
-                workspace.snippets.append(Snippet(name: name, body: s.body))
+                workspace.snippets.append(Snippet(name: name, body: s.body, alias: s.alias))
             }
             for p in imported.layoutPresets
                 where !workspace.layoutPresets.contains(where: { $0.canvas == p.canvas && $0.groups == p.groups })
@@ -1669,23 +1676,28 @@ public final class WorkspaceStore {
         return "\(copy) \(n)"
     }
 
-    /// Runs snippet `id`: resolves its `{{placeholders}}` from `values`, parses `<Token>` control keys to
-    /// bytes, and feeds the result into the BROADCAST targets when broadcast is armed, else the focused
-    /// pane. Returns how many panes it reached (0 = unknown id / empty body / no text-capable target).
-    /// Unresolved placeholders are left literal (visible) rather than blanked.
+    /// E16 WI-10 — the reserved-snippet-var read seam. ``runSnippet(_:values:)`` resolves the four reserved
+    /// placeholders — `{{clipboard}}` / `{{date}}` / `{{time}}` (plus the `{{cursor}}` caret marker) — from the
+    /// ``ReservedSnippetValues`` THIS closure returns, so the pure resolver (``ReservedSnippetVars``) never
+    /// reads the real pasteboard / clock (the determinism + hang-safety split). The app sets it at launch to
+    /// read `NSPasteboard` / `UIPasteboard` and format the clock; `nil` (the default / headless) resolves the
+    /// three string vars to empty. `@ObservationIgnored`: wiring, not view state (like ``onCwdVisited``).
+    @ObservationIgnored public var snippetReservedValues: (() -> ReservedSnippetValues)?
+
+    /// Runs snippet `id`: resolves the reserved vars (clipboard/date/time, injected via ``snippetReservedValues``)
+    /// + the user-prompt `{{placeholders}}` (from `values`) into wire bytes via ``snippetBytes(for:values:)``
+    /// (which lives in `WorkspaceStore+Snippets.swift`), then sends them to the BROADCAST targets when broadcast
+    /// is armed, else the focused pane. Returns how many text-capable panes it reached (0 = unknown id / empty
+    /// body / no text-capable target). Stays in the primary declaration because it reaches the private `registry`.
     @discardableResult
     public func runSnippet(_ id: UUID, values: [String: String] = [:]) -> Int {
         guard let snippet = workspace.snippets.first(where: { $0.id == id }) else { return 0 }
-        let (text, _) = SnippetExpander.expand(snippet.body, values: values)
-        let bytes = SendKeysParser.encode(text)
+        let bytes = snippetBytes(for: snippet, values: values)
         guard !bytes.isEmpty else { return 0 }
         let candidates = broadcastActive ? broadcastTargets() : (workspace.focusedPane.map { [$0] } ?? [])
-        var count = 0
-        for pid in candidates where workspace.canvas.spec(for: pid)?.kind.canReceiveText == true {
-            registry[pid]?.sendBytes(bytes)
-            count += 1
-        }
-        return count
+        let targets = candidates.filter { workspace.canvas.spec(for: $0)?.kind.canReceiveText == true }
+        for pid in targets { registry[pid]?.sendBytes(bytes) }
+        return targets.count
     }
 
     /// The snippet whose `{{placeholder}}` values the UI is currently asking for (the value-entry sheet's
@@ -1712,7 +1724,13 @@ public final class WorkspaceStore {
     public func beginRunSnippet(_ id: UUID) -> SnippetRunOutcome {
         guard let snippet = workspace.snippets.first(where: { $0.id == id }) else { return .unknown }
         lastRanSnippetID = id // remember the launch so ⌥⌘R can re-fire it without ⌘K
-        let slots = snippet.placeholders
+        // E16 WI-2: only the USER-prompt placeholders gate the value-entry sheet. The four reserved vars
+        // (`{{date}}`/`{{time}}`/`{{clipboard}}`/`{{cursor}}`) are resolved by `ReservedSnippetVars` at run
+        // time and must NEVER prompt — so a reserved-only body (the screenshot `timenow` = `{{date}} {{time}}`,
+        // the spec's `gco` = `git checkout {{cursor}}`) falls through to the immediate run, not a dead
+        // `pendingSnippetRun` that no surface consumes. `snippet.placeholders` would wrongly count the reserved
+        // names and strand every such snippet.
+        let slots = ReservedSnippetVars.userPlaceholders(in: snippet.body)
         guard !slots.isEmpty else { return .ran(runSnippet(id)) }
         pendingSnippetRun = id
         return .needsValues(slots)
@@ -2005,6 +2023,16 @@ public final class WorkspaceStore {
     public func requestSaveLayout() { pendingSaveLayout = true }
     /// The root view consumed the request (presented / dismissed the prompt).
     public func clearSaveLayoutRequest() { pendingSaveLayout = false }
+
+    // MARK: - Recipes (E16 — `.ottyrecipe` save / open + trust prompt + replay queue)
+
+    /// The recipe glue's runtime state, BUNDLED into one ``RecipeRuntimeState`` value (the
+    /// ``BlockBookmarkSeam`` idiom — keeping this monster class body under the lint type-body ceiling). The
+    /// LOGIC (snapshot → emit → write, parse → trust decision → restore) is in `WorkspaceStore+Recipes.swift`.
+    /// `internal(set)` so that same-module extension drives it; the app (a different module) reads
+    /// `recipes.pendingTrustPrompt` / `recipes.pendingSaveRecipe` to present the matching sheet (a normal
+    /// `@Observable` stored var, so a mutation to any field notifies the views).
+    public internal(set) var recipes = RecipeRuntimeState()
 
     /// Snapshots the CURRENT canvas (panes + groups + focus, ephemeral dialog panes stripped) under
     /// `name`. A re-save of an existing name OVERWRITES it (so "save monitoring" updates the layout you
@@ -3381,6 +3409,11 @@ public final class WorkspaceStore {
             guard let self else { return }
             let title = tree.spec(for: id)?.title ?? ""
             handleCommandCompleted(id: id, exitCode: exitCode, durationMS: durationMS, paneTitle: title)
+            // E16 WI-9: advance any in-flight recipe REPLAY in this pane on the local-prompt-return edge —
+            // a no-op unless a replay is mid-flight here; resumes the queue after a shell-handoff (`ssh`/…)
+            // pause once the inner session exits and the local prompt returns (the absorb counter skips the
+            // typed-ahead non-interactive completions). 100% client-side — no wire / golden touch.
+            recipeReplayCommandCompleted(for: id)
             // A26 cwd-freshness (OSC-7 equivalent): refresh this pane's last-known cwd from the host `cwd`
             // RPC on each command completion, so a `cd` here updates the inherit source for the next new
             // tab / split. `[weak connection]` avoids a retain cycle (the closure is owned by `connection`).
@@ -3425,6 +3458,10 @@ public final class WorkspaceStore {
         // override-aware single-chord table). The helper lives in WorkspaceStore+Keybinding so this body
         // stays under the lint ceiling (same pattern as `seedBlockBookmarks`).
         wireKeyInterceptor(terminal: terminal)
+        // E16 ES-E16-4: hand the surface its at-prompt snippet-alias auto-expander (default-OFF via the
+        // `snippetAutoExpand` setting). Same wiring pattern as `wireKeyInterceptor`; lives in
+        // WorkspaceStore+Keybinding so this body stays under the lint ceiling.
+        wireSnippetExpander(terminal: terminal)
         // FOCUS-ON-CLICK: the surface's mouseDown calls `onRequestFocus`; route it to the tree focus so the
         // workspace focus (chrome / inspector / which pane the next split or close targets) follows a click.
         terminal?.onRequestFocus = { [weak self] in self?.focusPaneTree(id) }
@@ -4451,21 +4488,27 @@ public extension WorkspaceStore {
     /// `command: nil`) so a quote / `<Enter>` in a path can't inject a command. A `nil`/empty cwd (the
     /// ``WorkingDirectoryPolicy/home`` policy, or a non-terminal kind) sends NOTHING — `launchBytes` returns
     /// `nil` for an empty cwd, and `.home` must not emit a redundant `cd` into a login shell that already
-    /// starts at `$HOME`. `launchGrace`-parameterized so a test injects `0` ms.
-    private func deferInheritedCwd(
+    /// starts at `$HOME`. `launchGrace`-parameterized so a test injects `0` ms. Internal (not `private`) so the
+    /// recipe-restore path (`WorkspaceStore+Recipes`) reuses the SAME safe-literal `cd` route to restore each
+    /// recipe pane's captured working directory (ES-E16-2). Returns `true` iff a `cd` was actually scheduled (a
+    /// terminal pane with a non-empty cwd) — the recipe restore folds that typed-ahead completion into the
+    /// replay handoff-absorb count; every other caller discards it.
+    @discardableResult
+    func deferInheritedCwd(
         _ cwd: String?,
         into paneID: PaneID,
         kind: PaneKind,
         launchGrace: Duration,
-    ) {
+    ) -> Bool {
         // Only a text-funnel terminal pane can take a `cd`; a `.chooser`/video pane is a no-op (the stamped
         // `lastKnownCwd` still rides the spec, so a chooser that later resolves to terminal keeps the hint).
-        guard kind == .terminal else { return }
-        guard let bytes = SessionTemplateEngine.launchBytes(cwd: cwd, command: nil) else { return }
+        guard kind == .terminal else { return false }
+        guard let bytes = SessionTemplateEngine.launchBytes(cwd: cwd, command: nil) else { return false }
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: launchGrace)
             self?.handle(for: paneID)?.sendBytes(bytes)
         }
+        return true
     }
 
     /// A26 cwd-freshness (the OSC-7 equivalent): after a command completes (OSC 133;D) pull pane `id`'s

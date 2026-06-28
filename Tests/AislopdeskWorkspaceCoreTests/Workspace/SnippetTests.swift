@@ -209,6 +209,45 @@ final class SnippetTests: XCTestCase {
         XCTAssertNil(st.pendingSnippetRun)
     }
 
+    /// A body of ONLY reserved vars ({{date}}/{{time}}/{{clipboard}}/{{cursor}}) needs NO prompt and runs
+    /// straight away — the reserved names are resolved by `ReservedSnippetVars`, never user-prompted. The
+    /// canonical ES-E16-4 examples (`timenow` = `{{date}} {{time}}`, `gco` = `git checkout {{cursor}}`).
+    /// REVERT-TO-CONFIRM-FAIL: with `beginRunSnippet` reading `snippet.placeholders` (which counts the reserved
+    /// names) these take the `.needsValues` branch, arm a `pendingSnippetRun` no surface consumes, and inject
+    /// NOTHING — so both `beginRunSnippet` expectations and the byte assertions flip.
+    func testBeginRunSnippetRunsReservedOnlyBodiesWithoutPrompting() {
+        let a = term(0)
+        let st = store([a], focus: a.id)
+        st.snippetReservedValues = { ReservedSnippetValues(clipboard: "", date: "2026-06-28", time: "09:41") }
+
+        let now = st.addSnippet(name: "timenow", body: "{{date}} {{time}}")
+        XCTAssertEqual(st.beginRunSnippet(now.id), .ran(1), "a reserved-only body runs immediately")
+        XCTAssertNil(st.pendingSnippetRun, "no value sheet is armed for reserved-only vars")
+        XCTAssertEqual(bytes(st, a.id), [Array("2026-06-28 09:41".utf8)], "the reserved vars are resolved + sent")
+
+        let gco = st.addSnippet(name: "gco", body: "git checkout {{cursor}}")
+        XCTAssertEqual(st.beginRunSnippet(gco.id), .ran(1), "a {{cursor}}-only body runs immediately")
+        XCTAssertNil(st.pendingSnippetRun)
+        XCTAssertEqual(
+            bytes(st, a.id).last, Array("git checkout ".utf8),
+            "the {{cursor}} caret marker is stripped (no prompt, no Enter)",
+        )
+    }
+
+    /// A body mixing a reserved var with a GENUINE user `{{slot}}` still prompts — only the user slot is
+    /// reported (the reserved `{{date}}` is filtered out of the value-entry set).
+    func testBeginRunSnippetReportsOnlyUserSlotsAlongsideReserved() {
+        let a = term(0)
+        let st = store([a], focus: a.id)
+        let s = st.addSnippet(name: "x", body: "ssh {{host}} on {{date}}<Enter>")
+        XCTAssertEqual(
+            st.beginRunSnippet(s.id), .needsValues(["host"]),
+            "the reserved {{date}} is excluded; only the user slot {{host}} prompts",
+        )
+        XCTAssertEqual(st.pendingSnippetRun, s.id)
+        XCTAssertEqual(bytes(st, a.id), [], "nothing is sent until the user slot is collected")
+    }
+
     // MARK: - Run Last Snippet (⌥⌘R re-fire)
 
     func testRunLastSnippetReFiresTheMostRecentLaunch() {

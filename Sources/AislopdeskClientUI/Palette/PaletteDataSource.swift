@@ -352,6 +352,139 @@ public struct TabsPaletteSource: PaletteDataSource {
     }
 }
 
+// MARK: - SNIPPETS source (run a saved snippet by name) — REAL
+
+/// The saved-snippet source (E16 WI-7) — one row per persisted ``Snippet``; selecting it runs the snippet
+/// into the focused (or broadcast) pane via ``WorkspaceStore/beginRunSnippet(_:)`` (which arms the value-entry
+/// sheet for a parameterized snippet, or injects immediately for a plain one). Surfaced under the verbs-only
+/// ⌘⇧P palette's `.actions` filter with a "Snippets" section header, so otty's "snippets appear in the command
+/// palette by name" behaviour is faithful. SNAPSHOT-based (like ``TabsPaletteSource``) — the live store read
+/// happens when the snapshot is built on the @MainActor at palette-open, so the mix/rank stay pure + testable.
+public struct SnippetPaletteSource: PaletteDataSource {
+    public let filters: Set<QueryFilter> = [.actions]
+    public let sectionTitle: String? = "Snippets"
+
+    /// A snapshot snippet row (id + display name + alias) captured from the store.
+    public struct Entry: Sendable {
+        public let id: UUID
+        public let name: String
+        public let alias: String
+
+        public init(id: UUID, name: String, alias: String) {
+            self.id = id
+            self.name = name
+            self.alias = alias
+        }
+    }
+
+    private let entries: [Entry]
+
+    public init(entries: [Entry]) { self.entries = entries }
+
+    /// Build a snapshot from the live store's persisted snippets (display-name normalized so a blank name
+    /// never renders an empty "Run …" row).
+    @preconcurrency
+    @MainActor
+    public static func snapshot(_ store: WorkspaceStore) -> Self {
+        Self(entries: store.snippets.map {
+            Entry(id: $0.id, name: WorkspaceStore.snippetName($0.name), alias: $0.alias)
+        })
+    }
+
+    public func candidates(query _: String) -> [PaletteItem] {
+        entries.map { entry in
+            PaletteItem(
+                id: "snippet.\(entry.id.uuidString)",
+                icon: "doc.plaintext",
+                title: entry.name,
+                // The alias rides BOTH the rendered subtitle (so the row reads "name / alias") and the hidden
+                // keywords, so typing the alias surfaces the snippet too (the same trigger word the at-prompt
+                // expansion uses). nil when the snippet has no alias.
+                subtitle: entry.alias.isEmpty ? nil : entry.alias,
+                keywords: entry.alias.isEmpty ? nil : entry.alias,
+                shortcut: nil,
+                filter: .actions,
+                action: .store { store in _ = store.beginRunSnippet(entry.id) },
+            )
+        }
+    }
+}
+
+// MARK: - RECIPES source (save / open a recipe, + run a saved one by name) — REAL
+
+/// The recipe source (E16 ES-E16-1/2/3 / M1) — surfaces otty's THIRD documented recipe entry point: the
+/// command palette (alongside Settings ▸ Recipes + the File ▸ Recipe menu). Two FIXED verb rows — "Save
+/// Recipe…" arms ``WorkspaceStore/requestSaveRecipe()`` and "Open Recipe…" arms
+/// ``WorkspaceStore/requestOpenRecipe()`` — plus one row per saved `.ottyrecipe` ("Open Recipe: <name>",
+/// opening it via ``WorkspaceStore/openRecipe(at:source:launchGrace:)`` with ``RecipeSource/savedLibrary``).
+/// Because the palette is the ONLY cross-platform recipe surface, these rows ALSO make Save / Open Recipe
+/// reachable on iOS (no menu bar, no ⌘S). SNAPSHOT-based (like ``SnippetPaletteSource``) — the saved-file scan
+/// happens when the snapshot is built on the @MainActor at palette-open, so the mix / rank stay pure + testable.
+public struct RecipePaletteSource: PaletteDataSource {
+    public let filters: Set<QueryFilter> = [.actions]
+    public let sectionTitle: String? = "Recipes"
+
+    /// A snapshot saved-recipe row (its on-disk URL + the resolved display name).
+    public struct Entry: Sendable {
+        public let url: URL
+        public let name: String
+
+        public init(url: URL, name: String) {
+            self.url = url
+            self.name = name
+        }
+    }
+
+    private let entries: [Entry]
+
+    public init(entries: [Entry]) { self.entries = entries }
+
+    /// Build a snapshot from the store's saved library files (display-name normalized the SAME way the
+    /// Open-Recipe picker does — the recipe's name, else the filename). A malformed file (`recipe == nil`) is
+    /// skipped: it is greyed / non-runnable in the picker, so it carries no palette row here either.
+    @preconcurrency
+    @MainActor
+    public static func snapshot(_ store: WorkspaceStore) -> Self {
+        Self(entries: store.savedRecipeFiles().compactMap { file in
+            guard let recipe = file.recipe else { return nil }
+            let trimmed = recipe.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = trimmed.isEmpty ? file.url.deletingPathExtension().lastPathComponent : trimmed
+            return Entry(url: file.url, name: name)
+        })
+    }
+
+    public func candidates(query _: String) -> [PaletteItem] {
+        var rows: [PaletteItem] = [
+            PaletteItem(
+                id: "recipe.save", icon: "square.and.arrow.down", title: "Save Recipe…",
+                keywords: "recipe save layout window tab snapshot export ottyrecipe",
+                shortcut: nil, filter: .actions,
+                action: .store { store in store.requestSaveRecipe() },
+            ),
+            PaletteItem(
+                id: "recipe.open", icon: "square.and.arrow.up", title: "Open Recipe…",
+                keywords: "recipe open restore import layout ottyrecipe",
+                shortcut: nil, filter: .actions,
+                action: .store { store in store.requestOpenRecipe() },
+            ),
+        ]
+        // One row per saved `.ottyrecipe` — opens it by URL from the library (`.savedLibrary` follows the
+        // Saved-Recipes Command-Replay default). The id is path-namespaced so two recipes never collide.
+        rows += entries.map { entry in
+            PaletteItem(
+                id: "recipe.saved.\(entry.url.path)",
+                icon: "doc.text",
+                title: "Open Recipe: \(entry.name)",
+                keywords: "recipe \(entry.name)",
+                shortcut: nil,
+                filter: .actions,
+                action: .store { store in store.openRecipe(at: entry.url, source: .savedLibrary) },
+            )
+        }
+        return rows
+    }
+}
+
 // MARK: - The mixer
 
 /// Combines registered sources into one ordered, sectioned result list (warp-overlays-actions.md §2.2).

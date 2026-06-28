@@ -1145,31 +1145,193 @@ private struct EditorSettingsTab: View {
     }
 }
 
-// MARK: - Recipes section (RESERVED — deferred)
+// MARK: - Recipes section (snippet library + Command Replay — E16 WI-7)
 
-/// Recipes is RESERVED/empty by design — kept in the taxonomy so the navigator stays 1:1 with otty's
-/// (`docs/otty-clone/screenshots/all-settings.png` shows a Recipes section, book glyph, between Appearance
-/// and Key Bindings). In otty, Recipes is a saved-command / snippet library; aislopdesk has no equivalent
-/// yet, so — exactly like the Editor placeholder — there are NO settings to surface here and we deliberately
-/// do NOT backfill it. The section fills in if/when a recipe library lands (otty-clone backlog); it is pinned
-/// by `SettingsSectionTaxonomyTests`.
+/// Recipes is the otty saved-command / snippet library (`all-settings.png` shows the section, book glyph,
+/// between Appearance and Key Bindings). E16 WI-7 populates it with the two surfaces aislopdesk backs today:
+///
+/// - **Snippets** — the persisted ``Snippet`` list (Name + Alias), each row with a pencil-edit + trash, and
+///   an **Add Text Snippet** button that opens the ``SnippetEditorSheet`` (`textsnippet-setting.png`). CRUD
+///   routes to the live ``WorkspaceStore`` (`addSnippet`/`updateSnippet`/`deleteSnippet`) injected via the
+///   `\.workspaceStore` environment slot (the same seam the Advanced → Workspace rows use).
+/// - **Command Replay** — the two otty replay-mode pickers (Saved Recipes default Auto / Recipe Files default
+///   Ask Once) bound to the fire-time `Defaults.Keys` (`@Default(.replayModeSaved)` / `.replayModeFiles`).
+///   Ask-Once / Manually surface the in-pane ``RecipeReplayHUD`` to run / step the queue.
+///
+/// **At-prompt snippet auto-expand is LIVE** (E16 ES-E16-4): the always-on baseline is the explicit palette
+/// expand (type a snippet's name or alias under ⌘⇧P); on top of that, the **Expand alias at shell prompt**
+/// toggle (`@Default(.snippetAutoExpand)`, default OFF) arms the prompt-aware input interceptor — typing an
+/// alias then Tab/Space at an OSC-133;A shell prompt expands it in place (``SnippetAliasExpander``, wired by
+/// `WorkspaceStore.wireSnippetExpander`). The toggle drives real behaviour, so it is not a lying control.
+///
+/// The RECIPE library list itself (saved `.ottyrecipe` files) is store-glue (E16 WI-8/WI-10) and lands with
+/// the save/open flows; this tab owns the snippet editor + the replay/expand SETTINGS. Cross-platform — the
+/// iOS settings sheet (WI-10) hosts the same struct. Pinned in the taxonomy by `SettingsSectionTaxonomyTests`.
 private struct RecipesSettingsTab: View {
+    /// The live workspace owner (snippet CRUD). `nil` outside the app scene (previews / before the iOS sheet
+    /// wires it, WI-10) → the snippet list renders a neutral unavailable note rather than crashing.
+    @Environment(\.workspaceStore) private var workspaceStore
+
+    @Default(.replayModeSaved) private var replayModeSaved
+    @Default(.replayModeFiles) private var replayModeFiles
+    @Default(.snippetAutoExpand) private var snippetAutoExpand
+
+    /// The snippet currently open in the editor sheet (a fresh target for Add, or the row being edited).
+    @State private var editing: SnippetEditTarget?
+
     var body: some View {
         Form {
-            Section("Recipes") {
-                LabeledContent("Recipe library") {
-                    Text("Not available")
-                        .foregroundStyle(Otty.Text.tertiary)
-                }
-                Text(
-                    "Recipes are a saved-command library, which aislopdesk does not have yet. This section is "
-                        + "reserved to stay 1:1 with otty's navigator.",
-                )
-                .font(.system(size: Otty.Typeface.footnote))
-                .foregroundStyle(Otty.Text.secondary)
-            }
+            snippetsSection
+            commandReplaySection
         }
         .formStyle(.grouped)
+        .sheet(item: $editing) { target in
+            SnippetEditorSheet(
+                isNew: target.isNew,
+                name: target.name,
+                alias: target.alias,
+                body: target.body,
+            ) { name, alias, body in
+                if let snippetID = target.snippetID {
+                    workspaceStore?.updateSnippet(snippetID, name: name, body: body, alias: alias)
+                } else {
+                    workspaceStore?.addSnippet(name: name, body: body, alias: alias)
+                }
+            }
+        }
+    }
+
+    // MARK: Snippets list + Add
+
+    private var snippetsSection: some View {
+        Section("Snippets") {
+            if let store = workspaceStore {
+                let snippets = store.snippets
+                if snippets.isEmpty {
+                    Text(
+                        "No snippets yet. Add a text snippet to run it from the command palette, or expand it "
+                            + "by alias at the shell prompt.",
+                    )
+                    .font(.system(size: Otty.Typeface.footnote))
+                    .foregroundStyle(Otty.Text.secondary)
+                } else {
+                    ForEach(snippets) { snippet in
+                        snippetRow(snippet, store: store)
+                    }
+                }
+                Button { editing = SnippetEditTarget() } label: {
+                    Label("Add Text Snippet", systemImage: "plus")
+                }
+            } else {
+                Text("Snippets are unavailable in this context.")
+                    .font(.system(size: Otty.Typeface.footnote))
+                    .foregroundStyle(Otty.Text.tertiary)
+            }
+        }
+    }
+
+    /// One snippet row: Name (+ monospaced Alias subtext), a pencil-edit, and a trash-delete (otty's row
+    /// chrome from `textsnippet-setting.png`'s list behind the sheet).
+    private func snippetRow(_ snippet: Snippet, store: WorkspaceStore) -> some View {
+        HStack(spacing: Otty.Metric.space2) {
+            VStack(alignment: .leading, spacing: Otty.Metric.space1) {
+                Text(WorkspaceStore.snippetName(snippet.name))
+                    .font(.system(size: Otty.Typeface.body))
+                    .foregroundStyle(Otty.Text.primary)
+                if !snippet.alias.isEmpty {
+                    Text(snippet.alias)
+                        .font(.system(size: Otty.Typeface.footnote).monospaced())
+                        .foregroundStyle(Otty.Text.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+            Button { editing = SnippetEditTarget(snippet) } label: {
+                Image(systemName: "pencil")
+                    .font(.system(size: Otty.Metric.iconSize))
+                    .foregroundStyle(Otty.Text.icon)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Edit snippet")
+            Button { store.deleteSnippet(snippet.id) } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: Otty.Metric.iconSize))
+                    .foregroundStyle(Otty.Text.icon)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Delete snippet")
+        }
+    }
+
+    // MARK: Command Replay + at-prompt auto-expand
+
+    private var commandReplaySection: some View {
+        Section("Command Replay") {
+            Picker("Saved Recipes", selection: $replayModeSaved) {
+                ForEach(RecipeReplayMode.allCases, id: \.self) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            Picker("Recipe Files", selection: $replayModeFiles) {
+                ForEach(RecipeReplayMode.allCases, id: \.self) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            Text(
+                "How a recipe's saved commands run when you open it. Auto runs them all; Ask Once shows them, "
+                    + "then runs the queue when you confirm in the pane; Manually runs one at a time; Skip opens "
+                    + "the layout only.",
+            )
+            .font(.system(size: Otty.Typeface.footnote))
+            .foregroundStyle(Otty.Text.secondary)
+
+            // LIVE toggle (E16 ES-E16-4): at-prompt alias auto-expansion. Default OFF (opt-in) — when on, the
+            // pure `SnippetAliasExpander` (wired per terminal pane) watches the in-progress prompt line and, on
+            // a bare Tab/Space whose trailing word is a snippet alias, erases the alias and injects the resolved
+            // body. Gated on an OSC-133;A prompt + a trusted line mirror so ordinary typing is never corrupted.
+            Toggle("Expand alias at shell prompt", isOn: $snippetAutoExpand)
+            Text(
+                "Snippets always expand from the command palette (⌘⇧P): type a snippet's name or alias to run "
+                    + "it. With this on, typing an alias then Tab or Space at the shell prompt expands it in "
+                    + "place (needs shell integration for the prompt mark).",
+            )
+            .font(.system(size: Otty.Typeface.footnote))
+            .foregroundStyle(Otty.Text.secondary)
+
+            timingFooter(.live)
+        }
+    }
+}
+
+/// The snippet open in the ``RecipesSettingsTab`` editor sheet — a fresh empty target (Add) or an existing
+/// snippet (Edit). `Identifiable` so it drives `.sheet(item:)`; `snippetID == nil` means "new".
+private struct SnippetEditTarget: Identifiable {
+    let id: UUID
+    /// The backing snippet's id, or `nil` for a brand-new snippet (Add).
+    let snippetID: UUID?
+    let name: String
+    let alias: String
+    let body: String
+
+    var isNew: Bool { snippetID == nil }
+
+    /// A fresh, empty snippet (Add Text Snippet). A throwaway `id` keeps `.sheet(item:)` happy.
+    init() {
+        id = UUID()
+        snippetID = nil
+        name = ""
+        alias = ""
+        body = ""
+    }
+
+    /// Editing an existing snippet — seeds the sheet with its current Name / Alias / Text.
+    init(_ snippet: Snippet) {
+        id = snippet.id
+        snippetID = snippet.id
+        name = snippet.name
+        alias = snippet.alias
+        body = snippet.body
     }
 }
 

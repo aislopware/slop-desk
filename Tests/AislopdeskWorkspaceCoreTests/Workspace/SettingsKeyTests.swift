@@ -81,6 +81,10 @@ final class SettingsKeyTests: XCTestCase {
             SettingsKey.windowWidthPxKey,
             SettingsKey.windowHeightPxKey,
             SettingsKey.autoHideTabsPanelKey,
+            // E16 WI-7: Recipes Command Replay modes + at-prompt snippet auto-expand.
+            SettingsKey.replayModeSavedKey,
+            SettingsKey.replayModeFilesKey,
+            SettingsKey.snippetAutoExpand,
         ]
     }
 
@@ -208,6 +212,48 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(NotifyWhileForeground.off.rawValue, "off")
         XCTAssertEqual(NotifyWhileForeground.always.rawValue, "always")
         XCTAssertEqual(NotifyWhileForeground.tabUnfocused.rawValue, "tab-unfocused")
+    }
+
+    // MARK: - E16 WI-7: Recipes Command Replay modes + at-prompt snippet auto-expand
+
+    /// The two Command Replay keys read their spec defaults when unset (saved recipes → Auto, opened files →
+    /// Ask Once), round-trip each ``RecipeReplayMode`` from its persisted raw value, and repair a stale value
+    /// to the per-key default via the `RawRepresentableBridge`. The auto-expand toggle defaults OFF (opt-in).
+    /// Pins the `Defaults.Key` defaults against an INDEPENDENT expectation (the spec replay-mode table), so a
+    /// default flip fails here. FAILS before the keys/accessors exist (E16 WI-7).
+    func testRecipeReplayKeysDefaultsAndRoundTrip() {
+        XCTAssertEqual(SettingsKey.replayModeSaved, .auto, "saved recipes default to Auto")
+        XCTAssertEqual(SettingsKey.replayModeFiles, .askOnce, "opened files default to Ask Once")
+        XCTAssertFalse(SettingsKey.snippetAutoExpandEnabled, "at-prompt auto-expand defaults OFF (opt-in)")
+
+        // Round-trip each mode from its persisted otty raw value.
+        UserDefaults.standard.set(RecipeReplayMode.manually.rawValue, forKey: SettingsKey.replayModeSavedKey)
+        XCTAssertEqual(SettingsKey.replayModeSaved, .manually)
+        UserDefaults.standard.set(RecipeReplayMode.skip.rawValue, forKey: SettingsKey.replayModeFilesKey)
+        XCTAssertEqual(SettingsKey.replayModeFiles, .skip)
+
+        // A stale / future-version raw value repairs to the per-key default (saved → Auto, files → Ask Once).
+        UserDefaults.standard.set("garbage-from-a-future-version", forKey: SettingsKey.replayModeSavedKey)
+        XCTAssertEqual(SettingsKey.replayModeSaved, .auto, "an invalid raw value repairs to Auto")
+        UserDefaults.standard.set("garbage", forKey: SettingsKey.replayModeFilesKey)
+        XCTAssertEqual(SettingsKey.replayModeFiles, .askOnce, "an invalid raw value repairs to Ask Once")
+
+        // The auto-expand toggle flips to ON when explicitly enabled.
+        UserDefaults.standard.set(true, forKey: SettingsKey.snippetAutoExpand)
+        XCTAssertTrue(SettingsKey.snippetAutoExpandEnabled)
+    }
+
+    /// The E16 key strings are the single source of truth shared with every `@Default` consumer + the WI-7
+    /// Recipes navigator — a rename that would split-brain the picker from the persisted value fails this pin.
+    /// The ``RecipeReplayMode`` raw values are the otty config tokens.
+    func testRecipeReplayKeyStringsAreStable() {
+        XCTAssertEqual(SettingsKey.replayModeSavedKey, "recipes.replayMode.saved")
+        XCTAssertEqual(SettingsKey.replayModeFilesKey, "recipes.replayMode.files")
+        XCTAssertEqual(SettingsKey.snippetAutoExpand, "recipes.snippetAutoExpand")
+        XCTAssertEqual(RecipeReplayMode.auto.rawValue, "auto")
+        XCTAssertEqual(RecipeReplayMode.askOnce.rawValue, "askOnce")
+        XCTAssertEqual(RecipeReplayMode.manually.rawValue, "manually")
+        XCTAssertEqual(RecipeReplayMode.skip.rawValue, "skip")
     }
 
     // MARK: - PreferencesStore (W13) — the live source the Settings panels bind to

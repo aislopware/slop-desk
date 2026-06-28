@@ -338,6 +338,14 @@ public final class TerminalViewModel {
     /// where the surface keeps its plain libghostty path. `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var keyInterceptor: TerminalKeyInterceptor?
 
+    /// E16 ES-E16-4 — the PURE at-prompt snippet-alias auto-expander the libghostty / iOS surface consults on a
+    /// BARE Tab/Space (via ``expandSnippetAlias()``). The store wires it (in `wireMaterializedLeaf`) with the
+    /// live snippet list, the `snippetAutoExpand` setting, this model's `isAtShellPrompt`, and the reserved-var
+    /// resolver. The mirror it keeps is fed by ``sendInput(_:)`` (outbound bytes) + ``ingestOutput(_:)`` (the
+    /// OSC-133;A prompt mark). `nil` for headless/preview callers (no store), where typing is never intercepted.
+    /// `@ObservationIgnored`: wiring, not view state.
+    @ObservationIgnored public var snippetExpander: SnippetAliasExpander?
+
     /// Fired the instant an interactive resize ENDS — i.e. ``setResizeSuspended(false)`` flushes the
     /// settled grid to the host. The renderer wires it to RE-ARM its post-resize present burst.
     ///
@@ -1128,10 +1136,34 @@ public final class TerminalViewModel {
         }
         if Self.echoProbeEnabled { probeInputAt = ContinuousClock.now }
         if glitchCaretMode != .off { noteGlitchCaretSend(data) }
+        // E16 ES-E16-4: mirror the in-progress prompt line for at-prompt snippet-alias auto-expansion. Fed the
+        // SAME outbound bytes the host sees (so the mirror matches the echoed line); the expander tracks only
+        // the unambiguous single-printable-ASCII / DEL shapes and drops trust on anything else. A no-op when no
+        // expander is wired (headless / non-terminal), and a no-op for the expander's own re-entrant injection
+        // (it untrusts the line before returning, so these bytes are ignored).
+        snippetExpander?.noteSent([UInt8](data))
         inputSink?(data)
         // Synchronized input: offer the SAME bytes to the broadcast fan-out (no-op when disarmed). After
         // the local send so the source pane echoes first; the store skips the source and guards re-entry.
         broadcastTap?(data)
+    }
+
+    /// E16 ES-E16-4 — AT-PROMPT SNIPPET ALIAS AUTO-EXPANSION actuator. The libghostty / iOS surface calls this
+    /// on a BARE word-boundary trigger key (Tab / Space) BEFORE its own key path: if the in-progress prompt
+    /// line's trailing word is a snippet alias (and the `snippetAutoExpand` setting is on AND the shell is at an
+    /// OSC-133;A prompt), it SENDS the resolved snippet bytes — alias-erasing DELs + the reserved-var/`{{cursor}}`
+    /// -resolved body — and returns `true` so the surface SWALLOWS the trigger key. Returns `false` to let the
+    /// key type normally (Tab completion / a literal space) when nothing matches or no expander is wired.
+    ///
+    /// All the decision logic is the pure, headless-tested ``SnippetAliasExpander``; this only routes the
+    /// resulting bytes through the single ``sendInput(_:)`` seam (so the expansion broadcasts to synced siblings
+    /// and respects the read-only gate, exactly like typed bytes). The expander untrusts its mirror before
+    /// returning the expansion, so the re-entrant `sendInput` here is not mistaken for fresh typing.
+    @discardableResult
+    public func expandSnippetAlias() -> Bool {
+        guard let expansion = snippetExpander?.expansion() else { return false }
+        sendInput(Data(expansion.bytes))
+        return true
     }
 
     // MARK: Glitch caret (predictive-echo v1 — docs/12 §B → docs/17 §2.4, docs/31 #3)
@@ -1516,6 +1548,12 @@ public final class TerminalViewModel {
             // (headless/preview); the `nil` short-circuit keeps the ground-content pass free of extra work.
             if onPromptIdle != nil, modeTracker.mode == .shellPrompt, modeEvents.contains(.promptStart) {
                 onPromptIdle?()
+            }
+            // E16 ES-E16-4: an OSC-133;A prompt mark on the MAIN screen means the shell is back at a KNOWN,
+            // empty prompt line — re-establish the snippet-alias mirror's trust so a freshly-typed alias can
+            // expand. GATED on `.shellPrompt` (not the alt-screen) for the same reason as the idle dispatch.
+            if snippetExpander != nil, modeTracker.mode == .shellPrompt, modeEvents.contains(.promptStart) {
+                snippetExpander?.notePromptMark()
             }
         }
         // Glitch caret (docs/31 #3): host output is the ground truth — ANY ingest hides the caret (the
