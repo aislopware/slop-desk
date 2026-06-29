@@ -47,9 +47,9 @@ These are honest, pre-documented (`DECISIONS.md` + source comments). The setting
 - **macOS-app pages** Installation / Pricing / Credits / Performance — N/A to a remote client.
 - **`ipc` / `state:<agent>` CLI**, config `include` directive, multi-key `>` chord sequences, env-var expansion in config values — explicitly deferred in source (E20 backlog).
 
-## E. Deferred LARGE features — candidates for the "next features" the user adds on top
+## E. INTENTIONALLY NOT BUILT — do NOT implement in future sessions ⛔
 
-Documented but never built; **not** in the stated exclusions; each is a substantial subsystem. Left as explicit product decisions for the user (the clone is the *foundation*; these are natural next features). Build any on request.
+**Binding scope decision (user, 2026-06-29):** the large features below are **deliberately excluded** from the clone. They are documented-but-not-built ON PURPOSE — the clone is the *foundation*; these are the user's own extension surface, to be built later **only on the user's explicit request**. **Future sessions / agents MUST NOT implement, scaffold, or "fix" these as coverage gaps.** Each is a substantial subsystem; auto-building them would be unwanted scope + cost. Treat them exactly like §D exclusions.
 
 | Feature | Doc page(s) | Size | Remote-model note |
 |---|---|---|---|
@@ -60,8 +60,8 @@ Documented but never built; **not** in the stated exclusions; each is a substant
 | **Theme catalog** — Nord (otty's dark default) + the ~24 built-ins (clone ships 8: 6 Monokai Pro + Paper + Dark) | customization/themes | Med | clone deliberately defaults to Monokai Pro; catalog breadth is the gap |
 | **bash / fish shell integration** — OSC-133 injection for `~/.bashrc` + fish `vendor_conf.d` (clone is zsh-only) | terminal-features/shell-integration | Med | bash/fish users currently get no blocks/badges/notify/auto-progress |
 
-Smaller deferred niceties (low severity, documented): tab labeled dividers, tear-off pane → new window / cross-tab merge, agent-history standalone pane + Resume button, token/cost/LSP session sidebar (Claude Code doesn't emit cost over the wire), composer status-info strip, Restart-Agent button, GUI Provide-Shell-Integration toggle, Debug section, config hot-reload (FS watcher), zoxide history import, Manage-Jump-Folders editor, KKP user toggle, macOS Services menu, Insert-from-Device menu, custom CLI aliases, Privileges menu bar.
+Smaller deferred niceties — **also intentionally not built (do NOT auto-implement)**, low priority: tab labeled dividers, tear-off pane → new window / cross-tab merge, agent-history standalone pane + Resume button, token/cost/LSP session sidebar (Claude Code doesn't emit cost over the wire), composer status-info strip, Restart-Agent button, GUI Provide-Shell-Integration toggle, Debug section, config hot-reload (FS watcher), zoxide history import, Manage-Jump-Folders editor, KKP user toggle, macOS Services menu, Insert-from-Device menu, custom CLI aliases, Privileges menu bar.
 
 ---
 
-*Generated from the 2026-06-29 docs-coverage audit (lean sonnet, run `wj7db1mx1`). Cheap real gaps fixed in `c9ac552`. The large §E features are the explicit, user-decidable extension surface.*
+*Generated from the 2026-06-29 docs-coverage audit (lean sonnet, run `wj7db1mx1`). Cheap real gaps fixed in `c9ac552`. **§C/§D/§E are all INTENTIONAL non-builds — a future session must NOT treat them as gaps to close.** Build a §E feature only when the user explicitly asks for it by name.*
