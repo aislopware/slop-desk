@@ -1,0 +1,67 @@
+# otty docs → aislopdesk clone — coverage matrix
+
+**Source of truth:** the live https://docs.otty.sh/ pages + their illustration screenshots (harvested under `docs/otty-clone/screenshots/`, mirrored as 47 specs under `docs/otty-clone/spec/`). This matrix is the result of a **docs-driven coverage audit** (2026-06-29) that read every in-scope live page and grepped the clone for each documented feature — catching features the docs describe that the implementation audit (which only inspects what was built) could not see.
+
+Method: lean per-section sonnet agents fetched each live page, cross-checked the screenshot, and reported only self-verified gaps. The clone's terminal **emulation** is the embedded **libghostty** engine (the real ghostty), so the entire VT/Terminal-API section (C0/ESC/CSI/OSC *parsing*) is provided by libghostty, not reimplemented — only the **app-level** OSC behaviours (7/8/9/52/133/9;4/1337) are clone responsibilities.
+
+Live docs sections audited: Getting Started, User Interface (9), Workflows (6), Terminal Features (16), Working with Agents (9), Customization (7), Terminal API/VT (~65, = libghostty), Reference (7), About. **47 user-facing pages map 1:1 to the harvested specs; the live nav has no un-harvested user-facing page.**
+
+---
+
+## A. Covered (the clone implements the documented feature)
+
+The large majority of every user-facing page is implemented (epics E1–E21 + audit batches 1–5c). Representative: Window/Tab/Split (vertical tabs, groups, splits, float card, pin, window-size modes), Details Panel (Info/Outline/Git/Files), Status Bar, Find + Global Search (Aa/ab/.* + search-all-tabs), Open Quickly (+ Recipes pill, see §B), Command Palette (full catalog + cwd pill), Jump-To/Hint-Mode, Selection/Copy/Paste/Scroll/Input (gated by Controls settings), Progress State + Notifications, Vi-Mode + Read-Only + Secure Input, Themes/Fonts/Keybindings/Config-File/Advanced/Import-Export settings, Agents (Composer + Prompt Queue + Send-to-Chat + Fork + History — Claude Code), CLI + watch:claude + first-launch, drag-and-drop + web pane, OSC 7/52/133/9;4 app behaviours, TERM identity. See `BACKLOG.md` / `GAP-ANALYSIS.md` / git history for per-epic detail.
+
+## B. Fixed in the docs-coverage pass — commit `c9ac552`
+
+Genuine gaps/bugs the coverage audit surfaced, fixed immediately:
+
+| Doc page | Gap | Fix |
+|---|---|---|
+| agents (overview/parallel-tasks) | **Bug:** tab badge did not auto-clear on tab focus (docs say it does) | `WorkspaceStore.selectTab` now clears the focused tab's agent badges (⌘1-9 + click) |
+| user-interface/open-quickly | Recipes filter pill missing (store existed since E16) | added `.recipes` pill + `recipeItems` builder + ⌘E chord |
+| agents/history | Send-to-Chat absent from transcript context menu | added `.contextMenu` (Copy + Send to Chat) wired to existing `openSendToChat` |
+| vt/osc/osc-133 | OSC 133 **B** mark not emitted → command blocks had empty commandText, auto-progress never fired | zsh shim emits 133;B via `PROMPT+=`; sniffer surfaces a prompt-ready idle signal |
+| customization/config-file | No CONFIG FILE section in Settings → Advanced | added path row + Open Config File + Reload Config (reusing the existing reload action) |
+
+## C. Documented ceilings — surface/persist but don't fully actuate (libghostty ABI / renderer limits)
+
+These are honest, pre-documented (`DECISIONS.md` + source comments). The setting/UI exists; full actuation awaits a libghostty hook the pinned fork doesn't expose. NOT bugs — the UI labels them "preference saved / not yet functional".
+
+- Scroll-Past-Last/First-Line **rendering** (blank overscroll region) — no viewport hook
+- Backspace-Deletes-Selection — no set-selection / cursor-geometry C API
+- Smooth-Scroll **OFF** (row-snap) — no row-snap viewport hook
+- Cursor Animation **Smooth** (gliding caret) — no cursor-animation hook
+- Title-Report toggle (XTWINOPS) — libghostty owns XTWINOPS, no enable/disable hook
+- Vi motion set: h/l, w/b/e, 0/$/^, H/M/L, visual anchor-swap `o`, Mark Mode — no programmatic cursor-move / set-selection action
+- OSC-8 hyperlink runs not in Hint/Jump — C ABI exposes no per-cell hyperlink read
+- Recipe **scrollback** capture — no libghostty scrollback-read seam
+- Box-drawing arrow/triangle **stem-joining** (otty-specific analytical glyph) — marked NON-1:1 for the initial clone
+
+## D. Intentional exclusions (per the user's directive + the remote model)
+
+- **Workflows section — cloud features:** Data Sync (otty cloud), SSH/Remote-Development as otty frames it. The clone is its own remote model (host + client over a trusted WireGuard mesh). *(Recipes, Session-Recovery, CLI, Frequent-Folders from the Workflows nav WERE implemented under other epics.)*
+- **Agents other than Claude Code:** Codex / OpenCode hook cards, `watch:codex`/`watch:opencode`, OSC-88 third-party resume — the user scoped agents to Claude Code only (`AgentKind.codex` is documented-dead, never rendered).
+- **Editor settings section** — needs a full file-editor; intentionally deferred (Task #14). Couples to the File/Folder panes in §E.
+- **VT sequence emulation** (C0/ESC/CSI/OSC parsing) — provided by libghostty, not reimplemented.
+- **macOS-app pages** Installation / Pricing / Credits / Performance — N/A to a remote client.
+- **`ipc` / `state:<agent>` CLI**, config `include` directive, multi-key `>` chord sequences, env-var expansion in config values — explicitly deferred in source (E20 backlog).
+
+## E. Deferred LARGE features — candidates for the "next features" the user adds on top
+
+Documented but never built; **not** in the stated exclusions; each is a substantial subsystem. Left as explicit product decisions for the user (the clone is the *foundation*; these are natural next features). Build any on request.
+
+| Feature | Doc page(s) | Size | Remote-model note |
+|---|---|---|---|
+| **Autocomplete** — inline ghost text + candidate panel + Fig spec DB (715+ tools) + frecency + auto-correction + `learn` pinning | terminal-features/autocomplete | **High** | needs host-side history + a bundled spec DB |
+| **File pane / Folder pane** — built-in editor (syntax highlight, Markdown/SVG/HTML/image/PDF/hex/diff preview) + standalone folder browser | user-interface/files-and-links | **High** | needs host file read/write over the wire; overlaps the deferred Editor (§D) |
+| **Quick Terminal** — system-wide global-hotkey drop-down terminal (`quick-terminal-*` config keys) | reference/configuration | Med-High | a host-connected dropdown in the remote model |
+| **Cross-terminal config import/export** — ghostty/kitty/alacritty classification + preview/conflict dialog + `aislopdesk import`/`export` CLI | customization/import-export, reference/cli | Med | aislopdesk currently does only its own workspace-JSON transfer |
+| **Theme catalog** — Nord (otty's dark default) + the ~24 built-ins (clone ships 8: 6 Monokai Pro + Paper + Dark) | customization/themes | Med | clone deliberately defaults to Monokai Pro; catalog breadth is the gap |
+| **bash / fish shell integration** — OSC-133 injection for `~/.bashrc` + fish `vendor_conf.d` (clone is zsh-only) | terminal-features/shell-integration | Med | bash/fish users currently get no blocks/badges/notify/auto-progress |
+
+Smaller deferred niceties (low severity, documented): tab labeled dividers, tear-off pane → new window / cross-tab merge, agent-history standalone pane + Resume button, token/cost/LSP session sidebar (Claude Code doesn't emit cost over the wire), composer status-info strip, Restart-Agent button, GUI Provide-Shell-Integration toggle, Debug section, config hot-reload (FS watcher), zoxide history import, Manage-Jump-Folders editor, KKP user toggle, macOS Services menu, Insert-from-Device menu, custom CLI aliases, Privileges menu bar.
+
+---
+
+*Generated from the 2026-06-29 docs-coverage audit (lean sonnet, run `wj7db1mx1`). Cheap real gaps fixed in `c9ac552`. The large §E features are the explicit, user-decidable extension surface.*
