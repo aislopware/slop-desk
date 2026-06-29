@@ -388,15 +388,21 @@ public struct ClientControlDispatcher {
         return Self.success(id: id, result: [:])
     }
 
-    /// `agent-status` → `{seen, status?}`. `seen:false` (never-seen id) maps to `watch:claude` exit 4.
+    /// `agent-status` → `{seen, status?}`. `seen:false` (id resolves to NO pane) maps to `watch:claude`
+    /// exit 4; `seen:true` with NO `status` (pane exists but the agent has not reported yet — the startup
+    /// window) keeps `watch:claude` polling; `seen:true` + `status` carries the rolled-up status.
     private func agentStatus(id: String, params: [String: Any]) -> [String: Any] {
         guard let target = params["id"] as? String, !target.isEmpty else {
             return Self.error(id: id, message: "missing params.id")
         }
-        if let status = backend.agentStatus(id: target) {
+        switch backend.agentStatus(id: target) {
+        case .unresolved:
+            return Self.success(id: id, result: ["seen": false])
+        case .resolvedNoStatus:
+            return Self.success(id: id, result: ["seen": true])
+        case let .status(status):
             return Self.success(id: id, result: ["seen": true, "status": status.rawValue])
         }
-        return Self.success(id: id, result: ["seen": false])
     }
 
     // MARK: - NDJSON helpers (pure, nonisolated — usable off the main actor by the socket shim)

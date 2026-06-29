@@ -39,12 +39,19 @@ final class WatchClaudeOutcomeTests: XCTestCase {
         }
     }
 
-    func testObservationSeenWithMissingOrUnknownTokenDegradesToNone() {
-        // Forward-tolerant: a seen session with a missing or unknown/future token is read as "no agent
-        // here / closed" (.none → settled), never a trap.
-        XCTAssertEqual(Outcome.observation(seen: true, statusToken: nil), .status(.none))
+    func testObservationSeenWithUnknownTokenDegradesToNone() {
+        // Forward-tolerant: a seen session with an unknown/future or empty (non-nil) token is read as
+        // "no agent here / closed" (.none → settled), never a trap.
         XCTAssertEqual(Outcome.observation(seen: true, statusToken: "warp-drive"), .status(.none))
         XCTAssertEqual(Outcome.observation(seen: true, statusToken: ""), .status(.none))
+    }
+
+    func testObservationSeenWithNoTokenIsSeenNoStatusNotNone() {
+        // M6 regression: `seen:true` with a MISSING status token = the pane exists but the agent has not
+        // reported yet (the startup window). It must decode to `.seenNoStatus`, NOT `.status(.none)` — the
+        // latter is "at rest" (settled) and would exit a still-starting agent immediately.
+        XCTAssertEqual(Outcome.observation(seen: true, statusToken: nil), .seenNoStatus)
+        XCTAssertNotEqual(Outcome.observation(seen: true, statusToken: nil), .status(.none))
     }
 
     // MARK: - isAtRest classification (independently authored)
@@ -88,6 +95,30 @@ final class WatchClaudeOutcomeTests: XCTestCase {
         // notSeen on the first poll (never seen before) = id never seen → exit 4.
         let step = Outcome.decide(observation: .notSeen, hasEverBeenSeen: false, deadlineExceeded: false)
         XCTAssertEqual(step, .finished(.neverSeen))
+    }
+
+    // MARK: - seenNoStatus — pane exists, agent not reporting yet (startup window) → keep polling
+
+    func testSeenNoStatusOnFirstPollKeepsPollingNotNeverSeen() {
+        // M6 root cause: `watch:claude <id>` right after spawning Claude — the pane EXISTS but has not
+        // reported a status yet. The first poll is `.seenNoStatus` with hasEverBeenSeen:false; it must keep
+        // polling (block until idle), NOT decide `.neverSeen` (exit 4).
+        let step = Outcome.decide(observation: .seenNoStatus, hasEverBeenSeen: false, deadlineExceeded: false)
+        XCTAssertEqual(step, .keepPolling)
+        XCTAssertNotEqual(step, .finished(.neverSeen))
+    }
+
+    func testSeenNoStatusPastDeadlineTimesOut() {
+        // A pane that never reports a status before the (caller-supplied) deadline → timeout, not never-seen.
+        let step = Outcome.decide(observation: .seenNoStatus, hasEverBeenSeen: false, deadlineExceeded: true)
+        XCTAssertEqual(step, .finished(.timedOut))
+    }
+
+    func testSeenNoStatusEndToEndKeepsPolling() {
+        // Wire reply {seen:true} (no status) on the first poll → keepPolling (exitCode nil), proving the
+        // startup-window id does NOT terminate with exit 4. Revert-to-confirm-fail: before the fix, the
+        // backend answered {seen:false} for this id and exitCode here would be 4.
+        XCTAssertNil(exitCode(seen: true, status: nil, everSeen: false, expired: false))
     }
 
     // MARK: - Exit 9 — timeout while still active

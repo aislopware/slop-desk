@@ -24,6 +24,7 @@ public enum WatchProgress {
     private static let esc: UInt8 = 0x1B // ESC
     private static let bel: UInt8 = 0x07 // BEL — the OSC terminator the spec examples use (`\a`)
     private static let rightBracket = UInt8(ascii: "]")
+    private static let semicolon = UInt8(ascii: ";")
 
     /// `ESC ] 9 ; 4 ; 3 BEL` — the INDETERMINATE spinner emitted at the start of a watched command.
     /// Parsed by the host into `.progress(state: 3 = indeterminate)`.
@@ -66,8 +67,9 @@ public enum WatchProgress {
     }
 
     /// `ESC ] 9 ; <message> BEL` — the iTerm2/ConEmu free-text desktop-notification form the host
-    /// already parses into a `.notification(title: "", body: message)`. Used for the watch-finish
-    /// banner (emitted by `main.swift` only when `-q`/`--quiet` was NOT passed).
+    /// already parses into a `.notification(title: "", body: message)`. The generic OSC-9 building block
+    /// (the watch-FINISH banner uses ``watchFinishNotificationBytes(message:)`` so it can ride the dedicated
+    /// "Notify on Watch Finish" toggle, not the master switch).
     ///
     /// An empty message yields NO bytes (the host drops an empty `OSC 9` body anyway, but emitting
     /// nothing keeps the wrapper from writing a no-op escape).
@@ -75,6 +77,28 @@ public enum WatchProgress {
         guard !message.isEmpty else { return [] }
         var out: [UInt8] = [esc, rightBracket]
         out.append(contentsOf: Array("9;".utf8))
+        out.append(contentsOf: Array(message.utf8))
+        out.append(bel)
+        return out
+    }
+
+    /// The watch-FINISH banner bytes: `ESC ] 777 ; notify ; <marker> ; <message> BEL`, where `<marker>` is the
+    /// private ``WatchNotificationMarker/title`` sentinel. The host parses this into a plain
+    /// `.notification(title: marker, body: message)` (no new wire); the client's `NotificationEvent.classifyExplicit`
+    /// recognises the marker, STRIPS it, and routes the banner to `NotificationEvent.watchFinish` (gated by the
+    /// dedicated "Notify on Watch Finish" toggle) rather than the generic `.explicitOSC` master switch — so the
+    /// toggle works as documented (reference__cli.md:40). The OSC-777 `;`-split (maxSplits 3) keeps any `;` in
+    /// `<message>` inside the body, and the marker carries no `;`, so the title field stays exactly the marker.
+    ///
+    /// An empty message yields NO bytes (a watch-finish notification always carries a message; this guards the
+    /// degenerate case so the wrapper never writes a content-less escape). `-q`/`--quiet` suppresses LOCALLY by
+    /// not calling this at all.
+    public static func watchFinishNotificationBytes(message: String) -> [UInt8] {
+        guard !message.isEmpty else { return [] }
+        var out: [UInt8] = [esc, rightBracket]
+        out.append(contentsOf: Array("777;notify;".utf8))
+        out.append(contentsOf: Array(WatchNotificationMarker.title.utf8))
+        out.append(Self.semicolon)
         out.append(contentsOf: Array(message.utf8))
         out.append(bel)
         return out

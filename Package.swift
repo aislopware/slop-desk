@@ -330,7 +330,13 @@ let package = Package(
         // AislopdeskCLICore / AislopdeskWorkspaceCore; this thin shell adds the socket + GUI launch + exit.
         .executableTarget(
             name: "aislopdesk",
-            dependencies: ["AislopdeskCLICore", "AislopdeskCtlCore", "AislopdeskWorkspaceCore"],
+            // AislopdeskVideoProtocol supplies `KeybindGrammar` — the parser `config validate` injects
+            // into `CLIConfig.validate` to check the keybind config file against the real grammar. It is
+            // transitive via AislopdeskWorkspaceCore (pure wire/settings target, no HW deps), declared
+            // here so the `import` is explicit.
+            dependencies: [
+                "AislopdeskCLICore", "AislopdeskCtlCore", "AislopdeskVideoProtocol", "AislopdeskWorkspaceCore",
+            ],
         ),
 
         // Interactive remote terminal client. Sources under Sources/aislopdesk-client.
@@ -429,6 +435,9 @@ let package = Package(
                 "AislopdeskWorkspaceCore",
                 "AislopdeskProtocol",
                 "AislopdeskAgentDetect",
+                // `CLIConfigTests` injects the REAL `KeybindGrammar.parseLine` into `CLIConfig.validate`
+                // so the verdict tracks exactly what the app honours. Transitive via WorkspaceCore.
+                "AislopdeskVideoProtocol",
             ],
         ),
 

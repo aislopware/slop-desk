@@ -1,3 +1,4 @@
+import AislopdeskProtocol
 import XCTest
 @testable import AislopdeskWorkspaceCore
 
@@ -80,6 +81,41 @@ final class NotificationPolicyTests: XCTestCase {
         let split = NotificationSettings(agentNotifyTaskComplete: false, agentNotifyAwaitInput: true)
         XCTAssertFalse(deliver(.agentTaskComplete, appActive: false, focused: false, settings: split))
         XCTAssertTrue(deliver(.agentAwaitInput, appActive: false, focused: false, settings: split))
+    }
+
+    // MARK: - Explicit-notification classification (watch-finish marker vs generic OSC)
+
+    /// M8-watch-notify-toggle: an `aislopdesk watch` finish banner carries the private WatchNotificationMarker
+    /// sentinel in its title; it must route to `.watchFinish` (gated by Notify on Watch Finish) with the marker
+    /// STRIPPED — NOT to `.explicitOSC` (the master Allow App Notifications switch). Revert-to-confirm-fail: the
+    /// pre-fix dispatch hard-coded `event: .explicitOSC`, so Notify-on-Watch-Finish=OFF had NO effect and the
+    /// banner delivered off the master switch. These assertions break that behaviour.
+    func testWatchFinishMarkerRoutesToWatchToggleNotMaster() {
+        // Master ON, watch-finish OFF: a watch banner must be SUPPRESSED (it rides Notify on Watch Finish).
+        let s = NotificationSettings(appNotificationsEnabled: true, notifyOnWatchFinish: false)
+        let (event, displayTitle) = NotificationEvent.classifyExplicit(
+            title: WatchNotificationMarker.title, body: "watch: make finished",
+        )
+        XCTAssertEqual(event, .watchFinish)
+        XCTAssertEqual(displayTitle, "", "the private marker is stripped from the shown title")
+        XCTAssertFalse(
+            deliver(event, appActive: false, focused: false, settings: s),
+            "watch banner must NOT deliver when Notify on Watch Finish is OFF, even with the master switch ON",
+        )
+
+        // A real child OSC notification (no marker) still rides the master switch.
+        let (generic, genericTitle) = NotificationEvent.classifyExplicit(title: "CI", body: "green")
+        XCTAssertEqual(generic, .explicitOSC)
+        XCTAssertEqual(genericTitle, "CI")
+        XCTAssertTrue(deliver(generic, appActive: false, focused: false, settings: s))
+
+        // Master OFF + watch ON: the watch banner STILL delivers — proving the two toggles are decoupled.
+        let s2 = NotificationSettings(appNotificationsEnabled: false, notifyOnWatchFinish: true)
+        XCTAssertTrue(deliver(.watchFinish, appActive: false, focused: false, settings: s2))
+        XCTAssertFalse(
+            deliver(.explicitOSC, appActive: false, focused: false, settings: s2),
+            "a generic OSC notification is gated OFF by the master switch independent of the watch toggle",
+        )
     }
 
     // MARK: - Notify-While-Foreground gate (event toggle held ON via explicitOSC + master ON)

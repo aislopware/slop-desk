@@ -1,5 +1,6 @@
 import AislopdeskCLICore
 import AislopdeskCtlCore
+import AislopdeskVideoProtocol
 import AislopdeskWorkspaceCore
 import Darwin
 import Foundation
@@ -7,7 +8,6 @@ import Foundation
 // aislopdesk — the user-facing CLI (otty-clone E20). One binary, a superset of `aislopdesk-ctl`:
 //
 //   aislopdesk                     launch the client GUI (like bare xterm/alacritty/ghostty)
-//   aislopdesk -e <cmd>            launch the GUI running <cmd>
 //   aislopdesk version             print version + build hash + protocol summary  (local, no socket)
 //   aislopdesk completions <shell> print a shell completion script                 (local, no socket)
 //   aislopdesk -h | --help         usage
@@ -40,14 +40,13 @@ func printUsage() {
     stdout("""
     usage: \(programName) [global flags] <subcommand> [args...]
            \(programName)                 launch the client GUI
-           \(programName) -e <cmd...>     launch the GUI running <cmd>
 
     Local subcommands (no running app required):
       version                 Print version, build hash, and a protocol/feature summary.
       completions <shell>     Print a completion script (bash, zsh, fish, elvish, powershell).
-      config path             Print the resolved config-file path.
-      config edit             Open the config file in $EDITOR.
-      config validate         Check the config file's syntax.
+      config path             Print the resolved keybind config-file path.
+      config edit             Open the keybind config file in $EDITOR.
+      config validate         Check the keybind config file's syntax.
 
     App-driving subcommands (require a running Aislopdesk app):
       windows | window list                List windows.
@@ -80,10 +79,15 @@ func printUsage() {
     In-pane subcommands (run inside a pane; no client socket required):
       watch [-q] <cmd> [args...]           Run <cmd> showing a spinner→success/error badge, then
                                            notify on finish (unless -q/--quiet). Put a bare `--`
-                                           before <cmd> if it contains --json/--socket/-e/etc.
+                                           before <cmd> if it contains --json/--socket/etc.
 
     More app-driving subcommands (ipc, state:claude) are
     added by later work items.
+
+    config: get/set/unset/show/reload target the LIVE running-app store (app keys like
+    font-size/theme, over the socket). path/edit/validate target the on-disk KEYBIND config
+    file: the app reads only its `keybind = <chord>:<action>` lines at launch — other keys in
+    that file are ignored, and `config validate` flags them rather than calling them valid.
 
     Global flags:
       --json / --format json   Emit structured JSON for list/inspect output.
@@ -93,7 +97,6 @@ func printUsage() {
       --timeout MS             Per-request IPC wait for the running app (default \(CLIArgs.defaultTimeoutMs)).
                                Bounds each socket recv/send — NOT the watch:claude block (see --block-timeout).
       -y / --yes               Skip destructive-action confirmation prompts.
-      -e <cmd...>              Launch the GUI running <cmd>.
       -h / --help              Show this help.
 
     """)
@@ -105,18 +108,12 @@ func printUsage() {
 let clientBundleIdentifier = "com.aislopdesk.client.macos"
 
 #if os(macOS)
-/// Launches the client GUI via LaunchServices (`open -b <bundle-id>`), forwarding any `-e <cmd>`
-/// to the app as argv. Compiled-only — never exercised by a unit test (it spawns a process).
-func launchClientGUI(execCommand: [String]) -> Never {
+/// Launches the client GUI via LaunchServices (`open -b <bundle-id>`). Compiled-only — never exercised
+/// by a unit test (it spawns a process).
+func launchClientGUI() -> Never {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    var openArgs = ["-b", clientBundleIdentifier]
-    if !execCommand.isEmpty {
-        openArgs.append("--args")
-        openArgs.append("-e")
-        openArgs.append(contentsOf: execCommand)
-    }
-    task.arguments = openArgs
+    task.arguments = ["-b", clientBundleIdentifier]
     do {
         try task.run()
         task.waitUntilExit()
@@ -126,7 +123,7 @@ func launchClientGUI(execCommand: [String]) -> Never {
     }
 }
 #else
-func launchClientGUI(execCommand _: [String]) -> Never {
+func launchClientGUI() -> Never {
     die("launching the GUI is only supported on macOS")
 }
 #endif
@@ -624,7 +621,7 @@ func cmdConfigValidate(_ args: [String]) -> Never {
     guard let data = FileManager.default.contents(atPath: path),
           let contents = String(data: data, encoding: .utf8)
     else { die("config validate: cannot read \(path)") }
-    let errors = CLIConfig.validate(contents)
+    let errors = CLIConfig.validate(contents, isValidKeybindValue: { KeybindGrammar.parseLine($0) != nil })
     guard errors.isEmpty else {
         for error in errors {
             FileHandle.standardError.write(Data("\(programName): \(path):\(error.line): \(error.message)\n".utf8))
@@ -946,7 +943,10 @@ func runWatch(command: [String], quiet: Bool) -> Never {
     func finish(exitCode: Int32) -> Never {
         writeRaw(WatchProgress.finishBytes(exitCode: exitCode))
         if !quiet {
-            writeRaw(WatchProgress.notificationBytes(
+            // Emit the watch-finish-SPECIFIC notification form (OSC 777 carrying the WatchNotificationMarker
+            // sentinel) so the host/client route it to NotificationEvent.watchFinish — gated by the dedicated
+            // "Notify on Watch Finish" toggle, NOT the master switch. `-q`/`--quiet` is the LOCAL suppression.
+            writeRaw(WatchProgress.watchFinishNotificationBytes(
                 message: WatchProgress.finishMessage(command: command, exitCode: exitCode),
             ))
         }
@@ -1034,7 +1034,13 @@ func runWatchClaude(id: String, blockTimeoutMs: Int?) -> Never {
             seen: result["seen"] as? Bool ?? false,
             statusToken: result["status"] as? String,
         )
-        if case .status = observation { hasEverBeenSeen = true }
+        // A pane that resolves — whether or not its agent has reported a status yet — counts as "seen",
+        // so a later disappearance reads as "closed" (exit 0), not "never seen" (exit 4).
+        switch observation {
+        case .status,
+             .seenNoStatus: hasEverBeenSeen = true
+        case .notSeen: break
+        }
 
         let nowNs = DispatchTime.now().uptimeNanoseconds
         // No deadline ⇒ never deadline-driven; with one, expired iff now ≥ it.
@@ -1077,9 +1083,9 @@ if invocation.wantsHelp || invocation.subcommand == "help" {
     exit(0)
 }
 
-// Bare invocation / `-e <cmd>` → launch the GUI.
+// Bare invocation → launch the GUI.
 if invocation.launchGUI {
-    launchClientGUI(execCommand: invocation.execCommand)
+    launchClientGUI()
 }
 
 switch invocation.subcommand {

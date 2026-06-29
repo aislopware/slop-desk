@@ -37,6 +37,7 @@ import AislopdeskWorkspaceCore
 import Foundation
 #if canImport(AppKit)
 import AppKit // NSFontManager — the macOS font enumeration for `font list` (compiled-only; iOS = empty)
+import CoreText // CTFontDescriptorCopyAttribute(kCTFontURLAttribute) — the per-face URL the scope split reads
 #endif
 
 /// The concrete ``ClientControlBackend`` over the live client stores. `@MainActor` (every store it adapts is
@@ -59,10 +60,21 @@ final class WorkspaceControlBackend: ClientControlBackend {
     /// additional config-change observer can refresh — a broadcast hook alongside the direct re-apply.
     static let configReloadNotification = Notification.Name("AislopdeskClientControlConfigReload")
 
-    init(store: WorkspaceStore, preferences: PreferencesStore, folders: FolderFrecencyStore) {
+    /// How long the `view`/`edit` shim defers its command injection past the new pane's inherited-cwd `cd`
+    /// (so a RELATIVE path resolves in the inherited directory first). Defaults to the production 1500 ms;
+    /// injectable so a unit test can observe the deferred launch bytes without a 1.5 s wall.
+    private let shimLaunchGrace: Duration
+
+    init(
+        store: WorkspaceStore,
+        preferences: PreferencesStore,
+        folders: FolderFrecencyStore,
+        shimLaunchGrace: Duration = .milliseconds(1500),
+    ) {
         self.store = store
         self.preferences = preferences
         self.folders = folders
+        self.shimLaunchGrace = shimLaunchGrace
     }
 
     // MARK: - Windows / tabs / panes (the tree reads)
@@ -103,7 +115,7 @@ final class WorkspaceControlBackend: ClientControlBackend {
 
     func listPanes(tabId: String?) -> [ClientPaneInfo] {
         guard let store else { return [] }
-        let focused = store.focusedPane
+        let focused = focusedPaneID()
         var out: [ClientPaneInfo] = []
         for session in store.tree.sessions {
             for tab in session.tabs {
@@ -162,8 +174,11 @@ final class WorkspaceControlBackend: ClientControlBackend {
         lastJumpSource = resolution.lastJumpSource
         var didChange = false
         if changeDirectory, let handle = focusedHandle() {
-            // VERBATIM cd (CLAUDE.md: cd/jump literal text is never transformed); Enter == carriage return.
-            handle.sendText("cd " + resolution.path)
+            // The PATH is sent VERBATIM (CLAUDE.md: jump literal text is never routed through `SendKeysParser`)
+            // but SHELL-QUOTED — an unquoted `cd /Users/x/My Project` would `cd` to `/Users/x/My`. Reuses the
+            // shared `'…'`-with-`'\''` idiom (zoxide/otty quote the target the same way); only shell-safe
+            // quoting is added, the bytes are still derived verbatim from the user's path. Enter == CR.
+            handle.sendText("cd -- " + ShellQuoting.singleQuote(resolution.path))
             handle.sendBytes([0x0D])
             didChange = true
         }
@@ -223,19 +238,23 @@ final class WorkspaceControlBackend: ClientControlBackend {
         // `cwd: nil` — the placement op already scheduled the inherited-cwd `cd`; this injects only the shim
         // command, the SAME way a launch-preset / template command is delivered into a fresh pane.
         guard let bytes = SessionTemplateEngine.launchBytes(cwd: nil, command: command) else { return false }
-        Task { @MainActor [weak store] in
-            try? await Task.sleep(for: Self.shimLaunchGrace)
+        Task { @MainActor [weak store, grace = shimLaunchGrace] in
+            try? await Task.sleep(for: grace)
             store?.handle(for: newPane)?.sendBytes(bytes)
         }
         return true
     }
 
-    /// The shim shell command typed into the new pane: `view` → `open <url>` for a URL else `less <path>`;
-    /// `edit` → `${EDITOR:-vi} <path>`. The `target` is appended VERBATIM (the file path / URL the user passed).
+    /// The shim shell command typed into the new pane: `view` → `open '<url>'` for a URL else `less -- '<path>'`;
+    /// `edit` → `${EDITOR:-vi} -- '<path>'`. The `target` is derived VERBATIM from the file path / URL the user
+    /// passed but SHELL-QUOTED (the shared `'…'`-with-`'\''` idiom) so a path with a space / metacharacter
+    /// (`My Project`, `a'b`) survives as a single argument instead of being word-split. `--` terminates option
+    /// parsing for the path forms; `open` does not take `--` reliably for a URL, so it is quoted without it.
     private static func shimCommand(target: String, mode: ClientControlOpenMode) -> String {
+        let quoted = ShellQuoting.singleQuote(target)
         switch mode {
-        case .view: looksLikeURL(target) ? "open " + target : "less " + target
-        case .edit: "${EDITOR:-vi} " + target
+        case .view: return looksLikeURL(target) ? "open " + quoted : "less -- " + quoted
+        case .edit: return "${EDITOR:-vi} -- " + quoted
         }
     }
 
@@ -257,10 +276,6 @@ final class WorkspaceControlBackend: ClientControlBackend {
         }
         return ids
     }
-
-    /// The shim command injects slightly AFTER the new pane's inherited-cwd `cd` (the split / new-tab / new-window
-    /// op schedules that at 1400 ms) so a RELATIVE `view`/`edit` path resolves in the inherited directory first.
-    private static let shimLaunchGrace: Duration = .milliseconds(1500)
 
     // MARK: - open-recipe
 
@@ -444,28 +459,67 @@ final class WorkspaceControlBackend: ClientControlBackend {
     }
 
     /// Enumerate font families (macOS via `NSFontManager`; iOS returns empty — no `font list` surface there).
-    /// `monospaceOnly` filters by fixed-pitch; `family` is a case-insensitive substring filter. The `scope`
-    /// (system/user) split + the libghostty-resolved family list are WI-4 refinements; every family here is
-    /// reported `isSystem: true`.
+    /// `monospaceOnly` filters by fixed-pitch; `family` is a case-insensitive substring filter. `scope` honors
+    /// the otty system/user split (`reference__cli.md`): each family is classified by the on-disk URL of its
+    /// representative font face — a face under `~/Library/Fonts` is a USER font, everything else (the
+    /// `/Library/Fonts` + `/System/Library/Fonts` bundles, or an unresolved URL) is a SYSTEM font — and the
+    /// `SCOPE` column + the `--system`/`--user` filter reflect that classification.
     func listFonts(
         monospaceOnly: Bool,
         family: String?,
-        scope _: ClientControlProtocol.FontScope?,
+        scope: ClientControlProtocol.FontScope?,
     ) -> [ClientFontInfo] {
         #if canImport(AppKit)
         let needle = family?.lowercased()
+        let userFontsDir = Self.userFontsDirectory
         var out: [ClientFontInfo] = []
         for familyName in NSFontManager.shared.availableFontFamilies.sorted() {
             if let needle, !familyName.lowercased().contains(needle) { continue }
             let isMonospace = NSFont(name: familyName, size: 12)?.isFixedPitch ?? false
             if monospaceOnly, !isMonospace { continue }
-            out.append(ClientFontInfo(family: familyName, isMonospace: isMonospace, isSystem: true))
+            let isSystem = !Self.isUserFont(
+                url: Self.fontFileURL(forFamily: familyName),
+                userFontsDirectory: userFontsDir,
+            )
+            switch scope {
+            case .system where !isSystem: continue
+            case .user where isSystem: continue
+            default: break
+            }
+            out.append(ClientFontInfo(family: familyName, isMonospace: isMonospace, isSystem: isSystem))
         }
         return out
         #else
         return []
         #endif
     }
+
+    #if canImport(AppKit)
+    /// The user-domain Fonts directory (`~/Library/Fonts`) — the one pole of the system/user font split.
+    private static var userFontsDirectory: String {
+        NSHomeDirectory() + "/Library/Fonts"
+    }
+
+    /// The on-disk URL of a family's representative font face, via Core Text's `kCTFontURLAttribute` on the
+    /// resolved descriptor. `nil` when the family does not resolve to a face (degrades to SYSTEM — the safe
+    /// default, since a face we cannot place is not a user install).
+    private static func fontFileURL(forFamily family: String) -> URL? {
+        guard let font = NSFont(name: family, size: 12) else { return nil }
+        let descriptor = font.fontDescriptor as CTFontDescriptor
+        return CTFontDescriptorCopyAttribute(descriptor, kCTFontURLAttribute) as? URL
+    }
+
+    /// Whether a font file `url` lives under the user-domain Fonts directory — the PURE classifier the scope
+    /// filter + `SCOPE` column turn on. An unresolved (`nil`) URL is NOT a user font (→ system). Standardized
+    /// so a `/private`/symlink-laden path compares against the standardized user dir.
+    static func isUserFont(url: URL?, userFontsDirectory: String) -> Bool {
+        guard let url else { return false }
+        let path = url.standardizedFileURL.path
+        // swiftlint:disable:next legacy_objc_type
+        let dir = (userFontsDirectory as NSString).standardizingPath
+        return path == dir || path.hasPrefix(dir + "/")
+    }
+    #endif
 
     func listKeybinds(actionFilter: String?) -> [ClientKeybindInfo] {
         let needle = actionFilter?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -504,9 +558,13 @@ final class WorkspaceControlBackend: ClientControlBackend {
 
     // MARK: - agent status
 
-    func agentStatus(id: String) -> ClaudeStatus? {
-        guard let store, let paneID = resolvePaneID(id) else { return nil }
-        return store.paneAgentStatus[paneID]
+    func agentStatus(id: String) -> AgentStatusResolution {
+        // Pane EXISTENCE (`resolvePaneID`) is decoupled from agent-status presence: a pane that exists but
+        // has not yet reported a non-`.none` status has NO `paneAgentStatus` entry (the agent-startup
+        // window) → `resolvedNoStatus` so `watch:claude` keeps polling instead of exiting 4.
+        guard let store, let paneID = resolvePaneID(id) else { return .unresolved }
+        guard let status = store.paneAgentStatus[paneID] else { return .resolvedNoStatus }
+        return .status(status)
     }
 
     // MARK: - Helpers
@@ -552,9 +610,23 @@ final class WorkspaceControlBackend: ClientControlBackend {
         return focusedHandle()
     }
 
+    /// The id of the focused pane in the LIVE model. The backend operates over the `tree` (every list reads
+    /// `store.tree.sessions`), so in `.tree` mode the focus truth is the active tab's active pane — NOT the
+    /// canvas-only `store.focusedPane`, which in tree mode names a SEPARATE, never-materialized canvas leaf
+    /// (so `handle(for:)` would return `nil` and `jump`/`send-keys`/`capture` would silently target nothing,
+    /// and `pane list`'s `isFocused` would never match). Falls back to the canvas passthrough for a
+    /// `.canvas`-model store (the pre-cutover test seam).
+    private func focusedPaneID() -> PaneID? {
+        guard let store else { return nil }
+        switch store.liveModel {
+        case .tree: return store.tree.activeSession?.activeTab?.activePane
+        case .canvas: return store.focusedPane
+        }
+    }
+
     /// The focused pane's live handle, or `nil`.
     private func focusedHandle() -> (any PaneSessionHandle)? {
-        guard let store, let focused = store.focusedPane else { return nil }
+        guard let store, let focused = focusedPaneID() else { return nil }
         return store.handle(for: focused)
     }
 
@@ -562,7 +634,7 @@ final class WorkspaceControlBackend: ClientControlBackend {
     /// no focused pane / its cwd was never seen. This is the client cwd cache `jump` (no query) and `learn`
     /// (no path) default to (the cwd lives on the host; the client only knows it via OSC 7).
     private func focusedCwd() -> String? {
-        guard let store, let focused = store.focusedPane else { return nil }
+        guard let store, let focused = focusedPaneID() else { return nil }
         for session in store.tree.sessions {
             if let spec = session.specs[focused] { return Self.nonEmpty(spec.lastKnownCwd) }
         }

@@ -61,6 +61,33 @@ final class SettingsSectionTaxonomyTests: XCTestCase {
         XCTAssertEqual(Set(icons).count, icons.count, "duplicate section icons")
     }
 
+    /// E20 M1 (ES-E20-4): the General page surfaces an **OS Integration** group on macOS — the reachable,
+    /// post-first-launch home for Default Terminal / Finder Integration / Full Disk Access (governing
+    /// screenshot `first-launch-default-terminal.png`, `spec/getting-started__first-launch.md §2`). Before the
+    /// fix these actions lived ONLY in the one-time first-launch sheet, so a user who clicked "Skip Setup"
+    /// could never reach "Set as Default Terminal" again. Pinned against an INDEPENDENT expectation (not the
+    /// helper's own derivation): macOS shows the four groups in order with OS Integration last; iOS omits it
+    /// (the LaunchServices + System-Settings deep-links are `#if os(macOS)`). Reverting the
+    /// `titles.append(osIntegration)` line fails the macOS branch.
+    func testGeneralPageSurfacesOSIntegrationOnMacOSOnly() {
+        let titles = GeneralSettingsLayout.sectionTitles
+        #if os(macOS)
+        XCTAssertEqual(
+            titles,
+            ["General", "Close Confirmation", "Privacy & New Panes", "OS Integration"],
+            "macOS General page must home the OS Integration group (E20 M1) so it is reachable post-first-launch",
+        )
+        XCTAssertEqual(GeneralSettingsLayout.osIntegration, "OS Integration")
+        #else
+        XCTAssertEqual(
+            titles,
+            ["General", "Close Confirmation", "Privacy & New Panes"],
+            "iOS omits OS Integration — no LaunchServices / System-Settings handler",
+        )
+        XCTAssertFalse(titles.contains("OS Integration"), "OS Integration is macOS-only")
+        #endif
+    }
+
     /// WI-5: the compact iOS settings sheet (`SettingsSheet`) drops the macOS-only sections via the
     /// `isMacOSOnly` filter. Pins — against an INDEPENDENT expectation, not the property's own derivation —
     /// that **Keybindings** is the sole macOS-only section (its chord capture is a macOS `NSEvent` monitor)

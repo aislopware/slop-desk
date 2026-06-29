@@ -385,6 +385,31 @@ struct SettingsSectionContent: View {
 
 // MARK: - General section
 
+/// The General-page SECTION group headers, in render order, as a PURE source list so the body never drifts
+/// from a headless taxonomy pin (`GeneralSectionLayoutTests`). The macOS slice appends **OS Integration** —
+/// the E20 M1 home for Default Terminal / Finder Integration / Full Disk Access, mirroring the governing
+/// screenshot `first-launch-default-terminal.png` and `spec/getting-started__first-launch.md §2` (Settings →
+/// General → OS Integration). iOS OMITS the group: the LaunchServices registration + System-Settings
+/// deep-links are `#if os(macOS)` (`DefaultTerminalIntegration`), so there is no iOS handler to surface.
+enum GeneralSettingsLayout {
+    static let general = "General"
+    static let closeConfirmation = "Close Confirmation"
+    static let privacyAndNewPanes = "Privacy & New Panes"
+    #if os(macOS)
+    static let osIntegration = "OS Integration"
+    #endif
+
+    /// The section headers the General page renders, in order. Drives the `Section(_:)` headers below so the
+    /// pure list and the rendered Form stay in lockstep.
+    static var sectionTitles: [String] {
+        var titles = [general, closeConfirmation, privacyAndNewPanes]
+        #if os(macOS)
+        titles.append(osIntegration)
+        #endif
+        return titles
+    }
+}
+
 /// General: On-Launch behaviour (O1), the tab/window close-confirmation policies (otty puts the Close
 /// Confirmation group on the General page — `launch-option.png`), privacy (redact secrets), and the default
 /// pane kind. All fire-time `Defaults.Keys` (bound via `@Default(.key)`) — applied LIVE. NOTE: the
@@ -406,10 +431,16 @@ private struct GeneralSettingsTab: View {
     @Default(.closeConfirmWindow) private var closeConfirmWindow
     @Default(.redactSecrets) private var redactSecrets
     @Default(.defaultPaneKind) private var defaultPaneKind
+    // E20 M1 (ES-E20-4): the OS Integration group's "Default Terminal" status, refreshed on appear + after the
+    // Set action. macOS-only — `DefaultTerminalIntegration` is `#if os(macOS)` (LaunchServices + System
+    // Settings deep-links have no iOS equivalent), so iOS omits the whole group.
+    #if os(macOS)
+    @State private var isDefaultTerminal = false
+    #endif
 
     var body: some View {
         Form {
-            Section("General") {
+            Section(GeneralSettingsLayout.general) {
                 Picker("On Launch", selection: $onLaunch) {
                     Text("Restore Last Session").tag(OnLaunchBehavior.restoreLastSession)
                     Text("New Window").tag(OnLaunchBehavior.newWindow)
@@ -417,13 +448,13 @@ private struct GeneralSettingsTab: View {
                 timingFooter(.live)
             }
 
-            Section("Close Confirmation") {
+            Section(GeneralSettingsLayout.closeConfirmation) {
                 Picker("Closing Tab", selection: $closeConfirmTab) { closeConfirmOptions }
                 Picker("Closing Window", selection: $closeConfirmWindow) { closeConfirmOptions }
                 timingFooter(.live)
             }
 
-            Section("Privacy & New Panes") {
+            Section(GeneralSettingsLayout.privacyAndNewPanes) {
                 Toggle("Redact likely secrets from titles", isOn: $redactSecrets)
                 Picker("Default pane kind", selection: $defaultPaneKind) {
                     Text("Terminal").tag(PaneKind.terminal)
@@ -431,6 +462,13 @@ private struct GeneralSettingsTab: View {
                 }
                 timingFooter(.live)
             }
+
+            // OS Integration (E20 M1) — macOS-only. Reuses the SAME `DefaultTerminalIntegration` actions the
+            // first-launch sheet builds, so the buttons stay REACHABLE after "Skip Setup" / first launch (the
+            // bug this fixes). iOS omits the group (no LaunchServices / System-Settings handler).
+            #if os(macOS)
+            osIntegrationSection
+            #endif
         }
         .formStyle(.grouped)
     }
@@ -440,6 +478,81 @@ private struct GeneralSettingsTab: View {
         Text("Always").tag(CloseConfirmationPolicy.always)
         Text("Multiple Tabs").tag(CloseConfirmationPolicy.multipleTabs)
     }
+
+    // MARK: - OS Integration (E20 M1 — macOS-only, reachable post-first-launch)
+
+    /// otty Settings → General → OS Integration (`first-launch-default-terminal.png` /
+    /// `getting-started__first-launch.md §2`). REUSES the first-launch sheet's rows so the behaviour lives in
+    /// one place (`DefaultTerminalIntegration`): a Default-Terminal status row (Set / "Default"), the
+    /// Finder-Integration + Full-Disk-Access System-Settings deep-links, and the honestly-DISABLED "Default
+    /// Terminal for Common Apps" row (a remote-host editor's config can't be rewritten from the client — E20
+    /// exclusion §4 / no dead button). macOS-only; iOS never compiles this.
+    #if os(macOS)
+    private var osIntegrationSection: some View {
+        Section(GeneralSettingsLayout.osIntegration) {
+            osIntegrationRow(
+                "Default Terminal",
+                "Handle `ssh://` links and shell scripts opened from Finder or `open`.",
+            ) {
+                if isDefaultTerminal {
+                    Label("Default", systemImage: "checkmark").foregroundStyle(Otty.Status.ok)
+                } else {
+                    Button("Set as Default Terminal") {
+                        Task {
+                            await DefaultTerminalIntegration.setAsDefaultTerminal()
+                            isDefaultTerminal = DefaultTerminalIntegration.isDefaultTerminal()
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            osIntegrationRow(
+                "Default Terminal for Common Apps",
+                "Editors and git GUIs hardcode Terminal.app. Rewriting their config only works for a LOCAL "
+                    + "editor — an editor on the remote host needs a host-side agent, so this is unavailable "
+                    + "in the remote model.",
+            ) {
+                Text("Unavailable").foregroundStyle(Otty.Text.tertiary)
+            }
+            osIntegrationRow(
+                "Finder Integration",
+                "Add \u{201C}Open in Aislopdesk\u{201D} to Finder's right-click Services menu for folders.",
+            ) {
+                Button("Open System Settings") { DefaultTerminalIntegration.openFinderServicesSettings() }
+                    .buttonStyle(.bordered)
+            }
+            osIntegrationRow(
+                "Full Disk Access",
+                "Needed when commands run inside Aislopdesk must read or write protected files. The app works "
+                    + "without it.",
+            ) {
+                Button("Open System Settings") { DefaultTerminalIntegration.openFullDiskAccessSettings() }
+                    .buttonStyle(.bordered)
+            }
+            timingFooter(.live)
+        }
+        .onAppear { isDefaultTerminal = DefaultTerminalIntegration.isDefaultTerminal() }
+    }
+
+    /// otty's OS-integration row: a bold title + gray subtext leading, the action control trailing.
+    private func osIntegrationRow(
+        _ title: String,
+        _ subtitle: String,
+        @ViewBuilder trailing: () -> some View,
+    ) -> some View {
+        LabeledContent {
+            trailing()
+        } label: {
+            VStack(alignment: .leading, spacing: Otty.Metric.space1) {
+                Text(title)
+                Text(subtitle)
+                    .font(.system(size: Otty.Typeface.footnote))
+                    .foregroundStyle(Otty.Text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+    #endif
 }
 
 // MARK: - Shell section

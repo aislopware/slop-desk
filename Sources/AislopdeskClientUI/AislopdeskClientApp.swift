@@ -316,17 +316,21 @@ public struct AislopdeskClientApp: App {
         // appActive + sourcePaneFocused. Each toast carries a stable `pane.<key>` id so a newer event for the
         // same pane REPLACES the old one (the coordinator's de-dupe), and a flavour matching the event class.
         store.onPaneNotification = { [weak overlay, weak store] paneID, paneTitle, title, body in
+            // E20/WI-7: an `aislopdesk watch` finish carries the private WatchNotificationMarker sentinel in its
+            // title — route it to `.watchFinish` (gated by Notify on Watch Finish) with the marker STRIPPED;
+            // every other explicit notification stays `.explicitOSC` (the master switch).
+            let (event, displayTitle) = NotificationEvent.classifyExplicit(title: title, body: body)
             overlay?.pushToast(Toast(
-                id: "pane.\(paneID.raw.uuidString)", flavor: .default, title: title, body: body,
+                id: "pane.\(paneID.raw.uuidString)", flavor: .default, title: displayTitle, body: body,
             ))
             #if os(macOS)
-            // E14/K9: the OS banner now goes through the pure NotificationPolicy (master "Allow App
-            // Notifications" + the Notify-While-Foreground tri-state) — the store supplies appActive +
-            // whether the SOURCE pane is the focused one. The in-app toast above stays unconditional.
+            // E14/K9: the OS banner now goes through the pure NotificationPolicy (the per-event toggle resolved
+            // above + the Notify-While-Foreground tri-state) — the store supplies appActive + whether the SOURCE
+            // pane is the focused one. The in-app toast above stays unconditional.
             guard let store else { return }
             explicitNotifier.notifyExplicit(
-                event: .explicitOSC,
-                paneIDKey: paneID.raw.uuidString, paneTitle: paneTitle, title: title, body: body,
+                event: event,
+                paneIDKey: paneID.raw.uuidString, paneTitle: paneTitle, title: displayTitle, body: body,
                 appActive: store.isAppActive,
                 sourcePaneFocused: store.isSourcePaneFocused(paneID),
                 settings: SettingsKey.notificationSettings,

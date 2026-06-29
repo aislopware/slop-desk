@@ -1,3 +1,4 @@
+import AislopdeskProtocol
 import Foundation
 
 // MARK: - NotificationPolicy (E14/K9 — the PURE "should this notification be delivered" decision)
@@ -42,6 +43,22 @@ public enum NotificationEvent: Sendable, Equatable {
     case agentTaskComplete
     /// A code agent is awaiting approval / input.
     case agentAwaitInput
+
+    /// Classify an EXPLICIT child notification (the host's `.notification(title:body:)` — OSC 9 / 777 / 99) into
+    /// the gating event + the user-visible title. An `aislopdesk watch` finish banner carries the private
+    /// ``WatchNotificationMarker/title`` sentinel in its title; it routes to ``watchFinish`` (gated by the
+    /// dedicated "Notify on Watch Finish" toggle) with the sentinel STRIPPED, so the banner shows just the
+    /// message. Any other notification rides ``explicitOSC`` (the master "Allow App Notifications" switch),
+    /// unchanged. Pure — the single source of the watch-vs-generic routing decision, exercised by the app's
+    /// `onPaneNotification` dispatch and pinned by `NotificationPolicyTests`.
+    public static func classifyExplicit(
+        title: String, body _: String,
+    ) -> (event: Self, displayTitle: String) {
+        if title == WatchNotificationMarker.title {
+            return (.watchFinish, "")
+        }
+        return (.explicitOSC, title)
+    }
 }
 
 /// The resolved per-event notification toggles + the foreground policy — the headless inputs to

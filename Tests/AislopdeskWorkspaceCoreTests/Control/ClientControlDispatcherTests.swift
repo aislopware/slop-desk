@@ -36,6 +36,8 @@ private final class FakeClientControlBackend: ClientControlBackend {
     var capturePaneReturn: [String]? = []
     var sendKeysReturn = true
     var agentStatusByID: [String: ClaudeStatus] = [:]
+    /// Ids that resolve to a live pane but carry NO agent status yet (the startup window) → `resolvedNoStatus`.
+    var resolvedNoStatusIDs: Set<String> = []
 
     // Recorded args
     var recordedTabsWindowId: String?
@@ -182,9 +184,11 @@ private final class FakeClientControlBackend: ClientControlBackend {
         return sendKeysReturn
     }
 
-    func agentStatus(id: String) -> ClaudeStatus? {
+    func agentStatus(id: String) -> AgentStatusResolution {
         recordedAgentStatusId = id
-        return agentStatusByID[id]
+        if let status = agentStatusByID[id] { return .status(status) }
+        if resolvedNoStatusIDs.contains(id) { return .resolvedNoStatus }
+        return .unresolved
     }
 }
 
@@ -729,9 +733,23 @@ final class ClientControlDispatcherTests: XCTestCase {
     }
 
     func testAgentStatusNeverSeen() {
+        // An id that resolves to NO pane → `seen:false` (maps to watch:claude exit 4).
         let obj = run(ClientControlProtocol.Method.agentStatus, ["id": "ghost"])
         XCTAssertTrue(isOK(obj))
         XCTAssertEqual(result(obj)["seen"] as? Bool, false)
+        XCTAssertNil(result(obj)["status"])
+    }
+
+    func testAgentStatusResolvedButNoStatusYet() {
+        // M6 regression: a pane that EXISTS but whose agent has not reported a status yet (the startup
+        // window) must answer `seen:true` with NO status — so watch:claude keeps polling, NOT exit 4.
+        // Revert-to-confirm-fail: the old `agentStatus(id:) -> ClaudeStatus?` returned nil here, which the
+        // dispatcher encoded as `seen:false` → first-poll never-seen → exit 4.
+        backend.resolvedNoStatusIDs = ["starting"]
+        let obj = run(ClientControlProtocol.Method.agentStatus, ["id": "starting"])
+        XCTAssertEqual(backend.recordedAgentStatusId, "starting")
+        XCTAssertTrue(isOK(obj))
+        XCTAssertEqual(result(obj)["seen"] as? Bool, true)
         XCTAssertNil(result(obj)["status"])
     }
 

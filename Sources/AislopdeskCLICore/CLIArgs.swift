@@ -47,11 +47,9 @@ public struct CLIInvocation: Sendable, Equatable {
     /// `-h` / `--help`: show usage instead of dispatching.
     public var wantsHelp: Bool
     /// True when this invocation should launch the client GUI: a bare invocation (no subcommand,
-    /// no `--help`) OR an `-e <cmd>` invocation.
+    /// no `--help`). (An aislopdesk pane is a REMOTE PTY with no local shell to exec into, so otty's
+    /// `-e <cmd>` has no faithful mapping here — it is not a flag; passing `-e` is an unknown-flag error.)
     public var launchGUI: Bool
-    /// The command captured after `-e` (empty unless `-e` was given). Launched inside the GUI,
-    /// the same GUI-launch path as a bare invocation.
-    public var execCommand: [String]
 
     public init(
         subcommand: String = "",
@@ -64,7 +62,6 @@ public struct CLIInvocation: Sendable, Equatable {
         assumeYes: Bool = false,
         wantsHelp: Bool = false,
         launchGUI: Bool = false,
-        execCommand: [String] = [],
     ) {
         self.subcommand = subcommand
         self.rest = rest
@@ -76,7 +73,6 @@ public struct CLIInvocation: Sendable, Equatable {
         self.assumeYes = assumeYes
         self.wantsHelp = wantsHelp
         self.launchGUI = launchGUI
-        self.execCommand = execCommand
     }
 }
 
@@ -103,8 +99,8 @@ public enum CLIArgs {
     /// - The first non-flag token is the subcommand; subsequent non-flag tokens go to `rest`.
     /// - Recognised global flags are consumed wherever they appear (before OR after the subcommand).
     /// - An UNRECOGNISED flag BEFORE the subcommand is an error; AFTER the subcommand it is a
-    ///   subcommand-specific flag and passes through to `rest`.
-    /// - `-e` captures every remaining token verbatim as the GUI exec command and stops parsing.
+    ///   subcommand-specific flag and passes through to `rest`. (There is no `-e`: a pane is a remote
+    ///   PTY, so `-e <cmd>` has no faithful local-exec mapping — it falls through as an unknown flag.)
     /// - A bare `--` (only valid after a subcommand) ends option parsing: it and everything after it
     ///   pass through to `rest` verbatim (POSIX end-of-options; protects literal `send-keys` text).
     public static func parse(_ args: [String]) -> Result<CLIInvocation, CLIParseError> {
@@ -122,11 +118,6 @@ public enum CLIArgs {
             }
 
             switch arg {
-            case "-e":
-                // Everything after `-e` is the command to run inside the GUI (xterm-style).
-                inv.execCommand = idx + 1 < args.count ? Array(args[(idx + 1)...]) : []
-                idx = args.count
-                continue
             case "--json":
                 inv.format = .json
             case "--format":
@@ -181,9 +172,7 @@ public enum CLIArgs {
             idx += 1
         }
 
-        // Bare (no subcommand, not `--help`) and `-e <cmd>` both route to the GUI. `-e` keeps the
-        // subcommand empty, so the single `subcommand.isEmpty` test covers both; `execCommand`
-        // distinguishes them downstream.
+        // A bare invocation (no subcommand, not `--help`) routes to the GUI, like bare `xterm`/`ghostty`.
         inv.launchGUI = inv.subcommand.isEmpty && !inv.wantsHelp
         return .success(inv)
     }

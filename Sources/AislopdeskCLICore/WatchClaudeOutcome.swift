@@ -7,8 +7,9 @@ import AislopdeskAgentDetect
 // `9` = timeout. Claude-only — there is no `watch:codex`/`watch:opencode` (carry-over exclusion §4).
 //
 // The CLI polls the running app's `agent-status` method (``ClientControlProtocol/Method/agentStatus``),
-// which answers `{seen, status?}`: `seen:false` = the id is unknown to the app right now; `seen:true`
-// + a ``ClaudeStatus`` rawValue = the rolled-up agent status. This type turns each polled observation —
+// which answers `{seen, status?}`: `seen:false` = the id resolves to NO pane (→ exit 4); `seen:true` with
+// NO `status` = the pane EXISTS but its agent has not reported yet (the startup window → keep polling);
+// `seen:true` + a ``ClaudeStatus`` rawValue = the rolled-up agent status. This type turns each polled observation —
 // plus whether the id has EVER been seen across polls and whether the deadline has elapsed — into a
 // ``Step``: finish with an exit code, or keep polling. The poll loop itself (sleep + socket I/O + the
 // clock) lives in `main.swift` (compiled-only — it does I/O and sleeps, so it is never instantiated in
@@ -29,7 +30,10 @@ public enum WatchClaudeOutcome {
     public enum Observation: Equatable, Sendable {
         /// `seen:true` with the rolled-up status.
         case status(ClaudeStatus)
-        /// `seen:false` — the running app does not (currently) know this id.
+        /// `seen:true` but NO status token — the pane EXISTS but its agent has not reported a status yet
+        /// (the agent-startup window). Distinct from a settled `.none`: still starting, so keep polling.
+        case seenNoStatus
+        /// `seen:false` — the id does not resolve to any pane the running app knows.
         case notSeen
     }
 
@@ -43,12 +47,14 @@ public enum WatchClaudeOutcome {
 
     /// Decode an `agent-status` reply's `{seen, status?}` fields into an ``Observation``. PURE +
     /// forward-tolerant (CLAUDE.md untrusted-input contract): `seen:false` ⇒ ``Observation/notSeen``;
-    /// `seen:true` with a known status token ⇒ that ``ClaudeStatus``; `seen:true` with a missing or
-    /// UNKNOWN/future token degrades to ``ClaudeStatus/none`` (i.e. "no agent here / closed" → settled)
-    /// rather than trapping, mirroring ``ClaudeStatus/init(urgency:)``.
+    /// `seen:true` with NO status token ⇒ ``Observation/seenNoStatus`` (pane exists, agent not yet
+    /// reporting — the startup window, keep polling); `seen:true` with a known status token ⇒ that
+    /// ``ClaudeStatus``; `seen:true` with an UNKNOWN/future token degrades to ``ClaudeStatus/none``
+    /// (i.e. "no agent here / closed" → settled) rather than trapping, mirroring ``ClaudeStatus/init(urgency:)``.
     public static func observation(seen: Bool, statusToken: String?) -> Observation {
         guard seen else { return .notSeen }
-        if let token = statusToken, let status = ClaudeStatus(rawValue: token) {
+        guard let token = statusToken else { return .seenNoStatus }
+        if let status = ClaudeStatus(rawValue: token) {
             return .status(status)
         }
         return .status(.none)
@@ -100,8 +106,12 @@ public enum WatchClaudeOutcome {
             if isAtRest(status) { return .finished(.settled) }
             // Still working / blocked on a human → keep polling unless the deadline has elapsed.
             return deadlineExceeded ? .finished(.timedOut) : .keepPolling
+        case .seenNoStatus:
+            // Pane EXISTS but its agent has not reported a status yet (startup window) → keep polling
+            // until it settles or the deadline elapses; never an instant never-seen on the first poll.
+            return deadlineExceeded ? .finished(.timedOut) : .keepPolling
         case .notSeen:
-            // An unknown id is "closed" when we have seen it before, else "never seen".
+            // An id that resolves to NO pane is "closed" when we have seen it before, else "never seen".
             return .finished(hasEverBeenSeen ? .settled : .neverSeen)
         }
     }

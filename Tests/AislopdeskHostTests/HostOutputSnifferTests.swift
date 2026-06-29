@@ -719,6 +719,24 @@ final class HostOutputSnifferTests: XCTestCase {
         XCTAssertEqual(notificationsOnly(observeWhole(bytes("\u{1B}]777;precmd;something\u{07}"))), [])
     }
 
+    /// M8-watch-notify-toggle: an `aislopdesk watch` finish banner is an OSC 777 notify whose TITLE field is
+    /// the private ``WatchNotificationMarker/title`` sentinel. The host preserves the marker intact in the
+    /// title (a distinguishable notification the client routes to `.watchFinish`), while a plain OSC 9 stays a
+    /// generic empty-title notification. This is the host half of "the watch toggle actually gates".
+    func testOSC777WatchFinishMarkerPreservedInTitle() {
+        let message = "watch: make finished"
+        XCTAssertEqual(
+            observeWhole(bytes("\u{1B}]777;notify;\(WatchNotificationMarker.title);\(message)\u{07}")),
+            [.notification(title: WatchNotificationMarker.title, body: message)],
+            "the watch-finish marker survives as the title field, distinct from a generic OSC-9 notification",
+        )
+        // A plain OSC 9 free-text notification carries NO marker (empty title) → the generic master-switch path.
+        XCTAssertEqual(
+            observeWhole(bytes("\u{1B}]9;\(message)\u{07}")),
+            [.notification(title: "", body: message)],
+        )
+    }
+
     func testOSC9EmptyBodyIgnored() {
         XCTAssertEqual(notificationsOnly(observeWhole(bytes("\u{1B}]9;\u{07}"))), [])
     }

@@ -6,6 +6,15 @@ import Foundation
 // (`get`/`set`/`unset`/`show`/`reload`, incl. `--transient`) go over the control socket instead;
 // only `path`/`edit`/`validate` are pure file ops, so the path resolution + the validator live here,
 // PURE and unit-tested (the `edit` $EDITOR spawn lives in the compiled-only `main.swift`).
+//
+// **The split is deliberate and documented (M2 fix).** Unlike otty — where every `config` subcommand
+// acts on the SAME file — aislopdesk's launch-time bridge (`KeybindConfigLoader`) reads ONLY the
+// `keybind = <chord>:<action>` lines of `config.toml`; every other key (font-size, theme, …) is
+// silently ignored there and instead lives in the running app's `PreferencesStore`, reached by
+// `get`/`set`/`unset`/`show`/`reload` over the socket. So `path`/`edit`/`validate` target the KEYBIND
+// config file, and `validate` checks the file against the REAL grammar the app honours: a line that
+// isn't a parseable `keybind` directive (e.g. `font-size = 14`) is flagged — never silently called
+// "valid" — because the app would ignore it. (The `config` help spells this split out explicitly.)
 
 public enum CLIConfig {
     /// Env override for the config-file location (the `--config-file` flag takes precedence over this).
@@ -44,25 +53,62 @@ public enum CLIConfig {
         }
     }
 
-    /// Validate the simple `key = value` config syntax. Blank lines, `#`/`;` comments, and `[section]`
-    /// table headers are skipped; every other line must be `key = value` (or `key=value`) with a
-    /// non-empty key. Returns every problem found (empty ⇒ valid). PURE — no file I/O; the caller reads
-    /// the file and passes its contents.
-    public static func validate(_ contents: String) -> [ValidationError] {
+    /// Validate the file against the ACTUAL keybind-file grammar the launch bridge honours (M2 fix).
+    ///
+    /// The app's `KeybindConfigLoader` reads ONLY `keybind = <chord>:<action>` lines from `config.toml`
+    /// and silently ignores every other key, so a generic `key = value` check would falsely call a file
+    /// full of ignored keys (`font-size = 14`) "valid". This validates the truth instead: blank lines,
+    /// `#` comments, and `[section]` headers are skipped; every OTHER line must be a `keybind = <value>`
+    /// assignment whose `<value>` parses as a binding directive. A non-`keybind` key, a missing `=`, an
+    /// empty value, or a malformed `<chord>:<action>` is reported (1-based line number). Returns every
+    /// problem found (empty ⇒ valid).
+    ///
+    /// PURE — no file I/O and NO dependency on the keybind grammar module: the caller injects
+    /// `isValidKeybindValue` (in production, `{ KeybindGrammar.parseLine($0) != nil }`); tests pass the
+    /// same real parser, so the validator's verdict tracks exactly what the app will and won't honour.
+    public static func validate(
+        _ contents: String,
+        isValidKeybindValue: (String) -> Bool,
+    ) -> [ValidationError] {
         var errors: [ValidationError] = []
         let lines = contents.split(separator: "\n", omittingEmptySubsequences: false)
         for (index, raw) in lines.enumerated() {
             let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.isEmpty || line.hasPrefix("#") || line.hasPrefix(";") || line.hasPrefix("[") {
+            // Skip blank lines, `#` comments, and `[section]` headers (the only non-directive lines the
+            // launch bridge tolerates without acting on them).
+            if line.isEmpty || line.hasPrefix("#") || line.hasPrefix("[") {
                 continue
             }
             guard let equals = line.firstIndex(of: "=") else {
-                errors.append(ValidationError(line: index + 1, message: "missing '=' (expected key = value)"))
+                errors.append(ValidationError(
+                    line: index + 1, message: "missing '=' (expected keybind = <chord>:<action>)",
+                ))
                 continue
             }
             let key = line[..<equals].trimmingCharacters(in: .whitespaces)
-            if key.isEmpty {
-                errors.append(ValidationError(line: index + 1, message: "empty key before '='"))
+            guard key == "keybind" else {
+                let shown = key.isEmpty ? "(empty)" : key
+                errors.append(ValidationError(
+                    line: index + 1,
+                    message: "unknown key '\(shown)': the app reads only 'keybind' lines from this file, "
+                        + "so this line has no effect (set app config via `aislopdesk config set`)",
+                ))
+                continue
+            }
+            // Mirror the loader's lenient quoting: an optional surrounding pair of double quotes is stripped.
+            var value = line[line.index(after: equals)...].trimmingCharacters(in: .whitespaces)
+            if value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") {
+                value = String(value.dropFirst().dropLast())
+            }
+            let unquoted = value
+            guard !unquoted.isEmpty else {
+                errors.append(ValidationError(line: index + 1, message: "empty keybind value"))
+                continue
+            }
+            if !isValidKeybindValue(unquoted) {
+                errors.append(ValidationError(
+                    line: index + 1, message: "malformed keybind '\(unquoted)' (expected <chord>:<action>)",
+                ))
             }
         }
         return errors

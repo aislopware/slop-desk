@@ -149,6 +149,22 @@ public enum ClientControlOpenMode: Sendable, Equatable {
     case edit
 }
 
+/// The outcome of resolving an `agent-status` query. Distinguishes a pane that does NOT exist from a
+/// pane that EXISTS but whose agent has not yet reported a non-`.none` status — the agent-startup
+/// window (`paneAgentStatus` has no entry until the first non-`.none` report over wire type 27).
+///
+/// `watch:claude` must KEEP POLLING in the startup window rather than declaring the id "never seen"
+/// (exit 4) on the first poll: `resolvedNoStatus` ⇒ `{seen:true}` (no status) ⇒ keep polling;
+/// `unresolved` ⇒ `{seen:false}` ⇒ exit 4 only for an id that resolves to NO pane at all.
+public enum AgentStatusResolution: Sendable, Equatable {
+    /// The id does not resolve to any pane the running app currently knows.
+    case unresolved
+    /// The id resolves to a live pane, but it has not yet reported an agent status.
+    case resolvedNoStatus
+    /// The id resolves to a live pane carrying this rolled-up agent status.
+    case status(ClaudeStatus)
+}
+
 // MARK: - Backend seam
 
 /// The seam the ``ClientControlDispatcher`` drives. Every method is SYNCHRONOUS and `@MainActor`
@@ -237,7 +253,9 @@ public protocol ClientControlBackend: AnyObject {
     /// Returns `false` when the pane is unknown.
     func sendKeys(paneId: String?, text: String, keys: [String]) -> Bool
 
-    /// The rolled-up agent status for session/pane `id`; `nil` when the id was never seen
-    /// (`watch:claude` distinguishes "never seen" → exit 4 from a real status).
-    func agentStatus(id: String) -> ClaudeStatus?
+    /// Resolve the agent status for session/pane `id`. Reports pane EXISTENCE separately from agent-status
+    /// presence (``AgentStatusResolution``) so `watch:claude` can keep polling through the agent-startup
+    /// window (`resolvedNoStatus`) and reserve "never seen" → exit 4 for an id that resolves to no pane
+    /// (`unresolved`).
+    func agentStatus(id: String) -> AgentStatusResolution
 }

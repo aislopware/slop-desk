@@ -182,7 +182,7 @@ public final class CLIInstaller {
     /// `'\''` idiom). The values here are our OWN bundle path / the fixed symlink target (not attacker input),
     /// but quoting defends against spaces / shell metacharacters in the install location.
     static func singleQuoteForShell(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        ShellQuoting.singleQuote(value)
     }
 
     /// Escape `value` for an AppleScript double-quoted string literal (backslash + double-quote).

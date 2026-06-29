@@ -19,29 +19,20 @@ final class CLIArgsTests: XCTestCase {
         }
         XCTAssertEqual(inv.subcommand, "")
         XCTAssertTrue(inv.launchGUI)
-        XCTAssertTrue(inv.execCommand.isEmpty)
         XCTAssertFalse(inv.wantsHelp)
     }
 
-    func testExecFlagLaunchesGUIWithCommand() {
-        guard case let .success(inv) = CLIArgs.parse(["aislopdesk", "-e", "vim", "file.txt"]) else {
-            XCTFail("expected success")
+    /// M8-dash-e-noop: `-e` is NOT a recognised flag — an aislopdesk pane is a remote PTY with no local
+    /// shell to exec into, so otty's `-e <cmd>` had no faithful mapping and was a silent no-op (it launched
+    /// the GUI and dropped the command). It is de-advertised: passing `-e` before a subcommand is an
+    /// unknown-flag error, never a silent GUI launch. Revert-to-confirm-fail: the pre-fix parser returned
+    /// `.success` (launchGUI, execCommand=["vim",...]); this now demands `.failure(.unknownFlag("-e"))`.
+    func testExecFlagIsAnUnknownFlagError() {
+        guard case let .failure(err) = CLIArgs.parse(["aislopdesk", "-e", "vim", "file.txt"]) else {
+            XCTFail("expected -e to be an unknown-flag error, not a GUI launch")
             return
         }
-        XCTAssertTrue(inv.launchGUI)
-        XCTAssertEqual(inv.subcommand, "")
-        XCTAssertEqual(inv.execCommand, ["vim", "file.txt"])
-    }
-
-    func testExecCapturesFlagLikeTokensVerbatim() {
-        // Everything after `-e` is the literal command — even `--json`-looking tokens.
-        guard case let .success(inv) = CLIArgs.parse(["aislopdesk", "-e", "grep", "--json", "x"]) else {
-            XCTFail("expected success")
-            return
-        }
-        XCTAssertEqual(inv.execCommand, ["grep", "--json", "x"])
-        // The `--json` belongs to the exec command, NOT the CLI format.
-        XCTAssertEqual(inv.format, .text)
+        XCTAssertEqual(err, .unknownFlag("-e"))
     }
 
     func testVersionSubcommandIsNotAGUILaunch() {
@@ -387,6 +378,25 @@ final class WatchProgressTests: XCTestCase {
 
     func testNotificationBytesEmptyMessageEmitsNothing() {
         XCTAssertTrue(WatchProgress.notificationBytes(message: "").isEmpty)
+    }
+
+    /// M8-watch-notify-toggle: the watch-FINISH banner must NOT use the generic free-text OSC-9 form (which
+    /// the host routes to `.explicitOSC` / the master switch). It rides OSC 777 carrying the private
+    /// `WatchNotificationMarker` sentinel in the TITLE field, so the client routes it to `.watchFinish`
+    /// (gated by Notify on Watch Finish). Revert-to-confirm-fail: swapping this back to `notificationBytes`
+    /// (the OSC-9 form) drops the marker and the 777 framing, failing this pin.
+    func testWatchFinishNotificationBytesCarryMarkerOnOSC777() {
+        let message = "watch: make finished"
+        XCTAssertEqual(
+            WatchProgress.watchFinishNotificationBytes(message: message),
+            Array("\u{1B}]777;notify;\(WatchNotificationMarker.title);\(message)\u{07}".utf8),
+        )
+        // The marker is ';'-free so the OSC-777 split preserves it as a single title field.
+        XCTAssertFalse(WatchNotificationMarker.title.contains(";"))
+    }
+
+    func testWatchFinishNotificationBytesEmptyMessageEmitsNothing() {
+        XCTAssertTrue(WatchProgress.watchFinishNotificationBytes(message: "").isEmpty)
     }
 
     func testFinishMessageSuccessAndFailureText() {
