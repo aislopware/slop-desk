@@ -5,6 +5,7 @@
 // the actual colors from the theme. `autoDismiss` is the timeout the toast view schedules (nil ⇒ sticky,
 // dismissed only by the X button).
 
+import AislopdeskWorkspaceCore // SettingsKey.redactSecretsEnabled + SecretRedactor (OSC-text masking parity)
 import Foundation
 
 public struct Toast: Identifiable, Sendable, Equatable {
@@ -45,5 +46,52 @@ public struct Toast: Identifiable, Sendable, Equatable {
         self.title = title
         self.body = body
         self.autoDismiss = autoDismiss
+    }
+
+    // MARK: - Secret redaction (parity with the OS banner + the pane title)
+
+    /// Masks likely secrets in untrusted, remote-controlled OSC text when `redactSecrets` (default ON) is
+    /// set — the SHARED seam so every in-app toast matches the macOS Notification-Center banner
+    /// (`CommandCompletionNotifier`) and the redacted sidebar/pill title (`PanePresentation`). Critically,
+    /// the toast is the ONLY notification surface on iOS (the macOS-only `UNUserNotification` never runs),
+    /// so without this an OSC 9/777 title or body carrying an API key / token / `PASSWORD=…` would render
+    /// VERBATIM on-screen — a shoulder-surf / screen-share / recording leak. Idempotent (re-masking is a
+    /// no-op), so it stays safe even where the source already passed through a redacting ingress.
+    public static func redactSecretsIfEnabled(_ text: String) -> String {
+        SettingsKey.redactSecretsEnabled ? SecretRedactor.redact(text) : text
+    }
+
+    /// Builds the in-app toast for an explicit OSC 9/777 notification, masking secrets in the (untrusted)
+    /// title + body at the single toast-construction site so both platforms benefit.
+    public static func explicitOSC(paneIDRaw: UUID, title: String, body: String?) -> Self {
+        Self(
+            id: "pane.\(paneIDRaw.uuidString)",
+            flavor: .default,
+            title: redactSecretsIfEnabled(title),
+            body: body.map { redactSecretsIfEnabled($0) },
+        )
+    }
+
+    /// Builds the in-app toast for a finished LONG-running command (the background "your build finished" cue).
+    /// `paneTitle` is the live OSC 0/2 pane title — untrusted, remote/PTY-settable text (commonly the running
+    /// command line, e.g. `mysql -pSECRET`, or an explicit `\e]2;…token…\a`), so it is masked at this single
+    /// construction site for parity with the macOS banner (`CommandCompletionNotifier.post`) and the OSC toast
+    /// above — the toast is the ONLY notification surface on iOS. The body is a FIXED exit-code + duration
+    /// template (no untrusted text), so it needs no redaction. A clean exit is `.success`; a non-zero exit is
+    /// `.error` (a green checkmark on a failed build would mislead).
+    public static func longCommand(
+        paneIDKey: String,
+        paneTitle: String,
+        exitCode: Int32?,
+        durationMS: UInt32,
+    ) -> Self {
+        let secs = Int((Double(durationMS) / 1000).rounded())
+        let cleanExit = (exitCode ?? 0) == 0
+        return Self(
+            id: "pane.\(paneIDKey)",
+            flavor: cleanExit ? .success : .error,
+            title: paneTitle.isEmpty ? "Command finished" : redactSecretsIfEnabled(paneTitle),
+            body: "command finished (exit \(exitCode.map(String.init) ?? "?"), \(secs)s)",
+        )
     }
 }

@@ -67,6 +67,10 @@ struct WebPaneView: WebViewRepresentable {
         configuration.mediaTypesRequiringUserActionForPlayback = .all
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        // otty spec (files-and-links › Web Browser Pane): two-finger trackpad swipe drives Back/Forward.
+        // The property lives on `WKWebView` on BOTH macOS and iOS, so this single shared line covers both
+        // the `makeNSView` and `makeUIView` slices (alongside the ⌘[/⌘] chords + the chrome buttons).
+        webView.allowsBackForwardNavigationGestures = true
         #if os(iOS)
         // Enable the native iOS find-in-page UI so the ⌘F chord (WebLeafView) can present the find navigator.
         webView.isFindInteractionEnabled = true

@@ -23,6 +23,7 @@
 import AislopdeskProtocol
 import AislopdeskWorkspaceCore
 import Foundation
+import SFSafeSymbols
 import SwiftUI
 
 struct OpenQuicklyView: View {
@@ -135,7 +136,7 @@ struct OpenQuicklyView: View {
 
     private var searchBar: some View {
         HStack(spacing: Otty.Metric.space2) {
-            Image(systemName: "magnifyingglass")
+            Image(systemSymbol: .magnifyingglass)
                 .font(.system(size: Otty.Typeface.body))
                 .foregroundStyle(Otty.Text.secondary)
             TextField("Search tabs, windows…", text: $query)
@@ -283,7 +284,7 @@ struct OpenQuicklyView: View {
                 selection = selectableIndex
                 actionsVisible = true
             } label: {
-                Image(systemName: "ellipsis.circle")
+                Image(systemSymbol: .ellipsisCircle)
                     .font(.system(size: Otty.Typeface.body))
                     .foregroundStyle(Otty.Text.secondary)
                     .contentShape(Rectangle())
@@ -429,7 +430,7 @@ struct OpenQuicklyView: View {
 
     private var actionsSearchField: some View {
         HStack(spacing: Otty.Metric.space2) {
-            Image(systemName: "magnifyingglass")
+            Image(systemSymbol: .magnifyingglass)
                 .font(.system(size: Otty.Typeface.footnote))
                 .foregroundStyle(Otty.Text.secondary)
             TextField("Filter actions…", text: $actionsQuery)

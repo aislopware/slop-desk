@@ -42,6 +42,11 @@ struct GlobalSearchView: View {
     @State private var caseSensitive = false
     @State private var isRegex = false
 
+    /// Per-group collapse state (E5: `user-interface__find.md` — each tab group is a COLLAPSIBLE group with a
+    /// leading disclosure control). Keyed by ``PaneID`` so a live re-run that re-orders/drops groups carries
+    /// the collapse intent to surviving panes and lets a vanished pane's id fall away. Default = all expanded.
+    @State private var collapse = GlobalSearchCollapseState()
+
     /// Pre-focuses the query field on appear so typing reaches it immediately (otty parity).
     @FocusState private var queryFocused: Bool
 
@@ -145,8 +150,10 @@ struct GlobalSearchView: View {
                 } else {
                     ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
                         groupHeader(group)
-                        ForEach(Array(group.hits.enumerated()), id: \.offset) { _, hit in
-                            GlobalSearchHitRow(excerpt: highlightedExcerpt(hit)) { jump(to: hit) }
+                        if collapse.showsHits(group.paneID) {
+                            ForEach(Array(group.hits.enumerated()), id: \.offset) { _, hit in
+                                GlobalSearchHitRow(excerpt: highlightedExcerpt(hit)) { jump(to: hit) }
+                            }
                         }
                     }
                 }
@@ -170,9 +177,20 @@ struct GlobalSearchView: View {
     // MARK: - Group header (one per tab/pane)
 
     private func groupHeader(_ group: GlobalSearchGroup) -> some View {
-        // Per global-search.png the group header carries only a leading per-tab terminal glyph + the tab title.
-        // (No ⌘ordinal badge: the ⌘1/⌘2/⌘3 numbers in the screenshot are SIDEBAR tab numbers, not group headers.)
-        HStack(spacing: Otty.Metric.space2) {
+        // Per `user-interface__find.md`:134-136 each tab group is COLLAPSIBLE via a leading disclosure control
+        // ("checkbox-style expand/collapse control to the left of the tab/file name header") — the `▸`/`▾`
+        // chevron below — followed by global-search.png's per-tab terminal glyph + the tab title. The whole
+        // header row toggles the group (otty disclosure-row idiom). (No ⌘ordinal badge: the ⌘1/⌘2/⌘3 numbers
+        // in the screenshot are SIDEBAR tab numbers, not group headers.)
+        let collapsed = collapse.isCollapsed(group.paneID)
+        return HStack(spacing: Otty.Metric.space2) {
+            // The disclosure control: a right-chevron when collapsed, a down-chevron when expanded — the
+            // checkbox-style expand/collapse affordance the spec puts to the LEFT of the header. Sized to the
+            // footnote metric so it sits flush with the terminal glyph + title on the same baseline.
+            Image(systemSymbol: collapsed ? .chevronRight : .chevronDown)
+                .font(.system(size: Otty.Typeface.small, weight: .semibold))
+                .foregroundStyle(Otty.Text.secondary)
+                .frame(width: Otty.Typeface.body, alignment: .center)
             // `.appleTerminal` (rawValue "apple.terminal") renders the `>_` PROMPT-BOX terminal glyph that
             // global-search.png shows — it is NOT an Apple-logo mark (verified by rendering the symbol). It is
             // the CURRENT, non-deprecated name; the bare `.terminal` case is the SAME glyph under its old name,
@@ -192,6 +210,11 @@ struct GlobalSearchView: View {
         .padding(.horizontal, Otty.Metric.space4)
         .padding(.top, Otty.Metric.space3)
         .padding(.bottom, Otty.Metric.space1)
+        .contentShape(Rectangle())
+        .onTapGesture { collapse.toggle(group.paneID) }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(Text(group.groupTitle))
+        .accessibilityValue(Text(collapsed ? "Collapsed" : "Expanded"))
     }
 
     // MARK: - Hit row (extracted so each row owns its own hover @State for the hover-reveal jump glyph)

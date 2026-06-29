@@ -514,16 +514,18 @@ final class ClientControlDispatcherTests: XCTestCase {
         XCTAssertFalse(isOK(run(ClientControlProtocol.Method.configGet, ["key": ""])))
     }
 
-    func testConfigSetTransient() throws {
+    /// `--transient` is HONESTLY REJECTED at the dispatcher BEFORE the backend is touched: aislopdesk applies
+    /// config live through the same model that persists it (no apply-without-persist layer), so the pre-fix
+    /// behavior (echo `transient:true` while the backend silently persisted) was a lie. Revert-to-confirm-fail:
+    /// the pre-fix dispatcher returned ok + `transient:true` and recorded the backend call.
+    func testConfigSetTransientIsHonestlyRejected() {
         let obj = run(
             ClientControlProtocol.Method.configSet,
             ["key": "font-size", "value": "16", "transient": true],
         )
-        XCTAssertTrue(isOK(obj))
-        XCTAssertEqual(backend.recordedConfigSetKey, "font-size")
-        XCTAssertEqual(backend.recordedConfigSetValue, "16")
-        XCTAssertTrue(try XCTUnwrap(backend.recordedConfigSetTransient))
-        XCTAssertEqual(result(obj)["transient"] as? Bool, true)
+        XCTAssertFalse(isOK(obj), "--transient is rejected, not a silent persist")
+        XCTAssertNil(backend.recordedConfigSetKey, "the backend is never invoked for a transient set")
+        XCTAssertTrue((errorMessage(obj) ?? "").contains("--transient"), "the error names the rejected flag")
     }
 
     func testConfigSetDefaultsTransientFalse() throws {
@@ -548,9 +550,11 @@ final class ClientControlDispatcherTests: XCTestCase {
         XCTAssertEqual(result(obj)["key"] as? String, "font-size")
     }
 
-    func testConfigUnsetTransient() throws {
-        _ = run(ClientControlProtocol.Method.configUnset, ["key": "font-size", "transient": true])
-        XCTAssertTrue(try XCTUnwrap(backend.recordedConfigUnsetTransient))
+    func testConfigUnsetTransientIsHonestlyRejected() {
+        let obj = run(ClientControlProtocol.Method.configUnset, ["key": "font-size", "transient": true])
+        XCTAssertFalse(isOK(obj), "--transient unset is rejected, not a silent persist")
+        XCTAssertNil(backend.recordedConfigUnsetKey, "the backend is never invoked for a transient unset")
+        XCTAssertTrue((errorMessage(obj) ?? "").contains("--transient"), "the error names the rejected flag")
     }
 
     func testConfigUnsetMissingKeyErrors() {

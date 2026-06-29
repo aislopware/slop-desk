@@ -250,7 +250,7 @@ Feature-by-feature matrix for cloning the Otty terminal 1:1 (UI + behavior) insi
 | L8 | Shell integration OSC 133 A/B/C/D + OSC 7 | **done** — host sniffer + client tracker | wire OSC 7 → `lastKnownCwd` (see A26) | 2 |
 | L9 | Shell-integration script injection (zsh ZDOTDIR / fish / bash / tmux) | **partial** — host spawns PTY; otty-style auto-inject scripts not shipped | host daemon ships integration scripts + injects env | 3 |
 | L10 | SSH wrapper (terminfo forward) / `edit`/`view`/`jump`/`learn` wrappers | **na-remote / partial** — host-side; deferred | defer SSH wrapper; ctl wrappers low-pri | 5 |
-| L11 | `$TERM`/`COLORTERM`/`TERM_PROGRAM`/`CW_TERM`; DA1/DA2/DSR | **done** — `HostEnvironment` + libghostty; set `TERM_PROGRAM=aislopdesk` | set `TERM_PROGRAM`/`CW_TERM` to aislopdesk | 4 |
+| L11 | `$TERM`/`COLORTERM`/`TERM_PROGRAM`/`CW_TERM`; DA1/DA2/DSR | **done** — `HostEnvironment.curated` unconditionally sets `TERM_PROGRAM=aislopdesk` + `TERM_PROGRAM_VERSION` + `CW_TERM=aislopdesk` (no longer mirrors the launcher's `TERM_PROGRAM`); `TERM`/`COLORTERM` + DA1/DA2/DSR via libghostty | none | — |
 | L12 | `term` setting (auto→xterm-256color w/ validation) | **partial** — TERM enum exists; no validated `term` setting | add `term` setting + host validation | 4 |
 
 ---

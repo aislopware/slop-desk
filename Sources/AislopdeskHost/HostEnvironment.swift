@@ -18,6 +18,15 @@ public enum HostEnvironment {
     /// libghostty, so a plain shell advertises the native ghostty TERM too.
     public static let defaultTerm = ClaudeCodeProfile.Term.ghostty.rawValue
 
+    /// The terminal-program identity advertised to the child shell via `TERM_PROGRAM` (and the
+    /// Amazon-Q/Fig `CW_TERM`). We report OURSELVES, never the launcher's `TERM_PROGRAM`, so the
+    /// shell and any program inspecting it sees `aislopdesk` rather than `Apple_Terminal`/`ghostty`.
+    public static let termProgram = "aislopdesk"
+
+    /// The build/marketing version advertised via `TERM_PROGRAM_VERSION`. Kept in step with the app
+    /// target's `MARKETING_VERSION` (`Apps/ClientApp-macOS/project.yml`) and `CLIVersion.version`.
+    public static let buildVersion = "0.1.0"
+
     /// A curated child environment: inherit a safe allowlist from the parent and layer
     /// the terminal defaults on top. We deliberately do **not** forward the parent's
     /// `PATH` blindly ([12] §1.4) — we set a conservative default the child's login
@@ -52,6 +61,9 @@ public enum HostEnvironment {
         // would have its ncurses search only the default dirs and FAIL to find the entry, so every TUI
         // degrades. Forwarding them makes the child's ncurses search the SAME dirs the probe used (only
         // forwarded when present), so a "resolvable" verdict is actually honoured.
+        // NOTE: `TERM_PROGRAM` is deliberately NOT mirrored from the parent. The child must report
+        // OUR identity (set below), not the launcher's (`Apple_Terminal` / `ghostty` / etc.), and a
+        // mirrored `TERM_PROGRAM` would also let Amazon-Q/Fig `cwterm` re-exec mid-`.zshrc`.
         for key in [
             "HOME",
             "USER",
@@ -60,7 +72,6 @@ public enum HostEnvironment {
             "TMPDIR",
             "LANG",
             "LC_ALL",
-            "TERM_PROGRAM",
             "TERMINFO",
             "TERMINFO_DIRS",
         ] {
@@ -72,6 +83,14 @@ public enum HostEnvironment {
         env["TERM"] = term
         env["COLORTERM"] = "truecolor"
         env["NCURSES_NO_UTF8_ACS"] = "1"
+
+        // Terminal-program identity. Advertise OURSELVES unconditionally so the child shell reports
+        // `aislopdesk` (not the launcher's `Apple_Terminal`/`ghostty`), and set `CW_TERM=aislopdesk`
+        // so Amazon-Q/Fig's shell hooks recognise a supported host and do NOT `cwterm`-exec a nested
+        // pseudo-terminal mid-`.zshrc`. These are local PTY env only (never on the wire).
+        env["TERM_PROGRAM"] = Self.termProgram
+        env["TERM_PROGRAM_VERSION"] = Self.buildVersion
+        env["CW_TERM"] = Self.termProgram
 
         // Conservative PATH so the shell can find its own profile / common tools even
         // before the login profile augments it. (Not forwarded blindly from parent.)

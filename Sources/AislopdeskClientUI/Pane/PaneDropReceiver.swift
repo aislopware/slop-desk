@@ -47,6 +47,15 @@ final class PaneDropOverlayModel {
     /// disabled one), or `nil` when the cursor is in a gap between zones. The overlay saturates this one.
     var activeZone: DropZone?
 
+    /// Monotonically-increasing token stamped on each new drag entry (`beginClassification`) and bumped on
+    /// every `reset()` (drop committed / cursor left). The async pasteboard classify captures the value live
+    /// at `dropEntered`; if a `reset()` bumped it before the classify resolves, the late write is recognised
+    /// as STALE and dropped (``applyClassified(_:generation:)``). Without this guard a slow `.url`/`.text`
+    /// provider load — or a fast enter→exit — would re-set `content` AFTER the overlay was cleared, flipping
+    /// ``isActive`` back to `true` and stranding the full-pane overlay faded-in with no drag present (the
+    /// post-reset async-race class — cf. the present-storm / identity-churn lessons).
+    private(set) var generation: Int = 0
+
     /// Whether the overlay should be shown — a supported drag is hovering this pane.
     var isActive: Bool { content != nil }
 
@@ -57,10 +66,30 @@ final class PaneDropOverlayModel {
         return DropActionResolver.allowedZones(for: content)
     }
 
-    /// Clear the drag state (drop finished / cursor left the pane) so the overlay fades out.
+    /// Begin a new classification cycle: bump ``generation`` and hand the new current value back for the
+    /// caller's async `Task` to capture. Only a classify whose captured generation still equals the live
+    /// ``generation`` may write ``content`` (see ``applyClassified(_:generation:)``).
+    func beginClassification() -> Int {
+        generation &+= 1
+        return generation
+    }
+
+    /// Apply a freshly-classified `content` IFF the stamping `generation` is still current — the post-reset
+    /// async-race guard. The `dropEntered` classify `Task` captures the generation from
+    /// ``beginClassification()`` and calls this on completion; if a `reset()` bumped the generation meanwhile
+    /// (the drag committed or left the pane), the write is DROPPED so a late classify can never re-activate
+    /// the overlay after it was cleared.
+    func applyClassified(_ content: DroppedContent?, generation: Int) {
+        guard generation == self.generation else { return }
+        self.content = content
+    }
+
+    /// Clear the drag state (drop finished / cursor left the pane) so the overlay fades out. Bumps
+    /// ``generation`` so any classify still in flight is invalidated (a late resolve can't strand the overlay).
     func reset() {
         content = nil
         activeZone = nil
+        generation &+= 1
     }
 }
 
@@ -117,8 +146,12 @@ struct PaneDropReceiver: DropDelegate {
         guard enabled else { return }
         let model = model
         MainActor.assumeIsolated {
+            // Stamp this entry with a fresh generation the classify Task captures; a `dropExited`/`performDrop`
+            // reset bumps the generation so a classify that resolves AFTER the reset is dropped as stale rather
+            // than re-activating the overlay (the strand-the-overlay race).
+            let generation = model.beginClassification()
             let bundle = ProviderBundle(info: info)
-            Task { @MainActor in model.content = await bundle.classify() }
+            Task { @MainActor in await model.applyClassified(bundle.classify(), generation: generation) }
         }
     }
 

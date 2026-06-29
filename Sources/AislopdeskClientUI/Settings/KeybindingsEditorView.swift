@@ -15,6 +15,7 @@
 #if canImport(SwiftUI)
 import AislopdeskVideoProtocol
 import AislopdeskWorkspaceCore
+import SFSafeSymbols
 import SwiftUI
 #if os(macOS)
 import AppKit
@@ -112,7 +113,7 @@ struct KeybindingsEditorView: View {
     /// action name OR chord — see `KeybindingsEditorModel.matches`.
     private var searchField: some View {
         HStack(spacing: Otty.Metric.space2) {
-            Image(systemName: "magnifyingglass")
+            Image(systemSymbol: .magnifyingglass)
                 .font(.system(size: Otty.Typeface.footnote))
                 .foregroundStyle(Otty.Text.secondary)
             TextField("Search key bindings", text: $searchQuery)
@@ -121,7 +122,7 @@ struct KeybindingsEditorView: View {
                 .foregroundStyle(Otty.Text.primary)
             if !searchQuery.isEmpty {
                 Button { searchQuery = "" } label: {
-                    Image(systemName: "xmark.circle.fill")
+                    Image(systemSymbol: .xmarkCircleFill)
                         .font(.system(size: Otty.Typeface.footnote))
                         .foregroundStyle(Otty.Text.secondary)
                 }
@@ -174,7 +175,7 @@ struct KeybindingsEditorView: View {
                 .foregroundStyle(Otty.Text.primary)
                 .lineLimit(1)
             if isConflicting {
-                Image(systemName: "exclamationmark.triangle.fill")
+                Image(systemSymbol: .exclamationmarkTriangleFill)
                     .font(.system(size: Otty.Typeface.small))
                     .foregroundStyle(Otty.Status.warn)
                     .help("This shortcut conflicts with another command")

@@ -21,6 +21,7 @@
 #if canImport(SwiftUI)
 import AislopdeskAgentDetect
 import AislopdeskWorkspaceCore
+import SFSafeSymbols
 import SwiftUI
 
 struct PeekReplyOverlay: View {
@@ -156,7 +157,7 @@ struct PeekReplyOverlay: View {
 
     private func replyBar(target: PaneID) -> some View {
         HStack(spacing: Otty.Metric.space2) {
-            Image(systemName: "arrowshape.turn.up.left")
+            Image(systemSymbol: .arrowshapeTurnUpLeft)
                 .font(.system(size: Otty.Typeface.footnote))
                 .foregroundStyle(Otty.Text.secondary)
             TextField("Reply…", text: $field)
@@ -172,7 +173,7 @@ struct PeekReplyOverlay: View {
                 // field, and `↩` stays the field's native `.onSubmit` (so it never double-fires).
                 .onKeyPress(phases: .down) { press in handleKey(press, target: target) }
             Button { submit(target: target) } label: {
-                Image(systemName: "paperplane.fill")
+                Image(systemSymbol: .paperplaneFill)
                     .font(.system(size: Otty.Typeface.footnote))
                     .foregroundStyle(field.trimmingCharacters(in: .whitespaces).isEmpty
                         ? Otty.Text.tertiary : Otty.State.accent)
@@ -224,7 +225,7 @@ struct PeekReplyOverlay: View {
 
     private var allCaughtUp: some View {
         VStack(spacing: Otty.Metric.space2) {
-            Image(systemName: "checkmark.circle")
+            Image(systemSymbol: .checkmarkCircle)
                 .font(.system(size: Otty.Typeface.body))
                 .foregroundStyle(Otty.Status.ok)
             Text("Nothing needs your reply.")

@@ -20,6 +20,7 @@
 // same on both platforms.
 
 #if canImport(SwiftUI)
+import SFSafeSymbols
 import SwiftUI
 
 struct ToastStackView: View {
@@ -78,7 +79,7 @@ struct ToastStackView: View {
             Button {
                 coordinator.dismissToast(toast.id)
             } label: {
-                Image(systemName: "xmark")
+                Image(systemSymbol: .xmark)
                     .font(.system(size: Otty.Typeface.small, weight: .semibold))
                     .foregroundStyle(Otty.Text.secondary)
                     .frame(width: 18, height: 18)

@@ -108,6 +108,42 @@ public struct GlobalSearchResults: Equatable, Sendable {
     public var summary: String { "\(totalMatches) results — \(tabCount) tabs" }
 }
 
+/// Transient per-group collapse state for the Global Search surface (⇧⌘F): the set of result groups the
+/// user has explicitly collapsed, keyed by each group's stable ``PaneID`` (one group == one source pane).
+///
+/// A PURE value type so the disclosure-toggle reducer is unit-testable WITHOUT instantiating the SwiftUI
+/// overlay (the hang-safety rule keeps real surfaces/windows out of tests). The view owns one as `@State`
+/// and asks it whether to render a group's hit rows; keying by ``PaneID`` (not by index) means a live
+/// re-run that re-orders or drops groups carries the collapse intent forward where the pane survives and
+/// simply lets a vanished pane's stale id fall away — never collapsing the WRONG group.
+///
+/// Default (`collapsed` empty) == every group EXPANDED: a fresh search shows all hits (otty parity — the
+/// disclosure control to the left of each group header collapses on demand, `user-interface__find.md`).
+public struct GlobalSearchCollapseState: Equatable, Sendable {
+    /// The pane groups the user has collapsed (their hit rows hidden). Empty ⇒ all groups expanded.
+    public private(set) var collapsed: Set<PaneID>
+
+    public init(collapsed: Set<PaneID> = []) { self.collapsed = collapsed }
+
+    /// `true` when the group identified by `paneID` is collapsed (its hit rows hidden).
+    public func isCollapsed(_ paneID: PaneID) -> Bool { collapsed.contains(paneID) }
+
+    /// Whether the group's hit rows should be SHOWN — the inverse of ``isCollapsed(_:)``, named for the
+    /// view's call site (it renders a group's hits only when this is `true`). A group never seen before is
+    /// expanded by default.
+    public func showsHits(_ paneID: PaneID) -> Bool { !collapsed.contains(paneID) }
+
+    /// Flip the collapsed/expanded state of `paneID` — the disclosure-control reducer. Collapsing one group
+    /// leaves every other group's state untouched.
+    public mutating func toggle(_ paneID: PaneID) {
+        if collapsed.contains(paneID) {
+            collapsed.remove(paneID)
+        } else {
+            collapsed.insert(paneID)
+        }
+    }
+}
+
 /// The PURE engine behind ⇧⌘F Global Search: it runs the proven ``TerminalSearchController/computeMatches``
 /// over every live terminal pane's scrollback mirror and assembles the grouped, summarised results the
 /// global-search surface renders. NO view, NO store, NO libghostty — the surface-collection glue (snapshotting

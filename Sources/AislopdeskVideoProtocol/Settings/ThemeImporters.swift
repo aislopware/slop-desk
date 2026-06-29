@@ -21,8 +21,9 @@ import Foundation
 /// lands the theme in the dark slot. `none`/unparseable backgrounds default to the dark slot.
 ///
 /// COLOUR NORMALISATION: every converter funnels its raw colour tokens through ``normalizeHex(_:)``, which
-/// accepts `#rrggbb`, `0xrrggbb`, and bare `rrggbb` (case preserved) and rejects anything else — so the
-/// document is built from clean `#`-less 6-hex strings exactly like the TOML path. Float→hex (iTerm2) uses
+/// accepts `#rrggbb`, `0xrrggbb`, bare `rrggbb`, the CSS-style `#rgb` shorthand (expanded), and `#rrggbbaa`
+/// (alpha dropped) — all case-preserved — and rejects anything else, so the document is built from clean
+/// `#`-less 6-hex strings exactly like the TOML path. Float→hex (iTerm2) uses
 /// SEPARATE clamp + multiply with NaN-faithful ordered clamps (`Double.minimum`/`Double.maximum`), never
 /// `fma`/`addingProduct`.
 public enum ThemeImporters {
@@ -348,8 +349,11 @@ public enum ThemeImporters {
 
     /// Normalise a third-party colour token to a `#`-less 6-hex string (case preserved), or `nil` when it is
     /// not a clean hex. Accepts a leading `#` or `0x`/`0X`; folds the transparent token to `none` (only valid
-    /// for a `background`). Validation is the exact 6-hex check ``ThemeDocument/isValidHex(_:)`` — anything
-    /// else (wrong length, stray characters) drops.
+    /// for a `background`). Both Kitty and Ghostty accept CSS-style shorthand, so before the 6-hex check we
+    /// EXPAND a 3-digit `rgb` → `rrggbb` (each nibble doubled) and TOLERATE an 8-digit `rrggbbaa` by dropping
+    /// the alpha (terminal colours have no alpha channel) — both only when the digits are clean hex. Validation
+    /// is the exact 6-hex check ``ThemeDocument/isValidHex(_:)`` — anything else (wrong length, stray
+    /// characters) drops.
     static func normalizeHex(_ raw: String) -> String? {
         var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         // Strip a surrounding pair of quotes (some tools quote bare values).
@@ -361,6 +365,12 @@ public enum ThemeImporters {
             value = String(value.dropFirst())
         } else if value.hasPrefix("0x") || value.hasPrefix("0X") {
             value = String(value.dropFirst(2))
+        }
+        // CSS-style shorthand → canonical 6-hex (an invalid nibble still fails the final isValidHex check).
+        if value.count == 3, value.allSatisfy(\.isHexDigit) {
+            value = value.map { "\($0)\($0)" }.joined()
+        } else if value.count == 8, value.allSatisfy(\.isHexDigit) {
+            value = String(value.prefix(6))
         }
         return ThemeDocument.isValidHex(value) ? value : nil
     }

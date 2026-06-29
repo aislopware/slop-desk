@@ -17,6 +17,7 @@
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
+import SFSafeSymbols
 import SwiftUI
 
 struct ConnectHostView: View {
@@ -75,7 +76,7 @@ struct ConnectHostView: View {
 
     private var titleBar: some View {
         HStack(spacing: Otty.Metric.space2) {
-            Image(systemName: "network")
+            Image(systemSymbol: .network)
                 .font(.system(size: Otty.Typeface.body))
                 .foregroundStyle(Otty.Text.secondary)
             Text("Connect to Host")
@@ -140,7 +141,7 @@ struct ConnectHostView: View {
                 showAdvanced = true
             } label: {
                 HStack(spacing: Otty.Metric.space1) {
-                    Image(systemName: "chevron.right")
+                    Image(systemSymbol: .chevronRight)
                         .font(.system(size: Otty.Typeface.small))
                     Text("Advanced (video ports)")
                         .font(.system(size: Otty.Typeface.footnote))
@@ -158,7 +159,7 @@ struct ConnectHostView: View {
     /// disabled (bad host / port / equal video ports).
     private func hintRow(_ hint: String) -> some View {
         HStack(spacing: Otty.Metric.space1) {
-            Image(systemName: "exclamationmark.triangle")
+            Image(systemSymbol: .exclamationmarkTriangle)
                 .font(.system(size: Otty.Typeface.small))
             Text(hint)
                 .font(.system(size: Otty.Typeface.footnote))

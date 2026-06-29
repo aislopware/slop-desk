@@ -313,6 +313,72 @@ final class ThemeImportersTests: XCTestCase {
         XCTAssertNil(ThemeImporters.importGhostty(text, fallbackName: "nofg"))
     }
 
+    // MARK: - Hex shorthand normalisation (CSS `#rgb` + `#rrggbbaa`)
+
+    /// Kitty/Ghostty (and the themes spec's own canonical examples — `foreground #fff` / `color0 #000`) accept
+    /// CSS-style 3-digit shorthand. REVERT-TO-CONFIRM-FAIL: without the `#rgb` → `#rrggbb` expansion in
+    /// `normalizeHex`, every shorthand token returns `nil`, leaving foreground/palette empty so the WHOLE file
+    /// validate-then-drops — `importKitty` returns `nil` and this guard-let fails.
+    func testImportKittyExpandsThreeDigitHexShorthand() {
+        var text = """
+        # shorthand theme
+        foreground #fff
+        background #000
+        cursor #f0f
+        """
+        for index in 0..<16 {
+            // color1 uses `#f00` shorthand; the rest use full 6-hex — both must coexist.
+            text += index == 1 ? "\ncolor1 #f00" : "\ncolor\(index) #\(String(format: "%02X", index))0000"
+        }
+        guard let doc = ThemeImporters.importKitty(text, fallbackName: "Short") else {
+            XCTFail("3-digit shorthand must import, not validate-then-drop the file")
+            return
+        }
+        XCTAssertEqual(doc.foreground, "ffffff") // `#fff` → `ffffff`
+        XCTAssertEqual(doc.background, "000000") // `#000` → `000000`
+        XCTAssertEqual(doc.cursor, "ff00ff") // `#f0f` → `ff00ff`
+        XCTAssertEqual(doc.palette[1], "ff0000") // `#f00` → `ff0000`
+        XCTAssertEqual(doc.palette.count, 16)
+        XCTAssertTrue(doc.isValid)
+    }
+
+    /// 8-digit `#rrggbbaa` (some Kitty/Ghostty configs carry an alpha byte) must import with the alpha DROPPED —
+    /// terminal colours have no alpha channel. REVERT-TO-CONFIRM-FAIL: without the `count == 8` truncation, the
+    /// 8-hex token fails the exact-6 check, so every channel drops and the document validate-then-drops to `nil`.
+    func testImportGhosttyToleratesEightDigitHexDroppingAlpha() {
+        var text = """
+        foreground = #FFFFFFFF
+        background = #000000ff
+        """
+        for index in 0..<16 {
+            text += "\npalette = \(index)=#\(String(format: "%02X", index))0000ff"
+        }
+        guard let doc = ThemeImporters.importGhostty(text, fallbackName: "Alpha") else {
+            XCTFail("8-digit `#rrggbbaa` must import with alpha dropped, not drop the file")
+            return
+        }
+        XCTAssertEqual(doc.foreground, "FFFFFF") // alpha byte dropped, case preserved
+        XCTAssertEqual(doc.background, "000000")
+        XCTAssertEqual(doc.palette[1], "010000")
+        XCTAssertEqual(doc.palette[15], "0F0000")
+        XCTAssertEqual(doc.palette.count, 16)
+        XCTAssertTrue(doc.isValid)
+    }
+
+    /// Validate-then-drop survives the new shorthand paths: a 3-char token whose nibbles are NOT hex (`#xyz`)
+    /// still expands to a non-hex 6-string that fails `isValidHex`, so the document drops — the tolerance is
+    /// length-shaped only, never a hole in the hex check.
+    func testImportKittyDropsMalformedThreeDigitShorthand() {
+        var text = """
+        foreground #xyz
+        background #000000
+        """
+        for index in 0..<16 {
+            text += "\ncolor\(index) #\(String(format: "%02X", index))0000"
+        }
+        XCTAssertNil(ThemeImporters.importKitty(text, fallbackName: "badshort"))
+    }
+
     // MARK: - Light/dark inference (per format)
 
     func testInfersLightSlotFromLightBackground() {

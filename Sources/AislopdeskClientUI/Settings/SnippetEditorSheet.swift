@@ -14,6 +14,7 @@
 // Otty.* tokens only (raw font/radius literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
+import SFSafeSymbols
 import SwiftUI
 
 /// The modal snippet editor. Presented with the snippet's current values (empty for a new snippet); on
@@ -86,7 +87,7 @@ struct SnippetEditorSheet: View {
                 .foregroundStyle(Otty.Text.primary)
             Spacer(minLength: 0)
             Button { dismiss() } label: {
-                Image(systemName: "xmark")
+                Image(systemSymbol: .xmark)
                     .font(.system(size: Otty.Typeface.footnote, weight: .medium))
                     .foregroundStyle(Otty.Text.tertiary)
                     .contentShape(Rectangle())

@@ -31,6 +31,12 @@ public struct ClientControlDispatcher {
     static let defaultCaptureLines = 100
     /// Upper bound on `pane-capture` `lines` so a hostile count can't force an unbounded read.
     static let maxCaptureLines = 100_000
+    /// Honest rejection for `config set/unset --transient`: aislopdesk applies render settings LIVE through the
+    /// same typed model that persists them, so there is no apply-without-persist layer. Rejecting beats the
+    /// pre-fix lie (persist silently while reporting `transient:true`). See `docs/DECISIONS.md`.
+    static let transientUnsupportedMessage =
+        "--transient is unsupported: aislopdesk applies config live AND persists it (no separate ephemeral "
+            + "render layer); re-run without --transient to apply (and persist), or config unset to revert"
 
     public init(backend: any ClientControlBackend) {
         self.backend = backend
@@ -255,6 +261,7 @@ public struct ClientControlDispatcher {
             return Self.error(id: id, message: "missing params.value")
         }
         let transient = (params["transient"] as? Bool) ?? false
+        if transient { return Self.error(id: id, message: Self.transientUnsupportedMessage) }
         guard backend.configSet(key: key, value: value, transient: transient) else {
             return Self.error(id: id, message: "config set rejected")
         }
@@ -267,6 +274,7 @@ public struct ClientControlDispatcher {
             return Self.error(id: id, message: "missing params.key")
         }
         let transient = (params["transient"] as? Bool) ?? false
+        if transient { return Self.error(id: id, message: Self.transientUnsupportedMessage) }
         guard backend.configUnset(key: key, transient: transient) else {
             return Self.error(id: id, message: "config unset rejected")
         }

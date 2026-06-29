@@ -361,15 +361,25 @@ struct NavigatorColumn: View {
 
     /// Make the row's tab active (if it isn't) then focus its pane. Both go through the store.
     private func select(_ paneID: PaneID) {
-        if let session = store.tree.activeSession {
-            for (index, tab) in session.tabs.enumerated()
-                where tab.root.allPaneIDs().contains(paneID)
-            {
-                if index != session.activeTabIndex { store.selectTab(index) }
-                break
-            }
+        if let session = store.tree.activeSession,
+           let index = Self.owningTabIndex(of: paneID, in: session),
+           index != session.activeTabIndex
+        {
+            store.selectTab(index)
         }
         store.focusPaneTree(paneID)
+    }
+
+    /// The index of the tab that OWNS `paneID` in `session`, FLOAT-AWARE: `Session.tabIndex(containing:)`
+    /// delegates to `Tab.contains` = split tree + floating layer. A FLOATED pane in a BACKGROUND tab still gets
+    /// a rail row (`RailRowsBuilder` enumerates `tab.allPaneIDs()` = tree + floats), so clicking its row must
+    /// resolve the owning tab and `selectTab` it — the ONLY path that stamps tab recency (E6 WI-3, floats the
+    /// tab in the `.updated` sidebar sort) — exactly as a tiled-pane row does. The pre-fix hand-rolled
+    /// `tab.root.allPaneIDs()` scan saw the tree ONLY, so it never matched a float and silently dropped the
+    /// recency stamp (E21 F1 class). Static + pure so the float-aware resolution is unit-tested without a live
+    /// view (see `NavigatorColumnSelectTests`).
+    static func owningTabIndex(of paneID: PaneID, in session: Session) -> Int? {
+        session.tabIndex(containing: paneID)
     }
 
     private func defaultTitle(for kind: PaneKind) -> String {

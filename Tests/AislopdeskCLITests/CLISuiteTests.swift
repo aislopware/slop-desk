@@ -22,17 +22,52 @@ final class CLIArgsTests: XCTestCase {
         XCTAssertFalse(inv.wantsHelp)
     }
 
-    /// M8-dash-e-noop: `-e` is NOT a recognised flag — an aislopdesk pane is a remote PTY with no local
-    /// shell to exec into, so otty's `-e <cmd>` had no faithful mapping and was a silent no-op (it launched
-    /// the GUI and dropped the command). It is de-advertised: passing `-e` before a subcommand is an
-    /// unknown-flag error, never a silent GUI launch. Revert-to-confirm-fail: the pre-fix parser returned
-    /// `.success` (launchGUI, execCommand=["vim",...]); this now demands `.failure(.unknownFlag("-e"))`.
-    func testExecFlagIsAnUnknownFlagError() {
-        guard case let .failure(err) = CLIArgs.parse(["aislopdesk", "-e", "vim", "file.txt"]) else {
-            XCTFail("expected -e to be an unknown-flag error, not a GUI launch")
+    /// xterm/ghostty `-e <cmd>` LAUNCHES THE GUI and runs the command in the first pane (it does NOT
+    /// local-exec — a pane is a remote PTY, so the command is forwarded over the control path). This reverses
+    /// the earlier E20 de-advertisement where `-e` was a fatal `.unknownFlag` error. Revert-to-confirm-fail:
+    /// the pre-fix parser returned `.failure(.unknownFlag("-e"))`; this now demands a GUI-launch with the
+    /// command captured verbatim.
+    func testExecFlagLaunchesGUIAndCapturesCommand() {
+        guard case let .success(inv) = CLIArgs.parse(["aislopdesk", "-e", "vim", "file.txt"]) else {
+            XCTFail("expected -e to launch the GUI, not an unknown-flag error")
             return
         }
-        XCTAssertEqual(err, .unknownFlag("-e"))
+        XCTAssertTrue(inv.launchGUI, "-e launches the client GUI")
+        XCTAssertEqual(inv.subcommand, "", "-e is a launch flag, not a subcommand")
+        XCTAssertEqual(inv.execCommand, ["vim", "file.txt"], "the command + args are captured verbatim")
+    }
+
+    /// `-e` is terminal (xterm semantics): EVERY token after it — even leading-dash ones — is part of the
+    /// command, captured verbatim (no flag parsing, no end-of-options needed).
+    func testExecFlagCapturesTrailingDashTokensVerbatim() {
+        guard case let .success(inv) = CLIArgs.parse(["aislopdesk", "-e", "ls", "-la", "--color"]) else {
+            XCTFail("expected success")
+            return
+        }
+        XCTAssertTrue(inv.launchGUI)
+        XCTAssertEqual(inv.execCommand, ["ls", "-la", "--color"])
+    }
+
+    /// `-e` with no following command is a missing-value error, not a half-parsed launch.
+    func testExecFlagWithoutCommandIsMissingValue() {
+        guard case let .failure(err) = CLIArgs.parse(["aislopdesk", "-e"]) else {
+            XCTFail("expected a missing-value error")
+            return
+        }
+        XCTAssertEqual(err, .missingValue("-e"))
+    }
+
+    /// Bare `-e` is a top-level launch flag only; AFTER a subcommand it is a subcommand-specific token that
+    /// passes through to `rest` (preserving the existing unknown-flag-after-subcommand pass-through).
+    func testExecFlagAfterSubcommandPassesThrough() {
+        guard case let .success(inv) = CLIArgs.parse(["aislopdesk", "pane", "-e", "x"]) else {
+            XCTFail("expected success")
+            return
+        }
+        XCTAssertEqual(inv.subcommand, "pane")
+        XCTAssertNil(inv.execCommand, "-e after a subcommand is not the launch flag")
+        XCTAssertEqual(inv.rest, ["-e", "x"])
+        XCTAssertFalse(inv.launchGUI)
     }
 
     func testVersionSubcommandIsNotAGUILaunch() {

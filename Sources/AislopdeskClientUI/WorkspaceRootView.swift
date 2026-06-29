@@ -66,13 +66,14 @@ public struct WorkspaceRootView: View {
     /// E19/A18 (WI-7, iOS): map the shared `chrome.sidebarCollapsed` flag — the one the auto-hide policy drives
     /// (and macOS's split reads) — onto the `NavigationSplitView`'s `columnVisibility`, so the TABS panel
     /// actually hides/reveals on iPad rather than the flag being a dead toggle there. The getter derives the
-    /// visibility from the flag (`Self.sidebarVisibility`); the setter writes the flag back when the user swipes
-    /// the leading column away or back, so a manual collapse round-trips through the SAME flag the policy + ⌘⇧L
-    /// (macOS) read. Mirrors ``detailsCompactColumnBinding``.
+    /// visibility from the flag (`Self.sidebarVisibility`); the setter routes a user swipe of the leading column
+    /// through `Self.applySidebarVisibility`, which writes the flag back AND records `manualSidebarOverride` on a
+    /// genuine collapse/reveal so the auto-hide policy honors an iPad swipe the same way it honors ⌘⇧L (WI-7) —
+    /// the SECOND manual entry point besides `toggleSidebar()`. Mirrors ``detailsCompactColumnBinding``.
     private var sidebarColumnVisibility: Binding<NavigationSplitViewVisibility> {
         Binding(
             get: { Self.sidebarVisibility(sidebarCollapsed: chrome.sidebarCollapsed) },
-            set: { chrome.sidebarCollapsed = ($0 == .doubleColumn || $0 == .detailOnly) },
+            set: { Self.applySidebarVisibility($0, chrome: chrome) },
         )
     }
 
@@ -196,13 +197,13 @@ public struct WorkspaceRootView: View {
         .onAppear { wireChromeToggles() }
         // E19/A18 (WI-7): drive the vertical TABS panel auto-hide. On a tab-count TRANSITION or a Settings
         // mode flip, apply `SidebarAutoHidePolicy` to the live `chrome.sidebarCollapsed` — but only when the
-        // policy has an opinion (`.auto`) and it DIFFERS from the current state, so a manual ⌘⇧L is never
-        // fought (we react to the transition, not to every render). `.default`/`.always` leave it alone.
-        // `initial: true` runs the policy ONCE on first render too — SwiftUI `.onChange` does not fire on first
-        // appearance, so without it a launch with a persisted `.auto` mode + a single-tab session opened with
-        // the sidebar REVEALED (the exact case `.auto` handles) until the user added/removed a tab.
-        // `sidebarCollapsed` is not persisted, so applying at launch is safe; the `!= desired` guard in
-        // `applyAutoHide` still prevents fighting a manual ⌘⇧L.
+        // policy has an opinion (`.auto`) AND the 1↔>1 tab-count regime actually crossed, so a manual ⌘⇧L is
+        // never fought by an unrelated tab open/close (`applyAutoHide` gates on the regime edge + a manual-
+        // override bit). `.default`/`.always` leave it alone. `initial: true` runs the policy ONCE on first
+        // render too — SwiftUI `.onChange` does not fire on first appearance, so without it a launch with a
+        // persisted `.auto` mode + a single-tab session opened with the sidebar REVEALED (the exact case `.auto`
+        // handles) until the user added/removed a tab. `sidebarCollapsed` is not persisted, so applying at launch
+        // is safe (the first application reads as a regime edge and actuates).
         .onChange(of: activeTabCount, initial: true) { applyAutoHidePolicy() }
         .onChange(of: autoHideTabsPanel) { applyAutoHidePolicy() }
         #else
@@ -240,9 +241,10 @@ public struct WorkspaceRootView: View {
         // E19/A18 (WI-7): drive the TABS panel auto-hide on iPad too — the SAME shared policy macOS runs. On a
         // tab-count TRANSITION or a Settings mode flip, apply `SidebarAutoHidePolicy` to `chrome.sidebarCollapsed`
         // (here mapped to the split's `columnVisibility` via `sidebarColumnVisibility`), only when the policy has
-        // an opinion (`.auto`) and it DIFFERS — so a manual reveal/hide is never fought. `initial: true` applies
-        // the policy ONCE at launch too (SwiftUI `.onChange` skips first appearance), so a single-tab `.auto`
-        // session opens with the TABS panel already hidden instead of waiting for a tab add/remove.
+        // an opinion (`.auto`) and the 1↔>1 regime crossed — so a manual reveal/hide is never fought by an
+        // unrelated tab open/close (`applyAutoHide` gates on the regime edge + a manual-override bit).
+        // `initial: true` applies the policy ONCE at launch too (SwiftUI `.onChange` skips first appearance), so a
+        // single-tab `.auto` session opens with the TABS panel already hidden instead of waiting for a tab add/remove.
         .onChange(of: activeTabCount, initial: true) { applyAutoHidePolicy() }
         .onChange(of: autoHideTabsPanel) { applyAutoHidePolicy() }
         // WI-5: the toolbar gear presents the in-app settings sheet (iOS has no `Settings` scene). The sheet
@@ -384,15 +386,48 @@ public struct WorkspaceRootView: View {
         sidebarCollapsed ? .doubleColumn : .all
     }
 
+    /// The iOS ``sidebarColumnVisibility`` SETTER side: a user-driven swipe of the leading TABS column — the
+    /// SECOND manual entry point besides ``WorkspaceChromeState/toggleSidebar`` — writes the shared
+    /// `chrome.sidebarCollapsed` flag AND, when it GENUINELY flips that flag (a real collapse/reveal, not a
+    /// SwiftUI echo of the value the auto-hide policy just set), records `manualSidebarOverride` so
+    /// ``applyAutoHide(mode:tabCount:chrome:)`` honors the iPad swipe the SAME way it honors ⌘⇧L (WI-7: "do NOT
+    /// fight a manual ⌘⇧L"). Without this an iPad user who swipes the panel away at >1 tabs would have it
+    /// forcibly REVEALED on the next within-regime tab open/close (the policy sees no override → re-asserts
+    /// `desired=false`). The `!= chrome.sidebarCollapsed` guard distinguishes a genuine user swipe from the
+    /// binding echo SwiftUI fires when the getter-derived value is written back unchanged, so a policy-driven
+    /// change is never mis-recorded as manual. Static + cross-platform so the contract is unit-tested without a
+    /// live split / NSWindow (see `SidebarAutoHideWiringTests`).
+    static func applySidebarVisibility(_ visibility: NavigationSplitViewVisibility, chrome: WorkspaceChromeState) {
+        let collapsed = (visibility == .doubleColumn || visibility == .detailOnly)
+        guard collapsed != chrome.sidebarCollapsed else { return }
+        chrome.manualSidebarOverride = true
+        chrome.sidebarCollapsed = collapsed
+    }
+
     /// E19/A18 (WI-7): the single place the `auto-hide-tabs-panel` policy ACTUATES. Apply the pure
     /// ``SidebarAutoHidePolicy/desiredCollapsed(mode:tabCount:)`` decision to the live `chrome.sidebarCollapsed`,
-    /// but ONLY when the policy has an opinion (mode `.auto`) AND that opinion DIFFERS from the current state. A
-    /// `nil` opinion (mode `.default`/`.always`) or an already-satisfied value is left untouched, so the wiring
-    /// never fights a manual ⌘⇧L collapse — it reacts to the tab-count / mode TRANSITION the caller's
-    /// `.onChange` fires on, not to the manual toggle, and never re-applies a value that is already in place.
-    /// Static + cross-platform so the contract is unit-tested without a live view (see `SidebarAutoHideWiringTests`).
+    /// but ONLY when the policy has an opinion (mode `.auto`); a `nil` opinion (mode `.default`/`.always`) is left
+    /// untouched.
+    ///
+    /// The decision the `.auto` opinion encodes flips ONLY across the 1↔>1 tab-count regime (`desired == tabCount
+    /// <= 1`), so the actuation is gated on a regime EDGE — the first application (`lastAutoHideCollapsed == nil`)
+    /// or a `desired` that differs from the last value the policy itself drove. ON that edge the otty default-state
+    /// opinion ("hidden when only one tab") legitimately re-asserts: clear any manual override and actuate. WITHIN
+    /// a regime (an UNRELATED tab open/close — e.g. 2→3 tabs — that does not flip `desired`) a manual ⌘⇧L is
+    /// honored and NEVER fought (E19-carryovers WI-7: "do NOT fight a manual ⌘⇧L"). The `!= desired` write guard
+    /// still avoids a redundant `@Observable` invalidation. Static + cross-platform so the contract is unit-tested
+    /// without a live view (see `SidebarAutoHideWiringTests`).
     static func applyAutoHide(mode: AutoHideTabsPanelMode, tabCount: Int, chrome: WorkspaceChromeState) {
         guard let desired = SidebarAutoHidePolicy.desiredCollapsed(mode: mode, tabCount: tabCount) else { return }
+        let isRegimeEdge = chrome.lastAutoHideCollapsed != desired
+        chrome.lastAutoHideCollapsed = desired
+        if isRegimeEdge {
+            // 1↔>1 transition (or first apply): the auto default-state opinion wins, manual override cleared.
+            chrome.manualSidebarOverride = false
+        } else if chrome.manualSidebarOverride {
+            // Same regime + a live manual override: leave the user's ⌘⇧L choice in place.
+            return
+        }
         if chrome.sidebarCollapsed != desired {
             chrome.sidebarCollapsed = desired
         }

@@ -23,6 +23,7 @@
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
 import Foundation
+import SFSafeSymbols
 import SwiftUI
 
 /// Per-pane chrome holder driving the Command Navigator's visibility — a reference type so the pane model's
@@ -121,7 +122,7 @@ struct CommandNavigatorView: View {
 
     private var searchBar: some View {
         HStack(spacing: Otty.Metric.space2) {
-            Image(systemName: "magnifyingglass")
+            Image(systemSymbol: .magnifyingglass)
                 .font(.system(size: Otty.Typeface.body))
                 .foregroundStyle(Otty.Text.secondary)
             TextField("Search commands…", text: $query)
@@ -266,11 +267,11 @@ struct CommandNavigatorView: View {
     private func gutter(for block: CommandBlock) -> some View {
         switch OutlinePresentation.gutter(for: block) {
         case .succeeded:
-            Image(systemName: "checkmark")
+            Image(systemSymbol: .checkmark)
                 .font(.system(size: Otty.Typeface.small, weight: .bold))
                 .foregroundStyle(Otty.Status.ok)
         case .failed:
-            Image(systemName: "xmark")
+            Image(systemSymbol: .xmark)
                 .font(.system(size: Otty.Typeface.small, weight: .bold))
                 .foregroundStyle(Otty.Status.err)
         case .running:
@@ -288,7 +289,7 @@ struct CommandNavigatorView: View {
         return Button {
             model.blocks.toggleBookmark(index: block.index)
         } label: {
-            Image(systemName: starred ? "star.fill" : "star")
+            Image(systemSymbol: starred ? .starFill : .star)
                 .font(.system(size: Otty.Typeface.footnote))
                 .foregroundStyle(starred ? Otty.Status.warn : Otty.Text.tertiary)
         }

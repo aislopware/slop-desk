@@ -231,4 +231,50 @@ final class GlobalSearchControllerTests: XCTestCase {
         XCTAssertEqual(GlobalSearchController.navigationActions(for: hit, query: "", caseSensitive: true), [])
         XCTAssertEqual(GlobalSearchController.navigationActions(for: hit, query: "", isRegex: true), [])
     }
+
+    // MARK: Per-group collapse state (the disclosure-control reducer the ⇧⌘F surface owns)
+
+    /// A fresh result set is fully EXPANDED — every group shows its hit rows by default (otty parity: a group
+    /// is collapsed only on an explicit disclosure tap). Reverting the fix (the view unconditionally renders
+    /// every group's hits) regresses to "never collapsible"; this pins that the default is expanded AND that a
+    /// toggle actually hides the group, distinguishing the fixed behaviour from the dead pre-fix terminal glyph.
+    func testCollapseStateDefaultsExpandedAndTogglesPerGroup() {
+        let alpha = PaneID()
+        let beta = PaneID()
+        var state = GlobalSearchCollapseState()
+
+        // Default: nothing collapsed → both groups render their hits.
+        XCTAssertTrue(state.showsHits(alpha))
+        XCTAssertTrue(state.showsHits(beta))
+        XCTAssertFalse(state.isCollapsed(alpha))
+
+        // Collapsing alpha hides ONLY alpha's hit rows; beta stays expanded (per-group, not global).
+        state.toggle(alpha)
+        XCTAssertTrue(state.isCollapsed(alpha))
+        XCTAssertFalse(state.showsHits(alpha))
+        XCTAssertTrue(state.showsHits(beta), "collapsing one group must not collapse a sibling group")
+
+        // Toggling alpha again re-expands it; beta is still untouched.
+        state.toggle(alpha)
+        XCTAssertTrue(state.showsHits(alpha))
+        XCTAssertTrue(state.showsHits(beta))
+    }
+
+    /// Collapse intent is keyed by ``PaneID`` (group identity), so a collapsed group keeps its state across a
+    /// live re-run that re-orders the groups — and an UNRELATED pane id is never collapsed by it. A by-INDEX
+    /// implementation would collapse whatever group happened to land at the same row after the re-order.
+    func testCollapseStateKeyedByGroupIdentityNotIndex() {
+        let first = PaneID()
+        let second = PaneID()
+        let stranger = PaneID()
+        var state = GlobalSearchCollapseState()
+
+        state.toggle(second) // collapse the second group only
+        XCTAssertFalse(state.isCollapsed(first))
+        XCTAssertTrue(state.isCollapsed(second))
+        // A pane never seen by this state is expanded — a stale/foreign id never collapses the wrong group.
+        XCTAssertTrue(state.showsHits(stranger))
+        // Identity survives a value round-trip (the `@State` carries it across re-runs).
+        XCTAssertEqual(state, GlobalSearchCollapseState(collapsed: [second]))
+    }
 }

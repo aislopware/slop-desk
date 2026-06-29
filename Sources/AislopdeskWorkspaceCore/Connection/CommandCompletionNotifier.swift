@@ -240,7 +240,12 @@ public final class CommandCompletionNotifier {
     private func post(paneTitle: String, exitCode: Int32?, durationMS: UInt32, paneIDKey: String?) {
         guard granted == true else { return }
         let content = UNMutableNotificationContent()
-        content.title = paneTitle.isEmpty ? "Command finished" : paneTitle
+        // `paneTitle` is the live OSC 0/2 pane title — untrusted, remote/PTY-settable text (often the running
+        // command line, e.g. `mysql -pSECRET`). Mask any secret before it is archived in Notification Center
+        // (a banner outlives the command), mirroring `postExplicit`. Gated as an opt-out. The body below is a
+        // fixed exit-code + duration template (no untrusted text), so it carries no secret.
+        let redact = SettingsKey.redactSecretsEnabled
+        content.title = paneTitle.isEmpty ? "Command finished" : (redact ? SecretRedactor.redact(paneTitle) : paneTitle)
         let secs = Int((Double(durationMS) / 1000).rounded())
         content.body = "command finished (exit \(exitCode.map(String.init) ?? "?"), \(secs)s)"
         content.userInfo = LongCommandNotificationUserInfo.make(

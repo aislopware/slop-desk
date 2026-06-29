@@ -320,9 +320,11 @@ public struct AislopdeskClientApp: App {
             // title — route it to `.watchFinish` (gated by Notify on Watch Finish) with the marker STRIPPED;
             // every other explicit notification stays `.explicitOSC` (the master switch).
             let (event, displayTitle) = NotificationEvent.classifyExplicit(title: title, body: body)
-            overlay?.pushToast(Toast(
-                id: "pane.\(paneID.raw.uuidString)", flavor: .default, title: displayTitle, body: body,
-            ))
+            // SECURITY: the toast is in-app UI and — on iOS — the ONLY notification surface, so the secret
+            // redaction the macOS banner (`CommandCompletionNotifier`) and the pane title
+            // (`PanePresentation`) apply must ALSO run here, or an OSC 9/777 title/body carrying a token is
+            // shown verbatim. Done once at the construction site (`Toast.explicitOSC`) so both platforms benefit.
+            overlay?.pushToast(Toast.explicitOSC(paneIDRaw: paneID.raw, title: displayTitle, body: body))
             #if os(macOS)
             // E14/K9: the OS banner now goes through the pure NotificationPolicy (the per-event toggle resolved
             // above + the Notify-While-Foreground tri-state) — the store supplies appActive + whether the SOURCE
@@ -339,15 +341,12 @@ public struct AislopdeskClientApp: App {
         }
         store.onLongCommandNotify = { [weak overlay, weak store] paneIDKey, paneTitle, exitCode, durationMS in
             // The store fires this ONLY for an unfocused, genuinely-long command (its own gate), so a toast
-            // here is the background "your build finished" cue. A clean exit is `.success`; a non-zero exit is
-            // `.error` (a green checkmark on a failed build would mislead).
-            let secs = Int((Double(durationMS) / 1000).rounded())
-            let cleanExit = (exitCode ?? 0) == 0
-            overlay?.pushToast(Toast(
-                id: "pane.\(paneIDKey)",
-                flavor: cleanExit ? .success : .error,
-                title: paneTitle.isEmpty ? "Command finished" : paneTitle,
-                body: "command finished (exit \(exitCode.map(String.init) ?? "?"), \(secs)s)",
+            // here is the background "your build finished" cue. SECURITY: `paneTitle` is the live OSC 0/2 pane
+            // title — remote/PTY-settable text (often the running command line such as `mysql -pSECRET`), and
+            // the toast is the ONLY notification surface on iOS, so the title is masked at the single
+            // construction site (`Toast.longCommand`) for parity with the macOS banner + the OSC toast.
+            overlay?.pushToast(Toast.longCommand(
+                paneIDKey: paneIDKey, paneTitle: paneTitle, exitCode: exitCode, durationMS: durationMS,
             ))
             #if os(macOS)
             // E14/K9: route the OS banner through NotificationPolicy — Notify on Finish (clean exit, default
@@ -368,10 +367,12 @@ public struct AislopdeskClientApp: App {
                 return "\(headline) — \(detail)"
             }()
             // Agent-needs-input is the highest-signal background event → `.attention`; a finish is `.success`.
+            // The agent `detail` is host-provided (Claude label); mask any secret in it (and the name) for
+            // the same reason as the OSC toast above — the toast is the only iOS notification surface.
             overlay?.pushToast(Toast(
                 id: "pane.\(paneIDKey)",
                 flavor: needsInput ? .attention : .success,
-                title: name, body: body,
+                title: Toast.redactSecretsIfEnabled(name), body: Toast.redactSecretsIfEnabled(body),
             ))
             #if os(macOS)
             // E14/K9: agent edges (Claude-only, reusing AttentionSupervision) ride their OWN per-event

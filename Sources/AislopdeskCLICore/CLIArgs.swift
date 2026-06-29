@@ -46,10 +46,15 @@ public struct CLIInvocation: Sendable, Equatable {
     public var assumeYes: Bool
     /// `-h` / `--help`: show usage instead of dispatching.
     public var wantsHelp: Bool
-    /// True when this invocation should launch the client GUI: a bare invocation (no subcommand,
-    /// no `--help`). (An aislopdesk pane is a REMOTE PTY with no local shell to exec into, so otty's
-    /// `-e <cmd>` has no faithful mapping here — it is not a flag; passing `-e` is an unknown-flag error.)
+    /// True when this invocation should launch the client GUI: a bare invocation (no subcommand, no
+    /// `--help`) OR an `-e <cmd>` invocation (see ``execCommand``). xterm/alacritty/ghostty all launch the
+    /// GUI for both, so aislopdesk matches.
     public var launchGUI: Bool
+    /// The command captured after `-e <cmd> [args…]` (xterm-compatible terminal-emulator flag), or `nil`.
+    /// `-e` does NOT local-exec — an aislopdesk pane is a remote PTY — so the command is forwarded to the
+    /// first (focused) pane of the freshly-launched GUI. Per xterm semantics `-e` is terminal: every token
+    /// after it (even leading-dash ones) is part of the command, captured verbatim.
+    public var execCommand: [String]?
 
     public init(
         subcommand: String = "",
@@ -62,6 +67,7 @@ public struct CLIInvocation: Sendable, Equatable {
         assumeYes: Bool = false,
         wantsHelp: Bool = false,
         launchGUI: Bool = false,
+        execCommand: [String]? = nil,
     ) {
         self.subcommand = subcommand
         self.rest = rest
@@ -73,6 +79,7 @@ public struct CLIInvocation: Sendable, Equatable {
         self.assumeYes = assumeYes
         self.wantsHelp = wantsHelp
         self.launchGUI = launchGUI
+        self.execCommand = execCommand
     }
 }
 
@@ -99,8 +106,11 @@ public enum CLIArgs {
     /// - The first non-flag token is the subcommand; subsequent non-flag tokens go to `rest`.
     /// - Recognised global flags are consumed wherever they appear (before OR after the subcommand).
     /// - An UNRECOGNISED flag BEFORE the subcommand is an error; AFTER the subcommand it is a
-    ///   subcommand-specific flag and passes through to `rest`. (There is no `-e`: a pane is a remote
-    ///   PTY, so `-e <cmd>` has no faithful local-exec mapping — it falls through as an unknown flag.)
+    ///   subcommand-specific flag and passes through to `rest`.
+    /// - `-e <cmd> [args…]` (only before a subcommand) is the xterm/ghostty terminal-emulator flag: it
+    ///   launches the GUI (`launchGUI`) and captures the remainder verbatim into ``CLIInvocation/execCommand``
+    ///   (the command is forwarded to the first pane, NOT local-exec'd — a pane is a remote PTY). Per xterm
+    ///   semantics `-e` is terminal, so option parsing stops after it.
     /// - A bare `--` (only valid after a subcommand) ends option parsing: it and everything after it
     ///   pass through to `rest` verbatim (POSIX end-of-options; protects literal `send-keys` text).
     public static func parse(_ args: [String]) -> Result<CLIInvocation, CLIParseError> {
@@ -149,6 +159,18 @@ public enum CLIArgs {
             case "-y",
                  "--yes":
                 inv.assumeYes = true
+            case "-e":
+                // xterm/ghostty `-e <cmd> [args…]`: launch the GUI + forward <cmd> to the first pane. Only a
+                // launch flag at top level; after a subcommand it is a subcommand-specific token (pass-through).
+                guard inv.subcommand.isEmpty else {
+                    inv.rest.append(arg)
+                    break
+                }
+                guard idx + 1 < args.count else { return .failure(.missingValue("-e")) }
+                // `-e` is terminal: capture every remaining token verbatim (even leading-dash ones) and stop.
+                inv.execCommand = Array(args[(idx + 1)...])
+                idx = args.count
+                continue
             case "-h",
                  "--help":
                 inv.wantsHelp = true

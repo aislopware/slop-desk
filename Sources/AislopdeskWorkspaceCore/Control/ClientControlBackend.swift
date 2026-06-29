@@ -213,12 +213,13 @@ public protocol ClientControlBackend: AnyObject {
     /// Read one config key; `nil` when the key is unset.
     func configGet(key: String) -> String?
 
-    /// Write one config key. `transient` writes the running app only (no persist). Returns `false`
-    /// when the key/value is rejected.
+    /// Write one config key. Returns `false` when the key/value is rejected — INCLUDING any `transient`
+    /// request (the dispatcher short-circuits `--transient` with an honest reason; aislopdesk has no
+    /// apply-without-persist render layer — see ``configSet`` on the concrete backend).
     func configSet(key: String, value: String, transient: Bool) -> Bool
 
-    /// Remove one config key. `transient` removes from the running app only (no persist). Returns
-    /// `false` when the removal is rejected.
+    /// Remove one config key. Returns `false` when the removal is rejected, including any `transient`
+    /// request (same no-ephemeral-layer reason as ``configSet(key:value:transient:)``).
     func configUnset(key: String, transient: Bool) -> Bool
 
     /// Broadcast the config-change notification. Returns `false` on failure.

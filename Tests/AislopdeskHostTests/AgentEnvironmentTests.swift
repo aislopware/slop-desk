@@ -96,4 +96,28 @@ final class AgentEnvironmentTests: XCTestCase {
         let id = HostServer.paneID(connectionID: conn, channelID: 4)
         XCTAssertEqual(id, "\(conn.uuidString):4", "the pane id is the (connectionID, channelID) composite")
     }
+
+    // MARK: terminal-program identity (TERM_PROGRAM / TERM_PROGRAM_VERSION / CW_TERM)
+
+    /// The curated env must advertise OUR identity unconditionally — `TERM_PROGRAM=aislopdesk`,
+    /// `CW_TERM=aislopdesk` (so Amazon-Q/Fig do NOT `cwterm`-exec mid-`.zshrc`), and a non-empty
+    /// `TERM_PROGRAM_VERSION` — regardless of what the parent advertises.
+    func testCuratedSetsTerminalProgramIdentity() {
+        let env = HostEnvironment.curated(parent: [:])
+        XCTAssertEqual(env["TERM_PROGRAM"], "aislopdesk")
+        XCTAssertEqual(env["CW_TERM"], "aislopdesk")
+        XCTAssertEqual(env["TERM_PROGRAM_VERSION"], HostEnvironment.buildVersion)
+        XCTAssertFalse(env["TERM_PROGRAM_VERSION"]?.isEmpty ?? true, "version must be present + non-empty")
+    }
+
+    /// A launcher's `TERM_PROGRAM` (e.g. `Apple_Terminal` / `ghostty`) must NOT leak through to the
+    /// child — the child reports `aislopdesk`, not the launcher's identity.
+    func testCuratedDoesNotMirrorParentTerminalProgram() {
+        let env = HostEnvironment.curated(
+            parent: ["TERM_PROGRAM": "Apple_Terminal", "TERM_PROGRAM_VERSION": "455", "CW_TERM": "kitty"],
+        )
+        XCTAssertEqual(env["TERM_PROGRAM"], "aislopdesk", "the launcher's TERM_PROGRAM must not leak through")
+        XCTAssertEqual(env["TERM_PROGRAM_VERSION"], HostEnvironment.buildVersion)
+        XCTAssertEqual(env["CW_TERM"], "aislopdesk")
+    }
 }

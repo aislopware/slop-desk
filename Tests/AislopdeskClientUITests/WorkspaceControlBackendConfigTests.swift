@@ -128,4 +128,52 @@ final class WorkspaceControlBackendConfigTests: XCTestCase {
         XCTAssertEqual(shown.first { $0.key == "theme" }?.value, "dark", "config show reflects the live theme")
         XCTAssertEqual(shown.first { $0.key == "font-size" }?.value, "15", "config show reflects the live size")
     }
+
+    // MARK: - --transient is honestly rejected (never silently persists)
+
+    /// The pre-fix backend IGNORED `transient` and wrote the typed model identically to a persisted set,
+    /// returning `true` while the dispatcher echoed `transient:true` — a lie (the "try it without saving"
+    /// value was permanently changed). aislopdesk has no apply-without-persist render layer (the model the
+    /// renderer reads IS the one that persists), so a transient set is now an honest reject (`false`) AND
+    /// must NOT mutate the live value. Revert-to-confirm-fail: on the pre-fix backend the first assertion
+    /// returns `true` and the second observes a mutated `fontSize`.
+    func testConfigSetTransientIsRejectedAndDoesNotApply() {
+        let h = makeHarness(#function)
+        let before = h.preferences.terminal.fontSize
+        XCTAssertFalse(
+            h.backend.configSet(key: "font-size", value: "22", transient: true),
+            "--transient is honestly rejected, not silently persisted",
+        )
+        XCTAssertEqual(
+            h.preferences.terminal.fontSize,
+            before,
+            "a rejected transient set must NOT mutate the live value",
+        )
+        // A transient theme set is likewise rejected and leaves the theme put.
+        let theme = ThemeStore.shared.active.id
+        XCTAssertFalse(h.backend.configSet(key: "theme", value: "paper", transient: true))
+        XCTAssertEqual(ThemeStore.shared.active.id, theme)
+    }
+
+    func testConfigUnsetTransientIsRejected() {
+        let h = makeHarness(#function)
+        XCTAssertTrue(h.backend.configSet(key: "font-size", value: "18", transient: false))
+        XCTAssertFalse(h.backend.configUnset(key: "font-size", transient: true), "--transient unset is rejected")
+        XCTAssertEqual(h.preferences.terminal.fontSize, 18, "a rejected transient unset leaves the value put")
+    }
+
+    // MARK: - `font apply "<name>"` routes through the config-set font-family path
+
+    /// `aislopdesk font apply "<name>"` is documented to write the font family. The CLI routes it through the
+    /// SAME running-app config path as `config set font-family` (no separate font-apply backend method), so
+    /// this pins that the route mutates the live terminal font family + round-trips via `config get`.
+    func testFontApplyRoutesToFontFamilyConfig() {
+        let h = makeHarness(#function)
+        XCTAssertTrue(
+            h.backend.configSet(key: "font-family", value: "Menlo", transient: false),
+            "font apply routes to the config-set font-family path",
+        )
+        XCTAssertEqual(h.preferences.terminal.fontFamily, "Menlo", "the live terminal font family is set")
+        XCTAssertEqual(h.backend.configGet(key: "font-family"), "Menlo", "config get reflects the applied font")
+    }
 }

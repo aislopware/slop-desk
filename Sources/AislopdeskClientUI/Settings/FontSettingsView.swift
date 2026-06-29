@@ -36,6 +36,7 @@
 import AislopdeskVideoProtocol
 import AislopdeskWorkspaceCore
 import CoreText
+import SFSafeSymbols
 import SwiftUI
 
 // MARK: - FontSettingsView
@@ -101,15 +102,18 @@ struct FontSettingsView: View {
         .buttonStyle(.plain)
     }
 
-    /// The contextual note under the tab row — the muted "saved into …" line, or (Global) otty's red-tinted
-    /// "Overrides theme; takes priority everywhere" banner (`font-setting-bold.png`).
+    /// The contextual note under the tab row — the muted "saved into …" line, or (Global) the precedence
+    /// banner. NOTE: aislopdesk resolves a per-theme font OVER Global (scope-over-Global, see
+    /// ``FontScopeResolver``), so the banner states the real precedence — Global applies only where a theme
+    /// sets no font of its own — rather than otty's "takes priority everywhere".
     @ViewBuilder private var scopeNote: some View {
         switch scope {
         case .computed:
             note("Read-only — the effective font for the active theme. Edit Global, Light Theme, or Dark "
                 + "Theme to change it.")
         case .global:
-            warnNote("Overrides theme; takes priority everywhere.")
+            warnNote("Applies everywhere a theme sets no font of its own; a Light or Dark theme font "
+                + "overrides this.")
         case .light:
             note("Saved into the light theme — travels with that theme.")
         case .dark:
@@ -133,10 +137,8 @@ struct FontSettingsView: View {
             globalFamilyEditors
         case .light:
             primaryFamilyRow(themeFontBinding(slug: lightSlug), placeholder: "Default (Global)")
-            perThemeDeferralNote
         case .dark:
             primaryFamilyRow(themeFontBinding(slug: darkSlug), placeholder: "Default (Global)")
-            perThemeDeferralNote
         case .fallback:
             FallbackListEditor(raw: $store.terminal.fontFamilyFallback)
         }
@@ -172,13 +174,6 @@ struct FontSettingsView: View {
     private var hostFontNote: some View {
         note("Fonts are installed and rendered on the host. Type any family the host has; the picker lists "
             + "this device's monospaced faces for convenience.")
-    }
-
-    /// The honest deferral for the per-theme scope tabs: the font is saved with the theme, but the Global
-    /// family currently drives the live terminal (the per-theme resolve is a follow-up in the apply path).
-    private var perThemeDeferralNote: some View {
-        note("Per-theme fonts are saved with the theme. The Global family currently drives the live terminal; "
-            + "the Computed tab shows the resolved family.")
     }
 
     // MARK: - Text section (size + line height)
@@ -367,10 +362,11 @@ struct FontSettingsView: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    /// otty's red/amber-tinted override banner (the Global "takes priority everywhere" call-out).
+    /// The red/amber-tinted banner styling (otty's `font-setting-bold.png`), reused for the Global-scope
+    /// precedence call-out (a per-theme font can override Global).
     private func warnNote(_ text: String) -> some View {
         HStack(spacing: Otty.Metric.space1) {
-            Image(systemName: "exclamationmark.triangle")
+            Image(systemSymbol: .exclamationmarkTriangle)
             Text(text)
         }
         .font(.system(size: Otty.Typeface.footnote))
@@ -447,7 +443,7 @@ private struct FontFamilyComboBox: View {
             Button {
                 showingList.toggle()
             } label: {
-                Image(systemName: "chevron.up.chevron.down")
+                Image(systemSymbol: .chevronUpChevronDown)
                     .font(.system(size: Otty.Typeface.small))
                     .foregroundStyle(Otty.Text.tertiary)
             }
@@ -471,7 +467,7 @@ private struct FontFamilyComboBox: View {
     private var specimenList: some View {
         VStack(spacing: 0) {
             HStack(spacing: Otty.Metric.space2) {
-                Image(systemName: "magnifyingglass")
+                Image(systemSymbol: .magnifyingglass)
                     .font(.system(size: Otty.Typeface.footnote))
                     .foregroundStyle(Otty.Text.tertiary)
                 TextField("Search fonts", text: $query)
@@ -512,7 +508,7 @@ private struct FontFamilyComboBox: View {
                     .foregroundStyle(Otty.Text.primary)
                 Spacer(minLength: 0)
                 if family == selection {
-                    Image(systemName: "checkmark")
+                    Image(systemSymbol: .checkmark)
                         .font(.system(size: Otty.Typeface.footnote))
                         .foregroundStyle(Otty.State.accent)
                 }
@@ -563,7 +559,7 @@ private struct FallbackListEditor: View {
                             .font(.system(size: Otty.Typeface.body))
                         Spacer(minLength: 0)
                         Button { remove(at: index) } label: {
-                            Image(systemName: "minus.circle")
+                            Image(systemSymbol: .minusCircle)
                                 .foregroundStyle(Otty.Text.tertiary)
                         }
                         .buttonStyle(.plain)

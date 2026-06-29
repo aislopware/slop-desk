@@ -16,6 +16,7 @@
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
+import SFSafeSymbols
 import SwiftUI
 
 struct RemoteWindowPickerModal: View {
@@ -68,7 +69,7 @@ struct RemoteWindowPickerModal: View {
 
     private var header: some View {
         HStack(spacing: Otty.Metric.space2) {
-            Image(systemName: "display")
+            Image(systemSymbol: .display)
                 .font(.system(size: Otty.Typeface.body))
                 .foregroundStyle(Otty.Text.secondary)
             Text("New Remote Window")
@@ -79,7 +80,7 @@ struct RemoteWindowPickerModal: View {
                 Button {
                     Task { await model.refresh() }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
+                    Image(systemSymbol: .arrowClockwise)
                         .font(.system(size: Otty.Typeface.footnote))
                 }
                 .buttonStyle(.plain)
@@ -160,7 +161,7 @@ struct RemoteWindowPickerModal: View {
             coordinator.openRemoteWindow(window)
         } label: {
             HStack(spacing: Otty.Metric.space2) {
-                Image(systemName: "macwindow")
+                Image(systemSymbol: .macwindow)
                     .font(.system(size: Otty.Typeface.footnote))
                     .foregroundStyle(Otty.Text.secondary)
                 Text(window.displayLabel)
@@ -187,7 +188,7 @@ struct RemoteWindowPickerModal: View {
                 showManualEntry = true
             } label: {
                 HStack(spacing: Otty.Metric.space1) {
-                    Image(systemName: "keyboard")
+                    Image(systemSymbol: .keyboard)
                         .font(.system(size: Otty.Typeface.small))
                     Text("Enter window ID manually")
                         .font(.system(size: Otty.Typeface.footnote))

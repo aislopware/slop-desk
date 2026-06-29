@@ -23,6 +23,7 @@
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
+import SFSafeSymbols
 import SwiftUI
 
 struct OverlayHostView: View {
@@ -266,7 +267,7 @@ struct CloseConfirmationPanel: View {
         OverlayPanel(width: 380) {
             VStack(alignment: .leading, spacing: Otty.Metric.space3) {
                 HStack(spacing: Otty.Metric.space2) {
-                    Image(systemName: "exclamationmark.triangle")
+                    Image(systemSymbol: .exclamationmarkTriangle)
                         .font(.system(size: Otty.Typeface.body))
                         .foregroundStyle(Otty.Status.warn)
                     Text(title)

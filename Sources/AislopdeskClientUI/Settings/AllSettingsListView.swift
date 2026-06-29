@@ -16,6 +16,7 @@
 import AislopdeskVideoProtocol
 import AislopdeskWorkspaceCore
 import Defaults
+import SFSafeSymbols
 import SwiftUI
 
 /// The Advanced → All Settings panel. Returns a `Group` of `Section`s so it composes into the host
@@ -198,7 +199,7 @@ struct AllSettingsListView: View {
             HStack(spacing: Otty.Metric.space1) {
                 Text(dedicatedValue(for: entry))
                     .foregroundStyle(Otty.Text.secondary)
-                Image(systemName: "pencil")
+                Image(systemSymbol: .pencil)
                     .foregroundStyle(Otty.Text.icon)
             }
             .font(.system(size: Otty.Typeface.footnote))

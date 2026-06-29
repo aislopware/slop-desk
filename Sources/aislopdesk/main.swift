@@ -2,12 +2,16 @@ import AislopdeskCLICore
 import AislopdeskCtlCore
 import AislopdeskVideoProtocol
 import AislopdeskWorkspaceCore
+#if os(macOS)
+import CoreText
+#endif
 import Darwin
 import Foundation
 
 // aislopdesk — the user-facing CLI (otty-clone E20). One binary, a superset of `aislopdesk-ctl`:
 //
 //   aislopdesk                     launch the client GUI (like bare xterm/alacritty/ghostty)
+//   aislopdesk -e <cmd> [args...]  launch the GUI + run <cmd> in the first pane (xterm `-e`)
 //   aislopdesk version             print version + build hash + protocol summary  (local, no socket)
 //   aislopdesk completions <shell> print a shell completion script                 (local, no socket)
 //   aislopdesk -h | --help         usage
@@ -40,6 +44,7 @@ func printUsage() {
     stdout("""
     usage: \(programName) [global flags] <subcommand> [args...]
            \(programName)                 launch the client GUI
+           \(programName) -e <cmd> [args...]   launch the GUI and run <cmd> in the first pane (xterm-style)
 
     Local subcommands (no running app required):
       version                 Print version, build hash, and a protocol/feature summary.
@@ -56,10 +61,12 @@ func printUsage() {
       pane capture [--pane <id>] [--lines N]   Capture the last N lines of a pane.
       pane send-keys [--pane <id>] -- "text" key:Enter   Send literal text + named keys.
       config get <key>                     Read a config key (running app).
-      config set <key> <value> [--transient]   Write a config key.
-      config unset <key> [--transient]     Remove a config key.
+      config set <key> <value> [--reload]  Write a config key (live + persisted).
+      config unset <key>                   Remove a config key (-y to confirm).
       config show | config reload          Dump / broadcast-reload the running config.
       font list [--monospace] [--family <s>] [--system|--user]   List fonts.
+      font apply "<name>"                  Set the terminal font family (running app).
+      font import <path> [--apply]         Install a font into ~/Library/Fonts (optionally apply).
       theme list [--color <dark|light|all>]    List themes.
       theme import <path> [--activate] [--overwrite]   Import a theme file.
       keybind list [--action <s>]          List keybindings.
@@ -110,20 +117,85 @@ let clientBundleIdentifier = "com.aislopdesk.client.macos"
 #if os(macOS)
 /// Launches the client GUI via LaunchServices (`open -b <bundle-id>`). Compiled-only — never exercised
 /// by a unit test (it spawns a process).
-func launchClientGUI() -> Never {
+///
+/// `forward` is the xterm/ghostty `-e <cmd>` command: after the window is up, it is sent to the first
+/// (focused) pane over the control socket (VERBATIM UTF-8 + a keycode Enter). Best-effort — the GUI has
+/// already launched (the xterm-compat guarantee); a forward that times out just leaves the command untyped.
+func launchClientGUI(forward: [String]? = nil) -> Never {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
     task.arguments = ["-b", clientBundleIdentifier]
     do {
         try task.run()
         task.waitUntilExit()
-        exit(task.terminationStatus == 0 ? 0 : 1)
+        guard task.terminationStatus == 0 else { exit(1) }
     } catch {
         die("failed to launch the Aislopdesk app: \(error.localizedDescription)")
     }
+    if let forward, !forward.isEmpty { forwardExecCommand(forward) }
+    exit(0)
+}
+
+/// Best-effort `-e <cmd>` forward: poll the client control socket until the freshly-launched app publishes
+/// it (bounded ~5s), then deliver the joined command to the focused (first) pane as VERBATIM text + a
+/// keycode Enter (``ClientControlProtocol/Method/paneSendKeys``). Fire-and-forget + NEVER fatal — the GUI is
+/// already visible (the xterm-compat guarantee); a connect that never succeeds just leaves the command
+/// untyped (every `die()` path is replaced by a silent return here).
+func forwardExecCommand(_ command: [String]) {
+    let socketPath = resolveClientSocketPath()
+    let text = command.joined(separator: " ")
+    guard let line = encodeRequestLine(
+        id: "1",
+        method: ClientControlProtocol.Method.paneSendKeys,
+        params: ClientControlProtocol.paneSendKeysParams(paneId: nil, text: text, keys: ["Enter"]),
+    ) else { return }
+    let deadline = Date().addingTimeInterval(5)
+    while Date() < deadline {
+        if forwardSend(socketPath: socketPath, requestLine: line) { return }
+        usleep(150_000) // 150ms between attempts while the workspace initialises
+    }
+}
+
+/// One non-fatal connect+write of `requestLine` to the AF_UNIX control socket; returns `true` once the bytes
+/// are delivered (response ignored — a forward is fire-and-forget). Every failure returns `false` instead of
+/// `die()`ing, so the `-e` launch path can retry the launch race and never abort with a transport error.
+func forwardSend(socketPath: String, requestLine: String) -> Bool {
+    let maxPath = MemoryLayout.size(ofValue: sockaddr_un().sun_path) - 1
+    guard socketPath.utf8.count <= maxPath else { return false }
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { return false }
+    defer { close(fd) }
+    var addr = sockaddr_un()
+    addr.sun_family = sa_family_t(AF_UNIX)
+    _ = withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
+        socketPath.withCString { cstr in
+            strncpy(UnsafeMutableRawPointer(ptr).assumingMemoryBound(to: CChar.self), cstr, maxPath)
+        }
+    }
+    let connected = withUnsafePointer(to: &addr) { ptr in
+        ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+    guard connected == 0 else { return false }
+    var line = requestLine
+    if !line.hasSuffix("\n") { line += "\n" }
+    let sendData = Data(line.utf8)
+    return sendData.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Bool in
+        guard let base = raw.baseAddress else { return false }
+        var offset = 0
+        let total = raw.count
+        while offset < total {
+            let n = write(fd, base + offset, total - offset)
+            if n > 0 { offset += n }
+            else if n < 0, errno == EINTR { continue }
+            else { return false }
+        }
+        return true
+    }
 }
 #else
-func launchClientGUI() -> Never {
+func launchClientGUI(forward _: [String]? = nil) -> Never {
     die("launching the GUI is only supported on macOS")
 }
 #endif
@@ -660,10 +732,110 @@ func cmdFontList(_ rest: [String]) -> Never {
     )
 }
 
+/// `font apply "<name>"` — set the live terminal font family. Routes through the SAME running-app config path
+/// as `config set font-family <name>` (the otty-documented mapping), so an unknown/empty name is an honest
+/// `config set rejected` rather than a silent no-op.
+func cmdFontApply(_ rest: [String]) -> Never {
+    var name: String?
+    for arg in rest {
+        if arg.hasPrefix("-") { die("font apply: unknown flag '\(arg)'", code: 2) }
+        if name == nil { name = arg } else { die("font apply: unexpected argument '\(arg)'", code: 2) }
+    }
+    guard let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        die("font apply: requires a font family <name>", code: 2)
+    }
+    let result = requireResult(callClient(
+        method: ClientControlProtocol.Method.configSet,
+        params: ClientControlProtocol.configSetParams(key: "font-family", value: name, transient: false),
+    ))
+    if invocation.format == .json {
+        stdout(CLIFormatting.renderJSON(result) + "\n")
+    } else {
+        stdout("applied font: \(name)\n")
+    }
+    exit(0)
+}
+
+/// `font import <path> [--apply]` — install a `.ttf`/`.otf`/`.ttc`/`.dfont` into `~/Library/Fonts` (the
+/// user-domain font dir macOS auto-activates), then, with `--apply`, resolve the file's family name via Core
+/// Text and route it through the `config set font-family` path. Local filesystem op (like `config edit`):
+/// the copy needs no running app; only `--apply` opens the control socket. Compiled-only (spawns FS I/O).
+func cmdFontImport(_ rest: [String]) -> Never {
+    var path: String?
+    var apply = false
+    for arg in rest {
+        switch arg {
+        case "--apply": apply = true
+        default:
+            if arg.hasPrefix("-") { die("font import: unknown flag '\(arg)'", code: 2) }
+            if path == nil { path = arg } else { die("font import: unexpected argument '\(arg)'", code: 2) }
+        }
+    }
+    guard let path, !path.isEmpty else { die("font import: requires a <path>", code: 2) }
+    #if os(macOS)
+    // swiftlint:disable:next legacy_objc_type
+    let srcURL = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+    guard FileManager.default.fileExists(atPath: srcURL.path) else {
+        die("font import: no such file '\(srcURL.path)'", code: 2)
+    }
+    let validExts: Set = ["ttf", "otf", "ttc", "dfont"]
+    guard validExts.contains(srcURL.pathExtension.lowercased()) else {
+        die("font import: '\(srcURL.lastPathComponent)' is not a font file (expected .ttf/.otf/.ttc/.dfont)", code: 2)
+    }
+    let fontsDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Fonts", isDirectory: true)
+    try? FileManager.default.createDirectory(at: fontsDir, withIntermediateDirectories: true)
+    let destURL = fontsDir.appendingPathComponent(srcURL.lastPathComponent)
+    do {
+        if FileManager.default.fileExists(atPath: destURL.path) {
+            try FileManager.default.removeItem(at: destURL)
+        }
+        try FileManager.default.copyItem(at: srcURL, to: destURL)
+    } catch {
+        die("font import: failed to install into ~/Library/Fonts: \(error.localizedDescription)")
+    }
+    let family = fontFamilyName(ofFileAt: destURL)
+    if apply {
+        guard let family else {
+            die(
+                "font import: installed '\(destURL.lastPathComponent)' but could not read its family name to --apply",
+                code: 1,
+            )
+        }
+        requireResult(callClient(
+            method: ClientControlProtocol.Method.configSet,
+            params: ClientControlProtocol.configSetParams(key: "font-family", value: family, transient: false),
+        ))
+    }
+    if invocation.format == .json {
+        var payload: [String: Any] = ["installed": destURL.path, "applied": apply]
+        if let family { payload["family"] = family }
+        stdout(CLIFormatting.renderJSON(payload) + "\n")
+    } else {
+        let famNote = family.map { " (\($0))" } ?? ""
+        stdout("imported font: \(destURL.lastPathComponent)\(famNote)\(apply ? " — applied" : "")\n")
+    }
+    exit(0)
+    #else
+    die("font import is only supported on macOS")
+    #endif
+}
+
+#if os(macOS)
+/// The family name of the font file at `url` (the first descriptor's `kCTFontFamilyNameAttribute`), or `nil`
+/// when Core Text cannot read it — used to drive `--apply` from an installed file.
+func fontFamilyName(ofFileAt url: URL) -> String? {
+    guard let descriptors = CTFontManagerCreateFontDescriptorsFromURL(url as CFURL) as? [CTFontDescriptor],
+          let first = descriptors.first else { return nil }
+    return CTFontDescriptorCopyAttribute(first, kCTFontFamilyNameAttribute) as? String
+}
+#endif
+
 func cmdFont(_ rest: [String]) -> Never {
     switch rest.first {
     case "list": cmdFontList(Array(rest.dropFirst()))
-    default: die("font: only 'list' is available (apply/import land in later work items)", code: 2)
+    case "apply": cmdFontApply(Array(rest.dropFirst()))
+    case "import": cmdFontImport(Array(rest.dropFirst()))
+    default: die("font: expected 'list', 'apply', or 'import'", code: 2)
     }
 }
 
@@ -1083,9 +1255,9 @@ if invocation.wantsHelp || invocation.subcommand == "help" {
     exit(0)
 }
 
-// Bare invocation → launch the GUI.
+// Bare invocation (or `-e <cmd>`) → launch the GUI, forwarding any `-e` command to the first pane.
 if invocation.launchGUI {
-    launchClientGUI()
+    launchClientGUI(forward: invocation.execCommand)
 }
 
 switch invocation.subcommand {

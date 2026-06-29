@@ -47,6 +47,7 @@
 import AislopdeskVideoProtocol
 import AislopdeskWorkspaceCore
 import Defaults
+import SFSafeSymbols
 import SwiftUI
 import UserNotifications
 #if os(macOS)
@@ -291,7 +292,7 @@ private struct SettingsSidebarSearchField: View {
 
     var body: some View {
         HStack(spacing: Otty.Metric.space2) {
-            Image(systemName: "magnifyingglass")
+            Image(systemSymbol: .magnifyingglass)
                 .font(.system(size: Otty.Typeface.footnote))
                 .foregroundStyle(Otty.Text.tertiary)
             TextField("Search", text: $text)
@@ -1409,7 +1410,7 @@ private struct RecipesSettingsTab: View {
             }
             Spacer(minLength: 0)
             Button { editing = SnippetEditTarget(snippet) } label: {
-                Image(systemName: "pencil")
+                Image(systemSymbol: .pencil)
                     .font(.system(size: Otty.Metric.iconSize))
                     .foregroundStyle(Otty.Text.icon)
                     .contentShape(Rectangle())
@@ -1417,7 +1418,7 @@ private struct RecipesSettingsTab: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Edit snippet")
             Button { store.deleteSnippet(snippet.id) } label: {
-                Image(systemName: "trash")
+                Image(systemSymbol: .trash)
                     .font(.system(size: Otty.Metric.iconSize))
                     .foregroundStyle(Otty.Text.icon)
                     .contentShape(Rectangle())
@@ -2093,7 +2094,7 @@ private struct AdvancedSettingsTab: View {
                     .frame(minHeight: 120)
                     .onChange(of: text) { _, new in commit(new) }
                 HStack(spacing: Otty.Metric.space1) {
-                    Image(systemName: "info.circle")
+                    Image(systemSymbol: .infoCircle)
                     Text("A real environment variable set on the process still wins over any value here.")
                 }
                 .font(.system(size: Otty.Typeface.small))
@@ -2251,7 +2252,7 @@ private struct VideoHostSettingsView: View {
                 optionalIntStepper("Parity (m)", $store.video.fecM, range: 1...8, default: 1)
                 optionalIntStepper("Group size (k)", $store.video.fecK, range: 1...32, default: 8)
                 HStack(spacing: Otty.Metric.space1) {
-                    Image(systemName: "exclamationmark.triangle.fill")
+                    Image(systemSymbol: .exclamationmarkTriangleFill)
                     Text("FEC must be set IDENTICALLY on both ends or the host and client disagree.")
                 }
                 .font(.system(size: Otty.Typeface.small))

@@ -325,13 +325,18 @@ final class WorkspaceControlBackend: ClientControlBackend {
     /// binding — or a value that fails to parse — returns `false`, which the dispatcher turns into an
     /// honest `config set rejected` error (NEVER a silent success, the `setTabBadge` lesson).
     ///
-    /// `transient` is accepted for CLI parity but does not branch the render keys: aislopdesk's live render
-    /// settings ARE their own persistence (there is no separate ephemeral render layer the renderer reads,
-    /// unlike otty's config-file ⇄ running-app split), so a `--transient` set applies live exactly like a
-    /// persisted one. The old code routed BOTH through ``EnvConfig/overlay`` — a `nonisolated(unsafe)`
-    /// static the realtime pipeline reads AND that ``PreferencesStore`` wholesale-replaces on any video/
-    /// agent change, so the write both raced and was silently clobbered; it is gone.
-    func configSet(key: String, value: String, transient _: Bool) -> Bool {
+    /// `transient` (apply-to-running-app-without-persisting) is HONESTLY REJECTED (returns `false`): aislopdesk's
+    /// live render settings ARE their own persistence — the typed ``PreferencesStore`` model the renderer reads
+    /// is the SAME model whose `didSet` persists, with no separate ephemeral render layer to write (unlike otty's
+    /// config-file ⇄ running-app split). The pre-fix backend ignored the flag and persisted identically while the
+    /// dispatcher echoed `transient:true`, lying to the caller; rather than silently persist a "transient" write
+    /// we reject it (the dispatcher surfaces a clear reason). Recorded as a ceiling in `docs/DECISIONS.md`. A
+    /// genuine overlay would require splitting render-source-of-truth from persistence in the libghostty config
+    /// builder + typed model — out of scope for the CLI. (The old ``EnvConfig/overlay`` route is gone: a
+    /// `nonisolated(unsafe)` static the pipeline read AND that ``PreferencesStore`` wholesale-replaced on any
+    /// video/agent change, so the write both raced and was silently clobbered.)
+    func configSet(key: String, value: String, transient: Bool) -> Bool {
+        guard !transient else { return false }
         guard let preferences else { return false }
         if key == Self.themeConfigKey { return applyThemeByName(value, on: preferences) }
         return preferences.setRenderConfig(value, forKey: key)
@@ -339,8 +344,10 @@ final class WorkspaceControlBackend: ClientControlBackend {
 
     /// Remove one config key — reset it to its model default. `theme` clears the primary slot back to the
     /// compile-time default; the render keys reset via ``PreferencesStore/unsetRenderConfig(forKey:)``. A
-    /// key with no live binding → `false` (honest error).
-    func configUnset(key: String, transient _: Bool) -> Bool {
+    /// key with no live binding → `false` (honest error). `transient` is rejected for the same reason as
+    /// ``configSet(key:value:transient:)`` — there is no non-persisting render layer to unset.
+    func configUnset(key: String, transient: Bool) -> Bool {
+        guard !transient else { return false }
         guard let preferences else { return false }
         if key == Self.themeConfigKey {
             var appearance = preferences.appearance

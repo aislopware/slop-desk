@@ -16,6 +16,7 @@
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
+import SFSafeSymbols
 import SwiftUI
 
 struct KeyboardCheatSheetView: View {
@@ -85,7 +86,7 @@ struct KeyboardCheatSheetView: View {
 
     private var titleBar: some View {
         HStack(spacing: Otty.Metric.space2) {
-            Image(systemName: "keyboard")
+            Image(systemSymbol: .keyboard)
                 .font(.system(size: Otty.Typeface.body))
                 .foregroundStyle(Otty.Text.secondary)
             Text("Keyboard Shortcuts")

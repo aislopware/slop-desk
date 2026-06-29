@@ -16,6 +16,7 @@
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
+import SFSafeSymbols
 import SwiftUI
 
 struct PaletteView: View {
@@ -84,7 +85,7 @@ struct PaletteView: View {
 
     private var searchBar: some View {
         HStack(spacing: Otty.Metric.space2) {
-            Image(systemName: "magnifyingglass")
+            Image(systemSymbol: .magnifyingglass)
                 .font(.system(size: Otty.Typeface.body))
                 .foregroundStyle(Otty.Text.secondary)
             TextField("Search for commands…", text: $coordinator.paletteQuery)
@@ -160,7 +161,7 @@ struct PaletteView: View {
 
     private func cwdBadge(_ cwd: String) -> some View {
         HStack(spacing: Otty.Metric.space1) {
-            Image(systemName: "folder")
+            Image(systemSymbol: .folder)
                 .font(.system(size: Otty.Typeface.small))
             Text(cwd)
                 .font(.system(size: Otty.Typeface.small))
@@ -187,7 +188,7 @@ struct PaletteView: View {
             // Leading 24pt gutter: the ✓ toggled-state checkmark (Unicode check, dark accent), or empty.
             ZStack {
                 if toggledState(item) {
-                    Image(systemName: "checkmark")
+                    Image(systemSymbol: .checkmark)
                         .font(.system(size: Otty.Typeface.footnote, weight: .semibold))
                         .foregroundStyle(Otty.State.accent)
                 }
