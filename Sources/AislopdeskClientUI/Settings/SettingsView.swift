@@ -92,7 +92,9 @@ public struct AislopdeskSettingsScene: Scene {
             SettingsView(store: store)
                 .workspaceStore(workspaceStore)
                 .agentHooksController(agentHooks)
-                .tint(Slate.State.accent)
+                // Settings is native chrome → SYSTEM accent (not the theme accent) so its toggles / steppers /
+                // radio rows read as native System-Settings controls; appearance still tracks the theme below.
+                .tint(nil)
                 .preferredColorScheme(Slate.colorScheme)
         }
     }

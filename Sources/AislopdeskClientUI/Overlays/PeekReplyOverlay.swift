@@ -1,27 +1,24 @@
-// PeekReplyOverlay — the floating "Peek & Reply" card (P4 / E13 WI-8, ⌘⌥J), the VIEW over the existing
-// `PeekReply` domain. It targets the OLDEST pane needing attention (`WorkspaceStore.peekReplyTargetPane`),
-// shows that pane's cheap headless `PeekContent` (its title + the agent's blocking question + a few recent
-// command-block lines), and offers a reply field — so the user can ANSWER a blocked agent INLINE without a
-// full tab/context switch, even reaching a pane in a BACKGROUND tab.
+// PeekReplyOverlay — the "Peek & Reply" card (P4 / E13 WI-8, ⌘⌥J), NATIVE SwiftUI. Everything outside the
+// workspace + panes is native chrome, so this is a native `.sheet` body (native title / status / `Divider` /
+// `TextField` / prominent send button) — NOT the old bespoke `Slate.Surface.card` panel. It targets the
+// OLDEST pane needing attention (`WorkspaceStore.peekReplyTargetPane`), shows that pane's cheap headless
+// `PeekContent` (title + the agent's blocking question + a few recent command-block lines), and offers a
+// reply field — so the user can ANSWER a blocked agent INLINE without a full tab/context switch.
 //
 // **Observe + reply, NEVER an approval gate** (E13 binding directive 2): the agent is never paused pending an
-// aislopdesk confirmation; this card simply lets the human reach the agent WHEN THEY choose. On submit the
-// typed line is formatted by the pure `PeekReplyFormatter` (plain / `!`-shell / digit), which appends the
-// single trailing newline, and sent VERBATIM down the pane's PTY (`OverlayCoordinator.deliverPeekReply` →
-// `WorkspaceStore.sendPeekReply`) — NEVER through `SendKeysParser`. A bare 1–9 digit while the field is empty
-// is the quick-answer shortcut (pick option N of a numbered prompt) via `PeekReplyFormatter.quickAnswer`.
-// After each reply the card ADVANCES to the next pane needing attention (excluding the just-answered one) and
-// closes when none is left.
+// aislopdesk confirmation. On submit the typed line is formatted by the pure `PeekReplyFormatter` (plain /
+// `!`-shell / digit), which appends the single trailing newline, and sent VERBATIM down the pane's PTY
+// (`OverlayCoordinator.deliverPeekReply` → `WorkspaceStore.sendPeekReply`) — NEVER through `SendKeysParser`.
+// A bare 1–9 digit while the field is empty is the quick-answer shortcut (pick option N of a numbered prompt).
+// After each reply the card ADVANCES to the next pane needing attention (excluding the just-answered one).
 //
 // SEAM discipline: every stateful decision (target resolution, advance, close) lives on the
 // `OverlayCoordinator` (the single `@Observable` reducer, headlessly tested); this view is a thin renderer +
-// the field's local text. The scrim + centering + fade are added by `OverlayHostView`; PeekReplyOverlay IS
-// the panel. `Slate.*` tokens ONLY (raw font/colour/radius literals fail `scripts/check-ds-leaks.sh`).
+// the field's local text. Presented as a real sheet by ``OverlayHostView``.
 
 #if canImport(SwiftUI)
 import AislopdeskAgentDetect
 import AislopdeskWorkspaceCore
-import SFSafeSymbols
 import SwiftUI
 
 struct PeekReplyOverlay: View {
@@ -39,7 +36,6 @@ struct PeekReplyOverlay: View {
     /// Pre-focuses the reply field on appear so typing (and the empty-field digit shortcut) reaches it.
     @FocusState private var replyFocused: Bool
 
-    private let panelWidth: CGFloat = 460
     private let recentMaxHeight: CGFloat = 132
 
     var body: some View {
@@ -53,21 +49,8 @@ struct PeekReplyOverlay: View {
                 allCaughtUp
             }
         }
-        .frame(width: panelWidth)
-        .background(Slate.Surface.card)
-        .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusCard))
-        .overlay(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                .stroke(Slate.Line.card, lineWidth: Slate.Metric.hairline),
-        )
-        .shadow(color: Slate.State.shadow, radius: 30, x: 0, y: 12)
         #if os(macOS)
-            .onExitCommand { coordinator.closePeekReply() }
-        #else
-            .onKeyPress(.escape, phases: .down) { _ in
-                coordinator.closePeekReply()
-                return .handled
-            }
+        .frame(width: 460)
         #endif
     }
 
@@ -76,12 +59,11 @@ struct PeekReplyOverlay: View {
     private func panel(target: PaneID, content: PeekContent) -> some View {
         VStack(spacing: 0) {
             header(target: target, content: content)
-            divider
+            Divider()
             questionBlock(content)
             if !content.recent.isEmpty { recentBlock(content) }
-            divider
+            Divider()
             replyBar(target: target)
-            footerBar
         }
     }
 
@@ -89,58 +71,54 @@ struct PeekReplyOverlay: View {
 
     private func header(target: PaneID, content: PeekContent) -> some View {
         let status = store.agentStatus(for: target)
-        return HStack(spacing: Slate.Metric.space2) {
+        return HStack(spacing: 8) {
             if let symbol = StatusPresentation.agentSymbol(status) {
                 Image(systemName: symbol)
-                    .font(.system(size: Slate.Typeface.body))
                     .foregroundStyle(StatusPresentation.agentTint(status))
             }
             VStack(alignment: .leading, spacing: 1) {
                 Text(content.title)
-                    .font(.system(size: Slate.Typeface.body, weight: .semibold))
-                    .foregroundStyle(Slate.Text.primary)
+                    .font(.headline)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(StatusPresentation.agentLabel(status))
-                    .font(.system(size: Slate.Typeface.small))
-                    .foregroundStyle(Slate.Text.tertiary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            Spacer(minLength: Slate.Metric.space2)
+            Spacer(minLength: 8)
             Text("Peek & Reply")
-                .font(.system(size: Slate.Typeface.small, weight: .medium))
-                .tracking(0.8)
-                .foregroundStyle(Slate.State.header)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, Slate.Metric.space4)
-        .frame(height: 48)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
     }
 
     // MARK: - Question (the host type-27 blocking prompt, or a generic note)
 
     private func questionBlock(_ content: PeekContent) -> some View {
         Text(content.question ?? "The agent is waiting for your input.")
-            .font(.system(size: Slate.Typeface.body))
-            .foregroundStyle(content.question == nil ? Slate.Text.secondary : Slate.Text.primary)
+            .font(.body)
+            .foregroundStyle(content.question == nil ? .secondary : .primary)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, Slate.Metric.space4)
-            .padding(.vertical, Slate.Metric.space3)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
     }
 
     // MARK: - Recent output (the cheap block-mirror tail)
 
     private func recentBlock(_ content: PeekContent) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+        VStack(alignment: .leading, spacing: 4) {
             Text("RECENT")
-                .font(.system(size: Slate.Typeface.small, weight: .semibold))
-                .tracking(0.8)
-                .foregroundStyle(Slate.State.header)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(Array(content.recent.enumerated()), id: \.offset) { _, line in
                         Text(line)
-                            .font(.system(size: Slate.Typeface.footnote, design: .monospaced))
-                            .foregroundStyle(Slate.Text.secondary)
+                            .font(.callout.monospaced())
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -149,42 +127,35 @@ struct PeekReplyOverlay: View {
             }
             .frame(maxHeight: recentMaxHeight)
         }
-        .padding(.horizontal, Slate.Metric.space4)
-        .padding(.bottom, Slate.Metric.space3)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 12)
     }
 
     // MARK: - Reply bar
 
     private func replyBar(target: PaneID) -> some View {
-        HStack(spacing: Slate.Metric.space2) {
-            Image(systemSymbol: .arrowshapeTurnUpLeft)
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+        HStack(spacing: 8) {
             TextField("Reply…", text: $field)
-                .textFieldStyle(.plain)
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.primary)
-                .tint(Slate.State.accent)
+                .textFieldStyle(.roundedBorder)
                 .focused($replyFocused)
                 .onSubmit { submit(target: target) }
-                // The empty-field digit quick-answer is intercepted BEFORE the field inserts the character
-                // (attached to the field so it pre-empts text editing): a bare 1–9 with the field empty fires
-                // `PeekReplyFormatter.quickAnswer`. Everything else is `.ignored` so normal typing reaches the
-                // field, and `↩` stays the field's native `.onSubmit` (so it never double-fires).
+                // The empty-field digit quick-answer is intercepted BEFORE the field inserts the character:
+                // a bare 1–9 with the field empty fires `PeekReplyFormatter.quickAnswer`. Everything else is
+                // `.ignored` so normal typing reaches the field, and `↩` stays the field's native `.onSubmit`.
                 .onKeyPress(phases: .down) { press in handleKey(press, target: target) }
-            Button { submit(target: target) } label: {
-                Image(systemSymbol: .paperplaneFill)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(field.trimmingCharacters(in: .whitespaces).isEmpty
-                        ? Slate.Text.tertiary : Slate.State.accent)
-                    .contentShape(Rectangle())
+            Button {
+                submit(target: target)
+            } label: {
+                Image(systemName: "paperplane.fill")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderedProminent)
             .disabled(field.trimmingCharacters(in: .whitespaces).isEmpty)
+            // Enter submits via the field's `.onSubmit` (below); no `.keyboardShortcut(.return)` here or a
+            // single Enter would deliver the reply TWICE (button action + onSubmit).
             .accessibilityLabel("Send reply")
         }
-        .padding(.horizontal, Slate.Metric.space4)
-        .frame(height: 48)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
         .onAppear {
             // A `@FocusState` set the same tick the view appears (before its backing responder exists) is
             // dropped — defer one runloop hop (the palette / Open-Quickly field idiom).
@@ -192,58 +163,20 @@ struct PeekReplyOverlay: View {
         }
     }
 
-    // MARK: - Footer hints
-
-    private var footerBar: some View {
-        HStack(spacing: Slate.Metric.space2) {
-            footerHint("Send", glyph: "↩")
-            footerHint("Quick answer", glyph: "1–9")
-            Spacer(minLength: Slate.Metric.space2)
-            footerHint("Close", glyph: "Esc")
-        }
-        .padding(.horizontal, Slate.Metric.space4)
-        .frame(height: 34)
-    }
-
-    private func footerHint(_ label: String, glyph: String) -> some View {
-        HStack(spacing: Slate.Metric.space1) {
-            Text(label)
-                .font(.system(size: Slate.Typeface.small))
-                .foregroundStyle(Slate.Text.tertiary)
-            Text(glyph)
-                .font(.system(size: Slate.Typeface.small, weight: .medium))
-                .foregroundStyle(Slate.Text.secondary)
-                .padding(.horizontal, Slate.Metric.space1)
-                .background(
-                    RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                        .fill(Slate.Surface.element),
-                )
-        }
-    }
-
     // MARK: - All-caught-up fallback (race only)
 
     private var allCaughtUp: some View {
-        VStack(spacing: Slate.Metric.space2) {
-            Image(systemSymbol: .checkmarkCircle)
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Status.ok)
+        VStack(spacing: 8) {
+            Image(systemName: "checkmark.circle")
+                .font(.title2)
+                .foregroundStyle(.green)
             Text("Nothing needs your reply.")
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(.secondary)
             Button("Done") { coordinator.closePeekReply() }
-                .buttonStyle(.plain)
-                .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                .foregroundStyle(Slate.State.accent)
+                .keyboardShortcut(.cancelAction)
         }
         .frame(maxWidth: .infinity)
-        .padding(Slate.Metric.space4)
-    }
-
-    private var divider: some View {
-        Rectangle()
-            .fill(Slate.Line.divider)
-            .frame(height: Slate.Metric.hairline)
+        .padding(24)
     }
 
     // MARK: - Actions

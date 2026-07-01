@@ -1,7 +1,7 @@
 // GlobalSearchView — the cross-tab Global Search results surface (E5 / WI-4), opened by ⇧⌘F. A LARGE,
 // content-area-filling, NON-scrimmed card (E5 divergence #1: a dedicated results *overlay* rather than a
 // results *tab*, which we do not add to avoid blast-radius across every `switch PaneKind` site).
-// Mounted by ``OverlayHostView`` over the workspace WITHOUT a ``Scrim`` so it does not dim the panes.
+// Presented as a NATIVE `.sheet` by ``OverlayHostView`` — a large results window on macOS (system chrome).
 //
 // Anatomy matches `screenshots/global-search.png` (`Slate.*` tokens ONLY — raw font / colour / radius literals
 // fail `scripts/check-ds-leaks.sh`):
@@ -62,14 +62,17 @@ struct GlobalSearchView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             queryBar
-            Rectangle()
-                .fill(Slate.Line.divider)
-                .frame(height: Slate.Metric.hairline)
+            Divider()
             summaryLine
             resultsList
         }
+        // Presented as a native `.sheet` by `OverlayHostView` — a large results window on macOS (the system
+        // provides the window chrome), full-sheet on iOS.
+        #if os(macOS)
+        .frame(width: 720, height: 560, alignment: .topLeading)
+        #else
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Slate.Surface.window)
+        #endif
         .onAppear { restoreFromStore() }
         #if os(macOS)
             .onExitCommand { coordinator.closeGlobalSearch() }

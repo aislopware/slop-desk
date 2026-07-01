@@ -1,8 +1,7 @@
-// SendToChatDialog — the E13 WI-5 / ES-E13-5 "Send to Chat" modal sheet (bound to ⌘⌃↩). A centered card over a
-// dimmed workspace (mounted by the app inside the shared `Scrim` + centered ZStack, exactly like
-// `CloseConfirmationPanel`) that matches `send-to-chat-frame-03/04.png`: a title row (the source location),
-// a read-only quoted preview box, a "Send to:" Claude-only session picker, a focused "Comment:" field, and
-// the Copy Message / Cancel / Send buttons.
+// SendToChatDialog — the E13 WI-5 / ES-E13-5 "Send to Chat" modal (bound to ⌘⌃↩), NATIVE SwiftUI. Everything
+// outside the workspace + panes is native chrome, so this is a native `.sheet` body — a grouped `Form` (the
+// read-only quoted preview, a native `Picker` of Claude-only sessions, a focused multi-line "Comment" field)
+// with a native title + button bar — NOT the old bespoke `OverlayPanel` card. Presented by ``OverlayHostView``.
 //
 // PURE plumbing over the headless ``SendToChatModel``: it composes the delivered message via
 // `SendToChatModel.compose(...)` and hands the chosen target + the composed STRING back through `onSend`
@@ -10,9 +9,7 @@
 // ordered-OUT VERBATIM sink — and auto-focuses the pane); Copy Message → `onCopy` (the owner writes the
 // pasteboard); Cancel → `onCancel`. Claude-only (BINDING directive 1) — the picker never surfaces codex.
 //
-// `Slate.*` tokens ONLY (raw font/radius literals fail `scripts/check-ds-leaks.sh`). Shared
-// `AislopdeskClientUI` view — compiles for iOS (only the AppKit Esc handler is `#if os(macOS)`-gated, with
-// an `onKeyPress(.escape)` iOS fallback); no dead iOS affordance.
+// Shared `AislopdeskClientUI` view — the native sheet + `Form` read on both platforms; no dead iOS affordance.
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -44,10 +41,6 @@ struct SendToChatDialog: View {
     /// Focus the Comment field on appear (the spec: "this field is focused and active when the dialog opens").
     @FocusState private var commentFocused: Bool
 
-    private let panelWidth: CGFloat = 520
-    private let previewMaxHeight: CGFloat = 72
-    private let commentMinHeight: CGFloat = 96
-
     init(
         context: SendToChatContext,
         sessions: [SendToChatSession],
@@ -72,143 +65,61 @@ struct SendToChatDialog: View {
     }
 
     var body: some View {
-        OverlayPanel(width: panelWidth) {
-            VStack(alignment: .leading, spacing: Slate.Metric.space3) {
-                titleRow
-                quotedPreview
-                sendToRow
-                commentSection
-                buttonRow
-            }
-            .padding(Slate.Metric.space4)
-        }
-        .onAppear { DispatchQueue.main.async { commentFocused = true } }
-        #if os(macOS)
-            .onExitCommand { onCancel() }
-        #else
-            .onKeyPress(.escape, phases: .down) { _ in
-                onCancel()
-                return .handled
-            }
-        #endif
-    }
-
-    // MARK: - Title (the source location, e.g. "composer.md L3")
-
-    private var titleRow: some View {
-        Text(context.title)
-            .font(.system(size: Slate.Typeface.body, weight: .semibold))
-            .foregroundStyle(Slate.Text.primary)
-            .lineLimit(1)
-    }
-
-    // MARK: - Quoted context preview (read-only, scrollable, monospaced)
-
-    private var quotedPreview: some View {
-        ScrollView {
-            Text(context.quoted)
-                .font(.system(size: Slate.Typeface.footnote).monospaced())
-                .foregroundStyle(Slate.Text.secondary)
+        VStack(spacing: 0) {
+            Text(context.title)
+                .font(.headline)
+                .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-                .padding(Slate.Metric.space2)
-        }
-        .frame(maxHeight: previewMaxHeight)
-        .background(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                .fill(Slate.Surface.element),
-        )
-    }
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
+                .padding(.bottom, 6)
 
-    // MARK: - "Send to:" Claude-only session picker
-
-    private var sendToRow: some View {
-        HStack(spacing: Slate.Metric.space2) {
-            Text("Send to:")
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.secondary)
-            Picker("Send to", selection: $selectedSessionID) {
-                ForEach(sessions) { session in
-                    sessionRow(session).tag(Optional(session.id))
+            Form {
+                Section("Quoted") {
+                    Text(context.quoted)
+                        .font(.body.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                // "New session" — always offered (the only option when no agent pane is open).
-                Text("New session").tag(PaneID?.none)
+
+                Section {
+                    Picker("Send to", selection: $selectedSessionID) {
+                        ForEach(sessions) { session in
+                            Text("\(session.name) · \(session.agentLabel)").tag(Optional(session.id))
+                        }
+                        // "New session" — always offered (the only option when no agent pane is open).
+                        Text("New session").tag(PaneID?.none)
+                    }
+                    .onChange(of: selectedSessionID) { _, new in onSelectionChange?(new) }
+                }
+
+                Section("Comment") {
+                    TextField("Add a comment…", text: $comment, axis: .vertical)
+                        .lineLimit(3...8)
+                        .focused($commentFocused)
+                }
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .tint(Slate.Text.primary)
-            .onChange(of: selectedSessionID) { _, new in onSelectionChange?(new) }
-            Spacer(minLength: 0)
-        }
-    }
+            .formStyle(.grouped)
 
-    private func sessionRow(_ session: SendToChatSession) -> some View {
-        HStack(spacing: Slate.Metric.space2) {
-            Text(session.name)
-                .foregroundStyle(Slate.Text.primary)
-            Text(session.agentLabel) // Claude-only badge — never "codex"
-                .foregroundStyle(Slate.Text.tertiary)
-        }
-    }
+            Divider()
 
-    // MARK: - "Comment:" field (focused, multi-line)
-
-    private var commentSection: some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            Text("Comment:")
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.secondary)
-            TextField("", text: $comment, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.primary)
-                .tint(Slate.State.accent)
-                .focused($commentFocused)
-                .lineLimit(3...8)
-                .padding(Slate.Metric.space2)
-                .frame(minHeight: commentMinHeight, alignment: .topLeading)
-                .background(
-                    RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                        .fill(Slate.Surface.element),
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                        .stroke(Slate.Line.card, lineWidth: Slate.Metric.hairline),
-                )
-        }
-    }
-
-    // MARK: - Buttons (Copy Message · Cancel · Send)
-
-    private var buttonRow: some View {
-        HStack(spacing: Slate.Metric.space2) {
-            Button("Copy Message") { onCopy(composedMessage) }
-                .buttonStyle(.plain)
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.secondary)
-                .padding(.horizontal, Slate.Metric.space3)
-                .padding(.vertical, Slate.Metric.space1)
-            Spacer(minLength: Slate.Metric.space2)
-            Button("Cancel") { onCancel() }
-                .buttonStyle(.plain)
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.secondary)
-                .padding(.horizontal, Slate.Metric.space3)
-                .padding(.vertical, Slate.Metric.space1)
-            Button { onSend(selectedSessionID, composedMessage) } label: {
-                Text("Send")
-                    .font(.system(size: Slate.Typeface.body, weight: .semibold))
-                    .foregroundStyle(Slate.Surface.card)
-                    .padding(.horizontal, Slate.Metric.space3)
-                    .padding(.vertical, Slate.Metric.space1)
-                    .background(
-                        RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                            .fill(Slate.State.accent),
-                    )
+            HStack(spacing: 12) {
+                Button("Copy Message") { onCopy(composedMessage) }
+                Spacer(minLength: 0)
+                Button("Cancel") { onCancel() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Send") { onSend(selectedSessionID, composedMessage) }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: .command)
             }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.return, modifiers: .command)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
         }
+        #if os(macOS)
+        .frame(width: 520)
+        #endif
+        .onAppear { DispatchQueue.main.async { commentFocused = true } }
     }
 }
 #endif

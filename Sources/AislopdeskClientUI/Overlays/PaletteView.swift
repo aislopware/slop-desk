@@ -10,9 +10,10 @@
 // labels) rather than the light theme shown in the reference screenshot.
 //
 // SEAM discipline: the palette OWNS no state — every read/mutation goes through the coordinator (the single
-// `@Observable` reducer) so the GUI and the headless model can't drift. The scrim, centering, and fade-in
-// are added by the `OverlayHostView` (WI-5) that mounts this; PaletteView IS the panel. `Slate.*` tokens
-// ONLY (raw font/colour/radius literals fail `scripts/check-ds-leaks.sh`).
+// `@Observable` reducer) so the GUI and the headless model can't drift. Presented as a NATIVE `.sheet` by the
+// `OverlayHostView` that mounts it (the system provides the window chrome — bg / rounded corners / shadow);
+// this view carries only the search field + result rows. `Slate.*` tokens ONLY for that content (raw
+// font/colour/radius literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -41,19 +42,14 @@ struct PaletteView: View {
     var body: some View {
         VStack(spacing: 0) {
             searchBar
-            Rectangle()
-                .fill(Slate.Line.divider)
-                .frame(height: Slate.Metric.hairline)
+            Divider()
             resultsList
         }
+        // Presented as a native `.sheet` by `OverlayHostView` — the system provides the window chrome (bg /
+        // rounded corners / shadow), so this view carries only its content + a fixed macOS dialog width.
+        #if os(macOS)
         .frame(width: panelWidth)
-        .background(Slate.Surface.card)
-        .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusCard))
-        .overlay(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                .stroke(Slate.Line.card, lineWidth: Slate.Metric.hairline),
-        )
-        .shadow(color: Slate.State.shadow, radius: 30, x: 0, y: 12)
+        #endif
         // Keyboard: the app NSEvent monitor passes bare arrows/Return through (it only swallows the prefix +
         // bound chords), so they reach this focused overlay. Plain ↩ is handled by the field's `.onSubmit`
         // (TextField-native, reliable); ⌘↩ is NOT a TextField submit, so it reaches THIS container handler —

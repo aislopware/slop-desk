@@ -64,7 +64,14 @@ struct CommandNavigatorView: View {
 
     var body: some View {
         ZStack {
-            Scrim { onClose() }
+            // Pane-LOCAL dimmed backdrop (the navigator floats over THIS pane's terminal, not the window, so
+            // it keeps its own scrim rather than the window-level native sheet the auxiliary overlays now use).
+            Rectangle()
+                .fill(Slate.State.shadow)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { onClose() }
+                .transition(.opacity)
             card
         }
     }

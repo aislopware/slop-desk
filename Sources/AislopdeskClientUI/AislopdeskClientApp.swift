@@ -584,7 +584,9 @@ public struct AislopdeskClientApp: App {
                 .sheet(isPresented: $presentFirstLaunch) {
                     FirstLaunchView(model: firstLaunchModel, store: preferences)
                         .agentHooksController(agentHooks)
-                        .tint(Slate.State.accent)
+                        // Native sheet → SYSTEM accent (reset the inherited theme tint) so its stock controls read
+                        // as native macOS controls; appearance still follows the theme via `preferredColorScheme`.
+                        .tint(nil)
                         // Adopt the active theme's light/dark like every other surface (issue 1) — without it
                         // the sheet inherited the OS appearance and could render light over a dark workspace.
                         .preferredColorScheme(Slate.colorScheme)

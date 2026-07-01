@@ -16,8 +16,9 @@
 //
 // Picker-LOCAL keys (handled here, NEVER globally registered): `Tab`/`⇧Tab` cycle pills, `⌘1–9` quick-pick a
 // visible row, `⌘K` toggles the Actions popover, `⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J/⌘E` jump straight to a pill, `↑`/`↓`
-// move, `↩` runs the selected row, `Esc` closes. The scrim + centering + fade are added by `OverlayHostView`;
-// OpenQuicklyView IS the panel. `Slate.*` tokens ONLY (raw font/colour/radius literals fail check-ds-leaks).
+// move, `↩` runs the selected row, `Esc` closes. Presented as a NATIVE `.sheet` by `OverlayHostView` (the
+// system provides the window chrome); OpenQuicklyView carries only its content. `Slate.*` tokens ONLY for
+// that content (raw font/colour/radius literals fail check-ds-leaks).
 
 #if canImport(SwiftUI)
 import AislopdeskProtocol
@@ -84,14 +85,11 @@ struct OpenQuicklyView: View {
             divider
             footerBar
         }
+        // Presented as a native `.sheet` by `OverlayHostView` — the system provides the window chrome (bg /
+        // rounded corners / shadow), so this view carries only its content + a fixed macOS dialog width.
+        #if os(macOS)
         .frame(width: panelWidth)
-        .background(Slate.Surface.card)
-        .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusCard))
-        .overlay(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                .stroke(Slate.Line.card, lineWidth: Slate.Metric.hairline),
-        )
-        .shadow(color: Slate.State.shadow, radius: 30, x: 0, y: 12)
+        #endif
         .onAppear {
             snapshotCurrent()
             recipeItems = OpenQuicklyModel.recipeItems(from: store.savedRecipeFiles())
@@ -132,11 +130,7 @@ struct OpenQuicklyView: View {
         #endif
     }
 
-    private var divider: some View {
-        Rectangle()
-            .fill(Slate.Line.divider)
-            .frame(height: Slate.Metric.hairline)
-    }
+    private var divider: some View { Divider() }
 
     // MARK: - Search bar
 

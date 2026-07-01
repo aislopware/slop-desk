@@ -1,22 +1,22 @@
-// RemoteWindowPickerModal — the MODAL Remote-Window picker overlay (E2 / WI-5, ES-E2-6 second clause). Opened
-// by the palette's "New Remote Window Tab" action (`openRemotePicker()`), it lists the host's shareable
-// windows and, on pick, opens a NEW `.remoteGUI` tab pre-bound to that window — the app-global counterpart of
-// the in-pane ``RemoteWindowPickerView`` (which binds a single pane's model and streams into THAT pane).
+// RemoteWindowPickerModal — the Remote-Window picker, NATIVE SwiftUI (E2 / WI-5, ES-E2-6 second clause).
+// Opened by the palette's "New Remote Window Tab" action (`openRemotePicker()`), it lists the host's
+// shareable windows and, on pick, opens a NEW `.remoteGUI` tab pre-bound to that window — the app-global
+// counterpart of the in-pane ``RemoteWindowPickerView``.
+//
+// Everything outside the workspace + panes is native chrome, so this is a native `.sheet` body — a grouped
+// `Form` (a filter field + a `Button` row per discovered window + a manual-id fallback section) with a native
+// title + Cancel bar — NOT the old bespoke `OverlayPanel` card. Presented as a real sheet by ``OverlayHostView``.
 //
 // Bound to ``OverlayCoordinator/remotePickerModel`` (a fresh ``RemoteWindowModel`` built per open against the
-// live app target), it reuses the in-pane picker's row/filter/manual-fallback idiom but routes a pick through
-// ``OverlayCoordinator/openRemoteWindow(_:)`` (open a tab + close the modal) instead of the pane's
-// `pick()→open()`. Discovery runs once on appear via `model.refresh()`.
+// live app target), it routes a pick through ``OverlayCoordinator/openRemoteWindow(_:)`` (open a tab + close
+// the modal). Discovery runs once on appear via `model.refresh()`.
 //
 // SEAM discipline: this view NEVER imports `AislopdeskVideoClient` — discovery crosses the
-// `RemoteWindowDiscovery` seam already wired into ``RemoteWindowModel`` (a closure the app injects). Shares the
-// family panel shell via ``OverlayPanel``. `Slate.*` tokens ONLY (raw font/radius literals fail
-// `scripts/check-ds-leaks.sh`). Shared `AislopdeskClientUI` view — compiles for iOS (only the AppKit Esc
-// handler is `#if os(macOS)`-gated).
+// `RemoteWindowDiscovery` seam already wired into ``RemoteWindowModel``. Shared `AislopdeskClientUI` view —
+// compiles for iOS (the native sheet + `Form` read on both platforms).
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
-import SFSafeSymbols
 import SwiftUI
 
 struct RemoteWindowPickerModal: View {
@@ -28,198 +28,107 @@ struct RemoteWindowPickerModal: View {
     @State private var filter: String = ""
     /// The manual window-id entry for the no-discovery fallback.
     @State private var manualID: String = ""
-    /// Whether the demoted manual-id fallback is revealed. Collapsed by default — the list leads.
-    @State private var showManualEntry = false
-    /// Focus the panel on appear so Esc reaches `.onExitCommand` even before the filter field exists
-    /// (loading / empty states have no text field to take first responder).
-    @FocusState private var panelFocused: Bool
-
-    private let panelWidth: CGFloat = 520
-    private let listMaxHeight: CGFloat = 360
 
     var body: some View {
-        OverlayPanel(width: panelWidth) {
-            VStack(alignment: .leading, spacing: Slate.Metric.space3) {
-                header
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text("New Remote Window")
+                    .font(.headline)
+                Spacer(minLength: 0)
                 if let model = coordinator.remotePickerModel {
-                    windowSection(model)
-                    manualEntrySection
+                    Button {
+                        Task { await model.refresh() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(model.isLoading)
+                    .help("Refresh the window list")
                 }
             }
-            .padding(Slate.Metric.space4)
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 6)
+
+            if let model = coordinator.remotePickerModel {
+                windowForm(model)
+            }
+
+            Divider()
+
+            HStack {
+                Spacer(minLength: 0)
+                Button("Cancel") { coordinator.closeRemotePicker() }
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
         }
+        #if os(macOS)
+        .frame(width: 520)
+        #endif
         // Discover once on appear (the modal's model is freshly built per open, so it always queries the
         // current host). A nil model (shouldn't happen while presented) is a safe no-op.
         .task { await coordinator.remotePickerModel?.refresh() }
-        .focusable()
-        .focusEffectDisabled()
-        .focused($panelFocused)
-        .onAppear { DispatchQueue.main.async { panelFocused = true } }
-        #if os(macOS)
-            .onExitCommand { coordinator.closeRemotePicker() }
-        #else
-            .onKeyPress(.escape, phases: .down) { _ in
-                coordinator.closeRemotePicker()
-                return .handled
-            }
-        #endif
     }
 
-    // MARK: - Header (title + Refresh)
+    // MARK: - Form (windows + manual fallback)
 
-    private var header: some View {
-        HStack(spacing: Slate.Metric.space2) {
-            Image(systemSymbol: .display)
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.secondary)
-            Text("New Remote Window")
-                .font(.system(size: Slate.Typeface.body, weight: .semibold))
-                .foregroundStyle(Slate.Text.primary)
-            Spacer(minLength: Slate.Metric.space2)
-            if let model = coordinator.remotePickerModel {
-                Button {
-                    Task { await model.refresh() }
-                } label: {
-                    Image(systemSymbol: .arrowClockwise)
-                        .font(.system(size: Slate.Typeface.footnote))
+    private func windowForm(_ model: RemoteWindowModel) -> some View {
+        Form {
+            Section("Shareable windows") {
+                if model.isLoading, model.availableWindows.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Looking for shareable windows…").foregroundStyle(.secondary)
+                    }
+                } else if model.availableWindows.isEmpty {
+                    Text(model.loadError ?? "No shareable windows on the host yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    TextField("Filter windows", text: $filter)
+                    windowRows(model)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(Slate.Text.secondary)
-                .disabled(model.isLoading)
+            }
+
+            Section("Or enter a window ID") {
+                HStack(spacing: 8) {
+                    TextField("Window id", text: $manualID)
+                        .font(.body.monospaced())
+                        .onSubmit { openManual() }
+                    Button("Open") { openManual() }
+                        .disabled(parsedManualID == nil)
+                }
             }
         }
-    }
-
-    // MARK: - Window list — the PRIMARY surface (loading / list / empty)
-
-    @ViewBuilder
-    private func windowSection(_ model: RemoteWindowModel) -> some View {
-        if model.isLoading, model.availableWindows.isEmpty {
-            loadingRow
-        } else if model.availableWindows.isEmpty {
-            emptyState(model)
-        } else {
-            filterField
-            windowList(model)
-        }
-    }
-
-    private var loadingRow: some View {
-        HStack(spacing: Slate.Metric.space2) {
-            ProgressView().controlSize(.small)
-            Text("Looking for shareable windows…")
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
-        }
-    }
-
-    private func emptyState(_ model: RemoteWindowModel) -> some View {
-        Text(model.loadError ?? "No shareable windows on the host yet.")
-            .font(.system(size: Slate.Typeface.footnote))
-            .foregroundStyle(Slate.Text.tertiary)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private var filterField: some View {
-        TextField("Filter windows", text: $filter)
-            .textFieldStyle(.plain)
-            .font(.system(size: Slate.Typeface.footnote))
-            .foregroundStyle(Slate.Text.primary)
-            .tint(Slate.State.accent)
-            .padding(Slate.Metric.space2)
-            .background(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                    .fill(Slate.Surface.element),
-            )
+        .formStyle(.grouped)
     }
 
     @ViewBuilder
-    private func windowList(_ model: RemoteWindowModel) -> some View {
+    private func windowRows(_ model: RemoteWindowModel) -> some View {
         let windows = RemoteWindowModel.filtered(model.availableWindows, query: filter)
         if windows.isEmpty {
             Text(RemoteWindowModel.windowFilterEmptyMessage(
                 filter: filter, totalCount: model.availableWindows.count,
             ))
-            .font(.system(size: Slate.Typeface.footnote))
-            .foregroundStyle(Slate.Text.tertiary)
+            .foregroundStyle(.secondary)
         } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                    ForEach(windows) { window in
-                        windowRow(window)
-                    }
+            ForEach(windows) { window in
+                Button {
+                    // A pick opens a NEW `.remoteGUI` tab pre-bound to this window, then closes the modal.
+                    coordinator.openRemoteWindow(window)
+                } label: {
+                    Label(window.displayLabel, systemImage: "macwindow")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
-            }
-            .frame(maxHeight: listMaxHeight)
-        }
-    }
-
-    private func windowRow(_ window: RemoteWindowSummary) -> some View {
-        Button {
-            // A pick opens a NEW `.remoteGUI` tab pre-bound to this window, then closes the modal — the
-            // app-global path (NOT the in-pane `pick()→open()`).
-            coordinator.openRemoteWindow(window)
-        } label: {
-            HStack(spacing: Slate.Metric.space2) {
-                Image(systemSymbol: .macwindow)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
-                Text(window.displayLabel)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.primary)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, Slate.Metric.space1)
-            .padding(.horizontal, Slate.Metric.space2)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Manual fallback (DEMOTED — collapsed disclosure under the list)
-
-    @ViewBuilder private var manualEntrySection: some View {
-        if showManualEntry {
-            manualField
-        } else {
-            Button {
-                showManualEntry = true
-            } label: {
-                HStack(spacing: Slate.Metric.space1) {
-                    Image(systemSymbol: .keyboard)
-                        .font(.system(size: Slate.Typeface.small))
-                    Text("Enter window ID manually")
-                        .font(.system(size: Slate.Typeface.footnote))
-                }
-                .foregroundStyle(Slate.Text.tertiary)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    private var manualField: some View {
-        HStack(spacing: Slate.Metric.space2) {
-            TextField("Window id", text: $manualID)
-                .textFieldStyle(.plain)
-                .font(.system(size: Slate.Typeface.footnote).monospaced())
-                .foregroundStyle(Slate.Text.primary)
-                .tint(Slate.State.accent)
-                .padding(Slate.Metric.space2)
-                .background(
-                    RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                        .fill(Slate.Surface.element),
-                )
-                .onSubmit { openManual() }
-            Button("Open") { openManual() }
                 .buttonStyle(.plain)
-                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                .foregroundStyle(parsedManualID != nil ? Slate.State.accent : Slate.Text.tertiary)
-                .disabled(parsedManualID == nil)
+            }
         }
     }
+
+    // MARK: - Manual fallback
 
     /// The typed manual window id parsed to a `CGWindowID`, or nil when blank/invalid (the Open button's
     /// enabled state — validate-then-open, never a force-unwrap).

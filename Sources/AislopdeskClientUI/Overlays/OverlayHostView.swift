@@ -1,160 +1,194 @@
-// OverlayHostView — the single ZStack that composes EVERY floating overlay above the workspace (E2 / WI-5).
-// Driven entirely by the injected ``OverlayCoordinator`` flags, it mounts (in z-order) the command palette,
-// the keyboard cheat sheet, the Connect-to-Host editor, and the Remote-Window picker — each behind a dimmed,
-// tap-to-dismiss ``Scrim`` — plus the ALWAYS-mounted ``ToastStackView`` (which renders nothing when the
-// stack is empty). One host so the four scrimmed panels share one mount point, one fade, and one hit-testing
-// gate; the workspace beneath stays interactive whenever nothing is up.
+// OverlayHostView — the single mount point that presents EVERY floating overlay above the workspace as
+// NATIVE SwiftUI chrome (the "everything outside the workspace + panes is native" directive). It owns NO
+// bespoke `Scrim` + hand-drawn card any more: each overlay is a real system `.sheet` driven by the injected
+// ``OverlayCoordinator`` flags, and the pane/tab close confirmation is a native `.alert` driven off the
+// store's `pendingClose*` parks. The always-mounted ``ToastStackView`` (which renders nothing when empty)
+// is the host's only in-tree content — transient notifications float over the workspace without a modal.
+//
+// One host so every overlay shares one presentation point: because the coordinator only ever drives one
+// overlay flag at a time (its `run()` closes-then-opens; the open* methods are the only writers), a single
+// `.sheet(item:)` keyed on a computed ``ActiveSheet`` is robust — it can never race two chained
+// `.sheet(isPresented:)` modifiers, and a system dismissal (Esc / click-away) routes back through the
+// binding's `set(nil)` to the matching `close*()`.
 //
 // MOUNTING: the root view (`WorkspaceRootView`) attaches this as a top `.overlay` on the macOS
-// `WorkspaceSplitRepresentable` (SwiftUI overlays compose over an `NSViewControllerRepresentable`) and on the
-// iOS `NavigationSplitView` — the same ZStack reads on both platforms (the panels' AppKit-only Esc handling
-// is already `#if os(macOS)`-gated inside each panel view).
-//
-// HIT-TESTING: `.allowsHitTesting(anyModalVisible || !toasts.isEmpty)` — when no modal is up and no toast is
-// showing, the whole host is transparent to clicks so the terminal/video panes beneath receive them; the
-// instant a panel or toast appears the host takes hits (the scrim swallows background clicks; the toast X
-// stays live). The empty regions of the toast frame carry no background, so a scrim tap still reaches the
-// scrim through them.
+// `WorkspaceSplitRepresentable` and on the iOS `NavigationSplitView` — a `.sheet`/`.alert` presented from an
+// overlay composes over the window on both platforms.
 //
 // SEAM discipline: the host owns NO state — every read/close goes through the coordinator (the single
-// `@Observable` reducer). The `toggledState` predicate is built by the root from the live `WorkspaceChromeState`
-// (macOS) or a no-op (iOS, until iOS chrome exists) and handed in, so the pure coordinator never learns about
-// chrome. `Slate.*` tokens ONLY (raw font/radius literals fail `scripts/check-ds-leaks.sh`).
+// `@Observable` reducer) or the store (the close-confirmation parks). The `toggledState` predicate is built
+// by the root from the live `WorkspaceChromeState` (macOS) or a no-op (iOS) and handed to the palette, so the
+// pure coordinator never learns about chrome. NATIVE styling only (system fonts / controls) — the overlays
+// carry their own content; the host adds no design-token chrome.
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
-import SFSafeSymbols
 import SwiftUI
 
 struct OverlayHostView: View {
-    /// The live store — passed to ``PaletteView`` (the WORKING-DIRECTORY badge reads the focused pane's cwd).
+    /// The live store — passed to the palette / pickers (working-directory badge, sources) and read for the
+    /// pane/tab close-confirmation parks (`pendingCloseSpec` / `pendingTabCloseID`).
     let store: WorkspaceStore
     /// The app-global connection — bound by ``ConnectHostView`` (the host/port form is a thin view over it).
     let connection: AppConnection
-    /// The single overlay reducer — `@Bindable` so the composed panels can two-way edit its query/selection.
+    /// The single overlay reducer — every overlay's visibility + close routes through it.
     @Bindable var coordinator: OverlayCoordinator
     /// Whether a palette row currently shows its ✓ (toggled-on) gutter. Built by the root from the live chrome
-    /// (see ``OverlayHostView/toggledState(for:)``) so the pure coordinator stays chrome-agnostic. Defaults to
-    /// "nothing toggled" (iOS / previews).
+    /// (see ``OverlayHostView/toggledState(for:store:)``) so the pure coordinator stays chrome-agnostic.
+    /// Defaults to "nothing toggled" (iOS / previews).
     var toggledState: @MainActor (PaletteItem) -> Bool = { _ in false }
 
     var body: some View {
-        ZStack {
-            if coordinator.paletteVisible {
-                Scrim { coordinator.closePalette() }
-                PaletteView(coordinator: coordinator, store: store, toggledState: toggledState)
+        // The always-mounted toast stack is the host's only in-tree content (it renders nothing when empty);
+        // every modal overlay is a native `.sheet`/`.alert` presented over the window. Transparent to hits
+        // unless a toast is up so the workspace beneath stays interactive.
+        ToastStackView(coordinator: coordinator)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .allowsHitTesting(!coordinator.toasts.isEmpty)
+            .sheet(item: activeSheetBinding) { sheet in
+                // System accent inside the sheet too (a sheet roots a fresh environment, so reset the tint on the
+                // presented content directly — not only on the presenter below — to be order-independent).
+                sheetContent(sheet)
+                    .tint(nil)
             }
-            if coordinator.cheatSheetVisible {
-                Scrim { coordinator.closeCheatSheet() }
-                KeyboardCheatSheetView(coordinator: coordinator)
-            }
-            // The Connect-to-Host editor is a NATIVE `.sheet` (see the `.sheet` modifier on the ZStack below),
-            // not a scrimmed custom panel — everything outside the workspace/panes is native chrome.
-            if coordinator.remotePickerVisible {
-                Scrim { coordinator.closeRemotePicker() }
-                RemoteWindowPickerModal(coordinator: coordinator)
-            }
-            // E11 / WI-6: the Open-Quickly picker (⌘⇧O → All · ⌘J → Current) — a centered, SCRIMMED multi-
-            // source quick switcher over the workspace (`open-quickly.png`). It FOLDS in E10's Jump-To: it
-            // reads its own sources (open panes / recents / folders / agents / the focused pane's links +
-            // OSC-133 command index), so it takes the store + coordinator + the app-owned Folders frecency
-            // store. Tapping the scrim closes it (like the other panels).
-            if coordinator.openQuicklyVisible {
-                Scrim { coordinator.closeOpenQuickly() }
-                OpenQuicklyView(store: store, coordinator: coordinator, folders: coordinator.folders)
-            }
-            // E13 / WI-8 (P4): the Peek & Reply card (⌘⌥J) — a centered, SCRIMMED card over the oldest pane
-            // needing attention that lets the user ANSWER a blocked agent INLINE (observe + reply, never an
-            // approval gate). Tapping the scrim closes it (like the other panels); it resolves its own target
-            // off the store via the coordinator.
-            if coordinator.peekReplyVisible {
-                Scrim { coordinator.closePeekReply() }
-                PeekReplyOverlay(store: store, coordinator: coordinator)
-            }
-            // E13 / WI-5 (ES-E13-5): the Send-to-Chat dialog (⌘⌃↩) — a centered, SCRIMMED card over the
-            // workspace that quotes the active pane's selection / last command and routes the composed message
-            // to a chosen Claude-only agent pane. The coordinator owns the captured `SendToChatContext` + the
-            // live session list; this view is pure plumbing (compose → `onSend`/`onCopy`). Tapping the scrim
-            // cancels (like the other panels).
-            if coordinator.sendToChatVisible, let context = coordinator.sendToChatContext {
-                Scrim { coordinator.closeSendToChat() }
-                SendToChatDialog(
-                    context: context,
-                    sessions: coordinator.sendToChatSessions,
-                    initialSelection: coordinator.sendToChatInitialSelection,
-                    onSend: { target, message in coordinator.sendChat(to: target, message: message) },
-                    onCopy: { message in coordinator.copyChatMessage(message) },
-                    onCancel: { coordinator.closeSendToChat() },
-                    onSelectionChange: { target in coordinator.recordSendToChatSelection(target) },
-                )
-            }
-            // E3 WI-4: the busy-shell / policy close confirmation for a PANE or TAB (the ⌘W / ⌘⇧W /
-            // close-button path parks `store.pendingClose` / `store.pendingTabCloseID`). The window-scope
-            // confirmation is the macOS `NSAlert` (`WindowCloseConfirmationDelegate`); this in-app panel
-            // covers the pane/tab scope on BOTH platforms, so a ⌘W on a pane (or ⌘⇧W on a tab) with a running
-            // command no longer silently no-ops. The two parks are mutually exclusive — at most one branch is
-            // ever live. Tapping the scrim cancels (no close), matching the other panels.
-            if let spec = store.pendingCloseSpec {
-                Scrim { store.cancelPendingClose() }
-                CloseConfirmationPanel(
-                    title: spec.title.isEmpty ? "Close this pane?" : "Close “\(spec.title)”?",
-                    // E3 carry-over #4: branch the subtitle on the policy that ACTUALLY gated this park (the
-                    // store resolves the effective pane policy) — not a hardcoded "a process is still running",
-                    // which is false for the `always` / `multiple_tabs` policies.
-                    subtitle: CloseConfirmationPanel.reason(
-                        for: store.pendingCloseReasonPolicy ?? .process, scope: .pane,
-                    ),
-                    onConfirm: { store.confirmPendingClose() },
-                    onCancel: { store.cancelPendingClose() },
-                )
-            } else if store.pendingTabCloseID != nil {
-                Scrim { store.cancelPendingClose() }
-                CloseConfirmationPanel(
-                    title: "Close this tab?",
-                    subtitle: CloseConfirmationPanel.reason(
-                        for: store.pendingCloseReasonPolicy ?? .process, scope: .tab,
-                    ),
-                    onConfirm: { store.confirmPendingClose() },
-                    onCancel: { store.cancelPendingClose() },
-                )
-            }
-            // E5 / WI-4: the cross-tab Global Search surface (⇧⌘F). A LARGE, content-area-filling, NON-scrimmed
-            // card (E5 divergence #1 — a dedicated results overlay rather than a results tab) so it is NOT
-            // wrapped in a `Scrim` and does NOT dim the workspace. It is mounted BELOW the toast stack so a
-            // background toast still floats over it, and it is gated separately from `anyScrimmedModal` (it is
-            // not in `anyModalVisible`) — its own `.allowsHitTesting` term below captures clicks while shown.
-            if coordinator.globalSearchVisible {
-                GlobalSearchView(store: store, coordinator: coordinator)
-                    .transition(.opacity)
-            }
-            // Always mounted (renders nothing when empty) so an arriving toast animates in without a re-mount;
-            // last in the ZStack ⇒ top-most, so a toast X stays clickable even with a panel up.
-            ToastStackView(coordinator: coordinator)
-        }
-        // NATIVE Connect-to-Host editor: a real macOS sheet (native Form + buttons), not a custom scrim panel.
-        // `get` mirrors the coordinator flag; `set(false)` (Esc / system dismiss) routes through `closeConnect`.
-        .sheet(isPresented: Binding(
-            get: { coordinator.connectVisible },
-            set: { if !$0 { coordinator.closeConnect() } },
-        )) {
-            ConnectHostView(connection: connection, coordinator: coordinator)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // One fade for the whole panel layer, keyed on the modal gate so a panel appearing/dismissing
-        // cross-fades with its scrim (the toast stack runs its own value-keyed animation internally).
-        .animation(Slate.Anim.standard, value: anyScrimmedModal)
-        // The non-scrimmed Global Search surface fades on its own flag (it is excluded from `anyScrimmedModal`).
-        .animation(Slate.Anim.standard, value: coordinator.globalSearchVisible)
-        // Transparent to hits when nothing is up so the workspace beneath stays interactive. Global Search is a
-        // full surface (not a scrimmed modal), so it adds its own hit-testing term.
-        .allowsHitTesting(anyScrimmedModal || coordinator.globalSearchVisible || !coordinator.toasts.isEmpty)
+            .alert(
+                closeAlertTitle,
+                isPresented: closeAlertBinding,
+                actions: {
+                    // "Close" is the destructive action (it stops a running command / discards the pane/tab);
+                    // Cancel is the safe default. Native roles give the macOS alert its standard button
+                    // placement + tinting, replacing the old hand-drawn warn-tinted button row.
+                    Button("Close", role: .destructive) { store.confirmPendingClose() }
+                    Button("Cancel", role: .cancel) { store.cancelPendingClose() }
+                },
+                message: { Text(closeAlertMessage) },
+            )
+            // Native chrome uses the SYSTEM accent, not the workspace theme accent. The WindowGroup tints its
+            // whole subtree with `Slate.State.accent` (so stock controls in the workspace/pane chrome adopt the
+            // theme); resetting the tint to nil here scopes the overlays' sheets + the close `.alert` back to the
+            // macOS default accent so their toggles / bordered buttons / focus rings read as native System-Settings
+            // controls. Only affects THIS overlay subtree (+ the sheets/alert it presents) — the workspace beneath
+            // keeps the theme tint. Appearance (light/dark) still follows the parent window via each sheet's own
+            // `.preferredColorScheme`, matching how a real macOS sheet inherits its window's appearance.
+            .tint(nil)
     }
 
-    /// Whether ANY scrimmed modal is up — the coordinator's four panels OR the store-driven pane/tab close
-    /// confirmation. Drives the host's hit-testing gate + the single cross-fade so the close panel behaves
-    /// exactly like the others (the coordinator's `anyModalVisible` stays chrome/overlay-only by design).
-    private var anyScrimmedModal: Bool {
-        coordinator.anyModalVisible || store.pendingCloseSpec != nil || store.pendingTabCloseID != nil
+    // MARK: - Active sheet (single robust presentation seam)
+
+    /// Which overlay (if any) should be presented, resolved from the coordinator flags in a fixed priority
+    /// order. The coordinator drives one flag at a time, so this is unambiguous; a `.sheet(item:)` keyed on it
+    /// presents exactly one overlay and re-presents cleanly when one overlay replaces another (palette → connect).
+    private enum ActiveSheet: Identifiable {
+        case connect
+        case palette
+        case cheatSheet
+        case remotePicker
+        case openQuickly
+        case peekReply
+        case sendToChat
+        case globalSearch
+        var id: Self { self }
+    }
+
+    private var activeSheet: ActiveSheet? {
+        if coordinator.connectVisible { return .connect }
+        if coordinator.paletteVisible { return .palette }
+        if coordinator.cheatSheetVisible { return .cheatSheet }
+        if coordinator.remotePickerVisible { return .remotePicker }
+        if coordinator.openQuicklyVisible { return .openQuickly }
+        if coordinator.peekReplyVisible { return .peekReply }
+        if coordinator.sendToChatVisible, coordinator.sendToChatContext != nil { return .sendToChat }
+        if coordinator.globalSearchVisible { return .globalSearch }
+        return nil
+    }
+
+    /// The `item` binding for the single sheet. `get` mirrors ``activeSheet``; `set(nil)` (a system dismissal —
+    /// Esc / click-away) routes to the matching `close*()` so the coordinator flag is cleared. A state-driven
+    /// dismissal (a view calling its own `close*()`) flips the flag first, so `get` returns nil and the sheet
+    /// dismisses without `set` firing — the two paths never double-close (and the closes are idempotent anyway).
+    private var activeSheetBinding: Binding<ActiveSheet?> {
+        Binding(
+            get: { activeSheet },
+            set: { if $0 == nil { closeActiveSheet() } },
+        )
+    }
+
+    private func closeActiveSheet() {
+        if coordinator.connectVisible { coordinator.closeConnect() }
+        else if coordinator.paletteVisible { coordinator.closePalette() }
+        else if coordinator.cheatSheetVisible { coordinator.closeCheatSheet() }
+        else if coordinator.remotePickerVisible { coordinator.closeRemotePicker() }
+        else if coordinator.openQuicklyVisible { coordinator.closeOpenQuickly() }
+        else if coordinator.peekReplyVisible { coordinator.closePeekReply() }
+        else if coordinator.sendToChatVisible { coordinator.closeSendToChat() }
+        else if coordinator.globalSearchVisible { coordinator.closeGlobalSearch() }
+    }
+
+    @ViewBuilder
+    private func sheetContent(_ sheet: ActiveSheet) -> some View {
+        switch sheet {
+        case .connect:
+            ConnectHostView(connection: connection, coordinator: coordinator)
+        case .palette:
+            PaletteView(coordinator: coordinator, store: store, toggledState: toggledState)
+        case .cheatSheet:
+            KeyboardCheatSheetView(coordinator: coordinator)
+        case .remotePicker:
+            RemoteWindowPickerModal(coordinator: coordinator)
+        case .openQuickly:
+            OpenQuicklyView(store: store, coordinator: coordinator, folders: coordinator.folders)
+        case .peekReply:
+            PeekReplyOverlay(store: store, coordinator: coordinator)
+        case .sendToChat:
+            sendToChatSheet
+        case .globalSearch:
+            GlobalSearchView(store: store, coordinator: coordinator)
+        }
+    }
+
+    /// The Send-to-Chat sheet — a thin view over the coordinator's captured quote + live agent session list.
+    /// Guarded on the captured context (``activeSheet`` already requires it non-nil, so the `else` is dead).
+    @ViewBuilder
+    private var sendToChatSheet: some View {
+        if let context = coordinator.sendToChatContext {
+            SendToChatDialog(
+                context: context,
+                sessions: coordinator.sendToChatSessions,
+                initialSelection: coordinator.sendToChatInitialSelection,
+                onSend: { target, message in coordinator.sendChat(to: target, message: message) },
+                onCopy: { message in coordinator.copyChatMessage(message) },
+                onCancel: { coordinator.closeSendToChat() },
+                onSelectionChange: { target in coordinator.recordSendToChatSelection(target) },
+            )
+        }
+    }
+
+    // MARK: - Close confirmation (native .alert)
+
+    /// Whether the pane/tab close confirmation is up — driven by EITHER store park (they are mutually
+    /// exclusive). `set(false)` (Esc / a system dismissal) cancels the park, matching the Cancel button.
+    private var closeAlertBinding: Binding<Bool> {
+        Binding(
+            get: { store.pendingCloseSpec != nil || store.pendingTabCloseID != nil },
+            set: { if !$0 { store.cancelPendingClose() } },
+        )
+    }
+
+    /// The alert headline: the pane's title when a pane close is parked ("Close “<pane>”?"), else the tab copy.
+    private var closeAlertTitle: String {
+        if let spec = store.pendingCloseSpec {
+            return spec.title.isEmpty ? "Close this pane?" : "Close “\(spec.title)”?"
+        }
+        return "Close this tab?"
+    }
+
+    /// The policy-aware alert body (E3 carry-over #4): branch the copy on the policy that ACTUALLY gated the
+    /// park, scoped to pane vs tab. Reuses the pure ``CloseConfirmationPanel/reason(for:scope:)`` copy the
+    /// tests pin, so the wording can't drift from the pinned strings.
+    private var closeAlertMessage: String {
+        let policy = store.pendingCloseReasonPolicy ?? .process
+        let scope: CloseScope = store.pendingCloseSpec != nil ? .pane : .tab
+        return CloseConfirmationPanel.reason(for: policy, scope: scope)
     }
 
     /// The toggled-state predicate the root hands to ``PaletteView`` — built from the live chrome so the
@@ -187,73 +221,15 @@ struct OverlayHostView: View {
     }
 }
 
-// MARK: - Scrim
+// MARK: - CloseConfirmationPanel (close-confirmation COPY — the pure wording the native `.alert` renders)
 
-/// The dimmed, tap-to-dismiss backdrop behind a centered overlay panel. A full-bleed plate tinted with the
-/// theme's panel-shadow token (no dedicated scrim role exists — E2 plan §WI-5) that closes the active panel
-/// on tap. Shared by all four scrimmed panels so the dim + dismiss behave identically.
-struct Scrim: View {
-    /// The dismiss action (the active panel's `close*()` — tapping outside the panel closes it).
-    var onTap: () -> Void = {}
-
-    var body: some View {
-        Rectangle()
-            .fill(Slate.State.shadow)
-            .ignoresSafeArea()
-            .contentShape(Rectangle())
-            .onTapGesture { onTap() }
-            .transition(.opacity)
-    }
-}
-
-// MARK: - OverlayPanel
-
-/// The shared floating-panel shell (E2 / WI-5): a fixed-width `Slate.Surface.card` panel with the family's
-/// rounded corners, hairline border, and drop shadow — used by ``ConnectHostView`` and
-/// ``RemoteWindowPickerModal`` so the aislopdesk-specific overlays read as one family with the palette /
-/// cheat sheet (which bake the same shell inline). The ZStack in ``OverlayHostView`` centers it.
-struct OverlayPanel<Content: View>: View {
-    /// The fixed panel width (the palette is ~720; the editor/picker forms are tighter).
-    var width: CGFloat = 460
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        content()
-            .frame(width: width)
-            .background(Slate.Surface.card)
-            .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusCard))
-            .overlay(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                    .stroke(Slate.Line.card, lineWidth: Slate.Metric.hairline),
-            )
-            .shadow(color: Slate.State.shadow, radius: 30, x: 0, y: 12)
-    }
-}
-
-// MARK: - CloseConfirmationPanel
-
-/// E3 WI-4 — the in-app PANE/TAB close confirmation (the ⌘W / close-button busy-shell + policy guard that
-/// parks ``WorkspaceStore/pendingClose``). A compact ``OverlayPanel`` with a Cancel / Close button row;
-/// "Close" is tinted with the warn role (a destructive action). The window-scope confirmation is the macOS
-/// native `NSAlert` in ``WindowCloseConfirmationDelegate``; this covers the pane/tab scope on both platforms
-/// so a close behind a running command always surfaces a prompt instead of silently doing nothing. The store
-/// owns the resolve (`confirmPendingClose()` / `cancelPendingClose()`); this view is pure plumbing.
-/// `Slate.*` tokens ONLY (raw font/radius literals fail `scripts/check-ds-leaks.sh`).
-struct CloseConfirmationPanel: View {
-    /// The headline ("Close “<pane>”?") the host builds from the pending pane's spec.
-    let title: String
-    /// The policy-aware subtitle the host precomputes via ``reason(for:scope:)`` (E3 carry-over #4). A
-    /// busy-process park reads "a process is still running"; an `always` / `multiple_tabs` park reads the
-    /// softer "are you sure" / "this window has multiple tabs" copy (matching the macOS NSAlert intent).
-    let subtitle: String
-    /// Resolve actions wired to the store by the host.
-    var onConfirm: () -> Void
-    var onCancel: () -> Void
-
-    /// The close-confirmation subtitle for a given resolved policy + close scope (E3 carry-over #4). PURE —
-    /// unit-pinnable without instantiating the view (no `NSAlert` / window). The wording stays soft: a running
-    /// process names the consequence; `always` asks plainly (scoped to "pane" vs "tab"); `multiple_tabs` warns
-    /// that the window holds several tabs.
+/// The pure close-confirmation copy (E3 carry-over #4). Once a hand-drawn panel, now a caseless namespace for
+/// the wording ONLY — the confirmation itself is a native `.alert` (``OverlayHostView``). Kept as a static
+/// helper so ``CloseConfirmationPanelTests`` still pins the policy→copy mapping without instantiating a view.
+enum CloseConfirmationPanel {
+    /// The close-confirmation subtitle for a given resolved policy + close scope. PURE — unit-pinnable. The
+    /// wording stays soft: a running process names the consequence; `always` asks plainly (scoped to "pane" vs
+    /// "tab"); `multiple_tabs` warns that the window holds several tabs.
     static func reason(for policy: CloseConfirmationPolicy, scope: CloseScope = .tab) -> String {
         switch policy {
         case .process:
@@ -267,56 +243,6 @@ struct CloseConfirmationPanel: View {
         case .multipleTabs:
             "This window has multiple tabs."
         }
-    }
-
-    var body: some View {
-        OverlayPanel(width: 380) {
-            VStack(alignment: .leading, spacing: Slate.Metric.space3) {
-                HStack(spacing: Slate.Metric.space2) {
-                    Image(systemSymbol: .exclamationmarkTriangle)
-                        .font(.system(size: Slate.Typeface.body))
-                        .foregroundStyle(Slate.Status.warn)
-                    Text(title)
-                        .font(.system(size: Slate.Typeface.body, weight: .semibold))
-                        .foregroundStyle(Slate.Text.primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Text(subtitle)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: Slate.Metric.space2) {
-                    Spacer(minLength: 0)
-                    Button("Cancel") { onCancel() }
-                        .buttonStyle(.plain)
-                        .font(.system(size: Slate.Typeface.body))
-                        .foregroundStyle(Slate.Text.secondary)
-                        .padding(.horizontal, Slate.Metric.space3)
-                        .padding(.vertical, Slate.Metric.space1)
-                    Button { onConfirm() } label: {
-                        Text("Close")
-                            .font(.system(size: Slate.Typeface.body, weight: .semibold))
-                            .foregroundStyle(Slate.Surface.card)
-                            .padding(.horizontal, Slate.Metric.space3)
-                            .padding(.vertical, Slate.Metric.space1)
-                            .background(
-                                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                                    .fill(Slate.Status.warn),
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(Slate.Metric.space4)
-        }
-        #if os(macOS)
-        .onExitCommand { onCancel() }
-        #else
-        .onKeyPress(.escape, phases: .down) { _ in
-            onCancel()
-            return .handled
-        }
-        #endif
     }
 }
 #endif

@@ -85,7 +85,9 @@ struct SettingsSheet: View {
                 }
             }
         }
-        .tint(Slate.State.accent)
+        // Native settings sheet → SYSTEM accent (reset the inherited theme tint) so its stock controls read as
+        // native controls; appearance still tracks the theme via `preferredColorScheme`.
+        .tint(nil)
         .preferredColorScheme(Slate.colorScheme)
     }
 }
