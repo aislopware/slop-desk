@@ -92,9 +92,33 @@ final class ANSIOutputStylerTests: XCTestCase {
         XCTAssertEqual(plain("\u{1B}]0;my title\u{07}visible"), "visible")
     }
 
-    func testCRLFCollapsedAndLoneCRDropped() {
+    func testCRLFCollapsedAndLoneCROverwrites() {
         XCTAssertEqual(plain("a\r\nb"), "a\nb") // CRLF → LF
-        XCTAssertEqual(plain("abc\rX"), "abcX") // lone CR (overwrite motion) dropped
+        // A lone CR is OVERWRITE motion: the cursor rewinds to column 0 and "X" replaces the first cell,
+        // leaving "Xbc" (the terminal's final frame) — NOT the concatenation "abcX".
+        XCTAssertEqual(plain("abc\rX"), "Xbc")
+    }
+
+    func testProgressBarRendersFinalFrameNotConcatenation() {
+        // Three redraws of one line via CR (the pip/cargo/curl progress-bar idiom). The FINAL frame wins;
+        // the earlier frames are overwritten, not concatenated into one giant line.
+        XCTAssertEqual(plain("10.2 MB\r10.3 MB\r10.5 MB"), "10.5 MB")
+    }
+
+    func testEraseToEndOfLineTruncatesShorterFrame() {
+        // A longer frame then a shorter one that clears the tail via `ESC [ K` — no leftover characters.
+        XCTAssertEqual(plain("100%%\rok\u{1B}[K"), "ok")
+    }
+
+    func testLongDigitSGRParamDoesNotTrap() {
+        // A degenerate SGR with a 30-digit parameter must NOT overflow Int / trap — the run survives.
+        XCTAssertEqual(plain("\u{1B}[999999999999999999999999999999mX"), "X")
+    }
+
+    func testDCSAndAPCPayloadsAreStripped() {
+        // A DCS (sixel) and an APC (kitty graphics) payload must be consumed up to ST, not leaked as text.
+        XCTAssertEqual(plain("\u{1B}Pq#0;2;100;0;0~~~\u{1B}\\visible"), "visible")
+        XCTAssertEqual(plain("\u{1B}_Gf=100,payload==\u{1B}\\after"), "after")
     }
 
     func testTrailingReverseVideoEOLMarkDropped() {

@@ -95,6 +95,21 @@ struct BlockHistoryView: View {
         .onChange(of: selection) { _, newValue in
             if let index = newValue { fetchIfNeeded(index) }
         }
+        // Completion edge: a block selected WHILE RUNNING resolves to `nil` (the host only holds output for
+        // COMPLETED blocks). When it later completes (or its byte count grows), invalidate the poisoned nil
+        // and refetch — otherwise the detail would read "Output unavailable" forever. Keyed on the selected
+        // block's completion + byte count so a running→done transition (or a growing tail) re-fires it.
+        .onChange(of: selectedBlockRevision) { _, _ in
+            if let index = selection { fetchIfNeeded(index) }
+        }
+        // Reconnect edge: a fresh session (`blocks.reset()`) bumps the model epoch and re-segments block
+        // indices from 0. Discard the whole index-keyed cache so a reused index can't serve the dead
+        // session's bytes (the `.id(activePaneID)` in InspectorColumn covers pane switches; this covers a
+        // reconnect within the SAME pane).
+        .onChange(of: model.epoch) { _, _ in
+            outputCache.removeAll()
+            fetching.removeAll()
+        }
         // ⌘↑ / ⌘↓ step the selection through the (filtered) newest-first list.
         .overlay(keyboardStepper)
     }
@@ -174,6 +189,14 @@ struct BlockHistoryView: View {
         return blocks.first { $0.index == selection }
     }
 
+    /// A cheap Equatable digest of the selected block's OUTPUT-AVAILABILITY state (its completion flag +
+    /// held byte count) — the trigger for a completion-edge refetch. A running→complete transition, or a
+    /// growing captured-output length, changes it and re-runs `fetchIfNeeded` for the selected index.
+    private var selectedBlockRevision: String {
+        guard let block = selectedBlock else { return "" }
+        return "\(block.complete)-\(block.outputLen)"
+    }
+
     /// The resolved output bytes for a cached index. The cache value is itself optional (`nil` = fetched
     /// but unavailable), so a `case let` unwraps the OUTER optional (present = resolved) and yields the
     /// inner value; an absent key (not yet fetched) is `nil`.
@@ -197,10 +220,18 @@ struct BlockHistoryView: View {
         fetchIfNeeded(index)
     }
 
-    /// Requests `index`'s output once; caches the result (incl. `nil` for unavailable) so a re-select
-    /// does not re-fire the wire request.
+    /// Requests `index`'s output, caching the result so a re-select does not re-fire the wire request.
+    /// A cached NON-nil result is final. A cached `nil` (host had nothing — typically a block that was
+    /// STILL RUNNING when first selected) is NOT permanent: it is refetched once the block reports held
+    /// output (`outputLen > 0`), so a running→complete block recovers instead of reading "Output
+    /// unavailable" forever.
     private func fetchIfNeeded(_ index: UInt32) {
-        guard outputCache.index(forKey: index) == nil, !fetching.contains(index) else { return }
+        guard !fetching.contains(index) else { return }
+        if case let .some(cached) = outputCache[index] {
+            if cached != nil { return } // real bytes already cached — never refetch
+            // A cached nil: only refetch once the host actually holds output for the block now.
+            guard let block = blocks.first(where: { $0.index == index }), block.outputLen > 0 else { return }
+        }
         fetching.insert(index)
         requestOutput(index) { result in
             fetching.remove(index)
@@ -211,8 +242,11 @@ struct BlockHistoryView: View {
     /// Copies a block's output to the pasteboard as VT-stripped plain text, fetching the raw bytes first if
     /// not cached (the clipboard always gets clean text — the SGR colour runs are for the on-screen render).
     private func copyOutput(for index: UInt32) {
-        if let cached = outputCache[index] {
-            if let bytes = cached { copyToPasteboard(BlockOutputSanitizer.plainText(from: bytes)) }
+        // Real bytes already cached → copy them. An ABSENT key OR a cached `nil` (e.g. the block was
+        // selected while still running) both (re)fetch: a copy is an explicit user action gated on
+        // `outputLen > 0`, so a fresh request is cheap and recovers a block whose earlier nil is now stale.
+        if case let .some(bytes)? = outputCache[index] {
+            copyToPasteboard(BlockOutputSanitizer.plainText(from: bytes))
             return
         }
         requestOutput(index) { result in

@@ -43,7 +43,34 @@ final class BlockOutputSanitizerTests: XCTestCase {
     func testNewlinesPreservedAndCRLFCollapsed() {
         XCTAssertEqual(strip("line1\nline2"), "line1\nline2")
         XCTAssertEqual(strip("line1\r\nline2"), "line1\nline2", "CRLF collapses to LF")
-        XCTAssertEqual(strip("over\rwrite"), "overwrite", "a lone CR (overwrite motion) is dropped")
+        // A lone CR is OVERWRITE motion: "write" rewinds to column 0 and overwrites "over" → "write"
+        // (the terminal's final frame), NOT the concatenation "overwrite".
+        XCTAssertEqual(strip("over\rwrite"), "write")
+    }
+
+    func testProgressBarRendersFinalFrameNotConcatenation() {
+        // A pip/cargo/curl progress line redrawn via CR: the FINAL frame wins, earlier frames overwritten.
+        XCTAssertEqual(strip("10.2 MB\r10.3 MB\r10.5 MB"), "10.5 MB")
+        // The multi-line case: each committed line keeps its final frame.
+        XCTAssertEqual(strip("aaaa\rbb\nnext"), "bbaa\nnext")
+    }
+
+    func testEraseToEndOfLineTruncatesShorterFrame() {
+        // A shorter frame that clears the stale tail via `ESC [ K` leaves no leftover characters.
+        XCTAssertEqual(strip("100%%\rok\u{1B}[K"), "ok")
+        // `ESC [ 2 K` / `ESC [ 1 K` stay stripped no-ops (only erase-to-end is honoured).
+        XCTAssertEqual(strip("done\u{1B}[2K"), "done")
+    }
+
+    func testLongDigitSGRParamDoesNotTrap() {
+        // A degenerate SGR with a 30-digit parameter must NOT overflow Int / trap — the run survives.
+        XCTAssertEqual(strip("\u{1B}[999999999999999999999999999999mX"), "X")
+    }
+
+    func testDCSAndAPCPayloadsAreStripped() {
+        // A DCS (sixel) and an APC (kitty graphics) payload must be consumed up to ST, not leaked as text.
+        XCTAssertEqual(strip("\u{1B}Pq#0;2;100;0;0~~~\u{1B}\\visible"), "visible")
+        XCTAssertEqual(strip("\u{1B}_Gf=100,payload==\u{1B}\\after"), "after")
     }
 
     func testTabsPreserved() {
@@ -110,8 +137,11 @@ final class BlockOutputSanitizerTests: XCTestCase {
     }
 
     func testZshEolMarkWithLeadingCRStripped() {
-        // Some configs emit a leading CR too (`\r` + mark + pad + `\r`). The lone CRs drop, the mark chops.
-        XCTAssertEqual(strip("hello\r\u{1B}[7m%\u{1B}[27m         \r"), "hello")
+        // A leading CR before the mark rewinds to column 0, so the reverse-video mark + pad OVERWRITE the
+        // prior "hello" (faithful terminal behavior) and the trailing EOL mark then chops the whole line.
+        // Real zsh does NOT emit a leading CR (the mark prints at the current cursor — see the tests above);
+        // this synthetic input just proves the CR-overwrite + mark-chop path never leaves a stray artifact.
+        XCTAssertEqual(strip("hello\r\u{1B}[7m%\u{1B}[27m         \r"), "")
     }
 
     func testOrdinaryTrailingPercentPreserved() {

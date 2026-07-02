@@ -40,8 +40,19 @@ enum ANSIOutputStyler {
         var reverse = false
     }
 
+    /// One styled cell of the CURRENT visual line: the byte at a column plus the SGR style in force when it
+    /// was written. Overwrite motion (a lone CR) rewinds the cursor so a later byte replaces the cell here.
+    private struct Cell { var byte: UInt8
+        var style: SGRState
+    }
+
     /// Renders `bytes` into a coloured `AttributedString`. `palette` is the active theme's 16 ANSI colours
     /// (index 0–15) as 24-bit RGB; `defaultFg`/`defaultBg` are the terminal fg/bg used for unset/reverse.
+    ///
+    /// CR line-rewrite semantics (so a progress bar renders as its FINAL frame, not every frame
+    /// concatenated): the current visual line is a column-indexed cell buffer with a cursor. A printable
+    /// byte writes at the cursor (overwriting an earlier frame's cell), a lone CR rewinds the cursor to
+    /// column 0, `ESC [ K` (erase-to-end) truncates the line at the cursor, and LF commits the line.
     static func attributed(
         from bytes: Data,
         palette: [UInt32],
@@ -52,60 +63,69 @@ enum ANSIOutputStyler {
         let input = [UInt8](bytes)
         let n = input.count
         var result = AttributedString()
-        var run: [UInt8] = []
         var state = SGRState()
-        // A pending reverse-video `%`/`#` + pad, held OUT of `run` so a TRAILING zsh EOL mark can be
-        // discarded at end-of-buffer. `pendingStyle` is the style captured when the candidate opened, used
-        // if ordinary content later proves it was NOT a trailing mark and it must be emitted as its own run.
-        var pendingEOL: [UInt8] = []
-        var pendingStyle = SGRState()
+        var line: [Cell] = [] // the current visual line (overwrite semantics)
+        var col = 0 // cursor column within `line` (invariant: 0 ≤ col ≤ line.count)
+        // Column of a reverse-video `%`/`#` EOL-mark candidate on the current line, or `nil`. A trailing
+        // zsh PROMPT_EOL_MARK (reverse `%`/`#` + pad + CR) is chopped from here at end-of-buffer.
+        var eolMarkCol: Int?
 
-        func flushRun() {
-            guard !run.isEmpty else { return }
-            // swiftlint:disable:next optional_data_string_conversion
-            var piece = AttributedString(String(decoding: run, as: UTF8.self))
-            apply(state, to: &piece, palette: palette, defaultFg: defaultFg, defaultBg: defaultBg)
-            result.append(piece)
-            run.removeAll(keepingCapacity: true)
+        // Writes `b` (styled with the current `state`) at the cursor, overwriting or extending, and advances.
+        func put(_ b: UInt8) {
+            let cell = Cell(byte: b, style: state)
+            if col < line.count { line[col] = cell } else { line.append(cell) }
+            col += 1
         }
-        // Ordinary content invalidated the trailing-mark hypothesis → emit the buffered `%`/pad as its own
-        // run (with the style it had) so nothing is lost. A no-op when there is no pending candidate.
-        func commitPendingEOL() {
-            guard !pendingEOL.isEmpty else { return }
-            // swiftlint:disable:next optional_data_string_conversion
-            var piece = AttributedString(String(decoding: pendingEOL, as: UTF8.self))
-            apply(pendingStyle, to: &piece, palette: palette, defaultFg: defaultFg, defaultBg: defaultBg)
-            result.append(piece)
-            pendingEOL.removeAll(keepingCapacity: true)
+        // Renders the accumulated `line` cells into `result`, coalescing consecutive equal-style cells into
+        // one styled run (a multi-byte UTF-8 scalar's bytes share a style, so it decodes intact).
+        func renderLine() {
+            var idx = 0
+            while idx < line.count {
+                let style = line[idx].style
+                var runBytes: [UInt8] = []
+                while idx < line.count, line[idx].style == style {
+                    runBytes.append(line[idx].byte)
+                    idx += 1
+                }
+                // swiftlint:disable:next optional_data_string_conversion
+                var piece = AttributedString(String(decoding: runBytes, as: UTF8.self))
+                apply(style, to: &piece, palette: palette, defaultFg: defaultFg, defaultBg: defaultBg)
+                result.append(piece)
+            }
+        }
+        func commitLine() {
+            renderLine()
+            result.append(AttributedString("\n"))
+            line.removeAll(keepingCapacity: true)
+            col = 0
+            eolMarkCol = nil
         }
 
         var i = 0
         while i < n {
             let byte = input[i]
             switch byte {
-            case 0x1B: // ESC — an escape sequence: apply if it is an SGR, otherwise strip it. A style change
-                // does NOT decide the pending EOL candidate's fate (the `%`+pad straddle the `ESC[0m` reset).
+            case 0x1B: // ESC — apply an SGR, honour `ESC [ K` erase-to-end, else strip the sequence.
                 let end = skipEscapeSequence(input, from: i)
                 if let params = sgrParams(input, from: i, upTo: end) {
-                    flushRun() // the style change starts a new run
                     applySGR(params, to: &state)
+                } else if isEraseToLineEnd(input, from: i, upTo: end), col < line.count {
+                    line.removeLast(line.count - col) // erase cursor→end of line
                 }
                 i = end
-            case 0x0A: // LF — a real newline: ordinary content, so the pending candidate was not trailing
-                commitPendingEOL()
-                run.append(0x0A)
+            case 0x0A: // LF — a real newline: commit the current visual line
+                commitLine()
                 i += 1
-            case 0x09: // HT — keep the tab (ordinary content)
-                commitPendingEOL()
-                run.append(0x09)
+            case 0x09: // HT — keep the tab (ordinary content) at the cursor
+                eolMarkCol = nil
+                put(0x09)
                 i += 1
-            case 0x0D: // CR — collapse `\r\n` → `\n` (ordinary); a lone `\r` is overwrite motion (drop, and
-                // it does NOT invalidate a pending mark — the zsh EOL mark ends in exactly a lone CR).
+            case 0x0D: // CR — `\r\n` → newline; a lone `\r` rewinds the cursor to column 0 (overwrite motion)
                 if i + 1 < n, input[i + 1] == 0x0A {
-                    commitPendingEOL()
-                    run.append(0x0A)
+                    commitLine()
                     i += 2
                 } else {
+                    col = 0
                     i += 1
                 }
             case 0x00...0x08,
@@ -116,28 +136,21 @@ enum ANSIOutputStyler {
                 i += 1 // other C0 controls + DEL — formatting noise, drop
             case 0x23,
                  0x25: // '#' / '%' — a zsh EOL-mark candidate iff currently reverse-video
-                if state.reverse {
-                    if pendingEOL.isEmpty { flushRun()
-                        pendingStyle = state
-                    } // open a candidate
-                    pendingEOL.append(byte)
-                } else {
-                    commitPendingEOL()
-                    run.append(byte)
-                }
+                eolMarkCol = state.reverse ? col : nil
+                put(byte)
                 i += 1
-            case 0x20: // space — pad after the candidate (buffer it); otherwise ordinary content
-                if pendingEOL.isEmpty { run.append(byte) } else { pendingEOL.append(byte) }
+            case 0x20: // space — pad (keep any pending EOL-mark candidate; a bare mark can be padded out)
+                put(byte)
                 i += 1
-            default: // printable / UTF-8 byte — ordinary content invalidates a pending candidate
-                commitPendingEOL()
-                run.append(byte)
+            default: // printable / UTF-8 byte — ordinary content invalidates a pending EOL candidate
+                eolMarkCol = nil
+                put(byte)
                 i += 1
             }
         }
-        // A still-pending candidate at end-of-buffer WAS the trailing mark → discard it (do not commit).
-        pendingEOL.removeAll()
-        flushRun()
+        // A trailing zsh EOL mark (reverse `%`/`#` + pad, still pending at end-of-buffer) is chopped.
+        if let eolMarkCol, eolMarkCol < line.count { line.removeLast(line.count - eolMarkCol) }
+        renderLine()
         return result
     }
 
@@ -295,7 +308,11 @@ enum ANSIOutputStyler {
                 value = 0
                 sawDigit = false
             } else if (0x30...0x39).contains(b) {
-                value = value * 10 + Int(b - 0x30)
+                // Cap the accumulation: no meaningful SGR code exceeds a few digits, and an unbounded digit
+                // run (e.g. a corrupt `ESC [ 99999…m`) would otherwise overflow Int and TRAP (this skimmer
+                // must NEVER trap — see the file header). Once past the cap the value is frozen (harmless:
+                // it can no longer match any handled SGR code).
+                if value < 100_000_000 { value = value * 10 + Int(b - 0x30) }
                 sawDigit = true
             } else {
                 return nil // intermediate byte — not a plain SGR
@@ -303,6 +320,24 @@ enum ANSIOutputStyler {
         }
         params.append(sawDigit ? value : 0)
         return params
+    }
+
+    /// True iff `input[start…end]` is an ERASE-TO-END-OF-LINE CSI (`ESC [ K` or `ESC [ 0 K`) — the form a
+    /// progress bar uses to clear stale trailing characters after a shorter frame. `ESC [ 1 K` / `ESC [ 2 K`
+    /// (and any other final byte) return `false` so they stay stripped no-ops, matching the linear skim of
+    /// the rest of the display-editing repertoire.
+    private static func isEraseToLineEnd(_ input: [UInt8], from start: Int, upTo end: Int) -> Bool {
+        guard end - start >= 3, input[start + 1] == 0x5B, input[end - 1] == 0x4B else { return false } // `ESC [ … K`
+        if end - 1 > start + 2, (0x3C...0x3F).contains(input[start + 2]) { return false } // private-mode CSI
+        var value = 0
+        var sawDigit = false
+        for j in (start + 2)..<(end - 1) {
+            let b = input[j]
+            guard (0x30...0x39).contains(b) else { return false } // `;` / intermediate — not a simple erase
+            if value < 100_000_000 { value = value * 10 + Int(b - 0x30) } // capped (never trap on a digit run)
+            sawDigit = true
+        }
+        return !sawDigit || value == 0 // empty param == `0` == erase-to-end
     }
 
     /// Index PAST the escape sequence at `start` (`input[start] == ESC`): CSI to its final byte, OSC to its
@@ -327,6 +362,18 @@ enum ANSIOutputStyler {
                 j += 1
             }
             return n
+        case 0x50, // 'P' DCS
+             0x58, // 'X' SOS
+             0x5E, // '^' PM
+             0x5F, // '_' APC
+             0x6B: // 'k' (screen/tmux title) — string sequences: consume the payload up to ST (ESC \) or BEL
+            var j = next + 1
+            while j < n {
+                if input[j] == 0x07 { return j + 1 } // BEL terminator
+                if input[j] == 0x1B, j + 1 < n, input[j + 1] == 0x5C { return j + 2 } // ST = ESC '\'
+                j += 1
+            }
+            return n // unterminated string sequence — consumed to the end
         default:
             let intro = input[next]
             if intro == 0x28 || intro == 0x29 || intro == 0x2A || intro == 0x2B, next + 1 < n {

@@ -26,34 +26,55 @@ public enum BlockOutputSanitizer {
         out.reserveCapacity(input.count)
         var i = 0
         let n = input.count
+        // CR line-rewrite semantics: the current visual line is a column-indexed byte buffer with a cursor,
+        // so a progress bar (which redraws one line via `\r`) collapses to its FINAL frame instead of every
+        // frame concatenated. A printable byte writes at the cursor (overwriting an earlier frame), a lone
+        // `\r` rewinds the cursor to column 0, `ESC [ K` truncates at the cursor, and LF commits the line.
+        var line: [UInt8] = []
+        var col = 0 // invariant: 0 ≤ col ≤ line.count
         // Reverse-video (SGR 7) tracking so a trailing zsh PROMPT_EOL_MARK can be dropped. zsh prints a
         // reverse-video `%` (or `#` for root) padded with spaces + a bare CR when the command's last output
         // line lacks a trailing newline — it lands INSIDE the captured C→D bytes and, once the SGR is
-        // stripped, would otherwise survive as a bare trailing "%". `eolMark` remembers the `out` offset of
-        // a reverse-video `%`/`#` that is followed only by pad whitespace; it is chopped after the scan.
+        // stripped, would otherwise survive as a bare trailing "%". `eolMark` remembers the column on the
+        // current line of a reverse-video `%`/`#` followed only by pad whitespace; it is chopped at the end.
         var reverseOn = false
         var eolMark: Int?
+        func put(_ b: UInt8) {
+            if col < line.count { line[col] = b } else { line.append(b) }
+            col += 1
+        }
+        func commitLine() {
+            out.append(contentsOf: line)
+            out.append(0x0A)
+            line.removeAll(keepingCapacity: true)
+            col = 0
+            eolMark = nil
+        }
         while i < n {
             let byte = input[i]
             switch byte {
             case 0x1B: // ESC — start of an escape sequence
                 let end = skipEscapeSequence(input, from: i)
-                if let effect = sgrReverseEffect(input, from: i, upTo: end) { reverseOn = effect }
+                if let effect = sgrReverseEffect(input, from: i, upTo: end) {
+                    reverseOn = effect
+                } else if isEraseToLineEnd(input, from: i, upTo: end), col < line.count {
+                    line.removeLast(line.count - col) // `ESC [ K` — erase cursor→end of line
+                }
                 i = end
-            case 0x0A: // LF — keep (a real newline)
-                out.append(0x0A)
-                eolMark = nil // real content follows/precedes → not a trailing EOL mark
+            case 0x0A: // LF — commit the current visual line (a real newline)
+                commitLine()
                 i += 1
-            case 0x09: // HT — keep (a tab; meaningful whitespace in pasted output)
-                out.append(0x09)
+            case 0x09: // HT — keep (a tab; meaningful whitespace in pasted output) at the cursor
+                eolMark = nil
+                put(0x09)
                 i += 1
-            case 0x0D: // CR — collapse `\r\n` → `\n`; drop a lone `\r` (overwrite motion)
+            case 0x0D: // CR — `\r\n` → newline; a lone `\r` rewinds the cursor to column 0 (overwrite motion)
                 if i + 1 < n, input[i + 1] == 0x0A {
-                    out.append(0x0A)
-                    eolMark = nil
+                    commitLine()
                     i += 2
                 } else {
-                    i += 1 // lone CR terminates the EOL mark's pad — leave any pending mark intact
+                    col = 0
+                    i += 1
                 }
             case 0x00...0x08,
                  0x0B,
@@ -64,24 +85,25 @@ public enum BlockOutputSanitizer {
                 i += 1
             case 0x23,
                  0x25: // '#' / '%' — candidate zsh EOL mark iff currently reverse-video
-                eolMark = reverseOn ? out.count : nil
-                out.append(byte)
+                eolMark = reverseOn ? col : nil
+                put(byte)
                 i += 1
             case 0x20: // space — pad after the EOL mark; keep it AND any pending mark candidate
-                out.append(byte)
+                put(byte)
                 i += 1
             default:
                 // Printable ASCII or a UTF-8 continuation/lead byte (≥ 0x80) — keep verbatim; the final
                 // lossy UTF-8 decode reassembles multi-byte scalars (and replaces any broken ones). Any
                 // ordinary printable invalidates a pending EOL-mark candidate.
                 eolMark = nil
-                out.append(byte)
+                put(byte)
                 i += 1
             }
         }
-        // Chop a trailing zsh PROMPT_EOL_MARK: the reverse-video `%`/`#` at `eolMark` plus the pad
-        // whitespace after it (everything from the mark to end-of-buffer is `%`/`#` + spaces by construction).
-        if let eolMark { out.removeLast(out.count - eolMark) }
+        // Chop a trailing zsh PROMPT_EOL_MARK from the current (unterminated) line: the reverse-video
+        // `%`/`#` at `eolMark` plus the pad whitespace after it, then flush the line WITHOUT a newline.
+        if let eolMark, eolMark < line.count { line.removeLast(line.count - eolMark) }
+        out.append(contentsOf: line)
         // LOSSY by design: a clipboard paste is best-effort — a broken UTF-8 byte in the captured output
         // becomes U+FFFD rather than dropping the whole copy. `String(decoding:as:)` is the non-failable
         // lossy initializer; the failable `String(bytes:encoding:)` the lint rule prefers would return nil
@@ -117,6 +139,18 @@ public enum BlockOutputSanitizer {
                 j += 1
             }
             return n // unterminated OSC — consumed to the end
+        case 0x50, // 'P' DCS (sixel, DECRQSS, …)
+             0x58, // 'X' SOS
+             0x5E, // '^' PM
+             0x5F, // '_' APC (kitty graphics)
+             0x6B: // 'k' (screen/tmux title) — string sequences: consume the payload up to ST (ESC \) or BEL
+            var j = next + 1
+            while j < n {
+                if input[j] == 0x07 { return j + 1 } // BEL terminator
+                if input[j] == 0x1B, j + 1 < n, input[j + 1] == 0x5C { return j + 2 } // ST = ESC '\'
+                j += 1
+            }
+            return n // unterminated string sequence — consumed to the end
         default:
             // A short escape (charset select `ESC ( X`, keypad `ESC =`, etc.). Most are two bytes; the
             // charset-designator forms are three (`ESC ( B`). Skip the introducer; if the next byte is a
@@ -154,7 +188,9 @@ public enum BlockOutputSanitizer {
             if b == 0x3B { // ';' — parameter separator
                 commit()
             } else if (0x30...0x39).contains(b) { // '0'…'9'
-                value = value * 10 + Int(b - 0x30)
+                // Cap the accumulation so a degenerate long-digit parameter (e.g. `ESC [ 99999…m`) can never
+                // overflow Int and TRAP — this skimmer must never crash on malformed input (see the header).
+                if value < 100_000_000 { value = value * 10 + Int(b - 0x30) }
                 sawDigit = true
             } else {
                 return nil // an intermediate byte (e.g. `ESC [ ? … m`) — not a plain SGR we interpret
@@ -162,5 +198,22 @@ public enum BlockOutputSanitizer {
         }
         commit()
         return result
+    }
+
+    /// True iff `input[start…end]` is an ERASE-TO-END-OF-LINE CSI (`ESC [ K` or `ESC [ 0 K`) — the form a
+    /// progress bar uses to clear stale trailing characters after a shorter frame. `ESC [ 1 K` / `ESC [ 2 K`
+    /// (and any other final byte) return `false` so they stay stripped no-ops.
+    private static func isEraseToLineEnd(_ input: [UInt8], from start: Int, upTo end: Int) -> Bool {
+        guard end - start >= 3, input[start + 1] == 0x5B, input[end - 1] == 0x4B else { return false } // `ESC [ … K`
+        if end - 1 > start + 2, (0x3C...0x3F).contains(input[start + 2]) { return false } // private-mode CSI
+        var value = 0
+        var sawDigit = false
+        for j in (start + 2)..<(end - 1) {
+            let b = input[j]
+            guard (0x30...0x39).contains(b) else { return false } // `;` / intermediate — not a simple erase
+            if value < 100_000_000 { value = value * 10 + Int(b - 0x30) } // capped (never trap on a digit run)
+            sawDigit = true
+        }
+        return !sawDigit || value == 0 // empty param == `0` == erase-to-end
     }
 }

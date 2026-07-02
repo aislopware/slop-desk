@@ -75,12 +75,14 @@ struct InspectorColumn: View {
         return store.tree.activeSession?.specs[id]?.lastKnownCwd
     }
 
-    /// The focused pane's working directory for the Info-tab Working Directory section (E9/WI-6): the
-    /// host-resolved cwd if the metadata fetch has landed, else the pane spec's last-known cwd. An empty
-    /// string collapses to `nil` so the section shows the "—" placeholder and Copy Path stays disabled.
+    /// The focused pane's working directory for the Info-tab Working Directory section (E9/WI-6): the pane
+    /// spec's live `lastKnownCwd` (kept fresh on every `cd` via OSC-7 / the post-command cwd RPC) if known,
+    /// else the host-resolved cwd from the metadata fetch. `lastKnownCwd` is preferred because the metadata
+    /// model's `cwd` is only refetched on pane-focus/(re)connect — a `cd` in an already-focused pane would
+    /// otherwise keep showing the bind-time directory until the next refresh. An empty string collapses to
+    /// `nil` so the section shows the "—" placeholder and Copy Path stays disabled.
     private var resolvedCwd: String? {
-        guard let candidate = activeModel.cwd ?? cwd, !candidate.isEmpty else { return nil }
-        return candidate
+        InfoTabFormatting.resolveWorkingDirectory(lastKnownCwd: cwd, modelCwd: activeModel.cwd)
     }
 
     /// The focused pane's typed metadata façade, or `nil` while it is disconnected.
@@ -88,16 +90,25 @@ struct InspectorColumn: View {
         activeLive?.connection?.activeMetadataClient
     }
 
-    /// Identity of "what the panel is showing": the focused pane AND its (re)connected metadata façade.
-    /// A change — switching panes, or a pane (re)connecting with a fresh `MetadataClient` — re-fires the
-    /// bind+refresh `.task` (which auto-cancels the prior, so a stale in-flight fetch can't land late).
+    /// Identity of "what the panel is showing": the focused pane, its metadata façade, AND the connection's
+    /// live status. A change — switching panes, a pane (re)connecting with a fresh `MetadataClient`, OR a
+    /// WARM reconnect (same `MetadataClient` instance, `status` cycling `.connected` → `.reconnecting` →
+    /// `.connected`) — re-fires the bind+refresh `.task` (which auto-cancels the prior, so a stale in-flight
+    /// fetch can't land late). Without `status` in the key, a warm ReconnectManager resume (which never
+    /// mints a new `MetadataClient`) would leave a bind-time-refresh-during-the-drop's empty results
+    /// (processes/ports/git/files) cached forever, since nothing else re-triggers the fetch.
     private struct RefreshKey: Equatable {
         let pane: PaneID?
         let client: ObjectIdentifier?
+        let status: ConnectionViewModel.Status?
     }
 
     private var refreshKey: RefreshKey {
-        RefreshKey(pane: activePaneID, client: activeMetadataClient.map { ObjectIdentifier($0) })
+        RefreshKey(
+            pane: activePaneID,
+            client: activeMetadataClient.map { ObjectIdentifier($0) },
+            status: activeLive?.connection?.status,
+        )
     }
 
     /// The focused pane's metadata model (its cached one, or the empty placeholder until the `.task` mints
@@ -214,7 +225,10 @@ struct InspectorColumn: View {
 
     @ViewBuilder private var content: some View {
         switch details.selected {
-        case .info: infoContent
+        // `.id(activePaneID)` resets the Info tab's local interaction state too — critically the Commands
+        // navigator's `@State` selection + fetched-output cache — when the focused pane changes, so a stale
+        // index-keyed cache can never render one pane's output under another pane's same-index block.
+        case .info: infoContent.id(activePaneID)
         // `.id(activePaneID)` resets each tab's local interaction state (selected diff file / find query /
         // scroll position) when the focused pane changes — `activeModel`/`terminalModel` already switch to
         // that pane's data.
@@ -434,6 +448,17 @@ enum InfoTabFormatting {
     static func displayPath(_ path: String?) -> String {
         guard let path, !path.isEmpty else { return "—" }
         return path
+    }
+
+    /// Resolves the Working Directory row's source of truth: the pane spec's live `lastKnownCwd` (kept
+    /// fresh on every `cd` via OSC-7 / the post-command cwd RPC) wins over the metadata model's bind-time
+    /// `cwd` (only refetched on pane-focus/(re)connect, so it goes stale the moment the user `cd`s in an
+    /// already-focused pane). Falls back to the model cwd only when no live cwd is known yet (e.g. a
+    /// freshly-spawned pane before any prompt has fired). An empty candidate is treated as missing.
+    static func resolveWorkingDirectory(lastKnownCwd: String?, modelCwd: String?) -> String? {
+        if let lastKnownCwd, !lastKnownCwd.isEmpty { return lastKnownCwd }
+        if let modelCwd, !modelCwd.isEmpty { return modelCwd }
+        return nil
     }
 }
 #endif
