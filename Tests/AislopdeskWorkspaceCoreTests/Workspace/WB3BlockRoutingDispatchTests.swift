@@ -248,6 +248,22 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
 
     // MARK: - BlockJump choreography (the shared re-anchor jump — Commands panel / navigator / jump-to-failed)
 
+    /// ghostty parses the `jump_to_prompt` parameter as `i16` — an anchor delta outside that range fails
+    /// the binding parse and silently no-ops (the bare-`scroll_to_bottom` regression seen on hardware).
+    /// Pins the constant inside the parseable range while staying far above any real prompt count.
+    func testReAnchorDeltaFitsGhosttyI16BindingParameter() {
+        XCTAssertLessThanOrEqual(
+            BlockJump.reAnchorDelta,
+            Int(Int16.max) + 1,
+            "-reAnchorDelta must parse as ghostty's i16 binding parameter",
+        )
+        XCTAssertGreaterThanOrEqual(
+            BlockJump.reAnchorDelta,
+            10000,
+            "still far beyond any retained scrollback's prompt count",
+        )
+    }
+
     /// The choreography pin: ordinal 1 anchors only (the huge-negative jump already lands on prompt #1);
     /// ordinal k ≥ 2 adds a downward `k − 1` (the anchor row's own prompt is never counted by ghostty's
     /// downward iterator, so `k − 1` lands prompt #k exactly); ordinal 0 (unknown) emits NOTHING — a
@@ -485,6 +501,10 @@ private struct GhosttyScrollPromptModel {
     private var activeTop: Int { max(0, prompts.count - visibleRows) }
 
     /// Replays the recorded action strings (`scroll_to_top` / `scroll_to_bottom` / `jump_to_prompt:<delta>`).
+    /// FAITHFUL to ghostty's binding-action parser: `jump_to_prompt` is declared `i16` (`Binding.zig`),
+    /// so a delta outside −32768…32767 FAILS the parse and the whole action silently no-ops — exactly
+    /// the hardware failure the first shipped anchor (−1_000_000) hit. Parsing into `Int16` here makes
+    /// the end-to-end pins catch any out-of-range delta the store might emit.
     mutating func apply(_ actions: [String]) {
         for action in actions {
             switch action {
@@ -493,7 +513,7 @@ private struct GhosttyScrollPromptModel {
             default:
                 if action.hasPrefix("jump_to_prompt:"),
                    let raw = action.split(separator: ":").last,
-                   let delta = Int(raw) { scrollPrompt(delta) }
+                   let delta = Int16(raw) { scrollPrompt(Int(delta)) }
             }
         }
     }

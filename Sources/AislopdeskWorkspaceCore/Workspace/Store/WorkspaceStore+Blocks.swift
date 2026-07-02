@@ -86,18 +86,39 @@ public struct BlockBookmarkSeam {
 enum BlockJump {
     /// Larger than any real scrollback's prompt count — exhausts ghostty's upward `PromptIterator` so
     /// the viewport pins to the OLDEST retained prompt row (see the type doc).
-    nonisolated static let reAnchorDelta = 1_000_000
+    ///
+    /// MUST fit ghostty's binding parameter type: `jump_to_prompt` is declared `i16` (`Binding.zig`,
+    /// pinned v1.3.1), so any |delta| > 32768 fails the ACTION-STRING PARSE and the whole binding
+    /// silently no-ops — the jump then degenerates to bare `scroll_to_bottom` (the first shipped value,
+    /// 1_000_000, did exactly that on hardware). 32_000 is comfortably inside `i16` while still far
+    /// beyond any retained scrollback's prompt count.
+    nonisolated static let reAnchorDelta = 32000
 
     /// Anchors on the oldest retained prompt row, then jumps `actions` DOWN to 1-based prompt ordinal
     /// `ordinal`. `0` (unknown — a mid-stream join stamped no ordinal) is a graceful no-op: better no
     /// jump than a mis-landing.
     nonisolated static func toPromptOrdinal(_ ordinal: UInt32, using actions: TerminalSurfaceActions) {
-        guard ordinal >= 1 else { return }
-        actions.performBindingAction("scroll_to_bottom")
-        actions.performBindingAction("jump_to_prompt:-\(reAnchorDelta)")
-        if ordinal >= 2 {
-            actions.performBindingAction("jump_to_prompt:\(Int(ordinal) - 1)")
+        guard ordinal >= 1 else {
+            debugLog("jump SKIPPED: ordinal 0 (mid-stream join — host stamped no prompt ordinal)")
+            return
         }
+        let anchor1 = actions.performBindingAction("scroll_to_bottom")
+        let anchor2 = actions.performBindingAction("jump_to_prompt:-\(reAnchorDelta)")
+        var step = true
+        if ordinal >= 2 {
+            step = actions.performBindingAction("jump_to_prompt:\(Int(ordinal) - 1)")
+        }
+        debugLog(
+            "jump ordinal=\(ordinal): scroll_to_bottom=\(anchor1) "
+                + "anchor(-\(reAnchorDelta))=\(anchor2) step(\(Int(ordinal) - 1))=\(step)",
+        )
+    }
+
+    /// stderr diagnostics for the jump choreography, gated by `AISLOPDESK_BLOCKS_DEBUG == "1"`
+    /// (default-OFF) — the launch-from-terminal debugging seam (`AISLOPDESK_VIDEO_DEBUG` idiom).
+    private nonisolated static func debugLog(_ message: String) {
+        guard ProcessInfo.processInfo.environment["AISLOPDESK_BLOCKS_DEBUG"] == "1" else { return }
+        FileHandle.standardError.write(Data("[blocks] \(message)\n".utf8))
     }
 }
 

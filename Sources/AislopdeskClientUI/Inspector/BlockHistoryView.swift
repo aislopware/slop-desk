@@ -9,13 +9,14 @@
 // scrollback / copy command / copy output / star-unstar (the model's bookmarks API). ⌘↑/⌘↓ move the
 // selection. Empty state via `ContentUnavailableView`.
 //
-// This panel ABSORBED the old standalone Outline tab (E9): each row carries the Outline's relative
-// first-seen stamp (ticking via `TimelineView`), and the row jump — the context menu's "Jump to Command"
-// plus a trailing hover-independent jump button — routes to the injected `onJump` (the store's
-// `jumpToNavigatorBlockInActivePane`, the shared ordinal-anchored `BlockJump`).
+// This panel ABSORBED the old standalone Outline tab (E9): each row shows the clock time the command
+// ran (its client-receive first-seen stamp), and the row jump — the context menu's "Jump to Command" —
+// routes to the injected `onJump` (the store's `jumpToNavigatorBlockInActivePane`, the shared
+// ordinal-anchored `BlockJump`). No per-row jump icon: the menu is the single jump affordance.
 //
-// SYSTEM colours, SF Symbols, system + monospaced fonts only — NO design-system. The block model +
-// sanitizer are pure; this view holds only selection + a per-index fetched-output cache as `@State`.
+// Slate tokens + SF Symbols (the Outline-merge restyle — the panel matches the Info tab's other
+// sections: a SlateSectionHeader, flat separator-less rows, a hover-revealed jump arrow). The block
+// model + sanitizer are pure; this view holds selection + a per-index fetched-output cache as `@State`.
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -58,7 +59,6 @@ struct BlockHistoryView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
             if blocks.isEmpty {
                 emptyState
             } else {
@@ -74,36 +74,47 @@ struct BlockHistoryView: View {
 
     // MARK: Header
 
+    /// The section header — the SAME `SlateSectionHeader` idiom as the Info tab's other sections
+    /// (Working Directory / Claude Code), with the failed-only filter as a quiet trailing icon that
+    /// tints red only while active.
     private var header: some View {
-        HStack {
-            Text("Commands").font(.headline)
-            Spacer(minLength: 0)
-            Toggle(isOn: $failedOnly) {
-                Label("Failed only", systemImage: "xmark.octagon")
-                    .labelStyle(.iconOnly)
+        SlateSectionHeader("Commands") {
+            Button {
+                failedOnly.toggle()
+            } label: {
+                Image(systemName: "xmark.octagon")
+                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                    .foregroundStyle(failedOnly ? Slate.Status.err : Slate.Text.icon)
+                    .padding(2)
+                    .background(
+                        failedOnly ? Slate.State.hover : .clear,
+                        in: .rect(cornerRadius: Slate.Metric.radiusSmall),
+                    )
+                    .contentShape(.rect)
             }
-            .toggleStyle(.button)
+            .buttonStyle(.plain)
             .help("Show failed commands only")
+            .accessibilityLabel("Show failed commands only")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     // MARK: List
 
     private var list: some View {
-        // The periodic tick only re-renders the rows so the relative first-seen stamps ("4m") stay live
-        // on an idle pane; 30s matches the coarse buckets (the old Outline tab's cadence).
-        TimelineView(.periodic(from: .now, by: 30)) { context in
-            List(selection: $selection) {
-                ForEach(blocks) { block in
-                    row(for: block, now: context.date)
-                        .tag(block.index)
-                        .contextMenu { rowMenu(for: block) }
-                }
+        List(selection: $selection) {
+            ForEach(blocks) { block in
+                row(for: block)
+                    .tag(block.index)
+                    .contextMenu { rowMenu(for: block) }
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(
+                        top: 0, leading: Slate.Metric.space2,
+                        bottom: 0, trailing: Slate.Metric.space2,
+                    ))
             }
         }
-        .listStyle(.inset)
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
         .focused($listFocused)
         .onChange(of: selection) { _, newValue in
             if let index = newValue { fetchIfNeeded(index) }
@@ -127,27 +138,14 @@ struct BlockHistoryView: View {
         .overlay(keyboardStepper)
     }
 
-    /// One Commands row: the block row (with its Outline-inherited relative stamp) plus a trailing
-    /// jump-to-scrollback button (`arrow.right.to.line`) — the merged Outline's primary affordance.
-    private func row(for block: CommandBlock, now: Date) -> some View {
-        HStack(spacing: 6) {
-            BlockRowView(
-                block: block,
-                isBookmarked: model.isBookmarked(block.index),
-                relativeTime: model.firstSeen(index: block.index)
-                    .map { OutlinePresentation.relativeTime(from: $0, now: now) },
-            )
-            Button {
-                onJump(block.index)
-            } label: {
-                Image(systemName: "arrow.right.to.line")
-                    .font(.caption)
-                    .foregroundStyle(Slate.Text.icon)
-            }
-            .buttonStyle(.plain)
-            .help("Jump to this command in the scrollback")
-            .accessibilityLabel("Jump to command")
-        }
+    /// One Commands row: the block row with the clock time the command ran (its first-seen stamp,
+    /// rendered by the pure `BlockClockTime.label`). The jump lives in the row's context menu only.
+    private func row(for block: CommandBlock) -> some View {
+        BlockRowView(
+            block: block,
+            isBookmarked: model.isBookmarked(block.index),
+            clockTime: model.firstSeen(index: block.index).map { BlockClockTime.label(for: $0) },
+        )
     }
 
     /// Invisible buttons carrying ⌘↑ / ⌘↓ so selection-stepping works without stealing other keys. DISABLED
@@ -305,6 +303,24 @@ struct BlockHistoryView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         #endif
+    }
+}
+
+/// Pure formatting for the Commands row's run-time column: the block's first-seen instant as a LOCAL
+/// wall-clock stamp ("19:32:05" — the `AgentTranscript.clockTime` shape). A cached fixed-format
+/// formatter (`en_US_POSIX`, 24h) so the label never re-shapes under a locale's 12-hour preference and
+/// row rendering never mints a `DateFormatter` per call.
+enum BlockClockTime {
+    private static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
+    /// The local wall-clock label for a first-seen instant.
+    static func label(for date: Date) -> String {
+        formatter.string(from: date)
     }
 }
 #endif
