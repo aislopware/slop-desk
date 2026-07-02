@@ -101,24 +101,20 @@ struct BlockHistoryView: View {
     // MARK: List
 
     private var list: some View {
-        List(selection: $selection) {
-            ForEach(blocks) { block in
-                row(for: block)
-                    .tag(block.index)
-                    .contextMenu { rowMenu(for: block) }
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets(
-                        top: 0, leading: Slate.Metric.space2,
-                        bottom: 0, trailing: Slate.Metric.space2,
-                    ))
+        // A ScrollView + Button rows with the Slate selection wash — NOT a `List(selection:)`, whose
+        // macOS row highlight is the SYSTEM accent and cannot be re-tinted to the theme. The sidebar
+        // shares the workspace window's surface, so its selection must wear the theme like every other
+        // in-window row (the GitStatusView idiom); native chrome is reserved for popups/sheets.
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(blocks) { block in
+                    row(for: block)
+                        .contextMenu { rowMenu(for: block) }
+                }
             }
+            .padding(.vertical, Slate.Metric.space1)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .focused($listFocused)
-        .onChange(of: selection) { _, newValue in
-            if let index = newValue { fetchIfNeeded(index) }
-        }
         // Completion edge: a block selected WHILE RUNNING resolves to `nil` (the host only holds output for
         // COMPLETED blocks). When it later completes (or its byte count grows), invalidate the poisoned nil
         // and refetch — otherwise the detail would read "Output unavailable" forever. Keyed on the selected
@@ -139,13 +135,28 @@ struct BlockHistoryView: View {
     }
 
     /// One Commands row: the block row with the clock time the command ran (its first-seen stamp,
-    /// rendered by the pure `BlockClockTime.label`). The jump lives in the row's context menu only.
+    /// rendered by the pure `BlockClockTime.label`). Clicking selects (expands the output detail) and
+    /// claims keyboard focus for the ⌘↑/⌘↓ stepper; the selected row wears the THEME wash
+    /// (`Slate.State.selected`), never the system accent. The jump lives in the row's context menu.
     private func row(for block: CommandBlock) -> some View {
-        BlockRowView(
-            block: block,
-            isBookmarked: model.isBookmarked(block.index),
-            clockTime: model.firstSeen(index: block.index).map { BlockClockTime.label(for: $0) },
-        )
+        Button {
+            selection = block.index
+            listFocused = true
+            fetchIfNeeded(block.index)
+        } label: {
+            BlockRowView(
+                block: block,
+                isBookmarked: model.isBookmarked(block.index),
+                clockTime: model.firstSeen(index: block.index).map { BlockClockTime.label(for: $0) },
+            )
+            .padding(.horizontal, Slate.Metric.space2)
+            .background(
+                selection == block.index ? Slate.State.selected : .clear,
+                in: .rect(cornerRadius: Slate.Metric.radiusSmall),
+            )
+            .padding(.horizontal, Slate.Metric.space1)
+        }
+        .buttonStyle(.plain)
     }
 
     /// Invisible buttons carrying ⌘↑ / ⌘↓ so selection-stepping works without stealing other keys. DISABLED
