@@ -49,9 +49,6 @@ struct WorkspaceCommands: Commands {
     /// the menu item a graceful no-op via `route`, never dead. The ⌘⇧O chord itself is owned by the NSEvent
     /// dispatcher (this menu carries no `.keyboardShortcut`); the menu only mirrors it.
     var openQuickly: (() -> Void)?
-    /// The View ▸ Git Status menu row — opens the active pane's Git details window (chord-less, so the
-    /// menu + palette are its entries). `nil` keeps the row a graceful no-op via `route`, never dead.
-    var showGitStatus: (() -> Void)?
     /// E19 / WI-4: the View ▸ Pin Window menu item toggle. Pin Window is CHORD-LESS (no default chord is
     /// bound), so unlike the chorded actions the MENU Button is its primary entry — the app
     /// threads `chrome.togglePin()` here so the row is live. `nil` keeps it a graceful no-op via `route`,
@@ -175,7 +172,6 @@ struct WorkspaceCommands: Commands {
                 toggleGlobalSearch: toggleGlobalSearch,
                 toggleJumpTo: toggleJumpTo,
                 openQuickly: openQuickly,
-                showGitStatus: showGitStatus,
                 togglePinWindow: togglePinWindow,
                 closeWindow: closeWindow,
             )

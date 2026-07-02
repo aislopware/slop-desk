@@ -80,10 +80,6 @@ public enum WorkspaceAction: Hashable, Sendable {
     // `NSWindow.level = .floating` via the route closure. A window-scope view concern → needs no active pane;
     // iOS has no window level (documented no-op).
     case pinWindow
-    // Git Status (keyboard-centric replacement for the removed Details panel's git row): open the active
-    // pane's Git details as a real auxiliary window (macOS; a documented no-op on iOS — no auxiliary-window
-    // idiom there). Unbound by default (`chord: nil`) — palette/menu-surfaced; bindable in Settings.
-    case showGitStatus
     case openQuickly // ⌘⇧O — open the fuzzy "open quickly" file/symbol switcher (E11 stub)
     // Jump-To (E10 ES-E10-5): ⌘J opens the floating Jump-To panel — the active pane's detected paths/URLs
     // (over its scrollback) + its OSC-133 command/prompt index, fuzzy-filterable, ↩ to act / ⌘K for the
@@ -268,8 +264,7 @@ public extension WorkspaceAction {
              // just no-ops). Same graceful-no-op family as the composer / send-to-chat affordances above.
              .forkInSplitRight,
              .forkInSplitDown,
-             .forkInNewTab,
-             .showGitStatus: // targets the ACTIVE pane's repo/metadata — degrades to a no-op without one
+             .forkInNewTab:
             // Block / find / scroll / font / composer affordances target the active TERMINAL pane (its
             // blocks / scrollback / prompt marks / glyphs / PTY), so they need one — but they degrade
             // gracefully (a no-pane shell just no-ops), so they are not greyed out aggressively.
@@ -746,18 +741,6 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: nil,
             symbol: "pin",
             keywords: "pin window float floating always on top above keep front level stay topmost pip",
-        ),
-        // Git Status: open the active pane's Git details as a real auxiliary window (the keyboard-centric
-        // entry — the Details panel that used to carry the git-summary row is REMOVED; the app is
-        // keyboard-first, so the window's launcher lives in the palette/menu instead of chrome). `chord:
-        // nil` — the palette/menu-only idiom (like `view.pinWindow`); bindable in Settings → Keybindings.
-        // Routed through a view closure (`showGitStatus`) like the other window-scope view surfaces; iOS
-        // has no auxiliary-window idiom, so the closure is a documented no-op there.
-        WorkspaceBinding(
-            id: "view.gitStatus", action: .showGitStatus, title: "Git Status",
-            category: .view, chord: nil,
-            symbol: "arrow.triangle.branch",
-            keywords: "git status branch diff changed files repo ahead behind remote window",
         ),
         // Blocks (WB2): the Command Navigator toggle + jump-to-block prev/next. ⌃⌘O / ⌃⌘[ / ⌃⌘] are all
         // ⌘-prefixed (the §5 conflict rule) and collision-free against the rest of the table (tab cycling

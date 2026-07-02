@@ -1091,29 +1091,6 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(store.tree, before, "both are view overlays — the tree is unchanged")
     }
 
-    // MARK: - View: Git Status (the removed Details panel's keyboard-centric replacement)
-
-    /// `.showGitStatus` forwards to the supplied closure and does NOT mutate the tree (it is a VIEW
-    /// affordance — the macOS window presenter). Pins the routing case exists + forwards.
-    @MainActor
-    func testShowGitStatusFiresClosureAndDoesNotMutateTree() {
-        let store = makeTreeStore()
-        let before = store.tree
-        var fired = 0
-        WorkspaceBindingRegistry.route(.showGitStatus, to: store, showGitStatus: { fired += 1 })
-        XCTAssertEqual(fired, 1, "showGitStatus forwarded to the closure exactly once")
-        XCTAssertEqual(store.tree, before, "Git Status is a view affordance — the tree is unchanged")
-    }
-
-    /// The `Git Status` registry binding exists, is `.view`, and is `chord: nil` (unbound — so it
-    /// doesn't collide with any chord, and isn't dead). Revert-to-confirm-fail by removing the registry case.
-    func testGitStatusBindingIsViewAndChordless() {
-        let binding = WorkspaceBindingRegistry.binding(for: .showGitStatus)
-        XCTAssertEqual(binding?.id, "view.gitStatus", "Git Status has id view.gitStatus")
-        XCTAssertEqual(binding?.category, .view, "Git Status is a View command")
-        XCTAssertNil(binding?.chord, "Git Status is unbound by default (chord: nil)")
-    }
-
     // MARK: - View: read-only (E17 ES-E17-1) — chord-less registry pin + active-pane routing
 
     /// `.toggleReadOnly` is registered, in the View category, and CHORD-LESS by design — it must never

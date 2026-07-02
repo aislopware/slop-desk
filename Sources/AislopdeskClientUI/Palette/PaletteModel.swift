@@ -104,11 +104,6 @@ public enum PaletteAction: Sendable {
     /// the legacy `store.sidebarCollapsed` the native shell never reads. Same live flag the ⌘⇧L chord + the
     /// titlebar button drive, so the run path, the chord, the button, and the ✓ stay in lockstep.
     case toggleSidebar
-    /// Open the active pane's Git details as a real auxiliary window (macOS) — routed by the overlay
-    /// coordinator to the injected ``OverlayCoordinator/showGitStatus`` closure (the keyboard-centric entry;
-    /// the Details panel that carried the git-summary row is removed). A documented no-op on iOS (no
-    /// auxiliary-window idiom) and in tests (nil-closure default).
-    case showGitStatus
     /// E19 WI-4: toggle "Pin Window" (keep the window floating above all other apps).
     /// Routed by the overlay coordinator to the injected ``OverlayCoordinator/togglePinWindow`` closure (bound
     /// to the SAME live ``WorkspaceChromeState`` `pinned` flag the menu Button + the `NSWindow.level` glue

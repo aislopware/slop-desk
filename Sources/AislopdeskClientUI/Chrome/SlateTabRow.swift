@@ -18,10 +18,8 @@ import SwiftUI
 struct SlateTabRow: View {
     let title: String
     let active: Bool
-    /// The 1-based tab shortcut number — the live ⌘1…⌘9 select-tab target = tab index + 1. Rendered as the
-    /// trailing `⌘N` badge for the first nine tabs (see ``shortcutBadge(for:)``); `0` / overflow ⇒ no badge.
-    var number: Int = 0
-    /// The pane's last-known cwd, shown as a muted truncating-middle second line. `nil`/empty ⇒ single-line.
+    /// The row's muted truncating-middle second line (a terminal's git line / cwd, a video pane's host
+    /// app). `nil`/empty ⇒ single-line.
     var subtitle: String?
     /// The host's coarse foreground-process label ("zsh"), shown trailing on the ACTIVE row only.
     var processLabel: String?
@@ -38,17 +36,6 @@ struct SlateTabRow: View {
     @State private var closeHover = false
 
     private var hasSubtitle: Bool { !(subtitle ?? "").isEmpty }
-
-    /// The trailing SWITCH-SHORTCUT badge text for a tab's 1-based `number`: `⌘N` for the first nine tabs (the
-    /// live ⌘1…⌘9 select-tab chords), `nil` for overflow (10+) which has NO ⌘-shortcut — so the row shows no
-    /// misleading number there. Renders this exact `⌘N` badge as the persistent trailing chip in the
-    /// sidebar (ground truth: `find.png`, `workspace-tabs.png` — `myproj ⌘1` / `OC | Reviewing todos ⌘2` / …).
-    /// The badge is shown PERSISTENTLY rather than gated behind a ⌘-hold reveal (the hold-to-hint keycaps
-    /// were tried and rejected — see DECISIONS Batch-5). Pure + static so the badge string is unit-pinnable
-    /// without rendering a SwiftUI view.
-    static func shortcutBadge(for number: Int) -> String? {
-        (1...9).contains(number) ? "⌘\(number)" : nil
-    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -90,8 +77,9 @@ struct SlateTabRow: View {
     }
 
     /// The trailing status cluster: the read-only lock (if locked), the fused `badge` (if any), then the
-    /// monospaced light-gray `⌘N` switch-shortcut badge, then the foreground-process label on the ACTIVE row —
-    /// all muted, right-aligned (`find.png` / `workspace-tabs.png` / `tab-badge.png`). Fades under the hover `×`.
+    /// foreground-process label on the ACTIVE row — all muted, right-aligned. Fades under the hover `×`.
+    /// (The persistent `⌘N` switch-shortcut chip is REMOVED per user feedback — the ⌘1…⌘9 chords still
+    /// work; the row just no longer advertises them.)
     private var trailingMeta: some View {
         HStack(spacing: 6) {
             if readOnly {
@@ -103,11 +91,6 @@ struct SlateTabRow: View {
             }
             if let badge {
                 TabBadgeView(kind: badge)
-            }
-            if let shortcut = Self.shortcutBadge(for: number) {
-                Text(shortcut)
-                    .font(.system(size: Slate.Typeface.small, design: .monospaced))
-                    .foregroundStyle(Slate.Text.secondary)
             }
             if active, let processLabel, !processLabel.isEmpty {
                 Text(processLabel)
@@ -155,7 +138,9 @@ struct SlateSortMenuButton: View {
 
     var body: some View {
         Button { show.toggle() } label: {
-            Image(systemSymbol: .line3Horizontal)
+            // The "decrease" variant (three bars narrowing top→bottom) reads as sort/filter, not as a
+            // navigation hamburger — per user feedback.
+            Image(systemSymbol: .line3HorizontalDecrease)
                 .font(.system(size: Slate.Typeface.footnote))
                 .foregroundStyle(Slate.Text.icon)
         }

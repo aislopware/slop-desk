@@ -199,8 +199,8 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     /// ES-E2-1 "grouped by section": the verbs-only zero-state LEADS with the WORKING DIRECTORY section (which
     /// owns the cwd badge in the view) carrying the client-side Copy Path row, and the catalog is grouped into
-    /// multiple categories. Also pins that the Git Status row (the removed Details panel's keyboard-centric
-    /// replacement) exists as a View sibling of Toggle Tabs Panel. Fails on the old flat catalog.
+    /// multiple categories. Also pins that the removed Details-panel / Git-window rows stay gone. Fails on the
+    /// old flat catalog.
     func testZeroStateLeadsWithWorkingDirectoryAndGroupsByCategory() throws {
         let (overlay, _) = makeCoordinator()
         overlay.openPalette()
@@ -222,17 +222,13 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertEqual(copyPath.category, .workingDirectory)
         XCTAssertEqual(copyPath.icon, "doc.on.doc")
 
-        // The Git Status row runs the .showGitStatus action, in View (the removed Details panel's
-        // keyboard-centric replacement — the palette owns the Git window's launcher now).
-        let gitStatus = try XCTUnwrap(
-            ActionsPaletteSource.catalog.first { $0.id == "action.gitStatus" },
-            "the catalog has a Git Status row",
-        )
-        XCTAssertEqual(gitStatus.title, "Git Status")
-        XCTAssertEqual(gitStatus.category, .view)
-        guard case .showGitStatus = gitStatus.action else {
-            XCTFail("the Git Status row runs the .showGitStatus action")
-            return
+        // The retired inspector-era rows stay gone: Details: Info / Toggle Details Panel (the panel) and
+        // Git Status (the auxiliary window, removed with it).
+        for retired in ["action.detailsInfo", "action.toggleInspector", "action.gitStatus"] {
+            XCTAssertNil(
+                ActionsPaletteSource.catalog.first { $0.id == retired },
+                "the removed \(retired) palette row is gone",
+            )
         }
 
         // The catalog spans more than one category (it is no longer one flat "Actions" list).
@@ -241,29 +237,6 @@ final class OverlayCoordinatorMountTests: XCTestCase {
             categories.isSuperset(of: [.workingDirectory, .pane, .tab, .view, .settings]),
             "the catalog is grouped across multiple categories, not one flat Actions list",
         )
-    }
-
-    // MARK: - Git Status: the removed Details panel's keyboard-centric replacement
-
-    /// The `Details: *` rows are GONE with the panel, and running the Git Status row through the coordinator
-    /// fires the injected `showGitStatus` closure (the seam the GUI binds to `GitDetailsWindowPresenter` in
-    /// `WorkspaceRootView.wireChromeToggles()`). Revert-to-confirm-fail: with no `.showGitStatus` run-arm the
-    /// closure never fires.
-    func testRunningGitStatusRowFiresTheInjectedClosure() throws {
-        XCTAssertNil(
-            ActionsPaletteSource.catalog.first { $0.id == "action.detailsInfo" },
-            "the removed Details: Info palette row is gone with the panel",
-        )
-        XCTAssertNil(
-            ActionsPaletteSource.catalog.first { $0.id == "action.toggleInspector" },
-            "the removed Toggle Details Panel palette row is gone with the panel",
-        )
-        let (overlay, _) = makeCoordinator()
-        var fired = 0
-        overlay.showGitStatus = { fired += 1 }
-        let row = try XCTUnwrap(ActionsPaletteSource.catalog.first { $0.id == "action.gitStatus" })
-        overlay.run(row)
-        XCTAssertEqual(fired, 1, "the Git Status palette row routes to the injected showGitStatus closure")
     }
 
     // MARK: - ES-E2-1: the keyboard selection stays valid when the query narrows (the clamp fix)
@@ -523,8 +496,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     /// the registry (the chips), while the chord-LESS rows the table carries render NO chip. Those are the
     /// collapsed ⌘1…⌘9 representative + the chord-less Rename Tab verb + the chord-less Close Tab verb (E7
     /// re-scoped ⌘⇧W onto Close Window, leaving Close Tab reachable only via the ⌘W cascade / palette, see
-    /// DECISIONS.md) + the Git Status window opener (palette/menu-only,
-    /// `chord: nil` by design, pinned chord-less by `TreeCommandRoutingTests`) + the three E17 view toggles
+    /// DECISIONS.md) + the three E17 view toggles
     /// `Read Only` + `Secure Keyboard Entry` + `Vi Mode Key Hints` (none ships a default chord —
     /// palette/menu-only, `chord: nil`, the user may bind them in Settings → Keybindings) + the E19 `Pin
     /// Window` view toggle (the "View ▸ Pin Window" toggle ships no default chord — palette/menu-only,
@@ -539,15 +511,13 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         let rows = WorkspaceBindingRegistry.groupedForDisplay.flatMap(\.bindings)
 
         // The chord-less rows in the display table are EXACTLY the representative + Rename Tab + Close Tab +
-        // the Git Status opener + the three E17 view toggles + the E10 Hint to Reveal verb +
+        // the three E17 view toggles + the E10 Hint to Reveal verb +
         // the E19 Pin Window toggle (all palette/menu-only, no key).
         let chordLessIDs = Set(rows.filter { $0.chord == nil }.map(\.id))
         XCTAssertEqual(
             chordLessIDs,
             [
                 "tab.selectN", "pane.rename", "tab.close",
-                // Git Status (the removed Details panel's keyboard-centric replacement) ships unbound.
-                "view.gitStatus",
                 "view.readOnly", "view.secureKeyboardEntry", "view.viKeyHints",
                 // E10 WI-9: Hint to Reveal in Finder is chord-less.
                 "view.hintReveal",
@@ -558,7 +528,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
                 // equivalent, so each carries `chord: nil`.
                 "agent.forkSplitRight", "agent.forkSplitDown", "agent.forkNewTab",
             ],
-            "the no-chip rows: collapsed select-tab representative + chord-less Rename/Close Tab + Git Status "
+            "the no-chip rows: collapsed select-tab representative + chord-less Rename/Close Tab "
                 + "+ the three E17 view toggles + E10 Hint to Reveal + E19 Pin Window + the "
                 + "three E13 Fork-in entries",
         )

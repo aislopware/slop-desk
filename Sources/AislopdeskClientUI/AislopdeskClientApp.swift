@@ -541,7 +541,7 @@ public struct AislopdeskClientApp: App {
     }
 
     /// The root IDE shell. On macOS it hands the root view installers that wire ⌘⇧L (Toggle Tabs Panel /
-    /// sidebar) and the chord-less Git Status / Pin Window actions to the view's live state ON THE
+    /// sidebar) and the chord-less Pin Window action to the view's live state ON THE
     /// app-level `keyDispatcher`, so each chord routes through the SAME NSEvent monitor that owns every other
     /// chord (the legacy `store.sidebarCollapsed` is not read on macOS); iOS has no dispatcher.
     @ViewBuilder
@@ -553,9 +553,6 @@ public struct AislopdeskClientApp: App {
             overlay: overlayCoordinator,
             chrome: chrome,
             installSidebarToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleSidebar(toggle) },
-            // Git Status: hand the dispatcher the (chord-less by default) window opener, so a user-bound
-            // chord for `.showGitStatus` opens the SAME per-pane window the palette / View-menu rows do.
-            installShowGitStatus: { [keyDispatcher] show in keyDispatcher.setShowGitStatus(show) },
             // E19 WI-4: hand the dispatcher the (chord-less by default) Pin Window toggle, so a user-bound
             // chord for `.pinWindow` flips the SAME `chrome.pinned` the menu Button + the `NSWindow.level` glue
             // read, through the one NSEvent monitor that owns every chord.
@@ -804,10 +801,6 @@ public struct AislopdeskClientApp: App {
                 // E11 / WI-7: the View ▸ Open Quickly… menu row opens the picker at the merged `.all` pill —
                 // the SAME overlay the ⌘⇧O chord drives (the menu mirrors the chord; the dispatcher owns it).
                 openQuickly: { [overlayCoordinator] in overlayCoordinator.toggleOpenQuickly(filter: .all) },
-                // The View ▸ Git Status menu row routes through the SAME injected coordinator closure the
-                // palette row + a user-bindable chord drive (installed by `WorkspaceRootView.wireChromeToggles`
-                // → `GitDetailsWindowPresenter`). Without this the menu row would be inert.
-                showGitStatus: { [overlayCoordinator] in overlayCoordinator.showGitStatus() },
                 // E19 WI-4: Pin Window is CHORD-LESS (no default keybinding), so the menu item is its primary
                 // entry. Flip the SAME live `chrome.pinned` the `.onChange(of:)` above actuates to `NSWindow
                 // .level` — directly off the app-owned chrome (no overlay round-trip needed).

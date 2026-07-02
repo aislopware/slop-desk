@@ -268,21 +268,81 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertFalse(after.first { $0.id == rows[1].id }?.readOnly ?? true, "its sibling row stays unlocked")
     }
 
-    // MARK: - cwd subtitle + the reused title+cwd filter
+    // MARK: - cwd folder-name title + git-line/cwd subtitle + the reused title+subtitle filter
 
-    /// The row's subtitle is the pane's last-known cwd, and `filtered` narrows by BOTH the title and the cwd.
+    /// A terminal row with a known cwd titles itself by the cwd's FOLDER NAME (line 1) and keeps the
+    /// full cwd as the subtitle (line 2) while no git summary is cached; `filtered` narrows by BOTH.
+    /// Fails on the pre-fix builder (line 1 was the generic "Terminal").
     func testSubtitleCwdAndFilter() {
         let store = makeStore()
         let pane = paneID(store, row: 0)
         store.setLastKnownCwd("/Users/me/project-alpha", for: pane)
         let rows = RailRowsBuilder.rows(for: store)
+        XCTAssertEqual(rows[0].title, "project-alpha", "line 1 is the cwd folder name, not 'Terminal'")
         XCTAssertEqual(rows[0].subtitle, "/Users/me/project-alpha")
-        // Title match ("Terminal" contains "term").
-        XCTAssertEqual(RailRowsBuilder.filtered(rows, query: "term").count, rows.count)
-        // cwd/subtitle match.
+        // The generic default no longer matches anything (the title IS the folder name now).
+        XCTAssertTrue(RailRowsBuilder.filtered(rows, query: "term").isEmpty)
+        // Folder-name/title + cwd/subtitle match.
         XCTAssertEqual(RailRowsBuilder.filtered(rows, query: "project-alpha").map(\.id), [pane])
         // No match anywhere.
         XCTAssertTrue(RailRowsBuilder.filtered(rows, query: "zzz-nope").isEmpty)
+    }
+
+    /// A cached ``PaneGitSummary`` upgrades the terminal row's second line from the raw cwd to the
+    /// compact git line; a non-repo summary keeps the cwd fallback. Fails on the pre-fix builder
+    /// (subtitle was unconditionally `railSubtitle`).
+    func testGitSummaryUpgradesSubtitleToGitLine() {
+        let store = makeStore()
+        let pane = paneID(store, row: 0)
+        store.setLastKnownCwd("/Users/me/project-alpha", for: pane)
+        store.paneGitSummary[pane] = PaneGitSummary(
+            hasRepo: true, branch: "main", ahead: 1, behind: 0, changedCount: 3,
+        )
+        XCTAssertEqual(
+            RailRowsBuilder.rows(for: store)[0].subtitle, "main ↑1 · 3 changed",
+            "line 2 is the compact git line when the cwd is a repo",
+        )
+        store.paneGitSummary[pane] = PaneGitSummary(
+            hasRepo: false, branch: "", ahead: 0, behind: 0, changedCount: 0,
+        )
+        XCTAssertEqual(
+            RailRowsBuilder.rows(for: store)[0].subtitle, "/Users/me/project-alpha",
+            "a non-repo cwd falls back to the plain path subtitle",
+        )
+    }
+
+    /// The title precedence for a terminal row: an EXPLICIT rename beats the folder name, the folder
+    /// name beats the shell-title chain, and a cwd-less pane keeps the old fallback ("Terminal").
+    func testRowTitlePrecedence() {
+        let renamed = PaneSpec(kind: .terminal, title: "build box", lastKnownCwd: "/srv/app")
+        XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .terminal, spec: renamed), "build box")
+
+        let unnamed = PaneSpec(kind: .terminal, title: "Terminal", lastKnownCwd: "/srv/app")
+        XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .terminal, spec: unnamed), "app")
+
+        // The load-time auto-promotion (`title == lastKnownTitle`) is NOT a rename — folder name wins.
+        let promoted = PaneSpec(
+            kind: .terminal, title: "zsh — aislopdesk", lastKnownCwd: "/srv/app",
+            lastKnownTitle: "zsh — aislopdesk",
+        )
+        XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .terminal, spec: promoted), "app")
+
+        let noCwd = PaneSpec(kind: .terminal, title: "Terminal")
+        XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .terminal, spec: noCwd), "Terminal")
+
+        // Non-terminal kinds keep the E21 chain untouched.
+        let video = PaneSpec(kind: .remoteGUI, title: "Docs", lastKnownTitle: "Docs — Safari")
+        XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .remoteGUI, spec: video), "Docs — Safari")
+    }
+
+    /// The folder-name helper: leaf extraction, trailing-slash tolerance, root, blank → nil.
+    func testCwdFolderName() {
+        XCTAssertEqual(RailRowsBuilder.cwdFolderName("/Volumes/Lacie/Workspace/oss/aislopdesk"), "aislopdesk")
+        XCTAssertEqual(RailRowsBuilder.cwdFolderName("/srv/app/"), "app")
+        XCTAssertEqual(RailRowsBuilder.cwdFolderName("/"), "/")
+        XCTAssertEqual(RailRowsBuilder.cwdFolderName("~"), "~")
+        XCTAssertNil(RailRowsBuilder.cwdFolderName("   "))
+        XCTAssertNil(RailRowsBuilder.cwdFolderName(nil))
     }
 
     // MARK: - E21 WI-5: a `.remoteGUI` pane reads as a labelled window in the rail

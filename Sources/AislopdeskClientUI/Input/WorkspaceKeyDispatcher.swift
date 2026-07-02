@@ -65,10 +65,6 @@ final class WorkspaceKeyDispatcher {
     /// ``setToggleSidebar(_:)`` on appear. Until then `nil` ⇒ `.toggleSidebar` falls back to the store flag in
     /// `route` (a non-trapping graceful op), never a dead chord.
     private var toggleSidebar: (() -> Void)?
-    /// The "Git Status" window opener (`view.gitStatus`, chord-less by default). View-owned (the macOS
-    /// window presenter needs the live store-bound closure the root view builds), so it is installed late
-    /// via ``setShowGitStatus(_:)``; until then `nil` ⇒ `.showGitStatus` is a graceful no-op (never dead).
-    private var showGitStatus: (() -> Void)?
     /// E19/A30 (WI-4): "Pin Window" (View ▸ Pin Window). View-owned `@State` (`WorkspaceChromeState`), so
     /// it is installed late by the root view via ``setTogglePinWindow(_:)`` once the chrome exists. Pin Window
     /// is CHORD-LESS by default (no chord ships out of the box), so this fires only if a user binds a chord to the
@@ -128,7 +124,6 @@ final class WorkspaceKeyDispatcher {
         toggleGlobalSearch: (() -> Void)? = nil,
         toggleJumpTo: (() -> Void)? = nil,
         toggleOpenQuickly: (() -> Void)? = nil,
-        showGitStatus: (() -> Void)? = nil,
         togglePinWindow: (() -> Void)? = nil,
         isOverlayCapturingKeys: @escaping () -> Bool = { false },
         isWorkspaceWindowKey: @escaping () -> Bool = { true },
@@ -143,7 +138,6 @@ final class WorkspaceKeyDispatcher {
         self.toggleGlobalSearch = toggleGlobalSearch
         self.toggleJumpTo = toggleJumpTo
         self.toggleOpenQuickly = toggleOpenQuickly
-        self.showGitStatus = showGitStatus
         self.togglePinWindow = togglePinWindow
         self.isOverlayCapturingKeys = isOverlayCapturingKeys
         self.isWorkspaceWindowKey = isWorkspaceWindowKey
@@ -167,11 +161,6 @@ final class WorkspaceKeyDispatcher {
     /// `route` falls back to the legacy `store.sidebarCollapsed` (which nothing reads on macOS) — so this
     /// closure makes ⌘⇧L actually collapse the native sidebar item ("Toggle Tabs Panel").
     func setToggleSidebar(_ toggle: @escaping () -> Void) { toggleSidebar = toggle }
-
-    /// Install the "Git Status" window opener once the root view exists (it builds the closure that resolves
-    /// the active pane + presents `GitDetailsWindowPresenter`). Git Status is chord-less by default, so this
-    /// fires only if a user binds a chord to `.showGitStatus`; until installed it is a graceful no-op.
-    func setShowGitStatus(_ show: @escaping () -> Void) { showGitStatus = show }
 
     /// Install the "Pin Window" toggle once the `WorkspaceChromeState` exists (the root view wires this to
     /// `chrome.togglePin()` on appear). Pin Window is chord-less by default, so this only fires when a user
@@ -325,7 +314,6 @@ final class WorkspaceKeyDispatcher {
             toggleGlobalSearch: toggleGlobalSearch,
             toggleJumpTo: toggleJumpTo,
             openQuickly: toggleOpenQuickly,
-            showGitStatus: showGitStatus,
             togglePinWindow: togglePinWindow,
             closeWindow: closeWindow,
         )

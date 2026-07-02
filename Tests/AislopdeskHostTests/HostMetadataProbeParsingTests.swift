@@ -142,7 +142,7 @@ final class HostMetadataProbeParsingTests: XCTestCase {
         ("C", 5), ("U", 6), ("?", 7), ("!", 8), ("T", 9),
     ]
 
-    /// A verbatim copy of the CLIENT's `GitStatusPresentation.statusChar` inverse table (nibble → char).
+    /// The documented inverse table (nibble → porcelain char) any CLIENT-side unpacking must follow.
     /// `packStatus`/`statusNibble` and this table must stay mutual inverses or host + client drift.
     private static func clientStatusChar(_ nibble: UInt8) -> Character {
         switch nibble {
@@ -178,10 +178,9 @@ final class HostMetadataProbeParsingTests: XCTestCase {
         XCTAssertEqual(HostMetadataProbe.packStatus("Z", "Z"), 0xFF, "unknown chars pack as 0xF in each nibble")
     }
 
-    /// The host packing round-trips through the CLIENT inverse: for every (X, Y) over the convention,
-    /// `clientStatusChar(packed >> 4) == X` and `clientStatusChar(packed & 0x0F) == Y`. This pins
-    /// host + client in lockstep WITHOUT importing the UI module (the table above mirrors
-    /// `GitStatusPresentation.xy(_:)`).
+    /// The host packing round-trips through the documented inverse: for every (X, Y) over the convention,
+    /// `clientStatusChar(packed >> 4) == X` and `clientStatusChar(packed & 0x0F) == Y`. This pins the
+    /// packing against the convention WITHOUT importing any UI module.
     func testPackStatusIsInverseOfClientUnpacking() {
         for (x, _) in Self.convention {
             for (y, _) in Self.convention {

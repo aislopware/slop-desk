@@ -165,11 +165,6 @@ public final class OverlayCoordinator {
     /// titlebar button + the palette ✓ all read — never the legacy `store.sidebarCollapsed` the native shell
     /// never reads. The default is a no-op (iOS / tests / previews), so the row is never a trap.
     @ObservationIgnored public var toggleSidebar: @MainActor () -> Void = {}
-    /// Opens the active pane's Git details as a real auxiliary window (the "Git Status" palette / View-menu
-    /// row — the keyboard-centric entry now that the Details panel is removed). Bound by ``WorkspaceRootView``
-    /// on macOS to `GitDetailsWindowPresenter`; a documented no-op on iOS (no auxiliary-window idiom) and by
-    /// default (tests / previews / a pre-`onAppear` scene).
-    @ObservationIgnored public var showGitStatus: @MainActor () -> Void = {}
     /// E19/A30 (WI-4): toggles the window-pin flag (the View ▸ Pin Window menu row). Bound by ``WorkspaceRootView`` to
     /// `chrome.togglePin()` so any palette / command surface routed here flips the SAME live
     /// `WorkspaceChromeState.pinned` the menu Button + the macOS `NSWindow.level` glue read. No-op by default
@@ -452,9 +447,6 @@ public final class OverlayCoordinator {
             if !keepOpen { closePalette() }
         case .toggleSidebar:
             toggleSidebar()
-            if !keepOpen { closePalette() }
-        case .showGitStatus:
-            showGitStatus()
             if !keepOpen { closePalette() }
         case .togglePinWindow:
             togglePinWindow()

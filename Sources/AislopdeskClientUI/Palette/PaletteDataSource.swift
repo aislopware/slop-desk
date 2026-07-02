@@ -146,16 +146,6 @@ public struct ActionsPaletteSource: PaletteDataSource {
             subtitle: nil, shortcut: glyph(.toggleSidebar), filter: .actions, category: .view,
             action: .toggleSidebar,
         ),
-        // "Git Status" — the keyboard-centric entry to the active pane's Git details WINDOW (the Details
-        // panel that carried the git-summary row is removed; the app is keyboard-first, so the palette/menu
-        // own the launcher). Chord-less (glyph resolves nil unless the user binds `.showGitStatus`); routed
-        // by the coordinator to the injected `showGitStatus` closure → `GitDetailsWindowPresenter` on macOS
-        // (a documented no-op on iOS — no auxiliary-window idiom there).
-        PaletteItem(
-            id: "action.gitStatus", icon: "arrow.triangle.branch", title: "Git Status",
-            subtitle: nil, shortcut: glyph(.showGitStatus), filter: .actions, category: .view,
-            action: .showGitStatus,
-        ),
         // Read Only (E17 ES-E17-1): toggle the active pane's input gate. Under the SHELL section as the
         // first shell verb in the catalog. The spec accepts
         // "read only" plus the synonyms `readonly` / `lock` / `freeze` / `view only` — folded into the row's

@@ -69,7 +69,7 @@ final class SlateSnapshotRender: XCTestCase {
     // MARK: - E6 / WI-4: opt-in render of the sidebar tab-row badge states
 
     /// Renders `SlateTabRow` in each badge state (spinner / error / hand / check / accent dot) plus the active
-    /// white card with a cwd subtitle + `#N` + process label — the visual lock for the E6 sidebar row. SAME
+    /// white card with a subtitle + process label — the visual lock for the E6 sidebar row. SAME
     /// `ImageRenderer` opt-in idiom as the showcase; inert (skipped) unless `AISLOPDESK_TABROW_SNAPSHOT_DIR=<dir>`
     /// is set, where it writes `tab-row-badges.png`. NO video/Metal — a badge is pure SwiftUI.
     @MainActor
@@ -78,16 +78,15 @@ final class SlateSnapshotRender: XCTestCase {
             throw XCTSkip("set AISLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the E6 tab-row badge states")
         }
         let panel = VStack(alignment: .leading, spacing: 2) {
-            badgeRow("full-release.sh", number: 1, badge: .running)
-            badgeRow("running build task", number: 2, badge: .error)
-            badgeRow("plan next move", number: 3, badge: .awaitingInput)
-            badgeRow("OpenCode", number: 4, badge: .completed)
-            badgeRow("abner@MacBook-AB:…", number: 5, badge: .finished)
+            badgeRow("full-release.sh", badge: .running)
+            badgeRow("running build task", badge: .error)
+            badgeRow("plan next move", badge: .awaitingInput)
+            badgeRow("OpenCode", badge: .completed)
+            badgeRow("abner@MacBook-AB:…", badge: .finished)
             SlateTabRow(
-                title: "~/Workplace/aislopdesk",
+                title: "aislopdesk",
                 active: true,
-                number: 6,
-                subtitle: "~/Workplace/aislopdesk",
+                subtitle: "main · 3 changed",
                 processLabel: "zsh",
                 onSelect: {},
                 onClose: {},
@@ -99,10 +98,10 @@ final class SlateSnapshotRender: XCTestCase {
         try render(panel, size: CGSize(width: 260, height: 340), to: dir, named: "tab-row-badges.png")
     }
 
-    /// A resting (non-active) tab row carrying one fused badge + its `#N`, for the badge-state showcase.
+    /// A resting (non-active) tab row carrying one fused badge, for the badge-state showcase.
     @MainActor
-    private func badgeRow(_ title: String, number: Int, badge: TabBadgeKind) -> some View {
-        SlateTabRow(title: title, active: false, number: number, badge: badge, onSelect: {}, onClose: {})
+    private func badgeRow(_ title: String, badge: TabBadgeKind) -> some View {
+        SlateTabRow(title: title, active: false, badge: badge, onSelect: {}, onClose: {})
     }
 
     // MARK: - E6 / WI-5: opt-in render of the grouped NavigatorColumn (search + By-Project sections)

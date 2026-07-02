@@ -3335,6 +3335,17 @@ public final class WorkspaceStore {
     /// lands (or is dropped). Runtime-only; never persisted.
     private var paneGitToplevelInFlight: Set<PaneID> = []
 
+    /// Per-pane compact git summary (branch / ahead / behind / changed count) — the sidebar tab row's
+    /// SECOND LINE (``PaneGitSummary/compactLine``; the row falls back to the plain cwd when a pane has
+    /// no entry / no repo). Refreshed via ``refreshGitSummary(for:from:)`` on command completion (OSC
+    /// 133;D), on a cwd change, and once on connect; PRUNED to the live leaf set alongside the other
+    /// per-pane mirrors. Runtime-only; never persisted.
+    public internal(set) var paneGitSummary: [PaneID: PaneGitSummary] = [:]
+
+    /// Panes with an in-flight git-summary `gitStatus` fetch — the same de-dupe idiom as
+    /// ``paneGitToplevelInFlight`` (a completion burst must not fan out N identical RPCs).
+    private var paneGitSummaryInFlight: Set<PaneID> = []
+
     /// The debounce handle for the By-Project git-toplevel sweep (E6 WI-7): cancelled + rescheduled on each
     /// trigger (grouping toggle / reconcile) so a burst coalesces into ONE fetch pass.
     private var projectKeyRefreshTask: Task<Void, Never>?
@@ -3546,6 +3557,9 @@ public final class WorkspaceStore {
             // command completion too, so shells without OSC 7 still update the inherit source for the next
             // new tab / split. `[weak connection]` avoids a retain cycle (the closure is owned by `connection`).
             refreshCwd(for: id, from: connection)
+            // The sidebar git line follows every completed command (a commit / checkout / touch changes
+            // branch + dirty state) — same validate-then-drop RPC idiom as the cwd refresh above.
+            refreshGitSummary(for: id, from: connection)
         }
         // LIVE TITLE PERSISTENCE (Goal A): persist the shell's live OSC title into lastKnownTitle so a
         // relaunch can restore the tab title for untouched (default-titled) panes. The dirty guard avoids
@@ -3559,11 +3573,19 @@ public final class WorkspaceStore {
         // RESUME IDENTITY CAPTURE (AISLOPDESK_DETACH_ENABLED): persist the live session UUID +
         // highest-contiguous-seq into the spec on each RTT snapshot (~3 s cadence) and on reconnect
         // so the next launch can feed them into seedResumeIdentity → RETURNING_CLIENT reattach.
-        connection?.onResumeIdentitySnapshot = { [weak self] sessionID, seq in
-            self?.updateSpecLive(id) { spec in
+        connection?.onResumeIdentitySnapshot = { [weak self, weak connection] sessionID, seq in
+            guard let self else { return }
+            updateSpecLive(id) { spec in
                 guard spec.resumeSessionID != sessionID || spec.resumeLastReceivedSeq != seq else { return }
                 spec.resumeSessionID = sessionID
                 spec.resumeLastReceivedSeq = seq
+            }
+            // INITIAL git-line population: this edge fires right at connect (before any command
+            // completes), so a freshly-(re)attached pane gets its sidebar git line without waiting for
+            // the first OSC 133;D. Guarded on "no entry yet" — later refreshes ride completion/cwd
+            // edges, so the ~3 s snapshot cadence never turns into a poll.
+            if paneGitSummary[id] == nil {
+                refreshGitSummary(for: id, from: connection)
             }
         }
         // SYNC-INPUT (tree path, Zellij ToggleActiveSyncTab): when the per-tab sync flag is on, mirror this
@@ -3727,6 +3749,11 @@ public final class WorkspaceStore {
         // unbounded across a long session of open/close.
         if !paneForegroundProcess.isEmpty {
             paneForegroundProcess = paneForegroundProcess.filter { leafSet.contains($0.key) }
+        }
+        // Prune the per-pane git-summary mirror in lockstep (the sidebar git line): a closed pane must
+        // not keep a stale branch line, and the dict must not grow unbounded across a long session.
+        if !paneGitSummary.isEmpty {
+            paneGitSummary = paneGitSummary.filter { leafSet.contains($0.key) }
         }
         // Prune the per-pane OSC 9;4 progress mirror in lockstep (E14): a closed pane must not keep a stale
         // spinner/bar in a Dock rollup, and the dict must not grow unbounded across a long session.
@@ -4655,6 +4682,11 @@ public extension WorkspaceStore {
         if paneGitToplevel.removeValue(forKey: paneID) != nil {
             refreshProjectKeysIfNeeded()
         }
+        // The sidebar git line follows the cwd: a `cd` can enter/leave/switch repos, so refetch this
+        // pane's summary. The stale line stays visible until the fresh reply lands (no flicker on a
+        // same-repo `cd`); the post-completion `refreshCwd` funnels through here ONLY when the cwd
+        // actually changed (the dirty guard above), so this never double-fetches a quiet completion.
+        refreshGitSummary(for: paneID, from: (handle(for: paneID) as? LivePaneSession)?.connection)
     }
 
     /// A26 cwd-freshness fallback: after a command completes (OSC 133;D) pull pane `id`'s
@@ -4722,5 +4754,30 @@ public extension WorkspaceStore {
     /// fallback. Internal so a unit test (or the arrival task) can seed it without a live socket.
     func cacheGitToplevel(_ root: String, for id: PaneID) {
         paneGitToplevel[id] = root
+    }
+
+    // MARK: - Sidebar git line (the per-pane compact summary)
+
+    /// Refreshes pane `id`'s compact git summary (``paneGitSummary`` → the sidebar row's second line)
+    /// from the host `gitStatus` RPC on the pane's OWN metadata channel. Fired on command completion
+    /// (OSC 133;D, beside ``refreshCwd(for:from:)``), on a cwd CHANGE (``setLastKnownCwd(_:for:)`` — a
+    /// `cd` can enter/leave/switch repos), and once on connect (the resume-identity edge). The stale
+    /// value stays visible until the fresh reply lands (no flicker on a same-repo `cd`); a `nil`
+    /// connection / failed RPC is a silent no-op (validate-then-drop), and the in-flight set de-dupes a
+    /// completion burst. The reply also feeds ``paneGitToplevel`` (the RPC already carries the precise
+    /// repo root, so By-Project grouping upgrades for free).
+    func refreshGitSummary(for id: PaneID, from connection: ConnectionViewModel?) {
+        guard let connection, !paneGitSummaryInFlight.contains(id) else { return }
+        paneGitSummaryInFlight.insert(id)
+        Task { @MainActor [weak self] in
+            let payload = await connection.activeMetadataClient?.gitStatus()
+            guard let self else { return }
+            paneGitSummaryInFlight.remove(id)
+            guard let payload else { return }
+            let summary = PaneGitSummary(payload: payload)
+            // Dirty-guarded: a quiet repo re-probe must not churn the @Observable rail.
+            if paneGitSummary[id] != summary { paneGitSummary[id] = summary }
+            cacheGitToplevel(payload.repoRoot, for: id)
+        }
     }
 }

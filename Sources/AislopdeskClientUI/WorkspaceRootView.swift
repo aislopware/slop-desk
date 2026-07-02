@@ -6,8 +6,7 @@
 // `.windowStyle(.hiddenTitleBar)` — there is NO system unified toolbar; the workspace's own hover-reveal
 // titlebar (`SlateTitlebar`, hosted as a top overlay inside `ContentColumn`) IS the chrome (sidebar toggle,
 // "New Tab", the centred title menu). iOS: a stock `NavigationSplitView` over the same two columns + its
-// own toolbar. (The right-hand inspector / Details column is REMOVED — keyboard-centric; the Git details
-// window, its surviving surface, opens from the palette / View menu via `GitDetailsWindowPresenter`.)
+// own toolbar. (The right-hand inspector / Details column is REMOVED — keyboard-centric.)
 //
 // NO custom design-system / token target (deleted in L0): SYSTEM semantic colours + fonts + SF Symbols.
 
@@ -79,12 +78,6 @@ public struct WorkspaceRootView: View {
     /// `store.sidebarCollapsed` (which nothing reads on macOS). `nil` (the default / iOS / tests) is a no-op. A
     /// plain closure keeps `WorkspaceKeyDispatcher` internal (no public-API widening).
     private let installSidebarToggle: ((@escaping () -> Void) -> Void)?
-    /// Installs the "Git Status" window opener on the app-level keybinding dispatcher (same late-wiring story
-    /// as `installSidebarToggle`): on appear the root view hands it the closure that resolves the active pane
-    /// and presents `GitDetailsWindowPresenter`, so a user-bound chord for the chord-less `.showGitStatus`
-    /// action routes through the SAME NSEvent monitor. `nil` (the default / iOS / tests) is a no-op — Git
-    /// Status's primary entry is then the palette + View menu.
-    private let installShowGitStatus: ((@escaping () -> Void) -> Void)?
     /// Installs the "Pin Window" toggle on the app-level keybinding dispatcher (same late-wiring story as
     /// `installSidebarToggle`): on appear the root view hands it `chrome.togglePin` so a user-bound chord for
     /// the chord-less `.pinWindow` action routes through the SAME NSEvent monitor. `nil` (the default / iOS /
@@ -100,7 +93,6 @@ public struct WorkspaceRootView: View {
         overlay: OverlayCoordinator,
         chrome: WorkspaceChromeState,
         installSidebarToggle: ((@escaping () -> Void) -> Void)? = nil,
-        installShowGitStatus: ((@escaping () -> Void) -> Void)? = nil,
         installPinToggle: ((@escaping () -> Void) -> Void)? = nil,
     ) {
         self.store = store
@@ -108,7 +100,6 @@ public struct WorkspaceRootView: View {
         self.overlay = overlay
         self.chrome = chrome
         self.installSidebarToggle = installSidebarToggle
-        self.installShowGitStatus = installShowGitStatus
         self.installPinToggle = installPinToggle
     }
 
@@ -275,7 +266,7 @@ public struct WorkspaceRootView: View {
     #endif
 
     #if os(macOS)
-    /// Hand the app-level dispatcher the chrome toggles (sidebar ⌘⇧L) + the Git Status opener, each bound to
+    /// Hand the app-level dispatcher the chrome toggles (sidebar ⌘⇧L), each bound to
     /// THIS view's live state. Called on appear (the dispatcher predates `chrome`, so the closures are
     /// installed late). `[chrome]` captures the same `@Observable` instance the representable + titlebar
     /// read, so each NSEvent chord and the matching titlebar button flip ONE flag.
@@ -285,11 +276,6 @@ public struct WorkspaceRootView: View {
         // so "Toggle Tabs Panel" from the palette flips the flag the split + the ✓ read
         // (not the dead `store.sidebarCollapsed`). Bound here because `chrome` predates the app-built overlay.
         overlay.toggleSidebar = { [chrome] in chrome.toggleSidebar() }
-        // Git Status (keyboard-centric): the palette row / View-menu row / a user-bound chord all open the
-        // active pane's Git details WINDOW through the SAME presenter (which owns the per-pane metadata
-        // models now that the inspector is gone). `[store]` captures the live store.
-        overlay.showGitStatus = { [store] in GitDetailsWindowPresenter.showForActivePane(store: store) }
-        installShowGitStatus? { [store] in GitDetailsWindowPresenter.showForActivePane(store: store) }
         // E19 WI-4 (Pin Window): route the palette / any command surface AND a user-bound chord (chord-less by
         // default) to the SAME live `chrome.pinned` the menu Button + the macOS `NSWindow.level` glue read.
         overlay.togglePinWindow = { [chrome] in chrome.togglePin() }

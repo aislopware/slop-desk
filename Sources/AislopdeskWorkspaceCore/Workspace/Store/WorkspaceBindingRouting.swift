@@ -35,10 +35,6 @@ struct RouteToggles {
     /// ⌘⇧O (this) and ⌘J (`jumpTo`, → `.current`) are GLOBAL; the pill / ⌘1–9 / Tab / ⌘K chords are
     /// PICKER-LOCAL (handled by `OpenQuicklyView.onKeyPress`, never registered here).
     var openQuickly: (() -> Void)?
-    /// Opens the active pane's Git details as a real auxiliary window (the keyboard-centric entry — the
-    /// Details panel that carried the git row is removed). View-owned (the macOS window presenter), so —
-    /// like `sidebar` — it is a passed-in closure; `nil` (headless / test / iOS) = a graceful no-op.
-    var showGitStatus: (() -> Void)?
     /// Toggles "Pin Window" (E19 WI-3, View ▸ Pin Window). A macOS `NSWindow.level` / window-level
     /// concern, so — like `sidebar` — it is a passed-in closure (the live app flips
     /// `WorkspaceChromeState.pinned`); `nil` (the headless / test / iOS default) is a graceful no-op, never a
@@ -77,7 +73,6 @@ public extension WorkspaceBindingRegistry {
         toggleGlobalSearch: (() -> Void)? = nil,
         toggleJumpTo: (() -> Void)? = nil,
         openQuickly: (() -> Void)? = nil,
-        showGitStatus: (() -> Void)? = nil,
         togglePinWindow: (() -> Void)? = nil,
         closeWindow: (() -> Void)? = nil,
     ) {
@@ -85,7 +80,7 @@ public extension WorkspaceBindingRegistry {
             palette: togglePalette, cheatSheet: toggleCheatSheet, find: toggleFind,
             peekReply: togglePeekReply,
             sidebar: toggleSidebar, globalSearch: toggleGlobalSearch, jumpTo: toggleJumpTo,
-            openQuickly: openQuickly, showGitStatus: showGitStatus, pinWindow: togglePinWindow,
+            openQuickly: openQuickly, pinWindow: togglePinWindow,
             sendToChat: toggleSendToChat, closeWindow: closeWindow,
         )
         switch store.liveModel {
@@ -219,10 +214,6 @@ public extension WorkspaceBindingRegistry {
         // the store flag so the action is a non-trapping graceful op (and any store-flag reader still toggles).
         case .toggleSidebar:
             if let s = toggles.sidebar { s() } else { store.toggleSidebarCollapsed() }
-        // Git Status: open the active pane's Git details as a real auxiliary window. View-owned (the macOS
-        // window presenter), so it is a passed-in closure; `nil` (the headless / test / iOS default) is a
-        // graceful no-op — never a dead chord.
-        case .showGitStatus: toggles.showGitStatus?()
         // Pin Window (E19 ES-E19-1 / WI-3): float the window above all other apps. A macOS NSWindow.level
         // concern (VIEW @State `WorkspaceChromeState.pinned`), so it is a passed-in closure like
         // `.toggleSidebar`; `nil` (the headless / test / iOS default) is a graceful
@@ -418,8 +409,6 @@ public extension WorkspaceBindingRegistry {
         // Sidebar is the tree-shell chrome; the canvas path still toggles it via the closure (the live macOS
         // app wires `chrome.toggleSidebar`). `nil` (the canvas test default) is a graceful no-op.
         case .toggleSidebar: toggles.sidebar?()
-        // Git Status is a view surface (the macOS window presenter); the canvas path forwards it via the closure.
-        case .showGitStatus: toggles.showGitStatus?()
         // Pin Window is a window-level concern (the live macOS app flips `WorkspaceChromeState.pinned`); the
         // canvas path forwards it via the closure too — a graceful no-op when none is supplied, never a dead chord.
         case .pinWindow: toggles.pinWindow?()

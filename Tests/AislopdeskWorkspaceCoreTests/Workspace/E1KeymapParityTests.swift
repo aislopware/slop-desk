@@ -253,21 +253,6 @@ final class E1KeymapParityTests: XCTestCase {
         XCTAssertNil(rename?.chord, "rename carries NO default chord")
     }
 
-    /// `.showGitStatus` (the Details panel's keyboard-centric replacement) routes through `route(_:to:)`
-    /// without trapping — it is a VIEW surface (the macOS window presenter), so a `nil` closure (the
-    /// headless default) is a graceful no-op that never mutates the tree; a supplied closure fires.
-    func testShowGitStatusRoutesWithoutTrappingOrMutatingTree() {
-        let store = makeTreeStore()
-        let before = store.tree
-        WorkspaceBindingRegistry.route(.showGitStatus, to: store) // nil closure → graceful no-op
-        XCTAssertEqual(store.tree, before, "Git Status is a view surface — the tree is unchanged")
-
-        // With a closure supplied, the route fires it (the live app wires the window presenter).
-        var fired = 0
-        WorkspaceBindingRegistry.route(.showGitStatus, to: store, showGitStatus: { fired += 1 })
-        XCTAssertEqual(fired, 1, "the supplied Git Status closure fires exactly once")
-    }
-
     /// E1 review fix: ⌘B "Toggle Sidebar" was a DEAD chord on macOS — it routed to
     /// `store.toggleSidebarCollapsed()`, a LEGACY flag the native split shell never reads (the macOS sidebar
     /// collapse is `WorkspaceChromeState.sidebarCollapsed`). Re-bound to ⌘⇧L "Toggle Tabs Panel" and

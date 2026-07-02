@@ -62,17 +62,20 @@ enum RailRowsBuilder {
             for paneID in tab.allPaneIDs() {
                 let spec = session.specs[paneID]
                 let kind = spec?.kind ?? .terminal
-                let title = spec?.lastKnownTitle ?? spec?.title ?? ""
-                // E21 WI-5: the second line is the kind-generic ``PaneSpec/railSubtitle`` — a terminal's cwd,
-                // or (for a `.remoteGUI`/`.systemDialog` video pane, which has no shell cwd) the host-side
-                // window's owning app name (falling back to the window title). So a remote window reads as a
-                // labelled WINDOW (title on line 1, host app on line 2) rather than a bare single line, instead
-                // of the pre-WI-5 always-nil cwd. The builder stays kind-generic — the policy lives in the pure
-                // `PaneSpec` derivation, not a branch here. (The coarse video-CONNECTION dot is deferred:
+                // A TERMINAL row's line 1 is its cwd's FOLDER NAME (`aislopdesk`), not the generic
+                // "Terminal" / raw shell title — an explicit user rename still wins (see `rowTitle`).
+                let title = Self.rowTitle(kind: kind, spec: spec)
+                // Line 2: a terminal shows its git line (branch ↑/↓ · N changed) when the store has a
+                // summary for a repo cwd, else the kind-generic ``PaneSpec/railSubtitle`` — a terminal's
+                // plain cwd, or (for a `.remoteGUI`/`.systemDialog` video pane, which has no shell cwd)
+                // the host-side window's owning app name (falling back to the window title). So a remote
+                // window reads as a labelled WINDOW (title on line 1, host app on line 2) rather than a
+                // bare single line. (The coarse video-CONNECTION dot is deferred:
                 // `PaneConnectionStatus.from` returns `.none` for a video pane by design, and surfacing a live
                 // phase needs a `RemoteWindowModel`→store→row thread that would widen this WI past the gate;
                 // recorded as an E21 §7 follow-up.)
-                let subtitle = spec?.railSubtitle
+                let gitLine = kind == .terminal ? store.paneGitSummary[paneID]?.compactLine : nil
+                let subtitle = gitLine ?? spec?.railSubtitle
                 let status = store.paneAgentStatus[paneID] ?? .none
                 let isSelected = tabIsActive && tab.activePane == paneID
                 // E6 WI-2: the `⌘N` is the TAB shortcut number (1-based), the trailing label is the host's
@@ -112,6 +115,38 @@ enum RailRowsBuilder {
             }
         }
         return out
+    }
+
+    /// The row's LINE-1 title. A `.terminal` pane titles itself by its working directory's FOLDER NAME
+    /// (`/Volumes/…/aislopdesk` → `aislopdesk`) — the identity a coding tool actually navigates by — with
+    /// two escapes: an EXPLICIT user rename always wins (a custom `title` that is neither the registry
+    /// default nor the shell-title auto-promotion), and a pane with no known cwd yet falls back to the
+    /// old shell-title chain. Non-terminal kinds keep the E21 chain (`lastKnownTitle ?? title`)
+    /// unchanged. Pure + static so the mapping is unit-pinned without a view.
+    static func rowTitle(kind: PaneKind, spec: PaneSpec?) -> String {
+        let fallback = spec?.lastKnownTitle ?? spec?.title ?? ""
+        guard kind == .terminal, let spec else { return fallback }
+        // Renamed = a non-empty custom title that is neither the registry default ("Terminal") nor the
+        // load-time auto-promotion of the shell title (`title == lastKnownTitle`, see
+        // `WorkspacePersistence.loadTree()`).
+        let defaultTitle = PaneChooserRegistry.option(for: .terminal).title
+        if !spec.title.isEmpty, spec.title != defaultTitle, spec.title != spec.lastKnownTitle {
+            return spec.title
+        }
+        return cwdFolderName(spec.lastKnownCwd) ?? fallback
+    }
+
+    /// The display folder name of a cwd: its last path component (`/a/b/repo` → `repo`, trailing-slash
+    /// tolerant), the root as `/`, a bare `~` kept as-is. `nil` for `nil`/blank so the caller falls back
+    /// — never an empty title.
+    static func cwdFolderName(_ cwd: String?) -> String? {
+        guard let cwd else { return nil }
+        var path = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return nil }
+        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+        if path == "/" { return "/" }
+        let leaf = path.split(separator: "/").last.map(String.init) ?? path
+        return leaf.isEmpty ? nil : leaf
     }
 
     /// Filter rows by a lower-cased search query against the title + subtitle (empty query ⇒ all).
