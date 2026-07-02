@@ -6,11 +6,8 @@ import Foundation
 /// (or file bytes) BEFORE it reaches the shell via the surface's `text(_:)` typing path. Cross-platform,
 /// AppKit-free, allocation-light — the testable heart of the Paste-as wiring in `GhosttyTerminalView`.
 ///
-/// Two of the five Paste-as variants are NOT transforms and live in the GUI/store as ROUTING, not here:
+/// One of the four Paste-as variants is NOT a transform and lives in the GUI/store as ROUTING, not here:
 /// - **Paste Selection** reads `surface.readSelection()` instead of the clipboard (a source swap).
-/// - **Paste and continue in Composer** converts the richest clipboard flavour (HTML/RTF→Markdown) and
-///   splices it into the client Composer draft at the caret (`TerminalViewModel.onPasteToComposer`, a
-///   parameterless trigger the leaf fulfils via `ComposerPasteboard`) instead of typing it.
 ///
 /// The three that ARE transforms:
 /// - ``bracketed(_:)`` — force DEC bracketed-paste framing even if the program never advertised it.

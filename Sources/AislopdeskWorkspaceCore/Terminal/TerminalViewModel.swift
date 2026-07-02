@@ -250,24 +250,6 @@ public final class TerminalViewModel {
     /// WI-7 lands ⇒ a graceful no-op. `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var onRequestRevealHostPath: ((_ path: String) -> Void)?
 
-    /// E8 / ES-E8-4: the right-click "Paste as ▸ Paste and continue in Composer" item — instead of typing the
-    /// clipboard into the shell, the renderer TRIGGERS this (parameterless) so the leaf reads the richest
-    /// clipboard flavour, converts HTML/RTF→Markdown (the SAME `ComposerPasteboard` the in-field `⌘V` uses),
-    /// and splices it into the client Composer draft AT THE CARET (a client-only buffer; no wire). The
-    /// conversion lives in the leaf (where `ComposerPasteboard` + `RichPasteMarkdown` are), not the renderer,
-    /// so the context path is never the "plain text, no conversion" path it used to be. The presence of this
-    /// hook also DRIVES the menu item's enablement (`TerminalContextMenu.Context.hasComposer`): while it is
-    /// `nil` (Composer unwired) the submenu row greys out. `@ObservationIgnored`: wiring, not view state.
-    @ObservationIgnored public var onPasteToComposer: (() -> Void)?
-
-    /// E13 WI-5 (ES-E13-5): the right-click "Send to Chat" item — instead of acting on the byte stream, the
-    /// renderer TRIGGERS this (parameterless) so the leaf focuses THIS pane and opens the client Send-to-Chat
-    /// dialog (the ``OverlayCoordinator`` captures the pane's selection / last command and routes the composed
-    /// message to a chosen agent pane). The presence of this hook also DRIVES the menu item's enablement
-    /// (``TerminalContextMenu/Context/canSendToChat``): while it is `nil` (Send-to-Chat unwired — headless /
-    /// preview) the row greys out. `@ObservationIgnored`: wiring, not view state. Nil for headless callers.
-    @ObservationIgnored public var onRequestSendToChat: (() -> Void)?
-
     /// W14 #5: the ⌘F / right-click "Find…" action — opens the find-in-terminal bar over THIS pane. The
     /// renderer's menu (and the `find:` responder selector) call it; the leaf wires it to the find-bar
     /// `@State`. `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers.
@@ -282,37 +264,14 @@ public final class TerminalViewModel {
     @ObservationIgnored public var onRequestFindNext: (() -> Void)?
     @ObservationIgnored public var onRequestFindPrev: (() -> Void)?
 
-    /// E12 ES-E12-1: the ⌘⇧E "Composer" action — toggles the multi-line Composer bar over THIS pane. The
-    /// durable ``ComposerModel`` (on the pane's ``LivePaneSession``) owns the visible/draft state; this
-    /// callback lets the leaf view move keyboard focus INTO the composer field when it opens (the
-    /// ``onRequestFind`` pattern — the store reaches it via ``WorkspaceStore/requestComposerInActivePane()``).
-    /// `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers (never invoked).
-    @ObservationIgnored public var onRequestComposer: (() -> Void)?
-
-    /// E12 ES-E12-5: the ⌘⇧M "Prompt Queue" action — opens the Composer in queue-input mode over THIS pane
-    /// (placeholder + `↩`-adds-a-line). Same view-focus seam as ``onRequestComposer`` (the store reaches it
-    /// via ``WorkspaceStore/requestPromptQueueInActivePane()``). `@ObservationIgnored`: wiring, not view
-    /// state. Nil for headless/preview callers (never invoked).
-    @ObservationIgnored public var onRequestPromptQueue: (() -> Void)?
-
-    /// E12: the NORMAL-pane Prompt-Queue idle trigger. Fired once each time the client ``modeTracker`` sees
-    /// an OSC-133;A prompt mark (`ESC]133;A`) WHILE on the main screen (`.shellPrompt`) — i.e. the shell has
-    /// returned to an idle prompt. The pane's ``LivePaneSession`` wires it to the composer's
-    /// `notePromptIdle()`, which dispatches the next queued prompt (one per idle, FIFO). This is the literal
-    /// "next idle prompt" trigger; the AGENT (alt-screen Claude Code) pane has no OSC-133 marks, so its
-    /// equivalent is the host's `claudeStatus → .idle` transition (``LivePaneSession``). Gated on
-    /// `.shellPrompt` so an alt-screen TUI's embedded/own prompt marks never double-fire it. No behaviour
-    /// change while nil (headless/preview). `@ObservationIgnored`: wiring, not view state.
-    @ObservationIgnored public var onPromptIdle: (() -> Void)?
-
-    /// E16 recipe-replay shell-handoff RESUME edge. Fired on the SAME OSC-133;A prompt mark as ``onPromptIdle``
+    /// E16 recipe-replay shell-handoff RESUME edge. Fired on an OSC-133;A prompt mark
     /// (`ESC]133;A` WHILE on the main screen, `.shellPrompt`) — i.e. a shell, LOCAL **or** the inner session a
     /// handoff command opened (`ssh`/`docker exec -it`/`tmux attach`), has drawn a fresh idle prompt. The pane's
     /// ``WorkspaceStore`` wires it to ``WorkspaceStore/recipeReplayPromptReturned(for:)`` so a replay paused after
     /// an interactive command resumes INTO that inner session (the prompt that comes up once `ssh` connects), NOT
     /// on the OUTER command's completion: OSC-133;D (``ConnectionViewModel/onCommandCompleted``) fires for `ssh`
     /// only when it EXITS, which would inject the held commands back into the LOCAL shell — on the wrong host.
-    /// Gated on `.shellPrompt` exactly like ``onPromptIdle`` (an alt-screen TUI's own marks never fire it). No
+    /// Gated on `.shellPrompt` (an alt-screen TUI's own marks never fire it). No
     /// behaviour change while nil (headless/preview). `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var onPromptReturn: (() -> Void)?
 
@@ -1339,10 +1298,8 @@ public final class TerminalViewModel {
     public var isAlternateScreen: Bool { modeTracker.mode == .altScreen }
 
     /// TRUE while the host shell is at an idle prompt on the MAIN screen (the real DECSET / OSC-133 mode
-    /// parse, not the coarse `shellActivity` proxy). The E12 Prompt-Queue kickstart reads this as the
-    /// "normal terminal pane is idle now?" probe (the agent pane uses `claudeStatus` instead) so a prompt
-    /// enqueued while the shell already sits at its prompt fires immediately — `LivePaneSession` injects it
-    /// into ``ComposerModel/isIdleNow``.
+    /// parse, not the coarse `shellActivity` proxy). The E16 snippet-alias auto-expansion reads this as its
+    /// at-prompt gate (``SnippetAliasExpander``).
     public var isAtShellPrompt: Bool { modeTracker.mode == .shellPrompt }
 
     /// TRUE while the foreground program has bracketed-paste mode (DECSET `?2004h`) enabled — the real
@@ -1670,15 +1627,6 @@ public final class TerminalViewModel {
         // default). The tracker's `memchr` skim makes a ground-content pass one `memchr` per chunk.
         for chunk in chunks {
             let modeEvents = modeTracker.consume(chunk)
-            // E12 NORMAL-pane Prompt-Queue idle dispatch: an OSC-133;A prompt mark on the MAIN screen means
-            // the shell is back at an idle prompt (the literal "next idle prompt" trigger). Fire the
-            // queue's idle signal so it dispatches the next queued prompt. GATED on `.shellPrompt` so an
-            // alt-screen TUI's own prompt marks don't double-fire it (the alt-screen / agent-pane idle path
-            // is `claudeStatus → .idle`, wired in LivePaneSession). No-op when `onPromptIdle` is nil
-            // (headless/preview); the `nil` short-circuit keeps the ground-content pass free of extra work.
-            if onPromptIdle != nil, modeTracker.mode == .shellPrompt, modeEvents.contains(.promptStart) {
-                onPromptIdle?()
-            }
             // E16 ES-E16-4: an OSC-133;A prompt mark on the MAIN screen means the shell is back at a KNOWN,
             // empty prompt line — re-establish the snippet-alias mirror's trust so a freshly-typed alias can
             // expand. GATED on `.shellPrompt` (not the alt-screen) for the same reason as the idle dispatch.
@@ -1928,7 +1876,7 @@ public final class TerminalViewModel {
     /// Requests block `index`'s RAW captured VT output bytes (wire type 15 → 29) — the colour-preserving
     /// sibling of ``copyBlockOutput(index:onResult:)`` for callers that render the SGR runs. `onResult`
     /// gets the raw bytes on success or `nil` when the block was evicted / unavailable / disconnected (so
-    /// the caller shows a brief "output unavailable" and NEVER hangs). The clipboard/composer path strips
+    /// the caller shows a brief "output unavailable" and NEVER hangs). The clipboard path strips
     /// these bytes through ``BlockOutputSanitizer``; here they stay raw so the colours survive.
     public func requestBlockOutputBytes(index: UInt32, onResult: @escaping (Data?) -> Void) {
         // No live connection → resolve as unavailable without sending (the request would never get a reply).

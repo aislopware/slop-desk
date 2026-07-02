@@ -248,61 +248,6 @@ public struct ActionsPaletteSource: PaletteDataSource {
             shortcut: glyph(.resetFontSize), category: .view,
             run: { store in store.resetFontInActivePane() },
         ),
-        // Open Composer (E12; ⌘⇧E) — toggle the active pane's Composer. A graceful no-op off a
-        // terminal active pane. Under the AGENTS section.
-        item(
-            id: "action.openComposer", icon: "square.and.pencil", title: "Open Composer",
-            keywords: "composer prompt write agent message draft compose",
-            shortcut: glyph(.composer), category: .agents,
-            run: { store in store.requestComposerInActivePane() },
-        ),
-        // Prompt Queue (E12; ⌘⇧M) — open the active pane's composer in prompt-queue
-        // input mode. The macOS Agents menu has it; surfacing it here makes it reachable cross-platform (iOS has
-        // no Agents menu). A graceful no-op off a terminal active pane. Glyph from the registry (no drift).
-        item(
-            id: "action.promptQueue", icon: "list.bullet.rectangle.portrait", title: "Prompt Queue",
-            keywords: "prompt queue agent messages pending backlog compose",
-            shortcut: glyph(.promptQueue), category: .agents,
-            run: { store in store.requestPromptQueueInActivePane() },
-        ),
-        // Send to Chat (E13 ES-E13-5; ⌘⌃↩) — quote the active pane's selection /
-        // last command into a chosen Claude-only agent pane. A VIEW overlay (the coordinator captures the quote
-        // + presents the scrimmed dialog), so it routes through ``PaletteAction/openSendToChat`` — the SAME ⌘⌃↩
-        // surface the menu mirrors. Surfacing it makes the dialog reachable from the palette (cross-platform).
-        // It HONESTLY no-ops (toast) when there is nothing to quote, so it is never a dead control.
-        PaletteItem(
-            id: "action.sendToChat", icon: "arrow.up.message", title: "Send to Chat",
-            keywords: "send chat agent selection command share forward message",
-            shortcut: glyph(.sendToChat), filter: .actions, category: .agents, action: .openSendToChat,
-        ),
-        // Fork in Split Right / Down / New Tab (E13 ES-E13-7, spec `agents__fork-branch-session`; CLAUDE-ONLY).
-        // PALETTE / MENU ONLY (the registry rows ship `chord: nil`) — the fork is started inside the agent's
-        // own `/branch` command, then the user picks a destination here. Each routes through the SAME single
-        // ``WorkspaceBindingRegistry/route`` `performFork` path (no duplicated fork logic), which is a graceful
-        // no-op when the active pane is not an agent or no `/branch` was detected — so surfacing them is never a
-        // dead/destructive control. Surfacing them in the catalog makes the fork reachable cross-platform (iOS
-        // has no Agents menu). The glyph derives from the registry (chord: nil ⇒ nil ⇒ no hint chip).
-        forkItem(
-            id: "action.forkSplitRight",
-            icon: "rectangle.split.2x1",
-            title: "Fork in Split Right",
-            keywords: "fork branch session split right parallel claude /branch new pane",
-            action: .forkInSplitRight,
-        ),
-        forkItem(
-            id: "action.forkSplitDown",
-            icon: "rectangle.split.1x2",
-            title: "Fork in Split Down",
-            keywords: "fork branch session split down parallel claude /branch new pane",
-            action: .forkInSplitDown,
-        ),
-        forkItem(
-            id: "action.forkNewTab",
-            icon: "plus.rectangle.on.rectangle",
-            title: "Fork in New Tab",
-            keywords: "fork branch session new tab parallel claude /branch open",
-            action: .forkInNewTab,
-        ),
         // Connect to a (possibly non-default) host — the only entry point to the host/port editor besides
         // the top-bar status pill. No registry chord ⇒ no hint chip.
         PaletteItem(
@@ -409,20 +354,6 @@ public struct ActionsPaletteSource: PaletteDataSource {
             keywords: "layout retile arrange tile even main tiled select-layout tmux zellij \(preset.rawValue)",
             shortcut: nil, category: .pane,
             run: { store in store.applyLayout(preset) },
-        )
-    }
-
-    /// Build an AGENTS "Fork in…" row whose `.store` run-arm routes the given fork ``WorkspaceAction`` through
-    /// the central ``WorkspaceBindingRegistry/route`` (the SINGLE `performFork` path — no duplicated fork
-    /// logic). A graceful no-op when the active pane has no detected `/branch`. The glyph derives from the
-    /// registry (chord: nil ⇒ no hint chip). CLAUDE-ONLY.
-    private static func forkItem(
-        id: String, icon: String, title: String, keywords: String, action: WorkspaceAction,
-    ) -> PaletteItem {
-        PaletteItem(
-            id: id, icon: icon, title: title, keywords: keywords, shortcut: glyph(action),
-            filter: .actions, category: .agents,
-            action: .store { store in WorkspaceBindingRegistry.route(action, to: store) },
         )
     }
 }

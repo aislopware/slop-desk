@@ -10,7 +10,7 @@
 //     (no Reveal / cd / SSH row), a path offers the full Open / Copy Path / Reveal / Change-Directory set, and a
 //     command block offers Jump-to + Copy.
 //
-// macOS-gated (NSPasteboard); no window / responder / VT / Metal — hang-safe (the `ComposerPasteHandlerTests`
+// macOS-gated (NSPasteboard); no window / responder / VT / Metal — hang-safe (the pasteboard-test
 // idiom). `TerminalViewModel()` + a `.tree` `WorkspaceStore` are headless (mirrors `HostPathActionsTests`).
 
 #if os(macOS)

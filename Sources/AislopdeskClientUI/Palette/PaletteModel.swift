@@ -62,7 +62,6 @@ public enum PaletteCategory: String, CaseIterable, Sendable, Hashable {
     case tab = "Tab"
     case view = "View"
     case shell = "Shell"
-    case agents = "Agents"
     case settings = "Settings"
 
     /// The section-header label (title case; the palette view uppercases it for display).
@@ -70,10 +69,9 @@ public enum PaletteCategory: String, CaseIterable, Sendable, Hashable {
 
     /// The fixed display order: Working Directory leads (it OWNS the cwd badge in the view, per the
     /// screenshot), then the remaining verb groups. An empty category is skipped by the mixer / zero-state, so it
-    /// never renders an empty header. (Shell carries the E17 "Read Only" verb;
-    /// Agents carries the E12/E13 "Open Composer" + the three "Fork in…" verbs.)
+    /// never renders an empty header. (Shell carries the E17 "Read Only" verb.)
     public static let commandOrder: [Self] = [
-        .workingDirectory, .window, .pane, .tab, .view, .shell, .agents, .settings,
+        .workingDirectory, .window, .pane, .tab, .view, .shell, .settings,
     ]
 }
 
@@ -133,10 +131,6 @@ public enum PaletteAction: Sendable {
     /// coordinator to the injected ``OverlayCoordinator/openThemeFile`` closure (macOS `NSWorkspace`; iOS has no
     /// `~/.config` so it is a documented no-op). A graceful no-op by default.
     case openThemeFile
-    /// Agent catalog verb (Batch 4): the Agents ▸ Send to Chat row — open the Send-to-Chat dialog over the active pane's
-    /// quote. Routed by the coordinator to ``OverlayCoordinator/openSendToChat()`` (the SAME ⌘⌃↩ surface the
-    /// menu mirrors), which HONESTLY no-ops (toast) when there is nothing to quote. CLAUDE-only.
-    case openSendToChat
     /// A non-interactable separator/zero row.
     case noOp
 }

@@ -279,18 +279,6 @@ public struct AislopdeskClientApp: App {
         // pill). Retained for the scene lifetime by `_overlayCoordinator` / `_folderFrecency` below.
         let overlay = OverlayCoordinator(store: store, folders: folderFrecency)
         overlay.connectionTarget = { [weak appConnection] in appConnection?.target ?? .default }
-        // E13 / WI-5 (ES-E13-5): the Send-to-Chat dialog reads the active pane's quote off the live store, and
-        // its "Copy Message" writes the system pasteboard. Inject both so the coordinator stays store- and
-        // clipboard-framework-agnostic (the headless / test defaults capture instead of touching AppKit).
-        overlay.captureSendToChat = { [weak store] in store?.captureSendToChatContext() }
-        overlay.copyToPasteboard = { text in
-            #if canImport(AppKit)
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-            #elseif canImport(UIKit)
-            UIPasteboard.general.string = text
-            #endif
-        }
         // Batch 4 (catalog-completeness): the palette's Theme / Config verbs are LOCAL client actions over the
         // live ``PreferencesStore`` (the SAME `appearance` slot Settings → Appearance edits). "Switch Theme"
         // advances the primary slot through the built-in themes (chrome retint + terminal cells repaint live);
@@ -496,11 +484,6 @@ public struct AislopdeskClientApp: App {
             // card) — replacing the prior `jumpToOldestAttentionPane()` fallback in `route`. ⌘⇧J stays E10's
             // Hint-to-Open (NOT restored to peek-reply).
             togglePeekReply: { [overlay] in overlay.togglePeekReply() },
-            // E13 / WI-5 (ES-E13-5): ⌘⌃↩ opens the Send-to-Chat dialog over the active pane's captured quote
-            // through the SAME NSEvent monitor that owns every chord. The coordinator HONESTLY no-ops when
-            // there is nothing to quote (no selection + no command block), so the chord does nothing rather
-            // than flashing an empty card.
-            toggleSendToChat: { [overlay] in overlay.toggleSendToChat() },
             toggleGlobalSearch: { [overlay] in overlay.toggleGlobalSearch() },
             // E10 / WI-8 → E11 / WI-7: ⌘J now opens the folded-in Jump-To — the Open-Quickly picker at the
             // `.current` pill — through the SAME NSEvent monitor that owns every chord.
@@ -517,9 +500,6 @@ public struct AislopdeskClientApp: App {
             // E13 / WI-8: the Peek & Reply card YIELDS the same way — its reply field must receive normal
             // typing + the bare-1–9 quick-answer (which a global ⌘-less chord can't steal, but a yield keeps
             // any modeled chord from firing behind the focused card). Esc / a scrim-tap close it.
-            // E13 / WI-5: the Send-to-Chat dialog (its auto-focused comment field) folds into the SAME gate via
-            // `capturesKeyboardWhileVisible` — without it a modeled ⌘W destroyed a background pane / ⌘1–9
-            // switched a background tab behind the open dialog (the chord leaked past the focused field).
             isOverlayCapturingKeys: { [overlay] in overlay.capturesKeyboardWhileVisible },
             // Bug-fix (keyboard audit): gate the app-wide NSEvent monitor on the WORKSPACE window being key, so
             // the stock Settings scene (⌘,) + attached sheets receive their own keystrokes instead of a bound
@@ -791,9 +771,6 @@ public struct AislopdeskClientApp: App {
                 // E13 / WI-8 (P4): the View ▸ Peek & Reply menu row opens the SAME overlay the ⌘⌥J chord
                 // drives (the menu mirrors the chord; the NSEvent dispatcher owns the chord itself).
                 togglePeekReply: { [overlayCoordinator] in overlayCoordinator.togglePeekReply() },
-                // E13 / WI-5 (ES-E13-5): the Agents ▸ Send to Chat menu row opens the SAME ⌘⌃↩ dialog the
-                // chord drives (the menu mirrors the chord; the NSEvent dispatcher owns the chord itself).
-                toggleSendToChat: { [overlayCoordinator] in overlayCoordinator.toggleSendToChat() },
                 toggleGlobalSearch: { [overlayCoordinator] in overlayCoordinator.toggleGlobalSearch() },
                 // E10 / WI-8 → E11 / WI-7: the View ▸ Jump To… menu item opens the folded-in Jump-To (the
                 // Open-Quickly picker at the `.current` pill), the SAME overlay the ⌘J chord drives.

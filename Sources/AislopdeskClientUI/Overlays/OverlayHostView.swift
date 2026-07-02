@@ -85,7 +85,6 @@ struct OverlayHostView: View {
         case remotePicker
         case openQuickly
         case peekReply
-        case sendToChat
         case globalSearch
         var id: Self { self }
     }
@@ -97,7 +96,6 @@ struct OverlayHostView: View {
         if coordinator.remotePickerVisible { return .remotePicker }
         if coordinator.openQuicklyVisible { return .openQuickly }
         if coordinator.peekReplyVisible { return .peekReply }
-        if coordinator.sendToChatVisible, coordinator.sendToChatContext != nil { return .sendToChat }
         if coordinator.globalSearchVisible { return .globalSearch }
         return nil
     }
@@ -120,7 +118,6 @@ struct OverlayHostView: View {
         else if coordinator.remotePickerVisible { coordinator.closeRemotePicker() }
         else if coordinator.openQuicklyVisible { coordinator.closeOpenQuickly() }
         else if coordinator.peekReplyVisible { coordinator.closePeekReply() }
-        else if coordinator.sendToChatVisible { coordinator.closeSendToChat() }
         else if coordinator.globalSearchVisible { coordinator.closeGlobalSearch() }
     }
 
@@ -139,27 +136,8 @@ struct OverlayHostView: View {
             OpenQuicklyView(store: store, coordinator: coordinator, folders: coordinator.folders)
         case .peekReply:
             PeekReplyOverlay(store: store, coordinator: coordinator)
-        case .sendToChat:
-            sendToChatSheet
         case .globalSearch:
             GlobalSearchView(store: store, coordinator: coordinator)
-        }
-    }
-
-    /// The Send-to-Chat sheet — a thin view over the coordinator's captured quote + live agent session list.
-    /// Guarded on the captured context (``activeSheet`` already requires it non-nil, so the `else` is dead).
-    @ViewBuilder
-    private var sendToChatSheet: some View {
-        if let context = coordinator.sendToChatContext {
-            SendToChatDialog(
-                context: context,
-                sessions: coordinator.sendToChatSessions,
-                initialSelection: coordinator.sendToChatInitialSelection,
-                onSend: { target, message in coordinator.sendChat(to: target, message: message) },
-                onCopy: { message in coordinator.copyChatMessage(message) },
-                onCancel: { coordinator.closeSendToChat() },
-                onSelectionChange: { target in coordinator.recordSendToChatSelection(target) },
-            )
         }
     }
 

@@ -43,33 +43,9 @@ final class TerminalContextMenuTests: XCTestCase {
             TerminalContextMenu.items,
             [
                 .copy, .cut, .paste, .pasteAsKeystrokes, .selectAll, .clear, .copyOutput,
-                // E13 WI-5: "Send to Chat" sits in the blocks/agent group (after Copy Command Output).
-                .sendToChat, .splitRight, .splitDown, .find,
+                .splitRight, .splitDown, .find,
             ],
         )
-    }
-
-    /// E13 WI-5 (ES-E13-5): "Send to Chat" is live ONLY when the dialog hook is wired (`canSendToChat`) AND
-    /// there is something to quote (a selection OR a completed command block) — otherwise it greys out
-    /// honestly (mirroring `pasteToComposer`'s `hasComposer` gate). Never a dead row.
-    func testSendToChatRequiresWiringAndAQuote() {
-        // Hook unwired (headless / preview) ⇒ always disabled, even with a selection.
-        let unwired = TerminalContextMenu.Context(hasSelection: true, clipboardHasText: false, canSendToChat: false)
-        XCTAssertFalse(TerminalContextMenu.isEnabled(.sendToChat, context: unwired))
-
-        // Wired but nothing to quote ⇒ disabled.
-        let nothing = TerminalContextMenu.Context(
-            hasSelection: false, clipboardHasText: false, hasCommandOutput: false, canSendToChat: true,
-        )
-        XCTAssertFalse(TerminalContextMenu.isEnabled(.sendToChat, context: nothing))
-
-        // Wired + a selection ⇒ enabled; wired + a command block ⇒ enabled.
-        let withSel = TerminalContextMenu.Context(hasSelection: true, clipboardHasText: false, canSendToChat: true)
-        let withOut = TerminalContextMenu.Context(
-            hasSelection: false, clipboardHasText: false, hasCommandOutput: true, canSendToChat: true,
-        )
-        XCTAssertTrue(TerminalContextMenu.isEnabled(.sendToChat, context: withSel))
-        XCTAssertTrue(TerminalContextMenu.isEnabled(.sendToChat, context: withOut))
     }
 
     func testSeparatorsGroupClipboardEditBlocksSplitFind() {
@@ -110,7 +86,7 @@ final class TerminalContextMenuTests: XCTestCase {
     func testPasteAsSubmenuOrderMatchesSlate() {
         XCTAssertEqual(
             TerminalContextMenu.pasteAsItems,
-            [.pasteSelection, .pasteFileBase64, .pasteEscaped, .pasteBracketed, .pasteToComposer],
+            [.pasteSelection, .pasteFileBase64, .pasteEscaped, .pasteBracketed],
         )
     }
 
@@ -122,7 +98,7 @@ final class TerminalContextMenuTests: XCTestCase {
     }
 
     func testPasteFileBase64IsAlwaysEnabled() {
-        // It picks its own file via NSOpenPanel, so it never depends on selection / clipboard / composer.
+        // It picks its own file via NSOpenPanel, so it never depends on selection / clipboard state.
         let empty = TerminalContextMenu.Context(hasSelection: false, clipboardHasText: false)
         XCTAssertTrue(TerminalContextMenu.isEnabled(.pasteFileBase64, context: empty))
     }
@@ -134,14 +110,5 @@ final class TerminalContextMenuTests: XCTestCase {
         XCTAssertTrue(TerminalContextMenu.isEnabled(.pasteBracketed, context: hasClip))
         XCTAssertFalse(TerminalContextMenu.isEnabled(.pasteEscaped, context: noClip))
         XCTAssertFalse(TerminalContextMenu.isEnabled(.pasteBracketed, context: noClip))
-    }
-
-    func testPasteToComposerRequiresClipboardTextAndComposer() {
-        let both = TerminalContextMenu.Context(hasSelection: false, clipboardHasText: true, hasComposer: true)
-        let clipOnly = TerminalContextMenu.Context(hasSelection: false, clipboardHasText: true, hasComposer: false)
-        let composerOnly = TerminalContextMenu.Context(hasSelection: false, clipboardHasText: false, hasComposer: true)
-        XCTAssertTrue(TerminalContextMenu.isEnabled(.pasteToComposer, context: both))
-        XCTAssertFalse(TerminalContextMenu.isEnabled(.pasteToComposer, context: clipOnly))
-        XCTAssertFalse(TerminalContextMenu.isEnabled(.pasteToComposer, context: composerOnly))
     }
 }

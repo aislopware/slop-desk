@@ -181,7 +181,7 @@ public enum SettingsKey {
     // click/context-menu dispatch, Jump-To, and Hint Mode). The bool key takes the bare name (`…Enabled`
     // accessor); the enum-valued keys take a `…Key` suffix (like `rightClickActionKey`) so the typed accessor
     // below can use the bare name; the list-valued keys take the bare name (read via the bridged accessors /
-    // `@Default`, like `composerPinnedPaneIDs`).
+    // `@Default`, like `customLinkSchemes`).
     /// `link-detection` — detect paths / URLs in terminal output and underline them on ⌘-hover (default
     /// ON). Turn OFF when a TUI's mouse reporting conflicts with the detection overlay.
     public static let linkDetection = "controls.linkDetection"
@@ -250,17 +250,6 @@ public enum SettingsKey {
     /// reports a non-zero exit / OSC 9;4;2 error; clicking the Dock jumps to the next failing tab + clears the
     /// tint (default ON; macOS-only). Read by the macOS ``DockProgressController`` via ``DockTintPolicy``.
     public static let dockIconErrorBadge = "appearance.dockIconErrorBadge"
-    // E12 (Composer / Prompt Queue). Fire-time `Defaults.Keys` flags — like the E8 Controls knobs they are
-    // NEVER folded into the env overlay / sidecar (golden-safe by construction). They MIRROR the typed
-    // `TerminalPreferences.composer*` client-pref fields; the leaf view reads these fire-time accessors so it
-    // doesn't have to thread `PreferencesStore` down the pane subtree.
-    /// "Composer max height" — the fraction of the pane height the Composer grows to before internal
-    /// scroll. Default ``TerminalPreferences/defaultComposerMaxHeightFraction`` (~0.4).
-    public static let composerMaxHeight = "composer.maxHeightFraction"
-    /// The set of pane UUIDs whose Composer is PINNED (rides along across tab switches, E12 WI-6). Pinning is
-    /// PER-PANE, so persistence is a set keyed by the stable leaf ``PaneID`` (NOT a single global Bool), and
-    /// each pane re-pins on a fresh launch (`LivePaneSession.adopt`). Default empty (nothing pinned).
-    public static let composerPinnedPaneIDs = "composer.pinnedPaneIDs"
     // Shell / window behaviour
     /// Where a new tab is inserted in the active session's tab bar (`new-tab-position`). Stored as the
     /// ``NewTabPosition`` rawValue (`auto`/`end`/`after-current`); default `.auto` (= append). Read at the
@@ -550,35 +539,6 @@ public enum SettingsKey {
     /// Whether the macOS Dock tile tints red on a non-zero exit / OSC 9;4;2 error (`dock-icon-error-badge`),
     /// default ON (macOS-only; inert on iOS). Read fire-time by ``DockProgressController`` via ``DockTintPolicy``.
     public static var dockIconErrorBadgeEnabled: Bool { Defaults[.dockIconErrorBadge] }
-
-    /// The resolved Composer max-height fraction ("Composer max height", E12) — the persisted value
-    /// clamped into a sane `0.15…0.9` band, or ``TerminalPreferences/defaultComposerMaxHeightFraction`` (~0.4)
-    /// when unset. The leaf multiplies this by the live pane height to size the Composer field (then internal
-    /// scroll). Ordered min/max (NaN-safe — never a bare `<`/`>` ternary).
-    public static var composerMaxHeightFraction: Double {
-        Double.minimum(0.9, Double.maximum(0.15, Defaults[.composerMaxHeight]))
-    }
-
-    /// Whether the Composer in the pane with `paneID` is PINNED across tab switches (E12 WI-6). Read at
-    /// session materialization (`LivePaneSession.adopt`) to re-pin the RIGHT pane on a fresh launch — the
-    /// "pinned state is persisted as a user preference" rule, made faithful by keying on the stable
-    /// per-pane ``PaneID`` instead of a single global Bool.
-    public static func isComposerPinned(paneID: PaneID) -> Bool {
-        Defaults[.composerPinnedPaneIDs].contains(paneID.raw.uuidString)
-    }
-
-    /// PERSISTS the per-pane Composer PIN (E12 WI-6) so a pinned Composer survives an app relaunch and
-    /// re-pins exactly the pane that was pinned. Adds / removes the pane's ``PaneID`` UUID in the persisted
-    /// set. Idempotent — a no-op write leaves the set (and `Defaults`) untouched. Wired to
-    /// ``ComposerModel/onPinnedChange`` by the owning ``LivePaneSession``.
-    public static func setComposerPinned(_ pinned: Bool, paneID: PaneID) {
-        let token = paneID.raw.uuidString
-        var ids = Set(Defaults[.composerPinnedPaneIDs])
-        if pinned { ids.insert(token) } else { ids.remove(token) }
-        let sorted = ids.sorted()
-        guard sorted != Defaults[.composerPinnedPaneIDs] else { return }
-        Defaults[.composerPinnedPaneIDs] = sorted
-    }
 
     /// The default kind for a generic "New Pane" (toolbar primary action / empty state), default
     /// `.terminal`. The ⌥⌘N per-kind shortcut is unaffected. A stale persisted `"claudeCode"` value (the
@@ -917,13 +877,6 @@ public extension Defaults.Keys {
     // Fire-time flags, never folded into a typed prefs model → golden-safe. Animate default OFF, error-tint ON.
     static let dockIconAnimateProgress = Key<Bool>(SettingsKey.dockIconAnimateProgress, default: false)
     static let dockIconErrorBadge = Key<Bool>(SettingsKey.dockIconErrorBadge, default: true)
-    // E12 Composer / Prompt Queue — fire-time flags, never folded into the env overlay / sidecar (golden-safe).
-    // The max-height default mirrors `TerminalPreferences.defaultComposerMaxHeightFraction` (one source).
-    static let composerMaxHeight = Key<Double>(
-        SettingsKey.composerMaxHeight,
-        default: TerminalPreferences.defaultComposerMaxHeightFraction,
-    )
-    static let composerPinnedPaneIDs = Key<[String]>(SettingsKey.composerPinnedPaneIDs, default: [])
     static let defaultPaneKind = Key<PaneKind>(SettingsKey.defaultPaneKindKey, default: .terminal)
     static let newTabPosition = Key<NewTabPosition>(SettingsKey.newTabPositionKey, default: .auto)
     // Sidebar tab grouping / sort (sort-hamburger, E6) stored as the bare enum rawValue. Group default
@@ -1023,7 +976,7 @@ public extension Defaults.Keys {
     // E10 (Path/link detection — Settings → Controls → Open With / Link Schemes). Fire-time flags, never
     // folded into a typed prefs model → golden-safe. The enum keys store the bare enum rawValue via the
     // `RawRepresentableBridge` (repairing a stale value to the default exactly like `rightClickAction`); the
-    // list keys store a native `[String]` (like `composerPinnedPaneIDs`).
+    // list keys store a native `[String]` (like `customLinkSchemes`).
     static let linkDetection = Key<Bool>(SettingsKey.linkDetection, default: true)
     static let linkCmdClick = Key<LinkCmdClick>(SettingsKey.linkCmdClickKey, default: .open)
     static let linkCmdShiftClick = Key<LinkCmdShiftClick>(SettingsKey.linkCmdShiftClickKey, default: .revealFinder)

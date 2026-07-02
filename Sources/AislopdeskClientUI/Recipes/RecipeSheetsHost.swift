@@ -8,7 +8,7 @@
 // The store fields are `internal(set)` (settable only inside WorkspaceCore), so each `isPresented` binding's
 // SETTER routes a dismissal through the public store API rather than writing the flag directly — and reading
 // the field in the GETTER registers the `@Observable` dependency that re-presents the sheet when the flag
-// flips (the same binding idiom `WorkspaceRootView.composerSheetPresented` uses).
+// flips (a get-derived / set-routing Binding).
 //
 // Applied ONCE at the WindowGroup root (`AislopdeskClientApp`), so the sheets ride above the workspace shell
 // on both platforms. The snippet editor (File ▸ Recipe ▸ Save Snippet…, macOS) rides an app-owned `@State`
@@ -34,8 +34,7 @@ private struct RecipeSheetsModifier: ViewModifier {
     func body(content: Content) -> some View {
         // Read the `@Observable` pending flags HERE, in the modifier body, so a flip re-evaluates this body
         // and the captured-value bindings below re-present the sheet. Reading them only inside a Binding getter
-        // may not register the observation (the same reason `WorkspaceRootView` reads `store.floatingComposer`
-        // explicitly in its body to drive the composer sheet).
+        // may not register the observation.
         let savePending = store.recipes.pendingSaveRecipe
         let openPending = store.recipes.pendingOpenRecipe
         let trustPrompt = store.recipes.pendingTrustPrompt

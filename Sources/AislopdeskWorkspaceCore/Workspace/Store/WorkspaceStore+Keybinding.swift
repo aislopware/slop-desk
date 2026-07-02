@@ -16,7 +16,6 @@ public struct WorkspaceOverlayKeyToggles {
     public var globalSearch: (() -> Void)?
     public var jumpTo: (() -> Void)?
     public var openQuickly: (() -> Void)?
-    public var sendToChat: (() -> Void)?
     public var peekReply: (() -> Void)?
 
     public init(
@@ -25,7 +24,6 @@ public struct WorkspaceOverlayKeyToggles {
         globalSearch: (() -> Void)? = nil,
         jumpTo: (() -> Void)? = nil,
         openQuickly: (() -> Void)? = nil,
-        sendToChat: (() -> Void)? = nil,
         peekReply: (() -> Void)? = nil,
     ) {
         self.palette = palette
@@ -33,7 +31,6 @@ public struct WorkspaceOverlayKeyToggles {
         self.globalSearch = globalSearch
         self.jumpTo = jumpTo
         self.openQuickly = openQuickly
-        self.sendToChat = sendToChat
         self.peekReply = peekReply
     }
 }
@@ -41,7 +38,7 @@ public struct WorkspaceOverlayKeyToggles {
 extension WorkspaceStore {
     /// Route a hardware-keyboard `action` resolved by a per-pane ``TerminalKeyInterceptor`` through
     /// ``WorkspaceBindingRegistry/route``, threading the view-injected ``overlayKeyToggles`` so an OVERLAY chord
-    /// (⌘⇧P / ⇧⌘F / ⌘⇧O / ⌘J / ⌘⌃↩ / ⌘⌥J) fires its panel on a platform with no app-level NSEvent monitor (iOS).
+    /// (⌘⇧P / ⇧⌘F / ⌘⇧O / ⌘J / ⌘⌥J) fires its panel on a platform with no app-level NSEvent monitor (iOS).
     /// macOS installs no toggles here (its dispatcher owns the chord BEFORE the surface ever sees it), so this
     /// degenerates to the bare `route` there. A `nil` toggle is a graceful no-op (the `route` arm's own fallback).
     func routeInterceptedKey(_ action: WorkspaceAction) {
@@ -50,7 +47,6 @@ extension WorkspaceStore {
             togglePalette: overlayKeyToggles.palette,
             toggleCheatSheet: overlayKeyToggles.cheatSheet,
             togglePeekReply: overlayKeyToggles.peekReply,
-            toggleSendToChat: overlayKeyToggles.sendToChat,
             toggleGlobalSearch: overlayKeyToggles.globalSearch,
             toggleJumpTo: overlayKeyToggles.jumpTo,
             openQuickly: overlayKeyToggles.openQuickly,

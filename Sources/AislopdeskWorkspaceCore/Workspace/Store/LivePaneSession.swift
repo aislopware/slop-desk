@@ -3,7 +3,7 @@ import AislopdeskClient
 import AislopdeskInspector
 import AislopdeskVideoProtocol // W12: EnvConfig — the behaviour-preserving config resolver (env → overlay → default)
 import Foundation
-import Observation // E13 WI-7: withObservationTracking — drive fork detection off the inspector's session id
+import Observation
 
 // MARK: - LivePaneSession (the production handle)
 
@@ -52,15 +52,6 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// terminal connection (the `.terminal` kind).
     public let inputBar: InputBarModel?
 
-    /// E12: the per-pane Composer (`⌘⇧E`) + Prompt Queue (`⌘⇧M`) view-model. DURABLE on this session — like
-    /// ``inputBar``, it survives tab switches and pause/resume (panes mount at opacity-0, never torn down),
-    /// so a draft / queued prompts persist. Present for `.terminal` panes; `nil` for the video kinds
-    /// (`.remoteGUI` / `.systemDialog`). Its single OUT sink rides the pane's ONE ordered-OUT FIFO via the
-    /// input bar (NOT a second socket), and BOTH turn-finished signals drain its queue: the NORMAL-pane
-    /// OSC-133;A (``TerminalViewModel/onPromptIdle``, wired in ``makeTerminal``) and the AGENT-pane
-    /// `claudeStatus → .done` (``applyDetectedStatus``).
-    public let composer: ComposerModel?
-
     /// The read-only structured inspector for a terminal pane (NWConnection #2). `nil` for non-terminal
     /// kinds (`.remoteGUI` / `.systemDialog`). Present for EVERY `.terminal` pane now (W11) because any
     /// terminal can become a Claude session at runtime; the second channel itself is only SUBSCRIBED
@@ -87,9 +78,8 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// QUEUE-SAFETY (2026-07-02, docs/DECISIONS.md "Queue-safety cluster"): whether AUTHORITATIVE agent
     /// turn signals have ever been seen for this pane — set on the first `.working`/`.done`/
     /// `.needsPermission`, which ONLY the host's hook/ctl paths can produce (the always-on foreground
-    /// watch yields at most the presence-floor `.idle`, behind which Claude may be MID-TURN). This is the
-    /// only basis on which the Prompt Queue may auto-dispatch into an agent: unverified agent panes hold
-    /// the queue (``ComposerModel/queueHold``). Sticky for the pane-session lifetime — the PTY env keeps
+    /// watch yields at most the presence-floor `.idle`, behind which Claude may be MID-TURN). Sticky for
+    /// the pane-session lifetime — the PTY env keeps
     /// `AISLOPDESK_SOCKET_PATH`, so a restarted claude in the same pane still reports. Observed so the
     /// strip's held badge clears the moment the first authoritative signal lands.
     public private(set) var agentTurnSignalsVerified = false
@@ -99,31 +89,6 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// `.needsPermission` the host set via a hook, so type-26 updates THIS string and nothing else. `nil`
     /// until the host reports one. Observed so any chrome that shows it re-renders.
     public private(set) var foregroundProcessName: String?
-
-    // MARK: Fork / Branch detection (E13 WI-7 — a `/branch` mints a NEW Claude session id)
-
-    /// The BASELINE Claude session id last seen for this pane (the inspector channel's reported
-    /// ``AislopdeskInspector/SessionInfo/sessionID``). Updated on every advertised id; a NEW id appearing
-    /// AFTER this is non-nil is the `/branch` fingerprint. Private — only the fork-signal fold reads/writes it.
-    private var knownAgentSessionID: String?
-
-    /// The PENDING fork target: the new Claude session id a detected `/branch` minted, awaiting a "Fork in…"
-    /// palette action to spawn `claude --resume <id>` (VERBATIM) into a split / tab. `nil` until a branch is
-    /// detected; CONSUMED (cleared) by ``consumeForkSessionID()`` so one branch is resumed exactly once.
-    /// Observed so any chrome that gates the fork affordance on a pending branch re-renders on the edge.
-    public private(set) var forkSessionID: String?
-
-    /// One-shot guard so the inspector-session observation (which re-arms itself) is started ONCE, not stacked
-    /// per subscribe / iOS resume cycle.
-    private var forkObservationArmed = false
-
-    /// E13 WI-6 (ES-E13-6): the Claude session id this pane is CURRENTLY running — its baseline
-    /// ``knownAgentSessionID`` exposed ONLY while a live agent hosts it (`claudeStatus != .none`), so a pane
-    /// whose claude has exited (id retained, status fallen back to `.none`) drops out of the Resume jump map
-    /// and a Resume of that session SPAWNS a fresh run rather than wrongly "jumping" to a dead tab. `nil`
-    /// otherwise. Drives ``WorkspaceStore/liveAgentSessionIDs()`` via the ``LiveAgentSessionProviding`` seam.
-    /// `public` so ClientUI surfaces can read the live session id.
-    public var liveAgentSessionID: String? { claudeStatus == .none ? nil : knownAgentSessionID }
 
     /// The live inspector second-channel client. Set when the inspector is subscribed; nilled on
     /// pause/teardown. Private so callers go through the lifecycle methods.
@@ -251,7 +216,6 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         kind: PaneKind,
         connection: ConnectionViewModel?,
         inputBar: InputBarModel?,
-        composer: ComposerModel?,
         inspector: InspectorViewModel?,
         inspectorClient: InspectorClient?,
         remoteWindow: RemoteWindowModel?,
@@ -263,7 +227,6 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         self.kind = kind
         self.connection = connection
         self.inputBar = inputBar
-        self.composer = composer
         self.inspector = inspector
         self.inspectorClient = inspectorClient
         self.remoteWindow = remoteWindow
@@ -369,27 +332,11 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         // (docs/29 dual-OUT-drain reorder fix). Weak: the sink must not retain the model.
         inputBar.sendSink = { [weak terminal] data in terminal?.sendInput(data) }
 
-        // E12 Composer (⌘⇧E) + Prompt Queue (⌘⇧M): per-pane, durable on this session. Its single OUT sink
-        // funnels through the SAME input bar — `sendRaw(record: true)` so a composer submit / a dispatched
-        // queued prompt gets the SAME ordered-OUT FIFO + B1 echo-dedup as a typed line (never a second
-        // socket, never an unstructured Task — the docs/29 reorder class). Weak so the sink can't retain
-        // the input bar.
-        let composer = ComposerModel()
-        composer.send = { [weak inputBar] data in inputBar?.sendRaw([UInt8](data), record: true) }
-        // NORMAL-pane idle dispatch (the shell-idle-prompt trigger): the client modeTracker fires `onPromptIdle`
-        // on an OSC-133;A prompt mark (the shell is back at an idle prompt) → drain the next queued prompt.
-        // Tagged `.shellPrompt` (queue-safety, 2026-07-02) so it can ONLY drain shell-targeted items — a
-        // prompt enqueued for an agent must never be typed into (and executed by) the shell. The AGENT-pane
-        // (alt-screen Claude Code, no OSC-133 marks) trigger is the `claudeStatus → .done` edge in
-        // `applyDetectedStatus` (`.agentTurnEnd`). Weak so the callback can't retain the composer.
-        terminal.onPromptIdle = { [weak composer] in composer?.notePromptIdle(.shellPrompt) }
-
-        let session = LivePaneSession(
+        return LivePaneSession(
             id: PaneID(),
             kind: spec.kind,
             connection: connection,
             inputBar: inputBar,
-            composer: composer,
             inspector: InspectorViewModel(),
             inspectorClient: nil, // opened lazily by subscribeInspector() once claudeStatus ≠ .none
             remoteWindow: nil,
@@ -399,37 +346,6 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             // `feedAgentSignal`) lifts `claudeStatus` off `.none`. The client TRUSTS that verdict (P1).
             isAgentDetectable: true,
         )
-        // E12 Prompt-Queue KICKSTART probe: the composer asks "is the pane idle now?" before deciding to
-        // fire the head queued item immediately on enqueue. Resolved per-pane = the normal shell at its
-        // prompt OR a VERIFIED agent between turns (`claudeStatus` `.idle`/`.done` with authoritative turn
-        // signals seen — queue-safety, 2026-07-02). Weak so the seam can't retain the session.
-        composer.isIdleNow = { [weak session] in session?.isComposerPaneIdle ?? false }
-        // QUEUE-SAFETY (2026-07-02): the pane-context probe the composer uses to stamp each enqueued
-        // item's target (`.shell` vs `.agent`) and to surface the held-reason badge. Weak so the seam
-        // can't retain the session; a dead session reads as a plain shell pane (the safe default — a
-        // dead pane dispatches nothing anyway, its terminal fires no triggers).
-        composer.paneContext = { [weak session] in
-            ComposerPaneContext(
-                isAgent: (session?.claudeStatus ?? .none) != .none,
-                turnSignalsVerified: session?.agentTurnSignalsVerified ?? false,
-            )
-        }
-        return session
-    }
-
-    /// Whether the owning pane is idle RIGHT NOW for the E12 Prompt-Queue kickstart, resolved by the SAME
-    /// dual-signal split as dispatch: an AGENT pane (a `claude` detected, `claudeStatus != .none`) is idle
-    /// only between turns (`.idle`/`.done`) — the alt-screen shell-prompt state is meaningless there — AND
-    /// only when ``agentTurnSignalsVerified`` (queue-safety, 2026-07-02: without hooks/ctl the host's
-    /// presence floor reports a PERMANENT `.idle` behind which Claude may be mid-turn, so the kickstart
-    /// must never trust a bare `.idle`); a NORMAL pane (no agent) is idle when its shell sits at the
-    /// prompt (``TerminalViewModel/isAtShellPrompt``). Read by ``ComposerModel/isIdleNow``.
-    private var isComposerPaneIdle: Bool {
-        if claudeStatus != .none {
-            guard agentTurnSignalsVerified else { return false }
-            return claudeStatus == .idle || claudeStatus == .done
-        }
-        return terminalModel?.isAtShellPrompt ?? false
     }
 
     /// Builds a `.remoteGUI` session: a `RemoteWindowModel` bound to the app target with the per-pane
@@ -454,7 +370,6 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             kind: spec.kind,
             connection: nil,
             inputBar: nil,
-            composer: nil, // a video pane has no terminal → no Composer / Prompt Queue
             inspector: nil,
             inspectorClient: nil,
             remoteWindow: model,
@@ -467,22 +382,8 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     // MARK: - ID adoption (store-internal)
 
     /// See ``PaneSessionIDAdopting``. The store re-points a freshly-built session at its leaf id.
-    ///
-    /// E12 WI-6 — the per-pane Composer PIN persistence is keyed by the stable leaf ``PaneID``, which
-    /// survives the workspace-tree persistence round-trip (the current tree model is ``SplitNode``, whose
-    /// `.leaf(PaneID)` case carries the id verbatim through encode/decode). So adoption is the right
-    /// moment to (1) RESTORE a persisted pin — re-pinning the RIGHT pane on a fresh launch and opening the
-    /// bar so it visibly rides along (pinned state is persisted across launches) — and (2) wire forward
-    /// persistence on later toggles. The restore runs BEFORE wiring ``ComposerModel/onPinnedChange`` so it
-    /// never re-persists what it just read.
     func adopt(id: PaneID) {
         self.id = id
-        guard let composer else { return }
-        if SettingsKey.isComposerPinned(paneID: id) {
-            composer.setPinned(true)
-            composer.open() // a persisted pin rides along visibly, not as a hidden empty bar.
-        }
-        composer.onPinnedChange = { pinned in SettingsKey.setComposerPinned(pinned, paneID: id) }
     }
 
     /// SYSTEM-DIALOG: flag a just-spawned ``PaneKind/systemDialog`` session as a secure (password/auth)
@@ -578,21 +479,8 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         if newStatus == .working || newStatus == .done || newStatus == .needsPermission {
             agentTurnSignalsVerified = true
         }
-        // E12 AGENT-pane turn-finished dispatch: alt-screen Claude Code emits no OSC-133 prompt marks, so
-        // its "turn finished" signal is the host's transition INTO `.done` — emitted IMMEDIATELY by the Stop
-        // hook, which then decays to `.idle` ~8s later. Fire on `.done` ONLY (NOT `.idle`) so each queued
-        // prompt dispatches the instant the turn ends (dispatching on the laggy `.idle` decay fired every
-        // prompt ~8s late) AND exactly once per turn (`.done → .idle` is a second edge that must not
-        // re-dispatch). The dedupe guard above already ruled out a no-op repeat, so reaching `.done` here is
-        // a genuine edge → drain the next queued prompt, exactly like the normal-pane OSC-133;A path
-        // (`TerminalViewModel.onPromptIdle`). Tagged `.agentTurnEnd` (queue-safety) so it can only drain
-        // agent-targeted items. Pure dispatch through the composer's ordered-OUT sink.
-        if newStatus == .done { composer?.notePromptIdle(.agentTurnEnd) }
         if !wasActive, isActive {
             // A claude just appeared in this terminal → open the read-only inspector second channel.
-            // E13 WI-7: also start tracking this pane's Claude session id so a later `/branch` (a NEW id) is
-            // caught for the fork action. Idempotent (the observation re-arms itself; the guard set-once).
-            armForkSessionObservation()
             inspectorTask?.cancel()
             inspectorTask = Task { [weak self] in await self?.subscribeInspector() }
         } else if wasActive, !isActive {
@@ -605,61 +493,6 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
                 Task { await toClose.close() }
             }
         }
-    }
-
-    // MARK: - Fork / Branch detection fold (E13 WI-7 / ES-E13-7)
-
-    /// Folds one ``ClaudeSignal`` carrying a session id into the fork state. When ``ForkSessionDetector``
-    /// reports a NEW (different) id: update the baseline, and — when a baseline was ALREADY established (so the
-    /// id is a `/branch`, not the pane's FIRST claude) — record it as the pending ``forkSessionID``. The
-    /// first-ever session for a pane only seeds the baseline (it is never a fork). `@discardableResult` +
-    /// internal so it is independently exercisable; the live driver is ``trackForkSessionID()`` off the
-    /// inspector channel. Returns the recorded fork id (or `nil` when the signal was baseline / no-change).
-    @discardableResult
-    func feedForkSignal(_ signal: ClaudeSignal) -> String? {
-        guard let newID = ForkSessionDetector.detectNewSession(previous: knownAgentSessionID, signal: signal)
-        else { return nil }
-        let hadBaseline = knownAgentSessionID != nil
-        knownAgentSessionID = newID
-        guard hadBaseline else { return nil } // the pane's FIRST claude is the baseline, not a fork
-        forkSessionID = newID
-        return newID
-    }
-
-    /// Reads AND clears the pending fork target. A branch is resumed EXACTLY ONCE — two panes running
-    /// `claude --resume <same-id>` would put two clients on one session — so the "Fork in…" routing consumes
-    /// it here. `nil` when no `/branch` is pending (a graceful no-op fork, never a dead palette entry).
-    func consumeForkSessionID() -> String? {
-        defer { forkSessionID = nil }
-        return forkSessionID
-    }
-
-    /// Starts the (self-re-arming) observation of the inspector channel's reported Claude session id, ONCE
-    /// (the `forkObservationArmed` guard). A no-op for a pane with no inspector (never an agent).
-    private func armForkSessionObservation() {
-        guard !forkObservationArmed, inspector != nil else { return }
-        forkObservationArmed = true
-        trackForkSessionID()
-    }
-
-    /// Observes the inspector model's session id and feeds each change into ``feedForkSignal(_:)``.
-    /// `withObservationTracking`'s `onChange` fires DURING the property's `willSet`, so the new value is read
-    /// on the next main-actor turn (a `Task`), which also re-arms the one-shot tracker. A `/branch` flips
-    /// `inspector.session.sessionID` to a fresh id (a new `SessionStart` replayed over the read-only channel)
-    /// → the fold records the fork target.
-    private func trackForkSessionID() {
-        withObservationTracking {
-            _ = inspector?.session?.sessionID
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in self?.handleForkSessionChange() }
-        }
-    }
-
-    /// Reads the inspector's CURRENT session id (after the mutation that woke `onChange` committed), folds it
-    /// into the fork state, and re-arms the tracker for the next change.
-    private func handleForkSessionChange() {
-        feedForkSignal(.hook(.sessionStart(sessionID: inspector?.session?.sessionID)))
-        trackForkSessionID()
     }
 
     // MARK: - PaneSessionHandle: video activation
@@ -774,18 +607,5 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             remoteWindow?.close()
             isVideoActive = false
         }
-        // E12 WI-6: the pane is gone for good → PRUNE its persisted Composer PIN so a closed pane's dead
-        // ``PaneID`` can't accumulate in the persisted set unbounded. teardown() is reached ONLY on the
-        // orphan/close path (`WorkspaceStore.reconcile` drops a leaf no longer in the tree) — NOT on
-        // `pause()` (iOS background) or app quit (`quiesce()` only awaits in-flight teardowns) — so a still-
-        // open pinned Composer keeps its pin across relaunch; only an actually-closed pane is forgotten,
-        // which also keeps the pin set consistent with the tree (the leaf is gone from both).
-        if composer != nil { SettingsKey.setComposerPinned(false, paneID: id) }
     }
 }
-
-// MARK: - LiveAgentSessionProviding (E13 WI-6 — the Resume jump map's session-id seam)
-
-/// Exposes the pane's live Claude session id (``liveAgentSessionID``) to ``WorkspaceStore/liveAgentSessionIDs()``
-/// so the History viewer's Resume can JUMP to a tab already running a session instead of spawning a duplicate.
-extension LivePaneSession: LiveAgentSessionProviding {}

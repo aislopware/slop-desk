@@ -295,14 +295,11 @@ final class E1KeymapParityTests: XCTestCase {
         XCTAssertEqual(store.sidebarCollapsed, !before, "the no-closure fallback still flips the store flag (no trap)")
     }
 
-    /// The delegated-stub chords (ES-E1-5): reopen ⌘⇧T, open-quickly ⌘⇧O, composer ⌘⇧E, queue ⌘⇧M, send-to-
-    /// chat ⌘⌃↩ — all registered now (behaviour lands in later epics), with the exact collision-checked chords.
+    /// The delegated-stub chords (ES-E1-5): reopen ⌘⇧T, open-quickly ⌘⇧O — registered with the exact
+    /// collision-checked chords.
     func testDelegatedStubChordsMatchTable() {
         XCTAssertEqual(chord(.reopenClosed), KeyChord(character: "t", [.command, .shift]), "reopen closed = ⌘⇧T")
         XCTAssertEqual(chord(.openQuickly), KeyChord(character: "o", [.command, .shift]), "open quickly = ⌘⇧O")
-        XCTAssertEqual(chord(.composer), KeyChord(character: "e", [.command, .shift]), "composer = ⌘⇧E")
-        XCTAssertEqual(chord(.promptQueue), KeyChord(character: "m", [.command, .shift]), "prompt queue = ⌘⇧M")
-        XCTAssertEqual(chord(.sendToChat), KeyChord(.return, [.command, .control]), "send to chat = ⌘⌃↩")
     }
 
     // MARK: - Registry integrity for the new actions
@@ -317,7 +314,6 @@ final class E1KeymapParityTests: XCTestCase {
             .commandJumpPrev, .commandJumpNext,
             .increaseFontSize, .decreaseFontSize, .resetFontSize,
             .reopenClosed, .openQuickly,
-            .composer, .promptQueue, .sendToChat,
         ]
         for action in actions {
             let binding = WorkspaceBindingRegistry.binding(for: action)
@@ -327,7 +323,7 @@ final class E1KeymapParityTests: XCTestCase {
     }
 
     /// Routing EVERY new E1 action through `route(_:to:)` on a tree store must not trap — the stubs
-    /// (reopen / open-quickly / composer / queue / send-to-chat) are documented graceful no-ops, the font /
+    /// (reopen / open-quickly) are documented graceful no-ops, the font /
     /// scroll / command-jump hooks no-op against a non-live surface, and the split / cycle ops mutate the
     /// tree. Pins the registry's "no dead chord" contract: every action is wired, none is dropped/traps.
     func testEveryE1ActionRoutesWithoutTrap() {
@@ -338,7 +334,6 @@ final class E1KeymapParityTests: XCTestCase {
             .commandJumpPrev, .commandJumpNext,
             .increaseFontSize, .decreaseFontSize, .resetFontSize,
             .reopenClosed, .openQuickly,
-            .composer, .promptQueue, .sendToChat,
         ]
         for action in actions {
             // Fresh store per action so a tree-mutating action (split) doesn't perturb the next assertion.
@@ -347,34 +342,15 @@ final class E1KeymapParityTests: XCTestCase {
         }
     }
 
-    /// The stub actions (reopen / open-quickly / composer / queue / send-to-chat) are GRACEFUL no-ops in E1:
+    /// The stub actions (reopen / open-quickly) are GRACEFUL no-ops in E1:
     /// they route without mutating the tree (their behaviour lands in later epics). Pins that they are wired
     /// to a documented no-op, not accidentally bound to a destructive op.
     func testE1StubActionsDoNotMutateTree() {
-        for action in [WorkspaceAction.openQuickly, .composer, .promptQueue, .sendToChat, .reopenClosed] {
+        for action in [WorkspaceAction.openQuickly, .reopenClosed] {
             let store = makeTreeStore()
             let before = store.tree
             WorkspaceBindingRegistry.route(action, to: store)
             XCTAssertEqual(store.tree, before, "\(action) is an E1 stub — the tree is unchanged")
         }
-    }
-
-    // MARK: - Category taxonomy: the new .agents group is surfaced
-
-    /// The new `.agents` Category is registered and surfaced by `groupedForDisplay` (so the cheat sheet /
-    /// palette show the agent verbs). FAILS on the pre-E1 code (no `.agents` case / no agent rows).
-    func testAgentsCategoryIsSurfacedInGroupedDisplay() {
-        XCTAssertTrue(
-            WorkspaceAction.Category.allCases.contains(.agents),
-            "the Agents category is registered",
-        )
-        let agents = WorkspaceBindingRegistry.groupedForDisplay.first { $0.category == .agents }
-        let group = agents?.bindings
-        XCTAssertNotNil(group, "groupedForDisplay surfaces the Agents group")
-        let ids = Set(group?.map(\.id) ?? [])
-        XCTAssertTrue(
-            ids.isSuperset(of: ["agent.composer", "agent.promptQueue", "agent.sendToChat"]),
-            "the Agents group carries composer / prompt-queue / send-to-chat",
-        )
     }
 }

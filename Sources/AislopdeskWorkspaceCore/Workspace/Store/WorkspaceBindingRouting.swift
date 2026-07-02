@@ -40,12 +40,6 @@ struct RouteToggles {
     /// `WorkspaceChromeState.pinned`); `nil` (the headless / test / iOS default) is a graceful no-op, never a
     /// dead chord.
     var pinWindow: (() -> Void)?
-    /// Opens the "Send to Chat" dialog (E13 WI-5 / ES-E13-5, ⌘⌃↩). A VIEW overlay (the app /
-    /// `OverlayCoordinator` owns the dialog visibility + captures the active pane's selection / last-output
-    /// into a ``SendToChatContext`` when it fires), so — like `globalSearch` / `jumpTo` — it is a passed-in
-    /// closure; `nil` (the headless / test default) is a graceful no-op, never a dead chord (ES-E1-5 keeps
-    /// the chord LIVE).
-    var sendToChat: (() -> Void)?
     /// Actuates a real window close (⌘⇧W / View ▸ Close Window, E3 WI-4 audit fix). A macOS
     /// `NSWindow.performClose(_:)` concern — so, like `pinWindow`, it is a passed-in closure; the live app
     /// wires it to `window.performClose(nil)`, which fires the native `windowShouldClose` → the existing
@@ -68,7 +62,6 @@ public extension WorkspaceBindingRegistry {
         toggleCheatSheet: (() -> Void)? = nil,
         toggleFind: (() -> Void)? = nil,
         togglePeekReply: (() -> Void)? = nil,
-        toggleSendToChat: (() -> Void)? = nil,
         toggleSidebar: (() -> Void)? = nil,
         toggleGlobalSearch: (() -> Void)? = nil,
         toggleJumpTo: (() -> Void)? = nil,
@@ -81,7 +74,7 @@ public extension WorkspaceBindingRegistry {
             peekReply: togglePeekReply,
             sidebar: toggleSidebar, globalSearch: toggleGlobalSearch, jumpTo: toggleJumpTo,
             openQuickly: openQuickly, pinWindow: togglePinWindow,
-            sendToChat: toggleSendToChat, closeWindow: closeWindow,
+            closeWindow: closeWindow,
         )
         switch store.liveModel {
         case .tree: routeTree(action, to: store, toggles: toggles)
@@ -284,21 +277,6 @@ public extension WorkspaceBindingRegistry {
         // `requestFindInActivePane()`), so ⌘⇧J does something useful rather than nothing.
         case .peekAndReply:
             if let p = toggles.peekReply { p() } else { store.jumpToOldestAttentionPane() }
-        // Agents (E12 Composer / Prompt Queue): route to the active-pane composer ops — ⌘⇧E toggles the
-        // Composer, ⌘⇧M opens it in Prompt-Queue input mode (both a graceful no-op off-terminal).
-        case .composer: store.requestComposerInActivePane()
-        case .promptQueue: store.requestPromptQueueInActivePane()
-        // Send to Chat (E13 WI-5 / ES-E13-5, ⌘⌃↩): a VIEW overlay (the app captures the active pane's
-        // selection / last-output into a ``SendToChatContext`` and presents the dialog), so it is a passed-in
-        // closure like `.globalSearch` / `.jumpTo`. `nil` (the headless / test default) is a graceful no-op —
-        // never a dead chord (ES-E1-5 keeps the chord LIVE).
-        case .sendToChat: toggles.sendToChat?()
-        // Fork / Branch (E13 WI-7 / ES-E13-7): spawn the active pane's detected `/branch` (a NEW Claude
-        // session id) into a split / new tab running VERBATIM `claude --resume <new-id>`. A graceful no-op
-        // when the active pane is not an agent or no fork was detected (never a dead palette entry).
-        case .forkInSplitRight: performFork(.splitRight, in: store)
-        case .forkInSplitDown: performFork(.splitDown, in: store)
-        case .forkInNewTab: performFork(.newTab, in: store)
         // Recipes (E16 WI-8): ⌘S / File ▸ Recipe ▸ Save Recipe… requests the save sheet; File ▸ Recipe ▸
         // Open Recipe… requests the open picker. Both flip a store `pending*` flag the app observes to present
         // the matching sheet (WI-10); the save snapshots the live tree directly (NOT the dead canvas
@@ -442,61 +420,11 @@ public extension WorkspaceBindingRegistry {
         // P4 Peek & Reply is a view overlay; the canvas path still toggles it (the overlay's own selector
         // returns nil under .canvas, where there is no attention rollup, so it opens read-only / no-ops).
         case .peekAndReply: toggles.peekReply?()
-        // Agents (E12 Composer / Prompt Queue): the canvas path resolves the active pane via canvas focus,
-        // so the same store ops toggle/open the composer there too (a graceful no-op for a non-terminal /
-        // empty canvas).
-        case .composer: store.requestComposerInActivePane()
-        case .promptQueue: store.requestPromptQueueInActivePane()
-        // Send to Chat (E13 WI-5): a view overlay; the canvas path still toggles it via the closure (a
-        // graceful no-op when none is supplied, like the palette / global search / jump-to).
-        case .sendToChat: toggles.sendToChat?()
-        // Fork (E13 WI-7): the agent fork spawns split / tab panes — tree-shell only (the flat canvas has no
-        // tab / split tree to route a forked thread into). A graceful no-op there, like `.breakPaneToTab`.
-        case .forkInSplitRight,
-             .forkInSplitDown,
-             .forkInNewTab:
-            break
         // Recipes (E16 WI-8): the recipe save / open surfaces are model-agnostic (they read/mount the tree,
         // which the store owns regardless of the live model), so the canvas path routes them identically —
         // they flip the SAME store `pending*` flags the tree path does.
         case .saveRecipe: store.requestSaveRecipe()
         case .openRecipe: store.requestOpenRecipe()
-        }
-    }
-
-    // MARK: - Fork (E13 WI-7 / ES-E13-7)
-
-    /// Spawns the active pane's detected `/branch` fork into `destination`, running VERBATIM
-    /// `claude --resume <new-id>` in the fresh pane. The new session id was captured off the inspector
-    /// channel by the owning ``LivePaneSession`` (``ForkSessionDetector``); this CONSUMES it (clears the
-    /// pending fork so a second fork command can't resume the same branch twice — two clients on one session).
-    ///
-    /// A graceful no-op (never a dead palette entry) when there is no active pane, the active pane is not an
-    /// agent ``LivePaneSession``, or no `/branch` was detected. The destination pane is spawned through the
-    /// SAME direct-terminal paths as the chooser (`splitActivePane` / `newTab`), which make the new leaf the
-    /// active pane; the VERBATIM resume command is then sent after the SAME ~1.4 s launch grace the
-    /// `cd`-inheritance / session-template apply use (the remote shell prompt must come up first). The command
-    /// string is ``AgentResumeRouter/resumeCommand(sessionID:)`` (single source of truth, never
-    /// ``SendKeysParser``). Both the original and the forked thread stay live (the existing multi-pane support).
-    @MainActor
-    private static func performFork(_ destination: ForkDestination, in store: WorkspaceStore) {
-        guard let active = store.tree.activeSession?.activeTab?.activePane,
-              let session = store.handle(for: active) as? LivePaneSession,
-              let forkID = session.forkSessionID // PEEK — only consume once a destination pane materializes
-        else { return }
-        switch destination {
-        case .splitRight: store.splitActivePane(axis: .horizontal, kind: .terminal)
-        case .splitDown: store.splitActivePane(axis: .vertical, kind: .terminal)
-        case .newTab: store.newTab(kind: .terminal)
-        }
-        // Each spawn path makes the freshly-created leaf the active pane; bail if it somehow didn't change
-        // (then nothing to resume into, and the pending fork is left intact rather than burned on a no-op).
-        guard let forked = store.tree.activeSession?.activeTab?.activePane, forked != active else { return }
-        _ = session.consumeForkSessionID() // success → clear the pending fork (one branch resumed exactly once)
-        let bytes = Array(AgentResumeRouter.resumeCommand(sessionID: forkID).utf8)
-        Task { @MainActor [weak store] in
-            try? await Task.sleep(for: .milliseconds(1400))
-            store?.handle(for: forked)?.sendBytes(bytes)
         }
     }
 }

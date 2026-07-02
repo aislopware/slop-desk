@@ -3836,15 +3836,6 @@ public final class WorkspaceStore {
             let handle = makeSession(spec)
             (handle as? PaneSessionIDAdopting)?.adopt(id: id)
             registry[id] = handle
-            // E12 WI-6 — a SINGLE window-level pin: wire this pane's composer so a pin-ON edge clears
-            // every OTHER pane's pin (no second, unreachable pinned composer). Wired for EVERY composer-bearing
-            // session (production `LivePaneSession` AND the recording test double), keyed by this leaf id. If
-            // `adopt` just RESTORED a persisted pin, enforce immediately too, so a legacy multi-pin relaunch
-            // collapses to a single pin (last-restored winning) instead of re-creating the orphan.
-            if let composer = (handle as? ComposerProviding)?.composerModel {
-                composer.onPinnedExclusive = { [weak self] in self?.enforceSingleComposerPin(keeping: id) }
-                if composer.isPinned { enforceSingleComposerPin(keeping: id) }
-            }
             onMaterialize?(id, handle)
         }
     }

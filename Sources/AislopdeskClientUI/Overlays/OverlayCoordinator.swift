@@ -59,8 +59,8 @@ public final class OverlayCoordinator {
     /// Opens the app's Settings surface. On macOS the Settings surface is the STOCK SwiftUI `Settings` scene
     /// (a separate system-chromed window opened by ⌘,), which no in-window flag can present — so the root view
     /// injects this closure, bound to the SwiftUI `openSettings` environment action (with an `NSApp`
-    /// `showSettingsWindow:` fallback). The palette "Open Settings" row and the agent footer's settings hook
-    /// route through ``openSettings()`` → this closure. `nil` (tests / previews / a pre-`onAppear` scene) makes
+    /// `showSettingsWindow:` fallback). The palette "Open Settings" row routes
+    /// through ``openSettings()`` → this closure. `nil` (tests / previews / a pre-`onAppear` scene) makes
     /// ``openSettings()`` a graceful no-op rather than a dead control that silently does nothing.
     @ObservationIgnored public var openSettingsAction: (@MainActor () -> Void)?
 
@@ -116,36 +116,6 @@ public final class OverlayCoordinator {
     /// still report `.needsPermission` until the host re-reports). Reset on every open / close so a fresh open
     /// re-targets cleanly.
     public private(set) var peekReplyExcluding: Set<PaneID> = []
-
-    // MARK: Send-to-Chat state (E13 WI-5 / ES-E13-5 — ⌘⌃↩)
-
-    /// Whether the Send-to-Chat dialog (⌘⌃↩) is presented. A centered, SCRIMMED card over the workspace
-    /// (`send-to-chat-frame-03/04.png`) that quotes the active pane's selection / last command and routes the
-    /// composed message to a chosen Claude-only agent pane. Included in ``anyModalVisible`` and mounted behind
-    /// a ``Scrim`` by ``OverlayHostView``. Opening HONESTLY no-ops when there is nothing to quote (no selection
-    /// + no command block), so ⌘⌃↩ on an empty pane does nothing rather than flashing an empty card.
-    public private(set) var sendToChatVisible = false
-    /// The captured quote shown in the dialog (the source title + the verbatim quoted text). `nil` until a
-    /// successful capture opens the dialog.
-    public private(set) var sendToChatContext: SendToChatContext?
-    /// The live Claude-only agent panes the quote can be routed to (built off the store on open). Empty ⇒ the
-    /// picker offers only "New session".
-    public private(set) var sendToChatSessions: [SendToChatSession] = []
-    /// The picker's pre-selected target on open — the last-used session if still live, else the first live
-    /// agent pane, else `nil` ("New session"). Resolved via ``SendToChatModel/defaultSession(in:lastUsed:)``.
-    public private(set) var sendToChatInitialSelection: PaneID?
-    /// The in-memory last-used Send-to-Chat target (the spec's "last-used session is the default"). Updated on
-    /// every send + on a manual picker change so the next open pre-selects it.
-    @ObservationIgnored private var lastChatTarget: PaneID?
-    /// Captures the active pane's quote (selection / last command). Injected by ``WorkspaceRootView`` to read
-    /// the live store (``WorkspaceStore/captureSendToChatContext()``); the default reads the attached store, so
-    /// a test can override it with a synthetic context. `nil` from it ⇒ nothing to quote ⇒ the dialog stays
-    /// closed (the honest no-op).
-    @ObservationIgnored public var captureSendToChat: (@MainActor () -> SendToChatContext?)?
-    /// Writes the composed message to the system pasteboard (the dialog's "Copy Message"). Injected by the
-    /// root (AppKit / UIKit) so the coordinator stays clipboard-framework-agnostic; default no-op (tests /
-    /// previews).
-    @ObservationIgnored public var copyToPasteboard: @MainActor (String) -> Void = { _ in }
 
     // MARK: Remote-window picker state (L6)
 
@@ -210,7 +180,7 @@ public final class OverlayCoordinator {
     /// gates Global Search's hit-testing separately on ``globalSearchVisible``.
     public var anyModalVisible: Bool {
         paletteVisible || cheatSheetVisible || connectVisible || remotePickerVisible || openQuicklyVisible
-            || peekReplyVisible || sendToChatVisible
+            || peekReplyVisible
     }
 
     /// Whether a presented overlay must OWN the keyboard — the gate the app's `isOverlayCapturingKeys` closure
@@ -485,11 +455,6 @@ public final class OverlayCoordinator {
         case .openThemeFile:
             openThemeFile()
             closePalette()
-        // Send to Chat opens its own scrimmed dialog (an overlay-switching row like settings / connect), so it
-        // closes-then-opens; `openSendToChat()` honestly no-ops (toast) when there is nothing to quote.
-        case .openSendToChat:
-            closePalette()
-            openSendToChat()
         case .noOp:
             break
         }
@@ -625,108 +590,6 @@ public final class OverlayCoordinator {
     public func advancePeekReply(answered pane: PaneID) {
         peekReplyExcluding.insert(pane)
         if peekReplyTarget() == nil { closePeekReply() }
-    }
-
-    // MARK: Send to Chat (⌘⌃↩ — quote the active pane → a chosen agent · E13 WI-5 / ES-E13-5)
-
-    /// Open the Send-to-Chat dialog with a CALLER-SUPPLIED `context` (the transcript context-menu path —
-    /// the viewer already has the text, so no capture / async fallback is needed). Builds the Claude-only
-    /// session picker off the store and pre-selects the last-used (or first live) agent pane. A no-op when
-    /// no store is attached (previews / pre-injection).
-    public func openSendToChat(context: SendToChatContext) {
-        guard let store else { return }
-        presentSendToChat(context, store: store)
-    }
-
-    /// Present the Send-to-Chat dialog over the active pane's captured quote (ES-E13-5's "selection OR last
-    /// command output"). Two passes: the SYNCHRONOUS selection capture wins (the injected closure — the app
-    /// wires it to the live store, a test overrides it — else the attached store); failing that, the ASYNC
-    /// no-selection fallback fetches the LAST command's OUTPUT body (the OSC-133 `D` block, wire 15→29). The
-    /// dialog opens with whichever quote materializes; when NEITHER does (no terminal / nothing selected /
-    /// nothing run / output evicted), a toast is surfaced rather than a silent no-op so ⌘⌃↩ always gives
-    /// feedback. Builds the Claude-only session picker off the store and pre-selects the last-used (or first
-    /// live) agent pane.
-    public func openSendToChat() {
-        guard let store else { return }
-        // Pass 1 — the SYNCHRONOUS selection path (the injected override wins; default reads the store).
-        if let context = captureSendToChat?() ?? store.captureSendToChatContext() {
-            presentSendToChat(context, store: store)
-            return
-        }
-        // Pass 2 — NO selection → the ASYNC last-command-OUTPUT fallback (OSC-133 `D` block, wire 15→29).
-        store.captureSendToChatLastOutput { [weak self] context in
-            guard let self, let store = self.store else { return }
-            if let context {
-                presentSendToChat(context, store: store)
-            } else {
-                // Nothing to quote (no terminal / no captured output / evicted / disconnected) — surface a
-                // toast instead of a silent no-op so ⌘⌃↩ always gives feedback.
-                pushToast(Toast(
-                    id: "send-to-chat.nothing",
-                    title: "Nothing to send to chat",
-                    body: "Select some text, or run a command first.",
-                ))
-            }
-        }
-    }
-
-    /// Open the Send-to-Chat dialog over a resolved `context`: build the Claude-only session picker off the
-    /// store, pre-select the last-used (or first live) agent pane, then show the scrimmed modal.
-    private func presentSendToChat(_ context: SendToChatContext, store: WorkspaceStore) {
-        sendToChatContext = context
-        sendToChatSessions = store.agentChatSessions()
-        sendToChatInitialSelection = SendToChatModel.defaultSession(
-            in: sendToChatSessions, lastUsed: lastChatTarget,
-        )?.id
-        sendToChatVisible = true
-    }
-
-    /// Dismiss the Send-to-Chat dialog and clear its captured quote / session list (so a stale capture can't
-    /// leak into the next open).
-    public func closeSendToChat() {
-        sendToChatVisible = false
-        sendToChatContext = nil
-        sendToChatSessions = []
-        sendToChatInitialSelection = nil
-    }
-
-    /// Toggle the Send-to-Chat dialog (the ⌘⌃↩ binding the app threads into the key dispatcher + the menu).
-    public func toggleSendToChat() {
-        if sendToChatVisible { closeSendToChat() } else { openSendToChat() }
-    }
-
-    /// Record a manual picker change as the new last-used default (the dialog's `onSelectionChange`), so the
-    /// next open pre-selects it even if the user cancels this one.
-    public func recordSendToChatSelection(_ target: PaneID?) {
-        if let target { lastChatTarget = target }
-    }
-
-    /// Deliver the composed `message` to the chosen target then close. A live agent pane (`target`) routes
-    /// through ``WorkspaceStore/sendChatMessage(_:to:)`` (the per-pane ordered-OUT VERBATIM sink — which also
-    /// AUTO-SWITCHES focus to that pane); a `nil` target ("New session") spawns a fresh terminal tab and
-    /// injects the message after the launch grace (``WorkspaceStore/sendChatToNewSession(_:)``). The chosen
-    /// live target is remembered as the last-used default for the next open.
-    public func sendChat(to target: PaneID?, message: String) {
-        if let target {
-            store?.sendChatMessage(message, to: target)
-            lastChatTarget = target
-        } else {
-            store?.sendChatToNewSession(message) { [weak self] in
-                self?.pushToast(Toast(
-                    id: "send-to-chat-new-session-failed",
-                    flavor: .error,
-                    title: "Couldn't start the chat",
-                    body: "The new session never connected, so the message was not sent.",
-                ))
-            }
-        }
-        closeSendToChat()
-    }
-
-    /// Copy the composed `message` to the pasteboard WITHOUT sending (the dialog's "Copy Message"), then close.
-    public func copyChatMessage(_ message: String) {
-        copyToPasteboard(message)
-        closeSendToChat()
     }
 
     // MARK: Remote-window picker (L6 / W1)

@@ -8,7 +8,7 @@
 //
 // Extracted out of ``TerminalLeafView`` so the wiring is a pure, headless-testable seam (the leaf is a SwiftUI
 // struct; this enum is not). The leaf wires it in `wirePaneCallbacks` and clears it in `clearPaneCallbacks`,
-// exactly like the find / Composer / hint / navigator callbacks.
+// exactly like the find / hint / navigator callbacks.
 
 import AislopdeskWorkspaceCore
 import Foundation

@@ -1,12 +1,8 @@
-// TerminalLeafView — the content of a terminal pane leaf (REBUILD-V2, L2 MINIMAL). Composes, top→bottom:
-//   [ terminal surface seam (TerminalRendererFactory.make — the SEAM, else BuildStatusPlaceholderView) ]
-//   [ PromptQueueStrip — chips above the Composer (E12; self-hides when the queue is empty)            ]
-//   [ ComposerBar — the ⌘⇧E / ⌘⇧M Composer + Prompt-Queue input (E12; mounted only when visible)       ]
+// TerminalLeafView — the content of a terminal pane leaf (REBUILD-V2, L2 MINIMAL): the terminal surface
+// seam (TerminalRendererFactory.make — the SEAM, else BuildStatusPlaceholderView).
 // The resting window shows NO persistent cwd chrome — the working-directory chip only appears in
 // menus/overlays — so there is no bottom cwd pill here. The bottom command `InputBar` is likewise NOT
-// persistently mounted: there is no persistent composer in the resting window; it toggles into view with ⌘⇧E.
-// The E12 ``ComposerBar`` reflows in below the surface ONLY while the durable ``ComposerModel/isVisible``
-// (and the queue strip while items are pending), exactly as `composer.png` shrinks the terminal to make room.
+// persistently mounted.
 //
 // SEAM usage: the terminal pixels come from `TerminalRendererFactory.make(model:isFocused:)`. The Xcode
 // app target injects the production `GhosttyTerminalView`; a headless `swift build` registers no factory,
@@ -16,15 +12,10 @@
 // not slam N sockets). The whole leaf is keyed `.id(PaneID)` by the caller (PaneContainer) so the surface
 // / connection is never reused across panes (identity hazard). SYSTEM colours only.
 //
-// E13 WI-4 (ES-E13-4): the `AgentInputFooterView` (Claude bottom bar) now mounts agent-gated at the pane
-// bottom (just above the status bar) over a per-leaf `AgentInputFooterCoordinator`; its "File explorer" pill
-// reveals an embedded file panel (so the side-panel-beside-the-surface idea is folded into the footer).
-//
 // DEFERRED (clean seams, do NOT wire in L2):
 //   - TODO(L3): the `TerminalBlocksView` command-block decoration overlay.
 
 #if canImport(SwiftUI)
-import AislopdeskAgentDetect // E13 WI-4: `ClaudeStatus` — the agent-gate for the Claude bottom-bar mount.
 import AislopdeskWorkspaceCore
 import Defaults // E17 ES-E17-4 / WI-7: observe the Auto-Secure-Input / indicator defaults so the toggle is LIVE.
 import Foundation
@@ -63,11 +54,6 @@ struct TerminalLeafView: View {
     /// the leaf is `.id(PaneID)`-keyed by `PaneContainer`, so this `@State` is per-pane (no cross-pane bleed).
     @State private var findBar = TerminalFindBarModel()
 
-    /// E12: the per-leaf Composer chrome (queue-input mode + focus token) the pane's `onRequestComposer` /
-    /// `onRequestPromptQueue` callbacks mutate. Per-pane (`.id(PaneID)`-keyed leaf) — never the DURABLE
-    /// ``ComposerModel``'s concern (that lives on the live session so the draft survives tab switches).
-    @State private var composerChrome = ComposerLeafChrome()
-
     /// E17 ES-E17-4 / WI-7: the per-pane macOS Secure Keyboard Entry actuator. Driven (in `wirePaneCallbacks`)
     /// from the pane model's `onHostEchoChanged` (auto, on a host no-echo password prompt) + the manual
     /// `onManualSecureInputChanged` toggle, it engages / disengages process-global `EnableSecureEventInput`
@@ -91,7 +77,7 @@ struct TerminalLeafView: View {
 
     /// E10 WI-10 (G8): the per-leaf Command Navigator (⌃⌘O) chrome the pane model's `onRequestBlockNavigator`
     /// callback TOGGLES (the seam doc: "show/hide"). A reference type so the `@MainActor` closure can flip it
-    /// (the find-bar / Composer idiom); per-pane (`.id(PaneID)`-keyed leaf), so no cross-pane bleed, and the
+    /// (the find-bar idiom); per-pane (`.id(PaneID)`-keyed leaf), so no cross-pane bleed, and the
     /// modal only ever opens over the pane whose model the store fired — i.e. the active pane.
     @State private var navigatorChrome = CommandNavigatorChrome()
 
@@ -100,18 +86,6 @@ struct TerminalLeafView: View {
     /// so the action is never a SILENT no-op. `nil` outside the app scene root (tests/previews) ⇒ the failure
     /// is simply swallowed there, never a crash.
     @Environment(\.overlayCoordinator) private var overlayCoordinator
-
-    /// E13 WI-4: the single live ``PreferencesStore`` (injected once at the scene root) the
-    /// ``AgentInputFooterCoordinator`` needs for the green-suggestion-chip enable/dismiss persistence (W4).
-    /// `nil` outside the app scene (tests/previews) ⇒ the chip shows by default and a click is a no-op
-    /// persistence-wise (the coordinator tolerates a `nil` store), never a crash.
-    @Environment(\.preferencesStore) private var preferencesStore
-
-    /// E13 WI-4: the per-leaf Claude bottom-bar coordinator (the single ``AgentInputFooterAction`` dispatch
-    /// site). Built + wired in `wireAgentFooter()` on appear / live-session swap and torn down on disappear;
-    /// the footer VIEW mounts over it only while this pane hosts a detected agent (`showAgentFooter`). Per-pane
-    /// (`.id(PaneID)`-keyed leaf), so no cross-pane bleed.
-    @State private var agentFooter: AgentInputFooterCoordinator?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -123,15 +97,6 @@ struct TerminalLeafView: View {
                 // libghostty surface, so the host PTY grid loses ~1 col/row each side — it reflows through the
                 // existing PaneContainer.size → resize-scrim → host TIOCSWINSZ path, no new signal needed.
                 .padding(Slate.Metric.space2)
-            bottomComposer
-            // E13 WI-4 (ES-E13-4): the Claude bottom bar — mounted agent-gated (`claudeStatus != .none`)
-            // just ABOVE the status bar, so it reflows in below the surface exactly like the Composer. The
-            // coordinator is built in `wireAgentFooter()`; the leaf-side `showAgentFooter` gate is the single
-            // mount decision (an unmounted coordinator is a silent no-op — E2/OverlayCoordinator lesson).
-            if showAgentFooter, let agentFooter {
-                AgentInputFooterView(coordinator: agentFooter)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
             // NO per-pane status strip on a TERMINAL pane (issue: "pane footer cho terminal không có giá trị
             // gì lắm, nên bỏ đi"). The cwd / exit / progress cues are low-value chrome; the host + connection
             // status — the only fields common to EVERY pane — now live ONCE in the sidebar's connection header
@@ -140,7 +105,7 @@ struct TerminalLeafView: View {
         }
         .background(NativePaneColor.terminalBackground)
         .task(id: live?.id) { await connectIfNeeded() }
-        // Wire the pane's ⌘F / ⌘G / ⇧⌘G + ⌘⇧E / ⌘⇧M callbacks on appear AND on every live-session swap
+        // Wire the pane's ⌘F / ⌘G / ⇧⌘G callbacks on appear AND on every live-session swap
         // (`initial: true` fires once up-front, then on each `live?.id` change). A synchronous `@MainActor`
         // closure — no actor hop, unlike the `@Sendable async` `.task` action above.
         .onChange(of: live?.id, initial: true) { wirePaneCallbacks() }
@@ -158,56 +123,10 @@ struct TerminalLeafView: View {
         // so it gets its own `onChange`; `initial: true` seeds it once on mount. No-op when no model yet.
         .onChange(of: cwd, initial: true) {
             live?.terminalModel?.linkCwd = cwd
-            // E13 WI-4: keep the footer's file-explorer bound to the live cwd so an open panel follows `cd`.
-            agentFooter?.updateCwd(cwd)
         }
         // Clear the callbacks when the leaf is torn down so a dead `@State` holder can't be driven by a
         // surviving model (the model is owned by the live session, which can outlive this `.id(PaneID)` leaf).
         .onDisappear { clearPaneCallbacks() }
-        .animation(Slate.Anim.reveal, value: live?.composer?.isVisible)
-        .animation(Slate.Anim.reveal, value: showAgentFooter)
-    }
-
-    /// The bottom Composer chrome — the Prompt-Queue chip strip + the ``ComposerBar``, reflowed in below the
-    /// terminal surface. Mounted only when the durable Composer is visible OR has queued items, and ONLY when
-    /// it is not pinned / floating (pin + float promote the Composer OUT of the pane subtree to a window-level
-    /// / float mount, WI-6). The strip self-hides when the queue is empty, so a visible-but-empty Composer
-    /// shows just the bar. Never in the static-mirror snapshot path.
-    @ViewBuilder private var bottomComposer: some View {
-        if let composer = live?.composer, mountBottomComposer(composer) {
-            VStack(spacing: 0) {
-                PromptQueueStrip(composer: composer)
-                if composer.isVisible {
-                    ComposerBar(composer: composer, chrome: composerChrome, maxLines: composerMaxLines)
-                }
-            }
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-        }
-    }
-
-    /// Whether the Claude bottom bar (E13 WI-4) mounts: a live terminal pane, NOT the static-mirror snapshot
-    /// path, and a detected agent in this pane (the host's type-27 verdict lifted ``LivePaneSession/claudeStatus``
-    /// off `.none`). Reading the OBSERVABLE `claudeStatus` here re-renders the leaf so the footer reveals the
-    /// instant a `claude` is detected (and tears down when it leaves). E13 is Claude-only, so the gate is the
-    /// generic `claudeStatus != .none` (no `AgentKind.codex` is ever surfaced — carryover constraint #1).
-    private var showAgentFooter: Bool {
-        !staticMirror && live?.terminalModel != nil && live?.claudeStatus != ClaudeStatus.none && agentFooter != nil
-    }
-
-    /// Whether the in-pane Composer chrome should mount: a live terminal pane, not the static mirror, the
-    /// Composer not promoted out (pin/float), and either visible or holding queued chips.
-    private func mountBottomComposer(_ composer: ComposerModel) -> Bool {
-        guard !staticMirror, live?.terminalModel != nil else { return false }
-        guard !composer.isPinned, !composer.isFloating else { return false }
-        return composer.isVisible || !composer.promptQueue.isEmpty
-    }
-
-    /// The Composer field's growing line budget, derived from the `composerMaxHeight` pref (a fraction of the
-    /// pane height) against a reference pane of ~32 rows, clamped to a sane `4…24`. A geometry-exact
-    /// pane-height fraction is a documented refinement (WI-5 keeps the InputBar line-limit idiom — lowest risk).
-    private var composerMaxLines: Int {
-        let lines = Int((SettingsKey.composerMaxHeightFraction * 32).rounded())
-        return min(24, max(4, lines))
     }
 
     /// The terminal pixels (the seam) — production renderer if the app registered one, else the headless
@@ -367,86 +286,23 @@ struct TerminalLeafView: View {
         return model.copyModeBadgeActive && model.showViKeyHints
     }
 
-    /// Wire all per-pane view callbacks (find + Composer + secure input + hint mode + host path actions) on
+    /// Wire all per-pane view callbacks (find + secure input + hint mode + host path actions) on
     /// appear / live-session swap.
     private func wirePaneCallbacks() {
         wireFindCallbacks()
-        wireComposerCallbacks()
         wireSecureInputCallbacks()
         wireHintCallbacks()
         wireNavigatorCallbacks()
         wirePathActionCallbacks()
-        wireAgentFooter()
     }
 
     /// Clear all per-pane view callbacks on teardown so a surviving model can't drive a dead leaf's `@State`.
     private func clearPaneCallbacks() {
         clearFindCallbacks()
-        clearComposerCallbacks()
         clearSecureInputCallbacks()
         clearHintCallbacks()
         clearNavigatorCallbacks()
         clearPathActionCallbacks()
-        clearAgentFooter()
-    }
-
-    // MARK: - Claude bottom bar (E13 WI-4 / ES-E13-4)
-
-    /// The agent display name surfaced on the footer's green-suggestion pill + used as its per-agent
-    /// notification-persistence key. E13 is **Claude-only** (carryover constraint #1 — `AgentKind.codex` is
-    /// never rendered), so the bar always names Claude Code.
-    private static let agentDisplayName = "Claude Code"
-
-    /// Build + wire the per-pane ``AgentInputFooterCoordinator`` for a terminal pane (rebuilt on every
-    /// live-session swap). It is created EAGERLY for any terminal — not gated on the agent status — so when
-    /// the host later detects a `claude` (``LivePaneSession/claudeStatus`` lifts off `.none`) the footer VIEW
-    /// (gated by `showAgentFooter`) reveals over an already-wired coordinator with NO extra plumbing.
-    ///
-    /// Hooks (the parent-supplied seams the coordinator can't complete on its own):
-    /// - `onOpenSettings`     → the Settings overlay (the Agents card lives there, E13 WI-2).
-    /// - `onStartRemoteControl` → the existing remote-window picker (E13 reuses the L6 seam).
-    /// - `onAddContext`       → toggles the file explorer (docs/30: the "+" pill "toggles the file explorer";
-    ///   never a dead stub).
-    /// - `onSelectFile`       → splice the chosen path into the pane's durable Composer (caret-aware insert).
-    ///
-    /// A no-op for a non-terminal / static-mirror leaf (the footer never mounts there).
-    private func wireAgentFooter() {
-        guard !staticMirror, live?.terminalModel != nil else {
-            agentFooter = nil
-            return
-        }
-        let footer = AgentInputFooterCoordinator(
-            agentName: Self.agentDisplayName,
-            inputBar: live?.inputBar,
-            preferences: preferencesStore,
-            cwd: cwd,
-            isRemote: footerIsRemote,
-        )
-        let overlay = overlayCoordinator
-        footer.onOpenSettings = { overlay?.openSettings() }
-        footer.onStartRemoteControl = { overlay?.openRemotePicker() }
-        // The "+" add-context pill has no menu yet (L4 stub) → toggle the file explorer, the one real
-        // attach affordance, so it is a live action rather than a silent no-op (docs/30 mapping).
-        footer.onAddContext = { [weak footer] in footer?.handle(.toggleFileExplorer) }
-        // A file pick splices its absolute path into the durable Composer at the caret (the same `insert`
-        // seam ⌘V / the context-menu paste use), revealing the Composer so the user sees it land.
-        footer.onSelectFile = { [weak composer = live?.composer] path in composer?.insert(path) }
-        agentFooter = footer
-    }
-
-    /// Drop the footer coordinator on teardown so a closed leaf's `@State` can't be driven (and the captured
-    /// overlay / composer references are released with it).
-    private func clearAgentFooter() {
-        agentFooter = nil
-    }
-
-    /// Whether the footer's file explorer should treat the pane's cwd as living on a DIFFERENT machine (so it
-    /// shows the honest "not available for remote panes" state rather than listing the client's own disk). The
-    /// PTY runs on the host, so a connected non-loopback host is remote; an empty / loopback host (the local
-    /// dev + same-machine GUI-verify case) lists the cwd directly. Mirrors ``FileExplorerLister``'s remote gate.
-    private var footerIsRemote: Bool {
-        let trimmed = host.trimmingCharacters(in: .whitespaces)
-        return !(trimmed.isEmpty || trimmed == "localhost" || trimmed == "127.0.0.1" || trimmed == "::1")
     }
 
     /// Wire the pane's host OPEN / REVEAL path callbacks (E10 WI-7 / ES-E10-2 / ES-E10-6) to the pane's live
@@ -548,49 +404,6 @@ struct TerminalLeafView: View {
         model.onRequestFindBackward = nil
         model.onRequestFindNext = nil
         model.onRequestFindPrev = nil
-    }
-
-    /// Wire the pane's ⌘⇧E / ⌘⇧M callbacks (the store fires these AFTER it has toggled / opened the durable
-    /// ``ComposerModel`` via `requestComposerInActivePane()` / `requestPromptQueueInActivePane()`): the view's
-    /// job is to switch the queue-input affordance and re-focus the field. Also wires the right-click
-    /// "Paste and continue in Composer" seam (`onPasteToComposer`) — it reads the richest clipboard flavour,
-    /// converts HTML/RTF→Markdown via the SAME ``ComposerPasteboard`` the in-field ⌘V uses, and splices it at
-    /// the Composer's caret (so the context path converts AND inserts at the caret, just like ⌘V). No-op for a
-    /// non-terminal pane. The chrome is leaf `@State` (per-pane); the Composer model is durable.
-    private func wireComposerCallbacks() {
-        guard let model = live?.terminalModel, let composer = live?.composer else { return }
-        let chrome = composerChrome
-        model.onRequestComposer = {
-            chrome.queueMode = false
-            chrome.focusToken &+= 1
-        }
-        model.onRequestPromptQueue = {
-            chrome.queueMode = true
-            chrome.focusToken &+= 1
-        }
-        model.onPasteToComposer = { [weak composer] in
-            guard let markdown = ComposerPasteboard.richMarkdown() else { return }
-            composer?.pasteRich(markdown)
-        }
-        // E13 / WI-5 (ES-E13-5): the right-click "Send to Chat" item focuses THIS pane (so the coordinator
-        // captures the right pane's selection / last command) then opens the client Send-to-Chat dialog. `nil`
-        // when no coordinator is in scope (tests / previews) ⇒ the menu row greys out honestly.
-        if let overlay = overlayCoordinator, let paneID = live?.id {
-            model.onRequestSendToChat = { [weak store] in
-                store?.focusPaneTree(paneID)
-                overlay.openSendToChat()
-            }
-        }
-    }
-
-    /// Nil the Composer callbacks so the durable terminal model stops referencing this torn-down leaf's
-    /// `@State` chrome (the leaf is `.id(PaneID)`-keyed and can be rebuilt while the live session survives).
-    private func clearComposerCallbacks() {
-        guard let model = live?.terminalModel else { return }
-        model.onRequestComposer = nil
-        model.onRequestPromptQueue = nil
-        model.onPasteToComposer = nil
-        model.onRequestSendToChat = nil
     }
 
     /// Wire the pane's SECURE-INPUT actuator (E17 ES-E17-4 / WI-7): sync the controller to the model's current

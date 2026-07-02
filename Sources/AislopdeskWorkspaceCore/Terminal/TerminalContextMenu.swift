@@ -23,11 +23,9 @@ public enum TerminalContextMenu {
         case pasteFileBase64 // base64-encodes a chosen file's bytes and types them
         case pasteEscaped // shell-escapes the clipboard so spaces/metachars land as literals
         case pasteBracketed // forces DEC bracketed-paste framing even if the program didn't ask
-        case pasteToComposer // appends the clipboard to the client Composer draft (no shell send)
         case selectAll
         case clear
         case copyOutput // WB2: copy the latest command BLOCK's output (request type 15 → VT-strip → clipboard)
-        case sendToChat // E13 WI-5: send the selection / last command to a chosen agent chat (⌘⌃↩ parity)
         case splitRight
         case splitDown
         case find
@@ -43,11 +41,9 @@ public enum TerminalContextMenu {
             case .pasteFileBase64: "Paste File Base64-Encoded…"
             case .pasteEscaped: "Paste Escaping Special Characters"
             case .pasteBracketed: "Bracketed Paste"
-            case .pasteToComposer: "Paste and continue in Composer"
             case .selectAll: "Select All"
             case .clear: "Clear"
             case .copyOutput: "Copy Command Output"
-            case .sendToChat: "Send to Chat"
             case .splitRight: "Split Right"
             case .splitDown: "Split Down"
             case .find: "Find…"
@@ -65,11 +61,9 @@ public enum TerminalContextMenu {
             case .pasteFileBase64: "doc.badge.plus"
             case .pasteEscaped: "textformat"
             case .pasteBracketed: "curlybraces"
-            case .pasteToComposer: "square.and.pencil"
             case .selectAll: "selection.pin.in.out"
             case .clear: "eraser"
             case .copyOutput: "text.alignleft"
-            case .sendToChat: "arrow.up.message"
             case .splitRight: "rectangle.split.2x1"
             case .splitDown: "rectangle.split.1x2"
             case .find: "magnifyingglass"
@@ -83,8 +77,6 @@ public enum TerminalContextMenu {
                  .copyOutput,
                  .splitRight,
                  .find: true
-            // In the "Paste as…" submenu, set the Composer destination apart from the four shell pastes.
-            case .pasteToComposer: true
             default: false
             }
         }
@@ -106,29 +98,16 @@ public enum TerminalContextMenu {
         /// is no block at all is the honest affordance.
         public var hasCommandOutput: Bool
 
-        /// E8 / ES-E8-4: a client Composer draft is available to receive a paste (gates "Paste and continue
-        /// in Composer"). False until the Composer (E12) is wired — the item then greys out honestly.
-        public var hasComposer: Bool
-
-        /// E13 / WI-5 (ES-E13-5): the client Send-to-Chat hook is wired (the leaf set the pane's
-        /// `onRequestSendToChat`). False until the dialog wiring is mounted (headless / preview) — "Send to
-        /// Chat" then greys out honestly, mirroring `hasComposer`.
-        public var canSendToChat: Bool
-
         public init(
             hasSelection: Bool,
             clipboardHasText: Bool,
             paneConnected: Bool = true,
             hasCommandOutput: Bool = false,
-            hasComposer: Bool = false,
-            canSendToChat: Bool = false,
         ) {
             self.hasSelection = hasSelection
             self.clipboardHasText = clipboardHasText
             self.paneConnected = paneConnected
             self.hasCommandOutput = hasCommandOutput
-            self.hasComposer = hasComposer
-            self.canSendToChat = canSendToChat
         }
     }
 
@@ -136,15 +115,14 @@ public enum TerminalContextMenu {
     /// `Item.separatorBefore`. The "Paste as…" variants are deliberately EXCLUDED — they hang off the
     /// ``pasteAsItems`` submenu (the view inserts it directly below `paste`), so `items != Item.allCases`.
     public static let items: [Item] = [
-        .copy, .cut, .paste, .pasteAsKeystrokes, .selectAll, .clear, .copyOutput, .sendToChat,
+        .copy, .cut, .paste, .pasteAsKeystrokes, .selectAll, .clear, .copyOutput,
         .splitRight, .splitDown, .find,
     ]
 
     /// E8 / ES-E8-4: the "Paste as…" submenu items, in display order (`spec/terminal-features__copy-and-paste`):
-    /// Paste Selection · Paste File Base64-Encoded… · Paste Escaping Special Characters · Bracketed Paste ·
-    /// Paste and continue in Composer.
+    /// Paste Selection · Paste File Base64-Encoded… · Paste Escaping Special Characters · Bracketed Paste.
     public static let pasteAsItems: [Item] = [
-        .pasteSelection, .pasteFileBase64, .pasteEscaped, .pasteBracketed, .pasteToComposer,
+        .pasteSelection, .pasteFileBase64, .pasteEscaped, .pasteBracketed,
     ]
 
     /// The title of the "Paste as…" submenu (Edit ▸ Paste ▸ Paste as), referenced by the GUI renderer.
@@ -210,8 +188,7 @@ public enum TerminalContextMenu {
     /// - **Copy / Cut** need a live selection.
     /// - **Paste / Paste as Keystrokes** need non-empty clipboard text.
     /// - **Paste as…** (ES-E8-4): *Paste Selection* needs a selection; *Paste File Base64* is always live
-    ///   (it picks its own file); *Paste Escaping* / *Bracketed Paste* need clipboard text; *Paste to
-    ///   Composer* needs clipboard text AND an available Composer draft.
+    ///   (it picks its own file); *Paste Escaping* / *Bracketed Paste* need clipboard text.
     /// - **Copy Command Output** (WB2) needs a completed command block to fetch.
     /// - **Select All / Clear / Split Right / Split Down / Find** are always available (Select-All/Clear
     ///   act on the surface regardless of selection; splits + find act on the workspace).
@@ -232,14 +209,8 @@ public enum TerminalContextMenu {
         case .pasteEscaped,
              .pasteBracketed:
             context.clipboardHasText
-        case .pasteToComposer:
-            context.clipboardHasText && context.hasComposer
         case .copyOutput:
             context.hasCommandOutput
-        case .sendToChat:
-            // E13 WI-5: live only when the dialog is wired AND there is something to quote (a selection or a
-            // last command). Mirrors `pasteToComposer` gating on `hasComposer` — never a dead row.
-            context.canSendToChat && (context.hasSelection || context.hasCommandOutput)
         case .selectAll,
              .clear,
              .splitRight,

@@ -1,9 +1,9 @@
 // PreferencesEnvironment — a SwiftUI environment slot carrying the single live ``PreferencesStore`` down
-// to deep views (the AgentInputFooter needs it for the W4 notification dismissal/enable persistence
-// without threading it through every intermediate view). The App scene injects it once at the root.
+// to deep views (Settings sheets / the sidebar context menu) without threading it through every
+// intermediate view. The App scene injects it once at the root.
 //
-// `nil` is the safe default — a footer with no preferences shows the suggestion chip (Warp's default)
-// and a click is a no-op persistence-wise, which keeps headless tests / previews trivial.
+// `nil` is the safe default — a consumer with no preferences degrades to a no-op persistence-wise,
+// which keeps headless tests / previews trivial.
 
 import AislopdeskWorkspaceCore
 import SwiftUI

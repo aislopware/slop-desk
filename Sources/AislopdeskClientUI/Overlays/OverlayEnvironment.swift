@@ -1,7 +1,6 @@
 // OverlayEnvironment — a SwiftUI environment slot carrying the single ``OverlayCoordinator`` down to deep
-// views (the AgentInputFooter's "open settings" hook, future toast emitters) without threading it through
-// every intermediate view. The root injects it once; `nil` is the safe default (footer settings hook = no-op
-// in tests/previews).
+// views (per-pane toast emitters / overlay hooks) without threading it through every intermediate view.
+// The root injects it once; `nil` is the safe default (hooks degrade to a no-op in tests/previews).
 
 import SwiftUI
 

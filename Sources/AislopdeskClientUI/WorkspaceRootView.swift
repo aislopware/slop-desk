@@ -44,12 +44,6 @@ public struct WorkspaceRootView: View {
     #if os(iOS)
     /// Whether the iOS settings sheet (WI-5) is presented — flipped by the toolbar gear, read by the `.sheet`.
     @State private var showSettings = false
-    /// E12 WI-6 (iOS): the bottom-sheet Composer's per-mount chrome (the sheet is outside any pane leaf).
-    @State private var composerSheetChrome = ComposerLeafChrome()
-    /// E12 WI-6 (iOS): a stable fallback model so the sheet content has a non-optional composer even on the
-    /// frame where the resolved float/pin target is briefly `nil` (the sheet is dismissed then, so the
-    /// fallback's content never shows).
-    @State private var composerSheetFallback = ComposerModel()
 
     /// E19/A18 (WI-7, iOS): map the shared `chrome.sidebarCollapsed` flag — the one the auto-hide policy drives
     /// (and macOS's split reads) — onto the `NavigationSplitView`'s `columnVisibility`, so the TABS panel
@@ -131,14 +125,6 @@ public struct WorkspaceRootView: View {
             preferences: preferencesStore,
         )
         .ignoresSafeArea()
-        // E12 WI-6 (pin): a PINNED composer is promoted OUT of its pane subtree to a WINDOW-level bottom
-        // mount, so it rides along across tab switches (the pin behaviour). Mounted UNDER the overlay host (the
-        // palette / toasts stay above it). Self-hides when nothing is pinned / when the pinned composer is
-        // floating. `store.pinnedComposer` resolves it across ALL live panes, so a tab switch never tears
-        // it down.
-        .overlay(alignment: .bottom) {
-            PinnedComposerBar(store: store)
-        }
         // The floating-overlay layer (palette / cheat sheet / connect / remote-window picker / toasts)
         // floats above the AppKit split — SwiftUI overlays compose over an `NSViewControllerRepresentable`.
         // `toggledState` is built from the LIVE chrome so the palette's ✓ gutter tracks the real
@@ -151,17 +137,6 @@ public struct WorkspaceRootView: View {
                 toggledState: OverlayHostView.toggledState(for: chrome, store: store),
             )
         }
-        // E12 WI-6 (float): drive the non-activating floating `NSPanel` from the FLOATING composer. Reading
-        // `store.floatingComposer` HERE (in the body) registers the observation that re-invokes the host's
-        // `updateNSView` when the float toggle flips. Zero-size — the panel is a separate window that stays
-        // on top WITHOUT activating the app.
-        .background {
-            ComposerFloatPanelHost(floating: store.floatingComposer)
-        }
-        // E12 WI-6: the "pinned state is persisted" rule is honoured PER-PANE — `LivePaneSession.adopt`
-        // restores each pane's pin (keyed by its stable `PaneID`) on launch and wires `onPinnedChange` to
-        // persist later toggles. No window-level write here: a single global Bool could not say WHICH pane
-        // was pinned.
         // Wire ⌘⇧L (Toggle Tabs Panel / sidebar) to the live chrome once it
         // exists. The dispatcher is built at app `init` (before `chrome`), so we hand it the toggles here
         // — `[chrome]` captures the same @Observable instance the representable + titlebar read, so the
@@ -202,7 +177,7 @@ public struct WorkspaceRootView: View {
         }
         // Wire the palette's cwd resolver + the per-pane hardware-keyboard interceptor's overlay toggles
         // (iPad has no app-level NSEvent monitor, so a focused
-        // terminal's ⌘⇧P / ⇧⌘F / ⌘⇧O / ⌘J / ⌘⌃↩ / ⌘⌥J would otherwise die at a nil toggle).
+        // terminal's ⌘⇧P / ⇧⌘F / ⌘⇧O / ⌘J / ⌘⌥J would otherwise die at a nil toggle).
         .onAppear {
             wireOverlayCwdResolver()
             wireOverlayKeyToggles()
@@ -227,43 +202,8 @@ public struct WorkspaceRootView: View {
                     .workspaceStore(store)
             }
         }
-        // E12 WI-6 (iOS): iOS has no floating window over other apps, so BOTH the float and the pin reduce
-        // to a re-presented bottom sheet (the documented ceiling, spec `agents__composer.md`). Present while
-        // a float/pin target exists; dismissing docks the float back AND unpins. Reading
-        // `store.floatingComposer` / `store.pinnedComposer` in the binding registers the observation that
-        // opens / closes the sheet with the toggle.
-        .composerSheet(
-            isPresented: composerSheetPresented,
-            composer: iosComposerTarget?.composer ?? composerSheetFallback,
-            chrome: composerSheetChrome,
-            agentActive: iosComposerTarget?.agentActive ?? false,
-        )
-        // E12 WI-6: pin persistence is PER-PANE (restored + persisted in `LivePaneSession.adopt`, keyed by
-        // the stable `PaneID`), not a window-level global Bool — so a relaunch re-pins the exact pane.
         #endif
     }
-
-    #if os(iOS)
-    /// The composer to present in the iOS sheet (E12 WI-6) — a FLOATING composer (the float button) or a
-    /// PINNED one (re-presented across navigation). Float wins when both are set (it is the active gesture).
-    private var iosComposerTarget: ResolvedComposer? {
-        store.floatingComposer ?? store.pinnedComposer
-    }
-
-    /// Binding driving the iOS Composer sheet: present while a float/pin target exists; dismissing it
-    /// (swipe-down / programmatic) docks the float back AND unpins (on iOS the sheet IS the pin surface, so
-    /// closing it is "stop riding along"). A no-op when there is no target.
-    private var composerSheetPresented: Binding<Bool> {
-        Binding(
-            get: { iosComposerTarget != nil },
-            set: { present in
-                guard !present, let target = iosComposerTarget else { return }
-                target.composer.isFloating = false
-                target.composer.setPinned(false)
-            },
-        )
-    }
-    #endif
 
     #if os(macOS)
     /// Hand the app-level dispatcher the chrome toggles (sidebar ⌘⇧L), each bound to
@@ -309,7 +249,7 @@ public struct WorkspaceRootView: View {
     /// Hand the live store the overlay-toggle closures the per-pane hardware-keyboard ``TerminalKeyInterceptor``
     /// threads into `route` (``WorkspaceStore/overlayKeyToggles``), each pointed at the injected
     /// ``OverlayCoordinator``. iOS-relevant: the iPad has no app-level NSEvent monitor, so without these a
-    /// focused terminal's ⌘⇧P / ⇧⌘F / ⌘⇧O / ⌘J / ⌘⌃↩ / ⌘⌥J resolved to a `nil` toggle and did nothing. On
+    /// focused terminal's ⌘⇧P / ⇧⌘F / ⌘⇧O / ⌘J / ⌘⌥J resolved to a `nil` toggle and did nothing. On
     /// macOS the dispatcher owns these chords before the surface, so this is harmless there (the interceptor
     /// never sees them) but keeps the seam single-sourced. The `[overlay]` capture mirrors the macOS dispatcher
     /// wiring in ``AislopdeskClientApp``.
@@ -320,7 +260,6 @@ public struct WorkspaceRootView: View {
             globalSearch: { [overlay] in overlay.toggleGlobalSearch() },
             jumpTo: { [overlay] in overlay.toggleOpenQuickly(filter: .current) },
             openQuickly: { [overlay] in overlay.toggleOpenQuickly(filter: .all) },
-            sendToChat: { [overlay] in overlay.toggleSendToChat() },
             peekReply: { [overlay] in overlay.togglePeekReply() },
         )
     }
@@ -442,44 +381,6 @@ public struct WorkspaceRootView: View {
 }
 
 #if os(macOS)
-/// E12 WI-6 — the WINDOW-level mount for a PINNED composer (the architecturally non-trivial "promote out of
-/// the pane subtree"). Pinning keeps the composer visible across ALL tab switches; here it mounts as a
-/// bottom strip ABOVE the AppKit split (a SwiftUI `.overlay` composes over the
-/// `NSViewControllerRepresentable`). `store.pinnedComposer` resolves the pinned composer across EVERY live
-/// pane, so switching to another tab never tears it down — the bar rides along. Hidden when nothing is
-/// pinned, when the pinned composer is FLOATING (the ``ComposerFloatPanel`` owns it then), or when the
-/// composer is dismissed (`⎋`) with an empty queue.
-struct PinnedComposerBar: View {
-    let store: WorkspaceStore
-    /// Per-mount chrome — the window-level mount is outside any pane leaf, so it owns its own (the bar is
-    /// the normal Composer; queue-input mode stays off here).
-    @State private var chrome = ComposerLeafChrome()
-
-    var body: some View {
-        if let pinned = store.pinnedComposer, mount(pinned.composer) {
-            let composer = pinned.composer
-            VStack(spacing: 0) {
-                PromptQueueStrip(composer: composer)
-                ComposerBar(composer: composer, chrome: chrome)
-            }
-            .frame(maxWidth: .infinity)
-            .background(NativePaneColor.terminalBackground)
-            .overlay(alignment: .top) {
-                Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
-            }
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-            .animation(Slate.Anim.reveal, value: composer.isVisible)
-        }
-    }
-
-    /// Mount the pinned bar only while this window-level slot is its HOME: pinned, NOT floating (the panel
-    /// owns it then), and either visible or holding queued chips (so `⎋` still hides an empty pinned bar).
-    private func mount(_ composer: ComposerModel) -> Bool {
-        guard !composer.isFloating else { return false }
-        return composer.isVisible || !composer.promptQueue.isEmpty
-    }
-}
-
 /// Bridges the AppKit `AislopdeskSplitViewController` into SwiftUI. The controller (and the two SwiftUI
 /// columns it hosts) owns the long-lived shell; SwiftUI just mounts it. Keeping the shell in AppKit (not a
 /// SwiftUI `HSplitView`) is the load-bearing no-teardown choice for the libghostty panes. `updateNSView…`

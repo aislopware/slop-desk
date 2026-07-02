@@ -1,10 +1,9 @@
-// PaletteContentAndReachTests — the "palette-content-and-ios-reach" audit group (4 findings):
+// PaletteContentAndReachTests — the "palette-content-and-ios-reach" audit group:
 //   1. (HIGH) the command palette had NO hardware-keyboard entry point on iOS — the per-pane interceptor
-//      routed with no overlay toggles, so a focused-pane ⌘⇧P / ⇧⌘F / ⌘⇧O / ⌘J / ⌘⌃↩ died at a nil toggle.
+//      routed with no overlay toggles, so a focused-pane ⌘⇧P / ⇧⌘F / ⌘⇧O / ⌘J died at a nil toggle.
 //   2. the curated catalog was missing many spec-named verbs (Reopen Closed Pane, Sync Input to All Panes,
-//      Close Window, Font Size ±/Reset, New Session, Open Composer).
+//      Close Window, Font Size ±/Reset).
 //   3. the Read Only / Secure Keyboard Entry rows never lit the ✓ gutter even when active.
-//   4. the "Fork in…" agent commands were absent from the palette (macOS Agents-menu-only, iOS-unreachable).
 //
 // All headless — no view, no socket, no video (per the hang-safety rule), driven by a tree-model
 // `WorkspaceStore` over the tiny `MountTestPaneSession` double (defined in `OverlayCoordinatorMountTests`).
@@ -41,7 +40,7 @@ final class PaletteContentAndReachTests: XCTestCase {
 
     /// THE iOS reachability pin: a per-pane ``TerminalKeyInterceptor``'s resolved overlay action must route
     /// through ``WorkspaceStore/routeInterceptedKey(_:)``, which threads the view-injected
-    /// ``WorkspaceStore/overlayKeyToggles`` — so ⌘⇧P / ⇧⌘F / ⌘⇧O / ⌘J / ⌘⌃↩ / ⌘⌥J fire their overlays on a
+    /// ``WorkspaceStore/overlayKeyToggles`` — so ⌘⇧P / ⇧⌘F / ⌘⇧O / ⌘J / ⌘⌥J fire their overlays on a
     /// platform with no app-level NSEvent monitor (iPad). REVERT-TO-CONFIRM-FAIL: the un-fixed interceptor
     /// called the bare `WorkspaceBindingRegistry.route(action, to:)` (no toggles), so `.commandPalette` →
     /// `toggles.palette?()` was nil and `fired["palette"]` stays false — every assertion below trips.
@@ -54,7 +53,6 @@ final class PaletteContentAndReachTests: XCTestCase {
             globalSearch: { fired.insert("globalSearch") },
             jumpTo: { fired.insert("jumpTo") },
             openQuickly: { fired.insert("openQuickly") },
-            sendToChat: { fired.insert("sendToChat") },
             peekReply: { fired.insert("peekReply") },
         )
 
@@ -63,7 +61,6 @@ final class PaletteContentAndReachTests: XCTestCase {
             (.globalSearch, "globalSearch"),
             (.openQuickly, "openQuickly"),
             (.jumpTo, "jumpTo"),
-            (.sendToChat, "sendToChat"),
             (.peekAndReply, "peekReply"),
         ]
         for (action, key) in routed {
@@ -87,7 +84,7 @@ final class PaletteContentAndReachTests: XCTestCase {
     // MARK: - Finding 2: the curated catalog surfaces the previously-missing spec verbs
 
     /// The catalog now ENUMERATES the spec-named verbs that were unreachable (Reopen Closed Pane, Sync Input
-    /// to All Panes, Close Window, Font Size ±/Reset, Open Composer), each under its own
+    /// to All Panes, Close Window, Font Size ±/Reset), each under its own
     /// category. REVERT-TO-CONFIRM-FAIL: dropping any row makes its `catalog.first` nil → the `XCTUnwrap` trips.
     func testCatalogSurfacesPreviouslyMissingVerbs() throws {
         let expected: [(id: String, title: String, category: PaletteCategory)] = [
@@ -97,7 +94,6 @@ final class PaletteContentAndReachTests: XCTestCase {
             ("action.increaseFontSize", "Increase Font Size", .view),
             ("action.decreaseFontSize", "Decrease Font Size", .view),
             ("action.resetFontSize", "Reset Font Size", .view),
-            ("action.openComposer", "Open Composer", .agents),
         ]
         for (id, title, category) in expected {
             let item = try row(id)
@@ -175,48 +171,7 @@ final class PaletteContentAndReachTests: XCTestCase {
         )
     }
 
-    // MARK: - Finding 4: the "Fork in…" agent commands are in the palette (cross-platform)
-
-    /// The three CLAUDE-ONLY "Fork in…" verbs are surfaced under the AGENTS category, each routing its fork
-    /// ``WorkspaceAction``. REVERT-TO-CONFIRM-FAIL: they lived only in the registry (macOS Agents menu), so the
-    /// `catalog.first` was nil and the `XCTUnwrap` trips.
-    func testForkVerbsAreInThePaletteUnderAgents() throws {
-        for (id, title) in [
-            ("action.forkSplitRight", "Fork in Split Right"),
-            ("action.forkSplitDown", "Fork in Split Down"),
-            ("action.forkNewTab", "Fork in New Tab"),
-        ] {
-            let item = try row(id)
-            XCTAssertEqual(item.title, title)
-            XCTAssertEqual(item.category, .agents, "the '\(id)' fork verb groups under AGENTS")
-            XCTAssertNil(item.shortcut, "the fork verbs ship no default chord ⇒ no hint chip")
-        }
-        XCTAssertTrue(
-            searchIDs("fork").contains("action.forkNewTab"),
-            "typing 'fork' surfaces the Fork-in-New-Tab verb in the palette snapshot",
-        )
-    }
-
-    /// Running a Fork verb against a NON-agent active pane (no detected `/branch`) is a GRACEFUL no-op — it
-    /// routes through the SAME `performFork` guard, which returns early when the active pane is not a live agent
-    /// session, so no split / tab is minted. Pins that surfacing the fork verb is never a destructive control.
-    func testForkVerbIsAGracefulNoOpWithoutADetectedBranch() throws {
-        let store = makeStore()
-        let item = try row("action.forkSplitRight")
-        guard case let .store(run) = item.action else {
-            XCTFail("Fork is a `.store` row")
-            return
-        }
-        let tabsBefore = store.tree.activeSession?.tabs.count ?? 0
-        let panesBefore = store.tree.allPaneIDs().count
-
-        run(store) // non-agent MountTestPaneSession active pane ⇒ performFork's guard bails
-
-        XCTAssertEqual(store.tree.activeSession?.tabs.count ?? 0, tabsBefore, "no tab minted without a fork")
-        XCTAssertEqual(store.tree.allPaneIDs().count, panesBefore, "no split minted without a fork")
-    }
-
-    // MARK: - Batch 4 (catalog completeness): theme/config verbs, layout presets, the rest of the Agents menu
+    // MARK: - Batch 4 (catalog completeness): theme/config verbs, layout presets
 
     /// The Theme / Config verbs ("Theme: Switch Theme / Open Theme File" + "Settings: Reload
     /// Config") are now in the catalog under SETTINGS, each routing its coordinator action. REVERT-TO-CONFIRM-
@@ -282,29 +237,5 @@ final class PaletteContentAndReachTests: XCTestCase {
             searchIDs("layout").contains("action.layoutTiled"),
             "typing 'layout' surfaces the named presets in the palette snapshot",
         )
-    }
-
-    /// The rest of the Agents menu — Prompt Queue (a `.store` arm) and Send to Chat (the coordinator's
-    /// `.openSendToChat` dialog) — are now in the palette under AGENTS (Open Composer already was). REVERT-TO-
-    /// CONFIRM-FAIL: they lived only in the registry (macOS Agents menu) → `catalog.first` nil → `XCTUnwrap` trips.
-    func testPromptQueueAndSendToChatAreInThePaletteUnderAgents() throws {
-        let promptQueue = try row("action.promptQueue")
-        XCTAssertEqual(promptQueue.title, "Prompt Queue")
-        XCTAssertEqual(promptQueue.category, .agents, "Prompt Queue groups under AGENTS")
-        guard case .store = promptQueue.action else {
-            XCTFail("Prompt Queue is a `.store` row (active-pane composer op)")
-            return
-        }
-
-        let sendToChat = try row("action.sendToChat")
-        XCTAssertEqual(sendToChat.title, "Send to Chat")
-        XCTAssertEqual(sendToChat.category, .agents, "Send to Chat groups under AGENTS")
-        guard case .openSendToChat = sendToChat.action else {
-            XCTFail("Send to Chat routes the coordinator's Send-to-Chat dialog")
-            return
-        }
-
-        XCTAssertTrue(searchIDs("prompt").contains("action.promptQueue"), "typing 'prompt' surfaces Prompt Queue")
-        XCTAssertTrue(searchIDs("send").contains("action.sendToChat"), "typing 'send' surfaces Send to Chat")
     }
 }

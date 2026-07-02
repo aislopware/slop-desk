@@ -1,7 +1,7 @@
 // WorkspaceCommands — the macOS menu-bar surface over the binding registry (E1 N6, OPTIONAL).
 //
 // A thin, DISCOVERABILITY-ONLY menu that renders `WorkspaceBindingRegistry.groupedForDisplay` as menu
-// sections (Panes / Tabs / Focus / View / Agents) so the workspace actions are visible in the
+// sections (Panes / Tabs / Focus / View) so the workspace actions are visible in the
 // macOS menu bar. Each item is a plain `Button(title) { route(action, to: store, …) }` that dispatches
 // through the SAME single source of truth (`WorkspaceBindingRegistry.route`) the keyboard dispatcher uses.
 //
@@ -33,10 +33,6 @@ struct WorkspaceCommands: Commands {
     var toggleCheatSheet: (() -> Void)?
     var toggleFind: (() -> Void)?
     var togglePeekReply: (() -> Void)?
-    /// E13 / WI-5 (ES-E13-5): the Agents ▸ Send to Chat menu row opens the SAME ⌘⌃↩ dialog (the menu mirrors
-    /// the chord; the NSEvent dispatcher owns the chord itself). `nil` keeps the menu item a graceful no-op via
-    /// `route`, never a dead menu item.
-    var toggleSendToChat: (() -> Void)?
     var toggleSidebar: (() -> Void)?
     /// E5 / WI-4: the cross-tab Global Search overlay toggle (⇧⌘F, the View ▸ Global Search… menu item).
     /// `nil` keeps the menu item a graceful no-op via `route`, never dead.
@@ -81,7 +77,6 @@ struct WorkspaceCommands: Commands {
         commandMenu(for: .tabs)
         commandMenu(for: .focus)
         commandMenu(for: .view)
-        commandMenu(for: .agents)
         recipeCommands
     }
 
@@ -166,7 +161,6 @@ struct WorkspaceCommands: Commands {
                 toggleCheatSheet: toggleCheatSheet,
                 toggleFind: toggleFind,
                 togglePeekReply: togglePeekReply,
-                toggleSendToChat: toggleSendToChat,
                 toggleSidebar: toggleSidebar,
                 toggleGlobalSearch: toggleGlobalSearch,
                 toggleJumpTo: toggleJumpTo,

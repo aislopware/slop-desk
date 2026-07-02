@@ -134,16 +134,6 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
     /// line — the theme/font decides).
     public var lineHeight: LineHeightMode
 
-    // E12 (Composer): the "Composer max height" default lives here as the single source the fire-time
-    // `SettingsKey.composerMaxHeight` Defaults key reads for its default. The per-instance max-height / pin
-    // MIRROR fields were removed — they had zero readers (the leaf reads the fire-time
-    // `SettingsKey.composerMaxHeightFraction`; the pin persists PER-PANE keyed by `PaneID` via
-    // `SettingsKey.isComposerPinned`/`setComposerPinned`), so a typed mirror here only risked a false
-    // "persisted" claim. CLIENT-only, no `video-prefs.json` sidecar / env overlay / golden corpus (decision #6).
-    /// The default Composer max-height fraction (the "Composer max height" setting defaults to
-    /// ~0.4 of the pane height). Read by `SettingsKey.Keys.composerMaxHeight` as its default.
-    public static let defaultComposerMaxHeightFraction: Double = 0.4
-
     public init(
         fontFamily: String = "SF Mono",
         fontSize: Double = 13,

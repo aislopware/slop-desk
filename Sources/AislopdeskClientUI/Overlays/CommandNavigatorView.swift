@@ -28,7 +28,7 @@ import SwiftUI
 
 /// Per-pane chrome holder driving the Command Navigator's visibility — a reference type so the pane model's
 /// `onRequestBlockNavigator` `@MainActor` closure can TOGGLE it (the seam doc: "show/hide"), exactly like the
-/// find bar's ``TerminalFindBarModel`` / the Composer's ``ComposerLeafChrome``. Held as `@State` on the
+/// find bar's ``TerminalFindBarModel``. Held as `@State` on the
 /// `.id(PaneID)`-keyed ``TerminalLeafView``, so it is per-pane (no cross-pane bleed) and never the durable
 /// model's concern.
 @MainActor

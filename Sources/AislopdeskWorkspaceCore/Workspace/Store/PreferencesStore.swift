@@ -337,7 +337,7 @@ public final class PreferencesStore {
     /// `Defaults.Keys` user setting — both the tab-reachable toggles AND the advanced-only privilege/IPC keys
     /// — so a "Reset All" genuinely returns the whole catalog (every row the Advanced → All Settings list
     /// advertises) to default, not just the five typed models (E7 / `customization__advanced-settings.md`).
-    /// Non-setting STATE keys (first-launch flag, CLI-installed flag, composer pin/height, window geometry,
+    /// Non-setting STATE keys (first-launch flag, CLI-installed flag, window geometry,
     /// tab sort/grouping) are deliberately excluded — they are app state, not user-editable settings.
     public func resetAll() {
         terminal = TerminalPreferences()

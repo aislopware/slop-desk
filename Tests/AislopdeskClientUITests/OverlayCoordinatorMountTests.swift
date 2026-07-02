@@ -475,14 +475,14 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     // MARK: - ES-E2-4 / WI-3: the cheat sheet's data source (categories + glyph chips)
 
     /// `KeyboardCheatSheetView` renders ``WorkspaceBindingRegistry/groupedForDisplay`` as one section per
-    /// category. Pin the five categories in their fixed display order — a reorder / dropped section would
+    /// category. Pin the four categories in their fixed display order — a reorder / dropped section would
     /// silently rearrange (or hide) a whole chunk of the cheat sheet.
     func testCheatSheetDataCoversCategories() {
         let categories = WorkspaceBindingRegistry.groupedForDisplay.map(\.category)
         XCTAssertEqual(
             categories,
-            [.panes, .tabs, .focus, .view, .agents],
-            "the cheat sheet renders the five categories in their fixed display order",
+            [.panes, .tabs, .focus, .view],
+            "the cheat sheet renders the four categories in their fixed display order",
         )
         // No section is empty (every category contributes at least one row) — an empty group is dropped by
         // `groupedForDisplay`, so the count matching the category list proves none collapsed to nothing.
@@ -500,9 +500,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     /// `Read Only` + `Secure Keyboard Entry` + `Vi Mode Key Hints` (none ships a default chord —
     /// palette/menu-only, `chord: nil`, the user may bind them in Settings → Keybindings) + the E19 `Pin
     /// Window` view toggle (the "View ▸ Pin Window" toggle ships no default chord — palette/menu-only,
-    /// `chord: nil`, pinned chord-less by `WorkspaceBindingRoutingTests`) + the three E13 `Fork in…` agent
-    /// entries (Split Right / Split Down / New Tab; the fork is started
-    /// from the agent's `/branch` command, so each ships `chord: nil`, palette/menu-only). The representative
+    /// `chord: nil`, pinned chord-less by `WorkspaceBindingRoutingTests`). The representative
     /// bakes its hint
     /// into its title instead. The trap this pins: `glyph(for:)` of the representative's stand-in `.selectTab(1)`
     /// action resolves the REAL ⌘1 binding, so the view MUST gate on the row's own `chord` (not the action's
@@ -523,14 +521,9 @@ final class OverlayCoordinatorMountTests: XCTestCase {
                 "view.hintReveal",
                 // E19 ES-E19-1: Pin Window is chord-less (the "View ▸ Pin Window" toggle ships no default chord).
                 "view.pinWindow",
-                // E13 ES-E13-7: the three "Fork in…" entries are
-                // palette/menu-only — the fork is initiated from the agent's `/branch` command, no key
-                // equivalent, so each carries `chord: nil`.
-                "agent.forkSplitRight", "agent.forkSplitDown", "agent.forkNewTab",
             ],
             "the no-chip rows: collapsed select-tab representative + chord-less Rename/Close Tab "
-                + "+ the three E17 view toggles + E10 Hint to Reveal + E19 Pin Window + the "
-                + "three E13 Fork-in entries",
+                + "+ the three E17 view toggles + E10 Hint to Reveal + E19 Pin Window",
         )
 
         // Every chord-bearing row resolves a non-empty glyph (the chips) — no drift between display + chord.
@@ -719,56 +712,6 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertFalse(overlay.anyModalVisible)
     }
 
-    // MARK: - E13 / WI-5 (ES-E13-5): the ⌘⌃↩ Send-to-Chat dialog state (the closures the app threads)
-
-    /// ⌘⌃↩ is `overlay.toggleSendToChat()`. Pin the HONEST gate (mirroring Peek & Reply): it does NOTHING when
-    /// there is nothing to quote (no empty card), and OPENS with the captured quote once there is one — and
-    /// registers as a scrimmed modal (the `OverlayHostView` hit-testing gate). FAILS on a naive
-    /// `sendToChatVisible.toggle()` that would flash an empty dialog (the no-capture assertion trips), or if
-    /// `sendToChatVisible` is not folded into `anyModalVisible`.
-    func testToggleSendToChatOnlyOpensWhenThereIsAQuoteAndIsModal() {
-        let (overlay, _) = makeCoordinator()
-        XCTAssertFalse(overlay.sendToChatVisible, "the Send-to-Chat dialog starts hidden")
-
-        // Nothing to quote → the honest no-op.
-        overlay.captureSendToChat = { nil }
-        overlay.toggleSendToChat()
-        XCTAssertFalse(overlay.sendToChatVisible, "⌘⌃↩ does nothing when there is nothing to quote (no empty card)")
-        XCTAssertFalse(overlay.anyModalVisible)
-
-        // A capture → opens with that context AND registers as a scrimmed modal.
-        let ctx = SendToChatContext(title: "src.swift L3", quoted: "let x = 1")
-        overlay.captureSendToChat = { ctx }
-        overlay.toggleSendToChat()
-        XCTAssertTrue(overlay.sendToChatVisible, "⌘⌃↩ opens the dialog once there is a quote")
-        XCTAssertEqual(overlay.sendToChatContext, ctx, "the captured quote drives the dialog")
-        XCTAssertTrue(
-            overlay.anyModalVisible,
-            "Send-to-Chat is a scrimmed modal — it registers in the hit-testing gate",
-        )
-
-        overlay.toggleSendToChat()
-        XCTAssertFalse(overlay.sendToChatVisible, "⌘⌃↩ again closes the dialog")
-        XCTAssertNil(overlay.sendToChatContext, "close clears the captured quote (no stale leak into the next open)")
-        XCTAssertFalse(overlay.anyModalVisible)
-    }
-
-    /// The dialog's "Copy Message" routes through `overlay.copyChatMessage(_:)` → the injected
-    /// `copyToPasteboard` (the app wires AppKit/UIKit) AND closes. Pin both — a regression that dropped the
-    /// pasteboard injection or left the dialog open would fail here.
-    func testCopyChatMessageWritesPasteboardAndCloses() {
-        let (overlay, _) = makeCoordinator()
-        var copied: String?
-        overlay.copyToPasteboard = { copied = $0 }
-        overlay.captureSendToChat = { SendToChatContext(title: "p", quoted: "q") }
-        overlay.openSendToChat()
-        XCTAssertTrue(overlay.sendToChatVisible, "precondition: the dialog is open")
-
-        overlay.copyChatMessage("> q\n\nplease review")
-        XCTAssertEqual(copied, "> q\n\nplease review", "Copy Message writes the composed text to the pasteboard")
-        XCTAssertFalse(overlay.sendToChatVisible, "Copy Message closes the dialog")
-    }
-
     // MARK: - WI-5: the `anyModalVisible` hit-testing gate the OverlayHostView reads
 
     /// `OverlayHostView.allowsHitTesting(anyModalVisible || !toasts.isEmpty)` — the host is transparent to
@@ -816,13 +759,11 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     /// `capturesKeyboardWhileVisible` is the SINGLE source of truth the app's `isOverlayCapturingKeys` gate
     /// reads so the global NSEvent dispatcher YIELDS modeled chords to a focused overlay. Pin that it tracks
-    /// EVERY keyboard-owning overlay: Open-Quickly, Peek & Reply, Send-to-Chat (E13), AND — after the
+    /// EVERY keyboard-owning overlay: Open-Quickly, Peek & Reply, AND — after the
     /// Batch-1 audit fix — the four SCRIMMED modals (palette / cheat sheet / connect / remote picker).
     /// The NSEvent monitor PREEMPTS the responder chain so the sheet-presented panels cannot rely on it
     /// alone; ⌘W/⌘T/⌘2 would destructively mutate the BACKGROUND tree behind their scrim without this gate.
-    /// REVERT-TO-CONFIRM-FAIL (M3): drop `|| sendToChatVisible` from the property and the Send-to-Chat branch
-    /// here flips to `false` — so a modeled ⌘W / ⌘1–9 would leak to a background pane behind the open dialog.
-    func testCapturesKeyboardWhileVisibleFoldsInSendToChat() throws {
+    func testCapturesKeyboardWhileVisibleFoldsInKeyboardOwningOverlays() throws {
         let (overlay, store) = makeCoordinator()
         XCTAssertFalse(overlay.capturesKeyboardWhileVisible, "nothing up ⇒ the dispatcher owns chords normally")
 
@@ -836,16 +777,6 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         overlay.openPeekReply()
         XCTAssertTrue(overlay.capturesKeyboardWhileVisible, "the Peek & Reply card owns the keyboard")
         overlay.closePeekReply()
-        XCTAssertFalse(overlay.capturesKeyboardWhileVisible)
-
-        // E13 / WI-5: the Send-to-Chat dialog (its auto-focused comment field) MUST fold into the gate.
-        overlay.captureSendToChat = { SendToChatContext(title: "p", quoted: "q") }
-        overlay.openSendToChat()
-        XCTAssertTrue(
-            overlay.capturesKeyboardWhileVisible,
-            "the Send-to-Chat dialog owns the keyboard — a modeled chord must not leak to a background pane",
-        )
-        overlay.closeSendToChat()
         XCTAssertFalse(overlay.capturesKeyboardWhileVisible)
 
         // The scrimmed panels ARE now in the gate (Batch-1 audit fix): the NSEvent monitor preempts the
