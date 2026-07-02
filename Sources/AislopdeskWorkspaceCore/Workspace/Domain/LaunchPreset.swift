@@ -7,8 +7,8 @@ import Foundation
 /// Applying one opens a terminal pane (or a tab of split panes) and runs the command(s) in it — the
 /// "launch Claude / htop / git log into a fresh pane" power feature.
 ///
-/// Distinct from ``LayoutPreset`` (a saved *canvas geometry* snapshot) and ``Snippet`` (a parameterized
-/// macro typed into an EXISTING pane): a `LaunchPreset` is a *template that SPAWNS* panes. It is a pure
+/// Distinct from ``LayoutPreset`` (a saved *canvas geometry* snapshot): a `LaunchPreset` is a
+/// *template that SPAWNS* panes. It is a pure
 /// `Codable` value; the store's apply path turns it into pane specs + the keystrokes to send, computed by
 /// the pure ``LaunchPresetEngine`` so the whole expansion is unit-testable with no view / no transport.
 public struct LaunchPreset: Codable, Sendable, Equatable, Identifiable {
@@ -154,7 +154,7 @@ public enum LaunchPresetEngine {
     /// of `/tmp/proj<Enter>rm -rf x` would execute `rm`). The quoting only escapes literal quotes, not
     /// these tokens, so the path must bypass the token parser entirely. Only the `command` field —
     /// intended shell input — legitimately goes through ``SendKeysParser`` (so `<Enter>`-style tokens IN
-    /// a command still resolve, consistent with snippets).
+    /// a command still resolve).
     public static func keystrokes(command: String, cwd: String?) -> [UInt8] {
         var out: [UInt8] = []
         if let cwd, !cwd.isEmpty {

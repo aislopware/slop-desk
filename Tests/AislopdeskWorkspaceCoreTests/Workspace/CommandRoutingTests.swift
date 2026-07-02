@@ -209,7 +209,7 @@ final class CommandRoutingTests: XCTestCase {
         )
     }
 
-    func testGroupCycleAndRunLastSnippetChordsAreBound() {
+    func testGroupCycleChordsAreBound() {
         // Pins both the modifier set AND the forward flag — a transposed ]/[ or a wrong modifier would
         // otherwise slip past the cheat-sheet drift guard (which only checks each command HAS a row).
         let interp = CommandInterpreter()
@@ -222,11 +222,6 @@ final class CommandRoutingTests: XCTestCase {
             interp.feed(KeyChord(character: "[", [.control, .command])),
             .cycleFocusInGroup(forward: false),
             "⌃⌘[ cycles back within the group",
-        )
-        XCTAssertEqual(
-            interp.feed(KeyChord(character: "r", [.option, .command])),
-            .runLastSnippet,
-            "⌥⌘R re-fires the last snippet",
         )
     }
 

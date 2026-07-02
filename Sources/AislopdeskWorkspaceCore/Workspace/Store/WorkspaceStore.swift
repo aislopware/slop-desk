@@ -361,25 +361,6 @@ public final class WorkspaceStore {
     /// The focused pane id, or `nil` when the canvas is empty (a pure passthrough).
     public var focusedPane: PaneID? { workspace.focusedPane }
 
-    /// The focused pane id in whichever live model is current: the active tab's active pane under
-    /// ``LiveModel/tree`` (the shipped app — where `workspace.focusedPane` is a dead default id), else the
-    /// canvas focus. Consumed by the snippet-run path so a snippet reaches a REAL registry leaf.
-    private var liveFocusedPane: PaneID? {
-        switch liveModel {
-        case .tree: tree.activeSession?.activeTab?.activePane
-        case .canvas: workspace.focusedPane
-        }
-    }
-
-    /// The ``PaneSpec`` for `id` in whichever live model is current (tree side table under
-    /// ``LiveModel/tree``, else the canvas). Used where a spec lookup must follow the live model.
-    private func liveSpec(for id: PaneID) -> PaneSpec? {
-        switch liveModel {
-        case .tree: tree.spec(for: id)
-        case .canvas: workspace.canvas.spec(for: id)
-        }
-    }
-
     /// Whether `id` is the focused pane (the view's focus-ring decision).
     public func isFocused(_ id: PaneID) -> Bool { workspace.focusedPane == id }
 
@@ -1492,89 +1473,13 @@ public final class WorkspaceStore {
         return reached
     }
 
-    // MARK: - Snippets (saved command macros, run from ⌘K)
-
-    /// The saved snippets in whichever live model is current (P-fix): the tree's under ``LiveModel/tree``
-    /// (the shipped app — where they are carried verbatim from v9 and persisted by ``persistableSnapshot()``),
-    /// else the canvas's. Reading `workspace.snippets` on the tree shell always saw the empty default canvas
-    /// (snippets never persisted / never reloaded); mirrors ``liveLayoutPresets``.
-    private var liveSnippets: [Snippet] {
-        get {
-            switch liveModel {
-            case .tree: tree.snippets
-            case .canvas: workspace.snippets
-            }
-        }
-        set {
-            switch liveModel {
-            case .tree: tree.snippets = newValue
-            case .canvas: workspace.snippets = newValue
-            }
-        }
-    }
-
-    /// Reconciles + debounce-saves the CURRENT live model (the tree app persists the tree via
-    /// ``persistableSnapshot()``; the canvas store persists the canvas). A metadata-only mutation (leaf set
-    /// unchanged) routes here so the write path matches the live model.
-    private func reconcileLive() {
-        switch liveModel {
-        case .tree: reconcileTree()
-        case .canvas: reconcile()
-        }
-    }
-
-    /// The saved snippets, persisted on the live model (read-only view; mutate via the CRUD below).
-    public var snippets: [Snippet] { liveSnippets }
-
-    /// A non-blank snippet display name (trimmed; an empty/whitespace name falls back to "Snippet" so the
-    /// palette never shows a blank "Run …" row — reachable from CRUD and from a merge-imported file). `public`
-    /// because the ClientUI snippet surfaces (Settings → Recipes list, the snippet palette source) normalize
-    /// the display name through the SAME helper the store CRUD uses, so the two cannot drift.
-    public static func snippetName(_ raw: String) -> String {
-        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        return t.isEmpty ? "Snippet" : t
-    }
-
-    /// Saves a new snippet and returns it. Metadata-only mutation (leaf set unchanged) → reconcile persists.
-    /// `alias` is the optional at-prompt trigger word (spaces stripped by ``Snippet``; "" = no alias).
-    @discardableResult
-    public func addSnippet(name: String, body: String, alias: String = "") -> Snippet {
-        let snippet = Snippet(name: Self.snippetName(name), body: body, alias: alias)
-        liveSnippets.append(snippet)
-        reconcileLive()
-        return snippet
-    }
-
-    /// Edits an existing snippet's name + body (+ alias). No-op for an unknown id.
-    public func updateSnippet(_ id: UUID, name: String, body: String, alias: String = "") {
-        guard let i = liveSnippets.firstIndex(where: { $0.id == id }) else { return }
-        // Store the name VERBATIM here — this is the live-editing path, so a per-keystroke trim/substitute
-        // would fight the typist (a trailing space gets deleted; clearing the field snaps to "Snippet").
-        // The empty→"Snippet" fallback is applied at DISPLAY time (palette/manager) and re-normalized once
-        // on add + import/load, where a one-shot clean-up is correct.
-        liveSnippets[i].name = name
-        liveSnippets[i].body = body
-        // The alias, unlike the name, IS normalized on every edit: the spec forbids spaces in an alias, so
-        // stripping whitespace per-keystroke is the correct UX (you cannot type a space into it) rather
-        // than a typist-fighting trim.
-        liveSnippets[i].alias = Snippet.normalizeAlias(alias)
-        reconcileLive()
-    }
-
-    /// Deletes a snippet. No-op for an unknown id.
-    public func deleteSnippet(_ id: UUID) {
-        liveSnippets.removeAll { $0.id == id }
-        if lastRanSnippetID == id { lastRanSnippetID = nil } // don't leave ⌥⌘R pointing at a dead snippet
-        reconcileLive()
-    }
-
     // MARK: - Workspace export / import (portable backup / share)
 
     /// Encodes the current workspace to a portable document (host connection stripped, ephemeral panes
     /// stripped) — what the `.fileExporter` writes to disk.
     public func exportWorkspaceData() -> Data {
         // LIVE-MODEL aware: the shipped app is `.tree`, so an export must serialize the LIVE tree (sessions /
-        // tabs / splits / snippets). Exporting `persistableWorkspace()` on the tree shell wrote only the dead
+        // tabs / splits). Exporting `persistableWorkspace()` on the tree shell wrote only the dead
         // default single-terminal canvas — an empty "backup".
         switch liveModel {
         case .tree: WorkspaceTransfer.exportTree(tree)
@@ -1587,7 +1492,7 @@ public final class WorkspaceStore {
     public enum WorkspaceImportMode: Sendable { case replace, mergeAppend }
 
     /// Imports a workspace document. `.replace` swaps the whole canvas (backup-restore / load-a-shared
-    /// setup); `.mergeAppend` adds the document's panes/groups/snippets/presets beside the current ones.
+    /// setup); `.mergeAppend` adds the document's panes/groups/presets beside the current ones.
     /// In BOTH modes the local host connection is KEPT (never adopt the file's) and every imported pane id
     /// is re-minted. Returns whether the bytes were a valid document; a hostile / foreign / future file
     /// leaves the live workspace untouched and returns `false`.
@@ -1655,22 +1560,21 @@ public final class WorkspaceStore {
             guard workspace.canvas.items.count + imported.canvas.items.count <= WorkspaceTransfer.maxItems else {
                 return false
             }
-            // The SAME per-collection bound applies to groups / snippets / presets. decode() and the on-disk
-            // load() both reject — and resetToDefault() — a workspace whose groups, snippets, or layoutPresets
+            // The SAME per-collection bound applies to groups / presets. decode() and the on-disk
+            // load() both reject — and resetToDefault() — a workspace whose groups or layoutPresets
             // exceed maxItems. So a merge that pushes any of those collections over the cap WORKS this session
             // but makes the next launch's load() discard the ENTIRE workspace (every pane, group, bookmark,
-            // snippet, preset) back to the one-terminal default — surprising total data loss the user never
+            // preset) back to the one-terminal default — surprising total data loss the user never
             // caused by hand-editing. Reject symmetrically (groups are never deduped here, so the sum is the
-            // exact post-merge count; snippets/presets dedup, so the sum is a safe upper bound). Live untouched.
+            // exact post-merge count; presets dedup, so the sum is a safe upper bound). Live untouched.
             guard workspace.groups.count + imported.groups.count <= WorkspaceTransfer.maxItems,
-                  workspace.snippets.count + imported.snippets.count <= WorkspaceTransfer.maxItems,
                   workspace.layoutPresets.count + imported.layoutPresets.count <= WorkspaceTransfer.maxItems
             else {
                 return false
             }
             // Re-mint imported pane ids AND group ids (the imported groups are brand-new here), offset the
             // frames by a cascade so the additions don't stack on top of the originals, then append the
-            // items + groups and union snippets/presets by name (collisions get a "… copy" suffix). Empty
+            // items + groups and union presets by name (collisions get a "… copy" suffix). Empty
             // bookmark slots are filled (never clobber an existing bookmark). Focus is left on the current
             // pane (a merge shouldn't yank focus to an import). reconcile() materializes the new sessions.
             var idMap: [PaneID: PaneID] = [:]
@@ -1692,15 +1596,8 @@ public final class WorkspaceStore {
             workspace.canvas = Canvas(items: workspace.canvas.items + appended, camera: workspace.canvas.camera)
             workspace.groups += imported.groups.map { PaneGroup(id: groupMap[$0.id] ?? PaneGroupID(), name: $0.name) }
             // Union by name, but CONTENT-dedup first so re-merging the SAME document N times can't grow the
-            // library (a snippet whose body already exists, or a preset whose canvas+groups already exist,
-            // is a re-import — skip it). Without this, repeated identical merges accrued "X copy copy …".
-            for s in imported.snippets where !workspace.snippets.contains(where: { $0.body == s.body }) {
-                let name = Self.uniqueName(
-                    base: Self.snippetName(s.name),
-                    existing: Set(workspace.snippets.map(\.name)),
-                )
-                workspace.snippets.append(Snippet(name: name, body: s.body, alias: s.alias))
-            }
+            // library (a preset whose canvas+groups already exist is a re-import — skip it). Without this,
+            // repeated identical merges accrued "X copy copy …".
             for p in imported.layoutPresets
                 where !workspace.layoutPresets.contains(where: { $0.canvas == p.canvas && $0.groups == p.groups })
             {
@@ -1741,102 +1638,6 @@ public final class WorkspaceStore {
         while existing.contains("\(copy) \(n)") { n += 1 }
         return "\(copy) \(n)"
     }
-
-    /// E16 WI-10 — the reserved-snippet-var read seam. ``runSnippet(_:values:)`` resolves the four reserved
-    /// placeholders — `{{clipboard}}` / `{{date}}` / `{{time}}` (plus the `{{cursor}}` caret marker) — from the
-    /// ``ReservedSnippetValues`` THIS closure returns, so the pure resolver (``ReservedSnippetVars``) never
-    /// reads the real pasteboard / clock (the determinism + hang-safety split). The app sets it at launch to
-    /// read `NSPasteboard` / `UIPasteboard` and format the clock; `nil` (the default / headless) resolves the
-    /// three string vars to empty. `@ObservationIgnored`: wiring, not view state (like ``onCwdVisited``).
-    @ObservationIgnored public var snippetReservedValues: (() -> ReservedSnippetValues)?
-
-    /// Runs snippet `id`: resolves the reserved vars (clipboard/date/time, injected via ``snippetReservedValues``)
-    /// + the user-prompt `{{placeholders}}` (from `values`) into wire bytes via ``snippetBytes(for:values:)``
-    /// (which lives in `WorkspaceStore+Snippets.swift`), then sends them to the BROADCAST targets when broadcast
-    /// is armed, else the focused pane. Returns how many text-capable panes it reached (0 = unknown id / empty
-    /// body / no text-capable target). Stays in the primary declaration because it reaches the private `registry`.
-    @discardableResult
-    public func runSnippet(_ id: UUID, values: [String: String] = [:]) -> Int {
-        guard let snippet = liveSnippets.first(where: { $0.id == id }) else { return 0 }
-        let bytes = snippetBytes(for: snippet, values: values)
-        guard !bytes.isEmpty else { return 0 }
-        // Resolve the (non-broadcast) target from the LIVE focused pane + spec: on the tree shell the canvas
-        // `workspace.focusedPane` is a dead default id that is never a registry key, so a snippet reached
-        // nothing (yet returned success). `liveFocusedPane` / `liveSpec` read whichever model drives the app.
-        let candidates = broadcastActive ? broadcastTargets() : (liveFocusedPane.map { [$0] } ?? [])
-        let targets = candidates.filter { liveSpec(for: $0)?.kind.canReceiveText == true }
-        for pid in targets { registry[pid]?.sendBytes(bytes) }
-        return targets.count
-    }
-
-    /// The snippet whose `{{placeholder}}` values the UI is currently asking for (the value-entry sheet's
-    /// presentation binding), or `nil`. Transient — never persisted.
-    public private(set) var pendingSnippetRun: UUID?
-
-    /// What ``beginRunSnippet(_:)`` decided to do — so the call (palette / menu) and the tests can branch
-    /// without poking view state.
-    public enum SnippetRunOutcome: Equatable {
-        /// Ran immediately (no placeholders), reaching N text-capable panes.
-        case ran(Int)
-        /// Has unresolved `{{placeholders}}` — the value-entry sheet was armed for these names.
-        case needsValues([String])
-        /// No snippet with that id.
-        case unknown
-    }
-
-    /// The single entry point for "run this snippet" from the palette/menu. A snippet with NO placeholders
-    /// runs straight away (the prior behaviour); a PARAMETERIZED one arms ``pendingSnippetRun`` so the UI
-    /// can collect values first — fixing the bug where `ssh {{user}}@{{host}}` was injected verbatim
-    /// because the palette always called `runSnippet(id, values: [:])`. Pure decision over the snippet's
-    /// placeholders; the sheet finishes by calling ``runSnippet(_:values:)`` + ``clearSnippetRunRequest()``.
-    @discardableResult
-    public func beginRunSnippet(_ id: UUID) -> SnippetRunOutcome {
-        guard let snippet = liveSnippets.first(where: { $0.id == id }) else { return .unknown }
-        lastRanSnippetID = id // remember the launch so ⌥⌘R can re-fire it without ⌘K
-        // E16 WI-2: only the USER-prompt placeholders gate the value-entry sheet. The four reserved vars
-        // (`{{date}}`/`{{time}}`/`{{clipboard}}`/`{{cursor}}`) are resolved by `ReservedSnippetVars` at run
-        // time and must NEVER prompt — so a reserved-only body (the screenshot `timenow` = `{{date}} {{time}}`,
-        // the spec's `gco` = `git checkout {{cursor}}`) falls through to the immediate run, not a dead
-        // `pendingSnippetRun` that no surface consumes. `snippet.placeholders` would wrongly count the reserved
-        // names and strand every such snippet.
-        let slots = ReservedSnippetVars.userPlaceholders(in: snippet.body)
-        guard !slots.isEmpty else { return .ran(runSnippet(id)) }
-        pendingSnippetRun = id
-        return .needsValues(slots)
-    }
-
-    /// The most-recently-launched snippet (via ``beginRunSnippet(_:)``), so ⌥⌘R can re-fire it. Session
-    /// state (not persisted). Cleared if that snippet is deleted.
-    public private(set) var lastRanSnippetID: UUID?
-
-    /// Re-runs the most-recently-launched snippet (⌥⌘R) — the "repeat my last macro" power chord, so a
-    /// `deploy` / `tmux attach` you fire all day costs one keystroke after the first ⌘K launch. Routes
-    /// through ``beginRunSnippet(_:)`` so a parameterized snippet re-prompts for values. A graceful no-op
-    /// (`.unknown`) when nothing has been run yet or the last snippet was since deleted.
-    @discardableResult
-    public func runLastSnippet() -> SnippetRunOutcome {
-        guard let id = lastRanSnippetID else { return .unknown }
-        return beginRunSnippet(id)
-    }
-
-    /// Dismisses the placeholder value-entry sheet (Cancel, or after a successful run).
-    public func clearSnippetRunRequest() { pendingSnippetRun = nil }
-
-    /// Whether the snippet manager (create / edit / delete) is presented. Until this existed, the snippet
-    /// CRUD (``addSnippet``/``updateSnippet``/``deleteSnippet``) had NO in-app caller — a user could only
-    /// get a snippet by hand-editing the workspace JSON. Transient — never persisted.
-    public private(set) var snippetManagerPresented = false
-
-    /// Opens the snippet manager (⌘K "Manage Snippets…" / Pane ▸ Manage Snippets…). Clears any stranded
-    /// `pendingSnippetRun` first so a value-entry sheet that a prior transition failed to present can
-    /// never sit armed-but-invisible behind the manager.
-    public func requestSnippetManager() {
-        pendingSnippetRun = nil
-        snippetManagerPresented = true
-    }
-
-    /// Closes the snippet manager.
-    public func dismissSnippetManager() { snippetManagerPresented = false }
 
     // MARK: - Command palette recents
 
@@ -2100,16 +1901,6 @@ public final class WorkspaceStore {
     public func requestSaveLayout() { pendingSaveLayout = true }
     /// The root view consumed the request (presented / dismissed the prompt).
     public func clearSaveLayoutRequest() { pendingSaveLayout = false }
-
-    // MARK: - Recipes (E16 — `.aislopdeskrecipe` save / open + trust prompt + replay queue)
-
-    /// The recipe glue's runtime state, BUNDLED into one ``RecipeRuntimeState`` value (the
-    /// ``BlockBookmarkSeam`` idiom — keeping this monster class body under the lint type-body ceiling). The
-    /// LOGIC (snapshot → emit → write, parse → trust decision → restore) is in `WorkspaceStore+Recipes.swift`.
-    /// `internal(set)` so that same-module extension drives it; the app (a different module) reads
-    /// `recipes.pendingTrustPrompt` / `recipes.pendingSaveRecipe` to present the matching sheet (a normal
-    /// `@Observable` stored var, so a mutation to any field notifies the views).
-    public internal(set) var recipes = RecipeRuntimeState()
 
     /// Snapshots the CURRENT canvas (panes + groups + focus, ephemeral dialog panes stripped) under
     /// `name`. A re-save of an existing name OVERWRITES it (so "save monitoring" updates the layout you
@@ -3070,7 +2861,7 @@ public final class WorkspaceStore {
     }
 
     /// Mutates the live ``tree`` in place via `transform` and schedules the debounced save — the
-    /// side-collection (snippets / presets / templates) edit seam for cross-file store extensions, mirroring
+    /// side-collection (presets / templates) edit seam for cross-file store extensions, mirroring
     /// the launch-preset CRUD's `tree.launchPresets … ; scheduleSave()` shape so the two paths can't drift.
     func mutateTree(_ transform: (inout TreeWorkspace) -> Void) {
         transform(&tree)
@@ -3541,11 +3332,6 @@ public final class WorkspaceStore {
             // the static spec title so the banner/toast identifies WHICH command/directory finished.
             let title = tree.spec(for: id)?.completionNotificationTitle ?? ""
             handleCommandCompleted(id: id, exitCode: exitCode, durationMS: durationMS, paneTitle: title)
-            // NB: an in-flight recipe REPLAY does NOT resume here. OSC-133;D for an interactive handoff command
-            // (`ssh`/`docker exec -it`/`tmux attach`) fires only when that session EXITS — resuming on it would
-            // inject the held commands back into the LOCAL shell (wrong host). The replay's shell-handoff resume
-            // is driven instead by the inner shell's OSC-133;A prompt-START edge (`terminal.onPromptReturn`,
-            // wired below) so the held queue lands INSIDE the inner session. See `recipeReplayPromptReturned`.
             // A26 cwd-freshness fallback: refresh this pane's last-known cwd from the host `cwd` RPC on
             // command completion too, so shells without OSC 7 still update the inherit source for the next
             // new tab / split. `[weak connection]` avoids a retain cycle (the closure is owned by `connection`).
@@ -3601,15 +3387,6 @@ public final class WorkspaceStore {
         // override-aware single-chord table). The helper lives in WorkspaceStore+Keybinding so this body
         // stays under the lint ceiling (same pattern as `seedBlockBookmarks`).
         wireKeyInterceptor(terminal: terminal)
-        // E16 ES-E16-4: hand the surface its at-prompt snippet-alias auto-expander (default-OFF via the
-        // `snippetAutoExpand` setting). Same wiring pattern as `wireKeyInterceptor`; lives in
-        // WorkspaceStore+Keybinding so this body stays under the lint ceiling.
-        wireSnippetExpander(terminal: terminal)
-        // E16 WI-9 shell-handoff RESUME (OSC-133;A): drive an in-flight recipe replay's prompt-return resume off
-        // the inner shell's prompt-START edge — NOT the outer OSC-133;D completion (which for `ssh`/… fires only
-        // on EXIT and would inject the held queue back into the LOCAL shell). Lives in WorkspaceStore+Recipes so
-        // this body stays under the lint ceiling (same pattern as `wireSnippetExpander`).
-        wireRecipeReplayResume(handle: handle, id: id)
         // FOCUS-ON-CLICK: the surface's mouseDown calls `onRequestFocus`; route it to the tree focus so the
         // workspace focus (chrome / inspector / which pane the next split or close targets) follows a click.
         terminal?.onRequestFocus = { [weak self] in self?.focusPaneTree(id) }
@@ -4584,10 +4361,6 @@ public func apply(_ command: WorkspaceCommand, to store: WorkspaceStore) {
         store.saveBookmark(slot)
     case let .recallBookmark(slot):
         store.recallBookmark(slot)
-    case .manageSnippets:
-        store.requestSnippetManager()
-    case .runLastSnippet:
-        store.runLastSnippet()
     case let .align(edge):
         store.alignPanes(to: edge)
     case let .distribute(horizontal):

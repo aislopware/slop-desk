@@ -9,12 +9,12 @@ import Foundation
 ///
 /// ### Pill set
 /// The full pill set considered was `All / Opened / Recent / Folders / SSH / Agents / Current / Recipes`.
-/// One is dropped by binding decision:
+/// Two are dropped by product decision:
 /// - **SSH** is a product cut (no `~/.ssh/config` parse, no `⌘S` chord, no SSH Actions row).
+/// - **Recipes** was removed with the recipe feature (2026-07-03).
 ///
-/// So the pill ring is **All / Opened / Recent / Folders / Agents / Current / Recipes** — SSH is a structural
-/// cut: no `ssh` case exists on this enum at all, so nothing can route to a missing source.
-/// The Recipes pill was deferred until E16 (the recipe store); it is now wired (E16 complete).
+/// So the pill ring is **All / Opened / Recent / Folders / Agents / Current** — both cuts are structural:
+/// no `ssh` / `recipes` case exists on this enum at all, so nothing can route to a missing source.
 public enum OpenQuicklyFilter: String, CaseIterable, Equatable, Hashable, Sendable {
     /// The merged, section-headered list of every source — the `⌘⇧O` default.
     case all
@@ -28,16 +28,14 @@ public enum OpenQuicklyFilter: String, CaseIterable, Equatable, Hashable, Sendab
     case agents
     /// The focused pane's detected links + command/prompt index (`⌘J` / Jump-To).
     case current
-    /// Saved `.aislopdeskrecipe` files from the recipe library (`⌘E`). Backed by ``RecipeLibrary``.
-    case recipes
 
     // SSH pill: dropped by product decision (no ~/.ssh/config parse).
     /// The pill order rendered in the filter bar (Tab/⇧Tab cycle this ring). `⌘⇧O` opens to ``defaultFilter``.
-    public static let pickerPills: [Self] = [.all, .opened, .recent, .folders, .agents, .current, .recipes]
+    public static let pickerPills: [Self] = [.all, .opened, .recent, .folders, .agents, .current]
 
     /// The section order the `.all` list merges in (every pill EXCEPT `.all`, in pill order). `.all` itself is
     /// never a section — it is the merged view of these.
-    public static let sectionOrder: [Self] = [.opened, .recent, .folders, .agents, .current, .recipes]
+    public static let sectionOrder: [Self] = [.opened, .recent, .folders, .agents, .current]
 
     /// The pill `⌘⇧O` opens to (the merged All list).
     public static let defaultFilter: OpenQuicklyFilter = .all
@@ -51,7 +49,6 @@ public enum OpenQuicklyFilter: String, CaseIterable, Equatable, Hashable, Sendab
         case .folders: "Folders"
         case .agents: "Agents"
         case .current: "Current"
-        case .recipes: "Recipes"
         }
     }
 
@@ -68,12 +65,11 @@ public enum OpenQuicklyFilter: String, CaseIterable, Equatable, Hashable, Sendab
         case .folders: "folder"
         case .agents: "sparkles"
         case .current: "scope"
-        case .recipes: "book"
         }
     }
 
     /// The bare character of the picker-LOCAL `⌘`-chord that jumps straight to this pill (`⌘0`/`⌘W`/`⌘R`/
-    /// `⌘Z`/`⌘G`/`⌘J`/`⌘E`). Handled by the panel's own `onKeyPress`, NEVER registered globally.
+    /// `⌘Z`/`⌘G`/`⌘J`). Handled by the panel's own `onKeyPress`, NEVER registered globally.
     public var pickerChordKey: String {
         switch self {
         case .all: "0"
@@ -82,7 +78,6 @@ public enum OpenQuicklyFilter: String, CaseIterable, Equatable, Hashable, Sendab
         case .folders: "z"
         case .agents: "g"
         case .current: "j"
-        case .recipes: "e"
         }
     }
 
@@ -95,7 +90,6 @@ public enum OpenQuicklyFilter: String, CaseIterable, Equatable, Hashable, Sendab
         case .folders: "No folders yet"
         case .agents: "No agent sessions"
         case .current: "Nothing detected in this pane"
-        case .recipes: "No saved recipes"
         }
     }
 }
@@ -113,8 +107,6 @@ public enum OpenQuicklyKind: String, CaseIterable, Equatable, Hashable, Sendable
     case path
     case url
     case fileURL
-    /// A saved `.aislopdeskrecipe` file from the recipe library (E16 Recipes pill).
-    case recipe
 
     /// The trailing type-badge label the row renders flush-right.
     public var badge: String {
@@ -128,7 +120,6 @@ public enum OpenQuicklyKind: String, CaseIterable, Equatable, Hashable, Sendable
         case .path: "Path"
         case .url: "URL"
         case .fileURL: "File"
-        case .recipe: "Recipe"
         }
     }
 
@@ -144,7 +135,6 @@ public enum OpenQuicklyKind: String, CaseIterable, Equatable, Hashable, Sendable
         case .path: "doc.text"
         case .url: "link"
         case .fileURL: "doc"
-        case .recipe: "book"
         }
     }
 
@@ -180,8 +170,6 @@ public struct OpenQuicklyItem: Identifiable, Equatable, Hashable, Sendable {
         /// Act on a focused-pane detection (Current `↩`) — wraps the underlying ``JumpToItem/Act`` (a link
         /// open or a scrollback jump) so the Current rows actuate through the SAME path as the Jump-To panel.
         case jumpTo(JumpToItem.Act)
-        /// Open a saved recipe from the library (Recipes `↩`) — routes through the trust/replay pipeline.
-        case openRecipe(url: URL)
     }
 
     /// A stable, unique id (the `ForEach` key). Prefixed by source: `pane:` / `folder:` / `agent:` /
@@ -492,29 +480,6 @@ public enum OpenQuicklyModel {
         // fallback is likewise an echo of line 1, so it is dropped rather than duplicated).
         if let app = nonEmpty(appName), app != title { return app }
         return nil
-    }
-
-    /// Build the **Recipes** rows from the saved `.aislopdeskrecipe` library. Each parseable file becomes one row
-    /// (malformed / `nil`-recipe files are skipped — validate-then-drop: CLAUDE.md §3). `↩` opens the recipe
-    /// through the store's trust/replay pipeline (``WorkspaceStore/openRecipe(at:source:)``). The display
-    /// title is the recipe's `name` field (falling back to the filename stem); the subtitle is the file path.
-    /// Reuses ``RecipeLibrary/RecipeFile`` directly so the view never re-scans the library.
-    public static func recipeItems(from files: [RecipeLibrary.RecipeFile]) -> [OpenQuicklyItem] {
-        files.compactMap { file in
-            guard let recipe = file.recipe else { return nil } // drop malformed files
-            let stem = file.url.deletingPathExtension().lastPathComponent
-            let title = recipe.name.isEmpty ? stem : recipe.name
-            return OpenQuicklyItem(
-                id: "recipe:\(file.url.path)",
-                kind: .recipe,
-                title: title,
-                subtitle: file.url.path,
-                timestamp: nil,
-                searchText: title,
-                act: .openRecipe(url: file.url),
-                paneKind: .terminal,
-            )
-        }
     }
 
     /// Build one **Recent** row for a recently-closed tab at LIFO `index` (0 = most-recently closed). `↩`

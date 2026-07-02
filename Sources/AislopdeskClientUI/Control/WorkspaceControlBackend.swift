@@ -277,32 +277,6 @@ final class WorkspaceControlBackend: ClientControlBackend {
         return ids
     }
 
-    // MARK: - open-recipe
-
-    /// Open a `.aislopdeskrecipe` by path or a saved-library recipe by name. A path that does not exist / a name
-    /// with no library match → `false` (validate-then-drop; the store's parse is itself drop-on-malformed).
-    func openRecipe(reference: String) -> Bool {
-        guard let store else { return false }
-        let url: URL
-        // A by-NAME resolution is a saved-library recipe (its Command-Replay default follows
-        // `replayModeSaved`); a path/`.aislopdeskrecipe` reference is an external file (`replayModeFiles`).
-        let source: RecipeSource
-        if reference.hasSuffix("." + RecipeLibrary.fileExtension) || reference.contains("/") {
-            // swiftlint:disable:next legacy_objc_type
-            let expanded = (reference as NSString).expandingTildeInPath
-            url = URL(fileURLWithPath: expanded)
-            guard FileManager.default.fileExists(atPath: url.path) else { return false }
-            source = .file
-        } else {
-            let files = store.savedRecipeFiles()
-            guard let match = files.first(where: { $0.recipe?.name == reference }) else { return false }
-            url = match.url
-            source = .savedLibrary
-        }
-        store.openRecipe(at: url, source: source)
-        return true
-    }
-
     // MARK: - config
 
     /// The config key whose value is the active theme NAME — `reference__cli.md` line 34 documents

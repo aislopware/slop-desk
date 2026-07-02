@@ -264,17 +264,6 @@ public final class TerminalViewModel {
     @ObservationIgnored public var onRequestFindNext: (() -> Void)?
     @ObservationIgnored public var onRequestFindPrev: (() -> Void)?
 
-    /// E16 recipe-replay shell-handoff RESUME edge. Fired on an OSC-133;A prompt mark
-    /// (`ESC]133;A` WHILE on the main screen, `.shellPrompt`) — i.e. a shell, LOCAL **or** the inner session a
-    /// handoff command opened (`ssh`/`docker exec -it`/`tmux attach`), has drawn a fresh idle prompt. The pane's
-    /// ``WorkspaceStore`` wires it to ``WorkspaceStore/recipeReplayPromptReturned(for:)`` so a replay paused after
-    /// an interactive command resumes INTO that inner session (the prompt that comes up once `ssh` connects), NOT
-    /// on the OUTER command's completion: OSC-133;D (``ConnectionViewModel/onCommandCompleted``) fires for `ssh`
-    /// only when it EXITS, which would inject the held commands back into the LOCAL shell — on the wrong host.
-    /// Gated on `.shellPrompt` (an alt-screen TUI's own marks never fire it). No
-    /// behaviour change while nil (headless/preview). `@ObservationIgnored`: wiring, not view state.
-    @ObservationIgnored public var onPromptReturn: (() -> Void)?
-
     /// E5 (find + global search) surface seams over the active ``TerminalSurfaceActions`` conformer (production
     /// ``GhosttySurface``): the flat scrollback text mirror the find bar / global search scan, and the
     /// passthrough to libghostty's own in-surface search bindings (`search:`/`navigate_search:`/`end_search`/
@@ -328,14 +317,6 @@ public final class TerminalViewModel {
     /// shared engine (B5 removed the hard-coded split branch). `nil` for headless/preview callers (no store),
     /// where the surface keeps its plain libghostty path. `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var keyInterceptor: TerminalKeyInterceptor?
-
-    /// E16 ES-E16-4 — the PURE at-prompt snippet-alias auto-expander the libghostty / iOS surface consults on a
-    /// BARE Tab/Space (via ``expandSnippetAlias()``). The store wires it (in `wireMaterializedLeaf`) with the
-    /// live snippet list, the `snippetAutoExpand` setting, this model's `isAtShellPrompt`, and the reserved-var
-    /// resolver. The mirror it keeps is fed by ``sendInput(_:)`` (outbound bytes) + ``ingestOutput(_:)`` (the
-    /// OSC-133;A prompt mark). `nil` for headless/preview callers (no store), where typing is never intercepted.
-    /// `@ObservationIgnored`: wiring, not view state.
-    @ObservationIgnored public var snippetExpander: SnippetAliasExpander?
 
     /// Fired the instant an interactive resize ENDS — i.e. ``setResizeSuspended(false)`` flushes the
     /// settled grid to the host. The renderer wires it to RE-ARM its post-resize present burst.
@@ -1189,34 +1170,10 @@ public final class TerminalViewModel {
         }
         if Self.echoProbeEnabled { probeInputAt = ContinuousClock.now }
         if glitchCaretMode != .off { noteGlitchCaretSend(data) }
-        // E16 ES-E16-4: mirror the in-progress prompt line for at-prompt snippet-alias auto-expansion. Fed the
-        // SAME outbound bytes the host sees (so the mirror matches the echoed line); the expander tracks only
-        // the unambiguous single-printable-ASCII / DEL shapes and drops trust on anything else. A no-op when no
-        // expander is wired (headless / non-terminal), and a no-op for the expander's own re-entrant injection
-        // (it untrusts the line before returning, so these bytes are ignored).
-        snippetExpander?.noteSent([UInt8](data))
         inputSink?(data)
         // Synchronized input: offer the SAME bytes to the broadcast fan-out (no-op when disarmed). After
         // the local send so the source pane echoes first; the store skips the source and guards re-entry.
         broadcastTap?(data)
-    }
-
-    /// E16 ES-E16-4 — AT-PROMPT SNIPPET ALIAS AUTO-EXPANSION actuator. The libghostty / iOS surface calls this
-    /// on a BARE word-boundary trigger key (Tab / Space) BEFORE its own key path: if the in-progress prompt
-    /// line's trailing word is a snippet alias (and the `snippetAutoExpand` setting is on AND the shell is at an
-    /// OSC-133;A prompt), it SENDS the resolved snippet bytes — alias-erasing DELs + the reserved-var/`{{cursor}}`
-    /// -resolved body — and returns `true` so the surface SWALLOWS the trigger key. Returns `false` to let the
-    /// key type normally (Tab completion / a literal space) when nothing matches or no expander is wired.
-    ///
-    /// All the decision logic is the pure, headless-tested ``SnippetAliasExpander``; this only routes the
-    /// resulting bytes through the single ``sendInput(_:)`` seam (so the expansion broadcasts to synced siblings
-    /// and respects the read-only gate, exactly like typed bytes). The expander untrusts its mirror before
-    /// returning the expansion, so the re-entrant `sendInput` here is not mistaken for fresh typing.
-    @discardableResult
-    public func expandSnippetAlias() -> Bool {
-        guard let expansion = snippetExpander?.expansion() else { return false }
-        sendInput(Data(expansion.bytes))
-        return true
     }
 
     // MARK: Glitch caret (predictive-echo v1 — docs/12 §B → docs/17 §2.4, docs/31 #3)
@@ -1296,11 +1253,6 @@ public final class TerminalViewModel {
     /// paste-protection / backspace gates inside ordinary running commands. The E8 GUI gates read this so
     /// they suppress ONLY inside a true full-screen TUI.
     public var isAlternateScreen: Bool { modeTracker.mode == .altScreen }
-
-    /// TRUE while the host shell is at an idle prompt on the MAIN screen (the real DECSET / OSC-133 mode
-    /// parse, not the coarse `shellActivity` proxy). The E16 snippet-alias auto-expansion reads this as its
-    /// at-prompt gate (``SnippetAliasExpander``).
-    public var isAtShellPrompt: Bool { modeTracker.mode == .shellPrompt }
 
     /// TRUE while the foreground program has bracketed-paste mode (DECSET `?2004h`) enabled — the real
     /// parse from the host output stream (the same bracketed state libghostty's surface derives). The E8
@@ -1626,21 +1578,7 @@ public final class TerminalViewModel {
         // E8 paste / backspace / scroll-past gates) must be fresh even when the glitch caret is off (its
         // default). The tracker's `memchr` skim makes a ground-content pass one `memchr` per chunk.
         for chunk in chunks {
-            let modeEvents = modeTracker.consume(chunk)
-            // E16 ES-E16-4: an OSC-133;A prompt mark on the MAIN screen means the shell is back at a KNOWN,
-            // empty prompt line — re-establish the snippet-alias mirror's trust so a freshly-typed alias can
-            // expand. GATED on `.shellPrompt` (not the alt-screen) for the same reason as the idle dispatch.
-            if snippetExpander != nil, modeTracker.mode == .shellPrompt, modeEvents.contains(.promptStart) {
-                snippetExpander?.notePromptMark()
-            }
-            // E16 WI-9 recipe-replay shell-handoff RESUME: the SAME OSC-133;A prompt mark is the signal that a
-            // shell — local OR the inner session an `ssh`/`docker`/`tmux` handoff opened — is back at an idle
-            // prompt. A replay paused after such a command resumes HERE (into the inner session), never on the
-            // outer command's OSC-133;D completion (which for `ssh` fires only on EXIT — the wrong host). Gated
-            // on `.shellPrompt` for the same reason as the dispatches above.
-            if onPromptReturn != nil, modeTracker.mode == .shellPrompt, modeEvents.contains(.promptStart) {
-                onPromptReturn?()
-            }
+            _ = modeTracker.consume(chunk)
         }
         // Glitch caret (docs/31 #3): host output is the ground truth — ANY ingest hides the caret (the
         // entire reconciliation policy: we never painted characters, so a "misprediction" can only ever be

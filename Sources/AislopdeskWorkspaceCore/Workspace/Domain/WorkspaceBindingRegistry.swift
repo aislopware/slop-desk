@@ -138,17 +138,6 @@ public enum WorkspaceAction: Hashable, Sendable {
     // Supervision (P4 — answer the blocked pane INLINE without a context switch)
     case peekAndReply // ⌘⌥J — open the Peek & Reply overlay over the oldest pane needing attention (moved off
     // ⌘⇧J, which E10 Hint Mode now owns for Hint to Open — see `view.peekReply` / `hintToOpen`)
-
-    // Recipes (E16 ES-E16-1/2/3): save the current tab/window layout (+ optional commands) to a
-    // `.aislopdeskrecipe`, and open a `.aislopdeskrecipe` to restore it. Both open a VIEW surface (the save sheet / the
-    // open picker) routed through the store's `pending*` flags — so, like `.commandPalette`, they act at the
-    // window scope and need no active pane. `.saveRecipe` is the ONE recipe verb that carries a default chord
-    // (⌘S), folded in via ``aliasChords`` (no display row — the menu is shortcut-LESS, the NSEvent dispatcher
-    // owns the chord). BOTH verbs are surfaced in the command palette (the cross-platform `RecipePaletteSource`,
-    // which also lists one "Open Recipe: <name>" row per saved `.aislopdeskrecipe`) AND the File menu — so Save / Open
-    // Recipe are reachable on iOS, which has no menu bar; neither is menu-only.
-    case saveRecipe
-    case openRecipe
 }
 
 public extension WorkspaceAction {
@@ -251,12 +240,7 @@ public extension WorkspaceAction {
              .spawnFloating, // creates its own pane — needs none
              .toggleSyncInput, // the tab must exist, but the palette can still show it (mirrors .newTab)
              .jumpToAttention, // acts globally across all tabs/sessions — needs no active pane
-             .peekAndReply, // acts globally (targets the oldest attention pane) — needs no active pane
-             // Recipes (E16): each opens a window-scope VIEW surface (the save sheet / the open picker) via a
-             // `pending*` flag — like `.commandPalette`, they need no active pane (the save sheet snapshots the
-             // whole window / the active tab itself).
-             .saveRecipe,
-             .openRecipe:
+             .peekAndReply: // acts globally (targets the oldest attention pane) — needs no active pane
             false
         }
     }
@@ -878,18 +862,10 @@ public enum WorkspaceBindingRegistry {
     /// same `.toggleCopyMode` action — exactly like the ⌘+ font-increase alias (no extra display row, shares the
     /// ACTION not the chord). Space is the NAMED `.space` key (the macOS normalizer maps keyCode 49 → `.space`
     /// only with a non-shift modifier, so a bare Space still types); ⌃⇧Space is otherwise unbound (no collision).
-    ///
-    /// E16 WI-8 (Recipes): ⌘S → `.saveRecipe`. The recipe save verb carries NO display binding row (the menu
-    /// is shortcut-LESS, surfaced as a manual File ▸ Recipe submenu, and recipes have no cheat-sheet category),
-    /// so its chord is registered HERE — exactly the "fire an action from a free chord without a display row"
-    /// purpose of this table. ⌘S is FREE on the tree shell (`s` appears in NO binding) and ⌘-prefixed (the §5
-    /// rule); terminal apps ship no default ⌘S, so it never steals a printable key. The dispatcher OWNS it (a
-    /// SwiftUI `.keyboardShortcut` would double-fire / break the menu-shortcutless gate).
     public static let aliasChords: [KeyChord: WorkspaceAction] = [
         KeyChord(character: "+", [.command, .shift]): .increaseFontSize, // ⌘+ = ⌘⇧= on a US/ANSI layout
         KeyChord(character: "+", [.command]): .increaseFontSize, // keypad + (no ⇧ reported)
         KeyChord(.space, [.control, .shift]): .toggleCopyMode, // ⌃⇧Space = Vi Mode entry (alias of ⌘⇧C)
-        KeyChord(character: "s", [.command]): .saveRecipe, // ⌘S = Save Recipe (E16; menu is shortcut-less)
     ]
 
     /// The chord → action lookup table (drives the keyboard dispatcher). Built from ``allBindings`` (so the

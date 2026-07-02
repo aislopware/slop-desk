@@ -85,8 +85,6 @@ public struct ClientControlDispatcher {
             openShim(id: id, params: params, mode: .view)
         case ClientControlProtocol.Method.edit:
             openShim(id: id, params: params, mode: .edit)
-        case ClientControlProtocol.Method.openRecipe:
-            openRecipe(id: id, params: params)
         case ClientControlProtocol.Method.configGet:
             configGet(id: id, params: params)
         case ClientControlProtocol.Method.configSet:
@@ -226,17 +224,6 @@ public struct ClientControlDispatcher {
         }
         guard backend.open(target: target, mode: mode, placement: placement) else {
             return Self.error(id: id, message: "could not open target")
-        }
-        return Self.success(id: id, result: [:])
-    }
-
-    /// `open-recipe` → open a `.aislopdeskrecipe` reference or saved-library name.
-    private func openRecipe(id: String, params: [String: Any]) -> [String: Any] {
-        guard let reference = params["reference"] as? String, !reference.isEmpty else {
-            return Self.error(id: id, message: "missing params.reference")
-        }
-        guard backend.openRecipe(reference: reference) else {
-            return Self.error(id: id, message: "could not open recipe")
         }
         return Self.success(id: id, result: [:])
     }

@@ -29,8 +29,6 @@ public enum WorkspaceCommand: Sendable, Equatable {
     case reconnectPane // ⇧⌘R — re-dial the focused pane (primary failure recovery)
     case saveBookmark(Int) // ⇧⌘1–9 — save the viewport as bookmark n
     case recallBookmark(Int) // ⌘1–9  — jump back to bookmark n
-    case manageSnippets // open the snippet manager (create / edit / delete command macros)
-    case runLastSnippet // ⌥⌘R — re-fire the most-recently-launched snippet (repeat my last macro)
     case align(AlignEdge) // align the Arrange targets (selection ≥2, else all) to an edge/centre
     case distribute(horizontal: Bool) // even-space the Arrange targets horizontally / vertically
     case saveLayout // open the "Save Current Layout…" prompt
@@ -52,8 +50,6 @@ public extension WorkspaceCommand {
              .recallBookmark,
              .centerFocusedPane,
              .centerAll,
-             .manageSnippets,
-             .runLastSnippet,
              .selectAllPanes:
             false
         default:
@@ -322,10 +318,6 @@ public extension CommandInterpreter {
         // Reconnect the focused pane: ⇧⌘R. The primary failure-recovery command was palette-only;
         // a chord makes it learnable and surfaces its glyph in the menu + palette automatically.
         map[KeyChord(character: "r", [.command, .shift])] = .reconnectPane
-
-        // Re-run the last snippet: ⌥⌘R (R = re-run; ⌘R is rename, ⇧⌘R reconnect, ⌥⌘R free). Fires the
-        // most-recently-launched macro again without re-opening ⌘K — a parameterized one re-prompts.
-        map[KeyChord(character: "r", [.option, .command])] = .runLastSnippet
 
         // Viewport bookmarks: ⇧⌘n saves the current viewport into slot n, ⌘n jumps back — the
         // single-key spatial loop a pan-only canvas needs (no tabs ever claimed ⌘1–9 here).

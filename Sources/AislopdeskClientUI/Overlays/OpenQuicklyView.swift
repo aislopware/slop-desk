@@ -1,21 +1,21 @@
 // OpenQuicklyView — the floating Open-Quickly picker (E11 / WI-6), an Xcode-style `⌘⇧O` multi-source
 // quick switcher (`open-quickly.png`). It FOLDS in the E10 Jump-To panel: ONE centered, SCRIMMED card with a
-// pre-focused search field, a row of filter pills (All / Opened / Recent / Folders / Agents / Current /
-// Recipes — SSH is absent by product decision), a sectioned + fuzzy-ranked result list, a per-row `⌘K` Actions
+// pre-focused search field, a row of filter pills (All / Opened / Recent / Folders / Agents / Current —
+// SSH is absent by product decision), a sectioned + fuzzy-ranked result list, a per-row `⌘K` Actions
 // popover, and a context-sensitive footer hint bar. `⌘⇧O` opens it on **All**; `⌘J` opens it on **Current**
 // (the Jump-To scope).
 //
 // SEAM discipline: every source is assembled by the PURE `OpenQuicklyModel` (headlessly tested) — Opened from
 // the live `WorkspaceStore.tree`, Recent from `recentlyClosedTabs`, Folders from the injected
-// `FolderFrecencyStore`, Current from the focused pane's `JumpToModel` snapshot, Agents from the focused
-// pane's host metadata RPC (`MetadataClient.listAgentSessions`, Claude-only) loaded ASYNC, and Recipes from
-// `store.savedRecipeFiles()` snapshotted on appear. Ranking runs the vendored `FuzzyMatcher`. Every row's
+// `FolderFrecencyStore`, Current from the focused pane's `JumpToModel` snapshot, and Agents from the focused
+// pane's host metadata RPC (`MetadataClient.listAgentSessions`, Claude-only) loaded ASYNC.
+// Ranking runs the vendored `FuzzyMatcher`. Every row's
 // default action + its `⌘K` action table actuate through the shared `LinkActionActuator` (the same thin
 // platform dispatch the renderer + Jump-To use), so link/cd/host routing has ONE home. The active pill lives
 // on the `OverlayCoordinator` (`openQuicklyFilter`); the search query + keyboard selection are local view state.
 //
 // Picker-LOCAL keys (handled here, NEVER globally registered): `Tab`/`⇧Tab` cycle pills, `⌘1–9` quick-pick a
-// visible row, `⌘K` toggles the Actions popover, `⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J/⌘E` jump straight to a pill, `↑`/`↓`
+// visible row, `⌘K` toggles the Actions popover, `⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J` jump straight to a pill, `↑`/`↓`
 // move, `↩` runs the selected row, `Esc` closes. Presented as a NATIVE `.sheet` by `OverlayHostView` (the
 // system provides the window chrome); OpenQuicklyView carries only its content. `Slate.*` tokens ONLY for
 // that content (raw font/colour/radius literals fail check-ds-leaks).
@@ -56,9 +56,6 @@ struct OpenQuicklyView: View {
     @State private var agentItems: [OpenQuicklyItem] = []
     /// Whether an Agents fetch is in flight (drives the honest "Loading agents…" state).
     @State private var agentsLoading = false
-    /// The **Recipes** rows — the saved `.aislopdeskrecipe` library, snapshotted on appear (the library is
-    /// on-disk; a rescan on every keystroke would be wasteful). Rebuilt when the picker closes+reopens.
-    @State private var recipeItems: [OpenQuicklyItem] = []
 
     /// Pre-focuses the search field on appear so typing reaches it immediately.
     @FocusState private var searchFocused: Bool
@@ -92,7 +89,6 @@ struct OpenQuicklyView: View {
         #endif
         .onAppear {
             snapshotCurrent()
-            recipeItems = OpenQuicklyModel.recipeItems(from: store.savedRecipeFiles())
         }
         .onChange(of: query) { _, _ in
             selection = 0
@@ -160,7 +156,7 @@ struct OpenQuicklyView: View {
 
     /// The filter pill ring (open-quickly.png): the active pill is FILLED (`Slate.State.selected`) with primary
     /// text; inactive pills are OUTLINED (`Slate.Line.card`) with secondary text. SSH is absent by
-    /// product decision (see ``OpenQuicklyFilter``). Recipes is now wired (E16 complete).
+    /// product decision (see ``OpenQuicklyFilter``).
     private var pillBar: some View {
         HStack(spacing: Slate.Metric.space2) {
             ForEach(OpenQuicklyFilter.pickerPills, id: \.self) { filter in
@@ -393,7 +389,6 @@ struct OpenQuicklyView: View {
         case .path,
              .url,
              .fileURL: "Open"
-        case .recipe: "Open Recipe"
         case nil: "Open"
         }
     }
@@ -589,16 +584,6 @@ struct OpenQuicklyView: View {
                 })
             }
             return actions
-        case let .openRecipe(url):
-            return [
-                RowAction(title: "Open Recipe", symbol: "book") {
-                    store.openRecipe(at: url, source: .savedLibrary)
-                    close()
-                },
-                RowAction(title: "Copy Path", symbol: "doc.on.doc") {
-                    LinkActionActuator.copyToPasteboard(url.path)
-                },
-            ]
         }
     }
 
@@ -656,8 +641,8 @@ struct OpenQuicklyView: View {
 
     // MARK: - Sources + sectioning
 
-    /// The per-pill source rows, assembled from the live store / folders / async Agents / Current snapshot /
-    /// Recipes snapshot via the PURE `OpenQuicklyModel` builders — the view stays a thin renderer.
+    /// The per-pill source rows, assembled from the live store / folders / async Agents / Current snapshot
+    /// via the PURE `OpenQuicklyModel` builders — the view stays a thin renderer.
     private var sources: [OpenQuicklyFilter: [OpenQuicklyItem]] {
         [
             .opened: OpenQuicklyModel.openedItems(from: store.tree),
@@ -665,7 +650,6 @@ struct OpenQuicklyView: View {
             .folders: OpenQuicklyModel.folderItems(from: folders?.ranked() ?? []),
             .agents: agentItems,
             .current: OpenQuicklyModel.currentItems(from: currentJumpItems),
-            .recipes: recipeItems,
         ]
     }
 
@@ -922,8 +906,6 @@ struct OpenQuicklyView: View {
             case let .link(link):
                 LinkActionActuator.actuate(LinkActionPolicy.explicitOpenAction(link: link), model: activeModel)
             }
-        case let .openRecipe(url):
-            store.openRecipe(at: url, source: .savedLibrary)
         }
         close()
     }

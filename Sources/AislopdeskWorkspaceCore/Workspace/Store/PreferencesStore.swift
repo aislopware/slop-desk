@@ -366,7 +366,7 @@ public final class PreferencesStore {
     /// the privilege/IPC `Defaults.Keys` that live ONLY in the Advanced panel (``advancedOnlyDefaultsKeys`` —
     /// title gates, the OSC-52 master + read/write tri-state, the agent-control IPC guards, the auto-progress
     /// command list). EVERY key in ``tabReachableDefaultsKeys`` IS reachable from a dedicated tab (General /
-    /// Shell / Controls / Appearance / Agents / Recipes), so this must NOT touch any of them, or it destroys
+    /// Shell / Controls / Appearance / Agents), so this must NOT touch any of them, or it destroys
     /// the user's other-tab choices — which Reset-Advanced-Only promises to leave intact.
     public func resetAdvancedOnly() {
         video = VideoPreferences()
@@ -424,8 +424,6 @@ public final class PreferencesStore {
         // Agents
         .autoSwitchLayouts, .recordClipboardHistory,
         .agentBadgeWhileProcessing, .agentBadgeWhenComplete, .agentBadgeWhenAwaitingInput,
-        // Recipes
-        .replayModeSaved, .replayModeFiles, .snippetAutoExpand,
     ]
 
     // MARK: Block bookmarks (WB3 — per-session starred command blocks)

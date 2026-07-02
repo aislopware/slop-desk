@@ -28,19 +28,14 @@ extension WorkspaceStore {
             // total data loss). Reject symmetrically; the live tree is left untouched.
             guard tree.allPaneIDs().count + imported.allPaneIDs().count <= WorkspaceTransfer.maxItems,
                   tree.sessions.count + imported.sessions.count <= WorkspaceTransfer.maxItems,
-                  tree.snippets.count + imported.snippets.count <= WorkspaceTransfer.maxItems,
                   tree.layoutPresets.count + imported.layoutPresets.count <= WorkspaceTransfer.maxItems
             else {
                 return false
             }
             var next = tree
             next.sessions += imported.sessions // focus stays on the current session (a merge shouldn't yank it)
-            // Union snippets / presets by name, CONTENT-deduped first so re-merging the SAME document N times
+            // Union presets by name, CONTENT-deduped first so re-merging the SAME document N times
             // can't grow the library (mirrors the canvas merge).
-            for s in imported.snippets where !next.snippets.contains(where: { $0.body == s.body }) {
-                let name = Self.uniqueName(base: Self.snippetName(s.name), existing: Set(next.snippets.map(\.name)))
-                next.snippets.append(Snippet(name: name, body: s.body, alias: s.alias))
-            }
             for p in imported.layoutPresets
                 where !next.layoutPresets.contains(where: { $0.canvas == p.canvas && $0.groups == p.groups })
             {

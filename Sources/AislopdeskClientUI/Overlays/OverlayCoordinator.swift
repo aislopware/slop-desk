@@ -263,16 +263,8 @@ public final class OverlayCoordinator {
     /// snapshot + the file/conversation/repo `EmptyPaletteSource` stubs — was removed; that jump-to is now the
     /// dedicated `OpenQuicklyView`/`OpenQuicklyModel`, NOT a palette mode.)
     public func rebuildMixer() {
-        // The verb-catalog categories, plus the live saved-snippet rows (E16 WI-7) and the recipe rows (E16 /
-        // M1: Save Recipe… / Open Recipe… + one row per saved `.aislopdeskrecipe`) when a store is attached — each a
-        // snapshot taken here so the mixer stays a pure value over the snippets / saved recipes at palette-open.
-        // The recipe rows are the cross-platform entry point that makes Save / Open Recipe reachable on iOS too.
-        var sources = ActionsPaletteSource.categorySources()
-        if let store {
-            sources.append(SnippetPaletteSource.snapshot(store))
-            sources.append(RecipePaletteSource.snapshot(store))
-        }
-        mixer = SearchMixer(sources: sources)
+        // The verb-catalog categories, one section header each.
+        mixer = SearchMixer(sources: ActionsPaletteSource.categorySources())
     }
 
     // MARK: Palette results (view binds these)

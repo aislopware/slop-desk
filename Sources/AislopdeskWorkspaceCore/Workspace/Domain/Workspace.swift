@@ -47,9 +47,6 @@ public struct Workspace: Codable, Sendable, Equatable {
     /// canvas under a name and switches contexts in one action. Snapshot = canvas + groups + focus,
     /// NOT the app connection (one host per session) — see ``LayoutPreset``.
     public var layoutPresets: [LayoutPreset]
-    /// Saved command macros runnable from ⌘K (`ssh {{host}}`, `git add -A<Enter>git commit<Enter>`, …).
-    /// See ``Snippet``. Persisted like ``layoutPresets``.
-    public var snippets: [Snippet]
 
     public init(
         schemaVersion: Int = Self.currentSchemaVersion,
@@ -60,7 +57,6 @@ public struct Workspace: Codable, Sendable, Equatable {
         connection: ConnectionTarget? = nil,
         bookmarks: [Int: CanvasBookmark] = [:],
         layoutPresets: [LayoutPreset] = [],
-        snippets: [Snippet] = [],
     ) {
         self.schemaVersion = schemaVersion
         self.canvas = canvas
@@ -70,7 +66,6 @@ public struct Workspace: Codable, Sendable, Equatable {
         self.connection = connection
         self.bookmarks = bookmarks
         self.layoutPresets = layoutPresets
-        self.snippets = snippets
     }
 }
 
@@ -137,7 +132,8 @@ public extension Workspace {
     /// 6 (2026-06-12): ``Workspace/bookmarks`` (viewport bookmarks, ⇧⌘n/⌘n).
     /// 7 (2026-06-13): ``Workspace/layoutPresets`` (named savable canvas layouts).
     /// 8 (2026-06-13): ``LayoutPreset/triggerAppName`` (auto-switch a layout on host app launch).
-    /// 9 (2026-06-13): ``Workspace/snippets`` (saved command macros runnable from ⌘K).
+    /// 9 (2026-06-13): `snippets` (saved command macros; feature REMOVED 2026-07-03 — the stale
+    ///   persisted key decode-ignores, so the version was not bumped).
     static let currentSchemaVersion = 9
 
     /// The fresh-launch / decode-failure fallback: one terminal pane at the origin, focused, ungrouped.
@@ -208,21 +204,15 @@ public extension Workspace {
         return copy
     }
 
-    /// Repairs the SIDE collections (groups / snippets / presets) against a corrupt or hand-edited file —
+    /// Repairs the SIDE collections (groups / presets) against a corrupt or hand-edited file —
     /// the same defensive contract the canvas gets from ``dedupingItemIDs``. Applied on BOTH the on-disk
     /// load and a portable import: a duplicate ``PaneGroupID`` (two groups → one SwiftUI Identifiable id →
-    /// undefined render results) drops to the first occurrence; every ``Snippet`` id is re-minted (snippet
-    /// ids are referenced by nothing, and a duplicate id would collide the palette's id-keyed entries); a
-    /// duplicate preset NAME (the layout palette entries are name-keyed) drops to the first. Pure.
+    /// undefined render results) drops to the first occurrence; a duplicate preset NAME (the layout
+    /// palette entries are name-keyed) drops to the first. Pure.
     func normalizingCollections() -> Workspace {
         var copy = self
         var seenGroups = Set<PaneGroupID>()
         copy.groups = groups.filter { seenGroups.insert($0.id).inserted }
-        // Re-mint ONLY a DUPLICATE snippet id (keep the first occurrence's id), so a clean file round-trips
-        // verbatim — an unconditional re-mint made load() non-idempotent (every launch changed the ids).
-        var seenSnippetIDs = Set<UUID>()
-        copy.snippets = snippets
-            .map { seenSnippetIDs.insert($0.id).inserted ? $0 : Snippet(name: $0.name, body: $0.body, alias: $0.alias) }
         var seenPresetNames = Set<String>()
         copy.layoutPresets = layoutPresets.filter { seenPresetNames.insert($0.name).inserted }
         return copy

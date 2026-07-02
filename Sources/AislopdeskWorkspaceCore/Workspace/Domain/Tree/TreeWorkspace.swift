@@ -4,7 +4,7 @@ import Foundation
 
 /// The tree-rooted workspace container for the `Session → Tab → Pane` redesign (docs/42 §Domain model).
 /// It holds `[Session]` + the active session + the client-state the live ``Workspace`` carries that still
-/// applies (`snippets` / `layoutPresets`). A pure `Codable`/`Equatable`/`Sendable` value with no SwiftUI
+/// applies (`layoutPresets`). A pure `Codable`/`Equatable`/`Sendable` value with no SwiftUI
 /// or transport import.
 ///
 /// **Transitional name (W2 is purely additive).** The plan's final type name for this is `Workspace`
@@ -25,14 +25,11 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
     public var sessions: [Session]
     /// The selected session, or `nil` only transiently before repair.
     public var activeSessionID: SessionID?
-    /// Saved command macros runnable from ⌘K — carried verbatim from the v9 ``Workspace`` (docs/42 keeps
-    /// these on the redesigned workspace).
-    public var snippets: [Snippet]
     /// Named launch templates — carried from v9; repurposed to Session/Tab templates in a later item.
     public var layoutPresets: [LayoutPreset]
     /// Named **launch configurations** (docs/42 W14 #9): a title + a command (+ optional cwd / split) that
     /// SPAWN a terminal pane running that command (Warp launch-configurations parity). Distinct from
-    /// ``layoutPresets`` (a saved geometry) and ``snippets`` (a macro typed into an existing pane). Seeded
+    /// ``layoutPresets`` (a saved geometry). Seeded
     /// with ``LaunchPreset/builtIns`` (Claude Code / htop / Git log) on a fresh workspace; a v10 file
     /// written before W14 has no `launchPresets` key, so the decode below tolerates its absence and the
     /// store re-seeds the built-ins (see ``seedingBuiltInLaunchPresetsIfEmpty()``).
@@ -49,7 +46,6 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
         schemaVersion: Int = Self.currentSchemaVersion,
         sessions: [Session],
         activeSessionID: SessionID?,
-        snippets: [Snippet] = [],
         layoutPresets: [LayoutPreset] = [],
         launchPresets: [LaunchPreset] = LaunchPreset.builtIns,
         sessionTemplates: [SessionTemplate] = SessionTemplate.builtIns,
@@ -57,7 +53,6 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
         self.schemaVersion = schemaVersion
         self.sessions = sessions
         self.activeSessionID = activeSessionID
-        self.snippets = snippets
         self.layoutPresets = layoutPresets
         self.launchPresets = launchPresets
         self.sessionTemplates = sessionTemplates
@@ -67,7 +62,6 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
         case schemaVersion
         case sessions
         case activeSessionID
-        case snippets
         case layoutPresets
         case launchPresets
         case sessionTemplates
@@ -77,12 +71,12 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
     /// only NEW key, so it is `decodeIfPresent` — a v10 file written before W14 (no `launchPresets`)
     /// decodes with an empty list, which the store then re-seeds with the built-ins. Never traps on the
     /// missing key (the persisted-data contract — a forward-compatible additive field must not brick load).
+    /// A stale `snippets` key (feature removed 2026-07-03) is simply not in ``CodingKeys`` → decode-ignored.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
         sessions = try c.decode([Session].self, forKey: .sessions)
         activeSessionID = try c.decodeIfPresent(SessionID.self, forKey: .activeSessionID)
-        snippets = try c.decodeIfPresent([Snippet].self, forKey: .snippets) ?? []
         layoutPresets = try c.decodeIfPresent([LayoutPreset].self, forKey: .layoutPresets) ?? []
         launchPresets = try c.decodeIfPresent([LaunchPreset].self, forKey: .launchPresets) ?? []
         sessionTemplates = try c.decodeIfPresent([SessionTemplate].self, forKey: .sessionTemplates) ?? []
@@ -326,7 +320,6 @@ public extension TreeWorkspace {
             schemaVersion: schemaVersion,
             sessions: freshSessions,
             activeSessionID: newActiveSessionID ?? freshSessions.first?.id,
-            snippets: snippets,
             layoutPresets: layoutPresets,
             launchPresets: launchPresets,
             sessionTemplates: sessionTemplates,

@@ -43,8 +43,6 @@ public enum ClientControlProtocol {
         public static let view = "view"
         /// Open an editable `edit` shim (`$EDITOR <path>`) in a new split/tab/window.
         public static let edit = "edit"
-        /// Open a recipe (by parsed `.aislopdeskrecipe` reference or saved-library name).
-        public static let openRecipe = "open-recipe"
         /// Read one config key.
         public static let configGet = "config-get"
         /// Write one config key (persisted, or `--transient` for the running app only).
@@ -72,7 +70,7 @@ public enum ClientControlProtocol {
 
         /// Every recognised method — the dispatcher rejects anything outside this set.
         public static let all: Set<String> = [
-            windows, tabs, panes, tabBadge, jump, learn, ignore, view, edit, openRecipe,
+            windows, tabs, panes, tabBadge, jump, learn, ignore, view, edit,
             configGet, configSet, configUnset, configReload, configShow,
             themeList, themeImport, fontList, keybindList, paneCapture, paneSendKeys, agentStatus,
         ]
@@ -211,11 +209,6 @@ public enum ClientControlProtocol {
     /// `edit` — `target` (path or URL) + optional `placement` token (default `new-tab`).
     public static func editParams(target: String, placement: Placement = .newTab) -> [String: Any] {
         ["target": target, "placement": placement.rawValue]
-    }
-
-    /// `open-recipe` — a `.aislopdeskrecipe` path or a saved-library recipe name.
-    public static func openRecipeParams(reference: String) -> [String: Any] {
-        ["reference": reference]
     }
 
     /// `config-get` — one `key`.

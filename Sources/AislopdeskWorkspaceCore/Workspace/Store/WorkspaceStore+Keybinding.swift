@@ -72,23 +72,6 @@ extension WorkspaceStore {
         )
     }
 
-    /// E16 ES-E16-4 — hand pane `id`'s libghostty surface its PURE ``SnippetAliasExpander`` (at-prompt
-    /// snippet-alias auto-expansion). The surface's `keyDown` consults it on a bare Tab/Space (via
-    /// ``TerminalViewModel/expandSnippetAlias()``); the expander's line mirror is fed by the model's
-    /// ``TerminalViewModel/sendInput(_:)`` (outbound bytes) + the OSC-133;A prompt mark in the ingest path. The
-    /// injected gates keep it faithful + default-OFF: the live `snippets` list, the `snippetAutoExpand` setting
-    /// (default off), THIS model's `isAtShellPrompt`, and ``autoExpandBytes(for:)`` (reserved vars + `{{cursor}}`,
-    /// declining still-parameterized snippets). A `nil` `terminal` (headless / non-terminal handle) is a no-op.
-    func wireSnippetExpander(terminal: TerminalViewModel?) {
-        guard let terminal else { return }
-        terminal.snippetExpander = SnippetAliasExpander(
-            snippets: { [weak self] in self?.snippets ?? [] },
-            isEnabled: { SettingsKey.snippetAutoExpandEnabled },
-            isAtPrompt: { [weak terminal] in terminal?.isAtShellPrompt ?? false },
-            resolveBytes: { [weak self] snippet in self?.autoExpandBytes(for: snippet) ?? [] },
-        )
-    }
-
     /// The terminal surface's right-click "Split Right/Down" landing (factored out of `wireMaterializedLeaf`
     /// to keep the `WorkspaceStore` body under the lint ceiling). A split MINTS a pane, so — like the `+` /
     /// ⌘D / title-menu split — it creates an in-pane CHOOSER pane (Terminal / Remote window) and focuses it.

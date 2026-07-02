@@ -87,7 +87,7 @@ final class WorkspaceKeyDispatcher {
     /// A predicate the monitor consults FIRST — `true` only while the WORKSPACE window is the key window. The
     /// app NSEvent monitor is application-wide (a `.keyDown` local monitor fires for events delivered to ANY
     /// window in this process), so without this gate a bound chord typed while the separate stock SwiftUI
-    /// Settings scene window (⌘,) — or an attached sheet (Save Recipe / first-launch / close-confirm) — is
+    /// Settings scene window (⌘,) — or an attached sheet (first-launch / close-confirm) — is
     /// key resolves against the HIDDEN main-window workspace tree and is swallowed before the Settings window
     /// ever sees it: ⌘W closes a background terminal pane while Settings refuses to close, ⌘T/⌘D/⌘1–9 mutate
     /// the hidden tree, and the keybindings recorder is starved (this monitor eats the chord it is trying to

@@ -132,7 +132,7 @@ final class WorkspacePersistenceTests: XCTestCase {
             "item frame survives",
         )
         XCTAssertEqual(restored.schemaVersion, Workspace.currentSchemaVersion)
-        XCTAssertEqual(restored.schemaVersion, 9) // 9: Workspace.snippets (command macros)
+        XCTAssertEqual(restored.schemaVersion, 9) // 9: the last bump (the since-removed command macros)
         XCTAssertEqual(
             restored.connection,
             ConnectionTarget(host: "10.0.0.9", port: 7420, mediaPort: 9000, cursorPort: 9001),

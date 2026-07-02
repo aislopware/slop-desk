@@ -77,7 +77,6 @@ func printUsage() {
                                            idle/closed (blocks indefinitely by default; --block-timeout
                                            bounds it). --timeout is the per-poll IPC wait, NOT the block.
                                            Exit 0 (idle/closed) · 4 (id never seen) · 9 (block timed out).
-      open <recipe>                        Open a .aislopdeskrecipe (path or saved-library name).
       view <path|url> [placement]          Read-only shim (less <path> / open <url>) in a new pane.
       edit <path|url> [placement]          Editor shim ($EDITOR <path>) in a new pane.
                                            placement: --new-tab (default) | --new-window |
@@ -992,27 +991,7 @@ func cmdIgnore(_ rest: [String]) -> Never {
     exit(0) // silent on success
 }
 
-// MARK: - open / view / edit (E20 WI-6)
-
-/// `open <recipe>` — open a `.aislopdeskrecipe` by path or a saved-library recipe by name. The running app parses
-/// the file (`RecipeTOMLCodec`, validate-then-drop) or resolves the name from its saved library, then restores
-/// it via `WorkspaceStore.openRecipe` — the SAME op File ▸ Open Recipe… drives (the E16 GUI open-recipe path;
-/// only this CLI subcommand was deferred to E20). Silent on success.
-func cmdOpen(_ rest: [String]) -> Never {
-    var reference: String?
-    for arg in rest {
-        if arg.hasPrefix("-") { die("open: unknown flag '\(arg)'", code: 2) }
-        if reference == nil { reference = arg } else { die("open: unexpected argument '\(arg)'", code: 2) }
-    }
-    guard let reference, !reference.isEmpty else {
-        die("open: requires a <recipe> (a .aislopdeskrecipe path or a saved-library name)", code: 2)
-    }
-    requireResult(callClient(
-        method: ClientControlProtocol.Method.openRecipe,
-        params: ClientControlProtocol.openRecipeParams(reference: reference),
-    ))
-    exit(0) // silent on success
-}
+// MARK: - view / edit (E20 WI-6)
 
 /// Parse a `view`/`edit` invocation into `(target, placement)`: one positional `<path|url>` plus an optional
 /// placement flag (`--new-tab` default / `--new-window` / `--left` / `--right` / `--top` / `--bottom`). Dies
@@ -1295,8 +1274,6 @@ case "learn":
     cmdLearn(invocation.rest)
 case "ignore":
     cmdIgnore(invocation.rest)
-case "open":
-    cmdOpen(invocation.rest)
 case "view":
     cmdView(invocation.rest)
 case "edit":

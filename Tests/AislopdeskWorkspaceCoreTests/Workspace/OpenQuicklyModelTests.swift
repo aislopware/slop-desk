@@ -5,7 +5,7 @@ import XCTest
 
 /// E11 WI-3 (ES-E11-1..4): the PURE Open-Quickly model — the `⌘⇧O` multi-source switcher's taxonomy +
 /// merge/rank/section/cycle/quick-pick logic, with zero SwiftUI/store coupling. These pin:
-/// - the pill set (SSH is a product cut; Recipes is now wired — E16 complete);
+/// - the pill set (SSH + Recipes are product cuts — no enum case exists for either);
 /// - the per-filter pill metadata (label / icon / picker-chord) + the `.all` default;
 /// - `nextFilter`/`prevFilter` Tab cycling that WRAPS the pill ring;
 /// - `sectioned` merging sources under ALL-CAPS headers in `.all` (empty sources omitted) vs a single
@@ -18,8 +18,8 @@ import XCTest
 /// - the source builders: Agents is **Claude-only** (carry-over), Folders maps name+path, Current wraps
 ///   `JumpToItem` acts verbatim.
 ///
-/// Each assertion is revert-to-confirm-fail: it fails on a model that re-adds an SSH/Recipes pill, fails to
-/// wrap the cycle, emits an empty `.all` header, mis-orders a tie, mis-maps `⌘1–9`, or lets a non-Claude
+/// Each assertion is revert-to-confirm-fail: it fails on a model that re-adds an SSH or Recipes pill, fails
+/// to wrap the cycle, emits an empty `.all` header, mis-orders a tie, mis-maps `⌘1–9`, or lets a non-Claude
 /// agent session through.
 final class OpenQuicklyModelTests: XCTestCase {
     // MARK: - Fixtures
@@ -70,49 +70,22 @@ final class OpenQuicklyModelTests: XCTestCase {
 
     // MARK: - Pill taxonomy (ES-E11-1)
 
-    /// REVERT-TO-CONFIRM-FAIL: removing `.recipes` from `pickerPills` fails the `contains("Recipes")`
-    /// assertion; removing the `case recipes` from the enum fails the `allCases.count == 7` assertion.
-    func testPickerPillsOrderExcludesSSHAndIncludesRecipes() {
+    /// REVERT-TO-CONFIRM-FAIL: re-adding an SSH or Recipes case grows `allCases` past 6; dropping a live
+    /// pill fails the order assertion.
+    func testPickerPillsOrderExcludesSSHAndRecipes() {
         XCTAssertEqual(
             OpenQuicklyFilter.pickerPills,
-            [.all, .opened, .recent, .folders, .agents, .current, .recipes],
+            [.all, .opened, .recent, .folders, .agents, .current],
         )
         XCTAssertEqual(
             OpenQuicklyFilter.pickerPills.map(\.label),
-            ["All", "Opened", "Recent", "Folders", "Agents", "Current", "Recipes"],
+            ["All", "Opened", "Recent", "Folders", "Agents", "Current"],
         )
         let labels = OpenQuicklyFilter.pickerPills.map(\.label)
         XCTAssertFalse(labels.contains("SSH"), "the SSH pill is a deliberate product cut")
-        XCTAssertTrue(labels.contains("Recipes"), "the Recipes pill is now wired (E16 store exists)")
-        // SSH is a structural cut (no enum case); Recipes is present (E16 complete).
-        XCTAssertEqual(OpenQuicklyFilter.allCases.count, 7)
-    }
-
-    /// REVERT-TO-CONFIRM-FAIL: removing the `.recipes` source filter from the builder yields an empty
-    /// `recipeItems(from:)` result or a nil-kind row — failing the `kind == .recipe` assertion.
-    func testRecipesItemsBuilderProducesRecipeKindRows() {
-        let url1 = URL(fileURLWithPath: "/tmp/my-layout.aislopdeskrecipe")
-        let url2 = URL(fileURLWithPath: "/tmp/broken.aislopdeskrecipe") // nil recipe → dropped
-
-        // Simulate two RecipeFile entries: one valid, one malformed.
-        let validFile = RecipeLibrary.RecipeFile(
-            url: url1,
-            bytes: [],
-            recipe: Recipe(name: "My Layout", scope: .window, window: RecipeWindow(tabs: [])),
-        )
-        let brokenFile = RecipeLibrary.RecipeFile(url: url2, bytes: [], recipe: nil)
-
-        let items = OpenQuicklyModel.recipeItems(from: [validFile, brokenFile])
-
-        XCTAssertEqual(items.count, 1, "the malformed file is dropped (validate-then-drop)")
-        XCTAssertEqual(items[0].kind, .recipe, "recipe rows carry the .recipe kind")
-        XCTAssertEqual(items[0].title, "My Layout", "the recipe's name field is the display title")
-        XCTAssertEqual(items[0].act, .openRecipe(url: url1), "↩ fires openRecipe with the file's URL")
-    }
-
-    /// REVERT-TO-CONFIRM-FAIL: removing `.recipes` from `pickerPills` breaks the chord collision test.
-    func testRecipesPillChordKeyIsE() {
-        XCTAssertEqual(OpenQuicklyFilter.recipes.pickerChordKey, "e", "⌘E jumps to the Recipes pill")
+        XCTAssertFalse(labels.contains("Recipes"), "the Recipes pill was removed with the recipe feature")
+        // Both are structural cuts (no enum case).
+        XCTAssertEqual(OpenQuicklyFilter.allCases.count, 6)
     }
 
     func testDefaultFilterIsAll() {
@@ -143,13 +116,12 @@ final class OpenQuicklyModelTests: XCTestCase {
     func testNextFilterWrapsForward() {
         XCTAssertEqual(OpenQuicklyModel.nextFilter(.all), .opened)
         XCTAssertEqual(OpenQuicklyModel.nextFilter(.folders), .agents)
-        XCTAssertEqual(OpenQuicklyModel.nextFilter(.current), .recipes)
-        XCTAssertEqual(OpenQuicklyModel.nextFilter(.recipes), .all, "Tab wraps from the last pill to the first")
+        XCTAssertEqual(OpenQuicklyModel.nextFilter(.current), .all, "Tab wraps from the last pill to the first")
     }
 
     func testPrevFilterWrapsBackward() {
         XCTAssertEqual(OpenQuicklyModel.prevFilter(.opened), .all)
-        XCTAssertEqual(OpenQuicklyModel.prevFilter(.all), .recipes, "⇧Tab wraps from the first pill to the last")
+        XCTAssertEqual(OpenQuicklyModel.prevFilter(.all), .current, "⇧Tab wraps from the first pill to the last")
     }
 
     // MARK: - sectioned: merge + headers (ES-E11-2)

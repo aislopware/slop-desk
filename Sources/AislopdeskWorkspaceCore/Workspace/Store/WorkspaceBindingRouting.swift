@@ -277,12 +277,6 @@ public extension WorkspaceBindingRegistry {
         // `requestFindInActivePane()`), so ⌘⇧J does something useful rather than nothing.
         case .peekAndReply:
             if let p = toggles.peekReply { p() } else { store.jumpToOldestAttentionPane() }
-        // Recipes (E16 WI-8): ⌘S / File ▸ Recipe ▸ Save Recipe… requests the save sheet; File ▸ Recipe ▸
-        // Open Recipe… requests the open picker. Both flip a store `pending*` flag the app observes to present
-        // the matching sheet (WI-10); the save snapshots the live tree directly (NOT the dead canvas
-        // `saveLayout`). Window-scope (no active pane needed).
-        case .saveRecipe: store.requestSaveRecipe()
-        case .openRecipe: store.requestOpenRecipe()
         }
     }
 
@@ -420,11 +414,6 @@ public extension WorkspaceBindingRegistry {
         // P4 Peek & Reply is a view overlay; the canvas path still toggles it (the overlay's own selector
         // returns nil under .canvas, where there is no attention rollup, so it opens read-only / no-ops).
         case .peekAndReply: toggles.peekReply?()
-        // Recipes (E16 WI-8): the recipe save / open surfaces are model-agnostic (they read/mount the tree,
-        // which the store owns regardless of the live model), so the canvas path routes them identically —
-        // they flip the SAME store `pending*` flags the tree path does.
-        case .saveRecipe: store.requestSaveRecipe()
-        case .openRecipe: store.requestOpenRecipe()
         }
     }
 }

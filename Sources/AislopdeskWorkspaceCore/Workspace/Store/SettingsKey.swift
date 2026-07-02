@@ -341,24 +341,6 @@ public enum SettingsKey {
     /// ``CLIShellShim``.
     public static let allowPrefixOverwrite = "shell.cli.allowPrefixOverwrite"
 
-    // E16 (Recipes — Command Replay + at-prompt snippet auto-expand). Fire-time `Defaults.Keys` flags, never
-    // folded into a typed prefs model → golden-safe (recipes are 100% client-side; touchesWire:false). The two
-    // replay-mode keys store the bare ``RecipeReplayMode`` rawValue via the `RawRepresentableBridge` (the
-    // conformance below); the auto-expand key is a native Bool. The enum-valued keys take a `Key` suffix (like
-    // ``newTabPositionKey``) so the typed ``replayModeSaved`` / ``replayModeFiles`` accessors take the bare name.
-    /// Recipes → Command Replay for INTERNALLY-saved recipes (the `.aislopdeskrecipe` ⌘S writes). Stored as the
-    /// ``RecipeReplayMode`` rawValue; default `.auto` (a recipe you saved yourself replays automatically).
-    public static let replayModeSavedKey = "recipes.replayMode.saved" // RecipeReplayMode.rawValue
-    /// Recipes → Command Replay for EXTERNALLY-opened `.aislopdeskrecipe` FILES. Stored as the
-    /// ``RecipeReplayMode`` rawValue; default `.askOnce` (a recipe from elsewhere shows its commands first).
-    public static let replayModeFilesKey = "recipes.replayMode.files" // RecipeReplayMode.rawValue
-    /// snippet at-prompt AUTO-EXPAND (E16 ES-E16-4) — whether typing a snippet's alias at the shell prompt
-    /// auto-expands it (default OFF — opt-in). RESERVED key for the **pinned-deferred** at-prompt expansion glue
-    /// (plans/E16.md WI-10 / §6): no live reader yet — the shipped baseline is the explicit palette expand (type
-    /// a snippet name/alias under ⌘⇧P). Settings deliberately surfaces NO toggle for this (a control that
-    /// promised the behavior while doing nothing would be a lying control — honesty over a dead toggle).
-    public static let snippetAutoExpand = "recipes.snippetAutoExpand"
-
     /// Whether a layout with a trigger app auto-switches when that app launches on the host (default
     /// ON — assigning a trigger is itself the opt-in). Read at fire-time.
     public static var autoSwitchLayoutsEnabled: Bool { Defaults[.autoSwitchLayouts] }
@@ -643,23 +625,6 @@ public enum SettingsKey {
     /// default OFF. Read fire-time by ``CLIShellShim/snippet(allowOverwrite:binary:)``.
     public static var allowPrefixOverwriteEnabled: Bool { Defaults[.allowPrefixOverwrite] }
 
-    // MARK: E16 Recipes (Command Replay modes + at-prompt snippet auto-expand)
-
-    /// The replay mode for INTERNALLY-saved recipes (Command Replay, E16), default
-    /// ``RecipeReplayMode/auto`` (a recipe you saved yourself replays automatically). A stale / invalid
-    /// persisted raw value repairs to `.auto` via the `RawRepresentableBridge`. Read by the recipe-open path.
-    public static var replayModeSaved: RecipeReplayMode { Defaults[.replayModeSaved] }
-
-    /// The replay mode for externally-opened `.aislopdeskrecipe` FILES (Command Replay, E16), default
-    /// ``RecipeReplayMode/askOnce`` (an unfamiliar file shows its commands first). A stale / invalid persisted
-    /// raw value repairs to `.askOnce`. Read by the recipe-open path.
-    public static var replayModeFiles: RecipeReplayMode { Defaults[.replayModeFiles] }
-
-    /// Whether typing a snippet alias at the shell prompt auto-expands it (E16 ES-E16-4), default OFF
-    /// (opt-in). RESERVED accessor for the **pinned-deferred** at-prompt expansion path — no live reader yet;
-    /// the shipped expansion path is the explicit command-palette run (honesty over a typing-corruption bug).
-    public static var snippetAutoExpandEnabled: Bool { Defaults[.snippetAutoExpand] }
-
     // MARK: Controls / scroll / copy (E8-owned behaviour — declared + persisted here)
 
     /// Whether the selection is copied to the pasteboard as soon as it is made (`copy-on-select`),
@@ -918,14 +883,6 @@ public extension Defaults.Keys {
     static let cliInstalled = Key<Bool>(SettingsKey.cliInstalled, default: false)
     static let omitCLIPrefix = Key<Bool>(SettingsKey.omitCLIPrefix, default: false)
     static let allowPrefixOverwrite = Key<Bool>(SettingsKey.allowPrefixOverwrite, default: false)
-    // E16 Recipes — Command Replay modes + at-prompt snippet auto-expand. Fire-time flags (never folded into a
-    // typed prefs model → golden-safe; recipes are 100% client-side). The replay modes store the bare
-    // `RecipeReplayMode` rawValue via the `RawRepresentableBridge` (the conformance below), repairing a stale
-    // value to the default; auto-expand is a native Bool defaulting OFF (opt-in). Defaults mirror the spec
-    // replay-mode table: a SELF-saved recipe auto-replays (`auto`); an opened FILE asks once (`askOnce`).
-    static let replayModeSaved = Key<RecipeReplayMode>(SettingsKey.replayModeSavedKey, default: .auto)
-    static let replayModeFiles = Key<RecipeReplayMode>(SettingsKey.replayModeFilesKey, default: .askOnce)
-    static let snippetAutoExpand = Key<Bool>(SettingsKey.snippetAutoExpand, default: false)
     // Controls / scroll / copy (Controls). FIRE-TIME flags only — never folded into a typed prefs model
     // (so they never reach the env overlay / sidecar → golden-safe). E8 owns the behaviour; these persist
     // the user's choice and round-trip today.
@@ -1029,12 +986,6 @@ extension OnLaunchBehavior: Defaults.Serializable, Defaults.PreferRawRepresentab
 /// selects the `RawRepresentableBridge`, which yields the key default (`.remember`) for a stale / invalid
 /// raw value — the same shape as ``NewTabPosition`` / ``OnLaunchBehavior``.
 extension WindowSizeMode: Defaults.Serializable, Defaults.PreferRawRepresentable {}
-
-/// Store ``RecipeReplayMode`` as its bare `String` rawValue (`auto`/`askOnce`/`manually`/`skip`) so the
-/// persisted Command Replay setting (E16) round-trips compactly; `PreferRawRepresentable` selects the
-/// `RawRepresentableBridge`, which yields the key default (`.auto` for saved recipes / `.askOnce` for files)
-/// for a stale / invalid raw value — the same shape as ``NewTabPosition`` / ``OnLaunchBehavior``.
-extension RecipeReplayMode: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 
 /// Store ``NotifyWhileForeground`` as its bare `String` rawValue (`off`/`always`/`tab-unfocused`) so the
 /// persisted "Notify While Foreground" setting round-trips with the config value (E14/K9);

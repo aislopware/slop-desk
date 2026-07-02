@@ -16,17 +16,17 @@
 // search pill (which SECTION ROWS show) is DISTINCT from the Advanced → All-Settings content search (which
 // config KEYS show) — both searches are surfaced side by side.
 //
-// E7 reorg: the old 5-tab strip (General / Terminal / Video / Keybindings / Advanced) is reshaped into a
-// 9-section taxonomy (`SettingsSection`): General / Shell / Controls / Editor / Agents / Appearance /
-// Recipes / Key Bindings / Advanced. Groups relocate to the section proven by the screenshots: terminal
+// E7 reorg: the old 5-tab strip (General / Terminal / Video / Keybindings / Advanced) is reshaped into an
+// 8-section taxonomy (`SettingsSection`): General / Shell / Controls / Editor / Agents / Appearance /
+// Key Bindings / Advanced. Groups relocate to the section proven by the screenshots: terminal
 // FONT (family + size) + the CURSOR group (style + blink) → **Appearance** (`font-setting.png` /
 // `cursor-style.png` both show them under Appearance); SCROLLBACK → **Controls** (`spec/terminal-features__
 // scroll.md`: Settings → Controls → Scroll); theme → Appearance; agent host flags → Agents; the Close
 // Confirmation pickers (Closing Tab / Closing Window) → **General** (`launch-option.png` shows them on the
 // General page). The **Editor** section is reserved for the built-in FILE-editor's settings (Soft Wrap /
-// Line Numbers / Tab Size — `editor-settings.png`) and **Recipes** is a saved-command library
-// (`all-settings.png`), neither of which aislopdesk has an equivalent for, so both stay RESERVED/empty
-// (deferral placeholders, kept 1:1 in the navigator, not terminal-render prefs). The 5 orphan toggles + the
+// Line Numbers / Tab Size — `editor-settings.png`), which aislopdesk has no equivalent for, so it stays
+// RESERVED/empty (a deferral placeholder, kept 1:1 in the navigator, not terminal-render prefs). The 5
+// orphan toggles + the
 // Controls/Scroll/Copy toggles are surfaced via `@Default(.key)`; the Video HOST flags (QP/FEC/pacer/sharpen)
 // have no dedicated section, so they fold into Advanced as a "Video (host)" sub-section (real functionality
 // — not dropped).
@@ -101,15 +101,15 @@ public struct AislopdeskSettingsScene: Scene {
 }
 #endif
 
-// MARK: - Settings taxonomy (the 9 sections — one source for the macOS navigator + the iOS list)
+// MARK: - Settings taxonomy (the 8 sections — one source for the macOS navigator + the iOS list)
 
-/// The settings taxonomy — 9 sections, each rendered as an icon+label row in the macOS two-column
+/// The settings taxonomy — 8 sections, each rendered as an icon+label row in the macOS two-column
 /// navigator (and, once WI-5 lands, a navigation row in the iOS sheet). The title + sidebar
 /// `systemImage` live here as the ONE source so the macOS navigator and the (future) iOS list never drift;
 /// `SettingsSectionTaxonomyTests` pins
 /// the set + order against an accidental drop/reorder/icon-swap. Order + glyphs mirror the sidebar shown in
 /// (`docs/ui-shell/screenshots/all-settings.png`): General, Shell, Controls, Editor, Agents, Appearance,
-/// Recipes, Key Bindings, Advanced.
+/// Key Bindings, Advanced.
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general
     case shell
@@ -117,7 +117,6 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     case editor
     case agents
     case appearance
-    case recipes
     case keybindings
     case advanced
 
@@ -132,7 +131,6 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .editor: "Editor"
         case .agents: "Agents"
         case .appearance: "Appearance"
-        case .recipes: "Recipes"
         case .keybindings: "Key Bindings"
         case .advanced: "Advanced"
         }
@@ -140,7 +138,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 
     /// The sidebar glyph for the section (SF Symbol name), chosen to read clearly at a glance: General =
     /// `exclamationmark.circle`, Controls = `cursorarrow` (the pointer/cursor glyph shown beside "Controls"
-    /// in `all-settings.png` — input/scroll/pointer settings), Agents = `powerplug`, Recipes = `book`, Key
+    /// in `all-settings.png` — input/scroll/pointer settings), Agents = `powerplug`, Key
     /// Bindings = `bolt` (lightning).
     var systemImage: String {
         switch self {
@@ -150,7 +148,6 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .editor: "doc.text"
         case .agents: "powerplug"
         case .appearance: "paintpalette"
-        case .recipes: "book"
         case .keybindings: "bolt"
         case .advanced: "wrench"
         }
@@ -326,7 +323,6 @@ struct SettingsSectionContent: View {
         case .editor: EditorSettingsTab()
         case .agents: AgentsSettingsTab(store: store)
         case .appearance: AppearanceSettingsTab(store: store)
-        case .recipes: RecipesSettingsTab()
         case .keybindings: KeybindingsSettingsTab(store: store)
         case .advanced: AdvancedSettingsTab(store: store, selectedSection: $selectedSection)
         }
@@ -1267,196 +1263,6 @@ private struct EditorSettingsTab: View {
             }
         }
         .formStyle(.grouped)
-    }
-}
-
-// MARK: - Recipes section (snippet library + Command Replay — E16 WI-7)
-
-/// Recipes is the saved-command / snippet library (`all-settings.png` shows the section, book glyph,
-/// between Appearance and Key Bindings). E16 WI-7 populates it with the two surfaces aislopdesk backs today:
-///
-/// - **Snippets** — the persisted ``Snippet`` list (Name + Alias), each row with a pencil-edit + trash, and
-///   an **Add Text Snippet** button that opens the ``SnippetEditorSheet`` (`textsnippet-setting.png`). CRUD
-///   routes to the live ``WorkspaceStore`` (`addSnippet`/`updateSnippet`/`deleteSnippet`) injected via the
-///   `\.workspaceStore` environment slot (the same seam the Advanced → Workspace rows use).
-/// - **Command Replay** — the two replay-mode pickers (Saved Recipes default Auto / Recipe Files default
-///   Ask Once) bound to the fire-time `Defaults.Keys` (`@Default(.replayModeSaved)` / `.replayModeFiles`).
-///   Ask-Once / Manually surface the in-pane ``RecipeReplayHUD`` to run / step the queue.
-///
-/// **At-prompt snippet auto-expand is LIVE** (E16 ES-E16-4): the always-on baseline is the explicit palette
-/// expand (type a snippet's name or alias under ⌘⇧P); on top of that, the **Expand alias at shell prompt**
-/// toggle (`@Default(.snippetAutoExpand)`, default OFF) arms the prompt-aware input interceptor — typing an
-/// alias then Tab/Space at an OSC-133;A shell prompt expands it in place (``SnippetAliasExpander``, wired by
-/// `WorkspaceStore.wireSnippetExpander`). The toggle drives real behaviour, so it is not a lying control.
-///
-/// The RECIPE library list itself (saved `.aislopdeskrecipe` files) is store-glue (E16 WI-8/WI-10) and lands with
-/// the save/open flows; this tab owns the snippet editor + the replay/expand SETTINGS. Cross-platform — the
-/// iOS settings sheet (WI-10) hosts the same struct. Pinned in the taxonomy by `SettingsSectionTaxonomyTests`.
-private struct RecipesSettingsTab: View {
-    /// The live workspace owner (snippet CRUD). `nil` outside the app scene (previews / before the iOS sheet
-    /// wires it, WI-10) → the snippet list renders a neutral unavailable note rather than crashing.
-    @Environment(\.workspaceStore) private var workspaceStore
-
-    @Default(.replayModeSaved) private var replayModeSaved
-    @Default(.replayModeFiles) private var replayModeFiles
-    @Default(.snippetAutoExpand) private var snippetAutoExpand
-
-    /// The snippet currently open in the editor sheet (a fresh target for Add, or the row being edited).
-    @State private var editing: SnippetEditTarget?
-
-    var body: some View {
-        Form {
-            snippetsSection
-            commandReplaySection
-        }
-        .formStyle(.grouped)
-        .sheet(item: $editing) { target in
-            SnippetEditorSheet(
-                isNew: target.isNew,
-                name: target.name,
-                alias: target.alias,
-                body: target.body,
-            ) { name, alias, body in
-                if let snippetID = target.snippetID {
-                    workspaceStore?.updateSnippet(snippetID, name: name, body: body, alias: alias)
-                } else {
-                    workspaceStore?.addSnippet(name: name, body: body, alias: alias)
-                }
-            }
-        }
-    }
-
-    // MARK: Snippets list + Add
-
-    private var snippetsSection: some View {
-        slateFormSection("Snippets") {
-            if let store = workspaceStore {
-                let snippets = store.snippets
-                if snippets.isEmpty {
-                    Text(
-                        "No snippets yet. Add a text snippet to run it from the command palette, or expand it "
-                            + "by alias at the shell prompt.",
-                    )
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
-                } else {
-                    ForEach(snippets) { snippet in
-                        snippetRow(snippet, store: store)
-                    }
-                }
-                Button { editing = SnippetEditTarget() } label: {
-                    Label("Add Text Snippet", systemImage: "plus")
-                }
-            } else {
-                Text("Snippets are unavailable in this context.")
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.tertiary)
-            }
-        }
-    }
-
-    /// One snippet row: Name (+ monospaced Alias subtext), a pencil-edit, and a trash-delete (the row
-    /// chrome from `textsnippet-setting.png`'s list behind the sheet).
-    private func snippetRow(_ snippet: Snippet, store: WorkspaceStore) -> some View {
-        HStack(spacing: Slate.Metric.space2) {
-            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                Text(WorkspaceStore.snippetName(snippet.name))
-                    .font(.system(size: Slate.Typeface.body))
-                    .foregroundStyle(Slate.Text.primary)
-                if !snippet.alias.isEmpty {
-                    Text(snippet.alias)
-                        .font(.system(size: Slate.Typeface.footnote).monospaced())
-                        .foregroundStyle(Slate.Text.secondary)
-                }
-            }
-            Spacer(minLength: 0)
-            Button { editing = SnippetEditTarget(snippet) } label: {
-                Image(systemSymbol: .pencil)
-                    .font(.system(size: Slate.Metric.iconSize))
-                    .foregroundStyle(Slate.Text.icon)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Edit snippet")
-            Button { store.deleteSnippet(snippet.id) } label: {
-                Image(systemSymbol: .trash)
-                    .font(.system(size: Slate.Metric.iconSize))
-                    .foregroundStyle(Slate.Text.icon)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Delete snippet")
-        }
-    }
-
-    // MARK: Command Replay + at-prompt auto-expand
-
-    private var commandReplaySection: some View {
-        slateFormSection("Command Replay") {
-            Picker("Saved Recipes", selection: $replayModeSaved) {
-                ForEach(RecipeReplayMode.allCases, id: \.self) { mode in
-                    Text(mode.displayName).tag(mode)
-                }
-            }
-            Picker("Recipe Files", selection: $replayModeFiles) {
-                ForEach(RecipeReplayMode.allCases, id: \.self) { mode in
-                    Text(mode.displayName).tag(mode)
-                }
-            }
-            Text(
-                "How a recipe's saved commands run when you open it. Auto runs them all; Ask Once shows them, "
-                    + "then runs the queue when you confirm in the pane; Manually runs one at a time; Skip opens "
-                    + "the layout only.",
-            )
-            .font(.system(size: Slate.Typeface.footnote))
-            .foregroundStyle(Slate.Text.secondary)
-
-            // LIVE toggle (E16 ES-E16-4): at-prompt alias auto-expansion. Default OFF (opt-in) — when on, the
-            // pure `SnippetAliasExpander` (wired per terminal pane) watches the in-progress prompt line and, on
-            // a bare Tab/Space whose trailing word is a snippet alias, erases the alias and injects the resolved
-            // body. Gated on an OSC-133;A prompt + a trusted line mirror so ordinary typing is never corrupted.
-            Toggle("Expand alias at shell prompt", isOn: $snippetAutoExpand)
-            Text(
-                "Snippets always expand from the command palette (⌘⇧P): type a snippet's name or alias to run "
-                    + "it. With this on, typing an alias then Tab or Space at the shell prompt expands it in "
-                    + "place (needs shell integration for the prompt mark).",
-            )
-            .font(.system(size: Slate.Typeface.footnote))
-            .foregroundStyle(Slate.Text.secondary)
-
-            timingFooter(.live)
-        }
-    }
-}
-
-/// The snippet open in the ``RecipesSettingsTab`` editor sheet — a fresh empty target (Add) or an existing
-/// snippet (Edit). `Identifiable` so it drives `.sheet(item:)`; `snippetID == nil` means "new".
-private struct SnippetEditTarget: Identifiable {
-    let id: UUID
-    /// The backing snippet's id, or `nil` for a brand-new snippet (Add).
-    let snippetID: UUID?
-    let name: String
-    let alias: String
-    let body: String
-
-    var isNew: Bool { snippetID == nil }
-
-    /// A fresh, empty snippet (Add Text Snippet). A throwaway `id` keeps `.sheet(item:)` happy.
-    init() {
-        id = UUID()
-        snippetID = nil
-        name = ""
-        alias = ""
-        body = ""
-    }
-
-    /// Editing an existing snippet — seeds the sheet with its current Name / Alias / Text.
-    init(_ snippet: Snippet) {
-        id = snippet.id
-        snippetID = snippet.id
-        name = snippet.name
-        alias = snippet.alias
-        body = snippet.body
     }
 }
 

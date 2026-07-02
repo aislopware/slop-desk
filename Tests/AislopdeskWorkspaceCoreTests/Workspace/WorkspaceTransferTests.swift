@@ -30,7 +30,6 @@ final class WorkspaceTransferTests: XCTestCase {
         let src = store([a, b], focus: a.id)
         let g = src.addGroup(name: "work")
         src.assignPane(a.id, toGroup: g)
-        src.addSnippet(name: "deploy", body: "make deploy<Enter>")
         let data = src.exportWorkspaceData()
 
         // A fresh store (its own single default pane) imports the document, REPLACING its canvas.
@@ -43,7 +42,6 @@ final class WorkspaceTransferTests: XCTestCase {
             "both panes restored (by title; ids are re-minted)",
         )
         XCTAssertEqual(dst.workspace.groups.map(\.name), ["work"], "the group survives")
-        XCTAssertEqual(dst.snippets.first?.name, "deploy", "snippets survive the round trip")
     }
 
     func testExportStripsHostConnection() {
@@ -133,22 +131,15 @@ final class WorkspaceTransferTests: XCTestCase {
         XCTAssertEqual(st.workspace.canvas.spec(for: anchor)?.title, "beta", "anchor still points at beta")
     }
 
-    func testMergeAppendAddsImportedPanesBesideExistingAndUnionsSnippets() {
+    func testMergeAppendAddsImportedPanesBesideExisting() {
         let src = store([term(0, "alpha"), term(400, "beta")], focus: PaneID())
-        src.addSnippet(name: "deploy", body: "make deploy<Enter>")
         let data = src.exportWorkspaceData()
 
         let dst = store([term(0, "keep")], focus: PaneID())
-        dst.addSnippet(name: "deploy", body: "other<Enter>") // a name collision to exercise the suffix
         XCTAssertTrue(dst.importWorkspace(data, mode: .mergeAppend))
 
         let titles = Set(dst.workspace.canvas.allIDs().compactMap { dst.workspace.canvas.spec(for: $0)?.title })
         XCTAssertEqual(titles, ["keep", "alpha", "beta"], "merge keeps the existing pane and adds the imported ones")
-        XCTAssertEqual(
-            Set(dst.snippets.map(\.name)),
-            ["deploy", "deploy copy"],
-            "a snippet name collision gets a ‘copy’ suffix",
-        )
         for id in dst.workspace.canvas.allIDs() {
             XCTAssertNotNil(dst.handle(for: id), "registry==canvas holds after a merge (every pane materialized)")
         }
@@ -194,23 +185,6 @@ final class WorkspaceTransferTests: XCTestCase {
         )
     }
 
-    func testDuplicateSnippetIDsAreRemintedOnDecode() {
-        let sid = UUID()
-        let ws = Workspace(
-            canvas: Canvas(items: [term(0, "a")]),
-            focusedPane: nil,
-            snippets: [Snippet(id: sid, name: "x", body: "a"), Snippet(id: sid, name: "y", body: "b")],
-        )
-        guard let decoded = WorkspaceTransfer.decode(WorkspaceTransfer.export(ws)) else { XCTFail()
-            return
-        }
-        XCTAssertEqual(
-            Set(decoded.snippets.map(\.id)).count,
-            2,
-            "snippet ids are re-minted so palette entry ids can't collide",
-        )
-    }
-
     func testOversizedDocumentIsRejected() {
         let items = (0...WorkspaceTransfer.maxItems).map { term(CGFloat($0) * 10, "p\($0)") } // maxItems + 1
         let ws = Workspace(canvas: Canvas(items: items), focusedPane: nil)
@@ -221,7 +195,7 @@ final class WorkspaceTransferTests: XCTestCase {
     }
 
     func testOversizedBookmarksAreRejected() {
-        // The bookmarks dictionary is the same untrusted-input surface as items/groups/snippets — a
+        // The bookmarks dictionary is the same untrusted-input surface as items/groups — a
         // hand-edited document with a huge bookmark map must be rejected, not iterated on the main actor.
         let bookmarks = Dictionary(uniqueKeysWithValues:
             (0...WorkspaceTransfer.maxItems)
@@ -326,7 +300,7 @@ final class WorkspaceTransferTests: XCTestCase {
 
     func testMergeRejectedWhenCombinedGroupsExceedCapElseNextLaunchWipesEverything() {
         // DATA-LOSS REGRESSION: mergeAppend used to cap ONLY the canvas, so a merge that pushed the combined
-        // groups (or snippets, or presets) past maxItems produced an over-cap workspace that worked this
+        // groups (or presets) past maxItems produced an over-cap workspace that worked this
         // session — then load() (which guards EACH side collection <= maxItems) discarded the ENTIRE
         // workspace to the default on the next launch. The merge must reject symmetrically, leaving the live
         // workspace untouched, so what is persisted always survives a reload.
@@ -374,7 +348,6 @@ final class WorkspaceTransferTests: XCTestCase {
         // rebuild the layout from them. This pins the store→document→decode→import path the picker rides.
         let a = term(0, "alpha"), b = term(400, "beta")
         let src = store([a, b], focus: a.id)
-        src.addSnippet(name: "deploy", body: "make deploy<Enter>")
         let documentBytes = src.exportWorkspaceData()
 
         let decoded = WorkspaceTransfer.decode(documentBytes)
@@ -387,7 +360,6 @@ final class WorkspaceTransferTests: XCTestCase {
 
         let dst = WorkspaceStore(restoring: nil, makeSession: { FakePaneSession($0) }, liveVideoCap: 5)
         XCTAssertTrue(dst.importWorkspace(documentBytes), "the file importer restores the document")
-        XCTAssertEqual(dst.snippets.first?.name, "deploy", "snippets survive the file round trip")
     }
 
     func testImportRejectsHostileBytesNoOp() {

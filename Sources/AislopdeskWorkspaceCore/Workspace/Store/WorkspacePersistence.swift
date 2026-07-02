@@ -121,12 +121,11 @@ public struct WorkspacePersistence: @unchecked Sendable {
         // bound the portable import enforces).
         guard migrated.canvas.items.count <= WorkspaceTransfer.maxItems,
               migrated.groups.count <= WorkspaceTransfer.maxItems,
-              migrated.snippets.count <= WorkspaceTransfer.maxItems,
               migrated.layoutPresets.count <= WorkspaceTransfer.maxItems else { return resetToDefault() }
         var seen = Set<PaneID>()
         var repaired = migrated
         repaired.canvas = repaired.canvas.dedupingItemIDs(seen: &seen)
-        // Repair the side collections (duplicate group ids / snippet ids / preset names) too — shared with
+        // Repair the side collections (duplicate group ids / preset names) too — shared with
         // the portable import path so a corrupt persisted file gets the same defensive treatment.
         return repaired.normalizingCollections().normalizingFocus().normalizingGroups()
     }
@@ -176,7 +175,6 @@ public struct WorkspacePersistence: @unchecked Sendable {
         // Bound the leaf/collection counts so a corrupt file cannot make the store allocate unboundedly
         // on launch (the same ceiling the canvas load + portable import enforce).
         guard tree.allPaneIDs().count <= WorkspaceTransfer.maxItems,
-              tree.snippets.count <= WorkspaceTransfer.maxItems,
               tree.layoutPresets.count <= WorkspaceTransfer.maxItems,
               tree.launchPresets.count <= WorkspaceTransfer.maxItems,
               tree.sessionTemplates.count <= WorkspaceTransfer.maxItems else { return resetTreeToDefault() }
@@ -288,7 +286,7 @@ public struct WorkspacePersistence: @unchecked Sendable {
     /// mints on every call (so a value `==` is impossible). The idempotency guard in ``snapshotPreviousSession()``
     /// uses it to AVOID clobbering a real session already in the sidecar with a throwaway default on a repeated
     /// new-window launch. Only the session content distinguishes a real session from the default, so app-config
-    /// presets/snippets are intentionally NOT part of the test.
+    /// presets are intentionally NOT part of the test.
     ///
     /// **The additive-field check is load-bearing, not decorative.** Structural shape ALONE is the single most
     /// common REAL workspace — one un-renamed terminal in a project dir — and that session is NOT throwaway: it

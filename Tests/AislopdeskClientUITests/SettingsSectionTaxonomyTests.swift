@@ -1,4 +1,4 @@
-// SettingsSectionTaxonomyTests (E7 WI-2) — the anti-drift pin for the 9-section Settings taxonomy.
+// SettingsSectionTaxonomyTests (E7 WI-2) — the anti-drift pin for the 8-section Settings taxonomy.
 //
 // The macOS tab strip and the (future) iOS settings sheet both drive their sections from `SettingsSection`
 // (`Settings/SettingsView.swift`), so a single source can't render an out-of-order / missing / re-iconed
@@ -8,8 +8,8 @@
 //
 // SECTION-CONTENT GAPS ARE INTENTIONAL (the per-section bodies are `private` to `SettingsView.swift`, so the
 // gaps are pinned by the doc-comment notes on each tab struct rather than by an assertion here — recorded for
-// a reviewer auditing this anti-drift file): Editor + Recipes stay RESERVED/empty (no file-editor / recipe
-// library); Shell → NOTIFICATIONS surfaces only the two rows backed by real behaviour (the rest of the
+// a reviewer auditing this anti-drift file): Editor stays RESERVED/empty (no file-editor);
+// Shell → NOTIFICATIONS surfaces only the two rows backed by real behaviour (the rest of the
 // NOTIFICATION + TAB BADGE groups deferred-until-backed); General has no Auto-Update / Language /
 // "Quit When All Windows Closed" controls (N/A for a single-user remote tool) and ADDS the aislopdesk-specific
 // Privacy & New Panes group; Appearance → TABS is VERTICAL-TABS-ONLY by product decision (a horizontal
@@ -36,15 +36,14 @@ final class SettingsSectionTaxonomyTests: XCTestCase {
         ("editor", "Editor", "doc.text"),
         ("agents", "Agents", "powerplug"),
         ("appearance", "Appearance", "paintpalette"),
-        ("recipes", "Recipes", "book"),
         ("keybindings", "Key Bindings", "bolt"),
         ("advanced", "Advanced", "wrench"),
     ]
 
     func testSectionTaxonomyIsPinned() {
         let cases = SettingsSection.allCases
-        XCTAssertEqual(cases.count, Self.expected.count, "the taxonomy must have exactly 9 sections")
-        XCTAssertEqual(cases.count, 9)
+        XCTAssertEqual(cases.count, Self.expected.count, "the taxonomy must have exactly 8 sections")
+        XCTAssertEqual(cases.count, 8)
         for (section, want) in zip(cases, Self.expected) {
             XCTAssertEqual(section.rawValue, want.raw, "section order / rawValue drifted")
             XCTAssertEqual(section.title, want.title, "title drifted for \(want.raw)")
@@ -91,7 +90,7 @@ final class SettingsSectionTaxonomyTests: XCTestCase {
     /// WI-5: the compact iOS settings sheet (`SettingsSheet`) drops the macOS-only sections via the
     /// `isMacOSOnly` filter. Pins — against an INDEPENDENT expectation, not the property's own derivation —
     /// that **Keybindings** is the sole macOS-only section (its chord capture is a macOS `NSEvent` monitor)
-    /// and that the iOS list is exactly the seven cross-platform sections in taxonomy order. Showing
+    /// and that the iOS list is exactly the cross-platform sections in taxonomy order. Showing
     /// Keybindings on iOS (or dropping another section) fails this. `isMacOSOnly` is cross-platform, so this
     /// runs headlessly on the macOS `swift test` host.
     func testMacOSOnlySectionsAreKeybindingsOnly() {
@@ -101,8 +100,8 @@ final class SettingsSectionTaxonomyTests: XCTestCase {
         let iosVisible = SettingsSection.allCases.filter { !$0.isMacOSOnly }.map(\.rawValue)
         XCTAssertEqual(
             iosVisible,
-            ["general", "shell", "controls", "editor", "agents", "appearance", "recipes", "advanced"],
-            "the iOS sheet shows the eight cross-platform sections in taxonomy order",
+            ["general", "shell", "controls", "editor", "agents", "appearance", "advanced"],
+            "the iOS sheet shows the seven cross-platform sections in taxonomy order",
         )
     }
 }

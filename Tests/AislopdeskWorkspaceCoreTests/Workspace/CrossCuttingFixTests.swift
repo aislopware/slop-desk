@@ -5,7 +5,7 @@ import XCTest
 /// Pins the four cross-cutting state-lifecycle fixes (2026-06-13 cross-cutting hunt): a whole-canvas swap
 /// (switchToLayoutPreset / importWorkspace.replace) must invalidate the workspace-global transients that
 /// anchor to the OLD canvas — viewport bookmarks, the close-undo, and armed broadcast — and a repeated
-/// identical merge must content-dedup instead of growing the snippet/preset library.
+/// identical merge must content-dedup instead of growing the preset library.
 @MainActor
 final class CrossCuttingFixTests: XCTestCase {
     private func store(_ items: [CanvasItem], focus: PaneID) -> WorkspaceStore {
@@ -71,19 +71,15 @@ final class CrossCuttingFixTests: XCTestCase {
 
     func testRepeatedIdenticalMergeDoesNotGrowLibrary() {
         let src = store([term(0, "alpha")], focus: PaneID())
-        src.addSnippet(name: "s", body: "make build<Enter>")
         src.saveLayoutPreset(name: "p")
         let data = src.exportWorkspaceData()
 
         let dst = store([term(0, "x")], focus: PaneID())
         XCTAssertTrue(dst.importWorkspace(data, mode: .mergeAppend))
-        let snippetsAfterFirst = dst.snippets.count
         let presetsAfterFirst = dst.workspace.layoutPresets.count
-        XCTAssertEqual(snippetsAfterFirst, 1)
         XCTAssertEqual(presetsAfterFirst, 1)
 
         XCTAssertTrue(dst.importWorkspace(data, mode: .mergeAppend)) // identical re-merge
-        XCTAssertEqual(dst.snippets.count, snippetsAfterFirst, "content-identical snippet is not re-added")
         XCTAssertEqual(dst.workspace.layoutPresets.count, presetsAfterFirst, "content-identical preset is not re-added")
     }
 }

@@ -72,7 +72,7 @@ final class LaunchPresetEngineTests: XCTestCase {
     }
 
     /// The COMMAND field, by contrast, legitimately resolves `SendKeysParser` tokens (intended shell
-    /// input — a snippet-style `<Enter>` in a command IS meant to send a newline).
+    /// input — a send-keys-style `<Enter>` in a command IS meant to send a newline).
     func testCommandWithSendKeysTokenResolves() {
         let preset = LaunchPreset(name: "X", command: "echo hi<Enter>echo bye")
         let plan = LaunchPresetEngine.plan(for: preset)
@@ -154,7 +154,7 @@ final class LaunchPresetEngineTests: XCTestCase {
         XCTAssertEqual(text(plan.panes[0].keystrokes), "git log --oneline --graph --decorate -30\n")
     }
 
-    // MARK: Codable round-trip (it persists on the workspace like LayoutPreset/Snippet)
+    // MARK: Codable round-trip (it persists on the workspace like LayoutPreset)
 
     func testCodableRoundTrip() throws {
         let preset = LaunchPreset(

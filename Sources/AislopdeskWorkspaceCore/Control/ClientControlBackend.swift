@@ -207,9 +207,6 @@ public protocol ClientControlBackend: AnyObject {
     /// Open a `view`/`edit` shim for `target` at `placement`. Returns `false` on failure.
     func open(target: String, mode: ClientControlOpenMode, placement: ClientControlProtocol.Placement) -> Bool
 
-    /// Open a recipe by `.aislopdeskrecipe` path or saved-library name. Returns `false` on failure.
-    func openRecipe(reference: String) -> Bool
-
     /// Read one config key; `nil` when the key is unset.
     func configGet(key: String) -> String?
 

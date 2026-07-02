@@ -1208,27 +1208,6 @@ final class GhosttyLayerBackedView: NSView {
             }
         }
 
-        // E16 ES-E16-4 — AT-PROMPT SNIPPET ALIAS AUTO-EXPANSION (claimed after the workspace interceptor, before
-        // the libghostty key path). A BARE Tab/Space — no ⌘/⌃/⌥ (those are app shortcuts / C0 bytes) — at an
-        // OSC-133;A shell prompt whose trailing typed word equals a snippet alias expands it: the pure,
-        // headless-tested `SnippetAliasExpander` (wired in `WorkspaceStore.wireSnippetExpander`) erases the alias
-        // and injects the resolved body (reserved vars + `{{cursor}}` offset). On a hit we SWALLOW the press +
-        // its matching release (parity with the branches above); a miss (no alias / setting off / not at a
-        // prompt) returns false → the key types normally (Tab completion, a literal space). Default-OFF via the
-        // `snippetAutoExpand` setting, so ordinary typing is never touched unless the user opts in. This view is
-        // a thin actuator: it only maps the trigger key and acts on the boolean.
-        if let model,
-           markedText.length == 0, // an active IME composition OWNS Tab/Space (convert / candidate keys)
-           !event.modifierFlags.contains(.command),
-           !event.modifierFlags.contains(.control),
-           !event.modifierFlags.contains(.option),
-           event.keyCode == 48 || event.keyCode == 49, // kVK_Tab / kVK_Space
-           model.expandSnippetAlias()
-        {
-            workspaceConsumedReleaseKeyCode = UInt16(event.keyCode)
-            return
-        }
-
         // CTRL+<key> → LEGACY C0 control byte (the universal-interrupt fix). The host shell (oh-my-zsh
         // / a plugin) enables the kitty keyboard protocol, which makes libghostty's encoder emit a
         // CSI-u ESCAPE for Ctrl-C/Z/D/… (e.g. `^[[3;5u`) instead of the raw control byte. A remote

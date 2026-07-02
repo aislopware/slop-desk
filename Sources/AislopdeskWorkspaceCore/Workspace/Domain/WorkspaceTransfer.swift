@@ -51,9 +51,9 @@ public enum WorkspaceTransfer {
     /// Decodes + REPAIRS `data` into a restorable workspace, or `nil` when the bytes are not a valid
     /// aislopdesk workspace document (wrong magic / unsupported format / schema mismatch / garbage / a
     /// collection beyond ``maxItems``). The host connection is dropped (the importer keeps its own);
-    /// duplicate pane AND group ids are dropped/re-minted, snippet ids re-minted (so the palette's
-    /// id-keyed entries can't collide), duplicate preset names dropped, and a dangling focus / group
-    /// membership normalized — a superset of the on-disk load repair, hardened against a hostile file.
+    /// duplicate pane AND group ids are dropped/re-minted, duplicate preset names dropped, and a dangling
+    /// focus / group membership normalized — a superset of the on-disk load repair, hardened against a
+    /// hostile file.
     public static func decode(_ data: Data) -> Workspace? {
         guard let doc = try? JSONDecoder().decode(Document.self, from: data),
               doc.format == magic,
@@ -61,7 +61,6 @@ public enum WorkspaceTransfer {
               doc.workspace.schemaVersion == Workspace.currentSchemaVersion,
               doc.workspace.canvas.items.count <= maxItems,
               doc.workspace.groups.count <= maxItems,
-              doc.workspace.snippets.count <= maxItems,
               doc.workspace.layoutPresets.count <= maxItems,
               doc.workspace.bookmarks.count <= maxItems else { return nil }
         var seen = Set<PaneID>()
@@ -72,7 +71,7 @@ public enum WorkspaceTransfer {
         // ⌘1…⌘9 recall chords). Drop them so the imported map only holds reachable bookmarks.
         ws.bookmarks = ws.bookmarks.filter { (1...9).contains($0.key) }
         ws.canvas = ws.canvas.dedupingItemIDs(seen: &seen)
-        // The side-collection repairs (group-id / snippet-id / preset-name dedup) are shared with the
+        // The side-collection repairs (group-id / preset-name dedup) are shared with the
         // on-disk load — see Workspace.normalizingCollections().
         return ws.normalizingCollections().normalizingFocus().normalizingGroups()
     }
@@ -125,7 +124,6 @@ public enum WorkspaceTransfer {
               doc.tree.schemaVersion == TreeWorkspace.currentSchemaVersion,
               doc.tree.allPaneIDs().count <= maxItems,
               doc.tree.sessions.count <= maxItems,
-              doc.tree.snippets.count <= maxItems,
               doc.tree.layoutPresets.count <= maxItems,
               doc.tree.launchPresets.count <= maxItems,
               doc.tree.sessionTemplates.count <= maxItems else { return nil }

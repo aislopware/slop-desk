@@ -47,7 +47,7 @@ final class FakePaneSession: @MainActor PaneSessionHandle, @MainActor Identifiab
     /// which panes received which text (and that video panes received nothing).
     private(set) var sentText: [String] = []
 
-    /// Every ``sendBytes(_:)`` payload, in call order — so snippet / send-keys tests can assert the exact
+    /// Every ``sendBytes(_:)`` payload, in call order — so send-keys tests can assert the exact
     /// byte sequence delivered to a pane.
     private(set) var sentBytes: [[UInt8]] = []
 

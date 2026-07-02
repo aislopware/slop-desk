@@ -23,7 +23,6 @@ private final class FakeClientControlBackend: ClientControlBackend {
     var learnReturn: String? = "/learned/dir"
     var ignoreReturn = true
     var openReturn = true
-    var openRecipeReturn = true
     var configGetReturn: String?
     var configSetReturn = true
     var configUnsetReturn = true
@@ -52,7 +51,6 @@ private final class FakeClientControlBackend: ClientControlBackend {
     var recordedOpenTarget: String?
     var recordedOpenMode: ClientControlOpenMode?
     var recordedOpenPlacement: ClientControlProtocol.Placement?
-    var recordedRecipeRef: String?
     var recordedConfigGetKey: String?
     var recordedConfigSetKey: String?
     var recordedConfigSetValue: String?
@@ -114,11 +112,6 @@ private final class FakeClientControlBackend: ClientControlBackend {
         recordedOpenMode = mode
         recordedOpenPlacement = placement
         return openReturn
-    }
-
-    func openRecipe(reference: String) -> Bool {
-        recordedRecipeRef = reference
-        return openRecipeReturn
     }
 
     func configGet(key: String) -> String? {
@@ -461,35 +454,6 @@ final class ClientControlDispatcherTests: XCTestCase {
         let obj = run(ClientControlProtocol.Method.view, ["target": "/f", "placement": 7])
         XCTAssertTrue(isOK(obj))
         XCTAssertEqual(backend.recordedOpenPlacement, .newTab)
-    }
-
-    // MARK: open-recipe
-
-    func testOpenRecipe() {
-        let obj = run(ClientControlProtocol.Method.openRecipe, ["reference": "dev.aislopdeskrecipe"])
-        XCTAssertTrue(isOK(obj))
-        XCTAssertEqual(backend.recordedRecipeRef, "dev.aislopdeskrecipe")
-    }
-
-    func testOpenRecipeMissingReferenceErrors() {
-        XCTAssertFalse(isOK(run(ClientControlProtocol.Method.openRecipe)))
-    }
-
-    func testOpenRecipeFailureErrors() {
-        backend.openRecipeReturn = false
-        XCTAssertFalse(isOK(run(ClientControlProtocol.Method.openRecipe, ["reference": "nope"])))
-    }
-
-    func testOpenRecipeNonStringReferenceDoesNotTrap() {
-        // Hostile: reference is a number → "missing reference" error, never a force-unwrap trap.
-        let obj = run(ClientControlProtocol.Method.openRecipe, ["reference": 7])
-        XCTAssertFalse(isOK(obj))
-        XCTAssertNil(backend.recordedRecipeRef)
-    }
-
-    func testOpenRecipeEmptyReferenceErrors() {
-        XCTAssertFalse(isOK(run(ClientControlProtocol.Method.openRecipe, ["reference": ""])))
-        XCTAssertNil(backend.recordedRecipeRef)
     }
 
     // MARK: config

@@ -103,7 +103,7 @@ struct WorkspaceTransferSettingsView: View {
         Group {
             slateFormSection("Workspace") {
                 Text(
-                    "Export your layout, groups, snippets, and bookmarks to a file, or import one back. The "
+                    "Export your layout, groups, and bookmarks to a file, or import one back. The "
                         + "host connection is never written into the file or adopted on import.",
                 )
                 .font(.system(size: Slate.Typeface.footnote))

@@ -91,10 +91,6 @@ public struct AislopdeskClientApp: App {
     #endif
     @Environment(\.scenePhase) private var scenePhase
     @State private var lifecycleTask: Task<Void, Never>?
-    /// E16 WI-10: the File ▸ Recipe ▸ Save Snippet… editor presentation flag (macOS menu only — snippet CRUD
-    /// is otherwise reached via Settings → Recipes). It has no store flag, so the app owns it; the recipe
-    /// save / open / trust sheets ride the store's `recipes.pending*` flags instead (see ``recipeSheets``).
-    @State private var snippetEditorPresented = false
     /// E20 WI-9 (ES-E20-4): the PURE first-launch gating model (which steps for this platform, present-once).
     /// Built once; the guided sheet presents when ``FirstLaunchModel/shouldPresent(hasCompleted:automationActive:)``
     /// (a fresh install, no automation) — resolved in a launch `.task` into ``presentFirstLaunch``. Both
@@ -264,12 +260,6 @@ public struct AislopdeskClientApp: App {
         // `record(cwd:)` validates-then-stores (drops an empty / over-long path). Held weakly — the app retains
         // the store via `_folderFrecency`.
         store.onCwdVisited = { [weak folderFrecency] cwd in folderFrecency?.record(cwd: cwd) }
-
-        // E16 WI-10: feed the snippet expander its reserved-var strings ({{clipboard}}/{{date}}/{{time}}) at
-        // expand time. The store calls this from `runSnippet`; the read of the live pasteboard + clock stays
-        // HERE (app side) so the pure `ReservedSnippetVars` resolver never touches `NSPasteboard`/`UIPasteboard`
-        // /`Date` (the determinism + hang-safety split). `{{cursor}}` is resolved purely (no app input).
-        store.snippetReservedValues = { Self.liveReservedSnippetValues() }
 
         // E2/WI-1: the single overlay coordinator. Built HERE — after the store + app connection exist — so
         // the macOS dispatcher (below) can thread its ⌘⇧P / ⌘/ toggles into the SAME NSEvent monitor that
@@ -563,11 +553,6 @@ public struct AislopdeskClientApp: App {
                 // settings" hook, future toast emitters) reach it via `\.overlayCoordinator`. The host view
                 // that renders the palette / cheat sheet / toasts lands in WI-5.
                 .overlayCoordinator(overlayCoordinator)
-                // E16 WI-10: host the recipe save / open / trust modals off the store's `recipes.pending*`
-                // flags (⌘S / File ▸ Recipe routes flip them via `WorkspaceBindingRouting`), plus the
-                // Save-Snippet editor off the app-owned `snippetEditorPresented`. Cross-platform — the same
-                // sheets ride the iOS shell.
-                .recipeSheets(store: store, snippetEditor: $snippetEditorPresented)
                 // E20 WI-9 (ES-E20-4): the guided first-launch sheet — composes On-Launch / Default-Terminal /
                 // Install-CLI / Theme / Install-Claude-hooks. Presents once on a fresh install (the
                 // `hasCompletedFirstLaunch` Defaults flag) and never under automation (it would steal the
@@ -791,10 +776,6 @@ public struct AislopdeskClientApp: App {
                 // policy). Without this the row routed to `store.requestCloseWindow()`, which only parked a flag
                 // nothing observed — the menu item never closed the window.
                 closeWindow: { [windowBox] in windowBox.window?.performClose(nil) },
-                // E16 WI-10: light up the File ▸ Recipe ▸ Save Snippet… row — flips the app-owned
-                // `snippetEditorPresented` the `recipeSheets` modifier presents the editor off. `nil` would
-                // HIDE the row (no dead button); wiring it makes the menu entry live.
-                openSnippetEditor: { snippetEditorPresented = true },
             )
             // E7 WI-4: File ▸ Export/Import Workspace (optional parity). Shortcut-LESS — the NSEvent
             // dispatcher owns chords (DECISIONS N6); a hostile import is a no-op + toast, never a crash.
@@ -842,30 +823,6 @@ public struct AislopdeskClientApp: App {
         let resolved = current.flatMap { order.contains($0) ? $0 : nil } ?? .monokaiProClassic
         let idx = order.firstIndex(of: resolved) ?? 0
         return order[(idx + 1) % order.count]
-    }
-
-    /// E16 WI-10 — the live reserved-snippet-var strings handed to ``WorkspaceStore/snippetReservedValues``
-    /// (read by `runSnippet`): `{{clipboard}}` from the system pasteboard (`NSPasteboard` on macOS,
-    /// `UIPasteboard` via ``SnippetPasteboardiOS`` on iOS), and `{{date}}` / `{{time}}` in the spec's fixed
-    /// formats (`YYYY-MM-DD` / 24-hour `HH:mm`) built from local calendar components (locale-independent — no
-    /// `DateFormatter` region surprises). `{{cursor}}` is resolved purely by ``ReservedSnippetVars`` and needs
-    /// no value here.
-    @MainActor
-    private static func liveReservedSnippetValues() -> ReservedSnippetValues {
-        let clipboard: String
-        #if os(macOS)
-        clipboard = NSPasteboard.general.string(forType: .string) ?? ""
-        #elseif os(iOS)
-        clipboard = SnippetPasteboardiOS.clipboardString()
-        #else
-        clipboard = ""
-        #endif
-        let parts = Calendar(identifier: .gregorian)
-            .dateComponents([.year, .month, .day, .hour, .minute], from: Date())
-        func pad2(_ value: Int) -> String { value < 10 ? "0\(value)" : "\(value)" }
-        let date = "\(parts.year ?? 0)-\(pad2(parts.month ?? 0))-\(pad2(parts.day ?? 0))"
-        let time = "\(pad2(parts.hour ?? 0)):\(pad2(parts.minute ?? 0))"
-        return ReservedSnippetValues(clipboard: clipboard, date: date, time: time)
     }
 
     /// Promotes every `AISLOPDESK_<KEY>=<VALUE>` launch argument into the process environment via `setenv`.

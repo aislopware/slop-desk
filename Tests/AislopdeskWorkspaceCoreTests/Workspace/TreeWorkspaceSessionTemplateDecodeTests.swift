@@ -79,7 +79,7 @@ final class TreeWorkspaceSessionTemplateDecodeTests: XCTestCase {
     // MARK: loadTree count bound (DoS-hardening)
 
     /// A hand-edited / hostile v10 file with a `sessionTemplates` array beyond ``WorkspaceTransfer/maxItems``
-    /// must be REJECTED by `loadTree()` (reset aside → default), exactly as the `allPaneIDs`/`snippets`/
+    /// must be REJECTED by `loadTree()` (reset aside → default), exactly as the `allPaneIDs`/
     /// `layoutPresets`/`launchPresets` collections are — so a single huge persisted array can't make the
     /// store allocate unboundedly on launch.
     func testLoadTreeRejectsOversizedSessionTemplates() throws {
