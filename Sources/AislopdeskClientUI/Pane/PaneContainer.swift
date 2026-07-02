@@ -24,6 +24,10 @@ struct PaneContainer: View {
     let paneID: PaneID
     /// Whether this pane is the active tab's active (focused) pane.
     let isFocused: Bool
+    /// Whether this pane is currently ON-SCREEN (its tab is active AND it is not zoom-hidden). Drives the video
+    /// activation lifecycle for a `.remoteGUI` pane (see ``GuiLeafView``). Defaults to `true` so terminal /
+    /// static-mirror callers are unaffected.
+    var isVisible: Bool = true
     /// This pane's current laid-out size (from the solver, via ``SplitContainer``). The SINGLE generic resize
     /// signal: whenever it changes — a pane-divider commit, a window-edge / sidebar / inspector resize, a
     /// split add/remove, a zoom, a balance, a tab switch — the content has been resized and its (frozen /
@@ -113,6 +117,7 @@ struct PaneContainer: View {
                 staticMirror: staticMirror,
                 store: store,
                 paneID: paneID,
+                isVisible: isVisible,
             )
         } else {
             TerminalLeafView(

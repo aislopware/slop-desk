@@ -53,6 +53,10 @@ struct CompositorPaneCard: View {
     let isFloating: Bool
     /// Whether this leaf is the active tab's active pane (drives the focus dim, exactly like a tiled pane).
     let isFocused: Bool
+    /// Whether this leaf is currently ON-SCREEN (its tab is active AND it is not zoom-hidden). Forwarded to
+    /// ``PaneContainer`` → ``GuiLeafView`` to drive the video activation lifecycle off visibility instead of
+    /// the (never-firing under keep-all-mounted) `onDisappear`. Defaults to `true` for callers that don't gate.
+    var isVisible: Bool = true
     /// The full container bounds the live drag/resize preview clamps into — the SAME rect the store reports
     /// via ``WorkspaceStore/updateFloatingBounds(_:)``, so the in-flight preview and the committed clamp share
     /// one coordinate space (no jump on release). Unused while tiled.
@@ -138,6 +142,7 @@ struct CompositorPaneCard: View {
                 store: store,
                 paneID: paneID,
                 isFocused: isFocused,
+                isVisible: isVisible,
                 // The content's live size IS the resize signal `PaneContainer`'s scrim keys off — during a
                 // corner-resize drag this changes each frame, so the surface shows the calm "resizing" scrim
                 // until the committed reflow lands (a move drag / a tiled pane keeps it constant → no scrim).

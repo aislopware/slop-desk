@@ -95,6 +95,35 @@ final class AppConnectionTests: XCTestCase {
         XCTAssertEqual(c.status, .disconnected)
     }
 
+    /// R-lifecycle #1: `onConnectionEstablished` fires exactly ONCE per transition INTO `.connected` — so the
+    /// store's pane re-dial fan-out runs when the app connection comes up, but a re-affirming healthy poll (an
+    /// already-connected → connected no-op) does NOT re-fan every tick. Driven via `markConnectedForAutomation`,
+    /// the one public path that reaches `.connected` without a live registry.
+    func testConnectionEstablishedFiresOncePerTransition() {
+        let c = AppConnection(registry: failingRegistry())
+        var fired = 0
+        c.onConnectionEstablished = { fired += 1 }
+
+        XCTAssertEqual(fired, 0, "no fire before the first connected transition")
+        c.markConnectedForAutomation()
+        XCTAssertEqual(fired, 1, "fires on the transition into .connected")
+        c.markConnectedForAutomation() // already connected — a re-affirm, not a transition
+        XCTAssertEqual(fired, 1, "an already-connected re-affirm must NOT re-fire the pane re-dial")
+    }
+
+    /// A deliberate `disconnect()` after a connect resets the guard, so the NEXT connected transition fires
+    /// again (a real drop→recover must re-dial the stranded panes).
+    func testConnectionEstablishedRefiresAfterDisconnect() async {
+        let c = AppConnection(registry: failingRegistry())
+        var fired = 0
+        c.onConnectionEstablished = { fired += 1 }
+        c.markConnectedForAutomation()
+        XCTAssertEqual(fired, 1)
+        await c.disconnect()
+        c.markConnectedForAutomation()
+        XCTAssertEqual(fired, 2, "reconnecting after a disconnect re-fires the establish hook")
+    }
+
     /// The seed target prefills the editable form fields (the connect-gate shows the last-used host).
     func testSeedPrefillsFormFields() {
         let seed = ConnectionTarget(host: "studio.local", port: 7421, mediaPort: 9100, cursorPort: 9101)

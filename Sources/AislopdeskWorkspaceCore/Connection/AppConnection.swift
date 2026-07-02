@@ -37,6 +37,22 @@ public final class AppConnection {
     /// ``Workspace/connection``. Set by the store after construction (avoids an init cycle).
     public var onTargetCommitted: (@MainActor (ConnectionTarget) -> Void)?
 
+    /// Invoked whenever `status` TRANSITIONS into `.connected` (not on a re-affirming healthy poll) — the app
+    /// shell wires this to ``WorkspaceStore/redialDisconnectedPanes()`` so that panes stranded in
+    /// `.failed`/`.unreachable` (e.g. every restored terminal pane dialled while the host was down, then given
+    /// up) are RE-DIALLED the moment the app-global connection (re)establishes. Without it the pill turns green
+    /// but every pre-existing pane stays a dead, blank terminal until a manual per-pane Reconnect (R-lifecycle
+    /// #1). `nil` in tests / headless ⇒ no fan-out.
+    public var onConnectionEstablished: (@MainActor () -> Void)?
+
+    /// Sets `status = .connected` and fires ``onConnectionEstablished`` ONLY on the transition INTO connected
+    /// (a re-affirm from an already-connected healthy poll must not re-fan the pane re-dial each tick).
+    private func markConnected() {
+        let wasConnected = status == .connected
+        status = .connected
+        if !wasConnected { onConnectionEstablished?() }
+    }
+
     // MARK: Collaborators
 
     private let registry: ConnectionRegistry
@@ -207,7 +223,7 @@ public final class AppConnection {
         do {
             try await registry.pin(host: t.host, port: t.port)
             guard gen == connectGeneration, !deliberatelyClosed else { return }
-            status = .connected
+            markConnected()
             recordRecentTarget(t)
             startSupervisor(t, generation: gen)
         } catch {
@@ -241,7 +257,7 @@ public final class AppConnection {
     /// always pins the terminal mux via ``connect()``).
     public func markConnectedForAutomation() {
         deliberatelyClosed = false
-        status = .connected
+        markConnected()
     }
 
     /// iOS background: unpin so the shared mux closes (the OS kills an app that strands a background
@@ -280,7 +296,9 @@ public final class AppConnection {
                 guard gen == connectGeneration, !deliberatelyClosed else { return }
                 if alive {
                     attempt = 0
-                    if status != .connected { status = .connected }
+                    // Re-affirm connected (a poll that finds the link back after a blip recovers here). Route
+                    // through `markConnected` so a genuine drop→recover transition re-dials stranded panes.
+                    if status != .connected { markConnected() }
                     try? await Task.sleep(for: Self.healthyPoll)
                     continue
                 }
@@ -290,7 +308,9 @@ public final class AppConnection {
                 do {
                     try await registry.pin(host: t.host, port: t.port) // rebuilds via dead-eviction
                     guard gen == connectGeneration, !deliberatelyClosed else { return }
-                    status = .connected // `pinnedTarget` is already `t` (set in establish, kept across reconnect)
+                    // `pinnedTarget` is already `t` (set in establish, kept across reconnect). Route through
+                    // `markConnected` so recovering from a drop re-dials any panes that gave up meanwhile.
+                    markConnected()
                     attempt = 0
                 } catch {
                     guard gen == connectGeneration, !deliberatelyClosed else { return }

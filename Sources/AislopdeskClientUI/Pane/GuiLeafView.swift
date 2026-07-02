@@ -42,6 +42,12 @@ struct GuiLeafView: View {
     let store: WorkspaceStore
     /// This pane's id — the activation + focus key.
     let paneID: PaneID
+    /// Whether this video pane is currently ON-SCREEN (its tab is active AND it is not zoom-hidden). Under the
+    /// keep-all-mounted invariant a hidden tab's leaf is NEVER unmounted, so `onDisappear` does not fire on a
+    /// tab switch — this visibility flag is what actually drives the activation lifecycle (A2/R-lifecycle #2):
+    /// a pane that goes hidden releases its `liveVideoCap` slot + stops the UDP/VT/Metal pipeline, and one that
+    /// becomes visible (re)requests a slot. Defaults to `true` for the static-mirror / preview paths.
+    var isVisible: Bool = true
     /// "LOCK POSITION" button state — mirrored locally so the footer lock icon reflects on/off. The actual
     /// edge-pan freeze lives in the video view (toggled via ``RemoteWindowModel/sendViewport(_:)``); this stays
     /// in sync 1:1 with the toggle and resets with the pane.
@@ -95,25 +101,36 @@ struct GuiLeafView: View {
             }
         }
         .animation(Slate.Anim.reveal, value: store.isReadOnly(for: paneID))
-        // CAP ADMISSION (A2): request a slot on appear AND re-attempt whenever a sibling frees one
-        // (`videoPromotionGeneration` bumps). `.task(id:)` cancels+restarts on either change. NEVER
-        // calls `live.setVideoActive` directly — the store enforces the cap + tearingDownVideo
-        // accounting. iOS resume re-activates `wasVideoActiveBeforePause` inside `LivePaneSession.resume`,
-        // so this activate is idempotent there (an already-active pane returns true without churn).
+        // CAP ADMISSION (A2/R-lifecycle #2): request a slot when this pane is ON-SCREEN, on appear AND whenever
+        // a sibling frees one (`videoPromotionGeneration` bumps). `.task(id:)` cancels+restarts on either
+        // change. Gated on `isVisible` so a background-tab / zoom-hidden pane does NOT claim a `liveVideoCap`
+        // slot (the launch-time race where hidden tabs win the cap over the visible pane). NEVER calls
+        // `live.setVideoActive` directly — the store enforces the cap + tearingDownVideo accounting. iOS resume
+        // re-activates `wasVideoActiveBeforePause` inside `LivePaneSession.resume`, so this is idempotent there.
         .task(id: activationKey) {
-            guard !staticMirror, model != nil else { return }
+            guard !staticMirror, model != nil, isVisible else { return }
             _ = store.activateVideo(paneID)
         }
-        // A tab-switch unmounts the leaf → free the cap slot (close/detach already flows through
-        // `reconcile` → `teardown`, this only handles the on-screen disappear, A5).
+        // VISIBILITY-DRIVEN LIFECYCLE (R-lifecycle #2): under keep-all-mounted a hidden tab's leaf is never
+        // unmounted, so `onDisappear` does NOT fire on a tab switch — driving (de)activation off `isVisible` is
+        // what frees the slot + stops the decode pipeline when this pane goes off-screen and re-activates it on
+        // return. (Zoom collapse hides a sibling the same way.)
+        .onChange(of: isVisible) { _, nowVisible in
+            guard !staticMirror, model != nil else { return }
+            if nowVisible { _ = store.activateVideo(paneID) } else { store.deactivateVideo(paneID) }
+        }
+        // Belt-and-braces: a genuine unmount (pane close before reconcile teardown) also frees the slot.
         .onDisappear {
             guard !staticMirror else { return }
             store.deactivateVideo(paneID)
         }
     }
 
-    /// The `.task` identity: re-run admission when THIS session changes (mount) OR a sibling frees a slot.
-    private var activationKey: String { "\(live?.id.hashValue ?? 0):\(store.videoPromotionGeneration)" }
+    /// The `.task` identity: re-run admission when THIS session changes (mount), a sibling frees a slot, OR
+    /// this pane's visibility flips (so a pane returning to screen re-requests its slot immediately).
+    private var activationKey: String {
+        "\(live?.id.hashValue ?? 0):\(store.videoPromotionGeneration):\(isVisible ? 1 : 0)"
+    }
 
     /// E21 WI-3 (F3): whether the `🔒 READ ONLY ×` pill mounts over this video pane — the pane is read-only
     /// (``WorkspaceStore/isReadOnly(for:)``, the convergent set) AND this is NOT the static-mirror snapshot
