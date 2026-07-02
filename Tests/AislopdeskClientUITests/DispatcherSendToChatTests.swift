@@ -5,7 +5,7 @@
 // chord was a permanent no-op (the closure defaulted to nil → graceful no-op) and the dialog never appeared.
 //
 // Driven headlessly with a synthetic NSEvent (no window-server resource — the hang-safety rule is about
-// SCStream/VT/Metal, not NSEvent), mirroring `DispatcherWebChordYieldTests`.
+// SCStream/VT/Metal, not NSEvent).
 //
 // REVERT-TO-CONFIRM-FAIL: with `dispatch(_:)`'s `route(...)` call missing `toggleSendToChat:` (the pre-fix
 // state) the closure never fires — `fired` stays 0 and `testSendToChatChordFiresTheToggleAndSwallows` fails.

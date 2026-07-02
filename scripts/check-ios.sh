@@ -18,9 +18,9 @@ PROJECT="${REPO_ROOT}/Apps/ClientApp-iOS/ClientApp-iOS.xcodeproj"
 DEST='generic/platform=iOS Simulator'
 
 # The .xcodeproj is gitignored/derived — project.yml is the source of truth (see .gitignore).
-# Regenerate it from the committed spec so newly added Apps/Shared sources (e.g. WebPaneView.swift)
-# are picked up; a stale checkout would otherwise compile AppMain.swift without them and fail with
-# "cannot find 'WebPaneView' in scope". Mirrors check-macos.sh / check-video.sh.
+# Regenerate it from the committed spec so newly added/removed Apps/Shared sources are picked up;
+# a stale checkout would otherwise compile AppMain.swift against an outdated source list and fail
+# with "cannot find … in scope". Mirrors check-macos.sh / check-video.sh.
 if ! command -v xcodegen > /dev/null 2>&1; then
   echo "ERROR: xcodegen not found on PATH (install: brew install xcodegen)." >&2
   exit 1

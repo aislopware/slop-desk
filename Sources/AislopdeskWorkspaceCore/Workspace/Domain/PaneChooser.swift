@@ -94,15 +94,6 @@ public enum PaneChooserRegistry {
                 isVideo: false,
                 requiresWindowPick: false,
             )
-        case .web:
-            PaneChooserOption(
-                kind: .web,
-                title: "Web",
-                symbol: "globe",
-                mnemonic: "w",
-                isVideo: false,
-                requiresWindowPick: false,
-            )
         }
     }
 

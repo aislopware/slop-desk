@@ -97,10 +97,6 @@ targets:
           - QuartzCore
           - -framework
           - Metal
-          # E18 LOCAL web pane: the production WebPaneView wraps a WKWebView (WebPaneSeam). Link
-          # WebKit so `import WebKit` resolves and WebRendererFactory.shared can be registered.
-          - -framework
-          - WebKit
         # Best-effort builds run unsigned for an iOS Simulator destination:
         #   xcodebuild build -destination 'generic/platform=iOS Simulator' \
         #     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO

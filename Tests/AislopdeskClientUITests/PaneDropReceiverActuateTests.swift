@@ -3,14 +3,14 @@
 // drop never moves focus (a pane is focused only on tap), so a Split-Left/Right or Open-In-Place drop onto a
 // NON-focused sibling used to split / replace the FOCUSED pane instead — a split-brained actuation (the
 // verbatim-inject / host-open arms already targeted the dropped pane's own terminal model, while the
-// `splitActivePane` / `openWebPane` arms read the ACTIVE pane). The fix threads the dropped-on pane's `PaneID`
+// `splitActivePane` arm read the ACTIVE pane). The fix threads the dropped-on pane's `PaneID`
 // into `actuate` and focuses it FIRST, so every active-pane-reading ingress resolves to the dropped-on pane.
 //
 // These drive the `@MainActor` `PaneDropReceiver.actuate` directly (a real `DropInfo` can't be synthesized in
 // a unit test) on a MULTI-pane tree whose focused pane (A) is NOT the drop target (B), and assert the new
 // split is a direct sibling of B — NOT A. Revert-to-confirm-fail: drop the `store.focusPaneTree(paneID)` line
-// from `actuate` and both tests fail (the new split lands beside the focused A instead of the dropped-on B).
-// The pre-existing `WebPaneStoreTests` only ever exercised a single-pane store, so the bug slipped through.
+// from `actuate` and the split test fails (the new split lands beside the focused A instead of the dropped-on
+// B). The earlier store-level tests only ever exercised a single-pane store, so the bug slipped through.
 
 #if canImport(SwiftUI)
 import XCTest
@@ -19,7 +19,7 @@ import XCTest
 
 @MainActor
 final class PaneDropReceiverActuateTests: XCTestCase {
-    /// A live tree-model store whose sessions are headless doubles (no socket, no `WKWebView`).
+    /// A live tree-model store whose sessions are headless doubles (no socket).
     private func makeStore() -> WorkspaceStore {
         WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
     }
@@ -54,27 +54,6 @@ final class PaneDropReceiverActuateTests: XCTestCase {
             "precondition: A is the FOCUSED pane and B is the non-focused sibling",
         )
         return (a, b)
-    }
-
-    // MARK: Split-Right (a dropped URL) onto a NON-focused pane splits THAT pane
-
-    func testSplitWebTargetsDroppedPaneNotFocusedPane() throws {
-        let store = makeStore()
-        let (a, b) = try makeFocusedAandSiblingB(store)
-        let before = Set(store.tree.allPaneIDs())
-
-        // Split-Right with a web URL dropped ONTO B (the non-focused pane).
-        PaneDropReceiver.actuate(
-            .splitWeb("example.com", leading: false),
-            store: store, terminalModel: nil, overlay: nil, paneID: b,
-        )
-
-        let new = try XCTUnwrap(store.tree.allPaneIDs().first { !before.contains($0) }, "the drop added a leaf")
-        XCTAssertEqual(store.tree.spec(for: new)?.kind, .web, "the dropped URL opened a web pane")
-        let root = try XCTUnwrap(store.tree.activeSession?.activeTab?.root)
-        let siblings = try XCTUnwrap(directLeafSiblings(of: new, in: root), "the new pane has a parent split")
-        XCTAssertTrue(siblings.contains(b), "the new split is a sibling of the DROPPED-ON pane B")
-        XCTAssertFalse(siblings.contains(a), "NOT a sibling of the focused pane A (the split-brain bug)")
     }
 
     // MARK: Read-only gate — a read-only terminal pane is INERT to drops (E17 parity with the paste halt)

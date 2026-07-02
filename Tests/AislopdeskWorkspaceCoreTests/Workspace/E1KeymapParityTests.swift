@@ -241,7 +241,7 @@ final class E1KeymapParityTests: XCTestCase {
 
     /// ⌘⇧R is UNBOUND (the Details panel — whose Toggle owned ⌘⇧R — is REMOVED; keyboard-centric shell),
     /// and Rename — which once squatted on ⌘⇧R — stays chord-less. FAILS if a binding re-takes ⌘⇧R without
-    /// a deliberate decision (a focused web pane also yields ⌘⇧R as browser hard-reload).
+    /// a deliberate decision.
     func testCmdShiftRIsUnboundAndRenameIsChordLess() {
         XCTAssertNil(
             WorkspaceBindingRegistry.chordTable[KeyChord(character: "r", [.command, .shift])],

@@ -21,7 +21,7 @@
 // visually identical to the old bare `PaneContainer`.
 //
 // KIND-GENERIC by construction: the card hosts the SAME `PaneContainer` the tiled layout mounts, so a
-// terminal, a local web pane, AND a `.remoteGUI` / `.systemDialog` video pane all float for free (the
+// terminal AND a `.remoteGUI` / `.systemDialog` video pane all float for free (the
 // "remote window floats" acceptance is satisfied with no kind branch here).
 //
 // ONE-SURFACE / NO-TEARDOWN invariant (the load-bearing rule): the card NEVER reconstructs the hosted surface

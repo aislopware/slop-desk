@@ -37,11 +37,28 @@ final class ClaudeKindRemovalTests: XCTestCase {
         XCTAssertEqual(spec.title, "my agent", "the title survives the tolerant decode")
     }
 
-    /// A genuinely unknown kind (NOT the tolerated legacy value) still throws — the loader's reset path
-    /// handles that; only the one intentionally-retired value is repaired.
+    /// A genuinely unknown kind (NOT a tolerated legacy value) still throws — the loader's reset path
+    /// handles that; only the intentionally-retired values are repaired.
     func testUnknownPaneKindStillThrows() {
         let json = Data(#"{ "kind": "wormhole", "title": "x" }"#.utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(PaneSpec.self, from: json), "an unknown kind is still corruption")
+    }
+
+    // MARK: - 2b. Legacy `"web"` raw value decodes to `.terminal` (the removed local web pane, no trap)
+
+    /// The removed `PaneKind.web` (the local WKWebView browser pane, since pruned) rides the SAME decode
+    /// bridge as `"claudeCode"`: an OLD persisted workspace carrying a `"web"` leaf decodes to a plain
+    /// `.terminal` instead of trapping. Its now-unknown `webURL` key is simply decode-ignored (the keyed
+    /// container skips keys it does not model). Revert-to-confirm-fail: without the bridge in
+    /// `PaneKind.init(from:)` the decode throws and this test fails.
+    func testLegacyWebRawValueDecodesToTerminal() throws {
+        // The exact bytes an old binary wrote for a persisted web pane (kind + title + address).
+        let json = Data(#"{ "kind": "web", "title": "Web", "webURL": "https://example.com/" }"#.utf8)
+        let spec = try JSONDecoder().decode(PaneSpec.self, from: json)
+        XCTAssertEqual(spec.kind, .terminal, "a legacy web spec decodes to a plain terminal (no trap)")
+        XCTAssertEqual(spec.title, "Web", "the title survives the tolerant decode")
+        // The raw value is no longer a valid synthesized case either.
+        XCTAssertNil(PaneKind(rawValue: "web"), "the synthesized rawValue init does not know web")
     }
 
     // MARK: - 3. Legacy claude pane handling

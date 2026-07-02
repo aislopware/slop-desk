@@ -15,14 +15,14 @@
 //   4. commit — `performDrop` resolves the `(zone, content)` cell to a ``DropAction`` and actuates it against
 //      the injected store / live terminal / overlay (E18 WI-6): a verbatim PTY inject, a terminal-rooted new
 //      tab / split (the store's ``WorkspaceStore/openTerminalRooted(at:split:leading:launchGrace:)`` ingress,
-//      with the host-resolved advisory toast), the E10 host-open verb, or the local web-pane ingress. Nothing
-//      is actuated on hover — commit-on-`performDrop` only.
+//      with the host-resolved advisory toast), or the E10 host-open verb. Nothing is actuated on hover —
+//      commit-on-`performDrop` only.
 //
-// HEADLESS-SAFE: the receiver itself imports no WebKit / AppKit-private. The geometry + policy are the pure
+// HEADLESS-SAFE: the receiver itself imports no AppKit-private. The geometry + policy are the pure
 // ``PaneDropZoneLayout`` / ``DropActionResolver`` from `AislopdeskWorkspaceCore`, so the gating is unit-tested
 // there without a GUI; the terminal-rooted `cd`-actuation lives behind the store ingress, unit-tested against
-// the `FakePaneSession` sink (`WebPaneStoreTests`). The live drag/overlay render is the Phase-3 HW-fidelity
-// target the plan flags.
+// the `FakePaneSession` sink (`OpenTerminalRootedStoreTests`). The live drag/overlay render is the Phase-3
+// HW-fidelity target the plan flags.
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -34,7 +34,7 @@ import UniformTypeIdentifiers
 
 /// The per-pane drag state the overlay renders from and the receiver mutates: the classified payload of the
 /// in-flight drag (`nil` when nothing supported is hovering) + the zone the cursor is currently over.
-/// `@MainActor @Observable` (mirrors ``WebPaneModel``) so the overlay re-renders as the cursor moves between
+/// `@MainActor @Observable` so the overlay re-renders as the cursor moves between
 /// zones; held as `@State` by ``PaneContainer`` (per-pane, `.id(PaneID)`-keyed).
 @MainActor
 @Observable
@@ -103,7 +103,7 @@ final class PaneDropOverlayModel {
 struct PaneDropReceiver: DropDelegate {
     /// THIS pane's id — the pane being dragged ONTO (the overlay covers the pane under the cursor and its
     /// zones act on THAT pane). On commit the receiver focuses it FIRST so the active-pane-reading store
-    /// ingress (`splitActivePane` / `openWebPane`) resolves to the dropped-on pane, not whichever pane
+    /// ingress (`splitActivePane`) resolves to the dropped-on pane, not whichever pane
     /// happened to be focused — a drop never changes focus on its own (the pane is focused only on tap), so
     /// without this a Split / Open-In-Place drop onto a non-focused sibling would split/replace the WRONG pane.
     let paneID: PaneID
@@ -114,10 +114,10 @@ struct PaneDropReceiver: DropDelegate {
     /// `false` on the static-mirror (ImageRenderer) path — the receiver then declines every drag so a
     /// snapshot pass never engages the live overlay.
     let enabled: Bool
-    /// The workspace store the terminal-rooted (`newTabCd` / `splitInjectPath`) and web (`openWeb` /
-    /// `splitWeb`) actions drive — reusing the existing `openTerminalRooted` / `openWebPane` ingress.
+    /// The workspace store the terminal-rooted (`newTabCd` / `splitInjectPath`) actions drive — reusing the
+    /// existing `openTerminalRooted` ingress.
     let store: WorkspaceStore
-    /// THIS (dropped-on) pane's live terminal model (`nil` for a web / chooser pane): the verbatim PTY funnel
+    /// THIS (dropped-on) pane's live terminal model (`nil` for a chooser pane): the verbatim PTY funnel
     /// for `injectText` + the E10 host-open callback for `hostOpen`. Since commit focuses ``paneID`` first,
     /// this is also the active pane by the time the action runs. The receiver never builds a `cd` itself; the
     /// canonical `cd` idiom lives in the store ingress (``LinkActionPolicy/changeDirectoryCommandLine(_:)``).
@@ -136,7 +136,7 @@ struct PaneDropReceiver: DropDelegate {
     /// Accept the drag iff it is enabled, the dropped-on terminal pane is NOT read-only, AND it carries a
     /// supported type — otherwise decline so no overlay shows (validate-then-drop). READ-ONLY gate (E17 parity
     /// with the ``TerminalViewModel/sendInput(_:)`` paste halt): a read-only pane refuses every drop, so the
-    /// affordance never appears and no inject / open-in-place can land. `terminalModel` is nil for a web /
+    /// affordance never appears and no inject / open-in-place can land. `terminalModel` is nil for a
     /// chooser pane (read-only doesn't apply). `hasItemsConforming(to:)` is a pure query; the read-only read
     /// hops to the main actor, where every `DropDelegate` callback is already delivered.
     func validateDrop(info: DropInfo) -> Bool {
@@ -214,12 +214,12 @@ struct PaneDropReceiver: DropDelegate {
 
     /// Carry out a resolved ``DropAction`` against the store / live terminal / overlay. The pure policy
     /// (``DropActionResolver``) decided WHAT; this turns it into the concrete call, reusing the existing
-    /// actuators (the verbatim PTY funnel, the store's terminal-rooted `cd` ingress, the E10 host-open verb,
-    /// the local web-pane ingress) — no new engine — and layers the host-resolved advisory toast on the
+    /// actuators (the verbatim PTY funnel, the store's terminal-rooted `cd` ingress, the E10 host-open verb)
+    /// — no new engine — and layers the host-resolved advisory toast on the
     /// folder → New-Tab `cd`. `static` so it captures no non-Sendable `self`.
     ///
     /// FOCUS-FIRST: `paneID` is the pane the cursor was dropped onto. We focus it BEFORE actuating so the
-    /// active-pane-reading ingress (`splitActivePane`, `openWebPane`'s `.split` / `.current`) targets the
+    /// active-pane-reading ingress (`splitActivePane`) targets the
     /// dropped-on pane — a drop never moves focus on its own, so a Split-Left/Right or Open-In-Place drop
     /// onto a NON-focused sibling would otherwise split / replace the focused pane instead of this one. The
     /// focus is a no-op when the pane is already active (or has since closed — `focusPaneTree` self-guards).
@@ -236,7 +236,7 @@ struct PaneDropReceiver: DropDelegate {
         // verbatim inject, no open-in-place host verb, no terminal-rooted tab/split. Belt-and-suspenders with
         // `validateDrop` (which suppresses the overlay) AND the single defence on the open-in-place `hostOpen`
         // path, which — unlike `injectText` → `sendInput` — does NOT self-gate read-only. `terminalModel` is
-        // nil for a web/chooser pane, where read-only doesn't apply, so those drops are unaffected.
+        // nil for a chooser pane, where read-only doesn't apply, so those drops are unaffected.
         guard terminalModel?.isReadOnly != true else { return }
         store.focusPaneTree(paneID)
         switch action {
@@ -254,14 +254,6 @@ struct PaneDropReceiver: DropDelegate {
             // Open-In-Place on the HOST — fire the SAME host-open verb (E10 verb 9, `MetadataClient.openPath`)
             // the ⌘-click path uses; `TerminalLeafView` has already wired this callback (+ its failure toast).
             terminalModel?.onRequestOpenHostPath?(path)
-        case let .openWeb(rawURL, placement):
-            if let url = WebURLNormalizer.normalize(rawURL) {
-                store.openWebPane(url: url, placement: placement)
-            }
-        case let .splitWeb(rawURL, leading):
-            if let url = WebURLNormalizer.normalize(rawURL) {
-                store.openWebPane(url: url, placement: .split(leading: leading))
-            }
         }
     }
 

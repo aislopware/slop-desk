@@ -12,7 +12,7 @@ public enum DropZone: String, CaseIterable, Sendable, Equatable {
     case newTab
     /// Center medium circle — paste the dropped path/text into the focused terminal.
     case insertPath
-    /// Lower-center medium circle — open the path/URL in place (host-open / web pane).
+    /// Lower-center medium circle — open the dropped path in place (host-open).
     case openInPlace
     /// Left-edge ellipse — split a new pane to the left.
     case splitLeft

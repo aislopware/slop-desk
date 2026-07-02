@@ -53,18 +53,6 @@ struct ClientAppMain {
         }
         #endif
 
-        // LOCAL web pane (E18, Web Browser Pane): register the production `WKWebView` surface. The
-        // cross-platform `AislopdeskClientUI` library cannot reference `WKWebView` directly (it would pull
-        // `WebKit` into the headless `swift build`/tests, and a `WKWebView` — like an `SCStream` — must never
-        // be built in a test, the CLAUDE.md hang-safety rule), so the GUI app target — which links `WebKit` —
-        // injects it here. With no registration the seam shows `WebLeafView`'s gated placeholder. The
-        // production view sets the non-persistent store + no-autoplay configuration (see WebPaneView).
-        #if canImport(WebKit)
-        WebRendererFactory.shared = { descriptor, context in
-            AnyView(WebPaneView(descriptor: descriptor, context: context))
-        }
-        #endif
-
         // PATH 2 (GUI video path, doc 17 §3): register the production remote-GUI-window
         // view. The cross-platform `AislopdeskClientUI` library cannot reference
         // `AislopdeskVideoClient.VideoWindowView` directly (it would pull VideoToolbox + Metal

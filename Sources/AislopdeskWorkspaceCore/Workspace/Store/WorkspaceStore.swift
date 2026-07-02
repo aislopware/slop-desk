@@ -3837,10 +3837,9 @@ public final class WorkspaceStore {
         for id in desiredLeafIDs where registry[id] == nil {
             guard let spec = spec(id) else { continue }
             // A `.chooser` pane is a pure IN-PANE kind picker — it has NO live session until the user picks a
-            // real kind (`choosePaneKind` flips the spec and this loop then materializes it). A `.web` pane is
-            // a fully-LOCAL WKWebView (no remote stream, no PTY) so it likewise materializes NO host session.
-            // Skip both so `handle(for:)` stays nil and the leaf view renders directly from the spec kind.
-            if spec.kind == .chooser || spec.kind == .web { continue }
+            // real kind (`choosePaneKind` flips the spec and this loop then materializes it). Skip it so
+            // `handle(for:)` stays nil and the leaf view renders directly from the spec kind.
+            if spec.kind == .chooser { continue }
             let handle = makeSession(spec)
             (handle as? PaneSessionIDAdopting)?.adopt(id: id)
             registry[id] = handle

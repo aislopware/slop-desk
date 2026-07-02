@@ -308,9 +308,9 @@ final class RemoteGUIFirstClassPeerTests: XCTestCase {
     /// **The drag-drop exclusion pin (carry-overs §4 / E21 plan §1 — "no drop-to-create a remote window").** A
     /// `.remoteGUI` pane (a host window streamed over the PATH-2 video path) is minted ONLY by the picker
     /// (`newRemoteWindowTab`); there is intentionally NO drop-to-create arm. ``DropAction`` — the pure output of
-    /// ``DropActionResolver`` — carries terminal/web cases only, so NO `(zone × content)` cell in the whole
+    /// ``DropActionResolver`` — carries terminal cases only, so NO `(zone × content)` cell in the whole
     /// policy table can spawn a video pane. This walks the FULL table (every ``DropZone`` × each
-    /// ``DroppedContent`` variant) and asserts every resolved action targets a terminal or web pane, never a
+    /// ``DroppedContent`` variant) and asserts every resolved action targets a terminal, never a
     /// remote window. The ``createsRemoteWindow(_:)`` classifier is an EXHAUSTIVE switch, so a future refactor
     /// that adds a remote-window `DropAction` case is forced to classify it HERE (compile-time) and any resolver
     /// arm returning it trips the assertion — the exclusion can't erode silently. A doc-only WI, so this is a
@@ -338,7 +338,7 @@ final class RemoteGUIFirstClassPeerTests: XCTestCase {
     }
 
     /// Whether a resolved ``DropAction`` would create / target a remote-window (`.remoteGUI`) pane. An EXHAUSTIVE
-    /// switch over today's terminal/web-only actions — all `false`, hand-classified (not derived from the
+    /// switch over today's terminal-only actions — all `false`, hand-classified (not derived from the
     /// action's own value, so no tautology). A future drop-to-create-remote-window refactor would add a
     /// `DropAction` case and force a `true` branch HERE, which then trips ``testDropPolicyNeverCreatesARemoteWindow``.
     private static func createsRemoteWindow(_ action: DropAction) -> Bool {
@@ -346,9 +346,7 @@ final class RemoteGUIFirstClassPeerTests: XCTestCase {
         case .injectText,
              .newTabCd,
              .hostOpen,
-             .splitInjectPath,
-             .splitWeb,
-             .openWeb:
+             .splitInjectPath:
             false
         }
     }

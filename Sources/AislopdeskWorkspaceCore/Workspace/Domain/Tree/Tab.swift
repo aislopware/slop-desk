@@ -17,8 +17,8 @@ import Foundation
 ///   id here is rendered as an in-app floating card stacked over the tiled tree (`FloatingPaneCard`,
 ///   z-ordered last = topmost). The set is mutated by `WorkspaceTreeOps.toggleFloating` /
 ///   `WorkspaceTreeOps.spawnFloating` (and `toggleFloating(embedAnchor:)` returns a card to the tile); its
-///   geometry rides each pane's ``PaneSpec/floatingFrame``. Kind-generic — a terminal, a local web pane, or a
-///   `.remoteGUI` video pane all float. Was `[]` through the MVP (schema-reserved since docs/42 to avoid a
+///   geometry rides each pane's ``PaneSpec/floatingFrame``. Kind-generic — a terminal or a
+///   `.remoteGUI` video pane both float. Was `[]` through the MVP (schema-reserved since docs/42 to avoid a
 ///   later migration); E21 made it the live float layer rather than adding a new field.
 ///
 /// A pane's ``PaneSpec`` is **not** stored here — the split tree holds only identity/geometry; specs live

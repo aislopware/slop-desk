@@ -105,11 +105,6 @@ struct PaneContainer: View {
             // window). Picking flips the spec kind in place (`choosePaneKind`) and reconcile materializes the
             // real session here on the SAME PaneID — no modal, no new leaf.
             InPaneChooserView(store: store, paneID: paneID)
-        } else if kind == .web {
-            // E18 WI-4: a LOCAL web pane (`PaneKind.web`) materializes NO live session (reconcile skips it,
-            // like `.chooser`) — `live` is `nil` and the leaf renders the local browser chrome + the
-            // headless-safe `WebRendererFactory` seam straight from the spec's persisted address.
-            WebLeafView(store: store, paneID: paneID, isFocused: isFocused, staticMirror: staticMirror)
         } else if isVideo {
             GuiLeafView(
                 live: live,
@@ -201,7 +196,7 @@ struct PaneContainer: View {
             .onTapGesture { store.focusPaneTree(paneID) }
             // E18 WI-5/WI-6: accept external file/folder/URL/text drags. The receiver is disabled on the
             // static snapshot path (`!staticMirror`); it gates the overlay above and on `performDrop` FOCUSES
-            // THIS pane (`paneID`) then actuates against the store (terminal-rooted `cd` / web-pane ingress),
+            // THIS pane (`paneID`) then actuates against the store (terminal-rooted `cd` ingress),
             // THIS (dropped-on) pane's live terminal (verbatim inject / host-open), and the overlay
             // coordinator (advisory toast) — so a Split / Open-In-Place drop targets the pane under the cursor,
             // not whichever pane was focused. The accepted UTTypes mirror the receiver's classifier precedence.

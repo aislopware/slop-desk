@@ -1,26 +1,12 @@
 import Foundation
 
-// MARK: - Where a web URL lands
-
-/// Where an opened web URL is placed in the workspace. Defined here because ``DropAction/openWeb`` is
-/// the first user; the E18 web-pane store ingress (`WorkspaceStore+WebPane.openWebPane(url:placement:)`,
-/// WI-3) REUSES this same type — it is the single source of truth for web placement.
-public enum WebPanePlacement: Equatable, Sendable {
-    /// Replace the active pane's content in place (Open-In-Place on a URL).
-    case current
-    /// Open the URL in a brand-new tab.
-    case newTab
-    /// Split the active pane and open the URL beside it (`leading` = to the left/top).
-    case split(leading: Bool)
-}
-
 // MARK: - Resolved drop action
 
 /// The concrete action a `(zone, content)` pair resolves to — the PURE output of the drop policy, an
 /// instruction the actuator (E18 WI-6) carries out against the store / live terminal / metadata client.
 /// Carrying the action as a value (not actuating here) keeps the policy headless + table-testable.
 ///
-/// The case set is terminal/web only — there is intentionally NO remote-window (`.remoteGUI`) creator (E21
+/// The case set is terminal-only — there is intentionally NO remote-window (`.remoteGUI`) creator (E21
 /// WI-7): a streamed host window is minted solely by the picker, never by a drop (see ``DropActionResolver``).
 public enum DropAction: Equatable, Sendable {
     /// Paste this text/path VERBATIM into the focused terminal (`TerminalViewModel.sendInput`, never
@@ -33,31 +19,28 @@ public enum DropAction: Equatable, Sendable {
     case hostOpen(String)
     /// Split the active terminal pane and target the new pane at this path (`leading` = left/top).
     case splitInjectPath(String, leading: Bool)
-    /// Split the active pane and open this URL in a web pane (`leading` = left/top).
-    case splitWeb(String, leading: Bool)
-    /// Open this URL in a web pane at `placement` (Open-In-Place → `.current`).
-    case openWeb(String, placement: WebPanePlacement)
 }
 
 // MARK: - Resolver (the (zone × content) policy table)
 
 /// The PURE policy mapping a hovered ``DropZone`` + classified ``DroppedContent`` to a ``DropAction``,
-/// or `nil` for a disabled cell (see `docs/ui-shell/spec/user-interface__drag-and-drop.md`). The spec's table:
+/// or `nil` for a disabled cell (see `docs/ui-shell/spec/user-interface__drag-and-drop.md`). The spec's table
+/// (with the local web pane removed — a dropped URL now only PASTES; it never opens a browser pane):
 ///
 /// | Dragged thing | Green half / terminal action            | Blue half / pane action          |
 /// |---------------|------------------------------------------|----------------------------------|
 /// | Folder        | New terminal tab with `cwd = <folder>`   | Folder viewer (host open) / split|
 /// | File          | (disabled — no "open as terminal")       | File viewer (host open) / split  |
-/// | URL           | (disabled — no "open as terminal")       | URL pane / split web             |
+/// | URL           | (disabled — no "open as terminal")       | (disabled — no local web pane)   |
 /// | Text snippet  | Pastes into the focused terminal         | Same                             |
 ///
 /// Concretely, by zone:
 /// - **New Tab** (green): folder → `newTabCd`; file/URL → `nil` (the disabled green-half cells);
 ///   text → paste.
 /// - **Insert Path** (green): any path/URL/text → paste it verbatim into the focused terminal.
-/// - **Open In-Place** (blue): path → host-open; URL → web pane in place; text → paste (no viewer for
-///   raw text).
-/// - **Split Left / Right** (blue): path → split terminal targeted at the path; URL → split web;
+/// - **Open In-Place** (blue): path → host-open; URL → `nil` (the web pane is gone — no local viewer);
+///   text → paste (no viewer for raw text).
+/// - **Split Left / Right** (blue): path → split terminal targeted at the path; URL → `nil`;
 ///   text → paste into the focused terminal (the spec's "Same").
 ///
 /// Text always pastes into the focused terminal regardless of zone (the spec lists identical green/blue
@@ -66,7 +49,7 @@ public enum DropAction: Equatable, Sendable {
 /// **E21 exclusion — no drop-to-create a remote window (`.remoteGUI`).** A `.remoteGUI` pane is a real host
 /// window streamed over the PATH-2 UDP video path; it is minted ONLY by the picker / connect overlay
 /// (`WorkspaceStore.newRemoteWindowTab(windowID:title:appName:)`), NEVER by a file / URL / text drop. There is
-/// deliberately no remote-window arm in this table — ``DropAction`` carries terminal/web cases only — so no
+/// deliberately no remote-window arm in this table — ``DropAction`` carries terminal cases only — so no
 /// `(zone × content)` cell can spawn a video pane (pinned by `RemoteGUIFirstClassPeerTests`). Conversely a
 /// foreign drop ONTO an already-mounted `.remoteGUI` target self-guards: the actuator (`PaneDropReceiver`)
 /// holds a `nil` `terminalModel` for a video pane and every terminal actuator is `terminalModel?.…`
@@ -102,7 +85,8 @@ public enum DropActionResolver {
             switch content {
             case let .folder(path),
                  let .file(path): return .hostOpen(path)
-            case let .url(value): return .openWeb(value, placement: .current)
+            // The local web pane is retired: there is no in-place viewer for a URL (Insert Path still pastes).
+            case .url: return nil
             case .text: return nil // unreachable
             }
 
@@ -129,7 +113,8 @@ public enum DropActionResolver {
         switch content {
         case let .folder(path),
              let .file(path): .splitInjectPath(path, leading: leading)
-        case let .url(value): .splitWeb(value, leading: leading)
+        // The local web pane is retired: a URL has no split-to-browser cell any more.
+        case .url: nil
         case .text: nil // unreachable (text handled before the zone switch)
         }
     }

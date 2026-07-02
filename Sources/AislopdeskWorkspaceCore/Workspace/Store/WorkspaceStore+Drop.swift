@@ -8,7 +8,7 @@ import Foundation
 ///
 /// It is lifted OUT of the view layer (it lived inline in `PaneContainer` during WI-5) precisely so the
 /// `cd`-actuation is unit-testable at the store level against the `FakePaneSession` sink
-/// (`WebPaneStoreTests`), exactly like the A26 cwd-inheritance ``setLastKnownCwd(_:for:)`` /
+/// (`OpenTerminalRootedStoreTests`), exactly like the A26 cwd-inheritance ``setLastKnownCwd(_:for:)`` /
 /// `deferInheritedCwd` deferred send is.
 ///
 /// REUSES the existing actuators verbatim — ``newTab(kind:)`` / ``splitActivePane(axis:kind:leading:)`` mint

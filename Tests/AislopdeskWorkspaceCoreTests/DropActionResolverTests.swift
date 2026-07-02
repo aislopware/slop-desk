@@ -62,8 +62,9 @@ final class DropActionResolverTests: XCTestCase {
         XCTAssertEqual(resolve(.openInPlace, file), .hostOpen("/Users/me/proj/README.md"))
     }
 
-    func testOpenInPlaceURLOpensWebInPlace() {
-        XCTAssertEqual(resolve(.openInPlace, url), .openWeb("https://example.com", placement: .current))
+    func testOpenInPlaceURLIsDisabled() {
+        // The local web pane is retired — a URL has no in-place viewer (Insert Path still pastes it).
+        XCTAssertNil(resolve(.openInPlace, url))
     }
 
     func testOpenInPlaceTextPastes() {
@@ -80,8 +81,9 @@ final class DropActionResolverTests: XCTestCase {
         XCTAssertEqual(resolve(.splitLeft, file), .splitInjectPath("/Users/me/proj/README.md", leading: true))
     }
 
-    func testSplitLeftURLSplitsWeb() {
-        XCTAssertEqual(resolve(.splitLeft, url), .splitWeb("https://example.com", leading: true))
+    func testSplitLeftURLIsDisabled() {
+        // No split-to-browser cell any more (the local web pane is retired).
+        XCTAssertNil(resolve(.splitLeft, url))
     }
 
     func testSplitLeftTextPastes() {
@@ -98,8 +100,8 @@ final class DropActionResolverTests: XCTestCase {
         XCTAssertEqual(resolve(.splitRight, file), .splitInjectPath("/Users/me/proj/README.md", leading: false))
     }
 
-    func testSplitRightURLSplitsWeb() {
-        XCTAssertEqual(resolve(.splitRight, url), .splitWeb("https://example.com", leading: false))
+    func testSplitRightURLIsDisabled() {
+        XCTAssertNil(resolve(.splitRight, url))
     }
 
     func testSplitRightTextPastes() {
@@ -129,11 +131,9 @@ final class DropActionResolverTests: XCTestCase {
         XCTAssertFalse(DropActionResolver.allowedZones(for: file).contains(.newTab))
     }
 
-    func testAllowedZonesURLDisablesNewTab() {
-        XCTAssertEqual(
-            DropActionResolver.allowedZones(for: url),
-            [.insertPath, .openInPlace, .splitLeft, .splitRight],
-        )
+    func testAllowedZonesURLIsInsertPathOnly() {
+        // With the local web pane retired, a URL's only live cell is the verbatim paste (Insert Path).
+        XCTAssertEqual(DropActionResolver.allowedZones(for: url), [.insertPath])
         XCTAssertFalse(DropActionResolver.allowedZones(for: url).contains(.newTab))
     }
 
