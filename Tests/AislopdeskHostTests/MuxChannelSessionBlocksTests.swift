@@ -43,7 +43,7 @@ final class MuxChannelSessionBlocksTests: XCTestCase {
         let blocks = commandBlocks(session.takeControlBatchForTesting())
         // A complete metadata for index 0 pinned to the literal command.
         let complete = blocks.compactMap { msg -> (UInt32, String, Bool)? in
-            guard case let .commandBlock(index, _, _, complete, _, cmd) = msg else { return nil }
+            guard case let .commandBlock(index, _, _, complete, _, cmd, _) = msg else { return nil }
             return (index, cmd, complete)
         }.filter(\.2)
         XCTAssertEqual(complete.count, 1)

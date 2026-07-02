@@ -76,8 +76,10 @@ public actor AislopdeskClient {
         /// host segments the outbound PTY byte stream into per-command blocks and emits this on each
         /// create / update / complete; it carries ONLY the metadata (NOT the output bytes). The UI
         /// upserts a per-pane block keyed by `index` (the request key for ``blockOutput``). A running
-        /// block: `complete == false`, nil exit/duration, partial `outputLen`. See
-        /// ``WireMessage/commandBlock(index:exitCode:durationMS:complete:outputLen:commandText:)``.
+        /// block: `complete == false`, nil exit/duration, partial `outputLen`. `promptOrdinal` is the
+        /// block's 1-based prompt-cycle ordinal (counts EVERY OSC-133 `A` cycle incl. blockless empty
+        /// Enters, matching libghostty's `.prompt` rows — the outline-jump anchor; 0 = unknown). See
+        /// ``WireMessage/commandBlock(index:exitCode:durationMS:complete:outputLen:commandText:promptOrdinal:)``.
         case commandBlock(
             index: UInt32,
             exitCode: Int32?,
@@ -85,6 +87,7 @@ public actor AislopdeskClient {
             complete: Bool,
             outputLen: UInt32,
             commandText: String,
+            promptOrdinal: UInt32,
         )
         /// A Block's captured OUTPUT bytes (WB1 wire type 29, host → client), in reply to a
         /// ``requestBlockOutput(index:)``. `output` is the RAW captured VT bytes (control sequences
@@ -540,11 +543,12 @@ public actor AislopdeskClient {
             // RICH Claude status (type 27): surface the raw bytes; the UI maps them back to a
             // ClaudeStatus (AislopdeskClient does not depend on AislopdeskAgentDetect).
             eventBroadcaster.yield(.claudeStatus(state: state, kind: kind, label: label))
-        case let .commandBlock(index, exitCode, durationMS, complete, outputLen, commandText):
+        case let .commandBlock(index, exitCode, durationMS, complete, outputLen, commandText, promptOrdinal):
             // BLOCK metadata (type 28): surface verbatim; the UI upserts a per-pane block keyed by index.
             eventBroadcaster.yield(.commandBlock(
                 index: index, exitCode: exitCode, durationMS: durationMS,
                 complete: complete, outputLen: outputLen, commandText: commandText,
+                promptOrdinal: promptOrdinal,
             ))
         case let .blockOutput(index, output):
             // BLOCK output (type 29): the reply to a requestBlockOutput. Surface the raw VT bytes; the

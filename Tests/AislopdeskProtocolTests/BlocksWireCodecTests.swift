@@ -4,10 +4,10 @@ import XCTest
 
 /// WB1 — the Warp-style "Blocks" wire codecs (terminal CONTROL channel):
 ///
-/// - **type 28** `commandBlock(index:exitCode:durationMS:complete:outputLen:commandText:)` —
+/// - **type 28** `commandBlock(index:exitCode:durationMS:complete:outputLen:commandText:promptOrdinal:)` —
 ///   block METADATA only (NOT the output bytes), host → client. Body =
 ///   `[UInt32 index][UInt8 hasExit][Int32 BE exit][UInt8 hasDuration][UInt32 BE duration]
-///    [UInt8 complete][UInt32 BE outputLen][UInt16 BE cmdLen][commandText UTF-8]`.
+///    [UInt8 complete][UInt32 BE outputLen][UInt32 BE promptOrdinal][UInt16 BE cmdLen][commandText UTF-8]`.
 /// - **type 15** `requestBlockOutput(index:)` — client → host. Body = `[UInt32 index]`.
 /// - **type 29** `blockOutput(index:output:)` — host → client. Body =
 ///   `[UInt32 index][UInt32 BE outputLen][output bytes]` (output is RAW VT bytes, not UTF-8).
@@ -62,9 +62,15 @@ final class BlocksWireCodecTests: XCTestCase {
 
     func testCommandBlockRoundTrip() throws {
         let cases: [WireMessage] = [
-            .commandBlock(index: 0, exitCode: 0, durationMS: 1250, complete: true, outputLen: 3, commandText: "ls"),
-            // running block: no exit, no duration, not complete, empty command.
-            .commandBlock(index: 1, exitCode: nil, durationMS: nil, complete: false, outputLen: 0, commandText: ""),
+            .commandBlock(
+                index: 0, exitCode: 0, durationMS: 1250, complete: true, outputLen: 3, commandText: "ls",
+                promptOrdinal: 1,
+            ),
+            // running block: no exit, no duration, not complete, empty command, unknown ordinal.
+            .commandBlock(
+                index: 1, exitCode: nil, durationMS: nil, complete: false, outputLen: 0, commandText: "",
+                promptOrdinal: 0,
+            ),
             // negative exit + max duration + multi-byte command text.
             .commandBlock(
                 index: 42,
@@ -73,11 +79,18 @@ final class BlocksWireCodecTests: XCTestCase {
                 complete: true,
                 outputLen: 262_144,
                 commandText: "grep · 文字 🚀",
+                promptOrdinal: UInt32.max,
             ),
             // exit absent but duration present (distinct presence bytes).
-            .commandBlock(index: 7, exitCode: nil, durationMS: 5, complete: true, outputLen: 1, commandText: "x"),
+            .commandBlock(
+                index: 7, exitCode: nil, durationMS: 5, complete: true, outputLen: 1, commandText: "x",
+                promptOrdinal: 9,
+            ),
             // exit present but duration absent.
-            .commandBlock(index: 8, exitCode: 130, durationMS: nil, complete: false, outputLen: 99, commandText: "y"),
+            .commandBlock(
+                index: 8, exitCode: 130, durationMS: nil, complete: false, outputLen: 99, commandText: "y",
+                promptOrdinal: 12,
+            ),
         ]
         for message in cases {
             XCTAssertEqual(message.messageType, 28)
@@ -88,9 +101,11 @@ final class BlocksWireCodecTests: XCTestCase {
 
     func testCommandBlockExactBytes() {
         // index=7, exit=0 (present), duration=1250 (present, 0x000004E2), complete=1, outputLen=3,
-        // cmd="ls" (cmdLen=2). payload = [28][00000007][01][00000000][01][000004E2][01][00000003][0002]['l','s']
+        // promptOrdinal=8, cmd="ls" (cmdLen=2).
+        // payload = [28][00000007][01][00000000][01][000004E2][01][00000003][00000008][0002]['l','s']
         let message = WireMessage.commandBlock(
             index: 7, exitCode: 0, durationMS: 1250, complete: true, outputLen: 3, commandText: "ls",
+            promptOrdinal: 8,
         )
         let body: [UInt8] = [
             28,
@@ -101,6 +116,7 @@ final class BlocksWireCodecTests: XCTestCase {
             0x00, 0x00, 0x04, 0xE2, // duration = 1250
             0x01, // complete
             0x00, 0x00, 0x00, 0x03, // outputLen = 3
+            0x00, 0x00, 0x00, 0x08, // promptOrdinal = 8
             0x00, 0x02, // cmdLen = 2
             0x6C, 0x73, // "ls"
         ]
@@ -113,6 +129,7 @@ final class BlocksWireCodecTests: XCTestCase {
         // running block: hasExit=0, exit field still present (0), hasDuration=0, duration field 0.
         let message = WireMessage.commandBlock(
             index: 0, exitCode: nil, durationMS: nil, complete: false, outputLen: 0, commandText: "",
+            promptOrdinal: 0,
         )
         let body: [UInt8] = [
             28,
@@ -123,6 +140,7 @@ final class BlocksWireCodecTests: XCTestCase {
             0x00, 0x00, 0x00, 0x00, // duration = 0 (absent)
             0x00, // complete = 0
             0x00, 0x00, 0x00, 0x00, // outputLen = 0
+            0x00, 0x00, 0x00, 0x00, // promptOrdinal = 0 (unknown)
             0x00, 0x00, // cmdLen = 0
         ]
         var frame: [UInt8] = [0x00, 0x00, 0x00, UInt8(body.count)]
@@ -135,6 +153,7 @@ final class BlocksWireCodecTests: XCTestCase {
         let cmd = String(repeating: "x", count: Int(UInt16.max))
         let message = WireMessage.commandBlock(
             index: 3, exitCode: 1, durationMS: 9, complete: true, outputLen: 0, commandText: cmd,
+            promptOrdinal: 4,
         )
         XCTAssertEqual(try roundTrip(message), message)
     }
@@ -146,8 +165,10 @@ final class BlocksWireCodecTests: XCTestCase {
             [28, 0x00, 0x00, 0x00, 0x07], // index but no hasExit
             [28, 0x00, 0x00, 0x00, 0x07, 0x01], // hasExit but partial exit
             [28, 0x00, 0x00, 0x00, 0x07, 0x01, 0x00, 0x00, 0x00, 0x00], // exit but no hasDuration
-            // through outputLen but a half-read cmdLen.
-            [28, 0, 0, 0, 7, 1, 0, 0, 0, 0, 1, 0, 0, 4, 0xE2, 1, 0, 0, 0, 3, 0x00],
+            // through outputLen but a half-read promptOrdinal.
+            [28, 0, 0, 0, 7, 1, 0, 0, 0, 0, 1, 0, 0, 4, 0xE2, 1, 0, 0, 0, 3, 0x00, 0x00],
+            // through promptOrdinal but a half-read cmdLen.
+            [28, 0, 0, 0, 7, 1, 0, 0, 0, 0, 1, 0, 0, 4, 0xE2, 1, 0, 0, 0, 3, 0, 0, 0, 8, 0x00],
         ]
         for payload in truncations {
             XCTAssertThrowsError(try decodePayload(payload)) { error in
@@ -160,7 +181,7 @@ final class BlocksWireCodecTests: XCTestCase {
         // cmdLen claims 5 bytes but only 1 is present → validate the declared length BEFORE reading
         // and DROP (truncated), never over-read a hostile datagram.
         let payload: [UInt8] = [
-            28, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // fixed fields, index=1
+            28, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // fixed fields, index=1
             0x00, 0x05, // cmdLen = 5
             0x41, // only 1 byte present
         ]
@@ -172,7 +193,7 @@ final class BlocksWireCodecTests: XCTestCase {
     func testCommandBlockNonUTF8CommandDrops() throws {
         // cmdLen=2 with invalid UTF-8 command bytes → malformedBody (strict UTF-8), never a trap.
         let payload: [UInt8] = [
-            28, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            28, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0x00, 0x02, 0xFF, 0xFE,
         ]
         XCTAssertThrowsError(try decodePayload(payload)) { error in
@@ -256,11 +277,17 @@ final class BlocksWireCodecTests: XCTestCase {
         let cases: [WireMessage] = [
             .requestBlockOutput(index: 0),
             .requestBlockOutput(index: UInt32.max),
-            .commandBlock(index: 0, exitCode: 0, durationMS: 1250, complete: true, outputLen: 3, commandText: "ls"),
-            .commandBlock(index: 1, exitCode: nil, durationMS: nil, complete: false, outputLen: 0, commandText: ""),
+            .commandBlock(
+                index: 0, exitCode: 0, durationMS: 1250, complete: true, outputLen: 3, commandText: "ls",
+                promptOrdinal: 1,
+            ),
+            .commandBlock(
+                index: 1, exitCode: nil, durationMS: nil, complete: false, outputLen: 0, commandText: "",
+                promptOrdinal: 0,
+            ),
             .commandBlock(
                 index: 42, exitCode: Int32.min, durationMS: UInt32.max, complete: true, outputLen: 9,
-                commandText: "grep · 文字 🚀",
+                commandText: "grep · 文字 🚀", promptOrdinal: UInt32.max,
             ),
             .blockOutput(index: 0, output: Data()),
             .blockOutput(index: 5, output: Data([0xAA, 0xBB, 0xCC, 0x1B])),

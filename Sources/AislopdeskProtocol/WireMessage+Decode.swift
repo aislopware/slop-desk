@@ -147,6 +147,7 @@ extension WireMessage {
             let durationRaw = try reader.readUInt32()
             let complete = try reader.readUInt8()
             let outputLen = try reader.readUInt32()
+            let promptOrdinal = try reader.readUInt32()
             // Validate the declared command-text length BEFORE reading: readBytes throws
             // `truncated` if the body is shorter than the declared count — never over-reading.
             let cmdLen = try Int(reader.readUInt16())
@@ -161,6 +162,7 @@ extension WireMessage {
                 complete: complete != 0,
                 outputLen: outputLen,
                 commandText: commandText,
+                promptOrdinal: promptOrdinal,
             )
 
         case 29: // blockOutput

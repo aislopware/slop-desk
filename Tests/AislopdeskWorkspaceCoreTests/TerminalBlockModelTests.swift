@@ -96,8 +96,10 @@ final class TerminalBlockModelTests: XCTestCase {
         let model = TerminalBlockModel()
         model.handle(.commandBlock(
             index: 2, exitCode: 1, durationMS: 100, complete: true, outputLen: 3, commandText: "false",
+            promptOrdinal: 5,
         ))
         XCTAssertEqual(model.block(at: 2)?.status, .failed(code: 1))
+        XCTAssertEqual(model.block(at: 2)?.promptOrdinal, 5, "the prompt ordinal folds into the stored block")
         // A non-block event is ignored.
         model.handle(.title("ignored"))
         XCTAssertEqual(model.blocks.count, 1)

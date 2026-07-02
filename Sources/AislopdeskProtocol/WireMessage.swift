@@ -118,6 +118,11 @@ public enum WireMessage: Equatable, Sendable {
     ///   show a size / decide whether to fetch); the host caps captured output at the segmenter's
     ///   256 KiB ceiling.
     /// - `commandText` is the typed command line (capped). Rides CONTROL like ``commandStatus``.
+    /// - `promptOrdinal` is the 1-based count of OSC 133 `A` prompt-start marks the host segmenter had
+    ///   seen when this block's cycle began — the block's PROMPT-ROW ordinal in the terminal, counting
+    ///   EVERY prompt cycle (including empty-Enter / Ctrl-C cycles that produce no block), exactly as
+    ///   libghostty counts `.prompt` rows for `jump_to_prompt`. `0` = unknown (a mid-stream join with
+    ///   no `A` seen) — the client then skips the outline jump for the block rather than mis-landing.
     case commandBlock(
         index: UInt32,
         exitCode: Int32?,
@@ -125,6 +130,7 @@ public enum WireMessage: Equatable, Sendable {
         complete: Bool,
         outputLen: UInt32,
         commandText: String,
+        promptOrdinal: UInt32,
     )
 
     /// A request for a Block's captured OUTPUT bytes (WB1, type 15, client → host, CONTROL). The

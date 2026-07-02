@@ -60,6 +60,12 @@ public struct CommandBlockSegmenter {
         public var complete: Bool
         /// `true` if ``output`` was clamped at ``outputCap`` (bytes beyond the cap dropped).
         public var outputTruncated: Bool
+        /// The 1-based count of `133;A` PROMPT CYCLES seen when this block's cycle began — the block's
+        /// prompt-row ordinal in the terminal. Counts EVERY primary prompt start (including empty-Enter /
+        /// Ctrl-C cycles that never become a block, and redraw-immune: `A` is emitted once per cycle from
+        /// precmd while only the in-`$PROMPT` `B` re-fires on redraws), exactly as libghostty counts
+        /// `.prompt` rows for `jump_to_prompt`. `0` = unknown (no `A` seen before the block opened).
+        public var promptOrdinal: Int
 
         public init(
             index: Int,
@@ -69,6 +75,7 @@ public struct CommandBlockSegmenter {
             durationMS: UInt32?,
             complete: Bool,
             outputTruncated: Bool,
+            promptOrdinal: Int = 0,
         ) {
             self.index = index
             self.commandText = commandText
@@ -77,6 +84,7 @@ public struct CommandBlockSegmenter {
             self.durationMS = durationMS
             self.complete = complete
             self.outputTruncated = outputTruncated
+            self.promptOrdinal = promptOrdinal
         }
     }
 
@@ -173,6 +181,7 @@ public struct CommandBlockSegmenter {
             durationMS: nil,
             complete: false,
             outputTruncated: openOutputTruncated,
+            promptOrdinal: openPromptOrdinal,
         )
     }
 
@@ -229,6 +238,14 @@ public struct CommandBlockSegmenter {
     private var openOutputTruncated = false
     private var hasOpenBlock = false
     private var runningSince: Date?
+    /// Running count of PRIMARY `133;A` prompt starts (kind `initial` — a `k=c`/`k=s`/`k=r` mark is a
+    /// continuation / secondary / right-prompt, which libghostty does NOT count as a new prompt row).
+    /// Increments once per prompt CYCLE (the shim emits `A` from precmd, so a `zle reset-prompt` redraw
+    /// storm — which re-fires only the in-`$PROMPT` `B` — never inflates it), including cycles that are
+    /// later discarded (empty Enter / Ctrl-C), so it stays 1:1 with the terminal's `.prompt` rows.
+    private var promptCycleCount = 0
+    /// ``promptCycleCount`` captured when the open block's cycle began — stamped onto the block.
+    private var openPromptOrdinal = 0
 
     // MARK: K2 auto-progress state (E14/WI-3) — synthetic OSC-9;4 spinner for configured slow commands
 
@@ -475,6 +492,12 @@ public struct CommandBlockSegmenter {
                 }
             }
             phase = .idle
+            // Count the new PRIMARY prompt cycle (after closing the interrupted block, which keeps ITS
+            // ordinal). A `k=c`/`k=s`/`k=r` mark is a continuation/secondary/right-prompt — libghostty
+            // does not start a new `.prompt` row group for those, so neither does the ordinal.
+            if Self.isPrimaryPromptStart(fields) {
+                promptCycleCount += 1
+            }
 
         case "B":
             // Command start (prompt end). Distinguish a genuine NEW prompt from a PROMPT REDRAW.
@@ -595,6 +618,9 @@ public struct CommandBlockSegmenter {
         openOutputBytes.removeAll(keepingCapacity: true)
         openOutputTruncated = false
         hasOpenBlock = true
+        // Stamp the cycle's prompt ordinal: the count of primary `A` marks seen so far (0 = none yet —
+        // a mid-stream join; the client then skips the outline jump rather than mis-landing).
+        openPromptOrdinal = promptCycleCount
         // K2 auto-progress (E14/WI-3): a fresh block starts with no synthetic spinner + no observed
         // real 9;4 (suppression is strictly per-block).
         syntheticSpinnerActive = false
@@ -647,6 +673,7 @@ public struct CommandBlockSegmenter {
             durationMS: durationMS,
             complete: complete,
             outputTruncated: openOutputTruncated,
+            promptOrdinal: openPromptOrdinal,
         )
         hasOpenBlock = false
         runningSince = nil
@@ -693,6 +720,17 @@ public struct CommandBlockSegmenter {
             }
         }
         return out
+    }
+
+    /// Whether a `133;A[;k=…]` mark starts a PRIMARY prompt (the only kind libghostty marks as a new
+    /// `.prompt` row group): kind absent or `k=i`. `k=c` (continuation), `k=s` (secondary/PS2) and
+    /// `k=r` (right prompt — same row as the primary) do NOT start a new prompt row, so they must not
+    /// consume a prompt ordinal.
+    private static func isPrimaryPromptStart(_ fields: [Substring]) -> Bool {
+        for field in fields.dropFirst(2) where field.hasPrefix("k=") {
+            return field == "k=i"
+        }
+        return true
     }
 
     /// One hex nibble (0–15) for an ASCII hex digit, or `nil` for a non-hex byte.

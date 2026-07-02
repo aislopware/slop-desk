@@ -471,4 +471,60 @@ final class CommandBlockSegmenterTests: XCTestCase {
         XCTAssertEqual(text(blocks[0].output), "built\n")
         XCTAssertEqual(blocks[0].exitCode, 0)
     }
+
+    // MARK: Prompt ordinals (the outline-jump anchor — count every `A` cycle exactly like ghostty rows)
+
+    /// Sequential commands are stamped with ordinals 1, 2, 3 — the 1-based `A`-cycle count.
+    func testPromptOrdinalIncrementsPerPromptCycle() {
+        let stream = cycle(prompt: "$ ", command: "one", output: "1\n", exit: 0)
+            + cycle(prompt: "$ ", command: "two", output: "2\n", exit: 0)
+            + cycle(prompt: "$ ", command: "three", output: "3\n", exit: 0)
+        let blocks = CommandBlockSegmenter.segment(bytes(stream))
+        XCTAssertEqual(blocks.map(\.promptOrdinal), [1, 2, 3])
+    }
+
+    /// An EMPTY-ENTER cycle (A → B → D with no C — precmd runs, preexec does not) produces NO block but
+    /// still CONSUMES a prompt ordinal: ghostty gets a `.prompt` row for the empty prompt, so the next
+    /// command's ordinal must skip past it (1 then 3, never 1 then 2). The load-bearing property for the
+    /// outline jump — an ordinal that ignored blockless cycles would land one prompt too high.
+    func testEmptyEnterCycleConsumesAnOrdinalWithoutABlock() {
+        let stream = cycle(prompt: "$ ", command: "one", output: "1\n", exit: 0)
+            + a() + "$ " + b() + d(0) // empty Enter: precmd D + A/B, no C — discarded, no block
+            + cycle(prompt: "$ ", command: "two", output: "2\n", exit: 0)
+        let blocks = CommandBlockSegmenter.segment(bytes(stream))
+        XCTAssertEqual(blocks.map(\.commandText), ["one", "two"], "the empty cycle mints no block")
+        XCTAssertEqual(
+            blocks.map(\.promptOrdinal), [1, 3],
+            "the empty-Enter prompt consumed ordinal 2 — exactly the `.prompt` row ghostty counts",
+        )
+    }
+
+    /// A `zle reset-prompt` redraw storm re-fires only the in-`$PROMPT` `B` mark (the shim emits `A`
+    /// once per cycle from precmd) — re-fired `B`s must NOT consume ordinals.
+    func testPromptRedrawBStormDoesNotConsumeOrdinals() {
+        let stream = a() + "$ " + b() + b() + b() + "ls" + c() + "out\n" + d(0)
+        let blocks = CommandBlockSegmenter.segment(bytes(stream))
+        XCTAssertEqual(blocks.count, 1)
+        XCTAssertEqual(blocks[0].promptOrdinal, 1, "three redraw `B`s are the SAME prompt cycle")
+    }
+
+    /// A continuation/secondary/right-prompt `A` (`k=c` / `k=s` / `k=r`) does not start a new `.prompt`
+    /// row group in ghostty — it must not consume an ordinal either. Only a bare/`k=i` `A` counts.
+    func testNonPrimaryPromptKindsDoNotConsumeOrdinals() {
+        let kc = "\(ESC)]133;A;k=c\(BEL)"
+        let ks = "\(ESC)]133;A;k=s\(BEL)"
+        let stream = a() + kc + ks + "$ " + b() + "ls" + c() + "out\n" + d(0)
+            + cycle(prompt: "$ ", command: "two", output: "2\n", exit: 0)
+        let blocks = CommandBlockSegmenter.segment(bytes(stream))
+        XCTAssertEqual(blocks.map(\.promptOrdinal), [1, 2], "k=c/k=s marks never consume an ordinal")
+    }
+
+    /// A mid-stream join that opens a block at `C` with NO `A` ever seen stamps ordinal 0 (unknown) —
+    /// the client then skips the jump instead of mis-landing.
+    func testMidStreamJoinWithoutPromptStampsUnknownOrdinal() {
+        let stream = c() + "orphan output\n" + d(0)
+        let blocks = CommandBlockSegmenter.segment(bytes(stream))
+        XCTAssertEqual(blocks.count, 1)
+        XCTAssertEqual(blocks[0].promptOrdinal, 0, "no `A` seen ⇒ unknown ordinal (0), never a guess")
+    }
 }

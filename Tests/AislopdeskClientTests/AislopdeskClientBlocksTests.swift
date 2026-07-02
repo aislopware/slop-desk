@@ -17,6 +17,7 @@ final class AislopdeskClientBlocksTests: XCTestCase {
         let events = client.events
         await client.handleInboundForTesting(.commandBlock(
             index: 7, exitCode: 0, durationMS: 1250, complete: true, outputLen: 42, commandText: "ls -la",
+            promptOrdinal: 9,
         ))
         let event: AislopdeskClient.Event? = await withTaskGroup(of: AislopdeskClient.Event?.self) { group in
             group.addTask {
@@ -31,7 +32,8 @@ final class AislopdeskClientBlocksTests: XCTestCase {
             group.cancelAll()
             return first
         }
-        guard case let .commandBlock(index, exitCode, durationMS, complete, outputLen, commandText) = event else {
+        guard case let .commandBlock(index, exitCode, durationMS, complete, outputLen, commandText, ordinal) = event
+        else {
             XCTFail("type 28 should surface a .commandBlock event")
             await client.close()
             return
@@ -42,6 +44,7 @@ final class AislopdeskClientBlocksTests: XCTestCase {
         XCTAssertTrue(complete)
         XCTAssertEqual(outputLen, 42)
         XCTAssertEqual(commandText, "ls -la")
+        XCTAssertEqual(ordinal, 9, "the prompt ordinal must survive the wire → Event surface verbatim")
         await client.close()
     }
 

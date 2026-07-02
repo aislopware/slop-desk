@@ -528,7 +528,7 @@
       "tier": 4
     }
   ],
-  "blocksWireMessages":   [
+  "blocksWireMessages": [
     {
       "hex": "000000050f00000000",
       "index": 0,
@@ -551,10 +551,11 @@
       "exitCode": 0,
       "hasDuration": true,
       "hasExit": true,
-      "hex": "000000181c00000007010000000001000004e2010000000300026c73",
+      "hex": "0000001c1c00000007010000000001000004e201000000030000000800026c73",
       "index": 7,
       "kind": "commandBlock",
-      "outputLen": 3
+      "outputLen": 3,
+      "promptOrdinal": 8
     },
     {
       "commandText": "",
@@ -563,10 +564,11 @@
       "exitCode": 0,
       "hasDuration": false,
       "hasExit": false,
-      "hex": "000000161c000000000000000000000000000000000000000000",
+      "hex": "0000001a1c00000000000000000000000000000000000000000000000000",
       "index": 0,
       "kind": "commandBlock",
-      "outputLen": 0
+      "outputLen": 0,
+      "promptOrdinal": 0
     },
     {
       "commandText": "grep · 文字 🚀",
@@ -575,10 +577,11 @@
       "exitCode": -2147483648,
       "hasDuration": true,
       "hasExit": true,
-      "hex": "000000291c0000002a018000000001ffffffff010004000000136772657020c2b720e69687e5ad9720f09f9a80",
+      "hex": "0000002d1c0000002a018000000001ffffffff0100040000ffffffff00136772657020c2b720e69687e5ad9720f09f9a80",
       "index": 42,
       "kind": "commandBlock",
-      "outputLen": 262144
+      "outputLen": 262144,
+      "promptOrdinal": 4294967295
     },
     {
       "hex": "0000000c1d0000000500000003aabbcc",

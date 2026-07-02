@@ -806,7 +806,8 @@ root["terminalWireMessages"] = [
 // WB1 — Warp-style "Blocks" wire messages (terminal CONTROL).
 // type 15 requestBlockOutput (c→h): body = [UInt32 index].
 // type 28 commandBlock (h→c): metadata only = [UInt32 index][UInt8 hasExit][Int32 BE exit]
-//   [UInt8 hasDuration][UInt32 BE duration][UInt8 complete][UInt32 BE outputLen][UInt16 BE cmdLen][cmd].
+//   [UInt8 hasDuration][UInt32 BE duration][UInt8 complete][UInt32 BE outputLen]
+//   [UInt32 BE promptOrdinal][UInt16 BE cmdLen][cmd].
 // type 29 blockOutput (h→c): [UInt32 index][UInt32 BE outputLen][output bytes].
 root["blocksWireMessages"] = [
     wmRecord("requestBlockOutput", .requestBlockOutput(index: 0), ["index": UInt32(0)]),
@@ -814,7 +815,10 @@ root["blocksWireMessages"] = [
     wmRecord("requestBlockOutput", .requestBlockOutput(index: UInt32.max), ["index": UInt32.max]),
     wmRecord(
         "commandBlock",
-        .commandBlock(index: 7, exitCode: 0, durationMS: 1250, complete: true, outputLen: 3, commandText: "ls"),
+        .commandBlock(
+            index: 7, exitCode: 0, durationMS: 1250, complete: true, outputLen: 3, commandText: "ls",
+            promptOrdinal: 8,
+        ),
         [
             "index": UInt32(7),
             "hasExit": true,
@@ -824,11 +828,15 @@ root["blocksWireMessages"] = [
             "complete": true,
             "outputLen": UInt64(3),
             "commandText": "ls",
+            "promptOrdinal": UInt32(8),
         ],
     ),
     wmRecord(
         "commandBlock",
-        .commandBlock(index: 0, exitCode: nil, durationMS: nil, complete: false, outputLen: 0, commandText: ""),
+        .commandBlock(
+            index: 0, exitCode: nil, durationMS: nil, complete: false, outputLen: 0, commandText: "",
+            promptOrdinal: 0,
+        ),
         [
             "index": UInt32(0),
             "hasExit": false,
@@ -838,6 +846,7 @@ root["blocksWireMessages"] = [
             "complete": false,
             "outputLen": UInt64(0),
             "commandText": "",
+            "promptOrdinal": UInt32(0),
         ],
     ),
     wmRecord(
@@ -849,6 +858,7 @@ root["blocksWireMessages"] = [
             complete: true,
             outputLen: 262_144,
             commandText: "grep · 文字 🚀",
+            promptOrdinal: UInt32.max,
         ),
         [
             "index": UInt32(42),
@@ -859,6 +869,7 @@ root["blocksWireMessages"] = [
             "complete": true,
             "outputLen": UInt64(262_144),
             "commandText": "grep · 文字 🚀",
+            "promptOrdinal": UInt32.max,
         ],
     ),
     wmRecord(

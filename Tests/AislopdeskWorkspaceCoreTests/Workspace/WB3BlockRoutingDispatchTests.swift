@@ -42,17 +42,26 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
             model.blocks.upsert(
                 index: b.index, commandText: b.commandText, exitCode: b.exitCode,
                 durationMS: b.durationMS, complete: b.complete, outputLen: b.outputLen,
+                promptOrdinal: b.promptOrdinal,
             )
         }
         return session
     }
 
-    private func failed(_ index: UInt32) -> CommandBlock {
-        CommandBlock(index: index, commandText: "cmd\(index)", exitCode: 1, complete: true)
+    /// A failed block. `ordinal` defaults to the index (the no-empty-prompt-cycles case); pass an
+    /// explicit ordinal to model empty-Enter cycles between commands.
+    private func failed(_ index: UInt32, ordinal: UInt32? = nil) -> CommandBlock {
+        CommandBlock(
+            index: index, commandText: "cmd\(index)", exitCode: 1, complete: true,
+            promptOrdinal: ordinal ?? index,
+        )
     }
 
-    private func ok(_ index: UInt32) -> CommandBlock {
-        CommandBlock(index: index, commandText: "cmd\(index)", exitCode: 0, complete: true)
+    private func ok(_ index: UInt32, ordinal: UInt32? = nil) -> CommandBlock {
+        CommandBlock(
+            index: index, commandText: "cmd\(index)", exitCode: 0, complete: true,
+            promptOrdinal: ordinal ?? index,
+        )
     }
 
     // MARK: - Re-run last command
@@ -143,26 +152,25 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         // Seat the cursor ON block 3 (a failure) so the search must ADVANCE past it in each direction.
         store.blockBookmarks.jumpCursor[session.id] = 3
 
-        // navigatorBlocks newest-first: [5,4,3,2,1] (5 blocks). Block 5 is at pos 0; block 1 is at pos 4.
-        // .jumpNextFailed = forward:true = toward OLDER = block 1 (pos 4) → re-anchor to the top then step
-        // DOWN (total − pos = 5 − 4 = 1) to the oldest prompt.
+        // navigatorBlocks newest-first: [5,4,3,2,1]. .jumpNextFailed = forward:true = toward OLDER =
+        // block 1 (prompt ordinal 1) → anchor on the oldest prompt (no second jump: the anchor IS #1).
         WorkspaceBindingRegistry.route(.jumpNextFailed, to: store)
         XCTAssertEqual(store.blockBookmarks.jumpCursor[session.id], 1, "next-failed lands on the OLDER failure (1)")
         XCTAssertEqual(
             recorder.actions,
-            ["scroll_to_top", "jump_to_prompt:1"],
-            "older failure (pos 4) = the 1st prompt from the top",
+            ["scroll_to_bottom", "jump_to_prompt:-\(BlockJump.reAnchorDelta)"],
+            "ordinal 1 = the anchor itself (oldest retained prompt) — no second jump",
         )
 
         recorder.resetActions()
-        // From the cursor now on 1, .jumpPreviousFailed = forward:false = toward NEWER = block 3 (pos 2)
-        // → total − pos = 5 − 2 = 3.
+        // From the cursor now on 1, .jumpPreviousFailed = forward:false = toward NEWER = block 3
+        // (prompt ordinal 3) → anchor + step DOWN ordinal − 1 = 2 prompts.
         WorkspaceBindingRegistry.route(.jumpPreviousFailed, to: store)
         XCTAssertEqual(store.blockBookmarks.jumpCursor[session.id], 3, "prev-failed steps to the NEWER failure (3)")
         XCTAssertEqual(
             recorder.actions,
-            ["scroll_to_top", "jump_to_prompt:3"],
-            "newer failure (pos 2) = the 3rd prompt from the top",
+            ["scroll_to_bottom", "jump_to_prompt:-\(BlockJump.reAnchorDelta)", "jump_to_prompt:2"],
+            "ordinal 3 = 2 prompts below the oldest-prompt anchor",
         )
     }
 
@@ -238,66 +246,85 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         )
     }
 
-    // MARK: - BlockJump delta math (the shared re-anchor jump — Outline / navigator / jump-to-failed)
+    // MARK: - BlockJump choreography (the shared re-anchor jump — Commands panel / navigator / jump-to-failed)
 
-    /// `jumpDelta` counts prompts oldest→newest from a `scroll_to_top` anchor (ghostty's `scrollPrompt`
-    /// counts relative to the viewport TOP, so an upward-from-bottom count skips every on-screen prompt).
-    /// With `total` command blocks, newest-first position `pos` is the `(total − pos)`-th prompt from the
-    /// top: `pos 0` (newest) = the `total`-th, `pos total − 1` (oldest) = the 1st. Delta is always in
-    /// `1…total`, never reaching the trailing live idle prompt (mark `total + 1`).
-    func testBlockJumpDeltaCountsFromTopAnchor() {
-        // 5 command blocks: newest (pos 0) is the 5th prompt from the top; oldest (pos 4) is the 1st.
-        XCTAssertEqual(BlockJump.jumpDelta(toTargetPos: 0, totalBlocks: 5), 5, "newest = the last prompt from the top")
-        XCTAssertEqual(BlockJump.jumpDelta(toTargetPos: 1, totalBlocks: 5), 4)
-        XCTAssertEqual(BlockJump.jumpDelta(toTargetPos: 4, totalBlocks: 5), 1, "oldest = the first prompt from the top")
+    /// The choreography pin: ordinal 1 anchors only (the huge-negative jump already lands on prompt #1);
+    /// ordinal k ≥ 2 adds a downward `k − 1` (the anchor row's own prompt is never counted by ghostty's
+    /// downward iterator, so `k − 1` lands prompt #k exactly); ordinal 0 (unknown) emits NOTHING — a
+    /// mid-stream-join block must not mis-land the viewport.
+    func testBlockJumpOrdinalChoreography() {
+        let recorder = RecordingSurfaceActions()
+        BlockJump.toPromptOrdinal(1, using: recorder)
+        XCTAssertEqual(recorder.actions, ["scroll_to_bottom", "jump_to_prompt:-\(BlockJump.reAnchorDelta)"])
+
+        recorder.resetActions()
+        BlockJump.toPromptOrdinal(5, using: recorder)
+        XCTAssertEqual(
+            recorder.actions,
+            ["scroll_to_bottom", "jump_to_prompt:-\(BlockJump.reAnchorDelta)", "jump_to_prompt:4"],
+        )
+
+        recorder.resetActions()
+        BlockJump.toPromptOrdinal(0, using: recorder)
+        XCTAssertTrue(recorder.actions.isEmpty, "an unknown ordinal (0) must not move the viewport at all")
     }
 
     // MARK: - E9: Jump to a specific Outline block (jumpToNavigatorBlockInActivePane)
 
-    /// E9 (ES-E9-2): clicking an Outline row jumps the scrollback to that block via
-    /// `jumpToNavigatorBlockInActivePane(index:)` — the load-bearing half that had ZERO coverage. It must
-    /// resolve the block's NEWEST-FIRST position in `navigatorBlocks` (not use the raw index as the delta)
-    /// and route through the shared absolute re-anchor (`scroll_to_top` then `jump_to_prompt:(total − pos)`).
-    ///
-    /// ORDERING-ASYMMETRIC on its own: seed an ODD count of 7 and target an OFF-CENTRE index (3, not the
-    /// pivot 4) so newest-first and oldest-first resolve to DIFFERENT positions. Blocks index-ascending →
-    /// navigatorBlocks newest-first `[7,6,5,4,3,2,1]`; block index 3 is at pos 4 → delta `7 − 4 = 3`. Under a
-    /// flipped (oldest-first `[1,2,3,4,5,6,7]`) resolution index 3 would be at pos 2 → `7 − 2 = 5`, so this
-    /// case FAILS directly on a swapped ordering — it no longer relies on the separate ends test.
-    func testJumpToNavigatorBlockResolvesNewestFirstPositionForIndex() throws {
+    /// E9 (ES-E9-2): clicking a Commands row jumps the scrollback to that block via
+    /// `jumpToNavigatorBlockInActivePane(index:)`, driven by the block's HOST-STAMPED prompt ordinal —
+    /// NOT its position among the blocks. Seed ordinals ≠ indices (ordinal 2 was an empty-Enter cycle
+    /// that produced no block): jumping to block index 2 (ordinal 3) must step `3 − 1 = 2` prompts below
+    /// the anchor. A position-derived delta (index 2 of 3 blocks → newest-first pos 1 → `3 − 1 = 2`…
+    /// with block 3 it would compute 1) or an index-as-ordinal read fails this pin.
+    func testJumpToNavigatorBlockUsesHostStampedOrdinalNotPosition() throws {
         let store = makeStore()
-        let session = try seedBlocks(store, [ok(1), ok(2), ok(3), ok(4), ok(5), ok(6), ok(7)])
+        // Ordinals 1, 3, 4: an empty Enter consumed ordinal 2 between cmd1 and cmd2.
+        let session = try seedBlocks(store, [ok(1, ordinal: 1), ok(2, ordinal: 3), ok(3, ordinal: 4)])
         let recorder = try XCTUnwrap(session.surfaceRecorder)
 
-        store.jumpToNavigatorBlockInActivePane(index: 3)
+        store.jumpToNavigatorBlockInActivePane(index: 2)
 
         XCTAssertEqual(
-            recorder.actions, ["scroll_to_top", "jump_to_prompt:3"],
-            "block 3 is at newest-first pos 4 (delta 7 − 4 = 3); oldest-first would be pos 2 (5), so a "
-                + "flipped ordering fails THIS case directly",
+            recorder.actions,
+            ["scroll_to_bottom", "jump_to_prompt:-\(BlockJump.reAnchorDelta)", "jump_to_prompt:2"],
+            "block index 2 carries prompt ordinal 3 (an empty Enter consumed ordinal 2) → step 2 below "
+                + "the anchor; a block-position delta would mis-land on the empty prompt",
         )
     }
 
-    /// The OLDEST block (index 1) is at the deepest newest-first position (pos 4) → the 1st prompt from the
-    /// top (delta `5 − 4 = 1`); the NEWEST (index 5) is at pos 0 → the last prompt from the top (delta
-    /// `5 − 0 = 5`). Pins both ends of the position resolution so a swapped ordering (oldest-first) fails.
+    /// The OLDEST block (ordinal 1) needs NO second jump (the anchor lands on it); the NEWEST (ordinal 5)
+    /// steps `5 − 1 = 4`. Pins both ends of the ordinal → delta mapping.
     func testJumpToNavigatorBlockHandlesOldestAndNewestEnds() throws {
         let store = makeStore()
         let session = try seedBlocks(store, [ok(1), ok(2), ok(3), ok(4), ok(5)])
         let recorder = try XCTUnwrap(session.surfaceRecorder)
 
-        store.jumpToNavigatorBlockInActivePane(index: 1) // oldest → pos 4 → 5 − 4 = 1
+        store.jumpToNavigatorBlockInActivePane(index: 1) // oldest → ordinal 1 → anchor only
         XCTAssertEqual(
-            recorder.actions, ["scroll_to_top", "jump_to_prompt:1"],
-            "the oldest block is the 1st prompt from the top",
+            recorder.actions, ["scroll_to_bottom", "jump_to_prompt:-\(BlockJump.reAnchorDelta)"],
+            "the oldest block IS the anchored oldest prompt — no second jump",
         )
 
         recorder.resetActions()
-        store.jumpToNavigatorBlockInActivePane(index: 5) // newest → pos 0 → 5 − 0 = 5
+        store.jumpToNavigatorBlockInActivePane(index: 5) // newest → ordinal 5 → 5 − 1 = 4
         XCTAssertEqual(
-            recorder.actions, ["scroll_to_top", "jump_to_prompt:5"],
-            "the newest block is the last (5th) prompt from the top",
+            recorder.actions,
+            ["scroll_to_bottom", "jump_to_prompt:-\(BlockJump.reAnchorDelta)", "jump_to_prompt:4"],
+            "the newest block is 4 prompts below the oldest-prompt anchor",
         )
+    }
+
+    /// A block stamped with NO ordinal (0 — a mid-stream join) is a graceful no-op: the viewport must not
+    /// move at all (a wrong landing is worse than none). FAILS if the ordinal-0 guard were dropped.
+    func testJumpToNavigatorBlockWithUnknownOrdinalIsANoOp() throws {
+        let store = makeStore()
+        let session = try seedBlocks(store, [ok(1, ordinal: 0)])
+        let recorder = try XCTUnwrap(session.surfaceRecorder)
+
+        store.jumpToNavigatorBlockInActivePane(index: 1)
+
+        XCTAssertTrue(recorder.actions.isEmpty, "an ordinal-less block emits no surface action (never mis-lands)")
     }
 
     /// An evicted / never-seen index is a graceful no-op — no surface action, no trap (the Outline can hold a
@@ -328,28 +355,21 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
 
     // MARK: - End-to-end vs a faithful ghostty scrollPrompt model (the real land-on-the-right-command pin)
 
-    /// The load-bearing behavioral test for the outline/navigator jump: it drives the PRODUCTION store hook
-    /// (`jumpToNavigatorBlockInActivePane`), captures the libghostty actions it emits, and REPLAYS them
-    /// through ``GhosttyScrollPromptModel`` — a faithful port of ghostty's `PageList.zig` `scrollPrompt`
-    /// (viewport-TOP-relative counting, `up(1)`/`down(1)` start, `pinIsActive` → keep `.active`). It then
-    /// asserts the target command's prompt is what the viewport lands on, for a buffer where the newest two
-    /// command prompts + the live idle prompt are ON SCREEN (in the active area) — exactly the case the old
-    /// `scroll_to_bottom` + `jump_to_prompt:-(pos+1)` got wrong (an upward count from the bottom skips every
-    /// visible prompt). FAILS on the pre-fix code (it lands on an older command / the wrong row) and passes
-    /// on the top-anchored `total − pos` delta.
-    func testOutlineJumpLandsOnClickedCommandAcrossVisiblePrompts() throws {
-        // Buffer (0-indexed rows), true = a prompt row. Row 0 is command-output preamble (the realistic
-        // "oldest retained row is not itself a prompt" case). visibleRows = 4 ⇒ active area = rows 6…9, so
-        // block4(7), block5(8) and the live idle prompt(9) are ON SCREEN; block1(1), block2(3), block3(5)
-        // are in the scrollback.
-        let prompts = [false, true, false, true, false, true, false, true, true, true]
-        let visibleRows = 4
-        // Command prompt rows oldest→newest (excludes the trailing live idle prompt at row 9).
-        let commandPromptRows: [UInt32: Int] = [1: 1, 2: 3, 3: 5, 4: 7, 5: 8]
-
+    /// Replays the store's emitted libghostty actions for a jump to every block in `blocks` through
+    /// ``GhosttyScrollPromptModel`` and asserts each landing: the target's prompt row sits at the
+    /// viewport top (or the viewport pins to `.active` when the row is inside the active area — either
+    /// way the row must be VISIBLE).
+    private func assertJumpLands(
+        blocks: [CommandBlock],
+        prompts: [Bool],
+        visibleRows: Int,
+        commandPromptRows: [UInt32: Int],
+        file: StaticString = #filePath,
+        line: UInt = #line,
+    ) throws {
         for index in commandPromptRows.keys.sorted() {
             let store = makeStore()
-            let session = try seedBlocks(store, [ok(1), ok(2), ok(3), ok(4), ok(5)])
+            let session = try seedBlocks(store, blocks)
             let recorder = try XCTUnwrap(session.surfaceRecorder)
 
             store.jumpToNavigatorBlockInActivePane(index: index)
@@ -358,33 +378,105 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
             model.apply(recorder.actions)
 
             let target = try XCTUnwrap(commandPromptRows[index])
-            let activeTop = prompts.count - visibleRows
+            let activeTop = max(0, prompts.count - visibleRows)
             if target >= activeTop {
                 // A prompt inside the active area: ghostty pins the viewport to `.active` (it can't scroll
                 // DOWN into the active area) — the command is on screen, the correct landing.
                 XCTAssertEqual(
                     model.viewportTop, activeTop,
                     "block \(index) (prompt row \(target)) is in the active area → viewport pins to active",
+                    file: file, line: line,
                 )
             } else {
                 XCTAssertEqual(
                     model.viewportTop, target,
                     "block \(index)'s prompt (row \(target)) must sit at the viewport top after the jump",
+                    file: file, line: line,
                 )
             }
             XCTAssertTrue(
                 target >= model.viewportTop && target < model.viewportTop + visibleRows,
-                "block \(index)'s command prompt is visible after clicking its outline row",
+                "block \(index)'s command prompt is visible after clicking its Commands row",
+                file: file, line: line,
             )
         }
+    }
+
+    /// The FRESH-PANE case — the one every new terminal hits: the shell's FIRST prompt IS the oldest
+    /// retained row (row 0), so ghostty's downward iterator (which starts at `viewport_top.down(1)` and
+    /// never counts the top row's own prompt) skips prompt #1 for any `scroll_to_top`-anchored count.
+    /// The old `scroll_to_top` + `jump_to_prompt:(total − pos)` landed EVERY jump one command too new
+    /// here; the ordinal choreography's huge-negative anchor makes "top row = prompt #1" an invariant.
+    /// FAILS on the pre-fix code.
+    func testOutlineJumpLandsOnClickedCommandInFreshPane() throws {
+        // rows: 0 prompt#1(cmd1) · 1 output · 2 prompt#2(cmd2) · 3 output · 4 prompt#3(cmd3) · 5 output
+        //       · 6 live idle prompt(#4). visibleRows = 3 ⇒ active area = rows 4…6.
+        let prompts = [true, false, true, false, true, false, true]
+        try assertJumpLands(
+            blocks: [ok(1), ok(2), ok(3)],
+            prompts: prompts,
+            visibleRows: 3,
+            commandPromptRows: [1: 0, 2: 2, 3: 4],
+        )
+    }
+
+    /// The EMPTY-ENTER case: a blockless prompt cycle (empty Enter / Ctrl-C — precmd re-fires `A`, the
+    /// segmenter rightly discards the cycle) sits between cmd1 and cmd2, so ghostty has one more prompt
+    /// row than there are blocks. A block-count-derived delta under-counts and lands on the EMPTY prompt;
+    /// the host-stamped ordinals (1 and 3 — ordinal 2 was consumed by the empty cycle) land exactly.
+    /// FAILS on the pre-fix code.
+    func testOutlineJumpSkipsBlocklessEmptyEnterPrompts() throws {
+        // rows: 0 banner · 1 prompt#1(cmd1) · 2 output · 3 prompt#2(EMPTY Enter) · 4 prompt#3(cmd2)
+        //       · 5 output · 6 live idle prompt(#4). visibleRows = 3 ⇒ active area = rows 4…6.
+        let prompts = [false, true, false, true, true, false, true]
+        try assertJumpLands(
+            blocks: [ok(1, ordinal: 1), ok(2, ordinal: 3)],
+            prompts: prompts,
+            visibleRows: 3,
+            commandPromptRows: [1: 1, 2: 4],
+        )
+    }
+
+    /// The VISIBLE-PROMPTS case (the old `scroll_to_bottom` + `-(pos+1)` bug's shape): the newest two
+    /// command prompts + the live idle prompt are ON SCREEN (in the active area) with a non-prompt row 0.
+    /// Kept from the previous pin so the ordinal choreography also covers the case the last fix targeted.
+    func testOutlineJumpLandsOnClickedCommandAcrossVisiblePrompts() throws {
+        // Buffer (0-indexed rows), true = a prompt row. Row 0 is command-output preamble. visibleRows = 4
+        // ⇒ active area = rows 6…9, so block4(7), block5(8) and the live idle prompt(9) are ON SCREEN;
+        // block1(1), block2(3), block3(5) are in the scrollback.
+        let prompts = [false, true, false, true, false, true, false, true, true, true]
+        try assertJumpLands(
+            blocks: [ok(1), ok(2), ok(3), ok(4), ok(5)],
+            prompts: prompts,
+            visibleRows: 4,
+            commandPromptRows: [1: 1, 2: 3, 3: 5, 4: 7, 5: 8],
+        )
+    }
+
+    /// The EVERYTHING-VISIBLE case: the whole (short) buffer fits in the active area, so the anchor's
+    /// huge negative finds no prompt above the active top and the viewport stays `.active` — every
+    /// command is on screen, which is the correct landing (no wild scroll).
+    func testOutlineJumpWithAllPromptsVisibleStaysActive() throws {
+        // rows: 0 prompt#1 · 1 prompt#2(empty) · 2 prompt#3(cmd2) · 3 live idle. visibleRows = 5 > 4 rows.
+        let prompts = [true, true, true, true]
+        try assertJumpLands(
+            blocks: [ok(1, ordinal: 1), ok(2, ordinal: 3)],
+            prompts: prompts,
+            visibleRows: 5,
+            commandPromptRows: [1: 0, 2: 2],
+        )
     }
 }
 
 /// A faithful, headless port of ghostty's `PageList.zig` `scrollPrompt` (+ `scroll_to_top`/`scroll_to_bottom`)
 /// over a flat prompt-flag buffer — used ONLY to prove the store's emitted libghostty actions land the
-/// viewport on the intended command prompt (the counting is viewport-TOP-relative, the crux of the bug).
-/// It is NOT a re-implementation the product depends on; it mirrors the vendored ghostty semantics so the
-/// test isn't tautological against the store's own delta math.
+/// viewport on the intended command prompt. Faithful on the three load-bearing behaviours (pinned
+/// v1.3.1): the downward iterator starts at `viewport_top.down(1)` (the top row's own prompt is never
+/// counted), the upward iterator starts at `up(1)`, and a delta LARGER than the available prompt count
+/// moves to the LAST prompt found (ghostty keeps `prompt_pin` across the exhausted loop — the behaviour
+/// the huge-negative re-anchor relies on). A landed prompt inside the active area keeps `.active`
+/// (`pinIsActive`). It is NOT a re-implementation the product depends on; it mirrors the vendored ghostty
+/// semantics so the test isn't tautological against the store's own choreography.
 private struct GhosttyScrollPromptModel {
     let prompts: [Bool] // prompts[i] == true ⇒ row i is a `.prompt` row
     let visibleRows: Int
@@ -399,14 +491,17 @@ private struct GhosttyScrollPromptModel {
             case "scroll_to_top": viewportTop = 0
             case "scroll_to_bottom": viewportTop = activeTop
             default:
-                if let raw = action.split(separator: ":").last, action.hasPrefix("jump_to_prompt:"),
+                if action.hasPrefix("jump_to_prompt:"),
+                   let raw = action.split(separator: ":").last,
                    let delta = Int(raw) { scrollPrompt(delta) }
             }
         }
     }
 
     /// The negative branch counts prompts from `viewportTop.up(1)` walking UP; the positive branch counts
-    /// from `viewportTop.down(1)` walking DOWN. A landed prompt inside the active area keeps `.active`.
+    /// from `viewportTop.down(1)` walking DOWN. Ghostty keeps the LAST prompt found when the delta
+    /// exceeds the count (`prompt_pin` survives the exhausted loop) — the viewport moves to it. A landed
+    /// prompt inside the active area keeps `.active`.
     private mutating func scrollPrompt(_ delta: Int) {
         guard delta != 0 else { return }
         var remaining = abs(delta)
@@ -414,21 +509,20 @@ private struct GhosttyScrollPromptModel {
         if delta < 0 {
             var row = viewportTop - 1
             while row >= 0 {
-                if prompts[row] { remaining -= 1
-                    if remaining == 0 { landed = row
-                        break
-                    }
+                if prompts[row] {
+                    landed = row
+                    remaining -= 1
+                    if remaining == 0 { break }
                 }
                 row -= 1
             }
         } else {
             var row = viewportTop + 1
-            guard row < prompts.count else { return }
             while row < prompts.count {
-                if prompts[row] { remaining -= 1
-                    if remaining == 0 { landed = row
-                        break
-                    }
+                if prompts[row] {
+                    landed = row
+                    remaining -= 1
+                    if remaining == 0 { break }
                 }
                 row += 1
             }

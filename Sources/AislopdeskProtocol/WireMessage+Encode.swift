@@ -102,9 +102,10 @@ extension WireMessage {
             frame.appendBE(UInt16(labelBytes.count))
             frame.append(labelBytes)
 
-        case let .commandBlock(index, exitCode, durationMS, complete, outputLen, commandText):
+        case let .commandBlock(index, exitCode, durationMS, complete, outputLen, commandText, promptOrdinal):
             // [UInt32 index][UInt8 hasExit][Int32 BE exit (0 absent)][UInt8 hasDuration]
             // [UInt32 BE duration (0 absent)][UInt8 complete][UInt32 BE outputLen]
+            // [UInt32 BE promptOrdinal (0 unknown)]
             // [UInt16 BE cmdLen][commandText UTF-8]. Fixed fields then a length-prefixed,
             // capped command line (so the decoder can validate its declared length before reading).
             // Clamp the command text to the UInt16 length field (see clampedCommandText): a raw
@@ -118,6 +119,7 @@ extension WireMessage {
             frame.appendBE(durationMS ?? 0) // UInt32 BE (0 when absent)
             frame.append(complete ? 1 : 0)
             frame.appendBE(outputLen)
+            frame.appendBE(promptOrdinal)
             let cmdBytes = Data(Self.clampedCommandText(commandText).utf8)
             frame.appendBE(UInt16(cmdBytes.count))
             frame.append(cmdBytes)
@@ -266,9 +268,10 @@ public extension WireMessage {
             case .ping,
                  .pong: 8 // timestampMS UInt64
             case .requestBlockOutput: 4 // index UInt32
-            case let .commandBlock(_, _, _, _, _, commandText):
-                // index + hasExit + Int32 + hasDuration + UInt32 + complete + outputLen + UInt16 len + cmd
-                4 + 1 + 4 + 1 + 4 + 1 + 4 + 2 + Self.clampedCommandText(commandText).utf8.count
+            case let .commandBlock(_, _, _, _, _, commandText, _):
+                // index + hasExit + Int32 + hasDuration + UInt32 + complete + outputLen + promptOrdinal
+                // + UInt16 len + cmd
+                4 + 1 + 4 + 1 + 4 + 1 + 4 + 4 + 2 + Self.clampedCommandText(commandText).utf8.count
             case let .blockOutput(_, output): 4 + 4 + output.count // index + UInt32 len + output bytes
             case let .metadataRequest(_, _, payload): 4 + 1 + 4 + payload
                 .count // requestID + verb + UInt32 len + payload

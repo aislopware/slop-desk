@@ -24,6 +24,11 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
     public var complete: Bool
     /// How many output bytes the host currently holds for this block (UI size hint / "has output" gate).
     public var outputLen: UInt32
+    /// The block's 1-based PROMPT-CYCLE ordinal (the count of OSC-133 `A` marks at the block's start —
+    /// including blockless empty-Enter / Ctrl-C cycles, matching libghostty's `.prompt` rows). The
+    /// ``BlockJump`` anchor for the outline/navigator jump. `0` = unknown (mid-stream join) — the jump
+    /// is skipped for such a block rather than mis-landing.
+    public var promptOrdinal: UInt32
 
     /// `Identifiable` over the stable wire index — so SwiftUI lists key rows by the block identity.
     public var id: UInt32 { index }
@@ -35,6 +40,7 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
         durationMS: UInt32? = nil,
         complete: Bool = false,
         outputLen: UInt32 = 0,
+        promptOrdinal: UInt32 = 0,
     ) {
         self.index = index
         self.commandText = commandText
@@ -42,6 +48,7 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
         self.durationMS = durationMS
         self.complete = complete
         self.outputLen = outputLen
+        self.promptOrdinal = promptOrdinal
     }
 
     // MARK: Status → presentation (the testable icon/label mapping)
@@ -259,6 +266,7 @@ public final class TerminalBlockModel {
         durationMS: UInt32?,
         complete: Bool,
         outputLen: UInt32,
+        promptOrdinal: UInt32 = 0,
     ) {
         let block = CommandBlock(
             index: index,
@@ -267,6 +275,7 @@ public final class TerminalBlockModel {
             durationMS: durationMS,
             complete: complete,
             outputLen: outputLen,
+            promptOrdinal: promptOrdinal,
         )
         if let existing = blocks.firstIndex(where: { $0.index == index }) {
             blocks[existing] = block
@@ -286,10 +295,11 @@ public final class TerminalBlockModel {
     /// caller hands the whole event stream here for symmetry with the other folds.
     public func handle(_ event: AislopdeskClient.Event) {
         switch event {
-        case let .commandBlock(index, exitCode, durationMS, complete, outputLen, commandText):
+        case let .commandBlock(index, exitCode, durationMS, complete, outputLen, commandText, promptOrdinal):
             upsert(
                 index: index, commandText: commandText, exitCode: exitCode,
                 durationMS: durationMS, complete: complete, outputLen: outputLen,
+                promptOrdinal: promptOrdinal,
             )
         case let .blockOutput(index, output):
             resolveOutput(index: index, output: output)

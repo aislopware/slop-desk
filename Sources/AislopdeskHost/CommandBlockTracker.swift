@@ -35,6 +35,7 @@ struct CommandBlockTracker {
         var complete: Bool
         var outputLen: UInt32
         var commandText: String
+        var promptOrdinal: UInt32
     }
 
     /// One retained COMPLETED block's output (the output ring).
@@ -114,6 +115,7 @@ struct CommandBlockTracker {
                 complete: meta.complete,
                 outputLen: meta.outputLen,
                 commandText: meta.commandText,
+                promptOrdinal: meta.promptOrdinal,
             )
         }
     }
@@ -147,6 +149,7 @@ struct CommandBlockTracker {
             complete: block.complete,
             outputLen: UInt32(truncatingIfNeeded: block.output.count),
             commandText: block.commandText,
+            promptOrdinal: UInt32(truncatingIfNeeded: max(0, block.promptOrdinal)),
         )
         if let last = lastEmitted[index], !Self.meaningfullyChanged(from: last, to: meta) {
             // Nothing the UI cares about changed — but keep the recorded length fresh so the eventual
@@ -162,6 +165,7 @@ struct CommandBlockTracker {
             complete: meta.complete,
             outputLen: meta.outputLen,
             commandText: meta.commandText,
+            promptOrdinal: meta.promptOrdinal,
         )
     }
 
@@ -176,6 +180,7 @@ struct CommandBlockTracker {
         return last.exitCode != next.exitCode
             || last.durationMS != next.durationMS
             || last.commandText != next.commandText
+            || last.promptOrdinal != next.promptOrdinal
     }
 
     /// Retains a COMPLETED block's output in the ring (replacing any prior record for that index),

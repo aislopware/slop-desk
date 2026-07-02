@@ -33,13 +33,18 @@ final class CommandBlockTrackerTests: XCTestCase {
         var complete: Bool
         var outLen: UInt32
         var cmd: String
+        var ordinal: UInt32
     }
 
     /// All `commandBlock` metadata emitted by ingesting `stream` in one chunk.
     private func metas(_ stream: String, _ tracker: inout CommandBlockTracker) -> [Meta] {
         tracker.ingest(bytes(stream)).compactMap {
-            guard case let .commandBlock(index, exit, dur, complete, outLen, cmd) = $0 else { return nil }
-            return Meta(index: index, exit: exit, dur: dur, complete: complete, outLen: outLen, cmd: cmd)
+            guard case let .commandBlock(index, exit, dur, complete, outLen, cmd, ordinal) = $0
+            else { return nil }
+            return Meta(
+                index: index, exit: exit, dur: dur, complete: complete, outLen: outLen, cmd: cmd,
+                ordinal: ordinal,
+            )
         }
     }
 
@@ -107,8 +112,12 @@ final class CommandBlockTrackerTests: XCTestCase {
     /// All `commandBlock` metadata in a raw `[WireMessage]` batch (for chunks ingested directly).
     private func commandBlocks(_ messages: [WireMessage]) -> [Meta] {
         messages.compactMap {
-            guard case let .commandBlock(index, exit, dur, complete, outLen, cmd) = $0 else { return nil }
-            return Meta(index: index, exit: exit, dur: dur, complete: complete, outLen: outLen, cmd: cmd)
+            guard case let .commandBlock(index, exit, dur, complete, outLen, cmd, ordinal) = $0
+            else { return nil }
+            return Meta(
+                index: index, exit: exit, dur: dur, complete: complete, outLen: outLen, cmd: cmd,
+                ordinal: ordinal,
+            )
         }
     }
 
