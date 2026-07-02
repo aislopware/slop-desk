@@ -78,6 +78,15 @@ public protocol PaneSessionHandle: AnyObject, Identifiable {
     /// `InputBarModel`, test fakes record it.
     func sendBytes(_ bytes: [UInt8])
 
+    /// Whether ``sendBytes(_:)``/``sendText(_:)`` will actually reach the remote shell right now, rather
+    /// than silently dropping (the documented disconnected no-op semantic — e.g. `InputBarModel.sendSink`
+    /// is `nil`/inert before the pane's connection comes up). A caller that must not lose bytes (e.g.
+    /// ``WorkspaceStore/sendChatToNewSession(_:launchGrace:onDeliveryFailed:)`` launching Claude into a
+    /// freshly-spawned tab) polls this instead of trusting a fixed wall-clock sleep. Default `true` — kinds
+    /// with no connection concept (video panes) and test fakes are always "ready"; ``LivePaneSession``
+    /// overrides for `.terminal` panes to reflect the live ``ConnectionViewModel/status``.
+    var isReadyForInput: Bool { get }
+
     // MARK: Scrollback capture (`aislopdesk pane capture`)
 
     /// The last `count` lines of this pane's scrollback (newest screen + retained scrollback), as a flat
@@ -114,6 +123,10 @@ public extension PaneSessionHandle {
 
     /// Default: no text funnel. ``LivePaneSession`` overrides for terminal/Claude panes.
     func sendBytes(_: [UInt8]) {}
+
+    /// Default: always ready (no connection concept — video panes, and every test fake unless it
+    /// overrides). ``LivePaneSession`` overrides for terminal panes.
+    var isReadyForInput: Bool { true }
 
     /// Default: no terminal ⇒ nothing to capture. ``LivePaneSession`` overrides for terminal panes.
     func captureScrollback(lines _: Int) -> [String] { [] }

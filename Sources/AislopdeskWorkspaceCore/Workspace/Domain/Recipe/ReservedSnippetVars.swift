@@ -104,6 +104,56 @@ public enum ReservedSnippetVars {
         return (text, offset, missing)
     }
 
+    /// Resolves `body` straight to the injection BYTES, WITHOUT ever running ``SendKeysParser`` over a
+    /// substituted value. Reserved vars / user-prompt values are treated as UNTRUSTED literal content —
+    /// a `<Enter>`/`<C-c>`/`<Esc>` inside `{{clipboard}}` or a sheet-entered value is emitted as its own
+    /// literal UTF-8 bytes, never parsed into a control-key token; only the snippet AUTHOR's own template
+    /// text is token-scanned. This is the verbatim-injection invariant `BlockReRunEncoder` also enforces
+    /// for untrusted text elsewhere in the codebase.
+    ///
+    /// Returns `(bytes, text, cursorOffset, missing)` where `text`/`cursorOffset` mirror
+    /// ``resolve(body:reserved:values:)`` (needed by ``WorkspaceStore/snippetCursorLeftBytes(text:byteOffset:)``,
+    /// which counts trailing graphemes of the merged text) and `bytes` is the safe injection payload.
+    public static func resolveBytes(
+        body: String,
+        reserved: ReservedSnippetValues,
+        values: [String: String] = [:],
+    ) -> (bytes: [UInt8], text: String, cursorOffset: Int?, missing: [String]) {
+        func clean(_ s: String) -> String { s.replacingOccurrences(of: cursorMarker, with: "") }
+
+        var table: [String: String] = [:]
+        for (name, value) in values where !reservedNames.contains(name) {
+            table[name] = clean(value)
+        }
+        table["clipboard"] = clean(reserved.clipboard)
+        table["date"] = clean(reserved.date)
+        table["time"] = clean(reserved.time)
+        table["cursor"] = cursorMarker
+
+        let (segments, missing) = SnippetExpander.expandSegments(body, values: table)
+
+        var bytes: [UInt8] = []
+        var text = ""
+        var cursorOffset: Int?
+        for segment in segments {
+            switch segment {
+            case let .literal(s):
+                bytes += SendKeysParser.encode(s)
+                text += s
+            case let .substituted(value):
+                if value == cursorMarker {
+                    // Only the FIRST {{cursor}} marks the caret (matches `resolve`); every other stray
+                    // sentinel occurrence is simply dropped, contributing no bytes/text.
+                    if cursorOffset == nil { cursorOffset = text.utf8.count }
+                } else {
+                    bytes += Array(value.utf8) // literal UTF-8 — NEVER re-scanned for <Token>s
+                    text += value
+                }
+            }
+        }
+        return (bytes, text, cursorOffset, missing)
+    }
+
     /// The USER-prompt placeholder names in `body` — i.e. ``SnippetExpander/placeholders(in:)`` with the
     /// reserved names removed. This is what drives the value-entry sheet: a body of only reserved vars
     /// (`git checkout {{cursor}}`, `echo {{date}}`) needs NO prompt and runs straight away.

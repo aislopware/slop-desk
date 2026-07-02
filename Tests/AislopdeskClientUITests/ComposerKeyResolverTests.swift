@@ -70,5 +70,20 @@ final class ComposerKeyResolverTests: XCTestCase {
             "IME composing → ⎋ drops the marked text, it does NOT cancel the Composer",
         )
     }
+
+    /// Return must defer to the input context while an IME composition is in flight — otherwise a bare `↩`
+    /// in Prompt-Queue mode (or `⌘↩`) would enqueue/send the raw, uncommitted marked text (Telex/Pinyin/
+    /// Kotoeri) instead of letting the input context commit it. Revert-to-confirm-fail: hardcode `false` in
+    /// `returnDefersToIME` and this fails.
+    func testReturnDefersToIMEOnlyWithMarkedText() {
+        XCTAssertFalse(
+            ComposerKeyResolver.returnDefersToIME(hasMarkedText: false),
+            "no IME composition → Return resolves normally (newline/enqueue/send)",
+        )
+        XCTAssertTrue(
+            ComposerKeyResolver.returnDefersToIME(hasMarkedText: true),
+            "IME composing → Return belongs to the input context, it does NOT enqueue/send the draft",
+        )
+    }
 }
 #endif

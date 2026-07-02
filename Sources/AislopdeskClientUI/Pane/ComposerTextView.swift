@@ -258,9 +258,15 @@ final class ComposerTextView: NSTextView {
             if insertConvertedPaste(rich: false) { return }
         }
         // Return / keypad-Enter — bare ↩/⇧↩ fall through to the editor (newline); ⌘↩ / ⌥⌘↩ / queue-mode-↩
-        // are handled (the decision is the PURE resolver).
+        // are handled (the decision is the PURE resolver). UNLESS an IME composition is active: then Return
+        // belongs to the input context, which COMMITS the marked text (Telex / Pinyin / Kotoeri) instead of
+        // enqueueing/sending the still-uncommitted draft out from under the composition.
         if event.keyCode == 36 || event.keyCode == 76 {
-            if coordinator.handleReturn(command: flags.contains(.command), option: flags.contains(.option)) { return }
+            if ComposerKeyResolver.returnDefersToIME(hasMarkedText: hasMarkedText()) {
+                if inputContext?.handleEvent(event) == true { return }
+            } else if coordinator.handleReturn(command: flags.contains(.command), option: flags.contains(.option)) {
+                return
+            }
         }
         // ⎋ — cancel (keeps the draft), UNLESS an IME composition is active: then ⎋ belongs to the input
         // context, which drops the marked text (Telex / Pinyin / Kotoeri) rather than tearing down the

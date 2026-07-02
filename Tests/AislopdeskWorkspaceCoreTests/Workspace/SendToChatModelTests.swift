@@ -241,4 +241,51 @@ final class SendToChatNewSessionStoreTests: XCTestCase {
             "the prompt must NOT be the first thing sent (the bug: a bare shell tries to run the markdown)",
         )
     }
+
+    /// REVERT-TO-CONFIRM-FAIL: the prior code slept a fixed grace and then unconditionally called
+    /// `sendBytes` — it never checked whether the pane was actually connected, so a slow/unreachable host
+    /// silently dropped the `claude\n` launch AND the composed prompt with no error. With the readiness
+    /// gate, a pane that never becomes ready is detected (bounded by `readyTimeout`) and `onDeliveryFailed`
+    /// fires instead of the message vanishing — and crucially NOTHING is sent to the still-disconnected pane.
+    func testNewSessionCallsOnDeliveryFailedWhenPaneNeverBecomesReady() async throws {
+        let pane = PaneID()
+        let tab = Tab(root: .leaf(pane), activePane: pane)
+        let specs: [PaneID: PaneSpec] = [pane: PaneSpec(kind: .terminal, title: "Terminal", lastKnownCwd: nil)]
+        let session = Session(name: "Local", tabs: [tab], activeTabIndex: 0, specs: specs)
+        let store = WorkspaceStore(
+            restoringTree: TreeWorkspace(sessions: [session], activeSessionID: session.id),
+            liveModel: .tree,
+            makeSession: { spec in
+                let fake = FakePaneSession(spec)
+                fake.isReadyForInput = false // simulate a pane that never connects
+                return fake
+            },
+            liveVideoCap: 2,
+            persistence: nil,
+        )
+        let message = SendToChatModel.compose(
+            context: SendToChatContext(title: "CC | proj", quoted: "x"), comment: "y",
+        )
+        var failed = 0
+        let spawned = try XCTUnwrap(
+            store.sendChatToNewSession(
+                message, launchGrace: .zero, readyTimeout: .milliseconds(50),
+                onDeliveryFailed: { failed += 1 },
+            ),
+            "a pane materialized",
+        )
+        let fake = try XCTUnwrap(store.handle(for: spawned) as? FakePaneSession)
+
+        // Wait past the bounded readiness timeout for the failure callback to fire.
+        for _ in 0..<400 where failed == 0 {
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+
+        XCTAssertEqual(failed, 1, "a pane that never becomes ready reports the delivery failure exactly once")
+        XCTAssertTrue(
+            fake.sentBytes.isEmpty,
+            "neither the Claude launch nor the composed message is sent to a pane that never connected",
+        )
+    }
 }

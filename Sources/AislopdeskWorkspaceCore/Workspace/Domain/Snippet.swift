@@ -125,9 +125,25 @@ public enum SnippetExpander {
         return regex
     }()
 
-    /// Replaces every `{{name}}` with `values[name]`. A name with no value is LEFT in place (so the user
-    /// sees what is unresolved) and reported in `missing` (first-appearance order, deduped).
-    public static func expand(_ body: String, values: [String: String]) -> (text: String, missing: [String]) {
+    /// One resolved chunk of an expanded snippet body. `literal` text came straight from the template
+    /// AUTHOR (the snippet's own `body`), so it is safe to scan for `<Token>` control-key markup.
+    /// `substituted` is a resolved value — a reserved var (`{{clipboard}}`/`{{date}}`/`{{time}}`) or a
+    /// user-supplied placeholder value — and must NEVER be re-scanned for `<Token>`s: that text is
+    /// untrusted (arbitrary clipboard contents / user input), and treating a literal `<Enter>`/`<C-c>`
+    /// inside it as a control-key token would inject bytes the author never wrote (the verbatim-injection
+    /// invariant used elsewhere, e.g. `BlockReRunEncoder`).
+    public enum SnippetSegment: Equatable {
+        case literal(String)
+        case substituted(String)
+    }
+
+    /// Like ``expand(_:values:)`` but keeps template text and substituted values as SEPARATE segments
+    /// instead of merging them into one string, so a caller (``ReservedSnippetVars/resolveBytes``) can
+    /// token-scan only the template author's own text.
+    public static func expandSegments(
+        _ body: String,
+        values: [String: String],
+    ) -> (segments: [SnippetSegment], missing: [String]) {
         var missing: [String] = []
         var seenMissing = Set<String>()
         // NSString is required: NSRegularExpression yields UTF-16 NSRanges, consumed via
@@ -136,21 +152,37 @@ public enum SnippetExpander {
         // swiftlint:disable:next legacy_objc_type
         let ns = body as NSString
         let matches = pattern.matches(in: body, range: NSRange(location: 0, length: ns.length))
-        var out = ""
+        var segments: [SnippetSegment] = []
         var cursor = 0
+        func appendLiteral(_ s: String) { if !s.isEmpty { segments.append(.literal(s)) } }
         for m in matches {
             let whole = m.range
-            out += ns.substring(with: NSRange(location: cursor, length: whole.location - cursor))
+            appendLiteral(ns.substring(with: NSRange(location: cursor, length: whole.location - cursor)))
             let name = ns.substring(with: m.range(at: 1))
             if let value = values[name] {
-                out += value
+                segments.append(.substituted(value))
             } else {
-                out += ns.substring(with: whole) // keep the literal {{name}} so the gap is visible
+                appendLiteral(ns.substring(with: whole)) // keep the literal {{name}} so the gap is visible
                 if seenMissing.insert(name).inserted { missing.append(name) }
             }
             cursor = whole.location + whole.length
         }
-        out += ns.substring(from: cursor)
+        appendLiteral(ns.substring(from: cursor))
+        return (segments, missing)
+    }
+
+    /// Replaces every `{{name}}` with `values[name]`. A name with no value is LEFT in place (so the user
+    /// sees what is unresolved) and reported in `missing` (first-appearance order, deduped).
+    public static func expand(_ body: String, values: [String: String]) -> (text: String, missing: [String]) {
+        let (segments, missing) = expandSegments(body, values: values)
+        var out = ""
+        for segment in segments {
+            switch segment {
+            case let .literal(s),
+                 let .substituted(s):
+                out += s
+            }
+        }
         return (out, missing)
     }
 

@@ -74,6 +74,46 @@ final class SnippetReservedRunTests: XCTestCase {
         XCTAssertEqual(bytes(st, a.id), [Array("ssh ada on 2026-06-28".utf8) + [0x0D]])
     }
 
+    // MARK: - substituted values are VERBATIM, never re-scanned for <Token>s
+
+    func testClipboardContainingTokenSyntaxIsInjectedLiterallyNotParsed() {
+        // A copied `<Enter>` inside {{clipboard}} must NOT become a real carriage return — that would
+        // execute a truncated command and spray the rest of the clipboard into the shell as live input.
+        // Revert-to-confirm-fail: before the fix, snippetBytes ran SendKeysParser over the WHOLE resolved
+        // text, so this asserted the literal `<Enter>` had become byte 0x0D.
+        let a = term(0)
+        let st = store([a], focus: a.id)
+        st.snippetReservedValues = { ReservedSnippetValues(clipboard: "press <Enter> to continue") }
+        let s = st.addSnippet(name: "p", body: "git commit -m \"{{clipboard}}\"")
+        XCTAssertEqual(st.runSnippet(s.id), 1)
+        XCTAssertEqual(
+            bytes(st, a.id),
+            [Array("git commit -m \"press <Enter> to continue\"".utf8)],
+            "the literal <Enter> token inside the substituted clipboard is NOT parsed into a control byte",
+        )
+    }
+
+    func testUserSuppliedPlaceholderValueContainingTokenSyntaxIsLiteral() {
+        // Same invariant for a sheet-entered {{placeholder}} value: a copied `<C-c>` must not become a
+        // real interrupt byte.
+        let a = term(0)
+        let st = store([a], focus: a.id)
+        let s = st.addSnippet(name: "x", body: "echo {{msg}}")
+        XCTAssertEqual(st.runSnippet(s.id, values: ["msg": "<C-c> means interrupt"]), 1)
+        XCTAssertEqual(bytes(st, a.id), [Array("echo <C-c> means interrupt".utf8)])
+    }
+
+    func testTemplateOwnTokensStillEncodeAroundASubstitutedValue() {
+        // The AUTHOR's own <Enter> (not inside a substituted value) still encodes to a real control byte —
+        // only substituted content is verbatim.
+        let a = term(0)
+        let st = store([a], focus: a.id)
+        st.snippetReservedValues = { ReservedSnippetValues(clipboard: "feature/login") }
+        let s = st.addSnippet(name: "co", body: "git checkout {{clipboard}}<Enter>")
+        XCTAssertEqual(st.runSnippet(s.id), 1)
+        XCTAssertEqual(bytes(st, a.id), [Array("git checkout feature/login".utf8) + [0x0D]])
+    }
+
     // MARK: - {{cursor}} caret reposition
 
     func testCursorMarkerAtEndSendsNoCaretMove() {

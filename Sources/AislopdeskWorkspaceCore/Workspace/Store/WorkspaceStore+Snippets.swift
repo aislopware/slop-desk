@@ -9,19 +9,22 @@ import Foundation
 /// real pasteboard / clock.
 extension WorkspaceStore {
     /// Resolve `snippet` into the bytes ``runSnippet(_:values:)`` injects:
-    ///   1. ``ReservedSnippetVars`` substitutes the reserved vars FIRST (`{{clipboard}}`/`{{date}}`/`{{time}}`,
-    ///      injected via ``snippetReservedValues``) and strips `{{cursor}}` to a byte offset; everything else
-    ///      falls through to the user-prompt ``SnippetExpander`` (unknown slots stay literal);
-    ///   2. ``SendKeysParser`` turns the resolved text's `<Token>`s into control bytes;
+    ///   1. ``ReservedSnippetVars/resolveBytes(body:reserved:values:)`` substitutes the reserved vars
+    ///      (`{{clipboard}}`/`{{date}}`/`{{time}}`, injected via ``snippetReservedValues``) and user-prompt
+    ///      values, and strips `{{cursor}}` to a byte offset; everything else falls through to the
+    ///      user-prompt ``SnippetExpander`` (unknown slots stay literal);
+    ///   2. ``SendKeysParser`` turns ONLY the snippet author's own template text's `<Token>`s into control
+    ///      bytes — substituted values (clipboard / user input) are emitted as literal UTF-8 bytes, NEVER
+    ///      re-scanned for `<Token>`s, so a copied `<Enter>`/`<C-c>` can't inject control bytes;
     ///   3. a `{{cursor}}` marker appends cursor-left bytes (``snippetCursorLeftBytes(text:byteOffset:)``) so
     ///      the prompt caret lands where the snippet author placed it — NO Enter is ever appended.
     func snippetBytes(for snippet: Snippet, values: [String: String]) -> [UInt8] {
-        let resolved = ReservedSnippetVars.resolve(
+        let resolved = ReservedSnippetVars.resolveBytes(
             body: snippet.body,
             reserved: snippetReservedValues?() ?? ReservedSnippetValues(),
             values: values,
         )
-        var bytes = SendKeysParser.encode(resolved.text)
+        var bytes = resolved.bytes
         if let offset = resolved.cursorOffset {
             bytes += Self.snippetCursorLeftBytes(text: resolved.text, byteOffset: offset)
         }

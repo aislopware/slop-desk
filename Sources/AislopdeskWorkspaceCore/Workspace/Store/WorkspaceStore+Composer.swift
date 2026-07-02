@@ -191,13 +191,22 @@ public extension WorkspaceStore {
     /// E13 WI-5 (ES-E13-5) — the "New session" picker option (no live agent target chosen): spawn a fresh
     /// terminal tab (the new chat's pane, focused), LAUNCH Claude in it, then hand it the composed `message`.
     /// Returns the new pane's id (focused), or `nil` if the spawn did not materialize a pane.
+    /// `onDeliveryFailed` fires (main actor) if the pane never became ready to accept input within
+    /// ``sendChatReadyTimeout`` — e.g. a slow/unreachable host — so the caller can surface a user-visible
+    /// error instead of the message silently vanishing.
     @discardableResult
-    func sendChatToNewSession(_ message: String) -> PaneID? {
-        sendChatToNewSession(message, launchGrace: .milliseconds(1400))
+    func sendChatToNewSession(_ message: String, onDeliveryFailed: (@MainActor () -> Void)? = nil) -> PaneID? {
+        sendChatToNewSession(message, launchGrace: .milliseconds(1400), onDeliveryFailed: onDeliveryFailed)
     }
 
-    /// The `launchGrace`-parameterized core of ``sendChatToNewSession(_:)`` — a test injects a `0` ms grace to
-    /// observe the launch + delivery without a 1.4 s wall-clock wait. Production callers use the public overload.
+    /// The bound on how long ``sendChatToNewSession(_:launchGrace:onDeliveryFailed:)`` waits for the freshly
+    /// spawned tab to become ``PaneSessionHandle/isReadyForInput`` before giving up and calling
+    /// `onDeliveryFailed`.
+    static let sendChatReadyTimeout: Duration = .seconds(10)
+
+    /// The `launchGrace`-parameterized core of ``sendChatToNewSession(_:onDeliveryFailed:)`` — a test injects
+    /// a `0` ms grace to observe the launch + delivery without a 1.4 s wall-clock wait. Production callers
+    /// use the public overload.
     ///
     /// A fresh terminal tab is a bare login SHELL — there is no live Claude here (that is exactly why the
     /// picker offered "New session"). Injecting the composed prompt straight in (the prior bug) makes the
@@ -205,27 +214,60 @@ public extension WorkspaceStore {
     /// LAUNCH Claude first — `claude\n` as VERBATIM literal UTF-8, NEVER ``SendKeysParser`` (the standing
     /// inject-safety invariant the fork/resume path also obeys) — then deliver the prompt via
     /// ``SendToChatModel/payload(for:)`` once Claude's TUI input is up (a multi-line message rides as one inert
-    /// DEC bracketed-paste block + CR). Both injects are sequenced in ONE task so the launch lands STRICTLY
+    /// DEC bracketed-paste block + CR).
+    ///
+    /// Readiness-gated, NOT a fixed sleep for the launch: a fixed wall-clock wait either fires too early on a
+    /// slow/WAN connect (``PaneSessionHandle/sendBytes(_:)`` silently drops while disconnected — the `claude\n`
+    /// launch vanishes and the message types into a bare shell) or wastes time on a fast one. So Phase 1 polls
+    /// ``PaneSessionHandle/isReadyForInput`` (bounded by ``sendChatReadyTimeout``) before typing `claude\n`,
+    /// and calls `onDeliveryFailed` instead of guessing if the pane never comes up. There is no wire signal for
+    /// "Claude's TUI is up", so Phase 2 (before the prompt) stays a bounded grace — but it now runs only after
+    /// the launch is KNOWN delivered, not guessed. Both phases run in ONE task so the launch lands STRICTLY
     /// after the new tab's own deferred cwd `cd` (which fires at `launchGrace`) — otherwise `claude` could
     /// start before the `cd` and the directory change would type into Claude's prompt instead of the shell.
     @discardableResult
-    func sendChatToNewSession(_ message: String, launchGrace: Duration) -> PaneID? {
+    func sendChatToNewSession(
+        _ message: String,
+        launchGrace: Duration,
+        readyTimeout: Duration = WorkspaceStore.sendChatReadyTimeout,
+        onDeliveryFailed: (@MainActor () -> Void)? = nil,
+    ) -> PaneID? {
         newTab(kind: .terminal, launchGrace: launchGrace)
         guard let spawned = tree.activeSession?.activeTab?.activePane else { return nil }
         let launch = Array("claude\n".utf8) // VERBATIM — start Claude in the fresh shell (no SendKeysParser)
         let payload = Array(SendToChatModel.payload(for: message))
         Task { @MainActor [weak self] in
-            // Phase 1: the shell prompt is up + the new-tab cwd `cd` has been enqueued (same grace).
+            guard let self else { return }
+            // Phase 0: let the new-tab's own deferred cwd `cd` get enqueued first (same grace), so `cd`
+            // can never land AFTER `claude` starts and type into its prompt instead of the shell.
             try? await Task.sleep(for: launchGrace)
-            // Phase 2: a second grace guarantees that `cd` landed before we launch Claude (avoids `cd`
-            // typing into Claude's input), then start Claude.
+            // Phase 1: wait for the pane to actually be able to accept input — NOT a guess. Bails out
+            // (loudly) rather than silently dropping `claude\n` into a still-disconnected pane.
+            guard await waitUntilReady(spawned, timeout: readyTimeout) else {
+                onDeliveryFailed?()
+                return
+            }
+            handle(for: spawned)?.sendBytes(launch)
+            // Phase 2: Claude's TUI needs a moment to come up before it can accept the composed prompt —
+            // no wire signal exists for this, so it stays a bounded grace (but the launch above is now
+            // KNOWN delivered, unlike the old fixed-sleep-only version).
             try? await Task.sleep(for: launchGrace)
-            self?.handle(for: spawned)?.sendBytes(launch)
-            // Phase 3: Claude's TUI input is up — only now can it accept the composed prompt.
-            try? await Task.sleep(for: launchGrace)
-            self?.handle(for: spawned)?.sendBytes(payload)
+            handle(for: spawned)?.sendBytes(payload)
         }
         return spawned
+    }
+
+    /// Polls ``PaneSessionHandle/isReadyForInput`` for pane `id` until it is `true` or `timeout` elapses.
+    /// Checks BEFORE the first sleep so an already-ready pane (every test fake, or a fast local connect)
+    /// returns immediately with no added latency.
+    @MainActor
+    private func waitUntilReady(_ id: PaneID, timeout: Duration) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while true {
+            if handle(for: id)?.isReadyForInput == true { return true }
+            if ContinuousClock.now >= deadline { return false }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
     }
 
     // MARK: - E13 WI-6: Resume (the History viewer's jump-vs-spawn map + the spawn-into-a-fresh-tab path)

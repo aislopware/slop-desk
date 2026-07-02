@@ -57,6 +57,10 @@ final class FakePaneSession: @MainActor PaneSessionHandle, @MainActor Identifiab
     /// Default `nil` ⇒ inert for every existing test.
     var onSendBytes: ((FakePaneSession, [UInt8]) -> Void)?
 
+    /// Settable so a test can simulate a pane that never connects (``PaneSessionHandle/isReadyForInput``).
+    /// Default `true` ⇒ every pre-existing test keeps the always-ready behaviour.
+    var isReadyForInput: Bool = true
+
     // MARK: Video activation
 
     /// The video-activation flag the cap tests assert against (only meaningful for `.remoteGUI`).
