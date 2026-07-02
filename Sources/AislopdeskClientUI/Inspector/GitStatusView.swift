@@ -2,10 +2,11 @@
 // (`GitDetailsSheet`): the old standalone Git tab merged into the Info tab, which carries only a one-row
 // summary (branch + change count) — the changed-file list is unbounded, so the full view gets a window.
 //
-// The detail view (spec/user-interface__details-panel.md §"Git Tab"): a header with the branch
-// name, the `origin` remote URL and the ahead/behind commit delta, then the changed-file list (each file a
-// status badge + name + dir), and an inline unified-diff OVERLAY that floats over the panel when a file row
-// is selected — its bytes fetched on demand via the pane's `gitDiff` verb. READ-ONLY: Commit / Fork
+// The detail view (spec/user-interface__details-panel.md §"Git Tab"): the changed-file list (each file a
+// status badge + name + dir) and an inline unified-diff OVERLAY that floats over the panel when a file row
+// is selected — its bytes fetched on demand via the pane's `gitDiff` verb. The branch/remote/delta header
+// lives on the HOSTING sheet's title bar (`GitDetailsSheet`) — the view rendering it too doubled the header
+// (two branch icons stacked). READ-ONLY: Commit / Fork
 // toolbar buttons are deferred (they require host-side mutation — see the E4 mapping notes), so this view
 // renders status + diff only.
 //
@@ -29,8 +30,6 @@ struct GitStatusView: View {
     /// The fetched raw `git diff` bytes for `selectedFile` (`nil` while loading / on failure).
     @State private var diffBytes: Data?
     @State private var diffLoading = false
-    /// True while the header refresh's metadata round-trip is in flight (drives the button's spinner).
-    @State private var refreshing = false
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -66,8 +65,6 @@ struct GitStatusView: View {
 
     private func repoBody(_ status: MetadataCodec.GitStatusPayload) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            gitHeader(status)
-            divider
             if status.files.isEmpty {
                 cleanState
             } else {
@@ -82,49 +79,6 @@ struct GitStatusView: View {
             }
         }
         .font(.system(size: Slate.Typeface.base))
-    }
-
-    private func gitHeader(_ status: MetadataCodec.GitStatusPayload) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            HStack(spacing: Slate.Metric.space1) {
-                Image(systemName: "arrow.triangle.branch")
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.icon)
-                Text(status.branch.isEmpty ? "detached" : status.branch)
-                    .font(.system(size: Slate.Typeface.body, weight: .semibold))
-                    .foregroundStyle(Slate.Text.primary)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                refreshButton
-            }
-            if !status.remoteURL.isEmpty {
-                Text(status.remoteURL)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            if status.ahead != 0 || status.behind != 0 {
-                HStack(spacing: Slate.Metric.space2) {
-                    if status.ahead != 0 {
-                        delta(symbol: "arrow.up", count: status.ahead, tint: Slate.Status.ok)
-                    }
-                    if status.behind != 0 {
-                        delta(symbol: "arrow.down", count: status.behind, tint: Slate.Status.warn)
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, Slate.Metric.space3)
-        .padding(.vertical, Slate.Metric.space2)
-    }
-
-    private func delta(symbol: String, count: Int32, tint: Color) -> some View {
-        HStack(spacing: 2) {
-            Image(systemName: symbol).font(.system(size: Slate.Typeface.small, weight: .semibold))
-            Text(String(count)).font(.system(size: Slate.Typeface.footnote)).monospacedDigit()
-        }
-        .foregroundStyle(tint)
     }
 
     private func fileRow(_ file: MetadataCodec.GitFileChange) -> some View {
@@ -277,36 +231,6 @@ struct GitStatusView: View {
         diffLoading = false
     }
 
-    /// The header's refresh action — with CLICK FEEDBACK: the icon yields to a small spinner while the
-    /// metadata round-trip is in flight (and the button disarms), so a click never reads as a no-op.
-    private var refreshButton: some View {
-        Button {
-            refreshing = true
-            Task {
-                await model.refresh()
-                refreshing = false
-            }
-        } label: {
-            Group {
-                if refreshing {
-                    ProgressView().controlSize(.mini)
-                } else {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: Slate.Typeface.small, weight: .medium))
-                        .foregroundStyle(Slate.Text.icon)
-                }
-            }
-            .frame(width: 16, height: 16)
-        }
-        .buttonStyle(.plain)
-        .disabled(!model.isConnected || refreshing)
-        .help("Refresh")
-    }
-
-    private var divider: some View {
-        Rectangle().fill(Slate.Line.divider).frame(height: 1).padding(.horizontal, Slate.Metric.space3)
-    }
-
     // MARK: Token mapping (the only theme-coupled part — kept out of the pure helpers)
 
     private func tint(for category: GitStatusPresentation.Category) -> Color {
@@ -356,10 +280,12 @@ struct GitStatusView: View {
     }
 }
 
-/// The Git details POPUP (the Git tab merged into Info): a sheet hosting the full `GitStatusView` —
-/// title bar (icon + "Git Status" + close) over the status/diff detail. Presented by the Info tab's
-/// git-summary row; sized like the `AgentSessionHistoryView` sheet so the unbounded changed-file list and
-/// the diff overlay get real estate the sidebar could never give them.
+/// The Git details POPUP (the Git tab merged into Info): a sheet hosting the full `GitStatusView`.
+/// The title bar IS the git header — branch icon + branch name + ahead/behind deltas, the remote URL as
+/// trailing secondary text, then refresh + close — so the sheet carries exactly ONE header (the first cut
+/// stacked a literal "Git Status" bar over the view's own branch header: two branch icons in a row).
+/// Presented by the Info tab's git-summary row; the tall frame is reserved for an actual changed-file list
+/// (+ the diff overlay) — a clean tree collapses the sheet to a compact card instead of a field of empty.
 struct GitDetailsSheet: View {
     /// The active pane's decoded host metadata — its `gitStatus` + the `gitDiff`/`refresh` verbs.
     let model: PaneMetadataModel
@@ -367,13 +293,25 @@ struct GitDetailsSheet: View {
     /// preview / test can instantiate the view standalone.
     var onClose: () -> Void = {}
 
+    /// True while the header refresh's metadata round-trip is in flight (drives the button's spinner).
+    @State private var refreshing = false
+
+    /// Whether there is a changed-file list to give real estate to — a clean/absent tree gets the
+    /// compact frame.
+    private var hasChanges: Bool { !(model.gitStatus?.files.isEmpty ?? true) }
+
     var body: some View {
         VStack(spacing: 0) {
             headerBar
             Rectangle().fill(Slate.Line.divider).frame(height: 1)
             GitStatusView(model: model)
         }
-        .frame(minWidth: 520, idealWidth: 620, minHeight: 420, idealHeight: 560)
+        .frame(
+            minWidth: 520,
+            idealWidth: 620,
+            minHeight: hasChanges ? 420 : 180,
+            idealHeight: hasChanges ? 560 : 200,
+        )
         .background(Slate.Surface.content)
     }
 
@@ -382,14 +320,37 @@ struct GitDetailsSheet: View {
             Image(systemName: "arrow.triangle.branch")
                 .font(.system(size: Slate.Typeface.base))
                 .foregroundStyle(Slate.Text.icon)
-            Text("Git Status")
-                .font(.system(size: Slate.Typeface.body, weight: .semibold))
-                .foregroundStyle(Slate.Text.primary)
-            Spacer(minLength: Slate.Metric.space2)
+            if let status = model.gitStatus, status.hasRepo {
+                Text(status.branch.isEmpty ? "detached" : status.branch)
+                    .font(.system(size: Slate.Typeface.body, weight: .semibold))
+                    .foregroundStyle(Slate.Text.primary)
+                    .lineLimit(1)
+                if status.ahead != 0 {
+                    delta(symbol: "arrow.up", count: status.ahead, tint: Slate.Status.ok)
+                }
+                if status.behind != 0 {
+                    delta(symbol: "arrow.down", count: status.behind, tint: Slate.Status.warn)
+                }
+                Spacer(minLength: Slate.Metric.space3)
+                if !status.remoteURL.isEmpty {
+                    Text(status.remoteURL)
+                        .font(.system(size: Slate.Typeface.footnote))
+                        .foregroundStyle(Slate.Text.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            } else {
+                Text("Git Status")
+                    .font(.system(size: Slate.Typeface.body, weight: .semibold))
+                    .foregroundStyle(Slate.Text.primary)
+                Spacer(minLength: Slate.Metric.space2)
+            }
+            refreshButton
             Button(action: onClose) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: Slate.Typeface.body))
                     .foregroundStyle(Slate.Text.icon)
+                    .frame(width: 16, height: 16)
             }
             .buttonStyle(.plain)
             .help("Close")
@@ -397,6 +358,40 @@ struct GitDetailsSheet: View {
         }
         .padding(.horizontal, Slate.Metric.space3)
         .padding(.vertical, Slate.Metric.space2)
+    }
+
+    private func delta(symbol: String, count: Int32, tint: Color) -> some View {
+        HStack(spacing: 2) {
+            Image(systemName: symbol).font(.system(size: Slate.Typeface.small, weight: .semibold))
+            Text(String(count)).font(.system(size: Slate.Typeface.footnote)).monospacedDigit()
+        }
+        .foregroundStyle(tint)
+    }
+
+    /// The header's refresh action — with CLICK FEEDBACK: the icon yields to a small spinner while the
+    /// metadata round-trip is in flight (and the button disarms), so a click never reads as a no-op.
+    private var refreshButton: some View {
+        Button {
+            refreshing = true
+            Task {
+                await model.refresh()
+                refreshing = false
+            }
+        } label: {
+            Group {
+                if refreshing {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: Slate.Typeface.small, weight: .medium))
+                        .foregroundStyle(Slate.Text.icon)
+                }
+            }
+            .frame(width: 16, height: 16)
+        }
+        .buttonStyle(.plain)
+        .disabled(!model.isConnected || refreshing)
+        .help("Refresh")
     }
 }
 

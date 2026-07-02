@@ -275,10 +275,12 @@ struct InspectorColumn: View {
                 workingDirectoryLabel
                 Spacer(minLength: 0)
                 ConfirmFlashButton(action: copyWorkingDirectory) { confirming in
+                    // Fixed 16×16 — the copy/checkmark glyphs differ in intrinsic size, and letting the
+                    // swap resize the button shifted the whole row.
                     Image(systemName: confirming ? "checkmark" : "doc.on.doc")
                         .font(.system(size: Slate.Typeface.base))
                         .foregroundStyle(confirming ? Slate.Status.ok : Slate.State.accent)
-                        .padding(.vertical, 1)
+                        .frame(width: 16, height: 16)
                         .contentShape(.rect)
                 }
                 .disabled(resolvedCwd == nil)
@@ -452,7 +454,10 @@ struct InspectorColumn: View {
         @ViewBuilder trailing: () -> some View = { EmptyView() },
     ) -> some View {
         HStack(spacing: Slate.Metric.space2) {
+            // Fixed 16×16 — the Copy row swaps its glyph to a checkmark while flash-confirming, and the
+            // glyphs' differing intrinsic sizes otherwise nudge the title and the row height.
             Image(systemName: systemImage)
+                .frame(width: 16, height: 16)
             Text(title)
             Spacer(minLength: Slate.Metric.space2)
             trailing()

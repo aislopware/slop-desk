@@ -88,9 +88,12 @@ struct BlockOutputView: View {
                 .foregroundStyle(Slate.State.header)
             Spacer(minLength: 0)
             ConfirmFlashButton(action: copy) { confirming in
+                // Fixed 16×16 — the copy/checkmark glyphs differ in intrinsic size, and letting the
+                // swap resize the button shifted the header row.
                 Label("Copy", systemImage: confirming ? "checkmark" : "doc.on.doc")
                     .labelStyle(.iconOnly)
                     .foregroundStyle(confirming ? Slate.Status.ok : Slate.Text.icon)
+                    .frame(width: 16, height: 16)
                     .contentShape(.rect)
             }
             .help("Copy output")
