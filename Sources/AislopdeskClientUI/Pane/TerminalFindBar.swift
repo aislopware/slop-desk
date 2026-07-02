@@ -126,10 +126,15 @@ final class TerminalFindBarModel {
         armSearch()
     }
 
-    /// Whether the controller's current mode CANNOT be expressed by libghostty's literal in-surface search
-    /// (no regex engine, no word-boundary filter), so the bar must drive navigation from its OWN match rows via
-    /// `scroll_to_row:` instead of arming `search:` / `navigate_search:`. True for regex OR whole-word mode.
-    private var needsRowDrivenNav: Bool { controller.isRegex || controller.wholeWord }
+    /// Whether the controller's current mode CANNOT be expressed FAITHFULLY by libghostty's literal in-surface
+    /// search, so the bar must drive navigation from its OWN match rows via `scroll_to_row:` instead of arming
+    /// `search:` / `navigate_search:`. True for regex (no regex engine), whole-word (no word-boundary filter),
+    /// AND case-SENSITIVE (libghostty's matcher is HARD-WIRED case-insensitive — `std.ascii.indexOfIgnoreCase`).
+    /// Arming `search:` in case-sensitive mode would amber-highlight (and `navigate_search:` would step) extra
+    /// case-folded occurrences the controller's case-sensitive counter says don't exist — the N-of-M counter,
+    /// the highlight, and the chevrons would permanently disagree. This mirrors ``GlobalSearchController``'s
+    /// click-to-line fix, which already routes case-sensitive jumps through `end_search` + `scroll_to_row`.
+    private var needsRowDrivenNav: Bool { controller.isRegex || controller.wholeWord || controller.caseSensitive }
 
     /// ↩ / ⌘G / vi `n` — step to the next match IN THE SEARCH DIRECTION + move the live grid to it. Opens the
     /// bar first if it is closed (faithful "find next opens find"), PRESERVING the current direction. For a
@@ -175,8 +180,15 @@ final class TerminalFindBarModel {
     /// addressing). Used by the row-driven modes (regex / whole-word) that libghostty's literal search cannot
     /// itself express. No current match (empty / unmatched query) ⇒ nothing to scroll to.
     private func scrollToCurrentMatchRow() {
-        guard needsRowDrivenNav, let row = controller.current?.line else { return }
-        model?.performSearchSurfaceAction("scroll_to_row:\(row)")
+        guard needsRowDrivenNav, let logicalRow = controller.current?.line else { return }
+        // `Match.line` indexes the UNWRAPPED scrollback mirror; libghostty's `scroll_to_row:` addresses PHYSICAL
+        // grid rows (soft-wrap continuations count). Map through the grid width so a heavily-wrapped pane lands
+        // on the match instead of N rows too high. Unknown grid width (`0`) ⇒ identity (the pre-fix row).
+        let columns = model?.searchGridColumns() ?? 0
+        let physicalRow = ScrollbackWrapMapper.physicalRow(
+            forLogicalLine: logicalRow, in: controller.lines, columns: columns,
+        )
+        model?.performSearchSurfaceAction("scroll_to_row:\(physicalRow)")
     }
 
     /// `rectangle.stack` "search all tabs" — escalate the in-pane find to cross-tab Global Search (`⇧⌘F`),
@@ -189,12 +201,21 @@ final class TerminalFindBarModel {
         close()
     }
 
-    /// × / Esc — clear the query + matches, end libghostty's search (drops every highlight), hide the bar. The
-    /// buffer mirror is kept (in the controller) so a re-open is cheap.
+    /// × / Esc / search-all-tabs — clear the query + matches, end libghostty's search (drops every highlight),
+    /// hide the bar, and RETURN the keyboard first responder to the terminal surface. The buffer mirror is kept
+    /// (in the controller) so a re-open is cheap.
+    ///
+    /// The focus hand-back is load-bearing: closing tears down the focused query `TextField`'s backing NSView,
+    /// but the pane's workspace focus never changed while the bar was open, so none of the surface's own reclaim
+    /// paths (the `isFocusedPane` didSet, mount, mouseDown, focus-follows-mouse — all gated on a focus TRANSITION
+    /// or a click) fire. Without ``TerminalViewModel/reclaimKeyboardFocus()`` the window stays first responder and
+    /// typing goes nowhere until the pane is clicked. This funnels all three close paths (Esc, ×, search-all-tabs
+    /// via ``searchAllTabs()``).
     func close() {
         controller.clear()
         model?.performSearchSurfaceAction("end_search")
         visible = false
+        model?.reclaimKeyboardFocus()
     }
 
     /// Push the current query into libghostty's own in-surface search (it owns the amber highlight + the

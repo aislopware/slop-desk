@@ -220,10 +220,13 @@ public enum GlobalSearchController {
     /// and regex).
     ///
     /// LANDING is mode-INDEPENDENT and viewport-INDEPENDENT: ALWAYS scroll the viewport straight to the clicked
-    /// hit's row via `scroll_to_row:<hit.line>`. `hit.line` indexes the SAME `searchScrollbackLines()` scrollback
-    /// mirror that `computeMatches` scanned AND that libghostty's `scroll_to_row:<usize>` addresses, so the
-    /// clicked row lands regardless of case-sensitivity, regex, or where the viewport currently sits — exactly
-    /// the row the find bar's chevrons scroll to. This replaces the old ordinal `navigate_search:next` walk,
+    /// hit's row via `scroll_to_row:<physicalRow>`. `hit.line` indexes the LOGICAL (unwrapped)
+    /// `searchScrollbackLines()` mirror that `computeMatches` scanned, whereas `scroll_to_row:<usize>` addresses
+    /// PHYSICAL grid rows (soft-wrap continuations count) — so the logical index is mapped through
+    /// ``ScrollbackWrapMapper/physicalRow(forLogicalLine:in:columns:)`` (passing the source `lines` + grid
+    /// `columns`) before scrolling, landing the clicked row regardless of case-sensitivity, regex, wrapped
+    /// output, or where the viewport currently sits. When `columns <= 0` (grid width unknown) the mapping is
+    /// the identity, matching the pre-wrap-fix behaviour. This replaces the old ordinal `navigate_search:next` walk,
     /// which was fragile (viewport-relative, so a mid-buffer viewport mis-landed) and WRONG in case-SENSITIVE
     /// mode: this engine counts hits case-sensitively, but libghostty `search:` is case-INSENSITIVE, so the
     /// clicked hit's case-sensitive ordinal did NOT map to libghostty's larger case-insensitive match cursor.
@@ -241,16 +244,21 @@ public enum GlobalSearchController {
         query: String,
         caseSensitive: Bool = false,
         isRegex: Bool = false,
+        lines: [String] = [],
+        columns: Int = 0,
     ) -> [String] {
         guard !query.isEmpty else { return [] }
+        // Map the LOGICAL (unwrapped) hit line to the PHYSICAL grid row `scroll_to_row` addresses (soft-wrap
+        // continuations count). `columns <= 0` (unknown grid width) ⇒ identity, i.e. the pre-wrap-fix row.
+        let row = ScrollbackWrapMapper.physicalRow(forLogicalLine: hit.line, in: lines, columns: columns)
         // Literal + case-insensitive is the ONLY mode where libghostty's literal matcher highlights the SAME
         // spans this engine found — arm it for the amber highlight, THEN scroll_to_row to land on the exact
         // clicked row (the arm itself only scrolls to the nearest match, so the scroll must follow it).
         if !isRegex, !caseSensitive {
-            return ["search:\(query)", "scroll_to_row:\(hit.line)"]
+            return ["search:\(query)", "scroll_to_row:\(row)"]
         }
         // Case-sensitive literal OR regex: don't arm the (case-insensitive / non-regex) literal matcher — it
         // would highlight wrong/zero spans. Clear any stale highlight and scroll straight to the clicked row.
-        return ["end_search", "scroll_to_row:\(hit.line)"]
+        return ["end_search", "scroll_to_row:\(row)"]
     }
 }

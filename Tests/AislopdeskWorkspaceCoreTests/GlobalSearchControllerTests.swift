@@ -218,6 +218,32 @@ final class GlobalSearchControllerTests: XCTestCase {
         XCTAssertFalse(rxThird.contains("navigate_search:previous"))
     }
 
+    /// Bug 1 (soft-wrap coordinate mapping): the click-to-line `scroll_to_row` must target the PHYSICAL grid
+    /// row, not the logical (unwrapped) mirror index. When the caller passes the source `lines` + grid
+    /// `columns`, a wide (wrapped) line above the hit shifts its physical row down. Revert-to-confirm-fail:
+    /// the un-fixed `navigationActions` emitted `scroll_to_row:<hit.line>` (the logical index), one row too
+    /// high per wrap continuation above the hit.
+    func testNavigationActionsMapLogicalLineToPhysicalRowAcrossWrap() throws {
+        // cols = 4. Row 0 ("abcdefgh", 8 cells) wraps to 2 physical rows; the "doc" on logical line 1 starts
+        // at physical row 2.
+        let lines = ["abcdefgh", "beta doc"]
+        let results = GlobalSearchController.run(
+            sources: [source("pane", lines)], query: "doc", caseSensitive: false, isRegex: false,
+        )
+        let hit = try XCTUnwrap(results.groups.first?.hits.first)
+        XCTAssertEqual(hit.line, 1, "the match's LOGICAL mirror index is 1")
+
+        // With the grid width, the logical line 1 maps to physical row 2 (past the 2-row wrapped line 0).
+        let mapped = GlobalSearchController.navigationActions(
+            for: hit, query: "doc", caseSensitive: false, isRegex: false, lines: lines, columns: 4,
+        )
+        XCTAssertEqual(mapped, ["search:doc", "scroll_to_row:2"])
+
+        // Without a grid width (default), the mapping degrades to the identity — the pre-fix logical row.
+        let unmapped = GlobalSearchController.navigationActions(for: hit, query: "doc")
+        XCTAssertEqual(unmapped, ["search:doc", "scroll_to_row:1"])
+    }
+
     /// An empty query arms nothing and scrolls nowhere (validate-then-drop) in every mode.
     func testNavigationActionsEmptyQueryYieldsNothing() throws {
         let results = GlobalSearchController.run(

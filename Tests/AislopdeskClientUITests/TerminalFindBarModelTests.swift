@@ -22,10 +22,15 @@ final class TerminalFindBarModelTests: XCTestCase {
     /// bar fires, so the driver is pinned without a real renderer. Hang-safe (no SCStream/VT/Metal).
     private final class FakeSearchSurface: TerminalSurface, TerminalSurfaceActions, @unchecked Sendable {
         var lines: [String]
+        /// The reported grid width for the physical-row mapping (0 ⇒ unknown ⇒ identity mapping).
+        var columns: Int
         private(set) var actions: [String] = []
         var onWrite: ((Data) -> Void)?
 
-        init(lines: [String]) { self.lines = lines }
+        init(lines: [String], columns: Int = 0) {
+            self.lines = lines
+            self.columns = columns
+        }
 
         // TerminalSurface
         func feed(_: Data) {}
@@ -41,6 +46,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
 
         func scrollbackTextLines() -> [String] { lines }
+        func scrollbackGridColumns() -> Int { columns }
 
         /// Drop the recorded actions so a test can assert on a fresh window of bind-actions (e.g. only those
         /// fired by a subsequent `next()`/`previous()`), without the open/query priming noise.
@@ -300,6 +306,104 @@ final class TerminalFindBarModelTests: XCTestCase {
             bar.searchAllTabs()
             XCTAssertEqual(seeded, "docs", "escalation seeds Global Search with the live find query")
             XCTAssertFalse(bar.visible, "escalating to Global Search dismisses the in-pane find bar")
+        }
+    }
+
+    /// Bug 2 (Aa case-sensitive honesty): libghostty's in-surface matcher is HARD-WIRED case-insensitive, so
+    /// case-SENSITIVE literal mode must NOT arm `search:` / `navigate_search:` (they would highlight + step
+    /// case-folded occurrences the case-sensitive counter says don't exist). Like regex / whole-word, it drives
+    /// the viewport from the controller's own match rows via `scroll_to_row` (end_search clears any stale
+    /// highlight). Revert-to-confirm-fail: the un-fixed `needsRowDrivenNav` omitted `caseSensitive`, so Aa mode
+    /// armed `search:foo` + `navigate_search:` — the assertions below fail on it.
+    func testCaseSensitiveModeDrivesScrollToRowNotLiteralSearch() {
+        // "foo" (case-sensitive) matches ONLY the exact-case "foo" on row 1; "Foo"/"FOO" are case-folded misses.
+        withBar(lines: ["Foo", "foo", "FOO"]) { bar, surface in
+            bar.open()
+            bar.toggleCaseSensitive() // flip BEFORE querying so no literal `search:` is ever armed for it
+            XCTAssertTrue(bar.controller.caseSensitive)
+
+            bar.setQuery("foo")
+            XCTAssertEqual(bar.controller.matchCount, 1, "case-sensitive 'foo' matches only the exact-case row")
+            XCTAssertFalse(
+                surface.actions.contains("search:foo"),
+                "case-sensitive mode must not arm libghostty's case-INSENSITIVE literal search",
+            )
+            XCTAssertTrue(
+                surface.actions.contains("scroll_to_row:1"),
+                "case-sensitive open scrolls to the sole matching row (1)",
+            )
+
+            surface.resetActions()
+            bar.next() // single match ⇒ re-scrolls to the same row, NEVER navigate_search
+            XCTAssertEqual(surface.actions, ["scroll_to_row:1"])
+            XCTAssertFalse(
+                surface.actions.contains(where: { $0.hasPrefix("navigate_search:") }),
+                "case-sensitive mode never fires libghostty's literal navigate_search",
+            )
+        }
+    }
+
+    /// Bug 1 (soft-wrap coordinate mapping): a row-driven `scroll_to_row` must target the PHYSICAL grid row,
+    /// not the logical (unwrapped) mirror index — every soft-wrapped continuation row ABOVE the match shifts
+    /// the physical row down. With a known grid width, a wide line above the hit adds its wrap rows.
+    /// Revert-to-confirm-fail: the un-fixed `scrollToCurrentMatchRow` emitted `scroll_to_row:<Match.line>`
+    /// (the logical index, 1), landing one row too high; the fix maps it through the grid width.
+    func testRowDrivenNavMapsLogicalLineToPhysicalRowAcrossWrap() {
+        // cols = 4. Row 0 is 8 cells wide ⇒ wraps to 2 physical rows (0,1). The regex match on logical line 1
+        // ("do1", 3 cells, 1 row) therefore STARTS at physical row 2, not 1.
+        let surface = FakeSearchSurface(lines: ["abcdefgh", "do1"], columns: 4)
+        let vm = TerminalViewModel(surface: surface)
+        let bar = TerminalFindBarModel()
+        bar.attach(vm)
+        bar.open()
+        bar.toggleRegex()
+        bar.setQuery("do.")
+        XCTAssertEqual(bar.controller.matchCount, 1, "regex `do.` matches the row-1 'do1'")
+        XCTAssertEqual(bar.controller.current?.line, 1, "the match's LOGICAL mirror index is 1")
+        XCTAssertTrue(
+            surface.actions.contains("scroll_to_row:2"),
+            "the logical line 1 maps to physical row 2 (the wide row 0 occupies 2 physical rows)",
+        )
+        XCTAssertFalse(
+            surface.actions.contains("scroll_to_row:1"),
+            "must NOT scroll to the un-mapped logical index (one physical row too high)",
+        )
+        withExtendedLifetime((vm, surface)) {}
+    }
+
+    /// Bug 3 (find bar close returns keyboard focus): closing the bar (Esc / × / search-all-tabs) must ask the
+    /// surface to re-claim the window's first responder — closing tears down the focused query field without a
+    /// workspace-focus change, so nothing else reclaims it and typing would go nowhere until the pane is clicked.
+    /// Revert-to-confirm-fail: the un-fixed `close()` never called `reclaimKeyboardFocus()`, so `reclaimed`
+    /// stays false.
+    func testCloseReclaimsKeyboardFocusOnEveryClosePath() {
+        // Esc / × path: close() directly.
+        do {
+            let surface = FakeSearchSurface(lines: ["docs"])
+            let vm = TerminalViewModel(surface: surface)
+            var reclaimed = 0
+            vm.onReclaimKeyboardFocus = { reclaimed += 1 }
+            let bar = TerminalFindBarModel()
+            bar.attach(vm)
+            bar.open()
+            bar.setQuery("docs")
+            bar.close()
+            XCTAssertEqual(reclaimed, 1, "Esc/× close returns first responder to the terminal surface")
+            withExtendedLifetime((vm, surface)) {}
+        }
+        // search-all-tabs path funnels through close() too.
+        do {
+            let surface = FakeSearchSurface(lines: ["docs"])
+            let vm = TerminalViewModel(surface: surface)
+            var reclaimed = 0
+            vm.onReclaimKeyboardFocus = { reclaimed += 1 }
+            let bar = TerminalFindBarModel()
+            bar.attach(vm)
+            bar.onSearchAllTabs = { _ in }
+            bar.open()
+            bar.searchAllTabs()
+            XCTAssertEqual(reclaimed, 1, "search-all-tabs escalation also returns first responder")
+            withExtendedLifetime((vm, surface)) {}
         }
     }
 }

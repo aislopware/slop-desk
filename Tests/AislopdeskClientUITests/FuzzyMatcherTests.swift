@@ -28,6 +28,19 @@ final class FuzzyMatcherTests: XCTestCase {
         XCTAssertEqual(score("a", "ba"), 16) // mid-word (b→a, no boundary) ⇒ bonus 0 → 16 + 0
     }
 
+    // MARK: Non-word first char — fzf gates the word-boundary bonus on `class > charNonWord` (STRICT)
+
+    func testNonWordFirstCharDoesNotGetBoundaryBonus() {
+        // A NON-word matched char (e.g. '-') is NOT a word boundary in fzf: whatever precedes it, it earns
+        // `bonusNonWord` (8), NEVER the after-whitespace (10) / after-delimiter (9) boundary bonuses.
+        // M==1 score = scoreMatch(16) + positionBonus * bonusFirstCharMultiplier(2).
+        // Un-fixed (`>=`): " -" scored 16 + 10*2 = 36 and ":-" 16 + 9*2 = 34.
+        XCTAssertEqual(score("-", " -"), 32) // after whitespace ⇒ bonusNonWord 8 → 16 + 16 (NOT 36)
+        XCTAssertEqual(score("-", ":-"), 32) // after delimiter ':' ⇒ bonusNonWord 8 → 16 + 16 (NOT 34)
+        XCTAssertEqual(score("-", "a-"), 32) // mid-word non-word ⇒ bonusNonWord 8 → 16 + 16
+        XCTAssertEqual(score("-", "-"), 32) // start-of-string non-word ⇒ bonusNonWord 8 (prev==white default)
+    }
+
     // MARK: Exact multi-char score — pins the Smith-Waterman DP + consecutive-chunk bonus
 
     func testConsecutiveChunkExactScore() {

@@ -237,7 +237,7 @@ public enum FuzzyMatcher {
 
     // MARK: Char classification + folding
 
-    /// fzf's `charClass` (default scheme). Raw values match algo.go's ordering so `class >= .nonWord` and
+    /// fzf's `charClass` (default scheme). Raw values match algo.go's ordering so `class > .nonWord` and
     /// the camelCase test port directly.
     private enum CharClass: Int, CaseIterable {
         case white = 0
@@ -280,7 +280,11 @@ public enum FuzzyMatcher {
 
     /// fzf's `bonusFor(prevClass, class)` — the edge-triggered structural bonus.
     private static func bonusFor(_ prev: CharClass, _ cur: CharClass) -> Int {
-        if cur.rawValue >= CharClass.nonWord.rawValue {
+        // Upstream fzf gates the word-boundary bonuses on `class > charNonWord` (STRICT): a non-word char
+        // never enters this branch — it falls through to `bonusNonWord` (8) regardless of the previous class.
+        // A `>=` here would over-reward a non-word char after whitespace (10) / a delimiter (9), diverging
+        // from fzf's ranking.
+        if cur.rawValue > CharClass.nonWord.rawValue {
             switch prev {
             case .white: return bonusBoundaryWhite
             case .delimiter: return bonusBoundaryDelimiter

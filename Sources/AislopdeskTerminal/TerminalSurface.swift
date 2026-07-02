@@ -83,6 +83,18 @@ public protocol TerminalSurfaceActions: AnyObject {
     /// for the client-side ``TerminalSearchController`` fallback when libghostty's in-surface search result
     /// callbacks are not plumbed through the C `action_cb`. One entry per line, no trailing newline.
     func scrollbackTextLines() -> [String]
+
+    /// The live grid COLUMN count, used to map an unwrapped LOGICAL scrollback line index (the index into
+    /// ``scrollbackTextLines()``, whose soft-wrapped rows are collapsed) to the PHYSICAL grid row
+    /// libghostty's `scroll_to_row:` addresses. `0` ⇒ unknown (headless / pre-layout), in which case the
+    /// caller treats the mapping as the identity (no wrap compensation). A protocol requirement with a
+    /// default so existing conformers (tests, the CLI) need not implement it — only the libghostty surface does.
+    func scrollbackGridColumns() -> Int
+}
+
+public extension TerminalSurfaceActions {
+    /// Default: grid width unknown (headless / preview conformers) ⇒ no wrap compensation.
+    func scrollbackGridColumns() -> Int { 0 }
 }
 
 // MARK: - TerminalViewportSnapshotting (the E10 WI-2 overlay-geometry capability seam)
