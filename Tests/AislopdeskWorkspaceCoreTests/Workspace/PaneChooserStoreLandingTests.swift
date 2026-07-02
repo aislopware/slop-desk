@@ -44,15 +44,6 @@ final class PaneChooserStoreLandingTests: XCTestCase {
         XCTAssertTrue(store.tree.isInvariantHeld())
     }
 
-    func testFloatingOpensFocusedChooserPane() {
-        let store = makeTreeStore()
-        let before = leafCount(store)
-        store.openChooserPane(.floating)
-        XCTAssertEqual(leafCount(store), before + 1)
-        XCTAssertEqual(activeKind(store), .chooser)
-        XCTAssertTrue(store.tree.isInvariantHeld())
-    }
-
     // MARK: - a .chooser pane materializes NO session (reconcile skips it)
 
     func testChooserPaneHasNoLiveHandle() throws {

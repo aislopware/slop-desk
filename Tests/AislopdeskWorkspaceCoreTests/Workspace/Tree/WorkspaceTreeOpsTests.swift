@@ -401,32 +401,6 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         XCTAssertEqual(try activeTab(prevWrap).activePane, c, ".previous from the first leaf wraps to the last")
     }
 
-    func testMoveFocusCycleReachesAFloatedPane() throws {
-        // a|b tiled, then b is FLOATED → tab.root = [a], tab.floatingPanes = [b]. ⌘-arrow cycling (.next)
-        // from the tiled `a` must reach the float `b` — the same float-inclusive `Tab.allPaneIDs()` ordering
-        // the ⌘]/⌘[ pane-cycle uses. Revert-to-confirm-fail: before the fix moveFocus cycled the tiled-only
-        // `tab.root.allPaneIDs()` (= [a]), so .next from `a` resolved back to `a` and the float was unreachable.
-        let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let bounds = CGRect(x: 0, y: 0, width: 800, height: 400)
-        let floated = WorkspaceTreeOps.toggleFloating(
-            b, defaultFrame: CGRect(x: 10, y: 10, width: 400, height: 300), bounds: bounds, in: s1,
-        )
-        // Precondition: b really is in the floating layer now, a is the lone tiled leaf.
-        let floatTab = try activeTab(floated)
-        XCTAssertEqual(floatTab.floatingPanes, [b], "b is floated")
-        XCTAssertEqual(floatTab.root.allPaneIDs(), [a], "a is the only tiled leaf")
-
-        let fromA = WorkspaceTreeOps.focusPane(a, in: floated)
-        let next = WorkspaceTreeOps.moveFocus(.next, bounds: bounds, in: fromA)
-        XCTAssertEqual(try activeTab(next).activePane, b, ".next from the tiled pane reaches the floated pane")
-
-        // .previous from the tiled pane reaches it too (2 panes → both directions land on the other one); the
-        // point is the float is now IN the cycle, which the tiled-only enumerator could never do.
-        let prev = WorkspaceTreeOps.moveFocus(.previous, bounds: bounds, in: fromA)
-        XCTAssertEqual(try activeTab(prev).activePane, b, ".previous from the tiled pane also reaches the float")
-    }
-
     func testMoveFocusIsNoOpForASinglePane() throws {
         // A single-pane tab: any directional move has no neighbour → unchanged; .next/.previous cycle to
         // the same lone leaf, so the active pane stays a (no crash, sane).

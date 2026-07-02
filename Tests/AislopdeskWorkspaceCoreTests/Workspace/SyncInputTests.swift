@@ -43,7 +43,6 @@ final class SyncInputTests: XCTestCase {
         case .splitRight: store.splitActivePane(axis: .horizontal, kind: .terminal)
         case .splitDown: store.splitActivePane(axis: .vertical, kind: .terminal)
         case .newTab: store.newTab(kind: .terminal)
-        case .spawnFloating: store.spawnFloatingPane(kind: .terminal)
         default: WorkspaceBindingRegistry.route(action, to: store)
         }
     }

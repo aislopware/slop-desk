@@ -17,7 +17,7 @@ import Foundation
 /// **In-memory only** (deliberately not persisted, like the canvas reopen slot): across a relaunch the
 /// layout file already restores every tab that mattered, so there is no untrusted-decode surface here.
 public struct RecentlyClosedTab: Sendable {
-    /// The closed tab's split tree (its ``Tab/root``, ``Tab/activePane``, title, zoom, floating layer) —
+    /// The closed tab's split tree (its ``Tab/root``, ``Tab/activePane``, title, zoom) —
     /// captured verbatim so the reopen restores the exact layout, keeping every original ``PaneID``.
     public let tab: Tab
     /// The ``PaneSpec`` for every leaf the closed tab held — merged back into the owning session's side

@@ -5,8 +5,8 @@ import XCTest
 
 /// Audit fixes for the zoom/layout cluster:
 ///
-/// 1. **Zoom keeps siblings MOUNTED** — `SplitTreeRenderModel` must emit every non-zoomed pane (tiled AND
-///    floating) as a zoom-HIDDEN compositor leaf, so `SplitContainer` keeps their surfaces alive at
+/// 1. **Zoom keeps siblings MOUNTED** — `SplitTreeRenderModel` must emit every non-zoomed pane as a
+///    zoom-HIDDEN compositor leaf, so `SplitContainer` keeps their surfaces alive at
 ///    `opacity 0` (the same no-teardown trick as keep-all-tabs-mounted). Before the fix the zoom branch
 ///    dropped the siblings from the layout entirely → their libghostty surfaces / video streams were torn
 ///    down and un-zoom repainted them from the lossy replay ring.
@@ -28,55 +28,46 @@ final class ZoomLayoutFixTests: XCTestCase {
     // MARK: - 1) Zoom keeps every sibling in the compositor (mounted, hidden)
 
     /// While zoomed, `compositorLeaves` must still contain EVERY pane of the tab — the zoomed leaf visible
-    /// at full bounds, the tiled sibling and the float mounted (for the view to hide) — so no surface is
+    /// at full bounds, the tiled sibling mounted (for the view to hide) — so no surface is
     /// ever unmounted by a zoom toggle. FAILS on the un-fixed model (zoom emitted ONLY the zoomed leaf).
     func testZoomKeepsEverySiblingInCompositorLeaves() {
-        let a = PaneID(), b = PaneID(), f = PaneID()
-        let tab = Tab(root: twoLeafRoot(a, b), activePane: b, zoomedPane: b, floatingPanes: [f])
-        let floatFrame = CGRect(x: 40, y: 40, width: 320, height: 200)
+        let a = PaneID(), b = PaneID()
+        let tab = Tab(root: twoLeafRoot(a, b), activePane: b, zoomedPane: b)
 
-        let zoomed = SplitTreeRenderModel.layout(for: tab, in: bounds, floating: [(id: f, frame: floatFrame)])
+        let zoomed = SplitTreeRenderModel.layout(for: tab, in: bounds)
 
-        // The VISIBLE contract is unchanged: one full-bounds leaf, no dividers, no visible floats.
+        // The VISIBLE contract is unchanged: one full-bounds leaf, no dividers.
         XCTAssertEqual(zoomed.leaves.map(\.id), [b], "zoom shows exactly the zoomed leaf")
         XCTAssertEqual(zoomed.leaves.first?.rect, bounds, "the zoomed leaf fills the whole bound")
         XCTAssertTrue(zoomed.dividers.isEmpty, "a zoomed tab shows no dividers")
-        XCTAssertTrue(zoomed.floatingLeaves.isEmpty, "a zoomed tab shows no floats")
 
         // The MOUNT contract is new: every pane of the tab is still a compositor leaf (no teardown).
         XCTAssertEqual(
-            Set(zoomed.compositorLeaves.map(\.id)), Set([a, b, f]),
+            Set(zoomed.compositorLeaves.map(\.id)), Set([a, b]),
             "zoom must keep every sibling pane MOUNTED in the compositor (hidden, not unmounted)",
         )
     }
 
-    /// The zoom-hidden entries carry the right flags + rects: the sibling keeps its TILED solver rect and
-    /// the float keeps its clamped floating rect (so neither surface reflows while hidden and un-zoom is a
-    /// pure visibility flip), while the zoomed leaf is the only NON-hidden entry.
+    /// The zoom-hidden entries carry the right flags + rects: the sibling keeps its TILED solver rect (so
+    /// its surface never reflows while hidden and un-zoom is a pure visibility flip), while the zoomed leaf
+    /// is the only NON-hidden entry.
     func testZoomHiddenLeavesKeepTheirUnzoomedRects() throws {
-        let a = PaneID(), b = PaneID(), f = PaneID()
+        let a = PaneID(), b = PaneID()
         let root = twoLeafRoot(a, b)
-        let floatFrame = CGRect(x: 40, y: 40, width: 320, height: 200)
-        let zoomedTab = Tab(root: root, activePane: b, zoomedPane: b, floatingPanes: [f])
-        let tiledTab = Tab(root: root, activePane: b, zoomedPane: nil, floatingPanes: [f])
+        let zoomedTab = Tab(root: root, activePane: b, zoomedPane: b)
+        let tiledTab = Tab(root: root, activePane: b, zoomedPane: nil)
 
-        let zoomed = SplitTreeRenderModel.layout(for: zoomedTab, in: bounds, floating: [(id: f, frame: floatFrame)])
-        let tiled = SplitTreeRenderModel.layout(for: tiledTab, in: bounds, floating: [(id: f, frame: floatFrame)])
+        let zoomed = SplitTreeRenderModel.layout(for: zoomedTab, in: bounds)
+        let tiled = SplitTreeRenderModel.layout(for: tiledTab, in: bounds)
 
         let hiddenA = try XCTUnwrap(zoomed.compositorLeaves.first { $0.id == a }, "sibling a stays mounted")
-        let hiddenF = try XCTUnwrap(zoomed.compositorLeaves.first { $0.id == f }, "float f stays mounted")
         let visibleB = try XCTUnwrap(zoomed.compositorLeaves.first { $0.id == b })
 
         XCTAssertTrue(hiddenA.isHidden, "the tiled sibling is zoom-hidden")
-        XCTAssertFalse(hiddenA.isFloating)
-        XCTAssertTrue(hiddenF.isHidden, "the float is zoom-hidden")
-        XCTAssertTrue(hiddenF.isFloating)
         XCTAssertFalse(visibleB.isHidden, "the zoomed leaf is the visible one")
 
         let tiledA = try XCTUnwrap(tiled.leaves.first { $0.id == a })
-        let tiledF = try XCTUnwrap(tiled.floatingLeaves.first)
         XCTAssertEqual(hiddenA.leaf.rect, tiledA.rect, "the hidden sibling keeps its tiled rect (no reflow)")
-        XCTAssertEqual(hiddenF.leaf.rect, tiledF.rect, "the hidden float keeps its clamped floating rect")
     }
 
     /// The un-zoomed layout emits NO hidden leaves — the zoom branch is the only producer, so the normal
@@ -89,7 +80,7 @@ final class ZoomLayoutFixTests: XCTestCase {
         XCTAssertEqual(Set(layout.compositorLeaves.map(\.id)), Set([a, b]))
     }
 
-    // MARK: - 2) Split / focus / spawn while zoomed exit zoom first
+    // MARK: - 2) Split / focus while zoomed exit zoom first
 
     /// ⌘D while zoomed: `splitPane` must clear the tab's zoom — the new (focused) leaf would otherwise be
     /// collapsed away by the still-zoomed render. FAILS on the un-fixed op (zoomedPane survived the split).
@@ -148,27 +139,5 @@ final class ZoomLayoutFixTests: XCTestCase {
         let tab = try XCTUnwrap(moved.activeSession?.activeTab)
         XCTAssertEqual(tab.activePane, b, "focus-right from the zoomed left pane lands on the right sibling")
         XCTAssertNil(tab.zoomedPane, "the directional focus move exits zoom")
-    }
-
-    /// Spawning a floating pane while zoomed exits zoom — zoom hides floats, so the freshly-spawned
-    /// (focused) float would otherwise be invisible. FAILS on the un-fixed `spawnFloating`.
-    func testSpawnFloatingWhileZoomedExitsZoom() throws {
-        let ws0 = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "a"))
-        let a = ws0.allPaneIDs()[0]
-        let (ws1, _) = WorkspaceTreeOps.splitPane(
-            a, axis: .horizontal, newSpec: PaneSpec(kind: .terminal, title: "b"), in: ws0,
-        )
-        let zoomedWs = WorkspaceTreeOps.toggleZoom(a, in: WorkspaceTreeOps.focusPane(a, in: ws1))
-
-        let (ws2, newID) = WorkspaceTreeOps.spawnFloating(
-            PaneSpec(kind: .terminal, title: "f"),
-            defaultFrame: CGRect(x: 10, y: 10, width: 320, height: 200),
-            bounds: bounds,
-            in: zoomedWs,
-        )
-
-        let tab = try XCTUnwrap(ws2.activeSession?.activeTab)
-        XCTAssertNil(tab.zoomedPane, "spawning a float while zoomed exits zoom (floats are hidden under zoom)")
-        XCTAssertEqual(tab.activePane, newID)
     }
 }

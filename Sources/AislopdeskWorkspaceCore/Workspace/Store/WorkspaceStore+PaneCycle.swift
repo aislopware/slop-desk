@@ -21,8 +21,8 @@ public extension WorkspaceStore {
     /// ``recentPaneTarget(forward:)`` / ``inGroupCycleTarget(forward:)``.
     ///
     /// Delegates straight to the pure ``WorkspaceTreeOps/cyclePaneTarget(forward:in:)`` (E3 WI-5) so the
-    /// DFS-wrap math has ONE source — the order is the active tab's ``Tab/allPaneIDs()`` (pre-order DFS +
-    /// the floating layer), the same order the reconcile diff + carousel read.
+    /// DFS-wrap math has ONE source — the order is the active tab's ``Tab/allPaneIDs()`` (pre-order DFS),
+    /// the same order the reconcile diff + carousel read.
     internal func paneCycleTreeTarget(forward: Bool) -> PaneID? {
         WorkspaceTreeOps.cyclePaneTarget(forward: forward, in: tree)
     }

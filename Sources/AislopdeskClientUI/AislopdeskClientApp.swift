@@ -451,7 +451,7 @@ public struct AislopdeskClientApp: App {
         _clipboardMonitor = State(initialValue: ClipboardMonitor(store: store))
         _dockProgress = State(initialValue: dockProgress)
         // WS-B / B3: build the live keybinding dispatcher over the single store. A new-pane action (split /
-        // new-tab / new-session / floating) mints an in-pane `.chooser` pane via the store's routing, focused,
+        // new-tab / new-session) mints an in-pane `.chooser` pane via the store's routing, focused,
         // so the user picks Terminal / Remote window INSIDE the new pane; ⌘T stays a direct-terminal escape
         // hatch (it routes via `.newPane(.terminal)`, never `.newTab`). The default prefix is ⌃A (tmux-like).
         //

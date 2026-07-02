@@ -134,6 +134,4 @@ public enum PaneChooserContext: Sendable, Equatable {
     /// true`, every other split (the ⌘D right / ⌘⇧D down) keeps the default trailing insert. Defaulted so
     /// every existing `.split(axis:)` call site is byte-identical.
     case split(axis: SplitAxis, leading: Bool = false)
-    /// A new floating scratch pane in the active tab.
-    case floating
 }

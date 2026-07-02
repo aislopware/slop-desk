@@ -46,14 +46,6 @@ final class PaneChooserRoutingTests: XCTestCase {
         XCTAssertEqual(activeKind(store), .chooser)
     }
 
-    func testSpawnFloatingRoutesToChooserPane() {
-        let store = makeTreeStore()
-        let before = leafCount(store)
-        WorkspaceBindingRegistry.route(.spawnFloating, to: store)
-        XCTAssertEqual(leafCount(store), before + 1)
-        XCTAssertEqual(activeKind(store), .chooser)
-    }
-
     // MARK: - terminal right-click "Split" mints a focused chooser pane targeting the acted-on pane
 
     func testContextMenuSplitMintsChooserFocusingNewPane() {

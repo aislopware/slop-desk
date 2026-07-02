@@ -108,13 +108,6 @@ public extension WorkspaceBindingRegistry {
         case .closePane: store.requestCloseActivePaneTree()
         case .renamePane: store.requestRenameActivePane()
         case .breakPaneToTab: store.breakActivePaneToTab()
-        // Floating panes (zellij toggle-float / new floating pane). Spawning a NEW floating pane mints a
-        // pane → route through the chooser (`.floating` context) when a host is supplied; `nil` keeps the
-        // direct default-kind spawn. `.toggleFloat` only floats/un-floats the EXISTING active pane (mints
-        // nothing), so it never gates.
-        case .toggleFloat: store.toggleFloatActivePaneCommand()
-        case .spawnFloating:
-            store.openChooserPane(.floating)
         // Move pane (swap with the geometric neighbour, against the reported layout)
         case .movePaneLeft: store.swapActivePaneInDirection(.left)
         case .movePaneRight: store.swapActivePaneInDirection(.right)
@@ -302,9 +295,6 @@ public extension WorkspaceBindingRegistry {
         case .reopenClosed: apply(.reopenClosedPane, to: store)
         case .renamePane: apply(.renamePane, to: store)
         case .breakPaneToTab: break // no canvas analogue
-        case .toggleFloat,
-             .spawnFloating:
-            break // floating overlay is tree-shell only
         // Tree-only pane management (move / resize / balance) — the flat canvas has no split tree to act on.
         case .movePaneLeft,
              .movePaneRight,

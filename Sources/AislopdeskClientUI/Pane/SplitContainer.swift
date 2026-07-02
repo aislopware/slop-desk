@@ -64,15 +64,15 @@ struct SplitContainer: View {
                         .opacity(isActive ? 1 : 0)
                         .allowsHitTesting(isActive)
                         .accessibilityHidden(!isActive)
-                        .id(tab.id) // OUTER key only — inner CompositorPaneCards stay keyed by PaneID
+                        .id(tab.id) // OUTER key only — inner pane leaves stay keyed by PaneID
                 }
             }
             .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
-            // Report the TRUE float viewport (the full container bounds) so the store's commit-clamp shares
-            // one coordinate space with the render model's place-clamp (no edge discrepancy). View-only — never
-            // reconciles. Skipped on the static snapshot path. Fires ONCE at the container level, not per tab.
-            .onAppear { if !staticMirror { store.updateFloatingBounds(bounds) } }
-            .onChange(of: bounds) { _, newBounds in if !staticMirror { store.updateFloatingBounds(newBounds) } }
+            // Report the full container bounds — the geometric ops' fallback before the first solved-layout
+            // report. View-only — never reconciles. Skipped on the static snapshot path. Fires ONCE at the
+            // container level, not per tab.
+            .onAppear { if !staticMirror { store.updateContainerBounds(bounds) } }
+            .onChange(of: bounds) { _, newBounds in if !staticMirror { store.updateContainerBounds(newBounds) } }
         }
         .background(NativePaneColor.window)
     }
@@ -82,28 +82,17 @@ struct SplitContainer: View {
     /// the active tab — a hidden tab is non-interactive, so it needs none.
     @ViewBuilder
     private func tabLayer(_ tab: AislopdeskWorkspaceCore.Tab, isActive: Bool, in bounds: CGRect) -> some View {
-        // E21 WI-6: feed the FLOATING overlay. The store's `floatingPanePairs(for:)` reads
-        // `tab.floatingPanes` × each spec's persisted `floatingFrame`; the render model clamps them into
-        // `bounds` and emits `floatingLeaves` (z-ordered, last = topmost), merged with the tiled `leaves`
-        // into `compositorLeaves` so ONE `ForEach` draws every pane as a `CompositorPaneCard` (F4 — the
-        // float↔embed move preserves the hosted surface). `floatingLeaves` is empty for a zoomed /
-        // float-less tab, so the non-floating path is byte-identical to before.
-        let layout = SplitTreeRenderModel.layout(for: tab, in: bounds, floating: store.floatingPanePairs(for: tab))
+        let layout = SplitTreeRenderModel.layout(for: tab, in: bounds)
         let frames = Dictionary(layout.leaves.map { ($0.id, $0.rect) }, uniquingKeysWith: { a, _ in a })
         ZStack(alignment: .topLeading) {
-            // F4 / WI-6: EVERY pane — tiled AND floating — renders from ONE `ForEach` over
-            // ``SplitTreeRenderModel/Layout/compositorLeaves`` (tiled first, floating last). `.id` only
-            // dedups WITHIN one `ForEach`, so a pane in two sibling loops was handed a NEW identity on a
-            // float↔embed move → its hosted terminal / `.remoteGUI` video surface was torn down + rebuilt
-            // (the stream reconnected + black-flashed). One keyed list keeps the move within one collection,
-            // so the surface survives; the per-leaf `isFloating` flag switches only the chrome + placement +
-            // z-order inside ``CompositorPaneCard``.
+            // EVERY pane — visible AND zoom-hidden — renders from ONE `ForEach` over
+            // ``SplitTreeRenderModel/Layout/compositorLeaves``. `.id` only dedups WITHIN one `ForEach`, so
+            // one keyed list keeps the zoom hidden↔visible flip within one collection and the hosted
+            // terminal / `.remoteGUI` video surface is never torn down.
             ForEach(layout.compositorLeaves, id: \.id) { entry in
-                CompositorPaneCard(
+                PaneContainer(
                     store: store,
                     paneID: entry.id,
-                    frame: entry.leaf.rect,
-                    isFloating: entry.isFloating,
                     // A zoom-hidden pane must never claim first responder (mirrors the keep-all-mounted
                     // focus-steal guard for hidden tabs).
                     isFocused: !entry.isHidden && Self.isPaneFocused(entry.id, in: tab, activeTabID: activeTabID),
@@ -112,13 +101,16 @@ struct SplitContainer: View {
                     // hidden tab / zoom-collapsed sibling releases its slot + stops the UDP/VT/Metal pipeline,
                     // re-activating when it returns (onDisappear never fires under keep-all-mounted).
                     isVisible: isActive && !entry.isHidden,
-                    containerBounds: bounds,
+                    // The content's live size IS the resize signal `PaneContainer`'s scrim keys off.
+                    size: entry.leaf.rect.size,
                     staticMirror: staticMirror,
                 )
-                // ZOOM keep-mounted: a zoomed tab still emits every sibling (tiled + float) as a HIDDEN
-                // compositor leaf at its un-zoomed rect — revealed/hidden here exactly like an inactive
-                // tab's layer, so the libghostty surface / `.remoteGUI` stream survives the zoom toggle
-                // and un-zoom is a pure visibility flip (no teardown, no lossy ring-replay).
+                .frame(width: entry.leaf.rect.width, height: entry.leaf.rect.height)
+                .position(x: entry.leaf.rect.midX, y: entry.leaf.rect.midY)
+                // ZOOM keep-mounted: a zoomed tab still emits every sibling as a HIDDEN compositor leaf at
+                // its un-zoomed rect — revealed/hidden here exactly like an inactive tab's layer, so the
+                // libghostty surface / `.remoteGUI` stream survives the zoom toggle and un-zoom is a pure
+                // visibility flip (no teardown, no lossy ring-replay).
                 .opacity(entry.isHidden ? 0 : 1)
                 .allowsHitTesting(!entry.isHidden)
                 .accessibilityHidden(entry.isHidden)
@@ -126,9 +118,8 @@ struct SplitContainer: View {
             }
             // Interaction chrome only for the active tab (a hidden tab is non-interactive anyway).
             if isActive {
-                // Dividers + the grab-handles / live drag overlay sit ABOVE the tiled panes (z 0) but
-                // BELOW the floating cards (`floatZBase`). With one mixed `ForEach` above, declaration order no
-                // longer keeps floats on top, so these layers carry an explicit z-index band.
+                // Dividers + the grab-handles / live drag overlay sit ABOVE the panes (z 0) via an
+                // explicit z-index band.
                 ForEach(layout.dividers, id: \.key) { handle in
                     dividerView(handle)
                 }
@@ -156,15 +147,10 @@ struct SplitContainer: View {
         store.updateSolvedLayout(SolvedLayout(frames: frames))
     }
 
-    /// The z-index band the compositor ZStack stacks by (F4): tiled panes at the base (0, set inside
-    /// ``CompositorPaneCard``), then the divider layer, then the move-handle / drag-overlay layer, then the
-    /// floating cards on top (``CompositorPaneCard`` rides at ``floatZBase`` and bumps a dragged float one
-    /// above its float siblings). A single mixed `ForEach` renders tiled + floating panes, so declaration order
-    /// alone no longer keeps floats topmost — these explicit z-values restore the layering the old separate
-    /// floating overlay got for free by being declared last.
+    /// The z-index band the compositor ZStack stacks by: panes at the base (0), then the divider layer,
+    /// then the move-handle / drag-overlay layer.
     static let dividerZ: Double = 10
     static let moveZ: Double = 20
-    static let floatZBase: Double = 30
 
     /// Whether pane `paneID` (in `tab`) should own the renderer's keyboard focus — the guard that makes
     /// keep-all-mounted safe. TRUE only when `tab` is the ACTIVE tab AND `paneID` is that tab's `activePane`.

@@ -6,8 +6,8 @@ import XCTest
 /// Pins the tmux/zellij `select-layout` re-tile transforms (``WorkspaceTreeOps/applyLayout(_:activeTabContaining:in:)``
 /// + ``WorkspaceTreeOps/cycleLayout(activeTabContaining:from:in:)``): each preset rebuilds the active tab's
 /// tiled tree into the documented SHAPE while **preserving the exact leaf-`PaneID` set** (the no-teardown
-/// invariant), resets weights to an equal `.flex(1)` share, is a no-op for 0/1 leaf, leaves floating panes
-/// untouched, and un-zooms before tiling.
+/// invariant), resets weights to an equal `.flex(1)` share, is a no-op for 0/1 leaf, and un-zooms before
+/// tiling.
 ///
 /// Revert-to-confirm-fail: every assertion references `WorkspaceTreeOps.LayoutPreset` /
 /// `applyLayout` / `cycleLayout`, which do not exist before the op — so the suite fails to compile on the
@@ -279,35 +279,6 @@ final class SelectLayoutTransformTests: XCTestCase {
         let (ws, _) = nLeaves(3)
         let after = WorkspaceTreeOps.applyLayout(.tiled, activeTabContaining: PaneID(), in: ws)
         XCTAssertEqual(after, ws, "an unknown pane re-tiles nothing")
-    }
-
-    // MARK: Floating panes untouched
-
-    func testFloatingPanesAreUntouched() throws {
-        // 2 tiled leaves + 1 floating; apply a preset → the tree re-tiles, the float layer is byte-identical.
-        let (ws0, ids) = nLeaves(2)
-        // Add a third leaf then float it, so the floating layer is non-empty.
-        let (ws1, floatLeaf) = WorkspaceTreeOps.splitPane(ids[0], axis: .vertical, newSpec: termSpec("f"), in: ws0)
-        let bounds = CGRect(x: 0, y: 0, width: 1000, height: 800)
-        let frame = WorkspaceTreeOps.defaultFloatingFrame(in: bounds)
-        let ws = WorkspaceTreeOps.toggleFloating(floatLeaf, defaultFrame: frame, bounds: bounds, in: ws1)
-        let tiledLeaves = try activeTab(ws).root.allPaneIDs()
-        XCTAssertTrue(try activeTab(ws).floatingPanes.contains(floatLeaf), "precondition: the leaf is floating")
-
-        let after = WorkspaceTreeOps.applyLayout(.evenVertical, activeTabContaining: tiledLeaves[0], in: ws)
-        XCTAssertEqual(
-            try activeTab(after).floatingPanes, try activeTab(ws).floatingPanes,
-            "the floating layer (ids + order) is untouched by a re-tile",
-        )
-        XCTAssertEqual(try activeTab(after).floatingPanes, [floatLeaf])
-        XCTAssertEqual(
-            after.spec(for: floatLeaf)?.floatingFrame,
-            ws.spec(for: floatLeaf)?.floatingFrame,
-            "the floated pane keeps its frame",
-        )
-        // The re-tiled tree has exactly the 2 tiled leaves (the float is NOT folded in).
-        XCTAssertEqual(try Set(activeRoot(after).allPaneIDs()), Set(tiledLeaves))
-        XCTAssertFalse(try activeRoot(after).contains(floatLeaf), "the float never enters the tiled tree")
     }
 
     // MARK: Zoom is cleared (un-zoom then tile, not no-op-while-zoomed)

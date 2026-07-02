@@ -203,7 +203,7 @@ public final class TerminalViewModel {
     /// shell raises for the duration of an interactive sidebar/inspector-divider drag. Dragging a divider
     /// live-resizes the content column every cell-step; for a REMOTE terminal each forward is a host PTY
     /// reflow + a re-streamed redraw, so we hold them and flush the FINAL grid ONCE on release (the same
-    /// commit-on-release rule the pane divider + floating-pane move already follow). Default off.
+    /// commit-on-release rule the pane divider already follows). Default off.
     @ObservationIgnored private var resizeDeliverySuspended = false
 
     /// Click-to-focus hook (macOS). The terminal NSView (`GhosttyLayerBackedView`) now installs

@@ -426,7 +426,7 @@ struct NavigatorColumn: View {
     }
 
     /// The full tab-row SELECT path, exposed as a static testable helper (mirrors ``owningTabIndex(of:in:)``):
-    /// switch to the owning tab (float-aware, stamps recency), focus the pane, then AUTO-CLEAR every agent
+    /// switch to the owning tab (stamps recency), focus the pane, then AUTO-CLEAR every agent
     /// badge on the newly-focused tab (badge auto-clears on tab focus). All three steps go through
     /// the store. Static so ``NavigatorColumnSelectTests`` exercises this logic headlessly without a live view.
     @MainActor
@@ -447,14 +447,11 @@ struct NavigatorColumn: View {
         }
     }
 
-    /// The index of the tab that OWNS `paneID` in `session`, FLOAT-AWARE: `Session.tabIndex(containing:)`
-    /// delegates to `Tab.contains` = split tree + floating layer. A FLOATED pane in a BACKGROUND tab still gets
-    /// a rail row (`RailRowsBuilder` enumerates `tab.allPaneIDs()` = tree + floats), so clicking its row must
-    /// resolve the owning tab and `selectTab` it — the ONLY path that stamps tab recency (E6 WI-3, floats the
-    /// tab in the `.updated` sidebar sort) — exactly as a tiled-pane row does. The pre-fix hand-rolled
-    /// `tab.root.allPaneIDs()` scan saw the tree ONLY, so it never matched a float and silently dropped the
-    /// recency stamp (E21 F1 class). Static + pure so the float-aware resolution is unit-tested without a live
-    /// view (see `NavigatorColumnSelectTests`).
+    /// The index of the tab that OWNS `paneID` in `session`: `Session.tabIndex(containing:)` delegates to
+    /// `Tab.contains`. A pane in a BACKGROUND tab still gets a rail row (`RailRowsBuilder` enumerates
+    /// `tab.allPaneIDs()`), so clicking its row must resolve the owning tab and `selectTab` it — the ONLY
+    /// path that stamps tab recency (E6 WI-3, floats the tab in the `.updated` sidebar sort). Static + pure
+    /// so the resolution is unit-tested without a live view (see `NavigatorColumnSelectTests`).
     static func owningTabIndex(of paneID: PaneID, in session: Session) -> Int? {
         session.tabIndex(containing: paneID)
     }

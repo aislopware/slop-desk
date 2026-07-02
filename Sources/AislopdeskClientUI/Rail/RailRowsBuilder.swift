@@ -35,7 +35,7 @@ struct RailRow: Identifiable, Equatable {
 }
 
 enum RailRowsBuilder {
-    /// Build the rail rows for the active session. One row per visible (non-floating) pane of each tab,
+    /// Build the rail rows for the active session. One row per pane of each tab,
     /// in tab order then pre-order pane order. `selected` = the tab is active AND the pane is that tab's
     /// active pane. Agent status comes from the store's per-pane mirror (`.none` ⇒ plain terminal).
     @MainActor
@@ -56,9 +56,7 @@ enum RailRowsBuilder {
             // stands in for the tab (the same representative `tab list` reports). Resolved once per tab.
             let representativePane = tab.activePane ?? tab.allPaneIDs().first
             let manualBadge = store.tabBadgeOverride(for: tab.id)
-            // E21 ES-E21-2/-4: enumerate the FULL pane set (`tab.allPaneIDs()` = tree + floating layer), not
-            // just `tab.root.allPaneIDs()`, so a floated pane (incl. a floated `.remoteGUI` remote window)
-            // stays a first-class peer in the sidebar rail — matching OpenQuickly, which uses `tab.allPaneIDs()`.
+            // Enumerate the tab's full pane set (`tab.allPaneIDs()`, pre-order DFS) — matching OpenQuickly.
             for paneID in tab.allPaneIDs() {
                 let spec = session.specs[paneID]
                 let kind = spec?.kind ?? .terminal

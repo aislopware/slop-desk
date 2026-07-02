@@ -404,9 +404,7 @@ public struct TabsPaletteSource: PaletteDataSource {
         guard let session = store.tree.activeSession else { return Self(entries: []) }
         var out: [Entry] = []
         for (tabIndex, tab) in session.tabs.enumerated() {
-            // E21 ES-E21-2/-4: enumerate the FULL pane set (`tab.allPaneIDs()` = tree + floating layer) so a
-            // floated pane (incl. a floated `.remoteGUI` remote window) stays in the ⌘K jump-to-pane palette —
-            // matching OpenQuickly. `tab.root.allPaneIDs()` alone drops the float layer.
+            // Enumerate the tab's full pane set (`tab.allPaneIDs()`, pre-order DFS) — matching OpenQuickly.
             for paneID in tab.allPaneIDs() {
                 let spec = session.specs[paneID]
                 let title = spec?.lastKnownTitle ?? spec?.title ?? "Terminal"

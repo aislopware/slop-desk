@@ -221,14 +221,11 @@ public extension TreeWorkspace {
             if !s.tabs.indices.contains(s.activeTabIndex) {
                 s.activeTabIndex = 0
             }
-            // Repair per-tab focus / zoom. The active pane may be a TILED leaf OR a FLOATING pane, so it is
-            // validated against the tab's FULL leaf set (`allPaneIDs()` = tree + floating). Zoom stays
-            // TREE-only — zoom never applies to a float — so its validity is checked against the tree leaves.
+            // Repair per-tab focus / zoom against the tab's leaf set.
             s.tabs = s.tabs.map { tab in
                 var t = tab
-                let allLeafIDs = Set(t.allPaneIDs())
                 let treeLeafIDs = Set(t.root.allPaneIDs())
-                if let active = t.activePane, !allLeafIDs.contains(active) {
+                if let active = t.activePane, !treeLeafIDs.contains(active) {
                     t.activePane = t.allPaneIDs().first
                 } else if t.activePane == nil {
                     t.activePane = t.allPaneIDs().first
@@ -283,7 +280,7 @@ public extension TreeWorkspace {
     /// Re-mints EVERY identity — session / tab / split / pane — so an imported document can never collide
     /// with the live registry (the async-teardown race a re-import into the SAME running session would
     /// otherwise hit) or with sessions being merged beside it. Each session's spec side table, active pane,
-    /// zoom, and floating layer follow their leaf's new id; `activeSessionID` follows its session's new id.
+    /// and zoom follow their leaf's new id; `activeSessionID` follows its session's new id.
     /// The tree analogue of the canvas import's explicit id-map (``WorkspaceStore/importWorkspace(_:mode:)``).
     /// Pure — preserves the specs == leafIDs invariant.
     func withFreshIdentities() -> TreeWorkspace {
@@ -300,7 +297,6 @@ public extension TreeWorkspace {
                     root: tab.root.mapLeaves { paneMap[$0] ?? $0 }.withFreshSplitIDs(),
                     activePane: tab.activePane.flatMap { paneMap[$0] },
                     zoomedPane: tab.zoomedPane.flatMap { paneMap[$0] },
-                    floatingPanes: tab.floatingPanes.compactMap { paneMap[$0] },
                 )
             }
             var freshSpecs: [PaneID: PaneSpec] = [:]

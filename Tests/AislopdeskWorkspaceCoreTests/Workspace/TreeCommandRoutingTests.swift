@@ -49,7 +49,6 @@ final class TreeCommandRoutingTests: XCTestCase {
         case .splitRight: store.splitActivePane(axis: .horizontal, kind: .terminal)
         case .splitDown: store.splitActivePane(axis: .vertical, kind: .terminal)
         case .newTab: store.newTab(kind: .terminal)
-        case .spawnFloating: store.spawnFloatingPane(kind: .terminal)
         default: WorkspaceBindingRegistry.route(action, to: store)
         }
     }
@@ -519,119 +518,16 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(chord(.balancePanes), KeyChord(character: "=", [.control, .command]), "balance = ⌃⌘=")
     }
 
-    // MARK: - Floating panes (P5a): chord pins + routing
-
-    /// The two floating-pane chords are the documented free defaults: ⌥⌘F float-toggle, ⌃⌘⇧F new-floating.
-    /// Pinning them here makes a future rebind/typo a loud failure (the uniqueness test only catches a
-    /// COLLISION, not a wrong-but-unique value). E5 RELOCATED float-toggle ⌘⇧F → ⌥⌘F to free ⇧⌘F for
-    /// Global Search (`view.globalSearch`); a later audit RELOCATED new-floating ⌃⌘F → ⌃⌘⇧F to free
-    /// ⌃⌘F for the system Toggle Fullscreen (see `testControlCommandFIsFreeForSystemToggleFullscreen`).
-    func testFloatingPaneChordsAreTheDocumentedDefaults() {
-        func chord(_ action: WorkspaceAction) -> KeyChord? {
-            WorkspaceBindingRegistry.binding(for: action)?.chord
-        }
-        XCTAssertEqual(
-            chord(.toggleFloat), KeyChord(character: "f", [.option, .command]), "toggle float = ⌥⌘F (E5 relocation)",
-        )
-        XCTAssertEqual(
-            chord(.spawnFloating), KeyChord(character: "f", [.control, .command, .shift]),
-            "new floating = ⌃⌘⇧F (audit relocation off ⌃⌘F)",
-        )
-    }
-
     /// ⌃⌘F is reserved for **Toggle Fullscreen** (the macOS-native Enter/Exit Full
     /// Screen). Aislopdesk must NOT bind ⌃⌘F to any workspace action — the app-level NSEvent dispatcher reads
     /// `resolvedChordTable`, so a binding there would resolve + SWALLOW ⌃⌘F and the system Full-Screen menu
-    /// item could never fire. This pins the audit fix: ⌃⌘F is free (no action), and in particular NOT
-    /// `.spawnFloating`, which moved to ⌃⌘⇧F. Revert (re-bind ⌃⌘F to spawnFloating) ⇒ both assertions fail.
+    /// item could never fire. This pins that ⌃⌘F is free (no action).
     func testControlCommandFIsFreeForSystemToggleFullscreen() {
         let controlCommandF = KeyChord(character: "f", [.control, .command])
         XCTAssertNil(
             WorkspaceBindingRegistry.chordTable[controlCommandF],
             "⌃⌘F must be unbound so it passes through to the system Toggle Fullscreen menu item",
         )
-        XCTAssertNotEqual(
-            WorkspaceBindingRegistry.chordTable[controlCommandF], .spawnFloating,
-            "⌃⌘F no longer routes to New Floating Pane (relocated to ⌃⌘⇧F)",
-        )
-        // And the relocated chord DOES route to spawnFloating (the binding stayed live, just moved).
-        XCTAssertEqual(
-            WorkspaceBindingRegistry.chordTable[KeyChord(character: "f", [.control, .command, .shift])],
-            .spawnFloating, "⌃⌘⇧F is the new New-Floating chord",
-        )
-    }
-
-    /// `.toggleFloat` on a 2-leaf tab moves the active pane into the floating layer (and keeps it as the
-    /// active pane); routing it again embeds it back.
-    func testToggleFloatRoutesPaneIntoAndOutOfFloatingLayer() throws {
-        let ws0 = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "a"))
-        let a = ws0.allPaneIDs()[0]
-        let (ws1, b) = WorkspaceTreeOps.splitPane(
-            a, axis: .horizontal, newSpec: PaneSpec(kind: .terminal, title: "b"), in: ws0,
-        )
-        let store = makeTreeStore(restoringTree: ws1)
-        store.focusPaneTree(b)
-
-        route(.toggleFloat, store)
-        var tab = try XCTUnwrap(store.tree.activeSession?.activeTab)
-        XCTAssertTrue(tab.floatingPanes.contains(b), "the active pane floated")
-        XCTAssertFalse(tab.root.contains(b), "and left the tiled tree")
-        XCTAssertNotNil(store.tree.spec(for: b)?.floatingFrame, "with a stamped frame")
-        XCTAssertEqual(leaves(store).count, 2, "no leaf was torn down — the float is still a leaf")
-
-        route(.toggleFloat, store)
-        tab = try XCTUnwrap(store.tree.activeSession?.activeTab)
-        XCTAssertFalse(tab.floatingPanes.contains(b), "routing again embeds it back")
-        XCTAssertTrue(tab.root.contains(b))
-        XCTAssertNil(store.tree.spec(for: b)?.floatingFrame, "the frame is cleared on embed")
-    }
-
-    /// `.spawnFloating` mints a NEW floating pane (a new leaf, materialized) without touching the tiled tree.
-    func testSpawnFloatingAddsAFloatingLeaf() throws {
-        let store = makeTreeStore()
-        let before = Set(leaves(store))
-
-        route(.spawnFloating, store)
-
-        let after = Set(leaves(store))
-        let newID = try XCTUnwrap(after.subtracting(before).first, "a new leaf was minted")
-        let tab = try XCTUnwrap(store.tree.activeSession?.activeTab)
-        XCTAssertTrue(tab.floatingPanes.contains(newID), "the new pane is floating")
-        XCTAssertFalse(tab.root.contains(newID), "and NOT in the tiled tree")
-        XCTAssertNotNil(store.tree.spec(for: newID)?.floatingFrame)
-    }
-
-    /// E21 WI-6: `store.floatingPanePairs(for:)` is the THIN reader the floating renderer (`SplitContainer`
-    /// → `FloatingPaneCard`) consumes — it pairs each `tab.floatingPanes` id (z-order, last = topmost) with
-    /// its persisted `floatingFrame`, feeding `SplitTreeRenderModel.layout(...floating:)`. Pins: empty before
-    /// any float; after floating a terminal + spawning a `.remoteGUI` float, the pairs follow the z-order and
-    /// each carries the pane's spec frame. Proven to fail before the helper exists (compile) + behaviorally.
-    func testFloatingPanePairsReadsFloatingLayerInZOrder() throws {
-        let ws0 = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "a"))
-        let a = ws0.allPaneIDs()[0]
-        let (ws1, b) = WorkspaceTreeOps.splitPane(
-            a, axis: .horizontal, newSpec: PaneSpec(kind: .terminal, title: "b"), in: ws0,
-        )
-        let store = makeTreeStore(restoringTree: ws1)
-        let tab0 = try XCTUnwrap(store.tree.activeSession?.activeTab)
-        XCTAssertTrue(store.floatingPanePairs(for: tab0).isEmpty, "no floats → no pairs")
-
-        // Float b (⌥⌘F), then spawn a remote-window float → floatingPanes = [b, spawned] (spawned topmost).
-        store.focusPaneTree(b)
-        route(.toggleFloat, store)
-        store.spawnFloatingPane(kind: .remoteGUI)
-
-        let tab1 = try XCTUnwrap(store.tree.activeSession?.activeTab)
-        let pairs = store.floatingPanePairs(for: tab1)
-        XCTAssertEqual(pairs.count, 2, "both floats are paired")
-        XCTAssertEqual(pairs.map(\.id), tab1.floatingPanes, "pairs follow floatingPanes z-order (last = topmost)")
-        for pair in pairs {
-            XCTAssertEqual(
-                pair.frame, store.tree.spec(for: pair.id)?.floatingFrame,
-                "each pair carries the pane's persisted floatingFrame",
-            )
-        }
-        XCTAssertEqual(pairs.last?.id, tab1.floatingPanes.last, "the topmost (last-spawned) float is last in the pairs")
     }
 
     // MARK: - Tabs: Close Window (⌘⇧W) routes to the window-close gate (E7 carry-over #5)
@@ -959,21 +855,16 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(chord(.globalSearch), KeyChord(character: "f", [.command, .shift]), "global search = ⇧⌘F")
     }
 
-    /// E5: the three new chords must be present in ``allBindings`` AND chord-unique against the whole table —
-    /// in particular ⇧⌘F (global search) and ⌥⌘F (relocated float-toggle) must coexist without collision. The
-    /// generic uniqueness test asserts no two share a chord over the FULL set; this adds the explicit presence
-    /// + the float/global-search disambiguation, the exact pair E5 reshuffled.
+    /// E5: the find/search chords must be present in ``allBindings`` AND chord-unique against the whole
+    /// table. The generic uniqueness test asserts no two share a chord over the FULL set; this adds the
+    /// explicit presence of the `f`/`g` family.
     func testE5NewChordsArePresentAndChordUnique() {
         let chords = WorkspaceBindingRegistry.allBindings.compactMap(\.chord)
         XCTAssertEqual(Set(chords).count, chords.count, "no two bindings share a chord after the E5 additions")
-        // The reshuffled `f` family: ⌘F find, ⇧⌘F global search, ⌥⌘F float-toggle, ⌃⌘⇧F new-floating — four
-        // DISTINCT chords on the same key (⌃⌘F is deliberately ABSENT — reserved for Toggle Fullscreen).
+        // The `f` family: ⌘F find, ⇧⌘F global search — DISTINCT chords on the same key (⌃⌘F is deliberately
+        // ABSENT — reserved for Toggle Fullscreen).
         XCTAssertTrue(chords.contains(KeyChord(character: "f", [.command])), "⌘F find present")
         XCTAssertTrue(chords.contains(KeyChord(character: "f", [.command, .shift])), "⇧⌘F global search present")
-        XCTAssertTrue(chords.contains(KeyChord(character: "f", [.option, .command])), "⌥⌘F float-toggle present")
-        XCTAssertTrue(
-            chords.contains(KeyChord(character: "f", [.control, .command, .shift])), "⌃⌘⇧F new-floating present",
-        )
         XCTAssertFalse(
             chords.contains(KeyChord(character: "f", [.control, .command])),
             "⌃⌘F is reserved for system Toggle Fullscreen — not a workspace binding",

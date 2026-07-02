@@ -1,7 +1,7 @@
 // InPaneChooserView — the pane-type chooser rendered AS THE CONTENT of a freshly-minted `.chooser` pane.
 //
-// New-pane gestures (⌘D / ⌘⇧D split, the `+` button, title-menu split, right-click split, new-session /
-// floating) create a real, FOCUSED `.chooser` pane immediately; `PaneContainer` renders THIS view as that
+// New-pane gestures (⌘D / ⌘⇧D split, the `+` button, title-menu split, right-click split, new-session)
+// create a real, FOCUSED `.chooser` pane immediately; `PaneContainer` renders THIS view as that
 // pane's content. The user picks Terminal or Remote window INLINE — `store.choosePaneKind(paneID, kind)`
 // flips the pane's spec kind in place (same `PaneID`) so reconcile materializes the real session (a
 // `.remoteGUI` pick then lands in its OWN in-pane window picker). No modal, no popover — the chooser IS the

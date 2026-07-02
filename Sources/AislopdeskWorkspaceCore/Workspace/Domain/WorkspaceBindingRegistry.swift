@@ -21,8 +21,6 @@ public enum WorkspaceAction: Hashable, Sendable {
     // tab-strip inline field); the active canvas pane on the retained-but-dead canvas path. Reachable from
     // the title menu / context menu / palette only (no default chord).
     case breakPaneToTab // ⌃⌘T — eject the active pane into a new tab
-    case toggleFloat // ⌥⌘F — float / embed the active pane (zellij toggle-float; E5 relocated off ⌘⇧F)
-    case spawnFloating // ⌃⌘⇧F — spawn a new floating scratch pane (⌃⌘F is reserved for system Toggle Fullscreen)
 
     // Move pane (Zellij "move pane" — swap with the geometric neighbour)
     case movePaneLeft // ⌥⌘⇧←
@@ -177,8 +175,7 @@ public extension WorkspaceAction {
              .focusDown,
              .cyclePaneNext, // steps focus through the active tab's panes — needs one to step from
              .cyclePanePrev,
-             .toggleZoom,
-             .toggleFloat: // needs a pane to float/embed
+             .toggleZoom:
             true
         case .find,
              // ⌘G / ⇧⌘G drive the find-bar's match navigation over the active TERMINAL pane (and open it when
@@ -237,7 +234,6 @@ public extension WorkspaceAction {
              .toggleSidebar,
              .pinWindow, // a window-scope NSWindow.level toggle — needs no active pane (like the sidebar toggle)
              .openQuickly, // a global fuzzy switcher — needs no active pane
-             .spawnFloating, // creates its own pane — needs none
              .toggleSyncInput, // the tab must exist, but the palette can still show it (mirrors .newTab)
              .jumpToAttention, // acts globally across all tabs/sessions — needs no active pane
              .peekAndReply: // acts globally (targets the oldest attention pane) — needs no active pane
@@ -365,26 +361,6 @@ public enum WorkspaceBindingRegistry {
             category: .panes, chord: KeyChord(character: "t", [.control, .command]),
             symbol: "rectangle.portrait.and.arrow.right", keywords: "eject move detach pop out promote",
         ),
-        // Floating panes (zellij toggle-float / new floating pane). ⌥⌘F floats/embeds the active pane; ⌃⌘⇧F
-        // spawns a new floating scratch pane (the "F = float" family). The float-toggle was ⌘⇧F before E5, but
-        // ⌘⇧F is reserved for Global Search (`view.globalSearch`), so float-toggle RELOCATED to ⌥⌘F.
-        // New Floating was ⌃⌘F, but the reference keymap reserves ⌃⌘F for **Toggle Fullscreen**
-        // (reference__keybindings.md:54 / customization__custom-keybindings.md:46 — the macOS-native
-        // Enter/Exit Full Screen); the dispatcher leaves ⌃⌘F UNBOUND so it passes through to AppKit's standard
-        // "Enter Full Screen" View-menu item (no registry action, no menu shortcut to add). New Floating
-        // RELOCATED to ⌃⌘⇧F — verified free (⌃⌘⇧ is otherwise only the resize / jump-failed arrow + bracket
-        // family, no letter). The `f` family (⌘F find, ⇧⌘F global search, ⌥⌘F float-toggle, ⌃⌘⇧F new-floating)
-        // is verified unique by `TreeCommandRoutingTests`.
-        WorkspaceBinding(
-            id: "pane.toggleFloat", action: .toggleFloat, title: "Float Pane",
-            category: .panes, chord: KeyChord(character: "f", [.option, .command]),
-            symbol: "macwindow", keywords: "float overlay scratch detach embed unfloat windowed",
-        ),
-        WorkspaceBinding(
-            id: "pane.spawnFloating", action: .spawnFloating, title: "New Floating Pane",
-            category: .panes, chord: KeyChord(character: "f", [.control, .command, .shift]),
-            symbol: "plus.rectangle.on.rectangle", keywords: "new floating scratch overlay terminal window",
-        ),
         // Move pane (Zellij "move pane" — swap with the geometric neighbour). ⌥⌘⇧+arrows are the ⌥-keyed
         // arrow family — distinct from focus (⌃⌘arrows) and the ⌃⌘⇧arrow divider chords below by the ⌥
         // modifier (⌥ vs ⌃), so a "move pane" never collides with a focus move or a divider nudge.
@@ -444,7 +420,7 @@ public enum WorkspaceBindingRegistry {
         // Layouts (tmux/zellij select-layout): ⌃⌘L cycles through the algorithmic re-tile presets
         // (even-horizontal/vertical, main-vertical/horizontal, tiled). It parallels ⌃⌘= Balance Panes
         // ("L = Layout"); ⌃⌘L is otherwise unbound (`l` appears in NO other chord). A registry binding
-        // fires ONLY via its menu item (no NSEvent monitor — same as float / sync-input), so the Pane menu's
+        // fires ONLY via its menu item (no NSEvent monitor — same as sync-input), so the Pane menu's
         // "Layouts ▸ Cycle Layout" item is what makes ⌃⌘L dispatch. The five NAMED presets are menu/palette
         // only (`.applyLayout(_)`, no chord). Pinned unique by `TreeCommandRoutingTests`.
         WorkspaceBinding(
@@ -604,8 +580,7 @@ public enum WorkspaceBindingRegistry {
             symbol: "chevron.up", keywords: "previous find search back backward match",
         ),
         // Global Search (E5 ES-E5-5): ⇧⌘F searches every tab's scrollback and shows a grouped results surface.
-        // ⇧⌘F is reserved for global search; the float-toggle that used to own it relocated to ⌥⌘F
-        // (see `pane.toggleFloat`). ⇧⌘F is now FREE. Pinned unique by `TreeCommandRoutingTests`.
+        // ⇧⌘F is reserved for global search. Pinned unique by `TreeCommandRoutingTests`.
         WorkspaceBinding(
             id: "view.globalSearch", action: .globalSearch, title: "Global Search…",
             category: .view, chord: KeyChord(character: "f", [.command, .shift]),

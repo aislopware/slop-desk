@@ -104,7 +104,7 @@ final class SplitNodeOpsTests: XCTestCase {
         // V[ H[ V[a,b], c ], d ] — remove c. The inner H collapses its lone survivor V[a,b] straight up
         // under the V root; without the same-axis merge that leaves a redundant V[ V[a,b], d ] (vertical
         // nested in vertical), which skews geometry + over-counts depth. The merge splices it flat to
-        // V[a,b,d]. This is the shared `removing` so closePane/breakPaneToTab/toggleFloating gain it too.
+        // V[a,b,d]. This is the shared `removing` so closePane/breakPaneToTab gain it too.
         let a = PaneID(), b = PaneID(), c = PaneID(), d = PaneID()
         func wc(_ node: SplitNode) -> WeightedChild { WeightedChild(weight: .flex(1), node: node) }
         let innerV = SplitNode.split(id: SplitNodeID(), axis: .vertical, children: [wc(.leaf(a)), wc(.leaf(b))])

@@ -64,20 +64,6 @@ public enum WorkspaceTreeOps {
         // Pick the replacement focus BEFORE the tree mutates (geometric neighbour of the closing pane).
         let refocus = neighbour(of: target, in: tab)
 
-        // FLOATING pane fast-path: a floating pane lives in `tab.floatingPanes`, NOT the tree, so
-        // `tab.root.removing(target)` would return the root unchanged and leave a DANGLING floating id with
-        // no spec (which `normalizingSpecs()` would then re-seed into a ghost). Remove it from the floating
-        // layer + drop its spec and DON'T fall into the empty-tab cascade — the tiled tree is untouched, so
-        // the tab is never emptied by closing a float.
-        if tab.floatingPanes.contains(target) {
-            tab.floatingPanes.removeAll { $0 == target }
-            session.specs.removeValue(forKey: target)
-            if tab.activePane == target { tab.activePane = refocus ?? tab.root.firstLeafID ?? tab.floatingPanes.first }
-            session.tabs[tIdx] = tab
-            copy.sessions[sIdx] = session
-            return copy.normalizingSpecs()
-        }
-
         let pruned = tab.root.removing(target)
         session.specs.removeValue(forKey: target) // drop the closed pane's spec
 
@@ -416,11 +402,10 @@ public enum WorkspaceTreeOps {
     /// share (any prior divider drags are intentionally discarded — `select-layout` semantics).
     ///
     /// The leaf ORDER is the tab's pre-order DFS (``SplitNode/allPaneIDs()``); for the `main-*` presets the
-    /// ACTIVE leaf (``Tab/activePane`` when it is a tiled leaf, else the first leaf) is moved to the front so
-    /// it becomes the large pane. FLOATING panes (`tab.floatingPanes`) are untouched — only `tab.root` is
-    /// rebuilt. A ZOOM is cleared first (re-tiling under a full-screen single-pane zoom is meaningless;
-    /// tmux's `select-layout` exits zoom). A tab with 0 or 1 tiled leaf is a NO-OP (returns `ws` unchanged —
-    /// a 1-child split would violate the ≥2-children invariant). No-op if `pane` is absent.
+    /// ACTIVE leaf (``Tab/activePane`` when it is a live leaf, else the first leaf) is moved to the front so
+    /// it becomes the large pane. A ZOOM is cleared first (re-tiling under a full-screen single-pane zoom
+    /// is meaningless; tmux's `select-layout` exits zoom). A tab with 0 or 1 leaf is a NO-OP (returns `ws`
+    /// unchanged — a 1-child split would violate the ≥2-children invariant). No-op if `pane` is absent.
     public static func applyLayout(
         _ preset: LayoutPreset,
         activeTabContaining pane: PaneID,
@@ -429,12 +414,12 @@ public enum WorkspaceTreeOps {
         guard let (sIdx, tIdx) = locate(pane, in: ws) else { return ws }
         let tab = ws.sessions[sIdx].tabs[tIdx]
 
-        // Collect the TILED leaves in pre-order DFS (floats are not in `tab.root`).
+        // Collect the leaves in pre-order DFS.
         let dfs = tab.root.allPaneIDs()
         guard dfs.count > 1 else { return ws } // 0/1 leaf → nothing to re-tile.
 
-        // The active leaf goes to the front for the main-* presets (only when it is actually a tiled leaf —
-        // a nil / floating activePane falls back to the first tiled leaf, the DFS head).
+        // The active leaf goes to the front for the main-* presets (only when it is actually a live leaf —
+        // a nil / dangling activePane falls back to the first leaf, the DFS head).
         let active = tab.activePane.flatMap { dfs.contains($0) ? $0 : nil }
         let leaves: [PaneID] =
             switch preset {
@@ -593,11 +578,9 @@ public enum WorkspaceTreeOps {
         switch direction {
         case .next,
              .previous:
-            // Cycle through the SAME float-inclusive ordering as the ⌘]/⌘[ pane-cycle
-            // (``cyclePaneTarget(forward:in:)`` → ``Tab/allPaneIDs()`` = pre-order DFS + the floating layer),
-            // NOT the tiled-only `tab.root.allPaneIDs()`, so ⌘-arrow cycling reaches floated panes too. One
-            // shared enumerator means the two cycle paths can't drift (a float reachable by ⌘] is reachable
-            // here as well).
+            // Cycle through the SAME ordering as the ⌘]/⌘[ pane-cycle (``cyclePaneTarget(forward:in:)`` →
+            // ``Tab/allPaneIDs()`` = pre-order DFS). One shared enumerator means the two cycle paths can't
+            // drift.
             target = cyclePaneTarget(forward: direction == .next, in: ws)
         case .left,
              .right,
@@ -613,20 +596,20 @@ public enum WorkspaceTreeOps {
     /// The pane a sequential ⌘]/⌘[ pane-cycle step (E1 ES-E1-2 / E3 ES-E3-5) would focus, or `nil` when it
     /// is a no-op — the **single source** of the DFS-wrap math the store delegates to
     /// (``WorkspaceStore/paneCycleTreeTarget(forward:)``). Walks the active session's active tab in
-    /// ``Tab/allPaneIDs()`` order (pre-order DFS + the floating layer — the same order reconcile + the
-    /// carousel read); `forward == true` steps to the NEXT id, `false` to the previous, WRAPPING at both
+    /// ``Tab/allPaneIDs()`` order (pre-order DFS — the same order reconcile + the carousel read);
+    /// `forward == true` steps to the NEXT id, `false` to the previous, WRAPPING at both
     /// ends (last → first / first → last).
     ///
     /// A no-op (`nil`) when: there is no active session / tab; the active tab has fewer than two panes
-    /// (nothing to cycle to); or ``Tab/activePane`` is `nil` or is NOT a tiled leaf (a floating-only or
-    /// dangling active has no place in the tiled walk — cycling must not silently jump focus to the front).
+    /// (nothing to cycle to); or ``Tab/activePane`` is `nil` or is NOT a live leaf (a dangling active has
+    /// no place in the walk — cycling must not silently jump focus to the front).
     /// Pure (no focus side effect), so the wrap + the guard is unit-testable in isolation.
     public static func cyclePaneTarget(forward: Bool, in ws: TreeWorkspace) -> PaneID? {
         guard let tab = ws.activeSession?.activeTab else { return nil }
         let ids = tab.allPaneIDs()
         guard ids.count > 1 else { return nil }
-        // Step only from a TILED active pane: a nil active, or a float / dangling id absent from the tree,
-        // has no defined predecessor / successor here, so cycling is a no-op rather than a jump-to-front.
+        // Step only from a LIVE active pane: a nil active, or a dangling id absent from the tree, has no
+        // defined predecessor / successor here, so cycling is a no-op rather than a jump-to-front.
         guard let active = tab.activePane, tab.root.contains(active), let current = ids.firstIndex(of: active)
         else { return nil }
         let next = forward ? (current + 1) % ids.count : (current - 1 + ids.count) % ids.count
@@ -827,182 +810,6 @@ public enum WorkspaceTreeOps {
         copy.sessions[sIdx].tabs.append(newTab)
         copy.sessions[sIdx].activeTabIndex = copy.sessions[sIdx].tabs.count - 1
         return copy
-    }
-
-    // MARK: Floating panes (zellij-style overlay scratch panes)
-
-    /// The smallest a floating pane may ever be (points) — the clamp floor for every floating-frame write,
-    /// so a stray gesture / hostile persisted file can't produce a 0-size or sub-grabbable card.
-    public static let floatingMinSize = CGSize(width: 320, height: 200)
-
-    /// Toggles pane `target` between the tiled tree and the floating overlay layer (zellij "toggle float").
-    ///
-    /// - If `target` is currently FLOATING: **embed** it — drop it from `tab.floatingPanes`, clear its
-    ///   `floatingFrame`, and re-insert it into the tiled tree (split off the current `activePane`/first
-    ///   tiled leaf, or seed it as the lone leaf if the tree somehow has none), then focus it.
-    /// - If `target` is a TILED leaf: **float** it — prune it from `tab.root` (GUARDED: a tab whose only
-    ///   leaf is `target` cannot float — that would empty the tiled tree — so it's a no-op), append it to
-    ///   `tab.floatingPanes`, stamp its spec's `floatingFrame` with the clamped `defaultFrame`, and focus
-    ///   it.
-    ///
-    /// The spec never leaves `session.specs`, so the **specs == leafIDs invariant** holds throughout
-    /// (`Tab.allPaneIDs()` counts the floating layer). No-op if `target` is absent.
-    ///
-    /// On EMBED, `embedAnchor` (if it is a live tiled leaf) is the pane the re-inserted float splits off —
-    /// the store passes the pane the user was last working in so the embedded card lands next to it rather
-    /// than always next to the first leaf. A `nil` / stale anchor falls back to the current tiled active
-    /// pane, then the first tiled leaf (the prior behaviour).
-    public static func toggleFloating(
-        _ target: PaneID,
-        defaultFrame: CGRect,
-        bounds: CGRect,
-        embedAnchor: PaneID? = nil,
-        in ws: TreeWorkspace,
-    ) -> TreeWorkspace {
-        guard let (sIdx, tIdx) = locate(target, in: ws) else { return ws }
-        var copy = ws
-        var session = copy.sessions[sIdx]
-        var tab = session.tabs[tIdx]
-
-        if tab.floatingPanes.contains(target) {
-            // EMBED: floating → tiled.
-            tab.floatingPanes.removeAll { $0 == target }
-            if var spec = session.specs[target] {
-                spec.floatingFrame = nil
-                session.specs[target] = spec
-            }
-            // Re-insert into the tree: split off `embedAnchor` (the pane the user was last on, if it is a
-            // live tiled leaf), else the current tiled active pane, else the first tiled leaf. If the tree
-            // has NO leaves (degenerate — shouldn't happen for a live tab) seed it as the root leaf.
-            let anchor = (embedAnchor.flatMap { tab.root.contains($0) ? $0 : nil })
-                ?? (tab.activePane.flatMap { tab.root.contains($0) ? $0 : nil })
-                ?? tab.root.firstLeafID
-            if let host = anchor, let newRoot = tab.root.splitting(host, axis: .horizontal, inserting: target) {
-                tab.root = newRoot
-            } else if tab.root.firstLeafID == nil {
-                tab.root = .leaf(target)
-            }
-            tab.activePane = target
-        } else {
-            // FLOAT: tiled → floating. Guard the lone-leaf case (floating it would empty the tiled tree).
-            guard tab.root.leafCount > 1, let pruned = tab.root.removing(target) else {
-                return ws
-            }
-            tab.root = pruned
-            if tab.zoomedPane == target { tab.zoomedPane = nil }
-            tab.floatingPanes.append(target)
-            if var spec = session.specs[target] {
-                spec.floatingFrame = clampFloatingFrame(defaultFrame, in: bounds)
-                session.specs[target] = spec
-            }
-            tab.activePane = target
-        }
-
-        session.tabs[tIdx] = tab
-        copy.sessions[sIdx] = session
-        return copy
-    }
-
-    /// Spawns a BRAND-NEW pane directly into the floating overlay of the active session's active tab
-    /// (zellij "new floating pane"). Mints a fresh ``PaneID``, appends it to `tab.floatingPanes`, stores
-    /// `newSpec` (with `floatingFrame` = the clamped `defaultFrame`) in the side table, and focuses it.
-    /// Returns the new workspace + minted id. No-op (throw-away id) if there is no active session/tab.
-    public static func spawnFloating(
-        _ newSpec: PaneSpec,
-        defaultFrame: CGRect,
-        bounds: CGRect,
-        in ws: TreeWorkspace,
-    ) -> (TreeWorkspace, PaneID) {
-        let newID = PaneID()
-        guard let sIdx = ws.activeSessionIndex else { return (ws, newID) }
-        var copy = ws
-        let tIdx = copy.sessions[sIdx].activeTabIndex
-        guard copy.sessions[sIdx].tabs.indices.contains(tIdx) else { return (ws, newID) }
-        var spec = newSpec
-        spec.floatingFrame = clampFloatingFrame(defaultFrame, in: bounds)
-        var tab = copy.sessions[sIdx].tabs[tIdx]
-        tab.floatingPanes.append(newID)
-        tab.activePane = newID
-        tab.zoomedPane = nil // zoom hides floats — spawning a (focused) float while zoomed exits zoom
-        copy.sessions[sIdx].tabs[tIdx] = tab
-        copy.sessions[sIdx].specs[newID] = spec
-        return (copy, newID)
-    }
-
-    /// Raises floating pane `target` to the FRONT of its tab's `floatingPanes` (z-order: last = topmost),
-    /// so a focused / just-grabbed float draws above any overlapping neighbour (zellij/any WM raises the
-    /// active float). Pure: only re-orders the floating array — the tree, specs, and frames are untouched,
-    /// so the **specs == leafIDs invariant** holds. No-op if `target` is absent, is not floating, or is
-    /// already topmost (so `focusPaneTree` → `raiseFloating` doesn't churn a reconcile when nothing moves).
-    public static func raiseFloating(_ target: PaneID, in ws: TreeWorkspace) -> TreeWorkspace {
-        guard let (sIdx, tIdx) = locate(target, in: ws) else { return ws }
-        var tab = ws.sessions[sIdx].tabs[tIdx]
-        guard tab.floatingPanes.contains(target), tab.floatingPanes.last != target else { return ws }
-        tab.floatingPanes.removeAll { $0 == target }
-        tab.floatingPanes.append(target)
-        var copy = ws
-        copy.sessions[sIdx].tabs[tIdx] = tab
-        return copy
-    }
-
-    /// Moves floating pane `target` so its origin becomes `origin` (keeping its current size), clamped into
-    /// `bounds` with the min-size floor. No-op if `target` is absent or has no `floatingFrame` (i.e. is not
-    /// floating). The split tree is untouched — only the spec's geometry moves.
-    public static func moveFloating(
-        _ target: PaneID,
-        to origin: CGPoint,
-        bounds: CGRect,
-        in ws: TreeWorkspace,
-    ) -> TreeWorkspace {
-        updatingSpec(target, in: ws) { spec in
-            guard let current = spec.floatingFrame else { return }
-            spec.floatingFrame = clampFloatingFrame(CGRect(origin: origin, size: current.size), in: bounds)
-        }
-    }
-
-    /// Resizes floating pane `target` to `frame`, clamped into `bounds` with the min-size floor. No-op if
-    /// `target` is absent or not floating. The split tree is untouched.
-    public static func resizeFloating(
-        _ target: PaneID,
-        to frame: CGRect,
-        bounds: CGRect,
-        in ws: TreeWorkspace,
-    ) -> TreeWorkspace {
-        updatingSpec(target, in: ws) { spec in
-            guard spec.floatingFrame != nil else { return }
-            spec.floatingFrame = clampFloatingFrame(frame, in: bounds)
-        }
-    }
-
-    /// Clamps `frame` to sit fully inside `bounds` with at least ``floatingMinSize``. Pure; the house float
-    /// idiom — separate `*`/`+`/`/`, NaN-faithful ordered `Double.maximum`/`Double.minimum`. A non-finite or
-    /// empty `bounds` (e.g. before first layout) returns `frame` unchanged so the caller never writes a NaN.
-    public static func clampFloatingFrame(_ frame: CGRect, in bounds: CGRect) -> CGRect {
-        guard bounds.width.isFinite, bounds.height.isFinite, bounds.width > 0, bounds.height > 0 else {
-            return frame
-        }
-        // Size: at least the min, at most the container (so it always fits).
-        let minW = Double.minimum(Double(floatingMinSize.width), Double(bounds.width))
-        let minH = Double.minimum(Double(floatingMinSize.height), Double(bounds.height))
-        let w = Double.minimum(Double.maximum(Double(frame.width), minW), Double(bounds.width))
-        let h = Double.minimum(Double.maximum(Double(frame.height), minH), Double(bounds.height))
-        // Origin: keep the (clamped) rect inside [bounds.min, bounds.max - size].
-        let maxX = Double(bounds.minX) + (Double(bounds.width) - w)
-        let maxY = Double(bounds.minY) + (Double(bounds.height) - h)
-        let x = Double.minimum(Double.maximum(Double(frame.minX), Double(bounds.minX)), maxX)
-        let y = Double.minimum(Double.maximum(Double(frame.minY), Double(bounds.minY)), maxY)
-        return CGRect(x: x, y: y, width: w, height: h)
-    }
-
-    /// A sensible default centered floating frame for a new/just-floated pane: ~`fraction` of `bounds`
-    /// (clamped to the min size), centered in `bounds`. Used when no frame is remembered.
-    public static func defaultFloatingFrame(in bounds: CGRect, fraction: CGFloat = 0.6) -> CGRect {
-        let safeFraction = Double.minimum(Double.maximum(Double(fraction), 0.2), 1.0)
-        let w = Double.maximum(Double(bounds.width) * safeFraction, Double(floatingMinSize.width))
-        let h = Double.maximum(Double(bounds.height) * safeFraction, Double(floatingMinSize.height))
-        let x = Double(bounds.minX) + (Double(bounds.width) - w) / 2
-        let y = Double(bounds.minY) + (Double(bounds.height) - h) / 2
-        return clampFloatingFrame(CGRect(x: x, y: y, width: w, height: h), in: bounds)
     }
 
     // MARK: Locate helpers

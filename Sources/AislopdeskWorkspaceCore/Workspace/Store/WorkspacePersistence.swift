@@ -309,14 +309,13 @@ public struct WorkspacePersistence: @unchecked Sendable {
               spec.kind == .terminal,
               spec.title == "Terminal",
               // Additive PaneSpec fields must ALL be empty — a real un-renamed terminal that has been connected
-              // (cwd subtitle hint, detach/reattach handle, floated, or a video binding) is NOT the throwaway
+              // (cwd subtitle hint, detach/reattach handle, or a video binding) is NOT the throwaway
               // default and must still be snapshotted aside before the autosave clobbers it.
               spec.video == nil,
               spec.resumeSessionID == nil,
               spec.resumeLastReceivedSeq == nil,
               spec.lastKnownCwd == nil,
-              spec.lastKnownTitle == nil,
-              spec.floatingFrame == nil else { return false }
+              spec.lastKnownTitle == nil else { return false }
         return true
     }
 

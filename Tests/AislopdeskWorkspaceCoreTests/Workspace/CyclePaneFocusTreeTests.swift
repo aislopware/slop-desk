@@ -161,18 +161,4 @@ final class CyclePaneFocusTreeTests: XCTestCase {
         XCTAssertNil(WorkspaceTreeOps.cyclePaneTarget(forward: false, in: ws))
         XCTAssertEqual(WorkspaceTreeOps.cyclePaneFocus(forward: true, in: ws), ws)
     }
-
-    /// A FLOATING active pane is not part of the tiled DFS walk → the pure op no-ops (⌘]/⌘[ cycles the
-    /// tiled panes, not the overlay layer) EVEN THOUGH `Tab.allPaneIDs()` lists the float in its order.
-    func testPureOpNoOpWhenActivePaneFloating() {
-        let a = PaneID(), b = PaneID(), f = PaneID()
-        var ws = tiledWorkspace([a, b], active: a)
-        ws.sessions[0].tabs[0].floatingPanes = [f]
-        ws.sessions[0].specs[f] = PaneSpec(kind: .terminal, title: "Float")
-        ws.sessions[0].tabs[0].activePane = f
-        XCTAssertEqual(ws.activeSession?.activeTab?.allPaneIDs(), [a, b, f], "the float IS listed in allPaneIDs…")
-        XCTAssertNil(WorkspaceTreeOps.cyclePaneTarget(forward: true, in: ws), "…but a floating active does not cycle")
-        XCTAssertNil(WorkspaceTreeOps.cyclePaneTarget(forward: false, in: ws))
-        XCTAssertEqual(WorkspaceTreeOps.cyclePaneFocus(forward: true, in: ws), ws, "no target → cyclePaneFocus no-ops")
-    }
 }

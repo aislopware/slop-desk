@@ -12,7 +12,7 @@ import XCTest
 /// reference screenshot to compare against — the standard is the existing aislopdesk surfaces. This suite is the
 /// developer-facing peer-enumeration pin: it asserts the model entry points the per-WI fixes ride on
 /// (`newRemoteWindowTab`, `OpenQuicklyModel.openedItems`,
-/// `WorkspaceTreeOps.toggleFloating`, `WorkspaceTreeOps.splitPane`, `WorkspaceStore.isReadOnly`) all ADMIT /
+/// `WorkspaceTreeOps.splitPane`, `WorkspaceStore.isReadOnly`) all ADMIT /
 /// HANDLE `.remoteGUI` with no kind-dropping `switch`/guard.
 ///
 /// ### Most cases pass immediately (confirming reuse); ONE drives WI-2.
@@ -29,18 +29,15 @@ import XCTest
 ///   `ReadOnlyStoreTests`/`PaletteReadOnlyTests` cases once the additive field exists (referencing it now
 ///   would be a compile error, not a runtime failure). This suite pins only the kind-generic
 ///   `isReadOnly`/`setPaneReadOnly` flip on a `.remoteGUI` pane (already convergent).
-/// - The status-bar STRIP mount + the floating-pane RENDERER are app-target view code (`GuiLeafView` /
-///   `FloatingPaneCard`), compiled + code-reviewed, never unit-instantiated (hang-safety, carry-overs §3).
-///   This suite covers only the pure models behind them.
+/// - The status-bar STRIP mount is app-target view code (`GuiLeafView`),
+///   compiled + code-reviewed, never unit-instantiated (hang-safety, carry-overs §3).
+///   This suite covers only the pure models behind it.
 ///
 /// Hang-safety: NO `SCStream`/`VTCompression`/`VTDecompression`/Metal/`NSWindow` is instantiated — the store
 /// uses the spec-only ``FakePaneSession`` seam, and the tree ops are pure value transforms.
 @MainActor
 final class RemoteGUIFirstClassPeerTests: XCTestCase {
     // MARK: - Fixtures
-
-    /// The floating-overlay viewport the pure float ops clamp into.
-    private let bounds = CGRect(x: 0, y: 0, width: 1200, height: 800)
 
     /// A spec-only `.tree`-live store (no terminal model / renderer / socket) — the same seam
     /// ``RemoteWindowTabLandingTests`` uses to drive `newRemoteWindowTab`.
@@ -70,8 +67,7 @@ final class RemoteGUIFirstClassPeerTests: XCTestCase {
     }
 
     /// A pure single-tab tree with a `.terminal` leaf split alongside a `.remoteGUI` SIBLING (two tiled leaves
-    /// in one tab) — the fixture for the kind-generic float/split peer assertions (a tab needs ≥2 tiled leaves
-    /// before one can float without emptying the tree).
+    /// in one tab) — the fixture for the kind-generic split peer assertions.
     private func makeSplitWithVideoSibling() -> (tree: TreeWorkspace, terminal: PaneID, video: PaneID) {
         let ws0 = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "term"))
         let term = ws0.allPaneIDs()[0]
@@ -266,27 +262,6 @@ final class RemoteGUIFirstClassPeerTests: XCTestCase {
 
         let row = try XCTUnwrap(OpenQuicklyModel.openedItems(from: store.tree).first { $0.act == .focusPane(id) })
         XCTAssertEqual(row.subtitle, "Safari", "the Open-Quickly row keeps the host app on line 2 too")
-    }
-
-    // MARK: - ES-E21-3 / WI-6 — float is kind-generic for the video pane
-
-    /// `WorkspaceTreeOps.toggleFloating` floats a `.remoteGUI` active pane with NO kind guard — it leaves the
-    /// tiled tree, joins `tab.floatingPanes`, and stamps `spec.floatingFrame`, exactly like a terminal. Passes
-    /// on un-fixed code (the float DOMAIN is kind-generic); the NEW surface is the `FloatingPaneCard` RENDERER
-    /// (WI-6), which composes a kind-generic `PaneContainer` so `.remoteGUI` floats visibly for free.
-    func testToggleFloatingFloatsARemoteWindowPane() throws {
-        let (ws, terminal, video) = makeSplitWithVideoSibling()
-        let frame = CGRect(x: 80, y: 80, width: 420, height: 320)
-
-        let after = WorkspaceTreeOps.toggleFloating(video, defaultFrame: frame, bounds: bounds, in: ws)
-        let tab = try XCTUnwrap(after.activeSession?.activeTab)
-
-        XCTAssertTrue(tab.floatingPanes.contains(video), "a `.remoteGUI` pane floats — no kind guard")
-        XCTAssertFalse(tab.root.contains(video), "the floated video pane leaves the tiled tree")
-        XCTAssertTrue(tab.root.contains(terminal), "the terminal sibling stays tiled")
-        XCTAssertEqual(after.spec(for: video)?.floatingFrame, frame, "the spec records the (clamped) frame")
-        XCTAssertEqual(after.spec(for: video)?.kind, .remoteGUI, "it is still a video pane after floating")
-        XCTAssertTrue(after.isInvariantHeld(), "specs==leafIDs invariant holds (floating layer counts)")
     }
 
     // MARK: - ES-E21-2 / WI-7 — split admits a video sibling + no drop-to-create a remote window
