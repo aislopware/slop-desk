@@ -177,6 +177,11 @@ public enum TerminalLinkDetector {
         ".", ",", ";", "!", "?", ")", "]", "}", ">", "\"", "'", "`", "\u{201D}", "\u{2019}",
     ]
 
+    /// Closing brackets whose trailing trim is BALANCED against their opener inside the token — so a URL
+    /// whose path legitimately ends in a matched close (`…/Swift_(programming_language)`, a `#L10)` prose
+    /// anchor) keeps it, while an unmatched wrapping close (prose `(https://x.com)`) is still stripped.
+    private static let balancedClosers: [Character: Character] = [")": "(", "]": "[", "}": "{"]
+
     /// Strip wrapping brackets/quotes and trailing sentence punctuation so `(https://x.com).` →
     /// `https://x.com`. Crucially `:` is NOT trailing-trimmed — the `:line:col` suffix must survive.
     /// Returns the trimmed core plus the cell count removed from the FRONT (so the caller can advance
@@ -189,6 +194,14 @@ public enum TerminalLinkDetector {
             chars.removeFirst()
         }
         while let last = chars.last, trailingTrim.contains(last) {
+            // A closing bracket is only trailing-trimmed when UNBALANCED (more of it than its opener remains
+            // in the token) — a balanced pair (a wiki disambiguation `(…)`, a `[…]`/`{…}` in the path) is a
+            // real part of the URL and must survive, matching iTerm2/ghostty paren balancing.
+            if let opener = balancedClosers[last] {
+                let closeCount = chars.reduce(0) { $0 + ($1 == last ? 1 : 0) }
+                let openCount = chars.reduce(0) { $0 + ($1 == opener ? 1 : 0) }
+                if closeCount <= openCount { break }
+            }
             chars.removeLast()
         }
         return (String(chars), leadingCells)
@@ -272,9 +285,17 @@ public enum TerminalLinkDetector {
         cellStart: Int,
         cwd: String?,
     ) -> DetectedLink? {
-        let (pathPart0, suffix) = splitLineCol(core)
-        var pathPart = pathPart0
-        while pathPart.hasSuffix(":") { pathPart.removeLast() } // e.g. a log "/path:" or "Error:"
+        // Strip trailing colons FIRST (a log "/path:" or "Error:", and — critically — the standard
+        // compiler-diagnostic form `path:line:col:` whose trailing `:` would otherwise defeat splitLineCol,
+        // leaving `:line:col` baked into the resolved path so open/reveal fails), THEN split the numeric
+        // `:line[:col]` suffix off the cleaned token so `path:line:col:` resolves as `.pathLineCol`.
+        // Strip trailing colons FIRST (a log "/path:" or "Error:", and — critically — the standard
+        // compiler-diagnostic form `path:line:col:` whose trailing `:` would otherwise defeat splitLineCol,
+        // leaving `:line:col` baked into the resolved path so open/reveal fails), THEN split the numeric
+        // `:line[:col]` suffix off the cleaned token so `path:line:col:` resolves as `.pathLineCol`.
+        var cleaned = core
+        while cleaned.hasSuffix(":") { cleaned.removeLast() }
+        let (pathPart, suffix) = splitLineCol(cleaned)
         guard !pathPart.isEmpty, let shape = pathShape(pathPart) else { return nil }
         // Decorative prompt art (starship cats, powerline glyphs) frequently begins with `/` — e.g. the
         // `/ᐠ` in a `/ᐠ - ˕ -マ ≫` prompt — but is NOT a filesystem path. Such art is a SINGLE exotic glyph

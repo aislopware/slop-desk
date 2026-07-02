@@ -56,37 +56,51 @@ public struct BlockBookmarkSeam {
 
 /// The single absolute "jump the viewport to navigator position N" implementation (WB2/WB3), so the
 /// navigator's per-row jump and the store's jump-to-failed cannot drift on the delta math. It re-anchors
-/// to the newest prompt (`scroll_to_bottom`) then steps `pos` prompts UP (delta `-pos`) from that known
-/// bottom anchor — robust to a prior scroll/jump (the delta math is ``BlockJump/jumpDelta(toTargetPos:)``).
-/// Pure over the ``TerminalSurfaceActions`` seam; `nonisolated` so both call sites reach it.
+/// to the OLDEST row (`scroll_to_top`) then steps DOWN (positive delta) to the target prompt — the delta
+/// math is ``BlockJump/jumpDelta(toTargetPos:totalBlocks:)``. Pure over the ``TerminalSurfaceActions``
+/// seam; `nonisolated` so both call sites reach it.
 enum BlockJump {
-    /// The libghostty `jump_to_prompt` delta to reach newest-first navigator position `pos` (0 = newest)
-    /// AFTER the viewport has been re-anchored to the bottom (`scroll_to_bottom`).
+    /// The libghostty `jump_to_prompt` delta to land newest-first navigator position `pos` (0 = newest)
+    /// AFTER the viewport has been re-anchored to the TOP (`scroll_to_top`), given `total` command blocks.
     ///
-    /// libghostty counts ITS OWN OSC-133 prompt marks — one per `133;A`, which the shim's `precmd` emits
-    /// once per real prompt draw. That set INCLUDES the current, live, empty prompt the shell is idling at,
-    /// for which our block list has NO block (a block needs a `B→C` command; the idle prompt never ran
-    /// one). So counting prompts up from the bottom: the live prompt is "0 up", the NEWEST command's
-    /// prompt is "1 up", and newest-first block position `pos` sits `pos + 1` prompts up → a delta of
-    /// `-(pos + 1)`. The old `-pos` was off by one (it assumed the bottom anchor already sat on the newest
-    /// command's prompt), so clicking the newest command jumped to the empty prompt BELOW it. The offset is
-    /// a CONSTANT one, NOT resize-dependent: a re-fired `133;B` (which `zle reset-prompt` re-emits from
-    /// `$PROMPT` on every resize) marks INPUT state, not a prompt row — only `133;A` (which does NOT
-    /// re-fire on resize) adds a prompt mark — so the phantom `B`s never inflate ghostty's prompt count.
+    /// ## Why re-anchor to the TOP, not the bottom
+    /// libghostty's `scrollPrompt` (ghostty `PageList.zig`, pinned v1.3.1) counts prompts RELATIVE TO THE
+    /// VIEWPORT TOP, not from a "bottom = 0" origin. For a NEGATIVE (upward) delta it starts its
+    /// `PromptIterator` at `getTopLeft(.viewport).up(1)` — one row ABOVE the viewport top — and walks up.
+    /// So after `scroll_to_bottom` (viewport = the active area) an upward jump counts ONLY prompts that
+    /// scrolled off the top into the scrollback; every prompt still VISIBLE in the active area (the live
+    /// idle prompt PLUS any short-command prompts) is skipped. A constant `-(pos + 1)` therefore overshoots
+    /// by the number of on-screen prompts (or no-ops entirely when nothing sits above the active-area top),
+    /// landing on an older command — the ghostty "Screen: jump back one prompt" test shows exactly this
+    /// (jumping back from the active area lands on the scrollback prompt, never the visible one).
     ///
-    /// The SINGLE source of the delta math: ``toNavigatorPosition(_:using:)`` and the Command Navigator's
-    /// per-row jump (``WorkspaceStore/jumpToNavigatorBlockInActivePane(index:)``, which the
+    /// Anchoring to the TOP removes the viewport dependency: after `scroll_to_top` the viewport top is the
+    /// OLDEST retained row, so EVERY command prompt lies at or below it and a POSITIVE (downward) delta
+    /// counts them oldest→newest, independent of how many are currently on screen. The command prompts in
+    /// oldest→newest order are `133;A` marks #1…#`total`; newest-first position `pos` is the
+    /// `(total − pos)`-th prompt from the top (`pos = 0` = newest = the `total`-th; `pos = total − 1` =
+    /// oldest = the 1st). The trailing live idle prompt is mark #`total + 1`, so a delta of `total − pos`
+    /// (always in `1…total`) never reaches it. If the target prompt is itself inside the active area,
+    /// ghostty pins the viewport to `.active` (it cannot scroll DOWN into the active area) — the target is
+    /// still on screen, which is the correct landing.
+    ///
+    /// The SINGLE source of the delta math: ``toNavigatorPosition(_:totalBlocks:using:)`` and the Command
+    /// Navigator's per-row jump (``WorkspaceStore/jumpToNavigatorBlockInActivePane(index:)``, which the
     /// `CommandNavigatorView` row calls) both route through this so the two can't drift.
-    nonisolated static func jumpDelta(toTargetPos pos: Int) -> Int {
-        -(pos + 1)
+    nonisolated static func jumpDelta(toTargetPos pos: Int, totalBlocks total: Int) -> Int {
+        total - pos
     }
 
-    /// Re-anchors to the bottom then jumps `actions` to newest-first navigator position `pos` (0 = newest).
-    /// The delta is always non-zero (``jumpDelta`` steps at least one prompt up, past the live empty
-    /// prompt), so a jump is always issued after the re-anchor.
-    nonisolated static func toNavigatorPosition(_ pos: Int, using actions: TerminalSurfaceActions) {
-        actions.performBindingAction("scroll_to_bottom")
-        let delta = jumpDelta(toTargetPos: pos)
+    /// Re-anchors to the top then jumps `actions` DOWN to newest-first navigator position `pos` (0 = newest)
+    /// among `total` command blocks. The delta is always ≥ 1 (`total − pos` for `pos` in `0…total − 1`), so
+    /// a jump is always issued after the re-anchor.
+    nonisolated static func toNavigatorPosition(
+        _ pos: Int,
+        totalBlocks total: Int,
+        using actions: TerminalSurfaceActions,
+    ) {
+        actions.performBindingAction("scroll_to_top")
+        let delta = jumpDelta(toTargetPos: pos, totalBlocks: total)
         if delta != 0 { actions.performBindingAction("jump_to_prompt:\(delta)") }
     }
 }
@@ -216,7 +230,7 @@ public extension WorkspaceStore {
             in: blocks, fromIndex: blockBookmarks.jumpCursor[paneID], forward: forward,
         ), let pos = blocks.firstIndex(where: { $0.index == target.index }) else { return }
         blockBookmarks.jumpCursor[paneID] = target.index
-        BlockJump.toNavigatorPosition(pos, using: actions)
+        BlockJump.toNavigatorPosition(pos, totalBlocks: blocks.count, using: actions)
     }
 
     // MARK: - E9: Jump to a specific Outline block
@@ -233,6 +247,6 @@ public extension WorkspaceStore {
               let actions = model.surface as? TerminalSurfaceActions else { return }
         let blocks = model.blocks.navigatorBlocks
         guard let pos = blocks.firstIndex(where: { $0.index == index }) else { return }
-        BlockJump.toNavigatorPosition(pos, using: actions)
+        BlockJump.toNavigatorPosition(pos, totalBlocks: blocks.count, using: actions)
     }
 }

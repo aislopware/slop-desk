@@ -46,11 +46,16 @@ struct LinkHighlightOverlay: View {
            let metrics = snapshot.cellMetrics(),
            metrics.cellWidth > 0, metrics.cellHeight > 0
         {
-            // Re-detect as output streams in under a held ⌘ (scroll / new output reflows the cells). The
-            // observable byte counter is the cheapest "the viewport may have changed" signal we already track.
-            // `let _` (not a bare `_ =`) is required — a `@ViewBuilder` rejects a bare Void discard statement.
+            // Re-detect under a held ⌘ on EITHER viewport-change signal: new streaming output (`bytesReceived`)
+            // OR a LOCAL scrollback scroll (`viewportRevision`, bumped by the renderer's scroll/pan handler).
+            // A local scroll moves the viewport WITHOUT new wire bytes, so `bytesReceived` alone would leave
+            // the underlines stranded at their pre-scroll screen rows over unrelated text — observing both
+            // re-runs detection against the moved `viewportTextRows()`. `let _` (not a bare `_ =`) is required
+            // — a `@ViewBuilder` rejects a bare Void discard statement.
             // swiftlint:disable:next redundant_discardable_let
             let _ = model.bytesReceived
+            // swiftlint:disable:next redundant_discardable_let
+            let _ = model.viewportRevision
             let accent = Slate.State.accent
             let links = TerminalLinkDetector.detect(
                 rows: snapshot.viewportTextRows(),

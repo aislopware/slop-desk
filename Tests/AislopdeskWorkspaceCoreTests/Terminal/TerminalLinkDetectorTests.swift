@@ -183,6 +183,54 @@ final class TerminalLinkDetectorTests: XCTestCase {
         XCTAssertEqual(path?.resolvedAbsolute, "/w/a/b.rs")
     }
 
+    /// The standard clang/swiftc/gcc diagnostic form `path:line:col:` (trailing colon before ` error:`)
+    /// must resolve as `.pathLineCol` with the `:line:col` split OFF the resolved path — otherwise ⌘click
+    /// open/reveal dispatches a path literally named `main.swift:3:14` and silently fails. FAILS on the
+    /// pre-fix order (splitLineCol ran before the trailing-colon strip, so `:3:14` stayed baked into
+    /// `raw` / `resolvedAbsolute` and the kind was `.absolutePath`).
+    func testCompilerDiagnosticTrailingColonSplitsLineCol() {
+        let abs = only("/Users/me/main.swift:3:14:")
+        XCTAssertEqual(abs?.kind, .pathLineCol)
+        XCTAssertEqual(abs?.raw, "/Users/me/main.swift:3:14")
+        XCTAssertEqual(abs?.resolvedAbsolute, "/Users/me/main.swift", "the :line:col suffix is dropped from the path")
+
+        // The same shape after the whitespace-split of a full `path:line:col: error: …` line.
+        let onlyLoc = detect("/Users/me/main.swift:3:14: error: cannot find 'x' in scope").first
+        XCTAssertEqual(onlyLoc?.kind, .pathLineCol)
+        XCTAssertEqual(onlyLoc?.resolvedAbsolute, "/Users/me/main.swift")
+
+        // Relative + line-only trailing colon (`path:line:`) also splits.
+        let rel = only("src/lib.rs:42:", cwd: "/w")
+        XCTAssertEqual(rel?.kind, .pathLineCol)
+        XCTAssertEqual(rel?.raw, "src/lib.rs:42")
+        XCTAssertEqual(rel?.resolvedAbsolute, "/w/src/lib.rs")
+
+        // A trailing-colon-only log path (no numbers) still resolves as a plain path (regression guard for
+        // the reordered strip).
+        XCTAssertEqual(only("/var/log/system.log:")?.kind, .absolutePath)
+        XCTAssertEqual(only("/var/log/system.log:")?.raw, "/var/log/system.log")
+    }
+
+    /// A URL whose path legitimately ends in a BALANCED close paren (Wikipedia disambiguation, MSDN, a
+    /// `#Lnn)` prose anchor) keeps it — the trailing-paren trim must balance against an opener inside the
+    /// token. FAILS on the pre-fix unconditional strip (which dropped the final `)`, truncating both the
+    /// underline and the opened URL).
+    func testBalancedTrailingParenSurvivesInURL() {
+        let wiki = only("https://en.wikipedia.org/wiki/Swift_(programming_language)")
+        XCTAssertEqual(wiki?.kind, .url)
+        XCTAssertEqual(wiki?.raw, "https://en.wikipedia.org/wiki/Swift_(programming_language)")
+        XCTAssertEqual(wiki?.colEnd, "https://en.wikipedia.org/wiki/Swift_(programming_language)".count)
+
+        // An UNMATCHED wrapping paren (prose) is still stripped — the balancing only keeps matched pairs.
+        let wrapped = only("see (https://example.com)")
+        XCTAssertEqual(wrapped?.raw, "https://example.com", "the wrapping (unbalanced) paren is trimmed")
+
+        // A wrapped URL that itself contains a balanced pair: the outer wrapping close is unbalanced (its
+        // opener was leading-trimmed) so it is stripped, but the inner balanced pair survives.
+        let both = only("(https://en.wikipedia.org/wiki/Swift_(programming_language))")
+        XCTAssertEqual(both?.raw, "https://en.wikipedia.org/wiki/Swift_(programming_language)")
+    }
+
     // MARK: - Bounds
 
     /// The per-row CELL scan is capped: a path that begins past `maxScanColumns` is never reached, so a
