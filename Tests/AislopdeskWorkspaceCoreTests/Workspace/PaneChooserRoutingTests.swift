@@ -54,14 +54,6 @@ final class PaneChooserRoutingTests: XCTestCase {
         XCTAssertEqual(activeKind(store), .chooser)
     }
 
-    func testNewSessionRoutesToChooserPane() {
-        let store = makeTreeStore()
-        let beforeSessions = store.tree.sessions.count
-        WorkspaceBindingRegistry.route(.newSession, to: store)
-        XCTAssertEqual(store.tree.sessions.count, beforeSessions + 1, "newSession adds a session")
-        XCTAssertEqual(activeKind(store), .chooser)
-    }
-
     // MARK: - terminal right-click "Split" mints a focused chooser pane targeting the acted-on pane
 
     func testContextMenuSplitMintsChooserFocusingNewPane() {

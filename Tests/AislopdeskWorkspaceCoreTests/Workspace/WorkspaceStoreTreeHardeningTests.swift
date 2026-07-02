@@ -230,8 +230,8 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
 
     // MARK: - B3 — one default-session-name source
 
-    /// The store's `defaultSessionName` is the single source both the keyboard path and the sidebar footer
-    /// name through — "Session N", N one past the count.
+    /// The store's `defaultSessionName` is the single source every session-minting path (agent control
+    /// backend, session templates) names through — "Session N", N one past the count.
     func testDefaultSessionNameIsSessionN() {
         let store = makeTreeStore()
         XCTAssertEqual(store.defaultSessionName, "Session 2", "one session ⇒ next is Session 2")

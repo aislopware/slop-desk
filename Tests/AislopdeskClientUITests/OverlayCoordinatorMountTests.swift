@@ -475,14 +475,14 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     // MARK: - ES-E2-4 / WI-3: the cheat sheet's data source (categories + glyph chips)
 
     /// `KeyboardCheatSheetView` renders ``WorkspaceBindingRegistry/groupedForDisplay`` as one section per
-    /// category. Pin the six categories in their fixed display order — a reorder / dropped section would
+    /// category. Pin the five categories in their fixed display order — a reorder / dropped section would
     /// silently rearrange (or hide) a whole chunk of the cheat sheet.
     func testCheatSheetDataCoversCategories() {
         let categories = WorkspaceBindingRegistry.groupedForDisplay.map(\.category)
         XCTAssertEqual(
             categories,
-            [.panes, .tabs, .sessions, .focus, .view, .agents],
-            "the cheat sheet renders the six categories in their fixed display order",
+            [.panes, .tabs, .focus, .view, .agents],
+            "the cheat sheet renders the five categories in their fixed display order",
         )
         // No section is empty (every category contributes at least one row) — an empty group is dropped by
         // `groupedForDisplay`, so the count matching the category list proves none collapsed to nothing.

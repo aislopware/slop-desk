@@ -87,13 +87,12 @@ final class PaletteContentAndReachTests: XCTestCase {
     // MARK: - Finding 2: the curated catalog surfaces the previously-missing spec verbs
 
     /// The catalog now ENUMERATES the spec-named verbs that were unreachable (Reopen Closed Pane, Sync Input
-    /// to All Panes, New Session, Close Window, Font Size ±/Reset, Open Composer), each under its own
+    /// to All Panes, Close Window, Font Size ±/Reset, Open Composer), each under its own
     /// category. REVERT-TO-CONFIRM-FAIL: dropping any row makes its `catalog.first` nil → the `XCTUnwrap` trips.
     func testCatalogSurfacesPreviouslyMissingVerbs() throws {
         let expected: [(id: String, title: String, category: PaletteCategory)] = [
             ("action.reopenClosed", "Reopen Closed Pane", .tab),
             ("action.toggleSyncInput", "Sync Input to All Panes", .pane),
-            ("action.newSession", "New Session", .window),
             ("action.closeWindow", "Close Window", .window),
             ("action.increaseFontSize", "Increase Font Size", .view),
             ("action.decreaseFontSize", "Decrease Font Size", .view),
@@ -119,20 +118,6 @@ final class PaletteContentAndReachTests: XCTestCase {
             searchIDs("font").contains("action.increaseFontSize"),
             "typing 'font' surfaces the font-size verbs",
         )
-    }
-
-    /// CLOSED loop: running the "New Session" row's `.store` arm mints a new session (proves the row is wired,
-    /// not a label). FAILS if the row's run-arm were a no-op stub.
-    func testRunningNewSessionRowMintsASession() throws {
-        let store = makeStore()
-        let item = try row("action.newSession")
-        guard case let .store(run) = item.action else {
-            XCTFail("New Session is a `.store` row")
-            return
-        }
-        let before = store.tree.sessions.count
-        run(store)
-        XCTAssertEqual(store.tree.sessions.count, before + 1, "running New Session added a session")
     }
 
     /// CLOSED loop: the "Close Window" row routes through the injected ``OverlayCoordinator/closeWindow``

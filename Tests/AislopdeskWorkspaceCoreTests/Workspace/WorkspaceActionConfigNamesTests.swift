@@ -41,7 +41,6 @@ final class WorkspaceActionConfigNamesTests: XCTestCase {
             "command_palette": "view.palette",
             "cheat_sheet": "view.cheatSheet",
             "find": "view.find",
-            "new_session": "session.new",
         ]
 
         let ids = registeredIDs

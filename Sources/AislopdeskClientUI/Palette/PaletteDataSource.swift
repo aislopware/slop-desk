@@ -220,14 +220,6 @@ public struct ActionsPaletteSource: PaletteDataSource {
             icon: "rectangle.split.2x2",
             preset: .tiled,
         ),
-        // New Session (⌃⌘N) — mints a fresh session whose first pane is an in-pane `.chooser` (Terminal /
-        // Remote window). Cross-platform (the palette is the iOS entry point — there is no ⌃⌘N there).
-        item(
-            id: "action.newSession", icon: "square.stack.3d.up", title: "New Session",
-            keywords: "new session window workspace",
-            shortcut: glyph(.newSession), category: .window,
-            run: { store in store.openChooserPane(.newSession) },
-        ),
         // Close Window (⌘⇧W) — routes through the injected `closeWindow` closure
         // (macOS `NSWindow.performClose` → the close-confirmation gate), falling back to the store's parked
         // confirmation when no closure is installed (iOS / tests). The SAME actuation the ⌘⇧W chord + menu use.

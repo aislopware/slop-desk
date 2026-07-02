@@ -3024,16 +3024,9 @@ public final class WorkspaceStore {
         newTab(kind: SettingsKey.defaultPaneKind)
     }
 
-    /// Adds a session carrying the user's default-kind leaf, named for the next free "Session N" slot.
-    /// The "new session" command entry.
-    public func newSessionDefault() {
-        newSession(name: defaultSessionName, kind: SettingsKey.defaultPaneKind)
-    }
-
     /// The SINGLE source of the default new-session name (ITEM B3) — "Session N" where N is one past the
-    /// current session count, so a created session is never blank. BOTH the keyboard path
-    /// (``newSessionDefault()``) and the sidebar's manual "add session" footer name through THIS, so the
-    /// two paths can never drift.
+    /// current session count, so a created session is never blank. Every session-minting path (the agent
+    /// control backend, session templates) names through THIS, so the paths can never drift.
     public var defaultSessionName: String {
         "Session \(tree.sessions.count + 1)"
     }
@@ -4628,7 +4621,6 @@ public extension WorkspaceStore {
         switch context {
         case let .split(axis, leading): splitActivePane(axis: axis, kind: .chooser, leading: leading)
         case .newTab: newTab(kind: .chooser)
-        case .newSession: newSession(name: defaultSessionName, kind: .chooser)
         case .floating: spawnFloatingPane(kind: .chooser)
         }
     }

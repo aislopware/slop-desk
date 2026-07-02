@@ -51,8 +51,6 @@ public extension WorkspaceBindingRegistry {
         "command_palette": "view.palette",
         "cheat_sheet": "view.cheatSheet",
         "find": "view.find",
-        // Sessions
-        "new_session": "session.new",
     ]
 
     /// Resolve a config action `name` (with an optional `arg`) to this registry's binding id, or

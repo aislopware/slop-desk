@@ -129,9 +129,6 @@ public enum WorkspaceAction: Hashable, Sendable {
     case closeWindow // ⌘⇧W — close the active window (→ Session); the close-confirmation surface gates it
     case reopenClosed // ⌘⇧T — reopen the most recently closed pane (browser idiom; E3 stub)
 
-    // Sessions
-    case newSession // ⌃⌘N
-
     // Synchronized input (Zellij ToggleActiveSyncTab)
     case toggleSyncInput // ⌘⇧I — broadcast keystrokes to every other pane in the active tab
 
@@ -171,7 +168,6 @@ public extension WorkspaceAction {
     enum Category: String, Sendable, CaseIterable {
         case panes = "Panes"
         case tabs = "Tabs"
-        case sessions = "Sessions"
         case focus = "Focus"
         case view = "View"
         // Agent-facing verbs (composer / prompt queue / send-to-chat). Last in display order so the
@@ -282,7 +278,6 @@ public extension WorkspaceAction {
              .toggleSidebar,
              .pinWindow, // a window-scope NSWindow.level toggle — needs no active pane (like the sidebar toggle)
              .openQuickly, // a global fuzzy switcher — needs no active pane
-             .newSession,
              .spawnFloating, // creates its own pane — needs none
              .toggleSyncInput, // the tab must exist, but the palette can still show it (mirrors .newTab)
              .jumpToAttention, // acts globally across all tabs/sessions — needs no active pane
@@ -365,10 +360,10 @@ public struct WorkspaceBinding: Sendable, Equatable {
 /// through to the focused terminal), and no two bindings share a chord — both pinned by
 /// `TreeCommandRoutingTests`. The chords follow the reference keymap: ⌘T new tab, ⌘W close, ⌘D
 /// split-right, ⌘⇧D split-down, ⌃⌘+arrows focus, ⌘⇧↩ zoom, ⌘⇧]/⌘⇧[ next/prev tab, ⌘1…9 select tab,
-/// ⌃⌘N new session, ⌘⇧L toggle Tabs panel, ⌃⌘T break-pane-to-tab, ⌘⇧P palette,
+/// ⌘⇧L toggle Tabs panel, ⌃⌘T break-pane-to-tab, ⌘⇧P palette,
 /// ⌘/ cheat sheet. Rename has no default chord — it is menu / palette / context-menu only (`chord: nil`).
 public enum WorkspaceBindingRegistry {
-    /// The shipped binding table, in cheat-sheet / palette display order (panes, tabs, sessions, focus,
+    /// The shipped binding table, in cheat-sheet / palette display order (panes, tabs, focus,
     /// view). `.selectTab(n)` for n=1…9 is generated (one chord each) but is NOT listed here — it is
     /// expanded by ``selectTabBindings`` so the table stays readable; the cheat sheet collapses the nine
     /// slots to one representative row synthesized in ``groupedForDisplay`` (the menu builds its own "Select
@@ -578,12 +573,6 @@ public enum WorkspaceBindingRegistry {
             category: .tabs, chord: KeyChord(character: "j", [.command, .option]),
             symbol: "bubble.left.and.text.bubble.right",
             keywords: "peek reply answer respond blocked needs permission inline quick supervise prompt",
-        ),
-        // Sessions
-        WorkspaceBinding(
-            id: "session.new", action: .newSession, title: "New Session",
-            category: .sessions, chord: KeyChord(character: "n", [.control, .command]),
-            symbol: "macwindow.badge.plus", keywords: "host connection add open create workspace",
         ),
         // Focus pane up/down/left/right — the documented default ⌃⌘arrows
         // (spec/reference__keybindings.md:82-85, customization__custom-keybindings.md:74-77). The single most
@@ -1053,7 +1042,7 @@ public enum WorkspaceBindingRegistry {
 
     // MARK: - Grouped display (the cheat sheet sections + palette catalog order)
 
-    /// The bindings grouped by category in display order (panes, tabs, sessions, focus, view), with the
+    /// The bindings grouped by category in display order (panes, tabs, focus, view), with the
     /// nine ⌘-digit select-tab chords collapsed into ONE representative "⌘1…⌘9" row SYNTHESIZED here (see
     /// ``selectTabRepresentative``) and appended to the Tabs group — the real per-digit chords live only in
     /// ``selectTabBindings`` (keyboard bank / chord table), never in this display set. The menu builds its

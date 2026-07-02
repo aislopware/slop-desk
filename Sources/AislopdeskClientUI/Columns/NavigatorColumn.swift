@@ -41,7 +41,7 @@ struct NavigatorColumn: View {
     var preferences: PreferencesStore?
 
     /// The app-global connection — drives the compact host + connection-status header pinned at the TOP of the
-    /// sidebar, ABOVE the session switcher and the TABS section. This is the ONE place the host / connection
+    /// sidebar, ABOVE the TABS section. This is the ONE place the host / connection
     /// state lives now: it is common to every pane, so it was lifted OUT of the per-pane footer (the terminal
     /// footer is gone entirely) into this shared header. Optional so the column stays standalone-mountable in
     /// previews / snapshot tests (a `nil` connection simply hides the header).
@@ -216,9 +216,6 @@ struct NavigatorColumn: View {
         let sections = buildSections(allRows, query: query)
         return VStack(alignment: .leading, spacing: 0) {
             Color.clear.frame(height: 40) // reserve the titlebar / traffic-light strip
-            // E19 WI-5 / A32: the multi-session switcher sits ABOVE the "TABS" header (below the traffic-light
-            // strip). It is additive — the tab list below still renders the ACTIVE session's tabs unchanged.
-            SessionSwitcherView(store: store)
             HStack(spacing: 0) {
                 Text("TABS")
                     .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
@@ -316,10 +313,6 @@ struct NavigatorColumn: View {
             set: { if let paneID = $0 { select(paneID) } },
         )
         return List(selection: selection) {
-            // E19 WI-5 / A32: the multi-session switcher as a leading Section so it composes into the column's
-            // system List (the root must stay a List for NavigationSplitView's push). Additive — the tab
-            // sections below still render the ACTIVE session's tabs unchanged.
-            SessionSwitcherView(store: store)
             if allRows.isEmpty {
                 Label("No tabs open", systemSymbol: .squareSplit2x1)
                     .foregroundStyle(Slate.Text.secondary)

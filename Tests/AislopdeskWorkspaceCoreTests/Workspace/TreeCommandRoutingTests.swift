@@ -49,7 +49,6 @@ final class TreeCommandRoutingTests: XCTestCase {
         case .splitRight: store.splitActivePane(axis: .horizontal, kind: .terminal)
         case .splitDown: store.splitActivePane(axis: .vertical, kind: .terminal)
         case .newTab: store.newTab(kind: .terminal)
-        case .newSession: store.newSession(name: store.defaultSessionName, kind: .terminal)
         case .spawnFloating: store.spawnFloatingPane(kind: .terminal)
         default: WorkspaceBindingRegistry.route(action, to: store)
         }
@@ -686,22 +685,6 @@ final class TreeCommandRoutingTests: XCTestCase {
         )
     }
 
-    // MARK: - Sessions: new session changes the active session + materializes its leaf
-
-    /// `.newSession` adds a session (one tab/leaf) and selects it; its leaf is materialized.
-    func testNewSessionAddsAndSelectsSession() throws {
-        let store = makeTreeStore()
-        let session0 = try XCTUnwrap(store.tree.activeSessionID)
-        XCTAssertEqual(store.tree.sessions.count, 1)
-
-        route(.newSession, store)
-
-        XCTAssertEqual(store.tree.sessions.count, 2, "newSession added a session")
-        XCTAssertNotEqual(store.tree.activeSessionID, session0, "the new session is now active")
-        XCTAssertEqual(leaves(store).count, 2, "the new session's leaf was materialized")
-        XCTAssertEqual(store.allSessions.count, 2)
-    }
-
     // MARK: - Rename: ⌘⇧R targets the active TAB on the tree shell (ITEM B1)
 
     /// B1: `.renamePane` on a `.tree` store records the active TAB as the pending tab-rename target (the
@@ -875,7 +858,6 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(
             chord(.toggleSidebar), KeyChord(character: "l", [.command, .shift]), "toggle sidebar = ⌘⇧L",
         )
-        XCTAssertEqual(chord(.newSession), KeyChord(character: "n", [.control, .command]), "new session = ⌃⌘N")
         XCTAssertEqual(chord(.selectTab(1)), KeyChord(character: "1", [.command]), "select tab 1 = ⌘1")
         XCTAssertEqual(chord(.selectTab(9)), KeyChord(character: "9", [.command]), "select tab 9 = ⌘9")
         XCTAssertEqual(chord(.find), KeyChord(character: "f", [.command]), "find = ⌘F (W14)")

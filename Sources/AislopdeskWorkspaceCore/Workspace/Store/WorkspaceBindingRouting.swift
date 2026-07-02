@@ -272,10 +272,6 @@ public extension WorkspaceBindingRegistry {
         // in-memory ``WorkspaceStore/recentlyClosedTabs`` LIFO and re-inserts the tab. A graceful no-op when
         // the LIFO is empty — live, never dead.
         case .reopenClosed: store.reopenLastClosedPane()
-        // Sessions — a new session carries one fresh leaf, so it mints a pane → create it as an in-pane
-        // `.chooser` pane (the user picks the kind inside the new session's pane).
-        case .newSession:
-            store.openChooserPane(.newSession)
         // Synchronized input (Zellij ToggleActiveSyncTab)
         case .toggleSyncInput:
             if let tabID = store.tree.activeSession?.activeTab?.id { store.toggleSyncInput(tabID: tabID) }
@@ -326,8 +322,7 @@ public extension WorkspaceBindingRegistry {
              .splitDown,
              .splitLeft, // canvas has no split tree; a split mints a new pane (the canvas analogue)
              .splitUp,
-             .newTab,
-             .newSession:
+             .newTab:
             apply(.newPaneDefault, to: store)
         case .closePane: apply(.closePane, to: store)
         // Reopen the last closed pane: the canvas has its own retained single-slot reopen (distinct from the

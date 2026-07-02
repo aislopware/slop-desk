@@ -47,7 +47,6 @@ final class PeekReplyTests: XCTestCase {
         case .splitRight: store.splitActivePane(axis: .horizontal, kind: .terminal)
         case .splitDown: store.splitActivePane(axis: .vertical, kind: .terminal)
         case .newTab: store.newTab(kind: .terminal)
-        case .newSession: store.newSession(name: store.defaultSessionName, kind: .terminal)
         case .spawnFloating: store.spawnFloatingPane(kind: .terminal)
         default: WorkspaceBindingRegistry.route(action, to: store)
         }

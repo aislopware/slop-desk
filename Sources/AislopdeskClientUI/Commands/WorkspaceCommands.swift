@@ -1,7 +1,7 @@
 // WorkspaceCommands — the macOS menu-bar surface over the binding registry (E1 N6, OPTIONAL).
 //
 // A thin, DISCOVERABILITY-ONLY menu that renders `WorkspaceBindingRegistry.groupedForDisplay` as menu
-// sections (Panes / Tabs / Sessions / Focus / View / Agents) so the workspace actions are visible in the
+// sections (Panes / Tabs / Focus / View / Agents) so the workspace actions are visible in the
 // macOS menu bar. Each item is a plain `Button(title) { route(action, to: store, …) }` that dispatches
 // through the SAME single source of truth (`WorkspaceBindingRegistry.route`) the keyboard dispatcher uses.
 //
@@ -79,7 +79,6 @@ struct WorkspaceCommands: Commands {
         // set per menu never drifts from the cheat sheet / palette.
         commandMenu(for: .panes)
         commandMenu(for: .tabs)
-        commandMenu(for: .sessions)
         commandMenu(for: .focus)
         commandMenu(for: .view)
         commandMenu(for: .agents)
