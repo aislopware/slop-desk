@@ -344,8 +344,8 @@ struct ComposerBar: View {
     private let iconSize: CGFloat = Slate.Metric.iconSize
     #endif
 
-    /// composer.png divides the three action hints with a muted interpunct "·" (the SAME separator the block
-    /// caption uses — ``BlockRowView``): a tertiary-toned dot so it reads as a divider, never an action.
+    /// composer.png divides the three action hints with a muted interpunct "·": a tertiary-toned dot so it
+    /// reads as a divider, never an action.
     private var actionSeparator: some View {
         Text("·")
             .font(.system(size: Slate.Typeface.footnote))

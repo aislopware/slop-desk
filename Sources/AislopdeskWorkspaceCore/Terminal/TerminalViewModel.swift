@@ -1926,8 +1926,7 @@ public final class TerminalViewModel {
     }
 
     /// Requests block `index`'s RAW captured VT output bytes (wire type 15 → 29) — the colour-preserving
-    /// sibling of ``copyBlockOutput(index:onResult:)``, used by the inspector output pane to render the SGR
-    /// runs (the "block output has no colour, just white text" report) via `ANSIOutputStyler`. `onResult`
+    /// sibling of ``copyBlockOutput(index:onResult:)`` for callers that render the SGR runs. `onResult`
     /// gets the raw bytes on success or `nil` when the block was evicted / unavailable / disconnected (so
     /// the caller shows a brief "output unavailable" and NEVER hangs). The clipboard/composer path strips
     /// these bytes through ``BlockOutputSanitizer``; here they stay raw so the colours survive.

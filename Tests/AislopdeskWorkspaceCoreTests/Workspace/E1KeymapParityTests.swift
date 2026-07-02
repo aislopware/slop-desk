@@ -214,7 +214,7 @@ final class E1KeymapParityTests: XCTestCase {
         XCTAssertEqual(store.tree, before, "font-increase is a render-only op — the tree is unchanged")
     }
 
-    // MARK: - Default-keymap parity: command palette ⌘⇧P + Toggle Details ⌘⇧R + chord-less rename
+    // MARK: - Default-keymap parity: command palette ⌘⇧P + freed ⌘⇧R + chord-less rename
 
     /// The Command Palette is bound to the documented default ⌘⇧P, NOT the coding-IDE ⌘K
     /// (spec/reference__keybindings.md:42, spec/user-interface__command-palette.md:5/9/35 "Opened with ⌘⇧P
@@ -239,45 +239,39 @@ final class E1KeymapParityTests: XCTestCase {
         )
     }
 
-    /// ⌘⇧R is bound to "Toggle Details Panel" (spec/reference__keybindings.md:67; the command-palette.png
-    /// screenshot shows "Toggle Details Panel" with chips ⇧⌘R). The new `.toggleDetailsPanel` action OWNS ⌘⇧R,
-    /// and Rename — which previously squatted on ⌘⇧R and suppressed the titlebar's Details toggle — now has NO
-    /// default chord (rename ships with no default chord). FAILS on the pre-fix code (no `.toggleDetailsPanel`;
-    /// rename was ⌘⇧R).
-    func testToggleDetailsOwnsCmdShiftRAndRenameIsChordLess() {
-        XCTAssertEqual(
-            chord(.toggleDetailsPanel), KeyChord(character: "r", [.command, .shift]),
-            "toggle Details panel = ⌘⇧R (default chord)",
-        )
-        XCTAssertEqual(
-            WorkspaceBindingRegistry.chordTable[KeyChord(character: "r", [.command, .shift])], .toggleDetailsPanel,
-            "⌘⇧R routes to Toggle Details Panel — NOT rename",
+    /// ⌘⇧R is UNBOUND (the Details panel — whose Toggle owned ⌘⇧R — is REMOVED; keyboard-centric shell),
+    /// and Rename — which once squatted on ⌘⇧R — stays chord-less. FAILS if a binding re-takes ⌘⇧R without
+    /// a deliberate decision (a focused web pane also yields ⌘⇧R as browser hard-reload).
+    func testCmdShiftRIsUnboundAndRenameIsChordLess() {
+        XCTAssertNil(
+            WorkspaceBindingRegistry.chordTable[KeyChord(character: "r", [.command, .shift])],
+            "⌘⇧R is free — the Details panel (its old owner) is removed",
         )
         // Rename is still a REGISTERED, routable action (title menu / context menu / palette), but chord-LESS.
         let rename = WorkspaceBindingRegistry.binding(for: .renamePane)
         XCTAssertNotNil(rename, "rename is still a registered binding (menu / palette reachable)")
-        XCTAssertNil(rename?.chord, "rename carries NO default chord (rename has no default chord; ⌘⇧R is Details)")
+        XCTAssertNil(rename?.chord, "rename carries NO default chord")
     }
 
-    /// `.toggleDetailsPanel` routes through `route(_:to:)` without trapping — it is a VIEW @State toggle
-    /// (`WorkspaceChromeState`), so a `nil` closure (the headless default) is a graceful no-op that never
-    /// mutates the tree. FAILS on the pre-fix code (no `.toggleDetailsPanel` case to route).
-    func testToggleDetailsPanelRoutesWithoutTrappingOrMutatingTree() {
+    /// `.showGitStatus` (the Details panel's keyboard-centric replacement) routes through `route(_:to:)`
+    /// without trapping — it is a VIEW surface (the macOS window presenter), so a `nil` closure (the
+    /// headless default) is a graceful no-op that never mutates the tree; a supplied closure fires.
+    func testShowGitStatusRoutesWithoutTrappingOrMutatingTree() {
         let store = makeTreeStore()
         let before = store.tree
-        WorkspaceBindingRegistry.route(.toggleDetailsPanel, to: store) // nil closure → graceful no-op
-        XCTAssertEqual(store.tree, before, "Toggle Details is a view toggle — the tree is unchanged")
+        WorkspaceBindingRegistry.route(.showGitStatus, to: store) // nil closure → graceful no-op
+        XCTAssertEqual(store.tree, before, "Git Status is a view surface — the tree is unchanged")
 
-        // With a closure supplied, the route fires it (the live app wires `chrome.toggleInspector`).
+        // With a closure supplied, the route fires it (the live app wires the window presenter).
         var fired = 0
-        WorkspaceBindingRegistry.route(.toggleDetailsPanel, to: store, toggleDetailsPanel: { fired += 1 })
-        XCTAssertEqual(fired, 1, "the supplied Details-toggle closure fires exactly once")
+        WorkspaceBindingRegistry.route(.showGitStatus, to: store, showGitStatus: { fired += 1 })
+        XCTAssertEqual(fired, 1, "the supplied Git Status closure fires exactly once")
     }
 
     /// E1 review fix: ⌘B "Toggle Sidebar" was a DEAD chord on macOS — it routed to
     /// `store.toggleSidebarCollapsed()`, a LEGACY flag the native split shell never reads (the macOS sidebar
     /// collapse is `WorkspaceChromeState.sidebarCollapsed`). Re-bound to ⌘⇧L "Toggle Tabs Panel" and
-    /// routed (like `.toggleDetailsPanel`) through a `toggleSidebar` VIEW closure the live app wires to
+    /// routed through a `toggleSidebar` VIEW closure the live app wires to
     /// `chrome.toggleSidebar`. Pins (1) the chord is ⌘⇧L, NOT ⌘B; (2) the action DRIVES the supplied closure
     /// (the live collapse flag), not just the dead store flag. FAILS on the pre-fix code (chord was ⌘B; the
     /// route had no `toggleSidebar` closure and flipped only the unread store flag).

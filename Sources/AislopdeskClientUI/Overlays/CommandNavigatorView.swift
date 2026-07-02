@@ -288,8 +288,7 @@ struct CommandNavigatorView: View {
         }
     }
 
-    /// The per-row star (bookmark) toggle — drives the SAME ``TerminalBlockModel`` bookmarks API the
-    /// inspector's `BlockHistoryView` star uses (so a star set in either surface shows in both + persists
+    /// The per-row star (bookmark) toggle — drives the ``TerminalBlockModel`` bookmarks API (persisted
     /// through the wired `onBookmarksChanged`). Reading `isBookmarked` here re-renders the glyph on toggle.
     private func starButton(_ block: CommandBlock) -> some View {
         let starred = model.blocks.isBookmarked(block.index)

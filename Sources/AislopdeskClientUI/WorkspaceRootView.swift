@@ -1,12 +1,13 @@
-// WorkspaceRootView — the native 3-column IDE shell (REBUILD-V2, L1 + L4a toolbar/inspector).
+// WorkspaceRootView — the native 2-column IDE shell (REBUILD-V2, L1 + L4a toolbar).
 //
 // macOS: an `NSViewControllerRepresentable` (`WorkspaceSplitRepresentable`) owning an
-// `AislopdeskSplitViewController` (an `NSSplitViewController` with sidebar | content | inspector items,
+// `AislopdeskSplitViewController` (an `NSSplitViewController` with sidebar | content items,
 // each an `NSHostingController` over a SwiftUI column). Modelled on CodeEdit's split shell. The window runs
 // `.windowStyle(.hiddenTitleBar)` — there is NO system unified toolbar; the workspace's own hover-reveal
-// titlebar (`SlateTitlebar`, hosted as a top overlay inside `ContentColumn`) IS the chrome (sidebar/Details toggles,
-// "New Tab", the centred title menu). iOS: a stock `NavigationSplitView` over the same three columns + its
-// own toolbar.
+// titlebar (`SlateTitlebar`, hosted as a top overlay inside `ContentColumn`) IS the chrome (sidebar toggle,
+// "New Tab", the centred title menu). iOS: a stock `NavigationSplitView` over the same two columns + its
+// own toolbar. (The right-hand inspector / Details column is REMOVED — keyboard-centric; the Git details
+// window, its surviving surface, opens from the palette / View menu via `GitDetailsWindowPresenter`.)
 //
 // NO custom design-system / token target (deleted in L0): SYSTEM semantic colours + fonts + SF Symbols.
 
@@ -31,10 +32,6 @@ public struct WorkspaceRootView: View {
     /// the titlebar / menu / palette flip (E19 WI-4: ONE `NSWindow.level` source of truth, no
     /// `NSApplication.windows`).
     let chrome: WorkspaceChromeState
-    /// The shared Details-panel tab selection (E9/WI-7). Owned here so BOTH inspector mounts (the macOS split
-    /// item via the representable, the iOS detail column) read ONE selection, and the four `Details: *` jump
-    /// commands can write it through the `selectDetailsTab` closure installed in `wireChromeToggles()`.
-    @State private var details = DetailsPanelState()
     /// The single live preferences store, injected once at the WindowGroup root (`\.preferencesStore`). Used by
     /// the iOS ``SettingsSheet`` (the gear) AND threaded into the macOS split host so the sidebar's tab context
     /// menu can surface the "Prevent Sleep While Processing" flag (Batch 4). Cross-platform (was iOS-only). `nil`
@@ -54,19 +51,6 @@ public struct WorkspaceRootView: View {
     /// frame where the resolved float/pin target is briefly `nil` (the sheet is dismissed then, so the
     /// fallback's content never shows).
     @State private var composerSheetFallback = ComposerModel()
-    /// ES-E9-5 (iOS reveal): on COMPACT width a three-column `NavigationSplitView` collapses to a single
-    /// stack, so a `Details: *` jump that only set `details.selected` would switch an OFF-SCREEN column — the
-    /// reveal half was inert (nothing read `chrome.inspectorCollapsed` on iOS). This binding maps that SAME
-    /// reveal flag to the split's `preferredCompactColumn`: when a command reveals the panel
-    /// (`inspectorCollapsed == false`) the `.detail` (Inspector) column is surfaced on compact width; manual
-    /// back-navigation writes the flag back. (Regular width always shows the detail column, so this is a no-op
-    /// there.) Reading `chrome` here ties the body to the flag the install closure flips.
-    private var detailsCompactColumnBinding: Binding<NavigationSplitViewColumn> {
-        Binding(
-            get: { Self.compactColumn(inspectorCollapsed: chrome.inspectorCollapsed) },
-            set: { chrome.inspectorCollapsed = ($0 != .detail) },
-        )
-    }
 
     /// E19/A18 (WI-7, iOS): map the shared `chrome.sidebarCollapsed` flag — the one the auto-hide policy drives
     /// (and macOS's split reads) — onto the `NavigationSplitView`'s `columnVisibility`, so the TABS panel
@@ -88,23 +72,19 @@ public struct WorkspaceRootView: View {
     /// `nil` (no scene injection / a preview) → the card renders the disabled "Connect a session" state.
     @Environment(\.agentHooksController) private var agentHooksController
     #endif
-    /// Installs the Details-panel toggle on the app-level keybinding dispatcher. The dispatcher is built at
-    /// app `init` (before this view's `chrome` exists), so on appear the root view hands it
-    /// `chrome.toggleInspector` and ⌘⇧R (the Toggle Details Panel chord) routes through the SAME NSEvent monitor
-    /// that owns every other chord. `nil` (the default / iOS / tests) leaves the chord a graceful no-op. A
-    /// plain closure keeps `WorkspaceKeyDispatcher` internal (no public-API widening).
-    private let installDetailsToggle: ((@escaping () -> Void) -> Void)?
-    /// Installs the sidebar / Tabs-panel toggle on the app-level keybinding dispatcher (same late-wiring story
-    /// as `installDetailsToggle`): on appear the root view hands it `chrome.toggleSidebar` so ⌘⇧L (the
+    /// Installs the sidebar / Tabs-panel toggle on the app-level keybinding dispatcher. The dispatcher is
+    /// built at app `init` (before this view's `chrome` exists), so on appear the root view hands it
+    /// `chrome.toggleSidebar` so ⌘⇧L (the
     /// Toggle Tabs Panel chord) flips the LIVE `chrome.sidebarCollapsed` the native split reads — not the legacy
-    /// `store.sidebarCollapsed` (which nothing reads on macOS). `nil` (the default / iOS / tests) is a no-op.
+    /// `store.sidebarCollapsed` (which nothing reads on macOS). `nil` (the default / iOS / tests) is a no-op. A
+    /// plain closure keeps `WorkspaceKeyDispatcher` internal (no public-API widening).
     private let installSidebarToggle: ((@escaping () -> Void) -> Void)?
-    /// Installs the four `Details: *` jump commands' tab-selector on the app-level keybinding dispatcher
-    /// (same late-wiring story as `installDetailsToggle`): on appear the root view hands it a closure that
-    /// sets `details.selected` AND reveals the panel (`chrome.inspectorCollapsed = false`), so a routed
-    /// `selectDetailsTab(_:)` action switches the Details tab through the SAME NSEvent monitor / menu that
-    /// owns every command. `nil` (the default / iOS / tests) leaves the four commands graceful no-ops.
-    private let installSelectDetailsTab: ((@escaping (DetailsPanelTab) -> Void) -> Void)?
+    /// Installs the "Git Status" window opener on the app-level keybinding dispatcher (same late-wiring story
+    /// as `installSidebarToggle`): on appear the root view hands it the closure that resolves the active pane
+    /// and presents `GitDetailsWindowPresenter`, so a user-bound chord for the chord-less `.showGitStatus`
+    /// action routes through the SAME NSEvent monitor. `nil` (the default / iOS / tests) is a no-op — Git
+    /// Status's primary entry is then the palette + View menu.
+    private let installShowGitStatus: ((@escaping () -> Void) -> Void)?
     /// Installs the "Pin Window" toggle on the app-level keybinding dispatcher (same late-wiring story as
     /// `installSidebarToggle`): on appear the root view hands it `chrome.togglePin` so a user-bound chord for
     /// the chord-less `.pinWindow` action routes through the SAME NSEvent monitor. `nil` (the default / iOS /
@@ -119,18 +99,16 @@ public struct WorkspaceRootView: View {
         connection: AppConnection,
         overlay: OverlayCoordinator,
         chrome: WorkspaceChromeState,
-        installDetailsToggle: ((@escaping () -> Void) -> Void)? = nil,
         installSidebarToggle: ((@escaping () -> Void) -> Void)? = nil,
-        installSelectDetailsTab: ((@escaping (DetailsPanelTab) -> Void) -> Void)? = nil,
+        installShowGitStatus: ((@escaping () -> Void) -> Void)? = nil,
         installPinToggle: ((@escaping () -> Void) -> Void)? = nil,
     ) {
         self.store = store
         self.connection = connection
         self.overlay = overlay
         self.chrome = chrome
-        self.installDetailsToggle = installDetailsToggle
         self.installSidebarToggle = installSidebarToggle
-        self.installSelectDetailsTab = installSelectDetailsTab
+        self.installShowGitStatus = installShowGitStatus
         self.installPinToggle = installPinToggle
     }
 
@@ -158,7 +136,7 @@ public struct WorkspaceRootView: View {
         // No system unified toolbar / header — the window runs `.hiddenTitleBar` and its own hover-reveal
         // titlebar (`SlateTitlebar`, hosted inside `ContentColumn`) IS the chrome.
         WorkspaceSplitRepresentable(
-            store: store, connection: connection, chrome: chrome, details: details, overlay: overlay,
+            store: store, connection: connection, chrome: chrome, overlay: overlay,
             preferences: preferencesStore,
         )
         .ignoresSafeArea()
@@ -193,7 +171,7 @@ public struct WorkspaceRootView: View {
         // restores each pane's pin (keyed by its stable `PaneID`) on launch and wires `onPinnedChange` to
         // persist later toggles. No window-level write here: a single global Bool could not say WHICH pane
         // was pinned.
-        // Wire ⌘⇧R (Toggle Details) + ⌘⇧L (Toggle Tabs Panel / sidebar) to the live chrome once it
+        // Wire ⌘⇧L (Toggle Tabs Panel / sidebar) to the live chrome once it
         // exists. The dispatcher is built at app `init` (before `chrome`), so we hand it the toggles here
         // — `[chrome]` captures the same @Observable instance the representable + titlebar read, so the
         // NSEvent chord and the titlebar button drive ONE flag.
@@ -212,18 +190,12 @@ public struct WorkspaceRootView: View {
         #else
         NavigationSplitView(
             columnVisibility: sidebarColumnVisibility,
-            preferredCompactColumn: detailsCompactColumnBinding,
         ) {
             NavigatorColumn(
                 store: store, preferences: preferencesStore, connection: connection, onConnect: openConnect,
             )
-        } content: {
-            ContentColumn(store: store, connection: connection, chrome: chrome)
         } detail: {
-            InspectorColumn(
-                store: store, connection: connection, details: details,
-                onSendToChat: { [overlay] ctx in overlay.openSendToChat(context: ctx) },
-            )
+            ContentColumn(store: store, connection: connection, chrome: chrome)
         }
         .toolbar { iosToolbar }
         // The floating-overlay layer mounts on iOS too (palette / connect / remote-window picker / toasts read
@@ -237,13 +209,11 @@ public struct WorkspaceRootView: View {
                 toggledState: OverlayHostView.toggledState(for: chrome, store: store),
             )
         }
-        // ES-E9-5: wire the four `Details: *` palette commands to the live `chrome`/`details` on iOS too (the
-        // palette is cross-platform; iOS has no NSEvent dispatcher, so the palette + this closure ARE the
-        // surface). The macOS path wires the same closure in `wireChromeToggles()`. ALSO wire the per-pane
-        // hardware-keyboard interceptor's overlay toggles (iPad has no app-level NSEvent monitor, so a focused
+        // Wire the palette's cwd resolver + the per-pane hardware-keyboard interceptor's overlay toggles
+        // (iPad has no app-level NSEvent monitor, so a focused
         // terminal's ⌘⇧P / ⇧⌘F / ⌘⇧O / ⌘J / ⌘⌃↩ / ⌘⌥J would otherwise die at a nil toggle).
         .onAppear {
-            wireOverlaySelectDetailsTab()
+            wireOverlayCwdResolver()
             wireOverlayKeyToggles()
         }
         // E19/A18 (WI-7): drive the TABS panel auto-hide on iPad too — the SAME shared policy macOS runs. On a
@@ -305,55 +275,38 @@ public struct WorkspaceRootView: View {
     #endif
 
     #if os(macOS)
-    /// Hand the app-level dispatcher the chrome toggles (Details ⌘⇧R + sidebar ⌘⇧L), each bound to THIS
-    /// view's live `chrome`. Called on appear (the dispatcher predates `chrome`, so the closures are installed
-    /// late). `[chrome]` captures the same `@Observable` instance the representable + titlebar read, so each
-    /// NSEvent chord and the matching titlebar button flip ONE flag.
+    /// Hand the app-level dispatcher the chrome toggles (sidebar ⌘⇧L) + the Git Status opener, each bound to
+    /// THIS view's live state. Called on appear (the dispatcher predates `chrome`, so the closures are
+    /// installed late). `[chrome]` captures the same `@Observable` instance the representable + titlebar
+    /// read, so each NSEvent chord and the matching titlebar button flip ONE flag.
     private func wireChromeToggles() {
-        installDetailsToggle? { [chrome] in chrome.toggleInspector() }
         installSidebarToggle? { [chrome] in chrome.toggleSidebar() }
-        // The four `Details: *` jump commands (ES-E9-5): set the shared tab selection AND reveal the panel
-        // (a hidden Details panel is opened when the jump targets it). `[chrome, details]` captures the SAME instances
-        // the representable + the hosted `InspectorColumn` read, so a routed `selectDetailsTab(_:)` switches
-        // the visible tab and un-collapses the inspector split item in one shot.
-        installSelectDetailsTab? { [chrome, details] tab in
-            Self.revealDetailsTab(tab, chrome: chrome, details: details)
-        }
-        // Route the palette's chrome-toggle rows through the SAME live `chrome` the chords + titlebar drive,
-        // so "Toggle Tabs Panel"/"Toggle Details Panel" from the palette flip the flag the split + the ✓ read
+        // Route the palette's chrome-toggle row through the SAME live `chrome` the chord + titlebar drive,
+        // so "Toggle Tabs Panel" from the palette flips the flag the split + the ✓ read
         // (not the dead `store.sidebarCollapsed`). Bound here because `chrome` predates the app-built overlay.
         overlay.toggleSidebar = { [chrome] in chrome.toggleSidebar() }
-        overlay.toggleInspector = { [chrome] in chrome.toggleInspector() }
+        // Git Status (keyboard-centric): the palette row / View-menu row / a user-bound chord all open the
+        // active pane's Git details WINDOW through the SAME presenter (which owns the per-pane metadata
+        // models now that the inspector is gone). `[store]` captures the live store.
+        overlay.showGitStatus = { [store] in GitDetailsWindowPresenter.showForActivePane(store: store) }
+        installShowGitStatus? { [store] in GitDetailsWindowPresenter.showForActivePane(store: store) }
         // E19 WI-4 (Pin Window): route the palette / any command surface AND a user-bound chord (chord-less by
         // default) to the SAME live `chrome.pinned` the menu Button + the macOS `NSWindow.level` glue read.
         overlay.togglePinWindow = { [chrome] in chrome.togglePin() }
         installPinToggle? { [chrome] in chrome.togglePin() }
-        wireOverlaySelectDetailsTab()
-    }
-    #endif
-
-    /// Cross-platform (ES-E9-5): bind the overlay coordinator's `selectDetailsTab` to THIS view's live
-    /// `chrome`/`details` so the command palette's four `Details: *` rows — and, on macOS, the View ▸
-    /// Details: * menu rows routed through the same coordinator closure (threaded in `AislopdeskClientApp`) —
-    /// set the shared `DetailsPanelState.selected` AND reveal the panel. The palette is cross-platform, so the
-    /// four commands run on iOS too (where there is no NSEvent dispatcher). `[chrome, details]` captures the
-    /// SAME instances both inspector mounts read, so the visible tab switches in one shot.
-    private func wireOverlaySelectDetailsTab() {
-        overlay.selectDetailsTab = { [chrome, details] tab in
-            Self.revealDetailsTab(tab, chrome: chrome, details: details)
-        }
         wireOverlayCwdResolver()
     }
+    #endif
 
     /// Batch-5b (A): bind the overlay coordinator's `resolveActiveCwd` to the focused pane's live
     /// ``MetadataClient`` so opening the command palette EAGERLY resolves its working directory (host `cwd()`
     /// RPC) and mirrors it into ``PaneSpec/lastKnownCwd`` — which the WORKING DIRECTORY header's cwd pill (and
     /// the titlebar / rail) read reactively. Without this the pill stayed blank on a freshly-connected pane at a
-    /// prompt: the only `lastKnownCwd` writers (a command completing via OSC 133;D, and the Details/Info tab
-    /// fetching — and the inspector is frequently collapsed) had not fired. Reuses the EXACT live-metadata path
-    /// the inspector + Open-Quickly use (`store.handle(for:) as? LivePaneSession → activeMetadataClient`), so it
+    /// prompt: the only other `lastKnownCwd` writer (a command completing via OSC 133;D) had not fired.
+    /// Reuses the EXACT live-metadata path
+    /// Open-Quickly uses (`store.handle(for:) as? LivePaneSession → activeMetadataClient`), so it
     /// spends NO new wire message. `[store]` captures the live store; a disconnected pane / nil client / empty
-    /// cwd is a silent no-op (validate-then-drop). Cross-platform — `wireOverlaySelectDetailsTab()` is called on
+    /// cwd is a silent no-op (validate-then-drop). Cross-platform — called on
     /// both platforms (macOS via `wireChromeToggles()`, iOS via the `.onAppear`).
     private func wireOverlayCwdResolver() {
         overlay.resolveActiveCwd = { [store] in
@@ -386,35 +339,15 @@ public struct WorkspaceRootView: View {
         )
     }
 
-    /// The single source of truth for what a `Details: *` jump DOES to the shared workspace state: switch the
-    /// visible Details tab AND reveal the panel. Both install paths (the macOS chord/menu in
-    /// `wireChromeToggles()` and the cross-platform overlay in `wireOverlaySelectDetailsTab()`) call this, so
-    /// they can never drift to "selects the tab but forgets to reveal" — the bug that left the iOS reveal half
-    /// inert. The reveal flag (`inspectorCollapsed = false`) drives the macOS split item AND, on iOS compact
-    /// width, `detailsCompactColumnBinding` → the `.detail` column. Static + cross-platform so the contract is
-    /// unit-testable without a live view (see `OverlayCoordinatorMountTests`).
-    static func revealDetailsTab(_ tab: DetailsPanelTab, chrome: WorkspaceChromeState, details: DetailsPanelState) {
-        details.selected = tab
-        chrome.inspectorCollapsed = false
-    }
-
-    /// Pure map from the shared `inspectorCollapsed` reveal flag to the iOS `NavigationSplitView` compact
-    /// column: a revealed Details panel (`!collapsed`) surfaces the `.detail` (Inspector) column on compact
-    /// width; collapsed leaves the `.content` column up. Drives `detailsCompactColumnBinding` (iOS). Kept
-    /// cross-platform (`NavigationSplitViewColumn` exists on macOS too) so the iOS reveal mapping is unit-tested
-    /// in the macOS `swift test` Gate, not only at iOS compile time.
-    static func compactColumn(inspectorCollapsed: Bool) -> NavigationSplitViewColumn {
-        inspectorCollapsed ? .content : .detail
-    }
-
     /// Pure map from the shared `sidebarCollapsed` flag to the iOS `NavigationSplitView` column visibility: a
-    /// collapsed sidebar hides the leading TABS column (`.doubleColumn` = content + detail), a revealed sidebar
+    /// collapsed sidebar hides the leading TABS column (`.detailOnly` — the shell is TWO columns now that the
+    /// inspector is removed, so "everything but the sidebar" is the detail alone), a revealed sidebar
     /// shows `.all`. Drives ``sidebarColumnVisibility`` (iOS) so the WI-7 auto-hide policy (which sets
     /// `chrome.sidebarCollapsed`) hides/reveals the TABS panel on iPad too — the shared flag is not a dead
     /// toggle there. Kept cross-platform (`NavigationSplitViewVisibility` exists on macOS) so the mapping is
     /// unit-tested in the macOS `swift test` Gate, not only at iOS compile time.
     static func sidebarVisibility(sidebarCollapsed: Bool) -> NavigationSplitViewVisibility {
-        sidebarCollapsed ? .doubleColumn : .all
+        sidebarCollapsed ? .detailOnly : .all
     }
 
     /// The iOS ``sidebarColumnVisibility`` SETTER side: a user-driven swipe of the leading TABS column — the
@@ -429,7 +362,9 @@ public struct WorkspaceRootView: View {
     /// change is never mis-recorded as manual. Static + cross-platform so the contract is unit-tested without a
     /// live split / NSWindow (see `SidebarAutoHideWiringTests`).
     static func applySidebarVisibility(_ visibility: NavigationSplitViewVisibility, chrome: WorkspaceChromeState) {
-        let collapsed = (visibility == .doubleColumn || visibility == .detailOnly)
+        // TWO-column shell: `.detailOnly` is the only "sidebar hidden" visibility (`.doubleColumn` shows
+        // both columns of a two-column split, so it must read as REVEALED — unlike the old 3-column map).
+        let collapsed = (visibility == .detailOnly)
         guard collapsed != chrome.sidebarCollapsed else { return }
         chrome.manualSidebarOverride = true
         chrome.sidebarCollapsed = collapsed
@@ -559,18 +494,15 @@ struct PinnedComposerBar: View {
     }
 }
 
-/// Bridges the AppKit `AislopdeskSplitViewController` into SwiftUI. The controller (and the three SwiftUI
+/// Bridges the AppKit `AislopdeskSplitViewController` into SwiftUI. The controller (and the two SwiftUI
 /// columns it hosts) owns the long-lived shell; SwiftUI just mounts it. Keeping the shell in AppKit (not a
 /// SwiftUI `HSplitView`) is the load-bearing no-teardown choice for the libghostty panes. `updateNSView…`
-/// pushes the chrome collapse flags into the split items each update (the toolbar toggles flip them).
+/// pushes the chrome collapse flag into the split item each update (the toolbar toggle flips it).
 struct WorkspaceSplitRepresentable: NSViewControllerRepresentable {
     let store: WorkspaceStore
     let connection: AppConnection
     let chrome: WorkspaceChromeState
-    /// The shared Details-tab selection (E9/WI-7) — forwarded into the controller so the hosted
-    /// `InspectorColumn` reads the SAME selection the root view's `selectDetailsTab` closure writes.
-    let details: DetailsPanelState
-    /// The overlay reducer — threaded so the controller can wire the inspector's Status row to
+    /// The overlay reducer — threaded so the controller can wire the sidebar's status affordance to
     /// `openConnect()` (ES-E2-6, the macOS connect affordance). Captured once in `makeNSViewController`.
     let overlay: OverlayCoordinator
     /// The live ``PreferencesStore`` (`\.preferencesStore`) — forwarded into the controller so the sidebar's
@@ -581,18 +513,14 @@ struct WorkspaceSplitRepresentable: NSViewControllerRepresentable {
 
     func makeNSViewController(context _: Context) -> AislopdeskSplitViewController {
         AislopdeskSplitViewController(
-            store: store, connection: connection, chrome: chrome, details: details, preferences: preferences,
+            store: store, connection: connection, chrome: chrome, preferences: preferences,
             onConnect: { [overlay] in overlay.openConnect() },
-            onSendToChat: { [overlay] ctx in overlay.openSendToChat(context: ctx) },
         )
     }
 
     func updateNSViewController(_ controller: AislopdeskSplitViewController, context _: Context) {
-        // Reading the @Observable flags here ties this update to their changes; apply them to the items.
-        controller.applyCollapse(
-            sidebarCollapsed: chrome.sidebarCollapsed,
-            inspectorCollapsed: chrome.inspectorCollapsed,
-        )
+        // Reading the @Observable flag here ties this update to its changes; apply it to the item.
+        controller.applyCollapse(sidebarCollapsed: chrome.sidebarCollapsed)
     }
 }
 #endif

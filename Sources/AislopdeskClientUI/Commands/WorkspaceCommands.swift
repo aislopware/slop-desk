@@ -37,7 +37,6 @@ struct WorkspaceCommands: Commands {
     /// the chord; the NSEvent dispatcher owns the chord itself). `nil` keeps the menu item a graceful no-op via
     /// `route`, never a dead menu item.
     var toggleSendToChat: (() -> Void)?
-    var toggleDetailsPanel: (() -> Void)?
     var toggleSidebar: (() -> Void)?
     /// E5 / WI-4: the cross-tab Global Search overlay toggle (⇧⌘F, the View ▸ Global Search… menu item).
     /// `nil` keeps the menu item a graceful no-op via `route`, never dead.
@@ -50,11 +49,9 @@ struct WorkspaceCommands: Commands {
     /// the menu item a graceful no-op via `route`, never dead. The ⌘⇧O chord itself is owned by the NSEvent
     /// dispatcher (this menu carries no `.keyboardShortcut`); the menu only mirrors it.
     var openQuickly: (() -> Void)?
-    /// E9 / WI-7: the `Details: *` jump commands' tab selector (the View ▸ Details: Info/Files
-    /// menu items). `nil` keeps the items a graceful no-op via `route` (the live wiring rides the macOS
-    /// NSEvent dispatcher's `selectDetailsTab`, matching how `toggleDetailsPanel`/`toggleSidebar` aren't
-    /// threaded into the menu either), never dead.
-    var selectDetailsTab: ((DetailsPanelTab) -> Void)?
+    /// The View ▸ Git Status menu row — opens the active pane's Git details window (chord-less, so the
+    /// menu + palette are its entries). `nil` keeps the row a graceful no-op via `route`, never dead.
+    var showGitStatus: (() -> Void)?
     /// E19 / WI-4: the View ▸ Pin Window menu item toggle. Pin Window is CHORD-LESS (no default chord is
     /// bound), so unlike the chorded actions the MENU Button is its primary entry — the app
     /// threads `chrome.togglePin()` here so the row is live. `nil` keeps it a graceful no-op via `route`,
@@ -174,12 +171,11 @@ struct WorkspaceCommands: Commands {
                 toggleFind: toggleFind,
                 togglePeekReply: togglePeekReply,
                 toggleSendToChat: toggleSendToChat,
-                toggleDetailsPanel: toggleDetailsPanel,
                 toggleSidebar: toggleSidebar,
                 toggleGlobalSearch: toggleGlobalSearch,
                 toggleJumpTo: toggleJumpTo,
                 openQuickly: openQuickly,
-                selectDetailsTab: selectDetailsTab,
+                showGitStatus: showGitStatus,
                 togglePinWindow: togglePinWindow,
                 closeWindow: closeWindow,
             )

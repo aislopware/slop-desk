@@ -1,12 +1,11 @@
-// GitStatusView — the git status/diff detail view (E4, WI-5): the old standalone Git tab merged into the
-// Info tab, which carries only a one-row summary (branch + change count) — the full view opens as a REAL
-// auxiliary window on macOS (`GitDetailsWindow.swift`, user-directed) / a popover anchored to the row on
-// iOS (`GitDetailsPopover` below).
+// GitStatusView — the git status/diff detail view (E4, WI-5), the content of the REAL auxiliary Git window
+// on macOS (`GitDetailsWindow.swift` — opened from the palette / View menu "Git Status", keyboard-centric;
+// the old inspector Details panel that carried a git-summary launcher row is removed, and iOS has no entry).
 //
 // The detail view (spec/user-interface__details-panel.md §"Git Tab"): the changed-file list (each file a
 // status badge + name + dir) and an inline unified-diff OVERLAY that floats over the panel when a file row
 // is selected — its bytes fetched on demand via the pane's `gitDiff` verb. The branch/remote/delta header
-// lives on the HOSTING popover's header (`GitDetailsPopover`) — the view rendering it too doubled the
+// lives on the HOSTING window's titlebar (`GitDetailsWindowRoot`) — the view rendering it too doubled the
 // header (two branch icons stacked). READ-ONLY: Commit / Fork
 // toolbar buttons are deferred (they require host-side mutation — see the E4 mapping notes), so this view
 // renders status + diff only.
@@ -280,119 +279,6 @@ struct GitStatusView: View {
         return parts.dropLast().joined(separator: "/")
     }
 }
-
-#if !os(macOS)
-/// The Git details POPOVER — iOS ONLY (macOS opens a real auxiliary window instead, `GitDetailsWindow.swift`;
-/// there is no auxiliary-window idiom on iOS, so the row anchors this popover, adapting to a sheet on
-/// compact). Sizes to its content (a clean tree gets a small card, not a field of empty), dismisses on
-/// click-away. The compact header carries the branch + ahead/behind deltas + remote + an inline refresh;
-/// `GitStatusView` below renders the changed-file list + the on-demand diff overlay.
-struct GitDetailsPopover: View {
-    /// The active pane's decoded host metadata — its `gitStatus` + the `gitDiff`/`refresh` verbs.
-    let model: PaneMetadataModel
-
-    /// True while the header refresh's metadata round-trip is in flight (drives the button's spinner).
-    @State private var refreshing = false
-
-    /// Whether there is a changed-file list to give real estate to — a clean/absent tree hugs a compact
-    /// card instead.
-    private var hasChanges: Bool { !(model.gitStatus?.files.isEmpty ?? true) }
-
-    /// The header title: the branch name (the one fact that identifies the repo state), falling back to
-    /// a generic "Git Status" while the pane has no repo/metadata.
-    private var title: String {
-        guard let status = model.gitStatus, status.hasRepo else { return "Git Status" }
-        return status.branch.isEmpty ? "detached" : status.branch
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            Rectangle().fill(Slate.Line.divider).frame(height: 1)
-            GitStatusView(model: model)
-        }
-        .background(Slate.Surface.content)
-        .frame(
-            width: hasChanges ? 560 : 340,
-            height: hasChanges ? 480 : 150,
-        )
-    }
-
-    /// The popover header: branch (+ ↑↓ deltas) over the remote URL, with the inline refresh trailing.
-    private var header: some View {
-        HStack(alignment: .center, spacing: Slate.Metric.space2) {
-            Image(systemName: "arrow.triangle.branch")
-                .foregroundStyle(Slate.Text.icon)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: Slate.Metric.space2) {
-                    Text(title)
-                        .font(.system(size: Slate.Typeface.base, weight: .semibold))
-                        .foregroundStyle(Slate.Text.primary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    if let status = model.gitStatus, status.hasRepo {
-                        if status.ahead != 0 { delta(symbol: "arrow.up", count: status.ahead, tint: Slate.Status.ok) }
-                        if status.behind != 0 { delta(
-                            symbol: "arrow.down",
-                            count: status.behind,
-                            tint: Slate.Status.warn,
-                        ) }
-                    }
-                }
-                if let remote = model.gitStatus?.remoteURL, !remote.isEmpty {
-                    Text(remote)
-                        .font(.system(size: Slate.Typeface.footnote))
-                        .foregroundStyle(Slate.Text.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
-                }
-            }
-            Spacer(minLength: Slate.Metric.space3)
-            refreshButton
-        }
-        .padding(.horizontal, Slate.Metric.space3)
-        .padding(.vertical, Slate.Metric.space2)
-    }
-
-    private func delta(symbol: String, count: Int32, tint: Color) -> some View {
-        HStack(spacing: 2) {
-            Image(systemName: symbol).font(.system(size: Slate.Typeface.small, weight: .semibold))
-            Text(String(count)).font(.system(size: Slate.Typeface.footnote)).monospacedDigit()
-        }
-        .foregroundStyle(tint)
-    }
-
-    /// The header refresh action — with CLICK FEEDBACK: the icon yields to a small spinner while the
-    /// metadata round-trip is in flight (and the button disarms), so a click never reads as a no-op.
-    private var refreshButton: some View {
-        Button {
-            refreshing = true
-            Task {
-                await model.refresh()
-                refreshing = false
-            }
-        } label: {
-            Group {
-                if refreshing {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: Slate.Typeface.base))
-                        .foregroundStyle(Slate.Text.icon)
-                }
-            }
-            // Fixed 16×16 — the icon↔spinner swap must not resize the button and shift the header row.
-            .frame(width: 16, height: 16)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .disabled(!model.isConnected || refreshing)
-        .help("Refresh")
-        .accessibilityLabel("Refresh git status")
-    }
-}
-#endif
 
 /// Pure unpacking of a `GitFileChange.statusCode` (porcelain `XY` packed by the host) into a render-ready
 /// category + badge letter — the INVERSE of `HostMetadataProbe.statusNibble`/`packStatus` (high nibble = X

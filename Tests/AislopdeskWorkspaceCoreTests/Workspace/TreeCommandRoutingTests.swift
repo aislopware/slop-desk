@@ -1091,33 +1091,27 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(store.tree, before, "both are view overlays — the tree is unchanged")
     }
 
-    // MARK: - View: the four Details: * jump commands (E9/WI-7, ES-E9-5)
+    // MARK: - View: Git Status (the removed Details panel's keyboard-centric replacement)
 
-    /// `.selectDetailsTab(tab)` forwards the tab to the supplied `selectDetailsTab` closure and does NOT
-    /// mutate the tree (it is a VIEW affordance — `DetailsPanelState` + the panel reveal). Pins the routing
-    /// case exists + forwards. FAILS on the pre-WI-7 code (no `.selectDetailsTab` action / routing case).
+    /// `.showGitStatus` forwards to the supplied closure and does NOT mutate the tree (it is a VIEW
+    /// affordance — the macOS window presenter). Pins the routing case exists + forwards.
     @MainActor
-    func testSelectDetailsTabFiresClosureAndDoesNotMutateTree() {
+    func testShowGitStatusFiresClosureAndDoesNotMutateTree() {
         let store = makeTreeStore()
         let before = store.tree
-        var captured: DetailsPanelTab?
-        WorkspaceBindingRegistry.route(.selectDetailsTab(.files), to: store, selectDetailsTab: { captured = $0 })
-        XCTAssertEqual(captured, .files, "selectDetailsTab forwarded the requested tab to the closure")
-        XCTAssertEqual(store.tree, before, "a Details-tab jump is a view affordance — the tree is unchanged")
+        var fired = 0
+        WorkspaceBindingRegistry.route(.showGitStatus, to: store, showGitStatus: { fired += 1 })
+        XCTAssertEqual(fired, 1, "showGitStatus forwarded to the closure exactly once")
+        XCTAssertEqual(store.tree, before, "Git Status is a view affordance — the tree is unchanged")
     }
 
-    /// The `Details: *` registry bindings exist, are `.view`, and are `chord: nil` (unbound — so they
-    /// don't collide with any chord, and aren't dead). Revert-to-confirm-fail by removing a registry case.
-    func testDetailsTabBindingsAreViewAndChordless() {
-        let expected: [(String, DetailsPanelTab)] = [
-            ("view.detailsInfo", .info), ("view.detailsFiles", .files),
-        ]
-        for (id, tab) in expected {
-            let binding = WorkspaceBindingRegistry.binding(for: .selectDetailsTab(tab))
-            XCTAssertEqual(binding?.id, id, "Details: \(tab) has id \(id)")
-            XCTAssertEqual(binding?.category, .view, "Details: \(tab) is a View command")
-            XCTAssertNil(binding?.chord, "Details: \(tab) is unbound by default (chord: nil)")
-        }
+    /// The `Git Status` registry binding exists, is `.view`, and is `chord: nil` (unbound — so it
+    /// doesn't collide with any chord, and isn't dead). Revert-to-confirm-fail by removing the registry case.
+    func testGitStatusBindingIsViewAndChordless() {
+        let binding = WorkspaceBindingRegistry.binding(for: .showGitStatus)
+        XCTAssertEqual(binding?.id, "view.gitStatus", "Git Status has id view.gitStatus")
+        XCTAssertEqual(binding?.category, .view, "Git Status is a View command")
+        XCTAssertNil(binding?.chord, "Git Status is unbound by default (chord: nil)")
     }
 
     // MARK: - View: read-only (E17 ES-E17-1) — chord-less registry pin + active-pane routing

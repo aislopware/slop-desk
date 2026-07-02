@@ -104,16 +104,11 @@ public enum PaletteAction: Sendable {
     /// the legacy `store.sidebarCollapsed` the native shell never reads. Same live flag the ⌘⇧L chord + the
     /// titlebar button drive, so the run path, the chord, the button, and the ✓ stay in lockstep.
     case toggleSidebar
-    /// Toggle the right Details / inspector panel — routed by the overlay coordinator to the live
-    /// ``WorkspaceChromeState`` `inspectorCollapsed`, the same flag ⌘⇧R + the titlebar button drive.
-    case toggleInspector
-    /// Jump the right Details / inspector panel to a SPECIFIC tab (Info / Files) AND reveal
-    /// it if hidden — routed by the overlay coordinator to the injected ``OverlayCoordinator/selectDetailsTab``
-    /// closure (the same live `DetailsPanelState.selected` + `WorkspaceChromeState.inspectorCollapsed` the
-    /// ⌘⇧R toggle + the View ▸ Details: * menu rows drive). These UNBOUND `Details: *`
-    /// commands are listed under VIEW so they run with zero config on BOTH
-    /// platforms (ES-E9-5 — the palette is cross-platform).
-    case selectDetailsTab(DetailsPanelTab)
+    /// Open the active pane's Git details as a real auxiliary window (macOS) — routed by the overlay
+    /// coordinator to the injected ``OverlayCoordinator/showGitStatus`` closure (the keyboard-centric entry;
+    /// the Details panel that carried the git-summary row is removed). A documented no-op on iOS (no
+    /// auxiliary-window idiom) and in tests (nil-closure default).
+    case showGitStatus
     /// E19 WI-4: toggle "Pin Window" (keep the window floating above all other apps).
     /// Routed by the overlay coordinator to the injected ``OverlayCoordinator/togglePinWindow`` closure (bound
     /// to the SAME live ``WorkspaceChromeState`` `pinned` flag the menu Button + the `NSWindow.level` glue

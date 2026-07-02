@@ -57,8 +57,8 @@ public struct ActionsPaletteSource: PaletteDataSource {
     /// the chord genuinely does not exist.
     public static let catalog: [PaletteItem] = [
         // WORKING DIRECTORY — leads the palette (the section header OWNS the cwd badge in the view). "Copy
-        // Path" is a CLIENT-side write of the focused pane's cwd to the platform pasteboard (the same idiom
-        // `RemoteFileTreeView` uses). Sibling "Reveal in Finder" / "Open in…" rows are host-routed —
+        // Path" is a CLIENT-side write of the focused pane's cwd to the platform
+        // pasteboard. Sibling "Reveal in Finder" / "Open in…" rows are host-routed —
         // TODO(E10): add them once the host can resolve a local Finder/Open path over the control channel.
         item(
             id: "action.copyPath", icon: "doc.on.doc", title: "Copy Path",
@@ -146,31 +146,15 @@ public struct ActionsPaletteSource: PaletteDataSource {
             subtitle: nil, shortcut: glyph(.toggleSidebar), filter: .actions, category: .view,
             action: .toggleSidebar,
         ),
-        // "Toggle Details Panel" (⇧⌘R) — sibling to "Toggle Tabs Panel". Lights up the existing dead plumbing
-        // (`.toggleInspector` run-arm + `overlay.toggleInspector` closure + the host's `action.toggleInspector`
-        // ✓ branch), routed to the live `WorkspaceChromeState.inspectorCollapsed` the ⌘⇧R chord + titlebar drive.
+        // "Git Status" — the keyboard-centric entry to the active pane's Git details WINDOW (the Details
+        // panel that carried the git-summary row is removed; the app is keyboard-first, so the palette/menu
+        // own the launcher). Chord-less (glyph resolves nil unless the user binds `.showGitStatus`); routed
+        // by the coordinator to the injected `showGitStatus` closure → `GitDetailsWindowPresenter` on macOS
+        // (a documented no-op on iOS — no auxiliary-window idiom there).
         PaletteItem(
-            id: "action.toggleInspector", icon: "sidebar.right", title: "Toggle Details Panel",
-            subtitle: nil, shortcut: glyph(.toggleDetailsPanel), filter: .actions, category: .view,
-            action: .toggleInspector,
-        ),
-        // E9/WI-7 (ES-E9-5): the UNBOUND `Details: *` jump commands surfaced in the palette (unbound
-        // commands are listed there, so they are runnable out-of-box with NO default chord). Each switches
-        // the right-hand Details panel to a specific tab AND reveals it, routed by the coordinator to the
-        // injected `selectDetailsTab` closure — the SAME live `DetailsPanelState` + chrome the ⌘⇧R toggle and
-        // the View ▸ Details: * menu rows drive. The palette is cross-platform, so these run on iOS too. The
-        // glyph derives from the registry (chord: nil ⇒ `nil` ⇒ no hint chip, since they ship unbound). The
-        // icons mirror the registry rows' symbols. (The old `Details: Git` row is gone — the Git tab merged
-        // into Info's git-summary row + popup.)
-        PaletteItem(
-            id: "action.detailsInfo", icon: "info.circle", title: "Details: Info",
-            subtitle: nil, shortcut: glyph(.selectDetailsTab(.info)), filter: .actions, category: .view,
-            action: .selectDetailsTab(.info),
-        ),
-        PaletteItem(
-            id: "action.detailsFiles", icon: "folder", title: "Details: Files",
-            subtitle: nil, shortcut: glyph(.selectDetailsTab(.files)), filter: .actions, category: .view,
-            action: .selectDetailsTab(.files),
+            id: "action.gitStatus", icon: "arrow.triangle.branch", title: "Git Status",
+            subtitle: nil, shortcut: glyph(.showGitStatus), filter: .actions, category: .view,
+            action: .showGitStatus,
         ),
         // Read Only (E17 ES-E17-1): toggle the active pane's input gate. Under the SHELL section as the
         // first shell verb in the catalog. The spec accepts
@@ -402,8 +386,8 @@ public struct ActionsPaletteSource: PaletteDataSource {
         }
     }
 
-    /// Write `string` to the platform pasteboard — the client-side local clipboard write
-    /// (mirrors `RemoteFileTreeView.copyPath`). Host-routed Reveal/Open land in E10.
+    /// Write `string` to the platform pasteboard — the client-side local clipboard
+    /// write. Host-routed Reveal/Open land in E10.
     private static func copyToPasteboard(_ string: String) {
         #if canImport(AppKit)
         NSPasteboard.general.clearContents()

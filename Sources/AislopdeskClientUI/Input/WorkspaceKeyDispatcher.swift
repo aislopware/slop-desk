@@ -59,22 +59,16 @@ final class WorkspaceKeyDispatcher {
     /// `route` — never a dead chord. ⌘⇧O (this) and ⌘J (`toggleJumpTo`) are the ONLY global Open-Quickly
     /// chords — the pill / ⌘1–9 / Tab / ⌘K chords are PICKER-LOCAL (handled in `OpenQuicklyView`).
     private let toggleOpenQuickly: (() -> Void)?
-    /// The Details/inspector panel toggle (⌘⇧R). View-owned `@State` (`WorkspaceChromeState`), so it is
-    /// passed in as a closure. The chrome state is created INSIDE `WorkspaceRootView` (after the dispatcher is
-    /// built at app `init`), so the root view installs the real closure via ``setToggleDetailsPanel(_:)`` on
-    /// appear; until then it is `nil` ⇒ `.toggleDetailsPanel` is a graceful no-op (never a dead chord).
-    private var toggleDetailsPanel: (() -> Void)?
-    /// The left sidebar / Tabs-panel toggle (⌘⇧L). Same view-owned `@State` story as the Details toggle:
+    /// The left sidebar / Tabs-panel toggle (⌘⇧L). View-owned `@State`:
     /// the macOS sidebar collapse is `WorkspaceChromeState.sidebarCollapsed` (the native split reads it), NOT
     /// the legacy `store.sidebarCollapsed`, so the root view installs the real closure via
     /// ``setToggleSidebar(_:)`` on appear. Until then `nil` ⇒ `.toggleSidebar` falls back to the store flag in
     /// `route` (a non-trapping graceful op), never a dead chord.
     private var toggleSidebar: (() -> Void)?
-    /// The four `Details: *` jump commands' tab selector (E9/WI-7, ES-E9-5). View-owned state
-    /// (`DetailsPanelState` + the chrome reveal), so it is installed late by the root view via
-    /// ``setSelectDetailsTab(_:)`` once those exist; until then `nil` ⇒ `.selectDetailsTab` is a graceful
-    /// no-op (never a dead command).
-    private var selectDetailsTab: ((DetailsPanelTab) -> Void)?
+    /// The "Git Status" window opener (`view.gitStatus`, chord-less by default). View-owned (the macOS
+    /// window presenter needs the live store-bound closure the root view builds), so it is installed late
+    /// via ``setShowGitStatus(_:)``; until then `nil` ⇒ `.showGitStatus` is a graceful no-op (never dead).
+    private var showGitStatus: (() -> Void)?
     /// E19/A30 (WI-4): "Pin Window" (View ▸ Pin Window). View-owned `@State` (`WorkspaceChromeState`), so
     /// it is installed late by the root view via ``setTogglePinWindow(_:)`` once the chrome exists. Pin Window
     /// is CHORD-LESS by default (no chord ships out of the box), so this fires only if a user binds a chord to the
@@ -130,12 +124,11 @@ final class WorkspaceKeyDispatcher {
         toggleFind: (() -> Void)? = nil,
         togglePeekReply: (() -> Void)? = nil,
         toggleSendToChat: (() -> Void)? = nil,
-        toggleDetailsPanel: (() -> Void)? = nil,
         toggleSidebar: (() -> Void)? = nil,
         toggleGlobalSearch: (() -> Void)? = nil,
         toggleJumpTo: (() -> Void)? = nil,
         toggleOpenQuickly: (() -> Void)? = nil,
-        selectDetailsTab: ((DetailsPanelTab) -> Void)? = nil,
+        showGitStatus: (() -> Void)? = nil,
         togglePinWindow: (() -> Void)? = nil,
         isOverlayCapturingKeys: @escaping () -> Bool = { false },
         isWorkspaceWindowKey: @escaping () -> Bool = { true },
@@ -146,12 +139,11 @@ final class WorkspaceKeyDispatcher {
         self.toggleFind = toggleFind
         self.togglePeekReply = togglePeekReply
         self.toggleSendToChat = toggleSendToChat
-        self.toggleDetailsPanel = toggleDetailsPanel
         self.toggleSidebar = toggleSidebar
         self.toggleGlobalSearch = toggleGlobalSearch
         self.toggleJumpTo = toggleJumpTo
         self.toggleOpenQuickly = toggleOpenQuickly
-        self.selectDetailsTab = selectDetailsTab
+        self.showGitStatus = showGitStatus
         self.togglePinWindow = togglePinWindow
         self.isOverlayCapturingKeys = isOverlayCapturingKeys
         self.isWorkspaceWindowKey = isWorkspaceWindowKey
@@ -170,23 +162,16 @@ final class WorkspaceKeyDispatcher {
     /// per-surface interceptors arming on ONE shared prefix.
     func setPrefix(_ chord: KeyChord) { machine.prefix = chord }
 
-    /// Install the Details/inspector toggle once the `WorkspaceChromeState` exists (the root view wires this
-    /// to `chrome.toggleInspector` on appear). Without it, ⌘⇧R resolves to `.toggleDetailsPanel` and is
-    /// swallowed but no-ops — so the titlebar SwiftUI shortcut can't own it either; this closure makes ⌘⇧R
-    /// actually toggle the Details panel.
-    func setToggleDetailsPanel(_ toggle: @escaping () -> Void) { toggleDetailsPanel = toggle }
-
     /// Install the left sidebar / Tabs-panel toggle once the `WorkspaceChromeState` exists (the root view
     /// wires this to `chrome.toggleSidebar` on appear). Without it, ⌘⇧L resolves to `.toggleSidebar` and
     /// `route` falls back to the legacy `store.sidebarCollapsed` (which nothing reads on macOS) — so this
     /// closure makes ⌘⇧L actually collapse the native sidebar item ("Toggle Tabs Panel").
     func setToggleSidebar(_ toggle: @escaping () -> Void) { toggleSidebar = toggle }
 
-    /// Install the `Details: *` tab selector once the `DetailsPanelState` + `WorkspaceChromeState` exist (the
-    /// root view wires this to a closure that sets the tab AND reveals the panel). Without it, a routed
-    /// `.selectDetailsTab(_:)` resolves but no-ops — so the four commands stay live (never dead) yet inert
-    /// until the view installs the closure.
-    func setSelectDetailsTab(_ select: @escaping (DetailsPanelTab) -> Void) { selectDetailsTab = select }
+    /// Install the "Git Status" window opener once the root view exists (it builds the closure that resolves
+    /// the active pane + presents `GitDetailsWindowPresenter`). Git Status is chord-less by default, so this
+    /// fires only if a user binds a chord to `.showGitStatus`; until installed it is a graceful no-op.
+    func setShowGitStatus(_ show: @escaping () -> Void) { showGitStatus = show }
 
     /// Install the "Pin Window" toggle once the `WorkspaceChromeState` exists (the root view wires this to
     /// `chrome.togglePin()` on appear). Pin Window is chord-less by default, so this only fires when a user
@@ -252,7 +237,7 @@ final class WorkspaceKeyDispatcher {
 
         // E18 M2: a FOCUSED local web pane OWNS the standard browser chords (⌘[ Back / ⌘] Forward / ⌘⇧R hard-
         // Reload / ⌘F Find-in-page; `files-and-links.md` › Web Browser Pane). These DEFAULT-collide with the
-        // global pane-cycle (⌘[/⌘]), Toggle Details (⌘⇧R) and Find (⌘F) bindings, and this monitor PREEMPTS
+        // global pane-cycle (⌘[/⌘]) and Find (⌘F) bindings (⌘⇧R ships unbound but a user may bind it), and this monitor PREEMPTS
         // the responder chain — so without yielding them here the web pane's focus-scoped `.keyboardShortcut`
         // (WebLeafView) would never see them. Pass them through UNCHANGED only while a `.web` leaf is active;
         // every OTHER pane keeps the global chords byte-identical (the control in DispatcherWebChordYieldTests).
@@ -336,12 +321,11 @@ final class WorkspaceKeyDispatcher {
             toggleFind: toggleFind,
             togglePeekReply: togglePeekReply,
             toggleSendToChat: toggleSendToChat,
-            toggleDetailsPanel: toggleDetailsPanel,
             toggleSidebar: toggleSidebar,
             toggleGlobalSearch: toggleGlobalSearch,
             toggleJumpTo: toggleJumpTo,
             openQuickly: toggleOpenQuickly,
-            selectDetailsTab: selectDetailsTab,
+            showGitStatus: showGitStatus,
             togglePinWindow: togglePinWindow,
             closeWindow: closeWindow,
         )

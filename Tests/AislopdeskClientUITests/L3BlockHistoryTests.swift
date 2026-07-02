@@ -1,8 +1,9 @@
-// L3BlockHistoryTests — pure logic the Commands inspector (BlockHistoryView) depends on (REBUILD-V2 L3).
+// L3BlockHistoryTests — pure command-block logic (REBUILD-V2 L3), today surfaced by the ⌃⌘O Command
+// Navigator overlay (the old inspector Commands panel is removed).
 //
-// Logic-level only: the "Failed only" filter the inspector drives (`TerminalBlockModel.blocks(filter:)`),
-// the `CommandBlock` status → symbol/label/tint mapping each `BlockRowView` reads, and the bookmark
-// toggle the row context menu calls. NO view rendering (no libghostty / Metal / surface). The block model
+// Logic-level only: the "Failed only" filter (`TerminalBlockModel.blocks(filter:)`),
+// the `CommandBlock` status → symbol/label/tint mapping, and the bookmark
+// toggle. NO view rendering (no libghostty / Metal / surface). The block model
 // is pure + `@MainActor`, so these run headless under the guarded runner.
 
 import AislopdeskWorkspaceCore

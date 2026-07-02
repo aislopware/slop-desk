@@ -19,7 +19,7 @@ public enum WorkspaceAction: Hashable, Sendable {
     case closePane // ⌘W  — close the active pane (cascades the tab/session)
     case renamePane // (no default chord) — rename the active TAB on the tree shell (opens its
     // tab-strip inline field); the active canvas pane on the retained-but-dead canvas path. Reachable from
-    // the title menu / context menu / palette only (⌘⇧R is reserved for Toggle Details).
+    // the title menu / context menu / palette only (no default chord).
     case breakPaneToTab // ⌃⌘T — eject the active pane into a new tab
     case toggleFloat // ⌥⌘F — float / embed the active pane (zellij toggle-float; E5 relocated off ⌘⇧F)
     case spawnFloating // ⌃⌘⇧F — spawn a new floating scratch pane (⌃⌘F is reserved for system Toggle Fullscreen)
@@ -75,16 +75,15 @@ public enum WorkspaceAction: Hashable, Sendable {
     // reachable via the menu + command palette ("Secure Keyboard Entry") only.
     case secureKeyboardEntry
     case toggleSidebar // ⌘⇧L — show/hide the sessions sidebar
-    case toggleDetailsPanel // ⌘⇧R — show/hide the right-hand Details / inspector panel
     // View → Pin Window (E19 ES-E19-1): keep the window floating above ALL other apps' windows.
     // CHORD-LESS — no default chord; the live macOS app flips `WorkspaceChromeState.pinned` →
     // `NSWindow.level = .floating` via the route closure. A window-scope view concern → needs no active pane;
     // iOS has no window level (documented no-op).
     case pinWindow
-    // Jump the Details / inspector panel to a SPECIFIC tab (Info / Files) AND reveal it if
-    // hidden (the `Details: *` jump commands; ES-E9-5). Parameterized like `selectTab`/`applyLayout`;
-    // unbound by default (the registry rows carry `chord: nil`) — the user can bind any in Settings.
-    case selectDetailsTab(DetailsPanelTab)
+    // Git Status (keyboard-centric replacement for the removed Details panel's git row): open the active
+    // pane's Git details as a real auxiliary window (macOS; a documented no-op on iOS — no auxiliary-window
+    // idiom there). Unbound by default (`chord: nil`) — palette/menu-surfaced; bindable in Settings.
+    case showGitStatus
     case openQuickly // ⌘⇧O — open the fuzzy "open quickly" file/symbol switcher (E11 stub)
     // Jump-To (E10 ES-E10-5): ⌘J opens the floating Jump-To panel — the active pane's detected paths/URLs
     // (over its scrollback) + its OSC-133 command/prompt index, fuzzy-filterable, ↩ to act / ⌘K for the
@@ -269,7 +268,8 @@ public extension WorkspaceAction {
              // just no-ops). Same graceful-no-op family as the composer / send-to-chat affordances above.
              .forkInSplitRight,
              .forkInSplitDown,
-             .forkInNewTab:
+             .forkInNewTab,
+             .showGitStatus: // targets the ACTIVE pane's repo/metadata — degrades to a no-op without one
             // Block / find / scroll / font / composer affordances target the active TERMINAL pane (its
             // blocks / scrollback / prompt marks / glyphs / PTY), so they need one — but they degrade
             // gracefully (a no-pane shell just no-ops), so they are not greyed out aggressively.
@@ -285,9 +285,7 @@ public extension WorkspaceAction {
              .closeWindow, // closes the whole window (→ Session) — a window-scope action, needs no active pane
              .reopenClosed, // restores a closed pane into the active tab — acts on history, not a live pane
              .toggleSidebar,
-             .toggleDetailsPanel, // a window-scope panel toggle — needs no active pane
-             .selectDetailsTab, // a window-scope Details-tab switch — needs no active pane (like the toggle)
-             .pinWindow, // a window-scope NSWindow.level toggle — needs no active pane (like the panel toggles)
+             .pinWindow, // a window-scope NSWindow.level toggle — needs no active pane (like the sidebar toggle)
              .openQuickly, // a global fuzzy switcher — needs no active pane
              .newSession,
              .spawnFloating, // creates its own pane — needs none
@@ -372,7 +370,7 @@ public struct WorkspaceBinding: Sendable, Equatable {
 /// through to the focused terminal), and no two bindings share a chord — both pinned by
 /// `TreeCommandRoutingTests`. The chords follow the reference keymap: ⌘T new tab, ⌘W close, ⌘D
 /// split-right, ⌘⇧D split-down, ⌃⌘+arrows focus, ⌘⇧↩ zoom, ⌘⇧]/⌘⇧[ next/prev tab, ⌘1…9 select tab,
-/// ⌃⌘N new session, ⌘⇧L toggle Tabs panel, ⌘⇧R toggle Details panel, ⌃⌘T break-pane-to-tab, ⌘⇧P palette,
+/// ⌃⌘N new session, ⌘⇧L toggle Tabs panel, ⌃⌘T break-pane-to-tab, ⌘⇧P palette,
 /// ⌘/ cheat sheet. Rename has no default chord — it is menu / palette / context-menu only (`chord: nil`).
 public enum WorkspaceBindingRegistry {
     /// The shipped binding table, in cheat-sheet / palette display order (panes, tabs, sessions, focus,
@@ -410,9 +408,9 @@ public enum WorkspaceBindingRegistry {
             category: .panes, chord: KeyChord(character: "w", [.command]),
             symbol: "xmark", keywords: "quit kill end terminate remove",
         ),
-        // Rename has NO default chord (⌘⇧R is reserved for Toggle Details Panel — see `view.toggleDetails`).
-        // It is reachable from the title menu / context menu / palette only; `chord: nil` surfaces the row
-        // (cheat sheet / menu / palette) without binding a key. Pinned chord-less by `E1KeymapParityTests`.
+        // Rename has NO default chord. It is reachable from the title menu / context menu / palette only;
+        // `chord: nil` surfaces the row (cheat sheet / menu / palette) without binding a key. Pinned
+        // chord-less by `E1KeymapParityTests`.
         WorkspaceBinding(
             id: "pane.rename", action: .renamePane, title: "Rename Tab",
             category: .panes, chord: nil,
@@ -728,23 +726,13 @@ public enum WorkspaceBindingRegistry {
         // panel | ⌘⇧L"; line 201 "⌘⇧L … map to sidebar … toggles"). RE-BOUND from the old ⌘B: ⌘B routed to
         // `store.toggleSidebarCollapsed()`, a LEGACY flag the native split shell never reads (the macOS
         // collapse is driven by `WorkspaceChromeState.sidebarCollapsed`), so ⌘B was a DEAD chord. Now ⌘⇧L
-        // routes through a `toggleSidebar` view-closure (like `.toggleDetailsPanel`) onto the live chrome
+        // routes through a `toggleSidebar` view-closure onto the live chrome
         // flag, and the titlebar's redundant SwiftUI ⌘⇧L shortcut is dropped (single owner). ⌘⇧L is FREE
         // (no other `l` chord; ⌃⌘L is Cycle Layout). Pinned by E1KeymapParityTests.
         WorkspaceBinding(
             id: "view.toggleSidebar", action: .toggleSidebar, title: "Toggle Tabs Panel",
             category: .view, chord: KeyChord(character: "l", [.command, .shift]),
             symbol: "sidebar.left", keywords: "sidebar sessions tabs panel rail hide show collapse",
-        ),
-        // Toggle Details Panel ⌘⇧R — the reference default (spec/reference__keybindings.md:67; the
-        // command-palette.png screenshot shows "Toggle Details Panel" with chips ⇧⌘R). The titlebar's
-        // matching hidden SwiftUI .keyboardShortcut was DEAD because the NSEvent dispatcher swallowed ⌘⇧R
-        // first (it was bound to rename); routing it through `toggleDetailsPanel` (a view-@State closure,
-        // like the palette / cheat-sheet toggles) makes ⌘⇧R own the Details panel. Pinned by E1KeymapParityTests.
-        WorkspaceBinding(
-            id: "view.toggleDetails", action: .toggleDetailsPanel, title: "Toggle Details Panel",
-            category: .view, chord: KeyChord(character: "r", [.command, .shift]),
-            symbol: "sidebar.right", keywords: "details inspector panel right pane hide show collapse",
         ),
         // Pin Window (E19 ES-E19-1, "View ▸ Pin Window" — `spec/user-interface__window-tab-split.md:14`
         // "keeps the window floating above all other apps' windows"). No default chord — `chord:
@@ -759,23 +747,17 @@ public enum WorkspaceBindingRegistry {
             symbol: "pin",
             keywords: "pin window float floating always on top above keep front level stay topmost pip",
         ),
-        // Details tab jump commands (E9/WI-7, ES-E9-5, B2): two UNBOUND-by-default commands that
-        // switch the right-hand Details panel to a specific tab (Info / Files — the old Outline tab is
-        // merged into Info's Commands section, and the old Git tab into Info's git-summary row + popup)
-        // AND reveal the
-        // panel when hidden (the reveal is wired in the view closure). `chord: nil` — the palette/menu-only
-        // idiom (like `tab.close` / `view.openQuickly`) surfaces them in the command palette + cheat sheet
-        // without binding a key; the user can bind any of them in Settings → Keybindings. The symbols mirror
-        // the segmented Details header's tab icons. Pinned chord-less + `.view` by `DetailsTabRoutingTests`.
+        // Git Status: open the active pane's Git details as a real auxiliary window (the keyboard-centric
+        // entry — the Details panel that used to carry the git-summary row is REMOVED; the app is
+        // keyboard-first, so the window's launcher lives in the palette/menu instead of chrome). `chord:
+        // nil` — the palette/menu-only idiom (like `view.pinWindow`); bindable in Settings → Keybindings.
+        // Routed through a view closure (`showGitStatus`) like the other window-scope view surfaces; iOS
+        // has no auxiliary-window idiom, so the closure is a documented no-op there.
         WorkspaceBinding(
-            id: "view.detailsInfo", action: .selectDetailsTab(.info), title: "Details: Info",
+            id: "view.gitStatus", action: .showGitStatus, title: "Git Status",
             category: .view, chord: nil,
-            symbol: "info.circle", keywords: "inspector details panel tab info jump switch session process ports git",
-        ),
-        WorkspaceBinding(
-            id: "view.detailsFiles", action: .selectDetailsTab(.files), title: "Details: Files",
-            category: .view, chord: nil,
-            symbol: "folder", keywords: "inspector details panel tab files jump switch tree directory browse",
+            symbol: "arrow.triangle.branch",
+            keywords: "git status branch diff changed files repo ahead behind remote window",
         ),
         // Blocks (WB2): the Command Navigator toggle + jump-to-block prev/next. ⌃⌘O / ⌃⌘[ / ⌃⌘] are all
         // ⌘-prefixed (the §5 conflict rule) and collision-free against the rest of the table (tab cycling
@@ -799,11 +781,10 @@ public enum WorkspaceBindingRegistry {
         // Hint Mode (E10 ES-E10-6 / `terminal-features__hint-mode`): the three "Hint to …" intents that overlay
         // 2-letter Vimium labels on the active pane's detected targets. ⌘⇧J Open + ⌘⇧Y Copy are the
         // documented defaults — both FREE on the tree shell after E10 RE-POINTED `.peekAndReply` off ⌘⇧J →
-        // ⌘⌥J (the carryover binding "E10 OWNS ⌘⇧J for Hint Mode"; `y` is in NO other chord). Reveal-in-Finder
-        // would naturally take ⌘⇧R, but ⌘⇧R is aislopdesk's Toggle Details (`view.toggleDetails`,
-        // `E1KeymapParityTests`-pinned), so Hint to Reveal is CHORD-LESS (`chord: nil` — palette/menu-surfaced
-        // + an in-overlay action switch while hint mode is up; the user may bind it in Settings). The ⌘⇧R
-        // reassignment is documented in DECISIONS.md. Pinned unique by the chord-uniqueness guard.
+        // ⌘⌥J (the carryover binding "E10 OWNS ⌘⇧J for Hint Mode"; `y` is in NO other chord). Hint to
+        // Reveal is CHORD-LESS (`chord: nil` — palette/menu-surfaced + an in-overlay action switch while
+        // hint mode is up; the user may bind it in Settings — ⌘⇧R is free since the Details panel was
+        // removed). Pinned unique by the chord-uniqueness guard.
         WorkspaceBinding(
             id: "view.hintOpen", action: .hintToOpen, title: "Hint to Open",
             category: .view, chord: KeyChord(character: "j", [.command, .shift]),

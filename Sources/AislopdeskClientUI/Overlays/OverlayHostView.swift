@@ -192,10 +192,10 @@ struct OverlayHostView: View {
     }
 
     /// The toggled-state predicate the root hands to ``PaletteView`` — built from the live chrome so the
-    /// palette's ✓ gutter reflects the real sidebar/inspector visibility (a visible panel ⇒ ✓ on its toggle
+    /// palette's ✓ gutter reflects the real sidebar visibility (a visible panel ⇒ ✓ on its toggle
     /// row). Pure + `static` so it is unit-pinnable without instantiating the view (E2 / WI-6). `@MainActor`
     /// because it reads the `@MainActor` ``WorkspaceChromeState``. Resolves the checkable View toggles — Toggle
-    /// Tabs Panel, Toggle Details Panel, Pin Window — PLUS the two E17 Shell toggles whose live state lives on
+    /// Tabs Panel, Pin Window — PLUS the two E17 Shell toggles whose live state lives on
     /// the active pane (Read Only / Secure Keyboard Entry), read off the `store` so the ✓ tracks the real pane
     /// input gate / secure-entry state rather than staying perpetually dark.
     @MainActor
@@ -205,9 +205,8 @@ struct OverlayHostView: View {
         { item in
             switch item.id {
             case "action.toggleSidebar": !chrome.sidebarCollapsed
-            case "action.toggleInspector": !chrome.inspectorCollapsed
             // E19 WI-4: Pin Window is a CHECKABLE toggle — light the ✓ gutter while the window is pinned, so the
-            // palette (and the View menu) tell the user the current pinned state. Mirrors the sidebar/inspector
+            // palette (and the View menu) tell the user the current pinned state. Mirrors the sidebar
             // treatment, reading the SAME live `chrome.pinned` the menu Button + the `NSWindow.level` glue flip.
             case "action.pinWindow": chrome.pinned
             // E17 (audit fix): Read Only / Secure Keyboard Entry are CHECKABLE toggles whose live state lives on

@@ -165,15 +165,11 @@ public final class OverlayCoordinator {
     /// titlebar button + the palette ✓ all read — never the legacy `store.sidebarCollapsed` the native shell
     /// never reads. The default is a no-op (iOS / tests / previews), so the row is never a trap.
     @ObservationIgnored public var toggleSidebar: @MainActor () -> Void = {}
-    /// Toggles the right Details / inspector panel. Bound by ``WorkspaceRootView`` to `chrome.toggleInspector()`
-    /// (the same live flag ⌘⇧R + the titlebar button drive). No-op by default (iOS / tests / previews).
-    @ObservationIgnored public var toggleInspector: @MainActor () -> Void = {}
-    /// Jumps the right Details / inspector panel to a specific tab AND reveals it (E9/WI-7, ES-E9-5). Bound by
-    /// ``WorkspaceRootView`` (on BOTH platforms) to set the shared `DetailsPanelState.selected` + un-collapse
-    /// the inspector (`chrome.inspectorCollapsed = false`). The palette's four `Details: *` rows AND the macOS
-    /// View ▸ Details: * menu rows both route here, so every surface drives the same live state. No-op by
+    /// Opens the active pane's Git details as a real auxiliary window (the "Git Status" palette / View-menu
+    /// row — the keyboard-centric entry now that the Details panel is removed). Bound by ``WorkspaceRootView``
+    /// on macOS to `GitDetailsWindowPresenter`; a documented no-op on iOS (no auxiliary-window idiom) and by
     /// default (tests / previews / a pre-`onAppear` scene).
-    @ObservationIgnored public var selectDetailsTab: @MainActor (DetailsPanelTab) -> Void = { _ in }
+    @ObservationIgnored public var showGitStatus: @MainActor () -> Void = {}
     /// E19/A30 (WI-4): toggles the window-pin flag (the View ▸ Pin Window menu row). Bound by ``WorkspaceRootView`` to
     /// `chrome.togglePin()` so any palette / command surface routed here flips the SAME live
     /// `WorkspaceChromeState.pinned` the menu Button + the macOS `NSWindow.level` glue read. No-op by default
@@ -200,9 +196,9 @@ public final class OverlayCoordinator {
     /// Batch-5b (A): EAGERLY resolve the focused pane's working directory (the host `cwd()` metadata RPC →
     /// ``WorkspaceStore/setLastKnownCwd(_:for:)``) so the WORKING DIRECTORY palette header's cwd pill is
     /// populated the moment the palette opens. Bound by ``WorkspaceRootView`` to the live ``MetadataClient``.
-    /// WITHOUT this the pill stayed blank on a freshly-connected pane sitting at a prompt: the only two
-    /// `lastKnownCwd` writers — a command completing (OSC 133;D) and the Details/Info tab fetching — had not
-    /// fired (and the Details panel is frequently collapsed). Fired from ``openPalette(mode:query:)``; the
+    /// WITHOUT this the pill stayed blank on a freshly-connected pane sitting at a prompt: the only other
+    /// `lastKnownCwd` writer — a command completing (OSC 133;D) — had not
+    /// fired. Fired from ``openPalette(mode:query:)``; the
     /// resolution lands reactively (`@Observable` spec write) within ~1 RTT, so the pill pops in without
     /// blocking the open. No-op by default (tests / previews / a disconnected pane), so opening the palette is
     /// never gated on it — and it spends NO new wire message (the `cwd()` RPC already exists).
@@ -279,8 +275,8 @@ public final class OverlayCoordinator {
         paletteSelection = 0
         paletteVisible = true
         // Batch-5b (A): kick the focused pane's cwd resolution so the WORKING DIRECTORY header's cwd pill is
-        // populated (within ~1 RTT, reactively) even on a fresh prompt where no command has completed and the
-        // Details/Info tab is closed — the two lazy `lastKnownCwd` writers that otherwise left the pill blank.
+        // populated (within ~1 RTT, reactively) even on a fresh prompt where no command has completed — the
+        // lazy `lastKnownCwd` writer that otherwise left the pill blank.
         resolveActiveCwd()
     }
 
@@ -443,7 +439,7 @@ public final class OverlayCoordinator {
     /// are no-ops. This is the ONE place a palette intent becomes a store mutation. `keepOpen` (the ⌘↩
     /// chaining path) suppresses the close for the `.store`/`.command`/chrome-toggle rows — the chainable
     /// kinds; the overlay-switching rows (settings/connect/cheat/picker) always close-then-open regardless.
-    /// The chrome-toggle rows route through the injected ``toggleSidebar``/``toggleInspector`` closures so they
+    /// The chrome-toggle rows route through the injected ``toggleSidebar`` closure so they
     /// flip the LIVE `WorkspaceChromeState` the split + the ✓ read — not the dead `store.sidebarCollapsed`.
     public func run(_ item: PaletteItem, keepOpen: Bool = false) {
         guard !item.isSeparator else { return }
@@ -457,11 +453,8 @@ public final class OverlayCoordinator {
         case .toggleSidebar:
             toggleSidebar()
             if !keepOpen { closePalette() }
-        case .toggleInspector:
-            toggleInspector()
-            if !keepOpen { closePalette() }
-        case let .selectDetailsTab(tab):
-            selectDetailsTab(tab)
+        case .showGitStatus:
+            showGitStatus()
             if !keepOpen { closePalette() }
         case .togglePinWindow:
             togglePinWindow()

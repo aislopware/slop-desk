@@ -1,11 +1,10 @@
 // AislopdeskSplitViewController — the macOS shell (REBUILD-V2, L1). An `NSSplitViewController` with
-// three `NSSplitViewItem`s (sidebar | content | inspector), each an `NSHostingController` over a SwiftUI
+// two `NSSplitViewItem`s (sidebar | content), each an `NSHostingController` over a SwiftUI
 // column. Modelled on CodeEdit's `CodeEditSplitViewController`: an AppKit split shell with SwiftUI INSIDE
 // each column. Keeping the split in AppKit (not a SwiftUI `HSplitView` that rebuilds subtrees) is the
 // load-bearing no-teardown choice for L2's libghostty panes — a torn-down NSView kills the surface.
-//
-// L4a wires the toolbar collapse toggles into the sidebar/inspector `NSSplitViewItem`s (via
-// `applyCollapse`) and threads `connection` into the inspector's Session section.
+// (The old right-hand inspector / Details column is REMOVED — the app is keyboard-centric; its surviving
+// surface, the Git details window, opens from the palette / View menu instead.)
 
 #if os(macOS)
 import AislopdeskWorkspaceCore
@@ -22,44 +21,31 @@ final class AislopdeskSplitViewController: NSSplitViewController {
     /// SEPARATE `NSHostingController` that does not inherit the WindowGroup `\.preferencesStore` environment, so
     /// it is threaded explicitly. `nil` (a preview / pre-injection scene) hides the Prevent-Sleep row.
     private let preferences: PreferencesStore?
-    /// The shared Details-tab selection (E9/WI-7) — forwarded to the inspector's `InspectorColumn` so a
-    /// `Details: *` jump command (which writes `details.selected` via the root view's installed closure)
-    /// switches the hosted panel's tab. The SAME instance the root view captures for the reveal closure.
-    private let details: DetailsPanelState
-    /// Opens the Connect-to-Host editor — wired into the inspector's Status row (ES-E2-6). The shell binds
-    /// this to `overlay.openConnect()`; the no-op default keeps the controller buildable without an overlay.
+    /// Opens the Connect-to-Host editor — wired into the sidebar's status affordance (ES-E2-6). The shell
+    /// binds this to `overlay.openConnect()`; the no-op default keeps the controller buildable without an
+    /// overlay.
     private let onConnect: () -> Void
-    /// Opens the Send-to-Chat dialog with a pre-built context (the transcript context-menu path). The shell
-    /// binds this to `overlay.openSendToChat(context:)`; the no-op default keeps the controller buildable
-    /// without an overlay.
-    private let onSendToChat: (SendToChatContext) -> Void
 
-    /// Retained so the titlebar toggles can animate their collapse (set in `viewDidLoad`).
+    /// Retained so the titlebar toggle can animate its collapse (set in `viewDidLoad`).
     private var sidebarItem: NSSplitViewItem?
-    private var inspectorItem: NSSplitViewItem?
 
-    /// E19 WI-4 (A29) — the sidebar (TABS panel) / inspector (Details panel) default thicknesses, shared with
+    /// E19 WI-4 (A29) — the sidebar (TABS panel) default thickness, shared with
     /// the window-size glue (`AislopdeskClientApp.applyInitialWindowSize`) so the `grid` mode's `chromeOverhead`
-    /// uses the SAME widths the split items adopt (no magic-number drift between the layout and the math).
+    /// uses the SAME width the split item adopts (no magic-number drift between the layout and the math).
     static let defaultSidebarWidth: CGFloat = 220
-    static let defaultInspectorWidth: CGFloat = 240
 
     init(
         store: WorkspaceStore,
         connection: AppConnection,
         chrome: WorkspaceChromeState,
-        details: DetailsPanelState,
         preferences: PreferencesStore? = nil,
         onConnect: @escaping () -> Void = {},
-        onSendToChat: @escaping (SendToChatContext) -> Void = { _ in },
     ) {
         self.store = store
         self.connection = connection
         self.chrome = chrome
-        self.details = details
         self.preferences = preferences
         self.onConnect = onConnect
-        self.onSendToChat = onSendToChat
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -109,37 +95,19 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         let contentItem = NSSplitViewItem(viewController: content)
         contentItem.minimumThickness = 420
 
-        // 3) Inspector — the working-directory + Commands navigator (the active pane's cwd, ports, and
-        //    command blocks; host/ping/agent status live in the sidebar status line). HIDDEN by default so
-        //    the resting window is a two-column (sidebar | content)
-        //    silhouette; revealed from the toolbar (L4a) or ⌘⇧R.
-        let inspector = NSHostingController(
-            rootView: InspectorColumn(
-                store: store, connection: connection, details: details,
-                onSendToChat: onSendToChat,
-            ),
-        )
-
         // Each column hosts SwiftUI in its own NSHostingController, which by DEFAULT insets its content below
         // the window's titlebar safe area (the traffic-light strip). With `.hiddenTitleBar` that pushed every
-        // column's top chrome — the hover-reveal titlebar's centred title + Details toggle, and the sidebar's
+        // column's top chrome — the hover-reveal titlebar's centred title, and the sidebar's
         // "TABS" header — a full row BELOW the traffic lights. Dropping the safe-area regions lets each column
         // start at the window's top edge, so the titlebar's controls land ON the traffic-light row (each
         // column still reserves its own titlebar-height strip at the top).
         navigator.safeAreaRegions = []
         content.safeAreaRegions = []
-        inspector.safeAreaRegions = []
-
-        let inspectorItem = NSSplitViewItem(inspectorWithViewController: inspector)
-        inspectorItem.minimumThickness = Self.defaultInspectorWidth
-        inspectorItem.isCollapsed = true
 
         addSplitViewItem(sidebarItem)
         addSplitViewItem(contentItem)
-        addSplitViewItem(inspectorItem)
 
         self.sidebarItem = sidebarItem
-        self.inspectorItem = inspectorItem
 
         // Defer remote terminal grid-resize forwarding while a sidebar/inspector divider (or the window edge)
         // is being dragged: NSSplitView re-lays its subviews every step and posts this notification, so each
@@ -246,11 +214,10 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         }
     }
 
-    /// Apply the toolbar collapse flags to the sidebar/inspector items (idempotent — only animates a real
+    /// Apply the toolbar collapse flag to the sidebar item (idempotent — only animates a real
     /// change so a steady-state update doesn't re-trigger the animation).
-    func applyCollapse(sidebarCollapsed: Bool, inspectorCollapsed: Bool) {
+    func applyCollapse(sidebarCollapsed: Bool) {
         let sidebarChanging = sidebarItem.map { $0.isCollapsed != sidebarCollapsed } ?? false
-        let inspectorChanging = inspectorItem.map { $0.isCollapsed != inspectorCollapsed } ?? false
         // LOST-PROMPT FIX: `animator().isCollapsed = …` applies the FIRST collapse-animation layout frame
         // SYNCHRONOUSLY, which fires `GhosttyLayerBackedView.layout()` and forwards an INTERMEDIATE grid
         // size to the host BEFORE `splitViewSubviewsDidResize` (the notification) suspends forwarding. That
@@ -258,15 +225,12 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         // final-width reset and erasing the prompt line. Suspend FIRST so the intermediate frames are held;
         // the settle timer in `splitViewSubviewsDidResize` resumes + flushes the FINAL grid (the
         // idempotency guard in `setResizeSuspended` prevents a double-flush).
-        if sidebarChanging || inspectorChanging {
+        if sidebarChanging {
             resizeForwardingSuspended = true
             store.setTerminalResizeSuspended(true)
         }
         if sidebarChanging, let sidebarItem {
             sidebarItem.animator().isCollapsed = sidebarCollapsed
-        }
-        if inspectorChanging, let inspectorItem {
-            inspectorItem.animator().isCollapsed = inspectorCollapsed
         }
     }
 }

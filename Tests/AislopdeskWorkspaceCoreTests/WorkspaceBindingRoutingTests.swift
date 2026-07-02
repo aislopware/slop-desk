@@ -360,7 +360,7 @@ final class WorkspaceBindingRoutingTests: XCTestCase {
     }
 
     /// `.pinWindow` is a window-scope action — it must NOT require an active pane (so the palette / menu never
-    /// grey it out on an empty shell), matching `.toggleDetailsPanel` / `.toggleSidebar`.
+    /// grey it out on an empty shell), matching `.toggleSidebar`.
     func testPinWindowDoesNotRequireAnActivePane() {
         XCTAssertFalse(
             WorkspaceAction.pinWindow.requiresActivePane,

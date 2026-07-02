@@ -46,6 +46,15 @@ final class DispatcherWebChordYieldTests: XCTestCase {
         ("f", 3, false), //  ⌘F  Find in page
     ]
 
+    /// The subset of ``webChords`` that still carries a GLOBAL default binding (⌘⇧R ships unbound since the
+    /// Details panel — its old owner — was removed, so it passes through on ANY pane; the yield entry only
+    /// matters if a user binds it).
+    private let globallyBoundWebChords: [(String, UInt16, Bool)] = [
+        ("[", 33, false), // ⌘[  cycle pane prev
+        ("]", 30, false), // ⌘]  cycle pane next
+        ("f", 3, false), //  ⌘F  find bar
+    ]
+
     /// With a `.web` leaf active, every web-browser chord is PASSED THROUGH to the focused pane (handle
     /// returns the event, not `nil`) so the WebLeafView `.keyboardShortcut` owns it.
     func testWebPaneYieldsAllBrowserChords() throws {
@@ -65,13 +74,15 @@ final class DispatcherWebChordYieldTests: XCTestCase {
         }
     }
 
-    /// The load-bearing control: with a TERMINAL leaf active (the seeded default) the SAME chords are OWNED by
+    /// The load-bearing control: with a TERMINAL leaf active (the seeded default) the still-globally-bound
+    /// chords are OWNED by
     /// the monitor — swallowed (handle returns `nil`) and routed to their global bindings. Proves the yield is
-    /// gated on `.web` focus, not an accidental table miss.
+    /// gated on `.web` focus, not an accidental table miss. (⌘⇧R is exempt: it ships UNBOUND now that the
+    /// Details panel is removed, so it passes through everywhere.)
     func testNonWebPaneStillOwnsTheSameChords() {
         let store = makeStore()
         let dispatcher = WorkspaceKeyDispatcher(store: store)
-        for (chars, keyCode, shift) in webChords {
+        for (chars, keyCode, shift) in globallyBoundWebChords {
             let result = dispatcher.handle(keyDown(chars, keyCode: keyCode, command: true, shift: shift))
             XCTAssertNil(
                 result,

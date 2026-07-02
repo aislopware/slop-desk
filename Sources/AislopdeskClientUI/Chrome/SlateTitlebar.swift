@@ -35,7 +35,6 @@ struct SlateTitlebar: View {
     }
 
     private var sidebarVisible: Bool { !chrome.sidebarCollapsed }
-    private var detailsVisible: Bool { !chrome.inspectorCollapsed }
 
     var body: some View {
         // Aligns the controls to the TRAFFIC-LIGHT row: top-anchored at `rowTop` so a 24pt plate's icon
@@ -74,31 +73,18 @@ struct SlateTitlebar: View {
             // Centre: the active title as a menu, on the traffic-light row.
             TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
                 .padding(.top, rowTop)
-
-            // Right: Details toggle (stays visible while Details is open).
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                PlateIconButton(symbol: detailsVisible ? .sidebarTrailing : .sidebarRight) {
-                    chrome.toggleInspector()
-                }
-                .opacity(chromeShown || detailsVisible ? 1 : 0)
-                .allowsHitTesting(chromeShown || detailsVisible)
-            }
-            .padding(.trailing, 10)
-            .padding(.top, rowTop)
         }
         .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
         .animation(Slate.Anim.standard, value: sidebarVisible)
-        .animation(Slate.Anim.standard, value: detailsVisible)
     }
 
-    // NOTE: the titlebar carries NO hidden SwiftUI `.keyboardShortcut` for the chrome chords. Both ⌘⇧L
-    // "Toggle Tabs Panel" (sidebar) and ⌘⇧R "Toggle Details Panel" are owned by the app-level
-    // `WorkspaceKeyDispatcher` NSEvent monitor (registry actions `.toggleSidebar` / `.toggleDetailsPanel`,
-    // wired to `chrome.toggleSidebar` / `chrome.toggleInspector` in `WorkspaceRootView`). A SwiftUI shortcut
+    // NOTE: the titlebar carries NO hidden SwiftUI `.keyboardShortcut` for the chrome chords. ⌘⇧L
+    // "Toggle Tabs Panel" (sidebar) is owned by the app-level
+    // `WorkspaceKeyDispatcher` NSEvent monitor (registry action `.toggleSidebar`,
+    // wired to `chrome.toggleSidebar` in `WorkspaceRootView`). A SwiftUI shortcut
     // here would be DEAD — the monitor swallows the chord before the responder chain sees it — so we keep a
-    // SINGLE owner per chord. The visible plate buttons (the Details toggle above, the sidebar toggle on the
-    // left row) still drive the same `chrome` flags on click.
+    // SINGLE owner per chord. The visible plate button (the sidebar toggle on the
+    // left row) still drives the same `chrome` flag on click.
 
     /// The reveal timing: fade-in 0.15s on enter; on exit, dwell 0.40s then fade-out 0.20s (keeps the
     /// controls clickable while the pointer travels to them).

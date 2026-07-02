@@ -21,7 +21,6 @@ struct RouteToggles {
     var cheatSheet: (() -> Void)?
     var find: (() -> Void)?
     var peekReply: (() -> Void)?
-    var detailsPanel: (() -> Void)?
     var sidebar: (() -> Void)?
     var globalSearch: (() -> Void)?
     /// Toggles the Jump-To affordance (E10 WI-8, ⌘J). A VIEW overlay, so — like `globalSearch` — it is a
@@ -36,11 +35,12 @@ struct RouteToggles {
     /// ⌘⇧O (this) and ⌘J (`jumpTo`, → `.current`) are GLOBAL; the pill / ⌘1–9 / Tab / ⌘K chords are
     /// PICKER-LOCAL (handled by `OpenQuicklyView.onKeyPress`, never registered here).
     var openQuickly: (() -> Void)?
-    /// Jumps the Details panel to a specific tab (E9/WI-7). View-owned state (`DetailsPanelState` + the
-    /// chrome reveal), so — like `detailsPanel` — it is a passed-in closure; `nil` = a graceful no-op.
-    var selectDetailsTab: ((DetailsPanelTab) -> Void)?
+    /// Opens the active pane's Git details as a real auxiliary window (the keyboard-centric entry — the
+    /// Details panel that carried the git row is removed). View-owned (the macOS window presenter), so —
+    /// like `sidebar` — it is a passed-in closure; `nil` (headless / test / iOS) = a graceful no-op.
+    var showGitStatus: (() -> Void)?
     /// Toggles "Pin Window" (E19 WI-3, View ▸ Pin Window). A macOS `NSWindow.level` / window-level
-    /// concern, so — like `sidebar` / `detailsPanel` — it is a passed-in closure (the live app flips
+    /// concern, so — like `sidebar` — it is a passed-in closure (the live app flips
     /// `WorkspaceChromeState.pinned`); `nil` (the headless / test / iOS default) is a graceful no-op, never a
     /// dead chord.
     var pinWindow: (() -> Void)?
@@ -73,20 +73,19 @@ public extension WorkspaceBindingRegistry {
         toggleFind: (() -> Void)? = nil,
         togglePeekReply: (() -> Void)? = nil,
         toggleSendToChat: (() -> Void)? = nil,
-        toggleDetailsPanel: (() -> Void)? = nil,
         toggleSidebar: (() -> Void)? = nil,
         toggleGlobalSearch: (() -> Void)? = nil,
         toggleJumpTo: (() -> Void)? = nil,
         openQuickly: (() -> Void)? = nil,
-        selectDetailsTab: ((DetailsPanelTab) -> Void)? = nil,
+        showGitStatus: (() -> Void)? = nil,
         togglePinWindow: (() -> Void)? = nil,
         closeWindow: (() -> Void)? = nil,
     ) {
         let toggles = RouteToggles(
             palette: togglePalette, cheatSheet: toggleCheatSheet, find: toggleFind,
-            peekReply: togglePeekReply, detailsPanel: toggleDetailsPanel,
+            peekReply: togglePeekReply,
             sidebar: toggleSidebar, globalSearch: toggleGlobalSearch, jumpTo: toggleJumpTo,
-            openQuickly: openQuickly, selectDetailsTab: selectDetailsTab, pinWindow: togglePinWindow,
+            openQuickly: openQuickly, showGitStatus: showGitStatus, pinWindow: togglePinWindow,
             sendToChat: toggleSendToChat, closeWindow: closeWindow,
         )
         switch store.liveModel {
@@ -215,23 +214,18 @@ public extension WorkspaceBindingRegistry {
         case .secureKeyboardEntry: store.toggleSecureKeyboardEntryInActivePane()
         // Toggle Tabs Panel (⌘⇧L): the LEFT sidebar collapse on the macOS shell is VIEW @State
         // (`WorkspaceChromeState.sidebarCollapsed`, read by the native split controller) — NOT the legacy
-        // `store.sidebarCollapsed`, which nothing reads on macOS. So it is a passed-in closure (like
-        // `.toggleDetailsPanel`). When no closure is supplied (the headless / test / iOS default) fall back to
+        // `store.sidebarCollapsed`, which nothing reads on macOS. So it is a passed-in closure.
+        // When no closure is supplied (the headless / test / iOS default) fall back to
         // the store flag so the action is a non-trapping graceful op (and any store-flag reader still toggles).
         case .toggleSidebar:
             if let s = toggles.sidebar { s() } else { store.toggleSidebarCollapsed() }
-        // Toggle Details Panel (⌘⇧R): the right-hand inspector is VIEW @State (`WorkspaceChromeState`),
-        // not store state, so it is a passed-in closure (like the palette / cheat-sheet toggles). `nil` (the
-        // headless / test default) keeps it a graceful no-op — never a dead chord.
-        case .toggleDetailsPanel: toggles.detailsPanel?()
-        // Details tab jump (E9/WI-7, ES-E9-5): switch the right-hand Details panel to a specific tab AND
-        // reveal it if hidden. View-owned state (`DetailsPanelState` + `WorkspaceChromeState`), so it is a
-        // passed-in closure like `.toggleDetailsPanel`; `nil` (the headless / test default) is a graceful
-        // no-op — never a dead chord.
-        case let .selectDetailsTab(tab): toggles.selectDetailsTab?(tab)
+        // Git Status: open the active pane's Git details as a real auxiliary window. View-owned (the macOS
+        // window presenter), so it is a passed-in closure; `nil` (the headless / test / iOS default) is a
+        // graceful no-op — never a dead chord.
+        case .showGitStatus: toggles.showGitStatus?()
         // Pin Window (E19 ES-E19-1 / WI-3): float the window above all other apps. A macOS NSWindow.level
         // concern (VIEW @State `WorkspaceChromeState.pinned`), so it is a passed-in closure like
-        // `.toggleSidebar` / `.toggleDetailsPanel`; `nil` (the headless / test / iOS default) is a graceful
+        // `.toggleSidebar`; `nil` (the headless / test / iOS default) is a graceful
         // no-op — never a dead chord.
         case .pinWindow: toggles.pinWindow?()
         // Blocks (WB2): the navigator toggle + jump-to-block both target the active terminal pane via the store.
@@ -424,10 +418,8 @@ public extension WorkspaceBindingRegistry {
         // Sidebar is the tree-shell chrome; the canvas path still toggles it via the closure (the live macOS
         // app wires `chrome.toggleSidebar`). `nil` (the canvas test default) is a graceful no-op.
         case .toggleSidebar: toggles.sidebar?()
-        // Details panel is a view overlay (tree-shell chrome); the canvas path still toggles it via the closure.
-        case .toggleDetailsPanel: toggles.detailsPanel?()
-        // Details tab jump: a view overlay (tree-shell chrome); the canvas path still forwards it via the closure.
-        case let .selectDetailsTab(tab): toggles.selectDetailsTab?(tab)
+        // Git Status is a view surface (the macOS window presenter); the canvas path forwards it via the closure.
+        case .showGitStatus: toggles.showGitStatus?()
         // Pin Window is a window-level concern (the live macOS app flips `WorkspaceChromeState.pinned`); the
         // canvas path forwards it via the closure too — a graceful no-op when none is supplied, never a dead chord.
         case .pinWindow: toggles.pinWindow?()
