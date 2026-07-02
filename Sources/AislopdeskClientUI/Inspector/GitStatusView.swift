@@ -1,12 +1,12 @@
-// GitStatusView — the git status/diff detail view (E4, WI-5), now hosted by the Git POPUP
-// (`GitDetailsSheet`): the old standalone Git tab merged into the Info tab, which carries only a one-row
-// summary (branch + change count) — the changed-file list is unbounded, so the full view gets a window.
+// GitStatusView — the git status/diff detail view (E4, WI-5), now hosted by the Git POPOVER
+// (`GitDetailsPopover`): the old standalone Git tab merged into the Info tab, which carries only a one-row
+// summary (branch + change count) — the full view opens as a popover anchored to that row.
 //
 // The detail view (spec/user-interface__details-panel.md §"Git Tab"): the changed-file list (each file a
 // status badge + name + dir) and an inline unified-diff OVERLAY that floats over the panel when a file row
 // is selected — its bytes fetched on demand via the pane's `gitDiff` verb. The branch/remote/delta header
-// lives on the HOSTING sheet's title bar (`GitDetailsSheet`) — the view rendering it too doubled the header
-// (two branch icons stacked). READ-ONLY: Commit / Fork
+// lives on the HOSTING popover's header (`GitDetailsPopover`) — the view rendering it too doubled the
+// header (two branch icons stacked). READ-ONLY: Commit / Fork
 // toolbar buttons are deferred (they require host-side mutation — see the E4 mapping notes), so this view
 // renders status + diff only.
 //
@@ -280,72 +280,89 @@ struct GitStatusView: View {
     }
 }
 
-/// The Git details POPUP (the Git tab merged into Info): a sheet hosting the full `GitStatusView` under
-/// NATIVE sheet chrome (the native-chrome directive — dialogs/sheets get system chrome, not a hand-drawn
-/// bar): `NavigationStack` + `.navigationTitle` (the branch) + `.navigationSubtitle` (↑↓ deltas + remote)
-/// + a `.toolbar` carrying the system-styled Refresh and Done buttons. Presented by the Info tab's
-/// git-summary row; the tall frame is reserved for an actual changed-file list (+ the diff overlay) — a
-/// clean tree collapses the sheet to a compact card instead of a field of empty.
-struct GitDetailsSheet: View {
+/// The Git details POPOVER (the Git tab merged into Info), anchored to the Info tab's git-summary row.
+/// A status *peek* wants popover semantics, not a sheet: it sizes to its content (a clean tree gets a
+/// small card, not a field of empty), needs no Done button or bottom bar (Esc / click-away dismisses),
+/// and stays visually attached to the row that opened it — the Xcode status-popover idiom. The compact
+/// header carries the branch + ahead/behind deltas + remote + an inline refresh; `GitStatusView` below
+/// renders the changed-file list + the on-demand diff overlay.
+struct GitDetailsPopover: View {
     /// The active pane's decoded host metadata — its `gitStatus` + the `gitDiff`/`refresh` verbs.
     let model: PaneMetadataModel
-    /// Dismisses the popup (the Info tab clears its `showGitDetails` flag). Defaults to a no-op so a
-    /// preview / test can instantiate the view standalone.
-    var onClose: () -> Void = {}
 
-    /// True while the toolbar refresh's metadata round-trip is in flight (drives the button's spinner).
+    /// True while the header refresh's metadata round-trip is in flight (drives the button's spinner).
     @State private var refreshing = false
 
-    /// Whether there is a changed-file list to give real estate to — a clean/absent tree gets the
-    /// compact frame.
+    /// Whether there is a changed-file list to give real estate to — a clean/absent tree hugs a compact
+    /// card instead.
     private var hasChanges: Bool { !(model.gitStatus?.files.isEmpty ?? true) }
 
-    /// The sheet's title: the branch name (the one fact that identifies the repo state), falling back to
+    /// The header title: the branch name (the one fact that identifies the repo state), falling back to
     /// a generic "Git Status" while the pane has no repo/metadata.
     private var title: String {
         guard let status = model.gitStatus, status.hasRepo else { return "Git Status" }
         return status.branch.isEmpty ? "detached" : status.branch
     }
 
-    /// The subtitle line under the branch: ahead/behind deltas + the `origin` remote URL.
-    private var subtitle: String {
-        guard let status = model.gitStatus, status.hasRepo else { return "" }
-        var parts: [String] = []
-        if status.ahead != 0 { parts.append("↑\(status.ahead)") }
-        if status.behind != 0 { parts.append("↓\(status.behind)") }
-        if !status.remoteURL.isEmpty { parts.append(status.remoteURL) }
-        return parts.joined(separator: "  ")
-    }
-
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            header
+            Rectangle().fill(Slate.Line.divider).frame(height: 1)
             GitStatusView(model: model)
-                .background(Slate.Surface.content)
-                .navigationTitle(title)
-            #if os(macOS)
-                .navigationSubtitle(subtitle)
-            #endif
-                .toolbar {
-                    ToolbarItem(placement: .automatic) {
-                        refreshButton
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        // `.cancelAction` (Esc) rather than the placement's Return default — the sheet is
-                        // read-only, so "dismiss" is the cancel gesture; Esc must always close it.
-                        Button("Done", action: onClose)
-                            .keyboardShortcut(.cancelAction)
-                    }
-                }
         }
+        .background(Slate.Surface.content)
         .frame(
-            minWidth: 520,
-            idealWidth: 620,
-            minHeight: hasChanges ? 420 : 200,
-            idealHeight: hasChanges ? 560 : 240,
+            width: hasChanges ? 560 : 340,
+            height: hasChanges ? 480 : 150,
         )
     }
 
-    /// The toolbar refresh action — with CLICK FEEDBACK: the icon yields to a small spinner while the
+    /// The popover header: branch (+ ↑↓ deltas) over the remote URL, with the inline refresh trailing.
+    private var header: some View {
+        HStack(alignment: .center, spacing: Slate.Metric.space2) {
+            Image(systemName: "arrow.triangle.branch")
+                .foregroundStyle(Slate.Text.icon)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: Slate.Metric.space2) {
+                    Text(title)
+                        .font(.system(size: Slate.Typeface.base, weight: .semibold))
+                        .foregroundStyle(Slate.Text.primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if let status = model.gitStatus, status.hasRepo {
+                        if status.ahead != 0 { delta(symbol: "arrow.up", count: status.ahead, tint: Slate.Status.ok) }
+                        if status.behind != 0 { delta(
+                            symbol: "arrow.down",
+                            count: status.behind,
+                            tint: Slate.Status.warn,
+                        ) }
+                    }
+                }
+                if let remote = model.gitStatus?.remoteURL, !remote.isEmpty {
+                    Text(remote)
+                        .font(.system(size: Slate.Typeface.footnote))
+                        .foregroundStyle(Slate.Text.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+            }
+            Spacer(minLength: Slate.Metric.space3)
+            refreshButton
+        }
+        .padding(.horizontal, Slate.Metric.space3)
+        .padding(.vertical, Slate.Metric.space2)
+    }
+
+    private func delta(symbol: String, count: Int32, tint: Color) -> some View {
+        HStack(spacing: 2) {
+            Image(systemName: symbol).font(.system(size: Slate.Typeface.small, weight: .semibold))
+            Text(String(count)).font(.system(size: Slate.Typeface.footnote)).monospacedDigit()
+        }
+        .foregroundStyle(tint)
+    }
+
+    /// The header refresh action — with CLICK FEEDBACK: the icon yields to a small spinner while the
     /// metadata round-trip is in flight (and the button disarms), so a click never reads as a no-op.
     private var refreshButton: some View {
         Button {
@@ -355,14 +372,23 @@ struct GitDetailsSheet: View {
                 refreshing = false
             }
         } label: {
-            if refreshing {
-                ProgressView().controlSize(.small)
-            } else {
-                Label("Refresh", systemImage: "arrow.clockwise")
+            Group {
+                if refreshing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: Slate.Typeface.base))
+                        .foregroundStyle(Slate.Text.icon)
+                }
             }
+            // Fixed 16×16 — the icon↔spinner swap must not resize the button and shift the header row.
+            .frame(width: 16, height: 16)
+            .contentShape(.rect)
         }
+        .buttonStyle(.plain)
         .disabled(!model.isConnected || refreshing)
         .help("Refresh")
+        .accessibilityLabel("Refresh git status")
     }
 }
 

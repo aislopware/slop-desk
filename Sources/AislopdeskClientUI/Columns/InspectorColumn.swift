@@ -2,8 +2,9 @@
 // header (active tab = icon+label pill, inactive = icon only) over a warm panel; hidden until ⌘⇧R.
 // It keeps aislopdesk's live content under the Info tab:
 //   • Info  — the live SESSION (connection dot+label, host:port, ping, agent) + working directory + a
-//             one-row GIT SUMMARY (branch + change count; the full status/diff opens as a popup — the old
-//             standalone Git tab merged here, its changed-file list is unbounded so it gets a window) + the
+//             one-row GIT SUMMARY (branch + change count; the full status/diff opens as a popover on the
+//             row — the old standalone Git tab merged here, its unbounded changed-file list outgrew a
+//             sidebar tab) + the
 //             first-class command navigator (`BlockHistoryView` over the active pane's `TerminalBlockModel`).
 //   • Files — the remote file tree.
 //
@@ -39,9 +40,10 @@ struct InspectorColumn: View {
     /// list + the `readAgentSession` fetch). E4/WI-6.
     @State private var showSessionHistory = false
 
-    /// Whether the Git details popup (`GitDetailsSheet` over the full `GitStatusView`) is presented. Set by
-    /// the Info tab's git-summary row — the old standalone Git tab merged into Info; the unbounded
-    /// changed-file list + diff live in the popup, the Info row carries only branch + change count.
+    /// Whether the Git details popover (`GitDetailsPopover` over the full `GitStatusView`) is presented —
+    /// anchored to the Info tab's git-summary row that sets it. The old standalone Git tab merged into
+    /// Info; the unbounded changed-file list + diff live in the popover, the Info row carries only
+    /// branch + change count.
     @State private var showGitDetails = false
 
     /// PER-PANE decoded host metadata (E4): processes / ports / git / files / cwd. One model per pane the
@@ -142,9 +144,6 @@ struct InspectorColumn: View {
                 onResume: { performResume($0) },
                 onSendToChat: onSendToChat,
             )
-        }
-        .sheet(isPresented: $showGitDetails) {
-            GitDetailsSheet(model: activeModel, onClose: { showGitDetails = false })
         }
     }
 
@@ -321,9 +320,9 @@ struct InspectorColumn: View {
 
     /// The Info-tab GIT section (the old standalone Git tab merged here): ONE summary row — branch name,
     /// ahead/behind deltas, and the changed-file count — that opens the full `GitStatusView` (status list +
-    /// per-file diff) as a POPUP. The changed-file list is unbounded, so it gets a window instead of a
-    /// sidebar tab; the Info row stays one line. Hidden while the pane has no metadata yet or the cwd is not
-    /// inside a git repo (the summary would carry no signal).
+    /// per-file diff) as a POPOVER anchored to the row. The changed-file list is unbounded, so it gets its
+    /// own surface instead of a sidebar tab; the Info row stays one line. Hidden while the pane has no
+    /// metadata yet or the cwd is not inside a git repo (the summary would carry no signal).
     @ViewBuilder private var gitSection: some View {
         if let status = activeModel.gitStatus, status.hasRepo {
             sectionDivider
@@ -362,6 +361,11 @@ struct InspectorColumn: View {
                 .buttonStyle(.plain)
                 .help("Show git status and diffs")
                 .accessibilityLabel("Show git status and diffs")
+                // Anchored HERE (not a `.sheet` on the column body) — the details view is a status
+                // peek, so it pops out of the row that names it and dismisses on Esc / click-away.
+                .popover(isPresented: $showGitDetails, arrowEdge: .leading) {
+                    GitDetailsPopover(model: activeModel)
+                }
             }
             .padding(.bottom, Slate.Metric.space2)
         }
