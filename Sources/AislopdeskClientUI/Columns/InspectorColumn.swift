@@ -2,9 +2,9 @@
 // header (active tab = icon+label pill, inactive = icon only) over a warm panel; hidden until ⌘⇧R.
 // It keeps aislopdesk's live content under the Info tab:
 //   • Info  — the live SESSION (connection dot+label, host:port, ping, agent) + working directory + a
-//             one-row GIT SUMMARY (branch + change count; the full status/diff opens as a popover on the
-//             row — the old standalone Git tab merged here, its unbounded changed-file list outgrew a
-//             sidebar tab) + the
+//             one-row GIT SUMMARY (branch + change count; the full status/diff opens as a real auxiliary
+//             WINDOW on macOS / a popover on iOS — the old standalone Git tab merged here, its unbounded
+//             changed-file list outgrew a sidebar tab) + the
 //             first-class command navigator (`BlockHistoryView` over the active pane's `TerminalBlockModel`).
 //   • Files — the remote file tree.
 //
@@ -40,9 +40,11 @@ struct InspectorColumn: View {
     /// list + the `readAgentSession` fetch). E4/WI-6.
     @State private var showSessionHistory = false
 
-    /// Whether the Git details popover (`GitDetailsPopover` over the full `GitStatusView`) is presented —
-    /// anchored to the Info tab's git-summary row that sets it. The old standalone Git tab merged into
-    /// Info; the unbounded changed-file list + diff live in the popover, the Info row carries only
+    /// iOS ONLY: whether the Git details popover (`GitDetailsPopover` over the full `GitStatusView`) is
+    /// presented, anchored to the Info tab's git-summary row that sets it. On macOS the row opens a REAL
+    /// auxiliary window instead (`GitDetailsWindowPresenter` — user-directed: a persistent window, not a
+    /// transient popover/sheet), so this flag is never set there. The old standalone Git tab merged into
+    /// Info; the unbounded changed-file list + diff live in the detail surface, the Info row carries only
     /// branch + change count.
     @State private var showGitDetails = false
 
@@ -195,6 +197,10 @@ struct InspectorColumn: View {
         for id in Array(models.keys) where store.handle(for: id) == nil {
             models[id]?.setClient(nil)
             models.removeValue(forKey: id)
+            #if os(macOS)
+            // A dead pane must not keep a live-looking Git window on screen.
+            GitDetailsWindowPresenter.close(pane: id)
+            #endif
         }
     }
 
@@ -329,7 +335,7 @@ struct InspectorColumn: View {
             VStack(alignment: .leading, spacing: 0) {
                 SlateSectionHeader("Git")
                 Button {
-                    showGitDetails = true
+                    openGitDetails()
                 } label: {
                     HStack(spacing: Slate.Metric.space2) {
                         Image(systemName: "arrow.triangle.branch")
@@ -361,14 +367,27 @@ struct InspectorColumn: View {
                 .buttonStyle(.plain)
                 .help("Show git status and diffs")
                 .accessibilityLabel("Show git status and diffs")
-                // Anchored HERE (not a `.sheet` on the column body) — the details view is a status
-                // peek, so it pops out of the row that names it and dismisses on Esc / click-away.
-                .popover(isPresented: $showGitDetails, arrowEdge: .leading) {
-                    GitDetailsPopover(model: activeModel)
-                }
+                #if !os(macOS)
+                    // iOS keeps the anchored popover (adapting to a sheet on compact) — there is no
+                    // auxiliary-window idiom there.
+                    .popover(isPresented: $showGitDetails, arrowEdge: .leading) {
+                        GitDetailsPopover(model: activeModel)
+                    }
+                #endif
             }
             .padding(.bottom, Slate.Metric.space2)
         }
+    }
+
+    /// Opens the Git details. macOS gets a REAL auxiliary window (`GitDetailsWindowPresenter`, one per
+    /// pane — persistent, resizable, native titlebar chrome); iOS presents the popover.
+    private func openGitDetails() {
+        #if os(macOS)
+        guard let id = activePaneID else { return }
+        GitDetailsWindowPresenter.show(model: activeModel, pane: id)
+        #else
+        showGitDetails = true
+        #endif
     }
 
     private func gitDelta(symbol: String, count: Int32, tint: Color) -> some View {

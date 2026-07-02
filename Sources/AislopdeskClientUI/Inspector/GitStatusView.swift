@@ -1,6 +1,7 @@
-// GitStatusView — the git status/diff detail view (E4, WI-5), now hosted by the Git POPOVER
-// (`GitDetailsPopover`): the old standalone Git tab merged into the Info tab, which carries only a one-row
-// summary (branch + change count) — the full view opens as a popover anchored to that row.
+// GitStatusView — the git status/diff detail view (E4, WI-5): the old standalone Git tab merged into the
+// Info tab, which carries only a one-row summary (branch + change count) — the full view opens as a REAL
+// auxiliary window on macOS (`GitDetailsWindow.swift`, user-directed) / a popover anchored to the row on
+// iOS (`GitDetailsPopover` below).
 //
 // The detail view (spec/user-interface__details-panel.md §"Git Tab"): the changed-file list (each file a
 // status badge + name + dir) and an inline unified-diff OVERLAY that floats over the panel when a file row
@@ -280,12 +281,12 @@ struct GitStatusView: View {
     }
 }
 
-/// The Git details POPOVER (the Git tab merged into Info), anchored to the Info tab's git-summary row.
-/// A status *peek* wants popover semantics, not a sheet: it sizes to its content (a clean tree gets a
-/// small card, not a field of empty), needs no Done button or bottom bar (Esc / click-away dismisses),
-/// and stays visually attached to the row that opened it — the Xcode status-popover idiom. The compact
-/// header carries the branch + ahead/behind deltas + remote + an inline refresh; `GitStatusView` below
-/// renders the changed-file list + the on-demand diff overlay.
+#if !os(macOS)
+/// The Git details POPOVER — iOS ONLY (macOS opens a real auxiliary window instead, `GitDetailsWindow.swift`;
+/// there is no auxiliary-window idiom on iOS, so the row anchors this popover, adapting to a sheet on
+/// compact). Sizes to its content (a clean tree gets a small card, not a field of empty), dismisses on
+/// click-away. The compact header carries the branch + ahead/behind deltas + remote + an inline refresh;
+/// `GitStatusView` below renders the changed-file list + the on-demand diff overlay.
 struct GitDetailsPopover: View {
     /// The active pane's decoded host metadata — its `gitStatus` + the `gitDiff`/`refresh` verbs.
     let model: PaneMetadataModel
@@ -391,6 +392,7 @@ struct GitDetailsPopover: View {
         .accessibilityLabel("Refresh git status")
     }
 }
+#endif
 
 /// Pure unpacking of a `GitFileChange.statusCode` (porcelain `XY` packed by the host) into a render-ready
 /// category + badge letter — the INVERSE of `HostMetadataProbe.statusNibble`/`packStatus` (high nibble = X
