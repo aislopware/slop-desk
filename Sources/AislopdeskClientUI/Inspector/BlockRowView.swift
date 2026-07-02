@@ -17,6 +17,10 @@ struct BlockRowView: View {
     let block: CommandBlock
     /// Whether the block is bookmarked — shows a trailing star so a starred block reads at a glance.
     var isBookmarked: Bool = false
+    /// The block's coarse relative first-seen stamp ("4m", "2h" — `OutlinePresentation.relativeTime`),
+    /// shown right-aligned. `nil` hides the column (an unknown / evicted first-seen). Folded in from the
+    /// old standalone Outline tab when it merged into this panel.
+    var relativeTime: String?
 
     /// The status tint: green for success, red for a failure, secondary while running.
     private var statusTint: Color {
@@ -43,6 +47,12 @@ struct BlockRowView: View {
                 Image(systemSymbol: .starFill)
                     .font(.caption2)
                     .foregroundStyle(Slate.Status.warn)
+            }
+            if let relativeTime {
+                Text(relativeTime)
+                    .font(.caption)
+                    .foregroundStyle(Slate.Text.tertiary)
+                    .monospacedDigit()
             }
         }
         .padding(.vertical, 2)

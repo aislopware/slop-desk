@@ -1110,7 +1110,7 @@ final class TreeCommandRoutingTests: XCTestCase {
     /// don't collide with any chord, and aren't dead). Revert-to-confirm-fail by removing a registry case.
     func testDetailsTabBindingsAreViewAndChordless() {
         let expected: [(String, DetailsPanelTab)] = [
-            ("view.detailsInfo", .info), ("view.detailsOutline", .outline),
+            ("view.detailsInfo", .info),
             ("view.detailsGit", .git), ("view.detailsFiles", .files),
         ]
         for (id, tab) in expected {

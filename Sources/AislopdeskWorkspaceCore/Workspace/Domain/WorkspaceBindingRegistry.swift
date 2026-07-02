@@ -81,7 +81,7 @@ public enum WorkspaceAction: Hashable, Sendable {
     // `NSWindow.level = .floating` via the route closure. A window-scope view concern → needs no active pane;
     // iOS has no window level (documented no-op).
     case pinWindow
-    // Jump the Details / inspector panel to a SPECIFIC tab (Info / Outline / Git / Files) AND reveal it if
+    // Jump the Details / inspector panel to a SPECIFIC tab (Info / Git / Files) AND reveal it if
     // hidden (four `Details: *` jump commands; ES-E9-5). Parameterized like `selectTab`/`applyLayout`;
     // unbound by default (the four registry rows carry `chord: nil`) — the user can bind any in Settings.
     case selectDetailsTab(DetailsPanelTab)
@@ -759,8 +759,9 @@ public enum WorkspaceBindingRegistry {
             symbol: "pin",
             keywords: "pin window float floating always on top above keep front level stay topmost pip",
         ),
-        // Details tab jump commands (E9/WI-7, ES-E9-5, B2): four UNBOUND-by-default commands that
-        // switch the right-hand Details panel to a specific tab (Info / Outline / Git / Files) AND reveal the
+        // Details tab jump commands (E9/WI-7, ES-E9-5, B2): three UNBOUND-by-default commands that
+        // switch the right-hand Details panel to a specific tab (Info / Git / Files — the old Outline tab
+        // is merged into Info's Commands section) AND reveal the
         // panel when hidden (the reveal is wired in the view closure). `chord: nil` — the palette/menu-only
         // idiom (like `tab.close` / `view.openQuickly`) surfaces them in the command palette + cheat sheet
         // without binding a key; the user can bind any of them in Settings → Keybindings. The symbols mirror
@@ -769,11 +770,6 @@ public enum WorkspaceBindingRegistry {
             id: "view.detailsInfo", action: .selectDetailsTab(.info), title: "Details: Info",
             category: .view, chord: nil,
             symbol: "info.circle", keywords: "inspector details panel tab info jump switch session process ports",
-        ),
-        WorkspaceBinding(
-            id: "view.detailsOutline", action: .selectDetailsTab(.outline), title: "Details: Outline",
-            category: .view, chord: nil,
-            symbol: "list.bullet", keywords: "inspector details panel tab outline jump switch commands marks blocks",
         ),
         WorkspaceBinding(
             id: "view.detailsGit", action: .selectDetailsTab(.git), title: "Details: Git",

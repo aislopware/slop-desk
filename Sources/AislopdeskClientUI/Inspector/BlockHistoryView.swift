@@ -5,9 +5,14 @@
 // `navigatorBlocks` (filtered) rendered via `BlockRowView`, and a detail area below the list that expands
 // the selected block's output (`BlockOutputView`). Selecting a block REQUESTS its captured output via the
 // injected `requestOutput` closure (the pane's `TerminalViewModel.copyBlockOutput`, which fires wire type
-// 15 and resolves with VT-stripped plain text). Per-row `.contextMenu`: copy command / copy output /
-// star-unstar (the model's bookmarks API). ⌘↑/⌘↓ move the selection. Empty state via
-// `ContentUnavailableView`.
+// 15 and resolves with VT-stripped plain text). Per-row `.contextMenu`: jump to the command in the
+// scrollback / copy command / copy output / star-unstar (the model's bookmarks API). ⌘↑/⌘↓ move the
+// selection. Empty state via `ContentUnavailableView`.
+//
+// This panel ABSORBED the old standalone Outline tab (E9): each row carries the Outline's relative
+// first-seen stamp (ticking via `TimelineView`), and the row jump — the context menu's "Jump to Command"
+// plus a trailing hover-independent jump button — routes to the injected `onJump` (the store's
+// `jumpToNavigatorBlockInActivePane`, the shared ordinal-anchored `BlockJump`).
 //
 // SYSTEM colours, SF Symbols, system + monospaced fonts only — NO design-system. The block model +
 // sanitizer are pure; this view holds only selection + a per-index fetched-output cache as `@State`.
@@ -29,6 +34,10 @@ struct BlockHistoryView: View {
     /// actor. The bytes keep their SGR colour runs — `BlockOutputView` renders them coloured; the copy path
     /// strips them through `BlockOutputSanitizer`.
     let requestOutput: (UInt32, @escaping (Data?) -> Void) -> Void
+    /// Jumps the pane's scrollback to a block index (the store's `jumpToNavigatorBlockInActivePane`).
+    /// Injected so this view stays free of the store/client actor; the no-op default keeps the panel
+    /// standalone-mountable (previews / tests).
+    var onJump: (UInt32) -> Void = { _ in }
 
     @State private var selection: UInt32?
     @State private var failedOnly = false
@@ -83,11 +92,15 @@ struct BlockHistoryView: View {
     // MARK: List
 
     private var list: some View {
-        List(selection: $selection) {
-            ForEach(blocks) { block in
-                BlockRowView(block: block, isBookmarked: model.isBookmarked(block.index))
-                    .tag(block.index)
-                    .contextMenu { rowMenu(for: block) }
+        // The periodic tick only re-renders the rows so the relative first-seen stamps ("4m") stay live
+        // on an idle pane; 30s matches the coarse buckets (the old Outline tab's cadence).
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            List(selection: $selection) {
+                ForEach(blocks) { block in
+                    row(for: block, now: context.date)
+                        .tag(block.index)
+                        .contextMenu { rowMenu(for: block) }
+                }
             }
         }
         .listStyle(.inset)
@@ -112,6 +125,29 @@ struct BlockHistoryView: View {
         }
         // ⌘↑ / ⌘↓ step the selection through the (filtered) newest-first list.
         .overlay(keyboardStepper)
+    }
+
+    /// One Commands row: the block row (with its Outline-inherited relative stamp) plus a trailing
+    /// jump-to-scrollback button (`arrow.right.to.line`) — the merged Outline's primary affordance.
+    private func row(for block: CommandBlock, now: Date) -> some View {
+        HStack(spacing: 6) {
+            BlockRowView(
+                block: block,
+                isBookmarked: model.isBookmarked(block.index),
+                relativeTime: model.firstSeen(index: block.index)
+                    .map { OutlinePresentation.relativeTime(from: $0, now: now) },
+            )
+            Button {
+                onJump(block.index)
+            } label: {
+                Image(systemName: "arrow.right.to.line")
+                    .font(.caption)
+                    .foregroundStyle(Slate.Text.icon)
+            }
+            .buttonStyle(.plain)
+            .help("Jump to this command in the scrollback")
+            .accessibilityLabel("Jump to command")
+        }
     }
 
     /// Invisible buttons carrying ⌘↑ / ⌘↓ so selection-stepping works without stealing other keys. DISABLED
@@ -156,6 +192,14 @@ struct BlockHistoryView: View {
 
     @ViewBuilder
     private func rowMenu(for block: CommandBlock) -> some View {
+        Button {
+            onJump(block.index)
+        } label: {
+            Label("Jump to Command", systemImage: "arrow.right.to.line")
+        }
+
+        Divider()
+
         Button {
             copyToPasteboard(block.commandText)
         } label: {

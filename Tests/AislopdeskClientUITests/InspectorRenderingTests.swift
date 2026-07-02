@@ -258,32 +258,24 @@ final class InspectorRenderingTests: XCTestCase {
         XCTAssertNil(AgentTranscript.clockTime(fromISO: "not-a-timestamp"))
     }
 
-    // MARK: - DetailsPanelTab order (Outline tab placement — InspectorColumn)
+    // MARK: - DetailsPanelTab order (Outline merged into Info — InspectorColumn)
 
-    func testDetailsTabOrderPlacesOutlineBetweenInfoAndGit() {
-        // ES-E9-2 / WI-5 + WI-7: the Details panel's segmented header iterates the hoisted cross-module
-        // `DetailsPanelTab.allCases`; the Outline tab must sit BETWEEN Info and Git, giving the fixed order
-        // Info | Outline | Git | Files. FAILS on the un-fixed code (no `.outline` case ⇒ does not compile) and
-        // on a reorder regression (the index pins below fail).
+    func testDetailsTabOrderIsInfoGitFiles() {
+        // The Details panel's segmented header iterates the hoisted cross-module `DetailsPanelTab.allCases`.
+        // The old standalone Outline tab was MERGED into the Info tab's Commands section, so the fixed order
+        // is Info | Git | Files — a resurfaced "outline" case or a reorder fails this pin.
         let order = DetailsPanelTab.allCases.map(\.rawValue)
-        XCTAssertEqual(order, ["info", "outline", "git", "files"], "Details tab order")
-
-        guard let info = order.firstIndex(of: "info"),
-              let outline = order.firstIndex(of: "outline"),
-              let git = order.firstIndex(of: "git")
-        else {
-            XCTFail("the Outline tab is missing from DetailsPanelTab")
-            return
-        }
-        XCTAssertLessThan(info, outline, "Outline follows Info")
-        XCTAssertLessThan(outline, git, "Outline precedes Git")
+        XCTAssertEqual(order, ["info", "git", "files"], "Details tab order (Outline merged into Info)")
     }
 
-    func testOutlineTabIconAndTitle() {
-        // The Outline tab uses the spec's list/lines glyph + "Outline" label (the segmented header renders it
-        // from the WI-7 view-local `DetailsPanelTab.title`/`.icon` extension).
-        XCTAssertEqual(DetailsPanelTab.outline.icon, "list.bullet")
-        XCTAssertEqual(DetailsPanelTab.outline.title, "Outline")
+    func testDetailsTabIconsAndTitles() {
+        // The segmented header renders from the WI-7 view-local `DetailsPanelTab.title`/`.icon` extension.
+        XCTAssertEqual(DetailsPanelTab.info.icon, "info.circle")
+        XCTAssertEqual(DetailsPanelTab.info.title, "Info")
+        XCTAssertEqual(DetailsPanelTab.git.icon, "arrow.triangle.branch")
+        XCTAssertEqual(DetailsPanelTab.git.title, "Git")
+        XCTAssertEqual(DetailsPanelTab.files.icon, "folder")
+        XCTAssertEqual(DetailsPanelTab.files.title, "Files")
     }
 
     // MARK: - InfoTabFormatting (Working Directory section — InspectorColumn, WI-6)

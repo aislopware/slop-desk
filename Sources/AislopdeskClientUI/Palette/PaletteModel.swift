@@ -107,7 +107,7 @@ public enum PaletteAction: Sendable {
     /// Toggle the right Details / inspector panel — routed by the overlay coordinator to the live
     /// ``WorkspaceChromeState`` `inspectorCollapsed`, the same flag ⌘⇧R + the titlebar button drive.
     case toggleInspector
-    /// Jump the right Details / inspector panel to a SPECIFIC tab (Info / Outline / Git / Files) AND reveal
+    /// Jump the right Details / inspector panel to a SPECIFIC tab (Info / Git / Files) AND reveal
     /// it if hidden — routed by the overlay coordinator to the injected ``OverlayCoordinator/selectDetailsTab``
     /// closure (the same live `DetailsPanelState.selected` + `WorkspaceChromeState.inspectorCollapsed` the
     /// ⌘⇧R toggle + the View ▸ Details: * menu rows drive). These four UNBOUND `Details: *`

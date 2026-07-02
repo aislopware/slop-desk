@@ -232,23 +232,8 @@ struct InspectorColumn: View {
         // `.id(activePaneID)` resets each tab's local interaction state (selected diff file / find query /
         // scroll position) when the focused pane changes — `activeModel`/`terminalModel` already switch to
         // that pane's data.
-        case .outline: outlineContent.id(activePaneID)
         case .git: GitStatusView(model: activeModel).id(activePaneID)
         case .files: RemoteFileTreeView(model: activeModel).id(activePaneID)
-        }
-    }
-
-    /// The Outline tab (E9, WI-5): the active pane's command-mark navigator. Bound to the focused terminal
-    /// pane's `TerminalBlockModel`; a non-terminal / unmaterialized pane shows the same empty state as the
-    /// Commands navigator.
-    @ViewBuilder private var outlineContent: some View {
-        if let terminalModel {
-            OutlineView(
-                model: terminalModel.blocks,
-                onJump: { store.jumpToNavigatorBlockInActivePane(index: $0) },
-            )
-        } else {
-            emptyState("No Commands", systemImage: "list.bullet", note: "Select a terminal pane to see its history")
         }
     }
 
@@ -400,6 +385,7 @@ struct InspectorColumn: View {
                 requestOutput: { index, completion in
                     terminalModel.requestBlockOutputBytes(index: index, onResult: completion)
                 },
+                onJump: { store.jumpToNavigatorBlockInActivePane(index: $0) },
             )
         } else {
             emptyState("No Commands", systemImage: "terminal", note: "Select a terminal pane to see its history")
@@ -415,23 +401,22 @@ struct InspectorColumn: View {
 /// The segmented Details header's per-tab DISPLAY (E9/WI-7): the short label + SF Symbol for each
 /// ``DetailsPanelTab``. Kept as a view-local extension (NOT on the core `DetailsPanelTab`, which stays a pure
 /// value enum) so the SF-symbol / title strings live in the UI layer; `internal` so the placement pin in
-/// `InspectorRenderingTests` reaches it via `@testable import`. Tab order is Info | Outline | Git | Files.
+/// `InspectorRenderingTests` reaches it via `@testable import`. Tab order is Info | Git | Files (the old
+/// Outline tab is merged into Info's Commands section).
 extension DetailsPanelTab {
     /// The short header label (NOT the `Details: …` palette title) shown when the tab is active.
     var title: String {
         switch self {
         case .info: "Info"
-        case .outline: "Outline"
         case .git: "Git"
         case .files: "Files"
         }
     }
 
-    /// The SF Symbol for the tab (mirrors the four `Details: *` registry binding symbols).
+    /// The SF Symbol for the tab (mirrors the `Details: *` registry binding symbols).
     var icon: String {
         switch self {
         case .info: "info.circle"
-        case .outline: "list.bullet"
         case .git: "arrow.triangle.branch"
         case .files: "folder"
         }

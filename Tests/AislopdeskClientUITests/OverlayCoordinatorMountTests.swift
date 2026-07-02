@@ -242,17 +242,20 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         )
     }
 
-    // MARK: - ES-E9-5: the four `Details: *` jump commands surface in the palette + run on both platforms
+    // MARK: - ES-E9-5: the three `Details: *` jump commands surface in the palette + run on both platforms
 
-    /// THE out-of-box pin (ES-E9-5, finding #2 / #4): the ⌘⇧P command-palette catalog now ENUMERATES the four
-    /// `Details: Info/Outline/Git/Files` jump commands under the VIEW category, each carrying the matching
-    /// `.selectDetailsTab(tab)` action. FAILS on the un-fixed code (the rows did not exist in the catalog, and
-    /// `PaletteAction.selectDetailsTab` had no case) — so the commands were dead out-of-box (chord: nil + not
-    /// in the palette). Revert-to-confirm-fail: removing any of the four rows drops its `catalog.first` to nil.
-    func testPaletteCatalogEnumeratesTheFourDetailsTabCommands() throws {
+    /// THE out-of-box pin (ES-E9-5, finding #2 / #4): the ⌘⇧P command-palette catalog ENUMERATES the three
+    /// `Details: Info/Git/Files` jump commands under the VIEW category, each carrying the matching
+    /// `.selectDetailsTab(tab)` action (the old `Details: Outline` row is gone — its tab merged into Info's
+    /// Commands section). Revert-to-confirm-fail: removing any of the three rows drops its `catalog.first`
+    /// to nil.
+    func testPaletteCatalogEnumeratesTheDetailsTabCommands() throws {
+        XCTAssertNil(
+            ActionsPaletteSource.catalog.first { $0.id == "action.detailsOutline" },
+            "the merged-away Details: Outline palette row is gone",
+        )
         let expected: [(id: String, title: String, tab: DetailsPanelTab)] = [
             ("action.detailsInfo", "Details: Info", .info),
-            ("action.detailsOutline", "Details: Outline", .outline),
             ("action.detailsGit", "Details: Git", .git),
             ("action.detailsFiles", "Details: Files", .files),
         ]
@@ -283,7 +286,6 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
         let rows: [(id: String, tab: DetailsPanelTab)] = [
             ("action.detailsInfo", .info),
-            ("action.detailsOutline", .outline),
             ("action.detailsGit", .git),
             ("action.detailsFiles", .files),
         ]
@@ -302,7 +304,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     /// (`WorkspaceRootView.revealDetailsTab`, bound in `wireOverlaySelectDetailsTab()`) must set BOTH the
     /// selected tab AND the reveal flag (`inspectorCollapsed = false`) — the reveal half was inert on iOS
     /// because nothing read that flag (now `detailsCompactColumnBinding` maps it to the compact `.detail`
-    /// column). Drives the FULL production seam: run the `Details: Outline` palette row through the coordinator
+    /// column). Drives the FULL production seam: run the `Details: Git` palette row through the coordinator
     /// wired exactly as the root view does, from a resting state (panel HIDDEN, a DIFFERENT tab selected) so the
     /// assertion proves the command moved both. Revert-to-confirm-fail: a regression that drops
     /// `chrome.inspectorCollapsed = false` from `revealDetailsTab` (leaving the iOS reveal a silent no-op) fails
@@ -318,12 +320,12 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         overlay.selectDetailsTab = { WorkspaceRootView.revealDetailsTab($0, chrome: chrome, details: details) }
 
         let row = try XCTUnwrap(
-            ActionsPaletteSource.catalog.first { $0.id == "action.detailsOutline" },
-            "the catalog has the Details: Outline row",
+            ActionsPaletteSource.catalog.first { $0.id == "action.detailsGit" },
+            "the catalog has the Details: Git row",
         )
         overlay.run(row)
 
-        XCTAssertEqual(details.selected, .outline, "running Details: Outline selects the Outline tab")
+        XCTAssertEqual(details.selected, .git, "running Details: Git selects the Git tab")
         XCTAssertFalse(
             chrome.inspectorCollapsed,
             "...AND reveals the panel — the flag the iOS compact reveal (preferredCompactColumn) reads, so the "
@@ -600,7 +602,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     /// the registry (the chips), while the chord-LESS rows the table carries render NO chip. Those are the
     /// collapsed ⌘1…⌘9 representative + the chord-less Rename Tab verb + the chord-less Close Tab verb (E7
     /// re-scoped ⌘⇧W onto Close Window, leaving Close Tab reachable only via the ⌘W cascade / palette, see
-    /// DECISIONS.md) + the four E9 `Details: *` jump commands (Info/Outline/Git/Files — palette/menu-only,
+    /// DECISIONS.md) + the three E9 `Details: *` jump commands (Info/Git/Files — palette/menu-only,
     /// `chord: nil` by design, pinned chord-less by `DetailsTabRoutingTests`) + the three E17 view toggles
     /// `Read Only` + `Secure Keyboard Entry` + `Vi Mode Key Hints` (none ships a default chord —
     /// palette/menu-only, `chord: nil`, the user may bind them in Settings → Keybindings) + the E19 `Pin
@@ -623,7 +625,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
             chordLessIDs,
             [
                 "tab.selectN", "pane.rename", "tab.close",
-                "view.detailsInfo", "view.detailsOutline", "view.detailsGit", "view.detailsFiles",
+                "view.detailsInfo", "view.detailsGit", "view.detailsFiles",
                 "view.readOnly", "view.secureKeyboardEntry", "view.viKeyHints",
                 // E10 WI-9: Hint to Reveal in Finder is chord-less (⌘⇧R is already bound to Toggle Details).
                 "view.hintReveal",

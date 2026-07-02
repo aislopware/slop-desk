@@ -160,16 +160,11 @@ public struct ActionsPaletteSource: PaletteDataSource {
         // injected `selectDetailsTab` closure — the SAME live `DetailsPanelState` + chrome the ⌘⇧R toggle and
         // the View ▸ Details: * menu rows drive. The palette is cross-platform, so these run on iOS too. The
         // glyph derives from the registry (chord: nil ⇒ `nil` ⇒ no hint chip, since they ship unbound). The
-        // icons mirror the four registry rows' symbols.
+        // icons mirror the three registry rows' symbols.
         PaletteItem(
             id: "action.detailsInfo", icon: "info.circle", title: "Details: Info",
             subtitle: nil, shortcut: glyph(.selectDetailsTab(.info)), filter: .actions, category: .view,
             action: .selectDetailsTab(.info),
-        ),
-        PaletteItem(
-            id: "action.detailsOutline", icon: "list.bullet", title: "Details: Outline",
-            subtitle: nil, shortcut: glyph(.selectDetailsTab(.outline)), filter: .actions, category: .view,
-            action: .selectDetailsTab(.outline),
         ),
         PaletteItem(
             id: "action.detailsGit", icon: "arrow.triangle.branch", title: "Details: Git",

@@ -50,7 +50,7 @@ struct WorkspaceCommands: Commands {
     /// the menu item a graceful no-op via `route`, never dead. The ⌘⇧O chord itself is owned by the NSEvent
     /// dispatcher (this menu carries no `.keyboardShortcut`); the menu only mirrors it.
     var openQuickly: (() -> Void)?
-    /// E9 / WI-7: the four `Details: *` jump commands' tab selector (the View ▸ Details: Info/Outline/Git/
+    /// E9 / WI-7: the `Details: *` jump commands' tab selector (the View ▸ Details: Info/Git/
     /// Files menu items). `nil` keeps the items a graceful no-op via `route` (the live wiring rides the macOS
     /// NSEvent dispatcher's `selectDetailsTab`, matching how `toggleDetailsPanel`/`toggleSidebar` aren't
     /// threaded into the menu either), never dead.
