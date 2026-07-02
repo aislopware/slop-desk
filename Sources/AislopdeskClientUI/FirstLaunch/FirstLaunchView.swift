@@ -194,8 +194,7 @@ private struct FirstLaunchThemeStep: View {
     private let columns = [GridItem(.adaptive(minimum: 150), spacing: Slate.Metric.space2)]
 
     private var selected: ThemeChoice {
-        if let slug = store.appearance.customLightSlug, !slug.isEmpty { return .system }
-        return store.appearance.theme ?? .monokaiProClassic
+        store.appearance.theme ?? .monokaiProClassic
     }
 
     var body: some View {
@@ -239,7 +238,6 @@ private struct FirstLaunchThemeStep: View {
     private func select(_ choice: ThemeChoice) {
         var appearance = store.appearance
         appearance.theme = choice
-        appearance.customLightSlug = nil
         store.appearance = appearance // didSet re-applies the theme LIVE (ThemeStore repoints every token).
         model.markComplete(.theme)
     }

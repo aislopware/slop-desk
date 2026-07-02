@@ -55,7 +55,7 @@ public enum TerminalConfigBuilder {
     /// corpus is untouched (this epic is wholly client-side). ``PreferencesStore`` always passes a resolved
     /// `controls` so the live surface tracks the fire-time Controls toggles.
     /// `paletteOverride` (E15 WI-2) — the active theme's 16-entry ANSI palette. When supplied AND valid
-    /// (exactly ``ThemeDocument/paletteCount`` entries, every one a clean 6-hex), the builder emits
+    /// (exactly ``paletteCount`` entries, every one a clean 6-hex), the builder emits
     /// `palette = N=hex` lines (indices 0–15) AFTER `foreground`, so the terminal cells track the theme. A
     /// `nil` (or malformed — validate-then-drop) value emits NO `palette` line (byte-identical default).
     /// `selectionBackgroundOverride` (E15 WI-2) — the theme's selection-highlight colour. A valid 6-hex emits
@@ -200,18 +200,36 @@ public enum TerminalConfigBuilder {
         Double.maximum(-50.0, Double.minimum(200.0, percent))
     }
 
+    /// The number of ANSI palette entries a valid theme palette MUST declare (indices 0–15).
+    static let paletteCount = 16
+
+    /// `true` iff `value` is a 6-digit hex colour with NO leading `#` (case-insensitive). Rejects the wrong
+    /// length, `#`-prefixed strings, and any non-hex character — the caller drops the whole override then
+    /// (validate-then-drop). The check is on the exact 6 characters, so embedded whitespace also fails.
+    static func isValidHex(_ value: String) -> Bool {
+        guard value.count == 6 else { return false }
+        for scalar in value.unicodeScalars {
+            let v = scalar.value
+            let isDigit = v >= 48 && v <= 57 // 0–9
+            let isUpperAF = v >= 65 && v <= 70 // A–F
+            let isLowerAF = v >= 97 && v <= 102 // a–f
+            if !(isDigit || isUpperAF || isLowerAF) { return false }
+        }
+        return true
+    }
+
     /// Append the E15 theme PALETTE lines (`palette = N=hex`, indices 0–15) + `selection-background`. Both
-    /// validate-then-drop: the palette is emitted only when it is exactly ``ThemeDocument/paletteCount``
-    /// clean 6-hex entries, and the selection only when it is a clean 6-hex — a `nil`/malformed value emits
-    /// NOTHING (byte-identical default). Hex matches the existing bare-hex `background`/`foreground` form.
+    /// validate-then-drop: the palette is emitted only when it is exactly ``paletteCount`` clean 6-hex
+    /// entries, and the selection only when it is a clean 6-hex — a `nil`/malformed value emits NOTHING
+    /// (byte-identical default). Hex matches the existing bare-hex `background`/`foreground` form.
     private static func appendPalette(
         _ lines: inout [String],
         paletteOverride: [String]?,
         selectionBackgroundOverride: String?,
     ) {
         if let paletteOverride,
-           paletteOverride.count == ThemeDocument.paletteCount,
-           paletteOverride.allSatisfy(ThemeDocument.isValidHex)
+           paletteOverride.count == paletteCount,
+           paletteOverride.allSatisfy(isValidHex)
         {
             for (index, hex) in paletteOverride.enumerated() {
                 lines.append("palette = \(index)=\(hex)")
@@ -219,7 +237,7 @@ public enum TerminalConfigBuilder {
         }
         if let selectionBackgroundOverride {
             let selection = selectionBackgroundOverride.trimmingCharacters(in: .whitespaces)
-            if ThemeDocument.isValidHex(selection) { lines.append("selection-background = \(selection)") }
+            if isValidHex(selection) { lines.append("selection-background = \(selection)") }
         }
     }
 

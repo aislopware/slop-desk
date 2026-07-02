@@ -439,20 +439,6 @@ public extension SplitNode {
         }
     }
 
-    /// Returns a structurally identical tree with every `.split` node's ``SplitNodeID`` freshly minted (leaf
-    /// ids, axes, and weights unchanged). Used by the workspace-import id re-mint so an imported document
-    /// cannot collide split identities with the live tree. Pure.
-    func withFreshSplitIDs() -> SplitNode {
-        switch self {
-        case .leaf:
-            self
-        case let .split(_, axis, children):
-            .split(id: SplitNodeID(), axis: axis, children: children.map { child in
-                WeightedChild(weight: child.weight, node: child.node.withFreshSplitIDs())
-            })
-        }
-    }
-
     // MARK: Enclosing split on an axis (the keyboard-resize query)
 
     /// The nearest ANCESTOR `.split` on `axis` that contains leaf `pane`, as `(splitID, childIndex,

@@ -76,7 +76,7 @@ final class ThemeStoreTests: XCTestCase {
         XCTAssertEqual(posts, 2)
     }
 
-    // MARK: E15 WI-3 — dual-slot follow-OS + custom resolution + cross-module id round-trip
+    // MARK: E15 WI-3 — dual-slot follow-OS + cross-module id round-trip
 
     /// With "Use separated theme for dark mode" ON, the OS appearance SELECTS the slot (light → primary
     /// `theme`, dark → `themeDark`) and an OS flip re-resolves LIVE. The `osIsDark` probe is stubbed (no NSApp).
@@ -146,71 +146,6 @@ final class ThemeStoreTests: XCTestCase {
         store.osIsDark = { false }
         store.reresolveForOSAppearance()
         XCTAssertEqual(store.active.id, "monokai-classic-light", "OS light → Monokai Pro Classic Light, live")
-    }
-
-    /// A `.custom` slot with NO catalog resolver (pre-WI-6 / a since-deleted slug) falls back GRACEFULLY to the
-    /// built-in default — never a crash.
-    func testCustomSlotFallsBackWhenNoResolver() {
-        let store = ThemeStore()
-        store.osIsDark = { false }
-        store.apply(appearance: AppearancePreferences(theme: .paper, customLightSlug: "ghost"))
-        XCTAssertEqual(
-            store.active.id, "monokai-classic",
-            "a custom slot with no resolver falls back to the default theme",
-        )
-    }
-
-    /// A `.custom` slot resolves through the injected `resolveCustomDocument` seam → an `SlateTheme(document:)`
-    /// (the seam WI-6's `ThemeCatalog` fills). The terminal palette tracks the document.
-    func testCustomSlotResolvesViaSeam() {
-        let store = ThemeStore()
-        store.osIsDark = { false }
-        let palette = Array(repeating: "112233", count: 16)
-        let doc = ThemeDocument(
-            displayName: "Dracula", slug: "dracula", mode: .dark,
-            foreground: "F8F8F2", background: "282A36", palette: palette,
-        )
-        store.resolveCustomDocument = { slug in slug == "dracula" ? doc : nil }
-        store.apply(appearance: AppearancePreferences(theme: .paper, customLightSlug: "dracula"))
-        XCTAssertEqual(store.active.id, "custom-dracula")
-        XCTAssertEqual(store.active.terminalBackgroundHex, "282A36", "the custom doc drives the terminal cells")
-    }
-
-    /// Editing the ACTIVE custom theme IN PLACE (same slug ⇒ same id, changed colours) must re-post the
-    /// cross-boundary repaint so the NSWindow backdrop / appearance / divider seam re-pin — before the fix
-    /// setActive posted ONLY on an id change, so an in-place edit left the window chrome at the old colours.
-    func testInPlaceCustomThemeEditRePostsOnContentChange() {
-        let store = ThemeStore()
-        store.osIsDark = { false }
-        let palette = Array(repeating: "112233", count: 16)
-        var doc = ThemeDocument(
-            displayName: "Mine", slug: "mine", mode: .dark,
-            foreground: "F8F8F2", background: "282A36", palette: palette,
-        )
-        store.resolveCustomDocument = { slug in slug == "mine" ? doc : nil }
-        let appearance = AppearancePreferences(theme: .paper, customLightSlug: "mine")
-        store.apply(appearance: appearance)
-        XCTAssertEqual(store.active.terminalBackgroundHex, "282A36")
-
-        var posts = 0
-        let token = NotificationCenter.default.addObserver(
-            forName: ThemeStore.didChangeNotification, object: store, queue: nil,
-        ) { _ in posts += 1 }
-        defer { NotificationCenter.default.removeObserver(token) }
-
-        // Re-apply the SAME slug with UNCHANGED content → no post (idempotent).
-        store.apply(appearance: appearance)
-        XCTAssertEqual(posts, 0, "an idempotent re-apply of the same custom theme posts nothing")
-
-        // Edit the background in place (same slug ⇒ same id "custom-mine") → must post so the chrome re-pins.
-        doc = ThemeDocument(
-            displayName: "Mine", slug: "mine", mode: .dark,
-            foreground: "F8F8F2", background: "101010", palette: palette,
-        )
-        store.apply(appearance: appearance)
-        XCTAssertEqual(store.active.terminalBackgroundHex, "101010", "the edited background resolved")
-        XCTAssertEqual(store.active.id, "custom-mine", "the id is unchanged (same slug)")
-        XCTAssertEqual(posts, 1, "the in-place edit re-posts the cross-boundary repaint")
     }
 
     /// CROSS-MODULE PIN: every concrete ``ThemeChoice``'s `builtinID` (in the leaf) round-trips to a built-in

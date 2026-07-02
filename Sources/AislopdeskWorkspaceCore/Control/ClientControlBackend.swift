@@ -228,11 +228,6 @@ public protocol ClientControlBackend: AnyObject {
     /// Themes filtered by color appearance.
     func listThemes(color: ClientControlProtocol.ThemeColorFilter) -> [ClientThemeInfo]
 
-    /// Import a theme file (native `.aislopdesktheme` / iTerm2 / kitty / alacritty / ghostty). `activate` makes
-    /// it the active theme; `overwrite` allows replacing an existing same-slug theme. Returns the
-    /// imported slug, or `nil` when the file is missing / unreadable / unparseable.
-    func themeImport(path: String, activate: Bool, overwrite: Bool) -> String?
-
     /// Fonts filtered by monospace / family substring / scope.
     func listFonts(
         monospaceOnly: Bool,

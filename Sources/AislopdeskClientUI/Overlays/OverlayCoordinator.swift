@@ -151,13 +151,6 @@ public final class OverlayCoordinator {
     /// the chrome + terminal cells through the SAME live `appearance.theme` Settings → Appearance edits. No-op
     /// by default (tests / previews), so the row is never a trap.
     @ObservationIgnored public var switchTheme: @MainActor () -> Void = {}
-    /// Theme parity (Batch 4): re-applies the live client settings (the palette "Reload Config" row). Bound
-    /// app-side to ``PreferencesStore/reapplyLiveSettings()`` + the config-reload broadcast. No-op by default.
-    @ObservationIgnored public var reloadConfig: @MainActor () -> Void = {}
-    /// Theme parity (Batch 4): reveals the custom-themes folder in Finder (the palette "Open Theme File" row).
-    /// Bound app-side (macOS `NSWorkspace`); iOS has no `~/.config`, so it is a documented no-op there. No-op by
-    /// default.
-    @ObservationIgnored public var openThemeFile: @MainActor () -> Void = {}
     /// Batch-5b (A): EAGERLY resolve the focused pane's working directory (the host `cwd()` metadata RPC →
     /// ``WorkspaceStore/setLastKnownCwd(_:for:)``) so the WORKING DIRECTORY palette header's cwd pill is
     /// populated the moment the palette opens. Bound by ``WorkspaceRootView`` to the live ``MetadataClient``.
@@ -434,19 +427,12 @@ public final class OverlayCoordinator {
         case .openRemotePicker:
             closePalette()
             openRemotePicker()
-        // Theme parity (Batch 4): a live theme switch / config reload — both chainable (⌘↩ keep-open) like the
-        // `.store` rows, so the user can cycle themes or re-apply without re-opening. The injected closure is a
-        // graceful no-op by default (tests / previews).
+        // Theme parity (Batch 4): a live theme switch — chainable (⌘↩ keep-open) like the `.store` rows, so
+        // the user can cycle themes without re-opening. The injected closure is a graceful no-op by default
+        // (tests / previews).
         case .switchTheme:
             switchTheme()
             if !keepOpen { closePalette() }
-        case .reloadConfig:
-            reloadConfig()
-            if !keepOpen { closePalette() }
-        // Open Theme File reveals the themes folder (navigates away to Finder), so it always closes the palette.
-        case .openThemeFile:
-            openThemeFile()
-            closePalette()
         case .noOp:
             break
         }

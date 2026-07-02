@@ -276,49 +276,4 @@ public extension TreeWorkspace {
             .seedingBuiltInLaunchPresetsIfEmpty()
             .seedingBuiltInSessionTemplatesIfEmpty()
     }
-
-    /// Re-mints EVERY identity — session / tab / split / pane — so an imported document can never collide
-    /// with the live registry (the async-teardown race a re-import into the SAME running session would
-    /// otherwise hit) or with sessions being merged beside it. Each session's spec side table, active pane,
-    /// and zoom follow their leaf's new id; `activeSessionID` follows its session's new id.
-    /// The tree analogue of the canvas import's explicit id-map (``WorkspaceStore/importWorkspace(_:mode:)``).
-    /// Pure — preserves the specs == leafIDs invariant.
-    func withFreshIdentities() -> TreeWorkspace {
-        var newActiveSessionID: SessionID?
-        let freshSessions = sessions.map { session -> Session in
-            var paneMap: [PaneID: PaneID] = [:]
-            for id in session.allPaneIDs() where paneMap[id] == nil { paneMap[id] = PaneID() }
-            let freshSessionID = SessionID()
-            if session.id == activeSessionID { newActiveSessionID = freshSessionID }
-            let freshTabs = session.tabs.map { tab -> Tab in
-                Tab(
-                    id: TabID(),
-                    title: tab.title,
-                    root: tab.root.mapLeaves { paneMap[$0] ?? $0 }.withFreshSplitIDs(),
-                    activePane: tab.activePane.flatMap { paneMap[$0] },
-                    zoomedPane: tab.zoomedPane.flatMap { paneMap[$0] },
-                )
-            }
-            var freshSpecs: [PaneID: PaneSpec] = [:]
-            for (id, spec) in session.specs {
-                if let fresh = paneMap[id] { freshSpecs[fresh] = spec }
-            }
-            return Session(
-                id: freshSessionID,
-                name: session.name,
-                tabs: freshTabs,
-                activeTabIndex: session.activeTabIndex,
-                specs: freshSpecs,
-                connection: session.connection,
-            )
-        }
-        return TreeWorkspace(
-            schemaVersion: schemaVersion,
-            sessions: freshSessions,
-            activeSessionID: newActiveSessionID ?? freshSessions.first?.id,
-            layoutPresets: layoutPresets,
-            launchPresets: launchPresets,
-            sessionTemplates: sessionTemplates,
-        )
-    }
 }

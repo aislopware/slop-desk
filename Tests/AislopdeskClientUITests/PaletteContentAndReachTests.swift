@@ -171,46 +171,30 @@ final class PaletteContentAndReachTests: XCTestCase {
         )
     }
 
-    // MARK: - Batch 4 (catalog completeness): theme/config verbs, layout presets
+    // MARK: - Batch 4 (catalog completeness): theme verb, layout presets
 
-    /// The Theme / Config verbs ("Theme: Switch Theme / Open Theme File" + "Settings: Reload
-    /// Config") are now in the catalog under SETTINGS, each routing its coordinator action. REVERT-TO-CONFIRM-
-    /// FAIL: they were absent (the palette had Open Settings only), so `catalog.first` is nil → `XCTUnwrap` trips.
-    func testThemeAndConfigVerbsAreInTheCatalog() throws {
-        let expected: [(id: String, title: String)] = [
-            ("action.switchTheme", "Switch Theme"),
-            ("action.reloadConfig", "Reload Config"),
-            ("action.openThemeFile", "Open Theme File"),
-        ]
-        for (id, title) in expected {
-            let item = try row(id)
-            XCTAssertEqual(item.title, title, "the '\(id)' row's title")
-            XCTAssertEqual(item.category, .settings, "the '\(id)' theme/config verb groups under SETTINGS")
-            XCTAssertEqual(item.filter, .actions, "the '\(id)' row is a verb (Actions filter)")
-        }
+    /// The Theme verb ("Switch Theme") is in the catalog under SETTINGS, routing its coordinator action.
+    /// REVERT-TO-CONFIRM-FAIL: it was absent (the palette had Open Settings only), so `catalog.first` is
+    /// nil → `XCTUnwrap` trips.
+    func testSwitchThemeVerbIsInTheCatalog() throws {
+        let item = try row("action.switchTheme")
+        XCTAssertEqual(item.title, "Switch Theme", "the 'action.switchTheme' row's title")
+        XCTAssertEqual(item.category, .settings, "the theme verb groups under SETTINGS")
+        XCTAssertEqual(item.filter, .actions, "the theme verb is a verb (Actions filter)")
         XCTAssertTrue(searchIDs("theme").contains("action.switchTheme"), "typing 'theme' surfaces Switch Theme")
-        XCTAssertTrue(searchIDs("reload").contains("action.reloadConfig"), "typing 'reload' surfaces Reload Config")
     }
 
-    /// CLOSED loop: each Theme / Config row runs the injected ``OverlayCoordinator`` closure (the app binds them
-    /// to ``PreferencesStore`` / `NSWorkspace`), then closes the palette. FAILS if a row's run arm dropped its
-    /// closure (the dead-control regression the audit flags).
-    func testRunningThemeConfigRowsFireInjectedCoordinatorClosures() throws {
+    /// CLOSED loop: the Switch Theme row runs the injected ``OverlayCoordinator`` closure (the app binds it
+    /// to ``PreferencesStore``), then closes the palette. FAILS if the row's run arm dropped its closure
+    /// (the dead-control regression the audit flags).
+    func testRunningSwitchThemeRowFiresInjectedCoordinatorClosure() throws {
         let (overlay, _) = makeOverlay()
-        var fired: Set<String> = []
-        overlay.switchTheme = { fired.insert("switchTheme") }
-        overlay.reloadConfig = { fired.insert("reloadConfig") }
-        overlay.openThemeFile = { fired.insert("openThemeFile") }
-        for (id, key) in [
-            ("action.switchTheme", "switchTheme"),
-            ("action.reloadConfig", "reloadConfig"),
-            ("action.openThemeFile", "openThemeFile"),
-        ] {
-            overlay.openPalette()
-            try overlay.run(row(id))
-            XCTAssertTrue(fired.contains(key), "running '\(id)' fires its injected '\(key)' coordinator closure")
-            XCTAssertFalse(overlay.paletteVisible, "running '\(id)' closes the palette")
-        }
+        var fired = false
+        overlay.switchTheme = { fired = true }
+        overlay.openPalette()
+        try overlay.run(row("action.switchTheme"))
+        XCTAssertTrue(fired, "running 'action.switchTheme' fires its injected coordinator closure")
+        XCTAssertFalse(overlay.paletteVisible, "running 'action.switchTheme' closes the palette")
     }
 
     /// The five NAMED layout presets (tmux/zellij `select-layout`; registry-documented "menu/palette only") are

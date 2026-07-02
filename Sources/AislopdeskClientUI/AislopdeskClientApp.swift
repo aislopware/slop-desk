@@ -131,12 +131,6 @@ public struct AislopdeskClientApp: App {
         // slot's resolved theme slug (`ThemeStore.active.id` — dual-slot / `.system` already concrete) keys
         // `appearance.themeFonts`, which `PreferencesStore.applyTerminal` looks up via `FontScopeResolver`.
         AppearanceApplier.resolveActiveThemeSlug = { ThemeStore.shared.active.id }
-        // E15 WI-6: build the custom-theme catalog (scan `~/.config/aislopdesk/themes/` — `[]` on iOS) and
-        // wire it as the `ThemeStore` custom-resolution seam BEFORE the first `PreferencesStore` apply below, so
-        // a persisted `.custom` light/dark slot resolves to its scanned `ThemeDocument` on the very first frame
-        // (not the default fallback). A since-deleted / not-yet-scanned slug still falls back gracefully.
-        ThemeCatalog.shared.reloadCustom()
-        ThemeStore.shared.resolveCustomDocument = { slug in ThemeCatalog.shared.customDocument(slug: slug) }
         // E15 WI-3: start the macOS OS-appearance observer so a dual-slot / `.system` user follows the system
         // colour scheme LIVE (a no-op on iOS).
         ThemeStore.shared.observeOSAppearanceChanges()
@@ -269,30 +263,15 @@ public struct AislopdeskClientApp: App {
         // pill). Retained for the scene lifetime by `_overlayCoordinator` / `_folderFrecency` below.
         let overlay = OverlayCoordinator(store: store, folders: folderFrecency)
         overlay.connectionTarget = { [weak appConnection] in appConnection?.target ?? .default }
-        // Batch 4 (catalog-completeness): the palette's Theme / Config verbs are LOCAL client actions over the
-        // live ``PreferencesStore`` (the SAME `appearance` slot Settings → Appearance edits). "Switch Theme"
-        // advances the primary slot through the built-in themes (chrome retint + terminal cells repaint live);
-        // "Reload Config" re-applies the live settings + posts the config-reload broadcast (the CLI `config
-        // reload` analog); "Open Theme File" reveals the custom-themes folder in Finder (macOS).
+        // Batch 4 (catalog-completeness): the palette's "Switch Theme" verb is a LOCAL client action over the
+        // live ``PreferencesStore`` (the SAME `appearance` slot Settings → Appearance edits) — it advances the
+        // primary slot through the built-in themes (chrome retint + terminal cells repaint live).
         overlay.switchTheme = { [weak preferences] in
             guard let preferences else { return }
             var appearance = preferences.appearance
             appearance.theme = Self.nextBuiltinTheme(after: appearance.theme)
-            appearance.customLightSlug = nil // a built-in choice clears any prior custom-slug override
             preferences.appearance = appearance
         }
-        overlay.reloadConfig = { [weak preferences] in
-            preferences?.reapplyLiveSettings()
-            NotificationCenter.default.post(name: WorkspaceControlBackend.configReloadNotification, object: nil)
-        }
-        #if os(macOS)
-        overlay.openThemeFile = {
-            guard let dir = ThemeLibrary.themesDirectoryURL() else { return }
-            // Create the folder first so a never-yet-used custom-themes dir still opens (created lazily, on first open).
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            NSWorkspace.shared.open(dir)
-        }
-        #endif
 
         #if os(macOS)
         // EXPLICIT NOTIFICATIONS (OSC 9 / OSC 777) + long-command + agent-attention → local macOS
@@ -777,9 +756,6 @@ public struct AislopdeskClientApp: App {
                 // nothing observed — the menu item never closed the window.
                 closeWindow: { [windowBox] in windowBox.window?.performClose(nil) },
             )
-            // E7 WI-4: File ▸ Export/Import Workspace (optional parity). Shortcut-LESS — the NSEvent
-            // dispatcher owns chords (DECISIONS N6); a hostile import is a no-op + toast, never a crash.
-            WorkspaceFileCommands(store: store, overlay: overlayCoordinator)
         }
         #endif
 
@@ -789,9 +765,7 @@ public struct AislopdeskClientApp: App {
         // settings panel once the coordinator lands). Binds the SAME single live `PreferencesStore`. macOS-only:
         // `Settings` is unavailable on iOS (the iOS settings surface lands as an in-app sheet later).
         #if os(macOS)
-        // Thread the live `WorkspaceStore` into the Settings scene so the Advanced → Workspace rows (E7
-        // WI-4) can export/import (the Settings scene is separate from the WindowGroup above).
-        AislopdeskSettingsScene(store: preferences, workspaceStore: store, agentHooks: agentHooks)
+        AislopdeskSettingsScene(store: preferences, agentHooks: agentHooks)
         #endif
     }
 

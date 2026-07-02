@@ -68,14 +68,6 @@ let package = Package(
         // while regressing the deliberate "no swift-syntax in the resolved graph" invariant. Re-evaluate
         // only if a future need requires the macro. (Phase-D upgrade 2026-06-29.)
         .package(url: "https://github.com/sindresorhus/Defaults.git", from: "8.2.0"),
-        // Markdown rendering (gonzalezreal/Textual — the pure-Swift `AttributedString`-based successor to
-        // swift-markdown-ui/MarkdownUI). Used by `MarkdownText` for the Claude transcript / rich block
-        // output. Runtime deps are pure-Swift only (ConcurrencyExtras + SwiftUIMath; no swift-cmark / C
-        // build step, no swift-syntax). ClientUI-only (it is SwiftUI rendering). HOLD at 0.5.0 — which IS
-        // the latest release; upstream issue #23 (EXC_BAD_ACCESS on ~200+ block docs, non-lazy ForEach in
-        // BlockContent.swift) is still OPEN/unfixed at 0.5.0 (re-verified 2026-06-29), mitigated by
-        // `MarkdownText`'s plain-text guard. Re-check #23 before ever raising this floor.
-        .package(url: "https://github.com/gonzalezreal/textual.git", from: "0.5.0"),
     ],
     targets: [
         // MARK: Libraries
@@ -248,8 +240,6 @@ let package = Package(
                 // Type-safe UserDefaults — the `@Default(.key)` SwiftUI bindings in SettingsView (replacing
                 // the stringly-typed `@AppStorage`). Same pure-Foundation `Defaults` product as the core.
                 .product(name: "Defaults", package: "Defaults"),
-                // Markdown rendering (`MarkdownText` → Textual's `StructuredText`). SwiftUI-only renderer.
-                .product(name: "Textual", package: "textual"),
             ],
         ),
 

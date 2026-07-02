@@ -2,7 +2,7 @@ import XCTest
 @testable import AislopdeskVideoProtocol
 
 /// E15 WI-3 / ES-E15-1 — the PURE dual-slot follow-OS resolver. Headless (no `NSApp`): `osIsDark` is injected,
-/// so every toggle × OS-appearance × custom-in-slot combination is exercised deterministically.
+/// so every toggle × OS-appearance combination is exercised deterministically.
 final class ThemeResolutionTests: XCTestCase {
     // MARK: Single / primary slot (useSeparateDarkTheme OFF or unset)
 
@@ -13,22 +13,22 @@ final class ThemeResolutionTests: XCTestCase {
     func testDefaultAppearanceFollowsOSForBothAppearances() {
         let def = AppearancePreferences()
         XCTAssertEqual(
-            ThemeResolution.activeRef(appearance: def, osIsDark: false), .builtin("monokai-classic-light"),
+            ThemeResolution.activeBuiltinID(appearance: def, osIsDark: false), "monokai-classic-light",
             "fresh install in LIGHT mode → the light default",
         )
         XCTAssertEqual(
-            ThemeResolution.activeRef(appearance: def, osIsDark: true), .builtin("monokai-classic"),
+            ThemeResolution.activeBuiltinID(appearance: def, osIsDark: true), "monokai-classic",
             "fresh install in DARK mode → the dark default",
         )
     }
 
     /// A concrete single-slot choice (separate-dark OFF) applies for EVERY OS appearance — it does NOT follow
-    /// the OS. Revert-to-confirm: a `.builtin("dark")`-only resolver that ignored the toggle would still pass,
+    /// the OS. Revert-to-confirm: a `"dark"`-only resolver that ignored the toggle would still pass,
     /// so the dual-slot tests below carry the real follow-OS proof.
     func testSingleSlotConcreteChoiceIgnoresOS() {
         let prefs = AppearancePreferences(theme: .paper)
-        XCTAssertEqual(ThemeResolution.activeRef(appearance: prefs, osIsDark: false), .builtin("paper"))
-        XCTAssertEqual(ThemeResolution.activeRef(appearance: prefs, osIsDark: true), .builtin("paper"))
+        XCTAssertEqual(ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: false), "paper")
+        XCTAssertEqual(ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "paper")
     }
 
     /// The legacy `.system` single choice STILL follows the OS by construction (dark → Classic, light → Light)
@@ -36,25 +36,11 @@ final class ThemeResolutionTests: XCTestCase {
     func testSystemChoiceFollowsOS() {
         let prefs = AppearancePreferences(theme: .system)
         XCTAssertEqual(
-            ThemeResolution.activeRef(appearance: prefs, osIsDark: true), .builtin("monokai-classic"),
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "monokai-classic",
         )
         XCTAssertEqual(
-            ThemeResolution.activeRef(appearance: prefs, osIsDark: false), .builtin("monokai-classic-light"),
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: false), "monokai-classic-light",
         )
-    }
-
-    /// A non-empty `customLightSlug` overrides the primary slot's built-in choice → a `.custom` ref.
-    func testCustomLightSlugOverridesPrimarySlot() {
-        let prefs = AppearancePreferences(theme: .paper, customLightSlug: "solarized-light")
-        XCTAssertEqual(
-            ThemeResolution.activeRef(appearance: prefs, osIsDark: false), .custom(slug: "solarized-light"),
-        )
-    }
-
-    /// An EMPTY custom slug is ignored (validate-then-fall-through to the built-in) — never an empty `.custom`.
-    func testEmptyCustomSlugFallsThroughToBuiltin() {
-        let prefs = AppearancePreferences(theme: .dark, customLightSlug: "")
-        XCTAssertEqual(ThemeResolution.activeRef(appearance: prefs, osIsDark: false), .builtin("dark"))
     }
 
     // MARK: Dual slot (useSeparateDarkTheme ON)
@@ -64,35 +50,21 @@ final class ThemeResolutionTests: XCTestCase {
     func testSeparateDarkSelectsSlotByOS() {
         let prefs = AppearancePreferences(theme: .paper, themeDark: .dark, useSeparateDarkTheme: true)
         XCTAssertEqual(
-            ThemeResolution.activeRef(appearance: prefs, osIsDark: false), .builtin("paper"),
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: false), "paper",
             "OS light → the primary/light slot",
         )
         XCTAssertEqual(
-            ThemeResolution.activeRef(appearance: prefs, osIsDark: true), .builtin("dark"),
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "dark",
             "OS dark → the dark slot",
         )
     }
 
-    /// A non-empty `customDarkSlug` overrides the DARK slot's built-in choice when the OS is dark.
-    func testCustomDarkSlugOverridesDarkSlot() {
-        let prefs = AppearancePreferences(
-            theme: .paper, themeDark: .dark, useSeparateDarkTheme: true, customDarkSlug: "dracula",
-        )
-        XCTAssertEqual(
-            ThemeResolution.activeRef(appearance: prefs, osIsDark: true), .custom(slug: "dracula"),
-        )
-        // … but the LIGHT slot (OS light) is unaffected by the dark custom slug.
-        XCTAssertEqual(
-            ThemeResolution.activeRef(appearance: prefs, osIsDark: false), .builtin("paper"),
-        )
-    }
-
-    /// Separate-dark ON with an UNSET dark slot (no `themeDark`, no `customDarkSlug`) falls back to the
+    /// Separate-dark ON with an UNSET dark slot (no `themeDark`) falls back to the
     /// compile-time default Monokai Pro Classic in dark mode.
     func testSeparateDarkWithUnsetDarkSlotUsesDefault() {
         let prefs = AppearancePreferences(theme: .paper, useSeparateDarkTheme: true)
         XCTAssertEqual(
-            ThemeResolution.activeRef(appearance: prefs, osIsDark: true), .builtin("monokai-classic"),
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "monokai-classic",
         )
     }
 

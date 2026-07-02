@@ -57,10 +57,7 @@ struct SlateTheme: Equatable {
     let selected: Color // selected row background
     let header: Color // section header text
     let accent: Color // active-state accent (Paper = green, Dark = system blue)
-    /// The active-state accent as a canonical 6-hex string (no `#`) — MIRRORS ``accent``'s colour. Carried so
-    /// the Theme-editor Duplicate path can re-emit the SOURCE theme's accent into the new `.aislopdesktheme` instead
-    /// of letting ``SlateTheme/init(document:)``'s bg/fg derivation fall through to the (wrong-hue) ANSI
-    /// "blue"-slot — e.g. so a duplicated Monokai keeps its cyan accent, not the filter's orange.
+    /// The active-state accent as a canonical 6-hex string (no `#`) — MIRRORS ``accent``'s colour.
     let accentHex: String
     let accentMuted: Color // active-state background wash
     let panelShadow: Color // floating-card / panel drop shadow
@@ -87,9 +84,7 @@ struct SlateTheme: Equatable {
     let terminalForegroundHex: String
 
     /// The 16 ANSI terminal colours (indices 0–15: 0=black … 7=white, 8–15 = bright). 6-hex, no `#`. Reaches
-    /// the terminal CELLS via ``TerminalConfigBuilder`` `palette = N=<hex>` and the Appearance swatch grid (the
-    /// 16-dot two-row grid in `dark-mode-theme.png`). Built-ins ship a canonical palette; a custom theme's
-    /// comes straight from its ``ThemeDocument``.
+    /// the terminal CELLS via ``TerminalConfigBuilder`` `palette = N=<hex>`. Built-ins ship a canonical palette.
     let ansiPalette: [String]
     /// Selection highlight background (`selection-background`), 6-hex no `#`; `nil` ⇒ let the renderer pick.
     let selectionBackgroundHex: String?
@@ -324,110 +319,6 @@ struct SlateTheme: Equatable {
         accent: 0x5AD4E6, ok: 0x7BD88F, warn: 0xFCE566, err: 0xFC618D, info: 0x5AD4E6,
         orange: 0xFD9353, purple: 0x948AE3, isLight: false,
     ))
-}
-
-// MARK: - SlateTheme ← ThemeDocument (E15 WI-1: a scanned custom theme → a full chrome theme)
-
-extension SlateTheme {
-    /// Build a full ``SlateTheme`` from a parsed ``ThemeDocument`` (a scanned `.aislopdesktheme`). The chrome roles
-    /// are DERIVED from the document's `background`/`foreground`/`accent` with the SAME structural opacities
-    /// the ``monokai(_:)`` factory uses (so a custom theme has identical chrome geometry — only the hues
-    /// differ), then OVERLAID by any explicit `[ui]`/`[window]`/`[sidebar]`/`[tab]`/`[panel]` hexes the file
-    /// declares. Status colours map from the ANSI palette (red/green/yellow/blue → err/ok/warn/info). The
-    /// terminal-cell hexes are re-emitted from the parsed background/foreground so a `"none"` (transparent)
-    /// background still yields a valid 6-hex pin for the libghostty cells. Built-ins stay FLAT (radius 0); a
-    /// custom `[container] radius` is parsed but applied by a later container-styling pass, not here.
-    init(document doc: ThemeDocument) {
-        let light = doc.mode == .light
-        let bg = Self.rgb24(doc.background) ?? (light ? 0xFFFFFF : 0x000000)
-        let fg = Self.rgb24(doc.foreground) ?? (light ? 0x000000 : 0xFFFFFF)
-
-        // Derived chrome surfaces: sidebar a touch off the backdrop; the elevated surface is white in light
-        // mode and a slight raise in dark mode; secondary/tertiary text interpolate foreground → background.
-        let sidebarHex = Self.rgb24(doc.sidebar) ?? Self.mix(bg, 0x000000, light ? 0.05 : 0.06)
-        let elevatedHex = light ? 0xFFFFFF : Self.mix(bg, 0xFFFFFF, 0.10)
-        let secondaryHex = Self.mix(fg, bg, 0.50)
-        let tertiaryHex = Self.mix(fg, bg, 0.65)
-
-        // Status + accent map off the ANSI palette (idx 1=red, 2=green, 3=yellow, 4=blue); the `[token] accent`
-        // wins when present, else the blue slot, else the foreground.
-        func paletteEntry(_ index: Int) -> UInt32? {
-            guard doc.palette.indices.contains(index) else { return nil }
-            return Self.rgb24(doc.palette[index])
-        }
-        let accentHex = Self.rgb24(doc.accent) ?? paletteEntry(4) ?? fg
-        let errHex = paletteEntry(1) ?? secondaryHex
-        let okHex = paletteEntry(2) ?? secondaryHex
-        let warnHex = paletteEntry(3) ?? secondaryHex
-        let infoHex = paletteEntry(4) ?? accentHex
-
-        let line: Color = light ? .black : .white
-        self.init(
-            window: Self.color(doc.window, fallback: Color(slateHex: bg)),
-            sidebar: Color(slateHex: sidebarHex),
-            content: Color(slateHex: bg),
-            card: Color(slateHex: bg), // FLAT: pane surface == backdrop
-            selectedCard: Self.color(doc.tab, fallback: Color(slateHex: elevatedHex)),
-            element: Self.color(doc.panel, fallback: Color(slateHex: elevatedHex)),
-            textPrimary: Color(slateHex: fg),
-            textSecondary: Color(slateHex: secondaryHex),
-            textTertiary: Color(slateHex: tertiaryHex),
-            icon: Color(slateHex: secondaryHex),
-            divider: line.opacity(light ? 0.08 : 0.07),
-            cardBorder: line.opacity(light ? 0.08 : 0.07),
-            border: line.opacity(light ? 0.05 : 0.06),
-            borderActive: line.opacity(0.15),
-            hover: line.opacity(light ? 0.045 : 0.05),
-            selected: line.opacity(light ? 0.07 : 0.09),
-            header: Color(slateHex: tertiaryHex),
-            accent: Color(slateHex: accentHex),
-            accentHex: Self.hex6(accentHex),
-            accentMuted: line.opacity(light ? 0.06 : 0.10),
-            panelShadow: Color.black.opacity(light ? 0.12 : 0.40),
-            isLight: light,
-            statusOK: Color(slateHex: okHex),
-            statusWarn: Color(slateHex: warnHex),
-            statusErr: Color(slateHex: errHex),
-            statusInfo: Color(slateHex: infoHex),
-            id: "custom-\(doc.slug)",
-            terminalBackgroundHex: Self.hex6(bg),
-            terminalForegroundHex: Self.hex6(fg),
-            ansiPalette: doc.palette,
-            selectionBackgroundHex: doc.selectionBackground,
-            cursorHex: doc.cursor,
-            cursorTextHex: doc.cursorText,
-        )
-    }
-
-    /// Parse a 6-hex colour string (tolerating one leading `#`) into a 24-bit RGB literal, or `nil` when it is
-    /// absent / malformed — the caller then substitutes a derived fallback (validate-then-default).
-    private static func rgb24(_ hex: String?) -> UInt32? {
-        guard var s = hex else { return nil }
-        if s.hasPrefix("#") { s = String(s.dropFirst()) }
-        guard s.count == 6, let value = UInt32(s, radix: 16) else { return nil }
-        return value
-    }
-
-    /// A ``Color`` from a (possibly absent / malformed) 6-hex string, falling back to `fallback`.
-    private static func color(_ hex: String?, fallback: Color) -> Color {
-        guard let value = rgb24(hex) else { return fallback }
-        return Color(slateHex: value)
-    }
-
-    /// Linearly interpolate two 24-bit RGB colours by `t` (0 ⇒ `a`, 1 ⇒ `b`), per channel. The channel math is
-    /// PLAIN `*`/`+` (NEVER fused / `addingProduct` — the package-wide codec/controller convention) and clamps
-    /// with ordered, NaN-faithful `Double.minimum`/`Double.maximum`.
-    private static func mix(_ a: UInt32, _ b: UInt32, _ t: Double) -> UInt32 {
-        let clampedT = Double.minimum(1, Double.maximum(0, t))
-        func lane(_ shift: UInt32) -> UInt32 {
-            let av = Double((a >> shift) & 0xFF)
-            let bv = Double((b >> shift) & 0xFF)
-            let blended = av * (1 - clampedT) + bv * clampedT
-            let clamped = Double.minimum(255, Double.maximum(0, blended.rounded()))
-            return UInt32(clamped) & 0xFF
-        }
-        return (lane(16) << 16) | (lane(8) << 8) | lane(0)
-    }
 }
 
 /// Static token namespace. Colours read the active `theme` (default Monokai Pro Classic); metrics/anim are

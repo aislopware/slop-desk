@@ -11,11 +11,10 @@
 // today that drops **Keybindings**, whose chord CAPTURE is a macOS `NSEvent` monitor with no iOS UI. The
 // Advanced section IS shown, but its macOS-host-only ROWS (the raw `AISLOPDESK_*` editor + the Video host
 // flags) are gated inside `AdvancedSettingsTab` with `#if os(macOS)`, so the iOS Advanced page shows the
-// pure-SwiftUI All-Settings list + Workspace import/export only.
+// pure-SwiftUI All-Settings list only.
 //
 // The single live `PreferencesStore` is handed in by `WorkspaceRootView` (read there from
-// `\.preferencesStore`); the live `WorkspaceStore` rides the `\.workspaceStore` environment slot (injected
-// at the sheet root in `WorkspaceRootView`) so the Advanced → Workspace export/import works on iOS too.
+// `\.preferencesStore`).
 //
 // E13 (ES-E13-1/ES-E13-2 iOS halves): the app-owned `AgentHooksController` is THREADED in here and injected
 // onto the section content via `.agentHooksController(_:)`, mirroring the macOS `AislopdeskSettingsScene`.

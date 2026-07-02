@@ -112,13 +112,9 @@ final class FontScopeResolverTests: XCTestCase {
 
     // MARK: - Per-slot slug resolution (WI-8 scope tabs)
 
-    /// The Light Theme tab keys `themeFonts` by a non-empty custom light slug, else the built-in id the light
-    /// slot's `theme` resolves to under OS-light (`.system` → the OS-light default).
-    func testLightSlotSlugPrefersCustomElseBuiltinLightID() {
-        XCTAssertEqual(
-            FontScopeResolver.lightSlotSlug(AppearancePreferences(customLightSlug: "my-light")),
-            "my-light", "a non-empty custom light slug wins",
-        )
+    /// The Light Theme tab keys `themeFonts` by the built-in id the light slot's `theme` resolves to under
+    /// OS-light (`.system` → the OS-light default).
+    func testLightSlotSlugResolvesBuiltinLightID() {
         XCTAssertEqual(
             FontScopeResolver.lightSlotSlug(AppearancePreferences(theme: .system)),
             "monokai-classic-light", "the light slot resolves .system to the OS-light default",
@@ -131,11 +127,6 @@ final class FontScopeResolverTests: XCTestCase {
             FontScopeResolver.lightSlotSlug(AppearancePreferences()),
             "monokai-classic-light", "an unset light slot follows the OS ⇒ the OS-light default",
         )
-        // An empty (not nil) custom slug is treated as unset → the built-in id.
-        XCTAssertEqual(
-            FontScopeResolver.lightSlotSlug(AppearancePreferences(theme: .paper, customLightSlug: "  ")),
-            "paper", "a whitespace-only custom slug is unset",
-        )
     }
 
     /// The Dark Theme tab always targets the DARK slot's own theme — independent of the separate-dark toggle.
@@ -144,10 +135,6 @@ final class FontScopeResolverTests: XCTestCase {
         XCTAssertEqual(FontScopeResolver.darkSlotSlug(off), "dark", "off ⇒ still the dark slot's theme")
         let on = AppearancePreferences(themeDark: .dark, useSeparateDarkTheme: true)
         XCTAssertEqual(FontScopeResolver.darkSlotSlug(on), "dark", "on ⇒ the dark slot's theme")
-        XCTAssertEqual(
-            FontScopeResolver.darkSlotSlug(AppearancePreferences(customDarkSlug: "my-dark")),
-            "my-dark", "a non-empty custom dark slug wins",
-        )
         XCTAssertEqual(
             FontScopeResolver.darkSlotSlug(AppearancePreferences()),
             "monokai-classic", "an unset dark slot ⇒ the compile-time default",

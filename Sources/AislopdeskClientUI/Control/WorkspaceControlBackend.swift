@@ -326,7 +326,6 @@ final class WorkspaceControlBackend: ClientControlBackend {
         if key == Self.themeConfigKey {
             var appearance = preferences.appearance
             appearance.theme = nil
-            appearance.customLightSlug = nil
             preferences.appearance = appearance
             return true
         }
@@ -352,33 +351,25 @@ final class WorkspaceControlBackend: ClientControlBackend {
     }
 
     /// The LIVE active theme's name — the resolved ``ThemeStore`` theme id, which already collapses the
-    /// default, the dual-slot / follow-OS selection, and custom themes to a concrete id matching the
-    /// `theme list` `name` column (so `config get theme` round-trips a `theme list` entry).
+    /// default and the dual-slot / follow-OS selection to a concrete id matching the `theme list` `name`
+    /// column (so `config get theme` round-trips a `theme list` entry).
     private func liveThemeName() -> String {
         ThemeStore.shared.active.id
     }
 
-    /// Switch the active theme by NAME — a built-in theme id (from `theme list`, e.g. `monokai-classic`),
-    /// a ``ThemeChoice`` raw value (e.g. `system`), or a scanned custom-theme slug — routed through
-    /// ``PreferencesStore/appearance`` so the chrome retints + the terminal cells repaint LIVE (and the
-    /// choice persists). Sets the PRIMARY (light / single) slot, the slot every OS appearance resolves to
-    /// unless the user separately enabled a dark-slot override. Returns `false` for an UNKNOWN name (honest
-    /// error, never a silent no-op).
+    /// Switch the active theme by NAME — a built-in theme id (from `theme list`, e.g. `monokai-classic`) or
+    /// a ``ThemeChoice`` raw value (e.g. `system`) — routed through ``PreferencesStore/appearance`` so the
+    /// chrome retints + the terminal cells repaint LIVE (and the choice persists). Sets the PRIMARY (light /
+    /// single) slot, the slot every OS appearance resolves to unless the user separately enabled a dark-slot
+    /// override. Returns `false` for an UNKNOWN name (honest error, never a silent no-op).
     private func applyThemeByName(_ name: String, on preferences: PreferencesStore) -> Bool {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        var appearance = preferences.appearance
-        if let choice = ThemeChoice.allCases.first(where: { $0.builtinID == trimmed })
+        guard let choice = ThemeChoice.allCases.first(where: { $0.builtinID == trimmed })
             ?? ThemeChoice(rawValue: trimmed)
-        {
-            appearance.theme = choice
-            appearance.customLightSlug = nil // a built-in choice clears any prior custom-slug override
-            preferences.appearance = appearance
-            return true
-        }
-        // Not a built-in → a scanned custom theme slug (validate against the catalog; unknown → reject).
-        guard ThemeCatalog.shared.customDocument(slug: trimmed) != nil else { return false }
-        appearance.customLightSlug = trimmed
+        else { return false }
+        var appearance = preferences.appearance
+        appearance.theme = choice
         preferences.appearance = appearance
         return true
     }
@@ -387,10 +378,8 @@ final class WorkspaceControlBackend: ClientControlBackend {
 
     func listThemes(color: ClientControlProtocol.ThemeColorFilter) -> [ClientThemeInfo] {
         let activeID = ThemeStore.shared.active.id
-        var all = ThemeCatalog.builtinThemes
-        all.append(contentsOf: ThemeCatalog.shared.customThemes.map { SlateTheme(document: $0) })
         var out: [ClientThemeInfo] = []
-        for theme in all {
+        for theme in ThemeCatalog.builtinThemes {
             let isDark = !theme.isLight
             switch color {
             case .dark where !isDark: continue
@@ -400,43 +389,6 @@ final class WorkspaceControlBackend: ClientControlBackend {
             out.append(ClientThemeInfo(name: theme.id, isDark: isDark, isActive: theme.id == activeID))
         }
         return out
-    }
-
-    /// Import a theme file via the E15 importers (`ThemeLibrary.importFile` — auto-detects native `.aislopdesktheme`
-    /// / iTerm2 / kitty / alacritty / ghostty), re-scan the custom catalog, and optionally activate it. A
-    /// missing / unreadable / unparseable file → `nil` (validate-then-drop). `overwrite` is accepted for CLI
-    /// parity; the importer already resolves slug collisions by suffixing (`-1`, `-2`), so a forced replace
-    /// of an existing same-slug theme is a documented refinement.
-    func themeImport(path: String, activate: Bool, overwrite _: Bool) -> String? {
-        // The E15 importer + the custom-theme directory are macOS-only (`ThemeLibrary.importFile` /
-        // `~/.config/aislopdesk/themes/`, both `#if os(macOS)`); iOS has no custom-theme filesystem analog, so
-        // `theme import` is unavailable there (validate-then-drop → nil), matching the macOS-only import UI.
-        #if os(macOS)
-        // swiftlint:disable:next legacy_objc_type
-        let expanded = (path as NSString).expandingTildeInPath
-        let url = URL(fileURLWithPath: expanded)
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        let builtinSlugs = Set(ThemeCatalog.builtinThemes.map(\.id))
-        guard let result = try? ThemeLibrary.importFile(at: url, builtinSlugs: builtinSlugs) else { return nil }
-        ThemeCatalog.shared.reloadCustom()
-        if activate { activateCustomTheme(slug: result.slug) }
-        return result.slug
-        #else
-        nil
-        #endif
-    }
-
-    /// Activate an imported custom theme in the slot the current OS appearance resolves to (mirrors
-    /// `ThemeEditorView.activate` — the dark slot only when "separate dark theme" is on AND the OS is dark).
-    private func activateCustomTheme(slug: String) {
-        guard let preferences else { return }
-        var appearance = preferences.appearance
-        if appearance.useSeparateDarkTheme ?? false, ThemeStore.shared.osIsDark() {
-            appearance.customDarkSlug = slug
-        } else {
-            appearance.customLightSlug = slug
-        }
-        preferences.appearance = appearance
     }
 
     /// Enumerate font families (macOS via `NSFontManager`; iOS returns empty — no `font list` surface there).

@@ -182,33 +182,27 @@ public enum FontScopeResolver {
 
     // MARK: Per-slot slug resolution (the Light / Dark / Computed scope tabs, WI-8)
 
-    /// The theme-font key (slug) the Font → **Light Theme** scope tab writes under: a non-empty
-    /// ``AppearancePreferences/customLightSlug`` (the slot points at a scanned `.aislopdesktheme`), else the built-in
-    /// id the light slot's ``AppearancePreferences/theme`` choice resolves to under OS-light (so a `.system`
-    /// light slot keys the OS-light default). Pure — mirrors ``ThemeResolution`` slot routing, headless.
+    /// The theme-font key (slug) the Font → **Light Theme** scope tab writes under: the built-in id the light
+    /// slot's ``AppearancePreferences/theme`` choice resolves to under OS-light (so a `.system` light slot
+    /// keys the OS-light default). Pure — mirrors ``ThemeResolution`` slot routing, headless.
     public static func lightSlotSlug(_ appearance: AppearancePreferences) -> String {
-        if let slug = nonEmpty(appearance.customLightSlug) { return slug }
-        return ThemeResolution.builtinID(for: appearance.theme, osIsDark: false)
+        ThemeResolution.builtinID(for: appearance.theme, osIsDark: false)
     }
 
-    /// The theme-font key (slug) the Font → **Dark Theme** scope tab writes under: a non-empty
-    /// ``AppearancePreferences/customDarkSlug``, else the built-in id the dark slot's
-    /// ``AppearancePreferences/themeDark`` choice resolves to under OS-dark. INDEPENDENT of
+    /// The theme-font key (slug) the Font → **Dark Theme** scope tab writes under: the built-in id the dark
+    /// slot's ``AppearancePreferences/themeDark`` choice resolves to under OS-dark. INDEPENDENT of
     /// ``AppearancePreferences/useSeparateDarkTheme`` — the Dark Theme tab always targets the dark slot's own
     /// theme even when follow-OS dual-slot is off (the slot still has a configured theme).
     public static func darkSlotSlug(_ appearance: AppearancePreferences) -> String {
-        if let slug = nonEmpty(appearance.customDarkSlug) { return slug }
-        return ThemeResolution.builtinID(for: appearance.themeDark, osIsDark: true)
+        ThemeResolution.builtinID(for: appearance.themeDark, osIsDark: true)
     }
 
     /// The slug of the slot ACTIVE under `osIsDark` — drives the read-only **Computed** scope tab (the
     /// effective font for whatever theme the current OS appearance resolves to). The light/primary slot unless
-    /// ``AppearancePreferences/useSeparateDarkTheme`` is on AND the OS is dark (``ThemeResolution/activeRef``).
+    /// ``AppearancePreferences/useSeparateDarkTheme`` is on AND the OS is dark
+    /// (``ThemeResolution/activeBuiltinID(appearance:osIsDark:)``).
     public static func activeSlotSlug(_ appearance: AppearancePreferences, osIsDark: Bool) -> String {
-        switch ThemeResolution.activeRef(appearance: appearance, osIsDark: osIsDark) {
-        case let .builtin(id): id
-        case let .custom(slug): slug
-        }
+        ThemeResolution.activeBuiltinID(appearance: appearance, osIsDark: osIsDark)
     }
 
     /// The trimmed value if it is non-empty, else `nil` (an empty/whitespace string counts as "unset").

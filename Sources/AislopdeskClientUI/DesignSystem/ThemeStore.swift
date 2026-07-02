@@ -13,11 +13,10 @@
 // Classic palette. The golden corpus is unaffected — chrome colour never crosses into the wire vectors
 // (appearance is pure client chrome, never folded into `EnvConfig`/the sidecar).
 //
-// E15 WI-3 — DUAL-SLOT FOLLOW-OS: `apply(appearance:)` resolves the active `ThemeRef` for the CURRENT OS
-// appearance (via the pure leaf `ThemeResolution`) and repoints `active`. A macOS OS-appearance observer
-// re-resolves LIVE on a system light/dark switch, so a follow-OS (or legacy `.system`) user sees the theme
-// flip without a restart. Custom (`.custom(slug)`) refs resolve through the injected `resolveCustomDocument`
-// seam (WI-6 wires the `ThemeCatalog`); pre-catalog / a since-deleted slug falls back to the default theme.
+// E15 WI-3 — DUAL-SLOT FOLLOW-OS: `apply(appearance:)` resolves the active built-in theme id for the
+// CURRENT OS appearance (via the pure leaf `ThemeResolution`) and repoints `active`. A macOS OS-appearance
+// observer re-resolves LIVE on a system light/dark switch, so a follow-OS (or legacy `.system`) user sees
+// the theme flip without a restart.
 
 #if canImport(SwiftUI)
 import AislopdeskVideoProtocol
@@ -48,12 +47,6 @@ final class ThemeStore {
     /// observer is then a no-op — there is nothing to re-resolve).
     @ObservationIgnored private var lastAppearance: AppearancePreferences?
 
-    /// CUSTOM-theme resolution seam (E15 WI-6 wires the `ThemeCatalog` here). Maps a `.custom` slot's slug →
-    /// its parsed ``ThemeDocument``; `nil` (the default, pre-catalog) ⇒ a `.custom` slot falls back to the
-    /// built-in default theme — so a slot pointing at a since-deleted / not-yet-scanned theme is GRACEFUL, not
-    /// a crash. Set ONCE at app launch after the themes-folder scan.
-    @ObservationIgnored var resolveCustomDocument: ((String) -> ThemeDocument?)?
-
     /// OS-appearance probe (injectable for tests). Default reads `NSApp.effectiveAppearance` on macOS; a test
     /// supplies a stub to drive the dual-slot / live-switch logic with NO `NSApp`.
     @ObservationIgnored var osIsDark: () -> Bool = { ThemeStore.systemIsDark() }
@@ -68,8 +61,8 @@ final class ThemeStore {
 
     // MARK: - Apply
 
-    /// Apply the whole ``AppearancePreferences`` (E15 WI-3): resolve the active ``ThemeRef`` for the CURRENT OS
-    /// appearance (dual-slot / custom-slug / follow-OS — ``ThemeResolution``) and repoint ``active``. Remembers
+    /// Apply the whole ``AppearancePreferences`` (E15 WI-3): resolve the active built-in theme id for the
+    /// CURRENT OS appearance (dual-slot / follow-OS — ``ThemeResolution``) and repoint ``active``. Remembers
     /// the model so the OS observer can re-resolve live on a system light/dark switch.
     func apply(appearance: AppearancePreferences) {
         lastAppearance = appearance
@@ -94,28 +87,16 @@ final class ThemeStore {
     }
 
     /// Resolve `appearance` → a concrete ``SlateTheme`` for the current OS appearance and repoint ``active``.
+    /// An unknown built-in id gracefully falls back to the default theme — never a crash.
     private func applyResolved(for appearance: AppearancePreferences) {
-        let ref = ThemeResolution.activeRef(appearance: appearance, osIsDark: osIsDark())
-        setActive(resolve(ref))
-    }
-
-    /// Resolve a ``ThemeRef`` → an ``SlateTheme``: a built-in by its stable id (unknown id ⇒ the default), a
-    /// custom by its slug through the ``resolveCustomDocument`` seam (absent / unresolved ⇒ the default).
-    private func resolve(_ ref: ThemeRef) -> SlateTheme {
-        switch ref {
-        case let .builtin(id):
-            return Self.builtin(id: id) ?? .monokaiProClassic
-        case let .custom(slug):
-            if let doc = resolveCustomDocument?(slug) { return SlateTheme(document: doc) }
-            return .monokaiProClassic
-        }
+        let id = ThemeResolution.activeBuiltinID(appearance: appearance, osIsDark: osIsDark())
+        setActive(Self.builtin(id: id) ?? .monokaiProClassic)
     }
 
     /// Repoint ``active`` and post the cross-boundary repaint notification on any theme CONTENT change (not
     /// just the `id`) — so a SAME-lightness variant switch (e.g. Classic → Spectrum) re-pins the AppKit
-    /// columns AND an in-place edit of the ACTIVE custom theme (same slug ⇒ same id, changed colours) re-pins
-    /// the NSWindow backdrop / appearance / divider seam (`AislopdeskSplitViewController.pinWindowAppearance`
-    /// is notification-driven). An idempotent re-apply of an identical theme still posts nothing.
+    /// columns (`AislopdeskSplitViewController.pinWindowAppearance` is notification-driven). An idempotent
+    /// re-apply of an identical theme still posts nothing.
     private func setActive(_ resolved: SlateTheme) {
         let changed = resolved != active
         active = resolved

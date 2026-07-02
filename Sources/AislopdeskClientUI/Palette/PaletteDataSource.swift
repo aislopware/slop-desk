@@ -267,25 +267,15 @@ public struct ActionsPaletteSource: PaletteDataSource {
             id: "action.openSettings", icon: "slider.horizontal.3", title: "Open Settings",
             subtitle: nil, shortcut: nil, filter: .actions, category: .settings, action: .openSettings,
         ),
-        // Theme / config verbs (Batch 4 catalog-completeness) — "Switch Theme", "Reload Config", and
-        // "Open Theme File" rows. Theme is LOCAL client state in aislopdesk (``ThemeStore`` /
-        // ``PreferencesStore``), so these are pure client actions routed by the coordinator to injected handlers
-        // (the SAME live `appearance` Settings → Appearance edits). Chord-less ⇒ no hint chip. Grouped under the
-        // SETTINGS section (aislopdesk has no separate Theme palette category).
+        // Theme verb (Batch 4 catalog-completeness) — the "Switch Theme" row. Theme is LOCAL client state in
+        // aislopdesk (``ThemeStore`` / ``PreferencesStore``), so this is a pure client action routed by the
+        // coordinator to the injected handler (the SAME live `appearance` Settings → Appearance edits).
+        // Chord-less ⇒ no hint chip. Grouped under the SETTINGS section (aislopdesk has no separate Theme
+        // palette category).
         PaletteItem(
             id: "action.switchTheme", icon: "paintpalette", title: "Switch Theme",
             subtitle: nil, keywords: "theme switch appearance color scheme dark light monokai paper palette",
             shortcut: nil, filter: .actions, category: .settings, action: .switchTheme,
-        ),
-        PaletteItem(
-            id: "action.reloadConfig", icon: "arrow.clockwise.circle", title: "Reload Config",
-            subtitle: nil, keywords: "reload config reapply refresh settings preferences theme apply reload theme",
-            shortcut: nil, filter: .actions, category: .settings, action: .reloadConfig,
-        ),
-        PaletteItem(
-            id: "action.openThemeFile", icon: "doc.text", title: "Open Theme File",
-            subtitle: nil, keywords: "open theme file reveal finder folder custom aislopdesktheme edit config",
-            shortcut: nil, filter: .actions, category: .settings, action: .openThemeFile,
         ),
         // The cheat sheet is also reachable by ⌘/; surfacing it here means the keyboard reference is
         // discoverable without knowing the chord. Its hint derives from the registry (no drift).

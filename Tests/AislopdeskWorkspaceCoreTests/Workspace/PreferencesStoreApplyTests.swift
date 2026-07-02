@@ -189,7 +189,7 @@ final class PreferencesStoreApplyTests: XCTestCase {
         XCTAssertEqual(sidecarAfter, sidecarBefore, "an appearance change must not rewrite the sidecar")
     }
 
-    /// E15 WI-3 golden-safety: the NEW dual-slot / custom-slug / follow-OS / per-theme-font appearance fields
+    /// E15 WI-3 golden-safety: the NEW dual-slot / follow-OS / per-theme-font appearance fields
     /// are PURE client chrome — setting them must NOT mutate ``EnvConfig/overlay`` nor rewrite the sidecar (the
     /// frozen golden corpus would shift otherwise). The whole model still reaches the GUI hook for resolution.
     func testDualSlotAppearanceFieldsStayOutOfOverlayAndSidecar() {
@@ -210,9 +210,7 @@ final class PreferencesStoreApplyTests: XCTestCase {
             theme: .paper,
             themeDark: .dark,
             useSeparateDarkTheme: true,
-            customLightSlug: "solarized-light",
-            customDarkSlug: "dracula",
-            themeFonts: ["dracula": "Fira Code"],
+            themeFonts: ["dark": "Fira Code"],
         )
         store.appearance = dualSlot
 

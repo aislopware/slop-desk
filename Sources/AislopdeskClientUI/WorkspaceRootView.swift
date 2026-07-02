@@ -192,14 +192,12 @@ public struct WorkspaceRootView: View {
         .onChange(of: activeTabCount, initial: true) { applyAutoHidePolicy() }
         .onChange(of: autoHideTabsPanel) { applyAutoHidePolicy() }
         // WI-5: the toolbar gear presents the in-app settings sheet (iOS has no `Settings` scene). The sheet
-        // hosts the same cross-platform section structs as the macOS strip. The live `WorkspaceStore` rides
-        // the `\.workspaceStore` slot so Advanced → Workspace export/import works on iOS too.
+        // hosts the same cross-platform section structs as the macOS strip.
         .sheet(isPresented: $showSettings) {
             if let preferencesStore {
                 // E13: thread the app-owned controller into the sheet so the Agents card / behaviour toggles
                 // are live on iOS (a sheet does not inherit the presenter's custom environment values).
                 SettingsSheet(store: preferencesStore, agentHooks: agentHooksController)
-                    .workspaceStore(store)
             }
         }
         #endif

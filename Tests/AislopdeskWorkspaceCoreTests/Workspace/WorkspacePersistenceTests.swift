@@ -600,7 +600,7 @@ final class WorkspacePersistenceTests: XCTestCase {
         )
     }
 
-    /// A file whose leaf count EXCEEDS ``WorkspaceTransfer/maxItems`` is bounded-reset (a corrupt file must
+    /// A file whose leaf count EXCEEDS ``WorkspacePersistence/maxItems`` is bounded-reset (a corrupt file must
     /// not make the store eagerly allocate a session per leaf on launch).
     func testLoadTreeExceedingMaxItemsIsBoundedReset() throws {
         let url = try tempURL()
@@ -609,7 +609,7 @@ final class WorkspacePersistenceTests: XCTestCase {
         var tree = TreeWorkspace.defaultWorkspace()
         let firstLeaf = try XCTUnwrap(tree.allPaneIDs().first)
         // Split the active pane repeatedly to grow leaves past the ceiling. Each split adds one leaf.
-        for _ in 0...(WorkspaceTransfer.maxItems) {
+        for _ in 0...(WorkspacePersistence.maxItems) {
             let active = tree.activeSession?.activeTab?.activePane ?? firstLeaf
             let (next, _) = WorkspaceTreeOps.splitPane(
                 active, axis: .horizontal,
@@ -617,7 +617,7 @@ final class WorkspacePersistenceTests: XCTestCase {
             )
             tree = next
         }
-        XCTAssertGreaterThan(tree.allPaneIDs().count, WorkspaceTransfer.maxItems, "the fixture is over the ceiling")
+        XCTAssertGreaterThan(tree.allPaneIDs().count, WorkspacePersistence.maxItems, "the fixture is over the ceiling")
         try persistence.save(tree)
 
         let loaded = persistence.loadTree()

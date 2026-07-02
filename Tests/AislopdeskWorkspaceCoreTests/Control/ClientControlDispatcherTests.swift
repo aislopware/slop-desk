@@ -29,7 +29,6 @@ private final class FakeClientControlBackend: ClientControlBackend {
     var configReloadReturn = true
     var configShowReturn: [ClientConfigEntry] = []
     var themesReturn: [ClientThemeInfo] = []
-    var themeImportReturn: String? = "monokai-classic-1"
     var fontsReturn: [ClientFontInfo] = []
     var keybindsReturn: [ClientKeybindInfo] = []
     var capturePaneReturn: [String]? = []
@@ -58,9 +57,6 @@ private final class FakeClientControlBackend: ClientControlBackend {
     var recordedConfigUnsetKey: String?
     var recordedConfigUnsetTransient: Bool?
     var recordedThemeColor: ClientControlProtocol.ThemeColorFilter?
-    var recordedThemeImportPath: String?
-    var recordedThemeImportActivate: Bool?
-    var recordedThemeImportOverwrite: Bool?
     var recordedFontMonospace: Bool?
     var recordedFontFamily: String?
     var recordedFontScope: ClientControlProtocol.FontScope?
@@ -139,13 +135,6 @@ private final class FakeClientControlBackend: ClientControlBackend {
     func listThemes(color: ClientControlProtocol.ThemeColorFilter) -> [ClientThemeInfo] {
         recordedThemeColor = color
         return themesReturn
-    }
-
-    func themeImport(path: String, activate: Bool, overwrite: Bool) -> String? {
-        recordedThemeImportPath = path
-        recordedThemeImportActivate = activate
-        recordedThemeImportOverwrite = overwrite
-        return themeImportReturn
     }
 
     func listFonts(
@@ -567,36 +556,6 @@ final class ClientControlDispatcherTests: XCTestCase {
 
     func testThemeListInvalidColorErrors() {
         XCTAssertFalse(isOK(run(ClientControlProtocol.Method.themeList, ["color": "ultraviolet"])))
-    }
-
-    func testThemeImportReturnsSlug() {
-        let obj = run(
-            ClientControlProtocol.Method.themeImport,
-            ["path": "~/Downloads/dracula.itermcolors", "activate": true, "overwrite": false],
-        )
-        XCTAssertTrue(isOK(obj))
-        XCTAssertEqual(backend.recordedThemeImportPath, "~/Downloads/dracula.itermcolors")
-        XCTAssertEqual(backend.recordedThemeImportActivate, true)
-        XCTAssertEqual(backend.recordedThemeImportOverwrite, false)
-        XCTAssertEqual(result(obj)["slug"] as? String, "monokai-classic-1")
-        XCTAssertEqual(result(obj)["activated"] as? Bool, true)
-    }
-
-    func testThemeImportMissingPathErrors() {
-        XCTAssertFalse(isOK(run(ClientControlProtocol.Method.themeImport)))
-        XCTAssertFalse(isOK(run(ClientControlProtocol.Method.themeImport, ["path": ""])))
-        XCTAssertNil(backend.recordedThemeImportPath)
-    }
-
-    func testThemeImportFailureErrors() {
-        backend.themeImportReturn = nil
-        XCTAssertFalse(isOK(run(ClientControlProtocol.Method.themeImport, ["path": "/nope.toml"])))
-    }
-
-    func testThemeImportDefaultsFlagsFalse() {
-        _ = run(ClientControlProtocol.Method.themeImport, ["path": "/x.toml"])
-        XCTAssertEqual(backend.recordedThemeImportActivate, false)
-        XCTAssertEqual(backend.recordedThemeImportOverwrite, false)
     }
 
     func testFontListFilters() throws {

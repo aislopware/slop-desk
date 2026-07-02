@@ -2,10 +2,9 @@ import CoreGraphics
 import XCTest
 @testable import AislopdeskWorkspaceCore
 
-/// Pins the four cross-cutting state-lifecycle fixes (2026-06-13 cross-cutting hunt): a whole-canvas swap
-/// (switchToLayoutPreset / importWorkspace.replace) must invalidate the workspace-global transients that
-/// anchor to the OLD canvas — viewport bookmarks, the close-undo, and armed broadcast — and a repeated
-/// identical merge must content-dedup instead of growing the preset library.
+/// Pins the cross-cutting state-lifecycle fixes (2026-06-13 cross-cutting hunt): a whole-canvas swap
+/// (switchToLayoutPreset) must invalidate the workspace-global transients that anchor to the OLD canvas —
+/// viewport bookmarks and the close-undo.
 @MainActor
 final class CrossCuttingFixTests: XCTestCase {
     private func store(_ items: [CanvasItem], focus: PaneID) -> WorkspaceStore {
@@ -38,8 +37,7 @@ final class CrossCuttingFixTests: XCTestCase {
         )
     }
 
-    func testSwitchAndImportReplaceClearTheCloseUndo() throws {
-        // switch path
+    func testSwitchClearsTheCloseUndo() {
         let a = term(0), b = term(400)
         let st = store([a, b], focus: a.id)
         st.saveLayoutPreset(name: "p")
@@ -48,38 +46,5 @@ final class CrossCuttingFixTests: XCTestCase {
         st.switchToLayoutPreset(name: "p")
         XCTAssertNil(st.recentlyClosed, "switch clears the close-undo (it points at the old workspace)")
         XCTAssertNil(st.reopenClosedPane(), "Reopen is a no-op after a switch")
-
-        // import-replace path
-        let src = store([term(0, "alpha")], focus: PaneID())
-        let data = src.exportWorkspaceData()
-        let dst = store([term(0), term(400, "z")], focus: PaneID())
-        try dst.closePane(XCTUnwrap(dst.workspace.canvas.allIDs().last))
-        XCTAssertNotNil(dst.recentlyClosed)
-        XCTAssertTrue(dst.importWorkspace(data, mode: .replace))
-        XCTAssertNil(dst.recentlyClosed, "import-replace clears the close-undo")
-    }
-
-    func testImportReplaceDisarmsBroadcast() {
-        let src = store([term(0, "a")], focus: PaneID())
-        let data = src.exportWorkspaceData()
-        let st = store([term(0), term(400)], focus: PaneID())
-        st.toggleBroadcast()
-        XCTAssertTrue(st.broadcastActive, "precondition: broadcast armed")
-        XCTAssertTrue(st.importWorkspace(data, mode: .replace))
-        XCTAssertFalse(st.broadcastActive, "a whole-canvas swap disarms synchronized input")
-    }
-
-    func testRepeatedIdenticalMergeDoesNotGrowLibrary() {
-        let src = store([term(0, "alpha")], focus: PaneID())
-        src.saveLayoutPreset(name: "p")
-        let data = src.exportWorkspaceData()
-
-        let dst = store([term(0, "x")], focus: PaneID())
-        XCTAssertTrue(dst.importWorkspace(data, mode: .mergeAppend))
-        let presetsAfterFirst = dst.workspace.layoutPresets.count
-        XCTAssertEqual(presetsAfterFirst, 1)
-
-        XCTAssertTrue(dst.importWorkspace(data, mode: .mergeAppend)) // identical re-merge
-        XCTAssertEqual(dst.workspace.layoutPresets.count, presetsAfterFirst, "content-identical preset is not re-added")
     }
 }

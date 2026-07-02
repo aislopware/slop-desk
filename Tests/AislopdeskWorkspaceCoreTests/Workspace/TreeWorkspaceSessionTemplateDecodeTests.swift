@@ -78,7 +78,7 @@ final class TreeWorkspaceSessionTemplateDecodeTests: XCTestCase {
 
     // MARK: loadTree count bound (DoS-hardening)
 
-    /// A hand-edited / hostile v10 file with a `sessionTemplates` array beyond ``WorkspaceTransfer/maxItems``
+    /// A hand-edited / hostile v10 file with a `sessionTemplates` array beyond ``WorkspacePersistence/maxItems``
     /// must be REJECTED by `loadTree()` (reset aside → default), exactly as the `allPaneIDs`/
     /// `layoutPresets`/`launchPresets` collections are — so a single huge persisted array can't make the
     /// store allocate unboundedly on launch.
@@ -92,14 +92,14 @@ final class TreeWorkspaceSessionTemplateDecodeTests: XCTestCase {
 
         // One template repeated (maxItems + 1) times — a valid v10 file whose ONLY problem is the count.
         let one = SessionTemplate(name: "T", layout: .pane(TemplatePane(title: "X")))
-        let oversized = [SessionTemplate](repeating: one, count: WorkspaceTransfer.maxItems + 1)
+        let oversized = [SessionTemplate](repeating: one, count: WorkspacePersistence.maxItems + 1)
         let listJSON = try XCTUnwrap(String(data: JSONEncoder().encode(oversized), encoding: .utf8))
         try workspaceJSON(sessionTemplates: listJSON).write(to: url)
 
         let loaded = persistence.loadTree()
         // Reset to default (built-in templates), NOT the oversized array.
         XCTAssertEqual(loaded.sessionTemplates, SessionTemplate.builtIns)
-        XCTAssertLessThanOrEqual(loaded.sessionTemplates.count, WorkspaceTransfer.maxItems)
+        XCTAssertLessThanOrEqual(loaded.sessionTemplates.count, WorkspacePersistence.maxItems)
     }
 
     // MARK: Persistence round-trip (byte-stable)

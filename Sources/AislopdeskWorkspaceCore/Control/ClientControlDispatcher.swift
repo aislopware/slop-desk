@@ -97,8 +97,6 @@ public struct ClientControlDispatcher {
             configShow(id: id)
         case ClientControlProtocol.Method.themeList:
             themeList(id: id, params: params)
-        case ClientControlProtocol.Method.themeImport:
-            themeImport(id: id, params: params)
         case ClientControlProtocol.Method.fontList:
             fontList(id: id, params: params)
         case ClientControlProtocol.Method.keybindList:
@@ -297,20 +295,6 @@ public struct ClientControlDispatcher {
             ["name": t.name, "dark": t.isDark, "active": t.isActive]
         }
         return Self.success(id: id, result: ["themes": items])
-    }
-
-    /// `theme-import` → import a theme file (reuses the E15 importers). Validates `path` (required,
-    /// non-empty); a missing/unreadable/unparseable file → error. Returns the imported `slug`.
-    private func themeImport(id: String, params: [String: Any]) -> [String: Any] {
-        guard let path = params["path"] as? String, !path.isEmpty else {
-            return Self.error(id: id, message: "missing params.path")
-        }
-        let activate = (params["activate"] as? Bool) ?? false
-        let overwrite = (params["overwrite"] as? Bool) ?? false
-        guard let slug = backend.themeImport(path: path, activate: activate, overwrite: overwrite) else {
-            return Self.error(id: id, message: "theme import failed")
-        }
-        return Self.success(id: id, result: ["slug": slug, "activated": activate])
     }
 
     /// `font-list` → `{fonts: [{family, monospace, system}]}`. Optional `monospace`/`family`/`scope`.

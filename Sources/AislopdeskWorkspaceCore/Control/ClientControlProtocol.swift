@@ -55,8 +55,6 @@ public enum ClientControlProtocol {
         public static let configShow = "config-show"
         /// Enumerate themes (filtered by color appearance).
         public static let themeList = "theme-list"
-        /// Import a theme file (native `.aislopdesktheme` / iTerm2 / kitty / alacritty / ghostty) into the catalog.
-        public static let themeImport = "theme-import"
         /// Enumerate fonts.
         public static let fontList = "font-list"
         /// Enumerate keybindings (optionally filtered by action substring).
@@ -72,7 +70,7 @@ public enum ClientControlProtocol {
         public static let all: Set<String> = [
             windows, tabs, panes, tabBadge, jump, learn, ignore, view, edit,
             configGet, configSet, configUnset, configReload, configShow,
-            themeList, themeImport, fontList, keybindList, paneCapture, paneSendKeys, agentStatus,
+            themeList, fontList, keybindList, paneCapture, paneSendKeys, agentStatus,
         ]
     }
 
@@ -235,16 +233,6 @@ public enum ClientControlProtocol {
     /// `theme-list` — optional `color` filter token (default `all`).
     public static func themeListParams(color: ThemeColorFilter = .all) -> [String: Any] {
         ["color": color.rawValue]
-    }
-
-    /// `theme-import` — a theme-file `path`; `activate` makes it the active theme, `overwrite` allows
-    /// replacing an existing same-slug theme.
-    public static func themeImportParams(
-        path: String,
-        activate: Bool = false,
-        overwrite: Bool = false,
-    ) -> [String: Any] {
-        ["path": path, "activate": activate, "overwrite": overwrite]
     }
 
     /// `font-list` — optional `monospace` filter, `family` substring, and `scope` token.

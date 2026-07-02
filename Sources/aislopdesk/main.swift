@@ -68,7 +68,6 @@ func printUsage() {
       font apply "<name>"                  Set the terminal font family (running app).
       font import <path> [--apply]         Install a font into ~/Library/Fonts (optionally apply).
       theme list [--color <dark|light|all>]    List themes.
-      theme import <path> [--activate] [--overwrite]   Import a theme file.
       keybind list [--action <s>]          List keybindings.
       jump [query] [--no-cd]               cd the focused pane to a frecency-ranked dir.
       learn [path]                         Record a directory visit (no path = focused pane cwd).
@@ -862,38 +861,10 @@ func cmdThemeList(_ rest: [String]) -> Never {
     )
 }
 
-func cmdThemeImport(_ rest: [String]) -> Never {
-    var path: String?
-    var activate = false
-    var overwrite = false
-    for token in rest {
-        switch token {
-        case "--activate": activate = true
-        case "--overwrite": overwrite = true
-        default:
-            if token.hasPrefix("-") { die("theme import: unknown flag '\(token)'", code: 2) }
-            if path == nil { path = token } else { die("theme import: unexpected argument '\(token)'", code: 2) }
-        }
-    }
-    guard let path else { die("theme import: requires a <path>", code: 2) }
-    let result = requireResult(callClient(
-        method: ClientControlProtocol.Method.themeImport,
-        params: ClientControlProtocol.themeImportParams(path: path, activate: activate, overwrite: overwrite),
-    ))
-    if invocation.format == .json {
-        stdout(CLIFormatting.renderJSON(result) + "\n")
-    } else {
-        let slug = result["slug"] as? String ?? path
-        stdout("imported theme: \(slug)\(activate ? " (activated)" : "")\n")
-    }
-    exit(0)
-}
-
 func cmdTheme(_ rest: [String]) -> Never {
     switch rest.first {
     case "list": cmdThemeList(Array(rest.dropFirst()))
-    case "import": cmdThemeImport(Array(rest.dropFirst()))
-    default: die("theme: expected 'list' or 'import'", code: 2)
+    default: die("theme: expected 'list'", code: 2)
     }
 }
 

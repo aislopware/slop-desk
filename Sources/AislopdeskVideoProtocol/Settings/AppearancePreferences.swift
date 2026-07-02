@@ -7,20 +7,19 @@ import Foundation
 /// ``EnvConfig/overlay``, and never serialised into the `video-prefs.json` sidecar — so a default install
 /// (all-`nil`) leaves the env overlay EMPTY and the golden corpus byte-identical. It persists ONLY to
 /// `UserDefaults` (key `settings.appearance.v1`) and applies ONLY to ``ThemeStore`` / ``SettingsKey/density``.
-/// The E15 dual-slot / custom-slug / per-theme-font fields ADDED below keep this invariant — they too only
-/// drive ``ThemeStore`` (theme/chrome) + ``TerminalConfigBuilder`` (pure client render config), never the
+/// The E15 dual-slot / per-theme-font fields ADDED below keep this invariant — they too only drive
+/// ``ThemeStore`` (theme/chrome) + ``TerminalConfigBuilder`` (pure client render config), never the
 /// wire/sidecar/overlay; a default-install (all-`nil`) is still byte-identical to the frozen golden corpus.
 ///
 /// Default = all-`nil` ⇒ NO behaviour change: the theme stays the compile-time default (Monokai Pro Classic)
 /// and the density key is left untouched.
 ///
-/// DUAL-SLOT MODEL (E15 / ES-E15-1): ``theme`` (+ ``customLightSlug``) is the LIGHT / single / primary slot;
-/// ``themeDark`` (+ ``customDarkSlug``) is the DARK slot. With ``useSeparateDarkTheme`` OFF (or `nil`) the
-/// primary slot applies for EVERY OS appearance (one theme, no follow-OS — except the legacy `.system`
-/// built-in, which still follows the OS by construction). With it ON the OS appearance selects the slot
-/// (light → light slot, dark → dark slot), re-resolved LIVE by ``ThemeStore``'s OS-appearance observer. A
-/// non-empty per-slot `custom…Slug` overrides that slot's built-in ``ThemeChoice`` (the slot then points at a
-/// scanned `.aislopdesktheme`). The pure picker is ``ThemeResolution/activeRef(appearance:osIsDark:)``.
+/// DUAL-SLOT MODEL (E15 / ES-E15-1): ``theme`` is the LIGHT / single / primary slot; ``themeDark`` is the
+/// DARK slot. With ``useSeparateDarkTheme`` OFF (or `nil`) the primary slot applies for EVERY OS appearance
+/// (one theme, no follow-OS — except the legacy `.system` built-in, which still follows the OS by
+/// construction). With it ON the OS appearance selects the slot (light → light slot, dark → dark slot),
+/// re-resolved LIVE by ``ThemeStore``'s OS-appearance observer. The pure picker is
+/// ``ThemeResolution/activeBuiltinID(appearance:osIsDark:)``.
 public struct AppearancePreferences: Codable, Sendable, Equatable {
     /// The active theme (the LIGHT / single / primary slot). `nil` ⇒ unset ⇒ keep the compile-time
     /// default (Monokai Pro Classic).
@@ -34,12 +33,6 @@ public struct AppearancePreferences: Codable, Sendable, Equatable {
     /// picks the slot (light → ``theme``, dark → ``themeDark``); `nil`/`false` ⇒ the single primary slot
     /// applies for every appearance. `nil` (unset) reads as OFF.
     public var useSeparateDarkTheme: Bool?
-    /// When non-empty, the LIGHT / primary slot points at a SCANNED custom theme (a ``ThemeDocument`` slug)
-    /// instead of the built-in ``theme``. `nil`/empty ⇒ use the built-in.
-    public var customLightSlug: String?
-    /// When non-empty, the DARK slot points at a scanned custom theme (slug) instead of the built-in
-    /// ``themeDark``. `nil`/empty ⇒ use the built-in.
-    public var customDarkSlug: String?
     /// Per-theme font overrides keyed by theme slug (the Font → Light/Dark scope tabs, ES-E15-4). `nil`/absent
     /// ⇒ no per-theme override (the Global ``TerminalPreferences/fontFamily`` stands). Stored here (not on the
     /// terminal prefs) because the override is keyed by the THEME a slot resolves to.
@@ -50,16 +43,12 @@ public struct AppearancePreferences: Codable, Sendable, Equatable {
         density: String? = nil,
         themeDark: ThemeChoice? = nil,
         useSeparateDarkTheme: Bool? = nil,
-        customLightSlug: String? = nil,
-        customDarkSlug: String? = nil,
         themeFonts: [String: String]? = nil,
     ) {
         self.theme = theme
         self.density = density
         self.themeDark = themeDark
         self.useSeparateDarkTheme = useSeparateDarkTheme
-        self.customLightSlug = customLightSlug
-        self.customDarkSlug = customDarkSlug
         self.themeFonts = themeFonts
     }
 }
@@ -86,8 +75,8 @@ public enum ThemeChoice: String, Codable, Sendable, Equatable, CaseIterable {
 public extension ThemeChoice {
     /// The stable ``SlateTheme`` `id` this choice pins to, or `nil` for ``system`` (which FOLLOWS the OS — the
     /// resolver substitutes the dark/light default per `osIsDark`). Used by ``ThemeResolution`` to produce a
-    /// ``ThemeRef`` WITHOUT importing the SwiftUI `SlateTheme` (the leaf can't see ClientUI). The id strings
-    /// MIRROR `SlateTheme.id`; the end-to-end `ThemeStoreTests` round-trip (ref → `SlateTheme`) pins them so a
+    /// built-in id WITHOUT importing the SwiftUI `SlateTheme` (the leaf can't see ClientUI). The id strings
+    /// MIRROR `SlateTheme.id`; the end-to-end `ThemeStoreTests` round-trip (id → `SlateTheme`) pins them so a
     /// drift between the two halves is caught.
     var builtinID: String? {
         switch self {

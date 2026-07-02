@@ -121,16 +121,6 @@ public enum PaletteAction: Sendable {
     /// SAME live `appearance.theme` Settings → Appearance edits, so the chrome retints + the terminal cells
     /// repaint immediately). `nil`-closure default (tests / previews) is a graceful no-op.
     case switchTheme
-    /// Theme catalog verb (Batch 4): the palette "Reload Config" / "Reload Theme" row — re-apply the live client
-    /// settings (theme retint + keybinding republish). Routed by the coordinator to the injected
-    /// ``OverlayCoordinator/reloadConfig`` closure (bound app-side to ``PreferencesStore/reapplyLiveSettings()``
-    /// plus the config-reload broadcast the CLI `config reload` posts). A graceful no-op by default.
-    case reloadConfig
-    /// Theme catalog verb (Batch 4): the palette "Open Theme File" row — reveal the custom-themes folder
-    /// (`~/.config/aislopdesk/themes/`) in Finder so a hand-authored `.aislopdesktheme` can be edited. Routed by the
-    /// coordinator to the injected ``OverlayCoordinator/openThemeFile`` closure (macOS `NSWorkspace`; iOS has no
-    /// `~/.config` so it is a documented no-op). A graceful no-op by default.
-    case openThemeFile
     /// A non-interactable separator/zero row.
     case noOp
 }

@@ -67,11 +67,6 @@ import UIKit
 #if os(macOS)
 public struct AislopdeskSettingsScene: Scene {
     private let store: PreferencesStore
-    /// The live workspace owner, injected so the Advanced → Workspace rows (E7 WI-4) can export/import. The
-    /// `Settings` scene is SEPARATE from the main WindowGroup, so the store is threaded in here explicitly
-    /// (an environment value set on the WindowGroup does not cross into this scene). Optional so a preview
-    /// or a future host can omit it (the Workspace section then renders disabled).
-    private let workspaceStore: WorkspaceStore?
     /// E13 WI-2: the app-owned Agents install-hooks model, injected so the Agents card's Install/Uninstall/
     /// Status round-trips reach the host. Optional so a preview / future host can omit it (the card then
     /// renders the disabled "Connect a session" state).
@@ -79,18 +74,15 @@ public struct AislopdeskSettingsScene: Scene {
 
     public init(
         store: PreferencesStore,
-        workspaceStore: WorkspaceStore? = nil,
         agentHooks: AgentHooksController? = nil,
     ) {
         self.store = store
-        self.workspaceStore = workspaceStore
         self.agentHooks = agentHooks
     }
 
     public var body: some Scene {
         Settings {
             SettingsView(store: store)
-                .workspaceStore(workspaceStore)
                 .agentHooksController(agentHooks)
                 // Settings is native chrome → SYSTEM accent (not the theme accent) so its toggles / steppers /
                 // radio rows read as native System-Settings controls; appearance still tracks the theme below.
@@ -1334,11 +1326,9 @@ private struct AppearanceSettingsTab: View {
             windowSection
             #endif
 
-            // THEME (E15 WI-6): the picker lists every built-in PLUS the scanned custom `.aislopdesktheme`s
-            // (`ThemeCatalog.shared.customThemes`); picking a built-in writes `theme`/`themeDark` (clearing the
-            // slot's custom slug), picking a custom writes `customLightSlug`/`customDarkSlug` so the slot points
-            // at the scanned document. With "Use separated theme for dark mode" ON the OS appearance selects the
-            // slot, so a Dark Theme picker appears below the toggle (`dark-mode-theme.png`).
+            // THEME (E15 WI-6): the picker lists every built-in theme; picking one writes `theme`/`themeDark`.
+            // With "Use separated theme for dark mode" ON the OS appearance selects the slot, so a Dark Theme
+            // picker appears below the toggle (`dark-mode-theme.png`).
             slateFormSection("Theme") {
                 Picker("Theme", selection: themeSelectionBinding(forDarkSlot: false)) {
                     themeOptions
@@ -1352,12 +1342,6 @@ private struct AppearanceSettingsTab: View {
                     .pickerStyle(.segmented)
                 }
             }
-
-            // THEME EDITOR (E15 WI-7): a swatch grid (fg/bg + 16 ANSI dots) + chrome-region groups (Tabbar
-            // OMITTED — vertical-tabs-only) + Duplicate / Edit Selected Theme / Open Themes Folder + the Import
-            // Theme… dropdown, bound to the active `ThemeStore` theme. macOS hosts the editable ColorPickers +
-            // filesystem actions; iOS shows the read-only swatch display (see `ThemeEditorView`).
-            ThemeEditorView(store: store)
 
             Section {
                 Toggle(isOn: separateDarkBinding) {
@@ -1429,63 +1413,39 @@ private struct AppearanceSettingsTab: View {
         .formStyle(.grouped)
     }
 
-    /// The shared picker options — the fixed built-in list THEN the scanned custom themes (each tagged with a
-    /// ``ThemeSelection`` so the SAME body serves both the light/primary slot and the dark slot). Reading
-    /// `ThemeCatalog.shared.customThemes` here registers the `@Observable` dependency, so the picker re-renders
-    /// live when a freshly imported theme is scanned in.
+    /// The shared picker options — the fixed built-in list (each tagged with its ``ThemeChoice`` so the SAME
+    /// body serves both the light/primary slot and the dark slot).
     @ViewBuilder private var themeOptions: some View {
-        Text("System").tag(ThemeSelection.builtin(.system))
+        Text("System").tag(ThemeChoice.system)
         Divider()
-        Text("Monokai Pro (Classic)").tag(ThemeSelection.builtin(.monokaiProClassic))
-        Text("Monokai Pro Light").tag(ThemeSelection.builtin(.monokaiProClassicLight))
-        Text("Monokai Pro Octagon").tag(ThemeSelection.builtin(.monokaiProOctagon))
-        Text("Monokai Pro Machine").tag(ThemeSelection.builtin(.monokaiProMachine))
-        Text("Monokai Pro Ristretto").tag(ThemeSelection.builtin(.monokaiProRistretto))
-        Text("Monokai Pro Spectrum").tag(ThemeSelection.builtin(.monokaiProSpectrum))
+        Text("Monokai Pro (Classic)").tag(ThemeChoice.monokaiProClassic)
+        Text("Monokai Pro Light").tag(ThemeChoice.monokaiProClassicLight)
+        Text("Monokai Pro Octagon").tag(ThemeChoice.monokaiProOctagon)
+        Text("Monokai Pro Machine").tag(ThemeChoice.monokaiProMachine)
+        Text("Monokai Pro Ristretto").tag(ThemeChoice.monokaiProRistretto)
+        Text("Monokai Pro Spectrum").tag(ThemeChoice.monokaiProSpectrum)
         Divider()
-        Text("Paper (Light)").tag(ThemeSelection.builtin(.paper))
-        Text("Dark").tag(ThemeSelection.builtin(.dark))
-        let customThemes = ThemeCatalog.shared.customThemes
-        if !customThemes.isEmpty {
-            Divider()
-            ForEach(customThemes, id: \.slug) { document in
-                Text(document.displayName).tag(ThemeSelection.custom(slug: document.slug))
-            }
-        }
+        Text("Paper (Light)").tag(ThemeChoice.paper)
+        Text("Dark").tag(ThemeChoice.dark)
     }
 
-    /// Bridge the unified picker selection to one theme SLOT's pair of model fields (`theme`/`customLightSlug`
-    /// for the light/primary slot, `themeDark`/`customDarkSlug` for the dark slot). A non-empty custom slug
-    /// reads as `.custom`; otherwise the slot's built-in ``ThemeChoice`` (unset light ⇒ `.system`, unset dark
-    /// ⇒ Monokai Pro Classic). Picking a built-in CLEARS the slot's custom slug (so it reverts to the built-in);
-    /// picking a custom sets the slug. Writing always sets an explicit choice so the user's pick persists.
-    private func themeSelectionBinding(forDarkSlot dark: Bool) -> Binding<ThemeSelection> {
+    /// Bridge the picker selection to one theme SLOT's model field (`theme` for the light/primary slot,
+    /// `themeDark` for the dark slot). An unset slot reads as its default (unset light ⇒ `.system`, unset
+    /// dark ⇒ Monokai Pro Classic). Writing always sets an explicit choice so the user's pick persists.
+    private func themeSelectionBinding(forDarkSlot dark: Bool) -> Binding<ThemeChoice> {
         Binding(
             get: {
-                let slug = dark ? store.appearance.customDarkSlug : store.appearance.customLightSlug
-                if let slug, !slug.isEmpty { return .custom(slug: slug) }
                 let choice = dark ? store.appearance.themeDark : store.appearance.theme
-                return .builtin(choice ?? (dark ? .monokaiProClassic : .system))
+                return choice ?? (dark ? .monokaiProClassic : .system)
             },
-            set: { selection in
+            set: { choice in
                 // Mutate a local copy and assign ONCE so the store's `appearance` didSet (which re-applies the
-                // theme) fires a single time for the paired (choice, slug) write.
+                // theme) fires a single time.
                 var appearance = store.appearance
-                switch selection {
-                case let .builtin(choice):
-                    if dark {
-                        appearance.themeDark = choice
-                        appearance.customDarkSlug = nil
-                    } else {
-                        appearance.theme = choice
-                        appearance.customLightSlug = nil
-                    }
-                case let .custom(slug):
-                    if dark {
-                        appearance.customDarkSlug = slug
-                    } else {
-                        appearance.customLightSlug = slug
-                    }
+                if dark {
+                    appearance.themeDark = choice
+                } else {
+                    appearance.theme = choice
                 }
                 store.appearance = appearance
             },
@@ -1574,14 +1534,6 @@ private struct AppearanceSettingsTab: View {
             }
         }
     }
-}
-
-/// A Theme-picker selection — a built-in ``ThemeChoice`` or a scanned custom theme (by slug). Bridges the
-/// dropdown's single selection to a slot's `theme`/`customLightSlug` (resp. `themeDark`/`customDarkSlug`)
-/// model pair: a built-in pick clears the slot's custom slug, a custom pick sets it.
-private enum ThemeSelection: Hashable {
-    case builtin(ThemeChoice)
-    case custom(slug: String)
 }
 
 // MARK: - Agents section
@@ -1863,8 +1815,8 @@ private struct AdvancedSettingsTab: View {
             privilegesSection
 
             // The raw `AISLOPDESK_*` override editor + the Video HOST flags are macOS-host-relevant, so the
-            // iOS settings sheet (WI-5) omits them; the cross-platform All-Settings list + Workspace transfer
-            // below still reach iOS.
+            // iOS settings sheet (WI-5) omits them; the cross-platform All-Settings list below still
+            // reaches iOS.
             #if os(macOS)
             slateFormSection("Raw overrides") {
                 Text(
@@ -1888,11 +1840,6 @@ private struct AdvancedSettingsTab: View {
 
             configFileSection
             #endif
-
-            // E7 WI-4: portable workspace export / import (file picker over `WorkspaceTransferDocument`).
-            // Reads the live `WorkspaceStore` from `\.workspaceStore` (injected at the Settings scene root on
-            // macOS and onto the iOS sheet in WI-5; `nil` → the rows render disabled rather than crashing).
-            WorkspaceTransferSettingsView()
 
             // The searchable All Settings list + Reset-All / Reset-Advanced (replaces the bare reset button).
             // Pure SwiftUI, so it is shown on the iOS sheet too. `onAfterReset` clears the local raw-overrides
@@ -2001,8 +1948,8 @@ private struct AdvancedSettingsTab: View {
     /// "Reload Config". macOS-only — the config file lives in the user's `~/.config` directory tree,
     /// which is inaccessible on iOS (no user-visible filesystem). "Open Config File" creates the parent
     /// directory and the file (if absent) then opens it in the default text editor so the user lands in
-    /// a usable state even on a fresh install. "Reload Config" calls the SAME action as the command
-    /// palette's "Reload Config" row: `reapplyLiveSettings()` + the config-reload broadcast.
+    /// a usable state even on a fresh install. "Reload Config" calls the SAME action as the CLI
+    /// `config reload`: `reapplyLiveSettings()` + the config-reload broadcast.
     #if os(macOS)
     private var configFileSection: some View {
         slateFormSection("Config File") {
@@ -2033,7 +1980,7 @@ private struct AdvancedSettingsTab: View {
                 }
                 .buttonStyle(.bordered)
                 Button("Reload Config") {
-                    // Mirror the palette's "Reload Config" action exactly (same as WorkspaceControlBackend.configReload).
+                    // Mirror the CLI `config reload` action exactly (same as WorkspaceControlBackend.configReload).
                     store.reapplyLiveSettings()
                     NotificationCenter.default.post(
                         name: WorkspaceControlBackend.configReloadNotification, object: nil,

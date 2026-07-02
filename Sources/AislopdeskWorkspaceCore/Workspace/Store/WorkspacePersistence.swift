@@ -22,6 +22,11 @@ import Foundation
 /// `WorkspacePersistence` value can cross actor boundaries for the store's off-main-actor debounced
 /// write (docs/22 §6) without data-race risk.
 public struct WorkspacePersistence: @unchecked Sendable {
+    /// The largest collection sizes a loaded file may carry. A persisted file is repaired defensively; an
+    /// enormous `items` array would make the store eagerly allocate one session PER item on the main actor
+    /// (UI freeze / OOM). Real workspaces are dozens of panes — this cap is far above any genuine use.
+    public static let maxItems = 1024
+
     /// The file the workspace is written to / read from. Defaults to
     /// `Application Support/Aislopdesk/workspace.json` (the app container on iOS).
     public let fileURL: URL
@@ -117,16 +122,15 @@ public struct WorkspacePersistence: @unchecked Sendable {
         // Then repair a dangling/nil focusedPane + maximizedPane (focus never pinned to a ghost pane) and
         // any item pointing at a group that no longer exists (R13, ported to the single canvas).
         // A corrupt / hand-edited file with an absurd item count would make the store eagerly allocate a
-        // session per item on the main actor — fall back to default rather than freeze on launch (the same
-        // bound the portable import enforces).
-        guard migrated.canvas.items.count <= WorkspaceTransfer.maxItems,
-              migrated.groups.count <= WorkspaceTransfer.maxItems,
-              migrated.layoutPresets.count <= WorkspaceTransfer.maxItems else { return resetToDefault() }
+        // session per item on the main actor — fall back to default rather than freeze on launch.
+        guard migrated.canvas.items.count <= Self.maxItems,
+              migrated.groups.count <= Self.maxItems,
+              migrated.layoutPresets.count <= Self.maxItems else { return resetToDefault() }
         var seen = Set<PaneID>()
         var repaired = migrated
         repaired.canvas = repaired.canvas.dedupingItemIDs(seen: &seen)
-        // Repair the side collections (duplicate group ids / preset names) too — shared with
-        // the portable import path so a corrupt persisted file gets the same defensive treatment.
+        // Repair the side collections (duplicate group ids / preset names) too, so a corrupt persisted
+        // file gets the same defensive treatment.
         return repaired.normalizingCollections().normalizingFocus().normalizingGroups()
     }
 
@@ -147,7 +151,7 @@ public struct WorkspacePersistence: @unchecked Sendable {
     ///
     /// Never throws — launch must always get a usable tree. The result is `normalized()` so the
     /// `Set(specs.keys) == Set(leafIDs)` invariant holds even for a hand-edited / partial file
-    /// (validate-then-repair), and the per-collection ``WorkspaceTransfer/maxItems`` bound guards against
+    /// (validate-then-repair), and the per-collection ``maxItems`` bound guards against
     /// a corrupt file that would make the store eagerly allocate a session per leaf on launch.
     ///
     /// After normalization, a **last-known-title promotion** runs over each session's specs: if a pane's
@@ -173,11 +177,11 @@ public struct WorkspacePersistence: @unchecked Sendable {
             return resetTreeToDefault() // un-decodable / un-migratable version — preserve aside
         }
         // Bound the leaf/collection counts so a corrupt file cannot make the store allocate unboundedly
-        // on launch (the same ceiling the canvas load + portable import enforce).
-        guard tree.allPaneIDs().count <= WorkspaceTransfer.maxItems,
-              tree.layoutPresets.count <= WorkspaceTransfer.maxItems,
-              tree.launchPresets.count <= WorkspaceTransfer.maxItems,
-              tree.sessionTemplates.count <= WorkspaceTransfer.maxItems else { return resetTreeToDefault() }
+        // on launch (the same ceiling the canvas load enforces).
+        guard tree.allPaneIDs().count <= Self.maxItems,
+              tree.layoutPresets.count <= Self.maxItems,
+              tree.launchPresets.count <= Self.maxItems,
+              tree.sessionTemplates.count <= Self.maxItems else { return resetTreeToDefault() }
         let normalized = tree.normalized()
         return Self.promotingLastKnownTitles(in: normalized)
     }
