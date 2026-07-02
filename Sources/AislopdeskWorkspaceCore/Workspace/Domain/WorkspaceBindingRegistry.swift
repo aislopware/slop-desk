@@ -81,9 +81,9 @@ public enum WorkspaceAction: Hashable, Sendable {
     // `NSWindow.level = .floating` via the route closure. A window-scope view concern → needs no active pane;
     // iOS has no window level (documented no-op).
     case pinWindow
-    // Jump the Details / inspector panel to a SPECIFIC tab (Info / Git / Files) AND reveal it if
-    // hidden (four `Details: *` jump commands; ES-E9-5). Parameterized like `selectTab`/`applyLayout`;
-    // unbound by default (the four registry rows carry `chord: nil`) — the user can bind any in Settings.
+    // Jump the Details / inspector panel to a SPECIFIC tab (Info / Files) AND reveal it if
+    // hidden (the `Details: *` jump commands; ES-E9-5). Parameterized like `selectTab`/`applyLayout`;
+    // unbound by default (the registry rows carry `chord: nil`) — the user can bind any in Settings.
     case selectDetailsTab(DetailsPanelTab)
     case openQuickly // ⌘⇧O — open the fuzzy "open quickly" file/symbol switcher (E11 stub)
     // Jump-To (E10 ES-E10-5): ⌘J opens the floating Jump-To panel — the active pane's detected paths/URLs
@@ -759,9 +759,10 @@ public enum WorkspaceBindingRegistry {
             symbol: "pin",
             keywords: "pin window float floating always on top above keep front level stay topmost pip",
         ),
-        // Details tab jump commands (E9/WI-7, ES-E9-5, B2): three UNBOUND-by-default commands that
-        // switch the right-hand Details panel to a specific tab (Info / Git / Files — the old Outline tab
-        // is merged into Info's Commands section) AND reveal the
+        // Details tab jump commands (E9/WI-7, ES-E9-5, B2): two UNBOUND-by-default commands that
+        // switch the right-hand Details panel to a specific tab (Info / Files — the old Outline tab is
+        // merged into Info's Commands section, and the old Git tab into Info's git-summary row + popup)
+        // AND reveal the
         // panel when hidden (the reveal is wired in the view closure). `chord: nil` — the palette/menu-only
         // idiom (like `tab.close` / `view.openQuickly`) surfaces them in the command palette + cheat sheet
         // without binding a key; the user can bind any of them in Settings → Keybindings. The symbols mirror
@@ -769,12 +770,7 @@ public enum WorkspaceBindingRegistry {
         WorkspaceBinding(
             id: "view.detailsInfo", action: .selectDetailsTab(.info), title: "Details: Info",
             category: .view, chord: nil,
-            symbol: "info.circle", keywords: "inspector details panel tab info jump switch session process ports",
-        ),
-        WorkspaceBinding(
-            id: "view.detailsGit", action: .selectDetailsTab(.git), title: "Details: Git",
-            category: .view, chord: nil,
-            symbol: "arrow.triangle.branch", keywords: "inspector details panel tab git jump switch branch diff status",
+            symbol: "info.circle", keywords: "inspector details panel tab info jump switch session process ports git",
         ),
         WorkspaceBinding(
             id: "view.detailsFiles", action: .selectDetailsTab(.files), title: "Details: Files",

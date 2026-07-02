@@ -1101,17 +1101,16 @@ final class TreeCommandRoutingTests: XCTestCase {
         let store = makeTreeStore()
         let before = store.tree
         var captured: DetailsPanelTab?
-        WorkspaceBindingRegistry.route(.selectDetailsTab(.git), to: store, selectDetailsTab: { captured = $0 })
-        XCTAssertEqual(captured, .git, "selectDetailsTab forwarded the requested tab to the closure")
+        WorkspaceBindingRegistry.route(.selectDetailsTab(.files), to: store, selectDetailsTab: { captured = $0 })
+        XCTAssertEqual(captured, .files, "selectDetailsTab forwarded the requested tab to the closure")
         XCTAssertEqual(store.tree, before, "a Details-tab jump is a view affordance — the tree is unchanged")
     }
 
-    /// The four `Details: *` registry bindings exist, are `.view`, and are `chord: nil` (unbound — so they
+    /// The `Details: *` registry bindings exist, are `.view`, and are `chord: nil` (unbound — so they
     /// don't collide with any chord, and aren't dead). Revert-to-confirm-fail by removing a registry case.
     func testDetailsTabBindingsAreViewAndChordless() {
         let expected: [(String, DetailsPanelTab)] = [
-            ("view.detailsInfo", .info),
-            ("view.detailsGit", .git), ("view.detailsFiles", .files),
+            ("view.detailsInfo", .info), ("view.detailsFiles", .files),
         ]
         for (id, tab) in expected {
             let binding = WorkspaceBindingRegistry.binding(for: .selectDetailsTab(tab))

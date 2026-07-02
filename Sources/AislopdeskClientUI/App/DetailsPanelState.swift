@@ -2,7 +2,7 @@
 // (E9/WI-7). Sibling of `WorkspaceChromeState`.
 //
 // The Details-tab selection was a private `@State` inside `InspectorColumn`, so it could not be driven from
-// outside the view — but the app exposes four bindable `Details: *` jump commands (ES-E9-5) that switch the
+// outside the view — but the app exposes bindable `Details: *` jump commands (ES-E9-5) that switch the
 // tab. Hoisting the selection into this shared `@Observable` lets `WorkspaceRootView` install a
 // `selectDetailsTab` closure that writes `selected` (and reveals the panel) when a command routes through
 // `WorkspaceBindingRegistry.route`, while `InspectorColumn` reads `selected` to render the active tab — one
@@ -18,8 +18,8 @@ import Foundation
 @MainActor
 @Observable
 final class DetailsPanelState {
-    /// The currently-selected Details / inspector tab (Info | Git | Files). Written by the
-    /// segmented header click AND by the four `Details: *` jump commands (via the root view's installed
+    /// The currently-selected Details / inspector tab (Info | Files). Written by the
+    /// segmented header click AND by the `Details: *` jump commands (via the root view's installed
     /// `selectDetailsTab` closure); read by `InspectorColumn` to render the active tab.
     var selected: DetailsPanelTab = .info
 }

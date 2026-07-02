@@ -1,9 +1,11 @@
 // InspectorColumn — the right Details panel. The Details panel is a SEGMENTED
 // header (active tab = icon+label pill, inactive = icon only) over a warm panel; hidden until ⌘⇧R.
 // It keeps aislopdesk's live content under the Info tab:
-//   • Info  — the live SESSION (connection dot+label, host:port, ping, agent) + working directory + the
+//   • Info  — the live SESSION (connection dot+label, host:port, ping, agent) + working directory + a
+//             one-row GIT SUMMARY (branch + change count; the full status/diff opens as a popup — the old
+//             standalone Git tab merged here, its changed-file list is unbounded so it gets a window) + the
 //             first-class command navigator (`BlockHistoryView` over the active pane's `TerminalBlockModel`).
-//   • Git / Files — themed empty states for now (no live git/file datum flows to this panel yet).
+//   • Files — the remote file tree.
 //
 // Resolution mirrors `PaneContainer`: `store.handle(for: paneID) as? LivePaneSession` keyed by the active
 // tab's active pane. Reading `connection.status` + `LivePaneSession.claudeStatus` + `connection?.latencyMS`
@@ -23,7 +25,7 @@ struct InspectorColumn: View {
     let store: WorkspaceStore
     let connection: AppConnection
     /// The shared, command-drivable Details-tab selection (E9/WI-7). Hoisted out of the old private `@State`
-    /// so the four `Details: *` jump commands (ES-E9-5) can switch the tab from OUTSIDE the view — the root
+    /// so the `Details: *` jump commands (ES-E9-5) can switch the tab from OUTSIDE the view — the root
     /// view installs a `selectDetailsTab` closure that writes `details.selected` (and reveals the panel). Both
     /// inspector mounts (macOS split item + iOS detail) share ONE instance, so the active tab is one truth.
     let details: DetailsPanelState
@@ -36,6 +38,11 @@ struct InspectorColumn: View {
     /// Set by the Info tab's agent-sessions action; the viewer binds the focused pane's model (its session
     /// list + the `readAgentSession` fetch). E4/WI-6.
     @State private var showSessionHistory = false
+
+    /// Whether the Git details popup (`GitDetailsSheet` over the full `GitStatusView`) is presented. Set by
+    /// the Info tab's git-summary row — the old standalone Git tab merged into Info; the unbounded
+    /// changed-file list + diff live in the popup, the Info row carries only branch + change count.
+    @State private var showGitDetails = false
 
     /// PER-PANE decoded host metadata (E4): processes / ports / git / files / cwd. One model per pane the
     /// inspector has shown — so each pane RETAINS its data and a slow `refresh()` for the pane you just left
@@ -136,6 +143,9 @@ struct InspectorColumn: View {
                 onSendToChat: onSendToChat,
             )
         }
+        .sheet(isPresented: $showGitDetails) {
+            GitDetailsSheet(model: activeModel, onClose: { showGitDetails = false })
+        }
     }
 
     /// Performs a History-viewer Resume (E13/WI-6, ES-E13-6) off the pure ``AgentResumeRouter`` decision: JUMP
@@ -229,10 +239,8 @@ struct InspectorColumn: View {
         // navigator's `@State` selection + fetched-output cache — when the focused pane changes, so a stale
         // index-keyed cache can never render one pane's output under another pane's same-index block.
         case .info: infoContent.id(activePaneID)
-        // `.id(activePaneID)` resets each tab's local interaction state (selected diff file / find query /
-        // scroll position) when the focused pane changes — `activeModel`/`terminalModel` already switch to
-        // that pane's data.
-        case .git: GitStatusView(model: activeModel).id(activePaneID)
+        // `.id(activePaneID)` resets the tab's local interaction state (find query / scroll position) when
+        // the focused pane changes — `activeModel` already switches to that pane's data.
         case .files: RemoteFileTreeView(model: activeModel).id(activePaneID)
         }
     }
@@ -240,6 +248,7 @@ struct InspectorColumn: View {
     private var infoContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             workingDirectorySection
+            gitSection
             sectionDivider
             ProcessPortsView(model: activeModel)
                 .padding(.bottom, Slate.Metric.space2)
@@ -253,41 +262,115 @@ struct InspectorColumn: View {
     }
 
     /// The Info-tab Working Directory section (E9/WI-6, ES-E9-1): leads the host-metadata content with the
-    /// focused pane's full working-directory path — a prominent, SELECTABLE, head-truncated path string per
-    /// `info-panel.png` — and a single "Copy Path" action. Reveal-in-Finder / Open-in-VS-Code/Cursor/Xcode/
-    /// Typora are intentionally absent: the path is a REMOTE host path with no local opener (E4 mapping note);
-    /// Copy Path is the only working-directory action E9 ships. The canonical home for the cwd (the old
-    /// truncated Session "Dir" row was removed).
+    /// focused pane's working-directory path — a prominent, SELECTABLE, RESPONSIVE path per `info-panel.png`
+    /// (full path when it fits, component-abbreviated `/V/L/W/o/leaf` when not, head-truncated as the last
+    /// resort) — with the Copy action inline as a trailing icon (the old full-width "Copy Path" row wasted a
+    /// line). Reveal-in-Finder / Open-in-VS-Code/Cursor/Xcode/Typora are intentionally absent: the path is a
+    /// REMOTE host path with no local opener (E4 mapping note); Copy Path is the only working-directory
+    /// action E9 ships. The canonical home for the cwd (the old truncated Session "Dir" row was removed).
     private var workingDirectorySection: some View {
         VStack(alignment: .leading, spacing: Slate.Metric.space1) {
             SlateSectionHeader("Working Directory")
-            Text(InfoTabFormatting.displayPath(resolvedCwd))
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.primary)
-                .textSelection(.enabled)
-                .lineLimit(1)
-                .truncationMode(.head)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, Slate.Metric.space3)
-            Button(action: copyWorkingDirectory) {
-                HStack(spacing: Slate.Metric.space2) {
-                    Image(systemName: "doc.on.doc")
-                    Text("Copy Path")
-                    Spacer(minLength: 0)
+            HStack(spacing: Slate.Metric.space2) {
+                workingDirectoryLabel
+                Spacer(minLength: 0)
+                ConfirmFlashButton(action: copyWorkingDirectory) { confirming in
+                    Image(systemName: confirming ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: Slate.Typeface.base))
+                        .foregroundStyle(confirming ? Slate.Status.ok : Slate.State.accent)
+                        .padding(.vertical, 1)
+                        .contentShape(.rect)
                 }
-                .font(.system(size: Slate.Typeface.base))
-                .foregroundStyle(Slate.State.accent)
-                .padding(.horizontal, Slate.Metric.space3)
-                .padding(.vertical, 3)
-                .contentShape(.rect)
+                .disabled(resolvedCwd == nil)
+                .help("Copy the working-directory path")
+                .accessibilityLabel("Copy the working-directory path")
             }
-            .buttonStyle(.plain)
-            .disabled(resolvedCwd == nil)
-            .help("Copy the working-directory path")
-            .accessibilityLabel("Copy the working-directory path")
+            .padding(.horizontal, Slate.Metric.space3)
         }
         .padding(.top, Slate.Metric.space1)
         .padding(.bottom, Slate.Metric.space2)
+    }
+
+    /// The RESPONSIVE working-directory label: `ViewThatFits` tries the full path, then the fish-style
+    /// component-abbreviated form (`/V/L/W/o/aislopdesk`), and falls back to HEAD-truncating the abbreviated
+    /// form when even that overflows — so the leaf directory (the part that identifies the project) survives
+    /// every width. The old single head-truncated `Text` lost the leading components at any overflow, and its
+    /// selectable text scrolled part of the TAIL out of view once selected.
+    @ViewBuilder private var workingDirectoryLabel: some View {
+        if let path = resolvedCwd {
+            ViewThatFits(in: .horizontal) {
+                pathText(path)
+                pathText(InfoTabFormatting.abbreviatedPath(path))
+                pathText(InfoTabFormatting.abbreviatedPath(path))
+                    .truncationMode(.head)
+            }
+        } else {
+            pathText("—")
+        }
+    }
+
+    private func pathText(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: Slate.Typeface.body))
+            .foregroundStyle(Slate.Text.primary)
+            .textSelection(.enabled)
+            .lineLimit(1)
+    }
+
+    /// The Info-tab GIT section (the old standalone Git tab merged here): ONE summary row — branch name,
+    /// ahead/behind deltas, and the changed-file count — that opens the full `GitStatusView` (status list +
+    /// per-file diff) as a POPUP. The changed-file list is unbounded, so it gets a window instead of a
+    /// sidebar tab; the Info row stays one line. Hidden while the pane has no metadata yet or the cwd is not
+    /// inside a git repo (the summary would carry no signal).
+    @ViewBuilder private var gitSection: some View {
+        if let status = activeModel.gitStatus, status.hasRepo {
+            sectionDivider
+            VStack(alignment: .leading, spacing: 0) {
+                SlateSectionHeader("Git")
+                Button {
+                    showGitDetails = true
+                } label: {
+                    HStack(spacing: Slate.Metric.space2) {
+                        Image(systemName: "arrow.triangle.branch")
+                            .foregroundStyle(Slate.Text.icon)
+                        Text(status.branch.isEmpty ? "detached" : status.branch)
+                            .foregroundStyle(Slate.Text.primary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if status.ahead != 0 {
+                            gitDelta(symbol: "arrow.up", count: status.ahead, tint: Slate.Status.ok)
+                        }
+                        if status.behind != 0 {
+                            gitDelta(symbol: "arrow.down", count: status.behind, tint: Slate.Status.warn)
+                        }
+                        Spacer(minLength: Slate.Metric.space2)
+                        Text(InfoTabFormatting.gitChangeSummary(status.files.count))
+                            .font(.system(size: Slate.Typeface.footnote))
+                            .foregroundStyle(status.files.isEmpty ? Slate.Status.ok : Slate.Status.warn)
+                            .monospacedDigit()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: Slate.Typeface.small, weight: .semibold))
+                            .foregroundStyle(Slate.Text.tertiary)
+                    }
+                    .font(.system(size: Slate.Typeface.base))
+                    .padding(.horizontal, Slate.Metric.space3)
+                    .padding(.vertical, 3)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help("Show git status and diffs")
+                .accessibilityLabel("Show git status and diffs")
+            }
+            .padding(.bottom, Slate.Metric.space2)
+        }
+    }
+
+    private func gitDelta(symbol: String, count: Int32, tint: Color) -> some View {
+        HStack(spacing: 2) {
+            Image(systemName: symbol).font(.system(size: Slate.Typeface.small, weight: .semibold))
+            Text(String(count)).font(.system(size: Slate.Typeface.footnote)).monospacedDigit()
+        }
+        .foregroundStyle(tint)
     }
 
     /// Writes the resolved working-directory path to the system pasteboard — the `RemoteFileTreeView.copyPath`
@@ -313,12 +396,18 @@ struct InspectorColumn: View {
     private var agentSessionsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             SlateSectionHeader("Claude Code")
-            agentActionRow(
-                systemImage: "doc.on.doc",
-                title: "Copy Session ID",
-                action: copySessionID,
-                disabled: activeAgentSessionID == nil,
-            )
+            // Copy Session ID flashes a checkmark after firing (the ConfirmFlashButton feedback beat) —
+            // a silent pasteboard write otherwise reads as a no-op.
+            ConfirmFlashButton(action: copySessionID) { confirming in
+                agentRowLabel(
+                    systemImage: confirming ? "checkmark" : "doc.on.doc",
+                    title: confirming ? "Copied" : "Copy Session ID",
+                    disabled: activeAgentSessionID == nil,
+                    tint: confirming ? Slate.Status.ok : nil,
+                )
+            }
+            .disabled(activeAgentSessionID == nil)
+            .accessibilityLabel("Copy Session ID")
             agentActionRow(
                 systemImage: "clock.arrow.circlepath",
                 title: "View Session History",
@@ -345,21 +434,34 @@ struct InspectorColumn: View {
         @ViewBuilder trailing: () -> some View = { EmptyView() },
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: Slate.Metric.space2) {
-                Image(systemName: systemImage)
-                Text(title)
-                Spacer(minLength: Slate.Metric.space2)
-                trailing()
-            }
-            .font(.system(size: Slate.Typeface.base))
-            .foregroundStyle(disabled ? Slate.Text.tertiary : Slate.State.accent)
-            .padding(.horizontal, Slate.Metric.space3)
-            .padding(.vertical, 3)
-            .contentShape(.rect)
+            agentRowLabel(systemImage: systemImage, title: title, disabled: disabled, trailing: trailing)
         }
         .buttonStyle(.plain)
         .disabled(disabled)
         .accessibilityLabel(title)
+    }
+
+    /// The agent action row's LABEL (shared by the plain rows and the flash-confirming Copy row): a leading
+    /// SF Symbol + an accent label + optional trailing accessory. `tint` overrides the enabled accent (the
+    /// flash state's `Slate.Status.ok`).
+    private func agentRowLabel(
+        systemImage: String,
+        title: String,
+        disabled: Bool = false,
+        tint: Color? = nil,
+        @ViewBuilder trailing: () -> some View = { EmptyView() },
+    ) -> some View {
+        HStack(spacing: Slate.Metric.space2) {
+            Image(systemName: systemImage)
+            Text(title)
+            Spacer(minLength: Slate.Metric.space2)
+            trailing()
+        }
+        .font(.system(size: Slate.Typeface.base))
+        .foregroundStyle(disabled ? Slate.Text.tertiary : (tint ?? Slate.State.accent))
+        .padding(.horizontal, Slate.Metric.space3)
+        .padding(.vertical, 3)
+        .contentShape(.rect)
     }
 
     /// Writes the focused agent pane's live Claude session id to the system pasteboard (the `copyWorkingDirectory`
@@ -401,14 +503,13 @@ struct InspectorColumn: View {
 /// The segmented Details header's per-tab DISPLAY (E9/WI-7): the short label + SF Symbol for each
 /// ``DetailsPanelTab``. Kept as a view-local extension (NOT on the core `DetailsPanelTab`, which stays a pure
 /// value enum) so the SF-symbol / title strings live in the UI layer; `internal` so the placement pin in
-/// `InspectorRenderingTests` reaches it via `@testable import`. Tab order is Info | Git | Files (the old
-/// Outline tab is merged into Info's Commands section).
+/// `InspectorRenderingTests` reaches it via `@testable import`. Tab order is Info | Files (the old Outline
+/// tab is merged into Info's Commands section; the old Git tab into Info's git-summary row + popup).
 extension DetailsPanelTab {
     /// The short header label (NOT the `Details: …` palette title) shown when the tab is active.
     var title: String {
         switch self {
         case .info: "Info"
-        case .git: "Git"
         case .files: "Files"
         }
     }
@@ -417,7 +518,6 @@ extension DetailsPanelTab {
     var icon: String {
         switch self {
         case .info: "info.circle"
-        case .git: "arrow.triangle.branch"
         case .files: "folder"
         }
     }
@@ -444,6 +544,32 @@ enum InfoTabFormatting {
         if let lastKnownCwd, !lastKnownCwd.isEmpty { return lastKnownCwd }
         if let modelCwd, !modelCwd.isEmpty { return modelCwd }
         return nil
+    }
+
+    /// The fish-style component-abbreviated form of a path — the Working Directory label's MIDDLE
+    /// responsive step (`ViewThatFits`: full path → this → head-truncate this). Every component but the
+    /// LAST collapses to its first character (`/Volumes/Lacie/Workspace/oss/aislopdesk` →
+    /// `/V/L/W/o/aislopdesk`); a leading `~` survives whole and a hidden directory keeps its dot + first
+    /// letter (`.config` → `.c`) so both stay recognisable. The leaf component — the part that identifies
+    /// the project — is never shortened. Separators are the REMOTE host's `/` (the path is a host path;
+    /// aislopdesk hosts are macOS). A path with fewer than two components passes through unchanged.
+    static func abbreviatedPath(_ path: String) -> String {
+        let isAbsolute = path.hasPrefix("/")
+        let parts = path.split(separator: "/").map(String.init)
+        guard parts.count > 1, let leaf = parts.last else { return path }
+        let head = parts.dropLast().map { component in
+            if component == "~" { return component }
+            if component.hasPrefix(".") { return String(component.prefix(2)) }
+            return String(component.prefix(1))
+        }
+        let joined = (head + [leaf]).joined(separator: "/")
+        return isAbsolute ? "/" + joined : joined
+    }
+
+    /// The Info-tab git-summary row's trailing change-count label: `0` reads "clean" (mirrors the popup's
+    /// "Working tree clean" state), otherwise "N changed" (the popup's "Changed (N)" header count).
+    static func gitChangeSummary(_ changedCount: Int) -> String {
+        changedCount == 0 ? "clean" : "\(changedCount) changed"
     }
 }
 #endif

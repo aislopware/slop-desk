@@ -258,22 +258,21 @@ final class InspectorRenderingTests: XCTestCase {
         XCTAssertNil(AgentTranscript.clockTime(fromISO: "not-a-timestamp"))
     }
 
-    // MARK: - DetailsPanelTab order (Outline merged into Info — InspectorColumn)
+    // MARK: - DetailsPanelTab order (Outline + Git merged into Info — InspectorColumn)
 
-    func testDetailsTabOrderIsInfoGitFiles() {
+    func testDetailsTabOrderIsInfoFiles() {
         // The Details panel's segmented header iterates the hoisted cross-module `DetailsPanelTab.allCases`.
-        // The old standalone Outline tab was MERGED into the Info tab's Commands section, so the fixed order
-        // is Info | Git | Files — a resurfaced "outline" case or a reorder fails this pin.
+        // The old standalone Outline tab was MERGED into the Info tab's Commands section, and the old Git
+        // tab into Info's git-summary row + popup — so the fixed order is Info | Files. A resurfaced
+        // "outline"/"git" case or a reorder fails this pin.
         let order = DetailsPanelTab.allCases.map(\.rawValue)
-        XCTAssertEqual(order, ["info", "git", "files"], "Details tab order (Outline merged into Info)")
+        XCTAssertEqual(order, ["info", "files"], "Details tab order (Outline + Git merged into Info)")
     }
 
     func testDetailsTabIconsAndTitles() {
         // The segmented header renders from the WI-7 view-local `DetailsPanelTab.title`/`.icon` extension.
         XCTAssertEqual(DetailsPanelTab.info.icon, "info.circle")
         XCTAssertEqual(DetailsPanelTab.info.title, "Info")
-        XCTAssertEqual(DetailsPanelTab.git.icon, "arrow.triangle.branch")
-        XCTAssertEqual(DetailsPanelTab.git.title, "Git")
         XCTAssertEqual(DetailsPanelTab.files.icon, "folder")
         XCTAssertEqual(DetailsPanelTab.files.title, "Files")
     }
@@ -322,6 +321,45 @@ final class InspectorRenderingTests: XCTestCase {
     func testResolveWorkingDirectoryNilWhenBothMissing() {
         XCTAssertNil(InfoTabFormatting.resolveWorkingDirectory(lastKnownCwd: nil, modelCwd: nil))
         XCTAssertNil(InfoTabFormatting.resolveWorkingDirectory(lastKnownCwd: "", modelCwd: ""))
+    }
+
+    /// The Working Directory label's RESPONSIVE middle step (`ViewThatFits`: full → abbreviated →
+    /// head-truncated abbreviation): every component but the LEAF collapses to its first character, so the
+    /// project-identifying leaf survives narrow panels. FAILS on the un-fixed code (no `abbreviatedPath`)
+    /// and on a regression that shortens the leaf, drops the leading `/`, or mangles `~`/dot-dirs. Not
+    /// tautological — the expectations are literal fish-style strings, not the helper's own derivation.
+    func testAbbreviatedPathCollapsesAllButTheLeaf() {
+        XCTAssertEqual(
+            InfoTabFormatting.abbreviatedPath("/Volumes/Lacie/Workspace/oss/aislopdesk"),
+            "/V/L/W/o/aislopdesk",
+            "absolute path: every non-leaf component collapses to its first character",
+        )
+        XCTAssertEqual(
+            InfoTabFormatting.abbreviatedPath("~/Workplace/myproject"),
+            "~/W/myproject",
+            "a leading ~ survives whole (it is already one character of meaning)",
+        )
+        XCTAssertEqual(
+            InfoTabFormatting.abbreviatedPath("/Users/me/.config/nvim"),
+            "/U/m/.c/nvim",
+            "a hidden directory keeps its dot + first letter so it stays recognisable",
+        )
+    }
+
+    func testAbbreviatedPathPassesShortPathsThrough() {
+        XCTAssertEqual(InfoTabFormatting.abbreviatedPath("/"), "/", "the bare root has nothing to collapse")
+        XCTAssertEqual(InfoTabFormatting.abbreviatedPath("/tmp"), "/tmp", "a single component IS the leaf")
+        XCTAssertEqual(InfoTabFormatting.abbreviatedPath("~"), "~")
+        XCTAssertEqual(InfoTabFormatting.abbreviatedPath("—"), "—", "the placeholder passes through untouched")
+    }
+
+    /// The Info tab's git-summary row (the Git tab merged into Info): the trailing change-count label reads
+    /// "clean" at zero (mirroring the popup's clean state) and "N changed" otherwise (the popup's
+    /// "Changed (N)" header count). FAILS on the un-fixed code (no `gitChangeSummary`).
+    func testGitChangeSummaryLabels() {
+        XCTAssertEqual(InfoTabFormatting.gitChangeSummary(0), "clean")
+        XCTAssertEqual(InfoTabFormatting.gitChangeSummary(1), "1 changed")
+        XCTAssertEqual(InfoTabFormatting.gitChangeSummary(37), "37 changed")
     }
 
     // MARK: - AgentSessionHistoryView — Send to Chat context wiring

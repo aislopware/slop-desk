@@ -154,22 +154,18 @@ public struct ActionsPaletteSource: PaletteDataSource {
             subtitle: nil, shortcut: glyph(.toggleDetailsPanel), filter: .actions, category: .view,
             action: .toggleInspector,
         ),
-        // E9/WI-7 (ES-E9-5): four UNBOUND `Details: *` jump commands surfaced in the palette (unbound
+        // E9/WI-7 (ES-E9-5): the UNBOUND `Details: *` jump commands surfaced in the palette (unbound
         // commands are listed there, so they are runnable out-of-box with NO default chord). Each switches
         // the right-hand Details panel to a specific tab AND reveals it, routed by the coordinator to the
         // injected `selectDetailsTab` closure — the SAME live `DetailsPanelState` + chrome the ⌘⇧R toggle and
         // the View ▸ Details: * menu rows drive. The palette is cross-platform, so these run on iOS too. The
         // glyph derives from the registry (chord: nil ⇒ `nil` ⇒ no hint chip, since they ship unbound). The
-        // icons mirror the three registry rows' symbols.
+        // icons mirror the registry rows' symbols. (The old `Details: Git` row is gone — the Git tab merged
+        // into Info's git-summary row + popup.)
         PaletteItem(
             id: "action.detailsInfo", icon: "info.circle", title: "Details: Info",
             subtitle: nil, shortcut: glyph(.selectDetailsTab(.info)), filter: .actions, category: .view,
             action: .selectDetailsTab(.info),
-        ),
-        PaletteItem(
-            id: "action.detailsGit", icon: "arrow.triangle.branch", title: "Details: Git",
-            subtitle: nil, shortcut: glyph(.selectDetailsTab(.git)), filter: .actions, category: .view,
-            action: .selectDetailsTab(.git),
         ),
         PaletteItem(
             id: "action.detailsFiles", icon: "folder", title: "Details: Files",

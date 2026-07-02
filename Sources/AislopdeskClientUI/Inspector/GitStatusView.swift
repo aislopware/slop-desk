@@ -1,6 +1,8 @@
-// GitStatusView — the Details Panel's Git tab (E4, WI-5).
+// GitStatusView — the git status/diff detail view (E4, WI-5), now hosted by the Git POPUP
+// (`GitDetailsSheet`): the old standalone Git tab merged into the Info tab, which carries only a one-row
+// summary (branch + change count) — the changed-file list is unbounded, so the full view gets a window.
 //
-// The Git tab (spec/user-interface__details-panel.md §"Git Tab"): a header with the branch
+// The detail view (spec/user-interface__details-panel.md §"Git Tab"): a header with the branch
 // name, the `origin` remote URL and the ahead/behind commit delta, then the changed-file list (each file a
 // status badge + name + dir), and an inline unified-diff OVERLAY that floats over the panel when a file row
 // is selected — its bytes fetched on demand via the pane's `gitDiff` verb. READ-ONLY: Commit / Fork
@@ -27,6 +29,8 @@ struct GitStatusView: View {
     /// The fetched raw `git diff` bytes for `selectedFile` (`nil` while loading / on failure).
     @State private var diffBytes: Data?
     @State private var diffLoading = false
+    /// True while the header refresh's metadata round-trip is in flight (drives the button's spinner).
+    @State private var refreshing = false
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -273,16 +277,29 @@ struct GitStatusView: View {
         diffLoading = false
     }
 
+    /// The header's refresh action — with CLICK FEEDBACK: the icon yields to a small spinner while the
+    /// metadata round-trip is in flight (and the button disarms), so a click never reads as a no-op.
     private var refreshButton: some View {
         Button {
-            Task { await model.refresh() }
+            refreshing = true
+            Task {
+                await model.refresh()
+                refreshing = false
+            }
         } label: {
-            Image(systemName: "arrow.clockwise")
-                .font(.system(size: Slate.Typeface.small, weight: .medium))
-                .foregroundStyle(Slate.Text.icon)
+            Group {
+                if refreshing {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: Slate.Typeface.small, weight: .medium))
+                        .foregroundStyle(Slate.Text.icon)
+                }
+            }
+            .frame(width: 16, height: 16)
         }
         .buttonStyle(.plain)
-        .disabled(!model.isConnected)
+        .disabled(!model.isConnected || refreshing)
         .help("Refresh")
     }
 
@@ -336,6 +353,50 @@ struct GitStatusView: View {
         let parts = path.split(separator: "/")
         guard parts.count > 1 else { return "" }
         return parts.dropLast().joined(separator: "/")
+    }
+}
+
+/// The Git details POPUP (the Git tab merged into Info): a sheet hosting the full `GitStatusView` —
+/// title bar (icon + "Git Status" + close) over the status/diff detail. Presented by the Info tab's
+/// git-summary row; sized like the `AgentSessionHistoryView` sheet so the unbounded changed-file list and
+/// the diff overlay get real estate the sidebar could never give them.
+struct GitDetailsSheet: View {
+    /// The active pane's decoded host metadata — its `gitStatus` + the `gitDiff`/`refresh` verbs.
+    let model: PaneMetadataModel
+    /// Dismisses the popup (the Info tab clears its `showGitDetails` flag). Defaults to a no-op so a
+    /// preview / test can instantiate the view standalone.
+    var onClose: () -> Void = {}
+
+    var body: some View {
+        VStack(spacing: 0) {
+            headerBar
+            Rectangle().fill(Slate.Line.divider).frame(height: 1)
+            GitStatusView(model: model)
+        }
+        .frame(minWidth: 520, idealWidth: 620, minHeight: 420, idealHeight: 560)
+        .background(Slate.Surface.content)
+    }
+
+    private var headerBar: some View {
+        HStack(spacing: Slate.Metric.space2) {
+            Image(systemName: "arrow.triangle.branch")
+                .font(.system(size: Slate.Typeface.base))
+                .foregroundStyle(Slate.Text.icon)
+            Text("Git Status")
+                .font(.system(size: Slate.Typeface.body, weight: .semibold))
+                .foregroundStyle(Slate.Text.primary)
+            Spacer(minLength: Slate.Metric.space2)
+            Button(action: onClose) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: Slate.Typeface.body))
+                    .foregroundStyle(Slate.Text.icon)
+            }
+            .buttonStyle(.plain)
+            .help("Close")
+            .accessibilityLabel("Close")
+        }
+        .padding(.horizontal, Slate.Metric.space3)
+        .padding(.vertical, Slate.Metric.space2)
     }
 }
 
