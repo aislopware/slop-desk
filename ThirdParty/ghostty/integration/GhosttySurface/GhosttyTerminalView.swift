@@ -2241,10 +2241,6 @@ final class GhosttyLayerBackedView: NSView {
             paneConnected: true,
             // WB2: "Copy Command Output" is enabled when this pane has at least one completed command block.
             hasCommandOutput: model?.blocks.latest?.complete ?? false,
-            // E8 / ES-E8-4: "Paste and continue in Composer" lights only when the Composer hook is wired.
-            hasComposer: model?.onPasteToComposer != nil,
-            // E13 / WI-5 (ES-E13-5): "Send to Chat" lights only when the dialog hook is wired (the leaf set it).
-            canSendToChat: model?.onRequestSendToChat != nil,
         )
         let menu = NSMenu()
         // NSMenu defaults `autoenablesItems == true`, which RE-VALIDATES every item at display time and
@@ -2332,12 +2328,6 @@ final class GhosttyLayerBackedView: NSView {
             if let s = NSPasteboard.general.string(forType: .string), !s.isEmpty {
                 surface?.text(PasteTransform.bracketed(s))
             }
-        case .pasteToComposer:
-            // Hand off to the client Composer instead of sending to the shell (no wire). The leaf reads the
-            // RICHEST clipboard flavour and converts HTML/RTF→Markdown (the same `ComposerPasteboard` the
-            // in-field ⌘V uses) before splicing it at the Composer's caret — so this path converts + inserts
-            // at the caret, not the old "plain string, appended" behaviour.
-            model?.onPasteToComposer?()
         case .selectAll: surface?.performBindingAction("select_all")
         case .clear: surface?.performBindingAction("clear_screen")
         case .copyOutput:
@@ -2351,10 +2341,6 @@ final class GhosttyLayerBackedView: NSView {
                     NSPasteboard.general.setString(text, forType: .string)
                 }
             }
-        case .sendToChat:
-            // E13 WI-5: hand off to the client Send-to-Chat dialog (the leaf focuses THIS pane + the overlay
-            // coordinator captures its selection / last command and routes the composed message to an agent).
-            model?.onRequestSendToChat?()
         case .splitRight: model?.onContextMenuSplit?(true)
         case .splitDown: model?.onContextMenuSplit?(false)
         case .find: model?.onRequestFind?()
