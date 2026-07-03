@@ -31,6 +31,24 @@ final class AislopdeskSplitViewController: NSSplitViewController {
     /// The RIGHT remote-windows column (TabSide partition) — retained so ⌘⇧E / the GUI-tab auto-reveal
     /// can animate its collapse (set in `viewDidLoad`; starts collapsed — terminal-first).
     private var guiItem: NSSplitViewItem?
+    /// The SIDE-column widths the user last chose by dragging a divider (seeded at the defaults). In
+    /// this SwiftUI-hosted shell the split view does NOT durably hold divider positions on its own:
+    /// its imperative layout re-derives both side columns at their MINIMUM thickness on every pass
+    /// (`NSSplitViewItem.holdingPriority` never materializes any width constraint, and an explicitly
+    /// installed one is overwritten — the frames come from `NSSplitView`'s internal divider
+    /// bookkeeping, not the constraint engine). So a divider drag moved the columns live and every
+    /// subsequent layout — mid-drag via the SwiftUI hosting views, or the GUI column's 4s dock poll
+    /// re-render — snapped them straight back: the user-reported "kéo thả tay ra lại về kích thước
+    /// cũ". The shell therefore holds the widths itself: ``trackDividerDrag()`` records the MOUSE
+    /// position of a live divider drag here (the frames lie mid-fight; the mouse is the user's true
+    /// intent), and ``reassertDividerPositions()`` writes deviations back through
+    /// `setPosition(_:ofDividerAt:)` — the one sanctioned API that updates the split view's internal
+    /// bookkeeping — after every layout pass.
+    private var desiredSidebarWidth: CGFloat = AislopdeskSplitViewController.defaultSidebarWidth
+    private var desiredGuiWidth: CGFloat = 380
+    /// Re-entrancy latch: `setPosition` inside `viewDidLayout` triggers another layout + resize
+    /// notification; the latch keeps the re-assert from tracking or re-asserting its own effects.
+    private var reassertingDividers = false
     /// Opens the Remote-Window picker — wired into the GUI column's `+` / empty state. The shell binds
     /// this to `overlay.openRemotePicker()`.
     private let onOpenRemotePicker: () -> Void
@@ -135,12 +153,26 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         content.safeAreaRegions = []
         gui.safeAreaRegions = []
 
+        // The SPLIT ITEMS own the column widths (min/max thickness + holding priority) — the hosting
+        // controllers must NOT also publish SwiftUI-derived size constraints. The default `sizingOptions`
+        // (`.standardBounds` = min/intrinsic/max) pins each column at its content's IDEAL width at
+        // priorities that beat the holding priorities — the GUI column's window-dock strip (a horizontal
+        // ScrollView whose ideal width is the FULL tile run, easily >1000pt) made the content|GUI divider
+        // undraggable (every drag solved straight back) and, on a window too narrow for the over-constrained
+        // system, let the solver break frames so the content column overlapped the GUI column and swallowed
+        // its input. `[]` leaves layout entirely to the split view.
+        navigator.sizingOptions = []
+        content.sizingOptions = []
+        gui.sizingOptions = []
+
         addSplitViewItem(sidebarItem)
         addSplitViewItem(contentItem)
         addSplitViewItem(guiItem)
 
         self.sidebarItem = sidebarItem
         self.guiItem = guiItem
+
+        desiredGuiWidth = guiItem.minimumThickness
 
         // Defer remote terminal grid-resize forwarding while a sidebar/inspector divider (or the window edge)
         // is being dragged: NSSplitView re-lays its subviews every step and posts this notification, so each
@@ -188,6 +220,7 @@ final class AislopdeskSplitViewController: NSSplitViewController {
     /// last step — i.e. when the drag is released. Commit-on-release, without subclassing the split view.
     @objc
     private func splitViewSubviewsDidResize(_: Notification) {
+        trackDividerDrag()
         if !resizeForwardingSuspended {
             resizeForwardingSuspended = true
             store.setTerminalResizeSuspended(true)
@@ -245,6 +278,111 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         for item in splitViewItems {
             item.viewController.view.needsDisplay = true
         }
+    }
+
+    /// Which divider the current left-mouse gesture is dragging: `0` / `1` once identified, `-1` for a
+    /// left-mouse gesture that started AWAY from every divider (sticky-ignored until mouse-up), `nil`
+    /// between gestures. Identified on the gesture's FIRST resize notification by mouse-to-divider
+    /// proximity — see ``trackDividerDrag()``.
+    private var draggingDivider: Int?
+    /// The last tracked drag event's timestamp — a stale gesture (no mouse-up notification ever fired)
+    /// is discarded after ``dragGestureTimeout``.
+    private var lastDragEventTime: TimeInterval = 0
+    private let dragGestureTimeout: TimeInterval = 1.0
+    /// First-contact tolerance (points) between the mouse and a divider for the gesture to count as a
+    /// divider drag. Tight enough that a window-edge resize (mouse at the window frame, hundreds of
+    /// points from a divider) can never false-positive.
+    private let dividerGrabTolerance: CGFloat = 16
+
+    /// LIVE divider-drag tracker, driven from the resize notification (which fires for every step of a
+    /// divider drag with `NSApp.currentEvent` = the mouse event). The frames mid-drag LIE (the split
+    /// view's imperative layout keeps snapping the side column back within the same event), so the
+    /// MOUSE is the user's true intent: identify the dragged divider on first contact, then record the
+    /// mouse-derived width each step. ``reassertDividerPositions()`` applies it.
+    private func trackDividerDrag() {
+        guard !reassertingDividers else { return }
+        guard let event = NSApp.currentEvent else { return }
+        switch event.type {
+        case .leftMouseDown,
+             .leftMouseDragged,
+             .leftMouseUp: break
+        default: return
+        }
+        guard event.window === splitView.window else { return }
+        // Stale-gesture reset by WALL clock (never `event.timestamp` — a synthetic/injected event can
+        // carry 0, which would keep one divider grabbed forever): a mouse-up whose final frame didn't
+        // change fires no resize notification, so the release can be invisible here — any >1s gap in
+        // tracked drag events starts a fresh gesture instead.
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastDragEventTime > dragGestureTimeout { draggingDivider = nil }
+        lastDragEventTime = now
+        let x = splitView.convert(event.locationInWindow, from: nil).x
+
+        if draggingDivider == nil {
+            // First tracked event of this gesture: which divider (if any) did it grab?
+            var grabbed = -1
+            if let sidebarItem, !sidebarItem.isCollapsed {
+                let div0 = sidebarItem.viewController.view.frame.width
+                if abs(x - div0) <= dividerGrabTolerance { grabbed = 0 }
+            }
+            if grabbed == -1, let guiItem, !guiItem.isCollapsed {
+                let div1 = splitView.bounds.width
+                    - guiItem.viewController.view.frame.width - splitView.dividerThickness
+                if abs(x - div1) <= dividerGrabTolerance { grabbed = 1 }
+            }
+            draggingDivider = grabbed
+        }
+
+        switch draggingDivider {
+        case 0:
+            if let sidebarItem, !sidebarItem.isCollapsed {
+                let maxW = sidebarItem.maximumThickness
+                var w = Swift.max(x, sidebarItem.minimumThickness)
+                if maxW >= 0 { w = Swift.min(w, maxW) } // unset maximum is NSSplitViewItemUnspecifiedDimension (<0)
+                desiredSidebarWidth = w
+            }
+        case 1:
+            if let guiItem, !guiItem.isCollapsed {
+                let proposed = splitView.bounds.width - x - splitView.dividerThickness
+                desiredGuiWidth = Swift.max(proposed, guiItem.minimumThickness)
+            }
+        default:
+            break
+        }
+
+        if event.type == .leftMouseUp { draggingDivider = nil }
+        if draggingDivider != nil, draggingDivider != -1 { reassertDividerPositions() } // live-follow the mouse
+    }
+
+    /// Write the user-chosen side-column widths back through `setPosition(_:ofDividerAt:)` whenever a
+    /// layout pass produced something else (the snap-back — see ``desiredSidebarWidth``). Idempotent:
+    /// only acts on a real deviation, never on a collapsed column, and skips a column's collapse/reveal
+    /// animation frames (width below the item's minimum). `setPosition` routes through the delegate
+    /// min/max arbitration, so a too-narrow window degrades gracefully.
+    private func reassertDividerPositions() {
+        guard !reassertingDividers, isViewLoaded else { return }
+        reassertingDividers = true
+        defer { reassertingDividers = false }
+        if let sidebarItem, !sidebarItem.isCollapsed {
+            let w = sidebarItem.viewController.view.frame.width
+            if w >= sidebarItem.minimumThickness, abs(w - desiredSidebarWidth) > 0.5 {
+                splitView.setPosition(desiredSidebarWidth, ofDividerAt: 0)
+            }
+        }
+        if let guiItem, !guiItem.isCollapsed {
+            let w = guiItem.viewController.view.frame.width
+            if w >= guiItem.minimumThickness, abs(w - desiredGuiWidth) > 0.5 {
+                let position = splitView.bounds.width - desiredGuiWidth - splitView.dividerThickness
+                splitView.setPosition(position, ofDividerAt: 1)
+            }
+        }
+    }
+
+    /// The snap-back happens inside a layout pass — re-assert right after every one (a cheap no-op
+    /// when nothing deviates).
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        reassertDividerPositions()
     }
 
     /// Apply the chrome collapse flags to the sidebar + GUI-column items (idempotent — only animates a
