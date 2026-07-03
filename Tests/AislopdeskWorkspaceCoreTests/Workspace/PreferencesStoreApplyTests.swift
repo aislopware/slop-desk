@@ -67,6 +67,23 @@ final class PreferencesStoreApplyTests: XCTestCase {
         XCTAssertEqual(sidecar?.toEnv()["AISLOPDESK_FEC_M"], "3")
     }
 
+    /// Raw overrides typed in the free-text box are serialised into the sidecar the HOST daemon reads —
+    /// not only the client's in-process overlay — so a host-only knob actually reaches the daemon (BUG B).
+    func testRawOverridesReachTheSidecar() {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aislopdesk-prefs-test-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: tmp)
+        store.video = VideoPreferences(fecM: 2)
+        store.rawOverrides = ["AISLOPDESK_FEC_M": "4", "AISLOPDESK_HOST_ONLY": "z"]
+
+        let sidecar = EnvBridge.readSidecar(at: tmp)
+        XCTAssertEqual(sidecar?.rawOverrides, ["AISLOPDESK_FEC_M": "4", "AISLOPDESK_HOST_ONLY": "z"])
+        // Last-wins: the raw override beats the typed field for the shared key in the sidecar's overlay.
+        XCTAssertEqual(sidecar?.toEnv()["AISLOPDESK_FEC_M"], "4")
+        XCTAssertEqual(sidecar?.toEnv()["AISLOPDESK_HOST_ONLY"], "z")
+    }
+
     // MARK: Terminal broadcast
 
     func testTerminalChangeBumpsTheBroadcaster() {

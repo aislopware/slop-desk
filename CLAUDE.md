@@ -88,7 +88,7 @@ Behavior is tuned by dozens of `AISLOPDESK_*` env vars read at well-known sites 
 | `AISLOPDESK_VIDEO_DEBUG` | off | stderr diagnostics across the whole video pipeline. |
 | `AISLOPDESK_DISPLAY_CAPTURE` | auto | Force SCStream filter: `window` / `display` (excluding) / `include` (displayIncluding, the VD-park default). |
 | `AISLOPDESK_SYSTEM_DIALOG_PANES` | on (Settings) | Auto-spawn a pane for system password dialogs. THREE states: unset/on, `0` off, `force` bypasses the toggle (use for E2E). |
-| `AISLOPDESK_PACER` | `deadline` | Presentation pacer; any other value → present-on-arrival. Setting `AISLOPDESK_PLAYOUT_MS` (even to its default) flips client out of adaptive playout. |
+| `AISLOPDESK_PACER` | present-on-arrival | Presentation pacer. Absent (or any value ≠ `deadline`) → present-on-arrival (the 2026 latency-first default, no playout hold); `=deadline` restores the smoothness-tuned deadline pacer. Setting `AISLOPDESK_PLAYOUT_MS` (even to its default) flips client out of adaptive playout. |
 
 ## Traps
 

@@ -122,6 +122,44 @@ final class EnvBridgeTests: XCTestCase {
         XCTAssertEqual(env["AISLOPDESK_AGENT_DETECT"], "1")
     }
 
+    /// Raw overrides survive the sidecar round-trip AND take LAST-WINS precedence over a typed field for
+    /// the same key — so a host-only knob typed in the free-text box reaches the daemon (BUG B).
+    func testSidecarRawOverridesRoundTripAndPrecedence() throws {
+        let sidecar = EnvBridge.VideoSidecar(
+            video: VideoPreferences(qpSharp: 24, fecM: 2),
+            agent: AgentPreferences(agentDetect: true),
+            rawOverrides: ["AISLOPDESK_QP_SHARP": "18", "AISLOPDESK_HOST_ONLY": "z"],
+        )
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aislopdesk-w12-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("video-prefs.json")
+
+        try EnvBridge.writeSidecar(sidecar, to: url)
+        let read = EnvBridge.readSidecar(at: url)
+        XCTAssertEqual(read, sidecar)
+        XCTAssertEqual(read?.rawOverrides, ["AISLOPDESK_QP_SHARP": "18", "AISLOPDESK_HOST_ONLY": "z"])
+
+        // The combined overlay: a raw override folds LAST, so it beats the typed field for the SAME key,
+        // and a host-only key the typed fields never emit still lands.
+        let env = sidecar.toEnv()
+        XCTAssertEqual(env["AISLOPDESK_QP_SHARP"], "18", "raw override wins over the typed field")
+        XCTAssertEqual(env["AISLOPDESK_FEC_M"], "2")
+        XCTAssertEqual(env["AISLOPDESK_HOST_ONLY"], "z")
+        XCTAssertEqual(env["AISLOPDESK_AGENT_DETECT"], "1")
+    }
+
+    /// A stale sidecar written BEFORE `rawOverrides` existed must still decode (→ empty), not brick the
+    /// daemon — the [[rwork-no-backcompat]] "new optional field" discipline.
+    func testSidecarWithoutRawOverridesFieldDecodes() throws {
+        let json = """
+        { "schemaVersion": 1, "video": {}, "agent": {} }
+        """
+        let read = try JSONDecoder().decode(EnvBridge.VideoSidecar.self, from: Data(json.utf8))
+        XCTAssertEqual(read.rawOverrides, [:])
+        XCTAssertEqual(read.schemaVersion, 1)
+    }
+
     /// A missing or malformed sidecar returns `nil` (validate-then-drop) — the daemon must not brick.
     func testSidecarMissingOrMalformedReturnsNil() throws {
         let dir = FileManager.default.temporaryDirectory

@@ -13,10 +13,6 @@ import Foundation
 // `SettingsKeyTests` pins and the `@Default`/`@AppStorage` consumers share). No SwiftUI import — headless.
 public enum SettingsKey {
     // Canvas
-    public static let snapPanes = "canvas.snapPanes"
-    public static let snapGrid = "canvas.snapGrid"
-    public static let showGrid = "canvas.showGrid"
-    public static let nonOverlap = "canvas.nonOverlap"
     public static let defaultPaneKindKey = "canvas.defaultPaneKind" // PaneKind.rawValue
     // General / launch
     /// The `On Launch` general setting (O1) — restore the last session vs open a fresh window.

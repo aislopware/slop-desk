@@ -76,16 +76,46 @@ public enum EnvBridge {
         public var schemaVersion: Int
         public var video: VideoPreferences
         public var agent: AgentPreferences
+        /// The free-text `AISLOPDESK_*` overrides a user types in the Settings "Raw overrides" box. These
+        /// reach the HOST daemon through the sidecar (not only the client's in-process ``EnvConfig/overlay``),
+        /// so a HOST-only knob typed here actually lands. They fold LAST — a raw override beats the typed
+        /// video/agent field for the SAME key (last-wins), mirroring ``PreferencesStore``'s live overlay.
+        public var rawOverrides: [String: String]
 
-        public init(video: VideoPreferences = .init(), agent: AgentPreferences = .init(), schemaVersion: Int = 1) {
+        public init(
+            video: VideoPreferences = .init(), agent: AgentPreferences = .init(),
+            rawOverrides: [String: String] = [:], schemaVersion: Int = 1,
+        ) {
             self.schemaVersion = schemaVersion
             self.video = video
             self.agent = agent
+            self.rawOverrides = rawOverrides
         }
 
-        /// The combined `AISLOPDESK_*` overlay this sidecar contributes (video ∪ agent).
+        private enum CodingKeys: String, CodingKey {
+            case schemaVersion
+            case video
+            case agent
+            case rawOverrides
+        }
+
+        /// Decode with `rawOverrides` OPTIONAL so a stale sidecar written before the field existed still
+        /// loads (→ empty) instead of decode-failing the whole file ([[rwork-no-backcompat]]: new optional
+        /// field, no migration). The other fields stay required (a truly corrupt file drops via `readSidecar`).
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+            video = try c.decode(VideoPreferences.self, forKey: .video)
+            agent = try c.decode(AgentPreferences.self, forKey: .agent)
+            rawOverrides = try c.decodeIfPresent([String: String].self, forKey: .rawOverrides) ?? [:]
+        }
+
+        /// The combined `AISLOPDESK_*` overlay this sidecar contributes (video ∪ agent ∪ raw overrides,
+        /// raw LAST-WINS over the typed fields for a shared key).
         public func toEnv() -> [String: String] {
-            EnvBridge.toEnv(video).merging(EnvBridge.toEnv(agent)) { _, new in new }
+            var env = EnvBridge.toEnv(video).merging(EnvBridge.toEnv(agent)) { _, new in new }
+            for (key, value) in rawOverrides where !key.isEmpty { env[key] = value }
+            return env
         }
     }
 

@@ -2033,7 +2033,7 @@ private struct VideoHostSettingsView: View {
 
             slateFormSection("Video · Forward Error Correction (symmetric)") {
                 optionalIntStepper("Parity (m)", $store.video.fecM, range: 1...8, default: 1)
-                optionalIntStepper("Group size (k)", $store.video.fecK, range: 1...32, default: 8)
+                optionalIntStepper("Group size (k)", $store.video.fecK, range: 1...32, default: 5)
                 HStack(spacing: Slate.Metric.space1) {
                     Image(systemSymbol: .exclamationmarkTriangleFill)
                     Text("FEC must be set IDENTICALLY on both ends or the host and client disagree.")
@@ -2045,7 +2045,7 @@ private struct VideoHostSettingsView: View {
 
             slateFormSection("Video · Pacer (host)") {
                 Picker("Mode", selection: pacerBinding) {
-                    Text("Default (deadline)").tag(VideoPreferences.Pacer?.none)
+                    Text("Default (on arrival)").tag(VideoPreferences.Pacer?.none)
                     Text("Deadline").tag(Optional(VideoPreferences.Pacer.deadline))
                     Text("On arrival").tag(Optional(VideoPreferences.Pacer.arrival))
                 }

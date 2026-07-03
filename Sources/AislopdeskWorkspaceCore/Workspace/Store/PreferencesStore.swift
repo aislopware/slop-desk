@@ -290,7 +290,7 @@ public final class PreferencesStore {
     /// can't reach disk must not crash the UI (the typed defaults still hold).
     private func writeSidecar() {
         guard let url = sidecarURL else { return }
-        let sidecar = EnvBridge.VideoSidecar(video: video, agent: agent)
+        let sidecar = EnvBridge.VideoSidecar(video: video, agent: agent, rawOverrides: rawOverrides)
         try? EnvBridge.writeSidecar(sidecar, to: url)
     }
 
