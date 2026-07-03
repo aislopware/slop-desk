@@ -76,7 +76,7 @@ struct GuiColumn: View {
                 onSelect: { activate($0) },
             )
             Spacer(minLength: 0)
-            PlateIconButton(symbol: .plus) { onOpenPicker() }
+            SlatePlateButton(symbol: .plus) { onOpenPicker() }
                 .help("Open a remote window…")
                 .accessibilityLabel("Open a remote window")
                 .padding(.trailing, Slate.Metric.space2)

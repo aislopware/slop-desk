@@ -14,25 +14,8 @@ import XCTest
 @testable import AislopdeskWorkspaceCore
 
 final class SlateSnapshotRender: XCTestCase {
-    @MainActor
-    func testRenderSlateShowcase() throws {
-        // Opt-in only: inert under `swift test` / `make check` unless an output path is requested.
-        guard let out = ProcessInfo.processInfo.environment["AISLOPDESK_SNAPSHOT_OUT"] else {
-            throw XCTSkip("set AISLOPDESK_SNAPSHOT_OUT=<path.png> to render the showcase")
-        }
-        let renderer = ImageRenderer(content: SlateShowcase().frame(width: 920, height: 560))
-        renderer.scale = 2
-        guard let image = renderer.nsImage,
-              let tiff = image.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff),
-              let png = rep.representation(using: .png, properties: [:])
-        else {
-            XCTFail("ImageRenderer produced no image")
-            return
-        }
-        try png.write(to: URL(fileURLWithPath: out))
-        print("AISLOPDESK_SNAPSHOT_WRITTEN \(out)")
-    }
+    // (The old `testRenderSlateShowcase` — a hand-built mock of the FLAT otty chrome — is deleted with
+    // that design; native-chrome migration, 2026-07-03. The remaining renders pin live views.)
 
     // MARK: - E2 / WI-6: opt-in render of the new overlay panels (palette + cheat sheet)
 
@@ -191,77 +174,4 @@ final class SlateSnapshotRender: XCTestCase {
     }
 }
 
-/// A static mock of the chrome, built from the real token layer + component kit. Mirrors the resting
-/// window: a "TABS" sidebar (white-card active tab via `SlateSidebarRow` + a hamburger `SlateSectionHeader`
-/// accessory) beside a FLUSH, borderless two-pane terminal on paper — NO floating card, NO accent ring, NO
-/// per-pane header bar, NO cwd pill and NO right inspector. Green appears ONLY on the prompt `❯` glyph
-/// (accent rationing), never as chrome.
-private struct SlateShowcase: View {
-    var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-            content
-        }
-        .frame(width: 920, height: 560)
-        .background(Slate.Surface.window)
-    }
-
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            SlateSectionHeader("Tabs") {
-                Image(systemSymbol: .line3Horizontal)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Slate.Text.icon)
-            }
-            SlateSidebarRow(symbol: .terminal, title: "~/aislopdesk", badge: "zsh", isSelected: true) {}
-            SlateSidebarRow(symbol: .terminal, title: "build", badge: "zsh", isSelected: false) {}
-            SlateSidebarRow(symbol: .display, title: "Remote window", isSelected: false) {}
-            Spacer()
-        }
-        .padding(Slate.Metric.space2)
-        .frame(width: Slate.Metric.sidebarWidth)
-        .background(Slate.Surface.sidebar)
-    }
-
-    private var content: some View {
-        VStack(spacing: 0) {
-            // The active path lives in the window titlebar, centered + muted — not a per-pane header bar.
-            Text("~/aislopdesk")
-                .font(.system(size: Slate.Typeface.base))
-                .foregroundStyle(Slate.Text.secondary)
-                .frame(maxWidth: .infinity)
-                .frame(height: Slate.Metric.paneHeaderHeight)
-            // Two flush, borderless terminal panes separated by a single hairline divider.
-            HStack(spacing: 0) {
-                terminalPane(
-                    promptPath: "~",
-                    command: "swift build",
-                )
-                Rectangle().fill(Slate.Line.divider).frame(width: Slate.Metric.hairline)
-                terminalPane(
-                    promptPath: "~/aislopdesk",
-                    command: nil,
-                )
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Slate.Surface.card) // flush paper terminal surface (#FCFBF9), not a brighter-white card
-    }
-
-    private func terminalPane(promptPath: String, command: String?) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            (Text("\(promptPath) ").foregroundStyle(Slate.Status.info)
-                + Text("via ").foregroundStyle(Slate.Text.secondary)
-                + Text("🥭 jmango").foregroundStyle(Slate.Status.ok))
-                .font(.system(size: 13, design: .monospaced))
-            (Text("/\\ - τ -▽ ").foregroundStyle(Slate.Text.secondary)
-                + Text("❯ ").foregroundStyle(Slate.State.accent) // the ONLY green — accent rationing
-                + Text(command ?? "").foregroundStyle(Slate.Text.primary))
-                .font(.system(size: 13, design: .monospaced))
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(Slate.Metric.space3)
-    }
-}
 #endif
