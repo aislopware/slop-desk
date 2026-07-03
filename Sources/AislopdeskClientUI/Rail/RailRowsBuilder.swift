@@ -14,7 +14,7 @@ struct RailRow: Identifiable, Equatable {
     let tabID: TabID
     let kind: PaneKind
     let title: String
-    /// The row's muted second line (``SlateTabRow`` subtitle). Kind-generic ``PaneSpec/railSubtitle`` (E21
+    /// The row's muted second line (the sidebar row subtitle). Kind-generic ``PaneSpec/railSubtitle`` (E21
     /// WI-5): a terminal's cwd, or a video pane's host-app/window label; `nil` ⇒ a single-line row.
     let subtitle: String?
     let status: ClaudeStatus
@@ -28,7 +28,7 @@ struct RailRow: Identifiable, Equatable {
     let processLabel: String?
     /// Whether this pane's input gate is READ-ONLY (E17 ES-E17-1 / WI-3) — read from the store's convergent
     /// ``WorkspaceStore/paneReadOnly`` set so the sidebar lock indicator and the pane's `🔒 READ ONLY ×` pill
-    /// share one source of truth. Drives ``SlateTabRow``'s trailing lock glyph.
+    /// share one source of truth. Drives the sidebar row's trailing lock glyph.
     let readOnly: Bool
     /// The pane's raw last-known working directory (C3 BUG A) — a terminal pane's `lastKnownCwd`, `nil` for a
     /// video pane. NOT rendered as chrome: it is the row's TOOLTIP (`.help`) text AND a hidden search key so a
@@ -37,7 +37,7 @@ struct RailRow: Identifiable, Equatable {
     let cwd: String?
     /// Whether this row is in inline-RENAME mode (C3 BUG B): the store's ``WorkspaceStore/pendingTabRename``
     /// names this row's tab AND this pane is that tab's representative (active) pane — so exactly one row per
-    /// pending tab opens its rename field. Consumed by ``SlateTabRow`` to swap the title for a `TextField`.
+    /// pending tab opens its rename field. Consumed by the sidebar row to swap the title for a `TextField`.
     let isEditing: Bool
     /// Selected = the row's tab is active AND this pane is the tab's active pane.
     let isSelected: Bool
