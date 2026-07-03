@@ -11,13 +11,11 @@ import SwiftUI
 // `@MainActor` because the aliases read the runtime ``Slate/theme`` (D3) — call sites are SwiftUI views.
 @MainActor
 enum NativePaneColor {
-    /// The chrome / window background (pane header, divider bands, empty content) — the Slate window backdrop.
-    static var window: Color { Slate.Surface.window }
+    /// The backdrop BEHIND the pane cards (the SplitContainer margin) — the darker theme `margin` tone the
+    /// rounded cards float on (card-canvas, 2026-07-04).
+    static var window: Color { Slate.Surface.margin }
 
     /// The terminal / editable content surface background — the floating card surface.
     static var terminalBackground: Color { Slate.Surface.card }
-
-    /// The hairline separator colour — the Slate divider.
-    static var separator: Color { Slate.Line.divider }
 }
 #endif

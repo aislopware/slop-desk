@@ -109,32 +109,14 @@ struct SplitContainer: View {
             // one keyed list keeps the zoom hidden↔visible flip within one collection and the hosted
             // terminal / `.remoteGUI` video surface is never torn down.
             ForEach(layout.compositorLeaves, id: \.id) { entry in
-                PaneContainer(
-                    store: store,
-                    paneID: entry.id,
-                    // A zoom-hidden pane must never claim first responder (mirrors the keep-all-mounted
-                    // focus-steal guard for hidden tabs).
-                    isFocused: !entry.isHidden && Self.isPaneFocused(entry.id, in: tab, activeTabID: activeTabID),
-                    // ON-SCREEN gate (A2/R-lifecycle #2): visible ⟺ the pane's tab is SHOWN (this column
-                    // reveals it) AND it is not zoom-hidden. A `.remoteGUI` pane drives its `liveVideoCap`
-                    // activation off THIS — a hidden tab / zoom-collapsed sibling releases its slot + stops
-                    // the UDP/VT/Metal pipeline, re-activating when it returns (onDisappear never fires
-                    // under keep-all-mounted).
-                    isVisible: isShown && !entry.isHidden,
-                    // The content's live size IS the resize signal `PaneContainer`'s scrim keys off.
-                    size: entry.leaf.rect.size,
-                    staticMirror: staticMirror,
+                paneLeaf(
+                    entry,
+                    tab: tab,
+                    isShown: isShown,
+                    // Solo = ONE visible tiled leaf (a zoomed pane counts: its hidden siblings don't
+                    // disambiguate anything on screen) → no accent focus ring.
+                    solo: layout.leaves.count == 1,
                 )
-                .frame(width: entry.leaf.rect.width, height: entry.leaf.rect.height)
-                .position(x: entry.leaf.rect.midX, y: entry.leaf.rect.midY)
-                // ZOOM keep-mounted: a zoomed tab still emits every sibling as a HIDDEN compositor leaf at
-                // its un-zoomed rect — revealed/hidden here exactly like an inactive tab's layer, so the
-                // libghostty surface / `.remoteGUI` stream survives the zoom toggle and un-zoom is a pure
-                // visibility flip (no teardown, no lossy ring-replay).
-                .opacity(entry.isHidden ? 0 : 1)
-                .allowsHitTesting(!entry.isHidden)
-                .accessibilityHidden(entry.isHidden)
-                .id(entry.id) // identity hazard: never reuse a surface across panes
             }
             // Interaction chrome only for the shown tab (a hidden tab is non-interactive anyway).
             if isShown {
@@ -161,6 +143,49 @@ struct SplitContainer: View {
         .onChange(of: frames) { _, newFrames in reportSolvedLayout(newFrames, isShown: isShown, tabID: tab.id) }
         .onChange(of: isShown) { _, nowShown in reportSolvedLayout(frames, isShown: nowShown, tabID: tab.id) }
         .onChange(of: activeTabID) { _, _ in reportSolvedLayout(frames, isShown: isShown, tabID: tab.id) }
+    }
+
+    /// One compositor leaf: the pane card placed absolutely at its solver rect (extracted from the
+    /// `ForEach` to keep `tabLayer`'s ZStack type-checkable).
+    private func paneLeaf(
+        _ entry: SplitTreeRenderModel.CompositorLeaf,
+        tab: AislopdeskWorkspaceCore.Tab,
+        isShown: Bool,
+        solo: Bool,
+    ) -> some View {
+        PaneContainer(
+            store: store,
+            paneID: entry.id,
+            // A zoom-hidden pane must never claim first responder (mirrors the keep-all-mounted
+            // focus-steal guard for hidden tabs).
+            isFocused: !entry.isHidden && Self.isPaneFocused(entry.id, in: tab, activeTabID: activeTabID),
+            // ON-SCREEN gate (A2/R-lifecycle #2): visible ⟺ the pane's tab is SHOWN (this column
+            // reveals it) AND it is not zoom-hidden. A `.remoteGUI` pane drives its `liveVideoCap`
+            // activation off THIS — a hidden tab / zoom-collapsed sibling releases its slot + stops
+            // the UDP/VT/Metal pipeline, re-activating when it returns (onDisappear never fires
+            // under keep-all-mounted).
+            isVisible: isShown && !entry.isHidden,
+            // The content's live size IS the resize signal `PaneContainer`'s scrim keys off.
+            size: entry.leaf.rect.size,
+            // Card-canvas: a lone pane skips the accent focus ring (nothing to disambiguate).
+            solo: solo,
+            staticMirror: staticMirror,
+        )
+        // Card-canvas: inset the card by half the inter-pane gap inside its solver rect, so two
+        // adjacent cards sit `paneGap` apart and the divider hit band lives in the gutter between
+        // them. Geometry (solver rects, divider seams, move handles) is untouched — this is a
+        // pure visual inset inside each placed frame.
+        .padding(Slate.Metric.paneGap / 2)
+        .frame(width: entry.leaf.rect.width, height: entry.leaf.rect.height)
+        .position(x: entry.leaf.rect.midX, y: entry.leaf.rect.midY)
+        // ZOOM keep-mounted: a zoomed tab still emits every sibling as a HIDDEN compositor leaf at
+        // its un-zoomed rect — revealed/hidden here exactly like an inactive tab's layer, so the
+        // libghostty surface / `.remoteGUI` stream survives the zoom toggle and un-zoom is a pure
+        // visibility flip (no teardown, no lossy ring-replay).
+        .opacity(entry.isHidden ? 0 : 1)
+        .allowsHitTesting(!entry.isHidden)
+        .accessibilityHidden(entry.isHidden)
+        .id(entry.id) // identity hazard: never reuse a surface across panes
     }
 
     /// Forwards the GLOBAL active tab's solved frames to `store.updateSolvedLayout` (a hidden tab, the

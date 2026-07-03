@@ -26,8 +26,11 @@ struct ContentColumn: View {
 
     var body: some View {
         paneArea
+            // Card-canvas: pad by half the inter-card gap — with each card's own half-gap inset
+            // (SplitContainer) the outer margin equals the gap between split cards.
+            .padding(Slate.Metric.paneGap / 2)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Slate.Surface.window)
+            .background(Slate.Surface.margin)
     }
 
     private var paneArea: some View {

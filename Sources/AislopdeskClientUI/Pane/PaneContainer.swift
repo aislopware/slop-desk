@@ -1,11 +1,12 @@
-// PaneContainer — one placed leaf = the flush, borderless pane content.
+// PaneContainer — one placed leaf = a rounded floating pane CARD (card-canvas, 2026-07-04; replaces the
+// flat-era flush panel).
 //
 // Resolves the pane's `LivePaneSession` handle + `PaneSpec` from the store, routes by pane kind to the
 // content view (terminal → `TerminalLeafView`; `.remoteGUI`/`.systemDialog` → the `VideoWindowFactory`
-// seam, else a native placeholder). The terminal renders as a FLUSH, borderless panel on paper — there
-// is NO floating card, NO accent ring, NO drop shadow and NO inset gutter. The per-pane controls
-// (split/close) hover-reveal as a top overlay instead of a resting header bar; focus is conveyed only by
-// dimming the unfocused panes (the `⌘D` split treatment). Tap anywhere focuses the pane via the store.
+// seam, else a native placeholder). The content is clipped to a continuous rounded rect on the theme card
+// fill, with a theme hairline border and a soft theme shadow, floating on the darker `Surface.margin`
+// backdrop (the SplitContainer/column gutter). In a SPLIT, focus = the accent border on the active card
+// (a lone pane draws no ring — nothing to disambiguate). Tap anywhere focuses the pane via the store.
 //
 // The whole pane is keyed `.id(PaneID)` by the SplitContainer so the surface/connection are never reused
 // across panes (identity hazard). SYSTEM colours/fonts only.
@@ -33,6 +34,10 @@ struct PaneContainer: View {
     /// split add/remove, a zoom, a balance, a tab switch — the content has been resized and its (frozen /
     /// stretched) surface won't match until it re-renders, so the scrim is shown until things settle.
     var size: CGSize = .zero
+    /// Whether this pane is the ONLY compositor leaf of its tab (card-canvas): a lone card skips the
+    /// accent focus ring — there is no sibling to disambiguate from. Defaults `true` (ring off) so
+    /// standalone callers/previews render calm.
+    var solo: Bool = true
     /// EAGER/STATIC render path for headless ImageRenderer snapshots.
     var staticMirror: Bool = false
 
@@ -188,10 +193,25 @@ struct PaneContainer: View {
             .onChange(of: dragging) { _, active in
                 if !active { resizedDuringDrag = false }
             }
-            // The terminal is a FLUSH, borderless panel on paper — fills the leaf rect edge-to-edge.
-            // No rounded card, no accent ring, no drop shadow, no gutter, and NO per-pane header bar (the
-            // active pane's title + split/close controls live in the titlebar `⋯` menu). Adjacent split
-            // panes are separated only by the `PaneDivider` hairline `SplitContainer` places between leaves.
+            // CARD-CANVAS (2026-07-04): clip the pane — content, scrim and drop overlays included — to a
+            // continuous rounded card. The clip masks the hosted libghostty / video CAMetalLayer too (the
+            // terminal surface keeps its own 8pt inner inset, so no corner glyph is ever cut). The border
+            // rides an overlay AFTER the clip (strokeBorder draws inward, never clipped): the theme
+            // hairline at rest, the accent ring on the FOCUSED card of a split (`solo` draws none — the
+            // ring only disambiguates siblings). Soft theme shadow lifts the card off the margin backdrop.
+            .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous)
+                    .strokeBorder(
+                        isFocusRinged ? Slate.State.accent.opacity(0.75) : Slate.Line.cardBorder,
+                        lineWidth: isFocusRinged ? 2 : 1,
+                    )
+                    .allowsHitTesting(false)
+            }
+            .shadow(color: Slate.Effect.panelShadow, radius: 5, x: 0, y: 2)
+            // NO per-pane header bar (the active pane's title + split/close controls live in the titlebar
+            // `⋯` menu); adjacent split cards are separated by the `Metric.paneGap` gutter, with the
+            // `PaneDivider` hit band living between them.
             .contentShape(Rectangle())
             .onTapGesture { store.focusPaneTree(paneID) }
             // E18 WI-5/WI-6: accept external file/folder/URL/text drags. The receiver is disabled on the
@@ -209,36 +229,11 @@ struct PaneContainer: View {
                 terminalModel: live?.terminalModel,
                 overlayCoordinator: overlayCoordinator,
             ))
-            // FOCUS = a small FILLED accent triangle tucked into the active pane's TOP-LEFT corner (Warp-style,
-            // the KEPT marker after the box/bracket/underline/dot/top-bar iterations). `Color.accentColor`,
-            // faded in only while focused; the unfocused panes render at FULL opacity (no dim — it washed out
-            // live content). `allowsHitTesting(false)` so taps / the divider gesture pass through. OUTERMOST
-            // overlay → above the resize-scrim + drop-zone overlays (KEPT exactly as-is — re-render logic).
-            .overlay(alignment: .topLeading) {
-                PaneFocusCorner(size: 12)
-                    .fill(Color.accentColor)
-                    .opacity(isFocused ? 1 : 0)
-                    .allowsHitTesting(false)
-            }
             .animation(.easeInOut(duration: 0.2), value: isFocused)
     }
-}
 
-/// The active-pane focus marker: a small FILLED right-triangle in the TOP-LEFT corner (Warp-style) — the
-/// two legs run along the top + left pane edges, the hypotenuse cuts across. Sized by `size` (leg length),
-/// auto-capped at the smaller pane side so a tiny pane keeps it.
-private struct PaneFocusCorner: Shape {
-    /// Leg length (points) of the corner triangle.
-    var size: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        let s = Swift.min(size, Swift.min(rect.width, rect.height))
-        var p = Path()
-        p.move(to: CGPoint(x: rect.minX, y: rect.minY)) // the corner
-        p.addLine(to: CGPoint(x: rect.minX + s, y: rect.minY)) // along the top edge
-        p.addLine(to: CGPoint(x: rect.minX, y: rect.minY + s)) // along the left edge
-        p.closeSubpath()
-        return p
-    }
+    /// Whether the accent focus ring is drawn: the focused card of a SPLIT (card-canvas focus treatment —
+    /// replaces the flat-era top-left corner triangle). A `solo` card never rings.
+    private var isFocusRinged: Bool { isFocused && !solo }
 }
 #endif

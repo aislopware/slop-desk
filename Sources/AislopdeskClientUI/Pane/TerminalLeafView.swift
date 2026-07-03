@@ -91,11 +91,12 @@ struct TerminalLeafView: View {
         VStack(spacing: 0) {
             terminalSurface
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Inner breathing room so the terminal content doesn't sit flush against the pane edges /
-                // the split divider (issue: "thêm padding vào các pane"). The `NativePaneColor.terminalBackground`
-                // on the VStack fills the inset gutter, so the pane stays flat (no card). NB this insets the
-                // libghostty surface, so the host PTY grid loses ~1 col/row each side — it reflows through the
-                // existing PaneContainer.size → resize-scrim → host TIOCSWINSZ path, no new signal needed.
+                // Inner breathing room so the terminal content doesn't sit flush against the pane edges
+                // (issue: "thêm padding vào các pane") — and, since card-canvas (2026-07-04), what keeps the
+                // card's rounded corners from ever clipping a corner glyph. The
+                // `NativePaneColor.terminalBackground` on the VStack fills the inset gutter. NB this insets
+                // the libghostty surface, so the host PTY grid loses ~1 col/row each side — it reflows through
+                // the existing PaneContainer.size → resize-scrim → host TIOCSWINSZ path, no new signal needed.
                 .padding(8)
             // NO per-pane status strip on a TERMINAL pane (issue: "pane footer cho terminal không có giá trị
             // gì lắm, nên bỏ đi"). The cwd / exit / progress cues are low-value chrome; the host + connection

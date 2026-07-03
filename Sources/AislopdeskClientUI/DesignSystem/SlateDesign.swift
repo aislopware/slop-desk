@@ -5,9 +5,10 @@
 // Monokai Pro filters — `.monokaiProClassic` the DEFAULT — plus the legacy `.paper`/`.dark`), whose
 // `terminalBackgroundHex`/`terminalForegroundHex`/`ansiPalette`/cursor fields pin the libghostty CELLS,
 // and whose surface roles paint the canvas FABRIC around them (pane backdrops, the pane hairline divider,
-// the build-status placeholder). The canvas keeps the FLAT doctrine — the terminal viewport fills its leaf
-// edge-to-edge, `card == window`, panes separated only by the hairline `PaneDivider` — while the chrome
-// around it follows the OS.
+// the build-status placeholder). CARD-CANVAS (2026-07-04, replaces the flat doctrine): every pane renders
+// as a rounded floating CARD (`Surface.card` fill, `Line.cardBorder` hairline, `Effect.panelShadow`) on the
+// darker `Surface.margin` backdrop; split panes are separated by the `Metric.paneGap` gutter instead of a
+// resting hairline. The chrome around the canvas follows the OS.
 //
 // The surviving `Slate.*` accessors read `Slate.theme`, which (D3) indirects through
 // `ThemeStore.shared.active` so a runtime theme switch repoints the canvas live (one SwiftUI hierarchy now
@@ -328,6 +329,10 @@ enum Slate {
     enum Surface {
         /// The column/margin backdrop behind the pane area (ContentColumn / GuiColumn).
         static var window: Color { Slate.theme.window }
+        /// The MARGIN backdrop the floating pane CARDS sit on (card-canvas, 2026-07-04): the theme's
+        /// darker `sidebar` tone, so the gutter around/between panes reads as depth in the SAME hue as
+        /// the canvas — never a neutral system gray that would clash with a warm/tinted filter.
+        static var margin: Color { Slate.theme.sidebar }
         /// The pane backdrop under every leaf (PaneContainer / NativePaneColor.terminalBackground).
         static var card: Color { Slate.theme.card }
     }
@@ -342,8 +347,17 @@ enum Slate {
 
     @MainActor
     enum Line {
-        /// The hairline between split panes (PaneDivider via NativePaneColor.separator) — canvas fabric.
-        static var divider: Color { Slate.theme.divider }
+        /// The pane CARD's resting 1px border (card-canvas, 2026-07-04; replaces the flat-era `divider`
+        /// hairline — a resting split seam is the paneGap gutter now) — theme-derived so it carries the
+        /// filter's own hue over the margin backdrop.
+        static var cardBorder: Color { Slate.theme.cardBorder }
+    }
+
+    @MainActor
+    enum Effect {
+        /// The pane card's soft drop shadow (card-canvas, 2026-07-04) — theme-tuned opacity (light themes
+        /// shadow gently, dark themes deeper).
+        static var panelShadow: Color { Slate.theme.panelShadow }
     }
 
     @MainActor
@@ -374,6 +388,13 @@ enum Slate {
     enum Metric {
         /// The pane divider's thicker active-drag hairline (PaneDivider).
         static let dividerHoverWidth: CGFloat = 2
+        /// Card-canvas (2026-07-04): the pane card's continuous corner radius. The terminal surface keeps
+        /// its own 8pt inner inset (TerminalLeafView), so the rounding never clips a corner glyph.
+        static let paneCornerRadius: CGFloat = 10
+        /// Card-canvas: the visual gap BETWEEN two adjacent pane cards. Each leaf insets by half of this
+        /// inside its solver rect (SplitContainer), and the columns pad the pane area by the same half —
+        /// so the inter-card gap and the outer margin are uniform.
+        static let paneGap: CGFloat = 8
     }
 
     /// Typography — only the canvas placeholder's sizes survive (chrome text is system text styles now).

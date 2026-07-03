@@ -49,9 +49,12 @@ struct GuiColumn: View {
             dockHeader
             Divider()
             paneArea
+                // Card-canvas: same half-gap outer margin as ContentColumn, so the video card floats
+                // on the margin backdrop with a uniform gutter.
+                .padding(Slate.Metric.paneGap / 2)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Slate.Surface.window)
+        .background(Slate.Surface.margin)
         // The dock poll: refresh the host-window list every `dockPollGap` while this column is VISIBLE
         // (a collapsed split item keeps the hosting view mounted, so the loop itself gates on the chrome
         // flag), skipping the query while disconnected (the seam would only time out). Keying the task on

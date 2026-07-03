@@ -369,7 +369,10 @@ private struct NavigatorRow: View {
                     }
                 }
             } icon: {
+                // Accent-tinted sidebar icons — the modern system-sidebar idiom (Mail/Finder); the row
+                // text stays primary/secondary.
                 Image(systemSymbol: symbol)
+                    .foregroundStyle(Color.accentColor)
             }
             Spacer(minLength: 4)
             if !row.isEditing {
