@@ -182,12 +182,14 @@ public struct WorkspaceRootView: View {
         NavigationSplitView(
             columnVisibility: sidebarColumnVisibility,
         ) {
-            NavigatorColumn(store: store, preferences: preferencesStore)
-                .navigationSplitViewColumnWidth(
-                    min: WorkspaceChromeState.defaultSidebarWidth,
-                    ideal: WorkspaceChromeState.defaultSidebarWidth,
-                    max: 360,
-                )
+            NavigatorColumn(store: store, preferences: preferencesStore) {
+                overlay.openRemotePicker()
+            }
+            .navigationSplitViewColumnWidth(
+                min: WorkspaceChromeState.defaultSidebarWidth,
+                ideal: WorkspaceChromeState.defaultSidebarWidth,
+                max: 360,
+            )
         } detail: {
             macDetail
         }
@@ -331,7 +333,7 @@ public struct WorkspaceRootView: View {
             if !chrome.guiCollapsed {
                 GuiPanelDivider(chrome: chrome, store: store, maxWidth: maxGuiWidth)
             }
-            GuiColumn(store: store, connection: connection, chrome: chrome) {
+            GuiColumn(store: store) {
                 overlay.openRemotePicker()
             }
             .frame(width: chrome.guiCollapsed ? 0 : effectiveGuiWidth)

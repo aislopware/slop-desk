@@ -613,6 +613,7 @@ public final class OverlayCoordinator {
     public func openRemoteWindow(_ summary: RemoteWindowSummary) {
         store?.newRemoteWindowTab(
             windowID: summary.windowID, title: summary.title, appName: summary.appName,
+            bundleID: summary.bundleID,
         )
         store?.recordRecentCommand(.newPane(.remoteGUI))
         closeRemotePicker()

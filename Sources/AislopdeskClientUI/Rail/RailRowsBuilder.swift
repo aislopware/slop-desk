@@ -41,6 +41,10 @@ struct RailRow: Identifiable, Equatable {
     let isEditing: Bool
     /// Selected = the row's tab is active AND this pane is the tab's active pane.
     let isSelected: Bool
+    /// A `.remoteGUI` row's host-app bundle identifier (``VideoEndpoint/bundleID``, stamped at pick time)
+    /// — the sidebar Windows row resolves the app's LOCAL icon from it (``AppIconResolver``). Empty (a
+    /// terminal row / a legacy binding) ⇒ the row keeps its SF-symbol icon.
+    var bundleID: String = ""
 
     /// A copy of this row with a new `title` (C3 BUG A collision disambiguation) — every other field is
     /// carried verbatim. Kept here so ``RailRowsBuilder/disambiguated(_:)`` need not restate the memberwise init.
@@ -48,7 +52,7 @@ struct RailRow: Identifiable, Equatable {
         Self(
             id: id, tabID: tabID, kind: kind, title: newTitle, subtitle: subtitle, status: status,
             tabNumber: tabNumber, badge: badge, processLabel: processLabel, readOnly: readOnly, cwd: cwd,
-            isEditing: isEditing, isSelected: isSelected,
+            isEditing: isEditing, isSelected: isSelected, bundleID: bundleID,
         )
     }
 }
@@ -58,9 +62,9 @@ enum RailRowsBuilder {
     /// in tab order then pre-order pane order. `selected` = the tab is active AND the pane is that tab's
     /// active pane. Agent status comes from the store's per-pane mirror (`.none` ⇒ plain terminal).
     ///
-    /// `side` scopes the rail to ONE column of the TabSide partition: the macOS sidebar passes
-    /// `.terminal` (the left column lists terminal tabs only — remote-window tabs live in the right
-    /// column's dock); `nil` (iOS, which keeps the single-region shell) lists every tab. The row's
+    /// `side` scopes the rail to ONE column of the TabSide partition: the macOS sidebar builds
+    /// `.terminal` (the Terminals list) and `.gui` (the Windows section) separately; `nil` (iOS, which
+    /// keeps the single-region shell) lists every tab. The row's
     /// `tabNumber` is the 1-based ordinal WITHIN the tab's side, matching the side-scoped ⌘1…⌘9
     /// (`WorkspaceStore/selectTabNumber(_:)` counts terminal tabs the same way).
     @MainActor
@@ -146,6 +150,7 @@ enum RailRowsBuilder {
                     cwd: kind == .terminal ? spec?.lastKnownCwd : nil,
                     isEditing: isEditing,
                     isSelected: isSelected,
+                    bundleID: spec?.video?.bundleID ?? "",
                 ))
             }
         }

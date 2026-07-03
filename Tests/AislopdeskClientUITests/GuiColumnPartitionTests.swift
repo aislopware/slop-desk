@@ -72,4 +72,25 @@ final class GuiColumnPartitionTests: XCTestCase {
         let allRows = RailRowsBuilder.rows(for: store)
         XCTAssertTrue(allRows.contains { $0.kind == .remoteGUI }, "side nil keeps the GUI rows (iOS shell)")
     }
+
+    /// The sidebar's WINDOWS section is the `.gui`-scoped rail (dock removal, 2026-07-04): only
+    /// remote-window rows, side-scoped ordinals, and the endpoint's `bundleID` carried for the local
+    /// app-icon lookup (terminal rows carry "").
+    func testGuiSideRowsListWindowsWithBundleID() {
+        let store = makeStore()
+        store.newRemoteWindowTab(windowID: 7, title: "Xcode", appName: "Xcode", bundleID: "com.apple.dt.Xcode")
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        store.newRemoteWindowTab(windowID: 8, title: "Safari", appName: "Safari")
+
+        let rows = RailRowsBuilder.rows(for: store, side: .gui)
+        XCTAssertEqual(rows.map(\.kind), [.remoteGUI, .remoteGUI], "gui side lists only window rows")
+        XCTAssertEqual(rows.map(\.tabNumber), [1, 2], "ordinals count GUI tabs only (terminal skipped)")
+        XCTAssertEqual(
+            rows.map(\.bundleID), ["com.apple.dt.Xcode", ""],
+            "the endpoint bundleID rides the row (empty when unknown)",
+        )
+
+        let terminalRows = RailRowsBuilder.rows(for: store, side: .terminal)
+        XCTAssertTrue(terminalRows.allSatisfy(\.bundleID.isEmpty), "terminal rows carry no bundleID")
+    }
 }

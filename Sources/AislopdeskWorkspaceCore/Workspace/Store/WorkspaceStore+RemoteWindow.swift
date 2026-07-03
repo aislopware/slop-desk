@@ -12,12 +12,12 @@ public extension WorkspaceStore {
     /// still flows through ``liveVideoCap`` at activation — a saturated cap shows the gated placeholder).
     /// Selected + focused like ``newTab(kind:)``. Returns the new pane id.
     @discardableResult
-    func newRemoteWindowTab(windowID: UInt32, title: String, appName: String) -> PaneID {
+    func newRemoteWindowTab(windowID: UInt32, title: String, appName: String, bundleID: String = "") -> PaneID {
         let label = title.isEmpty ? (appName.isEmpty ? "Remote window" : appName) : title
         let spec = PaneSpec(
             kind: .remoteGUI,
             title: label,
-            video: VideoEndpoint(windowID: windowID, title: label, appName: appName),
+            video: VideoEndpoint(windowID: windowID, title: label, appName: appName, bundleID: bundleID),
         )
         let (next, id) = WorkspaceTreeOps.newTab(in: tree, spec: spec)
         tree = next

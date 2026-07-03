@@ -5,6 +5,12 @@
 // hand-built search plate, `SlateTabRow` white-card rows — is deleted; the flat doctrine survives only
 // inside the terminal/video canvases.)
 //
+// On macOS the sidebar is the whole window's navigator (dock removal, 2026-07-04): the terminal tabs
+// first, then a "Windows" section — one native row per OPEN remote-window tab (real app icon via
+// ``AppIconResolver``, window title, host-app subtitle). Selecting a Windows row activates its GUI tab
+// (the right column's displayed tab). Browsing NOT-yet-open host windows is the Remote-Window picker,
+// minted from the footer's window-`+` (this replaces the GUI column's launcher dock strip).
+//
 // E6 WI-5 wiring is unchanged — the STORE stays the single source of row order:
 //   • `.searchable`'s query filters via the pure ``RailRowsBuilder/filtered(_:query:)``;
 //   • the rendered SECTIONS are ``WorkspaceStore/orderedTabGroups(now:)`` (grouping/sort/recency), so the
@@ -29,6 +35,11 @@ struct NavigatorColumn: View {
     /// hierarchy, but still passed explicitly for preview-mountability.
     var preferences: PreferencesStore?
 
+    /// Opens the Remote-Window picker modal (``OverlayCoordinator/openRemotePicker()``) — the sidebar
+    /// footer's window-`+` affordance (the dock's old mint, relocated with the Windows section). No-op
+    /// default keeps the column standalone-mountable in previews / iOS.
+    var onOpenPicker: () -> Void = {}
+
     /// The transient sidebar search query — narrows the rows via the pure ``RailRowsBuilder/filtered`` (E6
     /// WI-5). View-local `@State`: it is a presentational filter, NOT row order (which lives on the store).
     @State private var query = ""
@@ -39,12 +50,18 @@ struct NavigatorColumn: View {
     }
 
     var body: some View {
-        // TabSide partition (macOS): the sidebar is the TERMINAL column's tab list — remote-window tabs
-        // live in the right GUI column (its dock strip). iOS keeps the single-region shell (all tabs).
+        // TabSide partition (macOS): the sidebar is the whole window's navigator now — the terminal tabs
+        // first, then a "Windows" section listing the OPEN remote-window tabs (the right GUI column is
+        // pure content since the dock removal; browsing/opening host windows is the picker). iOS keeps
+        // the single-region shell (one flat list, all tabs).
         #if os(macOS)
         let allRows = RailRowsBuilder.rows(for: store, side: .terminal)
+        let windowRows = RailRowsBuilder.filtered(
+            RailRowsBuilder.rows(for: store, side: .gui), query: query,
+        )
         #else
         let allRows = RailRowsBuilder.rows(for: store)
+        let windowRows: [RailRow] = []
         #endif
         let sections = buildSections(allRows, query: query)
         let selection = Binding<PaneID?>(
@@ -52,10 +69,10 @@ struct NavigatorColumn: View {
             set: { if let paneID = $0 { select(paneID) } },
         )
         return List(selection: selection) {
-            if allRows.isEmpty {
+            if allRows.isEmpty, windowRows.isEmpty {
                 Label("No tabs open", systemSymbol: .squareSplit2x1)
                     .foregroundStyle(.secondary)
-            } else if sections.isEmpty {
+            } else if sections.isEmpty, windowRows.isEmpty {
                 Label("No matches", systemSymbol: .magnifyingglass)
                     .foregroundStyle(.secondary)
             } else {
@@ -66,12 +83,30 @@ struct NavigatorColumn: View {
                                 navRow(row)
                             }
                         }
-                    } else {
+                    } else if windowRows.isEmpty {
                         ForEach(section.rows) { row in
                             navRow(row)
                         }
+                    } else {
+                        // With a Windows section below, the flat terminal list gets its own header so
+                        // the two groups read as named peers (a bare list over a labelled section looks
+                        // like a rendering accident).
+                        Section("Terminals") {
+                            ForEach(section.rows) { row in
+                                navRow(row)
+                            }
+                        }
                     }
                 }
+                #if os(macOS)
+                if !windowRows.isEmpty {
+                    Section("Windows") {
+                        ForEach(windowRows) { row in
+                            windowRow(row)
+                        }
+                    }
+                }
+                #endif
             }
         }
         .listStyle(.sidebar)
@@ -89,8 +124,9 @@ struct NavigatorColumn: View {
     }
 
     #if os(macOS)
-    /// The pinned sidebar footer: a borderless accent-`+` "New Tab" row above a hairline — mints a
-    /// terminal tab (the terminal-side sidebar's kind; remote windows mint from the GUI column's dock).
+    /// The pinned sidebar footer: a borderless "New Tab" mint on the left (terminal tabs — the sidebar's
+    /// primary kind) and the window-`+` on the right, which opens the Remote-Window picker (the mint for
+    /// the Windows section — relocated here from the deleted GUI-column dock).
     private var newTabFooter: some View {
         HStack {
             Button {
@@ -103,10 +139,41 @@ struct NavigatorColumn: View {
             .buttonStyle(.borderless)
             .help("New Tab (⌘T)")
             Spacer(minLength: 0)
+            Button {
+                onOpenPicker()
+            } label: {
+                Image(systemSymbol: .macwindowBadgePlus)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Open a Remote Window…")
+            .accessibilityLabel("Open a Remote Window")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .overlay(alignment: .top) { Divider() }
+    }
+
+    /// One Windows-section row: the same native ``NavigatorRow`` chrome as a terminal row (real app icon
+    /// via the row's `bundleID`, window title, host-app subtitle, hover close) — but NOT drag-reorderable
+    /// (the section lists open order; the terminal rail's manual reorder stays terminal-scoped) and with
+    /// the slim window context menu (rename/close — the agent-badge cluster is terminal chrome).
+    private func windowRow(_ row: RailRow) -> some View {
+        NavigatorRow(
+            row: row,
+            title: row.title.isEmpty ? defaultTitle(for: row.kind) : row.title,
+            active: row.id == selectedPane,
+            symbol: Self.symbol(for: row.kind),
+            onClose: { store.requestClosePaneTree(row.id) },
+            onRename: { commitRename(row, to: $0) },
+            onCancelRename: { store.clearTabRenameRequest() },
+        )
+        .tag(row.id)
+        .contextMenu {
+            Button("Rename") { store.requestRenameTab(row.tabID) }
+            Button("Close Window Tab", role: .destructive) { store.requestClosePaneTree(row.id) }
+        }
     }
     #endif
 
@@ -397,10 +464,25 @@ private struct NavigatorRow: View {
                     }
                 }
             } icon: {
-                // Accent-tinted sidebar icons — the modern system-sidebar idiom (Mail/Finder); the row
-                // text stays primary/secondary.
+                #if os(macOS)
+                if row.kind == .remoteGUI, let icon = AppIconResolver.icon(bundleID: row.bundleID) {
+                    // A Windows row shows the HOST app's real icon (resolved locally from the endpoint's
+                    // bundleID — both ends are Macs), the Mail-account/Finder-favorite source-list idiom.
+                    Image(nsImage: icon)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .frame(width: 18, height: 18)
+                } else {
+                    // Accent-tinted sidebar icons — the modern system-sidebar idiom (Mail/Finder); the row
+                    // text stays primary/secondary.
+                    Image(systemSymbol: symbol)
+                        .foregroundStyle(Color.accentColor)
+                }
+                #else
                 Image(systemSymbol: symbol)
                     .foregroundStyle(Color.accentColor)
+                #endif
             }
             Spacer(minLength: 4)
             if !row.isEditing {
