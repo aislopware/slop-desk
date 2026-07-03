@@ -83,6 +83,12 @@ public final class ConnectionViewModel {
     /// / ``PaneSpec/resumeLastReceivedSeq`` for the next launch. `nil` ⇒ no observer.
     public var onResumeIdentitySnapshot: ((_ sessionID: UUID, _ seq: Int64) -> Void)?
 
+    /// A GENUINE reconnect edge (`.reconnected` — distinct from the ~3 s RTT snapshot that also drives
+    /// ``onResumeIdentitySnapshot``). Fired once when a dropped link comes back on a fresh host shell, so the
+    /// store can unconditionally re-fetch state that may have drifted while away — the sidebar git line (C3
+    /// BUG C a: a sibling-pane commit / detached-session drift the pane missed). `nil` ⇒ no observer.
+    public var onReconnected: (() -> Void)?
+
     /// A Claude-Code agent-detection signal (wire types 26/27 — `.foregroundProcess` / `.claudeStatus`).
     /// The store wires this to the owning pane's ``LivePaneSession`` so it folds the signal into the
     /// pane's `ClaudeStatusMachine` and pushes the result to ``WorkspaceStore/setAgentStatus(_:for:)``
@@ -651,6 +657,9 @@ public final class ConnectionViewModel {
             effectiveSessionID = sessionID
             onResumeIdentitySnapshot?(sessionID, snapshotedContiguousSeq)
             status = .connected
+            // C3 BUG C a: a genuine reconnect edge — let the store unconditionally refresh drift-prone state
+            // (the sidebar git line) that the ~3 s snapshot only re-fetches under a staleness window.
+            onReconnected?()
             // RECONNECT GRID RE-ASSERT (the "render bị xô lệch khi reconnect" fix). A reconnect spawns
             // a BRAND-NEW host shell (the mux path has no server-side resume — see
             // `TerminalViewModel.markReconnecting`), whose PTY starts at its 80×24 init size. The grid

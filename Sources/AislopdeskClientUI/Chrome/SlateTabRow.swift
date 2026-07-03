@@ -29,21 +29,42 @@ struct SlateTabRow: View {
     /// (the sidebar's read-only indicator, twin of the pane's `🔒 READ ONLY ×` pill). Default `false` keeps
     /// existing call sites source-compatible.
     var readOnly: Bool = false
+    /// C3 BUG B: whether the row is in inline-RENAME mode — swaps the title `Text` for a committing
+    /// `TextField`. Default `false` keeps existing call sites source-compatible.
+    var isEditing: Bool = false
+    /// C3 BUG A: the row's tooltip text (the full cwd) — shown on hover via `.help`. Empty/`nil` ⇒ no tooltip.
+    var helpText: String?
     var onSelect: () -> Void
     var onClose: () -> Void
+    /// C3 BUG B: commit the inline rename with the field's current text. No-op default keeps call sites compatible.
+    var onRename: (String) -> Void = { _ in }
+    /// C3 BUG B: dismiss the inline rename without renaming (escape / focus loss). No-op default.
+    var onCancelRename: () -> Void = {}
 
     @State private var hovering = false
     @State private var closeHover = false
+    /// The inline-rename draft text (C3 BUG B) — seeded from `title` when the field opens.
+    @State private var draft = ""
+    /// Whether the inline rename has already been RESOLVED by Return (commit) or Escape (cancel) — so the
+    /// focus-loss handler that fires when the field is torn down does NOT re-commit the draft (which would make
+    /// Escape accidentally RENAME to the draft, and Return commit twice). A genuine click-away leaves this
+    /// `false`, so that path still commits once. Reset per field-open via `.onAppear`.
+    @State private var renameResolved = false
+    @FocusState private var fieldFocused: Bool
 
     private var hasSubtitle: Bool { !(subtitle ?? "").isEmpty }
 
     var body: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
-                    .foregroundStyle(Slate.Text.primary)
-                    .lineLimit(1)
+                if isEditing {
+                    renameField
+                } else {
+                    Text(title)
+                        .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
+                        .foregroundStyle(Slate.Text.primary)
+                        .lineLimit(1)
+                }
                 if hasSubtitle {
                     Text(subtitle ?? "")
                         .font(.system(size: Slate.Typeface.small))
@@ -53,13 +74,17 @@ struct SlateTabRow: View {
                 }
             }
             Spacer(minLength: 6)
-            trailingMeta
-                .opacity(hovering ? 0 : 1)
+            if !isEditing {
+                trailingMeta
+                    .opacity(hovering ? 0 : 1)
+            }
         }
         .overlay(alignment: .trailing) {
-            closeButton
-                .opacity(hovering ? 1 : 0)
-                .allowsHitTesting(hovering)
+            if !isEditing {
+                closeButton
+                    .opacity(hovering ? 1 : 0)
+                    .allowsHitTesting(hovering)
+            }
         }
         .padding(.horizontal, 14)
         .frame(height: hasSubtitle ? 44 : 34)
@@ -70,10 +95,49 @@ struct SlateTabRow: View {
         ) } }
         .shadow(color: active ? .black.opacity(0.04) : .clear, radius: 2, y: 1)
         .contentShape(.rect)
-        .onTapGesture(perform: onSelect)
+        // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the field.
+        .onTapGesture { if !isEditing { onSelect() } }
         .onHover { hovering = $0 }
+        .help(helpText ?? "")
         .animation(Slate.Anim.smallFade, value: hovering)
         .animation(Slate.Anim.smallFade, value: active)
+    }
+
+    /// The inline-rename `TextField` (C3 BUG B): seeded from the current title on open, auto-focused, commits
+    /// on Return (`onSubmit` → `onRename`) and cancels on Escape (`onExitCommand` → `onCancelRename`). A blank
+    /// commit is a no-op rename (the store keeps the folder-name title), so the field never blanks the row.
+    private var renameField: some View {
+        let field = TextField("Rename", text: $draft)
+            .textFieldStyle(.plain)
+            .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
+            .foregroundStyle(Slate.Text.primary)
+            .tint(Slate.State.accent)
+            .lineLimit(1)
+            .focused($fieldFocused)
+            .onAppear {
+                draft = title
+                renameResolved = false
+                fieldFocused = true
+            }
+            .onSubmit {
+                renameResolved = true
+                onRename(draft)
+            }
+            // Focus loss (click elsewhere) commits the draft — matches a Finder rename field — UNLESS the
+            // rename was already resolved by Return/Escape (the field's teardown flips focus off, and re-firing
+            // here would make Escape rename to the draft / Return commit twice).
+            .onChange(of: fieldFocused) { _, focused in
+                if !focused, !renameResolved { onRename(draft) }
+            }
+        // Escape cancels the rename — `onExitCommand` is macOS/tvOS-only, so guard it off iOS.
+        #if os(macOS)
+        return field.onExitCommand {
+            renameResolved = true
+            onCancelRename()
+        }
+        #else
+        return field
+        #endif
     }
 
     /// The trailing status cluster: the read-only lock (if locked), the fused `badge` (if any), then the

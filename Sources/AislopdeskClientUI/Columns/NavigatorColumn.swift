@@ -286,8 +286,12 @@ struct NavigatorColumn: View {
                 processLabel: row.processLabel,
                 badge: row.badge,
                 readOnly: row.readOnly,
+                isEditing: row.isEditing,
+                helpText: row.cwd,
                 onSelect: { select(row.id) },
                 onClose: { store.requestClosePaneTree(row.id) },
+                onRename: { commitRename(row, to: $0) },
+                onCancelRename: { store.clearTabRenameRequest() },
             ),
             row: row,
         )
@@ -347,8 +351,12 @@ struct NavigatorColumn: View {
         reorderable(
             HStack(spacing: 8) {
                 Label {
-                    Text(row.title.isEmpty ? defaultTitle(for: row.kind) : row.title)
-                        .lineLimit(1)
+                    if row.isEditing {
+                        iosRenameField(row)
+                    } else {
+                        Text(row.title.isEmpty ? defaultTitle(for: row.kind) : row.title)
+                            .lineLimit(1)
+                    }
                 } icon: {
                     Image(systemSymbol: Self.symbol(for: row.kind))
                 }
@@ -368,7 +376,28 @@ struct NavigatorColumn: View {
         )
         .contextMenu { rowContextMenu(row) }
     }
+
+    /// The iOS inline-rename field (C3 BUG B) — commits the pane rename + clears the pending state on
+    /// submit/blur (escape is macOS-only). Reuses ``commitRename(_:to:)`` so the iOS + macOS paths share the
+    /// same commit semantics (rename the pane so the row title wins, then dismiss the field).
+    private func iosRenameField(_ row: RailRow) -> some View {
+        InlineRenameField(seed: row.title.isEmpty ? defaultTitle(for: row.kind) : row.title) { text in
+            commitRename(row, to: text)
+        } onCancel: {
+            store.clearTabRenameRequest()
+        }
+    }
     #endif
+
+    /// Commit an inline row rename (C3 BUG B): rename the pane (so ``RailRowsBuilder/rowTitle`` — which reads
+    /// the pane spec — surfaces it, winning over the folder name) then clear the pending state so the field
+    /// closes. A blank draft renames nothing (``WorkspaceStore/renamePane(_:to:)`` no-ops), keeping the folder
+    /// name; the pending state still clears so the field dismisses. Shared across the macOS + iOS row builders
+    /// (outside the platform guards) so both paths land the same commit semantics.
+    private func commitRename(_ row: RailRow, to text: String) {
+        store.renamePane(row.id, to: text)
+        store.clearTabRenameRequest()
+    }
 
     // MARK: - Tab context menu (E13 WI-3 — Clear Badge + per-pane badge overrides + notify toggles)
 
@@ -386,6 +415,14 @@ struct NavigatorColumn: View {
     /// (preview / pre-injection) simply hides the row.
     @ViewBuilder
     private func rowContextMenu(_ row: RailRow) -> some View {
+        // C3 BUG B: a mouse-reachable "Rename" — sets the pending-rename for THIS row's tab so its inline
+        // field opens (even on a background tab). Twin of the ⌘R / palette "Rename Pane" entry.
+        Button("Rename") { store.requestRenameTab(row.tabID) }
+        // C3 BUG C d: an on-demand git-line re-probe for a terminal row (a video pane has no git surface).
+        if row.kind == .terminal {
+            Button("Refresh Git Status") { store.refreshGitSummary(for: row.id) }
+        }
+        Divider()
         Button("Clear Badge") { store.clearAgentBadge(row.id) }
         Divider()
         Toggle("Badge While Processing", isOn: Binding(
@@ -510,6 +547,50 @@ private struct ReorderableRow<Content: View>: View {
                     .animation(.easeOut(duration: 0.12), value: showsInsertionLine)
                     .accessibilityHidden(true)
             }
+    }
+}
+
+/// A small self-focusing inline rename `TextField` (C3 BUG B, iOS list rows) — owns its own draft `@State` so
+/// a `@ViewBuilder` row helper (which cannot hold state) can drop it in. Seeds from `seed` on open, commits on
+/// Return / focus-loss (`onCommit`), and — on macOS only — cancels on Escape (`onCancel`). A blank commit is a
+/// no-op rename downstream, so the field never blanks the row.
+private struct InlineRenameField: View {
+    let seed: String
+    let onCommit: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var draft = ""
+    /// Whether the rename was already RESOLVED by Return/Escape — so the focus-loss handler fired at field
+    /// teardown does not re-commit (Escape must not rename to the draft). A genuine click-away leaves it
+    /// `false` and still commits once. Reset per open via `.onAppear`.
+    @State private var resolved = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        let field = TextField("Rename", text: $draft)
+            .textFieldStyle(.plain)
+            .lineLimit(1)
+            .focused($focused)
+            .onAppear {
+                draft = seed
+                resolved = false
+                focused = true
+            }
+            .onSubmit {
+                resolved = true
+                onCommit(draft)
+            }
+            .onChange(of: focused) { _, isFocused in
+                if !isFocused, !resolved { onCommit(draft) }
+            }
+        #if os(macOS)
+        return field.onExitCommand {
+            resolved = true
+            onCancel()
+        }
+        #else
+        return field
+        #endif
     }
 }
 #endif

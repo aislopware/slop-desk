@@ -30,8 +30,27 @@ struct RailRow: Identifiable, Equatable {
     /// ``WorkspaceStore/paneReadOnly`` set so the sidebar lock indicator and the pane's `🔒 READ ONLY ×` pill
     /// share one source of truth. Drives ``SlateTabRow``'s trailing lock glyph.
     let readOnly: Bool
+    /// The pane's raw last-known working directory (C3 BUG A) — a terminal pane's `lastKnownCwd`, `nil` for a
+    /// video pane. NOT rendered as chrome: it is the row's TOOLTIP (`.help`) text AND a hidden search key so a
+    /// git-repo row (whose visible subtitle is the git line, not the path) stays searchable BY PATH and two
+    /// same-named worktrees are told apart by their full cwd.
+    let cwd: String?
+    /// Whether this row is in inline-RENAME mode (C3 BUG B): the store's ``WorkspaceStore/pendingTabRename``
+    /// names this row's tab AND this pane is that tab's representative (active) pane — so exactly one row per
+    /// pending tab opens its rename field. Consumed by ``SlateTabRow`` to swap the title for a `TextField`.
+    let isEditing: Bool
     /// Selected = the row's tab is active AND this pane is the tab's active pane.
     let isSelected: Bool
+
+    /// A copy of this row with a new `title` (C3 BUG A collision disambiguation) — every other field is
+    /// carried verbatim. Kept here so ``RailRowsBuilder/disambiguated(_:)`` need not restate the memberwise init.
+    func retitled(_ newTitle: String) -> Self {
+        Self(
+            id: id, tabID: tabID, kind: kind, title: newTitle, subtitle: subtitle, status: status,
+            tabNumber: tabNumber, badge: badge, processLabel: processLabel, readOnly: readOnly, cwd: cwd,
+            isEditing: isEditing, isSelected: isSelected,
+        )
+    }
 }
 
 enum RailRowsBuilder {
@@ -97,6 +116,10 @@ enum RailRowsBuilder {
                 // E20 ES-E20-3: an explicit `tab badge --kind` override wins for the representative row,
                 // bypassing the agent-badge gates (it is an explicit CLI affordance, not an agent signal).
                 let badge = (paneID == representativePane ? manualBadge : nil) ?? gatedBadge
+                // C3 BUG B: the row opens its inline rename field when the store's pending-rename names this
+                // TAB and this pane is the tab's representative (active) pane — one editing row per pending tab
+                // (a split tab does not open a field on every sibling).
+                let isEditing = store.pendingTabRename == tab.id && paneID == representativePane
                 out.append(RailRow(
                     id: paneID,
                     tabID: tab.id,
@@ -108,11 +131,43 @@ enum RailRowsBuilder {
                     badge: badge,
                     processLabel: processLabel,
                     readOnly: store.isReadOnly(for: paneID),
+                    cwd: kind == .terminal ? spec?.lastKnownCwd : nil,
+                    isEditing: isEditing,
                     isSelected: isSelected,
                 ))
             }
         }
-        return out
+        // C3 BUG A (3): disambiguate any two VISIBLE rows that collide on a folder-name title by prefixing the
+        // parent path segment (`feature-a/myapp` vs `feature-b/myapp`) so same-named worktrees are told apart.
+        return disambiguated(out)
+    }
+
+    /// C3 BUG A (3): for any TITLE shared by more than one row, replace each colliding row's folder-name title
+    /// with its parent-qualified form (`parent/leaf`). Only folder-derived titles are rewritten (an explicit
+    /// rename that happens to collide is left verbatim), and only when a distinct parent segment exists; rows
+    /// with a unique title, no cwd, or no parent are returned unchanged. Pure so the collision rule is pinned
+    /// headlessly.
+    static func disambiguated(_ rows: [RailRow]) -> [RailRow] {
+        var counts: [String: Int] = [:]
+        for row in rows { counts[row.title, default: 0] += 1 }
+        return rows.map { row in
+            guard (counts[row.title] ?? 0) > 1,
+                  let qualified = parentQualifiedTitle(cwd: row.cwd, title: row.title)
+            else { return row }
+            return row.retitled(qualified)
+        }
+    }
+
+    /// The parent-qualified title `parent/leaf` for a folder-name row, or `nil` when it should be left alone:
+    /// the title is NOT the cwd's folder name (i.e. it is an explicit rename), the cwd is `nil`/blank, or the
+    /// path has no parent segment above the leaf. Pure + static so the collision rewrite is unit-pinned.
+    static func parentQualifiedTitle(cwd: String?, title: String) -> String? {
+        guard let cwd, cwdFolderName(cwd) == title else { return nil }
+        var path = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+        let comps = path.split(separator: "/").map(String.init)
+        guard comps.count >= 2 else { return nil }
+        return "\(comps[comps.count - 2])/\(title)"
     }
 
     /// The row's LINE-1 title. A `.terminal` pane titles itself by its working directory's FOLDER NAME
@@ -147,12 +202,17 @@ enum RailRowsBuilder {
         return leaf.isEmpty ? nil : leaf
     }
 
-    /// Filter rows by a lower-cased search query against the title + subtitle (empty query ⇒ all).
+    /// Filter rows by a lower-cased search query (empty query ⇒ all). Matches the visible title + subtitle AND
+    /// the hidden keys — the raw `cwd` (C3 BUG A: a git-repo row's visible subtitle is the git line, not the
+    /// path, so without this it would be unsearchable by path) and the foreground `processLabel`.
     static func filtered(_ rows: [RailRow], query: String) -> [RailRow] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         guard !q.isEmpty else { return rows }
         return rows.filter {
-            $0.title.lowercased().contains(q) || ($0.subtitle?.lowercased().contains(q) ?? false)
+            $0.title.lowercased().contains(q)
+                || ($0.subtitle?.lowercased().contains(q) ?? false)
+                || ($0.cwd?.lowercased().contains(q) ?? false)
+                || ($0.processLabel?.lowercased().contains(q) ?? false)
         }
     }
 

@@ -127,15 +127,17 @@ public final class WorkspaceStore {
         pendingRename = focused
     }
 
-    /// The TAB whose strip pill should open its inline rename field — set by the ⌘⇧R / menu "Rename Tab"
-    /// entry point on the LIVE tree shell, CONSUMED by ``TabBarView`` (``clearTabRenameRequest()``) once
-    /// the field is open. A pending ID (mirrors ``pendingRename``) so a not-yet-mounted tab strip acts on
-    /// the still-pending value rather than a fired-and-missed counter.
+    /// The TAB whose sidebar row should open its inline rename field — set by the ⌘R / palette "Rename Pane"
+    /// + the sidebar row context-menu "Rename" entry on the LIVE tree shell, CONSUMED by the rail row
+    /// (``RailRowsBuilder`` lights `isEditing` on that tab's representative pane row; the field commits via
+    /// ``renamePane(_:to:)`` and clears through ``clearTabRenameRequest()``). A pending ID (mirrors
+    /// ``pendingRename``) so a not-yet-mounted row acts on the still-pending value rather than a fired-and-missed
+    /// counter. (The old ``TabBarView`` strip that used to consume it was deleted in the tabs→rail pivot.)
     public private(set) var pendingTabRename: TabID?
 
     /// Requests the inline rename on the ACTIVE entity in whichever live model is current (W6, ITEM B1):
-    /// under ``LiveModel/tree`` the ⌘⇧R chord renames the active TAB (the tabs model + the existing
-    /// ``TabBarView`` inline-rename field, set via ``pendingTabRename``); under ``LiveModel/canvas`` it
+    /// under ``LiveModel/tree`` the ⌘R chord renames the active TAB (the sidebar rail row's inline-rename
+    /// field, set via ``pendingTabRename``); under ``LiveModel/canvas`` it
     /// keeps the sidebar pane rename (``pendingRename``, the field the `PaneSidebarView` row opens). No-op
     /// without an active tab / pane. This is the command-layer "Rename" entry the binding registry routes to.
     public func requestRenameActivePane() {
@@ -157,6 +159,14 @@ public final class WorkspaceStore {
     /// The tab strip consumed the tab-rename request (its inline field is open) — or it became moot.
     public func clearTabRenameRequest() {
         pendingTabRename = nil
+    }
+
+    /// Requests the inline rename on an ARBITRARY tab `tabID` (C3 BUG B: the sidebar row context-menu
+    /// "Rename" entry) — sets ``pendingTabRename`` so THAT tab's representative rail row opens its rename
+    /// field, even when it is not the active tab. Twin of ``requestRenameActivePane()`` for a mouse-reachable
+    /// target the user right-clicked rather than the keyboard-active one.
+    public func requestRenameTab(_ tabID: TabID) {
+        pendingTabRename = tabID
     }
 
     /// Where the value tree is persisted (docs/22 §6). Injectable so tests point at a temp dir and a
@@ -2516,6 +2526,17 @@ public final class WorkspaceStore {
         reconcileTree()
     }
 
+    /// Renames PANE `id` by writing its spec `title` (C3 BUG B: the rail row displays the pane-spec title via
+    /// ``RailRowsBuilder/rowTitle(kind:spec:)``, whose precedence lets an explicit rename WIN over the cwd
+    /// folder name). A blank/whitespace title is a no-op — clearing back to the folder name is done by not
+    /// renaming, never by storing an empty title (which the row would then have to special-case). Live-model
+    /// aware via ``updateSpecLive(_:_:)``, so the rename persists in whichever model is current.
+    public func renamePane(_ id: PaneID, to title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        updateSpecLive(id) { $0.title = trimmed }
+    }
+
     /// Renames session `sessionID`. Pure metadata — the leaf set is unchanged.
     public func renameSession(_ sessionID: SessionID, to name: String) {
         tree = WorkspaceTreeOps.renameSession(sessionID, to: name, in: tree)
@@ -2851,6 +2872,12 @@ public final class WorkspaceStore {
     /// ``paneGitToplevelInFlight`` (a completion burst must not fan out N identical RPCs).
     private var paneGitSummaryInFlight: Set<PaneID> = []
 
+    /// When each pane's ``paneGitSummary`` entry was last fetched (C3 BUG C) — the freshness clock the
+    /// ~3 s RTT-snapshot edge consults so a quiet ACTIVE pane re-fetches its stale git line at most once per
+    /// ``gitSummaryStaleWindow`` (bounded, never a poll). Stamped by ``applyGitSummary(_:toplevel:for:at:)``,
+    /// PRUNED to the live leaf set alongside ``paneGitSummary``. Runtime-only; never persisted.
+    public internal(set) var paneGitFetchedAt: [PaneID: Date] = [:]
+
     /// The debounce handle for the By-Project git-toplevel sweep (E6 WI-7): cancelled + rescheduled on each
     /// trigger (grouping toggle / reconcile) so a burst coalesces into ONE fetch pass.
     private var projectKeyRefreshTask: Task<Void, Never>?
@@ -3080,13 +3107,22 @@ public final class WorkspaceStore {
                 spec.resumeSessionID = sessionID
                 spec.resumeLastReceivedSeq = seq
             }
-            // INITIAL git-line population: this edge fires right at connect (before any command
-            // completes), so a freshly-(re)attached pane gets its sidebar git line without waiting for
-            // the first OSC 133;D. Guarded on "no entry yet" — later refreshes ride completion/cwd
-            // edges, so the ~3 s snapshot cadence never turns into a poll.
-            if paneGitSummary[id] == nil {
+            // GIT-LINE population/staleness on the RTT-snapshot edge (~3 s): populate once when absent
+            // (a freshly-attached pane gets its line before the first OSC 133;D), then re-fetch ONLY the
+            // ACTIVE pane and ONLY when its cached line is older than `gitSummaryStaleWindow` (C3 BUG C b) —
+            // so a pane that sits idle after the first populate still self-heals its line (a sibling-pane
+            // commit / a detached-session drift) without the snapshot cadence becoming a git-status poll. A
+            // genuine reconnect refreshes unconditionally via `onReconnected` below.
+            if shouldRefreshGitOnSnapshot(id) {
                 refreshGitSummary(for: id, from: connection)
             }
+        }
+        // RECONNECT git-line refresh (C3 BUG C a): a REAL reconnect edge (distinct from the steady-state RTT
+        // snapshot above) spawns a fresh host shell and may have missed sibling-pane commits / detached drift
+        // while the link was down — ALWAYS re-fetch this pane's git line. Fires once per reconnect, so it is
+        // not a poll.
+        connection?.onReconnected = { [weak self, weak connection] in
+            self?.refreshGitSummary(for: id, from: connection)
         }
         // SYNC-INPUT (tree path, Zellij ToggleActiveSyncTab): when the per-tab sync flag is on, mirror this
         // pane's keystrokes into every other pane in its tab via the same broadcastTap seam the canvas
@@ -3245,6 +3281,11 @@ public final class WorkspaceStore {
         // not keep a stale branch line, and the dict must not grow unbounded across a long session.
         if !paneGitSummary.isEmpty {
             paneGitSummary = paneGitSummary.filter { leafSet.contains($0.key) }
+        }
+        // Prune the git-summary freshness clock (C3 BUG C) in lockstep so a closed pane's fetch timestamp
+        // drops out — no leak, no stale freshness on a recycled id.
+        if !paneGitFetchedAt.isEmpty {
+            paneGitFetchedAt = paneGitFetchedAt.filter { leafSet.contains($0.key) }
         }
         // Prune the per-pane OSC 9;4 progress mirror in lockstep (E14): a closed pane must not keep a stale
         // spinner/bar in a Dock rollup, and the dict must not grow unbounded across a long session.
@@ -4249,10 +4290,57 @@ public extension WorkspaceStore {
             guard let self else { return }
             paneGitSummaryInFlight.remove(id)
             guard let payload else { return }
-            let summary = PaneGitSummary(payload: payload)
-            // Dirty-guarded: a quiet repo re-probe must not churn the @Observable rail.
-            if paneGitSummary[id] != summary { paneGitSummary[id] = summary }
-            cacheGitToplevel(payload.repoRoot, for: id)
+            applyGitSummary(PaneGitSummary(payload: payload), toplevel: payload.repoRoot, for: id)
+        }
+    }
+
+    /// The context-menu "Refresh Git Status" entry (C3 BUG C d): re-probe pane `id`'s git line on demand
+    /// through its OWN live connection. A `.remoteGUI` / faked pane (no ``LivePaneSession``) is a silent
+    /// no-op via ``refreshGitSummary(for:from:)``'s `nil`-connection guard.
+    func refreshGitSummary(for id: PaneID) {
+        refreshGitSummary(for: id, from: (handle(for: id) as? LivePaneSession)?.connection)
+    }
+
+    /// Applies a freshly-fetched git `summary` for pane `id` (C3 BUG C): a dirty-guarded write to
+    /// ``paneGitSummary``, a ``paneGitFetchedAt`` freshness stamp, and the ``paneGitToplevel`` cache — then
+    /// FANS the same summary out to every OTHER live pane whose cached toplevel matches (a sibling in the SAME
+    /// repo now knows a sibling-pane commit landed without waiting for its own command edge), each with its
+    /// own dirty guard so a quiet sibling never churns the `@Observable` rail. An EMPTY toplevel is "no repo",
+    /// not a shared key, so it never fans out. `now` is injectable for a deterministic staleness test.
+    func applyGitSummary(_ summary: PaneGitSummary, toplevel: String, for id: PaneID, at now: Date = Date()) {
+        if paneGitSummary[id] != summary { paneGitSummary[id] = summary }
+        paneGitFetchedAt[id] = now
+        cacheGitToplevel(toplevel, for: id)
+        guard !toplevel.isEmpty else { return }
+        for (pane, root) in paneGitToplevel where pane != id && root == toplevel {
+            if paneGitSummary[pane] != summary { paneGitSummary[pane] = summary }
+            paneGitFetchedAt[pane] = now
+        }
+    }
+
+    /// How long a git line stays "fresh" on the ~3 s RTT-snapshot edge (C3 BUG C b) before a re-fetch is
+    /// allowed — long enough that the snapshot cadence is never a git-status poll, short enough that a quiet
+    /// pane's stale line self-heals within a minute.
+    static let gitSummaryStaleWindow: TimeInterval = 60
+
+    /// Whether the ~3 s RTT-snapshot edge should re-fetch pane `id`'s git line (C3 BUG C b): ALWAYS when there
+    /// is no entry yet (initial populate), else ONLY when it is the ACTIVE pane AND its cached line is older
+    /// than ``gitSummaryStaleWindow``. A background pane is never re-fetched on this edge (a genuine reconnect
+    /// refreshes it via ``ConnectionViewModel/onReconnected``), so the snapshot cadence stays cheap + bounded.
+    func shouldRefreshGitOnSnapshot(_ id: PaneID, now: Date = Date()) -> Bool {
+        if paneGitSummary[id] == nil { return true }
+        guard isActivePane(id) else { return false }
+        guard let fetchedAt = paneGitFetchedAt[id] else { return true }
+        return now.timeIntervalSince(fetchedAt) > Self.gitSummaryStaleWindow
+    }
+
+    /// Whether pane `id` is the currently-focused pane in the live model (C3 BUG C) — the tree's active tab's
+    /// active pane, or the canvas focus. Used to bound the snapshot-edge git re-fetch to the pane the user is
+    /// actually looking at.
+    func isActivePane(_ id: PaneID) -> Bool {
+        switch liveModel {
+        case .tree: tree.activeSession?.activeTab?.activePane == id
+        case .canvas: workspace.focusedPane == id
         }
     }
 }

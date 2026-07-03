@@ -457,4 +457,123 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(sections.map(\.header), ["beta"], "the alpha section filters out entirely → dropped")
         XCTAssertEqual(sections[0].rows.map(\.tabNumber), [3])
     }
+
+    // MARK: - C3 BUG A: path-searchable row + collision disambiguation
+
+    /// A git-repo row's VISIBLE subtitle is the git line (not the path), yet the row stays searchable BY PATH
+    /// via the hidden `cwd` key — the C3 BUG A fix. Fails on the pre-fix builder, whose filter only matched
+    /// title + subtitle, so a path query against a git row returned nothing.
+    func testFilterMatchesCwdEvenWhenSubtitleIsGitLine() {
+        let store = makeStore()
+        let pane = paneID(store, row: 0)
+        store.setLastKnownCwd("/Users/me/worktrees/feature-x/myapp", for: pane)
+        store.paneGitSummary[pane] = PaneGitSummary(
+            hasRepo: true, branch: "main", ahead: 0, behind: 0, changedCount: 1,
+        )
+        let rows = RailRowsBuilder.rows(for: store)
+        XCTAssertEqual(rows[0].subtitle, "main · 1 changed", "the visible subtitle is the git line, not the path")
+        XCTAssertEqual(rows[0].cwd, "/Users/me/worktrees/feature-x/myapp", "the raw cwd rides as a hidden key")
+        // The path segment is searchable even though it is nowhere in the visible chrome.
+        XCTAssertEqual(RailRowsBuilder.filtered(rows, query: "feature-x").map(\.id), [pane])
+        XCTAssertEqual(RailRowsBuilder.filtered(rows, query: "worktrees").map(\.id), [pane])
+    }
+
+    /// The filter also matches the foreground process label (part of the hidden search key).
+    func testFilterMatchesProcessLabel() {
+        let store = makeStore()
+        let pane = paneID(store, row: 0)
+        store.setForegroundProcess("btop", for: pane)
+        let rows = RailRowsBuilder.rows(for: store)
+        XCTAssertEqual(RailRowsBuilder.filtered(rows, query: "btop").map(\.id), [pane])
+    }
+
+    /// Two panes whose cwd folder name COLLIDES (`…/feature-a/myapp` vs `…/feature-b/myapp`) are disambiguated
+    /// by their parent segment, so the sidebar shows `feature-a/myapp` vs `feature-b/myapp` — the C3 BUG A
+    /// worktree-distinctiveness fix. Fails on the pre-fix builder (both rows read the bare `myapp`).
+    func testCollidingFolderNamesDisambiguatedByParentSegment() {
+        let store = makeStore()
+        store.newTab(kind: .terminal, launchGrace: .zero) // 2nd tab
+        let rows0 = RailRowsBuilder.rows(for: store)
+        store.setLastKnownCwd("/work/feature-a/myapp", for: rows0[0].id)
+        store.setLastKnownCwd("/work/feature-b/myapp", for: rows0[1].id)
+        let rows = RailRowsBuilder.rows(for: store)
+        XCTAssertEqual(rows[0].title, "feature-a/myapp", "the collision is broken by the parent segment")
+        XCTAssertEqual(rows[1].title, "feature-b/myapp")
+    }
+
+    /// A UNIQUE folder name is left bare — disambiguation only fires on an actual collision.
+    func testUniqueFolderNameNotQualified() {
+        let store = makeStore()
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        let rows0 = RailRowsBuilder.rows(for: store)
+        store.setLastKnownCwd("/work/alpha", for: rows0[0].id)
+        store.setLastKnownCwd("/work/beta", for: rows0[1].id)
+        let rows = RailRowsBuilder.rows(for: store)
+        XCTAssertEqual(rows[0].title, "alpha", "a unique title is not parent-qualified")
+        XCTAssertEqual(rows[1].title, "beta")
+    }
+
+    /// An EXPLICIT rename that collides with a folder-name title is left verbatim (only folder-derived titles
+    /// are qualified) — the rename is the user's chosen label, not a path leaf.
+    func testExplicitRenameNotParentQualifiedOnCollision() {
+        // Both rows would read "myapp": one via folder name, one via an explicit rename.
+        let a = RailRow(
+            id: PaneID(), tabID: TabID(), kind: .terminal, title: "myapp", subtitle: nil, status: .none,
+            tabNumber: 1, badge: nil, processLabel: nil, readOnly: false, cwd: "/work/x/myapp",
+            isEditing: false, isSelected: false,
+        )
+        let b = RailRow(
+            id: PaneID(), tabID: TabID(), kind: .terminal, title: "myapp", subtitle: nil, status: .none,
+            tabNumber: 2, badge: nil, processLabel: nil, readOnly: false, cwd: "/work/other/place",
+            isEditing: false, isSelected: false,
+        )
+        let out = RailRowsBuilder.disambiguated([a, b])
+        XCTAssertEqual(out[0].title, "x/myapp", "the folder-name row is parent-qualified")
+        XCTAssertEqual(out[1].title, "myapp", "the explicit rename (cwd folder ≠ title) is left verbatim")
+    }
+
+    /// The pure parent-qualifier helper: qualifies a folder-name title, declines an explicit rename / a
+    /// root-level path / a blank cwd.
+    func testParentQualifiedTitleHelper() {
+        XCTAssertEqual(RailRowsBuilder.parentQualifiedTitle(cwd: "/a/b/repo", title: "repo"), "b/repo")
+        XCTAssertNil(RailRowsBuilder.parentQualifiedTitle(cwd: "/a/b/repo", title: "renamed"), "not the folder name")
+        XCTAssertNil(RailRowsBuilder.parentQualifiedTitle(cwd: "/repo", title: "repo"), "no parent segment")
+        XCTAssertNil(RailRowsBuilder.parentQualifiedTitle(cwd: nil, title: "repo"))
+    }
+
+    // MARK: - C3 BUG B: the row exposes inline-rename mode
+
+    /// A pending tab-rename lights the `isEditing` flag on that tab's REPRESENTATIVE (active) pane row only;
+    /// clearing the pending state closes it. Fails on the pre-C3 `RailRow` (no `isEditing` field).
+    func testPendingTabRenameExposesEditingOnRepresentativeRow() throws {
+        let store = makeStore()
+        store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false, launchGrace: .zero)
+        let representative = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
+        let tab = RailRowsBuilder.rows(for: store)[0].tabID
+
+        XCTAssertFalse(RailRowsBuilder.rows(for: store).contains(where: \.isEditing), "no row edits at rest")
+        store.requestRenameTab(tab)
+        let editing = RailRowsBuilder.rows(for: store).filter(\.isEditing)
+        XCTAssertEqual(editing.count, 1, "exactly one row (the representative pane) opens its rename field")
+        XCTAssertEqual(editing.first?.id, representative, "and it is the tab's representative (active) pane row")
+
+        store.clearTabRenameRequest()
+        XCTAssertFalse(RailRowsBuilder.rows(for: store).contains(where: \.isEditing), "clearing closes the field")
+    }
+
+    /// End-to-end through the store: a rename committed via `renamePane` WINS over the cwd folder-name title in
+    /// the rail (`rowTitle` precedence), and clearing the pending state closes the field.
+    func testRenameCommitWinsOverFolderNameInRail() throws {
+        let store = makeStore()
+        let pane = paneID(store, row: 0)
+        store.setLastKnownCwd("/Users/me/project-x", for: pane)
+        XCTAssertEqual(RailRowsBuilder.rows(for: store)[0].title, "project-x", "folder name before rename")
+        let tab = try XCTUnwrap(store.tree.activeSession?.activeTab?.id)
+        store.requestRenameTab(tab)
+        store.renamePane(pane, to: "deploy box")
+        store.clearTabRenameRequest()
+        let row = RailRowsBuilder.rows(for: store)[0]
+        XCTAssertEqual(row.title, "deploy box", "the rename wins over the folder name")
+        XCTAssertFalse(row.isEditing, "the field is closed after commit")
+    }
 }
