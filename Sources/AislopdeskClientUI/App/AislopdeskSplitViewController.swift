@@ -115,7 +115,7 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         //    auto-reveal expands it the moment a GUI tab exists, and ⌘⇧E toggles it manually. Holding
         //    priority above the content's default so a window-resize grows the content, not this column.
         let gui = NSHostingController(rootView: GuiColumn(
-            store: store, connection: connection, onOpenPicker: onOpenRemotePicker,
+            store: store, connection: connection, chrome: chrome, onOpenPicker: onOpenRemotePicker,
         ))
         let guiItem = NSSplitViewItem(viewController: gui)
         guiItem.minimumThickness = 380

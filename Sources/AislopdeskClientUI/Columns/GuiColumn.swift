@@ -18,6 +18,10 @@ struct GuiColumn: View {
     /// The app-global connection — the dock's discovery target (host + UDP ports) and its "poll only
     /// while connected" gate. Optional so the column stays standalone-mountable in previews.
     var connection: AppConnection?
+    /// The shared chrome — gates the dock poll off while THIS column is collapsed (a hidden dock needs
+    /// no window list; a collapsed split item keeps the hosting view mounted, so `.task` alone can't
+    /// tell). `nil` (previews) polls whenever connected.
+    var chrome: WorkspaceChromeState?
     /// Opens the Remote-Window picker modal (``OverlayCoordinator/openRemotePicker()``) — the `+` /
     /// empty-state affordance. No-op default keeps the column standalone-mountable in previews.
     var onOpenPicker: () -> Void = {}
@@ -48,13 +52,16 @@ struct GuiColumn: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Slate.Surface.window)
-        // The dock poll: refresh the host-window list every `dockPollGap` while this column is mounted,
-        // skipping the query entirely while disconnected (the seam would only time out). The task dies
-        // with the column (a collapsed split item keeps it mounted — acceptable: the guard gates on
-        // connection, and the host coalesces list answers).
-        .task {
+        // The dock poll: refresh the host-window list every `dockPollGap` while this column is VISIBLE
+        // (a collapsed split item keeps the hosting view mounted, so the loop itself gates on the chrome
+        // flag), skipping the query while disconnected (the seam would only time out). Keying the task on
+        // the collapse flag restarts the loop on a reveal, so expanding the column refreshes immediately
+        // instead of waiting out a sleeping tick.
+        .task(id: chrome?.guiCollapsed ?? false) {
             while !Task.isCancelled {
-                await refreshDock()
+                if chrome?.guiCollapsed != true {
+                    await refreshDock()
+                }
                 try? await Task.sleep(for: Self.dockPollGap)
             }
         }
