@@ -52,6 +52,9 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
     private var channelCursorConn: [UInt32: NWConnection] = [:]
     /// The reconnect-generation-safe admit/retire/route table (PURE; unit-tested).
     private var muxRouter = VideoMuxRouter()
+    /// Rate-limits the unbound-lane `bye` replies (reconnect-wedge fix; PURE, unit-tested).
+    /// Guarded by `lock` (mutated inside the routeMedia lock scope).
+    private var unboundByeLimiter = UnboundByeRateLimiter()
     private var stopped = false
 
     /// CONCURRENCY-HOST-1 mux analogue (always on): the per-lane idle-timeout reaper. Keyed by
@@ -320,6 +323,15 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
     /// non-hello stray/adversarial control datagram drops WITHOUT touching `channelMediaConn` (which
     /// would otherwise grow unboundedly for never-helloed ids). The hello-peek is done ONCE here and
     /// fed to the PURE ``VideoMuxRouter/bootstrapAction(for:channel:payloadIsHello:)`` decider.
+    /// What ``routeMedia`` decided under the lock: deliver to the daemon, drop silently, or drop
+    /// AND answer a `bye` on the arrival flow (the reconnect-wedge fix — see
+    /// ``UnboundLaneByeDecider``). The send itself happens OUTSIDE the lock.
+    private enum MediaRouteOutcome {
+        case deliver
+        case drop
+        case dropAndBye
+    }
+
     private func routeMedia(
         _ data: Data,
         on conn: NWConnection,
@@ -329,7 +341,7 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
         let tag = rest[rest.startIndex]
         guard let channel = VideoChannel(rawValue: tag) else { return }
         let payload = Data(rest[(rest.startIndex + 1)...])
-        let deliver: Bool = lock.withLock {
+        let outcome: MediaRouteOutcome = lock.withLock {
             let decision = muxRouter.route(channelID: channelID, channel: channel, bytesCount: data.count)
             switch decision {
             case .route:
@@ -340,7 +352,7 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
                 // the single-pin transport's stamp.
                 let isKA = channel == .control && rest.count >= 2 && rest[rest.startIndex + 1] == 6
                 idleReaper.noteInbound(id: channelID, now: Self.nowSeconds(), isKeepalive: isKA)
-                return true
+                return .deliver
             case .rejectUnadmitted,
                  .dropRetired:
                 // Bootstrap (FIX #2 + #6): peek-decode the payload ONCE and only re-admit/deliver +
@@ -362,20 +374,53 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
                 ) {
                 case .bootstrapDeliver:
                     channelMediaConn[channelID] = conn
-                    return true
+                    return .deliver
                 case .dropNoStamp:
-                    return false
+                    // RECONNECT-WEDGE FIX (2026-07-03): a dropped datagram that proves the sender still
+                    // believes a session exists (in-session control / input / recovery — typically a
+                    // client that survived a videohostd restart) gets a `bye` back on the arrival flow
+                    // (rate-limited per channelID), so the wedged client tears down + re-hellos instead
+                    // of freezing forever. NO flow bookkeeping is stamped — the reply rides `conn`
+                    // directly, so FIX #6's no-leak property is preserved.
+                    if UnboundLaneByeDecider.warrantsBye(channel: channel, payload: payload),
+                       unboundByeLimiter.admit(channelID: channelID, now: Self.nowSeconds())
+                    {
+                        return .dropAndBye
+                    }
+                    return .drop
                 }
             case .dropDraining,
                  .drop:
                 // Draining: the lane is mid-teardown (reaper stopping its session) — drop EVEN a hello
                 // until `endDrain` (no false accept to the dying sink, no premature re-mint). `.drop`:
                 // an empty datagram. Both benign — never fatal, never a sibling teardown.
-                return false
+                return .drop
             }
         }
-        guard deliver else { return }
-        onReceive(channelID, channel, payload)
+        switch outcome {
+        case .deliver:
+            onReceive(channelID, channel, payload)
+        case .dropAndBye:
+            sendUnboundBye(channelID, on: conn)
+        case .drop:
+            break
+        }
+    }
+
+    /// Answers an unbound lane's in-session datagram with a `bye` on the SAME flow it arrived on
+    /// (no `channelMediaConn` stamp — the lane stays forgotten). Fire-and-forget UDP; the client's
+    /// keepalive re-triggers it (rate-limited) if this one is lost.
+    private func sendUnboundBye(_ channelID: UInt32, on conn: NWConnection) {
+        var inner = Data(capacity: 2)
+        inner.append(VideoChannel.control.rawValue)
+        inner.append(VideoControlMessage.bye.encode())
+        let framed = VideoMuxHeaderCodec.encode(channelID: channelID, payload: inner)
+        log.info("unbound lane chan=\(channelID) still talking (host restarted?) — answering bye")
+        conn.send(content: framed, completion: .contentProcessed { [weak self] error in
+            if let error {
+                self?.log.error("unbound-lane bye send failed chan=\(channelID): \(String(describing: error))")
+            }
+        })
     }
 
     /// One-shot peek: does a control-channel payload decode as a `hello`? Only the control channel is

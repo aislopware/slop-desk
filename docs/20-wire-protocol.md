@@ -536,6 +536,17 @@ before any media flows. `[UInt8 type][body]`, big-endian:
   per §9 / §4.)
 - The host starts capture/encode **only on an accepted `hello`**; a duplicate `hello` is re-acked
   idempotently. Either side sends `bye` for a clean teardown.
+- **Session-liveness closure (2026-07-03, the reconnect-wedge fix — behavior only, no wire change):**
+  (1) the client **re-sends the `hello` on an exponential backoff (0.5 s → 5 s cap) while
+  unanswered**, so a lost hello/ack — or a host that is still restarting — can no longer wedge a
+  pane in "connecting" forever; (2) the host daemon **sends `bye` (×2) on every live lane at
+  graceful shutdown**; (3) a restarted host that receives an **unbound-lane datagram proving the
+  sender still believes a session exists** (input / recovery / control `keepalive`/`resizeRequest`/
+  `focusWindow`) **answers `bye` on the arrival flow** (rate-limited, one per second per channelID;
+  hello/discovery/stray-`bye`/undecodable payloads are never answered — validate-then-drop, no
+  reflection). On any received `bye` the client tears down and **rebuilds the whole pipeline**
+  (fresh channelID lane + hello + decoder/pacer/renderer), so a videohostd restart self-heals
+  within one keepalive interval (≤ ~5 s) instead of freezing the pane with dead input.
 - Beyond the handshake the control channel also carries additive host→client info messages, each an
   unknown type an old peer simply drops: `resizeAck` (5), `streamCadence` (10), `scrollOffset` (13),
   `contentMask` (14), and **`displayMax` (15)** = `UInt16 maxWidthPt` + `UInt16 maxHeightPt`, the max

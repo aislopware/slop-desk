@@ -84,6 +84,11 @@ public struct VideoClientStateMachine: Sendable {
         /// window sits on). The session stores it and forwards it to the view → the "Resize…" popover caps
         /// its width/height fields at it. Purely informational — no capture/decode effect.
         case applyDisplayMax(VideoSize)
+        /// The HOST ended this session (a received `bye` — daemon shutdown, VD termination, or the
+        /// restarted daemon answering an unbound lane). The actor surfaces it to the GUI layer, which
+        /// rebuilds the WHOLE pipeline (fresh lane + hello + renderer/pacer/decoder) — the
+        /// reconnect-wedge fix. Distinct from a LOCAL ``stop()`` (pane closed), which must NOT rebuild.
+        case sessionEndedByHost
     }
 
     /// `start()` was called: send the hello, move to `.connecting`.
@@ -120,7 +125,10 @@ public struct VideoClientStateMachine: Sendable {
         case .bye:
             guard state == .streaming || state == .connecting else { return [] }
             state = .stopped
-            return [.stopDecodePipeline]
+            // `.sessionEndedByHost` (reconnect-wedge fix): the GUI layer rebuilds the whole
+            // pipeline + re-hellos on a fresh lane. Emitted ONLY here (host-initiated end) —
+            // a local `stop()` must not trigger a rebuild.
+            return [.stopDecodePipeline, .sessionEndedByHost]
         case let .resizeAck(cw, ch, _):
             // The host adopted a new capture size for an in-session resize. Stage it as the
             // pending capture size; the actor adopts it as the aspect-fit denominator only when
@@ -172,6 +180,21 @@ public struct VideoClientStateMachine: Sendable {
         }
     }
 
+    /// Re-emits the `hello` while STILL `.connecting` (the hello-retry path — the reconnect-wedge
+    /// fix's second half). Over plain UDP the one-shot hello or its ack can be lost, and after a
+    /// pipeline rebuild the restarted host may not be listening yet — either way the session used
+    /// to wedge in `.connecting` forever. The actor drives this on the ``HelloRetryPolicy`` cadence;
+    /// any resolved state (streaming / rejected / stopped) returns `[]`, which also ends the retry
+    /// loop. Idempotent on the host (a duplicate hello re-acks without restarting capture).
+    public mutating func resendHello() -> [Effect] {
+        guard state == .connecting else { return [] }
+        return [.sendControl(.hello(
+            protocolVersion: AislopdeskVideoProtocol.version,
+            requestedWindowID: requestedWindowID,
+            viewport: viewport,
+        ))]
+    }
+
     /// `stop()` was called locally: tell the host (best-effort `bye`) and tear down.
     public mutating func stop() -> [Effect] {
         guard state != .stopped else { return [] }
@@ -184,6 +207,30 @@ public struct VideoClientStateMachine: Sendable {
 
     /// Whether received media (video/geometry/cursor) should be processed right now.
     public var mediaFlowing: Bool { state == .streaming }
+}
+
+/// PURE hello-retry cadence (the reconnect-wedge fix): how long to wait before re-sending the
+/// `hello` while the session is still `.connecting`. Exponential from `initialDelay`, capped at
+/// `maxDelay` — fast enough that a lost ack costs half a second, slow enough that a pane pointed
+/// at a downed host settles to one ~20-byte datagram per `maxDelay` (the same order as the window
+/// dock's discovery poll). No clock, no timer — the actor sleeps the returned delay — so the
+/// cadence is headlessly unit-testable.
+public enum HelloRetryPolicy {
+    /// First retry fires this long after the initial hello (seconds).
+    public static let initialDelay: TimeInterval = 0.5
+    /// Ceiling for the backoff (seconds).
+    public static let maxDelay: TimeInterval = 5.0
+
+    /// The delay before retry number `attempt` (0-based: `attempt == 0` is the FIRST retry after
+    /// the initial hello). `initialDelay × 2^attempt`, capped at `maxDelay`; a negative attempt is
+    /// clamped to 0 (defensive — the caller counts up from 0).
+    public static func delay(attempt: Int) -> TimeInterval {
+        let n = max(0, attempt)
+        // 2^4 already exceeds the cap (0.5 × 16 = 8 > 5) — short-circuit so a long-running retry
+        // loop can never overflow the shift.
+        guard n < 4 else { return maxDelay }
+        return Double.minimum(maxDelay, initialDelay * Double(1 << n))
+    }
 }
 
 /// Pure edge-pan reachability + clamp math for the ACTUAL-SIZE viewport (2026-07-02). The macOS pane shows

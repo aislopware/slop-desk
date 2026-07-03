@@ -41,6 +41,20 @@ final class VideoWindowPipeline {
     private var activeConnection: VideoWindowConnection?
     private var layerSize: VideoSize = .init(width: 0, height: 0)
 
+    /// RECONNECT-WEDGE FIX (2026-07-03): what a host-initiated session end needs to rebuild the
+    /// WHOLE pipeline in place — the view/layer the pane renders into (weak: the pane may be gone
+    /// by the time the bye lands) + the activate parameters. A videohostd restart ends every live
+    /// session with a `bye` (at shutdown, or from the restarted daemon answering an unbound lane);
+    /// the rebuild tears everything down (fresh lane + hello + renderer/pacer/decoder) so the pane
+    /// self-heals instead of freezing with dead input.
+    private weak var attachedView: HostView?
+    private weak var attachedLayer: CAMetalLayer?
+    private var attachedMaxFrameRate: Double = 30.0
+    /// Monotonic time of the last host-ended rebuild — floors rebuilds at one per second so a
+    /// bye burst (retransmits ×2, plus the unbound-lane replies) cannot thrash teardown/bring-up.
+    /// The client's own 5 s keepalive re-triggers a rebuild if a throttled bye mattered.
+    private var lastHostEndedRebuild: TimeInterval = 0
+
     /// SCROLL-HINT REPROJECTION (default-OFF, env `AISLOPDESK_SCROLL_REPROJECT == "1"`): the offset
     /// law for this pane, or `nil` when the feature is off (then NOTHING below engages and the present
     /// path is byte-identical). Owned here; shared with the ``pacer`` (which integrates + applies it on
@@ -181,6 +195,11 @@ final class VideoWindowPipeline {
         if activeConnection == connection, session != nil { return }
         deactivate()
         activeConnection = connection
+        // RECONNECT-WEDGE FIX: remember what a host-ended rebuild needs (weak view/layer — the pane
+        // may be gone by the time a bye lands; then the rebuild is a no-op).
+        attachedView = view
+        attachedLayer = videoLayer
+        attachedMaxFrameRate = maxFrameRate
 
         guard let renderer = MetalVideoRenderer(metalLayer: videoLayer) else {
             log.error("MetalVideoRenderer init failed — no Metal device")
@@ -462,6 +481,12 @@ final class VideoWindowPipeline {
                 // the view so it can cap the "Resize…" popover fields (no-op if unbound).
                 Task { @MainActor in self?.onDisplayMaxChanged?(points) }
             },
+            notifySessionEnded: { [weak self] in
+                // RECONNECT-WEDGE FIX: the host ended this session (bye). Hop to main and rebuild the
+                // WHOLE pipeline in place — fresh lane + hello + renderer/pacer/decoder — so a
+                // videohostd restart self-heals instead of freezing the pane with dead input.
+                Task { @MainActor in self?.rebuildAfterHostEndedSession() }
+            },
         )
 
         let session = AislopdeskVideoClientSession(
@@ -485,6 +510,26 @@ final class VideoWindowPipeline {
         // (~16.7ms @60). most-recent-wins + move-before-button ordering are interval-independent.
         motionInterval = Self.resolveMotionInterval()
         startMotionPump()
+    }
+
+    /// RECONNECT-WEDGE FIX: the host ended the live session (a received `bye`) — rebuild the whole
+    /// pipeline against the SAME connection: deactivate (closes the old lane; its session FSM is
+    /// already `.stopped`, so no second bye goes out) then activate (fresh channelID lane, fresh
+    /// hello, fresh renderer/pacer/decoder). The session's hello-retry loop then rides out a host
+    /// that is still restarting. Floored at one rebuild per second (`lastHostEndedRebuild`) so a
+    /// bye burst cannot thrash; a throttled bye is recovered by the next keepalive→bye round trip.
+    /// No-op when the pane/view is already gone (weak refs cleared) or nothing is active.
+    private func rebuildAfterHostEndedSession() {
+        guard let connection = activeConnection, let view = attachedView, let layer = attachedLayer else {
+            log.info("host ended session but pane is gone — no rebuild")
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastHostEndedRebuild >= 1.0 else { return }
+        lastHostEndedRebuild = now
+        log.info("host ended session (bye) — rebuilding pipeline against \(connection.host, privacy: .public)")
+        deactivate()
+        activate(view: view, videoLayer: layer, connection: connection, maxFrameRate: attachedMaxFrameRate)
     }
 
     /// Tears the pipeline + display link + sockets down (called on disappear/dismantle).

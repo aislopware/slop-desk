@@ -159,6 +159,12 @@ public actor AislopdeskVideoClientSession {
         /// resizable POINT size (its display bounds). The macOS view forwards it to the model so the
         /// "Resize…" popover caps its width/height fields. `nil` ⇒ no view wants it (iOS / standalone).
         public var notifyDisplayMax: (@Sendable (VideoSize) -> Void)?
+        /// RECONNECT-WEDGE FIX (2026-07-03): the HOST ended this session (a received `bye` — daemon
+        /// shutdown/restart, VD termination, or the restarted daemon answering an unbound lane). The
+        /// pipeline rebuilds the WHOLE pipeline (fresh lane + hello + renderer/pacer/decoder) so a
+        /// videohostd restart self-heals instead of freezing the pane with dead input. `nil` ⇒ no
+        /// rebuild owner (standalone/preview) — the session just stays stopped.
+        public var notifySessionEnded: (@Sendable () -> Void)?
         @preconcurrency
         public init(
             submitDecodedFrame: @escaping @Sendable (CVImageBuffer) -> Void,
@@ -174,6 +180,7 @@ public actor AislopdeskVideoClientSession {
             applyContentMask: (@Sendable ([MaskRect]) -> Void)? = nil,
             notifyDecodedPoints: (@Sendable (VideoSize) -> Void)? = nil,
             notifyDisplayMax: (@Sendable (VideoSize) -> Void)? = nil,
+            notifySessionEnded: (@Sendable () -> Void)? = nil,
         ) {
             self.submitDecodedFrame = submitDecodedFrame
             self.applyCursor = applyCursor
@@ -188,6 +195,7 @@ public actor AislopdeskVideoClientSession {
             self.applyContentMask = applyContentMask
             self.notifyDecodedPoints = notifyDecodedPoints
             self.notifyDisplayMax = notifyDisplayMax
+            self.notifySessionEnded = notifySessionEnded
         }
     }
 
@@ -291,6 +299,16 @@ public actor AislopdeskVideoClientSession {
     /// Cancelled in ``stop()``. ⚠️ Timer firing is [MS-confirm] (real-clock glue); the reap
     /// DECISION it feeds is covered by `IdleReapDeciderTests`.
     private var keepaliveTask: Task<Void, Never>?
+
+    /// RECONNECT-WEDGE FIX: the hello-retry loop. Over plain UDP the one-shot hello or its ack can
+    /// be lost, and after a pipeline rebuild the restarted host may not be listening yet — either
+    /// way the session used to wedge in `.connecting` forever. This actor-owned Task re-sends the
+    /// hello on the pure ``HelloRetryPolicy`` backoff while the FSM stays `.connecting`, and ends
+    /// itself the first time ``VideoClientStateMachine/resendHello()`` returns no effects (the
+    /// state resolved — streaming / rejected / stopped). Cancelled in ``stop()``. ⚠️ Timer firing
+    /// is real-clock glue; the retry DECISION + cadence are covered by `VideoClientStateMachineTests`
+    /// / `HelloRetryPolicyTests`.
+    private var helloRetryTask: Task<Void, Never>?
 
     /// Single batch-drain consumer of the inbound datagram queue (see ``start()``). Mirrors the
     /// host's `InboundQueue` pump; replaces the legacy per-datagram `Task { await receive… }`
@@ -517,7 +535,33 @@ public actor AislopdeskVideoClientSession {
         for effect in stateMachine.start() { await apply(effect) }
         startKeepalive()
         startNetworkStats()
+        startHelloRetry()
         log.info("video client session started; hello sent")
+    }
+
+    /// Starts the hello-retry loop (see ``helloRetryTask``). Mirrors ``startKeepalive()``'s safe
+    /// weak pattern; the loop ends itself once the FSM leaves `.connecting`.
+    private func startHelloRetry() {
+        helloRetryTask?.cancel()
+        helloRetryTask = Task { [weak self] in
+            var attempt = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(HelloRetryPolicy.delay(attempt: attempt) * 1_000_000_000))
+                guard !Task.isCancelled, let self else { return }
+                guard await resendHelloIfStillConnecting(attempt: attempt) else { return }
+                attempt += 1
+            }
+        }
+    }
+
+    /// One retry tick: re-sends the hello iff the FSM is still `.connecting`. Returns whether the
+    /// loop should keep running (false once the state resolved).
+    private func resendHelloIfStillConnecting(attempt: Int) async -> Bool {
+        let effects = stateMachine.resendHello()
+        guard !effects.isEmpty else { return false }
+        dbg("hello retry #\(attempt + 1) — still connecting (no ack yet)")
+        for effect in effects { await apply(effect) }
+        return true
     }
 
     /// Drains one inbound batch in arrival order on the actor.
@@ -534,6 +578,8 @@ public actor AislopdeskVideoClientSession {
     public func stop() async {
         keepaliveTask?.cancel()
         keepaliveTask = nil
+        helloRetryTask?.cancel()
+        helloRetryTask = nil
         networkStatsTask?.cancel()
         networkStatsTask = nil
         resizeSettleTask?.cancel()
@@ -1531,6 +1577,13 @@ public actor AislopdeskVideoClientSession {
             // so the "Resize…" popover caps its width/height fields at a size the remote can adopt.
             dbg("displayMax → max resize \(Int(size.width))x\(Int(size.height))pt")
             gui.notifyDisplayMax?(size)
+        case .sessionEndedByHost:
+            // RECONNECT-WEDGE FIX: the host ended this session (bye) — surface it so the pipeline
+            // rebuilds (fresh lane + hello + presentation path). The FSM is already `.stopped`, so
+            // the keepalive/stats timers self-quiesce on their mediaFlowing gates; the rebuild's
+            // deactivate → stop() then cancels them and closes the lane.
+            dbg("session ended by HOST (bye) → notifying pipeline for a full rebuild")
+            gui.notifySessionEnded?()
         }
     }
 
