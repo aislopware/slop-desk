@@ -93,13 +93,11 @@ struct OverlayHostView: View {
                 },
                 message: { Text(closeAlertMessage) },
             )
-            // Native chrome uses the SYSTEM accent, not the workspace theme accent. The WindowGroup tints its
-            // whole subtree with `Slate.State.accent` (so stock controls in the workspace/pane chrome adopt the
-            // theme); resetting the tint to nil here scopes the overlays' sheets + the close `.alert` back to the
-            // macOS default accent so their toggles / bordered buttons / focus rings read as native System-Settings
-            // controls. Only affects THIS overlay subtree (+ the sheets/alert it presents) — the workspace beneath
-            // keeps the theme tint. Appearance (light/dark) still follows the parent window via each sheet's own
-            // `.preferredColorScheme`, matching how a real macOS sheet inherits its window's appearance.
+            // Kept as an explicit reset even though the WindowGroup no longer tints its subtree (the
+            // native-chrome migration removed the theme accent at the scene root): a `nil` tint here makes
+            // the overlays' sheets + the close `.alert` immune to any FUTURE tint an intermediate container
+            // might introduce, so their toggles / bordered buttons / focus rings always read as native
+            // system controls.
             .tint(nil)
     }
 

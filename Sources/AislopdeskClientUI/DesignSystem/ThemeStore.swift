@@ -1,16 +1,15 @@
-// ThemeStore — the runtime theme holder that defeats the STATIC `Slate.theme` across the AppKit
-// `NSSplitViewController` boundary (REBUILD-V2, WS-D / D3).
+// ThemeStore — the runtime CANVAS-theme holder (REBUILD-V2, WS-D / D3; re-scoped by the native-chrome
+// migration, 2026-07-03).
 //
-// WHY a store and not a SwiftUI Environment value: the three columns are hosted in `NSHostingController`s
-// inside `AislopdeskSplitViewController`, so a `.preferredColorScheme` / `@Environment` set on
-// `WorkspaceRootView` does NOT cross into them (SlateDesign documents this; DECISIONS records the
-// half-repaint bug). The `Slate.*` colour accessors therefore read this @Observable store instead of a
-// compile-time `static let theme`. On a theme change the GUI must (a) repoint `active` here so SwiftUI
-// re-reads the tokens, AND (b) re-inject each `NSHostingController` + re-pin `NSWindow.appearance`
-// (handled in `AislopdeskSplitViewController`) — otherwise the window half-repaints.
+// The window chrome follows the SYSTEM appearance now, so the theme this store holds drives ONLY the
+// terminal/video canvas: the libghostty cell colours (via `AppearanceApplier.resolveTerminalColors`) and
+// the canvas-fabric `Slate.*` accessors (pane backdrops / divider / placeholder). The shell is one SwiftUI
+// hierarchy, so plain `@Observable` observation repaints every canvas consumer on a theme switch — the old
+// cross-`NSHostingController` re-pin (the reason this store originally existed) died with the AppKit split
+// shell; the store survives as the single live owner of the resolved theme + the dual-slot follow-OS logic.
 //
 // DEFAULT `.monokaiProClassic`: a headless / no-store render resolves `Slate.theme` to the Monokai Pro
-// Classic palette. The golden corpus is unaffected — chrome colour never crosses into the wire vectors
+// Classic palette. The golden corpus is unaffected — canvas colour never crosses into the wire vectors
 // (appearance is pure client chrome, never folded into `EnvConfig`/the sidecar).
 //
 // E15 WI-3 — DUAL-SLOT FOLLOW-OS: `apply(appearance:)` resolves the active built-in theme id for the
@@ -33,9 +32,9 @@ final class ThemeStore {
     /// The process-wide active store. `Slate.theme` reads `ThemeStore.shared.active`.
     static let shared = ThemeStore()
 
-    /// Posted AFTER ``active`` changes so the AppKit shell (``AislopdeskSplitViewController``) can re-pin
-    /// `NSWindow.appearance` + nudge the hosted columns — the cross-`NSHostingController` repaint SwiftUI's
-    /// `@Observable` observation does not reach (D3).
+    /// Posted AFTER ``active`` changes. (Historically the AppKit split shell observed this to re-pin
+    /// `NSWindow.appearance` across the `NSHostingController` boundary; that shell is deleted — SwiftUI
+    /// observation now covers every canvas consumer. Kept as a change signal for non-view listeners.)
     static let didChangeNotification = Notification.Name("AislopdeskThemeStoreDidChange")
 
     /// The active theme. Default Monokai Pro Classic (dark) — the product default; a no-store / headless
@@ -93,10 +92,9 @@ final class ThemeStore {
         setActive(Self.builtin(id: id) ?? .monokaiProClassic)
     }
 
-    /// Repoint ``active`` and post the cross-boundary repaint notification on any theme CONTENT change (not
-    /// just the `id`) — so a SAME-lightness variant switch (e.g. Classic → Spectrum) re-pins the AppKit
-    /// columns (`AislopdeskSplitViewController.pinWindowAppearance` is notification-driven). An idempotent
-    /// re-apply of an identical theme still posts nothing.
+    /// Repoint ``active`` and post ``didChangeNotification`` on any theme CONTENT change (not just the
+    /// `id`) — a SAME-lightness variant switch (e.g. Classic → Spectrum) still signals. An idempotent
+    /// re-apply of an identical theme posts nothing.
     private func setActive(_ resolved: SlateTheme) {
         let changed = resolved != active
         active = resolved
@@ -143,8 +141,8 @@ final class ThemeStore {
     }
 
     /// Install the live macOS OS-appearance observer (idempotent). On a system light/dark switch it
-    /// re-resolves the active slot from the last-applied appearance, so a dual-slot / `.system` user follows
-    /// the system colour scheme LIVE (the ``didChangeNotification`` then re-pins the AppKit columns). Called
+    /// re-resolves the active slot from the last-applied appearance, so a dual-slot / `.system` user's
+    /// CANVAS theme follows the system colour scheme LIVE (the chrome follows the OS by itself now). Called
     /// ONCE on ``shared`` at app launch; NOT in tests (they drive ``reresolveForOSAppearance()`` directly with
     /// a stubbed ``osIsDark``), so no distributed observer leaks per test instance. A no-op on iOS (no
     /// distributed interface-style notification — the iOS appearance flip is a view-trait concern).

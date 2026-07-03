@@ -238,7 +238,7 @@ struct SplitContainer: View {
                 .allowsHitTesting(false)
                 // Quick opacity snap between zones (paired with the per-zone `.id` cross-fade in the
                 // overlay) — NOT the 0.20s slab frame-morph, which swept a big rectangle edge-to-edge.
-                .animation(Slate.Anim.smallFade, value: move.zone)
+                .animation(.easeOut(duration: 0.12), value: move.zone)
             }
         }
     }

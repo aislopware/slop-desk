@@ -149,7 +149,7 @@ final class SlateSnapshotRender: XCTestCase {
     private func scrimmed(_ panel: some View) -> some View {
         ZStack {
             Slate.Surface.window
-            Slate.State.shadow // the host's dim scrim role
+            Color.black.opacity(0.25) // the host's dim scrim (native-chrome value)
             panel
         }
     }
