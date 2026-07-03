@@ -1,52 +1,60 @@
 #!/usr/bin/env bash
-# Design-token leak RATCHET for the client UI design system (REBUILD-V2).
+# Design-token MIGRATION RATCHET for the client UI (native-SwiftUI migration, 2026-07-03).
 #
-# The client UI (`Sources/AislopdeskClientUI`) drives every font size + corner radius through the `Slate`
-# token layer (`DesignSystem/SlateDesign.swift`: `Slate.Typeface.*`, `Slate.Metric.radius*`). This gate fails
-# on a NEW raw literal in that view tree, so a dimension can't silently bypass the scale. Text-only (no
-# compile); runs in `make lint` / CI swift-lint.
+# The client UI is migrating from the custom `Slate` token layer to NATIVE SwiftUI design
+# (system semantic colors, text styles, materials — see docs/DECISIONS.md "Native SwiftUI chrome
+# migration"). The old ratchet banned raw font/radius literals to PROTECT the token scale; that
+# polarity is now inverted: native idioms are the TARGET, and what must not grow is `Slate.*`
+# usage itself. This gate counts `Slate.` references in `Sources/AislopdeskClientUI` and fails
+# when the count EXCEEDS the recorded baseline — so the migration only moves forward (a PR can
+# remove Slate usage, never add net-new). Text-only (no compile); runs in `make lint` / CI swift-lint.
 #
-# (History: an earlier ratchet was retired in the native-SwiftUI rewrite when the token target was deleted;
-# a later rebuild re-introduced a token layer, so the ratchet is back — now enforcing the `Slate.*` scale.)
+# When a change legitimately LOWERS the count, refresh the baseline in the same commit:
+#     scripts/check-ds-leaks.sh --update-baseline
+# Raising the baseline by hand is the "I really mean it" escape hatch — it shows up in review.
 #
-# Banned raw-literal shapes (both spellings of each, so a leak can't dodge the regex):
-#   * font:   `.font(.system(size: N…))`           — `size: ?` tolerates the canonical + unspaced forms.
-#   * radius: `cornerRadius: N` (labeled arg, incl. `.rect(cornerRadius: N)` / `RoundedRectangle(...)`)
-#             AND `.cornerRadius(N)` (the SwiftUI `View` modifier) — `[(:]` covers the `(` and `:` spellings.
-# Not matched (the legitimate token system): `.font(.system(size: size))` / `size: someVar` (no digit), and
-# the token DEFINITIONS (`static let radiusCard: CGFloat = 8` is not `cornerRadius`-prefixed).
-#
-# Comment/string safety: this is a plain-text grep, so a doc comment that SHOWS a banned shape as an example
-# (this repo's heavy comment style — e.g. the sibling comment in SlateDesign.swift) would otherwise false-fail
-# a merge-gating check. The post-filter drops comment-ONLY lines (content starts with `//`, `///`, or a `*`
-# block-comment body); real code with a trailing comment still matches on its code half. (SwiftFormat
-# `--lint` runs FIRST in `make lint` and normalizes spacing, so only canonical spellings reach this gate.)
+# (History: ratchet v1 was retired in the first native-SwiftUI rewrite; v2 enforced the rebuilt
+# `Slate` scale by banning raw literals; v3 — this one — inverts v2 for the native migration.)
 set -euo pipefail
 
 root="Sources/AislopdeskClientUI"
+baseline_file="scripts/ds-migration-baseline.txt"
 
-# Fail CLOSED: a missing target dir is a setup/cwd error, not "clean". (The old script reported
-# "intact" + exit 0 when $root was unreachable — a silent pass that could mask the whole gate.)
+# Fail CLOSED: a missing target dir / baseline is a setup error, not "clean".
 if [[ ! -d "${root}" ]]; then
   echo "check-ds-leaks: target dir '${root}' not found — run from the repo root." >&2
   exit 2
 fi
 
-font_pat='\.font\(\.system\(size: ?[0-9]'
-radius_pat='cornerRadius[(:] *[0-9]'
+# `\bSlate\.` catches every token read (Slate.Surface/Text/Line/State/Metric/Typeface/Anim/theme/
+# colorScheme) without matching type DEFINITIONS (`enum Slate`, `SlateTheme`, `SlateTabRow`, …).
+# `-o` counts every occurrence, not just matching lines, so a one-line cleanup still moves the number.
+count="$(grep -rE '\bSlate\.' "${root}" --include='*.swift' -o | wc -l | tr -d ' ')"
 
-# `|| true`: grep exits 1 on no-match, which is the PASS case here. Comment-only lines (after `path:line:`,
-# the content starts with `//` / `///` / `*`) are filtered out so docs that mention the shape don't fail.
-hits="$(grep -rnE "${font_pat}|${radius_pat}" "${root}" --include='*.swift' |
-  grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|\*)' || true)"
+if [[ "${1:-}" == "--update-baseline" ]]; then
+  echo "${count}" > "${baseline_file}"
+  echo "check-ds-leaks: baseline updated to ${count} Slate.* references."
+  exit 0
+fi
 
-if [[ -n "${hits}" ]]; then
-  echo "check-ds-leaks: RAW design-token literals found in ${root} — use the Slate token scale instead:" >&2
-  echo "  font size    → Slate.Typeface.{display,body,base,footnote,small}" >&2
-  echo "  cornerRadius → Slate.Metric.radius{Card,Tab,Control,Item,Small,Pill}" >&2
-  echo "" >&2
-  echo "${hits}" >&2
+if [[ ! -f "${baseline_file}" ]]; then
+  echo "check-ds-leaks: baseline file '${baseline_file}' missing — run scripts/check-ds-leaks.sh --update-baseline." >&2
+  exit 2
+fi
+baseline="$(tr -d '[:space:]' < "${baseline_file}")"
+
+if ((count > baseline)); then
+  echo "check-ds-leaks: Slate.* usage GREW: ${count} references (baseline ${baseline})." >&2
+  echo "  The client UI is migrating to native SwiftUI design (docs/DECISIONS.md, 2026-07-03):" >&2
+  echo "  style new chrome with system semantic colors / .font text styles / materials," >&2
+  echo "  not Slate tokens. If the increase is genuinely intended, raise ${baseline_file}." >&2
   exit 1
 fi
 
-echo "check-ds-leaks: no raw font/radius literals in ${root} — Slate token scale intact."
+if ((count < baseline)); then
+  echo "check-ds-leaks: ${count} Slate.* references (baseline ${baseline}) — nice, ratchet down:" >&2
+  echo "  run scripts/check-ds-leaks.sh --update-baseline and commit the new baseline." >&2
+  exit 1
+fi
+
+echo "check-ds-leaks: ${count} Slate.* references — at baseline (${baseline}); migration holds."
