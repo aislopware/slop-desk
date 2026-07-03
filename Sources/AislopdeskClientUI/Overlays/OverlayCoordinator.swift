@@ -162,6 +162,22 @@ public final class OverlayCoordinator {
     /// never gated on it — and it spends NO new wire message (the `cwd()` RPC already exists).
     @ObservationIgnored public var resolveActiveCwd: @MainActor () -> Void = {}
 
+    // MARK: Prefix-armed indicator (keyboard improvement)
+
+    /// Whether the tmux-style workspace PREFIX (default ⌃A) is currently ARMED — the machine has swallowed
+    /// the prefix and awaits the follow-up key. Driven by the app's ``WorkspaceKeyDispatcher`` through
+    /// ``setPrefixArmed(_:)`` on every armed edge (arm → true; a resolved/unbound follow-up, the double-tap
+    /// send-prefix, or the escape timeout → false), so the workspace chip (``OverlayHostView``) shows exactly
+    /// while a follow-up is awaited and never lies. Stays `false` on iOS / tests (nothing drives it there).
+    public private(set) var prefixArmed = false
+
+    /// Publish one armed edge (the dispatcher's `onPrefixArmedChange` target). Idempotent — a redundant edge
+    /// never re-publishes the `@Observable` flag.
+    public func setPrefixArmed(_ armed: Bool) {
+        guard prefixArmed != armed else { return }
+        prefixArmed = armed
+    }
+
     // MARK: Modal gate
 
     /// Whether ANY focus-stealing modal overlay is presented — the `OverlayHostView` hit-testing gate (E2 /

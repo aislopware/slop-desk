@@ -96,10 +96,23 @@ final class WorkspaceKeyDispatcher {
     /// byte-identical — a test with no real window server always reports the workspace as key.
     private let isWorkspaceWindowKey: () -> Bool
 
+    /// Keyboard-improvement (prefix-armed indicator): reports every ARMED edge of the prefix machine — `true`
+    /// when the prefix arms, `false` on ANY disarm (a resolved follow-up, an unbound follow-up, the double-tap
+    /// send-prefix, or the escape TIMEOUT via ``armExpiryTask``). The app wires this to
+    /// ``OverlayCoordinator/setPrefixArmed(_:)`` so the workspace chip shows exactly while a follow-up key is
+    /// awaited. `{ _ in }` (the headless / test default) keeps the dispatcher inert without a UI.
+    private let onPrefixArmedChange: (Bool) -> Void
+
     /// The pure prefix machine (B2). Its sequence resolver reads the override-aware `resolvedSequenceTable`
     /// (single-chord fallback to `resolvedChordTable`) so a rebind — single OR multi-key — takes effect; the
     /// prefix chord itself is configurable (defaults to the store's live `workspaceKeyPrefix`).
     private let machine: PrefixStateMachine
+
+    /// The pending armed-timeout expiry: scheduled when the prefix arms, cancelled on the next keystroke.
+    /// The machine itself is clock-lazy (a stale arm expires only when `feed`/`expireIfStale` runs), so
+    /// WITHOUT this task an abandoned arm would leave the indicator lit until the next keypress. Firing it
+    /// calls `expireIfStale` (idempotent) and reports the `false` edge.
+    private var armExpiryTask: Task<Void, Never>?
 
     private var monitor: Any?
 
@@ -121,6 +134,7 @@ final class WorkspaceKeyDispatcher {
         togglePinWindow: (() -> Void)? = nil,
         isOverlayCapturingKeys: @escaping () -> Bool = { false },
         isWorkspaceWindowKey: @escaping () -> Bool = { true },
+        onPrefixArmedChange: @escaping (Bool) -> Void = { _ in },
     ) {
         self.store = store
         self.togglePalette = togglePalette
@@ -134,6 +148,7 @@ final class WorkspaceKeyDispatcher {
         self.togglePinWindow = togglePinWindow
         self.isOverlayCapturingKeys = isOverlayCapturingKeys
         self.isWorkspaceWindowKey = isWorkspaceWindowKey
+        self.onPrefixArmedChange = onPrefixArmedChange
         // The prefix machine resolves a post-prefix key against the override-aware SEQUENCE table FIRST (so a
         // multi-key prefix sequence whose tail key is not a standalone binding still fires), falling back to
         // the SINGLE-CHORD table (so the seeded ⌃A→⌘D, where ⌘D is also a standalone chord, keeps working and
@@ -148,6 +163,10 @@ final class WorkspaceKeyDispatcher {
     /// Re-point the configured prefix (a settings change moved it off ⌃A). Keeps the app monitor and the
     /// per-surface interceptors arming on ONE shared prefix.
     func setPrefix(_ chord: KeyChord) { machine.prefix = chord }
+
+    /// Re-tune the armed escape timeout (seconds). Internal seam — the indicator timeout test shrinks it so
+    /// the expiry edge is observable without a 1 s wait; the machine clamps a negative/NaN value itself.
+    func setPrefixTimeout(_ timeout: TimeInterval) { machine.timeout = timeout }
 
     /// Install the left sidebar / Tabs-panel toggle once the `WorkspaceChromeState` exists (the root view
     /// wires this to `chrome.toggleSidebar` on appear). Without it, ⌘⇧L resolves to `.toggleSidebar` and
@@ -183,6 +202,8 @@ final class WorkspaceKeyDispatcher {
     func teardown() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        armExpiryTask?.cancel()
+        armExpiryTask = nil
     }
 
     /// Map one `NSEvent` keystroke to swallow (`nil`) or pass-through (the event), routing any resolved
@@ -217,7 +238,11 @@ final class WorkspaceKeyDispatcher {
             ),
         ) else { return event }
 
-        switch machine.feed(chord, at: ProcessInfo.processInfo.systemUptime) {
+        let intent = machine.feed(chord, at: ProcessInfo.processInfo.systemUptime)
+        // Every fed keystroke re-syncs the "prefix armed" indicator (arm lights it; ANY disarm — resolved /
+        // unbound / double-tap — clears it; a fresh arm re-schedules the timeout expiry).
+        syncPrefixArmedIndicator()
+        switch intent {
         case let .passthrough(passed):
             // E1/WI-7: a user `text:`/`csi:`/`esc:` config binding (a literal-byte binding) resolves
             // BEFORE the action table — the chord sends its already-resolved bytes (ESC/CSI lead bytes baked
@@ -260,6 +285,26 @@ final class WorkspaceKeyDispatcher {
 
         case .disarmSwallow:
             return nil // an unbound key while armed (tmux-faithful: disarm + eat the key, prefix not replayed)
+        }
+    }
+
+    /// Report the machine's armed state to the indicator seam and (re-)schedule the timeout expiry. Called
+    /// after every `feed`: a disarm cancels any pending expiry; an arm schedules one at `machine.timeout` + a
+    /// small epsilon, which expires the stale arm (`expireIfStale` — idempotent, keystroke-safe: a keystroke
+    /// that landed first already cancelled this task) and reports the `false` edge so the chip never stays
+    /// lit after an abandoned prefix.
+    private func syncPrefixArmedIndicator() {
+        armExpiryTask?.cancel()
+        armExpiryTask = nil
+        onPrefixArmedChange(machine.isArmed)
+        guard machine.isArmed else { return }
+        let delay = machine.timeout + 0.05
+        armExpiryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            machine.expireIfStale(at: ProcessInfo.processInfo.systemUptime)
+            if !machine.isArmed { onPrefixArmedChange(false) }
+            armExpiryTask = nil
         }
     }
 

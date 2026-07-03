@@ -2454,6 +2454,18 @@ final class GhosttyLayerBackedView: NSView {
         // `viewDidMoveToWindow`.) Mutating the `@Observable` model here is safe — a responder-chain callback,
         // NOT an `updateNSView`/AttributeGraph pass (same as `flagsChanged`).
         clearLinkHighlight()
+        // IME (keyboard audit): CANCEL any in-flight composition when this pane loses first responder (a
+        // pane-focus move / ⌘T / a click into a sibling). Without this the marked text + the ghostty preedit
+        // stayed LIVE in the abandoned pane — a mid-Telex/Japanese composition stranded its underline there,
+        // and the input method's staged keystrokes silently vanished or double-landed when focus returned.
+        // `unmarkText()` clears the mirror and republishes the EMPTY preedit (`syncPreedit` →
+        // `surface.preedit(nil)`); `discardMarkedText()` tells the input context to abandon its own staged
+        // composition so nothing is re-delivered on refocus. Both are guarded/idempotent and neither commits
+        // bytes to the PTY (`insertText` is not involved — the composition is dropped, not accepted).
+        if hasMarkedText() {
+            unmarkText()
+            inputContext?.discardMarkedText()
+        }
         return super.resignFirstResponder()
     }
 

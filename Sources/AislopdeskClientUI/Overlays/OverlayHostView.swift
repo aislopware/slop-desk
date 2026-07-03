@@ -45,6 +45,20 @@ struct OverlayHostView: View {
         ToastStackView(coordinator: coordinator)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .allowsHitTesting(!coordinator.toasts.isEmpty)
+            // Keyboard improvement: the "prefix armed" chip — a minimal bottom-LEADING glyph shown only while
+            // the ⌃A prefix machine awaits its follow-up key (`coordinator.prefixArmed`, driven by the app
+            // dispatcher's armed edges: arm lights it; fire / unbound / double-tap / timeout clear it). The
+            // bottom-TRAILING corner belongs to the toast stack; the chip never takes hits, so the workspace
+            // beneath stays interactive.
+            .overlay(alignment: .bottomLeading) {
+                if coordinator.prefixArmed {
+                    PrefixArmedChip(glyph: WorkspaceBindingRegistry.glyph(store.workspaceKeyPrefix))
+                        .padding(Slate.Metric.space4)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+            .animation(Slate.Anim.smallFade, value: coordinator.prefixArmed)
             .sheet(item: activeSheetBinding) { sheet in
                 // System accent inside the sheet too (a sheet roots a fresh environment, so reset the tint on the
                 // presented content directly — not only on the presenter below — to be order-independent).
@@ -195,6 +209,35 @@ struct OverlayHostView: View {
             default: false
             }
         }
+    }
+}
+
+// MARK: - PrefixArmedChip (the minimal "prefix armed" indicator)
+
+/// The tiny keyboard-centric chip shown while the workspace prefix is ARMED: the configured prefix glyph
+/// (e.g. `⌃A`) + the word "prefix" on the shared floating-card shell. Text-minimal by design (no icon zoo,
+/// no panel) — it only answers "did my prefix land?" while the machine awaits the follow-up key. `Slate.*`
+/// tokens only (the ds-leaks ratchet).
+private struct PrefixArmedChip: View {
+    let glyph: String
+
+    var body: some View {
+        HStack(spacing: Slate.Metric.space1) {
+            Text(glyph)
+                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                .foregroundStyle(Slate.State.accent)
+            Text("prefix")
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.secondary)
+        }
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.vertical, Slate.Metric.space1)
+        .background(Slate.Surface.card, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+        .overlay(
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
+                .strokeBorder(Slate.Line.subtle, lineWidth: 1),
+        )
+        .accessibilityLabel("Prefix armed")
     }
 }
 

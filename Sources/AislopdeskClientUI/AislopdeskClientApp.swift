@@ -470,12 +470,22 @@ public struct AislopdeskClientApp: App {
             // typing + the bare-1–9 quick-answer (which a global ⌘-less chord can't steal, but a yield keeps
             // any modeled chord from firing behind the focused card). Esc / a scrim-tap close it.
             isOverlayCapturingKeys: { [overlay] in overlay.capturesKeyboardWhileVisible },
-            // Bug-fix (keyboard audit): gate the app-wide NSEvent monitor on the WORKSPACE window being key, so
-            // the stock Settings scene (⌘,) + attached sheets receive their own keystrokes instead of a bound
-            // chord (⌘W/⌘T/⌘1–9/…) resolving against the hidden workspace tree behind them. The window is
-            // captured weakly in `windowBox` by the `.introspect(.window)` hook below; before capture (nil) we
-            // default to "workspace is key" so the at-launch behaviour is unchanged.
-            isWorkspaceWindowKey: { [windowBox] in windowBox.window.map(\.isKeyWindow) ?? true },
+            // Bug-fix (keyboard audit, hardened in the multi-window audit): gate the app-wide NSEvent monitor
+            // on the WORKSPACE window being key, so the stock Settings scene (⌘,) + attached sheets receive
+            // their own keystrokes instead of a bound chord (⌘W/⌘T/⌘1–9/…) resolving against the hidden
+            // workspace tree behind them. The window is captured weakly in `windowBox` by the
+            // `.introspect(.window)` hook below; the predicate is a pure IDENTITY check against
+            // `NSApp.keyWindow` (`workspaceWindowIsKey`), so a nil capture — pre-introspect, or the weak box
+            // going stale after the window closes — NEVER claims the keyboard (the old `?? true` default let a
+            // stale/empty box swallow chords while Settings was frontmost). Every key then passes through
+            // until the workspace window is truly key again.
+            isWorkspaceWindowKey: { [windowBox] in
+                Self.workspaceWindowIsKey(captured: windowBox.window, keyWindow: NSApp.keyWindow)
+            },
+            // Keyboard improvement (prefix-armed chip): report every armed edge of the ⌃A prefix machine to
+            // the coordinator so the workspace shows a minimal "prefix" chip while the follow-up key is
+            // awaited (arm lights it; fire / unbound / double-tap / timeout clear it).
+            onPrefixArmedChange: { [overlay] in overlay.setPrefixArmed($0) },
         ))
         // E20 WI-3: the client control socket server over a ``WorkspaceControlBackend`` adapter on the SAME
         // live stores the GUI uses (the backend holds them WEAKLY — the app retains the originals). Built
@@ -659,7 +669,11 @@ public struct AislopdeskClientApp: App {
                     // E19 WI-4: capture the window weakly for the `.onChange(of: chrome.pinned)` pin actuator,
                     // apply the current pin level (idempotent — the callback can re-fire), and apply the
                     // configured initial size EXACTLY ONCE per window open (so a later manual resize is never
-                    // fought). All NSWindow reach stays inside THIS blessed hook.
+                    // fought). All NSWindow reach stays inside THIS blessed hook. CAPTURE AUDIT (multi-window
+                    // fix): this closure fires only for the window hosting the WORKSPACE root (the Settings
+                    // scene never mounts this modifier), and File ▸ New Window is removed
+                    // (`CommandGroup(replacing: .newItem)`), so exactly ONE window can ever land here — the
+                    // box is never overwritten by a second workspace window's re-render.
                     windowBox.window = window
                     Self.applyPinLevel(to: window, pinned: chrome.pinned)
                     // E19 WI-4 (A29): pass the LIVE chrome (for the grid `chromeOverhead` — the revealed
@@ -728,6 +742,15 @@ public struct AislopdeskClientApp: App {
         // identical overlays — cheap parity. `toggleFind` stays nil (tree-path route arm); `togglePeekReply`
         // is wired (E13 / WI-8) so the View ▸ Peek & Reply menu row drives the same ⌘⌥J overlay.
         .commands {
+            // Multi-window audit fix: the product is a documented SINGLE-workspace-window model (one
+            // WindowGroup window + the stock Settings scene) — the whole app wiring (`store` /
+            // `keyDispatcher` / `windowBox` / the close gate) is app-wide singleton state, so the stock
+            // File ▸ New Window item minted a SECOND workspace window over the SAME store whose introspect
+            // hook then overwrote `windowBox`: chords intermittently died in the window being typed in and
+            // the ⌃A prefix leaked into remote-GUI panes. `.newItem` carries ONLY the New-Window item for a
+            // plain WindowGroup (no document types are declared), so replacing it with nothing removes the
+            // affordance without touching the rest of the File menu.
+            CommandGroup(replacing: .newItem) {}
             WorkspaceCommands(
                 store: store,
                 togglePalette: { [overlayCoordinator] in overlayCoordinator.togglePalette() },
@@ -818,6 +841,21 @@ public struct AislopdeskClientApp: App {
     }
 
     #if os(macOS)
+    /// The keybinding dispatcher's key-window gate, as a PURE identity predicate so it is unit-pinnable
+    /// without an `NSWindow` (`AnyObject` — tests inject plain fakes): the workspace owns the keyboard ONLY
+    /// when the window captured by the `.introspect(.window)` hook IS the application's current key window.
+    /// A `nil` capture (pre-introspect, or the weak ``WeakWindowBox`` going stale after the workspace window
+    /// closed) NEVER claims the keyboard — the old `window.map(\.isKeyWindow) ?? true` form defaulted a nil
+    /// capture to "workspace is key", which let a stale box swallow chords while the Settings window (or any
+    /// other window) was frontmost. Identity against `NSApp.keyWindow` also stays truthful if the box ever
+    /// held a non-workspace window: that window being key is exactly the state where yielding is wrong only
+    /// for the REAL workspace window, which the single-window model (File ▸ New Window removed) guarantees is
+    /// the only window the introspect hook can capture.
+    static func workspaceWindowIsKey(captured: AnyObject?, keyWindow: AnyObject?) -> Bool {
+        guard let captured else { return false }
+        return captured === keyWindow
+    }
+
     /// Associated-object key under which a window retains its ``WindowCloseConfirmationDelegate`` (the
     /// delegate is referenced WEAKLY by `NSWindow.delegate`, so it needs an explicit owner for the window's
     /// lifetime). Only its ADDRESS is used (as the associated-object key), never its value — `nonisolated`

@@ -94,5 +94,54 @@ final class DispatcherKeyWindowGateTests: XCTestCase {
             XCTAssertNotNil(result, "a bare key always reaches the focused responder (workspaceKey=\(workspaceKey))")
         }
     }
+
+    // MARK: - The hardened gate predicate (multi-window audit fix)
+
+    /// The regression the hardened predicate closes: `WeakWindowBox.window` is WEAK, so before the introspect
+    /// capture — or after the captured workspace window is deallocated / a re-render overwrote the box with a
+    /// window that later closed — the old gate expression `window.map(\.isKeyWindow) ?? true` reported the
+    /// workspace as KEY while a completely different window (Settings, a sheet) owned the keyboard, so a bound
+    /// chord was swallowed + resolved against the hidden tree. A nil capture must NEVER report the workspace
+    /// as key, whatever window currently is.
+    func testNilCapturedWindowNeverReportsWorkspaceKey() {
+        let someOtherWindow = NSObject() // stands in for the Settings window being key
+        XCTAssertFalse(
+            AislopdeskClientApp.workspaceWindowIsKey(captured: nil, keyWindow: someOtherWindow),
+            "a nil (uncaptured / deallocated) workspace window must not claim the keyboard",
+        )
+        XCTAssertFalse(
+            AislopdeskClientApp.workspaceWindowIsKey(captured: nil, keyWindow: nil),
+            "with no key window at all there is nothing to own chords for",
+        )
+    }
+
+    /// The gate is a pure IDENTITY comparison against the application's key window: true exactly when the
+    /// captured workspace window IS the key window; any other key window (Settings scene, an attached sheet,
+    /// a window-backed panel) resolves false so that window keeps its own keystrokes.
+    func testWorkspaceWindowIsKeyRequiresIdentityWithTheKeyWindow() {
+        let workspace = NSObject()
+        let settings = NSObject()
+        XCTAssertTrue(AislopdeskClientApp.workspaceWindowIsKey(captured: workspace, keyWindow: workspace))
+        XCTAssertFalse(AislopdeskClientApp.workspaceWindowIsKey(captured: workspace, keyWindow: settings))
+        XCTAssertFalse(AislopdeskClientApp.workspaceWindowIsKey(captured: workspace, keyWindow: nil))
+    }
+
+    /// End-to-end through the dispatcher: a STALE (empty) `WeakWindowBox` + another window key — built with the
+    /// SAME predicate the app wires — must yield ⌘W (pass through, no tree mutation). On the old `?? true`
+    /// closure this swallowed the chord and closed a background pane.
+    func testStaleWindowBoxYieldsChordsWhileAnotherWindowIsKey() {
+        let store = makeTwoLeafStore()
+        let box = WeakWindowBox() // never captured (or the workspace window was deallocated)
+        let otherKeyWindow = NSObject()
+        let dispatcher = WorkspaceKeyDispatcher(store: store, isWorkspaceWindowKey: {
+            AislopdeskClientApp.workspaceWindowIsKey(captured: box.window, keyWindow: otherKeyWindow)
+        })
+
+        let result = dispatcher.handle(keyDown("w", keyCode: 13, command: true))
+
+        XCTAssertNotNil(result, "with no captured workspace window ⌘W must pass through to the real key window")
+        XCTAssertEqual(store.tree.allPaneIDs().count, 2, "⌘W must NOT close a background workspace pane")
+        XCTAssertNil(store.pendingCloseSpec, "⌘W must NOT even park a close")
+    }
 }
 #endif
