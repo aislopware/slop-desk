@@ -107,6 +107,14 @@ public protocol PaneSessionHandle: AnyObject, Identifiable {
     /// Default does nothing; ``LivePaneSession`` routes to the terminal model.
     func clearBell()
 
+    /// RELEASE STUCK INPUT (C5): fire the remote-GUI pane's synthetic-release escape hatch — a key-up
+    /// for every held modifier + a mouse-up for every button, via the pane's existing release paths —
+    /// for when the host is left holding input despite the automatic redundancy+dedup. A no-op for
+    /// kinds with no video input sink (terminal panes) and while the pane is read-only / not streaming
+    /// (the seam withholds the sink). Default does nothing; ``LivePaneSession`` routes to the
+    /// ``RemoteWindowModel``.
+    func releaseStuckInput()
+
     /// Tear the session down for good (the pane is closing). Delegates to the proven
     /// `ConnectionViewModel` teardown order, closes the inspector channel, and stops any video stack.
     /// Called by `reconcile()` for every orphaned leaf id before it is dropped from the registry.
@@ -136,6 +144,10 @@ public extension PaneSessionHandle {
 
     /// Default: nothing to clear. ``LivePaneSession`` routes to the terminal model.
     func clearBell() {}
+
+    /// Default: no video input sink ⇒ nothing to release. ``LivePaneSession`` routes to the
+    /// ``RemoteWindowModel`` for `.remoteGUI` panes.
+    func releaseStuckInput() {}
 }
 
 // MARK: - ID adoption (store-internal)

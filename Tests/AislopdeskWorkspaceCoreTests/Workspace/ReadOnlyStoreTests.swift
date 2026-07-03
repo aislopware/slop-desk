@@ -200,5 +200,31 @@ final class ReadOnlyStoreTests: XCTestCase {
         XCTAssertNil(model.keyInjector, "read-only: the seam clears the model's key-injection sink")
         XCTAssertFalse(model.canPasteKeystrokes, "read-only: paste-as-keystrokes is inert")
     }
+
+    /// **C5 — read-only WITHHOLDS the Release-Stuck-Input sink at the seam.** The escape hatch sends
+    /// host input (synthetic key/mouse releases), so — exactly like the paste-as-keystrokes sink — the
+    /// `.videoLeaf` derivation binds `nil` while read-only: the palette row is inert on a locked pane
+    /// (`canReleaseStuckInput == false`) without the model ever learning the read-only state.
+    func testReadOnlyWithholdsTheInputReleaseSinkAtTheSeam() {
+        let model = RemoteWindowModel(windowID: "7", title: "Safari")
+        model.open()
+        let liveSink: () -> Void = {}
+
+        // WRITABLE: the seam binds the published release sink → the escape hatch is armed.
+        RemotePaneContext.videoLeaf(
+            isActive: true, readOnly: false, bindKeyInjector: { _ in },
+            bindInputRelease: { model.inputReleaseInjector = $0 },
+        ).onInputReleaseReady?(liveSink)
+        XCTAssertNotNil(model.inputReleaseInjector, "writable: the published release sink reaches the model")
+        XCTAssertTrue(model.canReleaseStuckInput, "writable: the palette escape hatch is live")
+
+        // READ-ONLY: the seam withholds the sink (binds nil) EVEN THOUGH the view publishes a real one.
+        RemotePaneContext.videoLeaf(
+            isActive: true, readOnly: true, bindKeyInjector: { _ in },
+            bindInputRelease: { model.inputReleaseInjector = $0 },
+        ).onInputReleaseReady?(liveSink)
+        XCTAssertNil(model.inputReleaseInjector, "read-only: the seam clears the release sink")
+        XCTAssertFalse(model.canReleaseStuckInput, "read-only: a locked pane cannot inject releases")
+    }
     #endif
 }

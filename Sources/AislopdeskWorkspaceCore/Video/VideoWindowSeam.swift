@@ -104,6 +104,13 @@ public struct RemotePaneContext {
     /// 3 toggle-lock). Pure CLIENT compositor ops (no host input), so — unlike ``onResizeInjectorReady`` — it
     /// is NOT withheld while read-only. `nil` (the standalone default) ⇒ no canvas to receive it.
     public var onViewportInjectorReady: ((((_ command: UInt8) -> Void)?) -> Void)?
+    /// RELEASE STUCK INPUT (C5, the manual escape hatch): the live video view publishes a zero-arg release
+    /// closure here (and `nil` on teardown) that synthesizes a key-UP for every held modifier + a mouse-UP
+    /// for every button through the existing synthetic-release send paths — the palette's chord-less
+    /// "Release Stuck Input" drives it when the host is left with a latched modifier / button despite the
+    /// automatic redundancy+dedup. SENDS host input, so — like ``onKeyInjectorReady`` — the seam withholds
+    /// it (binds `nil`) while the pane is read-only. `nil` (the standalone default) ⇒ no canvas.
+    public var onInputReleaseReady: (((() -> Void)?) -> Void)?
     /// HOST-WINDOW RESIZE: the live video view PUSHES the remote window's current + MAX resizable POINT
     /// sizes through this whenever either changes (first decoded frame / host displayMax report), so the
     /// "Resize…" popover pre-fills its fields at the current size and caps them at the remote max. `(curW,
@@ -125,6 +132,7 @@ public struct RemotePaneContext {
         onKeyInjectorReady: ((((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?) -> Void)? = nil,
         onResizeInjectorReady: ((((_ width: Double, _ height: Double) -> Void)?) -> Void)? = nil,
         onViewportInjectorReady: ((((_ command: UInt8) -> Void)?) -> Void)? = nil,
+        onInputReleaseReady: (((() -> Void)?) -> Void)? = nil,
         onWindowGeometryChanged: ((_ curW: Double, _ curH: Double, _ maxW: Double, _ maxH: Double) -> Void)? = nil,
         onStreamCadenceChanged: ((_ fps: Int) -> Void)? = nil,
     ) {
@@ -136,6 +144,7 @@ public struct RemotePaneContext {
         self.onKeyInjectorReady = onKeyInjectorReady
         self.onResizeInjectorReady = onResizeInjectorReady
         self.onViewportInjectorReady = onViewportInjectorReady
+        self.onInputReleaseReady = onInputReleaseReady
         self.onWindowGeometryChanged = onWindowGeometryChanged
         self.onStreamCadenceChanged = onStreamCadenceChanged
     }
@@ -163,6 +172,7 @@ public struct RemotePaneContext {
         bindKeyInjector: @escaping (((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?) -> Void,
         bindResizeInjector: @escaping (((_ width: Double, _ height: Double) -> Void)?) -> Void = { _ in },
         bindViewportInjector: @escaping (((_ command: UInt8) -> Void)?) -> Void = { _ in },
+        bindInputRelease: @escaping ((() -> Void)?) -> Void = { _ in },
         onWindowGeometry: @escaping (_ curW: Double, _ curH: Double, _ maxW: Double, _ maxH: Double)
             -> Void = { _, _, _, _ in
             },
@@ -181,6 +191,9 @@ public struct RemotePaneContext {
             // VIEWPORT CONTROLS: zoom / pan-lock are pure CLIENT compositor ops (they never reach the host), so
             // they stay live even on a READ-ONLY pane — bind the sink unconditionally (no read-only gate).
             onViewportInjectorReady: { sink in bindViewportInjector(sink) },
+            // RELEASE STUCK INPUT: synthesizes host key/mouse RELEASES — host input, so a read-only pane
+            // must not fire it. Withhold the sink (bind nil) exactly like the key sink.
+            onInputReleaseReady: { sink in bindInputRelease(readOnly ? nil : sink) },
             // HOST-WINDOW RESIZE: the window geometry push (current + max size) is informational and never
             // reaches the host, so it stays live even on a read-only pane (the popover is hidden anyway, but
             // the model's size mirror stays current for when the pane is unlocked).

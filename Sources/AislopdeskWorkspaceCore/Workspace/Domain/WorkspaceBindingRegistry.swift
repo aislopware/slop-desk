@@ -72,6 +72,11 @@ public enum WorkspaceAction: Hashable, Sendable {
     // password prompt without an action; this is the explicit user override. No default chord —
     // reachable via the menu + command palette ("Secure Keyboard Entry") only.
     case secureKeyboardEntry
+    // Release Stuck Input (C5, 2026-07-03): the manual escape hatch for a remote-GUI pane whose host is
+    // left holding a modifier/button (every release datagram of a redundant burst lost) — synthesizes a
+    // key-up for ALL modifiers + a mouse-up for all buttons via the pane's existing synthetic-release
+    // paths. No default chord — palette/menu only; a graceful no-op for a non-video active pane.
+    case releaseStuckInput
     case toggleSidebar // ⌘⇧L — show/hide the sessions sidebar
     // View → Pin Window (E19 ES-E19-1): keep the window floating above ALL other apps' windows.
     // CHORD-LESS — no default chord; the live macOS app flips `WorkspaceChromeState.pinned` →
@@ -192,6 +197,9 @@ public extension WorkspaceAction {
              // Secure Keyboard Entry toggles the ACTIVE terminal pane's manual secure input — needs a pane,
              // but degrades gracefully (an empty / non-terminal shell just no-ops), same family.
              .secureKeyboardEntry,
+             // Release Stuck Input targets the ACTIVE remote-GUI pane's release sink — needs a pane, but
+             // degrades gracefully (a terminal / empty / read-only pane just no-ops), same family.
+             .releaseStuckInput,
              .commandNavigator,
              // Jump-To scans the ACTIVE terminal pane (its scrollback links + its OSC-133 command index), so it
              // needs one — but degrades gracefully (an empty / non-terminal shell just opens an empty list).
@@ -634,6 +642,17 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: nil,
             symbol: "lock.shield",
             keywords: "secure input keyboard entry password sudo protect eavesdrop sniff secure event input",
+        ),
+        // Release Stuck Input (C5, 2026-07-03): the remote-GUI escape hatch — synthesize a key-up for ALL
+        // modifiers + a mouse-up for all buttons on the active video pane when the host is left holding
+        // input (every release datagram of the loss-resilient burst lost). `chord: nil` — the chord-less
+        // idiom (like `view.readOnly`); reachable via the palette/menu, bindable in Settings → Keybindings.
+        // A graceful no-op for a non-video / read-only / not-streaming active pane.
+        WorkspaceBinding(
+            id: "view.releaseStuckInput", action: .releaseStuckInput, title: "Release Stuck Input",
+            category: .view, chord: nil,
+            symbol: "keyboard.badge.ellipsis",
+            keywords: "release stuck input modifier key mouse button unstick reset keyboard command shift remote window video",
         ),
         // Toggle Tabs Panel ⌘⇧L — the reference default (spec/reference__keybindings.md:66 "Toggle tabs
         // panel | ⌘⇧L"; line 201 "⌘⇧L … map to sidebar … toggles"). RE-BOUND from the old ⌘B: ⌘B routed to

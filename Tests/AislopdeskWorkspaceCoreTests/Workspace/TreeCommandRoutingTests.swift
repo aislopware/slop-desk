@@ -994,6 +994,38 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(store.tree, treeBefore, "read-only is a view-state gate — the tree is unchanged")
     }
 
+    // MARK: - View: Release Stuck Input (C5) — chord-less registry pin + active-pane routing
+
+    /// `.releaseStuckInput` is registered, in the View category, and CHORD-LESS by design (the chord-less
+    /// idiom — like `view.readOnly`). Revert-to-confirm-fail by removing the registry case.
+    func testReleaseStuckInputBindingIsViewAndChordless() {
+        let binding = WorkspaceBindingRegistry.binding(for: .releaseStuckInput)
+        XCTAssertEqual(binding?.id, "view.releaseStuckInput", "stable id for override keying")
+        XCTAssertEqual(binding?.category, .view, "Release Stuck Input is a View command")
+        XCTAssertNil(binding?.chord, "unbound by default (palette/menu only)")
+    }
+
+    /// Routing `.releaseStuckInput` fires the ACTIVE pane handle's `releaseStuckInput()` — and ONLY the
+    /// active pane's — without mutating the tree. (On a live `.remoteGUI` pane the handle forwards to the
+    /// `RemoteWindowModel`'s published release sink; that forwarding is pinned separately.)
+    func testReleaseStuckInputRoutesToActivePaneHandleOnly() throws {
+        let store = makeTreeStore()
+        store.splitActivePane(axis: .horizontal, kind: .terminal) // a sibling proves "only the active" fires
+        let active = try XCTUnwrap(activePane(store))
+        let treeBefore = store.tree
+
+        WorkspaceBindingRegistry.route(.releaseStuckInput, to: store)
+
+        for id in leaves(store) {
+            let fake = try XCTUnwrap(store.handle(for: id) as? FakePaneSession)
+            XCTAssertEqual(
+                fake.releaseStuckInputCount, id == active ? 1 : 0,
+                "the escape hatch fires exactly once, on the active pane only",
+            )
+        }
+        XCTAssertEqual(store.tree, treeBefore, "a synthetic input release never mutates the tree")
+    }
+
     // MARK: - View: peek-and-reply falls back to the store when no overlay closure (no dead ⌘⇧J)
 
     /// `.peekAndReply` WITH an explicit `togglePeekReply` override fires the closure (the future overlay

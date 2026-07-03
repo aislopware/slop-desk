@@ -384,7 +384,9 @@ public enum InputInjectorRaisePolicy {
 /// mid-selection, so the NEXT click "đã bắt đầu selection rồi". This tracks which buttons are
 /// logically HELD so a fresh `mouseDown` for an already-held button can emit a synthetic
 /// release FIRST — guaranteeing a click never begins inside a stuck selection. Only
-/// down/up mutate the held set; moves/drags/scroll/keys/text pass through unchanged.
+/// down/up mutate the held set; moves/drags/scroll/text pass through unchanged. MODIFIER key
+/// edges (C5 BUG B) get the same idempotence via ``heldModifierKeys`` — the client's redundant
+/// modifier key-up burst collapses to one post; ordinary keys and Caps Lock pass through.
 ///
 /// The held set is keyed on ``MouseButton`` (a `UInt8`-backed enum, left=0/right=1/other=2), so
 /// `Set<MouseButton>` membership is the SINGLE SOURCE OF TRUTH for the fold — only `mouseDown`/
@@ -395,6 +397,13 @@ public struct InputButtonBalance: Sendable, Equatable {
     /// The logically-held buttons (keyed on ``MouseButton``; the golden-parity tests read
     /// `held.contains` / `held.isEmpty` / `held`).
     public private(set) var held: Set<MouseButton> = []
+    /// The logically-held MODIFIER keys (C5 BUG B, keyed on the exact keyCode — left/right variants
+    /// are distinct latched flags). The client sends a modifier key-UP redundantly (a lost release
+    /// latches the modifier on the shared `hidSystemState` source until the user re-presses it); this
+    /// set collapses that burst to ONE posted CGEvent, exactly like `held` does for mouse ups. Only
+    /// ``InputModifierKeys/heldModifierKeyCodes`` ever enter it — ordinary keys (which auto-repeat as
+    /// identical downs) and the Caps Lock toggle pass through verbatim.
+    public private(set) var heldModifierKeys: Set<UInt16> = []
     public init() {}
 
     /// What to do before injecting `event`.
@@ -430,10 +439,23 @@ public struct InputButtonBalance: Sendable, Equatable {
                 return Plan() // first up for a held button — release it
             }
             return Plan(suppress: true) // duplicate / orphan up — drop it (idempotent)
+        case let .key(keyCode, down, _, _):
+            // MODIFIER dedup (C5 BUG B): the client's redundant modifier key-up burst must post ONCE.
+            // Ordinary keys (auto-repeat = identical downs) and Caps Lock (a toggle — state keyed on
+            // down/up would desync from the host's actual Caps state) pass through untouched.
+            guard InputModifierKeys.isHeldModifier(keyCode) else { return Plan() }
+            if down {
+                // A down for an already-down modifier (refocus resync vs a still-latched host flag)
+                // is a no-op — the latched flag is already correct.
+                return Plan(suppress: !heldModifierKeys.insert(keyCode).inserted)
+            }
+            if heldModifierKeys.remove(keyCode) != nil {
+                return Plan() // first up for a held modifier — release it
+            }
+            return Plan(suppress: true) // duplicate / orphan modifier up — drop it (idempotent)
         case .mouseMove,
              .mouseDrag,
              .scroll,
-             .key,
              .text:
             return Plan()
         }

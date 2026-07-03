@@ -24,6 +24,29 @@ final class RemoteWindowModelTests: XCTestCase {
         XCTAssertTrue(m.canOpen)
     }
 
+    /// C5 — the "Release Stuck Input" escape hatch: `releaseStuckInput()` drives the LIVE published
+    /// sink exactly once per invocation, is a safe no-op with no sink (not streaming / read-only —
+    /// the seam withholds it), and `canReleaseStuckInput` requires BOTH a streaming pane and a sink.
+    func testReleaseStuckInputDrivesThePublishedSink() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        m.releaseStuckInput() // no sink yet — must not crash, nothing to fire
+        XCTAssertFalse(m.canReleaseStuckInput, "no sink + not streaming ⇒ the palette row is inert")
+
+        var fired = 0
+        m.inputReleaseInjector = { fired += 1 }
+        XCTAssertFalse(m.canReleaseStuckInput, "a sink alone is not enough — the pane must be streaming")
+        m.open()
+        XCTAssertTrue(m.canReleaseStuckInput, "streaming + live sink ⇒ the escape hatch is armed")
+
+        m.releaseStuckInput()
+        XCTAssertEqual(fired, 1, "one invocation fires the release exactly once")
+
+        m.inputReleaseInjector = nil // teardown / read-only: the view (or seam) clears the sink
+        m.releaseStuckInput()
+        XCTAssertEqual(fired, 1, "a cleared sink makes the escape hatch inert again")
+        XCTAssertFalse(m.canReleaseStuckInput)
+    }
+
     func testOpenBuildsDescriptorFromAppTarget() {
         let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
         m.open()

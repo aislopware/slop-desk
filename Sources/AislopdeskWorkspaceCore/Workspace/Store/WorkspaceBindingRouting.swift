@@ -193,6 +193,9 @@ public extension WorkspaceBindingRegistry {
         // (the auto path engages on a host no-echo prompt without an action). A graceful no-op for an empty /
         // non-terminal shell; the macOS leaf's `SecureKeyboardEntryController` actuates the process-global API.
         case .secureKeyboardEntry: store.toggleSecureKeyboardEntryInActivePane()
+        // Release Stuck Input (C5): fire the active remote-GUI pane's synthetic-release escape hatch (all
+        // modifiers up + all buttons up). A graceful no-op for a terminal / empty / read-only active pane.
+        case .releaseStuckInput: store.releaseStuckInputInActivePane()
         // Toggle Tabs Panel (⌘⇧L): the LEFT sidebar collapse on the macOS shell is VIEW @State
         // (`WorkspaceChromeState.sidebarCollapsed`, read by the native split controller) — NOT the legacy
         // `store.sidebarCollapsed`, which nothing reads on macOS. So it is a passed-in closure.
@@ -363,6 +366,9 @@ public extension WorkspaceBindingRegistry {
         // Secure Keyboard Entry (E17 ES-E17-4): the canvas path resolves the active pane via canvas focus, so
         // the same store seam toggles manual secure input there too (a no-op for a non-terminal / empty shell).
         case .secureKeyboardEntry: store.toggleSecureKeyboardEntryInActivePane()
+        // Release Stuck Input (C5): the same store seam fires the active remote-GUI pane's synthetic-release
+        // escape hatch on the canvas path too (a no-op for a non-video / empty / read-only active pane).
+        case .releaseStuckInput: store.releaseStuckInputInActivePane()
         // Sidebar is the tree-shell chrome; the canvas path still toggles it via the closure (the live macOS
         // app wires `chrome.toggleSidebar`). `nil` (the canvas test default) is a graceful no-op.
         case .toggleSidebar: toggles.sidebar?()

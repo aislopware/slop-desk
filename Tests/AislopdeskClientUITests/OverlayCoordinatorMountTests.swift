@@ -521,6 +521,9 @@ final class OverlayCoordinatorMountTests: XCTestCase {
                 "view.hintReveal",
                 // E19 ES-E19-1: Pin Window is chord-less (the "View ▸ Pin Window" toggle ships no default chord).
                 "view.pinWindow",
+                // C5 (2026-07-03): Release Stuck Input is chord-less (the remote-GUI escape hatch —
+                // palette/menu-only; pinned by `TreeCommandRoutingTests`).
+                "view.releaseStuckInput",
             ],
             "the no-chip rows: collapsed select-tab representative + chord-less Rename/Close Tab "
                 + "+ the three E17 view toggles + E10 Hint to Reveal + E19 Pin Window",

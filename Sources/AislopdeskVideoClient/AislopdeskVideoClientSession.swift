@@ -1407,7 +1407,23 @@ public actor AislopdeskVideoClientSession {
     }
 
     public func sendKey(keyCode: UInt16, down: Bool, modifiers: InputModifiers) {
-        sendInput(inputEncoder.key(keyCode: keyCode, down: down, modifiers: modifiers))
+        // Build ONCE, send `keySendCount` times (C5 BUG B): a MODIFIER key-up gets the same
+        // loss-resilient redundancy as `sendMouseUp` — a lost modifier release permanently latches
+        // the flag on the host's shared `hidSystemState` source (every later plain scroll becomes
+        // ⌘-scroll) until the user happens to press+release that modifier again. Same bytes each
+        // time: the host's `InputButtonBalance` posts the FIRST and suppresses the duplicates, so
+        // the redundancy never becomes a spurious extra modifier edge. Everything else stays a
+        // single datagram (an ordinary key-up loss is a visible, self-healing miss).
+        let event = inputEncoder.key(keyCode: keyCode, down: down, modifiers: modifiers)
+        for _ in 0..<Self.keySendCount(keyCode: keyCode, down: down) { sendInput(event) }
+    }
+
+    /// Pure send-count policy for one key event: `redundantUpCount` for a HELD-modifier key-UP
+    /// (⌘/⇧/⌃/⌥/fn — see ``InputModifierKeys``), else 1. Caps Lock and ordinary keys are never
+    /// duplicated (Caps is a toggle; a duplicated edge would flip it twice on a host that missed
+    /// the dedup). Static + pure so the policy is pinned headlessly (`InputKeyRedundancyTests`).
+    static func keySendCount(keyCode: UInt16, down: Bool) -> Int {
+        (!down && InputModifierKeys.isHeldModifier(keyCode)) ? redundantUpCount : 1
     }
 
     public func sendText(_ string: String) {

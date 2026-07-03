@@ -228,7 +228,12 @@ public struct ModifierLatchTracker: Sendable, Equatable {
     public func isDown(_ keyCode: UInt16) -> Bool { downKeyCodes.contains(keyCode) }
 
     /// Record one modifier `flagsChanged` edge (idempotent — a repeated same-edge is absorbed).
+    /// Caps Lock (keyCode 57) is NEVER latched (C5 BUG A): it is a TOGGLE, not a held key, so the
+    /// blur-time synthesized "release" (a bare key-up CGEvent on virtualKey 57) would FLIP the host's
+    /// Caps state — focusing/blurring a GUI pane with local Caps on toggled remote Caps every time.
+    /// Its genuine `flagsChanged` edges still forward to the host 1:1; they just bypass the latch.
     public mutating func note(keyCode: UInt16, down: Bool) {
+        guard keyCode != InputModifierKeys.capsLockKeyCode else { return }
         if down { downKeyCodes.insert(keyCode) } else { downKeyCodes.remove(keyCode) }
     }
 

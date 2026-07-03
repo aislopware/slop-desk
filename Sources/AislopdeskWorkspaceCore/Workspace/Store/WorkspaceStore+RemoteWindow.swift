@@ -24,4 +24,15 @@ public extension WorkspaceStore {
         reconcileTree()
         return id
     }
+
+    /// RELEASE STUCK INPUT (C5, the palette's `view.releaseStuckInput`): fire the ACTIVE pane's
+    /// synthetic-release escape hatch — a key-up for every held modifier + a mouse-up for every button
+    /// through the remote-GUI pane's existing release send paths — for when the host is left holding
+    /// input (a latched ⌘/⇧/button) despite the automatic redundancy+dedup. Routed through the
+    /// ``PaneSessionHandle`` seam, so it is a graceful no-op for a terminal / empty / read-only /
+    /// not-streaming active pane (never a dead command).
+    func releaseStuckInputInActivePane() {
+        guard let id = activePaneID else { return }
+        handle(for: id)?.releaseStuckInput()
+    }
 }

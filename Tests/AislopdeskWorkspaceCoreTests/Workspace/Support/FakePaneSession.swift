@@ -61,6 +61,12 @@ final class FakePaneSession: @MainActor PaneSessionHandle, @MainActor Identifiab
     /// Default `true` ⇒ every pre-existing test keeps the always-ready behaviour.
     var isReadyForInput: Bool = true
 
+    /// How many times ``releaseStuckInput()`` was called (C5 — pins the palette escape-hatch routing:
+    /// `view.releaseStuckInput` → store → the ACTIVE pane's handle, and only that pane's).
+    private(set) var releaseStuckInputCount = 0
+
+    func releaseStuckInput() { releaseStuckInputCount += 1 }
+
     // MARK: Video activation
 
     /// The video-activation flag the cap tests assert against (only meaningful for `.remoteGUI`).

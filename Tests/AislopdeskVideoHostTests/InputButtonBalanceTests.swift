@@ -124,4 +124,70 @@ final class InputButtonBalanceTests: XCTestCase {
         XCTAssertNil(bal.plan(for: up(.left)).preRelease)
         XCTAssertEqual(bal.held, [.right])
     }
+
+    // MARK: - C5 BUG B: MODIFIER key edges are deduplicated like button ups
+
+    private func key(_ code: UInt16, down: Bool) -> InputEvent {
+        .key(keyCode: code, down: down, modifiers: [], tag: 0)
+    }
+
+    /// The client now sends a modifier key-UP redundantly (a lost release sticks the modifier on the
+    /// host's shared `hidSystemState` source — poisoning every later scroll/click until the user
+    /// happens to press+release it again). The host must collapse the burst to ONE CGEvent: the first
+    /// up releases + posts, the duplicates are suppressed — the mirror of the mouseUp idempotence.
+    func testModifierReleaseBurstCollapsesToOnePost() {
+        var bal = InputButtonBalance()
+        XCTAssertFalse(bal.plan(for: key(55, down: true)).suppress, "⌘ down posts")
+        let first = bal.plan(for: key(55, down: false))
+        XCTAssertFalse(first.suppress, "first ⌘ up releases and is posted")
+        XCTAssertTrue(bal.plan(for: key(55, down: false)).suppress, "2nd duplicate ⌘ up is suppressed")
+        XCTAssertTrue(bal.plan(for: key(55, down: false)).suppress, "3rd duplicate ⌘ up is suppressed")
+    }
+
+    /// A release for an already-up modifier (no matching down seen) is a no-op — posting it would emit
+    /// a stray modifier `flagsChanged` into the target app.
+    func testOrphanModifierReleaseIsSuppressed() {
+        var bal = InputButtonBalance()
+        XCTAssertTrue(bal.plan(for: key(56, down: false)).suppress, "⇧ up with no down is dropped")
+    }
+
+    /// A down for an already-down modifier (the refocus resync racing a still-latched host state) is
+    /// likewise a no-op — the latched flag is already correct.
+    func testDuplicateModifierDownIsSuppressed() {
+        var bal = InputButtonBalance()
+        XCTAssertFalse(bal.plan(for: key(58, down: true)).suppress, "⌥ down posts")
+        XCTAssertTrue(bal.plan(for: key(58, down: true)).suppress, "duplicate ⌥ down is suppressed")
+        XCTAssertFalse(bal.plan(for: key(58, down: false)).suppress, "the up still releases + posts")
+    }
+
+    /// Left/right variants of the same modifier are DISTINCT keys (distinct latched flags on the host),
+    /// so they dedupe independently.
+    func testLeftRightModifierVariantsTrackIndependently() {
+        var bal = InputButtonBalance()
+        XCTAssertFalse(bal.plan(for: key(55, down: true)).suppress) // ⌘ left
+        XCTAssertFalse(bal.plan(for: key(54, down: true)).suppress, "⌘ right is independent of ⌘ left")
+        XCTAssertFalse(bal.plan(for: key(55, down: false)).suppress)
+        XCTAssertFalse(bal.plan(for: key(54, down: false)).suppress)
+    }
+
+    /// ORDINARY keys must NEVER be deduplicated: a held letter auto-repeats as identical downs, and
+    /// only modifier releases ride the redundant-send path. Byte-identical pass-through.
+    func testOrdinaryKeyRepeatIsNeverSuppressed() {
+        var bal = InputButtonBalance()
+        for _ in 0..<3 {
+            XCTAssertFalse(bal.plan(for: key(0, down: true)).suppress, "'a' auto-repeat downs all post")
+        }
+        XCTAssertFalse(bal.plan(for: key(0, down: false)).suppress)
+        XCTAssertFalse(bal.plan(for: key(36, down: false)).suppress, "an unpaired Return up still posts")
+    }
+
+    /// Caps Lock (57) is a TOGGLE — dedup state keyed on down/up would desync from the host's actual
+    /// Caps state, so its edges always pass through verbatim (the client never dups them either).
+    func testCapsLockEdgesAreNeverSuppressed() {
+        var bal = InputButtonBalance()
+        XCTAssertFalse(bal.plan(for: key(57, down: true)).suppress)
+        XCTAssertFalse(bal.plan(for: key(57, down: true)).suppress, "a repeated Caps edge still posts")
+        XCTAssertFalse(bal.plan(for: key(57, down: false)).suppress)
+        XCTAssertFalse(bal.plan(for: key(57, down: false)).suppress)
+    }
 }

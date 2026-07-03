@@ -40,4 +40,18 @@ final class ModifierLatchTrackerTests: XCTestCase {
         t.note(keyCode: 59, down: true) // ⌃ down, no release
         XCTAssertEqual(t.drainForRelease(), [59], "only the still-held ⌃ needs a synthesized release")
     }
+
+    /// C5 BUG A: Caps Lock (keyCode 57) is a TOGGLE, not a held key — latching it makes the blur-time
+    /// synthesized "release" (a bare key-up CGEvent on virtualKey 57) TOGGLE the host's Caps state, so
+    /// every focus/blur cycle of a GUI pane with local Caps on flipped remote Caps. The tracker must
+    /// never latch it (its genuine `flagsChanged` edges still forward 1:1 while focused).
+    func testCapsLockEdgesAreNeverLatched() {
+        var t = ModifierLatchTracker()
+        t.note(keyCode: 57, down: true) // ⇪ ON edge — must NOT latch
+        XCTAssertFalse(t.isDown(57), "Caps Lock is a toggle — never tracked as held")
+        XCTAssertTrue(t.isEmpty)
+        t.note(keyCode: 55, down: true) // ⌘ down (a real held modifier)
+        t.note(keyCode: 57, down: true) // ⇪ again, mixed in
+        XCTAssertEqual(t.drainForRelease(), [55], "a blur release list never contains keyCode 57")
+    }
 }

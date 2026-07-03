@@ -342,6 +342,19 @@ final class FlagsChangedModifierTests: XCTestCase {
         XCTAssertNil(MetalLayerBackedView.modifierDown(keyCode: 36, flags: [])) // return
     }
 
+    /// C5 BUG A: the focus-regain modifier RESYNC re-forwards every "held" modifier as a key-down. Caps
+    /// Lock must be EXCLUDED from that set: it is a toggle, so a synthesized down (the host posts
+    /// virtualKey 57) TOGGLES the remote Caps state — focusing a GUI pane with local Caps on flipped
+    /// host Caps, and blur flipped it again.
+    func testHeldModifierKeyCodesExcludeCapsLock() {
+        let codes = MetalLayerBackedView.heldModifierKeyCodes([.capsLock, .command, .shift])
+        XCTAssertEqual(Set(codes), [55, 56], "resync re-establishes ⌘ and ⇧ but never Caps Lock")
+        XCTAssertTrue(
+            MetalLayerBackedView.heldModifierKeyCodes([.capsLock]).isEmpty,
+            "Caps Lock alone resyncs nothing — its flag is a toggle state, not a held key",
+        )
+    }
+
     func testDownDetectionDependsOnFlagPresenceNotKeyCode() {
         // The same ⌘ keyCode (55) yields down=true when ⌘ is present and down=false when
         // absent — that flag check is the only way to tell the press edge from the release.

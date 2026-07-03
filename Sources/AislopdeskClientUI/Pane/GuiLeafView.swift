@@ -198,6 +198,9 @@ struct GuiLeafView: View {
                     // VIEWPORT CONTROLS (issue 5): zoom / pan-lock — pure CLIENT compositor ops, so the seam
                     // binds this sink even on a read-only pane (unlike the host-affecting key/resize sinks).
                     bindViewportInjector: { [weak model] sink in model?.viewportInjector = sink },
+                    // RELEASE STUCK INPUT (C5): the palette's escape hatch — host input, so the seam binds
+                    // nil while read-only (exactly like the key sink).
+                    bindInputRelease: { [weak model] sink in model?.inputReleaseInjector = sink },
                     // HOST-WINDOW RESIZE: the live view pushes the window's current + max point sizes so the
                     // "Resize…" popover pre-fills + caps its fields (informational; not read-only-gated).
                     onWindowGeometry: { [weak model] cw, ch, mw, mh in

@@ -125,6 +125,21 @@ public final class RemoteWindowModel {
     /// Drive one client-viewport ``ViewportCommand`` through the live ``viewportInjector`` (no-op when no sink).
     public func sendViewport(_ command: ViewportCommand) { viewportInjector?(command.rawValue) }
 
+    /// RELEASE STUCK INPUT (C5, the manual escape hatch): the live ``VideoWindowView`` publishes this
+    /// zero-arg closure once its session exists (via ``RemotePaneContext/onInputReleaseReady``; cleared
+    /// `nil` on teardown, and WITHHELD by the seam while the pane is read-only — it sends host input).
+    /// Firing it synthesizes a key-UP for every held modifier + a mouse-UP for every button through the
+    /// existing synthetic-release send paths, clearing a modifier/button the host was left holding
+    /// despite the automatic redundancy+dedup (e.g. every release datagram of a burst lost).
+    public var inputReleaseInjector: (() -> Void)?
+
+    /// Whether the palette's "Release Stuck Input" can act right now: streaming AND a live release sink
+    /// is wired (withheld while read-only).
+    public var canReleaseStuckInput: Bool { active != nil && inputReleaseInjector != nil }
+
+    /// Fire the manual stuck-input release (no-op when no sink is wired — not streaming / read-only).
+    public func releaseStuckInput() { inputReleaseInjector?() }
+
     /// Whether a paste-as-keystrokes is possible right now: streaming AND a live key sink is wired. A
     /// read-only pane has no sink (the seam withholds it, see ``keyInjector``), so this is `false` there.
     public var canPasteKeystrokes: Bool { active != nil && keyInjector != nil }

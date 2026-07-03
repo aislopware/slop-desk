@@ -87,6 +87,7 @@ struct ClientAppMain {
                     onKeyInjectorReady: paneContext.onKeyInjectorReady,
                     onResizeInjectorReady: paneContext.onResizeInjectorReady,
                     onViewportInjectorReady: paneContext.onViewportInjectorReady,
+                    onInputReleaseReady: paneContext.onInputReleaseReady,
                     onWindowGeometryReady: paneContext.onWindowGeometryChanged,
                     onStreamCadenceReady: paneContext.onStreamCadenceChanged,
                 ))

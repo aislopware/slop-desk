@@ -99,6 +99,10 @@ public struct VideoWindowView: View {
     /// exists (and `nil` on teardown), so the pane's control bar can drive zoom / pan-lock. The closure
     /// carries a raw command byte (`RemoteWindowModel.ViewportCommand`). `nil` ⇒ no canvas / iOS.
     let onViewportInjectorReady: ((((_ command: UInt8) -> Void)?) -> Void)?
+    /// RELEASE STUCK INPUT (C5): the live view publishes a zero-arg release closure here (and `nil` on
+    /// teardown) that synthesizes a key-UP for every held modifier + a mouse-UP for every button — the
+    /// palette's chord-less escape hatch for a host left holding input. `nil` ⇒ no canvas / iOS.
+    let onInputReleaseReady: (((() -> Void)?) -> Void)?
     /// HOST-WINDOW RESIZE: the live view pushes the window's current + MAX resizable POINT sizes here
     /// whenever either changes (first decoded frame / host displayMax report), so the "Resize…" popover
     /// pre-fills its fields at the current size and caps them at the remote max. `(curW, curH, maxW,
@@ -122,6 +126,7 @@ public struct VideoWindowView: View {
         onKeyInjectorReady = nil
         onResizeInjectorReady = nil
         onViewportInjectorReady = nil
+        onInputReleaseReady = nil
         onWindowGeometryReady = nil
         onStreamCadenceReady = nil
     }
@@ -140,6 +145,7 @@ public struct VideoWindowView: View {
         onKeyInjectorReady: ((((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?) -> Void)? = nil,
         onResizeInjectorReady: ((((_ width: Double, _ height: Double) -> Void)?) -> Void)? = nil,
         onViewportInjectorReady: ((((_ command: UInt8) -> Void)?) -> Void)? = nil,
+        onInputReleaseReady: (((() -> Void)?) -> Void)? = nil,
         onWindowGeometryReady: ((_ curW: Double, _ curH: Double, _ maxW: Double, _ maxH: Double) -> Void)? = nil,
         onStreamCadenceReady: ((_ fps: Int) -> Void)? = nil,
     ) {
@@ -153,6 +159,7 @@ public struct VideoWindowView: View {
         self.onKeyInjectorReady = onKeyInjectorReady
         self.onResizeInjectorReady = onResizeInjectorReady
         self.onViewportInjectorReady = onViewportInjectorReady
+        self.onInputReleaseReady = onInputReleaseReady
         self.onWindowGeometryReady = onWindowGeometryReady
         self.onStreamCadenceReady = onStreamCadenceReady
     }
@@ -177,6 +184,7 @@ public struct VideoWindowView: View {
             onKeyInjectorReady: onKeyInjectorReady,
             onResizeInjectorReady: onResizeInjectorReady,
             onViewportInjectorReady: onViewportInjectorReady,
+            onInputReleaseReady: onInputReleaseReady,
             onWindowGeometryReady: onWindowGeometryReady,
             onStreamCadenceReady: onStreamCadenceReady,
         )
@@ -208,6 +216,7 @@ struct MetalVideoLayerView: NSViewRepresentable {
     var onKeyInjectorReady: ((((UInt16, Bool, Bool) -> Void)?) -> Void)?
     var onResizeInjectorReady: ((((Double, Double) -> Void)?) -> Void)?
     var onViewportInjectorReady: ((((UInt8) -> Void)?) -> Void)?
+    var onInputReleaseReady: (((() -> Void)?) -> Void)?
     var onWindowGeometryReady: ((Double, Double, Double, Double) -> Void)?
     var onStreamCadenceReady: ((Int) -> Void)?
 
@@ -239,6 +248,10 @@ struct MetalVideoLayerView: NSViewRepresentable {
         // on `deactivate`.
         view.onViewportInjectorReady = onViewportInjectorReady
         view.publishViewportInjector()
+        // RELEASE STUCK INPUT (C5): publish the manual escape-hatch release sink (the seam binds nil while
+        // read-only, like the key sink). Cleared on `deactivate`.
+        view.onInputReleaseReady = onInputReleaseReady
+        view.publishInputReleaseInjector()
         // BUG-2 probe: a recreate (makeNSView) on focus change — vs an in-place updateNSView — would reset
         // isActive to its `true` default mid-stream; logging it distinguishes "stale Bool" from "recreate".
         videoViewDbg("makeNSView (CREATED) isActive=\(isActive)")
@@ -272,6 +285,10 @@ struct MetalVideoLayerView: NSViewRepresentable {
             // read-only flip must re-publish to withdraw / restore the grip's drive.
             nsView.onResizeInjectorReady = onResizeInjectorReady
             nsView.publishResizeInjector()
+            // RELEASE STUCK INPUT (C5): read-only-gated like the key sink — a flip re-evaluates the seam's
+            // nil-binding so a locked pane withdraws the escape hatch and an unlock restores it.
+            nsView.onInputReleaseReady = onInputReleaseReady
+            nsView.publishInputReleaseInjector()
         }
     }
 
@@ -377,6 +394,10 @@ final class MetalLayerBackedView: NSView {
     /// teardown), so the pane's bottom control bar drives zoom / pan-lock. The byte is `RemoteWindowModel.
     /// ViewportCommand` (0 zoom-in / 1 zoom-out / 2 reset / 3 toggle-lock). Set by the representable.
     var onViewportInjectorReady: ((((UInt8) -> Void)?) -> Void)?
+    /// RELEASE STUCK INPUT (C5): the canvas publishes a zero-arg release sink through this (and `nil` on
+    /// teardown; the seam binds nil while read-only) — the palette's chord-less escape hatch fires it to
+    /// synthesize a key-UP for every held modifier + a mouse-UP for every button. Set by the representable.
+    var onInputReleaseReady: (((() -> Void)?) -> Void)?
 
     /// Hands the canvas a key-injection closure routed to THIS view's pipeline (Shift folded into the
     /// modifiers; `pipeline.key` no-ops until the session is up). Idempotent — safe to call on every
@@ -399,6 +420,35 @@ final class MetalLayerBackedView: NSView {
     /// freeze the edge-pan). `self` weak so a torn-down view does nothing. Idempotent.
     func publishViewportInjector() {
         onViewportInjectorReady? { [weak self] command in self?.handleViewportCommand(command) }
+    }
+
+    /// Hands the canvas the RELEASE STUCK INPUT closure (C5) routed to THIS view. `self` weak so a
+    /// torn-down view releases nothing. Idempotent — safe to call on every render.
+    func publishInputReleaseInjector() {
+        onInputReleaseReady? { [weak self] in self?.releaseAllStuckInput() }
+    }
+
+    /// RELEASE STUCK INPUT (C5, the manual escape hatch): synthesize a key-UP for EVERY held-modifier
+    /// keyCode (left/right ⌘⇧⌃⌥ + fn — not only the locally-latched ones; the point is a HOST stuck
+    /// despite the automatic paths) plus a mouse-UP for every button, through the same send paths the
+    /// automatic synthetic releases use. Each modifier key-up rides the loss-resilient redundant send
+    /// (`keySendCount`) and each mouse-up the `redundantUpCount` burst; the host's `InputButtonBalance`
+    /// suppresses whichever releases are no-ops there (an already-up modifier / button posts nothing),
+    /// so firing this on a healthy session is harmless. The local latch is drained first so the
+    /// client's own bookkeeping agrees that nothing is held. Read-only panes never reach here (the seam
+    /// withholds the sink), but keep the `inputEnabled` gate as belt-and-braces.
+    private func releaseAllStuckInput() {
+        guard inputEnabled else { return }
+        _ = modifierLatch.drainForRelease()
+        for keyCode in InputModifierKeys.heldModifierKeyCodes.sorted() {
+            pipeline.key(keyCode: keyCode, down: false, modifiers: [])
+        }
+        // The release position is immaterial to un-sticking (the target app just ends its tracking);
+        // the pane centre keeps it inside the captured window.
+        let centre = VideoPoint(x: Double(bounds.midX), y: Double(bounds.midY))
+        for button in [MouseButton.left, .right, .other] {
+            pipeline.mouseUp(button, centre, 1, [])
+        }
     }
 
     /// Apply one viewport command from the footer control bar (the `RemoteWindowModel.ViewportCommand` byte:
@@ -550,6 +600,7 @@ final class MetalLayerBackedView: NSView {
         onKeyInjectorReady?(nil) // PASTE AS KEYSTROKES: drop the stale sink before teardown
         onResizeInjectorReady?(nil) // RESIZE GRIP: drop the stale sink before teardown
         onViewportInjectorReady?(nil) // VIEWPORT CONTROLS: drop the stale zoom/lock sink before teardown
+        onInputReleaseReady?(nil) // RELEASE STUCK INPUT (C5): drop the stale escape-hatch sink before teardown
         pipeline.deactivate()
     }
 
@@ -644,13 +695,15 @@ final class MetalLayerBackedView: NSView {
     /// A representative modifier keyCode (left variant) for each modifier currently present in `flags` — used
     /// by ``resyncModifiersFromCurrentFlags`` to re-forward a still-held modifier on refocus. The left keyCode
     /// is arbitrary but consistent: the host only cares about the resulting latched flag, not left-vs-right.
+    /// Caps Lock is deliberately ABSENT (C5 BUG A): `.capsLock` in `flags` is a TOGGLE STATE, not a
+    /// held key — re-forwarding it as a key-down would make the host post virtualKey 57 and FLIP the
+    /// remote Caps state on every refocus (and the matching latch release flipped it again on blur).
     static func heldModifierKeyCodes(_ flags: NSEvent.ModifierFlags) -> [UInt16] {
         var codes: [UInt16] = []
         if flags.contains(.command) { codes.append(55) }
         if flags.contains(.shift) { codes.append(56) }
         if flags.contains(.control) { codes.append(59) }
         if flags.contains(.option) { codes.append(58) }
-        if flags.contains(.capsLock) { codes.append(57) }
         if flags.contains(.function) { codes.append(63) }
         return codes
     }
@@ -1200,6 +1253,9 @@ struct MetalVideoLayerView: UIViewRepresentable {
     // not a host-window resize, so the resize / viewport / geometry hooks are accepted + ignored here.
     var onResizeInjectorReady: ((((Double, Double) -> Void)?) -> Void)?
     var onViewportInjectorReady: ((((UInt8) -> Void)?) -> Void)?
+    // Signature parity with the macOS representable. iOS forwards no host key/mouse input, so the
+    // release-stuck-input escape hatch has nothing to release — accepted + ignored here.
+    var onInputReleaseReady: (((() -> Void)?) -> Void)?
     var onWindowGeometryReady: ((Double, Double, Double, Double) -> Void)?
     // Signature parity with the macOS representable. The iOS Connection section is not wired yet, so the
     // host-cadence push is accepted + ignored here.

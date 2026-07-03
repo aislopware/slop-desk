@@ -177,6 +177,11 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// bar, NOT recorded for echo-dedup (a programmatic send has no local pre-echo to suppress).
     public func sendBytes(_ bytes: [UInt8]) { inputBar?.sendRaw(bytes, record: false) }
 
+    /// RELEASE STUCK INPUT (C5): route the palette escape hatch to the `.remoteGUI` pane's
+    /// ``RemoteWindowModel`` (whose live sink the video view publishes; withheld while read-only /
+    /// not streaming). A no-op for every other kind (`remoteWindow == nil`).
+    public func releaseStuckInput() { remoteWindow?.releaseStuckInput() }
+
     /// Reflects the live connection: `.terminal`/Claude panes are only ready once the handshake completes
     /// (``ConnectionViewModel/status`` `== .connected`) — before that, `InputBarModel.sendSink` is wired but
     /// `TerminalViewModel.inputSink` is not yet set, so a send would silently drop. A `.remoteGUI` /
