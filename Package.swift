@@ -365,6 +365,16 @@ let package = Package(
             dependencies: ["AislopdeskVideoHost", "AislopdeskVideoClient", "AislopdeskVideoProtocol"],
         ),
 
+        // Headless VideoToolbox encode/decode TIMING benchmark (perf work, not shipped product):
+        // real VideoEncoder + VideoDecoder + packetizer/FEC at the ACTUAL host configs (resolution ×
+        // LiveBitratePolicy bitrate × fps × motion) → per-frame encode latency, output size /
+        // effective bitrate (QP starvation = blur), drops, decode + packetize timing. Runs from a
+        // normal shell (VT hangs only inside xctest). macOS-only.
+        .executableTarget(
+            name: "aislopdesk-perfbench",
+            dependencies: ["AislopdeskVideoHost", "AislopdeskVideoClient", "AislopdeskVideoProtocol"],
+        ),
+
         // Frame-cadence watcher: SCK desktopIndependentWindow capture of ANY window (foreground
         // or background) that logs per-frame arrival timestamps + content checksums and prints a
         // stall histogram — the objective frame-level smoothness instrument (works on Aislopdesk AND
