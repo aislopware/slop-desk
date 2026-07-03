@@ -219,6 +219,8 @@ struct OverlayHostView: View {
         { item in
             switch item.id {
             case "action.toggleSidebar": !chrome.sidebarCollapsed
+            // TabSide partition: the windows-panel row's ✓ tracks the live GUI-column visibility.
+            case "action.toggleWindowsPanel": !chrome.guiCollapsed
             // E19 WI-4: Pin Window is a CHECKABLE toggle — light the ✓ gutter while the window is pinned, so the
             // palette (and the View menu) tell the user the current pinned state. Mirrors the sidebar
             // treatment, reading the SAME live `chrome.pinned` the menu Button + the `NSWindow.level` glue flip.

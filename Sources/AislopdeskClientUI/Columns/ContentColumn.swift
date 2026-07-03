@@ -16,7 +16,16 @@ struct ContentColumn: View {
     /// default keeps the column standalone-mountable in previews.
     var onConnect: () -> Void = {}
 
-    private var hasActiveTab: Bool { store.tree.activeSession?.activeTab != nil }
+    /// Whether this column has a tab to show. macOS: the TERMINAL side's displayed tab (the TabSide
+    /// partition — remote-window tabs render in the right GUI column); iOS keeps the single-region shell
+    /// (the active tab, whatever its side).
+    private var hasActiveTab: Bool {
+        #if os(macOS)
+        store.displayedTab(on: .terminal) != nil
+        #else
+        store.tree.activeSession?.activeTab != nil
+        #endif
+    }
 
     var body: some View {
         content
@@ -47,7 +56,13 @@ struct ContentColumn: View {
     private var paneArea: some View {
         Group {
             if hasActiveTab {
+                // TabSide partition (macOS): this column renders the TERMINAL side only; the remote-window
+                // tabs live in the right GUI column. iOS keeps the single-region shell (side nil = all tabs).
+                #if os(macOS)
+                SplitContainer(store: store, side: .terminal)
+                #else
                 SplitContainer(store: store)
+                #endif
             } else {
                 ContentUnavailableView(
                     "No Session",

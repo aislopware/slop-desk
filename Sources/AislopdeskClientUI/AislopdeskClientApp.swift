@@ -525,6 +525,9 @@ public struct AislopdeskClientApp: App {
             overlay: overlayCoordinator,
             chrome: chrome,
             installSidebarToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleSidebar(toggle) },
+            // TabSide partition: hand the dispatcher the Toggle Windows Panel actuator (⌘⇧E), so the chord
+            // flips the SAME `chrome.guiCollapsed` the palette row + the split shell read.
+            installWindowsToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleWindowsPanel(toggle) },
             // E19 WI-4: hand the dispatcher the (chord-less by default) Pin Window toggle, so a user-bound
             // chord for `.pinWindow` flips the SAME `chrome.pinned` the menu Button + the `NSWindow.level` glue
             // read, through the one NSEvent monitor that owns every chord.
@@ -771,6 +774,10 @@ public struct AislopdeskClientApp: App {
                 // E13 / WI-8 (P4): the View ▸ Peek & Reply menu row opens the SAME overlay the ⌘⌥J chord
                 // drives (the menu mirrors the chord; the NSEvent dispatcher owns the chord itself).
                 togglePeekReply: { [overlayCoordinator] in overlayCoordinator.togglePeekReply() },
+                // TabSide partition: the View ▸ Toggle Windows Panel row flips the SAME live
+                // `chrome.guiCollapsed` the ⌘⇧E chord + the palette row drive (directly off the app-owned
+                // chrome, like Pin Window — no overlay round-trip needed).
+                toggleWindowsPanel: { [chrome] in chrome.toggleWindowsPanel() },
                 toggleGlobalSearch: { [overlayCoordinator] in overlayCoordinator.toggleGlobalSearch() },
                 // E10 / WI-8 → E11 / WI-7: the View ▸ Jump To… menu item opens the folded-in Jump-To (the
                 // Open-Quickly picker at the `.current` pill), the SAME overlay the ⌘J chord drives.

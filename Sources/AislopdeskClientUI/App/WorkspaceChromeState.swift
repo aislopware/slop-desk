@@ -37,12 +37,35 @@ final class WorkspaceChromeState {
     /// (leave a manual ⌘⇧L alone). Bookkeeping only — not persisted, not read by any view.
     var lastAutoHideCollapsed: Bool?
 
+    /// TabSide partition: whether the RIGHT remote-windows column (GUI tabs + the window dock) split item
+    /// is collapsed. Starts COLLAPSED — a fresh window is terminal-first; the auto policy reveals it the
+    /// moment a GUI tab exists (see `WorkspaceRootView.applyGuiAutoReveal`) and re-collapses when the last
+    /// one closes. Pure view state — not persisted.
+    var guiCollapsed = true
+
+    /// Set whenever the user MANUALLY toggles the windows panel (⌘⇧E / palette). While set, the GUI-tab-count
+    /// auto policy must not fight the manual choice WITHIN a regime (0↔>0 edges re-assert and clear it) —
+    /// the exact `manualSidebarOverride` discipline, mirrored for the right column.
+    var manualGuiOverride = false
+
+    /// The collapsed value the GUI auto-reveal policy itself last actuated (`nil` before the first
+    /// application) — lets the policy tell a 0↔>0 regime EDGE from a within-regime tab change. Bookkeeping
+    /// only; not persisted, not read by any view.
+    var lastAutoGuiCollapsed: Bool?
+
     /// Manual entry point for the TABS-panel toggle (⌘⇧L / titlebar / palette; the iPad column swipe is the other,
     /// via `WorkspaceRootView.applySidebarVisibility`). Records the manual override so the auto-hide policy won't
     /// revert it on an unrelated tab open/close (E19 WI-7: "do NOT fight a manual ⌘⇧L").
     func toggleSidebar() {
         sidebarCollapsed.toggle()
         manualSidebarOverride = true
+    }
+
+    /// Manual entry point for the WINDOWS-panel toggle (⌘⇧E / palette) — records the manual override so the
+    /// GUI auto-reveal policy won't revert it on an unrelated GUI tab open/close.
+    func toggleWindowsPanel() {
+        guiCollapsed.toggle()
+        manualGuiOverride = true
     }
 
     /// Flip the window-pin flag ("Pin Window"). The macOS scene's `.onChange(of: chrome.pinned)` actuates

@@ -28,6 +28,12 @@ final class AislopdeskSplitViewController: NSSplitViewController {
 
     /// Retained so the titlebar toggle can animate its collapse (set in `viewDidLoad`).
     private var sidebarItem: NSSplitViewItem?
+    /// The RIGHT remote-windows column (TabSide partition) — retained so ⌘⇧E / the GUI-tab auto-reveal
+    /// can animate its collapse (set in `viewDidLoad`; starts collapsed — terminal-first).
+    private var guiItem: NSSplitViewItem?
+    /// Opens the Remote-Window picker — wired into the GUI column's `+` / empty state. The shell binds
+    /// this to `overlay.openRemotePicker()`.
+    private let onOpenRemotePicker: () -> Void
 
     /// E19 WI-4 (A29) — the sidebar (TABS panel) default thickness, shared with
     /// the window-size glue (`AislopdeskClientApp.applyInitialWindowSize`) so the `grid` mode's `chromeOverhead`
@@ -40,12 +46,14 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         chrome: WorkspaceChromeState,
         preferences: PreferencesStore? = nil,
         onConnect: @escaping () -> Void = {},
+        onOpenRemotePicker: @escaping () -> Void = {},
     ) {
         self.store = store
         self.connection = connection
         self.chrome = chrome
         self.preferences = preferences
         self.onConnect = onConnect
+        self.onOpenRemotePicker = onOpenRemotePicker
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -102,13 +110,27 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         // "TABS" header — a full row BELOW the traffic lights. Dropping the safe-area regions lets each column
         // start at the window's top edge, so the titlebar's controls land ON the traffic-light row (each
         // column still reserves its own titlebar-height strip at the top).
+        // 3) GUI column — the RIGHT remote-windows region (TabSide partition): the window strip + the GUI
+        //    side's pane compositor. Collapsible; starts COLLAPSED (terminal-first) — the root view's
+        //    auto-reveal expands it the moment a GUI tab exists, and ⌘⇧E toggles it manually. Holding
+        //    priority above the content's default so a window-resize grows the content, not this column.
+        let gui = NSHostingController(rootView: GuiColumn(store: store, onOpenPicker: onOpenRemotePicker))
+        let guiItem = NSSplitViewItem(viewController: gui)
+        guiItem.minimumThickness = 380
+        guiItem.canCollapse = true
+        guiItem.holdingPriority = NSLayoutConstraint.Priority(261)
+        guiItem.isCollapsed = true
+
         navigator.safeAreaRegions = []
         content.safeAreaRegions = []
+        gui.safeAreaRegions = []
 
         addSplitViewItem(sidebarItem)
         addSplitViewItem(contentItem)
+        addSplitViewItem(guiItem)
 
         self.sidebarItem = sidebarItem
+        self.guiItem = guiItem
 
         // Defer remote terminal grid-resize forwarding while a sidebar/inspector divider (or the window edge)
         // is being dragged: NSSplitView re-lays its subviews every step and posts this notification, so each
@@ -215,23 +237,28 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         }
     }
 
-    /// Apply the toolbar collapse flag to the sidebar item (idempotent — only animates a real
-    /// change so a steady-state update doesn't re-trigger the animation).
-    func applyCollapse(sidebarCollapsed: Bool) {
+    /// Apply the chrome collapse flags to the sidebar + GUI-column items (idempotent — only animates a
+    /// real change so a steady-state update doesn't re-trigger the animation).
+    func applyCollapse(sidebarCollapsed: Bool, guiCollapsed: Bool) {
         let sidebarChanging = sidebarItem.map { $0.isCollapsed != sidebarCollapsed } ?? false
+        let guiChanging = guiItem.map { $0.isCollapsed != guiCollapsed } ?? false
         // LOST-PROMPT FIX: `animator().isCollapsed = …` applies the FIRST collapse-animation layout frame
         // SYNCHRONOUSLY, which fires `GhosttyLayerBackedView.layout()` and forwards an INTERMEDIATE grid
         // size to the host BEFORE `splitViewSubviewsDidResize` (the notification) suspends forwarding. That
         // premature SIGWINCH makes zsh run `zle reset-prompt` at the wrong width, double-firing against the
         // final-width reset and erasing the prompt line. Suspend FIRST so the intermediate frames are held;
         // the settle timer in `splitViewSubviewsDidResize` resumes + flushes the FINAL grid (the
-        // idempotency guard in `setResizeSuspended` prevents a double-flush).
-        if sidebarChanging {
+        // idempotency guard in `setResizeSuspended` prevents a double-flush). The GUI column reuses the
+        // same suspension — its collapse re-lays the content column, so the terminal grid resizes too.
+        if sidebarChanging || guiChanging {
             resizeForwardingSuspended = true
             store.setTerminalResizeSuspended(true)
         }
         if sidebarChanging, let sidebarItem {
             sidebarItem.animator().isCollapsed = sidebarCollapsed
+        }
+        if guiChanging, let guiItem {
+            guiItem.animator().isCollapsed = guiCollapsed
         }
     }
 }

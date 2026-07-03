@@ -112,6 +112,15 @@ public final class WorkspaceStore {
     /// new concurrency / Sendable surface).
     public private(set) var videoPromotionGeneration: Int = 0
 
+    /// SIDE PARTITION (terminal ⟂ remote-window columns): the tab each ``TabSide`` LAST displayed, per
+    /// session — the memory that keeps a column's content stable while focus lives in the OTHER column.
+    /// The workspace has ONE active tab (keyboard focus); the column whose side matches shows it, the
+    /// other column keeps showing the side's last-active tab from this map. Runtime view-state (NOT
+    /// persisted — a relaunch re-derives from the active tab + first-of-side); stamped in
+    /// ``reconcileTree()`` (the funnel every tree mutation passes) and pruned there against the live
+    /// tab set. Read via ``displayedTab(on:)``.
+    var displayedSideTab: [SessionID: [TabSide: TabID]] = [:]
+
     /// The pane whose sidebar row should open its inline rename field — set by the ⌘R / menu /
     /// palette "Rename" entry points, CONSUMED by the sidebar (``clearRenameRequest()``) once the
     /// field is open. A pending ID rather than a counter nudge: when the sidebar column is collapsed
@@ -3054,6 +3063,9 @@ public final class WorkspaceStore {
         // tree. Keyed by TabID / a tree-only concept, so pruned here against the tree rather than in the
         // pane-keyed `reconcileRegistry` cache-prune. The helper lives in WorkspaceStore+TabOrdering.
         pruneTreeSidebarMirrors()
+        // SIDE PARTITION: stamp the active tab as its column's last-displayed tab (+ prune stale ids) so
+        // the terminal / GUI column each keep showing their own tab while focus lives in the other one.
+        noteDisplayedSideTabs()
         // E6 WI-7: a newly-materialized pane (or a launch already in By-Project, hydrated from prefs) needs
         // its git toplevel resolved — sweep the visible panes for any uncached key. Debounced + de-duped +
         // self-guarded (a no-op unless grouping is By-Project), so this is cheap on the hot reconcile path.
@@ -4210,6 +4222,18 @@ public extension WorkspaceStore {
         updateSpecLive(paneID) { spec in
             spec.kind = kind
             spec.title = title
+        }
+        // SIDE PARTITION: a chooser SPLIT can resolve to a kind on the OTHER side of its tab (a Remote
+        // window picked beside a terminal, or a terminal picked beside a remote window). A mixed tab
+        // would straddle the two columns, so eject the just-resolved pane into its own tab — the side
+        // derivation then routes that new tab to its proper column. A chooser opened as its OWN tab
+        // (⌘T) never mixes, so this is a no-op on the common new-tab path.
+        if let (sID, tabID) = tree.tab(containing: paneID),
+           let session = tree.sessions.first(where: { $0.id == sID }),
+           let tab = session.tabs.first(where: { $0.id == tabID }),
+           session.isMixedTab(tab)
+        {
+            breakPaneToTab(paneID)
         }
         focusPaneTree(paneID)
     }

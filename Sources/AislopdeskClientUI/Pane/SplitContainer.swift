@@ -22,6 +22,12 @@ import SwiftUI
 
 struct SplitContainer: View {
     let store: WorkspaceStore
+    /// TabSide partition: which COLUMN of the workspace this container renders. `nil` (iOS, the
+    /// single-region shell) renders every tab and reveals the active one; `.terminal` / `.gui` renders
+    /// only that side's tabs and reveals the side's DISPLAYED tab (``WorkspaceStore/displayedTab(on:)``)
+    /// — the active tab when it is on this side, else the side's last-active tab. Keyboard focus stays
+    /// keyed on the GLOBAL active tab, so only one pane across both columns owns first responder.
+    var side: TabSide?
     /// EAGER/STATIC render path for headless ImageRenderer snapshots.
     var staticMirror: Bool = false
 
@@ -30,21 +36,34 @@ struct SplitContainer: View {
     @State private var move: PaneMoveDrag?
 
     /// EVERY tab of every RETAINED session (the active session + the LRU-retained previous ones — see
-    /// ``WorkspaceStore/retainedSessionIDs``), in session-then-tab-bar order. We render ALL of them (see
-    /// `body`), revealing only the active session's active tab, so NEITHER a tab switch NOR an A→B→A session
-    /// switch unmounts a pane subtree (R-lifecycle #3 — a session switch used to dismantle every outgoing
-    /// surface and repaint via the lossy ring replay). Stale retained ids (a since-closed session) are dropped
-    /// by the `tree.sessions` intersection; the active session is always included even before the first switch
-    /// (when the retention set is still empty).
+    /// ``WorkspaceStore/retainedSessionIDs``), in session-then-tab-bar order — narrowed to this
+    /// container's ``side`` (a tab is rendered by exactly ONE container; the side derivation partitions).
+    /// We render ALL of them (see `body`), revealing only the displayed one, so NEITHER a tab switch NOR
+    /// an A→B→A session switch unmounts a pane subtree (R-lifecycle #3 — a session switch used to
+    /// dismantle every outgoing surface and repaint via the lossy ring replay). Stale retained ids (a
+    /// since-closed session) are dropped by the `tree.sessions` intersection; the active session is always
+    /// included even before the first switch (when the retention set is still empty).
     private var tabs: [AislopdeskWorkspaceCore.Tab] {
         let retained = store.retainedSessionIDs
         let activeID = store.tree.activeSessionID
         return store.tree.sessions
             .filter { retained.contains($0.id) || $0.id == activeID }
-            .flatMap(\.tabs)
+            .flatMap { session in
+                guard let side else { return session.tabs }
+                return session.tabs.filter { session.side(ofTab: $0) == side }
+            }
     }
 
-    /// The selected tab's id — the ONE tab shown + interactive; every other tab is mounted but hidden.
+    /// The tab this container REVEALS (+ makes interactive); every other tab is mounted but hidden. For a
+    /// side-scoped container this is the side's displayed tab — which may differ from the global active
+    /// tab while focus lives in the OTHER column.
+    private var shownTabID: TabID? {
+        if let side { return store.displayedTabID(on: side) }
+        return store.tree.activeSession?.activeTab?.id
+    }
+
+    /// The GLOBAL active tab's id — the keyboard-focus owner (first responder lives in it, whichever
+    /// column shows it) and the solved-layout reporter's gate.
     private var activeTabID: TabID? { store.tree.activeSession?.activeTab?.id }
 
     var body: some View {
@@ -59,11 +78,11 @@ struct SplitContainer: View {
             // one ZStack keyed per-tab (and per-`PaneID` within) has no identity collision.
             ZStack {
                 ForEach(tabs) { tab in
-                    let isActive = tab.id == activeTabID
-                    tabLayer(tab, isActive: isActive, in: bounds)
-                        .opacity(isActive ? 1 : 0)
-                        .allowsHitTesting(isActive)
-                        .accessibilityHidden(!isActive)
+                    let isShown = tab.id == shownTabID
+                    tabLayer(tab, isShown: isShown, in: bounds)
+                        .opacity(isShown ? 1 : 0)
+                        .allowsHitTesting(isShown)
+                        .accessibilityHidden(!isShown)
                         .id(tab.id) // OUTER key only — inner pane leaves stay keyed by PaneID
                 }
             }
@@ -78,10 +97,10 @@ struct SplitContainer: View {
     }
 
     /// One tab's pane tree, placed absolutely in a ZStack. Rendered for EVERY tab; the caller hides +
-    /// disables all but the active one. Interaction chrome (dividers, move handles, drop) is drawn only for
-    /// the active tab — a hidden tab is non-interactive, so it needs none.
+    /// disables all but the SHOWN one (this container's revealed tab). Interaction chrome (dividers, move
+    /// handles, drop) is drawn only for the shown tab — a hidden tab is non-interactive, so it needs none.
     @ViewBuilder
-    private func tabLayer(_ tab: AislopdeskWorkspaceCore.Tab, isActive: Bool, in bounds: CGRect) -> some View {
+    private func tabLayer(_ tab: AislopdeskWorkspaceCore.Tab, isShown: Bool, in bounds: CGRect) -> some View {
         let layout = SplitTreeRenderModel.layout(for: tab, in: bounds)
         let frames = Dictionary(layout.leaves.map { ($0.id, $0.rect) }, uniquingKeysWith: { a, _ in a })
         ZStack(alignment: .topLeading) {
@@ -96,11 +115,12 @@ struct SplitContainer: View {
                     // A zoom-hidden pane must never claim first responder (mirrors the keep-all-mounted
                     // focus-steal guard for hidden tabs).
                     isFocused: !entry.isHidden && Self.isPaneFocused(entry.id, in: tab, activeTabID: activeTabID),
-                    // ON-SCREEN gate (A2/R-lifecycle #2): visible ⟺ the pane's tab is the active tab AND it is
-                    // not zoom-hidden. A `.remoteGUI` pane drives its `liveVideoCap` activation off THIS — a
-                    // hidden tab / zoom-collapsed sibling releases its slot + stops the UDP/VT/Metal pipeline,
-                    // re-activating when it returns (onDisappear never fires under keep-all-mounted).
-                    isVisible: isActive && !entry.isHidden,
+                    // ON-SCREEN gate (A2/R-lifecycle #2): visible ⟺ the pane's tab is SHOWN (this column
+                    // reveals it) AND it is not zoom-hidden. A `.remoteGUI` pane drives its `liveVideoCap`
+                    // activation off THIS — a hidden tab / zoom-collapsed sibling releases its slot + stops
+                    // the UDP/VT/Metal pipeline, re-activating when it returns (onDisappear never fires
+                    // under keep-all-mounted).
+                    isVisible: isShown && !entry.isHidden,
                     // The content's live size IS the resize signal `PaneContainer`'s scrim keys off.
                     size: entry.leaf.rect.size,
                     staticMirror: staticMirror,
@@ -116,8 +136,8 @@ struct SplitContainer: View {
                 .accessibilityHidden(entry.isHidden)
                 .id(entry.id) // identity hazard: never reuse a surface across panes
             }
-            // Interaction chrome only for the active tab (a hidden tab is non-interactive anyway).
-            if isActive {
+            // Interaction chrome only for the shown tab (a hidden tab is non-interactive anyway).
+            if isShown {
                 // Dividers + the grab-handles / live drag overlay sit ABOVE the panes (z 0) via an
                 // explicit z-index band.
                 ForEach(layout.dividers, id: \.key) { handle in
@@ -134,16 +154,20 @@ struct SplitContainer: View {
         // Report the ACTIVE tab's solved leaf rects to the store (`updateSolvedLayout`) — the production
         // wiring the L0/L2 rewrite dropped with `SplitTreeView`, which left `lastSolvedLayout` forever nil
         // and the ⌃⌘arrow / ⌥⌘⇧arrow chords resolving against the store's nominal fallback. View-only state;
-        // never reconciles. Skipped for hidden tabs (only the visible geometry counts) + the static path.
-        .onAppear { reportSolvedLayout(frames, isActive: isActive) }
-        .onChange(of: frames) { _, newFrames in reportSolvedLayout(newFrames, isActive: isActive) }
-        .onChange(of: isActive) { _, nowActive in reportSolvedLayout(frames, isActive: nowActive) }
+        // never reconciles. Gated on the GLOBAL active tab (the keyboard ops' target), not merely shown —
+        // the OTHER column's displayed-but-unfocused tab must not overwrite the focus geometry. Skipped for
+        // hidden tabs + the static path.
+        .onAppear { reportSolvedLayout(frames, isShown: isShown, tabID: tab.id) }
+        .onChange(of: frames) { _, newFrames in reportSolvedLayout(newFrames, isShown: isShown, tabID: tab.id) }
+        .onChange(of: isShown) { _, nowShown in reportSolvedLayout(frames, isShown: nowShown, tabID: tab.id) }
+        .onChange(of: activeTabID) { _, _ in reportSolvedLayout(frames, isShown: isShown, tabID: tab.id) }
     }
 
-    /// Forwards the active tab's solved frames to `store.updateSolvedLayout` (a hidden tab / the static
-    /// snapshot path never reports — the store must only ever hold the geometry the user actually sees).
-    private func reportSolvedLayout(_ frames: [PaneID: CGRect], isActive: Bool) {
-        guard isActive, !staticMirror, !frames.isEmpty else { return }
+    /// Forwards the GLOBAL active tab's solved frames to `store.updateSolvedLayout` (a hidden tab, the
+    /// other column's unfocused tab, or the static snapshot path never reports — the store must only ever
+    /// hold the geometry keyboard focus ops act on).
+    private func reportSolvedLayout(_ frames: [PaneID: CGRect], isShown: Bool, tabID: TabID) {
+        guard isShown, tabID == activeTabID, !staticMirror, !frames.isEmpty else { return }
         store.updateSolvedLayout(SolvedLayout(frames: frames))
     }
 

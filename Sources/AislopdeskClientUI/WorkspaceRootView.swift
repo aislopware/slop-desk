@@ -72,6 +72,10 @@ public struct WorkspaceRootView: View {
     /// `store.sidebarCollapsed` (which nothing reads on macOS). `nil` (the default / iOS / tests) is a no-op. A
     /// plain closure keeps `WorkspaceKeyDispatcher` internal (no public-API widening).
     private let installSidebarToggle: ((@escaping () -> Void) -> Void)?
+    /// Installs the remote-windows-column toggle (⌘⇧E) on the app-level keybinding dispatcher — the
+    /// TabSide partition twin of `installSidebarToggle`, wired to `chrome.toggleWindowsPanel()` on appear.
+    /// `nil` (the default / iOS / tests) is a no-op.
+    private let installWindowsToggle: ((@escaping () -> Void) -> Void)?
     /// Installs the "Pin Window" toggle on the app-level keybinding dispatcher (same late-wiring story as
     /// `installSidebarToggle`): on appear the root view hands it `chrome.togglePin` so a user-bound chord for
     /// the chord-less `.pinWindow` action routes through the SAME NSEvent monitor. `nil` (the default / iOS /
@@ -87,6 +91,7 @@ public struct WorkspaceRootView: View {
         overlay: OverlayCoordinator,
         chrome: WorkspaceChromeState,
         installSidebarToggle: ((@escaping () -> Void) -> Void)? = nil,
+        installWindowsToggle: ((@escaping () -> Void) -> Void)? = nil,
         installPinToggle: ((@escaping () -> Void) -> Void)? = nil,
     ) {
         self.store = store
@@ -94,6 +99,7 @@ public struct WorkspaceRootView: View {
         self.overlay = overlay
         self.chrome = chrome
         self.installSidebarToggle = installSidebarToggle
+        self.installWindowsToggle = installWindowsToggle
         self.installPinToggle = installPinToggle
     }
 
@@ -115,6 +121,10 @@ public struct WorkspaceRootView: View {
     /// `.onChange(of: activeTabCount)` observer fires the policy on a tab open/close TRANSITION, never on every
     /// render — so a manual ⌘⇧L is never fought.
     private var activeTabCount: Int { store.tree.activeSession?.tabs.count ?? 0 }
+
+    /// TabSide partition: the active session's GUI (remote-window) tab count — the right column's
+    /// auto-reveal input (reveal on 0→>0, collapse on >0→0; a manual ⌘⇧E wins within a regime).
+    private var guiTabCount: Int { store.tabCount(on: .gui) }
 
     public var body: some View {
         #if os(macOS)
@@ -154,6 +164,12 @@ public struct WorkspaceRootView: View {
         // is safe (the first application reads as a regime edge and actuates).
         .onChange(of: activeTabCount, initial: true) { applyAutoHidePolicy() }
         .onChange(of: autoHideTabsPanel) { applyAutoHidePolicy() }
+        // TabSide partition: auto-reveal the right remote-windows column when a GUI tab appears and
+        // re-collapse when the last one closes (0↔>0 edges re-assert + clear a manual ⌘⇧E override;
+        // within a regime the manual choice is honored — the sidebar auto-hide discipline, mirrored).
+        .onChange(of: guiTabCount, initial: true) {
+            Self.applyGuiAutoReveal(guiTabCount: guiTabCount, chrome: chrome)
+        }
         #else
         NavigationSplitView(
             columnVisibility: sidebarColumnVisibility,
@@ -212,10 +228,13 @@ public struct WorkspaceRootView: View {
     /// read, so each NSEvent chord and the matching titlebar button flip ONE flag.
     private func wireChromeToggles() {
         installSidebarToggle? { [chrome] in chrome.toggleSidebar() }
+        // TabSide partition: ⌘⇧E (Toggle Windows Panel) — the right column's twin of the sidebar wiring.
+        installWindowsToggle? { [chrome] in chrome.toggleWindowsPanel() }
         // Route the palette's chrome-toggle row through the SAME live `chrome` the chord + titlebar drive,
         // so "Toggle Tabs Panel" from the palette flips the flag the split + the ✓ read
         // (not the dead `store.sidebarCollapsed`). Bound here because `chrome` predates the app-built overlay.
         overlay.toggleSidebar = { [chrome] in chrome.toggleSidebar() }
+        overlay.toggleWindowsPanel = { [chrome] in chrome.toggleWindowsPanel() }
         // E19 WI-4 (Pin Window): route the palette / any command surface AND a user-bound chord (chord-less by
         // default) to the SAME live `chrome.pinned` the menu Button + the macOS `NSWindow.level` glue read.
         overlay.togglePinWindow = { [chrome] in chrome.togglePin() }
@@ -324,6 +343,26 @@ public struct WorkspaceRootView: View {
         }
     }
 
+    /// TabSide partition: the GUI column's auto-reveal policy. `desired collapsed = (guiTabCount == 0)`
+    /// — the column shows exactly while there is something to show. Actuation is gated on the 0↔>0
+    /// regime EDGE (the first application, or a flip of `desired`): ON an edge the auto opinion wins and
+    /// any manual ⌘⇧E override is cleared; WITHIN a regime (another GUI tab opened/closed without
+    /// crossing zero) a manual toggle is honored and never fought. Static + pure over the chrome model so
+    /// the contract is unit-tested without a live split (mirrors ``applyAutoHide(mode:tabCount:chrome:)``).
+    static func applyGuiAutoReveal(guiTabCount: Int, chrome: WorkspaceChromeState) {
+        let desired = guiTabCount == 0
+        let isRegimeEdge = chrome.lastAutoGuiCollapsed != desired
+        chrome.lastAutoGuiCollapsed = desired
+        if isRegimeEdge {
+            chrome.manualGuiOverride = false
+        } else if chrome.manualGuiOverride {
+            return
+        }
+        if chrome.guiCollapsed != desired {
+            chrome.guiCollapsed = desired
+        }
+    }
+
     /// Thin view-side glue over the static, unit-tested ``applyAutoHide(mode:tabCount:chrome:)`` — read the live
     /// inputs (the `@Default` mode + the active session's tab count) and actuate. Called from the `.onChange`
     /// observers on both shells so the view body stays declarative and the tested unit stays the policy.
@@ -402,12 +441,13 @@ struct WorkspaceSplitRepresentable: NSViewControllerRepresentable {
         AislopdeskSplitViewController(
             store: store, connection: connection, chrome: chrome, preferences: preferences,
             onConnect: { [overlay] in overlay.openConnect() },
+            onOpenRemotePicker: { [overlay] in overlay.openRemotePicker() },
         )
     }
 
     func updateNSViewController(_ controller: AislopdeskSplitViewController, context _: Context) {
-        // Reading the @Observable flag here ties this update to its changes; apply it to the item.
-        controller.applyCollapse(sidebarCollapsed: chrome.sidebarCollapsed)
+        // Reading the @Observable flags here ties this update to their changes; apply them to the items.
+        controller.applyCollapse(sidebarCollapsed: chrome.sidebarCollapsed, guiCollapsed: chrome.guiCollapsed)
     }
 }
 #endif

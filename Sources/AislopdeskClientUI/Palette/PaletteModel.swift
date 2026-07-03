@@ -102,6 +102,11 @@ public enum PaletteAction: Sendable {
     /// the legacy `store.sidebarCollapsed` the native shell never reads. Same live flag the ⌘⇧L chord + the
     /// titlebar button drive, so the run path, the chord, the button, and the ✓ stay in lockstep.
     case toggleSidebar
+    /// TabSide partition: toggle the RIGHT remote-windows column (GUI tabs + the window dock) — routed by
+    /// the overlay coordinator to the injected ``OverlayCoordinator/toggleWindowsPanel`` closure (bound to
+    /// the live ``WorkspaceChromeState`` `guiCollapsed` flag the ⌘⇧E chord drives), so the run path, the
+    /// chord, and the ✓ gutter stay in lockstep. Mirrors ``toggleSidebar`` exactly.
+    case toggleWindowsPanel
     /// E19 WI-4: toggle "Pin Window" (keep the window floating above all other apps).
     /// Routed by the overlay coordinator to the injected ``OverlayCoordinator/togglePinWindow`` closure (bound
     /// to the SAME live ``WorkspaceChromeState`` `pinned` flag the menu Button + the `NSWindow.level` glue

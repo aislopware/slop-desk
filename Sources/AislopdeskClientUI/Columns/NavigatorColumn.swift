@@ -183,7 +183,9 @@ struct NavigatorColumn: View {
     /// sections. Paints its own warm background (the host `NSSplitViewItem` is a plain item, so there is no
     /// native vibrancy/rounding).
     private var macSidebar: some View {
-        let allRows = RailRowsBuilder.rows(for: store)
+        // TabSide partition: the sidebar is the TERMINAL column's tab list — remote-window tabs live in
+        // the right GUI column (its dock strip), so their rows never render here.
+        let allRows = RailRowsBuilder.rows(for: store, side: .terminal)
         let sections = buildSections(allRows, query: query)
         return VStack(alignment: .leading, spacing: 0) {
             Color.clear.frame(height: 40) // reserve the titlebar / traffic-light strip

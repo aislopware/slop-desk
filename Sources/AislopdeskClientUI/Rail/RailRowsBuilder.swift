@@ -57,8 +57,14 @@ enum RailRowsBuilder {
     /// Build the rail rows for the active session. One row per pane of each tab,
     /// in tab order then pre-order pane order. `selected` = the tab is active AND the pane is that tab's
     /// active pane. Agent status comes from the store's per-pane mirror (`.none` ⇒ plain terminal).
+    ///
+    /// `side` scopes the rail to ONE column of the TabSide partition: the macOS sidebar passes
+    /// `.terminal` (the left column lists terminal tabs only — remote-window tabs live in the right
+    /// column's dock); `nil` (iOS, which keeps the single-region shell) lists every tab. The row's
+    /// `tabNumber` is the 1-based ordinal WITHIN the tab's side, matching the side-scoped ⌘1…⌘9
+    /// (`WorkspaceStore/selectTabNumber(_:)` counts terminal tabs the same way).
     @MainActor
-    static func rows(for store: WorkspaceStore) -> [RailRow] {
+    static func rows(for store: WorkspaceStore, side: TabSide? = nil) -> [RailRow] {
         guard let session = store.tree.activeSession else { return [] }
         // FIX 1: observe the flash-decay tick so the rail re-renders ONCE at the completion flash-window
         // boundary. `completionFreshness(forPane:)` below reads the wall clock at build time (NOT an
@@ -68,7 +74,13 @@ enum RailRowsBuilder {
         _ = store.completionFlashTick
         let activeTabIndex = session.activeTabIndex
         var out: [RailRow] = []
+        // Per-side ordinal counters (the rendered numbering skips the OTHER side's tabs).
+        var sideOrdinals: [TabSide: Int] = [:]
         for (tabIndex, tab) in session.tabs.enumerated() {
+            let tabSide = session.side(ofTab: tab)
+            let ordinal = (sideOrdinals[tabSide] ?? 0) + 1
+            sideOrdinals[tabSide] = ordinal
+            if let side, tabSide != side { continue }
             let tabIsActive = tabIndex == activeTabIndex
             // E20 ES-E20-3: a MANUAL `tab badge --kind` override (if any) is rendered on the tab's
             // REPRESENTATIVE (active) pane row — the badge is per-tab, so it lands on the one row that
@@ -127,7 +139,7 @@ enum RailRowsBuilder {
                     title: title,
                     subtitle: subtitle,
                     status: status,
-                    tabNumber: tabIndex + 1,
+                    tabNumber: ordinal,
                     badge: badge,
                     processLabel: processLabel,
                     readOnly: store.isReadOnly(for: paneID),
