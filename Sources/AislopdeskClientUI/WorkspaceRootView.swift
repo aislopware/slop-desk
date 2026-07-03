@@ -184,6 +184,16 @@ public struct WorkspaceRootView: View {
         } detail: {
             macDetail
         }
+        // Side-by-side columns (not the Tahoe detail-under-sidebar float): the sidebar should read as a
+        // column of the SAME window as the terminal, not a detached glass card hovering over it.
+        .navigationSplitViewStyle(.balanced)
+        // The WORKSPACE window resolves its appearance from the CANVAS theme's lightness — this is NOT the
+        // old chrome-token pin (chrome stays native semantic colors/materials); it only picks WHICH native
+        // appearance they resolve in. Without it a light-mode OS renders light glass chrome around the
+        // dark Monokai canvas — a jarring split-brain window (user-rejected). Settings/first-launch stay
+        // on the system appearance (separate scenes). Reading the @Observable theme registers observation,
+        // so a live theme switch re-resolves.
+        .preferredColorScheme(ThemeStore.shared.active.isLight ? .light : .dark)
         .navigationTitle(activeTitle)
         .toolbar { macToolbar }
         // The floating-overlay layer (palette / cheat sheet / connect / remote-window picker / toasts).
@@ -236,6 +246,9 @@ public struct WorkspaceRootView: View {
         } detail: {
             ContentColumn(store: store, connection: connection, chrome: chrome)
         }
+        // Match the macOS shell: the workspace window's appearance follows the CANVAS theme's lightness
+        // (native chrome, resolved in the canvas's appearance — never light glass around a dark terminal).
+        .preferredColorScheme(ThemeStore.shared.active.isLight ? .light : .dark)
         .toolbar { iosToolbar }
         // The floating-overlay layer mounts on iOS too (palette / connect / remote-window picker / toasts read
         // as a ZStack overlay on both platforms). The ✓ gutter tracks the live chrome + the active pane's

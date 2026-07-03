@@ -75,7 +75,10 @@ struct NavigatorColumn: View {
             }
         }
         .listStyle(.sidebar)
-        .searchable(text: $query, prompt: "Search tabs")
+        // `.sidebar` placement pins the field at the TOP OF THE SIDEBAR column (the System-Settings
+        // idiom) — the default placement floated it into the window toolbar's trailing edge, where it
+        // ate half the unified toolbar.
+        .searchable(text: $query, placement: .sidebar, prompt: "Search tabs")
         .toolbar { navToolbar }
     }
 
