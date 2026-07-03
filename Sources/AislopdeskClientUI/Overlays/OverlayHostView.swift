@@ -57,12 +57,12 @@ struct OverlayHostView: View {
             .overlay(alignment: .bottomLeading) {
                 if coordinator.prefixArmed {
                     PrefixArmedChip(glyph: WorkspaceBindingRegistry.glyph(store.workspaceKeyPrefix))
-                        .padding(Slate.Metric.space4)
+                        .padding(16)
                         .allowsHitTesting(false)
                         .transition(.opacity)
                 }
             }
-            .animation(Slate.Anim.smallFade, value: coordinator.prefixArmed)
+            .animation(.easeOut(duration: 0.12), value: coordinator.prefixArmed)
             // C8 improvement 3: the durable connection indicator — a compact amber/red chip shown at the
             // bottom ONLY while the tabs panel is collapsed AND some pane is unhealthy. With the sidebar hidden
             // a dropped/reconnecting pane otherwise has no per-pane surface; clicking the chip focuses the worst
@@ -70,11 +70,11 @@ struct OverlayHostView: View {
             .overlay(alignment: .bottom) {
                 if sidebarCollapsed, let alert = connectionAlert {
                     ConnectionAlertChip(alert: alert) { store.focusPaneTree(alert.worstPane) }
-                        .padding(Slate.Metric.space4)
+                        .padding(16)
                         .transition(.opacity)
                 }
             }
-            .animation(Slate.Anim.smallFade, value: connectionAlert)
+            .animation(.easeOut(duration: 0.12), value: connectionAlert)
             .sheet(item: activeSheetBinding) { sheet in
                 // System accent inside the sheet too (a sheet roots a fresh environment, so reset the tint on the
                 // presented content directly — not only on the presenter below — to be order-independent).
@@ -239,27 +239,27 @@ struct OverlayHostView: View {
 // MARK: - PrefixArmedChip (the minimal "prefix armed" indicator)
 
 /// The tiny keyboard-centric chip shown while the workspace prefix is ARMED: the configured prefix glyph
-/// (e.g. `⌃A`) + the word "prefix" on the shared floating-card shell. Text-minimal by design (no icon zoo,
-/// no panel) — it only answers "did my prefix land?" while the machine awaits the follow-up key. `Slate.*`
-/// tokens only (the ds-leaks ratchet).
+/// (e.g. `⌃A`) + the word "prefix" on the native floating-card shell (system Material + `.separator`
+/// hairline). Text-minimal by design (no icon zoo, no panel) — it only answers "did my prefix land?" while
+/// the machine awaits the follow-up key.
 private struct PrefixArmedChip: View {
     let glyph: String
 
     var body: some View {
-        HStack(spacing: Slate.Metric.space1) {
+        HStack(spacing: 4) {
             Text(glyph)
-                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                .foregroundStyle(Slate.State.accent)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
             Text("prefix")
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, Slate.Metric.space2)
-        .padding(.vertical, Slate.Metric.space1)
-        .background(Slate.Surface.card, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(.regularMaterial, in: .rect(cornerRadius: 6))
         .overlay(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                .strokeBorder(Slate.Line.subtle, lineWidth: 1),
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(.separator, lineWidth: 1),
         )
         .accessibilityLabel("Prefix armed")
     }
@@ -270,27 +270,27 @@ private struct PrefixArmedChip: View {
 /// The compact connection-health chip (C8 improvement 3): an amber/red status dot + a count label
 /// ("1 reconnecting" / "2 disconnected") shown at the bottom while the tabs panel is collapsed and some pane
 /// is unhealthy. A `Button` (unlike the non-interactive prefix chip) so a click focuses the worst-affected
-/// pane. `Slate.*` tokens only (the ds-leaks ratchet); the dot colour reuses the shared status roles.
+/// pane. Native styling (system Material + `.separator` hairline); the dot reuses the system status colours.
 private struct ConnectionAlertChip: View {
     let alert: WorkspaceConnectionAlert
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: Slate.Metric.space1) {
+            HStack(spacing: 4) {
                 Circle()
                     .fill(Self.tint(for: alert.worst))
                     .frame(width: 7, height: 7)
                 Text(alert.label)
-                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, Slate.Metric.space2)
-            .padding(.vertical, Slate.Metric.space1)
-            .background(Slate.Surface.card, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.regularMaterial, in: .rect(cornerRadius: 6))
             .overlay(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                    .strokeBorder(Slate.Line.subtle, lineWidth: 1),
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(.separator, lineWidth: 1),
             )
         }
         .buttonStyle(.plain)
@@ -302,9 +302,9 @@ private struct ConnectionAlertChip: View {
     /// the same status roles the toolbar connection pill (`StatusPresentation`) uses.
     private static func tint(for severity: WorkspaceConnectionAlert.Severity) -> Color {
         switch severity {
-        case .reconnecting: Slate.Status.warn
+        case .reconnecting: .orange
         case .failed,
-             .unreachable: Slate.Status.err
+             .unreachable: .red
         }
     }
 }

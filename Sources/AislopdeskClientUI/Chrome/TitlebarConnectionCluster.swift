@@ -50,32 +50,32 @@ struct TitlebarConnectionCluster: View {
     }
 
     var body: some View {
-        HStack(spacing: Slate.Metric.space1) {
+        HStack(spacing: 4) {
             Button(action: onConnect) {
-                HStack(spacing: Slate.Metric.space2) {
+                HStack(spacing: 8) {
                     SlateStatusDot(
                         color: StatusPresentation.connectionColor(status),
                         glowKey: StatusPresentation.connectionLabel(status),
                     )
                     Text(host)
-                        .font(.system(size: Slate.Typeface.base))
-                        .foregroundStyle(hover ? Slate.Text.primary : Slate.Text.secondary)
+                        .font(.callout)
+                        .foregroundStyle(hover ? Color.primary : Color.secondary)
                         .lineLimit(1).truncationMode(.middle)
                     if let trailing {
                         Text(trailing.text)
-                            .font(.system(size: Slate.Typeface.footnote).monospacedDigit())
-                            .foregroundStyle(trailing.isMetric ? Slate.Text.tertiary : Slate.Text.secondary)
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(trailing.isMetric ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
                             .lineLimit(1)
                     }
                 }
-                .padding(.horizontal, Slate.Metric.space2)
+                .padding(.horizontal, 8)
                 .frame(height: 24)
-                .background(hover ? Slate.State.hover : .clear, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+                .background(hover ? Color.primary.opacity(0.08) : .clear, in: .rect(cornerRadius: 6))
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
             .onHover { hover = $0 }
-            .animation(Slate.Anim.smallFade, value: hover)
+            .animation(.easeOut(duration: 0.12), value: hover)
             .help(StatusPresentation.connectionHelp(host: host, status: status))
             .accessibilityElement(children: .combine)
             .accessibilityLabel(StatusPresentation.connectionHelp(host: host, status: status))
@@ -85,8 +85,8 @@ struct TitlebarConnectionCluster: View {
             if StatusPresentation.showsRetry(status) {
                 Button { Task { await connection.retry() } } label: {
                     Image(systemSymbol: .arrowClockwise)
-                        .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                        .foregroundStyle(Slate.Text.secondary)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
                         .frame(width: 24, height: 24)
                         .contentShape(.rect)
                 }

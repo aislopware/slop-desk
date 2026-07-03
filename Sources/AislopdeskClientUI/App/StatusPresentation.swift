@@ -10,8 +10,8 @@ import AislopdeskAgentDetect
 import AislopdeskWorkspaceCore
 import SwiftUI
 
-// `@MainActor` because the colour mappers read the runtime ``Slate/theme`` (D3) — every call site is a
-// SwiftUI view body, all MainActor.
+// `@MainActor` — every call site is a SwiftUI view body (all MainActor); kept so the annotation can't
+// churn call sites even though the system-color mappers below are theme-independent.
 @MainActor
 enum StatusPresentation {
     // MARK: Connection
@@ -21,15 +21,15 @@ enum StatusPresentation {
         ConnectionPresenter.shortLabel(for: status)
     }
 
-    /// The status-dot colour — cohesive on the active theme.
+    /// The status-dot colour — system status colors (adaptive light/dark).
     static func connectionColor(_ status: ConnectionStatus) -> Color {
         switch status {
-        case .connected: Slate.Status.ok
+        case .connected: .green
         case .connecting,
-             .reconnecting: Slate.Status.warn
+             .reconnecting: .orange
         case .failed,
-             .unreachable: Slate.Status.err
-        case .disconnected: Slate.Text.secondary
+             .unreachable: .red
+        case .disconnected: .secondary
         }
     }
 
@@ -63,11 +63,11 @@ enum StatusPresentation {
     /// Tint for an agent status (docs/42 glyph palette: idle🟢 working🟡 done🔵 needs🔴).
     static func agentTint(_ status: ClaudeStatus) -> Color {
         switch status {
-        case .none: Slate.Text.secondary
-        case .idle: Slate.Status.ok
-        case .working: Slate.Status.warn
-        case .done: Slate.Status.info
-        case .needsPermission: Slate.Status.err
+        case .none: .secondary
+        case .idle: .green
+        case .working: .orange
+        case .done: .blue
+        case .needsPermission: .red
         }
     }
 
@@ -86,12 +86,12 @@ enum StatusPresentation {
     static func tabBadge(_ kind: TabBadgeKind) -> TabBadgeStyle {
         switch kind {
         case .running: .spinner
-        case .completed: .symbol(name: "checkmark.circle.fill", tint: Slate.Status.ok)
-        case .finished: .dot(Slate.Status.ok)
-        case .error: .symbol(name: "exclamationmark.triangle.fill", tint: Slate.Status.err)
-        case .awaitingInput: .symbol(name: "hand.raised.fill", tint: Slate.Status.warn)
-        case .caffeinate: .symbol(name: "cup.and.saucer.fill", tint: Slate.Text.secondary)
-        case .sudo: .symbol(name: "shield.lefthalf.filled", tint: Slate.Text.secondary)
+        case .completed: .symbol(name: "checkmark.circle.fill", tint: .green)
+        case .finished: .dot(.green)
+        case .error: .symbol(name: "exclamationmark.triangle.fill", tint: .red)
+        case .awaitingInput: .symbol(name: "hand.raised.fill", tint: .orange)
+        case .caffeinate: .symbol(name: "cup.and.saucer.fill", tint: .secondary)
+        case .sudo: .symbol(name: "shield.lefthalf.filled", tint: .secondary)
         }
     }
 

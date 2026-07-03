@@ -7,13 +7,12 @@
 // store's `didSet` apply-paths do the rest (terminal live-reload, env overlay + sidecar, theme repoint,
 // keybinding republish).
 //
-// LAYOUT: Settings is a TWO-COLUMN window — a left NAVIGATOR column with a rounded SEARCH PILL pinned at the
+// LAYOUT: Settings is a TWO-COLUMN window — a left NAVIGATOR column with a search field pinned at the
 // top and a vertical icon+label section list, and a content column on the right
 // (`docs/ui-shell/screenshots/{all-settings,launch-option,editor-settings,cursor-style}.png`). This view
-// reproduces that with a flat two-column `HStack` (NOT a macOS `TabView` top tab strip): a fixed-width
-// `Slate.Surface.sidebar` navigator (`settingsSidebarWidth`) holding `SettingsSidebarSearchField` + the
-// `SettingsSidebarRow` list, a hairline divider, and the selected section's `Form` on the right. The sidebar
-// search pill (which SECTION ROWS show) is DISTINCT from the Advanced → All-Settings content search (which
+// reproduces that NATIVELY (native-chrome migration): a `NavigationSplitView` with a system
+// `List(selection:)` sidebar + `.searchable`, and the selected section's `Form` as the detail. The sidebar
+// search (which SECTION ROWS show) is DISTINCT from the Advanced → All-Settings content search (which
 // config KEYS show) — both searches are surfaced side by side.
 //
 // E7 reorg: the old 5-tab strip (General / Terminal / Video / Keybindings / Advanced) is reshaped into an
@@ -42,7 +41,8 @@
 // connection). Terminal + appearance + keybindings + the fire-time toggles are live; the video/agent HOST
 // flags are reconnect-only; SYMMETRIC keys (FEC) additionally carry a "set on both ends" warning.
 //
-// Slate.* tokens only (raw font/radius literals fail `scripts/check-ds-leaks.sh`).
+// NATIVE styling (native-chrome migration, 2026-07-03): system semantic colors / text styles / spacing
+// literals — the Slate token layer is retiring from Settings chrome.
 
 #if canImport(SwiftUI)
 import AislopdeskCLICore
@@ -84,10 +84,10 @@ public struct AislopdeskSettingsScene: Scene {
         Settings {
             SettingsView(store: store)
                 .agentHooksController(agentHooks)
-                // Settings is native chrome → SYSTEM accent (not the theme accent) so its toggles / steppers /
-                // radio rows read as native System-Settings controls; appearance still tracks the theme below.
+                // Settings is native chrome → SYSTEM accent (not the theme accent) and SYSTEM appearance —
+                // no `preferredColorScheme` pin, so the window follows the OS light/dark mode exactly like
+                // macOS System Settings (the terminal theme styles the workspace, not this window).
                 .tint(nil)
-                .preferredColorScheme(Slate.colorScheme)
         }
     }
 }
@@ -183,23 +183,23 @@ enum ApplyTiming {
     }
 }
 
-/// A small inline timing chip (symbol + label). The tint reads the `@MainActor` `Slate.Status` tokens in
-/// the view body (not on the nonisolated enum).
+/// A small inline timing chip (symbol + label). The tint is a system status color resolved in the view body
+/// (not on the nonisolated enum).
 private struct TimingChip: View {
     let timing: ApplyTiming
     var body: some View {
-        HStack(spacing: Slate.Metric.space1) {
+        HStack(spacing: 4) {
             Image(systemName: timing.symbol)
             Text(timing.label)
         }
-        .font(.system(size: Slate.Typeface.small))
+        .font(.caption)
         .foregroundStyle(tint)
     }
 
     private var tint: Color {
         switch timing {
-        case .live: Slate.Status.ok
-        case .reconnect: Slate.Status.warn
+        case .live: .green
+        case .reconnect: .orange
         }
     }
 }
@@ -226,9 +226,8 @@ struct SettingsView: View {
         // NATIVE macOS settings chrome (issue 1: "settings layout/component đang không native"): a native
         // `NavigationSplitView` with a system `List(selection:)` sidebar + native `.searchable`, and the
         // already-native `Form`-based section content as the detail — instead of the bespoke two-column
-        // `HStack` + custom `SettingsSidebarRow` buttons. The window appearance is pinned to the active theme
-        // (light/dark) so the native controls render consistently with the workspace (the scene also applies
-        // `.preferredColorScheme(Slate.colorScheme)`).
+        // `HStack` + custom `SettingsSidebarRow` buttons. The window follows the SYSTEM appearance (no theme
+        // pin — System Settings behavior), so the native controls always match the OS light/dark mode.
         NavigationSplitView {
             List(selection: selectionBinding) {
                 ForEach(filteredSections) { section in
@@ -237,7 +236,7 @@ struct SettingsView: View {
                 }
             }
             .navigationSplitViewColumnWidth(
-                min: 200, ideal: Slate.Metric.settingsSidebarWidth, max: 320,
+                min: 200, ideal: 260, max: 320,
             )
             .searchable(text: $sidebarQuery, placement: .sidebar, prompt: "Search")
             // A Settings window has a FIXED navigator (like macOS System Settings) — drop the toolbar
@@ -249,11 +248,6 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(minWidth: 720, minHeight: 480)
-        #if os(macOS)
-            // Pin the Settings NSWindow to the theme appearance (macOS only — iOS has no NSWindow; its settings
-            // surface is the separate `SettingsSheet`, which adopts `.preferredColorScheme` directly).
-            .background { SettingsWindowAppearancePinner(isLight: Slate.theme.isLight) }
-        #endif
     }
 
     /// Bridges the non-optional ``selectedSection`` to the optional selection a `List` single-selection binding
@@ -276,23 +270,6 @@ struct SettingsView: View {
         SettingsSectionContent(section: section, store: store, selectedSection: $selectedSection)
     }
 }
-
-// MARK: - Settings window appearance pin
-
-#if os(macOS)
-/// Pins the Settings `NSWindow`'s appearance to the active Slate theme (light/dark), so the native settings
-/// chrome + any AppKit-hosted control renders consistently with the workspace — not the OS default. `isLight`
-/// is passed IN (read from `Slate.theme.isLight` in `SettingsView.body`), so a LIVE theme switch re-renders the
-/// view → re-runs `updateNSView` → re-pins, with NO `NotificationCenter` observer to leak. The scene's
-/// `.preferredColorScheme(Slate.colorScheme)` covers the pure-SwiftUI side; this covers the window itself.
-private struct SettingsWindowAppearancePinner: NSViewRepresentable {
-    let isLight: Bool
-    func makeNSView(context _: Context) -> NSView { NSView() }
-    func updateNSView(_ nsView: NSView, context _: Context) {
-        nsView.window?.appearance = NSAppearance(named: isLight ? .aqua : .darkAqua)
-    }
-}
-#endif
 
 // MARK: - Shared per-section content (one dispatch for the macOS navigator + the iOS sheet)
 
@@ -433,7 +410,7 @@ private struct GeneralSettingsTab: View {
                 "Handle `ssh://` links and shell scripts opened from Finder or `open`.",
             ) {
                 if isDefaultTerminal {
-                    Label("Default", systemImage: "checkmark").foregroundStyle(Slate.Status.ok)
+                    Label("Default", systemImage: "checkmark").foregroundStyle(.green)
                 } else {
                     Button("Set as Default Terminal") {
                         Task {
@@ -450,7 +427,7 @@ private struct GeneralSettingsTab: View {
                     + "editor — an editor on the remote host needs a host-side agent, so this is unavailable "
                     + "in the remote model.",
             ) {
-                Text("Unavailable").foregroundStyle(Slate.Text.tertiary)
+                Text("Unavailable").foregroundStyle(.tertiary)
             }
             osIntegrationRow(
                 "Finder Integration",
@@ -481,11 +458,11 @@ private struct GeneralSettingsTab: View {
         LabeledContent {
             trailing()
         } label: {
-            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                 Text(subtitle)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -702,12 +679,12 @@ private struct ShellSettingsTab: View {
 
     /// The row label layout: a bold title with an optional gray subtext beneath.
     private func rowLabel(_ title: String, _ subtitle: String?) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
             if let subtitle, !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -749,15 +726,15 @@ private struct NotificationPermissionRow: View {
             Button("Open System Settings", action: openSystemSettings)
                 .controlSize(.small)
         } label: {
-            HStack(spacing: Slate.Metric.space2) {
+            HStack(spacing: 8) {
                 Circle()
                     .fill(dotColor)
                     .frame(width: 8, height: 8)
-                VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("System Permission")
                     Text(dotSubtitle)
-                        .font(.system(size: Slate.Typeface.footnote))
-                        .foregroundStyle(Slate.Text.secondary)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -767,9 +744,9 @@ private struct NotificationPermissionRow: View {
 
     private var dotColor: Color {
         switch dot {
-        case .green: Slate.Status.ok
-        case .amber: Slate.Status.warn
-        case .red: Slate.Status.err
+        case .green: .green
+        case .amber: .orange
+        case .red: .red
         }
     }
 
@@ -1003,10 +980,10 @@ private struct ControlsSettingsTab: View {
                 isOn: $smoothScroll,
             )
             LabeledContent("Scroll multiplier") {
-                HStack(spacing: Slate.Metric.space2) {
+                HStack(spacing: 8) {
                     Slider(value: refreshing($scrollMultiplier), in: 0.25...5, step: 0.25)
                     Text(String(format: "%.2f×", scrollMultiplier))
-                        .foregroundStyle(Slate.Text.secondary)
+                        .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
             }
@@ -1112,8 +1089,8 @@ private struct ControlsSettingsTab: View {
                     + "panes are not available here — paths reveal or open on the host and URLs open in your "
                     + "client browser.",
             )
-            .font(.system(size: Slate.Typeface.footnote))
-            .foregroundStyle(Slate.Text.secondary)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
             timingFooter(.live)
         }
     }
@@ -1133,14 +1110,14 @@ private struct ControlsSettingsTab: View {
                 Text("Custom").tag(AutoDetectLinkSchemes.custom)
             }
             if autoDetectLinkSchemes == .custom {
-                VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+                VStack(alignment: .leading, spacing: 4) {
                     rowLabel(
                         "Custom Link Schemes",
                         "Comma-separated extra schemes to additionally detect (e.g. codex, ssh, vscode).",
                     )
                     TextField("codex, ssh, vscode", text: customSchemesText)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: Slate.Typeface.body, design: .monospaced))
+                        .font(.body.monospaced())
                 }
             }
             timingFooter(.live)
@@ -1215,12 +1192,12 @@ private struct ControlsSettingsTab: View {
 
     /// The row label layout: a bold title with an optional gray subtext beneath.
     private func rowLabel(_ title: String, _ subtitle: String?) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
             if let subtitle, !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -1243,15 +1220,15 @@ private struct EditorSettingsTab: View {
             slateFormSection("Editor") {
                 LabeledContent("File editor") {
                     Text("Not available")
-                        .foregroundStyle(Slate.Text.tertiary)
+                        .foregroundStyle(.tertiary)
                 }
                 Text(
                     "Editor settings (Soft Wrap, Line Numbers, Tab Size, …) configure a built-in file editor, "
                         + "which aislopdesk does not have yet. Terminal font, cursor, and scrollback live under "
                         + "Appearance and Controls.",
                 )
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -1497,8 +1474,8 @@ private struct AppearanceSettingsTab: View {
                 Stepper("Height: \(windowHeightPx) px", value: $windowHeightPx, in: 64...16384, step: 50)
             }
             Text("Applied to the next window opened.")
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
     }
     #endif
@@ -1524,12 +1501,12 @@ private struct AppearanceSettingsTab: View {
 
     /// The row label layout: a bold title with an optional gray subtext beneath.
     private func rowLabel(_ title: String, _ subtitle: String?) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
             if let subtitle, !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -1605,8 +1582,8 @@ private struct AgentsSettingsTab: View {
             Toggle("Notify When Awaiting Input", isOn: $agentNotifyAwaitInput)
             if !behaviorEnabled {
                 Text("Install an integration above to configure agent behaviour.")
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.tertiary)
+                    .font(.subheadline)
+                    .foregroundStyle(.tertiary)
             }
             timingFooter(.live)
         }
@@ -1647,8 +1624,8 @@ private struct AgentsSettingsTab: View {
 
             if state == .disconnected || state == .unknown {
                 Text("Connect a session to manage hooks")
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.tertiary)
+                    .font(.subheadline)
+                    .foregroundStyle(.tertiary)
             }
 
             // Queue-safety cluster (2026-07-02): installed-but-INACTIVE — the hooks are in
@@ -1661,8 +1638,8 @@ private struct AgentsSettingsTab: View {
                         + "AISLOPDESK_AGENT_HOOKS=1 (or enable the “Claude Code hooks” toggle below and "
                         + "relaunch it), then open new panes.",
                 )
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Status.warn)
+                .font(.subheadline)
+                .foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -1670,8 +1647,8 @@ private struct AgentsSettingsTab: View {
             // next launch — so this is an agent-restart caveat, not a host-reconnect-gated sidecar flag (hence
             // a plain caption, not the `.reconnect` "Applies on reconnect" chip, which would mislead).
             Text("Hooks take effect after the agent restarts.")
-                .font(.system(size: Slate.Typeface.small))
-                .foregroundStyle(Slate.Text.tertiary)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
         }
     }
 
@@ -1679,7 +1656,7 @@ private struct AgentsSettingsTab: View {
     /// flight a small spinner replaces the buttons; while disconnected/unknown the Install button shows
     /// disabled (honest — never a dead-looking enabled button with no backing pane).
     private func installButtons(_ state: AgentHooksController.InstallState) -> some View {
-        HStack(spacing: Slate.Metric.space2) {
+        HStack(spacing: 8) {
             switch state {
             case .installed,
                  .installedInactive: // the entries are on disk either way — Uninstall stays actionable
@@ -1704,29 +1681,29 @@ private struct AgentsSettingsTab: View {
         switch state {
         case .installed:
             Label("Installed", systemImage: "checkmark")
-                .foregroundStyle(Slate.Status.ok)
+                .foregroundStyle(.green)
         case .installedInactive:
             Label("Installed — inactive", systemImage: "exclamationmark.triangle")
-                .foregroundStyle(Slate.Status.warn)
+                .foregroundStyle(.orange)
         case .notInstalled:
-            Text("Not Installed").foregroundStyle(Slate.Text.secondary)
+            Text("Not Installed").foregroundStyle(.secondary)
         case .working:
-            Text("Working…").foregroundStyle(Slate.Text.secondary)
+            Text("Working…").foregroundStyle(.secondary)
         case .disconnected,
              .unknown:
-            Text("—").foregroundStyle(Slate.Text.tertiary)
+            Text("—").foregroundStyle(.tertiary)
         }
     }
 
     /// The row label layout: a bold title with an optional gray subtext beneath (mirrors the Appearance tab's
     /// `rowLabel`, kept local so the Agents card composes without widening that struct's visibility).
     private func rowLabel(_ title: String, _ subtitle: String?) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
             if let subtitle, !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -1822,18 +1799,18 @@ private struct AdvancedSettingsTab: View {
                 Text(
                     "One AISLOPDESK_KEY=value per line. Folded last, so a key here overrides the matching typed setting.",
                 )
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
                 TextEditor(text: $text)
-                    .font(.system(size: Slate.Typeface.footnote, design: .monospaced))
+                    .font(.subheadline.monospaced())
                     .frame(minHeight: 120)
                     .onChange(of: text) { _, new in commit(new) }
-                HStack(spacing: Slate.Metric.space1) {
+                HStack(spacing: 4) {
                     Image(systemSymbol: .infoCircle)
                     Text("A real environment variable set on the process still wins over any value here.")
                 }
-                .font(.system(size: Slate.Typeface.small))
-                .foregroundStyle(Slate.Text.tertiary)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
             }
 
             VideoHostSettingsView(store: store)
@@ -1913,11 +1890,11 @@ private struct AdvancedSettingsTab: View {
 
     /// The row label layout: a bold title with a gray subtext beneath.
     private func privilegeLabel(_ title: String, _ subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
             Text(subtitle)
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -1957,12 +1934,12 @@ private struct AdvancedSettingsTab: View {
                 // `resolvePath(override:nil)` respects `AISLOPDESK_CONFIG_FILE` env override so the
                 // displayed path always matches the file the app actually honours (not just the XDG default).
                 Text(CLIConfig.resolvePath(override: nil))
-                    .font(.system(size: Slate.Typeface.footnote, design: .monospaced))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(.subheadline.monospaced())
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            HStack(spacing: Slate.Metric.space3) {
+            HStack(spacing: 12) {
                 Button("Open Config File") {
                     let path = CLIConfig.resolvePath(override: nil)
                     let url = URL(fileURLWithPath: path)
@@ -2034,12 +2011,12 @@ private struct VideoHostSettingsView: View {
             slateFormSection("Video · Forward Error Correction (symmetric)") {
                 optionalIntStepper("Parity (m)", $store.video.fecM, range: 1...8, default: 1)
                 optionalIntStepper("Group size (k)", $store.video.fecK, range: 1...32, default: 5)
-                HStack(spacing: Slate.Metric.space1) {
+                HStack(spacing: 4) {
                     Image(systemSymbol: .exclamationmarkTriangleFill)
                     Text("FEC must be set IDENTICALLY on both ends or the host and client disagree.")
                 }
-                .font(.system(size: Slate.Typeface.small))
-                .foregroundStyle(Slate.Status.warn)
+                .font(.caption)
+                .foregroundStyle(.orange)
                 timingFooter(.reconnect)
             }
 
@@ -2076,10 +2053,10 @@ private struct VideoHostSettingsView: View {
             if let value = binding.wrappedValue {
                 Stepper("\(value)", value: nonOptional(binding, default: def), in: range)
                     .labelsHidden()
-                Text("\(value)").foregroundStyle(Slate.Text.secondary)
+                Text("\(value)").foregroundStyle(.secondary)
             } else {
-                Text("default").foregroundStyle(Slate.Text.tertiary)
-                    .font(.system(size: Slate.Typeface.footnote))
+                Text("default").foregroundStyle(.tertiary)
+                    .font(.subheadline)
             }
         }
     }
@@ -2087,7 +2064,7 @@ private struct VideoHostSettingsView: View {
     private func optionalDoubleSlider(
         _ title: String, _ binding: Binding<Double?>, range: ClosedRange<Double>, default def: Double,
     ) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+        VStack(alignment: .leading, spacing: 4) {
             Toggle(isOn: setBinding(binding, default: def)) { Text(title) }
                 .toggleStyle(.switch)
             if binding.wrappedValue != nil {

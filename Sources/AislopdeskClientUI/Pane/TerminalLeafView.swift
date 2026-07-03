@@ -96,7 +96,7 @@ struct TerminalLeafView: View {
                 // on the VStack fills the inset gutter, so the pane stays flat (no card). NB this insets the
                 // libghostty surface, so the host PTY grid loses ~1 col/row each side — it reflows through the
                 // existing PaneContainer.size → resize-scrim → host TIOCSWINSZ path, no new signal needed.
-                .padding(Slate.Metric.space2)
+                .padding(8)
             // NO per-pane status strip on a TERMINAL pane (issue: "pane footer cho terminal không có giá trị
             // gì lắm, nên bỏ đi"). The cwd / exit / progress cues are low-value chrome; the host + connection
             // status — the only fields common to EVERY pane — now live ONCE in the sidebar's connection header
@@ -184,7 +184,7 @@ struct TerminalLeafView: View {
         // `showReadOnlyPill` is gated `!copyModeBadgeActive`, so the lock pill steps aside while vi mode owns
         // the slot.
         .overlay(alignment: .topTrailing) {
-            VStack(alignment: .trailing, spacing: Slate.Metric.space2) {
+            VStack(alignment: .trailing, spacing: 8) {
                 if !staticMirror, showViModePill, let model = live?.terminalModel {
                     ViModePill(model: model, onExit: { model.exitCopyMode() })
                         .transition(.move(edge: .top).combined(with: .opacity))
@@ -202,7 +202,7 @@ struct TerminalLeafView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
-            .padding(Slate.Metric.space2)
+            .padding(8)
         }
         // The vi key-hint bar (E17 WI-5) floats along the pane BOTTOM (the vi-mode spec's likely position) when
         // `⌘/` has toggled it on during a vi session — `showViHintBar` gates it on `copyModeBadgeActive` so it
@@ -210,16 +210,16 @@ struct TerminalLeafView: View {
         .overlay(alignment: .bottom) {
             if !staticMirror, showViHintBar {
                 ViKeyHintBar()
-                    .padding(Slate.Metric.space2)
+                    .padding(8)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(Slate.Anim.reveal, value: findBar.visible)
-        .animation(Slate.Anim.reveal, value: showReadOnlyPill)
-        .animation(Slate.Anim.reveal, value: showSecureInputPill)
-        .animation(Slate.Anim.reveal, value: showViModePill)
-        .animation(Slate.Anim.reveal, value: showViHintBar)
-        .animation(Slate.Anim.reveal, value: navigatorChrome.isVisible)
+        .animation(.easeOut(duration: 0.15), value: findBar.visible)
+        .animation(.easeOut(duration: 0.15), value: showReadOnlyPill)
+        .animation(.easeOut(duration: 0.15), value: showSecureInputPill)
+        .animation(.easeOut(duration: 0.15), value: showViModePill)
+        .animation(.easeOut(duration: 0.15), value: showViHintBar)
+        .animation(.easeOut(duration: 0.15), value: navigatorChrome.isVisible)
     }
 
     /// Whether the `🛡 SECURE INPUT` pill is shown (E17 ES-E17-4 / WI-7). Visible iff secure input is active for

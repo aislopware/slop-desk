@@ -14,8 +14,9 @@
 // `wireMaterializedLeaf` persists into the pane's `spec.video` (PANE REBIND).
 //
 // SEAM discipline: this view NEVER imports `AislopdeskVideoClient` — discovery crosses the
-// `RemoteWindowDiscovery` seam (a closure injected by the app target). Design-system tokens ONLY (`Slate.*`);
-// raw font/colour/radius literals fail `scripts/check-ds-leaks.sh`.
+// `RemoteWindowDiscovery` seam (a closure injected by the app target). NATIVE chrome (system semantic
+// colors / text styles — the 2026-07-03 native-chrome migration); the pane backdrop stays the theme-driven
+// `NativePaneColor` canvas fabric.
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -43,12 +44,12 @@ struct RemoteWindowPickerView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space3) {
+        VStack(alignment: .leading, spacing: 12) {
             header
             windowSection
             manualEntrySection
         }
-        .padding(Slate.Metric.space4)
+        .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(NativePaneColor.terminalBackground)
         // Discover on appear; a background pane's picker still loads so it is ready the moment it focuses.
@@ -61,23 +62,23 @@ struct RemoteWindowPickerView: View {
     // MARK: Header (title + Refresh)
 
     private var header: some View {
-        HStack(spacing: Slate.Metric.space2) {
+        HStack(spacing: 8) {
             Image(systemSymbol: .display)
-                .font(.system(size: Slate.Typeface.body, weight: .regular))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(.body)
+                .foregroundStyle(.secondary)
             Text("Remote window")
-                .font(.system(size: Slate.Typeface.body, weight: .semibold))
-                .foregroundStyle(Slate.Text.primary)
-            Spacer(minLength: Slate.Metric.space2)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.primary)
+            Spacer(minLength: 8)
             Button {
                 onActivate()
                 Task { await model.refresh() }
             } label: {
                 Image(systemSymbol: .arrowClockwise)
-                    .font(.system(size: Slate.Typeface.footnote, weight: .regular))
+                    .font(.subheadline)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(Slate.Text.secondary)
+            .foregroundStyle(.secondary)
             .disabled(model.isLoading)
         }
     }
@@ -96,11 +97,11 @@ struct RemoteWindowPickerView: View {
     }
 
     private var loadingRow: some View {
-        HStack(spacing: Slate.Metric.space2) {
+        HStack(spacing: 8) {
             ProgressView().controlSize(.small)
             Text("Looking for shareable windows…")
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -108,10 +109,10 @@ struct RemoteWindowPickerView: View {
     /// Names the likely cause and points at the manual fallback below — the list stays the headline, the id
     /// box never fronts it.
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space2) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(model.loadError ?? "No shareable windows on the host yet.")
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.tertiary)
+                .font(.subheadline)
+                .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -122,12 +123,13 @@ struct RemoteWindowPickerView: View {
             text: $filter,
         )
         .textFieldStyle(.plain)
-        .font(.system(size: Slate.Typeface.footnote))
-        .foregroundStyle(Slate.Text.primary)
-        .padding(Slate.Metric.space2)
+        .font(.subheadline)
+        .foregroundStyle(.primary)
+        .padding(8)
         .background(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                .fill(Slate.Surface.element),
+            // A subtle inset-field wash (the native small-inset-box idiom, replacing the Slate element fill).
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.primary.opacity(0.05)),
         )
     }
 
@@ -135,11 +137,11 @@ struct RemoteWindowPickerView: View {
         let windows = filteredWindows
         if windows.isEmpty {
             Text(RemoteWindowModel.windowFilterEmptyMessage(filter: filter, totalCount: model.availableWindows.count))
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.tertiary)
+                .font(.subheadline)
+                .foregroundStyle(.tertiary)
         } else {
             ScrollView {
-                VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+                VStack(alignment: .leading, spacing: 4) {
                     ForEach(windows) { window in
                         windowRow(window)
                     }
@@ -156,18 +158,18 @@ struct RemoteWindowPickerView: View {
             // an error instead of streaming a permanent black surface (host rejects a dead id silently).
             model.pickAndOpen(window)
         } label: {
-            HStack(spacing: Slate.Metric.space2) {
+            HStack(spacing: 8) {
                 Image(systemSymbol: .macwindow)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 Text(window.displayLabel)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.primary)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
-            .padding(.vertical, Slate.Metric.space1)
-            .padding(.horizontal, Slate.Metric.space2)
+            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
@@ -184,13 +186,13 @@ struct RemoteWindowPickerView: View {
                 onActivate()
                 showManualEntry = true
             } label: {
-                HStack(spacing: Slate.Metric.space1) {
+                HStack(spacing: 4) {
                     Image(systemSymbol: .keyboard)
-                        .font(.system(size: Slate.Typeface.small))
+                        .font(.caption)
                     Text("Enter window ID manually")
-                        .font(.system(size: Slate.Typeface.footnote))
+                        .font(.subheadline)
                 }
-                .foregroundStyle(Slate.Text.tertiary)
+                .foregroundStyle(.tertiary)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -198,21 +200,22 @@ struct RemoteWindowPickerView: View {
     }
 
     private var manualField: some View {
-        HStack(spacing: Slate.Metric.space2) {
+        HStack(spacing: 8) {
             TextField("Window id", text: $manualID)
                 .textFieldStyle(.plain)
-                .font(.system(size: Slate.Typeface.footnote).monospaced())
-                .foregroundStyle(Slate.Text.primary)
-                .padding(Slate.Metric.space2)
+                .font(.subheadline.monospaced())
+                .foregroundStyle(.primary)
+                .padding(8)
                 .background(
-                    RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                        .fill(Slate.Surface.element),
+                    // The same subtle inset-field wash as the filter field above.
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.primary.opacity(0.05)),
                 )
                 .onSubmit { openManual() }
             Button("Open") { openManual() }
                 .buttonStyle(.plain)
-                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                .foregroundStyle(canOpenManual ? Slate.State.accent : Slate.Text.tertiary)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(canOpenManual ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.tertiary))
                 .disabled(!canOpenManual)
         }
     }

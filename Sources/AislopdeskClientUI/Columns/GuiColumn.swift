@@ -6,7 +6,8 @@
 // tears down a live video surface). The dock polls the host's shareable-window list over the SAME
 // discovery seam the picker uses (every `dockPollGap` while connected — the host coalesces concurrent
 // list answers, and `AppLaunchMonitor` already polls this cadence for layout triggers). macOS-only —
-// iOS keeps the single-region shell. Slate tokens only (the ds-leaks ratchet).
+// iOS keeps the single-region shell. Chrome is native-styled; the column backdrop keeps its Slate
+// surface (video-pane-adjacent — a later pass owns it).
 
 #if os(macOS)
 import AislopdeskWorkspaceCore
@@ -46,7 +47,7 @@ struct GuiColumn: View {
     var body: some View {
         VStack(spacing: 0) {
             dockHeader
-            Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
+            Divider()
             paneArea
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -69,7 +70,7 @@ struct GuiColumn: View {
     // MARK: Dock header (the window dock + the `+`)
 
     private var dockHeader: some View {
-        HStack(alignment: .center, spacing: Slate.Metric.space1) {
+        HStack(alignment: .center, spacing: 4) {
             WindowDockStrip(
                 items: WindowDockModel.items(windows: hostWindows, session: store.tree.activeSession),
                 selectedTabID: shownTabID,
@@ -79,9 +80,9 @@ struct GuiColumn: View {
             SlatePlateButton(symbol: .plus) { onOpenPicker() }
                 .help("Open a remote window…")
                 .accessibilityLabel("Open a remote window")
-                .padding(.trailing, Slate.Metric.space2)
+                .padding(.trailing, 8)
         }
-        .padding(.bottom, Slate.Metric.space1)
+        .padding(.bottom, 4)
     }
 
     /// One dock poll: query the host's shareable windows over the picker's discovery seam. Skipped while

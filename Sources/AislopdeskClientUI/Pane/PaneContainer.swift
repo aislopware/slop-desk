@@ -141,7 +141,7 @@ struct PaneContainer: View {
                 PaneResizeScrim()
                     .opacity(showResizeScrim ? 1 : 0)
                     .allowsHitTesting(false)
-                    .animation(Slate.Anim.reveal, value: showResizeScrim)
+                    .animation(.easeOut(duration: 0.15), value: showResizeScrim)
             }
             // E18 WI-5: the external-drag drop-zone overlay. Kept in the tree at opacity 0 (cheap, never
             // hit-tests) and faded in only while a supported drag hovers the pane (`dropModel.isActive`). It
@@ -155,7 +155,7 @@ struct PaneContainer: View {
                 )
                 .opacity(dropModel.isActive ? 1 : 0)
                 .allowsHitTesting(false)
-                .animation(Slate.Anim.reveal, value: dropModel.isActive)
+                .animation(.easeOut(duration: 0.15), value: dropModel.isActive)
             }
             // Generic resize signal: when this pane's laid-out `size` changes (from ANY source) show the
             // scrim, then hold it until the size has been steady for `resizeScrimSettle`. `.task(id:)`
@@ -210,17 +210,17 @@ struct PaneContainer: View {
                 overlayCoordinator: overlayCoordinator,
             ))
             // FOCUS = a small FILLED accent triangle tucked into the active pane's TOP-LEFT corner (Warp-style,
-            // the KEPT marker after the box/bracket/underline/dot/top-bar iterations). `Slate.State.accent`,
+            // the KEPT marker after the box/bracket/underline/dot/top-bar iterations). `Color.accentColor`,
             // faded in only while focused; the unfocused panes render at FULL opacity (no dim — it washed out
             // live content). `allowsHitTesting(false)` so taps / the divider gesture pass through. OUTERMOST
             // overlay → above the resize-scrim + drop-zone overlays (KEPT exactly as-is — re-render logic).
             .overlay(alignment: .topLeading) {
-                PaneFocusCorner(size: Slate.Metric.focusCornerSize)
-                    .fill(Slate.State.accent)
+                PaneFocusCorner(size: 12)
+                    .fill(Color.accentColor)
                     .opacity(isFocused ? 1 : 0)
                     .allowsHitTesting(false)
             }
-            .animation(Slate.Anim.standard, value: isFocused)
+            .animation(.easeInOut(duration: 0.2), value: isFocused)
     }
 }
 

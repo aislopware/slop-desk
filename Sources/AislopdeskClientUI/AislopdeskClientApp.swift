@@ -565,14 +565,10 @@ public struct AislopdeskClientApp: App {
                 // `.onDisappear → model.finish()`), so it never re-presents. The sheet inherits the injected
                 // `agentHooksController` (re-injected here defensively) for the Claude-hooks step.
                 .sheet(isPresented: $presentFirstLaunch) {
+                    // Native sheet: system appearance + system accent (the whole chrome follows the OS now —
+                    // native-chrome migration; the theme drives only the terminal/video canvases).
                     FirstLaunchView(model: firstLaunchModel, store: preferences)
                         .agentHooksController(agentHooks)
-                        // Native sheet → SYSTEM accent (reset the inherited theme tint) so its stock controls read
-                        // as native macOS controls; appearance still follows the theme via `preferredColorScheme`.
-                        .tint(nil)
-                        // Adopt the active theme's light/dark like every other surface (issue 1) — without it
-                        // the sheet inherited the OS appearance and could render light over a dark workspace.
-                        .preferredColorScheme(Slate.colorScheme)
                 }
                 .task {
                     presentFirstLaunch = FirstLaunchModel.shouldPresent(
@@ -580,12 +576,9 @@ public struct AislopdeskClientApp: App {
                         automationActive: Self.hasAutomationEnvironment(),
                     )
                 }
-                // L6: the app chrome is a PINNED palette (default Monokai Pro Classic — flat dark filter).
-                // Pin the window's colour scheme to the active theme so every system semantic colour we don't
-                // tokenize resolves with the right contrast, and route the global tint to the theme's accent
-                // colour so stock controls/selection adopt it.
-                .tint(Slate.State.accent)
-                .preferredColorScheme(Slate.colorScheme)
+                // NATIVE chrome (native-chrome migration, 2026-07-03): the window follows the SYSTEM
+                // appearance + accent — no theme pin, no scene tint. The Monokai/Slate theme now drives ONLY
+                // the terminal-cell/video canvases (the Terminal.app model: system chrome, themed canvas).
                 .onChange(of: scenePhase) { _, phase in handleScenePhase(phase) }
                 // System-dialog monitor poll loop, scoped to the scene. Skipped under automation / when
                 // AISLOPDESK_SYSTEM_DIALOG_PANES=0; inert anyway with no discovery seam registered.

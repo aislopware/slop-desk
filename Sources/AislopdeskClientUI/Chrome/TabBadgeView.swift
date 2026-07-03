@@ -35,12 +35,12 @@ struct TabBadgeView: View {
             ProgressView()
                 .progressViewStyle(.circular)
                 .controlSize(.small)
-                .tint(Slate.Text.secondary)
+                .tint(.secondary)
         case let .dot(color):
             SlateStatusDot(color: color, size: 8)
         case let .symbol(name, tint):
             Image(systemName: name)
-                .font(.system(size: Slate.Typeface.body, weight: .semibold))
+                .font(.body.weight(.semibold))
                 .foregroundStyle(tint)
         }
     }

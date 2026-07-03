@@ -15,7 +15,7 @@
 //
 // Hit-test footprint: the handle view fills its leaf but only a SHORT top strip is hit-testable (a `Spacer`
 // fills the rest and passes clicks through to the terminal below it in the ZStack). The strip senses hover
-// (to reveal the pill) and owns the drag gesture. SYSTEM / design-token colours only.
+// (to reveal the pill) and owns the drag gesture. NATIVE system semantic colours / materials only.
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -94,7 +94,7 @@ struct PaneMoveHandle: View {
     private var strip: some View {
         ZStack {
             Capsule()
-                .fill(isDragging ? Slate.State.accent : Slate.Text.tertiary)
+                .fill(isDragging ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.tertiary))
                 .frame(width: 30, height: 4)
                 .opacity(revealed ? 1 : 0)
                 .scaleEffect(hovering && !isDragging ? 1.15 : 1)
@@ -111,7 +111,7 @@ struct PaneMoveHandle: View {
                     .onEnded { onEnded($0.location) },
             )
             .onTapGesture { onTap() }
-            .animation(Slate.Anim.dividerHover, value: revealed)
+            .animation(.easeInOut(duration: 0.16), value: revealed)
     }
 }
 
@@ -172,11 +172,11 @@ struct PaneMoveOverlay: View {
 
     /// SWAP: a wash + border over the WHOLE target rect (the original look) — "these two exchange".
     private func swapWash(_ rect: CGRect) -> some View {
-        RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-            .fill(Slate.State.accentMuted)
+        RoundedRectangle(cornerRadius: 8)
+            .fill(Color.accentColor.opacity(0.15))
             .overlay(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                    .strokeBorder(Slate.State.accent, lineWidth: 2),
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.accentColor, lineWidth: 2),
             )
             .frame(width: rect.width, height: rect.height)
             .position(x: rect.midX, y: rect.midY)
@@ -187,17 +187,17 @@ struct PaneMoveOverlay: View {
     private func resplitSlab(in rect: CGRect, edge: PaneDropEdge) -> some View {
         let slab = Self.slabRect(in: rect, edge: edge)
         return ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                .fill(Slate.State.accentMuted)
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.accentColor.opacity(0.15))
                 .overlay(
-                    RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                        .strokeBorder(Slate.State.accent.opacity(0.7), lineWidth: 1.5),
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 1.5),
                 )
                 .frame(width: slab.width, height: slab.height)
                 .position(x: slab.midX, y: slab.midY)
             // The seam: a 3pt accent bar on the slab's INNER edge (the would-be new divider).
             Capsule()
-                .fill(Slate.State.accent)
+                .fill(Color.accentColor)
                 .frame(width: Self.seamSize(slab, edge: edge).width, height: Self.seamSize(slab, edge: edge).height)
                 .position(Self.seamCenter(slab, edge: edge))
         }
@@ -207,11 +207,11 @@ struct PaneMoveOverlay: View {
     /// distinct from the per-pane half-slab.
     private func dockRail(edge: PaneDropEdge) -> some View {
         let rail = Self.railRect(in: container, edge: edge)
-        return RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-            .fill(Slate.State.accentMuted)
+        return RoundedRectangle(cornerRadius: 8)
+            .fill(Color.accentColor.opacity(0.15))
             .overlay(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                    .strokeBorder(Slate.State.accent, lineWidth: 2),
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.accentColor, lineWidth: 2),
             )
             .frame(width: rail.width, height: rail.height)
             .position(x: rail.midX, y: rail.midY)
@@ -222,9 +222,9 @@ struct PaneMoveOverlay: View {
     private var sourceOutline: some View {
         Group {
             if let rect = frames[drag.source] {
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
+                RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(
-                        Slate.State.accent.opacity(0.55),
+                        Color.accentColor.opacity(0.55),
                         style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]),
                     )
                     .frame(width: rect.width, height: rect.height)
@@ -236,26 +236,27 @@ struct PaneMoveOverlay: View {
     private var ghostChip: some View {
         HStack(spacing: 6) {
             Image(systemSymbol: Self.zoneIcon(drag.zone))
-                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
             Text(Self.zoneLabel(drag.zone, title: sourceTitle))
-                .font(.system(size: Slate.Typeface.base, weight: .medium))
+                .font(.callout.weight(.medium))
                 .lineLimit(1)
         }
-        .foregroundStyle(drag.zone == .none ? Slate.Text.tertiary : Slate.Text.primary)
+        .foregroundStyle(drag.zone == .none ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
+            // The cursor-pinned ghost chip floats over the panes — a material capsule with a state-tinted ring.
             Capsule(style: .continuous)
-                .fill(Slate.Surface.card)
+                .fill(.regularMaterial)
                 .overlay(
                     Capsule(style: .continuous)
                         .strokeBorder(
-                            drag.zone == .none ? Slate.Text.tertiary.opacity(0.4) : Slate.State.accent,
+                            drag.zone == .none ? AnyShapeStyle(.separator) : AnyShapeStyle(Color.accentColor),
                             lineWidth: 1,
                         ),
                 ),
         )
-        .shadow(color: Slate.State.shadow, radius: 8, y: 2)
+        .shadow(color: Color.black.opacity(0.25), radius: 8, y: 2)
         .fixedSize()
     }
 

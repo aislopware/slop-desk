@@ -7,10 +7,12 @@
 // file is the home for
 // those pills: WI-3 ships ``ReadOnlyPill`` (the `🔒 READ ONLY ×` chip); WI-7 adds `SecureInputPill` beside it.
 //
-// `Slate.*` tokens ONLY — raw font / radius / colour literals fail `scripts/check-ds-leaks.sh`. No libghostty /
-// Metal / VideoToolbox is touched (CLAUDE.md rule #6): these are plain SwiftUI chips driven by the pane model's
-// OBSERVABLE mirrors (``TerminalViewModel/readOnlyBadgeActive`` / ``copyModeBadgeActive``), never the
-// `@ObservationIgnored` `isReadOnly`/`isCopyMode` flags the renderer's keyDown path reads.
+// NATIVE chrome (system semantic colors / text styles / materials — the 2026-07-03 native-chrome migration);
+// the one deliberate exception is the FIXED security-blue secure-input fill (theme/appearance-independent by
+// design — see ``SecureInputPill``). No libghostty / Metal / VideoToolbox is touched (CLAUDE.md rule #6):
+// these are plain SwiftUI chips driven by the pane model's OBSERVABLE mirrors
+// (``TerminalViewModel/readOnlyBadgeActive`` / ``copyModeBadgeActive``), never the `@ObservationIgnored`
+// `isReadOnly`/`isCopyMode` flags the renderer's keyDown path reads.
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -38,31 +40,31 @@ struct ReadOnlyPill: View {
     @State private var closeHover = false
 
     var body: some View {
-        HStack(spacing: Slate.Metric.space1) {
-            // The solid padlock — a theme-tinted SF Symbol (NOT the gold 🔒 emoji): `readonly-mode.png` shows a
+        HStack(spacing: 4) {
+            // The solid padlock — a semantic-tinted SF Symbol (NOT the gold 🔒 emoji): `readonly-mode.png` shows a
             // monochrome dark padlock matching the label weight, which the emoji can't honour.
             Image(systemSymbol: .lockFill)
-                .font(.system(size: Slate.Typeface.small, weight: .semibold))
-                .foregroundStyle(Slate.Text.primary)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.primary)
             Text("READ ONLY")
-                .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                .font(.subheadline.weight(.medium))
                 .tracking(0.5) // the screenshot's small-caps / uppercase spacing
-                .foregroundStyle(Slate.Text.primary)
+                .foregroundStyle(.primary)
                 .lineLimit(1)
                 .fixedSize()
             closeButton
         }
-        .padding(.horizontal, Slate.Metric.space2)
-        .padding(.vertical, Slate.Metric.space1)
-        // Subtly-filled chip: the inset-control surface + a hairline — distinct from, but not louder than, the
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        // Subtly-filled chip: a material fill + a hairline — distinct from, but not louder than, the
         // chrome behind it (the screenshot's "bordered or subtly filled chip rather than a brightly coloured
         // badge"). A small shadow lifts it off busy terminal output for legibility.
-        .background(Slate.Surface.element, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+        .background(.regularMaterial, in: .rect(cornerRadius: 6))
         .overlay(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(.separator, lineWidth: 1),
         )
-        .shadow(color: Slate.State.shadow, radius: 4, x: 0, y: 1)
+        .shadow(color: Color.black.opacity(0.25), radius: 4, x: 0, y: 1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Read only")
         .accessibilityHint("Disable read-only mode to allow input again")
@@ -73,12 +75,12 @@ struct ReadOnlyPill: View {
     private var closeButton: some View {
         Button(action: onDeactivate) {
             Image(systemSymbol: .xmark)
-                .font(.system(size: Slate.Typeface.small, weight: .medium))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
                 .frame(width: 16, height: 16)
                 .background(
-                    closeHover ? Slate.State.selected : .clear,
-                    in: .rect(cornerRadius: Slate.Metric.radiusSmall),
+                    closeHover ? Color.primary.opacity(0.12) : .clear,
+                    in: .rect(cornerRadius: 4),
                 )
                 .contentShape(.rect)
         }
@@ -91,10 +93,10 @@ struct ReadOnlyPill: View {
 /// The `🛡 SECURE INPUT` pill (E17 ES-E17-4 / WI-7) — shown in the pane's top-trailing overlay while macOS
 /// Secure Keyboard Entry is active for the pane (the host is at a no-echo password prompt and Auto Secure
 /// Input is on, OR the manual toggle is on) AND the secure-input INDICATOR setting is on. Faithful to
-/// `secure-input.png`: a VIVID-BLUE FILLED pill in the FIXED security-blue `Slate.Status.secureInput`
-/// (#2D6FE8) — a theme-INDEPENDENT token, NOT the theme-derived `Slate.Status.info`. The pill must stay a
-/// constant royal-blue on every theme so it can never collapse into the theme accent: the shipped default
-/// Monokai Pro seed has `info == accent == cyan`, which would make a theme-derived security badge invisible
+/// `secure-input.png`: a VIVID-BLUE FILLED pill in the FIXED security-blue #2D6FE8 — theme- AND
+/// appearance-INDEPENDENT by design, deliberately NOT `Color.accentColor` / `.blue`. The pill must stay a
+/// constant royal-blue everywhere so it can never collapse into the accent: the shipped default
+/// Monokai Pro seed has `info == accent == cyan`, which would make an accent-derived security badge invisible
 /// against the accent (the screenshot is the green-accent Paper theme yet the pill is the same blue).
 /// Carries a WHITE filled lock-shield + the uppercase `SECURE INPUT` label in white.
 ///
@@ -104,32 +106,32 @@ struct ReadOnlyPill: View {
 /// HIDDEN while read-only is on (no input path can fire there, so the secure-input cue is moot), mirroring
 /// the spec's "those pills hide under read-only".
 struct SecureInputPill: View {
-    /// The pill's FIXED fill — the theme-INDEPENDENT security-blue `Slate.Status.secureInput` (#2D6FE8), NOT
-    /// the theme-derived `Slate.Status.info`. Exposed as a single source so the view and its colour test read
-    /// the SAME token (mirroring `ToastStackView.tint(for:)`): a regression that re-routed the fill back through
-    /// the theme accent fails the test that pins this against the fixed token and asserts it ≠ the Monokai accent.
-    static var fillColor: Color { Slate.Status.secureInput }
+    /// The pill's FIXED fill — the theme-INDEPENDENT security-blue #2D6FE8, never the accent / a semantic
+    /// blue. Exposed as a single source so the view and its colour test read the SAME value (mirroring
+    /// `ToastStackView.tint(for:)`): a regression that re-routed the fill back through the theme accent fails
+    /// the test that pins this against the fixed royal-blue and asserts it ≠ the Monokai accent.
+    static var fillColor: Color { Color(slateHex: 0x2D6FE8) }
 
     var body: some View {
-        HStack(spacing: Slate.Metric.space1) {
+        HStack(spacing: 4) {
             // The white lock-shield — `secure-input.png` shows a filled shield-with-lock, the macOS
             // secure-input idiom (NOT the plain padlock the read-only pill uses).
             Image(systemSymbol: .lockShieldFill)
-                .font(.system(size: Slate.Typeface.small, weight: .bold))
+                .font(.caption.weight(.bold))
                 .foregroundStyle(.white)
             Text("SECURE INPUT")
-                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .tracking(0.5)
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .fixedSize()
         }
-        .padding(.horizontal, Slate.Metric.space2)
-        .padding(.vertical, Slate.Metric.space1)
-        // VIVID-BLUE FILLED chip in the FIXED security-blue (theme-INDEPENDENT, never the theme accent) — the
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        // VIVID-BLUE FILLED chip in the FIXED security-blue (theme-INDEPENDENT, never the accent) — the
         // screenshot's bold royal-blue badge. A small shadow lifts it off busy terminal output.
-        .background(Self.fillColor, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-        .shadow(color: Slate.State.shadow, radius: 4, x: 0, y: 1)
+        .background(Self.fillColor, in: .rect(cornerRadius: 6))
+        .shadow(color: Color.black.opacity(0.25), radius: 4, x: 0, y: 1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Secure input")
         .accessibilityHint("Secure keyboard entry is active — other apps cannot read your keystrokes")

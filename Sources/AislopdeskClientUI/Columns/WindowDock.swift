@@ -112,7 +112,7 @@ struct WindowDockStrip: View {
 
     var body: some View {
         ScrollView(.horizontal) {
-            HStack(alignment: .top, spacing: Slate.Metric.space1) {
+            HStack(alignment: .top, spacing: 4) {
                 ForEach(items) { item in
                     WindowDockTile(
                         item: item,
@@ -121,14 +121,14 @@ struct WindowDockStrip: View {
                     )
                 }
             }
-            .padding(.horizontal, Slate.Metric.space2)
+            .padding(.horizontal, 8)
         }
         .scrollIndicators(.hidden)
     }
 }
 
 /// One dock tile: 28pt app icon (local lookup / letter avatar), the title caption beneath, and the
-/// running dot under an OPEN window (the macOS-dock idiom). Selected = card fill + active border.
+/// running dot under an OPEN window (the macOS-dock idiom). Selected = accent wash + accent ring.
 private struct WindowDockTile: View {
     let item: WindowDockItem
     let selected: Bool
@@ -142,32 +142,32 @@ private struct WindowDockTile: View {
                 iconView
                     .frame(width: 28, height: 28)
                 Text(item.title)
-                    .font(.system(size: Slate.Typeface.small))
-                    .foregroundStyle(selected ? Slate.Text.primary : Slate.Text.secondary)
+                    .font(.caption)
+                    .foregroundStyle(selected ? Color.primary : Color.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: 72)
                 Circle()
-                    .fill(Slate.Status.ok)
+                    .fill(.green)
                     .frame(width: 4, height: 4)
                     .opacity(item.isOpen ? 1 : 0)
                     .accessibilityHidden(true)
             }
-            .padding(.horizontal, Slate.Metric.space1)
-            .padding(.vertical, Slate.Metric.space1)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
             .background(
-                selected ? AnyShapeStyle(Slate.Surface.card) : AnyShapeStyle(hover ? Slate.State.hover : .clear),
-                in: .rect(cornerRadius: Slate.Metric.radiusControl),
+                selected ? Color.accentColor.opacity(0.22) : (hover ? Color.primary.opacity(0.08) : .clear),
+                in: .rect(cornerRadius: 6),
             )
             .overlay(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                    .strokeBorder(selected ? Slate.Line.active : .clear, lineWidth: Slate.Metric.hairline),
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 1),
             )
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
-        .animation(Slate.Anim.smallFade, value: hover)
+        .animation(.easeOut(duration: 0.12), value: hover)
         .help(dockHelp)
         .accessibilityLabel(dockHelp)
     }
@@ -186,14 +186,14 @@ private struct WindowDockTile: View {
         } else {
             // Letter avatar: a stable app-name-keyed hue + the first letter (the "unknown local app"
             // fallback — the host app isn't installed on this Mac).
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
+            RoundedRectangle(cornerRadius: 6)
                 .fill(Color(
                     hue: AppIconResolver.stableHue(for: item.appName.isEmpty ? item.title : item.appName),
                     saturation: 0.45, brightness: 0.62,
                 ))
                 .overlay(
                     Text(String((item.appName.isEmpty ? item.title : item.appName).prefix(1)).uppercased())
-                        .font(.system(size: Slate.Typeface.body, weight: .semibold))
+                        .font(.body.weight(.semibold))
                         .foregroundStyle(.white),
                 )
         }

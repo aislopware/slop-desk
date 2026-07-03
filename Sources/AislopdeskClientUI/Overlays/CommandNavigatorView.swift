@@ -16,7 +16,8 @@
 // delta math is never re-derived here). The navigator only ever opens over the ACTIVE pane, so the store's
 // active-pane jump always re-anchors the pane this card floats over.
 //
-// `Slate.*` tokens ONLY (raw font/colour/radius literals fail `scripts/check-ds-leaks.sh`). Cross-platform:
+// NATIVE styling: system Material panel, semantic colors, system text styles (the native-chrome
+// migration — a Spotlight-class floating panel, no design-token chrome). Cross-platform:
 // the ⌃⌘O chord is macOS-only, but the overlay + its keyboard handling compile for iOS too (the toolbar /
 // menu surfaces it there), so this whole file builds under `bash scripts/check-ios.sh`.
 
@@ -72,7 +73,7 @@ struct CommandNavigatorView: View {
             // Pane-LOCAL dimmed backdrop (the navigator floats over THIS pane's terminal, not the window, so
             // it keeps its own scrim rather than the window-level native sheet the auxiliary overlays now use).
             Rectangle()
-                .fill(Slate.State.shadow)
+                .fill(Color.black.opacity(0.25))
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .onTapGesture { onClose() }
@@ -94,13 +95,14 @@ struct CommandNavigatorView: View {
             footerBar
         }
         .frame(width: panelWidth)
-        .background(Slate.Surface.card)
-        .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusCard))
+        // Native floating-panel shell: system Material body + hairline `.separator` ring (Spotlight-class).
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                .stroke(Slate.Line.card, lineWidth: Slate.Metric.hairline),
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(.separator, lineWidth: 1),
         )
-        .shadow(color: Slate.State.shadow, radius: 30, x: 0, y: 12)
+        .shadow(color: Color.black.opacity(0.25), radius: 30, x: 0, y: 12)
         .onChange(of: query) { _, _ in selection = 0 }
         .onChange(of: filter) { _, _ in selection = 0 }
         // Keyboard: the focused search field consumes typed text + plain ↩ (`onSubmit`); bare arrows / Esc
@@ -138,27 +140,25 @@ struct CommandNavigatorView: View {
     }
 
     private var divider: some View {
-        Rectangle()
-            .fill(Slate.Line.divider)
-            .frame(height: Slate.Metric.hairline)
+        Divider()
     }
 
     // MARK: - Search bar
 
     private var searchBar: some View {
-        HStack(spacing: Slate.Metric.space2) {
+        HStack(spacing: 8) {
             Image(systemSymbol: .magnifyingglass)
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(.body)
+                .foregroundStyle(.secondary)
             TextField("Search commands…", text: $query)
                 .textFieldStyle(.plain)
-                .font(.system(size: Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.primary)
-                .tint(Slate.State.accent) // the active caret is the accent colour
+                .font(.body)
+                .foregroundStyle(.primary)
+                .tint(Color.accentColor) // the active caret is the accent colour
                 .focused($searchFocused)
                 .onSubmit { actSelected() } // plain ↩ jumps + closes
         }
-        .padding(.horizontal, Slate.Metric.space4)
+        .padding(.horizontal, 16)
         .frame(height: 48)
         .onAppear {
             // A `@FocusState` set in the same tick the view appears (before its backing responder exists) is
@@ -170,13 +170,13 @@ struct CommandNavigatorView: View {
     // MARK: - Filter segment (All | Failed | Bookmarked)
 
     private var filterBar: some View {
-        HStack(spacing: Slate.Metric.space1) {
+        HStack(spacing: 4) {
             ForEach(BlockNavigatorFilter.allCases, id: \.self) { segment in
                 filterPill(segment)
             }
-            Spacer(minLength: Slate.Metric.space2)
+            Spacer(minLength: 8)
         }
-        .padding(.horizontal, Slate.Metric.space3)
+        .padding(.horizontal, 12)
         .frame(height: 36)
     }
 
@@ -185,18 +185,18 @@ struct CommandNavigatorView: View {
         return Button {
             filter = segment
         } label: {
-            HStack(spacing: Slate.Metric.space1) {
+            HStack(spacing: 4) {
                 Image(systemName: segment.symbol)
-                    .font(.system(size: Slate.Typeface.small))
+                    .font(.caption)
                 Text(segment.title)
-                    .font(.system(size: Slate.Typeface.footnote, weight: active ? .semibold : .regular))
+                    .font(.subheadline.weight(active ? .semibold : .regular))
             }
-            .foregroundStyle(active ? Slate.Text.primary : Slate.Text.secondary)
-            .padding(.horizontal, Slate.Metric.space2)
+            .foregroundStyle(active ? .primary : .secondary)
+            .padding(.horizontal, 8)
             .frame(height: 24)
             .background(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                    .fill(active ? Slate.Surface.element : Color.clear),
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(active ? Color.primary.opacity(0.12) : Color.clear),
             )
             .contentShape(Rectangle())
         }
@@ -218,23 +218,23 @@ struct CommandNavigatorView: View {
                         }
                     }
                 }
-                .padding(.vertical, Slate.Metric.space1)
+                .padding(.vertical, 4)
             }
             .frame(maxHeight: resultsMaxHeight)
             .onChange(of: selection) { _, _ in
                 let rows = visibleBlocks
                 guard selection >= 0, selection < rows.count else { return }
-                withAnimation(Slate.Anim.smallFade) { proxy.scrollTo(rows[selection].id, anchor: .center) }
+                withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(rows[selection].id, anchor: .center) }
             }
         }
     }
 
     private var emptyState: some View {
         Text(baseBlocks.isEmpty ? emptyMessage : "No matches")
-            .font(.system(size: Slate.Typeface.body))
-            .foregroundStyle(Slate.Text.tertiary)
+            .font(.body)
+            .foregroundStyle(.tertiary)
             .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, Slate.Metric.space4)
+            .padding(.vertical, 16)
     }
 
     /// The zero-state message for the empty pane, scoped to the active segment (no commands / none failed /
@@ -249,14 +249,14 @@ struct CommandNavigatorView: View {
 
     private func row(_ block: CommandBlock, index: Int) -> some View {
         let isSelected = index == selection
-        return HStack(spacing: Slate.Metric.space2) {
+        return HStack(spacing: 8) {
             gutter(for: block)
                 .frame(width: 14, alignment: .center)
             highlightedTitle(block)
-                .font(.system(size: Slate.Typeface.body))
+                .font(.body)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Spacer(minLength: Slate.Metric.space2)
+            Spacer(minLength: 8)
             // The Re-run / Copy-Output affordances live on the SELECTED (hover or keyboard) row only, so a
             // resting list stays clean; the meta (duration / relative time) collapses under them when shown.
             if isSelected {
@@ -264,27 +264,25 @@ struct CommandNavigatorView: View {
             } else {
                 if let duration = block.durationLabel {
                     Text(duration)
-                        .font(.system(size: Slate.Typeface.small))
-                        .foregroundStyle(Slate.Text.tertiary)
-                        .monospacedDigit()
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
                 }
                 if let stamp = model.blocks.firstSeen(index: block.index) {
                     Text(OutlinePresentation.relativeTime(from: stamp, now: Date()))
-                        .font(.system(size: Slate.Typeface.small))
-                        .foregroundStyle(Slate.Text.tertiary)
-                        .monospacedDigit()
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
                 }
             }
             starButton(block)
         }
-        .padding(.horizontal, Slate.Metric.space3)
+        .padding(.horizontal, 12)
         .frame(height: 34)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusItem)
-                .fill(isSelected ? Slate.State.selected : Color.clear),
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color.accentColor.opacity(0.22) : Color.clear),
         )
-        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.horizontal, 8)
         .contentShape(Rectangle())
         .onHover { hovering in if hovering { selection = index } }
         .onTapGesture { act(block) }
@@ -297,13 +295,13 @@ struct CommandNavigatorView: View {
     /// ``WorkspaceStore/copyBlockOutputInActivePane(index:onResult:)``) — no jump/close, so the user can act
     /// on a command without leaving the navigator.
     private func rowActions(_ block: CommandBlock) -> some View {
-        HStack(spacing: Slate.Metric.space2) {
+        HStack(spacing: 8) {
             Button {
                 reRun(block)
             } label: {
                 Image(systemSymbol: .arrowClockwise)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
             .help("Re-run (⌘↩)")
@@ -313,8 +311,8 @@ struct CommandNavigatorView: View {
                 copyOutput(block)
             } label: {
                 Image(systemSymbol: .docOnDoc)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
             .help("Copy Output (⌘C)")
@@ -329,15 +327,15 @@ struct CommandNavigatorView: View {
         switch OutlinePresentation.gutter(for: block) {
         case .succeeded:
             Image(systemSymbol: .checkmark)
-                .font(.system(size: Slate.Typeface.small, weight: .bold))
-                .foregroundStyle(Slate.Status.ok)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.green)
         case .failed:
             Image(systemSymbol: .xmark)
-                .font(.system(size: Slate.Typeface.small, weight: .bold))
-                .foregroundStyle(Slate.Status.err)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.red)
         case .running:
             Circle()
-                .fill(Slate.Text.tertiary)
+                .fill(.tertiary)
                 .frame(width: 5, height: 5)
         }
     }
@@ -350,8 +348,8 @@ struct CommandNavigatorView: View {
             model.blocks.toggleBookmark(index: block.index)
         } label: {
             Image(systemSymbol: starred ? .starFill : .star)
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(starred ? Slate.Status.warn : Slate.Text.tertiary)
+                .font(.subheadline)
+                .foregroundStyle(starred ? AnyShapeStyle(.orange) : AnyShapeStyle(.tertiary))
         }
         .buttonStyle(.plain)
     }
@@ -363,19 +361,19 @@ struct CommandNavigatorView: View {
         let title = block.commandText.isEmpty ? "—" : block.commandText
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, let ranges = FuzzyMatcher.score(trimmed, title)?.ranges, !ranges.isEmpty else {
-            return Text(title).foregroundStyle(Slate.Text.primary)
+            return Text(title).foregroundStyle(.primary)
         }
         var segments: [Text] = []
         var cursor = title.startIndex
         for range in ranges where range.lowerBound >= cursor {
             if cursor < range.lowerBound {
-                segments.append(Text(title[cursor..<range.lowerBound]).foregroundStyle(Slate.Text.primary))
+                segments.append(Text(title[cursor..<range.lowerBound]).foregroundStyle(.primary))
             }
-            segments.append(Text(title[range]).foregroundStyle(Slate.State.accent).fontWeight(.semibold))
+            segments.append(Text(title[range]).foregroundStyle(Color.accentColor).fontWeight(.semibold))
             cursor = range.upperBound
         }
         if cursor < title.endIndex {
-            segments.append(Text(title[cursor...]).foregroundStyle(Slate.Text.primary))
+            segments.append(Text(title[cursor...]).foregroundStyle(.primary))
         }
         return segments.reduce(Text(verbatim: "")) { $0 + $1 }
     }
@@ -383,28 +381,28 @@ struct CommandNavigatorView: View {
     // MARK: - Footer hint bar
 
     private var footerBar: some View {
-        HStack(spacing: Slate.Metric.space2) {
+        HStack(spacing: 8) {
             footerHint("Navigate", glyph: "↑↓")
-            Spacer(minLength: Slate.Metric.space2)
+            Spacer(minLength: 8)
             footerHint("Jump", glyph: "↩")
             footerHint("Close", glyph: "esc")
         }
-        .padding(.horizontal, Slate.Metric.space4)
+        .padding(.horizontal, 16)
         .frame(height: 34)
     }
 
     private func footerHint(_ label: String, glyph: String) -> some View {
-        HStack(spacing: Slate.Metric.space1) {
+        HStack(spacing: 4) {
             Text(label)
-                .font(.system(size: Slate.Typeface.small))
-                .foregroundStyle(Slate.Text.tertiary)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
             Text(glyph)
-                .font(.system(size: Slate.Typeface.small, weight: .medium))
-                .foregroundStyle(Slate.Text.secondary)
-                .padding(.horizontal, Slate.Metric.space1)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 4)
                 .background(
-                    RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                        .fill(Slate.Surface.element),
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.primary.opacity(0.05)),
                 )
         }
     }

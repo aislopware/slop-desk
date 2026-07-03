@@ -6,7 +6,8 @@
 // header. Earlier code used the native `Section("Title")` initializer, which renders Title-Case bold
 // dark on macOS grouped Forms (e.g. "Selection", "Copy & Paste"). This helper consolidates every grouped
 // settings section onto ONE shared header style that matches both the design-spec screenshots AND this app's
-// own command-palette section headers (`PaletteView.sectionHeader` — the same three tokens), so the Settings
+// own command-palette section headers (`PaletteView.sectionHeader` — the same uppercase/tracked/muted
+// treatment, styled with native system semantics since the native-chrome migration), so the Settings
 // form and the palette no longer diverge. Call sites swap `Section("X") {` → `slateFormSection("X") {`; the
 // content closure is unchanged, so no layout in the section body moves.
 
@@ -20,11 +21,12 @@ enum SlateSettingsSectionHeader {
     static func label(_ title: String) -> String { title.uppercased() }
 }
 
-/// A grouped-`Form` section whose header carries the UPPERCASE / tracked / secondary-gray treatment
-/// (`Slate.Typeface.small` semibold · `Slate.State.header`), instead of macOS's default Title-Case dark header.
+/// A grouped-`Form` section whose header carries the UPPERCASE / tracked / muted treatment (native
+/// `.caption` semibold · system `.tertiary` — the Slate token layer is retired here, native-chrome
+/// migration 2026-07-03), instead of macOS's default Title-Case dark header.
 /// Drop-in for `Section(_ title:content:)`: the trailing `content` closure is identical, so swapping the
-/// initializer name restyles the header without touching the section body. `@MainActor` because the gray
-/// header color resolves through the main-actor `Slate.State` palette (every call site is a SwiftUI body).
+/// initializer name restyles the header without touching the section body. `@MainActor` matches its SwiftUI
+/// call sites (every one is a view body).
 @MainActor
 func slateFormSection(
     _ title: String,
@@ -34,9 +36,9 @@ func slateFormSection(
         content()
     } header: {
         Text(SlateSettingsSectionHeader.label(title))
-            .font(.system(size: Slate.Typeface.small, weight: .semibold))
+            .font(.caption.weight(.semibold))
             .tracking(0.8)
-            .foregroundStyle(Slate.State.header)
+            .foregroundStyle(.tertiary)
     }
 }
 #endif

@@ -21,7 +21,9 @@
 //
 // SEAM discipline: this library NEVER imports `AislopdeskVideoClient`/VideoToolbox/Metal — only the seam
 // types (`VideoWindowFactory`, `RemoteWindowDescriptor`, `RemotePaneContext`) cross. A headless `swift build`
-// registers no factory, so `VideoWindowFactory.make` yields an `EmptyView`. SYSTEM/Slate tokens only.
+// registers no factory, so `VideoWindowFactory.make` yields an `EmptyView`. NATIVE chrome (system semantic
+// colors / text styles / materials — the 2026-07-03 native-chrome migration); the video canvas fabric stays
+// theme-driven (`NativePaneColor`).
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -75,7 +77,7 @@ struct GuiLeafView: View {
                 // Inner padding so the remote surface doesn't sit flush against the pane edges / the split
                 // divider (issue: "thêm padding vào các pane"). The Metal-hosting view is sized to this PADDED
                 // frame, so its pointer→host coordinate mapping (relative to the view bounds) stays consistent.
-                .padding(Slate.Metric.space2)
+                .padding(8)
             // WINDOW-PANE CONTROL BAR (issue 5): the bottom bar carries the window CONTROLS — resize (moved out
             // of the pane CONTENT into the footer), lock-position (freeze the edge-hover auto-pan), and zoom
             // in / out / reset — NOT a status strip. Host + connection state now live ONCE in the sidebar
@@ -88,19 +90,15 @@ struct GuiLeafView: View {
         // PASTE-AS-KEYSTROKES RESULT BANNER (C7): surface the model's transient "typed N, skipped M" feedback
         // (set only when some clipboard characters had no US-QWERTY mapping and were dropped) so the user
         // learns a paste was incomplete instead of silently losing them. Tap to dismiss; auto-clears on a
-        // timer. Never on the static-mirror snapshot path. A tiny bottom pill — flat, no card.
+        // timer. Never on the static-mirror snapshot path. A tiny bottom material chip.
         .overlay(alignment: .bottom) {
             if !staticMirror, let feedback = model?.pasteFeedback {
                 PasteFeedbackBanner(feedback: feedback) { model?.dismissPasteFeedback() }
-                    .padding(
-                        .bottom,
-                        showControlBar ? Slate.Metric.paneHeaderHeight + Slate.Metric.space2
-                            : Slate.Metric.space2,
-                    )
+                    .padding(.bottom, showControlBar ? 28 + 8 : 8)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(Slate.Anim.reveal, value: model?.pasteFeedback)
+        .animation(.easeOut(duration: 0.15), value: model?.pasteFeedback)
         // E21 WI-3 (F3): the `🔒 READ ONLY ×` pill (E17 ``ReadOnlyPill``) so a read-only `.remoteGUI` /
         // `.systemDialog` pane is a VISUAL peer of a read-only terminal leaf — same top-trailing overlay,
         // alignment, padding, and reveal animation as ``TerminalLeafView``. Without it a locked remote window
@@ -113,10 +111,10 @@ struct GuiLeafView: View {
             if Self.showReadOnlyPill(staticMirror: staticMirror, isReadOnly: store.isReadOnly(for: paneID)) {
                 ReadOnlyPill(onDeactivate: { store.setPaneReadOnly(paneID, false) })
                     .transition(.move(edge: .top).combined(with: .opacity))
-                    .padding(Slate.Metric.space2)
+                    .padding(8)
             }
         }
-        .animation(Slate.Anim.reveal, value: store.isReadOnly(for: paneID))
+        .animation(.easeOut(duration: 0.15), value: store.isReadOnly(for: paneID))
         // CAP ADMISSION (A2/R-lifecycle #2): request a slot when this pane is ON-SCREEN, on appear AND whenever
         // a sibling frees one (`videoPromotionGeneration` bumps). `.task(id:)` cancels+restarts on either
         // change. Gated on `isVisible` so a background-tab / zoom-hidden pane does NOT claim a `liveVideoCap`
@@ -232,7 +230,7 @@ struct GuiLeafView: View {
             )
             // STALL SCRIM (the reconnect-wedge residual): while the host is silent past the stall threshold
             // the pane would otherwise look healthy-but-dead (a frozen last frame that swallows clicks).
-            // A flat translucent veil + spinner says "the client noticed; recovery is automatic" (the
+            // A translucent veil + spinner card says "the client noticed; recovery is automatic" (the
             // self-heal rebuild + hello retry run underneath). Hit-testing stays OFF — purely visual, so
             // any interaction still reaches the surface (harmless while the host is dark).
             .overlay {
@@ -242,20 +240,20 @@ struct GuiLeafView: View {
                         .transition(.opacity)
                 }
             }
-            .animation(Slate.Anim.reveal, value: model?.isStreamStalled ?? false)
+            .animation(.easeOut(duration: 0.15), value: model?.isStreamStalled ?? false)
         }
     }
 
     /// The native placeholder for the non-live states: the cap-gated "video paused" notice, or the bare
     /// idle mirror used on the static snapshot path.
     private func placeholder(_ state: RemoteGUIDisplay) -> some View {
-        VStack(spacing: Slate.Metric.space3) {
+        VStack(spacing: 12) {
             Image(systemSymbol: live?.kind == .systemDialog ? .lockShield : .display)
-                .font(.system(size: Slate.Typeface.display, weight: .regular))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(.system(size: 40, weight: .regular))
+                .foregroundStyle(.secondary)
             Text(placeholderLabel(state))
-                .font(.system(size: Slate.Typeface.body, weight: .semibold))
-                .foregroundStyle(Slate.Text.primary)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.primary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(NativePaneColor.terminalBackground)
@@ -268,25 +266,28 @@ struct GuiLeafView: View {
 }
 
 /// STALL SCRIM (2026-07-03): the "Reconnecting…" veil over a live video surface whose host has gone
-/// silent (dead daemon / network drop — ``RemoteWindowModel/isStreamStalled``). A flat translucent
-/// dim over the frozen last frame + a compact spinner/label pill, matching the placeholder typography.
-/// Purely visual (the caller disables hit-testing); recovery is automatic underneath (self-heal
-/// rebuild + hello retry), so there is deliberately no button here.
+/// silent (dead daemon / network drop — ``RemoteWindowModel/isStreamStalled``). A plain translucent
+/// black dim over the frozen last frame + a compact spinner/label card on `.regularMaterial` (native
+/// chrome; never `glassEffect` over the live Metal surface). Purely visual (the caller disables
+/// hit-testing); recovery is automatic underneath (self-heal rebuild + hello retry), so there is
+/// deliberately no button here.
 private struct StreamStallScrim: View {
     var body: some View {
         ZStack {
             // Dim the stale frame so it reads "not live" without hiding context entirely.
-            NativePaneColor.terminalBackground.opacity(0.6)
-            VStack(spacing: Slate.Metric.space3) {
+            Color.black.opacity(0.6)
+            VStack(spacing: 12) {
                 ProgressView()
                     .controlSize(.small)
                 Text("Reconnecting…")
-                    .font(.system(size: Slate.Typeface.body, weight: .semibold))
-                    .foregroundStyle(Slate.Text.primary)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
                 Text("The remote host stopped responding")
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
+            .padding(16)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         }
     }
 }
@@ -294,8 +295,8 @@ private struct StreamStallScrim: View {
 /// The bottom CONTROL bar for a LIVE window pane (issue 5): the window controls that used to clutter the pane
 /// CONTENT — a "Resize…" button (opens a numeric size popover; replaced the old fiddly DRAG grip), a "lock
 /// position" toggle (freezes the edge-hover auto-pan), and zoom out / reset / in (client-side compositor zoom
-/// of the actual-size viewport). A flat strip flush along the pane bottom, separated from the surface by a
-/// single top hairline (flat design — never a floating card). The resize button is gated on a live
+/// of the actual-size viewport). A native `.bar`-material strip flush along the pane bottom, separated from
+/// the surface by a hairline `Divider` (never a floating card). The resize button is gated on a live
 /// host-resize sink (``RemoteWindowModel/canResizeWindow``, withheld while read-only); the zoom/lock controls
 /// on a live viewport sink (``RemoteWindowModel/canControlViewport``, live even while read-only — pure client ops).
 private struct GuiPaneControlBar: View {
@@ -310,7 +311,7 @@ private struct GuiPaneControlBar: View {
     @State private var showResizePopover = false
 
     var body: some View {
-        HStack(spacing: Slate.Metric.space1) {
+        HStack(spacing: 4) {
             // PASTE (C7): the local-clipboard affordances — "Paste as Keystrokes" (types the CURRENT local
             // clipboard into the host window) + a "Clipboard Ring" submenu of recent clips (masked preview for
             // secrets). A footer MENU rather than a surface context menu, which would steal the secondary-click
@@ -326,7 +327,7 @@ private struct GuiPaneControlBar: View {
                     RemoteWindowSizePopover(model: model, isPresented: $showResizePopover)
                 }
             }
-            Spacer(minLength: Slate.Metric.space2)
+            Spacer(minLength: 8)
             if let model, model.canControlViewport {
                 SlatePlateButton(symbol: .minusMagnifyingglass, help: "Zoom out") { model.sendViewport(.zoomOut) }
                 SlatePlateButton(symbol: .arrowCounterclockwise, help: "Actual size (reset zoom + position)") {
@@ -336,19 +337,19 @@ private struct GuiPaneControlBar: View {
                 SlatePlateButton(
                     symbol: panLocked ? .lockFill : .lockOpen,
                     help: panLocked ? "Unlock viewport (resume edge-pan)" : "Lock viewport position (freeze edge-pan)",
-                    tint: panLocked ? Slate.State.accent : Slate.Text.icon,
+                    tint: panLocked ? Color.accentColor : Color.secondary,
                 ) {
                     panLocked.toggle()
                     model.sendViewport(.toggleLock)
                 }
             }
         }
-        .padding(.horizontal, Slate.Metric.space2)
-        .frame(height: Slate.Metric.paneHeaderHeight)
+        .padding(.horizontal, 8)
+        .frame(height: 28)
         .frame(maxWidth: .infinity)
-        .background(Slate.Surface.card) // FLAT: bar background == pane background
+        .background(.bar) // native bottom bar material (the edge-attached footer idiom)
         .overlay(alignment: .top) {
-            Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
+            Divider() // hairline seam between the live surface and the footer bar
         }
     }
 }
@@ -380,18 +381,18 @@ private struct RemoteWindowSizePopover: View {
     ) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space3) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("Resize remote window")
-                .font(.system(size: Slate.Typeface.body, weight: .semibold))
-                .foregroundStyle(Slate.Text.primary)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.primary)
             axisRow("Width", value: $width, range: Self.minSide...maxW)
             axisRow("Height", value: $height, range: Self.minSide...maxH)
             if let mx = model.windowMaxPointSize {
                 Text("Display max \(Int(mx.width)) × \(Int(mx.height)) pt")
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
-            HStack(spacing: Slate.Metric.space2) {
+            HStack(spacing: 8) {
                 if model.windowMaxPointSize != nil {
                     Button("Maximize") { width = maxW
                         height = maxH
@@ -404,7 +405,7 @@ private struct RemoteWindowSizePopover: View {
                     .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(Slate.Metric.space4)
+        .padding(16)
         .frame(width: 280)
         .onAppear {
             let cur = model.windowPointSize ?? CGSize(width: 1280, height: 800)
@@ -414,18 +415,18 @@ private struct RemoteWindowSizePopover: View {
     }
 
     private func axisRow(_ label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
-        HStack(spacing: Slate.Metric.space2) {
+        HStack(spacing: 8) {
             Text(label)
                 .frame(width: 52, alignment: .leading)
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(.secondary)
             TextField(label, value: value, format: .number)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 92)
             Stepper(label, value: value, in: range, step: 20)
                 .labelsHidden()
-            Text("pt").foregroundStyle(Slate.Text.secondary)
+            Text("pt").foregroundStyle(.secondary)
         }
-        .font(.system(size: Slate.Typeface.body))
+        .font(.body)
     }
 
     private func apply() {
@@ -478,12 +479,12 @@ private struct GuiPastePlateMenu: View {
             }
         } label: {
             Image(systemSymbol: .keyboard)
-                .font(.system(size: Slate.Metric.iconSize, weight: .medium))
-                .foregroundStyle(Slate.Text.icon)
-                .frame(width: Slate.Metric.plate, height: Slate.Metric.plate)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
                 .background(
-                    hovering ? Slate.State.hover : .clear,
-                    in: .rect(cornerRadius: Slate.Metric.radiusControl),
+                    hovering ? Color.primary.opacity(0.08) : .clear,
+                    in: .rect(cornerRadius: 6),
                 )
                 .contentShape(.rect)
         }
@@ -496,26 +497,26 @@ private struct GuiPastePlateMenu: View {
 
 /// The transient "typed N, skipped M" result banner (C7) for ``RemoteWindowModel/pasteAsKeystrokes(_:)`` —
 /// shown only when some clipboard characters had no US-QWERTY mapping and were dropped, so the user learns a
-/// paste was incomplete. Tap to dismiss (it also auto-clears on the model's timer). A flat bottom pill.
+/// paste was incomplete. Tap to dismiss (it also auto-clears on the model's timer). A floating material chip.
 private struct PasteFeedbackBanner: View {
     let feedback: RemoteWindowModel.PasteFeedback
     let onDismiss: () -> Void
 
     var body: some View {
         Button(action: onDismiss) {
-            HStack(spacing: Slate.Metric.space2) {
+            HStack(spacing: 8) {
                 Image(systemSymbol: .exclamationmarkTriangle)
-                    .foregroundStyle(Slate.State.accent)
+                    .foregroundStyle(Color.accentColor)
                 Text("Typed \(feedback.typed), skipped \(feedback.skipped) unmapped")
-                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                    .foregroundStyle(Slate.Text.primary)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
             }
-            .padding(.horizontal, Slate.Metric.space3)
-            .padding(.vertical, Slate.Metric.space2)
-            .background(Slate.Surface.card, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.regularMaterial, in: .rect(cornerRadius: 6))
             .overlay(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                    .strokeBorder(Slate.Line.divider, lineWidth: Slate.Metric.hairline),
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(.separator, lineWidth: 1),
             )
             .contentShape(.rect)
         }

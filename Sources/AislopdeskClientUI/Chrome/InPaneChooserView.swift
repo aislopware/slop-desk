@@ -8,7 +8,8 @@
 // pane. Replaces the old `PaneChooserPopover` (a centred overlay), per the "create + focus, content = the
 // choices" UX.
 //
-// Slate.* tokens only (raw font/radius literals fail scripts/check-ds-leaks.sh).
+// Native system styling: semantic colors / system text styles, and a `.regularMaterial` card (the
+// native-SwiftUI chrome migration — docs/DECISIONS.md 2026-07-03).
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -29,16 +30,16 @@ struct InPaneChooserView: View {
     private var options: [PaneChooserOption] { PaneChooserRegistry.options }
 
     var body: some View {
-        VStack(spacing: Slate.Metric.space2) {
+        VStack(spacing: 8) {
             Spacer(minLength: 0)
             Text("New Pane")
-                .font(.system(size: Slate.Typeface.body, weight: .semibold))
-                .foregroundStyle(Slate.Text.primary)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.primary)
             Text("Choose what to open in this pane")
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
-                .padding(.bottom, Slate.Metric.space2)
-            VStack(spacing: Slate.Metric.space2) {
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 8)
+            VStack(spacing: 8) {
                 ForEach(options, id: \.kind) { option in
                     InPaneChooserCard(option: option) { store.choosePaneKind(paneID, kind: option.kind) }
                 }
@@ -46,7 +47,7 @@ struct InPaneChooserView: View {
             .frame(maxWidth: 320)
             Spacer(minLength: 0)
         }
-        .padding(Slate.Metric.space4)
+        .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
         // Claim the keyboard for the NEW pane: `.focusable()` + `@FocusState` makes this view the window's
@@ -82,27 +83,32 @@ private struct InPaneChooserCard: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: Slate.Metric.space3) {
+            HStack(spacing: 12) {
                 Image(systemName: option.symbol)
-                    .font(.system(size: Slate.Typeface.body))
-                    .foregroundStyle(Slate.State.accent)
+                    .font(.body)
+                    .foregroundStyle(Color.accentColor)
                     .frame(width: 22)
                 Text(option.title)
-                    .font(.system(size: Slate.Typeface.body))
-                    .foregroundStyle(Slate.Text.primary)
-                Spacer(minLength: Slate.Metric.space2)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 8)
                 Text(String(option.mnemonic).uppercased())
-                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, Slate.Metric.space3)
+            .padding(.horizontal, 12)
             .frame(height: 44)
-            .background(hovering ? Slate.State.hover : Slate.Surface.element)
+            // A native material card with a hover plate over it — the material replaces the old inset
+            // element fill, so the card reads as native chrome without a bespoke surface color.
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                    .stroke(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(hovering ? Color.primary.opacity(0.08) : Color.clear),
             )
-            .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusControl))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(.separator, lineWidth: 1),
+            )
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

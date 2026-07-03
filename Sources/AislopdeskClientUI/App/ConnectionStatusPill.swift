@@ -45,17 +45,17 @@ struct ConnectionStatusPill: View {
                     glowKey: StatusPresentation.connectionLabel(status),
                 )
                 Text(host)
-                    .font(.system(size: Slate.Typeface.base, weight: .medium))
-                    .foregroundStyle(Slate.Text.primary)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
                 Text(StatusPresentation.connectionLabel(status))
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if case .connected = status, let pingMS {
                     Text("· \(Int(pingMS.rounded())) ms")
-                        .font(.system(size: Slate.Typeface.footnote).monospacedDigit())
-                        .foregroundStyle(Slate.Text.secondary)
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             }
@@ -64,8 +64,8 @@ struct ConnectionStatusPill: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .background(Slate.Surface.element, in: Capsule())
-        .overlay(Capsule().strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline))
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(.separator, lineWidth: 1))
         .help(StatusPresentation.connectionHelp(host: host, status: status))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(StatusPresentation.connectionHelp(host: host, status: status))
@@ -78,15 +78,15 @@ struct ConnectionStatusPill: View {
             Task { await connection.retry() }
         } label: {
             Image(systemSymbol: .arrowClockwise)
-                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                .foregroundStyle(Slate.Text.secondary)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 4)
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .background(Slate.Surface.element, in: Capsule())
-        .overlay(Capsule().strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline))
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(.separator, lineWidth: 1))
         .help("Retry connecting to \(host)")
         .accessibilityLabel("Retry connecting to \(host)")
     }
