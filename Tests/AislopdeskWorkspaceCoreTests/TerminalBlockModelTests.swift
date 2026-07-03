@@ -234,19 +234,6 @@ final class TerminalBlockModelTests: XCTestCase {
         XCTAssertFalse(model.isOutputPending(index: 7))
     }
 
-    func testResetBumpsSessionEpochSoIndexKeyedCachesInvalidate() {
-        // On a reconnect (`reset()`) block indices restart at 0. The observable epoch must advance on EACH
-        // reset so the inspector's index-keyed output cache discards the dead session's bytes and can never
-        // serve them under a reused index (Bug 1's within-pane reconnect collision).
-        let model = TerminalBlockModel()
-        XCTAssertEqual(model.epoch, 0, "a fresh model starts at epoch 0")
-        model.upsert(index: 0, commandText: "a", exitCode: 0, durationMS: 1, complete: true, outputLen: 3)
-        model.reset()
-        XCTAssertEqual(model.epoch, 1, "reset advances the session epoch")
-        model.reset()
-        XCTAssertEqual(model.epoch, 2, "each reset advances the epoch (monotonic, so onChange always fires)")
-    }
-
     // MARK: First-seen timestamps (E9 Outline — client-receive time side-map)
 
     func testFirstSeenIsSetOnFirstUpsertAndStableAcrossUpdate() {

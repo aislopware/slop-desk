@@ -135,8 +135,8 @@ public final class ConnectionViewModel {
 
     private var client: AislopdeskClient?
     /// The pane's typed metadata façade (E4), created on connect bound to the live ``client`` and torn
-    /// down on disconnect. The inspector's ``PaneMetadataModel`` drives it; this VM folds the inbound
-    /// `.metadataResponse` events into its pending-request registry. `nil` while disconnected.
+    /// down on disconnect. Drives the sidebar git line + Open-Quickly/path actions; this VM folds the
+    /// inbound `.metadataResponse` events into its pending-request registry. `nil` while disconnected.
     private var metadataClient: MetadataClient?
     /// Monotonic connect-attempt counter (R6 #1 — the VM analogue of `AislopdeskClient.connectGeneration`).
     /// `connect()`/`resume()` capture it before the long handshake `await`; a teardown / reconnect /
@@ -316,8 +316,8 @@ public final class ConnectionViewModel {
     /// The live client (so the input bar can `sendInput`). `nil` while disconnected.
     public var activeClient: AislopdeskClient? { client }
 
-    /// The pane's typed metadata façade (E4), or `nil` while disconnected. The Details-Panel
-    /// ``PaneMetadataModel`` binds to this to fetch processes/ports/cwd/git/files/sessions over the wire.
+    /// The pane's typed metadata façade (E4), or `nil` while disconnected. The sidebar git line,
+    /// Open-Quickly, and the host-path actions bind to this to fetch cwd/git status over the wire.
     public var activeMetadataClient: MetadataClient? { metadataClient }
 
     // MARK: Lifecycle

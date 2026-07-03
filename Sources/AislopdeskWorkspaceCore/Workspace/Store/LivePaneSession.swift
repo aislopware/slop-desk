@@ -75,15 +75,6 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// Observed so the leaf chrome re-renders on a change.
     public private(set) var claudeStatus: ClaudeStatus = .none
 
-    /// QUEUE-SAFETY (2026-07-02, docs/DECISIONS.md "Queue-safety cluster"): whether AUTHORITATIVE agent
-    /// turn signals have ever been seen for this pane — set on the first `.working`/`.done`/
-    /// `.needsPermission`, which ONLY the host's hook/ctl paths can produce (the always-on foreground
-    /// watch yields at most the presence-floor `.idle`, behind which Claude may be MID-TURN). Sticky for
-    /// the pane-session lifetime — the PTY env keeps
-    /// `AISLOPDESK_SOCKET_PATH`, so a restarted claude in the same pane still reports. Observed so the
-    /// strip's held badge clears the moment the first authoritative signal lands.
-    public private(set) var agentTurnSignalsVerified = false
-
     /// The last foreground process basename the host reported (type 26) — a COARSE display-only hint, NOT
     /// a status source (P1, review #3): a transient child process taking the PTY must never wipe a
     /// `.needsPermission` the host set via a hook, so type-26 updates THIS string and nothing else. `nil`
@@ -483,13 +474,6 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         let isActive = newStatus != .none
         guard claudeStatus != newStatus else { return } // dedupe identical updates (no churn)
         claudeStatus = newStatus
-        // QUEUE-SAFETY (2026-07-02): `.working`/`.done`/`.needsPermission` can ONLY come from the host's
-        // authoritative hook/ctl paths (the foreground watch's presence floor never leaves `.idle`), so
-        // the first one proves the turn-signal pipeline is live for this pane — from here on the Prompt
-        // Queue may auto-dispatch into the agent (kickstart on verified `.idle`/`.done`, drain on `.done`).
-        if newStatus == .working || newStatus == .done || newStatus == .needsPermission {
-            agentTurnSignalsVerified = true
-        }
         if !wasActive, isActive {
             // A claude just appeared in this terminal → open the read-only inspector second channel.
             inspectorTask?.cancel()

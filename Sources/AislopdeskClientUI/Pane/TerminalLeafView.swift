@@ -1,8 +1,8 @@
 // TerminalLeafView — the content of a terminal pane leaf (REBUILD-V2, L2 MINIMAL): the terminal surface
 // seam (TerminalRendererFactory.make — the SEAM, else BuildStatusPlaceholderView).
 // The resting window shows NO persistent cwd chrome — the working-directory chip only appears in
-// menus/overlays — so there is no bottom cwd pill here. The bottom command `InputBar` is likewise NOT
-// persistently mounted.
+// menus/overlays — so there is no bottom cwd pill here. There is no mounted bottom command-input row;
+// text delivery (incl. Peek & Reply) routes through `InputBarModel` headlessly, never a bar view.
 //
 // SEAM usage: the terminal pixels come from `TerminalRendererFactory.make(model:isFocused:)`. The Xcode
 // app target injects the production `GhosttyTerminalView`; a headless `swift build` registers no factory,

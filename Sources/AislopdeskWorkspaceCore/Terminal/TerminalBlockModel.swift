@@ -141,12 +141,6 @@ public final class TerminalBlockModel {
     /// The blocks in INDEX order (oldest first). Newest is `last`. Bounded to ``maxBlocks``.
     public private(set) var blocks: [CommandBlock] = []
 
-    /// A monotonic SESSION-EPOCH bumped on every ``reset()`` (a reconnect / fresh session). Block indices
-    /// restart at 0 each epoch, so any consumer that caches by index (e.g. the inspector's fetched-output
-    /// cache) OBSERVES this and discards its cache when it changes — otherwise a reused index would serve
-    /// the dead session's bytes. Observed (NOT `@ObservationIgnored`) so a SwiftUI `onChange` fires.
-    public private(set) var epoch: Int = 0
-
     /// The newest block (the CURRENT / last command), or `nil` if none yet. Drives the sticky header +
     /// the chrome status chip.
     public var latest: CommandBlock? { blocks.last }
@@ -318,7 +312,6 @@ public final class TerminalBlockModel {
     /// Clears all blocks + cancels every pending output request with an empty result (so a caller awaiting
     /// one never hangs). Called on a session reset / reconnect — the dead session's blocks are stale.
     public func reset() {
-        epoch &+= 1 // a new session epoch — index-keyed caches downstream must discard on this edge.
         blocks.removeAll()
         // The dead session's first-seen timestamps die with its blocks (a fresh session re-captures them).
         firstSeenByIndex.removeAll()

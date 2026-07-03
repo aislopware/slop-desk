@@ -6,8 +6,8 @@ import Foundation
 /// builds a verb's request payload, mints a correlation id from its ``MetadataRequestRegistry``, fires the
 /// wire request through an injected `send` seam, awaits the reply, and decodes the opaque
 /// ``WireMessage/metadataResponse(requestID:status:payload:)`` payload into the verb's
-/// ``MetadataCodec`` value type. The Details-Panel ``PaneMetadataModel`` drives it; the inbound pump
-/// resolves it via ``resolve(requestID:status:payload:)`` (folded by ``ConnectionViewModel``).
+/// ``MetadataCodec`` value type. The sidebar git line, Open-Quickly, and the host-path actions drive it;
+/// the inbound pump resolves it via ``resolve(requestID:status:payload:)`` (folded by ``ConnectionViewModel``).
 ///
 /// **One per pane.** Pane identity rides the mux channel envelope, so a `MetadataClient` is bound to ONE
 /// pane's ``AislopdeskClient`` channel — its `send` closure targets that channel and its cache is that
