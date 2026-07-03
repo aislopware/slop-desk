@@ -1,14 +1,16 @@
-// WorkspaceRootView — the native 2-column IDE shell (REBUILD-V2, L1 + L4a toolbar).
+// WorkspaceRootView — the native IDE shell (native-chrome migration, 2026-07-03; see docs/DECISIONS.md).
 //
-// macOS: an `NSViewControllerRepresentable` (`WorkspaceSplitRepresentable`) owning an
-// `AislopdeskSplitViewController` (an `NSSplitViewController` with sidebar | content items,
-// each an `NSHostingController` over a SwiftUI column). Modelled on CodeEdit's split shell. The window runs
-// `.windowStyle(.hiddenTitleBar)` — there is NO system unified toolbar; the workspace's own hover-reveal
-// titlebar (`SlateTitlebar`, hosted as a top overlay inside `ContentColumn`) IS the chrome (sidebar toggle,
-// "New Tab", the centred title menu). iOS: a stock `NavigationSplitView` over the same two columns + its
-// own toolbar. (The right-hand inspector / Details column is REMOVED — keyboard-centric.)
+// BOTH platforms are a stock `NavigationSplitView` now (sidebar | detail) with a native unified titlebar
+// + toolbar — the old AppKit shell (`AislopdeskSplitViewController` + an `NSHostingController` per column
+// + the hover-reveal `SlateTitlebar`) is deleted. One SwiftUI hierarchy means `@Environment` / `.tint` /
+// `.preferredColorScheme` reach every column — the old D3 boundary workaround (static theme tokens + an
+// `NSWindow.appearance` re-pin) is no longer load-bearing.
 //
-// NO custom design-system / token target (deleted in L0): SYSTEM semantic colours + fonts + SF Symbols.
+// macOS detail = the terminal content column + the RIGHT remote-windows column (TabSide partition) in a
+// keep-mounted HStack split: the GUI column collapses by WIDTH (never unmounted), because `.inspector` /
+// conditional removal would tear down live video surfaces — the SplitContainer identity-preservation
+// invariant. Its divider is a thin custom handle (`GuiPanelDivider`) that brackets the drag with
+// `setTerminalResizeSuspended` (commit-on-release, same rule as `PaneDivider`).
 
 #if canImport(SwiftUI)
 import AislopdeskAgentDetect
@@ -16,6 +18,9 @@ import AislopdeskWorkspaceCore
 import Defaults
 import SFSafeSymbols
 import SwiftUI
+#if os(macOS)
+import AppKit // NSColor.separatorColor for the GUI-panel divider hairline
+#endif
 
 public struct WorkspaceRootView: View {
     let store: WorkspaceStore
@@ -41,23 +46,24 @@ public struct WorkspaceRootView: View {
     /// `.onChange(of: autoHideTabsPanel)` observer below — when the user flips the Settings picker. Drives the
     /// vertical TABS panel auto-hide together with the active session's tab count (see ``applyAutoHide``).
     @Default(.autoHideTabsPanel) private var autoHideTabsPanel
-    #if os(iOS)
-    /// Whether the iOS settings sheet (WI-5) is presented — flipped by the toolbar gear, read by the `.sheet`.
-    @State private var showSettings = false
-
-    /// E19/A18 (WI-7, iOS): map the shared `chrome.sidebarCollapsed` flag — the one the auto-hide policy drives
-    /// (and macOS's split reads) — onto the `NavigationSplitView`'s `columnVisibility`, so the TABS panel
-    /// actually hides/reveals on iPad rather than the flag being a dead toggle there. The getter derives the
-    /// visibility from the flag (`Self.sidebarVisibility`); the setter routes a user swipe of the leading column
-    /// through `Self.applySidebarVisibility`, which writes the flag back AND records `manualSidebarOverride` on a
-    /// genuine collapse/reveal so the auto-hide policy honors an iPad swipe the same way it honors ⌘⇧L (WI-7) —
-    /// the SECOND manual entry point besides `toggleSidebar()`. Mirrors ``detailsCompactColumnBinding``.
+    /// E19/A18 (WI-7): map the shared `chrome.sidebarCollapsed` flag — the one the auto-hide policy drives —
+    /// onto the `NavigationSplitView`'s `columnVisibility`, so the TABS panel hides/reveals on BOTH platforms
+    /// rather than the flag being a dead toggle. The getter derives the visibility from the flag
+    /// (`Self.sidebarVisibility`); the setter routes a user-driven collapse (the macOS toolbar's system
+    /// sidebar button / a sidebar-divider snap; an iPad swipe of the leading column) through
+    /// `Self.applySidebarVisibility`, which writes the flag back AND records `manualSidebarOverride` on a
+    /// genuine collapse/reveal so the auto-hide policy honors it the same way it honors ⌘⇧L (WI-7) —
+    /// the SECOND manual entry point besides `toggleSidebar()`.
     private var sidebarColumnVisibility: Binding<NavigationSplitViewVisibility> {
         Binding(
             get: { Self.sidebarVisibility(sidebarCollapsed: chrome.sidebarCollapsed) },
             set: { Self.applySidebarVisibility($0, chrome: chrome) },
         )
     }
+
+    #if os(iOS)
+    /// Whether the iOS settings sheet (WI-5) is presented — flipped by the toolbar gear, read by the `.sheet`.
+    @State private var showSettings = false
 
     /// E13 (ES-E13-1/ES-E13-2 iOS halves): the app-owned Agents install-hooks controller, injected once at the
     /// WindowGroup root (`\.agentHooksController`) and handed to the iOS ``SettingsSheet`` so the Agents card +
@@ -81,6 +87,20 @@ public struct WorkspaceRootView: View {
     /// the chord-less `.pinWindow` action routes through the SAME NSEvent monitor. `nil` (the default / iOS /
     /// tests) is a no-op — Pin Window's primary entry is then the menu Button + palette (E19 WI-4).
     private let installPinToggle: ((@escaping () -> Void) -> Void)?
+
+    #if os(macOS)
+    /// Coalesces content-column geometry churn (window resize / sidebar drag / collapse animation) into ONE
+    /// host grid-resize flush 0.1s after the burst settles. The old AppKit shell drove this off
+    /// `NSSplitView.didResizeSubviewsNotification`; the SwiftUI shell drives the SAME store bracket off
+    /// `.onGeometryChange` on the content column.
+    @State private var resizeCoalescer = TerminalResizeCoalescer()
+    /// The detail region's live width — clamps the GUI column's draggable width so the terminal content
+    /// column always keeps its minimum.
+    @State private var detailWidth: CGFloat = 0
+
+    /// The terminal content column's minimum width (the old split item's `minimumThickness`).
+    private static let minContentWidth: CGFloat = 420
+    #endif
 
     // INTERNAL init (not `public`): `WorkspaceRootView` is constructed only inside this module
     // (`AislopdeskClientApp`), and `chrome` is the internal `WorkspaceChromeState`. Narrowing the init keeps
@@ -110,11 +130,33 @@ public struct WorkspaceRootView: View {
         return store.handle(for: id) as? LivePaneSession
     }
 
-    /// The active pane's smoothed RTT (ms) — ping lives on the per-pane channel (`ConnectionViewModel`).
-    private var activePingMS: Double? { activeLive?.connection?.latencyMS }
+    /// The RTT (ms) for the toolbar status cluster. Prefers the ACTIVE pane's per-channel `latencyMS`,
+    /// falling back to ANY live pane's when the active pane has none — a `.remoteGUI` window pane has no
+    /// terminal-channel ping (`connection == nil`), so without this the ping would VANISH the moment you
+    /// focus a window. Every pane pings the SAME host, so a sibling terminal's RTT is representative;
+    /// `.min()` keeps it deterministic across the unordered registry.
+    private var activePingMS: Double? {
+        if let active = activeLive?.connection?.latencyMS { return active }
+        return store.allSessions
+            .compactMap { ($0 as? LivePaneSession)?.connection?.latencyMS }
+            .min()
+    }
+
+    /// The active VIDEO pane's host-announced stream cadence (fps); `nil` for a terminal pane / until the
+    /// host's FPS governor announces a value.
+    private var activeFps: Int? { activeLive?.remoteWindow?.streamFps }
 
     /// The active pane's agent status (`.none` when no agent / no live pane).
     private var activeAgentStatus: ClaudeStatus { activeLive?.claudeStatus ?? .none }
+
+    /// The active tab's title — the native window title (`.navigationTitle`), replacing the old custom
+    /// titlebar's centred title button.
+    private var activeTitle: String {
+        guard let id = store.tree.activeSession?.activeTab?.activePane else { return "Aislopdesk" }
+        let spec = store.tree.activeSession?.specs[id]
+        let title = spec?.lastKnownTitle ?? spec?.title ?? ""
+        return title.isEmpty ? "~" : title
+    }
 
     /// E19/A18 (WI-7): the active session's tab count — the auto-hide policy's input. `nil` (no active session
     /// materialized yet) reads as `0`, which collapses under `.auto` (there is nothing to switch between). The
@@ -128,17 +170,25 @@ public struct WorkspaceRootView: View {
 
     public var body: some View {
         #if os(macOS)
-        // No system unified toolbar / header — the window runs `.hiddenTitleBar` and its own hover-reveal
-        // titlebar (`SlateTitlebar`, hosted inside `ContentColumn`) IS the chrome.
-        WorkspaceSplitRepresentable(
-            store: store, connection: connection, chrome: chrome, overlay: overlay,
-            preferences: preferencesStore,
-        )
-        .ignoresSafeArea()
-        // The floating-overlay layer (palette / cheat sheet / connect / remote-window picker / toasts)
-        // floats above the AppKit split — SwiftUI overlays compose over an `NSViewControllerRepresentable`.
+        // The native shell: a stock NavigationSplitView (system glass sidebar, system toolbar with the
+        // sidebar toggle) whose detail hosts the terminal content + the keep-mounted GUI column split.
+        NavigationSplitView(
+            columnVisibility: sidebarColumnVisibility,
+        ) {
+            NavigatorColumn(store: store, preferences: preferencesStore)
+                .navigationSplitViewColumnWidth(
+                    min: WorkspaceChromeState.defaultSidebarWidth,
+                    ideal: WorkspaceChromeState.defaultSidebarWidth,
+                    max: 360,
+                )
+        } detail: {
+            macDetail
+        }
+        .navigationTitle(activeTitle)
+        .toolbar { macToolbar }
+        // The floating-overlay layer (palette / cheat sheet / connect / remote-window picker / toasts).
         // `toggledState` is built from the LIVE chrome so the palette's ✓ gutter tracks the real
-        // sidebar/inspector visibility.
+        // sidebar/windows-panel visibility.
         .overlay {
             OverlayHostView(
                 store: store,
@@ -150,8 +200,8 @@ public struct WorkspaceRootView: View {
         }
         // Wire ⌘⇧L (Toggle Tabs Panel / sidebar) to the live chrome once it
         // exists. The dispatcher is built at app `init` (before `chrome`), so we hand it the toggles here
-        // — `[chrome]` captures the same @Observable instance the representable + titlebar read, so the
-        // NSEvent chord and the titlebar button drive ONE flag.
+        // — `[chrome]` captures the same @Observable instance the split + toolbar read, so the
+        // NSEvent chord and the toolbar button drive ONE flag.
         .onAppear { wireChromeToggles() }
         // E19/A18 (WI-7): drive the vertical TABS panel auto-hide. On a tab-count TRANSITION or a Settings
         // mode flip, apply `SidebarAutoHidePolicy` to the live `chrome.sidebarCollapsed` — but only when the
@@ -170,6 +220,12 @@ public struct WorkspaceRootView: View {
         .onChange(of: guiTabCount, initial: true) {
             Self.applyGuiAutoReveal(guiTabCount: guiTabCount, chrome: chrome)
         }
+        // LOST-PROMPT discipline (carried from the old shell's `applyCollapse`): a sidebar/windows-panel
+        // collapse ANIMATES the content column through intermediate widths — suspend the host grid-resize
+        // forwarding on the flip (before the first animation frame lays out) and let the geometry
+        // coalescer's settle timer flush the FINAL grid once the animation lands.
+        .onChange(of: chrome.sidebarCollapsed) { resizeCoalescer.note(store: store) }
+        .onChange(of: chrome.guiCollapsed) { resizeCoalescer.note(store: store) }
         #else
         NavigationSplitView(
             columnVisibility: sidebarColumnVisibility,
@@ -222,6 +278,80 @@ public struct WorkspaceRootView: View {
     }
 
     #if os(macOS)
+    /// The GUI column's effective rendered width: the user-chosen `chrome.guiWidth`, clamped so the
+    /// terminal content column keeps its minimum inside the live detail width (`detailWidth == 0` before
+    /// the first layout ⇒ the minimum).
+    private var effectiveGuiWidth: CGFloat {
+        min(max(chrome.guiWidth, WorkspaceChromeState.minGuiWidth), maxGuiWidth)
+    }
+
+    /// Upper clamp for the GUI column width — the detail region minus the content minimum + divider band.
+    private var maxGuiWidth: CGFloat {
+        max(WorkspaceChromeState.minGuiWidth, detailWidth - Self.minContentWidth - 9)
+    }
+
+    /// The detail region: the terminal content column + the RIGHT remote-windows column (TabSide
+    /// partition) in a keep-mounted split. The GUI column collapses by WIDTH/opacity — never unmounted —
+    /// so a collapse/reveal never tears down a live video surface (`.inspector` / conditional removal
+    /// would; the SplitContainer identity-preservation invariant).
+    private var macDetail: some View {
+        HStack(spacing: 0) {
+            ContentColumn(store: store, connection: connection, chrome: chrome)
+                .frame(minWidth: Self.minContentWidth, maxWidth: .infinity, maxHeight: .infinity)
+                // The commit-on-release resize rule: any geometry burst on the content column (window
+                // resize, sidebar divider drag, collapse animation) suspends host grid-resize forwarding
+                // on its first change; the coalescer flushes the settled grid 0.1s after the last.
+                .onGeometryChange(for: CGSize.self) { proxy in
+                    proxy.size
+                } action: { _ in
+                    resizeCoalescer.note(store: store)
+                }
+                .onDisappear { resizeCoalescer.cancel(store: store) }
+            if !chrome.guiCollapsed {
+                GuiPanelDivider(chrome: chrome, store: store, maxWidth: maxGuiWidth)
+            }
+            GuiColumn(store: store, connection: connection, chrome: chrome) {
+                overlay.openRemotePicker()
+            }
+            .frame(width: chrome.guiCollapsed ? 0 : effectiveGuiWidth)
+            .opacity(chrome.guiCollapsed ? 0 : 1)
+            .allowsHitTesting(!chrome.guiCollapsed)
+            .clipped()
+        }
+        .animation(.easeInOut(duration: 0.2), value: chrome.guiCollapsed)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            detailWidth = width
+        }
+    }
+
+    /// The native unified-toolbar items. The system sidebar toggle is provided by `NavigationSplitView`;
+    /// these are the trailing cluster: pane actions, the connection-status cluster, and the windows-panel
+    /// toggle at the far right (nearest the column it collapses — ⌘⇧E's clickable twin).
+    @ToolbarContentBuilder
+    private var macToolbar: some ToolbarContent {
+        ToolbarItem {
+            PaneActionsMenu(store: store)
+        }
+        ToolbarItem {
+            TitlebarConnectionCluster(
+                connection: connection,
+                pingMS: activePingMS,
+                fps: activeFps,
+                onConnect: { overlay.openConnect() },
+            )
+        }
+        ToolbarItem {
+            Button {
+                chrome.toggleWindowsPanel()
+            } label: {
+                Label("Toggle Windows Panel", systemSymbol: .sidebarRight)
+            }
+            .help("Toggle Windows Panel (⌘⇧E)")
+        }
+    }
+
     /// Hand the app-level dispatcher the chrome toggles (sidebar ⌘⇧L), each bound to
     /// THIS view's live state. Called on appear (the dispatcher predates `chrome`, so the closures are
     /// installed late). `[chrome]` captures the same `@Observable` instance the representable + titlebar
@@ -420,34 +550,96 @@ public struct WorkspaceRootView: View {
 }
 
 #if os(macOS)
-/// Bridges the AppKit `AislopdeskSplitViewController` into SwiftUI. The controller (and the two SwiftUI
-/// columns it hosts) owns the long-lived shell; SwiftUI just mounts it. Keeping the shell in AppKit (not a
-/// SwiftUI `HSplitView`) is the load-bearing no-teardown choice for the libghostty panes. `updateNSView…`
-/// pushes the chrome collapse flag into the split item each update (the toolbar toggle flips it).
-struct WorkspaceSplitRepresentable: NSViewControllerRepresentable {
-    let store: WorkspaceStore
-    let connection: AppConnection
+/// The draggable divider between the terminal content column and the RIGHT remote-windows column: a
+/// native hairline (`separatorColor`) inside a comfortable hit band, a column-resize pointer, and the
+/// commit-on-release resize discipline — `setTerminalResizeSuspended` brackets the drag so the host gets
+/// ONE grid flush on settle, not one per frame (the `PaneDivider` rule). Double-click resets the column
+/// to its default width.
+private struct GuiPanelDivider: View {
     let chrome: WorkspaceChromeState
-    /// The overlay reducer — threaded so the controller can wire the sidebar's status affordance to
-    /// `openConnect()` (ES-E2-6, the macOS connect affordance). Captured once in `makeNSViewController`.
-    let overlay: OverlayCoordinator
-    /// The live ``PreferencesStore`` (`\.preferencesStore`) — forwarded into the controller so the sidebar's
-    /// ``NavigatorColumn`` tab context menu can surface the host-LOCAL "Prevent Sleep While Processing" flag
-    /// (Batch 4). The NSHostingController columns do not inherit the WindowGroup environment, hence the explicit
-    /// thread. `nil` (no scene injection / a preview) hides the row.
-    let preferences: PreferencesStore?
+    let store: WorkspaceStore
+    /// Upper clamp for a drag (the detail width minus the content column's minimum).
+    let maxWidth: CGFloat
 
-    func makeNSViewController(context _: Context) -> AislopdeskSplitViewController {
-        AislopdeskSplitViewController(
-            store: store, connection: connection, chrome: chrome, preferences: preferences,
-            onConnect: { [overlay] in overlay.openConnect() },
-            onOpenRemotePicker: { [overlay] in overlay.openRemotePicker() },
-        )
+    /// `true` for the duration of the gesture. SwiftUI auto-resets `@GestureState` on end/cancel, so the
+    /// end-cleanup (unsuspend + flush) can never be skipped by a cancelled drag.
+    @GestureState private var gestureActive = false
+    /// The GUI width captured at drag start — the absolute anchor for the whole gesture (an over-drag into
+    /// the clamp HOLDS and resumes exactly when the cursor returns; no drift).
+    @State private var startWidth: CGFloat?
+
+    var body: some View {
+        Rectangle()
+            .fill(.clear)
+            .frame(width: 9)
+            .overlay {
+                Rectangle()
+                    .fill(gestureActive ? Color.accentColor : Color(nsColor: .separatorColor))
+                    .frame(width: 1)
+            }
+            .contentShape(.rect)
+            .pointerStyle(.columnResize)
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .updating($gestureActive) { _, state, _ in state = true }
+                    .onChanged { value in
+                        if startWidth == nil {
+                            startWidth = chrome.guiWidth
+                            store.setTerminalResizeSuspended(true)
+                        }
+                        let proposed = (startWidth ?? chrome.guiWidth) - value.translation.width
+                        chrome.guiWidth = min(
+                            max(proposed, WorkspaceChromeState.minGuiWidth),
+                            max(WorkspaceChromeState.minGuiWidth, maxWidth),
+                        )
+                    },
+            )
+            .onTapGesture(count: 2) { chrome.guiWidth = WorkspaceChromeState.minGuiWidth }
+            // Fires on end AND cancel (`gestureActive` resets either way). Clean up exactly once.
+            .onChange(of: gestureActive) { _, active in
+                if !active, startWidth != nil {
+                    startWidth = nil
+                    store.setTerminalResizeSuspended(false) // flush the grid the drag settled on
+                }
+            }
+    }
+}
+
+/// Coalesces a content-geometry resize burst into ONE host grid flush: suspend forwarding on the first
+/// size change, re-arm a settle timer each step, resume + flush 0.1s after the last (the drag release /
+/// animation end). The old AppKit shell did this off `NSSplitView.didResizeSubviewsNotification`
+/// (`AislopdeskSplitViewController`, deleted); the SwiftUI shell drives the SAME store bracket off
+/// `.onGeometryChange` on the content column.
+@MainActor
+final class TerminalResizeCoalescer {
+    private var settleWork: DispatchWorkItem?
+    private var suspended = false
+    private let settleDelay: TimeInterval = 0.1
+
+    /// One step of a resize burst: suspend on the first step, (re)arm the settle timer on every step.
+    func note(store: WorkspaceStore) {
+        if !suspended {
+            suspended = true
+            store.setTerminalResizeSuspended(true)
+        }
+        settleWork?.cancel()
+        let work = DispatchWorkItem { [weak self, weak store] in
+            guard let self else { return }
+            suspended = false
+            store?.setTerminalResizeSuspended(false) // flush the grid the burst settled on
+        }
+        settleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + settleDelay, execute: work)
     }
 
-    func updateNSViewController(_ controller: AislopdeskSplitViewController, context _: Context) {
-        // Reading the @Observable flags here ties this update to their changes; apply them to the items.
-        controller.applyCollapse(sidebarCollapsed: chrome.sidebarCollapsed, guiCollapsed: chrome.guiCollapsed)
+    /// Resume forwarding if the column disappears mid-burst (window closed mid-resize) — otherwise the
+    /// cancelled settle work item would leave forwarding suspended and the next session on the SAME store
+    /// would never flush its grid (the old shell's `viewWillDisappear` discipline).
+    func cancel(store: WorkspaceStore) {
+        guard suspended else { return }
+        settleWork?.cancel()
+        suspended = false
+        store.setTerminalResizeSuspended(false)
     }
 }
 #endif

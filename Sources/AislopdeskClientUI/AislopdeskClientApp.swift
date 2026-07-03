@@ -744,9 +744,9 @@ public struct AislopdeskClientApp: App {
             #endif
         }
         #if os(macOS)
-        // The app has NO system unified toolbar: hide the titlebar (the window keeps traffic lights + a
-        // full-size content view) so its own hover-reveal titlebar (`SlateTitlebar`) is the only chrome.
-        .windowStyle(.hiddenTitleBar)
+        // NATIVE chrome (native-chrome migration, 2026-07-03): the stock window style — system titlebar +
+        // unified glass toolbar (the toolbar items live in `WorkspaceRootView.macToolbar`; the old
+        // hover-reveal `SlateTitlebar` is deleted).
         .windowResizability(.automatic)
         // G1: open at the odiff reference geometry (1280×800) so a fresh window matches the reference.
         .defaultSize(width: 1280, height: 800)
@@ -958,10 +958,11 @@ public struct AislopdeskClientApp: App {
             width: window.frame.size.width - window.contentLayoutRect.size.width,
             height: window.frame.size.height - window.contentLayoutRect.size.height,
         )
-        // In-window non-terminal overhead for `grid` mode: the revealed sidebar width
-        // (the titlebar is an overlay → no vertical cost; vertical-tabs-only → no horizontal tab bar).
+        // In-window non-terminal overhead for `grid` mode: the revealed sidebar width. The NATIVE
+        // titlebar/toolbar costs no extra math here — `chromeInsets` already subtracts it (window frame
+        // minus `contentLayoutRect`); vertical-tabs-only → no horizontal tab bar.
         let overheadWidth =
-            (chrome.sidebarCollapsed ? 0 : AislopdeskSplitViewController.defaultSidebarWidth)
+            (chrome.sidebarCollapsed ? 0 : WorkspaceChromeState.defaultSidebarWidth)
         let chromeOverhead = CGSize(width: overheadWidth, height: 0)
         guard let size = WindowSizeMath.resolvedContentSize(
             mode: mode,

@@ -1,17 +1,12 @@
 // SlateKit — small reusable chrome controls built on the polished `Slate` token layer (SlateDesign.swift).
-// Two pieces:
 //   • `PlateIconButton` — the hover-plate icon button: a borderless SF-Symbol button that grows a faint
-//     rounded hover plate, 0.12s small-fade. Used by the titlebar chrome.
-//   • `TitlebarHoverCatcher`: ONE tracking area over the whole titlebar strip
-//     whose `hitTest` returns nil (so clicks/drag fall through to the window) but still reports hover by
-//     geometry. Drives the titlebar chrome reveal without stealing the window-drag region.
+//     rounded hover plate, 0.12s small-fade. Used by the in-column chrome (window dock `+`, …).
+// (`TitlebarHoverCatcher` was deleted with the custom hover-reveal titlebar — the titlebar/toolbar is the
+// system's now; native-chrome migration, 2026-07-03.)
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
 import SwiftUI
-#if os(macOS)
-import AppKit
-#endif
 
 /// A hover-plate icon button — a borderless SF-Symbol with a faint rounded hover plate (radius 6).
 struct PlateIconButton: View {
@@ -37,40 +32,4 @@ struct PlateIconButton: View {
     }
 }
 
-#if os(macOS)
-/// A click-through NSView that reports hover over the whole titlebar strip by
-/// geometry (its `hitTest` returns nil so window drag + clicks fall through to the views/window behind it).
-struct TitlebarHoverCatcher: NSViewRepresentable {
-    var onHover: (Bool) -> Void
-
-    func makeNSView(context _: Context) -> NSView {
-        let view = HoverNSView()
-        view.onHover = onHover
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context _: Context) {
-        (nsView as? HoverNSView)?.onHover = onHover
-    }
-
-    final class HoverNSView: NSView {
-        var onHover: ((Bool) -> Void)?
-
-        override func hitTest(_: NSPoint) -> NSView? { nil } // click-through (window drag + buttons behind)
-
-        override func updateTrackingAreas() {
-            super.updateTrackingAreas()
-            for area in trackingAreas { removeTrackingArea(area) }
-            addTrackingArea(NSTrackingArea(
-                rect: .zero,
-                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                owner: self,
-            ))
-        }
-
-        override func mouseEntered(with _: NSEvent) { onHover?(true) }
-        override func mouseExited(with _: NSEvent) { onHover?(false) }
-    }
-}
-#endif
 #endif

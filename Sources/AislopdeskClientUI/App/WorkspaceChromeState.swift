@@ -1,10 +1,10 @@
 // WorkspaceChromeState — the small @Observable chrome model the toolbar toggles drive (REBUILD-V2, L4a).
 //
-// Owns the sidebar collapse flag the titlebar toggle flips. The macOS
-// `WorkspaceSplitRepresentable.updateNSViewController` reads it each update and animates the matching
-// `NSSplitViewItem.isCollapsed`. Kept separate from `WorkspaceStore` (whose legacy `sidebarCollapsed`
-// predates the native rebuild and isn't read by the new navigator) so the chrome flags live in one
-// place and reading them in the SwiftUI body re-invalidates the representable.
+// Owns the sidebar/windows-panel collapse flags + the GUI column width the native SwiftUI shell reads
+// (`WorkspaceRootView`: the NavigationSplitView column visibility + the keep-mounted detail split). Kept
+// separate from `WorkspaceStore` (whose legacy `sidebarCollapsed` predates the native rebuild and isn't
+// read by the new navigator) so the chrome flags live in one place and reading them in a SwiftUI body
+// re-invalidates exactly the views that consume them.
 
 #if canImport(SwiftUI)
 import Foundation
@@ -12,8 +12,21 @@ import Foundation
 @MainActor
 @Observable
 final class WorkspaceChromeState {
+    /// The sidebar (TABS panel) default/min thickness — shared with the window-size glue
+    /// (`AislopdeskClientApp.applyInitialWindowSize`) so the `grid` mode's `chromeOverhead` uses the SAME
+    /// width the native split column adopts (no magic-number drift between the layout and the math).
+    static let defaultSidebarWidth: CGFloat = 220
+    /// The RIGHT remote-windows column's minimum/default width (matches the old split item's
+    /// `minimumThickness` — wide enough for the window dock + a usable video viewport).
+    static let minGuiWidth: CGFloat = 380
+
     /// Whether the left navigator (sidebar) split item is collapsed.
     var sidebarCollapsed = false
+
+    /// The RIGHT remote-windows column's user-chosen width (points) — dragged via the detail split's
+    /// divider handle, seeded at the minimum. Pure view state; the column keeps its panes MOUNTED while
+    /// collapsed (width 0), so a reveal never re-creates a live video surface.
+    var guiWidth: CGFloat = WorkspaceChromeState.minGuiWidth
     /// E19/A30: whether the window is PINNED (View ▸ Pin Window — keep-on-top). Lives with the other
     /// chrome flags so reading it in the SwiftUI scene body re-invalidates the introspect-bearing scene; the
     /// macOS `NSWindow` glue (E19 WI-4) maps it to `NSWindow.level` (`.floating` ⇄ `.normal`). Pure view

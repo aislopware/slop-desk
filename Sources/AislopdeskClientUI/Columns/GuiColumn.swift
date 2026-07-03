@@ -45,7 +45,6 @@ struct GuiColumn: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Color.clear.frame(height: Slate.Metric.titlebarHeight) // the traffic-light / titlebar strip
             dockHeader
             Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
             paneArea

@@ -188,7 +188,6 @@ struct NavigatorColumn: View {
         let allRows = RailRowsBuilder.rows(for: store, side: .terminal)
         let sections = buildSections(allRows, query: query)
         return VStack(alignment: .leading, spacing: 0) {
-            Color.clear.frame(height: 40) // reserve the titlebar / traffic-light strip
             HStack(spacing: 0) {
                 Text("TABS")
                     .font(.system(size: Slate.Typeface.footnote, weight: .semibold))

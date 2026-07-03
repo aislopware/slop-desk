@@ -1,8 +1,8 @@
 // ContentColumn — the centre content area. Renders the active tab's pane tree via the
-// identity-preserving `SplitContainer` (a native `ContentUnavailableView` empty-state when no session/tab),
-// with a hover-reveal titlebar floating as a TOP overlay. The titlebar lives here (not at window level)
-// so its centred title menu centres over the content area for free, and the terminal extends under it
-// for a clean resting silhouette. The shared `WorkspaceChromeState` drives the sidebar/Details toggles.
+// identity-preserving `SplitContainer` (a native `ContentUnavailableView` empty-state when no session/tab).
+// The window chrome is NATIVE now (native-chrome migration, 2026-07-03): the titlebar/toolbar is the
+// system's — the old hover-reveal `SlateTitlebar` overlay and its reserved 40pt strip are gone, so the
+// pane area fills the column directly on both platforms.
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -12,9 +12,6 @@ struct ContentColumn: View {
     let store: WorkspaceStore
     let connection: AppConnection
     let chrome: WorkspaceChromeState
-    /// Opens the Connect-to-Host editor — wired into the titlebar's connection-status cluster. The no-op
-    /// default keeps the column standalone-mountable in previews.
-    var onConnect: () -> Void = {}
 
     /// Whether this column has a tab to show. macOS: the TERMINAL side's displayed tab (the TabSide
     /// partition — remote-window tabs render in the right GUI column); iOS keeps the single-region shell
@@ -28,29 +25,9 @@ struct ContentColumn: View {
     }
 
     var body: some View {
-        content
+        paneArea
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Slate.Surface.window)
-        #if os(macOS)
-            // The hover-reveal titlebar floats as a TOP overlay. New-pane gestures (`+` / title-menu split)
-            // mint an in-pane `.chooser` pane directly — the chooser is the pane's CONTENT, not a modal.
-            .overlay(alignment: .top) {
-                SlateTitlebar(store: store, chrome: chrome, connection: connection, onConnect: onConnect)
-            }
-        #endif
-    }
-
-    /// On macOS the pane area is pushed below the hover-reveal titlebar strip (so the terminal starts under
-    /// it, not under the centred title); iOS has no titlebar so the pane area fills directly.
-    private var content: some View {
-        #if os(macOS)
-        VStack(spacing: 0) {
-            Color.clear.frame(height: Slate.Metric.titlebarHeight)
-            paneArea
-        }
-        #else
-        paneArea
-        #endif
     }
 
     private var paneArea: some View {
