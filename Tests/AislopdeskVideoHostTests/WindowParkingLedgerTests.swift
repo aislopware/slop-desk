@@ -90,5 +90,50 @@ final class WindowParkingLedgerTests: XCTestCase {
         XCTAssertTrue(l.drainAll().isEmpty, "second drain is empty")
         XCTAssertNil(l.unpark(channelID: 1), "channel bindings cleared by drain")
     }
+
+    // C6 BUG A: `parkedChannelIDs` is the VD-termination policy's "which lanes hold a parked
+    // window" snapshot input — it must track park/share/unpark/drain exactly.
+    func testParkedChannelIDsTrackLifecycle() {
+        let l = WindowParkingLedger()
+        XCTAssertEqual(l.parkedChannelIDs, [])
+        _ = l.park(channelID: 1, windowID: 42)
+        XCTAssertEqual(l.parkedChannelIDs, [], "needsMove alone binds nothing (the AX move may fail)")
+        l.recordMove(channelID: 1, windowID: 42, pid: 7, originalFrame: frameA, achievedSize: sizeA)
+        XCTAssertEqual(l.parkedChannelIDs, [1])
+        _ = l.park(channelID: 2, windowID: 42) // second lane SHARES the parked window
+        XCTAssertEqual(l.parkedChannelIDs, [1, 2])
+        _ = l.unpark(channelID: 1)
+        XCTAssertEqual(l.parkedChannelIDs, [2])
+        _ = l.drainAll()
+        XCTAssertEqual(l.parkedChannelIDs, [])
+    }
+
+    // C6 BUG C: the sidecar persists one entry per DISTINCT parked window (refcount is a live-only
+    // concern — a crash restore puts each window back once), sorted for a stable on-disk file.
+    func testSidecarEntriesOnePerDistinctWindowSorted() {
+        let l = WindowParkingLedger()
+        XCTAssertEqual(l.sidecarEntries(), [])
+        _ = l.park(channelID: 1, windowID: 43)
+        l.recordMove(
+            channelID: 1,
+            windowID: 43,
+            pid: 8,
+            originalFrame: CGRect(x: 0, y: 0, width: 800, height: 600),
+            achievedSize: CGSize(width: 800, height: 600),
+        )
+        _ = l.park(channelID: 2, windowID: 42)
+        l.recordMove(channelID: 2, windowID: 42, pid: 7, originalFrame: frameA, achievedSize: sizeA)
+        _ = l.park(channelID: 3, windowID: 42) // shared — must NOT duplicate the entry
+        XCTAssertEqual(l.sidecarEntries(), [
+            WindowParkingSnapshot.Entry(windowID: 42, pid: 7, originalFrame: frameA),
+            WindowParkingSnapshot.Entry(
+                windowID: 43,
+                pid: 8,
+                originalFrame: CGRect(x: 0, y: 0, width: 800, height: 600),
+            ),
+        ])
+        _ = l.unpark(channelID: 1)
+        XCTAssertEqual(l.sidecarEntries().map(\.windowID), [42], "last-lane release drops the entry")
+    }
 }
 #endif

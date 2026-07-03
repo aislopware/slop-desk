@@ -194,6 +194,16 @@ func cpuBrandString() -> String {
     return String(bytes: buf.prefix(while: { $0 != 0 }), encoding: .utf8) ?? ""
 }
 
+/// C6 BUG A: everything the lazy VD re-create needs after a WindowServer termination — the
+/// launch-time geometry/fps to re-apply, and the single-flight + cooldown gate so concurrent mints
+/// never stack blocking `applySettings:` calls. Armed ONLY when the launch-time create succeeded
+/// (an environment where the VD never worked should not retry on every hello).
+struct VDRecreateContext {
+    let geometry: VirtualDisplayGeometry
+    let fps: Int
+    let gate = VirtualDisplayRecreateGate()
+}
+
 /// Resolve a pane's capture placement (feature #1): PARK its window on the LIVE virtual display
 /// (captured at the VD's real backing scale → sharp) or fall back to 1× in place. The VD is
 /// re-queried per mint so a WindowServer-terminated VD (displayID cleared) cleanly degrades. Returns
@@ -207,12 +217,29 @@ func resolvePaneCapture(
     holder: Holder,
     parkingManager: WindowParkingManager,
     fallbackScale: Double,
-    vdPointWidth: Int,
-    vdPointHeight: Int,
+    vdPointSize: VideoSize,
+    recreate: VDRecreateContext?,
 ) async -> (captureScale: Double, sizeOverride: VideoSize?, resizeLimit: VideoSize?) {
-    let (liveVDID, liveVDScale): (CGDirectDisplayID, Int) = await MainActor.run {
+    var (liveVDID, liveVDScale): (CGDirectDisplayID, Int) = await MainActor.run {
         guard let vd = holder.currentVirtualDisplay() else { return (CGDirectDisplayID(0), 1) }
         return (vd.displayID, vd.scale)
+    }
+    // C6 BUG A: the VD is DEAD (WindowServer terminated it — displayID cleared by the termination
+    // handler, so no park can target it). Lazily re-create it on this park request — single-flight
+    // + cooldown via the gate; a losing/throttled mint just captures 1× and a later hello retries.
+    if liveVDID == 0, let recreate, recreate.gate.begin(now: ProcessInfo.processInfo.systemUptime) {
+        if let vd = holder.currentVirtualDisplay() {
+            if let id = await vd.create(recreate.geometry, fps: recreate.fps) {
+                log("virtual display RE-CREATED (id=\(id)) after WindowServer termination")
+            } else {
+                log("virtual display re-create failed — capturing 1×; retrying after cooldown")
+            }
+        }
+        recreate.gate.end()
+        (liveVDID, liveVDScale) = await MainActor.run {
+            guard let vd = holder.currentVirtualDisplay() else { return (CGDirectDisplayID(0), 1) }
+            return (vd.displayID, vd.scale)
+        }
     }
     guard liveVDID != 0, let movePid = processID,
           let achieved = await parkingManager.park(
@@ -230,7 +257,7 @@ func resolvePaneCapture(
     return (
         resolveCaptureScaleOverride(vdScale: vdScale),
         VideoSize(width: Double(achieved.width), height: Double(achieved.height)),
-        VideoSize(width: Double(vdPointWidth), height: Double(vdPointHeight)),
+        vdPointSize,
     )
 }
 
@@ -245,6 +272,71 @@ func resolveCaptureScaleOverride(vdScale: Double) -> Double {
           let v = Double(s), v >= 1
     else { return vdScale }
     return min(vdScale, v)
+}
+
+// MARK: - C6 BUG C: next-launch parked-window hygiene
+
+/// The global bounds of every online display — the ``StrandedWindowRestorePolicy`` input. Empty on
+/// any CG failure (the predicate then fails SOFT: no window is moved on uncertainty).
+@Sendable
+func onlineDisplayBoundsList() -> [CGRect] {
+    var n: UInt32 = 0
+    guard CGGetOnlineDisplayList(0, nil, &n) == .success, n > 0 else { return [] }
+    var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))
+    guard CGGetOnlineDisplayList(n, &ids, &n) == .success else { return [] }
+    return ids.prefix(Int(n)).map { CGDisplayBounds($0) }
+}
+
+/// The window's CURRENT global frame (top-left points, the same space as `CGDisplayBounds` / AX)
+/// via CGWindowList, or `nil` when the window no longer exists OR its owner pid changed —
+/// CGWindowIDs are per-boot and reusable, so a stale sidecar entry must never move an unrelated
+/// window.
+@Sendable
+func currentWindowFrame(windowID: UInt32, expectedPid: Int32) -> CGRect? {
+    guard let infos = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(windowID))
+        as? [[String: Any]],
+        let info = infos.first,
+        let ownerPid = info[kCGWindowOwnerPID as String] as? Int32, ownerPid == expectedPid,
+        let boundsDict = info[kCGWindowBounds as String] as? [String: Any],
+        let frame = CGRect(dictionaryRepresentation: boundsDict as CFDictionary)
+    else { return nil }
+    return frame
+}
+
+/// C6 BUG C: recover windows a CRASHED/SIGKILLed previous daemon left stranded on its (now gone)
+/// virtual display. Clean shutdown restores through `performGracefulShutdown`; this covers the
+/// unclean exits the old comment only promised to. Reads the parked-window sidecar the previous
+/// run persisted, deletes it FIRST (one-shot — a hygiene crash must not loop), then AX-restores
+/// each recorded window that still exists (same windowID AND owner pid) and still sits at an
+/// implausible position (intersecting NO current display — the pure
+/// ``StrandedWindowRestorePolicy``). Run BEFORE this launch creates a fresh VD, so "intersects no
+/// display" cannot be confused by the new VD's own off-screen bounds.
+@MainActor
+func runParkedWindowLaunchHygiene(at url: URL?) {
+    guard let url, let data = try? Data(contentsOf: url) else { return } // no leftover file — clean exit
+    try? FileManager.default.removeItem(at: url)
+    guard let snapshot = WindowParkingSnapshot.decoded(from: data) else {
+        log("parked-window sidecar unreadable/stale schema — ignored (no-backcompat)")
+        return
+    }
+    let displays = onlineDisplayBoundsList()
+    var restored = 0
+    for entry in snapshot.entries {
+        guard let current = currentWindowFrame(windowID: entry.windowID, expectedPid: entry.pid) else { continue }
+        guard StrandedWindowRestorePolicy.shouldRestore(
+            currentFrame: current,
+            originalFrame: entry.originalFrame,
+            displayBounds: displays,
+        ) else { continue }
+        if WindowPlacement.restoreWindow(
+            windowID: CGWindowID(entry.windowID),
+            pid: pid_t(entry.pid),
+            toFrame: entry.originalFrame,
+        ) { restored += 1 }
+    }
+    if restored > 0 {
+        log("launch hygiene: restored \(restored) window(s) a previous unclean daemon exit left stranded")
+    }
 }
 
 // Live ScreenCaptureKit capture needs a window-server connection. A bare command-line binary
@@ -521,6 +613,114 @@ final class MuxRetireBox: @unchecked Sendable {
     }
 }
 
+/// C6 BUG A: the VD-termination drain. Every live session whose window was PARKED on the dead VD
+/// is still capturing it — a silent client freeze — so bye + stop each one (the client's existing
+/// disconnect/reconnect UI engages; its fresh hello re-mints onto the re-created VD or 1×), then
+/// restore every parked window. The pure decision is `VirtualDisplayTerminationPolicy`
+/// (headlessly unit-tested).
+@Sendable
+func handleVirtualDisplayTermination(holder: Holder, parkingManager: WindowParkingManager) async {
+    let parked = await MainActor.run { parkingManager.parkedChannelIDs }
+    let muxPair = holder.currentMux()
+    let live: Set<UInt32> =
+        if let (registry, _) = muxPair {
+            await registry.liveChannelIDs
+        } else { [] }
+    let affected = VirtualDisplayTerminationPolicy.channelsToDisconnect(
+        parkedChannels: parked,
+        liveChannels: live,
+    )
+    if let (registry, mux) = muxPair {
+        let bye = VideoControlMessage.bye.encode()
+        for id in affected {
+            // Tell the client FIRST (its reply flow dies with the lane retire below); ×2 — bye is
+            // a single unacked UDP datagram.
+            mux.send(bye, on: .control, channelID: id)
+            mux.send(bye, on: .control, channelID: id)
+            // Stop capture/encode + retire the lane; the lane's retire hook unparks (AX-restores)
+            // its window.
+            await registry.retireAndStop(id)
+            await parkingManager.unpark(channelID: id)
+        }
+    }
+    // Restore anything still parked (e.g. a lane that died before its session was admitted).
+    // Idempotent with the per-channel unparks.
+    await MainActor.run { parkingManager.restoreAll() }
+    log(
+        "virtual display terminated by WindowServer — disconnected \(affected.count) parked session(s), windows restored; next pane hello re-creates the VD",
+    )
+}
+
+/// Feature #1 bring-up + the C6 lifecycle wiring, extracted from the launch Task. Runs the C6
+/// BUG C launch hygiene, builds the daemon-lifetime `VirtualDisplay` + `WindowParkingManager`
+/// (mirroring the parked set to the crash sidecar), creates the VD when enabled, and arms the C6
+/// BUG A termination drain + lazy re-create. Returns the parking manager and the recreate context
+/// (`nil` when the VD is disabled or its launch-time create failed).
+@Sendable
+func bringUpVirtualDisplay(
+    args: VideoHostdArguments,
+    holder: Holder,
+) async -> (parkingManager: WindowParkingManager, vdRecreate: VDRecreateContext?) {
+    // C6 BUG C: next-launch hygiene BEFORE a fresh VD exists — restore windows a previous CRASHED
+    // daemon left stranded (the sidecar below is the crash journal), then keep the sidecar
+    // mirrored to every park/unpark so the NEXT unclean exit is recoverable too.
+    let parkingSidecarURL = WindowParkingSnapshot.defaultSidecarURL()
+    await MainActor.run { runParkedWindowLaunchHygiene(at: parkingSidecarURL) }
+
+    let virtualDisplay = await MainActor.run { VirtualDisplay() }
+    holder.setVirtualDisplay(virtualDisplay)
+    let parkingManager = await MainActor.run { WindowParkingManager() }
+    holder.setParkingManager(parkingManager)
+    await MainActor.run {
+        parkingManager.persistSnapshot = { snapshot in
+            guard let url = parkingSidecarURL else { return }
+            if snapshot.entries.isEmpty {
+                try? FileManager.default.removeItem(at: url) // nothing parked ⇒ no crash journal
+            } else if let data = snapshot.encoded() {
+                try? FileManager.default.createDirectory(
+                    at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
+                )
+                try? data.write(to: url, options: .atomic)
+            }
+        }
+    }
+    guard args.virtualDisplay else { return (parkingManager, nil) }
+    // Detect the chip's framebuffer pixel limit so an oversized VD is refused up front
+    // (rather than after a multi-second applySettings stall) on base M-series chips.
+    let chipLimit = VirtualDisplayPlanner.chipPixelLimit(cpuBrand: cpuBrandString())
+    let geo = VirtualDisplayGeometry(
+        pointWidth: args.vdPointWidth,
+        pointHeight: args.vdPointHeight,
+        scale: 2,
+        maxHorizontalPixels: chipLimit,
+    )
+    guard let id = await virtualDisplay.create(geo, fps: args.fps) else {
+        log("WARNING: virtual display unavailable — capturing 1×, text SOFT. Set AISLOPDESK_VD=0 to silence.")
+        return (parkingManager, nil)
+    }
+    // C6 BUG A: recover when WindowServer later tears the VD down (sleep/wake, GPU reset,
+    // fast-user-switch). `handleTermination` already cleared `displayID` by the time this fires,
+    // so concurrent mints fail SOFT to 1× (no re-park onto the dead VD); the drain then
+    // disconnects the affected sessions + restores their windows.
+    await MainActor.run {
+        virtualDisplay.onTerminated = {
+            Task { await handleVirtualDisplayTermination(holder: holder, parkingManager: parkingManager) }
+        }
+    }
+    log(
+        "virtual display ONLINE id=\(id) (\(args.vdPointWidth)x\(args.vdPointHeight)pt @2× → \(geo.pixelWidth)x\(geo.pixelHeight)px, chip-limit \(chipLimit)px) — windows will be moved onto it for sharp capture",
+    )
+    if args.fps > 60 {
+        log(
+            "note: --fps \(args.fps) exceeds 60; the VD advertises a \(args.fps)Hz mode but the encoder fps is the real cap",
+        )
+    }
+    // C6 BUG A: arm the lazy re-create — after a WindowServer termination, the next park request
+    // re-creates the VD (single-flight + cooldown) instead of leaving every later pane soft at 1×
+    // until a daemon restart.
+    return (parkingManager, VDRecreateContext(geometry: geo, fps: args.fps))
+}
+
 Task {
     do {
         let windows = try await shareableWindows()
@@ -585,41 +785,10 @@ Task {
         // display. The manager remembers each window's original frame and restores it on pane close /
         // shutdown / VD termination. ANY failure (private API absent, WindowServer refusal,
         // pixel-limit) leaves the VD displayID at 0 → capture stays at the existing 1× `effectiveScale`.
-        // Never crashes.
-        let virtualDisplay = await MainActor.run { VirtualDisplay() }
-        holder.setVirtualDisplay(virtualDisplay)
-        let parkingManager = await MainActor.run { WindowParkingManager() }
-        holder.setParkingManager(parkingManager)
-        if args.virtualDisplay {
-            // Detect the chip's framebuffer pixel limit so an oversized VD is refused up front
-            // (rather than after a multi-second applySettings stall) on base M-series chips.
-            let chipLimit = VirtualDisplayPlanner.chipPixelLimit(cpuBrand: cpuBrandString())
-            let geo = VirtualDisplayGeometry(
-                pointWidth: args.vdPointWidth,
-                pointHeight: args.vdPointHeight,
-                scale: 2,
-                maxHorizontalPixels: chipLimit,
-            )
-            if let id = await virtualDisplay.create(geo, fps: args.fps) {
-                // Recover gracefully if WindowServer later tears the VD down: restore parked windows.
-                // New mints re-query the (now-cleared) displayID and fall back to 1× automatically.
-                await MainActor.run {
-                    virtualDisplay.onTerminated = {
-                        Task { @MainActor in parkingManager.restoreAll() }
-                    }
-                }
-                log(
-                    "virtual display ONLINE id=\(id) (\(args.vdPointWidth)x\(args.vdPointHeight)pt @2× → \(geo.pixelWidth)x\(geo.pixelHeight)px, chip-limit \(chipLimit)px) — windows will be moved onto it for sharp capture",
-                )
-                if args.fps > 60 {
-                    log(
-                        "note: --fps \(args.fps) exceeds 60; the VD advertises a \(args.fps)Hz mode but the encoder fps is the real cap",
-                    )
-                }
-            } else {
-                log("WARNING: virtual display unavailable — capturing 1×, text SOFT. Set AISLOPDESK_VD=0 to silence.")
-            }
-        }
+        // Never crashes. C6: the bring-up (incl. launch hygiene, the crash sidecar mirror, the
+        // termination drain, and the lazy re-create context) is extracted to
+        // `bringUpVirtualDisplay` above.
+        let (parkingManager, vdRecreate) = await bringUpVirtualDisplay(args: args, holder: holder)
 
         // CONCURRENCY-HOST-1 mux analogue: the shared transport arms the per-lane reaper.
         let mux = NWVideoMuxDatagramTransport(mediaPort: mediaPort, cursorPort: cursorPort)
@@ -668,8 +837,8 @@ Task {
                 holder: holder,
                 parkingManager: parkingManager,
                 fallbackScale: effectiveScale,
-                vdPointWidth: args.vdPointWidth,
-                vdPointHeight: args.vdPointHeight,
+                vdPointSize: VideoSize(width: Double(args.vdPointWidth), height: Double(args.vdPointHeight)),
+                recreate: vdRecreate,
             )
             let session = AislopdeskVideoHostSession(
                 window: w,

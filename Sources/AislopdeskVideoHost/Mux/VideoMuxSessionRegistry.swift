@@ -38,6 +38,10 @@ public final class VideoMuxSinkTable: @unchecked Sendable {
     }
 
     public var count: Int { lock.withLock { sinks.count } }
+
+    /// The registered channelIDs (C6 BUG A: the VD-termination policy's live-lane snapshot input —
+    /// a lane's sink registers inside `session.start()` and unregisters on retire).
+    public var channelIDs: Set<UInt32> { lock.withLock { Set(sinks.keys) } }
 }
 
 /// The daemon-side registry that turns ONE shared ``NWVideoMuxDatagramTransport`` into
@@ -186,5 +190,9 @@ public actor VideoMuxSessionRegistry {
 
     /// The number of live lanes (for a test / lsof-style assertion).
     public var liveChannelCount: Int { sinkTable.count }
+
+    /// The live lanes' channelIDs (C6 BUG A: the daemon intersects these with the parking ledger's
+    /// channel bindings to decide which sessions a VD termination must bye + stop).
+    public var liveChannelIDs: Set<UInt32> { sinkTable.channelIDs }
 }
 #endif

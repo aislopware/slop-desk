@@ -20,7 +20,22 @@ public final class WindowParkingManager {
     private let log = Logger(subsystem: "aislopdesk.video.host", category: "WindowParking")
     private let ledger = WindowParkingLedger()
 
+    /// C6 BUG C crash-recovery persistence hook: called with the CURRENT parked-window snapshot
+    /// whenever the parked SET changes (a recorded park, a last-lane unpark, a drain), so the
+    /// daemon can mirror it to the on-disk sidecar (`WindowParkingSnapshot.defaultSidecarURL`).
+    /// Best-effort: unset in tests / when persistence is not wired.
+    public var persistSnapshot: ((WindowParkingSnapshot) -> Void)?
+
     public init() {}
+
+    /// The channelIDs currently holding a parked window (C6 BUG A: the VD-termination policy's
+    /// snapshot input).
+    public var parkedChannelIDs: Set<UInt32> { ledger.parkedChannelIDs }
+
+    /// Mirror the parked set to the sidecar (only the daemon wires `persistSnapshot`).
+    private func persistParkedSet() {
+        persistSnapshot?(WindowParkingSnapshot(entries: ledger.sidecarEntries()))
+    }
 
     /// Park `windowID` for `channelID` on `displayID`. If already parked (another pane / a retransmit)
     /// returns the cached achieved size without moving again. Otherwise AX-moves it onto the VD and
@@ -43,6 +58,7 @@ public final class WindowParkingManager {
                 originalFrame: result.originalFrame,
                 achievedSize: result.achievedSize,
             )
+            persistParkedSet() // C6 BUG C: a new window is parked — mirror to the crash sidecar
             return result.achievedSize
         }
     }
@@ -53,6 +69,7 @@ public final class WindowParkingManager {
     public func unpark(channelID: UInt32) {
         guard let target = ledger.unpark(channelID: channelID) else { return }
         WindowPlacement.restoreWindow(windowID: target.windowID, pid: target.pid, toFrame: target.originalFrame)
+        persistParkedSet() // C6 BUG C: a window left the parked set — mirror to the crash sidecar
     }
 
     /// Restore EVERY parked window to its original frame and clear all bookkeeping. Called on daemon
@@ -66,6 +83,7 @@ public final class WindowParkingManager {
         for target in targets {
             WindowPlacement.restoreWindow(windowID: target.windowID, pid: target.pid, toFrame: target.originalFrame)
         }
+        persistParkedSet() // C6 BUG C: the parked set drained to empty — the sidecar clears
     }
 
     /// The number of distinct windows currently parked (for diagnostics / tests).

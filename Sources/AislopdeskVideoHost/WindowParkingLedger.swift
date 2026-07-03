@@ -103,5 +103,22 @@ final class WindowParkingLedger {
 
     /// Number of distinct windows currently parked.
     var parkedCount: Int { parked.count }
+
+    /// The channelIDs currently holding a parked window (C6 BUG A: the VD-termination policy's
+    /// "which lanes parked onto the dead VD" snapshot input).
+    var parkedChannelIDs: Set<UInt32> { Set(channelWindow.keys) }
+
+    /// One crash-recovery sidecar entry per DISTINCT parked window (C6 BUG C), sorted by windowID
+    /// for a stable on-disk file. Refcount is deliberately dropped — a next-launch restore puts
+    /// each window back exactly once.
+    func sidecarEntries() -> [WindowParkingSnapshot.Entry] {
+        parked
+            .map { WindowParkingSnapshot.Entry(
+                windowID: UInt32($0.key),
+                pid: Int32($0.value.pid),
+                originalFrame: $0.value.originalFrame,
+            ) }
+            .sorted { $0.windowID < $1.windowID }
+    }
 }
 #endif

@@ -2642,10 +2642,17 @@ public actor AislopdeskVideoHostSession {
                 "dialog-expand: capture region \(regionGlobal == nil ? "→ window frame" : "→ union") \(pointW)x\(pointH)pt (\(pixelWidth)x\(pixelHeight)px) epoch=\(epoch)",
             )
         } catch {
-            log.error("dialog-expand capturer start failed: \(String(describing: error))")
-            if capturer === newCapturer { capturer = nil
-                encoder = nil
-            }
+            // C6 BUG B: the OLD capturer is already stopped and the union start threw — nil'ing the
+            // refs here left the session `.streaming` with NO capturer and NO recovery (a silent
+            // forever-freeze; contrast applyResize's rollBackWindow + restartOldSizeCapture).
+            // Recovery ladder (pure: `CaptureRegionFailureRecovery`): rebuild the PLAIN window-frame
+            // capturer so the stream degrades to the un-expanded window; if even that fails,
+            // bye + stop (a visible disconnect beats a silent freeze).
+            log
+                .error(
+                    "dialog-expand capturer start failed: \(String(describing: error)) — degrading to plain window capture",
+                )
+            await recoverPlainWindowCapture(deadCapturer: newCapturer, deadEncoder: newEncoder)
             return
         }
         guard capturer === newCapturer else {
@@ -2678,6 +2685,155 @@ public actor AislopdeskVideoHostSession {
             guard stateMachine.mediaFlowing, captureRegionGlobal == regionGlobal else { return }
             transport.send(maskMessage, on: .control)
         }
+    }
+
+    /// C6 BUG B recovery (rung 2 of the `CaptureRegionFailureRecovery` ladder): the DIALOG-EXPAND
+    /// rebuild stopped the old capturer and the union-region `start()` threw, leaving the installed
+    /// `deadCapturer`/`deadEncoder` refs pointing at a stream that never came up. Rebuild a PLAIN
+    /// window-frame capturer (the same wiring as ``applyCaptureRegion``'s contract path, no region
+    /// override) so frames RESUME at the un-expanded window; on any further failure escalate to
+    /// ``disconnectAfterCaptureRebuildFailure()``. Mirrors ``restartOldSizeCapture`` (the resize
+    /// path's FIX #5 recovery), including its post-suspension supersede guards.
+    private func recoverPlainWindowCapture(deadCapturer: WindowCapturer, deadEncoder: VideoEncoder) async {
+        switch CaptureRegionFailureRecovery.action(
+            mediaFlowing: stateMachine.mediaFlowing,
+            superseded: !(capturer === deadCapturer && encoder === deadEncoder),
+            isFallbackRebuild: false,
+        ) {
+        case .abandon:
+            dbg("dialog-expand recovery: superseded/torn-down — skip (a newer owner or a teardown owns cleanup)")
+            return
+        case .disconnect: // not the first rung's outcome; defensive
+            await disconnectAfterCaptureRebuildFailure()
+            return
+        case .rebuildPlainWindow:
+            break
+        }
+        // Drop the dead refs the failed region rebuild left installed before rebuilding.
+        capturer = nil
+        encoder = nil
+        let windowFrame = currentWindowBoundsCG().cgRect
+        let pointW = max(1, Int(windowFrame.width.rounded())), pointH = max(1, Int(windowFrame.height.rounded()))
+        let pixelWidth = max(1, Int((Double(pointW) * captureScale).rounded()))
+        let pixelHeight = max(1, Int((Double(pointH) * captureScale).rounded()))
+        captureRegionEpoch &+= 1
+        let epoch = captureRegionEpoch
+        let ceiling = LiveBitratePolicy.targetBitrate(
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight,
+            fps: fps,
+            floor: bitrate,
+        )
+        let fallbackEncoder = VideoEncoder(
+            width: pixelWidth,
+            height: pixelHeight,
+            bitrate: ceiling,
+            fps: fps,
+            fullRange: Self.fullRange,
+            ltrEnabled: Self.ltrEnabled,
+            outputHandler: makeEncoderOutputHandler(),
+        )
+        do { try fallbackEncoder.createLiveSession() } catch {
+            log.error("dialog-expand recovery: encoder rebuild failed: \(String(describing: error))")
+            await disconnectAfterCaptureRebuildFailure()
+            return
+        }
+        let logCallback = log
+        let fallbackCapturer = WindowCapturer(
+            fps: fps,
+            captureScale: captureScale,
+            fullRange: Self.fullRange,
+            preferDisplayAnchored: true, // low-latency default (see WindowCapturer.preferDisplayAnchored)
+        ) { pixelBuffer, pts, forceKeyframe, crisp, compact, ltrRefresh, perFrameMaxQP in
+            do {
+                if ltrRefresh {
+                    try fallbackEncoder.encodeLiveLTRRefresh(pixelBuffer: pixelBuffer, presentationTime: pts)
+                } else if crisp {
+                    try fallbackEncoder.encodeLiveCrispKeyframe(pixelBuffer: pixelBuffer, presentationTime: pts)
+                } else if compact {
+                    try fallbackEncoder.encodeCompactKeyframe(pixelBuffer: pixelBuffer, presentationTime: pts)
+                } else {
+                    try fallbackEncoder.encodeLive(
+                        pixelBuffer: pixelBuffer,
+                        presentationTime: pts,
+                        forceKeyframe: forceKeyframe,
+                        perFrameMaxQP: perFrameMaxQP,
+                    )
+                }
+            } catch { logCallback.error("live encode (dialog-expand recovery) failed: \(String(describing: error))") }
+        }
+        encoder = fallbackEncoder
+        seedCongestionController(ceiling: ceiling)
+        resetLTRForNewEncoder()
+        capturer = fallbackCapturer
+        if Self.fpsGovernorEnabled, governedFps != fps {
+            fallbackCapturer.setGovernedFPS(governedFps)
+            fallbackEncoder.setExpectedFrameRate(governedFps)
+        }
+        // Back to the WINDOW-origin input/cursor mapping (the union region — and its off-window
+        // origin — is gone with the failed capturer).
+        let mapRect = VideoRect(
+            x: windowFrame.minX,
+            y: windowFrame.minY,
+            width: windowFrame.width,
+            height: windowFrame.height,
+        )
+        injector?.updateWindowBounds(mapRect)
+        cursorSampler?.updateWindowBounds(mapRect)
+        captureRegionGlobal = nil
+        let captureWindow = window
+        do {
+            nonisolated(unsafe) let w = captureWindow
+            try await fallbackCapturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+            dbg("dialog-expand recovery: degraded to plain window capture \(pointW)x\(pointH)pt epoch=\(epoch)")
+        } catch {
+            log.error("dialog-expand recovery: plain window capturer start failed: \(String(describing: error))")
+            let superseded = !(capturer === fallbackCapturer && encoder === fallbackEncoder)
+            if !superseded {
+                capturer = nil
+                encoder = nil
+            }
+            // Last rung: even the plain-window fallback failed — disconnect (unless a newer owner /
+            // teardown took over across the start suspension, which then owns the session's fate).
+            if CaptureRegionFailureRecovery.action(
+                mediaFlowing: stateMachine.mediaFlowing,
+                superseded: superseded,
+                isFallbackRebuild: true,
+            ) == .disconnect {
+                await disconnectAfterCaptureRebuildFailure()
+            }
+            return
+        }
+        // Identity guard (symmetric to applyCaptureRegion): a superseding teardown/start during
+        // `start` means our refs are no longer installed — tear down the orphan stream, no ack.
+        guard capturer === fallbackCapturer else {
+            dbg("dialog-expand recovery: superseded during start — tearing down orphan")
+            await fallbackCapturer.stop()
+            return
+        }
+        // Ack the degraded (window-frame) size — the client adopts it frame-gated — and CLEAR any
+        // transparency mask left over from a previously-applied union region.
+        await apply(.sendControl(.resizeAck(
+            captureWidth: UInt16(min(Double(UInt16.max), Double(pointW))),
+            captureHeight: UInt16(min(Double(UInt16.max), Double(pointH))),
+            epoch: epoch,
+        )))
+        await apply(.sendControl(.contentMask([])))
+    }
+
+    /// C6 BUG B, last rung: no capturer can be brought up — a `.streaming` session with dead capture
+    /// would freeze the client's pane forever with no signal. Send a host→client `.bye` (twice —
+    /// it is a single unacked UDP datagram) so the client's existing disconnect/reconnect UI
+    /// engages, then stop the session; `stop()`'s `transport.stop()` retires the lane, which also
+    /// unparks/restores the window through the daemon's retire hook.
+    private func disconnectAfterCaptureRebuildFailure() async {
+        log
+            .error(
+                "capture rebuild unrecoverable — sending bye + stopping session (visible disconnect beats silent freeze)",
+            )
+        await apply(.sendControl(.bye))
+        await apply(.sendControl(.bye))
+        await stop()
     }
 
     /// Converts the GLOBAL opaque content rects (window + popups) into capture-local PIXEL

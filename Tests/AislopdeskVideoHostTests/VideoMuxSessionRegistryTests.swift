@@ -130,5 +130,22 @@ final class VideoMuxSessionRegistryTests: XCTestCase {
         XCTAssertNil(table.sink(1))
         XCTAssertEqual(table.count, 1)
     }
+
+    // C6 BUG A: `liveChannelIDs` is the VD-termination policy's "which lanes are live sessions"
+    // snapshot input — the registered-sink set (a lane's sink registers inside session.start and
+    // unregisters on retire), so it must mirror register/unregister exactly.
+    func testLiveChannelIDsMirrorRegisteredSinks() async {
+        let table = VideoMuxSinkTable()
+        let registry = makeRegistry(table)
+        var live = await registry.liveChannelIDs
+        XCTAssertEqual(live, [])
+        table.register(4) { _, _ in }
+        table.register(11) { _, _ in }
+        live = await registry.liveChannelIDs
+        XCTAssertEqual(live, [4, 11])
+        await registry.retire(11)
+        live = await registry.liveChannelIDs
+        XCTAssertEqual(live, [4])
+    }
 }
 #endif
