@@ -112,7 +112,7 @@ struct WindowDockStrip: View {
 
     var body: some View {
         ScrollView(.horizontal) {
-            HStack(alignment: .top, spacing: 4) {
+            HStack(alignment: .top, spacing: 6) {
                 ForEach(items) { item in
                     WindowDockTile(
                         item: item,
@@ -127,7 +127,7 @@ struct WindowDockStrip: View {
     }
 }
 
-/// One dock tile: 28pt app icon (local lookup / letter avatar), the title caption beneath, and the
+/// One dock tile: 32pt app icon (local lookup / letter avatar), the title caption beneath, and the
 /// running dot under an OPEN window (the macOS-dock idiom). Selected = accent wash + accent ring.
 private struct WindowDockTile: View {
     let item: WindowDockItem
@@ -140,13 +140,13 @@ private struct WindowDockTile: View {
         Button(action: onSelect) {
             VStack(spacing: 2) {
                 iconView
-                    .frame(width: 28, height: 28)
+                    .frame(width: 32, height: 32)
                 Text(item.title)
                     .font(.caption)
                     .foregroundStyle(selected ? Color.primary : Color.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(maxWidth: 72)
+                    .frame(maxWidth: 80)
                 Circle()
                     .fill(.green)
                     .frame(width: 4, height: 4)

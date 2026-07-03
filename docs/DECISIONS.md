@@ -621,3 +621,14 @@
 - ✅ **Focus = accent border on the focused card of a SPLIT** (2pt, 75% accent) — replaces the flat-era top-left corner triangle, which a rounded corner would have clipped. A solo/zoomed pane draws no ring (nothing to disambiguate).
 - ✅ **Sidebar icons tint accent** (`NavigatorRow`) — the Mail/Finder system-sidebar idiom.
 - Dead flat-era tokens removed with their last consumers: `NativePaneColor.separator`, `Slate.Line.divider` (the `SlateTheme.divider` DATA field stays — theme structs keep every role).
+
+## Region rhythm: one margin surface, centred status, dock floats, sidebar footer (2026-07-04) — layout restructure over the card-canvas
+
+> User verdict on the card-canvas pass: "Bản này đã ổn hơn rồi, nhưng tôi cảm thấy layout có thể tái cấu trúc lại để đẹp hơn." The cards were right but the REGIONS around them still carried flat-era seams: a system-gray strip + hairline slicing the two themed columns apart, a hard rule under the window dock, status crowded into the toolbar's trailing corner, and no mouse-visible New-Tab mint anywhere on macOS. Decision: the detail area is ONE continuous margin surface with a deliberate gutter rhythm, and the chrome recomposes to the native seats.
+
+- ✅ **One continuous margin surface** — the macOS detail `HStack` itself backs `Surface.margin`, so the GUI-panel divider band no longer exposes the system window background between the two themed columns. Gutter rhythm: cards within a region sit `paneGap` (8pt) apart; the two REGIONS sit a double gap (16pt = 4+8+4) apart across the divider band — hierarchy by spacing, not by lines.
+- ✅ **`GuiPanelDivider` goes invisible-at-rest** (the `PaneDivider` language): no hairline; the gutter IS the seam; a 2pt accent line appears only while dragging. Band width 9→`paneGap`; hit band + column-resize pointer + commit-on-release discipline unchanged.
+- ✅ **Connection cluster moves to the titlebar CENTRE** (`.principal` — the Xcode activity-pill seat) with a resting bezel fill; trailing keeps the actions (pane menu, windows-panel toggle). Ambient state reads from the middle; actions live at the edge.
+- ✅ **`.navigationSubtitle` = the focused pane's cwd**, home-abbreviated via the palette's `CwdDisplay` (the document-proxy idiom); empty until known.
+- ✅ **The window dock floats on the margin** — the hard `Divider()` under it is gone; the strip gets breathing room instead (the space to the video card below is the seam). Tiles grow to 32pt icons.
+- ✅ **Sidebar footer New-Tab affordance** (`safeAreaInset(edge: .bottom)`, the Things/Reminders idiom) — before this, macOS had NO mouse-visible tab mint (⌘T / palette / menu only). Mints a terminal tab; remote windows keep minting from the dock's `+`.

@@ -68,9 +68,14 @@ struct TitlebarConnectionCluster: View {
                             .lineLimit(1)
                     }
                 }
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 10)
                 .frame(height: 24)
-                .background(hover ? Color.primary.opacity(0.08) : .clear, in: .rect(cornerRadius: 6))
+                // The Xcode activity-pill bezel: a faint fill at rest (the cluster now sits CENTRED in the
+                // titlebar, so it needs a resting shape, not just a hover wash), a touch stronger on hover.
+                .background(
+                    hover ? Color.primary.opacity(0.1) : Color.primary.opacity(0.045),
+                    in: .rect(cornerRadius: 6),
+                )
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)

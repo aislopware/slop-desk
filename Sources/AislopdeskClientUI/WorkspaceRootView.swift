@@ -18,9 +18,6 @@ import AislopdeskWorkspaceCore
 import Defaults
 import SFSafeSymbols
 import SwiftUI
-#if os(macOS)
-import AppKit // NSColor.separatorColor for the GUI-panel divider hairline
-#endif
 
 public struct WorkspaceRootView: View {
     let store: WorkspaceStore
@@ -158,6 +155,16 @@ public struct WorkspaceRootView: View {
         return title.isEmpty ? "~" : title
     }
 
+    /// The native window SUBTITLE — the focused pane's working directory, home-abbreviated
+    /// (`~/Workplace/myproject/`), the document-proxy idiom (Xcode shows the project path there). Empty
+    /// (no cwd known yet / no pane) renders no subtitle line at all.
+    private var activeSubtitle: String {
+        guard let id = store.tree.activeSession?.activeTab?.activePane,
+              let cwd = store.tree.activeSession?.specs[id]?.lastKnownCwd
+        else { return "" }
+        return CwdDisplay.abbreviate(cwd)
+    }
+
     /// E19/A18 (WI-7): the active session's tab count — the auto-hide policy's input. `nil` (no active session
     /// materialized yet) reads as `0`, which collapses under `.auto` (there is nothing to switch between). The
     /// `.onChange(of: activeTabCount)` observer fires the policy on a tab open/close TRANSITION, never on every
@@ -195,6 +202,7 @@ public struct WorkspaceRootView: View {
         // so a live theme switch re-resolves.
         .preferredColorScheme(ThemeStore.shared.active.isLight ? .light : .dark)
         .navigationTitle(activeTitle)
+        .navigationSubtitle(activeSubtitle)
         .toolbar { macToolbar }
         // The floating-overlay layer (palette / cheat sheet / connect / remote-window picker / toasts).
         // `toggledState` is built from the LIVE chrome so the palette's ✓ gutter tracks the real
@@ -300,7 +308,7 @@ public struct WorkspaceRootView: View {
 
     /// Upper clamp for the GUI column width — the detail region minus the content minimum + divider band.
     private var maxGuiWidth: CGFloat {
-        max(WorkspaceChromeState.minGuiWidth, detailWidth - Self.minContentWidth - 9)
+        max(WorkspaceChromeState.minGuiWidth, detailWidth - Self.minContentWidth - Slate.Metric.paneGap)
     }
 
     /// The detail region: the terminal content column + the RIGHT remote-windows column (TabSide
@@ -331,6 +339,11 @@ public struct WorkspaceRootView: View {
             .allowsHitTesting(!chrome.guiCollapsed)
             .clipped()
         }
+        // Card-canvas region rhythm: the WHOLE detail is one continuous margin surface — without this the
+        // divider band between the two themed columns showed a strip of the system window background (a
+        // gray slice cutting the backdrop in half). Cards gutter 8pt within a region; regions sit a
+        // double-gap (16pt) apart across the invisible divider band.
+        .background(Slate.Surface.margin)
         .animation(.easeInOut(duration: 0.2), value: chrome.guiCollapsed)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width
@@ -339,21 +352,23 @@ public struct WorkspaceRootView: View {
         }
     }
 
-    /// The native unified-toolbar items. The system sidebar toggle is provided by `NavigationSplitView`;
-    /// these are the trailing cluster: pane actions, the connection-status cluster, and the windows-panel
-    /// toggle at the far right (nearest the column it collapses — ⌘⇧E's clickable twin).
+    /// The native unified-toolbar items. The system sidebar toggle is provided by `NavigationSplitView`.
+    /// The connection-status cluster sits CENTRED in the titlebar (`.principal` — the Xcode activity-pill
+    /// seat: ambient window state reads from the middle, not from a corner); trailing keeps the actions:
+    /// pane actions and the windows-panel toggle at the far right (nearest the column it collapses —
+    /// ⌘⇧E's clickable twin).
     @ToolbarContentBuilder
     private var macToolbar: some ToolbarContent {
-        ToolbarItem {
-            PaneActionsMenu(store: store)
-        }
-        ToolbarItem {
+        ToolbarItem(placement: .principal) {
             TitlebarConnectionCluster(
                 connection: connection,
                 pingMS: activePingMS,
                 fps: activeFps,
                 onConnect: { overlay.openConnect() },
             )
+        }
+        ToolbarItem {
+            PaneActionsMenu(store: store)
         }
         ToolbarItem {
             Button {
@@ -563,11 +578,12 @@ public struct WorkspaceRootView: View {
 }
 
 #if os(macOS)
-/// The draggable divider between the terminal content column and the RIGHT remote-windows column: a
-/// native hairline (`separatorColor`) inside a comfortable hit band, a column-resize pointer, and the
-/// commit-on-release resize discipline — `setTerminalResizeSuspended` brackets the drag so the host gets
-/// ONE grid flush on settle, not one per frame (the `PaneDivider` rule). Double-click resets the column
-/// to its default width.
+/// The draggable divider between the terminal content column and the RIGHT remote-windows column —
+/// card-canvas region seam: INVISIBLE at rest (the continuous margin surface flows through the band; the
+/// double-gap gutter between the two regions IS the seam), an accent line only while actively dragging
+/// (the `PaneDivider` language), a column-resize pointer, and the commit-on-release resize discipline —
+/// `setTerminalResizeSuspended` brackets the drag so the host gets ONE grid flush on settle, not one per
+/// frame. Double-click resets the column to its default width.
 private struct GuiPanelDivider: View {
     let chrome: WorkspaceChromeState
     let store: WorkspaceStore
@@ -584,13 +600,16 @@ private struct GuiPanelDivider: View {
     var body: some View {
         Rectangle()
             .fill(.clear)
-            .frame(width: 9)
+            .frame(width: Slate.Metric.paneGap)
             .overlay {
                 Rectangle()
-                    .fill(gestureActive ? Color.accentColor : Color(nsColor: .separatorColor))
-                    .frame(width: 1)
+                    .fill(gestureActive ? Color.accentColor : Color.clear)
+                    .frame(width: 2)
             }
-            .contentShape(.rect)
+            // The LAYOUT band is the region gutter (paneGap); the HIT band extends 4pt past each side —
+            // over margin backdrop only (the cards inset a further half-gap inside their columns), so a
+            // 16pt grab target costs no extra region spacing (the PaneDivider fat-hit-band rule).
+            .contentShape(Rectangle().inset(by: -4))
             .pointerStyle(.columnResize)
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)

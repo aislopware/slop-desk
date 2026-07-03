@@ -79,8 +79,36 @@ struct NavigatorColumn: View {
         // idiom) — the default placement floated it into the window toolbar's trailing edge, where it
         // ate half the unified toolbar.
         .searchable(text: $query, placement: .sidebar, prompt: "Search tabs")
-        .toolbar { navToolbar }
+        #if os(macOS)
+            // The sidebar FOOTER New-Tab affordance (the Things/Reminders "Add List" idiom): before this the
+            // ONLY macOS entry points were ⌘T / the palette / the pane-actions menu — no mouse-visible mint
+            // anywhere in the window. iOS keeps its toolbar `+` instead.
+            .safeAreaInset(edge: .bottom, spacing: 0) { newTabFooter }
+        #endif
+            .toolbar { navToolbar }
     }
+
+    #if os(macOS)
+    /// The pinned sidebar footer: a borderless accent-`+` "New Tab" row above a hairline — mints a
+    /// terminal tab (the terminal-side sidebar's kind; remote windows mint from the GUI column's dock).
+    private var newTabFooter: some View {
+        HStack {
+            Button {
+                store.newTab(kind: .terminal)
+            } label: {
+                Label("New Tab", systemSymbol: .plusCircle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("New Tab (⌘T)")
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .overlay(alignment: .top) { Divider() }
+    }
+    #endif
 
     /// One sidebar row: the native `Label` row (title / subtitle / trailing status cluster / hover close)
     /// plus the drag-reorder source + drop target and the tab context menu. The drop routes `reorderable`

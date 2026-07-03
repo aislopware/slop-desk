@@ -46,8 +46,9 @@ struct GuiColumn: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Card-canvas: the dock floats directly ON the margin surface (no hard rule under it — the
+            // breathing room between the dock and the video card below is the seam).
             dockHeader
-            Divider()
             paneArea
                 // Card-canvas: same half-gap outer margin as ContentColumn, so the video card floats
                 // on the margin backdrop with a uniform gutter.
@@ -85,6 +86,7 @@ struct GuiColumn: View {
                 .accessibilityLabel("Open a remote window")
                 .padding(.trailing, 8)
         }
+        .padding(.top, 6)
         .padding(.bottom, 4)
     }
 
