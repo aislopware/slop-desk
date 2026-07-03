@@ -752,7 +752,18 @@ public actor AislopdeskVideoHostSession {
             case .input:
                 // Gate on streaming (matches `InputDatagramRouter.route`) and decode here so the
                 // run can be coalesced. A malformed datagram is dropped, never crashes the receiver.
-                guard stateMachine.mediaFlowing else { continue }
+                guard stateMachine.mediaFlowing else {
+                    // TRACE the silent gate (`AISLOPDESK_VIDEO_DEBUG`): a client that still believes
+                    // its session is live sends input here and sees NOTHING happen — the drop must be
+                    // observable or it reads as "remote window không nhận input" with no lead.
+                    if Self.inputTrace {
+                        FileHandle.standardError.write(Data(
+                            "aislopdesk-videohostd[inject]: input DROPPED (state=\(stateMachine.state), window=\(window.windowID))\n"
+                                .utf8,
+                        ))
+                    }
+                    continue
+                }
                 do {
                     let event = try InputEvent.decode(data)
                     // i2h: note a real key/mouse DOWN (NOT move/scroll/up) so the input→encoded segment is
