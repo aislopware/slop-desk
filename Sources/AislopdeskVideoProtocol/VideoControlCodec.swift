@@ -45,6 +45,7 @@ import Foundation
 /// type 6 keepalive:     (no body)
 /// type 7 listWindows:   (no body)
 /// type 8 windowList:    UInt16 count | per record: UInt32 id | UInt16 w | UInt16 h | lp app | lp title
+///                            | lp bundleID
 /// type 9 focusWindow:   (no body)
 /// type 10 streamCadence: UInt16 fps
 /// type 11 listSystemDialogs: (no body)
@@ -76,13 +77,21 @@ public struct WindowSummary: Equatable, Sendable {
     /// Window size in points (for display in the picker; clamped to UInt16 on the wire).
     public var width: UInt16
     public var height: UInt16
+    /// The owning application's bundle identifier (e.g. "com.google.Chrome"), or "" when unknown. The
+    /// client's window DOCK resolves the app ICON locally from this (`NSWorkspace` lookup — both ends are
+    /// Macs, so the app is usually installed client-side too); never used for stream selection.
+    public var bundleID: String
 
-    public init(windowID: UInt32, appName: String, title: String, width: UInt16, height: UInt16) {
+    public init(
+        windowID: UInt32, appName: String, title: String, width: UInt16, height: UInt16,
+        bundleID: String = "",
+    ) {
         self.windowID = windowID
         self.appName = appName
         self.title = title
         self.width = width
         self.height = height
+        self.bundleID = bundleID
     }
 }
 
@@ -274,7 +283,8 @@ public enum VideoControlMessage: Equatable, Sendable {
         case .listWindows:
             break
         case let .windowList(windows):
-            // `UInt16 count` then per record: UInt32 id | UInt16 w | UInt16 h | len-prefixed app | len-prefixed title.
+            // `UInt16 count` then per record: UInt32 id | UInt16 w | UInt16 h | len-prefixed app
+            // | len-prefixed title | len-prefixed bundleID (the dock's local icon-lookup key).
             // The CALLER (host) must cap the list to fit one UDP datagram (control is not packetized).
             out.appendBE(UInt16(truncatingIfNeeded: windows.count))
             for w in windows {
@@ -283,6 +293,7 @@ public enum VideoControlMessage: Equatable, Sendable {
                 out.appendBE(w.height)
                 out.appendVideoControlLengthPrefixed(w.appName)
                 out.appendVideoControlLengthPrefixed(w.title)
+                out.appendVideoControlLengthPrefixed(w.bundleID)
             }
         case .focusWindow:
             break
@@ -389,7 +400,10 @@ public enum VideoControlMessage: Equatable, Sendable {
                 let h = try reader.readUInt16()
                 let app = try reader.readVideoControlLengthPrefixed()
                 let title = try reader.readVideoControlLengthPrefixed()
-                windows.append(WindowSummary(windowID: id, appName: app, title: title, width: w, height: h))
+                let bundleID = try reader.readVideoControlLengthPrefixed()
+                windows.append(WindowSummary(
+                    windowID: id, appName: app, title: title, width: w, height: h, bundleID: bundleID,
+                ))
             }
             return .windowList(windows)
         case 9:

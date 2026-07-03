@@ -234,14 +234,22 @@ public struct RemoteWindowSummary: Sendable, Equatable, Identifiable {
     public var title: String
     public var width: UInt16
     public var height: UInt16
+    /// The owning app's bundle identifier ("" when unknown) — the window DOCK's LOCAL icon-lookup key
+    /// (`NSWorkspace.urlForApplication(withBundleIdentifier:)`; both ends are Macs, so the app is usually
+    /// installed client-side too). Display-only — never used for stream selection.
+    public var bundleID: String
     public var id: UInt32 { windowID }
 
-    public init(windowID: UInt32, appName: String, title: String, width: UInt16, height: UInt16) {
+    public init(
+        windowID: UInt32, appName: String, title: String, width: UInt16, height: UInt16,
+        bundleID: String = "",
+    ) {
         self.windowID = windowID
         self.appName = appName
         self.title = title
         self.width = width
         self.height = height
+        self.bundleID = bundleID
     }
 
     /// "App — Title  (W×H)" for one picker row (title omitted when empty).

@@ -114,7 +114,9 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         //    side's pane compositor. Collapsible; starts COLLAPSED (terminal-first) — the root view's
         //    auto-reveal expands it the moment a GUI tab exists, and ⌘⇧E toggles it manually. Holding
         //    priority above the content's default so a window-resize grows the content, not this column.
-        let gui = NSHostingController(rootView: GuiColumn(store: store, onOpenPicker: onOpenRemotePicker))
+        let gui = NSHostingController(rootView: GuiColumn(
+            store: store, connection: connection, onOpenPicker: onOpenRemotePicker,
+        ))
         let guiItem = NSSplitViewItem(viewController: gui)
         guiItem.minimumThickness = 380
         guiItem.canCollapse = true

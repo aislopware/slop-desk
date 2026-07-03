@@ -393,6 +393,8 @@ func pickerSummary(_ w: SCWindow) -> WindowSummary? {
         title: w.title ?? "",
         width: UInt16(clamping: width),
         height: UInt16(clamping: height),
+        // The client's window dock resolves the app ICON locally from this (NSWorkspace lookup).
+        bundleID: w.owningApplication?.bundleIdentifier ?? "",
     )
 }
 

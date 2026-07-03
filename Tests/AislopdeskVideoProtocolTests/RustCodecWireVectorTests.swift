@@ -236,12 +236,13 @@ final class RustCodecWireVectorTests: XCTestCase {
     }
 
     /// Pins the nested-array `windowList` / `systemDialogList` layout: `u16 count` then per record
-    /// `u32 id | u16 w | u16 h | (u8 isSecure) | u16-len-prefixed name | u16-len-prefixed title`. A
-    /// known vector independently verifies the FFI record-array marshaling (field order across the
-    /// boundary), which a round-trip alone could not catch if a field were swapped symmetrically.
+    /// `u32 id | u16 w | u16 h | (u8 isSecure) | u16-len-prefixed name | u16-len-prefixed title`
+    /// (+ a trailing `u16-len-prefixed bundleID` on windowList — the dock's local icon-lookup key). A
+    /// known vector independently verifies the record-array marshaling (field order), which a
+    /// round-trip alone could not catch if a field were swapped symmetrically.
     func testVideoControlListWireVectors() throws {
         let windowList = VideoControlMessage.windowList([
-            WindowSummary(windowID: 1, appName: "Hi", title: "", width: 0x0102, height: 0x0304),
+            WindowSummary(windowID: 1, appName: "Hi", title: "", width: 0x0102, height: 0x0304, bundleID: "a.b"),
         ])
         let windowExpected: [UInt8] = [
             0x08, // type = windowList
@@ -251,6 +252,7 @@ final class RustCodecWireVectorTests: XCTestCase {
             0x03, 0x04, // height
             0x00, 0x02, 0x48, 0x69, // appName len 2 + "Hi"
             0x00, 0x00, // title len 0
+            0x00, 0x03, 0x61, 0x2E, 0x62, // bundleID len 3 + "a.b"
         ]
         XCTAssertEqual(Array(windowList.encode()), windowExpected)
         XCTAssertEqual(try VideoControlMessage.decode(Data(windowExpected)), windowList)

@@ -115,6 +115,7 @@ struct ClientAppMain {
                         title: $0.title,
                         width: $0.width,
                         height: $0.height,
+                        bundleID: $0.bundleID,
                     )
                 }
             }
