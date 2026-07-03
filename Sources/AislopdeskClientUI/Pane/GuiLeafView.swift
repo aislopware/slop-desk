@@ -81,10 +81,26 @@ struct GuiLeafView: View {
             // in / out / reset — NOT a status strip. Host + connection state now live ONCE in the sidebar
             // header, so a video pane no longer duplicates them here. Shown only while the live surface is up.
             if showControlBar {
-                GuiPaneControlBar(model: model, panLocked: $panLocked)
+                GuiPaneControlBar(model: model, store: store, panLocked: $panLocked)
             }
         }
         .background(NativePaneColor.terminalBackground)
+        // PASTE-AS-KEYSTROKES RESULT BANNER (C7): surface the model's transient "typed N, skipped M" feedback
+        // (set only when some clipboard characters had no US-QWERTY mapping and were dropped) so the user
+        // learns a paste was incomplete instead of silently losing them. Tap to dismiss; auto-clears on a
+        // timer. Never on the static-mirror snapshot path. A tiny bottom pill — flat, no card.
+        .overlay(alignment: .bottom) {
+            if !staticMirror, let feedback = model?.pasteFeedback {
+                PasteFeedbackBanner(feedback: feedback) { model?.dismissPasteFeedback() }
+                    .padding(
+                        .bottom,
+                        showControlBar ? Slate.Metric.paneHeaderHeight + Slate.Metric.space2
+                            : Slate.Metric.space2,
+                    )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(Slate.Anim.reveal, value: model?.pasteFeedback)
         // E21 WI-3 (F3): the `🔒 READ ONLY ×` pill (E17 ``ReadOnlyPill``) so a read-only `.remoteGUI` /
         // `.systemDialog` pane is a VISUAL peer of a read-only terminal leaf — same top-trailing overlay,
         // alignment, padding, and reveal animation as ``TerminalLeafView``. Without it a locked remote window
@@ -244,6 +260,8 @@ struct GuiLeafView: View {
 /// on a live viewport sink (``RemoteWindowModel/canControlViewport``, live even while read-only — pure client ops).
 private struct GuiPaneControlBar: View {
     let model: RemoteWindowModel?
+    /// The store — supplies the LOCAL clipboard (current + the recent-clips ring) for the paste menu (C7).
+    let store: WorkspaceStore
     /// Mirrors the pane's "lock position" state so the lock icon reflects on/off (the freeze itself lives in
     /// the video view; this toggles 1:1 with the `.toggleLock` command).
     @Binding var panLocked: Bool
@@ -253,6 +271,13 @@ private struct GuiPaneControlBar: View {
 
     var body: some View {
         HStack(spacing: Slate.Metric.space1) {
+            // PASTE (C7): the local-clipboard affordances — "Paste as Keystrokes" (types the CURRENT local
+            // clipboard into the host window) + a "Clipboard Ring" submenu of recent clips (masked preview for
+            // secrets). A footer MENU rather than a surface context menu, which would steal the secondary-click
+            // the pane forwards to the host window. Also reachable via ⌥⌘V + the command palette.
+            if let model {
+                GuiPastePlateMenu(model: model, store: store)
+            }
             if let model, model.canResizeWindow {
                 SlatePlateButton(symbol: .arrowUpLeftAndArrowDownRight, help: "Resize remote window…") {
                     showResizePopover = true
@@ -370,6 +395,92 @@ private struct RemoteWindowSizePopover: View {
 
     private func clamp(_ v: Double, _ lo: Double, _ hi: Double) -> Double {
         Swift.min(Swift.max(v, lo), Swift.max(lo, hi))
+    }
+}
+
+/// PASTE-AS-KEYSTROKES menu (C7): the footer affordance that makes ``RemoteWindowModel/pasteAsKeystrokes(_:)``
+/// + the store's ``WorkspaceStore/clipboardRing`` REACHABLE in a remote-GUI pane — a plain ⌘V there forwards a
+/// raw Cmd+V that pastes the HOST clipboard, so local text (e.g. a password for the auto-spawned SecurityAgent
+/// dialog pane) could never reach a remote field. A native ``Menu``: "Paste as Keystrokes" types the CURRENT
+/// local clipboard; the "Clipboard Ring" submenu lists recent clips with classifier-aware previews (secrets
+/// masked). Enablement + row previews come from the headless ``ClipboardPasteMenu`` model. Disabled while the
+/// pane can't type (not streaming / read-only). Mirrors the ⌥⌘V chord + the palette command.
+private struct GuiPastePlateMenu: View {
+    let model: RemoteWindowModel
+    let store: WorkspaceStore
+    @State private var hovering = false
+
+    /// The CURRENT local clipboard (live reader, works even with clipboard-history recording off).
+    private var clipboard: String? { store.currentLocalClipboard() }
+    /// Whether "Paste as Keystrokes" (types the current clipboard) is enabled right now.
+    private var canPasteCurrent: Bool {
+        ClipboardPasteMenu.canPaste(canPasteKeystrokes: model.canPasteKeystrokes, clipboard: clipboard)
+    }
+
+    var body: some View {
+        Menu {
+            Button("Paste as Keystrokes") {
+                if let text = clipboard { model.pasteAsKeystrokes(text) }
+            }
+            .disabled(!canPasteCurrent)
+
+            let rows = ClipboardPasteMenu.rows(store.clipboardRing)
+            if rows.isEmpty {
+                Button("No recent clips") {}.disabled(true)
+            } else {
+                Menu("Clipboard Ring") {
+                    ForEach(rows) { row in
+                        // The row label is the MASKED / truncated preview; the full clip (never shown) is typed.
+                        Button(row.label) { model.pasteAsKeystrokes(row.text) }
+                            .disabled(!model.canPasteKeystrokes)
+                    }
+                }
+            }
+        } label: {
+            Image(systemSymbol: .keyboard)
+                .font(.system(size: Slate.Metric.iconSize, weight: .medium))
+                .foregroundStyle(Slate.Text.icon)
+                .frame(width: Slate.Metric.plate, height: Slate.Metric.plate)
+                .background(
+                    hovering ? Slate.State.hover : .clear,
+                    in: .rect(cornerRadius: Slate.Metric.radiusControl),
+                )
+                .contentShape(.rect)
+        }
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { hovering = $0 }
+        .slateHelp("Paste local clipboard into the remote window as keystrokes (⌥⌘V)")
+    }
+}
+
+/// The transient "typed N, skipped M" result banner (C7) for ``RemoteWindowModel/pasteAsKeystrokes(_:)`` —
+/// shown only when some clipboard characters had no US-QWERTY mapping and were dropped, so the user learns a
+/// paste was incomplete. Tap to dismiss (it also auto-clears on the model's timer). A flat bottom pill.
+private struct PasteFeedbackBanner: View {
+    let feedback: RemoteWindowModel.PasteFeedback
+    let onDismiss: () -> Void
+
+    var body: some View {
+        Button(action: onDismiss) {
+            HStack(spacing: Slate.Metric.space2) {
+                Image(systemSymbol: .exclamationmarkTriangle)
+                    .foregroundStyle(Slate.State.accent)
+                Text("Typed \(feedback.typed), skipped \(feedback.skipped) unmapped")
+                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                    .foregroundStyle(Slate.Text.primary)
+            }
+            .padding(.horizontal, Slate.Metric.space3)
+            .padding(.vertical, Slate.Metric.space2)
+            .background(Slate.Surface.card, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+            .overlay(
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
+                    .strokeBorder(Slate.Line.divider, lineWidth: Slate.Metric.hairline),
+            )
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .slateHelp("Dismiss")
     }
 }
 #endif

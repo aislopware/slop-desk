@@ -196,6 +196,10 @@ public extension WorkspaceBindingRegistry {
         // Release Stuck Input (C5): fire the active remote-GUI pane's synthetic-release escape hatch (all
         // modifiers up + all buttons up). A graceful no-op for a terminal / empty / read-only active pane.
         case .releaseStuckInput: store.releaseStuckInputInActivePane()
+        // Paste as Keystrokes (C7, ⌥⌘V): type the CURRENT local clipboard into the active remote-GUI pane's
+        // host window (paced per-key CGEvents). A graceful no-op for a terminal / empty / read-only pane, or
+        // when the local clipboard is empty. The store reads the live clipboard via `currentLocalClipboard()`.
+        case .pasteAsKeystrokes: store.pasteAsKeystrokesInActivePane()
         // Toggle Tabs Panel (⌘⇧L): the LEFT sidebar collapse on the macOS shell is VIEW @State
         // (`WorkspaceChromeState.sidebarCollapsed`, read by the native split controller) — NOT the legacy
         // `store.sidebarCollapsed`, which nothing reads on macOS. So it is a passed-in closure.
@@ -369,6 +373,9 @@ public extension WorkspaceBindingRegistry {
         // Release Stuck Input (C5): the same store seam fires the active remote-GUI pane's synthetic-release
         // escape hatch on the canvas path too (a no-op for a non-video / empty / read-only active pane).
         case .releaseStuckInput: store.releaseStuckInputInActivePane()
+        // Paste as Keystrokes (C7): the same store seam types the local clipboard into the active remote-GUI
+        // pane on the canvas path too (a no-op for a non-video / empty / read-only pane or empty clipboard).
+        case .pasteAsKeystrokes: store.pasteAsKeystrokesInActivePane()
         // Sidebar is the tree-shell chrome; the canvas path still toggles it via the closure (the live macOS
         // app wires `chrome.toggleSidebar`). `nil` (the canvas test default) is a graceful no-op.
         case .toggleSidebar: toggles.sidebar?()

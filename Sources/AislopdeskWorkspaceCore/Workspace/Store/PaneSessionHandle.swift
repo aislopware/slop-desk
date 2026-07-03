@@ -115,6 +115,14 @@ public protocol PaneSessionHandle: AnyObject, Identifiable {
     /// ``RemoteWindowModel``.
     func releaseStuckInput()
 
+    /// PASTE AS KEYSTROKES (C7): type `text` into the remote-GUI pane's host window as paced per-key
+    /// `CGEvent`s (via the pane's published key sink) — how LOCAL clipboard text (e.g. a password for the
+    /// auto-spawned SecurityAgent dialog pane) reaches a remote field, since a plain ⌘V forwards a raw
+    /// Cmd+V that pastes the HOST clipboard instead. A no-op for kinds with no video key sink (terminal
+    /// panes) and while the pane is read-only / not streaming (the seam withholds the sink). Default does
+    /// nothing; ``LivePaneSession`` routes to the ``RemoteWindowModel``.
+    func pasteAsKeystrokes(_ text: String)
+
     /// Tear the session down for good (the pane is closing). Delegates to the proven
     /// `ConnectionViewModel` teardown order, closes the inspector channel, and stops any video stack.
     /// Called by `reconcile()` for every orphaned leaf id before it is dropped from the registry.
@@ -148,6 +156,10 @@ public extension PaneSessionHandle {
     /// Default: no video input sink ⇒ nothing to release. ``LivePaneSession`` routes to the
     /// ``RemoteWindowModel`` for `.remoteGUI` panes.
     func releaseStuckInput() {}
+
+    /// Default: no video key sink ⇒ nothing to type. ``LivePaneSession`` routes to the
+    /// ``RemoteWindowModel`` for `.remoteGUI` panes (a terminal pane has its own paste pipeline).
+    func pasteAsKeystrokes(_: String) {}
 }
 
 // MARK: - ID adoption (store-internal)

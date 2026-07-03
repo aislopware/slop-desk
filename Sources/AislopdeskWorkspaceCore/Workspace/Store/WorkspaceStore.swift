@@ -1509,6 +1509,19 @@ public final class WorkspaceStore {
     /// How many clips to keep.
     public static let clipboardRingCap = 20
 
+    /// A LIVE reader of the current local clipboard text, injected by the app (macOS: `NSPasteboard`),
+    /// so the pure store/routing stays platform-free + testable. The ⌥⌘V "Paste as Keystrokes" chord +
+    /// the pane context menu read the CURRENT clipboard through this (not the up-to-1s-stale ring head),
+    /// and it works even when clipboard-history recording is OFF (an empty ring). `nil` (the headless /
+    /// test default) ⇒ fall back to ``clipboardRing`` head via ``currentLocalClipboard()``.
+    @ObservationIgnored public var clipboardTextProvider: (() -> String?)?
+
+    /// The current local clipboard text: the injected ``clipboardTextProvider`` if wired, else the most
+    /// recent recorded clip (``clipboardRing`` head). `nil`/empty ⇒ nothing to paste.
+    public func currentLocalClipboard() -> String? {
+        clipboardTextProvider?() ?? clipboardRing.first
+    }
+
     /// Records `text` at the front of the ring (deduped — a repeat moves to front), capped at
     /// ``clipboardRingCap``. Skips empty/whitespace, and skips everything when the user has turned OFF
     /// clipboard-history recording (Settings ▸ Advanced ▸ Privacy) — the single chokepoint, so a copied

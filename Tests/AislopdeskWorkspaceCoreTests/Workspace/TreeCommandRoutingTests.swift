@@ -1026,6 +1026,67 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(store.tree, treeBefore, "a synthetic input release never mutates the tree")
     }
 
+    // MARK: - View: Paste as Keystrokes (C7) — ⌥⌘V registry pin + active-pane clipboard routing
+
+    /// `.pasteAsKeystrokes` is registered, in the View category, and bound to ⌥⌘V (FREE — `v` is in no other
+    /// chord); the chord table resolves ⌥⌘V to it. Revert-to-confirm-fail by removing the registry row.
+    func testPasteAsKeystrokesBindingIsViewAndOptCmdV() {
+        let binding = WorkspaceBindingRegistry.binding(for: .pasteAsKeystrokes)
+        XCTAssertEqual(binding?.id, "view.pasteAsKeystrokes", "stable id for override keying")
+        XCTAssertEqual(binding?.category, .view, "Paste as Keystrokes is a View command")
+        XCTAssertEqual(binding?.chord, KeyChord(character: "v", [.command, .option]), "⌥⌘V")
+        XCTAssertEqual(
+            WorkspaceBindingRegistry.chordTable[KeyChord(character: "v", [.command, .option])],
+            .pasteAsKeystrokes, "⌥⌘V resolves to .pasteAsKeystrokes in the dispatcher table",
+        )
+    }
+
+    /// Routing `.pasteAsKeystrokes` types the CURRENT local clipboard into the ACTIVE pane's handle — and
+    /// ONLY the active pane's — reading the live clipboard via the injected provider, without mutating the
+    /// tree. (On a live `.remoteGUI` pane the handle forwards to the `RemoteWindowModel`'s key sink.)
+    func testPasteAsKeystrokesRoutesCurrentClipboardToActivePaneHandleOnly() throws {
+        let store = makeTreeStore()
+        store.clipboardTextProvider = { "s3cret-from-clipboard" }
+        store.splitActivePane(axis: .horizontal, kind: .terminal) // a sibling proves "only the active" fires
+        let active = try XCTUnwrap(activePane(store))
+        let treeBefore = store.tree
+
+        WorkspaceBindingRegistry.route(.pasteAsKeystrokes, to: store)
+
+        for id in leaves(store) {
+            let fake = try XCTUnwrap(store.handle(for: id) as? FakePaneSession)
+            XCTAssertEqual(
+                fake.pastedKeystrokes, id == active ? ["s3cret-from-clipboard"] : [],
+                "the clipboard is typed exactly once, into the active pane only",
+            )
+        }
+        XCTAssertEqual(store.tree, treeBefore, "typing the clipboard never mutates the tree")
+    }
+
+    /// An EMPTY (or whitespace-only) local clipboard makes ⌥⌘V a graceful no-op — never a dead chord, and
+    /// nothing reaches any pane.
+    func testPasteAsKeystrokesWithEmptyClipboardIsNoOp() throws {
+        let store = makeTreeStore()
+        store.clipboardTextProvider = { "   \n\t " }
+        let active = try XCTUnwrap(activePane(store))
+
+        WorkspaceBindingRegistry.route(.pasteAsKeystrokes, to: store)
+
+        let fake = try XCTUnwrap(store.handle(for: active) as? FakePaneSession)
+        XCTAssertTrue(fake.pastedKeystrokes.isEmpty, "a blank clipboard types nothing")
+    }
+
+    /// `currentLocalClipboard()` prefers the injected provider, and falls back to the ring head when no
+    /// provider is wired (so a recorded clip is still typable when the app hasn't installed the reader).
+    func testCurrentLocalClipboardPrefersProviderThenRingHead() {
+        let store = makeTreeStore()
+        XCTAssertNil(store.currentLocalClipboard(), "no provider + empty ring ⇒ nothing")
+        store.recordClip("ring-head")
+        XCTAssertEqual(store.currentLocalClipboard(), "ring-head", "falls back to the most recent clip")
+        store.clipboardTextProvider = { "live-clipboard" }
+        XCTAssertEqual(store.currentLocalClipboard(), "live-clipboard", "the live provider wins over the ring")
+    }
+
     // MARK: - View: peek-and-reply falls back to the store when no overlay closure (no dead ⌘⇧J)
 
     /// `.peekAndReply` WITH an explicit `togglePeekReply` override fires the closure (the future overlay

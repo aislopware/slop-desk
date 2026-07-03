@@ -77,6 +77,11 @@ public enum WorkspaceAction: Hashable, Sendable {
     // key-up for ALL modifiers + a mouse-up for all buttons via the pane's existing synthetic-release
     // paths. No default chord — palette/menu only; a graceful no-op for a non-video active pane.
     case releaseStuckInput
+    // Paste as Keystrokes (C7, 2026-07-03): ⌥⌘V types the LOCAL clipboard into the ACTIVE remote-GUI
+    // pane's host window as paced per-key CGEvents (the SAME path that reaches a sudo / SecurityAgent
+    // secure field) — since a plain ⌘V into a GUI pane forwards a raw Cmd+V that pastes the HOST
+    // clipboard. A graceful no-op for a terminal (its own paste pipeline) / empty / read-only pane.
+    case pasteAsKeystrokes
     case toggleSidebar // ⌘⇧L — show/hide the sessions sidebar
     // View → Pin Window (E19 ES-E19-1): keep the window floating above ALL other apps' windows.
     // CHORD-LESS — no default chord; the live macOS app flips `WorkspaceChromeState.pinned` →
@@ -200,6 +205,9 @@ public extension WorkspaceAction {
              // Release Stuck Input targets the ACTIVE remote-GUI pane's release sink — needs a pane, but
              // degrades gracefully (a terminal / empty / read-only pane just no-ops), same family.
              .releaseStuckInput,
+             // Paste as Keystrokes types the local clipboard into the ACTIVE remote-GUI pane — needs a
+             // pane, but degrades gracefully (a terminal / empty / read-only pane just no-ops), same family.
+             .pasteAsKeystrokes,
              .commandNavigator,
              // Jump-To scans the ACTIVE terminal pane (its scrollback links + its OSC-133 command index), so it
              // needs one — but degrades gracefully (an empty / non-terminal shell just opens an empty list).
@@ -653,6 +661,17 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: nil,
             symbol: "keyboard.badge.ellipsis",
             keywords: "release stuck input modifier key mouse button unstick reset keyboard command shift remote window video",
+        ),
+        // Paste as Keystrokes (C7, 2026-07-03): ⌥⌘V types the LOCAL clipboard into the active remote-GUI
+        // pane's host window (paced per-key CGEvents — reaches a sudo / SecurityAgent secure field). ⌥⌘V is
+        // FREE (`v` appears in NO other chord — plain ⌘V / ⌘⇧V never enter the registry, they belong to the
+        // terminal's own paste responder), and it is ⌘-prefixed (the §5 rule) so it is intercepted before a
+        // focused terminal. Pinned unique by the chord-uniqueness guard. A graceful no-op off a remote pane.
+        WorkspaceBinding(
+            id: "view.pasteAsKeystrokes", action: .pasteAsKeystrokes, title: "Paste as Keystrokes",
+            category: .view, chord: KeyChord(character: "v", [.command, .option]),
+            symbol: "keyboard",
+            keywords: "paste keystrokes type clipboard local password sudo securityagent remote window video field secure",
         ),
         // Toggle Tabs Panel ⌘⇧L — the reference default (spec/reference__keybindings.md:66 "Toggle tabs
         // panel | ⌘⇧L"; line 201 "⌘⇧L … map to sidebar … toggles"). RE-BOUND from the old ⌘B: ⌘B routed to

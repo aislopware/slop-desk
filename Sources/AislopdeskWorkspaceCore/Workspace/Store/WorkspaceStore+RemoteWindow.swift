@@ -35,4 +35,23 @@ public extension WorkspaceStore {
         guard let id = activePaneID else { return }
         handle(for: id)?.releaseStuckInput()
     }
+
+    /// PASTE AS KEYSTROKES (C7, the ⌥⌘V chord + the pane context menu): type the CURRENT local clipboard
+    /// into the ACTIVE remote-GUI pane's host window as paced per-key `CGEvent`s. Reads the live clipboard
+    /// through ``currentLocalClipboard()`` (works even when clipboard-history recording is off), then routes
+    /// to the active pane's handle — a graceful no-op for a terminal / empty / read-only / not-streaming
+    /// active pane, and when the clipboard is empty (never a dead command). The terminal keeps its own paste.
+    func pasteAsKeystrokesInActivePane() {
+        guard let text = currentLocalClipboard(),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        pasteAsKeystrokesInActivePane(text)
+    }
+
+    /// PASTE AS KEYSTROKES (C7): type an EXPLICIT `text` (a chosen "Clipboard Ring" entry) into the ACTIVE
+    /// remote-GUI pane's host window. Routed through the ``PaneSessionHandle`` seam, so it is a graceful
+    /// no-op for a terminal / empty / read-only / not-streaming active pane.
+    func pasteAsKeystrokesInActivePane(_ text: String) {
+        guard let id = activePaneID else { return }
+        handle(for: id)?.pasteAsKeystrokes(text)
+    }
 }

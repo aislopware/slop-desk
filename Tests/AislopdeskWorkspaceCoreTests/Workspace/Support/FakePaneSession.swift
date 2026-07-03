@@ -67,6 +67,12 @@ final class FakePaneSession: @MainActor PaneSessionHandle, @MainActor Identifiab
 
     func releaseStuckInput() { releaseStuckInputCount += 1 }
 
+    /// Every ``pasteAsKeystrokes(_:)`` payload, in call order (C7 — pins the ⌥⌘V chord + pane-menu routing:
+    /// `view.pasteAsKeystrokes` / the context menu → store → the ACTIVE pane's handle, and only that pane's).
+    private(set) var pastedKeystrokes: [String] = []
+
+    func pasteAsKeystrokes(_ text: String) { pastedKeystrokes.append(text) }
+
     // MARK: Video activation
 
     /// The video-activation flag the cap tests assert against (only meaningful for `.remoteGUI`).
