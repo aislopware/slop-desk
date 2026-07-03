@@ -264,6 +264,16 @@ public final class TerminalViewModel {
     @ObservationIgnored public var onRequestFindNext: (() -> Void)?
     @ObservationIgnored public var onRequestFindPrev: (() -> Void)?
 
+    /// C8 improvement 1: fired ONCE per RECONNECT the instant the fresh-vs-resumed verdict resolves
+    /// (``AislopdeskClient/SessionResumeOutcome``) — `.resumedSession` (the same live shell reattached,
+    /// scrollback/history intact) or `.freshShell` (a fresh shell; the previous session ended). The
+    /// ``ConnectionViewModel`` forwards it up to the store, which surfaces a small transient toast so the
+    /// user knows WHICH happened (a silent fresh shell otherwise loses context with no signal). Gated to a
+    /// real reconnect (``markReconnecting``) — a first-ever connect / deliberate ``reset`` never notifies,
+    /// so the toast is never a launch surprise. `@ObservationIgnored`: wiring, not view state; nil for
+    /// headless/preview callers (never invoked).
+    @ObservationIgnored public var onResumeOutcomeResolved: ((AislopdeskClient.SessionResumeOutcome) -> Void)?
+
     /// E5 (find + global search) surface seams over the active ``TerminalSurfaceActions`` conformer (production
     /// ``GhosttySurface``): the flat scrollback text mirror the find bar / global search scan, and the
     /// passthrough to libghostty's own in-surface search bindings (`search:`/`navigate_search:`/`end_search`/
@@ -1147,6 +1157,13 @@ public final class TerminalViewModel {
     /// (pre-reconnect leftovers) defers to a later batch. `@ObservationIgnored`: control flag.
     @ObservationIgnored private var awaitingResumeOutcome = false
 
+    /// C8 improvement 1: whether the NEXT resolved resume verdict should fire ``onResumeOutcomeResolved``.
+    /// Armed by ``markReconnecting`` (a genuine drop being retried) and CLEARED by ``reset`` (a fresh
+    /// connect target / deliberate reconnect), so the user-facing "reattached vs fresh shell" toast fires
+    /// only after an UNEXPECTED reconnect — never on first launch and never on a self-initiated ⇧⌘R. One-shot:
+    /// cleared the moment it fires so one reconnect yields exactly one toast. `@ObservationIgnored`: control flag.
+    @ObservationIgnored private var resumeOutcomeNotifiable = false
+
     public init(surface: (any TerminalSurface)? = nil) {
         self.surface = surface
     }
@@ -1483,11 +1500,23 @@ public final class TerminalViewModel {
         case .resumedSession:
             awaitingResumeOutcome = false
             pendingFreshSessionReset = false
+            notifyResumeOutcome(.resumedSession)
         case .freshShell:
             awaitingResumeOutcome = false // leave the armed wipe for the ingest pass to consume
+            notifyResumeOutcome(.freshShell)
         case .undetermined:
             break // pre-reconnect leftovers — the verdict arrives with a later batch
         }
+    }
+
+    /// C8 improvement 1: surface the resolved fresh-vs-resumed verdict to the UI (via
+    /// ``onResumeOutcomeResolved``) ONCE per reconnect. A no-op unless ``resumeOutcomeNotifiable`` is armed
+    /// (only ``markReconnecting`` arms it; ``reset`` clears it), so a first-ever connect / deliberate ⇧⌘R
+    /// never fires a toast. One-shot: disarm before firing so one reconnect yields exactly one notification.
+    private func notifyResumeOutcome(_ outcome: AislopdeskClient.SessionResumeOutcome) {
+        guard resumeOutcomeNotifiable else { return }
+        resumeOutcomeNotifiable = false
+        onResumeOutcomeResolved?(outcome)
     }
 
     /// Monotonic SESSION boundary counter, bumped by ``markReconnecting()`` and
@@ -1853,6 +1882,9 @@ public final class TerminalViewModel {
         // batch is ingested (see ``resolveResumeOutcomeIfNeeded(client:epoch:batchIsEmpty:)``).
         pendingFreshSessionReset = true
         awaitingResumeOutcome = true
+        // C8 improvement 1: this is a GENUINE drop being retried — arm the user-facing "reattached vs fresh
+        // shell" toast so the resolved verdict surfaces once the first post-reconnect output lands.
+        resumeOutcomeNotifiable = true
         sessionEpoch += 1 // in-hand batches taken from the dead session stop painting
         // The fresh shell will re-segment its own blocks from index 0 — drop the dead session's blocks (and
         // resolve any in-flight copy-output request as unavailable) so the navigator/header don't show stale
@@ -1902,6 +1934,10 @@ public final class TerminalViewModel {
         // must not wipe the surviving screen either).
         pendingFreshSessionReset = true
         awaitingResumeOutcome = true
+        // C8 improvement 1: a fresh connect target / deliberate reconnect (⇧⌘R) must NOT fire the
+        // "reattached vs fresh shell" toast — that surface is for UNEXPECTED drops (``markReconnecting``)
+        // only, so disarm the notification even though the wipe arms exactly like a reconnect.
+        resumeOutcomeNotifiable = false
         sessionEpoch += 1
         clearGlitchCaret()
         endAwaitingReflow() // a fresh session has nothing pending to reflow

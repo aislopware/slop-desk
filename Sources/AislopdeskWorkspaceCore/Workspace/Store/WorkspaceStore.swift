@@ -362,6 +362,19 @@ public final class WorkspaceStore {
     /// exactly like ``PanePresentation/busy(handle:)``.
     public func paneIsBusy(_ id: PaneID) -> Bool { registry[id]?.isShellBusy ?? false }
 
+    /// C8 improvement 3: fold every live pane's PATH-1 connection status into a compact ``WorkspaceConnectionAlert``
+    /// for the collapsed-sidebar connection indicator, or `nil` when all panes are healthy. Iterates the tree
+    /// in DFS order (a STABLE worst-pane tie-break) and reads each materialized ``LivePaneSession``'s channel
+    /// status; a video pane / faked handle contributes a `nil` status (never an alarm). Reading it inside a
+    /// SwiftUI body registers observation on each ``ConnectionViewModel/status``, so the chip re-renders as
+    /// panes drop / recover — the same observation seam ``PanePresentation/connectionStatus(_:)`` relies on.
+    public func connectionAlert() -> WorkspaceConnectionAlert? {
+        let entries: [(pane: PaneID, status: ConnectionStatus?)] = tree.allPaneIDs().map { id in
+            (pane: id, status: (registry[id] as? LivePaneSession)?.connection?.status)
+        }
+        return WorkspaceConnectionAlert.resolve(from: entries)
+    }
+
     /// All live sessions (registry values). Order is unspecified — callers that need a stable order
     /// derive it from the tree's `allLeafIDs()`.
     public var allSessions: [any PaneSessionHandle] { Array(registry.values) }
@@ -1684,6 +1697,15 @@ public final class WorkspaceStore {
     /// explicit notification (OSC 9 / OSC 777); the app posts it carrying the pane id so a click can
     /// ``revealPane(_:)``. `nil` in tests / headless ⇒ the notification is dropped (no UN dependency).
     public var onPaneNotification: ((_ paneID: PaneID, _ paneTitle: String, _ title: String, _ body: String) -> Void)?
+
+    /// C8 improvement 1: a pane's fresh-vs-resumed verdict after a completed RECONNECT (forwarded from its
+    /// ``ConnectionViewModel``). The app wires this to a small transient toast so the user knows whether the
+    /// drop reattached the SAME live shell (`.resumedSession` — scrollback/history intact) or spawned a
+    /// FRESH shell (`.freshShell` — the previous session ended and its context is gone). Fires at most once
+    /// per drop→reconnect; never on a first-ever connect or a deliberate ⇧⌘R. `nil` in tests / headless ⇒
+    /// the verdict is dropped. `@ObservationIgnored`: wiring, not view state.
+    @ObservationIgnored
+    public var onSessionResumeOutcome: ((_ paneID: PaneID, _ outcome: AislopdeskClient.SessionResumeOutcome) -> Void)?
 
     /// WS-B / B4·B5·B6·B7: the configured tmux/zellij PREFIX chord (default ⌃A, CONFIGURABLE off a
     /// Ctrl-letter). Both the app-level `WorkspaceKeyDispatcher` (B3) and the per-surface
@@ -3067,6 +3089,11 @@ public final class WorkspaceStore {
         // ClaudeStatusMachine and mirror the result into `paneAgentStatus` (→ the sidebar/tab/chrome dots).
         connection?.onAgentSignal = { [weak self] event in
             self?.handleAgentSignal(id: id, event: event)
+        }
+        // C8 improvement 1: forward this pane's fresh-vs-resumed reconnect verdict to the app's toast sink,
+        // tagged with the pane id so the "reattached / fresh shell" toast identifies (and can focus) it.
+        connection?.onResumeOutcomeResolved = { [weak self] outcome in
+            self?.onSessionResumeOutcome?(id, outcome)
         }
         // OSC 9;4 PROGRESS (E14/K1, wire type 32): mirror this pane's validated taskbar-style progress into
         // `paneProgress` (→ the sidebar tab badge + the macOS Dock aggregate). A `.clear` arrives as `nil` and

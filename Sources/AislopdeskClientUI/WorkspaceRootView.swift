@@ -135,6 +135,7 @@ public struct WorkspaceRootView: View {
                 connection: connection,
                 coordinator: overlay,
                 toggledState: OverlayHostView.toggledState(for: chrome, store: store),
+                sidebarCollapsed: chrome.sidebarCollapsed,
             )
         }
         // Wire ⌘⇧L (Toggle Tabs Panel / sidebar) to the live chrome once it
@@ -173,6 +174,7 @@ public struct WorkspaceRootView: View {
                 connection: connection,
                 coordinator: overlay,
                 toggledState: OverlayHostView.toggledState(for: chrome, store: store),
+                sidebarCollapsed: chrome.sidebarCollapsed,
             )
         }
         // Wire the palette's cwd resolver + the per-pane hardware-keyboard interceptor's overlay toggles

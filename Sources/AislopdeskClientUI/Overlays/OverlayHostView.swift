@@ -37,6 +37,10 @@ struct OverlayHostView: View {
     /// (see ``OverlayHostView/toggledState(for:store:)``) so the pure coordinator stays chrome-agnostic.
     /// Defaults to "nothing toggled" (iOS / previews).
     var toggledState: @MainActor (PaletteItem) -> Bool = { _ in false }
+    /// C8 improvement 3: whether the tabs panel (sidebar) is currently collapsed — the root passes the live
+    /// `chrome.sidebarCollapsed`. The durable connection indicator shows ONLY while collapsed (an open sidebar
+    /// is the user's normal per-pane surface); default `false` (iOS/previews/tests) keeps it hidden.
+    var sidebarCollapsed: Bool = false
 
     var body: some View {
         // The always-mounted toast stack is the host's only in-tree content (it renders nothing when empty);
@@ -59,6 +63,18 @@ struct OverlayHostView: View {
                 }
             }
             .animation(Slate.Anim.smallFade, value: coordinator.prefixArmed)
+            // C8 improvement 3: the durable connection indicator — a compact amber/red chip shown at the
+            // bottom ONLY while the tabs panel is collapsed AND some pane is unhealthy. With the sidebar hidden
+            // a dropped/reconnecting pane otherwise has no per-pane surface; clicking the chip focuses the worst
+            // affected pane. Hidden entirely when all panes are healthy (`connectionAlert()` returns nil).
+            .overlay(alignment: .bottom) {
+                if sidebarCollapsed, let alert = connectionAlert {
+                    ConnectionAlertChip(alert: alert) { store.focusPaneTree(alert.worstPane) }
+                        .padding(Slate.Metric.space4)
+                        .transition(.opacity)
+                }
+            }
+            .animation(Slate.Anim.smallFade, value: connectionAlert)
             .sheet(item: activeSheetBinding) { sheet in
                 // System accent inside the sheet too (a sheet roots a fresh environment, so reset the tint on the
                 // presented content directly — not only on the presenter below — to be order-independent).
@@ -86,6 +102,12 @@ struct OverlayHostView: View {
             // `.preferredColorScheme`, matching how a real macOS sheet inherits its window's appearance.
             .tint(nil)
     }
+
+    /// C8 improvement 3: the live connection-health fold, read once per body evaluation so the indicator
+    /// overlay and its fade animation agree on the same value. Reading `store.connectionAlert()` registers
+    /// observation on each pane's `ConnectionViewModel.status`, so the chip appears / updates / disappears as
+    /// panes drop and recover.
+    private var connectionAlert: WorkspaceConnectionAlert? { store.connectionAlert() }
 
     // MARK: - Active sheet (single robust presentation seam)
 
@@ -238,6 +260,50 @@ private struct PrefixArmedChip: View {
                 .strokeBorder(Slate.Line.subtle, lineWidth: 1),
         )
         .accessibilityLabel("Prefix armed")
+    }
+}
+
+// MARK: - ConnectionAlertChip (the durable collapsed-sidebar connection indicator)
+
+/// The compact connection-health chip (C8 improvement 3): an amber/red status dot + a count label
+/// ("1 reconnecting" / "2 disconnected") shown at the bottom while the tabs panel is collapsed and some pane
+/// is unhealthy. A `Button` (unlike the non-interactive prefix chip) so a click focuses the worst-affected
+/// pane. `Slate.*` tokens only (the ds-leaks ratchet); the dot colour reuses the shared status roles.
+private struct ConnectionAlertChip: View {
+    let alert: WorkspaceConnectionAlert
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: Slate.Metric.space1) {
+                Circle()
+                    .fill(Self.tint(for: alert.worst))
+                    .frame(width: 7, height: 7)
+                Text(alert.label)
+                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                    .foregroundStyle(Slate.Text.secondary)
+            }
+            .padding(.horizontal, Slate.Metric.space2)
+            .padding(.vertical, Slate.Metric.space1)
+            .background(Slate.Surface.card, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+            .overlay(
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
+                    .strokeBorder(Slate.Line.subtle, lineWidth: 1),
+            )
+        }
+        .buttonStyle(.plain)
+        .help("\(alert.label) — click to focus the affected pane")
+        .accessibilityLabel("\(alert.label). Click to focus the affected pane.")
+    }
+
+    /// Amber while a drop is recovering (`.reconnecting`), red once it is down (`.failed` / `.unreachable`) —
+    /// the same status roles the toolbar connection pill (`StatusPresentation`) uses.
+    private static func tint(for severity: WorkspaceConnectionAlert.Severity) -> Color {
+        switch severity {
+        case .reconnecting: Slate.Status.warn
+        case .failed,
+             .unreachable: Slate.Status.err
+        }
     }
 }
 

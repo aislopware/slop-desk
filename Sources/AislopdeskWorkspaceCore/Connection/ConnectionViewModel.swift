@@ -89,6 +89,13 @@ public final class ConnectionViewModel {
     /// BUG C a: a sibling-pane commit / detached-session drift the pane missed). `nil` ⇒ no observer.
     public var onReconnected: (() -> Void)?
 
+    /// C8 improvement 1: the fresh-vs-resumed verdict for a completed RECONNECT, forwarded from the terminal
+    /// model (which alone derives it from the first post-reconnect output seq). The store wires this to a
+    /// per-pane toast so a warm reattach ("session preserved") vs a fresh shell ("previous session ended")
+    /// is surfaced rather than silent. Fired at most once per drop→reconnect; never on a first-ever connect
+    /// or a deliberate ⇧⌘R. `nil` ⇒ no observer (the side-effect is dropped).
+    public var onResumeOutcomeResolved: ((_ outcome: AislopdeskClient.SessionResumeOutcome) -> Void)?
+
     /// A Claude-Code agent-detection signal (wire types 26/27 — `.foregroundProcess` / `.claudeStatus`).
     /// The store wires this to the owning pane's ``LivePaneSession`` so it folds the signal into the
     /// pane's `ClaudeStatusMachine` and pushes the result to ``WorkspaceStore/setAgentStatus(_:for:)``
@@ -413,6 +420,12 @@ public final class ConnectionViewModel {
         // is never targeted.
         terminal.requestBlockOutputSink = { [weak client] index in
             Task { try? await client?.requestBlockOutput(index: index) }
+        }
+        // C8 improvement 1: forward the terminal model's fresh-vs-resumed reconnect verdict up to the store
+        // (→ a per-pane toast). Set once here alongside the other sinks; a supervisor-driven reconnect does
+        // NOT re-run connect(), so this sink stays live to catch the verdict resolved after that reconnect.
+        terminal.onResumeOutcomeResolved = { [weak self] outcome in
+            self?.onResumeOutcomeResolved?(outcome)
         }
 
         // E4: the pane's metadata façade. Its `send` seam fires a `requestMetadata` on the CONTROL channel

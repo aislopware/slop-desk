@@ -325,6 +325,15 @@ public struct AislopdeskClientApp: App {
             )
             #endif
         }
+        // C8 improvement 1: after an UNEXPECTED reconnect, surface WHICH kind it was as a transient toast —
+        // `.resumedSession` reattached the same live shell (scrollback intact); `.freshShell` spawned a fresh
+        // shell (the previous session ended). Otherwise a fresh shell silently drops the user's context with
+        // no signal. Pushed unconditionally (in-app UI, independent of OS-notification settings); the stable
+        // `pane.<key>` id de-dupes with the pane's other toasts.
+        store.onSessionResumeOutcome = { [weak overlay] paneID, outcome in
+            guard let toast = Toast.sessionResume(paneIDKey: paneID.raw.uuidString, outcome: outcome) else { return }
+            overlay?.pushToast(toast)
+        }
         store.onLongCommandNotify = { [weak overlay, weak store] paneIDKey, paneTitle, exitCode, durationMS in
             // The store fires this ONLY for an unfocused, genuinely-long command (its own gate), so a toast
             // here is the background "your build finished" cue. SECURITY: `paneTitle` is the live OSC 0/2 pane

@@ -5,6 +5,7 @@
 // the actual colors from the theme. `autoDismiss` is the timeout the toast view schedules (nil ⇒ sticky,
 // dismissed only by the X button).
 
+import AislopdeskClient // SessionResumeOutcome (the fresh-vs-resumed reconnect verdict)
 import AislopdeskWorkspaceCore // SettingsKey.redactSecretsEnabled + SecretRedactor (OSC-text masking parity)
 import Foundation
 
@@ -93,5 +94,35 @@ public struct Toast: Identifiable, Sendable, Equatable {
             title: paneTitle.isEmpty ? "Command finished" : redactSecretsIfEnabled(paneTitle),
             body: "command finished (exit \(exitCode.map(String.init) ?? "?"), \(secs)s)",
         )
+    }
+
+    /// C8 improvement 1: the in-app toast for a completed RECONNECT's fresh-vs-resumed verdict — the ONLY
+    /// signal the user gets for whether a dropped link reattached the SAME live shell (scrollback/history
+    /// intact) or spawned a FRESH shell (the previous session, and its context, ended). `.resumedSession` is
+    /// reassuring (`.success`); `.freshShell` is a soft warning that context is gone (`.attention`).
+    /// `.undetermined` is never a user-facing edge (the verdict has not resolved) ⇒ `nil` (nothing to show).
+    /// No untrusted text (both strings are fixed templates), so no secret redaction is needed. The stable
+    /// `pane.<key>` id de-dupes with the pane's other toasts so a newer event replaces this one.
+    static func sessionResume(
+        paneIDKey: String, outcome: AislopdeskClient.SessionResumeOutcome,
+    ) -> Self? {
+        switch outcome {
+        case .resumedSession:
+            Self(
+                id: "pane.\(paneIDKey)",
+                flavor: .success,
+                title: "Reattached",
+                body: "Session preserved.",
+            )
+        case .freshShell:
+            Self(
+                id: "pane.\(paneIDKey)",
+                flavor: .attention,
+                title: "Reconnected",
+                body: "Fresh shell — previous session ended.",
+            )
+        case .undetermined:
+            nil
+        }
     }
 }

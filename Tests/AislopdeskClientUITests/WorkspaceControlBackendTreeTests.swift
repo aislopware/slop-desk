@@ -191,6 +191,35 @@ final class WorkspaceControlBackendTreeTests: XCTestCase {
         )
     }
 
+    /// C8 improvement 2 (re-scope): `--new-window` no longer mints a NEW SESSION (with the session switcher
+    /// pruned that would strand the user) — it degrades to a NEW TAB in the CURRENT session. The session count
+    /// must stay 1 and the active session gains one tab; the shim command still lands on the new leaf.
+    /// REVERT-TO-FAIL: the pre-fix `store.newSession(...)` arm makes `sessions.count` 2 (a new orphan session).
+    func testNewWindowPlacementOpensTabInCurrentSession() async throws {
+        let store = makeStore()
+        let backend = makeBackend(store, shimGrace: .milliseconds(5))
+        let sessionsBefore = store.tree.sessions.count
+        let tabsBefore = store.tree.activeSession?.tabs.count ?? 0
+        let leavesBefore = leafIDs(store)
+
+        XCTAssertTrue(backend.open(target: "/tmp/notes.txt", mode: .view, placement: .newWindow))
+
+        XCTAssertEqual(
+            store.tree.sessions.count, sessionsBefore,
+            "--new-window must NOT create a new session (the multi-session UI is gone)",
+        )
+        XCTAssertEqual(
+            store.tree.activeSession?.tabs.count, tabsBefore + 1,
+            "--new-window opens a new TAB in the current session",
+        )
+        let newLeaf = try XCTUnwrap(leafIDs(store).subtracting(leavesBefore).first)
+        let command = try await awaitShimCommand(store, newLeaf)
+        XCTAssertTrue(
+            command.contains("less -- '/tmp/notes.txt'"),
+            "the shim command still lands on the new-tab leaf (got: \(command))",
+        )
+    }
+
     // MARK: - (d) pane capture — last-N scrollback
 
     func testCapturePaneReturnsLastNLines() throws {

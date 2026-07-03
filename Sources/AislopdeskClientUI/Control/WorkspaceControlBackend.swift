@@ -228,7 +228,12 @@ final class WorkspaceControlBackend: ClientControlBackend {
         let before = Self.leafIDs(of: store)
         switch placement {
         case .newTab: store.newTab(kind: .terminal)
-        case .newWindow: store.newSession(name: Self.shimSessionName(target: target), kind: .terminal)
+        // C8 improvement 2 (re-scope): the multi-session UI was pruned (no session switcher), so a
+        // `--new-window` that mints a NEW SESSION and swaps the whole UI to it would strand the user with
+        // no way back. Degrade the UI-reachable `--new-window` to a NEW TAB in the CURRENT session — no
+        // orphan session is ever user-created. The control-plane verb name stays `--new-window` for CLI
+        // compat (see ``ClientControlProtocol/Placement``); only its placement target changed.
+        case .newWindow: store.newTab(kind: .terminal)
         case .left: store.splitActivePane(axis: .horizontal, kind: .terminal, leading: true)
         case .right: store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false)
         case .top: store.splitActivePane(axis: .vertical, kind: .terminal, leading: true)
@@ -256,13 +261,6 @@ final class WorkspaceControlBackend: ClientControlBackend {
         case .view: return looksLikeURL(target) ? "open " + quoted : "less -- " + quoted
         case .edit: return "${EDITOR:-vi} -- " + quoted
         }
-    }
-
-    /// The session name for a `--new-window` shim — the target's last path component (a stable human label),
-    /// falling back to a generic name for an empty / odd target.
-    private static func shimSessionName(target: String) -> String {
-        let last = URL(fileURLWithPath: target).lastPathComponent
-        return last.isEmpty ? "View" : last
     }
 
     /// Every live leaf id across the tree — the before/after set the shim diffs to find the pane the placement

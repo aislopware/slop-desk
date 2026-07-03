@@ -109,6 +109,93 @@ final class TerminalViewModelWarmReconnectTests: XCTestCase {
         await client.close()
     }
 
+    // MARK: - C8 improvement 1: fresh-vs-resumed toast signal (onResumeOutcomeResolved)
+
+    /// A warm PATH-A reattach after a DROP fires `onResumeOutcomeResolved(.resumedSession)` exactly once — the
+    /// signal the store turns into a "Reattached (session preserved)" toast. REVERT-TO-FAIL: without the
+    /// `notifyResumeOutcome` call in `resolveResumeOutcomeIfNeeded` the callback never fires.
+    func testResumeOutcomeCallbackFiresResumedAfterReconnect() async throws {
+        let factory = TransportFactory()
+        let client = AislopdeskClient(makeTransport: { factory.next() })
+        try await client.connect(host: "h", port: 1)
+
+        let surface = RecordingSurface()
+        let model = TerminalViewModel(surface: surface)
+        var captured: [AislopdeskClient.SessionResumeOutcome] = []
+        model.onResumeOutcomeResolved = { captured.append($0) }
+        let pump = Task { await model.observe(client: client) }
+        defer { pump.cancel() }
+
+        let history = Data("$ ls\n".utf8)
+        factory.current.deliver(.output(seq: 1, bytes: history))
+        await waitUntil { surface.writes.contains(history) }
+        XCTAssertTrue(captured.isEmpty, "the initial connect must not fire the reconnect toast")
+
+        // A genuine drop → reconnect that REATTACHES the same shell (seq stream continues past the presented 1).
+        model.markReconnecting()
+        try await client.connect(host: "h", port: 1)
+        let repaint = Data("$ ".utf8)
+        factory.current.deliver(.output(seq: 2, bytes: repaint))
+        await waitUntil { !captured.isEmpty }
+
+        XCTAssertEqual(captured, [.resumedSession], "a warm reattach fires exactly one .resumedSession signal")
+        await client.close()
+    }
+
+    /// A reconnect landing on a FRESH shell (the seq stream restarts at 1) fires
+    /// `onResumeOutcomeResolved(.freshShell)` — the store's "Reconnected (fresh shell — previous session ended)"
+    /// cue. The two determinate verdicts must be distinguishable, so this pins the fresh side.
+    func testResumeOutcomeCallbackFiresFreshAfterReconnect() async throws {
+        let factory = TransportFactory()
+        let client = AislopdeskClient(makeTransport: { factory.next() })
+        try await client.connect(host: "h", port: 1)
+
+        let surface = RecordingSurface()
+        let model = TerminalViewModel(surface: surface)
+        var captured: [AislopdeskClient.SessionResumeOutcome] = []
+        model.onResumeOutcomeResolved = { captured.append($0) }
+        let pump = Task { await model.observe(client: client) }
+        defer { pump.cancel() }
+
+        factory.current.deliver(.output(seq: 1, bytes: Data("$ old\n".utf8)))
+        await waitUntil { surface.writes.contains(Data("$ old\n".utf8)) }
+
+        model.markReconnecting()
+        try await client.connect(host: "h", port: 1)
+        factory.current.deliver(.output(seq: 1, bytes: Data("fresh-$ ".utf8)))
+        await waitUntil { !captured.isEmpty }
+
+        XCTAssertEqual(captured, [.freshShell], "a fresh host shell fires exactly one .freshShell signal")
+        await client.close()
+    }
+
+    /// A FRESH CONNECT (`reset()`, i.e. first launch / a deliberate ⇧⌘R) resolves `.freshShell` and arms the
+    /// wipe, but must fire NO toast — the "previous session ended" cue is for UNEXPECTED drops only, never a
+    /// launch surprise. REVERT-TO-FAIL: dropping the `resumeOutcomeNotifiable` gate makes this fire a spurious
+    /// toast on every fresh connect.
+    func testResumeOutcomeCallbackSuppressedOnFreshConnect() async throws {
+        let factory = TransportFactory()
+        let client = AislopdeskClient(makeTransport: { factory.next() })
+        try await client.connect(host: "h", port: 1)
+
+        let surface = RecordingSurface()
+        let model = TerminalViewModel(surface: surface)
+        var captured: [AislopdeskClient.SessionResumeOutcome] = []
+        model.onResumeOutcomeResolved = { captured.append($0) }
+        let pump = Task { await model.observe(client: client) }
+        defer { pump.cancel() }
+
+        // reset() is the fresh-connect boundary (the real ConnectionViewModel.connect() calls it): it arms the
+        // wipe but clears the notify flag, so the resolved .freshShell verdict must stay silent.
+        model.reset()
+        let prompt = Data("fresh-$ ".utf8)
+        factory.current.deliver(.output(seq: 1, bytes: prompt))
+        await waitUntil { surface.writes.contains(prompt) }
+
+        XCTAssertTrue(captured.isEmpty, "a fresh connect (reset) resolves .freshShell but must fire no toast")
+        await client.close()
+    }
+
     // MARK: - Helpers
 
     /// Polls `condition` (≤ ~5 s) while suspending the test method so the MainActor pump runs.
