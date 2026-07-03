@@ -42,6 +42,21 @@ coarser** than a 150 Mbps near-lossless reference of the same content. That is t
 scroll. In the profiles this is set explicitly by `AQP_MAX` (44 = very coarse). On a good link there is
 headroom to lower it (less motion blur) — see the recommended profile.
 
+## The `AQP_MAX` motion-blur tradeoff (measured, fixed-QP, 1080p60)
+
+Pinning const-QP to a fixed value and measuring the scroll-frame size shows exactly how much detail
+each QP throws away — and how cheap sharper motion is on a good link:
+
+| QP (motion ceiling) | avg frame | at 60 fps | verdict |
+|---|---|---|---|
+| 24 (sharp floor)     | 72.9 KB | ~35 Mbps | crisp (this is the *static* floor) |
+| 30                   | 51.3 KB | ~25 Mbps | |
+| **36 (recommended)** | 29.8 KB | ~14 Mbps | **3.5× more detail than QP44 — sharp motion, trivial bandwidth** |
+| 44 (current profile) | **8.5 KB** | ~4 Mbps | heavily quantized = the motion blur |
+
+`AQP_MAX=44` crushes each scroll frame to 8.5 KB. On a fat LAN there is no reason to — `AQP_MAX=36`
+keeps 3.5× the detail for ~14 Mbps at 60 fps, which the link and the encoder both absorb easily.
+
 ## Decode + FEC are not bottlenecks
 
 `decode p50 1.26 ms / p95 1.50 ms`; `packetize+FEC m=1 p50 0.02 ms, m=2 p50 0.06 ms`. No work needed
