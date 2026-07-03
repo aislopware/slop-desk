@@ -90,6 +90,7 @@ struct ClientAppMain {
                     onInputReleaseReady: paneContext.onInputReleaseReady,
                     onWindowGeometryReady: paneContext.onWindowGeometryChanged,
                     onStreamCadenceReady: paneContext.onStreamCadenceChanged,
+                    onStreamStallChanged: paneContext.onStreamStallChanged,
                 ))
             }
             return AnyView(VideoWindowView(title: descriptor.title))

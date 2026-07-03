@@ -1,5 +1,5 @@
 import XCTest
-@testable import AislopdeskWorkspaceCore
+@testable import AislopdeskVideoProtocol
 
 /// C7 improvement 2 — the pure frozen-stream detector. The load-bearing case is the IDLE-SKIP trap: a
 /// healthy idle window (frames suppressed by design, heartbeat still flowing) must NOT be declared stalled.

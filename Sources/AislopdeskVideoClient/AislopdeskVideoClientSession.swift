@@ -310,6 +310,16 @@ public actor AislopdeskVideoClientSession {
     /// / `HelloRetryPolicyTests`.
     private var helloRetryTask: Task<Void, Never>?
 
+    // MARK: Stall-scrim liveness stamps (2026-07-03, the reconnect-wedge residual)
+
+    /// Uptime (``ProcessInfo/systemUptime`` seconds) of the last VIDEO fragment that arrived, and of
+    /// the last successfully-decoded host CONTROL message (the host's 1 s heartbeat keepalive rides
+    /// control, but ANY decodable control datagram proves the host is alive). The pipeline's stall
+    /// monitor reads both via ``livenessSnapshot()`` and feeds ``StreamStallPolicy`` — no timer here;
+    /// the stamps are just writes on paths the actor already runs per datagram.
+    private var lastVideoSignalAt: TimeInterval?
+    private var lastControlSignalAt: TimeInterval?
+
     /// Single batch-drain consumer of the inbound datagram queue (see ``start()``). Mirrors the
     /// host's `InboundQueue` pump; replaces the legacy per-datagram `Task { await receive… }`
     /// fan-out (≈3000 Task spawns/sec at 60fps × ~50 fragments — pure scheduler overhead, and the
@@ -618,6 +628,27 @@ public actor AislopdeskVideoClientSession {
         transport.send(VideoControlMessage.keepalive.encode(), on: .control)
     }
 
+    // MARK: Stall-scrim liveness snapshot (2026-07-03)
+
+    /// One reading of the session's liveness signals for the pipeline's stall monitor: whether the
+    /// FSM is `.streaming`, plus the uptime stamps of the last video fragment and the last decodable
+    /// host control message (the host's 1 s heartbeat rides control). All stamps share the
+    /// ``ProcessInfo/systemUptime`` clock the monitor evaluates ``StreamStallPolicy`` against.
+    public struct LivenessSnapshot: Sendable, Equatable {
+        public let streaming: Bool
+        public let lastVideoSignalAt: TimeInterval?
+        public let lastControlSignalAt: TimeInterval?
+    }
+
+    /// The current liveness reading (see ``LivenessSnapshot``).
+    public func livenessSnapshot() -> LivenessSnapshot {
+        LivenessSnapshot(
+            streaming: stateMachine.mediaFlowing,
+            lastVideoSignalAt: lastVideoSignalAt,
+            lastControlSignalAt: lastControlSignalAt,
+        )
+    }
+
     // MARK: Network-feedback telemetry (the network-feedback channel)
 
     /// Starts the self-owned ~50 ms NetworkStats timer. COPIES ``startKeepalive()``'s safe weak
@@ -846,8 +877,13 @@ public actor AislopdeskVideoClientSession {
         }
         switch router.route(channel: channel, data: data, mediaFlowing: stateMachine.mediaFlowing) {
         case let .control(message):
+            // Stall-scrim liveness: any decodable host control message (the 1 s heartbeat keepalive,
+            // acks, cadence, …) proves the host is alive — stamp BEFORE the FSM (which deliberately
+            // no-ops a keepalive).
+            lastControlSignalAt = ProcessInfo.processInfo.systemUptime
             for effect in stateMachine.handleControl(message) { await apply(effect) }
         case let .videoFragment(fragment):
+            lastVideoSignalAt = ProcessInfo.processInfo.systemUptime
             ingestVideo(fragment)
         case let .geometry(message):
             applyGeometry(message)

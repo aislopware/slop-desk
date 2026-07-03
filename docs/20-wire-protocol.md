@@ -547,6 +547,17 @@ before any media flows. `[UInt8 type][body]`, big-endian:
   reflection). On any received `bye` the client tears down and **rebuilds the whole pipeline**
   (fresh channelID lane + hello + decoder/pacer/renderer), so a videohostd restart self-heals
   within one keepalive interval (≤ ~5 s) instead of freezing the pane with dead input.
+- **Host→client heartbeat + stall scrim (2026-07-03, the residual of the above — behavior only, no
+  wire change):** while a session streams, the host sends a zero-body **`keepalive` (6) host→client
+  every 1 s** (`KeepaliveTiming.hostHeartbeatInterval`; type 6 was already documented wire-safe in
+  both directions — an old client's FSM drops it inertly). The client stamps the arrival of every
+  decodable control message and every video fragment, and a ~1 s monitor evaluates
+  `StreamStallPolicy` (threshold 3 s = tolerates two lost heartbeats): **no frame AND no control for
+  ≥ 3 s while streaming ⇒ the pane overlays a "Reconnecting…" scrim** over the frozen last frame.
+  The heartbeat — not frame arrival — is the liveness signal, so a healthily-idle window
+  (idle-skip suppresses frames by design) never false-stalls. The scrim is **sticky** through the
+  self-heal rebuild (bye → fresh lane/hello) and clears only when traffic actually resumes. A
+  stopped/bye'd host session sends no heartbeat (it must go silent so the monitor sees the truth).
 - Beyond the handshake the control channel also carries additive host→client info messages, each an
   unknown type an old peer simply drops: `resizeAck` (5), `streamCadence` (10), `scrollOffset` (13),
   `contentMask` (14), and **`displayMax` (15)** = `UInt16 maxWidthPt` + `UInt16 maxHeightPt`, the max

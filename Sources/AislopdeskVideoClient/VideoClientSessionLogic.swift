@@ -233,6 +233,54 @@ public enum HelloRetryPolicy {
     }
 }
 
+/// The STICKY show/hide reducer behind the remote-GUI pane's "Reconnecting…" scrim (the stall-scrim
+/// wiring, 2026-07-03 — the presentational residual of the reconnect-wedge fix). The pipeline's stall
+/// monitor folds each ``StreamStallPolicy/Verdict`` through this and notifies the view ONLY on a flip.
+///
+/// Why sticky: once the scrim shows, the recovery path itself makes the verdict leave `.stalled` —
+/// a host-ended rebuild drops the FSM to `.connecting` (verdict `.notConnected`), and the fresh
+/// session starts with no liveness signal at all (verdict `.unknown`). Clearing on either would flash
+/// the pane "healthy" while it still shows a stale frozen frame mid-recovery, so the scrim clears
+/// ONLY on a real `.live` verdict (traffic actually flowing again). Pure value type — headlessly
+/// unit-testable, no timer/clock (the monitor owns the cadence).
+public struct StallScrimLatch: Sendable, Equatable {
+    /// Whether the scrim is currently shown.
+    public private(set) var visible = false
+
+    public init() {}
+
+    /// A HOST-ENDED rebuild started (a received `bye` — daemon shutdown / restarted-daemon answer):
+    /// show the scrim NOW. The bye path never produces a `.stalled` verdict (the FSM leaves
+    /// `.streaming` before the monitor can see a gap, so verdicts run `.notConnected`) — without this,
+    /// a gracefully-shut-down host that never comes back would leave the pane frozen in hello-retry
+    /// limbo with no scrim (the HW-found bye-path gap). Returns `true` when this SHOWED the scrim
+    /// (caller notifies the view), `nil` when it was already up (duplicate byes are quiet).
+    public mutating func noteReconnecting() -> Bool? {
+        guard !visible else { return nil }
+        visible = true
+        return true
+    }
+
+    /// Folds one verdict. Returns the NEW visibility when it flipped (the caller notifies the view),
+    /// `nil` when unchanged (quiet — no per-tick re-notify). `.notConnected`/`.unknown` hold the
+    /// current state (see the type doc: sticky through the rebuild).
+    public mutating func apply(_ verdict: StreamStallPolicy.Verdict) -> Bool? {
+        switch verdict {
+        case .stalled:
+            guard !visible else { return nil }
+            visible = true
+            return true
+        case .live:
+            guard visible else { return nil }
+            visible = false
+            return false
+        case .notConnected,
+             .unknown:
+            return nil
+        }
+    }
+}
+
 /// Pure edge-pan reachability + clamp math for the ACTUAL-SIZE viewport (2026-07-02). The macOS pane shows
 /// the remote window inside a fixed viewport; the DISPLAYED window size is the native POINT size × the client
 /// zoom (a compositor scale of the sublayer), and edge-pan is the only in-pane way to reach content beyond the
