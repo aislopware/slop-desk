@@ -430,7 +430,32 @@ struct TerminalLeafView: View {
         // a tab switch never tears down a healthy session or wipes the replay ring (the "switch tab mất
         // history" regression). A genuinely idle/dead channel still dials.
         await live?.connection?.connectIfNeeded()
+        await runAutotypeIfRequested()
     }
+
+    /// The `AISLOPDESK_AUTOTYPE` OUT-path proof seam (docs/22 §7) — RESTORED: it lived in the retired
+    /// `PaneLeafView.runAutotypeIfRequested` and was dropped (unnoticed) in the REBUILD-V2 L0 UI deletion,
+    /// leaving `LivePaneSession.isAutotypeTarget` written-but-never-read and `check-macos.sh --connect`'s
+    /// OUT-path proof permanently red. After tab0/pane0's terminal connects, if `AISLOPDESK_AUTOTYPE` is
+    /// set, push the command bytes through the REAL OUT path — `terminalModel.sendInput` → the ordered
+    /// drain in `ConnectionViewModel` → host PTY: the exact keystroke→host chain the renderer drives, so
+    /// the typed command actually executes on the host and renders back. IDEMPOTENT per pane: fires only
+    /// while this leaf is the store-marked autotype target and only once per process (a tab-switch remount
+    /// re-runs the `.task`; the latch keeps a second copy of the command off the shell). Unset in normal
+    /// use, so a production launch is unaffected.
+    private func runAutotypeIfRequested() async {
+        guard let live, live.isAutotypeTarget, !Self.autotypeFired,
+              let cmd = ProcessInfo.processInfo.environment["AISLOPDESK_AUTOTYPE"], !cmd.isEmpty,
+              let connection = live.connection, case .connected = connection.status,
+              let terminalModel = live.terminalModel else { return }
+        Self.autotypeFired = true
+        try? await Task.sleep(nanoseconds: 1_500_000_000) // let the remote prompt come up
+        terminalModel.sendInput(Data((cmd + "\n").utf8))
+    }
+
+    /// Once-per-process latch for ``runAutotypeIfRequested()`` — the `.task` re-fires on every remount, and
+    /// the proof command must land exactly once. `@MainActor`-confined (the leaf body/task both are).
+    @MainActor private static var autotypeFired = false
 
     // MARK: - Hint Mode actuation (E10 WI-9 / ES-E10-6)
 
