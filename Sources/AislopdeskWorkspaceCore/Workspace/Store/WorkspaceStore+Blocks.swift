@@ -1,5 +1,6 @@
 import AislopdeskTerminal
 import Foundation
+import os
 
 // MARK: - CommandBlock → PeekBlockLine (the P4 peek "recent output" shape)
 
@@ -94,9 +95,23 @@ enum BlockJump {
     /// beyond any retained scrollback's prompt count.
     nonisolated static let reAnchorDelta = 32000
 
+    /// The largest single DOWNWARD `jump_to_prompt` step that fits ghostty's binding parameter.
+    ///
+    /// `jump_to_prompt` is declared `i16` (`Binding.zig`, pinned v1.3.1 — max 32767), so a single step
+    /// whose delta exceeds that fails the ACTION-STRING PARSE and silently no-ops the WHOLE binding — the
+    /// exact i16 trap the anchor delta hit in 84b2cf3. The step delta is `ordinal − 1`, which is unbounded
+    /// (a long-lived detached session stamps ever-growing prompt ordinals — every Enter counts), so past
+    /// ordinal 32768 the raw step would silently land on the anchor (oldest prompt) instead of the target.
+    /// A step beyond this bound is therefore SPLIT into multiple in-range hops: each positive
+    /// `jump_to_prompt` re-counts from the NEW viewport-top's `down(1)` (that row's own prompt is never
+    /// re-counted), so consecutive hops COMPOSE to the full delta and land the exact prompt — saturation
+    /// would land short, chunking lands true. 32000 matches the re-anchor magnitude and stays inside i16.
+    nonisolated static let maxStep = 32000
+
     /// Anchors on the oldest retained prompt row, then jumps `actions` DOWN to 1-based prompt ordinal
     /// `ordinal`. `0` (unknown — a mid-stream join stamped no ordinal) is a graceful no-op: better no
-    /// jump than a mis-landing.
+    /// jump than a mis-landing. The `ordinal − 1` downward delta is emitted as one or more in-range hops
+    /// (see ``maxStep``) so an ordinal beyond ghostty's i16 range still lands exactly instead of no-opping.
     nonisolated static func toPromptOrdinal(_ ordinal: UInt32, using actions: TerminalSurfaceActions) {
         guard ordinal >= 1 else {
             debugLog("jump SKIPPED: ordinal 0 (mid-stream join — host stamped no prompt ordinal)")
@@ -104,15 +119,30 @@ enum BlockJump {
         }
         let anchor1 = actions.performBindingAction("scroll_to_bottom")
         let anchor2 = actions.performBindingAction("jump_to_prompt:-\(reAnchorDelta)")
-        var step = true
-        if ordinal >= 2 {
-            step = actions.performBindingAction("jump_to_prompt:\(Int(ordinal) - 1)")
+        var remaining = Int(ordinal) - 1
+        var stepsOK = true
+        var hops: [Int] = []
+        while remaining > 0 {
+            let hop = Swift.min(remaining, maxStep)
+            hops.append(hop)
+            if !actions.performBindingAction("jump_to_prompt:\(hop)") { stepsOK = false }
+            remaining -= hop
+        }
+        // A `false` from a REAL surface (an out-of-range/rejected delta, or a headless/placeholder surface)
+        // means the viewport did NOT move to the target. Surface it at DEFAULT log level — not only the
+        // debug-gated trace — so a silently-failed navigator / Jump-to-Failed jump is diagnosable in the
+        // field without setting AISLOPDESK_BLOCKS_DEBUG. (The recording test surface always returns true.)
+        if !anchor1 || !anchor2 || !stepsOK {
+            log.error("command jump did not land (binding no-op): ordinal=\(ordinal, privacy: .public)")
         }
         debugLog(
             "jump ordinal=\(ordinal): scroll_to_bottom=\(anchor1) "
-                + "anchor(-\(reAnchorDelta))=\(anchor2) step(\(Int(ordinal) - 1))=\(step)",
+                + "anchor(-\(reAnchorDelta))=\(anchor2) steps=\(hops)=\(stepsOK)",
         )
     }
+
+    /// Default-level diagnostics for a jump that failed to move the viewport (see ``toPromptOrdinal``).
+    private nonisolated static let log = Logger(subsystem: "com.aislopdesk.workspace", category: "blocks")
 
     /// stderr diagnostics for the jump choreography, gated by `AISLOPDESK_BLOCKS_DEBUG == "1"`
     /// (default-OFF) — the launch-from-terminal debugging seam (`AISLOPDESK_VIDEO_DEBUG` idiom).
@@ -231,6 +261,22 @@ public extension WorkspaceStore {
     func reRunCommandInActivePane(_ text: String) {
         guard let model = activeTerminalModel, let bytes = BlockReRunEncoder.bytes(for: text) else { return }
         model.sendInput(bytes)
+    }
+
+    /// Copies the active pane's captured output for block `index` — the Command Navigator's per-row
+    /// "Copy Output" affordance — by routing to the active terminal model's
+    /// ``TerminalViewModel/copyBlockOutput(index:onResult:)`` (wire type 15 → 29, VT-stripped to plain
+    /// text). `onResult` receives the plain text on success or `nil` when there is no live terminal pane /
+    /// the block was evicted / disconnected (the caller shows a brief "output unavailable" and NEVER hangs).
+    /// The headless core owns no `NSPasteboard`, so the CALLER does the clipboard write — this is the SAME
+    /// request path the terminal context menu's "Copy Command Output" uses (no wire change). Resolving the
+    /// active model here (not passing one in) keeps the copy on the focused pane, mirroring the jump ops.
+    func copyBlockOutputInActivePane(index: UInt32, onResult: @escaping (String?) -> Void) {
+        guard let model = activeTerminalModel else {
+            onResult(nil)
+            return
+        }
+        model.copyBlockOutput(index: index, onResult: onResult)
     }
 
     // MARK: - WB3: Jump to previous / next FAILED block

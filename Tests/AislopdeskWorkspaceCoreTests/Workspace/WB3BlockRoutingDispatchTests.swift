@@ -138,6 +138,48 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         XCTAssertTrue(session.sentInput.isEmpty, "an empty/whitespace command sends nothing")
     }
 
+    // MARK: - Copy block output routing (Command Navigator per-row "Copy Output")
+
+    /// `copyBlockOutputInActivePane(index:onResult:)` routes to the ACTIVE pane's terminal model's block-
+    /// output request (wire type 15) for the given index, then resolves the completion from the host's
+    /// reply with the VT-stripped plain text. Pins the store→model routing the navigator's per-row Copy
+    /// affordance depends on (the view only owns the clipboard write). FAILS if the store requested a
+    /// different index or dropped the reply.
+    func testCopyBlockOutputInActivePaneRoutesToActiveModel() throws {
+        let store = makeStore()
+        let session = try seedBlocks(store, [ok(3), ok(7)])
+        let model = try XCTUnwrap(session.terminalModel)
+        var requestedIndex: UInt32?
+        model.requestBlockOutputSink = { requestedIndex = $0 }
+
+        var result: String? = "unset"
+        store.copyBlockOutputInActivePane(index: 7) { result = $0 }
+        XCTAssertEqual(requestedIndex, 7, "the store routes the copy request to the active model for the given index")
+
+        // Simulate the host's type-29 reply → the completion resolves with the sanitized output text.
+        model.blocks.resolveOutput(index: 7, output: Data("built ok\n".utf8))
+        XCTAssertEqual(result?.contains("built ok"), true, "the completion receives the sanitized block output")
+    }
+
+    /// An EMPTY host reply (block evicted / unavailable) resolves the copy completion as `nil` — a graceful
+    /// no-op the navigator turns into "nothing copied" rather than a hang.
+    func testCopyBlockOutputEmptyReplyResolvesNil() throws {
+        let store = makeStore()
+        let session = try seedBlocks(store, [ok(1)])
+        let model = try XCTUnwrap(session.terminalModel)
+        model.requestBlockOutputSink = { _ in }
+
+        var resolved = false
+        var result: String? = "unset"
+        store.copyBlockOutputInActivePane(index: 1) { result = $0
+            resolved = true
+        }
+        model.blocks.resolveOutput(index: 1, output: Data()) // empty ⇒ unavailable
+
+        XCTAssertTrue(resolved, "the completion always resolves (never hangs)")
+        XCTAssertNil(result, "an empty reply resolves as unavailable (nil)")
+    }
+
     // MARK: - Jump-to-failed direction inversion (the spec-critical mapping)
 
     /// THE direction guard. Blocks (index-ascending, so navigatorBlocks is newest-first 5,4,3,2,1):
@@ -283,6 +325,56 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         recorder.resetActions()
         BlockJump.toPromptOrdinal(0, using: recorder)
         XCTAssertTrue(recorder.actions.isEmpty, "an unknown ordinal (0) must not move the viewport at all")
+    }
+
+    /// A prompt ordinal BEYOND ghostty's i16 binding-parameter range (`jump_to_prompt` is `i16`, max
+    /// 32767) must NOT emit a single out-of-range step: a raw `jump_to_prompt:39999` fails the ACTION
+    /// STRING PARSE and silently no-ops the whole binding, landing on the anchor (oldest prompt) instead of
+    /// the target — the long-lived-detached-session bug (every Enter grows the ordinal). The downward
+    /// `ordinal − 1` delta is instead SPLIT into in-range hops whose SUM equals the full delta, so
+    /// consecutive hops compose to land the exact prompt. Pins: every emitted step parses as `i16` AND the
+    /// steps sum to `ordinal − 1`. FAILS on the pre-fix single-step emission (`Int16("39999")` is nil).
+    func testBlockJumpChunksStepBeyondI16Range() {
+        let recorder = RecordingSurfaceActions()
+        BlockJump.toPromptOrdinal(40000, using: recorder)
+
+        let actions = recorder.actions
+        XCTAssertGreaterThanOrEqual(actions.count, 3, "anchor pair + at least one step")
+        XCTAssertEqual(actions[0], "scroll_to_bottom", "still anchors on scroll_to_bottom")
+        XCTAssertEqual(
+            actions[1],
+            "jump_to_prompt:-\(BlockJump.reAnchorDelta)",
+            "still re-anchors on the oldest prompt",
+        )
+
+        let steps: [Int] = Array(actions[2...]).map { action in
+            let raw = action.split(separator: ":").last.map(String.init) ?? ""
+            XCTAssertNotNil(Int16(raw), "every step (\(action)) must parse as ghostty's i16 binding parameter")
+            return Int(raw) ?? 0
+        }
+        XCTAssertFalse(steps.isEmpty, "a beyond-i16 ordinal still emits downward steps")
+        XCTAssertTrue(steps.allSatisfy { $0 > 0 }, "all steps are downward (positive)")
+        XCTAssertEqual(steps.reduce(0, +), 39999, "the split hops sum to the full ordinal − 1 delta (40000 − 1)")
+    }
+
+    /// The exact-boundary case: ordinal `maxStep + 2` (step delta `maxStep + 1`) splits into `maxStep` then
+    /// `1`; ordinal `maxStep + 1` (step delta `maxStep`) is still a SINGLE in-range hop. Pins the split
+    /// threshold is `> maxStep`, not `>=`.
+    func testBlockJumpSingleHopAtBoundaryTwoHopsJustBeyond() {
+        let single = RecordingSurfaceActions()
+        BlockJump.toPromptOrdinal(UInt32(BlockJump.maxStep + 1), using: single) // step = maxStep exactly
+        XCTAssertEqual(
+            Array(single.actions[2...]), ["jump_to_prompt:\(BlockJump.maxStep)"],
+            "a step of exactly maxStep is one in-range hop",
+        )
+
+        let split = RecordingSurfaceActions()
+        BlockJump.toPromptOrdinal(UInt32(BlockJump.maxStep + 2), using: split) // step = maxStep + 1
+        XCTAssertEqual(
+            Array(split.actions[2...]),
+            ["jump_to_prompt:\(BlockJump.maxStep)", "jump_to_prompt:1"],
+            "a step one past maxStep splits into maxStep + 1",
+        )
     }
 
     // MARK: - E9: Jump to a specific Outline block (jumpToNavigatorBlockInActivePane)

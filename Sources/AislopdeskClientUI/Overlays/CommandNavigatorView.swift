@@ -25,6 +25,11 @@ import AislopdeskWorkspaceCore
 import Foundation
 import SFSafeSymbols
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 /// Per-pane chrome holder driving the Command Navigator's visibility — a reference type so the pane model's
 /// `onRequestBlockNavigator` `@MainActor` closure can TOGGLE it (the seam doc: "show/hide"), exactly like the
@@ -107,6 +112,19 @@ struct CommandNavigatorView: View {
         }
         .onKeyPress(.downArrow, phases: .down) { _ in
             moveSelection(1)
+            return .handled
+        }
+        // ⌘↩ re-runs the selected command in place (plain ↩ still jumps + closes, via the field's onSubmit);
+        // ⌘C copies the selected command's output. Both act on the keyboard selection WITHOUT closing, so the
+        // list stays open. Guarded on the ⌘ modifier so an unmodified key still reaches the search field.
+        .onKeyPress(.return, phases: .down) { press in
+            guard press.modifiers.contains(.command) else { return .ignored }
+            reRunSelected()
+            return .handled
+        }
+        .onKeyPress(KeyEquivalent("c"), phases: .down) { press in
+            guard press.modifiers.contains(.command) else { return .ignored }
+            copyOutputSelected()
             return .handled
         }
         #if os(macOS)
@@ -239,17 +257,23 @@ struct CommandNavigatorView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: Slate.Metric.space2)
-            if let duration = block.durationLabel {
-                Text(duration)
-                    .font(.system(size: Slate.Typeface.small))
-                    .foregroundStyle(Slate.Text.tertiary)
-                    .monospacedDigit()
-            }
-            if let stamp = model.blocks.firstSeen(index: block.index) {
-                Text(OutlinePresentation.relativeTime(from: stamp, now: Date()))
-                    .font(.system(size: Slate.Typeface.small))
-                    .foregroundStyle(Slate.Text.tertiary)
-                    .monospacedDigit()
+            // The Re-run / Copy-Output affordances live on the SELECTED (hover or keyboard) row only, so a
+            // resting list stays clean; the meta (duration / relative time) collapses under them when shown.
+            if isSelected {
+                rowActions(block)
+            } else {
+                if let duration = block.durationLabel {
+                    Text(duration)
+                        .font(.system(size: Slate.Typeface.small))
+                        .foregroundStyle(Slate.Text.tertiary)
+                        .monospacedDigit()
+                }
+                if let stamp = model.blocks.firstSeen(index: block.index) {
+                    Text(OutlinePresentation.relativeTime(from: stamp, now: Date()))
+                        .font(.system(size: Slate.Typeface.small))
+                        .foregroundStyle(Slate.Text.tertiary)
+                        .monospacedDigit()
+                }
             }
             starButton(block)
         }
@@ -265,6 +289,36 @@ struct CommandNavigatorView: View {
         .onHover { hovering in if hovering { selection = index } }
         .onTapGesture { act(block) }
         .id(block.id)
+    }
+
+    /// Trailing per-row actions (shown on the selected/hovered row): Re-run the captured command verbatim
+    /// in the active pane, or Copy its captured output to the clipboard. Both funnel through the SAME tested
+    /// store paths the terminal context menu uses (``WorkspaceStore/reRunCommandInActivePane(_:)`` /
+    /// ``WorkspaceStore/copyBlockOutputInActivePane(index:onResult:)``) — no jump/close, so the user can act
+    /// on a command without leaving the navigator.
+    private func rowActions(_ block: CommandBlock) -> some View {
+        HStack(spacing: Slate.Metric.space2) {
+            Button {
+                reRun(block)
+            } label: {
+                Image(systemSymbol: .arrowClockwise)
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Re-run (⌘↩)")
+            .disabled(block.commandText.isEmpty)
+
+            Button {
+                copyOutput(block)
+            } label: {
+                Image(systemSymbol: .docOnDoc)
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Copy Output (⌘C)")
+        }
     }
 
     /// The status gutter glyph — green ✓ (succeeded) / red ✗ (failed) / grey · (running), via the pure
@@ -386,6 +440,46 @@ struct CommandNavigatorView: View {
         let rows = visibleBlocks
         guard selection >= 0, selection < rows.count else { return }
         act(rows[selection])
+    }
+
+    /// The keyboard-selected row, if any (shared by the ⌘↩ / ⌘C handlers).
+    private func selectedBlock() -> CommandBlock? {
+        let rows = visibleBlocks
+        guard selection >= 0, selection < rows.count else { return nil }
+        return rows[selection]
+    }
+
+    private func reRunSelected() {
+        if let block = selectedBlock() { reRun(block) }
+    }
+
+    private func copyOutputSelected() {
+        if let block = selectedBlock() { copyOutput(block) }
+    }
+
+    /// Re-run `block`'s captured command verbatim in the active pane (the shared, injection-safe
+    /// ``WorkspaceStore/reRunCommandInActivePane(_:)`` path). Closes the navigator so the re-run's output is
+    /// visible — the command is going to the live shell. An empty command is a store-level no-op.
+    private func reRun(_ block: CommandBlock) {
+        guard !block.commandText.isEmpty else { return }
+        store.reRunCommandInActivePane(block.commandText)
+        onClose()
+    }
+
+    /// Copy `block`'s captured output (VT-stripped plain text) to the clipboard via the shared
+    /// ``WorkspaceStore/copyBlockOutputInActivePane(index:onResult:)`` request path. Stays OPEN (a copy is a
+    /// side action, not a jump). An empty / unavailable reply is a graceful no-op — the headless core owns no
+    /// clipboard, so the pasteboard write lives here.
+    private func copyOutput(_ block: CommandBlock) {
+        store.copyBlockOutputInActivePane(index: block.index) { text in
+            guard let text, !text.isEmpty else { return }
+            #if canImport(AppKit)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            #elseif canImport(UIKit)
+            UIPasteboard.general.string = text
+            #endif
+        }
     }
 
     /// Jump the active pane's scrollback to `block` (the shared `BlockJump` re-anchor, via the store's
