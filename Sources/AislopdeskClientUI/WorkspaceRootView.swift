@@ -159,7 +159,7 @@ public struct WorkspaceRootView: View {
             columnVisibility: sidebarColumnVisibility,
         ) {
             NavigatorColumn(
-                store: store, preferences: preferencesStore, connection: connection, onConnect: openConnect,
+                store: store, preferences: preferencesStore,
             )
         } detail: {
             ContentColumn(store: store, connection: connection, chrome: chrome)

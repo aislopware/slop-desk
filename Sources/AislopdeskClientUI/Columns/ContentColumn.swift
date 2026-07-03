@@ -12,6 +12,9 @@ struct ContentColumn: View {
     let store: WorkspaceStore
     let connection: AppConnection
     let chrome: WorkspaceChromeState
+    /// Opens the Connect-to-Host editor — wired into the titlebar's connection-status cluster. The no-op
+    /// default keeps the column standalone-mountable in previews.
+    var onConnect: () -> Void = {}
 
     private var hasActiveTab: Bool { store.tree.activeSession?.activeTab != nil }
 
@@ -22,7 +25,9 @@ struct ContentColumn: View {
         #if os(macOS)
             // The hover-reveal titlebar floats as a TOP overlay. New-pane gestures (`+` / title-menu split)
             // mint an in-pane `.chooser` pane directly — the chooser is the pane's CONTENT, not a modal.
-            .overlay(alignment: .top) { SlateTitlebar(store: store, chrome: chrome) }
+            .overlay(alignment: .top) {
+                SlateTitlebar(store: store, chrome: chrome, connection: connection, onConnect: onConnect)
+            }
         #endif
     }
 

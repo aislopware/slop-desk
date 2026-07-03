@@ -4,8 +4,9 @@
 // exit, dwell 0.40s + fade-out 0.20s) so the resting window stays clean and uncluttered:
 //   • left  — the sidebar toggle (hover-revealed; stays visible while the sidebar is collapsed)
 //   • centre— the active tab's title as a `⋯` menu (working dir / split / move / find / close pane)
-//   • right — the Details (inspector) toggle (stays visible while Details is open)
-// The sidebar/Details toggles flip the shared `WorkspaceChromeState` flags that the split representable reads
+//   • right — the ALWAYS-visible connection-status cluster (`TitlebarConnectionCluster`): dot + host +
+//     live ping/fps, tap → the Connect-to-Host editor. Ambient window state, so it is NOT hover-gated.
+// The sidebar toggle flips the shared `WorkspaceChromeState` flag that the split representable reads
 // to collapse the matching `NSSplitViewItem` — same machinery the old toolbar drove.
 
 #if canImport(SwiftUI)
@@ -20,12 +21,40 @@ import AppKit // NSPasteboard for "Copy Path"
 struct SlateTitlebar: View {
     let store: WorkspaceStore
     let chrome: WorkspaceChromeState
+    /// The app-global connection — drives the trailing status cluster. Optional so the titlebar stays
+    /// standalone-mountable in previews / snapshot tests (`nil` simply hides the cluster).
+    var connection: AppConnection?
+    /// Tapping the status cluster opens the Connect-to-Host editor (``OverlayCoordinator/openConnect()``).
+    var onConnect: () -> Void = {}
 
     @State private var chromeShown = false
     @State private var hideWork: DispatchWorkItem?
 
     /// The active tab's active pane id — drives the centre title + the menu's pane actions.
     private var activePane: PaneID? { store.tree.activeSession?.activeTab?.activePane }
+
+    /// The active pane's live session — resolves the per-pane connection telemetry the status cluster
+    /// shows: ping (per-pane channel RTT) and, for a GUI/video pane, the host stream cadence (fps).
+    private var activeLive: LivePaneSession? {
+        guard let id = activePane else { return nil }
+        return store.handle(for: id) as? LivePaneSession
+    }
+
+    /// The RTT (ms) for the status cluster. Prefers the ACTIVE pane's per-channel `latencyMS`, falling back
+    /// to ANY live pane's when the active pane has none — a `.remoteGUI` window pane has no terminal-channel
+    /// ping (`connection == nil`), so without this the ping would VANISH the moment you focus a window. Every
+    /// pane pings the SAME host, so a sibling terminal's RTT is representative; `.min()` keeps it
+    /// deterministic across the unordered registry.
+    private var activePingMS: Double? {
+        if let active = activeLive?.connection?.latencyMS { return active }
+        return store.allSessions
+            .compactMap { ($0 as? LivePaneSession)?.connection?.latencyMS }
+            .min()
+    }
+
+    /// The active VIDEO pane's host-announced stream cadence (fps); `nil` for a terminal pane / until the
+    /// host's FPS governor announces a value.
+    private var activeFps: Int? { activeLive?.remoteWindow?.streamFps }
 
     private var activeTitle: String {
         guard let id = activePane else { return "~" }
@@ -73,6 +102,20 @@ struct SlateTitlebar: View {
             // Centre: the active title as a menu, on the traffic-light row.
             TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
                 .padding(.top, rowTop)
+
+            // Right: the connection-status cluster, on the traffic-light row. ALWAYS visible (ambient
+            // window state — the single home for host/status/telemetry now the sidebar footer is gone).
+            if let connection {
+                TitlebarConnectionCluster(
+                    connection: connection,
+                    pingMS: activePingMS,
+                    fps: activeFps,
+                    onConnect: onConnect,
+                )
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, 12)
+                .padding(.top, rowTop)
+            }
         }
         .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
         .animation(Slate.Anim.standard, value: sidebarVisible)

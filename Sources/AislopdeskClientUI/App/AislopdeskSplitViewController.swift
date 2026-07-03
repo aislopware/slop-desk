@@ -21,9 +21,9 @@ final class AislopdeskSplitViewController: NSSplitViewController {
     /// SEPARATE `NSHostingController` that does not inherit the WindowGroup `\.preferencesStore` environment, so
     /// it is threaded explicitly. `nil` (a preview / pre-injection scene) hides the Prevent-Sleep row.
     private let preferences: PreferencesStore?
-    /// Opens the Connect-to-Host editor — wired into the sidebar's status affordance (ES-E2-6). The shell
-    /// binds this to `overlay.openConnect()`; the no-op default keeps the controller buildable without an
-    /// overlay.
+    /// Opens the Connect-to-Host editor — wired into the titlebar's connection-status cluster (ES-E2-6,
+    /// reseated from the old sidebar footer). The shell binds this to `overlay.openConnect()`; the no-op
+    /// default keeps the controller buildable without an overlay.
     private let onConnect: () -> Void
 
     /// Retained so the titlebar toggle can animate its collapse (set in `viewDidLoad`).
@@ -79,7 +79,7 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         //    replacing. A plain item lets `NavigatorColumn` paint its own flat warm panel + white-card rows.
         //    Holding priority above the content's default so window-resize grows the content, not the sidebar.
         let navigator = NSHostingController(rootView: NavigatorColumn(
-            store: store, preferences: preferences, connection: connection, onConnect: onConnect,
+            store: store, preferences: preferences,
         ))
         let sidebarItem = NSSplitViewItem(viewController: navigator)
         sidebarItem.minimumThickness = Self.defaultSidebarWidth
@@ -88,9 +88,10 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         sidebarItem.holdingPriority = NSLayoutConstraint.Priority(260)
 
         // 2) Content — the pane grid (terminal / claude / remote) + the hover-reveal titlebar overlay.
-        //    The non-collapsible centre. `chrome` drives the titlebar's sidebar/Details toggles.
+        //    The non-collapsible centre. `chrome` drives the titlebar's sidebar toggle; `onConnect` wires
+        //    the titlebar's connection-status cluster to the Connect-to-Host editor.
         let content = NSHostingController(
-            rootView: ContentColumn(store: store, connection: connection, chrome: chrome),
+            rootView: ContentColumn(store: store, connection: connection, chrome: chrome, onConnect: onConnect),
         )
         let contentItem = NSSplitViewItem(viewController: content)
         contentItem.minimumThickness = 420

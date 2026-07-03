@@ -40,15 +40,9 @@ struct NavigatorColumn: View {
     /// the value via the `NavigationSplitView`, but it is still passed explicitly for parity.
     var preferences: PreferencesStore?
 
-    /// The app-global connection — drives the compact host + connection-status header pinned at the TOP of the
-    /// sidebar, ABOVE the TABS section. This is the ONE place the host / connection
-    /// state lives now: it is common to every pane, so it was lifted OUT of the per-pane footer (the terminal
-    /// footer is gone entirely) into this shared header. Optional so the column stays standalone-mountable in
-    /// previews / snapshot tests (a `nil` connection simply hides the header).
-    var connection: AppConnection?
-    /// Tapping the connection header opens the Connect-to-Host editor (``OverlayCoordinator/openConnect()``).
-    /// No-op default keeps the column standalone-mountable.
-    var onConnect: () -> Void = {}
+    // (The connection status line that used to pin at the sidebar bottom moved to the titlebar's trailing
+    // ``TitlebarConnectionCluster`` — the single ambient home for host/status/telemetry, readable even while
+    // the sidebar is collapsed.)
 
     /// The transient sidebar search query — narrows the rows via the pure ``RailRowsBuilder/filtered`` (E6
     /// WI-5). View-local `@State`: it is a presentational filter, NOT row order (which lives on the store).
@@ -58,29 +52,6 @@ struct NavigatorColumn: View {
     private var selectedPane: PaneID? {
         store.tree.activeSession?.activeTab?.activePane
     }
-
-    /// The active pane's live session — resolves the per-pane connection telemetry the Connection section
-    /// shows: ping (per-pane channel RTT) and, for a GUI/video pane, the host stream cadence (fps).
-    private var activeLive: LivePaneSession? {
-        guard let id = selectedPane else { return nil }
-        return store.handle(for: id) as? LivePaneSession
-    }
-
-    /// The RTT (ms) to show in the Connection card. Prefers the ACTIVE pane's per-channel `latencyMS`, but
-    /// falls back to ANY live pane's RTT when the active pane has none — a `.remoteGUI` window pane has no
-    /// terminal-channel ping (`connection == nil`), so without this the ping would VANISH the moment you focus
-    /// a window. Every pane pings the SAME host, so a sibling terminal's RTT is representative; `.min()` keeps
-    /// it deterministic across the unordered registry.
-    private var activePingMS: Double? {
-        if let active = activeLive?.connection?.latencyMS { return active }
-        return store.allSessions
-            .compactMap { ($0 as? LivePaneSession)?.connection?.latencyMS }
-            .min()
-    }
-
-    /// The active VIDEO pane's host-announced stream cadence (fps); `nil` for a terminal pane / until the
-    /// host's FPS governor announces a value.
-    private var activeFps: Int? { activeLive?.remoteWindow?.streamFps }
 
     var body: some View {
         #if os(macOS)
@@ -253,21 +224,7 @@ struct NavigatorColumn: View {
                 .padding(.horizontal, 8)
             }
             .scrollIndicators(.hidden) // scrollbars stay invisible for the flat sidebar look
-            .frame(maxHeight: .infinity) // the tab list fills the slack so the connection card pins to the bottom
-
-            // Connection STATUS LINE: a borderless, FULL-BLEED whisper status bar pinned at the bottom of the
-            // sidebar (window chrome, not a card). Common to EVERY pane — the single home for the host/status
-            // cues. One line: dot + host + right-flushed metrics (ping = the active pane's RTT, or any live
-            // pane's, so a window pane keeps it; fps for a live video pane only). It carries its own top
-            // hairline + internal padding, so it spans the full width with no call-site insets.
-            if let connection {
-                ConnectionInfoSection(
-                    connection: connection,
-                    pingMS: activePingMS,
-                    fps: activeFps,
-                    onConnect: onConnect,
-                )
-            }
+            .frame(maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Slate.Surface.sidebar)
