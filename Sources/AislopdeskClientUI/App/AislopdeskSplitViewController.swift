@@ -111,9 +111,9 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         // start at the window's top edge, so the titlebar's controls land ON the traffic-light row (each
         // column still reserves its own titlebar-height strip at the top).
         // 3) GUI column — the RIGHT remote-windows region (TabSide partition): the window strip + the GUI
-        //    side's pane compositor. Collapsible; starts COLLAPSED (terminal-first) — the root view's
-        //    auto-reveal expands it the moment a GUI tab exists, and ⌘⇧E toggles it manually. Holding
-        //    priority above the content's default so a window-resize grows the content, not this column.
+        //    side's pane compositor. Collapsible; the root view's auto-reveal expands it the moment a GUI
+        //    tab exists, and ⌘⇧E toggles it manually. Holding priority above the content's default so a
+        //    window-resize grows the content, not this column.
         let gui = NSHostingController(rootView: GuiColumn(
             store: store, connection: connection, chrome: chrome, onOpenPicker: onOpenRemotePicker,
         ))
@@ -121,7 +121,15 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         guiItem.minimumThickness = 380
         guiItem.canCollapse = true
         guiItem.holdingPriority = NSLayoutConstraint.Priority(261)
-        guiItem.isCollapsed = true
+        // Seed from the LIVE chrome flag, never a hard-coded `true`: on a workspace-restore launch the
+        // root view's GUI auto-reveal can flip `chrome.guiCollapsed` to `false` BEFORE this view loads
+        // (SwiftUI runs `.onChange(initial:)` off the first body render; `viewDidLoad` runs on first
+        // view access) — a constant here then sticks, because the next `updateNSViewController` sees no
+        // FLAG change to re-apply, and a restored remote-window tab streams into an invisible column.
+        guiItem.isCollapsed = chrome.guiCollapsed
+        // Same discipline for the sidebar (its default `false` matches the chrome default, but seeding
+        // keeps the pair ordering-proof).
+        sidebarItem.isCollapsed = chrome.sidebarCollapsed
 
         navigator.safeAreaRegions = []
         content.safeAreaRegions = []

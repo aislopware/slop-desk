@@ -2,10 +2,13 @@ import CoreGraphics
 import XCTest
 @testable import AislopdeskWorkspaceCore
 
-/// WS-C v2 — the IN-PANE chooser store landing. Every new-pane gesture mints a real, FOCUSED `.chooser`
-/// pane (the pane's CONTENT is the kind picker); ``WorkspaceStore/choosePaneKind(_:kind:)`` then flips it to
-/// the real kind IN PLACE (same `PaneID`) and reconcile materializes the session. This suite is the headless
-/// authority for that contract (`openChooserPane` placement + `choosePaneKind` transition + reconcile-skip).
+/// The new-pane store landing under the TabSide partition (the in-pane CHOOSER is no longer minted,
+/// 2026-07-03): every new-pane gesture creates a real, FOCUSED pane of the gesture's side directly —
+/// `.newTab` (⌘T / `+`) a terminal tab, a terminal-side split a terminal, a GUI-side split an UNBOUND
+/// `.remoteGUI` (its content is the in-pane window picker). The `.chooser` kind survives only for
+/// persisted legacy panes: ``WorkspaceStore/choosePaneKind(_:kind:)`` still flips one to the real kind
+/// IN PLACE (same `PaneID`), and reconcile still skips materializing it — this suite is the headless
+/// authority for both halves.
 @MainActor
 final class PaneChooserStoreLandingTests: XCTestCase {
     private func makeTreeStore() -> WorkspaceStore {
@@ -24,40 +27,52 @@ final class PaneChooserStoreLandingTests: XCTestCase {
         return store.tree.spec(for: id)?.kind
     }
 
-    // MARK: - openChooserPane mints a FOCUSED .chooser pane per context
+    // MARK: - openChooserPane mints a FOCUSED pane of the gesture's side directly (no chooser step)
 
-    func testNewTabOpensFocusedChooserPane() {
+    func testNewTabOpensFocusedTerminalPane() {
         let store = makeTreeStore()
         let before = leafCount(store)
         store.openChooserPane(.newTab)
-        XCTAssertEqual(leafCount(store), before + 1, "a chooser pane is created immediately")
-        XCTAssertEqual(activeKind(store), .chooser, "the new pane is a focused chooser")
+        XCTAssertEqual(leafCount(store), before + 1, "a pane is created immediately")
+        XCTAssertEqual(activeKind(store), .terminal, "⌘T mints a TERMINAL directly — no chooser step")
         XCTAssertTrue(store.tree.isInvariantHeld())
     }
 
-    func testSplitOpensFocusedChooserPane() {
+    func testSplitOnTerminalSideOpensFocusedTerminalPane() {
         let store = makeTreeStore()
         let before = leafCount(store)
         store.openChooserPane(.split(axis: .horizontal))
         XCTAssertEqual(leafCount(store), before + 1)
-        XCTAssertEqual(activeKind(store), .chooser, "the split FOCUSES the new chooser pane")
+        XCTAssertEqual(activeKind(store), .terminal, "a terminal-side split mints a focused TERMINAL")
         XCTAssertTrue(store.tree.isInvariantHeld())
     }
 
-    // MARK: - a .chooser pane materializes NO session (reconcile skips it)
+    func testSplitOnGuiSideOpensUnboundRemoteGUIPane() throws {
+        let store = makeTreeStore()
+        store.newRemoteWindowTab(windowID: 42, title: "W", appName: "App") // focus moves to the GUI tab
+        store.openChooserPane(.split(axis: .vertical))
+        let id = try XCTUnwrap(activeID(store))
+        XCTAssertEqual(activeKind(store), .remoteGUI, "a GUI-side split mints a remote-window pane")
+        XCTAssertNil(store.tree.spec(for: id)?.video, "unbound — its content is the in-pane window picker")
+        let session = try XCTUnwrap(store.tree.activeSession)
+        XCTAssertFalse(session.tabs.contains(where: session.isMixedTab), "the GUI tab stays side-pure")
+        XCTAssertTrue(store.tree.isInvariantHeld())
+    }
+
+    // MARK: - a legacy .chooser pane still materializes NO session (reconcile skips it)
 
     func testChooserPaneHasNoLiveHandle() throws {
         let store = makeTreeStore()
-        store.openChooserPane(.newTab)
+        store.newTab(kind: .chooser) // the persisted-legacy shape, minted directly for the pin
         let id = try XCTUnwrap(activeID(store))
         XCTAssertNil(store.handle(for: id), "a .chooser pane has no live session until a kind is picked")
     }
 
-    // MARK: - choosePaneKind flips the chooser IN PLACE + materializes
+    // MARK: - choosePaneKind still flips a legacy chooser IN PLACE + materializes
 
     func testChoosePaneKindTerminalMaterializesInPlace() throws {
         let store = makeTreeStore()
-        store.openChooserPane(.newTab)
+        store.newTab(kind: .chooser)
         let id = try XCTUnwrap(activeID(store))
         let countAfterChooser = leafCount(store)
         store.choosePaneKind(id, kind: .terminal)
@@ -70,10 +85,10 @@ final class PaneChooserStoreLandingTests: XCTestCase {
 
     func testChoosePaneKindRemoteLandsUnconfiguredRemoteGUI() throws {
         let store = makeTreeStore()
-        store.openChooserPane(.split(axis: .vertical))
+        store.splitActivePane(axis: .vertical, kind: .chooser, leading: false, launchGrace: .zero)
         let id = try XCTUnwrap(activeID(store))
         store.choosePaneKind(id, kind: .remoteGUI)
-        XCTAssertEqual(activeKind(store), .remoteGUI)
+        XCTAssertEqual(store.tree.spec(for: id)?.kind, .remoteGUI)
         XCTAssertNil(store.tree.spec(for: id)?.video, "the remoteGUI pane is unconfigured (in-pane window picker path)")
         XCTAssertTrue(store.tree.isInvariantHeld())
     }

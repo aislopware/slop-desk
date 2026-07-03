@@ -37,10 +37,9 @@ final class E1KeymapParityTests: XCTestCase {
 
     // MARK: - ES-E1-1: split-left / split-up insert the LEADING leaf and focus it
 
-    /// `.splitLeft` splits the active pane and inserts the new `.chooser` leaf on the LEADING (DFS-first)
-    /// side, focused. (The leaf is a `.chooser`, which materializes no session until `choosePaneKind`, so we
-    /// assert on the tree structure, not a fake handle — the chooser-split itself is the WI-4/WI-5 contract.)
-    /// FAILS on the pre-E1 code: there is no `.splitLeft` action / routing case.
+    /// `.splitLeft` splits the active pane and inserts the new leaf on the LEADING (DFS-first) side,
+    /// focused. Under the TabSide partition a terminal-side split mints a TERMINAL directly (the chooser
+    /// step is gone, 2026-07-03). FAILS on the pre-E1 code: there is no `.splitLeft` action / routing case.
     func testSplitLeftInsertsLeadingLeafAndFocuses() throws {
         let store = makeTreeStore()
         let original = try XCTUnwrap(leaves(store).first)
@@ -52,7 +51,7 @@ final class E1KeymapParityTests: XCTestCase {
         let added = try XCTUnwrap(after.first { $0 != original })
         XCTAssertEqual(after.first, added, "the new leaf is inserted on the LEADING side (DFS-first)")
         XCTAssertEqual(activePane(store), added, "the new (leading) leaf is focused")
-        XCTAssertEqual(store.tree.spec(for: added)?.kind, .chooser, "the new leaf is an in-pane chooser pane")
+        XCTAssertEqual(store.tree.spec(for: added)?.kind, .terminal, "a terminal-side split mints a terminal")
     }
 
     /// `.splitUp` does the same on the vertical axis: a leading (top, DFS-first) leaf, focused, in a stacked

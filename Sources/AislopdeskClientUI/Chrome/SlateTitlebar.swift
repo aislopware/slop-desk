@@ -103,19 +103,29 @@ struct SlateTitlebar: View {
             TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
                 .padding(.top, rowTop)
 
-            // Right: the connection-status cluster, on the traffic-light row. ALWAYS visible (ambient
-            // window state — the single home for host/status/telemetry now the sidebar footer is gone).
-            if let connection {
-                TitlebarConnectionCluster(
-                    connection: connection,
-                    pingMS: activePingMS,
-                    fps: activeFps,
-                    onConnect: onConnect,
-                )
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.trailing, 12)
-                .padding(.top, rowTop)
+            // Right: the connection-status cluster (ALWAYS visible — ambient window state, the single
+            // home for host/status/telemetry now the sidebar footer is gone) + the windows-panel toggle
+            // at the far right (nearest the column it collapses). The toggle mirrors the LEFT sidebar
+            // button's semantics: hover-revealed while the column is open, ALWAYS visible while it is
+            // collapsed — the discoverable way back in (⌘⇧E's clickable twin).
+            HStack(spacing: Slate.Metric.space1) {
+                if let connection {
+                    TitlebarConnectionCluster(
+                        connection: connection,
+                        pingMS: activePingMS,
+                        fps: activeFps,
+                        onConnect: onConnect,
+                    )
+                }
+                PlateIconButton(symbol: .sidebarRight) { chrome.toggleWindowsPanel() }
+                    .opacity(chrome.guiCollapsed || chromeShown ? 1 : 0)
+                    .allowsHitTesting(chrome.guiCollapsed || chromeShown)
+                    .help("Toggle Windows Panel (⌘⇧E)")
+                    .accessibilityLabel("Toggle Windows Panel")
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.trailing, 12)
+            .padding(.top, rowTop)
         }
         .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
         .animation(Slate.Anim.standard, value: sidebarVisible)

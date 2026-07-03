@@ -37,7 +37,8 @@ final class TabSidePartitionTests: XCTestCase {
 
     func testChooserOnlyTabIsTerminalSideUntilResolved() throws {
         let store = makeStore()
-        store.openChooserPane(.newTab)
+        // A persisted-LEGACY chooser tab (the gesture no longer mints one) — minted directly for the pin.
+        store.newTab(kind: .chooser, launchGrace: .zero)
         let session = try XCTUnwrap(store.tree.activeSession)
         let chooserTab = try XCTUnwrap(session.activeTab)
         XCTAssertEqual(
@@ -156,13 +157,16 @@ final class TabSidePartitionTests: XCTestCase {
         )
     }
 
-    // MARK: Mixed-tab break-out (chooser split resolving across the partition)
+    // MARK: Mixed-tab break-out (a LEGACY chooser pane resolving across the partition)
 
-    func testChooserSplitResolvingToRemoteWindowBreaksOutToOwnTab() throws {
+    // The gesture path no longer mints choosers (a split is side-pure by construction), but a PERSISTED
+    // legacy chooser can still resolve to the other side — the break-out keeps the partition clean.
+
+    func testLegacyChooserResolvingToRemoteWindowBreaksOutToOwnTab() throws {
         let store = makeStore()
         let terminalTabID = try XCTUnwrap(store.tree.activeSession?.activeTab?.id)
-        // Split the terminal pane into an in-pane chooser, then pick "Remote window".
-        store.openChooserPane(.split(axis: .horizontal))
+        // A legacy chooser split beside the terminal (minted directly — the gesture no longer does).
+        store.splitActivePane(axis: .horizontal, kind: .chooser, leading: false, launchGrace: .zero)
         let chooser = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
         store.choosePaneKind(chooser, kind: .remoteGUI, launchGrace: .zero)
 
@@ -178,10 +182,10 @@ final class TabSidePartitionTests: XCTestCase {
         XCTAssertEqual(session.activeTab?.activePane, chooser, "focus stays on the resolved pane")
     }
 
-    func testChooserSplitResolvingToTerminalInGuiTabBreaksOut() throws {
+    func testLegacyChooserResolvingToTerminalInGuiTabBreaksOut() throws {
         let store = makeStore()
         openGuiTab(store)
-        store.openChooserPane(.split(axis: .vertical))
+        store.splitActivePane(axis: .vertical, kind: .chooser, leading: false, launchGrace: .zero)
         let chooser = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
         store.choosePaneKind(chooser, kind: .terminal, launchGrace: .zero)
 

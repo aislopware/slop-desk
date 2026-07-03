@@ -4192,13 +4192,29 @@ public func apply(_ command: WorkspaceCommand, to store: WorkspaceStore) {
 /// stay OUT of the `WorkspaceStore` primary body's `type_body_length` budget. `choosePaneKind` must live in
 /// THIS file (it calls the file-private `updateSpecLive` / `defaultTitle`).
 public extension WorkspaceStore {
-    /// Create a new pane whose CONTENT is the pane-type chooser (Terminal / Remote window), placed by
-    /// `context` and FOCUSED — the user picks the kind INSIDE the pane, no modal popup. The pane carries the
-    /// `.chooser` kind, which materializes NO session until ``choosePaneKind(_:kind:)`` flips it to a real one.
+    /// Create a new pane placed by `context`, focused, with its kind resolved by the TabSide partition —
+    /// the in-pane Terminal/Remote-window CHOOSER is no longer minted (2026-07-03): the terminal column
+    /// is terminal-ONLY (a remote window is opened from the GUI column's dock / `+` / the picker), so
+    /// there is nothing to choose.
+    ///   • `.newTab` (⌘T / the `+`) ⇒ a TERMINAL tab (the left column's gesture; the GUI column adds
+    ///     windows through its dock).
+    ///   • `.split` ⇒ a pane of the ACTIVE TAB'S side: a terminal-side split mints a terminal; a GUI-side
+    ///     split mints an UNBOUND `.remoteGUI` pane whose content is the in-pane window picker (the
+    ///     existing `.entryForm` state), so both stay side-pure with no chooser step.
+    /// The `.chooser` kind itself is retained for persisted legacy panes (``choosePaneKind(_:kind:)``
+    /// still resolves them); it is just never minted here any more.
     func openChooserPane(_ context: PaneChooserContext) {
         switch context {
-        case let .split(axis, leading): splitActivePane(axis: axis, kind: .chooser, leading: leading)
-        case .newTab: newTab(kind: .chooser)
+        case let .split(axis, leading):
+            let side: TabSide =
+                if let session = tree.activeSession, let tab = session.activeTab {
+                    session.side(ofTab: tab)
+                } else {
+                    .terminal
+                }
+            splitActivePane(axis: axis, kind: side == .gui ? .remoteGUI : .terminal, leading: leading)
+        case .newTab:
+            newTab(kind: .terminal)
         }
     }
 
