@@ -261,16 +261,27 @@ func resolvePaneCapture(
     )
 }
 
+/// The default capture-scale CAP when `AISLOPDESK_CAPTURE_SCALE` is unset. Measured on M1 Max
+/// (`aislopdesk-perfbench`, `docs/research/perf-2026-07-04-encode-wall.md`): capturing the 2× VD at
+/// its full backing scale (3840×2160 4K) costs ~23 ms/frame — over the 60 fps budget and marginal at
+/// 30 fps — AND balloons scroll frames (bigger encode → more send-pacing spread → present judder,
+/// the 2026-07-05 smoothness finding). 1.25× (a SUPERSAMPLED downscale of the 2× render, sharper than
+/// a native-1× capture) drops encode to ~13 ms — under the 60 fps budget — while staying crisp with
+/// the client's `AISLOPDESK_SHARPEN` + the static crisp re-anchor. This is the "bias the default toward
+/// ~1.25×" the perf doc recommended landing. Override up (→ 2, sharpest) or down (→ 1, lightest) via
+/// `AISLOPDESK_CAPTURE_SCALE`; a host whose VD is already ≤1.25× is unaffected (min()).
+let defaultCaptureScaleCap = 1.25
+
 /// Optional capture-scale override (`AISLOPDESK_CAPTURE_SCALE`), clamped to `[1, vdScale]`. Unset ⇒
-/// the VD's backing scale (today's 2×). Set to `1` ⇒ encode at 1× (downscaled from the 2× VD), the
-/// smoothness-over-sharpness lever measured to keep the HW encoder under the 60fps frame budget.
+/// `min(vdScale, defaultCaptureScaleCap)` (smoothness-first — see `defaultCaptureScaleCap`). Set to a
+/// value ⇒ that scale clamped to `[1, vdScale]` (`1` = lightest 1× downscale of the 2× VD render).
 @Sendable
 func resolveCaptureScaleOverride(vdScale: Double) -> Double {
     // W12: resolve through `EnvConfig` (ProcessInfo env → settings overlay) so a GUI setting can
-    // override it; an EMPTY overlay is byte-identical to the previous `ProcessInfo` read.
+    // override it; an EMPTY overlay resolves to the smoothness-first default cap.
     guard let s = EnvConfig.string("AISLOPDESK_CAPTURE_SCALE"),
           let v = Double(s), v >= 1
-    else { return vdScale }
+    else { return min(vdScale, defaultCaptureScaleCap) }
     return min(vdScale, v)
 }
 

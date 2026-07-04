@@ -54,19 +54,23 @@ final class SettingsReachConsumerTests: XCTestCase {
     // MARK: AISLOPDESK_CAPTURE_SCALE — `resolveCaptureScaleOverride(vdScale:)`
 
     /// The daemon's capture-scale override: parse `Double`, require `>= 1`, then `min(vdScale, v)`.
-    /// Unset ⇒ the VD's backing scale. The overlay must reach this exact clamp.
+    /// Unset ⇒ `min(vdScale, defaultCaptureScaleCap)` (smoothness-first default, 2026-07-05). The
+    /// overlay must reach this exact clamp.
     func testOverlayReachesCaptureScale() throws {
         try skipIfRealEnv("AISLOPDESK_CAPTURE_SCALE")
+        let defaultCaptureScaleCap = 1.25
         func resolveCaptureScaleOverride(vdScale: Double) -> Double {
             guard let s = EnvConfig.string("AISLOPDESK_CAPTURE_SCALE"), let v = Double(s), v >= 1
-            else { return vdScale }
+            else { return min(vdScale, defaultCaptureScaleCap) }
             return min(vdScale, v)
         }
-        XCTAssertEqual(resolveCaptureScaleOverride(vdScale: 2.0), 2.0, "empty overlay ⇒ the VD scale")
+        XCTAssertEqual(resolveCaptureScaleOverride(vdScale: 2.0), 1.25, "empty overlay ⇒ smoothness-first cap")
+        EnvConfig.overlay["AISLOPDESK_CAPTURE_SCALE"] = "2" // explicit 2 restores the full VD scale
+        XCTAssertEqual(resolveCaptureScaleOverride(vdScale: 2.0), 2.0, "overlay 2 ⇒ full VD scale (sharpest)")
         EnvConfig.overlay["AISLOPDESK_CAPTURE_SCALE"] = "1"
         XCTAssertEqual(resolveCaptureScaleOverride(vdScale: 2.0), 1.0, "overlay 1 ⇒ 1× (downscaled)")
-        EnvConfig.overlay["AISLOPDESK_CAPTURE_SCALE"] = "0.5" // below the >= 1 gate ⇒ rejected → default
-        XCTAssertEqual(resolveCaptureScaleOverride(vdScale: 2.0), 2.0, "sub-1 rejected ⇒ VD scale")
+        EnvConfig.overlay["AISLOPDESK_CAPTURE_SCALE"] = "0.5" // below the >= 1 gate ⇒ rejected → default cap
+        XCTAssertEqual(resolveCaptureScaleOverride(vdScale: 2.0), 1.25, "sub-1 rejected ⇒ default cap")
         EnvConfig.overlay["AISLOPDESK_CAPTURE_SCALE"] = "9" // capped to vdScale
         XCTAssertEqual(resolveCaptureScaleOverride(vdScale: 2.0), 2.0, "above VD scale ⇒ capped to vdScale")
     }
