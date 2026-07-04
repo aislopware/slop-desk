@@ -206,6 +206,12 @@ public struct WorkspaceRootView: View {
         .navigationTitle(activeTitle)
         .navigationSubtitle(activeSubtitle)
         .toolbar { macToolbar }
+        // CARD-ON-GLASS (2026-07-04 v3, HW round 3): the toolbar draws NO background of its own — the
+        // detail's `WindowGlassBackdrop` already extends under the titlebar (`.background` ignores the
+        // safe area), so hiding the system toolbar material makes header band + canvas ONE surface
+        // (user flagged "2 cái background khác nhau": the titlebar material sat visibly darker than
+        // the canvas glass). Toolbar items keep their own macOS 26 capsule glass.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         // The floating-overlay layer (palette / cheat sheet / connect / remote-window picker / toasts).
         // `toggledState` is built from the LIVE chrome so the palette's ✓ gutter tracks the real
         // sidebar/windows-panel visibility.
