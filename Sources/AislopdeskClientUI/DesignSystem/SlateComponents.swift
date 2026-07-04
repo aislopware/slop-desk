@@ -9,7 +9,7 @@ import SFSafeSymbols
 import SwiftUI
 
 /// A small status dot. When `glowKey` is supplied it briefly glows (Pow) whenever the key changes. When
-/// `breathing` is on, the dot carries a slow scale+opacity loop — the "alive" cue for an ONGOING healthy
+/// `breathing` is on, the dot carries a slow opacity pulse — the "alive" cue for an ONGOING healthy
 /// state (a live connection), never a static one.
 struct SlateStatusDot: View {
     let color: Color
@@ -33,10 +33,12 @@ struct SlateStatusDot: View {
     }
 }
 
-/// The breathing loop behind ``SlateStatusDot/breathing``: a gentle scale+opacity oscillation
-/// (`easeInOut` 1.4s, autoreversing forever). Gated on Reduce Motion — the loop collapses to a static
-/// dot when the user asked for stillness. Value-keyed off one flip so turning `active` off settles the
-/// dot back to rest with a short non-repeating ease.
+/// The breathing loop behind ``SlateStatusDot/breathing``: a slow opacity-only pulse (`easeInOut` 1.4s,
+/// autoreversing forever) — the recording-indicator idiom. Deliberately NO scale: a size oscillation
+/// inside a fixed pill reads as the dot popping in and out of its container (user verdict 2026-07-04:
+/// "buồn cười"), while an opacity pulse reads as glow. Gated on Reduce Motion — the loop collapses to a
+/// static dot when the user asked for stillness. Value-keyed off one flip so turning `active` off
+/// settles the dot back to rest with a short non-repeating ease.
 private struct BreathingModifier: ViewModifier {
     let active: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -45,8 +47,7 @@ private struct BreathingModifier: ViewModifier {
     func body(content: Content) -> some View {
         let animating = active && !reduceMotion
         content
-            .scaleEffect(animating ? (inhaled ? 1.12 : 0.88) : 1)
-            .opacity(animating ? (inhaled ? 1.0 : 0.7) : 1)
+            .opacity(animating ? (inhaled ? 1.0 : 0.55) : 1)
             .animation(
                 animating
                     ? .easeInOut(duration: 1.4).repeatForever(autoreverses: true)
