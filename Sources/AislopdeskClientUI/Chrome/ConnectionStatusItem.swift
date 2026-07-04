@@ -61,6 +61,8 @@ struct ConnectionStatusItem: View {
                     color: StatusPresentation.connectionColor(status),
                     size: 6,
                     glowKey: StatusPresentation.connectionLabel(status),
+                    // Breathe ONLY while genuinely live — a degraded state's static dot is itself the cue.
+                    breathing: StatusPresentation.isLive(status),
                 )
                 Text(host)
                     .font(.subheadline)
@@ -129,6 +131,7 @@ private struct ConnectionDetailPopover: View {
                 SlateStatusDot(
                     color: StatusPresentation.connectionColor(status),
                     glowKey: StatusPresentation.connectionLabel(status),
+                    breathing: StatusPresentation.isLive(status),
                 )
                 VStack(alignment: .leading, spacing: 1) {
                     Text(connection.target.host)

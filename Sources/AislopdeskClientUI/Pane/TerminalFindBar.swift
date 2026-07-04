@@ -312,10 +312,9 @@ struct TerminalFindBar: View {
         // find.png: the floating find-bar card is delineated by its FILL + drop SHADOW only — there is NO
         // hairline stroke around the CARD (verified by pixel-scanning find.png: the pane→shadow gradient
         // transitions straight into the card fill with no border line). Only the `Aa`/`ab`/`.*` mode chips keep
-        // their OWN individual hairline outlines (FindTogglePill); the card itself wears no border/overlay.
-        // Native chrome: the fill is `.regularMaterial` (the floating-card idiom over the terminal canvas).
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
-        .shadow(color: Color.black.opacity(0.25), radius: 12, x: 0, y: 4)
+        // their OWN individual hairline outlines (FindTogglePill); the card itself wears no border/overlay —
+        // hence `ringed: false` on the shared theme-tinted glass shell (GlassPanel).
+        .glassPanel(radius: 6, shadowRadius: 12, ringed: false)
         .onAppear {
             // A `@FocusState` set in the same tick the view appears (before its backing responder exists) is
             // dropped — defer one runloop hop (the palette / cheat-sheet idiom).

@@ -48,8 +48,10 @@ struct ToastStackView: View {
         // surrounding frame carries no background, so it stays transparent to hits when there are no cards.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         // Animate the insert/remove transitions off the toast-id list (the coordinator mutates `toasts`
-        // outside a `withAnimation`, so the value-keyed `.animation` is what drives the diff).
-        .animation(.easeOut(duration: 0.18), value: coordinator.toasts.map(\.id))
+        // outside a `withAnimation`, so the value-keyed `.animation` is what drives the diff). A gentle
+        // spring on the slide-in (design-craft pass, 2026-07-04) — a toast is an infrequent arrival, so
+        // the settle is earned; removal is a plain fade so a dismissal never bounces.
+        .animation(.spring(duration: 0.35, bounce: 0.18), value: coordinator.toasts.map(\.id))
     }
 
     // MARK: - Card
@@ -91,14 +93,8 @@ struct ToastStackView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .frame(width: cardWidth, alignment: .leading)
-        // Native toast-card shell: system Material body + hairline `.separator` ring + a soft drop shadow.
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(.separator, lineWidth: 1),
-        )
-        .shadow(color: Color.black.opacity(0.25), radius: 18, x: 0, y: 8)
+        // Toast-card shell: the shared theme-tinted glass (mid-size float).
+        .glassPanel(radius: 10, shadowRadius: 20)
         // Per-card auto-dismiss: sleep `toast.autoDismiss` then dismiss. A nil delay ⇒ sticky (no timer). The
         // `do/catch return` bails on cancellation (the card removed early by the X / cap-eviction) so a torn-
         // down card never fires a late dismiss. Keyed on `toast.id` (a same-id re-push reuses this card).

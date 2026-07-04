@@ -33,6 +33,14 @@ enum StatusPresentation {
         }
     }
 
+    /// Whether the status is a genuinely ONGOING healthy state — the breathing-dot gate (design-craft
+    /// pass, 2026-07-04): only a LIVE connection earns the ambient loop; connecting/degraded states stay
+    /// still so their stillness reads beside the live dot. Pure, so the gate is unit-testable.
+    static func isLive(_ status: ConnectionStatus) -> Bool {
+        if case .connected = status { return true }
+        return false
+    }
+
     /// Whether a manual Retry affordance applies (only the give-up states).
     static func showsRetry(_ status: ConnectionStatus) -> Bool {
         switch status {

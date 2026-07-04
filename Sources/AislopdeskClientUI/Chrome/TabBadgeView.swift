@@ -20,9 +20,15 @@ struct TabBadgeView: View {
     /// with different badge shapes keep a stable trailing edge.
     private static let side: CGFloat = 16
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         glyph
             .frame(width: Self.side, height: Self.side)
+            // A kind change is a MOMENT (command finished / errored / wants input): the incoming symbol
+            // pops in with a small spring (design-craft pass, 2026-07-04). Kind changes are infrequent —
+            // never keyboard-frequency — so the beat is earned; Reduce Motion collapses it to a plain swap.
+            .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.35), value: kind)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(StatusPresentation.tabBadgeLabel(kind))
             .help(StatusPresentation.tabBadgeLabel(kind))
@@ -36,12 +42,17 @@ struct TabBadgeView: View {
                 .progressViewStyle(.circular)
                 .controlSize(.small)
                 .tint(.secondary)
+                .transition(.opacity)
         case let .dot(color):
             SlateStatusDot(color: color, size: 8)
+                .transition(.scale(scale: 0.4).combined(with: .opacity))
         case let .symbol(name, tint):
             Image(systemName: name)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(tint)
+                // Symbol→symbol swaps (completed → error) morph via the SF-Symbols replace, not a hard cut.
+                .contentTransition(.symbolEffect(.replace))
+                .transition(.scale(scale: 0.4).combined(with: .opacity))
         }
     }
 }

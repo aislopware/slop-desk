@@ -351,6 +351,10 @@ enum Slate {
         /// it carries the filter's own hue (never a flat system gray that would clash with a warm/tinted
         /// filter). Defines the card edge against the glass backdrop.
         static var cardBorder: Color { Slate.theme.cardBorder }
+        /// The FOCUSED split-sibling's card border (design-craft pass, 2026-07-04): the theme accent
+        /// knocked back by opacity — a HUE shift at hairline weight, the Zed/Raycast focus idiom (never a
+        /// glow/shadow ring). Same 1pt geometry as ``cardBorder`` so focus reads as tone, not chrome.
+        static var cardBorderFocused: Color { Slate.theme.accent.opacity(0.45) }
     }
 
     @MainActor

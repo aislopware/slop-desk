@@ -289,7 +289,7 @@ private struct StreamStallScrim: View {
                     .foregroundStyle(.secondary)
             }
             .padding(16)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .glassPanel(radius: 8, shadowRadius: 12)
         }
     }
 }
@@ -515,11 +515,7 @@ private struct PasteFeedbackBanner: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(.regularMaterial, in: .rect(cornerRadius: 6))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(.separator, lineWidth: 1),
-            )
+            .glassPanel(radius: 6, shadowRadius: 8)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
