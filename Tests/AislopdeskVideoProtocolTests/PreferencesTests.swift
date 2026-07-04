@@ -28,12 +28,13 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(def.scrollbackLines, 10000)
         XCTAssertEqual(def.cursorStyle, .block)
         XCTAssertEqual(def.cursorBlink, .default) // tri-state default = defer to DEC mode 12
-        // E8 WI-1: cursor color/text/opacity/animation render-pref defaults (empty colour = follow theme,
-        // opacity 1.0, animation Off — the "Default" state).
+        // E8 WI-1: cursor color/text/opacity render-pref defaults (empty colour = follow theme, opacity
+        // 1.0). Animation defaults SMOOTH since the design-craft pass (2026-07-04) — the cursor motion
+        // trail is the terminal's signature moment, delivered via the custom-shader cursor uniforms.
         XCTAssertEqual(def.cursorColor, "")
         XCTAssertEqual(def.cursorTextColor, "")
         XCTAssertEqual(def.cursorOpacity, 1.0)
-        XCTAssertEqual(def.cursorAnimation, .off)
+        XCTAssertEqual(def.cursorAnimation, .smooth)
         // E15 WI-2: the font-parity defaults — every one is the value that emits NO new libghostty line, so
         // a default-constructed prefs stays byte-identical to the pre-E15 builder output.
         XCTAssertEqual(def.fontFamilyFallback, "")

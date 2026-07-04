@@ -69,11 +69,14 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
 
     /// Cursor body-glide animation (`cursor.animation`).
     public enum CursorAnimation: String, Codable, Sendable, CaseIterable {
-        /// No animation — the caret jumps discretely (the libghostty default; also the default here).
+        /// No animation — the caret jumps discretely (the libghostty default).
         case off
-        /// Glide the caret on same-row moves and add a small elastic overshoot on click / focus. A
-        /// CLIENT-side render layer (the pinned libghostty fork exposes no cursor-animation key, so the
-        /// glide is the documented ceiling, deferred — E8 DECISIONS); the value persists + surfaces today.
+        /// A brief critically-damped motion TRAIL when the caret JUMPS (≥ 1.5× its own size — typing
+        /// never smears). DELIVERED (design-craft pass, 2026-07-04) via the ghostty 1.2 custom-shader
+        /// cursor uniforms: ``TerminalConfigBuilder`` materializes ``CursorTrailShader`` and emits a
+        /// `custom-shader` line. (E8 had deferred this as "no cursor-animation key in the fork" — the
+        /// 1.2 shader uniforms are the sanctioned hook.) NOW THE DEFAULT: the trail is the terminal's
+        /// signature moment, and its jump gate keeps it out of keystroke-frequency territory.
         case smooth
     }
 
@@ -147,7 +150,7 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         cursorColor: String = "",
         cursorTextColor: String = "",
         cursorOpacity: Double = 1.0,
-        cursorAnimation: CursorAnimation = .off,
+        cursorAnimation: CursorAnimation = .smooth,
         fontFamilyFallback: String = "",
         fontFamilyBold: String = "",
         fontFamilyItalic: String = "",

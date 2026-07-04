@@ -131,6 +131,14 @@ public enum TerminalConfigBuilder {
         case .on: lines.append("cursor-style-blink = true")
         case .off: lines.append("cursor-style-blink = false")
         }
+        // Cursor motion TRAIL (design-craft pass, 2026-07-04): `.smooth` delivers E8's deferred cursor
+        // animation via the ghostty 1.2 custom-shader cursor uniforms — materialize the bundled shader
+        // (idempotent, versioned) and point libghostty at it. `.off` emits nothing (legacy-identical);
+        // a materialization failure ALSO emits nothing (validate-then-drop — no trail, never a broken
+        // config line).
+        if prefs.cursorAnimation == .smooth, let shader = CursorTrailShader.materializedPath() {
+            lines.append("custom-shader = \(shader)")
+        }
         lines.append("scrollback-limit = \(scrollbackLimitBytes(lines: prefs.scrollbackLines))")
 
         // Additive keybind lines (one per user rebind), validate-then-skip an empty one.

@@ -170,7 +170,11 @@ final class TerminalConfigBuilderTests: XCTestCase {
     /// output is `font-feature = -calt,-liga,-dlig` — the ligature-DISABLING set (the `off` default truly
     /// turns ligatures off, including for a font that ships them; item 7). No per-face / palette /
     /// cell-height / thicken default leaks a line. FAILS if any other font-parity default emits.
-    func testDefaultPathEmitsTheExpectedLinesExactly() {
+    func testDefaultPathEmitsTheExpectedLinesExactly() throws {
+        // The default output gained EXACTLY one line since the design-craft pass (2026-07-04): the
+        // cursor-trail `custom-shader` (animation defaults `.smooth` now). Its path is machine-local
+        // Application Support, so the pin resolves it through the same single source the builder uses.
+        let shaderPath = try XCTUnwrap(CursorTrailShader.materializedPath())
         let expected = [
             "font-family = SF Mono",
             "font-size = 13",
@@ -180,9 +184,37 @@ final class TerminalConfigBuilderTests: XCTestCase {
             "background = FCFBF9",
             "foreground = 37352F",
             "cursor-style = block",
+            "custom-shader = \(shaderPath)",
             "scrollback-limit = 2560000",
         ].joined(separator: "\n")
         XCTAssertEqual(TerminalConfigBuilder.string(for: TerminalPreferences()), expected)
+    }
+
+    // MARK: - Cursor motion trail (design-craft pass, 2026-07-04)
+
+    /// `.off` emits NO `custom-shader` line — byte-identical to the pre-trail output for a user who
+    /// turns the animation off.
+    func testCursorAnimationOffEmitsNoShaderLine() {
+        let config = TerminalConfigBuilder.string(for: TerminalPreferences(cursorAnimation: .off))
+        XCTAssertFalse(config.contains("custom-shader"), "`.off` must not reference any shader")
+    }
+
+    /// `.smooth` materializes the versioned trail shader on disk (idempotent) and points libghostty at
+    /// it; the file's content is the bundled GLSL source.
+    func testCursorAnimationSmoothMaterializesAndReferencesTheTrailShader() throws {
+        let config = TerminalConfigBuilder.string(for: TerminalPreferences(cursorAnimation: .smooth))
+        let line = try XCTUnwrap(
+            config.split(separator: "\n").first(where: { $0.hasPrefix("custom-shader = ") }),
+        )
+        let path = String(line.dropFirst("custom-shader = ".count))
+        XCTAssertTrue(
+            path.hasSuffix("cursor-trail-v\(CursorTrailShader.version).glsl"),
+            "the emitted path is the VERSIONED materialized shader",
+        )
+        XCTAssertEqual(
+            try String(contentsOfFile: path, encoding: .utf8), CursorTrailShader.source,
+            "the on-disk shader is the bundled source",
+        )
     }
 
     /// Passing the new E15 args as nil is byte-for-byte the no-args build (so existing callers and the

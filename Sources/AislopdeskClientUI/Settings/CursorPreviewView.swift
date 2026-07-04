@@ -150,9 +150,9 @@ struct CursorPreviewView: View {
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Cursor Animation")
-                    Text("Smooth would glide the caret on same-row moves and overshoot on click/focus — "
-                        + "preference saved, but deferred: the renderer exposes no cursor-animation hook, so "
-                        + "the caret does not yet animate.")
+                    Text("Smooth draws a brief motion trail when the caret JUMPS (a prompt hop, a vi "
+                        + "motion, a click) — never while typing. Rendered by the terminal itself "
+                        + "(a cursor-aware shader), so it costs nothing while the caret is still.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
