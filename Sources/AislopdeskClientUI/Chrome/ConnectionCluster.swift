@@ -1,12 +1,11 @@
-// ConnectionCluster — the titlebar's trailing connection-status cluster (the sidebar-footer
-// status line, reseated as window chrome on the traffic-light row). One whisper-quiet line: the host's
-// identity MONOGRAM (hash-hue plate; saturation = connection state — the plate IS the whole name, no
-// hostname text at rest) + the live telemetry ("9 ms · 30 fps") in tertiary
-// monospaced digits — or, when not connected, the status word ("Connecting…", "Unreachable") plus a
-// one-tap Retry in the give-up states. ALWAYS visible (not hover-gated like the pane controls): the
-// connection is ambient window state, and it must stay readable while the sidebar is collapsed. The
-// whole cluster taps through to the Connect-to-Host editor. Reads `connection.status` (an
-// `@Observable`) so it stays live; ping/fps are resolved by the parent titlebar off the live store.
+// ConnectionCluster — the connection-status cluster. Resting home: the SIDEBAR TOP (full-width row);
+// the titlebar hosts it only while the sidebar is collapsed. One whisper-quiet line: the host's
+// identity MONOGRAM whose plate colour IS the network health at a glance (gray offline · green good ·
+// yellow slow · red bad — classified from the live ping) + the live telemetry ("9 ms · 30 fps") in
+// tertiary monospaced digits — or, when not connected, the status word ("Connecting…", "Unreachable")
+// plus a one-tap Retry in the give-up states. The whole cluster taps through to the Connect-to-Host
+// editor. Reads `connection.status` (an `@Observable`) so it stays live; ping/fps/kbps are resolved by
+// the mount off the live store (`ConnectionTelemetry`).
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -27,6 +26,9 @@ struct ConnectionCluster: View {
     var kbps: Int?
     /// Opens the Connect-to-Host editor (pre-seeded with the current host/port).
     var onConnect: () -> Void = {}
+    /// Stretch the tappable row to the mount's full width (the SIDEBAR mount — the row reads as one
+    /// full-width sidebar item, hover plate included). The titlebar fallback keeps content width.
+    var fillWidth = false
 
     @State private var hover = false
 
@@ -55,6 +57,37 @@ struct ConnectionCluster: View {
         kbps >= 1000 ? String(format: "%.1f Mbps", Double(kbps) / 1000) : "\(kbps) kbps"
     }
 
+    /// Network health at a glance — the monogram plate's colour scale (user: "nhìn phát biết tình trạng
+    /// mạng"). Classified from the smoothed ping while connected; a connected link with no sample yet
+    /// reads `good` (the EWMA lands within a beat, and green-then-degrade is honest for a fresh link).
+    enum NetworkHealth: Equatable {
+        case offline
+        case good
+        case slow
+        case bad
+    }
+
+    /// Pure classifier: ≤ 80 ms feels immediate for a remote coding session, ≤ 180 ms is workable-but-
+    /// noticeable, beyond that typing hurts. Static so the thresholds are pinned by tests.
+    static func health(isConnected: Bool, pingMS: Double?) -> NetworkHealth {
+        guard isConnected else { return .offline }
+        guard let pingMS else { return .good }
+        if pingMS <= 80 { return .good }
+        if pingMS <= 180 { return .slow }
+        return .bad
+    }
+
+    /// The plate tint for the current health — theme status colours; `nil` (offline) lets the monogram
+    /// drain to its own grayscale.
+    private var plateTint: Color? {
+        switch Self.health(isConnected: isConnected, pingMS: pingMS) {
+        case .offline: nil
+        case .good: Slate.Status.ok
+        case .slow: Slate.Status.warn
+        case .bad: Slate.Status.err
+        }
+    }
+
     /// The trailing summary: live metrics ("9 ms · 30 fps", tertiary mono) when connected, else the status
     /// word ("Connecting…", "Unreachable") — the dropped-"Connected" rule: a green dot + a ping already say
     /// it. `nil` ⇒ connected with no sample yet (dot + host alone read as connected).
@@ -70,13 +103,12 @@ struct ConnectionCluster: View {
         HStack(spacing: Slate.Metric.space1) {
             Button(action: onConnect) {
                 HStack(spacing: Slate.Metric.space2) {
-                    // The host-identity MONOGRAM (MERIDIAN C2): the plate's hash-hue is the host's
-                    // permanent colour; its SATURATION is the connection state (connected = colour,
-                    // else grayscale — L1 applied to identity). Replaces the status dot here — the
-                    // plate is the one status pixel, the not-connected states keep their status WORD.
-                    // The plate is ALSO the whole name: no hostname text at rest (user: "chỉ để avatar
-                    // + ping cho đỡ tốn diện tích") — the full host lives in the hover tooltip.
-                    SlateMonogram(identity: displayHost, live: isConnected)
+                    // The host MONOGRAM as the one status pixel (MERIDIAN L1: colour = live data): the
+                    // plate's colour IS the network health — green good / yellow slow / red bad (ping-
+                    // classified), gray when offline. The initials are the whole name (no hostname text
+                    // at rest — the full host lives in the hover tooltip); the identity hash-hue yields
+                    // to the health tint here because two colour meanings on one plate would be noise.
+                    SlateMonogram(identity: displayHost, live: isConnected, tint: plateTint)
                     if let trailing {
                         // The telemetry is a COMPLICATION (MERIDIAN L2): instrument voice for the numbers,
                         // prose voice for a status word. Its INSERTION rides the flood (below) with a small
@@ -94,6 +126,9 @@ struct ConnectionCluster: View {
                 }
                 .padding(.horizontal, Slate.Metric.space2)
                 .frame(height: Slate.Metric.heightControl)
+                // Sidebar mount: the row stretches to the column width so it reads (and hovers, and hits)
+                // as ONE full-width sidebar item; the titlebar fallback hugs its content.
+                .frame(maxWidth: fillWidth ? .infinity : nil, alignment: .leading)
                 .background(hover ? Slate.State.hover : .clear, in: .rect(cornerRadius: Slate.Metric.radiusControl))
                 .contentShape(.rect)
                 // THE FLOOD (MERIDIAN L4 — the one orchestrated moment): on handshake the colour flows IN —

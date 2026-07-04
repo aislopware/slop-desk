@@ -234,6 +234,7 @@ struct NavigatorColumn: View {
                     fps: ConnectionTelemetry.fps(store),
                     kbps: ConnectionTelemetry.kbps(store),
                     onConnect: onConnect,
+                    fillWidth: true,
                 )
                 .padding(.horizontal, Slate.Metric.space2)
                 .padding(.bottom, Slate.Metric.space2)

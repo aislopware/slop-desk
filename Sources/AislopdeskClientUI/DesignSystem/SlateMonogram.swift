@@ -44,19 +44,29 @@ enum MonogramIdentity {
     }
 }
 
-/// The identity plate: two initials in the instrument voice on the hash-hue fill. `live` drives the
-/// saturation channel (connected = full colour, else grayscale at the same luminance).
+/// The identity plate: two initials in the instrument voice on the plate fill. The DEFAULT fill is the
+/// identity hash-hue with `live` driving the saturation channel (connected = full colour, else grayscale
+/// at the same luminance); a caller can override the fill with an explicit `tint` — the connection
+/// cluster injects the network-health colour there (status IS the plate's colour in that mount).
 struct SlateMonogram: View {
     let identity: String
     /// Whether the identity is CONNECTED — saturation on. Anything else (connecting / lost / never) drains.
     var live = true
+    /// Explicit plate fill override (e.g. the cluster's network-health tint). `nil` ⇒ the identity
+    /// hash-hue. The drained-gray offline treatment applies only to the default fill — an overriding
+    /// caller picks its own offline colour (or passes `nil` to fall back here).
+    var tint: Color?
     var size: CGFloat = Slate.Metric.monogram
 
     /// Fixed saturation/brightness band (≈ HSL 42%/62%): saturated enough to read as identity, muted
     /// enough that eight theme accents never fight it. Only the HUE is per-identity; only the SATURATION
     /// is state.
     private var plate: Color {
-        Color(hue: MonogramIdentity.hue(of: identity) / 360, saturation: live ? 0.41 : 0, brightness: 0.78)
+        tint ?? Color(
+            hue: MonogramIdentity.hue(of: identity) / 360,
+            saturation: live ? 0.41 : 0,
+            brightness: 0.78,
+        )
     }
 
     var body: some View {

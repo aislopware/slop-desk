@@ -1,6 +1,7 @@
-// ConnectionClusterTests — pins the titlebar cluster's bitrate formatting (the stream-weight
-// complication) and the model's kbps dirty-guard semantics (a ZERO is a real idle reading, kept —
-// unlike fps, where zero is spurious and dropped).
+// ConnectionClusterTests — pins the connection cluster's bitrate formatting (the stream-weight
+// complication), the network-health classifier behind the monogram plate's colour, and the model's
+// kbps dirty-guard semantics (a ZERO is a real idle reading, kept — unlike fps, where zero is
+// spurious and dropped).
 
 import XCTest
 @testable import AislopdeskClientUI
@@ -15,6 +16,19 @@ final class ConnectionClusterTests: XCTestCase {
     func testBitrateLabelKilobitsBelowOneMegabit() {
         XCTAssertEqual(ConnectionCluster.bitrateLabel(kbps: 850), "850 kbps")
         XCTAssertEqual(ConnectionCluster.bitrateLabel(kbps: 0), "0 kbps")
+    }
+
+    func testNetworkHealthClassifierThresholds() {
+        // Offline wins regardless of any stale ping value.
+        XCTAssertEqual(ConnectionCluster.health(isConnected: false, pingMS: 5), .offline)
+        XCTAssertEqual(ConnectionCluster.health(isConnected: false, pingMS: nil), .offline)
+        // Connected with no sample yet reads good (the EWMA lands within a beat).
+        XCTAssertEqual(ConnectionCluster.health(isConnected: true, pingMS: nil), .good)
+        // The pinned thresholds: ≤80 good, ≤180 slow, beyond bad (boundary-inclusive).
+        XCTAssertEqual(ConnectionCluster.health(isConnected: true, pingMS: 80), .good)
+        XCTAssertEqual(ConnectionCluster.health(isConnected: true, pingMS: 80.1), .slow)
+        XCTAssertEqual(ConnectionCluster.health(isConnected: true, pingMS: 180), .slow)
+        XCTAssertEqual(ConnectionCluster.health(isConnected: true, pingMS: 180.1), .bad)
     }
 
     @MainActor
