@@ -389,9 +389,10 @@ enum Slate {
         static let dividerHoverWidth: CGFloat = 2
         /// The glass gutter between two adjacent pane cards (card-on-glass canvas, 2026-07-04 v3). Each
         /// placed leaf insets by HALF this inside its solver rect, so siblings sit exactly this far
-        /// apart and the divider hit band lives in the gap; the columns pad by the same half so the
-        /// window-edge margin matches the inter-card gap (one 8pt rhythm, no bigger space tax).
-        static let paneGap: CGFloat = 8
+        /// apart and the divider hit band lives in the gap; the detail region pads by the same half so
+        /// the window-edge margin AND the column seam match the inter-card gap (one 6pt rhythm — user
+        /// tightened from 8, "gap đang hơi rộng").
+        static let paneGap: CGFloat = 6
         /// The pane card's continuous corner radius.
         static let paneCornerRadius: CGFloat = 10
     }

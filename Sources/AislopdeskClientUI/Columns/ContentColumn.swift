@@ -26,11 +26,10 @@ struct ContentColumn: View {
 
     var body: some View {
         paneArea
-            // CARD-ON-GLASS (2026-07-04 v3): pad by half the inter-card gap so the window-edge margin
-            // equals the gap between two split cards (one 8pt rhythm) — the cards float on the NATIVE
-            // window glass, never a theme backdrop (macDetail renders the shared `WindowGlassBackdrop`
-            // behind both columns).
-            .padding(Slate.Metric.paneGap / 2)
+            // CARD-ON-GLASS (2026-07-04 v3): no padding here — the DETAIL region pads by half the
+            // inter-card gap around BOTH columns (WorkspaceRootView), so the column seam equals the
+            // in-split card gap instead of doubling up. The cards float on the NATIVE window glass,
+            // never a theme backdrop (macDetail renders the shared `WindowGlassBackdrop`).
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

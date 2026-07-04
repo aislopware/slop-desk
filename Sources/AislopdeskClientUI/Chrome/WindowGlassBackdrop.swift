@@ -8,10 +8,12 @@
 // look). It resolves in the window's effective appearance — the workspace pins `preferredColorScheme`
 // to the canvas theme's lightness, so a dark Monokai filter gets dark glass, light filters light glass.
 //
-// macOS: a behind-window `NSVisualEffectView` (`.underWindowBackground`) — the actual window-backdrop
-// material, blurring the desktop behind the window; it works in a normal opaque window (the same way
-// the system sidebar does) and follows the window's active state. iOS has no behind-window surface —
-// the system background is the native equivalent.
+// macOS: a behind-window `NSVisualEffectView` with the `.sidebar` material — the SAME material the
+// NavigationSplitView sidebar and the titlebar band render on (user direction 2026-07-04: "màu nền
+// giống như header, nền ở dưới sidebar"), so sidebar → toolbar → canvas is one seamless surface;
+// `.underWindowBackground` (the first cut) resolved visibly darker/more opaque and read as a third
+// tone. Follows the window's active state. iOS has no behind-window surface — the system background
+// is the native equivalent.
 
 #if canImport(SwiftUI)
 import SwiftUI
@@ -20,7 +22,7 @@ import SwiftUI
 struct WindowGlassBackdrop: NSViewRepresentable {
     func makeNSView(context _: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
-        view.material = .underWindowBackground
+        view.material = .sidebar
         view.blendingMode = .behindWindow
         view.state = .followsWindowActiveState
         return view

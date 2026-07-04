@@ -23,10 +23,9 @@ struct GuiColumn: View {
 
     var body: some View {
         paneArea
-            // CARD-ON-GLASS (2026-07-04 v3): same half-gap margin as ContentColumn — the remote-window
-            // card floats on the shared `WindowGlassBackdrop` (rendered by macDetail behind both
-            // columns); the video card TOP-ALIGNS with the terminal card (no header band above it).
-            .padding(Slate.Metric.paneGap / 2)
+            // CARD-ON-GLASS (2026-07-04 v3): no padding here — macDetail pads the whole detail region
+            // by half the gap (column seam == in-split gap); the remote-window card floats on the shared
+            // `WindowGlassBackdrop` and TOP-ALIGNS with the terminal card (no header band above it).
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

@@ -255,8 +255,10 @@ public struct WorkspaceRootView: View {
             )
         } detail: {
             ContentColumn(store: store, connection: connection, chrome: chrome)
-                // CARD-ON-GLASS (2026-07-04 v3): the iOS twin of macDetail's backdrop — the native
-                // system background behind the floating pane cards (iOS has no under-window glass).
+                // CARD-ON-GLASS (2026-07-04 v3): the iOS twin of macDetail — the same half-gap pad
+                // around the detail region (the columns no longer pad themselves) on the native system
+                // background behind the floating pane cards (iOS has no under-window glass).
+                .padding(Slate.Metric.paneGap / 2)
                 .background(WindowGlassBackdrop())
         }
         // Match the macOS shell: the workspace window's appearance follows the CANVAS theme's lightness
@@ -344,10 +346,14 @@ public struct WorkspaceRootView: View {
             .allowsHitTesting(!chrome.guiCollapsed)
             .clipped()
         }
-        // CARD-ON-GLASS (2026-07-04 v3): the WHOLE detail — both columns and the divider band — renders
-        // on ONE native under-window glass surface (the same material the system sidebar/titlebar sit
-        // on), so the window reads as a single continuous liquid-glass backdrop with the themed pane
-        // cards floating on it. Deliberately NOT a theme colour (the v1 card-canvas depth-read failure).
+        // CARD-ON-GLASS (2026-07-04 v3): ONE half-gap pad around the whole detail region — combined
+        // with each leaf's half-gap inset, the window-edge margin, the in-split card gap AND the
+        // column seam all resolve to `paneGap` (padding inside the columns doubled the seam to ~2×).
+        .padding(Slate.Metric.paneGap / 2)
+        // The WHOLE detail — both columns and the divider band — renders on ONE native glass surface
+        // (the sidebar/header material), so the window reads as a single continuous liquid-glass
+        // backdrop with the themed pane cards floating on it. Deliberately NOT a theme colour (the v1
+        // card-canvas depth-read failure).
         .background(WindowGlassBackdrop())
         .animation(.easeInOut(duration: 0.2), value: chrome.guiCollapsed)
         .onGeometryChange(for: CGFloat.self) { proxy in
