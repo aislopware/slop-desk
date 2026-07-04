@@ -5,14 +5,15 @@
 //
 // AMBIENT-WHEN-HEALTHY (the researched consensus — VS Code / Linear / Tailscale collapse a healthy
 // connection to near-nothing): a state-coloured dot + the host in muted text + the live telemetry in
-// tertiary monospaced digits. No resting fill, no border, no embedded action buttons — a hover wash is
-// the only clickability hint. CLICK opens the detail POPOVER (status headline, telemetry rows, Retry +
-// the Connect-to-Host editor); a degraded state earns space inline: the trailing text swaps to the
-// status word, the dot glows on change (Pow), and the give-up states surface a one-tap Retry glyph.
+// tertiary monospaced digits. No resting fill, no border, no embedded action buttons. CLICK opens the
+// detail POPOVER (status headline, telemetry rows, Retry + the Connect-to-Host editor); a degraded
+// state earns space inline: the trailing text swaps to the status word, the dot glows on change (Pow),
+// and the give-up states surface a one-tap Retry glyph.
 //
 // GEOMETRY RULE (the old cluster's overflow bug): height is CONTENT-driven — padding, never a fixed
-// `frame(height:)` — and the hover wash follows padding → background(shape) → clipShape(SAME shape) →
-// contentShape(same), so no inner content can ever spill past the fill.
+// `frame(height:)`. And NO custom hover background: the macOS 26 toolbar draws its OWN glass capsule +
+// hover highlight around every item, so a second wash inside it reads as a stray fill floating in the
+// middle of the system pill (HW-caught 2026-07-04). Hover feedback = the host-text brighten only.
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -74,12 +75,12 @@ struct ConnectionStatusItem: View {
                         .contentTransition(.numericText())
                 }
             }
-            // Overflow-safe capsule: padding BEFORE the background shape (content sizes the fill), then
-            // clip to the SAME shape (nothing escapes it), then hit-test the same shape.
+            // The macOS 26 toolbar wraps every item in its own glass capsule WITH a hover highlight —
+            // a second, smaller wash of our own renders as a stray fill floating inside the system
+            // pill (HW-caught 2026-07-04). So: no custom background here; padding only sizes the
+            // system capsule + hit area, and hover feedback is the host-text brighten below.
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(hover ? Color.primary.opacity(0.07) : Color.clear, in: Capsule())
-            .clipShape(Capsule())
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
