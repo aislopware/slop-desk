@@ -600,6 +600,16 @@ public actor AislopdeskVideoHostSession {
     /// gate latch + encoder hint re-application at resize and the streamCadence dup-send.
     private var governedFps: Int
 
+    /// HOST→CLIENT HEARTBEAT (stall-scrim liveness, 2026-07-03 — the reconnect-wedge residual): a 1 s
+    /// (``KeepaliveTiming/hostHeartbeatInterval``) actor-owned Task sending a zero-body `keepalive` on
+    /// the control channel while streaming, so the client can tell a healthily-IDLE window (idle-skip
+    /// suppresses frames by design) from a DEAD/unreachable host and overlay its "Reconnecting…"
+    /// scrim. Wire type 6 is documented wire-safe in both directions — an old client's FSM drops it
+    /// inertly — so this is behaviour-only, no wire change. Started on `.startCapture`, cancelled on
+    /// `.stopCapture` + ``stop()`` (a bye → `.listening` session must go silent so the client's stall
+    /// monitor sees the truth).
+    private var heartbeatTask: Task<Void, Never>?
+
     /// - Parameters:
     ///   - window: the desktop-independent window to remote.
     ///   - transport: the UDP datagram transport (production: a ``VideoMuxChannelTransport`` lane on the shared ``NWVideoMuxDatagramTransport``).
@@ -725,6 +735,9 @@ public actor AislopdeskVideoHostSession {
         // End the paced-send lane (queued frames are for a session that no longer exists).
         sendLane?.close()
         sendLane = nil
+        // End the stall-scrim heartbeat (a stopped session must go silent — the client's stall
+        // monitor + the shutdown bye are the truth now).
+        stopHeartbeat()
         for effect in stateMachine.stop() { await apply(effect) }
         await teardownLiveComponents()
         await transport.stop()
@@ -752,7 +765,18 @@ public actor AislopdeskVideoHostSession {
             case .input:
                 // Gate on streaming (matches `InputDatagramRouter.route`) and decode here so the
                 // run can be coalesced. A malformed datagram is dropped, never crashes the receiver.
-                guard stateMachine.mediaFlowing else { continue }
+                guard stateMachine.mediaFlowing else {
+                    // TRACE the silent gate (`AISLOPDESK_VIDEO_DEBUG`): a client that still believes
+                    // its session is live sends input here and sees NOTHING happen — the drop must be
+                    // observable or it reads as "remote window không nhận input" with no lead.
+                    if Self.inputTrace {
+                        FileHandle.standardError.write(Data(
+                            "aislopdesk-videohostd[inject]: input DROPPED (state=\(stateMachine.state), window=\(window.windowID))\n"
+                                .utf8,
+                        ))
+                    }
+                    continue
+                }
                 do {
                     let event = try InputEvent.decode(data)
                     // i2h: note a real key/mouse DOWN (NOT move/scroll/up) so the input→encoded segment is
@@ -1339,6 +1363,38 @@ public actor AislopdeskVideoHostSession {
         sendStreamCadence(UInt16(clamping: newFps))
     }
 
+    // MARK: Host→client heartbeat (stall-scrim liveness, 2026-07-03)
+
+    /// Starts the 1 s heartbeat timer (idempotent re-arm). Mirrors the client keepalive's safe weak
+    /// pattern — a strong `self` in a long-lived timer Task would leak the whole session. ⚠️ Timer
+    /// firing is real-clock glue; the stall DECISION it feeds is covered by `StreamStallPolicyTests`
+    /// + `StallScrimLatchTests` client-side.
+    private func startHeartbeat() {
+        heartbeatTask?.cancel()
+        heartbeatTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(
+                    nanoseconds: UInt64(KeepaliveTiming.hostHeartbeatInterval * 1_000_000_000),
+                )
+                guard let self else { return }
+                await sendHeartbeatIfStreaming()
+            }
+        }
+    }
+
+    private func stopHeartbeat() {
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+    }
+
+    /// Sends one host→client `keepalive` iff the session is streaming (a bye → `.listening` session
+    /// must go silent). Fire-and-forget UDP; a lost heartbeat costs nothing — the client's stall
+    /// threshold (3 s) tolerates two consecutive losses.
+    private func sendHeartbeatIfStreaming() {
+        guard stateMachine.mediaFlowing else { return }
+        transport.send(scheduler.scheduleControl(.keepalive).bytes, on: .control)
+    }
+
     /// Sends the `streamCadence(fps:)` control message, duplicated once ~25 ms later with a
     /// `mediaFlowing` re-check (cursor-shape dup-send pattern): a cadence change often coincides
     /// with congestion (the lossiest moment) and the client's application is idempotent.
@@ -1440,8 +1496,11 @@ public actor AislopdeskVideoHostSession {
             // HOST-WINDOW RESIZE: announce the window's display max so the client's resize popover caps
             // its fields. Additive (old clients drop the unknown type); sent once per capture bring-up.
             sendDisplayMax()
+            // STALL-SCRIM HEARTBEAT: start the 1 s host→client liveness keepalive for this stream.
+            startHeartbeat()
         case .stopCapture:
             dbg("effect stopCapture")
+            stopHeartbeat()
             await teardownLiveComponents()
         case let .resizeCapture(width, height, epoch):
             await applyResize(width: width, height: height, epoch: epoch)

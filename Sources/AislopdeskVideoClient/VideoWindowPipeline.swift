@@ -41,6 +41,35 @@ final class VideoWindowPipeline {
     private var activeConnection: VideoWindowConnection?
     private var layerSize: VideoSize = .init(width: 0, height: 0)
 
+    /// RECONNECT-WEDGE FIX (2026-07-03): what a host-initiated session end needs to rebuild the
+    /// WHOLE pipeline in place — the view/layer the pane renders into (weak: the pane may be gone
+    /// by the time the bye lands) + the activate parameters. A videohostd restart ends every live
+    /// session with a `bye` (at shutdown, or from the restarted daemon answering an unbound lane);
+    /// the rebuild tears everything down (fresh lane + hello + renderer/pacer/decoder) so the pane
+    /// self-heals instead of freezing with dead input.
+    private weak var attachedView: HostView?
+    private weak var attachedLayer: CAMetalLayer?
+    private var attachedMaxFrameRate: Double = 30.0
+    /// Monotonic time of the last host-ended rebuild — floors rebuilds at one per second so a
+    /// bye burst (retransmits ×2, plus the unbound-lane replies) cannot thrash teardown/bring-up.
+    /// The client's own 5 s keepalive re-triggers a rebuild if a throttled bye mattered.
+    private var lastHostEndedRebuild: TimeInterval = 0
+
+    /// STALL SCRIM (2026-07-03, the reconnect-wedge residual): fired on the @MainActor when the
+    /// stream's stall state FLIPS — `true` ⇒ the host went silent past the ``StreamStallPolicy``
+    /// threshold (dead daemon / network drop) and the pane should overlay its "Reconnecting…" scrim;
+    /// `false` ⇒ traffic is flowing again. Sticky through the recovery rebuild (``StallScrimLatch``),
+    /// so the scrim holds from "host went dark" until frames/heartbeats actually resume. Set by the
+    /// view in `activate`.
+    var onStreamStallChanged: ((Bool) -> Void)?
+    /// The ~1 s monitor Task evaluating ``StreamStallPolicy`` over the session's liveness snapshot.
+    /// Started in `activate`, cancelled in `deactivate`. The LATCH deliberately lives on the
+    /// pipeline (not the task): a host-ended rebuild replaces the session + monitor, and the scrim
+    /// must stay up across that swap until a real `.live` verdict.
+    private var stallMonitorTask: Task<Void, Never>?
+    private var stallLatch = StallScrimLatch()
+    private static let stallPolicy = StreamStallPolicy()
+
     /// SCROLL-HINT REPROJECTION (default-OFF, env `AISLOPDESK_SCROLL_REPROJECT == "1"`): the offset
     /// law for this pane, or `nil` when the feature is off (then NOTHING below engages and the present
     /// path is byte-identical). Owned here; shared with the ``pacer`` (which integrates + applies it on
@@ -181,6 +210,11 @@ final class VideoWindowPipeline {
         if activeConnection == connection, session != nil { return }
         deactivate()
         activeConnection = connection
+        // RECONNECT-WEDGE FIX: remember what a host-ended rebuild needs (weak view/layer — the pane
+        // may be gone by the time a bye lands; then the rebuild is a no-op).
+        attachedView = view
+        attachedLayer = videoLayer
+        attachedMaxFrameRate = maxFrameRate
 
         guard let renderer = MetalVideoRenderer(metalLayer: videoLayer) else {
             log.error("MetalVideoRenderer init failed — no Metal device")
@@ -462,6 +496,12 @@ final class VideoWindowPipeline {
                 // the view so it can cap the "Resize…" popover fields (no-op if unbound).
                 Task { @MainActor in self?.onDisplayMaxChanged?(points) }
             },
+            notifySessionEnded: { [weak self] in
+                // RECONNECT-WEDGE FIX: the host ended this session (bye). Hop to main and rebuild the
+                // WHOLE pipeline in place — fresh lane + hello + renderer/pacer/decoder — so a
+                // videohostd restart self-heals instead of freezing the pane with dead input.
+                Task { @MainActor in self?.rebuildAfterHostEndedSession() }
+            },
         )
 
         let session = AislopdeskVideoClientSession(
@@ -485,6 +525,77 @@ final class VideoWindowPipeline {
         // (~16.7ms @60). most-recent-wins + move-before-button ordering are interval-independent.
         motionInterval = Self.resolveMotionInterval()
         startMotionPump()
+        // STALL SCRIM: watch the session's liveness (video fragments + the host's 1 s heartbeat)
+        // and flip the pane's "Reconnecting…" scrim when the host goes silent / recovers.
+        startStallMonitor()
+    }
+
+    // MARK: Stall scrim (2026-07-03)
+
+    /// Starts the ~1 s stall monitor (idempotent re-arm; cancelled in `deactivate`). Each tick reads
+    /// the session's ``AislopdeskVideoClientSession/livenessSnapshot()`` and folds the
+    /// ``StreamStallPolicy`` verdict through the sticky ``StallScrimLatch``; the view is notified
+    /// only on a flip. `idleSkipActive: false` + BOTH stamps is deliberate: the client cannot see the
+    /// host's idle-skip state, but the 1 s heartbeat flows regardless, so heartbeat freshness alone
+    /// keeps a healthily-idle window `.live` (the exact trap the policy is built around).
+    private func startStallMonitor() {
+        stallMonitorTask?.cancel()
+        stallMonitorTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard let self else { return }
+                await evaluateStall()
+            }
+        }
+    }
+
+    private func stopStallMonitor() {
+        stallMonitorTask?.cancel()
+        stallMonitorTask = nil
+        // The latch is NOT reset here: `deactivate` also runs mid-rebuild (host-ended bye), where a
+        // shown scrim must persist until the rebuilt session goes `.live` (StallScrimLatch's job).
+    }
+
+    /// One monitor tick: snapshot → verdict → latch → (on flip) notify the view.
+    private func evaluateStall() async {
+        guard let session else { return }
+        let snapshot = await session.livenessSnapshot()
+        let verdict = Self.stallPolicy.evaluate(.init(
+            now: ProcessInfo.processInfo.systemUptime,
+            lastFrameAt: snapshot.lastVideoSignalAt,
+            lastHeartbeatAt: snapshot.lastControlSignalAt,
+            connected: snapshot.streaming,
+            idleSkipActive: false,
+        ))
+        if let shown = stallLatch.apply(verdict) {
+            log.info("stream stall scrim \(shown ? "SHOWN (host silent)" : "cleared (traffic resumed)")")
+            onStreamStallChanged?(shown)
+        }
+    }
+
+    /// RECONNECT-WEDGE FIX: the host ended the live session (a received `bye`) — rebuild the whole
+    /// pipeline against the SAME connection: deactivate (closes the old lane; its session FSM is
+    /// already `.stopped`, so no second bye goes out) then activate (fresh channelID lane, fresh
+    /// hello, fresh renderer/pacer/decoder). The session's hello-retry loop then rides out a host
+    /// that is still restarting. Floored at one rebuild per second (`lastHostEndedRebuild`) so a
+    /// bye burst cannot thrash; a throttled bye is recovered by the next keepalive→bye round trip.
+    /// No-op when the pane/view is already gone (weak refs cleared) or nothing is active.
+    private func rebuildAfterHostEndedSession() {
+        guard let connection = activeConnection, let view = attachedView, let layer = attachedLayer else {
+            log.info("host ended session but pane is gone — no rebuild")
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastHostEndedRebuild >= 1.0 else { return }
+        lastHostEndedRebuild = now
+        log.info("host ended session (bye) — rebuilding pipeline against \(connection.host, privacy: .public)")
+        // STALL SCRIM (the bye-path gap): show "Reconnecting…" NOW. The bye path never yields a
+        // `.stalled` verdict (the FSM leaves `.streaming` before the monitor sees a gap), so without
+        // this a gracefully-shut-down host that never returns would leave the pane frozen in
+        // hello-retry limbo with no scrim. Clears via the monitor's first `.live` verdict.
+        if stallLatch.noteReconnecting() != nil { onStreamStallChanged?(true) }
+        deactivate()
+        activate(view: view, videoLayer: layer, connection: connection, maxFrameRate: attachedMaxFrameRate)
     }
 
     /// Tears the pipeline + display link + sockets down (called on disappear/dismantle).
@@ -497,6 +608,7 @@ final class VideoWindowPipeline {
     /// so it holds the live-video slot for a small bounded `videoTeardownSettle` past teardown
     /// instead (FIX #4). Over-holding fails safe (at worst a brief admission delay at the cap).
     func deactivate() {
+        stopStallMonitor()
         stopMotionPump()
         stopOutboundConsumer()
         pacer?.stop()

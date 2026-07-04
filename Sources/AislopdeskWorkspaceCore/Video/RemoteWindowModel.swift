@@ -95,6 +95,19 @@ public final class RemoteWindowModel {
         streamFps = fps
     }
 
+    /// STALL SCRIM (2026-07-03, the reconnect-wedge residual): whether the stream is currently STALLED —
+    /// the host went silent (no frame AND no 1 s host heartbeat) past the stall threshold, so the pane
+    /// overlays a "Reconnecting…" scrim over the frozen last frame instead of looking healthy-but-dead.
+    /// Pushed by the live ``VideoWindowView`` on every flip (sticky through the client's self-heal rebuild:
+    /// it clears only when traffic actually resumes). Defaults `false`.
+    public private(set) var isStreamStalled = false
+
+    /// Records a stall flip from the live view. Only writes the observable on a real change.
+    public func noteStreamStalled(_ stalled: Bool) {
+        guard isStreamStalled != stalled else { return }
+        isStreamStalled = stalled
+    }
+
     /// Request an ABSOLUTE host-window POINT size from the "Resize…" popover (no-op when no sink is wired —
     /// the pane is not streaming or is read-only). The host clamps to the window's achievable min/max and
     /// re-anchors the window at its display origin so an up-to-display-max size takes.
@@ -449,5 +462,6 @@ public final class RemoteWindowModel {
         // between them, so the rebind still completes); a genuine teardown stops a stale query re-opening.
         revalidationTask?.cancel()
         endAwaitingReflow() // a closed window will not re-capture — never leave the scrim hung
+        isStreamStalled = false // a closed pane shows the picker, not a stale "Reconnecting…" scrim
     }
 }

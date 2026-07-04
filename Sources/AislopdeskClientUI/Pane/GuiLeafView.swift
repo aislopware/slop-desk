@@ -225,8 +225,24 @@ struct GuiLeafView: View {
                     // CONNECTION STATS: the live view pushes the host-announced stream cadence so the sidebar's
                     // Connection section shows this pane's FPS row (informational; not read-only-gated).
                     onStreamCadence: { [weak model] fps in model?.noteStreamFps(fps) },
+                    // STALL SCRIM: the live view pushes the stream's stall flips (host silent ↔ traffic
+                    // resumed) so the overlay below shows/clears "Reconnecting…" (informational).
+                    onStreamStall: { [weak model] stalled in model?.noteStreamStalled(stalled) },
                 ),
             )
+            // STALL SCRIM (the reconnect-wedge residual): while the host is silent past the stall threshold
+            // the pane would otherwise look healthy-but-dead (a frozen last frame that swallows clicks).
+            // A flat translucent veil + spinner says "the client noticed; recovery is automatic" (the
+            // self-heal rebuild + hello retry run underneath). Hit-testing stays OFF — purely visual, so
+            // any interaction still reaches the surface (harmless while the host is dark).
+            .overlay {
+                if model?.isStreamStalled == true {
+                    StreamStallScrim()
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+            .animation(Slate.Anim.reveal, value: model?.isStreamStalled ?? false)
         }
     }
 
@@ -248,6 +264,30 @@ struct GuiLeafView: View {
     private func placeholderLabel(_ state: RemoteGUIDisplay) -> String {
         if state == .gated { return "Video paused — too many live streams" }
         return live?.kind == .systemDialog ? "system dialog" : "remote window"
+    }
+}
+
+/// STALL SCRIM (2026-07-03): the "Reconnecting…" veil over a live video surface whose host has gone
+/// silent (dead daemon / network drop — ``RemoteWindowModel/isStreamStalled``). A flat translucent
+/// dim over the frozen last frame + a compact spinner/label pill, matching the placeholder typography.
+/// Purely visual (the caller disables hit-testing); recovery is automatic underneath (self-heal
+/// rebuild + hello retry), so there is deliberately no button here.
+private struct StreamStallScrim: View {
+    var body: some View {
+        ZStack {
+            // Dim the stale frame so it reads "not live" without hiding context entirely.
+            NativePaneColor.terminalBackground.opacity(0.6)
+            VStack(spacing: Slate.Metric.space3) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Reconnecting…")
+                    .font(.system(size: Slate.Typeface.body, weight: .semibold))
+                    .foregroundStyle(Slate.Text.primary)
+                Text("The remote host stopped responding")
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.secondary)
+            }
+        }
     }
 }
 

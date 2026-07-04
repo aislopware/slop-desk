@@ -105,7 +105,99 @@ final class VideoClientStateMachineTests: XCTestCase {
         ))
         let effects = sm.handleControl(.bye)
         XCTAssertEqual(sm.state, .stopped)
-        XCTAssertEqual(effects, [.stopDecodePipeline])
+        // RECONNECT-WEDGE FIX: a HOST-initiated bye also surfaces `.sessionEndedByHost` so the
+        // pipeline rebuilds (fresh lane + hello); a LOCAL stop() must not (see the stop tests).
+        XCTAssertEqual(effects, [.stopDecodePipeline, .sessionEndedByHost])
+    }
+
+    func testByeWhileConnectingAlsoSurfacesSessionEndedByHost() {
+        var sm = makeSM()
+        _ = sm.start()
+        let effects = sm.handleControl(.bye)
+        XCTAssertEqual(sm.state, .stopped)
+        XCTAssertEqual(
+            effects,
+            [.stopDecodePipeline, .sessionEndedByHost],
+            "a bye that races the connect (host draining for restart) must still trigger the rebuild",
+        )
+    }
+
+    func testLocalStopNeverSurfacesSessionEndedByHost() {
+        var sm = makeSM()
+        _ = sm.start()
+        _ = sm.handleControl(.helloAck(
+            accepted: true,
+            streamID: 1,
+            captureWidth: 800,
+            captureHeight: 600,
+            windowBoundsCG: VideoRect(x: 0, y: 0, width: 800, height: 600),
+            fullRange: false,
+        ))
+        XCTAssertFalse(
+            sm.stop().contains(.sessionEndedByHost),
+            "a local stop (pane closed) must NOT trigger a pipeline rebuild",
+        )
+    }
+
+    // MARK: Hello retry (reconnect-wedge fix)
+
+    func testResendHelloWhileConnectingReEmitsTheSameHello() {
+        var sm = makeSM()
+        _ = sm.start()
+        let effects = sm.resendHello()
+        XCTAssertEqual(effects.count, 1)
+        guard case let .sendControl(.hello(version, windowID, viewport)) = effects.first else {
+            XCTFail("expected a re-emitted hello, got \(effects)")
+            return
+        }
+        XCTAssertEqual(version, AislopdeskVideoProtocol.version)
+        XCTAssertEqual(windowID, 42)
+        XCTAssertEqual(viewport, VideoSize(width: 1280, height: 800))
+        XCTAssertEqual(sm.state, .connecting, "a retry never moves the state")
+    }
+
+    func testResendHelloIsInertOutsideConnecting() {
+        var idle = makeSM()
+        XCTAssertTrue(idle.resendHello().isEmpty, "no retry before start()")
+
+        var streaming = makeSM()
+        _ = streaming.start()
+        _ = streaming.handleControl(.helloAck(
+            accepted: true,
+            streamID: 1,
+            captureWidth: 800,
+            captureHeight: 600,
+            windowBoundsCG: VideoRect(x: 0, y: 0, width: 800, height: 600),
+            fullRange: false,
+        ))
+        XCTAssertTrue(streaming.resendHello().isEmpty, "an acked session never re-hellos")
+
+        var rejected = makeSM()
+        _ = rejected.start()
+        _ = rejected.handleControl(.helloAck(
+            accepted: false,
+            streamID: 0,
+            captureWidth: 0,
+            captureHeight: 0,
+            windowBoundsCG: VideoRect(x: 0, y: 0, width: 0, height: 0),
+            fullRange: false,
+        ))
+        XCTAssertTrue(rejected.resendHello().isEmpty, "a rejected session must not retry-spam the host")
+
+        var stopped = makeSM()
+        _ = stopped.start()
+        _ = stopped.stop()
+        XCTAssertTrue(stopped.resendHello().isEmpty, "a stopped session never re-hellos")
+    }
+
+    func testHelloRetryPolicyBacksOffExponentiallyToTheCap() {
+        XCTAssertEqual(HelloRetryPolicy.delay(attempt: 0), 0.5)
+        XCTAssertEqual(HelloRetryPolicy.delay(attempt: 1), 1.0)
+        XCTAssertEqual(HelloRetryPolicy.delay(attempt: 2), 2.0)
+        XCTAssertEqual(HelloRetryPolicy.delay(attempt: 3), 4.0)
+        XCTAssertEqual(HelloRetryPolicy.delay(attempt: 4), 5.0, "capped at maxDelay")
+        XCTAssertEqual(HelloRetryPolicy.delay(attempt: 100), 5.0, "stays capped (no overflow)")
+        XCTAssertEqual(HelloRetryPolicy.delay(attempt: -3), 0.5, "negative attempt clamps to the first delay")
     }
 
     func testStopWhileStreamingSendsByeAndStopsPipeline() {
