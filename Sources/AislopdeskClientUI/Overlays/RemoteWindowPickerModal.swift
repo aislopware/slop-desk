@@ -31,10 +31,7 @@ struct RemoteWindowPickerModal: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Text("New Remote Window")
-                    .font(.headline)
-                Spacer(minLength: 0)
+            SlateSheetHeader("New Remote Window") {
                 if let model = coordinator.remotePickerModel {
                     Button {
                         Task { await model.refresh() }
@@ -47,23 +44,15 @@ struct RemoteWindowPickerModal: View {
                     .help("Refresh the window list")
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 6)
 
             if let model = coordinator.remotePickerModel {
                 windowForm(model)
             }
 
-            Divider()
-
-            HStack {
-                Spacer(minLength: 0)
+            SlateSheetFooter {
                 Button("Cancel") { coordinator.closeRemotePicker() }
                     .keyboardShortcut(.cancelAction)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
         }
         #if os(macOS)
         .frame(width: 520)

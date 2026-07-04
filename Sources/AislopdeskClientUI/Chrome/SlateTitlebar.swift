@@ -134,20 +134,22 @@ private struct TitleMenuButton: View {
         return store.tree.activeSession?.specs[id]?.lastKnownCwd
     }
 
+    // The menu speaks the shared ``SlatePopoverSection``/``SlatePopoverRow``/``SlatePopoverDivider``
+    // vocabulary (MERIDIAN C3) — one menu chrome across the app, no per-popover drift.
     private var menu: some View {
         VStack(alignment: .leading, spacing: 0) {
-            TitleMenuSection("WORKING DIRECTORY")
-            TitleMenuRow(icon: "folder", title: cwd ?? "~", dim: true) {}
-            TitleMenuRow(title: "Copy Path") { copyPath() }
-            TitleMenuDivider()
-            TitleMenuRow(title: "Split Right", shortcut: "⌘D") { split(.horizontal) }
-            TitleMenuRow(title: "Split Down", shortcut: "⌘⇧D") { split(.vertical) }
-            TitleMenuRow(title: "Move Pane Left", shortcut: "⌥⌘←") { move(.left) }
-            TitleMenuRow(title: "Move Pane Right", shortcut: "⌥⌘→") { move(.right) }
-            TitleMenuDivider()
-            TitleMenuRow(title: "Close Pane", shortcut: "⌘W") { close() }
-                .padding(.bottom, 6)
+            SlatePopoverSection("WORKING DIRECTORY")
+            SlatePopoverRow(cwd ?? "~", icon: "folder", dim: true) {}
+            SlatePopoverRow("Copy Path") { copyPath() }
+            SlatePopoverDivider()
+            SlatePopoverRow("Split Right", shortcut: "⌘D") { split(.horizontal) }
+            SlatePopoverRow("Split Down", shortcut: "⌘⇧D") { split(.vertical) }
+            SlatePopoverRow("Move Pane Left", shortcut: "⌥⌘←") { move(.left) }
+            SlatePopoverRow("Move Pane Right", shortcut: "⌥⌘→") { move(.right) }
+            SlatePopoverDivider()
+            SlatePopoverRow("Close Pane", shortcut: "⌘W") { close() }
         }
+        .padding(.vertical, 6)
         .frame(width: 260)
     }
 
@@ -179,62 +181,4 @@ private struct TitleMenuButton: View {
     }
 }
 
-// MARK: - Title-menu row chrome (TMRow/TMSection/TMDivider)
-
-private struct TitleMenuSection: View {
-    let title: String
-    init(_ title: String) { self.title = title }
-    var body: some View {
-        // MERIDIAN L2: caps micro-labels speak the INSTRUMENT voice — same register as `SlateSectionHeader`
-        // and the sort popover's section label (one voice per role, no per-popover drift).
-        Text(title)
-            .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
-            .tracking(Slate.Typeface.instrumentTracking)
-            .foregroundStyle(Slate.State.header)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, Slate.Metric.space3).padding(.top, Slate.Metric.space2).padding(.bottom, 2)
-    }
-}
-
-private struct TitleMenuDivider: View {
-    var body: some View {
-        Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
-            .padding(.vertical, 5).padding(.horizontal, 10)
-    }
-}
-
-private struct TitleMenuRow: View {
-    var icon: String?
-    var title: String
-    var shortcut: String?
-    var dim = false
-    var action: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                if let icon {
-                    Image(systemName: icon).font(.system(size: Slate.Typeface.base)).foregroundStyle(Slate.Text.icon)
-                        .frame(width: 16)
-                }
-                Text(title)
-                    .font(.system(size: Slate.Typeface.base))
-                    .foregroundStyle(dim ? Slate.Text.secondary : Slate.Text.primary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 8)
-                if let shortcut {
-                    Text(shortcut).font(.system(size: Slate.Typeface.footnote)).foregroundStyle(Slate.Text.secondary)
-                }
-            }
-            .padding(.horizontal, Slate.Metric.space3).frame(height: Slate.Metric.heightBar)
-            .background(hovering ? Slate.State.hover : .clear)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-    }
-}
 #endif

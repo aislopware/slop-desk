@@ -185,14 +185,16 @@ struct SlateSortMenuButton: View {
         .popover(isPresented: $show, arrowEdge: .bottom) { popover }
     }
 
+    // The popover speaks the shared ``SlatePopoverSection``/``SlatePopoverRow``/``SlatePopoverDivider``
+    // vocabulary (MERIDIAN C3) — one menu chrome across the app, no per-popover drift.
     private var popover: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SortSection("GROUP")
+            SlatePopoverSection("GROUP")
             groupRow("No Grouping", "list.bullet", .none)
             groupRow("By Project", "folder", .byProject)
             groupRow("By Date", "calendar", .byDate)
-            SortDivider()
-            SortSection("ORDER")
+            SlatePopoverDivider()
+            SlatePopoverSection("ORDER")
             orderRow("Created Time", "clock", .created)
             orderRow("Updated Time", "clock.arrow.circlepath", .updated)
             orderRow("Manual", "arrow.up.arrow.down", .manual)
@@ -203,68 +205,12 @@ struct SlateSortMenuButton: View {
 
     /// A GROUP row whose checkmark READS ``WorkspaceStore/tabGrouping`` and whose tap WRITES it (persisted).
     private func groupRow(_ title: String, _ icon: String, _ value: TabGrouping) -> some View {
-        SortRow(title, icon: icon, on: store.tabGrouping == value) { store.setTabGrouping(value) }
+        SlatePopoverRow(title, icon: icon, checked: store.tabGrouping == value) { store.setTabGrouping(value) }
     }
 
     /// An ORDER row whose checkmark READS ``WorkspaceStore/tabSort`` and whose tap WRITES it (persisted).
     private func orderRow(_ title: String, _ icon: String, _ value: TabSort) -> some View {
-        SortRow(title, icon: icon, on: store.tabSort == value) { store.setTabSort(value) }
-    }
-}
-
-private struct SortSection: View {
-    let title: String
-    init(_ title: String) { self.title = title }
-    var body: some View {
-        Text(title)
-            .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
-            .tracking(Slate.Typeface.instrumentTracking)
-            .foregroundStyle(Slate.State.header)
-            .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 2)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct SortDivider: View {
-    var body: some View {
-        Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
-            .padding(.vertical, 5).padding(.horizontal, 10)
-    }
-}
-
-private struct SortRow: View {
-    let title: String
-    let icon: String
-    let on: Bool
-    var action: () -> Void
-
-    init(_ title: String, icon: String, on: Bool, _ action: @escaping () -> Void) {
-        self.title = title
-        self.icon = icon
-        self.on = on
-        self.action = action
-    }
-
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: icon).font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
-                    .frame(width: 16)
-                Text(title).font(.system(size: Slate.Typeface.base)).foregroundStyle(Slate.Text.primary)
-                Spacer()
-                if on {
-                    Image(systemSymbol: .checkmark).font(.system(size: Slate.Typeface.small, weight: .semibold))
-                        .foregroundStyle(Slate.Text.secondary)
-                }
-            }
-            .padding(.horizontal, Slate.Metric.space3).frame(height: Slate.Metric.heightControl)
-            .background(hovering ? Slate.State.hover : .clear)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
+        SlatePopoverRow(title, icon: icon, checked: store.tabSort == value) { store.setTabSort(value) }
     }
 }
 #endif

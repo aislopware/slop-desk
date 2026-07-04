@@ -39,16 +39,10 @@ struct KeyboardCheatSheetView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Label("Keyboard Shortcuts", systemImage: "keyboard")
-                    .font(.headline)
-                Spacer(minLength: 0)
+            SlateSheetHeader("Keyboard Shortcuts", systemImage: "keyboard") {
                 Button("Done") { coordinator.closeCheatSheet() }
                     .keyboardShortcut(.cancelAction)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 6)
 
             List {
                 ForEach(sections) { section in

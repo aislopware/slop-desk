@@ -54,14 +54,35 @@ struct ContentColumn: View {
             if hasActiveTab {
                 SplitContainer(store: store)
             } else {
-                ContentUnavailableView(
-                    "No Session",
-                    systemImage: "terminal",
-                    description: Text("Connect to a host or open a tab"),
-                )
+                // The Slate empty-state voice (MERIDIAN C3) — the cause names WHY the area is empty
+                // (not-connected vs link-down vs no-tabs) and carries the one next action.
+                let cause = Self.emptyCause(status: connection.status, host: connection.target.host)
+                SlateEmptyState(cause: cause) {
+                    switch cause {
+                    case .neverConnected: onConnect()
+                    case .noTabs: store.openChooserPane(.newTab)
+                    case .linkDown: break // redials itself; no user action offered
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Resolves the empty pane area's CAUSE from the live connection: connected ⇒ the only thing
+    /// missing is a tab; an active redial ⇒ link-down (named host, no action — the supervisor is
+    /// already dialing); anything else (fresh launch, give-up states, a first `connecting`) reads
+    /// not-connected, whose action opens the Connect editor. Static + pure so the mapping is pinned
+    /// by tests.
+    static func emptyCause(status: ConnectionStatus, host: String) -> SlateEmptyState.Cause {
+        switch status {
+        case .connected: .noTabs
+        case .reconnecting: .linkDown(host: host)
+        case .disconnected,
+             .connecting,
+             .unreachable,
+             .failed: .neverConnected
+        }
     }
 }
 #endif

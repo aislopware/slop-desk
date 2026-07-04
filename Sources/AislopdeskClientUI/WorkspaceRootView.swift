@@ -104,9 +104,6 @@ public struct WorkspaceRootView: View {
         return store.handle(for: id) as? LivePaneSession
     }
 
-    /// The active pane's smoothed RTT (ms) — ping lives on the per-pane channel (`ConnectionViewModel`).
-    private var activePingMS: Double? { activeLive?.connection?.latencyMS }
-
     /// The active pane's agent status (`.none` when no agent / no live pane).
     private var activeAgentStatus: ClaudeStatus { activeLive?.claudeStatus ?? .none }
 
@@ -334,10 +331,18 @@ public struct WorkspaceRootView: View {
     #if os(iOS)
     @ToolbarContentBuilder
     private var iosToolbar: some ToolbarContent {
-        // iOS uses NavigationSplitView's own column-visibility chrome; surface the connection pill + the
+        // iOS uses NavigationSplitView's own column-visibility chrome; surface the connection cluster
+        // (the SAME `ConnectionCluster` as the macOS sidebar/titlebar — one connection surface per app,
+        // MERIDIAN C3; the old iOS-only `ConnectionStatusPill` had drifted into its own voice) + the
         // agent indicator + a New-Tab affordance. (Sidebar/inspector toggles are the system idiom there.)
         ToolbarItem(placement: .principal) {
-            ConnectionStatusPill(connection: connection, pingMS: activePingMS, onTap: openConnect)
+            ConnectionCluster(
+                connection: connection,
+                pingMS: ConnectionTelemetry.pingMS(store),
+                fps: ConnectionTelemetry.fps(store),
+                kbps: ConnectionTelemetry.kbps(store),
+                onConnect: openConnect,
+            )
         }
         ToolbarItem(placement: .primaryAction) {
             if let symbol = StatusPresentation.agentSymbol(activeAgentStatus) {

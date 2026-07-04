@@ -29,12 +29,7 @@ struct ConnectHostView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Text("Connect to Host")
-                .font(.headline)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
-                .padding(.top, 18)
-                .padding(.bottom, 6)
+            SlateSheetHeader("Connect to Host")
 
             Form {
                 Section {
@@ -61,10 +56,7 @@ struct ConnectHostView: View {
             }
             .formStyle(.grouped)
 
-            Divider()
-
-            HStack(spacing: 12) {
-                Spacer(minLength: 0)
+            SlateSheetFooter {
                 Button("Cancel") { coordinator.closeConnect() }
                     .keyboardShortcut(.cancelAction)
                 Button("Connect") { connectAndClose() }
@@ -72,8 +64,6 @@ struct ConnectHostView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(!connection.canConnect)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
         }
         #if os(macOS)
         .frame(width: 460) // a fixed-width macOS dialog; iOS presents the sheet full-width

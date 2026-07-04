@@ -1,9 +1,7 @@
-// StatusPresentation — pure view-side mapping of connection + agent state to native SwiftUI presentation
-// (REBUILD-V2, L4a). Recovers the connection-pill derivation (label / colour-role / dot) from the deleted
-// `Chrome/TopBarConnectionPill.swift`, but maps the colour role straight to a SYSTEM semantic `Color` (no
-// design-system token). Shared by the unified-toolbar status pill and the inspector's Session section so
-// the copy + dot colour can't drift. The label copy itself comes from `ConnectionPresenter` (the one
-// source of truth) — this only adds the view-layer colour + dot.
+// StatusPresentation — pure view-side mapping of connection + agent state to native SwiftUI presentation.
+// Shared by the connection cluster (`ConnectionCluster`, both platforms) and the Peek & Reply header so
+// the copy + retry policy can't drift. The label copy itself comes from `ConnectionPresenter` (the one
+// source of truth) — this adds only the view-layer help text, retry gating, and agent glyph/tint.
 
 #if canImport(SwiftUI)
 import AislopdeskAgentDetect
@@ -19,18 +17,6 @@ enum StatusPresentation {
     /// The compact pill label (e.g. "connected", "reconnecting 3/20", "failed").
     static func connectionLabel(_ status: ConnectionStatus) -> String {
         ConnectionPresenter.shortLabel(for: status)
-    }
-
-    /// The status-dot colour — cohesive on the active theme.
-    static func connectionColor(_ status: ConnectionStatus) -> Color {
-        switch status {
-        case .connected: Slate.Status.ok
-        case .connecting,
-             .reconnecting: Slate.Status.warn
-        case .failed,
-             .unreachable: Slate.Status.err
-        case .disconnected: Slate.Text.secondary
-        }
     }
 
     /// Whether a manual Retry affordance applies (only the give-up states).
