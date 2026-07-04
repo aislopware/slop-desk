@@ -183,7 +183,8 @@ negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` who
     `requestID` is a client-chosen monotonic `UInt32` correlating a reply to one of several in-flight
     requests; the host echoes it **verbatim** (stateless responder, like `pong`). `verb` is the raw
     `UInt8` of `MetadataVerb`: `1` processes, `2` ports, `3` cwd, `4` gitStatus (subsumes branch +
-    remote + repo toplevel + ahead/behind + changed files), `5` gitDiff, `6` listDirectory, `7` listAgentSessions,
+    remote + repo toplevel + ahead/behind + **stash depth** (`Int32` BE after `behind`, before the file
+    count) + changed files), `5` gitDiff, `6` listDirectory, `7` listAgentSessions,
     `8` readAgentSession — all **read-only** — plus the two **side-effecting** verbs `9` openPath and
     `10` revealPath (E10), the **agent-hooks** verbs `11` installAgentHooks / `12` uninstallAgentHooks
     (side-effecting) / `13` agentHookStatus (a pure read returning a 2-byte flag payload) (E13), and

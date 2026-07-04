@@ -87,25 +87,33 @@ struct SlateTabRow: View {
         .help(helpText ?? "")
     }
 
-    /// The instrument-voice git line with per-token STATUS colour (MERIDIAN "colour = state, not ornament"):
-    /// the branch stays MUTED (inherits the row's secondary — a branch is structure, not a signal), `↑ahead`
-    /// reads OK-green (outgoing commits, ready to push), `↓behind` reads info-blue (behind upstream, pull) and
-    /// `· N changed` reads warn-amber (a dirty worktree — the "you have uncommitted work" flag). A CLEAN repo
-    /// is just the muted branch, no colour — nothing to flag. `nil` for a non-repo cwd. The rendered text is
+    /// The instrument-voice git line with per-token STATUS colour (MERIDIAN "colour = state, not ornament"),
+    /// each state a SINGLE sigil + count (oh-my-zsh vocabulary). The branch stays MUTED (inherits the row's
+    /// secondary — structure, not a signal); the tokens colour by meaning:
+    ///   `↑`ahead / `+`staged → OK-green (outgoing / index work, ready to commit or push)
+    ///   `↓`behind / `!`modified → warn-amber (behind upstream / unstaged edits — needs attention)
+    ///   `?`untracked → info-blue (new files not yet tracked)
+    ///   `=`conflicts → err-red (unmerged — must resolve)
+    ///   `$`stash → muted secondary (parked work; the `$` sigil carries it, no alarm colour)
+    /// A CLEAN repo is just the muted branch — nothing to flag. `nil` for a non-repo cwd. The rendered text is
     /// byte-identical to ``PaneGitSummary/compactLine`` so the plain fallback / search key / row height (all
     /// keyed on ``subtitle``) never diverge from what the coloured line shows.
     @MainActor
     static func gitLine(_ g: PaneGitSummary) -> AttributedString? {
         guard g.hasRepo else { return nil }
-        func token(_ text: String, _ colour: Color) -> AttributedString {
+        func token(_ text: String, _ colour: Color?) -> AttributedString {
             var seg = AttributedString(text)
-            seg.foregroundColor = colour
+            seg.foregroundColor = colour // nil ⇒ inherits the row's secondary
             return seg
         }
         var line = AttributedString(g.branch.isEmpty ? "detached" : g.branch)
         if g.ahead > 0 { line += token(" ↑\(g.ahead)", Slate.Status.ok) }
-        if g.behind > 0 { line += token(" ↓\(g.behind)", Slate.Status.info) }
-        if g.changedCount > 0 { line += token(" · \(g.changedCount) changed", Slate.Status.warn) }
+        if g.behind > 0 { line += token(" ↓\(g.behind)", Slate.Status.warn) }
+        if g.staged > 0 { line += token(" +\(g.staged)", Slate.Status.ok) }
+        if g.modified > 0 { line += token(" !\(g.modified)", Slate.Status.warn) }
+        if g.untracked > 0 { line += token(" ?\(g.untracked)", Slate.Status.info) }
+        if g.conflicted > 0 { line += token(" =\(g.conflicted)", Slate.Status.err) }
+        if g.stash > 0 { line += token(" $\(g.stash)", nil) }
         return line
     }
 

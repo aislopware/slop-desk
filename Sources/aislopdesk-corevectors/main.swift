@@ -1010,7 +1010,7 @@ root["metadataCodecPayloads"] = [
         ])),
         "dir/file leaf names",
     ),
-    // GitStatus ([UInt8 hasRepo]; if repo: branch, remote, repoRoot, [Int32 ahead][Int32 behind], file list).
+    // GitStatus ([UInt8 hasRepo]; if repo: branch, remote, repoRoot, [Int32 ahead][Int32 behind][Int32 stash], files).
     mcRecord("gitStatus", hex(MetadataCodec.encodeGitStatus(.noRepo)), "no repo (single 0x00 byte)"),
     mcRecord(
         "gitStatus",
@@ -1021,12 +1021,13 @@ root["metadataCodecPayloads"] = [
             repoRoot: "/Users/me/aislopdesk",
             ahead: 3,
             behind: 0,
+            stashCount: 2,
             files: [
                 .init(statusCode: 0x12, path: "Sources/main.swift"),
                 .init(statusCode: 0xFF, path: "docs/x.md"),
             ],
         ))),
-        "repo: branch+remote+repoRoot+ahead/behind+files",
+        "repo: branch+remote+repoRoot+ahead/behind+stash+files",
     ),
     // AgentSessionList ([UInt16 count] then kind, id, title, cwd, [Int64 mtimeMS]).
     mcRecord(

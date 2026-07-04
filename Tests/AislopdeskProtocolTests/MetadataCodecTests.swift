@@ -168,6 +168,7 @@ final class MetadataCodecTests: XCTestCase {
             repoRoot: "/Users/me/aislopdesk", // E6 WI-7 — the precise By-Project key survives the round-trip
             ahead: 3,
             behind: -2, // negative survives (Int32 BE)
+            stashCount: 4, // rides the round-trip right after behind
             files: [
                 .init(statusCode: 0x12, path: "Sources/main.swift"),
                 .init(statusCode: 0xFF, path: "docs/café.md"),
@@ -180,10 +181,12 @@ final class MetadataCodecTests: XCTestCase {
 
     func testGitStatusRepoRootExactBytes() {
         // E6 WI-7 — the repoRoot string rides length-prefixed UTF-8 RIGHT AFTER remoteURL (and only when
-        // hasRepo). Hand-computed bytes (independent of the codec's own output) pin the new layout:
-        // hasRepo=1, branch "a", remote "", repoRoot "/r", ahead 0, behind 0, 0 files.
+        // hasRepo). Hand-computed bytes (independent of the codec's own output) pin the layout:
+        // hasRepo=1, branch "a", remote "", repoRoot "/r", ahead 0, behind 0, stash 7, 0 files. The `stash`
+        // Int32 rides right after `behind` (before the file count).
         let bytes = [UInt8](MetadataCodec.encodeGitStatus(.init(
-            hasRepo: true, branch: "a", remoteURL: "", repoRoot: "/r", ahead: 0, behind: 0, files: [],
+            hasRepo: true, branch: "a", remoteURL: "", repoRoot: "/r", ahead: 0, behind: 0, stashCount: 7,
+            files: [],
         )))
         XCTAssertEqual(bytes, [
             0x01, // hasRepo
@@ -192,6 +195,7 @@ final class MetadataCodecTests: XCTestCase {
             0x00, 0x02, 0x2F, 0x72, // repoRoot "/r"
             0x00, 0x00, 0x00, 0x00, // ahead = 0
             0x00, 0x00, 0x00, 0x00, // behind = 0
+            0x00, 0x00, 0x00, 0x07, // stash = 7
             0x00, 0x00, // 0 files
         ])
     }
@@ -217,6 +221,7 @@ final class MetadataCodecTests: XCTestCase {
             0x00, 0x00, // repoRoot "" (E6 WI-7 — between remote and ahead)
             0x00, 0x00, 0x00, 0x00, // ahead = 0
             0x00, 0x00, 0x00, 0x00, // behind = 0
+            0x00, 0x00, 0x00, 0x00, // stash = 0 (rides after behind, before the file count)
             0x00, 0x00, // 0 files
         ])
         let decoded = try MetadataCodec.decodeGitStatus(body)
@@ -225,7 +230,7 @@ final class MetadataCodecTests: XCTestCase {
     }
 
     func testGitStatusFileCountBeforeAllocDrops() {
-        // hasRepo, empty branch/remote/repoRoot, ahead/behind, fileCount=5000 but no file bytes → truncated.
+        // hasRepo, empty branch/remote/repoRoot, ahead/behind/stash, fileCount=5000 but no file bytes → truncated.
         let body = Data([
             0x01, // hasRepo
             0x00, 0x00, // branch ""
@@ -233,6 +238,7 @@ final class MetadataCodecTests: XCTestCase {
             0x00, 0x00, // repoRoot "" (E6 WI-7)
             0x00, 0x00, 0x00, 0x00, // ahead
             0x00, 0x00, 0x00, 0x00, // behind
+            0x00, 0x00, 0x00, 0x00, // stash
             0x13, 0x88, // fileCount = 5000
         ])
         XCTAssertThrowsError(try MetadataCodec.decodeGitStatus(body)) { error in

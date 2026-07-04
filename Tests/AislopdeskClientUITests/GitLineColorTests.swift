@@ -31,35 +31,50 @@ final class GitLineColorTests: XCTestCase {
 
     /// The coloured line's plain text is byte-identical to `compactLine` — the height/search/fallback contract.
     func testTextMatchesCompactLine() throws {
-        let g = PaneGitSummary(hasRepo: true, branch: "main", ahead: 1, behind: 2, changedCount: 3)
+        let g = PaneGitSummary(
+            hasRepo: true, branch: "main", ahead: 1, behind: 2, changedCount: 6,
+            staged: 3, modified: 4, untracked: 5, conflicted: 6, stash: 7,
+        )
         let line = try XCTUnwrap(SlateTabRow.gitLine(g))
         XCTAssertEqual(String(line.characters), g.compactLine, "coloured text must equal the plain compactLine")
     }
 
-    /// A dirty worktree's `· N changed` token reads warn-amber (the "you have uncommitted work" flag).
-    func testDirtyChangedTokenIsWarn() throws {
-        let g = PaneGitSummary(hasRepo: true, branch: "main", ahead: 0, behind: 0, changedCount: 3)
-        let line = try XCTUnwrap(SlateTabRow.gitLine(g))
-        XCTAssertEqual(colour(of: "3 changed", in: line), .some(Slate.Status.warn))
-    }
-
-    /// `↑ahead` reads OK-green (outgoing) and `↓behind` reads info-blue (behind upstream) — distinct signals.
-    func testAheadIsOkBehindIsInfo() throws {
-        let g = PaneGitSummary(hasRepo: true, branch: "main", ahead: 1, behind: 2, changedCount: 0)
+    /// Green (ok) = outgoing/index work: `↑`ahead and `+`staged both read OK-green.
+    func testAheadAndStagedAreOk() throws {
+        let g = PaneGitSummary(hasRepo: true, branch: "main", ahead: 1, behind: 0, changedCount: 2, staged: 2)
         let line = try XCTUnwrap(SlateTabRow.gitLine(g))
         XCTAssertEqual(colour(of: "↑1", in: line), .some(Slate.Status.ok))
-        XCTAssertEqual(colour(of: "↓2", in: line), .some(Slate.Status.info))
+        XCTAssertEqual(colour(of: "+2", in: line), .some(Slate.Status.ok))
     }
 
-    /// The branch name carries NO explicit colour — it inherits the row's muted secondary (a branch is
-    /// structure, not a status signal). Distinct from `warn`/`ok`/`info` so it can't read as a signal.
-    func testBranchIsUncoloured() throws {
-        let g = PaneGitSummary(hasRepo: true, branch: "feature-x", ahead: 0, behind: 0, changedCount: 1)
+    /// Amber (warn) = needs-attention: `↓`behind and `!`modified both read warn-amber.
+    func testBehindAndModifiedAreWarn() throws {
+        let g = PaneGitSummary(hasRepo: true, branch: "main", ahead: 0, behind: 2, changedCount: 3, modified: 3)
+        let line = try XCTUnwrap(SlateTabRow.gitLine(g))
+        XCTAssertEqual(colour(of: "↓2", in: line), .some(Slate.Status.warn))
+        XCTAssertEqual(colour(of: "!3", in: line), .some(Slate.Status.warn))
+    }
+
+    /// `?`untracked reads info-blue; `=`conflicts reads err-red (must-resolve).
+    func testUntrackedIsInfoConflictIsErr() throws {
+        let g = PaneGitSummary(
+            hasRepo: true, branch: "main", ahead: 0, behind: 0, changedCount: 2, untracked: 1, conflicted: 1,
+        )
+        let line = try XCTUnwrap(SlateTabRow.gitLine(g))
+        XCTAssertEqual(colour(of: "?1", in: line), .some(Slate.Status.info))
+        XCTAssertEqual(colour(of: "=1", in: line), .some(Slate.Status.err))
+    }
+
+    /// The branch name and the `$`stash token carry NO explicit colour — both inherit the row's muted
+    /// secondary (structure / parked work; the sigil carries the meaning, no alarm colour).
+    func testBranchAndStashAreUncoloured() throws {
+        let g = PaneGitSummary(hasRepo: true, branch: "feature-x", ahead: 0, behind: 0, changedCount: 0, stash: 2)
         let line = try XCTUnwrap(SlateTabRow.gitLine(g))
         XCTAssertEqual(colour(of: "feature-x", in: line), .some(Color?.none), "branch inherits secondary")
+        XCTAssertEqual(colour(of: "$2", in: line), .some(Color?.none), "stash inherits secondary")
     }
 
-    /// A CLEAN repo (no ahead/behind/changed) is just the muted branch — no coloured token at all.
+    /// A CLEAN repo (no deltas / worktree state / stash) is just the muted branch — no coloured token.
     func testCleanRepoHasNoColouredToken() throws {
         let g = PaneGitSummary(hasRepo: true, branch: "main", ahead: 0, behind: 0, changedCount: 0)
         let line = try XCTUnwrap(SlateTabRow.gitLine(g))

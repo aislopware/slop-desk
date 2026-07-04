@@ -9,8 +9,12 @@ import XCTest
 final class PaneGitSummaryTests: XCTestCase {
     private func summary(
         hasRepo: Bool = true, branch: String = "main", ahead: Int = 0, behind: Int = 0, changed: Int = 0,
+        staged: Int = 0, modified: Int = 0, untracked: Int = 0, conflicted: Int = 0, stash: Int = 0,
     ) -> PaneGitSummary {
-        PaneGitSummary(hasRepo: hasRepo, branch: branch, ahead: ahead, behind: behind, changedCount: changed)
+        PaneGitSummary(
+            hasRepo: hasRepo, branch: branch, ahead: ahead, behind: behind, changedCount: changed,
+            staged: staged, modified: modified, untracked: untracked, conflicted: conflicted, stash: stash,
+        )
     }
 
     /// A clean, tracking branch renders as JUST the branch name — no noise.
@@ -25,15 +29,29 @@ final class PaneGitSummaryTests: XCTestCase {
         XCTAssertEqual(summary(ahead: 1, behind: 4).compactLine, "main ↑1 ↓4")
     }
 
-    /// The dirty count appends as `· N changed` after the branch/deltas.
-    func testChangedCount() {
-        XCTAssertEqual(summary(changed: 3).compactLine, "main · 3 changed")
-        XCTAssertEqual(summary(ahead: 1, behind: 2, changed: 5).compactLine, "main ↑1 ↓2 · 5 changed")
+    /// Each worktree state is a SINGLE sigil + count: `+`staged `!`modified `?`untracked `=`conflicts.
+    func testWorktreeSigils() {
+        XCTAssertEqual(summary(staged: 2).compactLine, "main +2")
+        XCTAssertEqual(summary(modified: 3).compactLine, "main !3")
+        XCTAssertEqual(summary(untracked: 1).compactLine, "main ?1")
+        XCTAssertEqual(summary(conflicted: 2).compactLine, "main =2")
+        // Full order: branch, ↑, ↓, +, !, ?, =, $.
+        XCTAssertEqual(
+            summary(ahead: 1, behind: 2, staged: 3, modified: 4, untracked: 5, conflicted: 6, stash: 7)
+                .compactLine,
+            "main ↑1 ↓2 +3 !4 ?5 =6 $7",
+        )
+    }
+
+    /// The stash depth appends as `$N` (repo-global) — present even on an otherwise clean worktree.
+    func testStashSigil() {
+        XCTAssertEqual(summary(stash: 1).compactLine, "main $1")
+        XCTAssertEqual(summary(modified: 2, stash: 3).compactLine, "main !2 $3")
     }
 
     /// A detached HEAD (empty branch) reads "detached", never a blank leading token.
     func testDetachedHead() {
-        XCTAssertEqual(summary(branch: "", changed: 1).compactLine, "detached · 1 changed")
+        XCTAssertEqual(summary(branch: "", modified: 1).compactLine, "detached !1")
     }
 
     /// A non-repo cwd renders NOTHING (`nil`) — the rail then falls back to the plain cwd subtitle.
@@ -41,19 +59,26 @@ final class PaneGitSummaryTests: XCTestCase {
         XCTAssertNil(summary(hasRepo: false, branch: "").compactLine)
     }
 
-    /// The wire-payload fold: branch/ahead/behind carry over, `changedCount` is the FILE COUNT (the
-    /// rail never needs the per-file list), and the remote/toplevel are dropped.
+    /// The wire-payload fold derives the porcelain breakdown from the packed `XY` status codes: `0x01`
+    /// (` M` — worktree-modified), `0x77` (`??` — untracked), `0x11` (`MM` — staged AND modified, counts
+    /// in BOTH), `0x66` (`UU` — a conflict). Branch/ahead/behind + `stashCount` carry over; the
+    /// remote/toplevel/file-list are dropped.
     func testPayloadFold() {
         let payload = MetadataCodec.GitStatusPayload(
             hasRepo: true, branch: "feat/x", remoteURL: "git@github.com:a/b.git", repoRoot: "/srv/app",
-            ahead: 2, behind: 1,
+            ahead: 2, behind: 1, stashCount: 5,
             files: [
-                MetadataCodec.GitFileChange(statusCode: 0x01, path: "a.swift"),
-                MetadataCodec.GitFileChange(statusCode: 0x77, path: "b.swift"),
+                MetadataCodec.GitFileChange(statusCode: 0x01, path: "a.swift"), // " M" modified
+                MetadataCodec.GitFileChange(statusCode: 0x77, path: "b.swift"), // "??" untracked
+                MetadataCodec.GitFileChange(statusCode: 0x11, path: "c.swift"), // "MM" staged + modified
+                MetadataCodec.GitFileChange(statusCode: 0x66, path: "d.swift"), // "UU" conflict
             ],
         )
         let folded = PaneGitSummary(payload: payload)
-        XCTAssertEqual(folded, summary(branch: "feat/x", ahead: 2, behind: 1, changed: 2))
-        XCTAssertEqual(folded.compactLine, "feat/x ↑2 ↓1 · 2 changed")
+        XCTAssertEqual(folded, summary(
+            branch: "feat/x", ahead: 2, behind: 1, changed: 4,
+            staged: 1, modified: 2, untracked: 1, conflicted: 1, stash: 5,
+        ))
+        XCTAssertEqual(folded.compactLine, "feat/x ↑2 ↓1 +1 !2 ?1 =1 $5")
     }
 }

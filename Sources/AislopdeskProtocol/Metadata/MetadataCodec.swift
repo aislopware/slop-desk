@@ -116,6 +116,10 @@ public enum MetadataCodec {
         public var ahead: Int32
         /// Commits the branch is behind its upstream (0 when no upstream).
         public var behind: Int32
+        /// The number of entries in the repo's stash (`git stash list`) — a repo-global count (0 when the
+        /// stash is empty). Carried ONLY when ``hasRepo`` is `true`, as an `Int32` BE right after ``behind``
+        /// (before the file list). Lets the sidebar surface `$N` without the client shelling out to git.
+        public var stashCount: Int32
         /// The changed files.
         public var files: [GitFileChange]
 
@@ -126,6 +130,7 @@ public enum MetadataCodec {
             repoRoot: String = "",
             ahead: Int32,
             behind: Int32,
+            stashCount: Int32 = 0,
             files: [GitFileChange],
         ) {
             self.hasRepo = hasRepo
@@ -134,6 +139,7 @@ public enum MetadataCodec {
             self.repoRoot = repoRoot
             self.ahead = ahead
             self.behind = behind
+            self.stashCount = stashCount
             self.files = files
         }
 
@@ -145,6 +151,7 @@ public enum MetadataCodec {
             repoRoot: "",
             ahead: 0,
             behind: 0,
+            stashCount: 0,
             files: [],
         )
     }
@@ -292,7 +299,7 @@ public enum MetadataCodec {
         return items
     }
 
-    // MARK: - GitStatus  ([UInt8 hasRepo]; if repo: branch, remote, repoRoot, [Int32 ahead][Int32 behind], files)
+    // MARK: - GitStatus  ([UInt8 hasRepo]; if repo: branch, remote, repoRoot, [Int32 ahead][Int32 behind][Int32 stash], files)
 
     /// Fixed bytes per ``GitFileChange`` (statusCode + pathLen; path may be empty).
     private static let gitFileFixedBytes = 1 + 2
@@ -312,6 +319,7 @@ public enum MetadataCodec {
         appendString(status.repoRoot, to: &out)
         out.appendBE(status.ahead)
         out.appendBE(status.behind)
+        out.appendBE(status.stashCount)
         let count = clampedCount(status.files.count)
         out.appendBE(UInt16(count))
         for file in status.files.prefix(count) {
@@ -332,6 +340,7 @@ public enum MetadataCodec {
         let repoRoot = try readString(&reader, "gitStatus.repoRoot")
         let ahead = try reader.readInt32()
         let behind = try reader.readInt32()
+        let stashCount = try reader.readInt32()
         let count = try Int(reader.readUInt16())
         guard reader.bytesRemaining >= count * gitFileFixedBytes else { throw AislopdeskError.truncated }
         var files: [GitFileChange] = []
@@ -348,6 +357,7 @@ public enum MetadataCodec {
             repoRoot: repoRoot,
             ahead: ahead,
             behind: behind,
+            stashCount: stashCount,
             files: files,
         )
     }

@@ -296,10 +296,10 @@ final class RailRowBuilderTests: XCTestCase {
         let pane = paneID(store, row: 0)
         store.setLastKnownCwd("/Users/me/project-alpha", for: pane)
         store.paneGitSummary[pane] = PaneGitSummary(
-            hasRepo: true, branch: "main", ahead: 1, behind: 0, changedCount: 3,
+            hasRepo: true, branch: "main", ahead: 1, behind: 0, changedCount: 3, modified: 3,
         )
         XCTAssertEqual(
-            RailRowsBuilder.rows(for: store)[0].subtitle, "main ↑1 · 3 changed",
+            RailRowsBuilder.rows(for: store)[0].subtitle, "main ↑1 !3",
             "line 2 is the compact git line when the cwd is a repo",
         )
         store.paneGitSummary[pane] = PaneGitSummary(
@@ -468,10 +468,10 @@ final class RailRowBuilderTests: XCTestCase {
         let pane = paneID(store, row: 0)
         store.setLastKnownCwd("/Users/me/worktrees/feature-x/myapp", for: pane)
         store.paneGitSummary[pane] = PaneGitSummary(
-            hasRepo: true, branch: "main", ahead: 0, behind: 0, changedCount: 1,
+            hasRepo: true, branch: "main", ahead: 0, behind: 0, changedCount: 1, modified: 1,
         )
         let rows = RailRowsBuilder.rows(for: store)
-        XCTAssertEqual(rows[0].subtitle, "main · 1 changed", "the visible subtitle is the git line, not the path")
+        XCTAssertEqual(rows[0].subtitle, "main !1", "the visible subtitle is the git line, not the path")
         XCTAssertEqual(rows[0].cwd, "/Users/me/worktrees/feature-x/myapp", "the raw cwd rides as a hidden key")
         // The path segment is searchable even though it is nowhere in the visible chrome.
         XCTAssertEqual(RailRowsBuilder.filtered(rows, query: "feature-x").map(\.id), [pane])

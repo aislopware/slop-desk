@@ -183,8 +183,17 @@ struct HostMetadataProbe: MetadataQuerying {
         let toplevel = Self.gitToplevel(cwd: cwd) ?? ""
         return MetadataCodec.GitStatusPayload(
             hasRepo: true, branch: branch, remoteURL: remote, repoRoot: toplevel,
-            ahead: ahead, behind: behind, files: files,
+            ahead: ahead, behind: behind, stashCount: Self.gitStashCount(cwd: cwd), files: files,
         )
+    }
+
+    /// The repo's stash depth (`git stash list` line count), clamped to `Int32`. Best-effort like every
+    /// other probe: a missing binary / non-repo / empty stash all yield `0` (an empty `stash list` prints
+    /// nothing). Repo-global (not cwd-specific beyond which repo the cwd is in).
+    static func gitStashCount(cwd: String) -> Int32 {
+        guard let out = runProcessString(gitPath, ["-C", cwd, "stash", "list"]) else { return 0 }
+        let lines = out.split(separator: "\n", omittingEmptySubsequences: true).count
+        return Int32(min(lines, Int(Int32.max)))
     }
 
     func gitDiff(cwd: String, file: String) -> Data? {
