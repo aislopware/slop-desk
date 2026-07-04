@@ -22,8 +22,9 @@ struct TitlebarConnectionCluster: View {
     var pingMS: Double?
     /// The active VIDEO pane's host-announced stream cadence (frames/sec); `nil` for a terminal pane.
     var fps: Int?
-    /// The active VIDEO pane's remote-window size (points); `nil` for a terminal pane / pre-handshake.
-    var windowSize: CGSize?
+    /// The active VIDEO pane's client-measured stream bitrate (kilobits/sec, ~1 Hz); `nil` for a
+    /// terminal pane / until the first reading.
+    var kbps: Int?
     /// Opens the Connect-to-Host editor (pre-seeded with the current host/port).
     var onConnect: () -> Void = {}
 
@@ -39,13 +40,19 @@ struct TitlebarConnectionCluster: View {
     private var isConnected: Bool { if case .connected = status { true } else { false } }
 
     /// The live telemetry segments — ping (when known), then the focused video pane's stream cadence and
-    /// remote-window size (the window's useful numbers; absent for a terminal pane).
+    /// client-measured payload bitrate (the stream's health numbers; absent for a terminal pane).
     private var metrics: [String] {
         var out: [String] = []
         if let pingMS { out.append("\(Int(pingMS.rounded())) ms") }
         if let fps { out.append("\(fps) fps") }
-        if let windowSize { out.append("\(Int(windowSize.width))×\(Int(windowSize.height))") }
+        if let kbps { out.append(Self.bitrateLabel(kbps: kbps)) }
         return out
+    }
+
+    /// Formats a kbps reading for the cluster: ≥ 1 Mbps reads in megabits with one decimal ("12.4 Mbps"),
+    /// below that in whole kilobits ("850 kbps"). Static + pure so the mapping is unit-testable.
+    static func bitrateLabel(kbps: Int) -> String {
+        kbps >= 1000 ? String(format: "%.1f Mbps", Double(kbps) / 1000) : "\(kbps) kbps"
     }
 
     /// The trailing summary: live metrics ("9 ms · 30 fps", tertiary mono) when connected, else the status

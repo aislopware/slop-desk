@@ -90,6 +90,7 @@ struct ClientAppMain {
                     onInputReleaseReady: paneContext.onInputReleaseReady,
                     onWindowGeometryReady: paneContext.onWindowGeometryChanged,
                     onStreamCadenceReady: paneContext.onStreamCadenceChanged,
+                    onStreamBitrateReady: paneContext.onStreamBitrateChanged,
                     onStreamStallChanged: paneContext.onStreamStallChanged,
                 ))
             }

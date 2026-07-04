@@ -119,6 +119,10 @@ public actor AislopdeskVideoClientSession {
         /// interval + adaptive-jitter seconds→frames conversion (`FramePacer.setContentFps`).
         /// `nil` ⇒ ignore (a view with no pacer to rebase). Idempotent — the host dup-sends ×2.
         public var applyStreamCadence: (@Sendable (Int) -> Void)?
+        /// STREAM BITRATE (titlebar complication, 2026-07-04): the client-measured VIDEO-PAYLOAD
+        /// bitrate (kilobits/sec), reported ~1 Hz from the reassembled-frame byte window. Payload-level
+        /// (the decoder's diet — FEC parity/headers/dups excluded). `nil` ⇒ no view wants it.
+        public var applyStreamBitrate: (@Sendable (Int) -> Void)?
         /// Component 4 (adaptive pacer depth, 2026-06-11): SYNCHRONOUS, lock-guarded drain of the
         /// pipeline-owned FramePacer's presentation-health counters (`FramePacer.drainTelemetry`).
         /// Safe to call from the session actor with NO main hop — the pacer is `@unchecked
@@ -173,6 +177,7 @@ public actor AislopdeskVideoClientSession {
             setColorRange: @escaping @Sendable (ColorRange) -> Void,
             notifyStreamNativePoints: (@Sendable (VideoSize) -> Void)? = nil,
             applyStreamCadence: (@Sendable (Int) -> Void)? = nil,
+            applyStreamBitrate: (@Sendable (Int) -> Void)? = nil,
             readPacerTelemetry: (@Sendable () -> PacerTelemetrySnapshot)? = nil,
             noteNetworkLate: (@Sendable () -> Void)? = nil,
             notePlayoutJitter: (@Sendable (Double) -> Void)? = nil,
@@ -188,6 +193,7 @@ public actor AislopdeskVideoClientSession {
             self.setColorRange = setColorRange
             self.notifyStreamNativePoints = notifyStreamNativePoints
             self.applyStreamCadence = applyStreamCadence
+            self.applyStreamBitrate = applyStreamBitrate
             self.readPacerTelemetry = readPacerTelemetry
             self.noteNetworkLate = noteNetworkLate
             self.notePlayoutJitter = notePlayoutJitter
@@ -473,6 +479,10 @@ public actor AislopdeskVideoClientSession {
     private var winFramesReceived: UInt32 = 0
     private var winFecRecovered: UInt32 = 0
     private var winUnrecovered: UInt32 = 0
+    /// STREAM-BITRATE window (the ~1 Hz `gui.applyStreamBitrate` reading — independent of the 50 ms
+    /// NetworkStats wire window): reassembled-frame payload bytes + the window's start timestamp.
+    private var bitrateWindowBytes: UInt64 = 0
+    private var bitrateWindowStartS: Double = 0
     /// The self-owned ~50 ms NetworkStats timer (mirrors ``keepaliveTask``'s safe weak pattern).
     /// Cancelled in ``stop()``.
     private var networkStatsTask: Task<Void, Never>?
@@ -661,6 +671,7 @@ public actor AislopdeskVideoClientSession {
                 try? await Task.sleep(nanoseconds: 50_000_000)
                 guard let self else { return }
                 await sendNetworkStatsIfStreaming()
+                await flushStreamBitrateIfDue()
             }
         }
     }
@@ -705,6 +716,31 @@ public actor AislopdeskVideoClientSession {
         winFramesReceived = 0
         winFecRecovered = 0
         winUnrecovered = 0
+    }
+
+    /// STREAM BITRATE (titlebar complication): flushes the ~1 s payload-byte window into
+    /// `gui.applyStreamBitrate` (kilobits/sec). Rides the 50 ms stats timer but is NOT gated on the
+    /// telemetry flag — it is a local GUI reading, never a wire report. While media is not flowing the
+    /// window just re-arms (no 0-spam into a torn-down view); a flowing-but-idle window reports a real
+    /// 0 (idle-skip means nothing arrives — the instrument shows the stream breathing).
+    private func flushStreamBitrateIfDue() {
+        guard let apply = gui.applyStreamBitrate else { return }
+        let now = FramePacer.currentHostTimeSeconds()
+        guard stateMachine.mediaFlowing else {
+            bitrateWindowBytes = 0
+            bitrateWindowStartS = now
+            return
+        }
+        if bitrateWindowStartS == 0 {
+            bitrateWindowStartS = now
+            return
+        }
+        let elapsed = now - bitrateWindowStartS
+        guard elapsed >= 1 else { return }
+        let kbps = Int((Double(bitrateWindowBytes) * 8 / elapsed / 1000).rounded())
+        bitrateWindowBytes = 0
+        bitrateWindowStartS = now
+        apply(kbps)
     }
 
     // MARK: Layout (called by the host view each layout pass)
@@ -951,6 +987,7 @@ public actor AislopdeskVideoClientSession {
                 "frame reassembled #\(frame.frameID) (kf=\(frame.keyframe) ltr=\(frame.isLTR) fec=\(frame.recoveredViaFEC)) → decoding",
             )
             winFramesReceived &+= 1
+            bitrateWindowBytes &+= UInt64(frame.avcc.count)
             if frame.recoveredViaFEC {
                 winFecRecovered &+= 1
                 // Component 5: an FEC recovery is the EARLY-WARNING loss event — bursts produce

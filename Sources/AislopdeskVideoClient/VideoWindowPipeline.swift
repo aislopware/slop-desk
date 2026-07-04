@@ -140,6 +140,11 @@ final class VideoWindowPipeline {
     /// `activate`. (Same value that re-bases the pacer below — surfaced for display, not control.)
     var onStreamCadenceChanged: ((Int) -> Void)?
 
+    /// CONNECTION STATS (2026-07-04): fired on the @MainActor ~1 Hz with the client-measured video
+    /// PAYLOAD bitrate (kilobits/sec) — the titlebar cluster's stream-weight complication. Set by the
+    /// view in `activate`. Display-only (never reaches the host).
+    var onStreamBitrateChanged: ((Int) -> Void)?
+
     #if os(macOS)
     /// The LOCAL `NSCursor` mirroring the host's CURRENT cursor SHAPE (Parsec model: the OS draws it at
     /// the instant local mouse position, so the pointer never lags by an RTT). `nil` until the shape
@@ -456,6 +461,11 @@ final class VideoWindowPipeline {
                 // CONNECTION STATS: also surface the cadence to the view→model so the Connection section's
                 // FPS row tracks it. Hop to main (the model is @MainActor); coalesced no-op when unbound.
                 Task { @MainActor in self?.onStreamCadenceChanged?(Int(fps)) }
+            },
+            applyStreamBitrate: { [weak self] kbps in
+                // CONNECTION STATS: surface the ~1 Hz payload-bitrate reading to the view→model chain
+                // (the titlebar cluster). Hop to main (the model is @MainActor); no-op when unbound.
+                Task { @MainActor in self?.onStreamBitrateChanged?(kbps) }
             },
             readPacerTelemetry: {
                 // Component 4: synchronous lock-guarded drain (no main hop — the pacer carries its

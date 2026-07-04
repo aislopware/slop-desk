@@ -113,6 +113,9 @@ public struct VideoWindowView: View {
     /// the host's FPS governor announces a new value, so the sidebar's Connection section shows a per-pane
     /// "FPS" row. `nil` ⇒ no canvas wired it (preview / standalone / iOS).
     let onStreamCadenceReady: ((_ fps: Int) -> Void)?
+    /// CONNECTION STATS: the live view pushes the client-measured video PAYLOAD bitrate (kilobits/sec,
+    /// ~1 Hz) here — the titlebar cluster's stream-weight complication. `nil` ⇒ no canvas wired it.
+    let onStreamBitrateReady: ((_ kbps: Int) -> Void)?
     /// STALL SCRIM: the live view pushes the stream's stall state here when it FLIPS — `true` ⇒ the host
     /// went silent past the stall threshold (show the pane's "Reconnecting…" scrim), `false` ⇒ traffic
     /// resumed (clear it). Sticky through the self-heal rebuild. `nil` ⇒ no canvas wired it.
@@ -134,6 +137,7 @@ public struct VideoWindowView: View {
         onInputReleaseReady = nil
         onWindowGeometryReady = nil
         onStreamCadenceReady = nil
+        onStreamBitrateReady = nil
         onStreamStallChanged = nil
     }
 
@@ -154,6 +158,7 @@ public struct VideoWindowView: View {
         onInputReleaseReady: (((() -> Void)?) -> Void)? = nil,
         onWindowGeometryReady: ((_ curW: Double, _ curH: Double, _ maxW: Double, _ maxH: Double) -> Void)? = nil,
         onStreamCadenceReady: ((_ fps: Int) -> Void)? = nil,
+        onStreamBitrateReady: ((_ kbps: Int) -> Void)? = nil,
         onStreamStallChanged: ((_ stalled: Bool) -> Void)? = nil,
     ) {
         self.title = title
@@ -169,6 +174,7 @@ public struct VideoWindowView: View {
         self.onInputReleaseReady = onInputReleaseReady
         self.onWindowGeometryReady = onWindowGeometryReady
         self.onStreamCadenceReady = onStreamCadenceReady
+        self.onStreamBitrateReady = onStreamBitrateReady
         self.onStreamStallChanged = onStreamStallChanged
     }
 
@@ -195,6 +201,7 @@ public struct VideoWindowView: View {
             onInputReleaseReady: onInputReleaseReady,
             onWindowGeometryReady: onWindowGeometryReady,
             onStreamCadenceReady: onStreamCadenceReady,
+            onStreamBitrateReady: onStreamBitrateReady,
             onStreamStallChanged: onStreamStallChanged,
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -228,6 +235,7 @@ struct MetalVideoLayerView: NSViewRepresentable {
     var onInputReleaseReady: (((() -> Void)?) -> Void)?
     var onWindowGeometryReady: ((Double, Double, Double, Double) -> Void)?
     var onStreamCadenceReady: ((Int) -> Void)?
+    var onStreamBitrateReady: ((Int) -> Void)?
     var onStreamStallChanged: ((Bool) -> Void)?
 
     func makeNSView(context _: Context) -> MetalLayerBackedView {
@@ -243,6 +251,7 @@ struct MetalVideoLayerView: NSViewRepresentable {
         view.onWindowGeometryReady = onWindowGeometryReady
         // CONNECTION STATS: before activate so the first host cadence announcement reaches the model's FPS row.
         view.onStreamCadenceReady = onStreamCadenceReady
+        view.onStreamBitrateReady = onStreamBitrateReady
         // STALL SCRIM: before activate so a stall detected on the very first monitor tick reaches the model.
         view.onStreamStallReady = onStreamStallChanged
         view.activate(connection: connection)
@@ -287,8 +296,9 @@ struct MetalVideoLayerView: NSViewRepresentable {
         nsView.onViewportInjectorReady = onViewportInjectorReady
         // HOST-WINDOW RESIZE: keep the geometry push current (model persists per pane).
         nsView.onWindowGeometryReady = onWindowGeometryReady
-        // CONNECTION STATS: keep the cadence push current (model persists per pane).
+        // CONNECTION STATS: keep the cadence + bitrate pushes current (model persists per pane).
         nsView.onStreamCadenceReady = onStreamCadenceReady
+        nsView.onStreamBitrateReady = onStreamBitrateReady
         // STALL SCRIM: keep the stall push current (model persists per pane).
         nsView.onStreamStallReady = onStreamStallChanged
         nsView.activate(connection: connection)
@@ -404,6 +414,10 @@ final class MetalLayerBackedView: NSView {
     /// stream fps whenever the host's FPS governor announces a new value so the sidebar's Connection section
     /// shows a per-pane "FPS" row. Set by the representable.
     var onStreamCadenceReady: ((Int) -> Void)?
+    /// CONNECTION STATS: the canvas publishes a bitrate SINK through this — the view pushes the ~1 Hz
+    /// client-measured video PAYLOAD bitrate (kilobits/sec) for the titlebar's stream-weight complication.
+    /// Set by the representable.
+    var onStreamBitrateReady: ((Int) -> Void)?
     /// STALL SCRIM: the canvas publishes a stall SINK through this — the view pushes the pipeline's stall
     /// flips (`true` ⇒ host silent past threshold, show "Reconnecting…"; `false` ⇒ traffic resumed) so the
     /// pane can overlay/clear its scrim. Set by the representable.
@@ -618,6 +632,7 @@ final class MetalLayerBackedView: NSView {
         }
         // CONNECTION STATS: forward the host-announced stream cadence to the model's FPS row (no-op if unbound).
         pipeline.onStreamCadenceChanged = { [weak self] fps in self?.onStreamCadenceReady?(fps) }
+        pipeline.onStreamBitrateChanged = { [weak self] kbps in self?.onStreamBitrateReady?(kbps) }
         // STALL: drain THIS surface to grayscale (MERIDIAN L1 — the material says "stale", see
         // `applyStallDrain`) and forward the flip to the pane model (→ the corner age caption; no-op if
         // unbound). The closure reads the live `onStreamStallReady`, so updateNSView refreshing the seam
@@ -1307,8 +1322,9 @@ struct MetalVideoLayerView: UIViewRepresentable {
     var onInputReleaseReady: (((() -> Void)?) -> Void)?
     var onWindowGeometryReady: ((Double, Double, Double, Double) -> Void)?
     // Signature parity with the macOS representable. The iOS Connection section is not wired yet, so the
-    // host-cadence push is accepted + ignored here.
+    // host-cadence + bitrate pushes are accepted + ignored here.
     var onStreamCadenceReady: ((Int) -> Void)?
+    var onStreamBitrateReady: ((Int) -> Void)?
     // Signature parity with the macOS representable. The iOS pane has no scrim overlay wired yet, so the
     // stall push is accepted + ignored here.
     var onStreamStallChanged: ((Bool) -> Void)?

@@ -222,9 +222,11 @@ struct GuiLeafView: View {
                     onWindowGeometry: { [weak model] cw, ch, mw, mh in
                         model?.noteWindowGeometry(currentW: cw, currentH: ch, maxW: mw, maxH: mh)
                     },
-                    // CONNECTION STATS: the live view pushes the host-announced stream cadence so the sidebar's
-                    // Connection section shows this pane's FPS row (informational; not read-only-gated).
+                    // CONNECTION STATS: the live view pushes the host-announced stream cadence + the ~1 Hz
+                    // client-measured payload bitrate so the titlebar telemetry shows this pane's fps/Mbps
+                    // (informational; not read-only-gated).
                     onStreamCadence: { [weak model] fps in model?.noteStreamFps(fps) },
+                    onStreamBitrate: { [weak model] kbps in model?.noteStreamKbps(kbps) },
                     // STALL SCRIM: the live view pushes the stream's stall flips (host silent ↔ traffic
                     // resumed) so the overlay below shows/clears "Reconnecting…" (informational).
                     onStreamStall: { [weak model] stalled in model?.noteStreamStalled(stalled) },

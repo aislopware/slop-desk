@@ -95,6 +95,18 @@ public final class RemoteWindowModel {
         streamFps = fps
     }
 
+    /// CONNECTION STATS (2026-07-04): the client-measured video PAYLOAD bitrate (kilobits/sec), pushed
+    /// ~1 Hz by ``VideoWindowView``. Unlike ``streamFps`` a ZERO is a real reading (idle-skip = nothing
+    /// flows — the instrument shows the stream breathing), so it is kept; only a negative (nonsense)
+    /// value is dropped. `nil` until the first report lands.
+    public private(set) var streamKbps: Int?
+
+    /// Records one ~1 Hz bitrate reading. Only writes the observable on a real change.
+    public func noteStreamKbps(_ kbps: Int) {
+        guard kbps >= 0, streamKbps != kbps else { return }
+        streamKbps = kbps
+    }
+
     /// STALL SCRIM (2026-07-03, the reconnect-wedge residual): whether the stream is currently STALLED —
     /// the host went silent (no frame AND no 1 s host heartbeat) past the stall threshold, so the pane
     /// overlays a "Reconnecting…" scrim over the frozen last frame instead of looking healthy-but-dead.

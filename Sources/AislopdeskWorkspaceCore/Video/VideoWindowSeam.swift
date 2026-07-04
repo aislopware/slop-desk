@@ -122,6 +122,10 @@ public struct RemotePaneContext {
     /// a per-pane "FPS" row. Pure informational view→model push (never reaches the host), so it is NOT
     /// read-only-gated. `nil` ⇒ none.
     public var onStreamCadenceChanged: ((_ fps: Int) -> Void)?
+    /// CONNECTION STATS (2026-07-04): the live video view PUSHES the client-measured video PAYLOAD bitrate
+    /// (kilobits/sec, ~1 Hz) through this — the titlebar cluster's stream-weight complication. Pure
+    /// informational view→model push (never reaches the host), so it is NOT read-only-gated. `nil` ⇒ none.
+    public var onStreamBitrateChanged: ((_ kbps: Int) -> Void)?
     /// STALL SCRIM (2026-07-03): the live video view PUSHES the stream's stall state through this when it
     /// FLIPS — `true` ⇒ the host went silent past the stall threshold (the pane overlays "Reconnecting…"),
     /// `false` ⇒ traffic resumed. Pure informational view→model push (never reaches the host), so it is NOT
@@ -140,6 +144,7 @@ public struct RemotePaneContext {
         onInputReleaseReady: (((() -> Void)?) -> Void)? = nil,
         onWindowGeometryChanged: ((_ curW: Double, _ curH: Double, _ maxW: Double, _ maxH: Double) -> Void)? = nil,
         onStreamCadenceChanged: ((_ fps: Int) -> Void)? = nil,
+        onStreamBitrateChanged: ((_ kbps: Int) -> Void)? = nil,
         onStreamStallChanged: ((_ stalled: Bool) -> Void)? = nil,
     ) {
         self.isActive = isActive
@@ -153,6 +158,7 @@ public struct RemotePaneContext {
         self.onInputReleaseReady = onInputReleaseReady
         self.onWindowGeometryChanged = onWindowGeometryChanged
         self.onStreamCadenceChanged = onStreamCadenceChanged
+        self.onStreamBitrateChanged = onStreamBitrateChanged
         self.onStreamStallChanged = onStreamStallChanged
     }
 
@@ -184,6 +190,7 @@ public struct RemotePaneContext {
             -> Void = { _, _, _, _ in
             },
         onStreamCadence: @escaping (_ fps: Int) -> Void = { _ in },
+        onStreamBitrate: @escaping (_ kbps: Int) -> Void = { _ in },
         onStreamStall: @escaping (_ stalled: Bool) -> Void = { _ in },
     ) -> Self {
         Self(
@@ -206,9 +213,10 @@ public struct RemotePaneContext {
             // reaches the host, so it stays live even on a read-only pane (the popover is hidden anyway, but
             // the model's size mirror stays current for when the pane is unlocked).
             onWindowGeometryChanged: onWindowGeometry,
-            // CONNECTION STATS: the host-cadence push is informational (never reaches the host), so it stays
-            // live regardless of read-only — the Connection section's FPS row tracks the stream either way.
+            // CONNECTION STATS: the host-cadence + bitrate pushes are informational (never reach the host),
+            // so they stay live regardless of read-only — the titlebar telemetry tracks the stream either way.
             onStreamCadenceChanged: onStreamCadence,
+            onStreamBitrateChanged: onStreamBitrate,
             // STALL SCRIM: informational (never reaches the host) — stays live regardless of read-only, so
             // a locked pane still shows "Reconnecting…" when its host goes dark.
             onStreamStallChanged: onStreamStall,
