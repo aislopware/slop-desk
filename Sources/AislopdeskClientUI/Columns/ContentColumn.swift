@@ -21,7 +21,12 @@ struct ContentColumn: View {
     var body: some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Slate.Surface.window)
+            // MERIDIAN L5, scoped by user report ("title màu khác với pane ở dưới nhìn rất lạc quẻ"):
+            // the content column is the LIT FACE end-to-end — the titlebar band paints the PANE tone
+            // (`card`), never the dimmed chrome `window` tone. Panes are flush under the band (no gap, no
+            // radius), so a darker strip here reads as a mispainted header, not a housing; the dimmed
+            // housing is the SIDEBAR column only.
+            .background(Slate.Surface.card)
         #if os(macOS)
             // The hover-reveal titlebar floats as a TOP overlay. New-pane gestures (`+` / title-menu split)
             // mint an in-pane `.chooser` pane directly — the chooser is the pane's CONTENT, not a modal.

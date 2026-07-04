@@ -11,9 +11,13 @@
 // Design DNA — "clean / modern / minimalist", FLAT, relit by MERIDIAN L5 (2026-07-04):
 //   - FLAT pane: the terminal viewport fills its leaf edge-to-edge with NO corner radius and NO card;
 //     adjacent split panes are separated only by the hairline `PaneDivider`.
-//   - MERIDIAN L5 (depth by light, not lines): the CHROME (`window` = titlebar band, `sidebar`) sits ONE
-//     luminance step BELOW the pane surface (`card`/`content` = the seed background) — the pane is the lit
-//     face of the instrument, the chrome its unlit housing. The step IS the structure; no divider between.
+//   - MERIDIAN L5 (depth by light, not lines): the SIDEBAR column sits ONE luminance step BELOW the pane
+//     surface (`card`/`content` = the seed background) — the pane is the lit face of the instrument, the
+//     sidebar its unlit housing. The step IS the structure; no divider between. SCOPE (user report "title
+//     màu khác với pane… lạc quẻ"): the CONTENT column is lit end-to-end — its titlebar band paints the
+//     pane tone, because panes sit flush under it (no gap/radius) and a darker strip there reads as a
+//     mispainted header. `window` (== sidebar tone) remains the ground of AUXILIARY windows
+//     (Settings / first-launch / overlays), which are chrome, not pane.
 //   - 8pt grid; ultra-thin structure: borders ~6% opacity, hover ~4–5% — low contrast = minimalist.
 //   - Minimal palette: three text levels + an accent used ONLY for active state.
 //
@@ -218,10 +222,10 @@ struct SlateTheme: Equatable {
         // theme đang màu trắng / hardcode" report. Light filters keep a near-black structure line.
         let line = Color(slateHex: s.isLight ? 0x000000 : s.foreground)
         return Self(
-            // MERIDIAN L5 (depth by light, not lines): the CHROME (titlebar band + sidebar) recedes onto the
-            // seed's dimmed `sidebar` tone while the PANE surface (`card`/terminal bg) keeps the brighter
-            // seed `background` — the pane is the lit face of the instrument, the chrome its unlit housing.
-            // The luminance step IS the structure; no divider is added between them.
+            // MERIDIAN L5 (depth by light, not lines): the chrome ground (`window` — auxiliary windows;
+            // the sidebar column) recedes onto the seed's dimmed `sidebar` tone while the PANE surface
+            // (`card`/terminal bg) keeps the brighter seed `background` — the pane is the lit face of the
+            // instrument. The workspace CONTENT column paints `card`, not `window` (see ContentColumn).
             window: Color(slateHex: s.sidebar),
             sidebar: Color(slateHex: s.sidebar),
             content: Color(slateHex: s.background),
