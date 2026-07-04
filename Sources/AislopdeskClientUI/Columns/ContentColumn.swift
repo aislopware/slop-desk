@@ -26,11 +26,11 @@ struct ContentColumn: View {
 
     var body: some View {
         paneArea
-            // Card-canvas: pad by half the inter-card gap — with each card's own half-gap inset
-            // (SplitContainer) the outer margin equals the gap between split cards.
-            .padding(Slate.Metric.paneGap / 2)
+            // FLAT CANVAS (2026-07-04 v2): the pane area IS the column, edge-to-edge — the card-era
+            // half-gap outer margin is gone (content-to-chrome ratio wins; the researched
+            // Ghostty/Zed/macOS-27 direction — docs/research/ui-restructure-2026-07-04.md §2.1).
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Slate.Surface.margin)
+            .background(Slate.Surface.card)
     }
 
     private var paneArea: some View {

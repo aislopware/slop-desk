@@ -23,8 +23,8 @@ public struct WorkspaceRootView: View {
     let store: WorkspaceStore
     let connection: AppConnection
     /// The single ``OverlayCoordinator`` (command palette / cheat sheet / toasts / connect / remote-window
-    /// picker), built once at app `init` and injected into the scene env. WI-1 threads it so the iOS
-    /// connection pill (and any macOS status surface) can open the Connect-to-Host overlay via
+    /// picker), built once at app `init` and injected into the scene env. WI-1 threads it so the
+    /// ambient connection-status item (both platforms) can open the Connect-to-Host overlay via
     /// ``OverlayCoordinator/openConnect()``; the `OverlayHostView` mount that renders the panels lands in WI-5.
     let overlay: OverlayCoordinator
     /// The two split-collapse flags + the window-pin flag the toolbar toggles drive (read by the
@@ -310,7 +310,7 @@ public struct WorkspaceRootView: View {
 
     /// Upper clamp for the GUI column width — the detail region minus the content minimum + divider band.
     private var maxGuiWidth: CGFloat {
-        max(WorkspaceChromeState.minGuiWidth, detailWidth - Self.minContentWidth - Slate.Metric.paneGap)
+        max(WorkspaceChromeState.minGuiWidth, detailWidth - Self.minContentWidth - GuiPanelDivider.layoutWidth)
     }
 
     /// The detail region: the terminal content column + the RIGHT remote-windows column (TabSide
@@ -341,11 +341,10 @@ public struct WorkspaceRootView: View {
             .allowsHitTesting(!chrome.guiCollapsed)
             .clipped()
         }
-        // Card-canvas region rhythm: the WHOLE detail is one continuous margin surface — without this the
-        // divider band between the two themed columns showed a strip of the system window background (a
-        // gray slice cutting the backdrop in half). Cards gutter 8pt within a region; regions sit a
-        // double-gap (16pt) apart across the invisible divider band.
-        .background(Slate.Surface.margin)
+        // FLAT CANVAS (2026-07-04 v2): the WHOLE detail is one continuous theme surface — without this
+        // the collapse animation could flash a strip of the system window background between the two
+        // themed columns. The GuiPanelDivider hairline is the only visible seam.
+        .background(Slate.Surface.card)
         .animation(.easeInOut(duration: 0.2), value: chrome.guiCollapsed)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width
@@ -354,25 +353,25 @@ public struct WorkspaceRootView: View {
         }
     }
 
-    /// The native unified-toolbar items. The system sidebar toggle is provided by `NavigationSplitView`.
-    /// The connection-status cluster sits CENTRED in the titlebar (`.principal` — the Xcode activity-pill
-    /// seat: ambient window state reads from the middle, not from a corner); trailing keeps the actions:
-    /// pane actions and the windows-panel toggle at the far right (nearest the column it collapses —
+    /// The native unified-toolbar items (HIG three-zone model — UI restructure 2026-07-04): leading =
+    /// the system sidebar toggle + title/subtitle; CENTRE = empty (ambient status is not a headline —
+    /// the centred `.principal` pill was the researched anti-pattern); trailing = the ambient
+    /// connection-status item (the VS Code / Linear corner placement), a fixed spacer, then the actions
+    /// — pane actions and the windows-panel toggle at the far right (nearest the column it collapses —
     /// ⌘⇧E's clickable twin).
     @ToolbarContentBuilder
     private var macToolbar: some ToolbarContent {
-        ToolbarItem(placement: .principal) {
-            TitlebarConnectionCluster(
+        ToolbarItem {
+            ConnectionStatusItem(
                 connection: connection,
                 pingMS: activePingMS,
                 fps: activeFps,
                 onConnect: { overlay.openConnect() },
             )
         }
-        ToolbarItem {
+        ToolbarSpacer(.fixed)
+        ToolbarItemGroup {
             PaneActionsMenu(store: store)
-        }
-        ToolbarItem {
             Button {
                 chrome.toggleWindowsPanel()
             } label: {
@@ -533,10 +532,13 @@ public struct WorkspaceRootView: View {
     #if os(iOS)
     @ToolbarContentBuilder
     private var iosToolbar: some ToolbarContent {
-        // iOS uses NavigationSplitView's own column-visibility chrome; surface the connection pill + the
-        // agent indicator + a New-Tab affordance. (Sidebar/inspector toggles are the system idiom there.)
+        // iOS uses NavigationSplitView's own column-visibility chrome; surface the shared ambient
+        // connection item (the nav-bar centre IS the iOS status idiom, unlike macOS) + the agent
+        // indicator + a New-Tab affordance. (Sidebar/inspector toggles are the system idiom there.)
         ToolbarItem(placement: .principal) {
-            ConnectionStatusPill(connection: connection, pingMS: activePingMS, onTap: openConnect)
+            ConnectionStatusItem(
+                connection: connection, pingMS: activePingMS, fps: activeFps, onConnect: openConnect,
+            )
         }
         ToolbarItem(placement: .primaryAction) {
             if let symbol = StatusPresentation.agentSymbol(activeAgentStatus) {
@@ -573,7 +575,7 @@ public struct WorkspaceRootView: View {
 
     /// Opens the Connect-to-Host flow via the injected coordinator (sets `overlay.connectVisible`). The
     /// `ConnectHostView` the flag drives lands in WI-5; WI-1 only routes the affordance here. A give-up
-    /// state still runs Retry inside the pill itself.
+    /// state still surfaces a one-tap Retry beside the status item itself.
     private func openConnect() {
         overlay.openConnect()
     }
@@ -581,9 +583,9 @@ public struct WorkspaceRootView: View {
 
 #if os(macOS)
 /// The draggable divider between the terminal content column and the RIGHT remote-windows column —
-/// card-canvas region seam: INVISIBLE at rest (the continuous margin surface flows through the band; the
-/// double-gap gutter between the two regions IS the seam), an accent line only while actively dragging
-/// (the `PaneDivider` language), a column-resize pointer, and the commit-on-release resize discipline —
+/// flat-canvas region seam (2026-07-04 v2): a resting 1pt theme hairline (the `PaneDivider` language;
+/// the two columns tile edge-to-edge, so the hairline IS the seam), thickening to the accent line while
+/// actively dragging, a column-resize pointer, and the commit-on-release resize discipline —
 /// `setTerminalResizeSuspended` brackets the drag so the host gets ONE grid flush on settle, not one per
 /// frame. Double-click resets the column to its default width.
 private struct GuiPanelDivider: View {
@@ -591,6 +593,10 @@ private struct GuiPanelDivider: View {
     let store: WorkspaceStore
     /// Upper clamp for a drag (the detail width minus the content column's minimum).
     let maxWidth: CGFloat
+
+    /// The seam's LAYOUT width — a single hairline point; the grab target is the fat `contentShape`
+    /// band, not layout spacing (the flat canvas spends no visible gutter on the region seam).
+    static let layoutWidth: CGFloat = 1
 
     /// `true` for the duration of the gesture. SwiftUI auto-resets `@GestureState` on end/cancel, so the
     /// end-cleanup (unsuspend + flush) can never be skipped by a cancelled drag.
@@ -601,17 +607,18 @@ private struct GuiPanelDivider: View {
 
     var body: some View {
         Rectangle()
-            .fill(.clear)
-            .frame(width: Slate.Metric.paneGap)
+            .fill(Slate.Line.divider)
+            .frame(width: Self.layoutWidth)
+            // The drag affordance: the accent line thickens OVER the hairline (an overlay, so the 1pt
+            // layout band never shifts the columns while dragging).
             .overlay {
                 Rectangle()
                     .fill(gestureActive ? Color.accentColor : Color.clear)
                     .frame(width: 2)
             }
-            // The LAYOUT band is the region gutter (paneGap); the HIT band extends 4pt past each side —
-            // over margin backdrop only (the cards inset a further half-gap inside their columns), so a
-            // 16pt grab target costs no extra region spacing (the PaneDivider fat-hit-band rule).
-            .contentShape(Rectangle().inset(by: -4))
+            // The LAYOUT band is one hairline point; the HIT band extends 7pt past each side (a 15pt
+            // grab target that costs no visible region spacing — the PaneDivider fat-hit-band rule).
+            .contentShape(Rectangle().inset(by: -7))
             .pointerStyle(.columnResize)
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)

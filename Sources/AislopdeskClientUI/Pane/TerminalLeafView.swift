@@ -100,8 +100,8 @@ struct TerminalLeafView: View {
                 .padding(8)
             // NO per-pane status strip on a TERMINAL pane (issue: "pane footer cho terminal không có giá trị
             // gì lắm, nên bỏ đi"). The cwd / exit / progress cues are low-value chrome; the host + connection
-            // status — the only fields common to EVERY pane — now live ONCE in the sidebar's connection header
-            // (`NavigatorColumn` → `ConnectionStatusPill`), not duplicated per pane. The GUI/window pane keeps
+            // status — the only fields common to EVERY pane — live ONCE in the toolbar's ambient
+            // `ConnectionStatusItem`, not duplicated per pane. The GUI/window pane keeps
             // a bottom bar, but as a CONTROL bar (resize / lock / zoom), not a status strip.
         }
         .background(NativePaneColor.terminalBackground)

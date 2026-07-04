@@ -266,16 +266,18 @@ struct GuiLeafView: View {
 }
 
 /// STALL SCRIM (2026-07-03): the "Reconnecting…" veil over a live video surface whose host has gone
-/// silent (dead daemon / network drop — ``RemoteWindowModel/isStreamStalled``). A plain translucent
-/// black dim over the frozen last frame + a compact spinner/label card on `.regularMaterial` (native
-/// chrome; never `glassEffect` over the live Metal surface). Purely visual (the caller disables
+/// silent (dead daemon / network drop — ``RemoteWindowModel/isStreamStalled``). A translucent
+/// theme-derived dim over the frozen last frame + a compact spinner/label card on `.regularMaterial`
+/// (native chrome; never `glassEffect` over the live Metal surface). Purely visual (the caller disables
 /// hit-testing); recovery is automatic underneath (self-heal rebuild + hello retry), so there is
 /// deliberately no button here.
 private struct StreamStallScrim: View {
     var body: some View {
         ZStack {
-            // Dim the stale frame so it reads "not live" without hiding context entirely.
-            Color.black.opacity(0.6)
+            // Dim the stale frame so it reads "not live" without hiding context entirely. ONE scrim
+            // spec across the canvas (UI restructure 2026-07-04): the same theme-derived veil the
+            // resize scrim uses (`PaneResizeScrim`) — never a hardcoded black that fights a light theme.
+            NativePaneColor.terminalBackground.opacity(0.6)
             VStack(spacing: 12) {
                 ProgressView()
                     .controlSize(.small)

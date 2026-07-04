@@ -47,6 +47,23 @@ enum StatusPresentation {
         "Connection: \(host) — \(ConnectionPresenter.headline(for: status))"
     }
 
+    /// The ambient status item's trailing summary (``ConnectionStatusItem``): live metrics
+    /// ("9 ms · 30 fps", tertiary mono) when connected, else the status word ("connecting…",
+    /// "reconnecting 3/20") — the dropped-"connected" rule: a green dot + a ping already say it.
+    /// `nil` ⇒ connected with no sample yet (dot + host alone read as connected). Pure, so the
+    /// healthy-collapses / degraded-earns-space contract is unit-testable without rendering.
+    static func connectionSummary(
+        status: ConnectionStatus, pingMS: Double?, fps: Int?,
+    ) -> (text: String, isMetric: Bool)? {
+        if case .connected = status {
+            var metrics: [String] = []
+            if let pingMS { metrics.append("\(Int(pingMS.rounded())) ms") }
+            if let fps { metrics.append("\(fps) fps") }
+            return metrics.isEmpty ? nil : (metrics.joined(separator: " · "), true)
+        }
+        return (connectionLabel(status), false)
+    }
+
     // MARK: Agent (Claude Code)
 
     /// SF Symbol for an agent status. `nil` ⇒ render nothing (no active agent).

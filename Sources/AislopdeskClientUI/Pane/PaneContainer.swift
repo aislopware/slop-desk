@@ -1,12 +1,14 @@
-// PaneContainer — one placed leaf = a rounded floating pane CARD (card-canvas, 2026-07-04; replaces the
-// flat-era flush panel).
+// PaneContainer — one placed leaf, rendered FLAT and edge-to-edge (flat hairline canvas, 2026-07-04 v2;
+// replaces the one-day card-canvas — docs/research/ui-restructure-2026-07-04.md §2.1: the Ghostty/Zed
+// content-first school; no rounded card, no border, no shadow, no margin gutter).
 //
 // Resolves the pane's `LivePaneSession` handle + `PaneSpec` from the store, routes by pane kind to the
 // content view (terminal → `TerminalLeafView`; `.remoteGUI`/`.systemDialog` → the `VideoWindowFactory`
-// seam, else a native placeholder). The content is clipped to a continuous rounded rect on the theme card
-// fill, with a theme hairline border and a soft theme shadow, floating on the darker `Surface.margin`
-// backdrop (the SplitContainer/column gutter). In a SPLIT, focus = the accent border on the active card
-// (a lone pane draws no ring — nothing to disambiguate). Tap anywhere focuses the pane via the store.
+// seam, else a native placeholder). Panes tile the canvas fully on one continuous theme surface;
+// adjacent panes are separated by the `PaneDivider` resting hairline. In a SPLIT, focus reads as
+// CONTENT, not chrome: the UNFOCUSED siblings dim gently under a theme-background veil (Ghostty's
+// unfocused-split treatment, gentler); a lone pane never dims. Tap anywhere focuses the pane via the
+// store.
 //
 // The whole pane is keyed `.id(PaneID)` by the SplitContainer so the surface/connection are never reused
 // across panes (identity hazard). SYSTEM colours/fonts only.
@@ -34,9 +36,9 @@ struct PaneContainer: View {
     /// split add/remove, a zoom, a balance, a tab switch — the content has been resized and its (frozen /
     /// stretched) surface won't match until it re-renders, so the scrim is shown until things settle.
     var size: CGSize = .zero
-    /// Whether this pane is the ONLY compositor leaf of its tab (card-canvas): a lone card skips the
-    /// accent focus ring — there is no sibling to disambiguate from. Defaults `true` (ring off) so
-    /// standalone callers/previews render calm.
+    /// Whether this pane is the ONLY compositor leaf of its tab: a lone pane skips the unfocused dim —
+    /// there is no sibling to disambiguate from. Defaults `true` (dim off) so standalone
+    /// callers/previews render calm.
     var solo: Bool = true
     /// EAGER/STATIC render path for headless ImageRenderer snapshots.
     var staticMirror: Bool = false
@@ -139,6 +141,16 @@ struct PaneContainer: View {
         paneContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Slate.Surface.card)
+            // FLAT-CANVAS focus treatment: dim the UNFOCUSED siblings of a split under a gentle
+            // theme-background veil (the Ghostty unfocused-split dim, tuned subtler so a streamed
+            // window pane never reads as "broken"). Kept in the tree at opacity 0 (cheap). NO
+            // animation, deliberately: pane focus moves are keyboard-frequency actions — the
+            // zero-animation rule (docs/research/ui-restructure-2026-07-04.md §2.5).
+            .overlay {
+                Slate.Surface.card
+                    .opacity(isFocused || solo ? 0 : Self.unfocusedDim)
+                    .allowsHitTesting(false)
+            }
             // While this pane is mid-resize, cover its (frozen / stretched) surface with a calm scrim so the
             // moment reads as a deliberate "resizing" state, not a glitchy stretch. Kept in the tree at
             // opacity 0 (cheap) and faded in — never hit-tests, so taps / the divider gesture pass through.
@@ -193,25 +205,9 @@ struct PaneContainer: View {
             .onChange(of: dragging) { _, active in
                 if !active { resizedDuringDrag = false }
             }
-            // CARD-CANVAS (2026-07-04): clip the pane — content, scrim and drop overlays included — to a
-            // continuous rounded card. The clip masks the hosted libghostty / video CAMetalLayer too (the
-            // terminal surface keeps its own 8pt inner inset, so no corner glyph is ever cut). The border
-            // rides an overlay AFTER the clip (strokeBorder draws inward, never clipped): the theme
-            // hairline at rest, the accent ring on the FOCUSED card of a split (`solo` draws none — the
-            // ring only disambiguates siblings). Soft theme shadow lifts the card off the margin backdrop.
-            .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous)
-                    .strokeBorder(
-                        isFocusRinged ? Slate.State.accent.opacity(0.75) : Slate.Line.cardBorder,
-                        lineWidth: isFocusRinged ? 2 : 1,
-                    )
-                    .allowsHitTesting(false)
-            }
-            .shadow(color: Slate.Effect.panelShadow, radius: 5, x: 0, y: 2)
             // NO per-pane header bar (the active pane's title + split/close controls live in the titlebar
-            // `⋯` menu); adjacent split cards are separated by the `Metric.paneGap` gutter, with the
-            // `PaneDivider` hit band living between them.
+            // `⋯` menu); adjacent split panes are separated by the `PaneDivider` resting hairline drawn
+            // in its own layer above the tiled leaves.
             .contentShape(Rectangle())
             .onTapGesture { store.focusPaneTree(paneID) }
             // E18 WI-5/WI-6: accept external file/folder/URL/text drags. The receiver is disabled on the
@@ -229,11 +225,11 @@ struct PaneContainer: View {
                 terminalModel: live?.terminalModel,
                 overlayCoordinator: overlayCoordinator,
             ))
-            .animation(.easeInOut(duration: 0.2), value: isFocused)
     }
 
-    /// Whether the accent focus ring is drawn: the focused card of a SPLIT (card-canvas focus treatment —
-    /// replaces the flat-era top-left corner triangle). A `solo` card never rings.
-    private var isFocusRinged: Bool { isFocused && !solo }
+    /// The unfocused-sibling dim strength: a theme-background veil at this opacity over a split's
+    /// non-focused panes. Ghostty ships 0.3 (an `unfocused-split-opacity` of 0.7); ours is deliberately
+    /// gentler — a streamed remote-window pane is often watched while unfocused.
+    static let unfocusedDim: Double = 0.15
 }
 #endif

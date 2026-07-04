@@ -1,10 +1,10 @@
 // PaneStatusPills — the per-pane status pills that float in the pane's TOP-TRAILING overlay region (E17).
 //
 // The design reference mock places these in a window TITLEBAR's top-right corner
-// (`docs/ui-shell/screenshots/readonly-mode.png` and, later, `secure-input.png`). aislopdesk has NO persistent
-// titlebar — the window chrome is a hover-reveal strip and the pane is a flush, window-level surface — so the
-// EQUIVALENT placement is the pane's top-trailing overlay region (the same place the ⌘F find bar floats). This
-// file is the home for
+// (`docs/ui-shell/screenshots/readonly-mode.png` and, later, `secure-input.png`). The titlebar is native
+// system chrome now (native-chrome migration 2026-07-03) and these are PER-PANE states — a split can have
+// one locked and one live pane — so the placement is the affected pane's own top-trailing overlay region
+// (the same place the ⌘F find bar floats). This file is the home for
 // those pills: WI-3 ships ``ReadOnlyPill`` (the `🔒 READ ONLY ×` chip); WI-7 adds `SecureInputPill` beside it.
 //
 // NATIVE chrome (system semantic colors / text styles / materials — the 2026-07-03 native-chrome migration);

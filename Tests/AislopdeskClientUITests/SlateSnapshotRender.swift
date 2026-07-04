@@ -148,7 +148,7 @@ final class SlateSnapshotRender: XCTestCase {
     @MainActor
     private func scrimmed(_ panel: some View) -> some View {
         ZStack {
-            Slate.Surface.window
+            Slate.Surface.card // the one canvas surface (flat hairline canvas, 2026-07-04 v2)
             Color.black.opacity(0.25) // the host's dim scrim (native-chrome value)
             panel
         }

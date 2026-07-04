@@ -23,12 +23,11 @@ struct GuiColumn: View {
 
     var body: some View {
         paneArea
-            // Card-canvas: same half-gap outer margin as ContentColumn, so the video card floats on the
-            // margin backdrop with a uniform gutter — and TOP-ALIGNS with the terminal card across the
-            // region seam (no header band above it).
-            .padding(Slate.Metric.paneGap / 2)
+            // FLAT CANVAS (2026-07-04 v2): edge-to-edge like ContentColumn — one continuous canvas
+            // surface across both columns, separated only by the GuiPanelDivider hairline; the video
+            // pane TOP-ALIGNS with the terminal pane (no header band above it).
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Slate.Surface.margin)
+            .background(Slate.Surface.card)
     }
 
     // MARK: Pane area (the GUI side's compositor / empty state)
