@@ -1,7 +1,7 @@
 // TitlebarConnectionCluster — the titlebar's trailing connection-status cluster (the sidebar-footer
 // status line, reseated as window chrome on the traffic-light row). One whisper-quiet line: the host's
-// identity MONOGRAM (hash-hue plate; saturation = connection state) + the host in muted text + the live
-// telemetry ("9 ms · 30 fps") in tertiary
+// identity MONOGRAM (hash-hue plate; saturation = connection state — the plate IS the whole name, no
+// hostname text at rest) + the live telemetry ("9 ms · 30 fps") in tertiary
 // monospaced digits — or, when not connected, the status word ("Connecting…", "Unreachable") plus a
 // one-tap Retry in the give-up states. ALWAYS visible (not hover-gated like the pane controls): the
 // connection is ambient window state, and it must stay readable while the sidebar is collapsed. The
@@ -67,11 +67,9 @@ struct TitlebarConnectionCluster: View {
                     // permanent colour; its SATURATION is the connection state (connected = colour,
                     // else grayscale — L1 applied to identity). Replaces the status dot here — the
                     // plate is the one status pixel, the not-connected states keep their status WORD.
+                    // The plate is ALSO the whole name: no hostname text at rest (user: "chỉ để avatar
+                    // + ping cho đỡ tốn diện tích") — the full host lives in the hover tooltip.
                     SlateMonogram(identity: displayHost, live: isConnected)
-                    Text(displayHost)
-                        .font(.system(size: Slate.Typeface.base))
-                        .foregroundStyle(hover ? Slate.Text.primary : Slate.Text.secondary)
-                        .lineLimit(1).truncationMode(.middle)
                     if let trailing {
                         // The telemetry is a COMPLICATION (MERIDIAN L2): instrument voice for the numbers,
                         // prose voice for a status word. Its INSERTION rides the flood (below) with a small
