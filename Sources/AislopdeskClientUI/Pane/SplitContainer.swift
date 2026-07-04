@@ -35,6 +35,10 @@ struct SplitContainer: View {
     /// terminal-grid / remote-window redraw fires once on commit, not per drag frame.
     @State private var move: PaneMoveDrag?
 
+    /// CINEMATIC NAVIGATION (design-craft big-swing C, 2026-07-04): tab switches spring instead of
+    /// hard-cutting. Gated off under Reduce Motion and on the static snapshot path.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// EVERY tab of every RETAINED session (the active session + the LRU-retained previous ones — see
     /// ``WorkspaceStore/retainedSessionIDs``), in session-then-tab-bar order — narrowed to this
     /// container's ``side`` (a tab is rendered by exactly ONE container; the side derivation partitions).
@@ -77,10 +81,25 @@ struct SplitContainer: View {
             // re-feed that dropped an unfocused pane's prompt). PaneIDs are unique across a session's tabs, so
             // one ZStack keyed per-tab (and per-`PaneID` within) has no identity collision.
             ZStack {
-                ForEach(tabs) { tab in
+                let ordered = tabs
+                let shownIndex = ordered.firstIndex { $0.id == shownTabID }
+                ForEach(ordered) { tab in
                     let isShown = tab.id == shownTabID
+                    let index = ordered.firstIndex { $0.id == tab.id }
                     tabLayer(tab, isShown: isShown, in: bounds)
                         .opacity(isShown ? 1 : 0)
+                        // CINEMATIC NAVIGATION (big-swing C): a hidden tab PARKS slightly toward its rail
+                        // direction at 98.5% scale; revealing it springs it to identity, so a switch reads
+                        // as the new tab sliding in from where its sidebar row sits (down the rail ⇒ rises
+                        // in from below) while the old one recedes the opposite way. Pure render transforms
+                        // — the leaf frames never change, so no PTY/grid resize is ever triggered. Keyed on
+                        // `isShown` only (divider drags / solver re-rects never animate through this).
+                        .scaleEffect(isShown ? 1 : 0.985)
+                        .offset(y: isShown ? 0 : Self.parkOffset(index: index, shownIndex: shownIndex))
+                        .animation(
+                            reduceMotion || staticMirror ? nil : .spring(duration: 0.3, bounce: 0.12),
+                            value: isShown,
+                        )
                         .allowsHitTesting(isShown)
                         .accessibilityHidden(!isShown)
                         .id(tab.id) // OUTER key only — inner pane leaves stay keyed by PaneID
@@ -191,6 +210,15 @@ struct SplitContainer: View {
         // libghostty surface / `.remoteGUI` stream survives the zoom toggle and un-zoom is a pure
         // visibility flip (no teardown, no lossy ring-replay).
         .opacity(entry.isHidden ? 0 : 1)
+        // CINEMATIC NAVIGATION (big-swing C): zoom-hidden siblings recede (fade + slight shrink) and
+        // return with a spring instead of blinking. Transform+opacity ONLY, keyed on the hidden flip —
+        // the leaf's rect/frame is never animated (an animated frame would storm the PTY grid-resize
+        // path), so the zoomed pane itself snaps to its new rect and settles.
+        .scaleEffect(entry.isHidden ? 0.96 : 1)
+        .animation(
+            reduceMotion || staticMirror ? nil : .spring(duration: 0.3, bounce: 0.1),
+            value: entry.isHidden,
+        )
         .allowsHitTesting(!entry.isHidden)
         .accessibilityHidden(entry.isHidden)
         .id(entry.id) // identity hazard: never reuse a surface across panes
@@ -208,6 +236,15 @@ struct SplitContainer: View {
     /// then the move-handle / drag-overlay layer.
     static let dividerZ: Double = 10
     static let moveZ: Double = 20
+
+    /// CINEMATIC NAVIGATION (big-swing C): where a hidden tab PARKS, relative to the shown tab's rail
+    /// position — above the shown tab ⇒ parked slightly up, below ⇒ slightly down, so the reveal always
+    /// slides in from the direction the user travelled in the sidebar. Pure + static (headlessly
+    /// testable); unknown indices park in place (no directional cue, still a clean cross-fade).
+    static func parkOffset(index: Int?, shownIndex: Int?, magnitude: CGFloat = 14) -> CGFloat {
+        guard let index, let shownIndex, index != shownIndex else { return 0 }
+        return index < shownIndex ? -magnitude : magnitude
+    }
 
     /// Whether pane `paneID` (in `tab`) should own the renderer's keyboard focus — the guard that makes
     /// keep-all-mounted safe. TRUE only when `tab` is the ACTIVE tab AND `paneID` is that tab's `activePane`.
