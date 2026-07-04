@@ -261,9 +261,11 @@ final class MetadataWireMessageTests: XCTestCase {
         XCTAssertEqual(MetadataVerb.installAgentHooks.rawValue, 11)
         XCTAssertEqual(MetadataVerb.uninstallAgentHooks.rawValue, 12)
         XCTAssertEqual(MetadataVerb.agentHookStatus.rawValue, 13)
+        // MERIDIAN C2: the host-identity pure read (raw UTF-8 hostname payload, docs/20).
+        XCTAssertEqual(MetadataVerb.hostInfo.rawValue, 14)
         // Unknown verb bytes map to nil (caller answers unsupportedVerb) — never a trap.
         XCTAssertNil(MetadataVerb(rawValue: 0))
-        XCTAssertNil(MetadataVerb(rawValue: 14))
+        XCTAssertNil(MetadataVerb(rawValue: 15))
         XCTAssertNil(MetadataVerb(rawValue: 200))
     }
 

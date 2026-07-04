@@ -185,10 +185,11 @@ negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` who
     `UInt8` of `MetadataVerb`: `1` processes, `2` ports, `3` cwd, `4` gitStatus (subsumes branch +
     remote + repo toplevel + ahead/behind + changed files), `5` gitDiff, `6` listDirectory, `7` listAgentSessions,
     `8` readAgentSession — all **read-only** — plus the two **side-effecting** verbs `9` openPath and
-    `10` revealPath (E10), and the **agent-hooks** verbs `11` installAgentHooks / `12` uninstallAgentHooks
-    (side-effecting) / `13` agentHookStatus (a pure read returning a 2-byte flag payload) (E13). `payload` is the
+    `10` revealPath (E10), the **agent-hooks** verbs `11` installAgentHooks / `12` uninstallAgentHooks
+    (side-effecting) / `13` agentHookStatus (a pure read returning a 2-byte flag payload) (E13), and
+    `14` hostInfo (a **pure read** returning the host machine's own hostname). `payload` is the
     verb's length-prefixed argument — empty for the pane-scoped verbs (`processes`/`ports`/`cwd`/`gitStatus`)
-    AND for the host-global agent-hooks verbs (`installAgentHooks`/`uninstallAgentHooks`/`agentHookStatus`),
+    AND for the host-global verbs (`installAgentHooks`/`uninstallAgentHooks`/`agentHookStatus`/`hostInfo`),
     a UTF-8 path/id for the parameterized ones
     (`gitDiff`/`listDirectory`/`listAgentSessions`/`readAgentSession`), and a raw UTF-8 **absolute host
     path** for `openPath`/`revealPath`.
@@ -219,6 +220,13 @@ negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` who
     11/12/13 to a thin macOS shim (`HostAgentActionPerformer`) BEFORE the read-only responder; the iOS
     client routes install/uninstall/status TO the host over this same wire. **Claude Code only** (no
     codex/opencode install path is ever surfaced).
+  - **`hostInfo` (14) is a pane-agnostic pure read** (MERIDIAN C2 host identity): the host answers
+    status `ok` + its own hostname as raw UTF-8 (`ProcessInfo.hostName`, e.g. `mac-studio.local`;
+    `error` when unresolvable/empty). Empty request payload, **no cwd confinement** (only the machine's
+    name crosses the wire). The client chrome uses it so the titlebar monogram + label speak the host's
+    NAME even when the user connected by IP; an old host answers `unsupportedVerb` and the client falls
+    back to reverse-DNS, then the raw target host. Served by the read-only responder
+    (`MetadataResponseBuilder` → `HostMetadataProbe.hostName()`).
   - **`metadataResponse`** body = `[UInt32 BE requestID][UInt8 status][UInt32 BE payloadLen][payload]`.
     The host **always replies** (so the client's pending-request registry never hangs — `status =
     error`/empty on any failure). `status` is the raw `UInt8` of `MetadataStatus`: `0` ok, `1`

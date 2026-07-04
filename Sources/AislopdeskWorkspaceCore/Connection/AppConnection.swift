@@ -33,6 +33,21 @@ public final class AppConnection {
     /// The single app-wide status the gate + toolbar render.
     public private(set) var status: ConnectionStatus = .disconnected
 
+    /// The host's SHORT display name ("mac-studio") — the identity the titlebar monogram + label speak,
+    /// never the raw IP the user happened to type. Seeded synchronously from a typed hostname
+    /// (``HostDisplayName/shortLabel(_:)``); a typed IP literal resolves post-connect via the
+    /// ``hostInfoFetcher`` (the host's own `hostInfo` metadata verb — authoritative, works over any
+    /// mesh), with client reverse-DNS as the fallback for an old host. `nil` ⇒ unresolved — the chrome
+    /// falls back to ``target``'s raw host.
+    public private(set) var hostDisplayName: String?
+
+    /// App-shell seam: fetches the host's self-reported hostname over the metadata RPC (the first
+    /// connected pane's ``MetadataClient/hostInfo()``). `nil` result ⇒ no pane channel is open yet or
+    /// the host predates the verb — the resolver retries, then falls back to reverse-DNS. Injected by
+    /// the app shell after construction (the store owns the pane channels; same pattern as
+    /// ``onTargetCommitted``).
+    public var hostInfoFetcher: (@MainActor () async -> String?)?
+
     /// Invoked when a target is committed (a successful connect) so the store can persist it into
     /// ``Workspace/connection``. Set by the store after construction (avoids an init cycle).
     public var onTargetCommitted: (@MainActor (ConnectionTarget) -> Void)?
@@ -50,7 +65,44 @@ public final class AppConnection {
     private func markConnected() {
         let wasConnected = status == .connected
         status = .connected
-        if !wasConnected { onConnectionEstablished?() }
+        if !wasConnected {
+            onConnectionEstablished?()
+            resolveHostDisplayNameIfNeeded()
+        }
+    }
+
+    /// Seeds ``hostDisplayName`` for a freshly-committed target: a typed HOSTNAME shortens synchronously
+    /// (the identity is already known); a typed IP clears to `nil` until the post-connect reverse lookup
+    /// lands (or forever, if nothing answers — the chrome then shows the IP fallback).
+    private func seedHostDisplayName(for host: String) {
+        hostDisplayName = HostDisplayName.isIPLiteral(host) ? nil : HostDisplayName.shortLabel(host)
+    }
+
+    /// Resolves an IP target's hostname ONCE per connect transition (no-op when already known or the
+    /// target is a hostname). Asks the HOST first (`hostInfo` metadata verb — authoritative, mesh-
+    /// agnostic), retrying briefly because the first pane channel opens AFTER the app-level connect;
+    /// falls back to client reverse-DNS (mDNS) for a host that predates the verb. A stale result (the
+    /// target moved while a lookup ran) is dropped.
+    private func resolveHostDisplayNameIfNeeded() {
+        guard hostDisplayName == nil else { return }
+        let ip = target.host
+        Task { @MainActor [weak self] in
+            for attempt in 0..<10 {
+                guard let self, target.host == ip, hostDisplayName == nil else { return }
+                if let name = await hostInfoFetcher?(), !name.isEmpty {
+                    guard target.host == ip else { return }
+                    hostDisplayName = HostDisplayName.shortLabel(name)
+                    return
+                }
+                // Channels usually open within a beat of the connect; back off 1s → 3s after that.
+                try? await Task.sleep(for: .seconds(attempt == 0 ? 1 : 3))
+            }
+            guard let self, target.host == ip, hostDisplayName == nil,
+                  let name = await HostDisplayName.reverseResolve(ip),
+                  target.host == ip, hostDisplayName == nil
+            else { return }
+            hostDisplayName = name
+        }
     }
 
     // MARK: Collaborators
@@ -154,6 +206,7 @@ public final class AppConnection {
         status = .connecting
         deliberatelyClosed = false
         target = saved
+        seedHostDisplayName(for: saved.host)
         onTargetCommitted?(saved)
         connectGeneration &+= 1
         let gen = connectGeneration
@@ -202,6 +255,7 @@ public final class AppConnection {
         status = .connecting
         deliberatelyClosed = false
         target = t
+        seedHostDisplayName(for: t.host)
         onTargetCommitted?(t)
         connectGeneration &+= 1
         let gen = connectGeneration

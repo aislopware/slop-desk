@@ -82,6 +82,14 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// NO host file CONTENTS cross the wire (unlike the read verbs 5...8), only the two flag bytes —
     /// so it needs no cwd confinement.
     case agentHookStatus = 13
+    /// **Pure read (MERIDIAN C2).** The host's own hostname (`ProcessInfo.hostName`, e.g.
+    /// "mac-studio.local") — the durable identity the client chrome speaks (titlebar monogram + label)
+    /// when the user connected by IP. Request payload: empty (host-global, pane-agnostic). Response:
+    /// status `.ok` + the raw UTF-8 hostname string (opaque — no nested codec); `.error` when the name
+    /// is unresolvable. No cwd confinement needed — only the machine's name crosses the wire. An OLD
+    /// host answers `.unsupportedVerb` (forward-tolerance) and the client falls back to reverse-DNS /
+    /// the raw target host.
+    case hostInfo = 14
 }
 
 /// The outcome of a ``WireMessage/metadataResponse(requestID:status:payload:)`` (E4). The host ALWAYS

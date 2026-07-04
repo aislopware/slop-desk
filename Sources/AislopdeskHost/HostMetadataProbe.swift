@@ -342,6 +342,12 @@ struct HostMetadataProbe: MetadataQuerying {
         return Array(out.prefix(Self.maxSessions))
     }
 
+    func hostName() -> String? {
+        // The machine's own name ("mac-studio.local") — the `hostInfo` verb's answer. Pane-agnostic,
+        // no file access; `ProcessInfo` resolves it without a DNS round-trip.
+        ProcessInfo.processInfo.hostName
+    }
+
     func readAgentSession(id: String) -> Data? {
         // Defense in depth (the builder already rejected `..`): confine the resolved file to the known
         // session roots so an absolute id outside them can't exfiltrate an arbitrary host file.

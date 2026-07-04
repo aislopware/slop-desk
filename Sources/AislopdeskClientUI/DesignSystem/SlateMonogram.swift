@@ -15,9 +15,17 @@ enum MonogramIdentity {
     /// TWO initials for an identity string: the first letters of the first two separator-split components
     /// ("mac-studio" → "MS", "herdr.local" → "HL"), or the first two characters of a single-component name
     /// ("macstudio" → "MA"). Uppercased; an empty/separator-only identity falls back to "?".
+    ///
+    /// An ALL-NUMERIC dotted identity (an IP literal) degenerates under the first-letters rule — every
+    /// `192.168.*` host would read "11" — so the plate shows the LAST octet instead (last two digits at
+    /// most): that is the part that actually distinguishes machines on one subnet. The hash HUE still
+    /// covers the full string, so same-suffix hosts on different subnets stay different colours.
     static func initials(of identity: String) -> String {
         let parts = identity.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
         guard let first = parts.first else { return "?" }
+        if parts.count >= 2, parts.allSatisfy({ $0.allSatisfy(\.isNumber) }) {
+            return String((parts.last ?? first).suffix(2))
+        }
         if parts.count >= 2, let a = first.first, let b = parts[1].first {
             return String([a, b]).uppercased()
         }

@@ -20,9 +20,12 @@ final class SlateMonogramTests: XCTestCase {
         XCTAssertEqual(MonogramIdentity.initials(of: "m"), "M")
     }
 
-    func testInitialsOfNumericHostUseDigits() {
-        // An IP identity still gets a stable two-glyph plate (digits are legitimate initials).
-        XCTAssertEqual(MonogramIdentity.initials(of: "192.168.1.7"), "11")
+    func testInitialsOfIPLiteralUseLastOctet() {
+        // The first-letters rule DEGENERATES on IPs (every 192.168.* host → "11") — the distinguishing
+        // part of an IP is its LAST octet, so the plate shows that (last two digits at most).
+        XCTAssertEqual(MonogramIdentity.initials(of: "192.168.1.7"), "7")
+        XCTAssertEqual(MonogramIdentity.initials(of: "10.0.0.254"), "54")
+        XCTAssertEqual(MonogramIdentity.initials(of: "100.94.23.11"), "11")
     }
 
     func testInitialsFallBackForEmptyOrSeparatorOnlyIdentity() {

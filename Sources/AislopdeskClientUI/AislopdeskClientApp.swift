@@ -223,6 +223,14 @@ public struct AislopdeskClientApp: App {
         // keep-all-mounted, so without this fan-out a restored pane that gave up while the host was down stays
         // a dead, blank terminal behind a green pill until a manual per-pane Reconnect.
         appConnection.onConnectionEstablished = { [weak store] in store?.redialDisconnectedPanes() }
+        // MERIDIAN C2 host identity: the titlebar speaks the host's NAME even when the user connected by
+        // IP. The resolver asks the host itself over the metadata RPC (verb 14) through whichever pane
+        // carries a live channel — resolved at call time like the Agents card, so the fetcher survives
+        // pane churn/reconnects.
+        appConnection.hostInfoFetcher = { [weak store] in
+            guard let store, let client = Self.firstConnectedMetadataClient(store) else { return nil }
+            return await client.hostInfo()
+        }
         // Gate the scene-level "Reconnect Pane" command on the app being connected.
         store.isAppConnected = { [weak appConnection] in
             if case .connected = appConnection?.status { return true }

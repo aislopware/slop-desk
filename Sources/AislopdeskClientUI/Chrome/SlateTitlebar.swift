@@ -53,6 +53,9 @@ struct SlateTitlebar: View {
     /// host's FPS governor announces a value.
     private var activeFps: Int? { activeLive?.remoteWindow?.streamFps }
 
+    /// The active VIDEO pane's remote-window size (points); `nil` for a terminal pane / pre-handshake.
+    private var activeWindowSize: CGSize? { activeLive?.remoteWindow?.windowPointSize }
+
     private var activeTitle: String {
         guard let id = activePane else { return "~" }
         let spec = store.tree.activeSession?.specs[id]
@@ -93,6 +96,7 @@ struct SlateTitlebar: View {
                     connection: connection,
                     pingMS: activePingMS,
                     fps: activeFps,
+                    windowSize: activeWindowSize,
                     onConnect: onConnect,
                 )
                 .frame(maxWidth: .infinity, alignment: .trailing)

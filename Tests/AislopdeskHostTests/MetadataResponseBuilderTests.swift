@@ -56,6 +56,9 @@ final class MetadataResponseBuilderTests: XCTestCase {
             readAgentSessionCalls.append(id)
             return sessionBytes
         }
+
+        var hostNameValue: String? = "mac-studio.local"
+        func hostName() -> String? { hostNameValue }
     }
 
     // MARK: - Helpers
@@ -104,6 +107,24 @@ final class MetadataResponseBuilderTests: XCTestCase {
         fake.portList = [.init(port: 8080, proto: 0, procName: "node")]
         let r = response(MetadataResponseBuilder(query: fake), .ports)
         XCTAssertEqual(try MetadataCodec.decodePortList(r.payload), fake.portList)
+    }
+
+    func testHostInfoReturnsHostnameBytes() {
+        let fake = FakeQuery()
+        fake.hostNameValue = "mac-studio.local"
+        let r = response(MetadataResponseBuilder(query: fake), .hostInfo)
+        XCTAssertEqual(r.status, MetadataStatus.ok.rawValue)
+        XCTAssertEqual(String(data: r.payload, encoding: .utf8), "mac-studio.local")
+    }
+
+    func testHostInfoUnresolvableIsError() {
+        for value in [nil, ""] as [String?] {
+            let fake = FakeQuery()
+            fake.hostNameValue = value
+            let r = response(MetadataResponseBuilder(query: fake), .hostInfo)
+            XCTAssertEqual(r.status, MetadataStatus.error.rawValue)
+            XCTAssertTrue(r.payload.isEmpty)
+        }
     }
 
     func testCwdOkAndErrorWhenUnresolved() {

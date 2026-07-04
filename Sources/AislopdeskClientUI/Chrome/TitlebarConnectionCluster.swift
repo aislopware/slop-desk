@@ -22,20 +22,29 @@ struct TitlebarConnectionCluster: View {
     var pingMS: Double?
     /// The active VIDEO pane's host-announced stream cadence (frames/sec); `nil` for a terminal pane.
     var fps: Int?
+    /// The active VIDEO pane's remote-window size (points); `nil` for a terminal pane / pre-handshake.
+    var windowSize: CGSize?
     /// Opens the Connect-to-Host editor (pre-seeded with the current host/port).
     var onConnect: () -> Void = {}
 
     @State private var hover = false
 
     private var status: ConnectionStatus { connection.status }
+    /// The raw committed host (IP or name) — the tooltip/accessibility detail, never the display label.
     private var host: String { connection.target.host }
+    /// The identity the cluster SPEAKS (label + monogram): the resolved short hostname ("mac-studio"),
+    /// falling back to the raw target host only while unresolved (the user asked the chrome to talk
+    /// hostnames, not IPs).
+    private var displayHost: String { connection.hostDisplayName ?? host }
     private var isConnected: Bool { if case .connected = status { true } else { false } }
 
-    /// The live telemetry segments — ping (when known) then fps (when a live video pane is focused).
+    /// The live telemetry segments — ping (when known), then the focused video pane's stream cadence and
+    /// remote-window size (the window's useful numbers; absent for a terminal pane).
     private var metrics: [String] {
         var out: [String] = []
         if let pingMS { out.append("\(Int(pingMS.rounded())) ms") }
         if let fps { out.append("\(fps) fps") }
+        if let windowSize { out.append("\(Int(windowSize.width))×\(Int(windowSize.height))") }
         return out
     }
 
@@ -58,8 +67,8 @@ struct TitlebarConnectionCluster: View {
                     // permanent colour; its SATURATION is the connection state (connected = colour,
                     // else grayscale — L1 applied to identity). Replaces the status dot here — the
                     // plate is the one status pixel, the not-connected states keep their status WORD.
-                    SlateMonogram(identity: host, live: isConnected)
-                    Text(host)
+                    SlateMonogram(identity: displayHost, live: isConnected)
+                    Text(displayHost)
                         .font(.system(size: Slate.Typeface.base))
                         .foregroundStyle(hover ? Slate.Text.primary : Slate.Text.secondary)
                         .lineLimit(1).truncationMode(.middle)

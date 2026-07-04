@@ -32,6 +32,9 @@ protocol MetadataQuerying {
     /// The raw transcript bytes for session `id` (the id was checked free of `..` traversal; the probe
     /// additionally confines the resolved file to the known session roots). `nil` → `.notFound`.
     func readAgentSession(id: String) -> Data?
+    /// The host machine's own hostname (`hostInfo` verb; e.g. "mac-studio.local") — the client chrome's
+    /// durable host identity. `nil`/empty when unresolvable (the verb replies `.error`).
+    func hostName() -> String?
 }
 
 /// E4 — the PURE host responder for the metadata RPC. Maps a request `(verb, payload)` to a
@@ -147,6 +150,14 @@ struct MetadataResponseBuilder {
                 return reply(requestID, .notFound, Data())
             }
             return reply(requestID, .ok, cappedOpaque(bytes))
+
+        case .hostInfo:
+            // Pane-agnostic pure read: the machine's own name (no path argument, no confinement — only
+            // the hostname string crosses the wire).
+            guard let name = query.hostName(), !name.isEmpty else {
+                return reply(requestID, .error, Data())
+            }
+            return reply(requestID, .ok, Data(name.utf8))
 
         case .openPath,
              .revealPath:

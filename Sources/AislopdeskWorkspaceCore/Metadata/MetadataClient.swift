@@ -190,6 +190,15 @@ public final class MetadataClient {
         return AgentHookStatusReport(installed: installedFlag == 1, listenerActive: activeFlag == 1)
     }
 
+    /// The host's self-reported hostname (``MetadataVerb/hostInfo``; e.g. "mac-studio.local") — the
+    /// chrome's durable host identity when the user connected by IP. `nil` on any failure, INCLUDING an
+    /// old host answering `.unsupportedVerb` (the caller falls back to reverse-DNS / the raw target).
+    public func hostInfo() async -> String? {
+        let (status, payload) = await request(.hostInfo)
+        guard status == .ok, let name = String(data: payload, encoding: .utf8), !name.isEmpty else { return nil }
+        return name
+    }
+
     // MARK: Core round-trip
 
     /// The decoded `agentHookStatus` (verb 13) reply — the two flag bytes, typed (queue-safety
