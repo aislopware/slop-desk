@@ -80,6 +80,7 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         //    Holding priority above the content's default so window-resize grows the content, not the sidebar.
         let navigator = NSHostingController(rootView: NavigatorColumn(
             store: store, preferences: preferences, chrome: chrome,
+            connection: connection, onConnect: onConnect,
         ))
         let sidebarItem = NSSplitViewItem(viewController: navigator)
         sidebarItem.minimumThickness = Self.defaultSidebarWidth

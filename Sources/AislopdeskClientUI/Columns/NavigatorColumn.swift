@@ -47,9 +47,14 @@ struct NavigatorColumn: View {
     /// `NavigationSplitView` provides its own toggle) simply omits the button.
     var chrome: WorkspaceChromeState?
 
-    // (The connection status line that used to pin at the sidebar bottom moved to the titlebar's trailing
-    // ``TitlebarConnectionCluster`` — the single ambient home for host/status/telemetry, readable even while
-    // the sidebar is collapsed.)
+    /// The app-global connection — the SIDEBAR TOP is the connection cluster's resting home (leading-
+    /// aligned in a fixed-width column, so the ticking telemetry numbers can't layout-shift anything;
+    /// trailing-aligned in the titlebar they wiggled the cluster every second). While the sidebar is
+    /// COLLAPSED the titlebar hosts the fallback (`SlateTitlebar`) so the state never vanishes. Threaded
+    /// in by the split-view host like `preferences`; `nil` (previews / iOS) simply omits the cluster.
+    var connection: AppConnection?
+    /// Tapping the cluster opens the Connect-to-Host editor (``OverlayCoordinator/openConnect()``).
+    var onConnect: () -> Void = {}
 
     /// The transient sidebar search query — narrows the rows via the pure ``RailRowsBuilder/filtered`` (E6
     /// WI-5). View-local `@State`: it is a presentational filter, NOT row order (which lives on the store).
@@ -218,6 +223,21 @@ struct NavigatorColumn: View {
                 }
             }
             .frame(height: Slate.Metric.titlebarHeight)
+            // The connection cluster's RESTING HOME (its titlebar mount is the collapsed-sidebar fallback):
+            // monogram plate + live telemetry, leading-aligned above the TABS header. The outer `space2`
+            // plus the cluster's own inner `space2` lands the plate's left edge on the header text's 16pt
+            // margin. Fixed-width column + leading alignment ⇒ the ticking numbers shift nothing.
+            if let connection {
+                ConnectionCluster(
+                    connection: connection,
+                    pingMS: ConnectionTelemetry.pingMS(store),
+                    fps: ConnectionTelemetry.fps(store),
+                    kbps: ConnectionTelemetry.kbps(store),
+                    onConnect: onConnect,
+                )
+                .padding(.horizontal, Slate.Metric.space2)
+                .padding(.bottom, Slate.Metric.space2)
+            }
             HStack(spacing: 0) {
                 // MERIDIAN L2: the panel label speaks the INSTRUMENT voice (mono + wide tracking) — same
                 // register as `SlateSectionHeader`, one size up for the panel-level label.

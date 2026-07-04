@@ -1,4 +1,4 @@
-// TitlebarConnectionCluster — the titlebar's trailing connection-status cluster (the sidebar-footer
+// ConnectionCluster — the titlebar's trailing connection-status cluster (the sidebar-footer
 // status line, reseated as window chrome on the traffic-light row). One whisper-quiet line: the host's
 // identity MONOGRAM (hash-hue plate; saturation = connection state — the plate IS the whole name, no
 // hostname text at rest) + the live telemetry ("9 ms · 30 fps") in tertiary
@@ -13,7 +13,7 @@ import AislopdeskWorkspaceCore
 import SFSafeSymbols
 import SwiftUI
 
-struct TitlebarConnectionCluster: View {
+struct ConnectionCluster: View {
     /// The app-global connection. Reading `connection.status` (an `@Observable`) in `body` registers
     /// observation, so the cluster stays live; no `$`-binding is needed (plain property, not `@Bindable`).
     let connection: AppConnection

@@ -4,8 +4,10 @@
 //     toggle lives INSIDE the sidebar (`NavigatorColumn`'s traffic-light strip) — the button belongs to
 //     the panel it hides; the titlebar hosts it only when that panel is gone.
 //   • centre— the active tab's title as a `⋯` menu (working dir / split / move / find / close pane)
-//   • right — the ALWAYS-visible connection-status cluster (`TitlebarConnectionCluster`): dot + host +
-//     live ping/fps, tap → the Connect-to-Host editor. Ambient window state.
+//   • right — the connection cluster (`ConnectionCluster`), ONLY while the sidebar is collapsed. Its
+//     resting home is the SIDEBAR TOP (fixed-width column, leading-aligned — the ticking telemetry
+//     numbers can't shift anything there; trailing-aligned in the titlebar they wiggled the whole
+//     cluster every second). Same host-the-fallback pattern as the reopen button beside it.
 // The reopen button flips the shared `WorkspaceChromeState` flag that the split representable reads
 // to collapse the matching `NSSplitViewItem` — same machinery the old toolbar drove.
 
@@ -29,33 +31,6 @@ struct SlateTitlebar: View {
 
     /// The active tab's active pane id — drives the centre title + the menu's pane actions.
     private var activePane: PaneID? { store.tree.activeSession?.activeTab?.activePane }
-
-    /// The active pane's live session — resolves the per-pane connection telemetry the status cluster
-    /// shows: ping (per-pane channel RTT) and, for a GUI/video pane, the host stream cadence (fps).
-    private var activeLive: LivePaneSession? {
-        guard let id = activePane else { return nil }
-        return store.handle(for: id) as? LivePaneSession
-    }
-
-    /// The RTT (ms) for the status cluster. Prefers the ACTIVE pane's per-channel `latencyMS`, falling back
-    /// to ANY live pane's when the active pane has none — a `.remoteGUI` window pane has no terminal-channel
-    /// ping (`connection == nil`), so without this the ping would VANISH the moment you focus a window. Every
-    /// pane pings the SAME host, so a sibling terminal's RTT is representative; `.min()` keeps it
-    /// deterministic across the unordered registry.
-    private var activePingMS: Double? {
-        if let active = activeLive?.connection?.latencyMS { return active }
-        return store.allSessions
-            .compactMap { ($0 as? LivePaneSession)?.connection?.latencyMS }
-            .min()
-    }
-
-    /// The active VIDEO pane's host-announced stream cadence (fps); `nil` for a terminal pane / until the
-    /// host's FPS governor announces a value.
-    private var activeFps: Int? { activeLive?.remoteWindow?.streamFps }
-
-    /// The active VIDEO pane's client-measured stream bitrate (kbps, ~1 Hz); `nil` for a terminal pane /
-    /// until the first reading.
-    private var activeKbps: Int? { activeLive?.remoteWindow?.streamKbps }
 
     private var activeTitle: String {
         guard let id = activePane else { return "~" }
@@ -90,18 +65,19 @@ struct SlateTitlebar: View {
             TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
                 .padding(.top, rowTop)
 
-            // Right: the connection-status cluster, on the traffic-light row. ALWAYS visible (ambient
-            // window state — the single home for host/status/telemetry now the sidebar footer is gone).
-            if let connection {
-                TitlebarConnectionCluster(
+            // Right: the connection cluster — the COLLAPSED-SIDEBAR fallback only (its resting home is
+            // the sidebar top; the connection state must never vanish entirely, so the titlebar hosts it
+            // while that panel is gone — the same pattern as the reopen button on the left).
+            if let connection, !sidebarVisible {
+                ConnectionCluster(
                     connection: connection,
-                    pingMS: activePingMS,
-                    fps: activeFps,
-                    kbps: activeKbps,
+                    pingMS: ConnectionTelemetry.pingMS(store),
+                    fps: ConnectionTelemetry.fps(store),
+                    kbps: ConnectionTelemetry.kbps(store),
                     onConnect: onConnect,
                 )
                 .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.trailing, 12)
+                .padding(.trailing, Slate.Metric.space3)
                 .padding(.top, rowTop)
             }
         }
