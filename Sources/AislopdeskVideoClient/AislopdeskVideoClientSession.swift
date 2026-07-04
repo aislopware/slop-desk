@@ -165,6 +165,13 @@ public actor AislopdeskVideoClientSession {
         /// videohostd restart self-heals instead of freezing the pane with dead input. `nil` ⇒ no
         /// rebuild owner (standalone/preview) — the session just stays stopped.
         public var notifySessionEnded: (@Sendable () -> Void)?
+        /// STATS HUD (design-craft pass, 2026-07-04): a ~1 Hz sample for the pane's opt-in diagnostics
+        /// overlay — the video-transport smoothed RTT (ms) + the CUMULATIVE frames received /
+        /// FEC-recovered / unrecovered since bring-up. Purely informational (drives no policy); `nil` ⇒
+        /// no HUD wants it (standalone / preview).
+        public var notifyVideoStats: (@Sendable (
+            _ rttMS: Double, _ received: UInt64, _ recovered: UInt64, _ lost: UInt64,
+        ) -> Void)?
         @preconcurrency
         public init(
             submitDecodedFrame: @escaping @Sendable (CVImageBuffer) -> Void,
@@ -181,6 +188,9 @@ public actor AislopdeskVideoClientSession {
             notifyDecodedPoints: (@Sendable (VideoSize) -> Void)? = nil,
             notifyDisplayMax: (@Sendable (VideoSize) -> Void)? = nil,
             notifySessionEnded: (@Sendable () -> Void)? = nil,
+            notifyVideoStats: (@Sendable (
+                _ rttMS: Double, _ received: UInt64, _ recovered: UInt64, _ lost: UInt64,
+            ) -> Void)? = nil,
         ) {
             self.submitDecodedFrame = submitDecodedFrame
             self.applyCursor = applyCursor
@@ -196,6 +206,7 @@ public actor AislopdeskVideoClientSession {
             self.notifyDecodedPoints = notifyDecodedPoints
             self.notifyDisplayMax = notifyDisplayMax
             self.notifySessionEnded = notifySessionEnded
+            self.notifyVideoStats = notifyVideoStats
         }
     }
 
@@ -469,6 +480,12 @@ public actor AislopdeskVideoClientSession {
     /// The stream's content frame interval (ms) — seeds the owd-late threshold. Updated by the
     /// FPS governor's `streamCadence` message (`.applyStreamCadence`); 60 fps until announced.
     private var contentIntervalMs: Double = 1000.0 / 60.0
+    /// STATS HUD (design-craft pass, 2026-07-04): CUMULATIVE since bring-up (never reset per report,
+    /// unlike the `win*` window below) — the pane's diagnostics HUD shows totals, not 50 ms windows.
+    /// Wrapping adds by idiom (a u64 frame counter cannot realistically wrap; the guard costs nothing).
+    private var cumFramesReceived: UInt64 = 0
+    private var cumFecRecovered: UInt64 = 0
+    private var cumUnrecovered: UInt64 = 0
     /// Windowed counters reset after every report: frames completed / FEC-recovered / unrecovered.
     private var winFramesReceived: UInt32 = 0
     private var winFecRecovered: UInt32 = 0
@@ -657,12 +674,25 @@ public actor AislopdeskVideoClientSession {
     private func startNetworkStats() {
         networkStatsTask?.cancel()
         networkStatsTask = Task { [weak self] in
+            var tick = 0
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 50_000_000)
                 guard let self else { return }
                 await sendNetworkStatsIfStreaming()
+                // STATS HUD: publish the cumulative sample every ~1 s (20 × 50 ms), independent of the
+                // host-report `telemetryEnabled` gate — the local HUD must work with telemetry off.
+                tick += 1
+                if tick.isMultiple(of: 20) { await publishHUDStats() }
             }
         }
+    }
+
+    /// STATS HUD (design-craft pass, 2026-07-04): one ~1 Hz informational sample for the pane's opt-in
+    /// diagnostics overlay — smoothed video-transport RTT (ms) + the cumulative frame counters. Drives
+    /// no policy; skipped while media is not flowing (a stale sample would lie).
+    private func publishHUDStats() {
+        guard stateMachine.mediaFlowing else { return }
+        gui.notifyVideoStats?(rttEstimate * 1000, cumFramesReceived, cumFecRecovered, cumUnrecovered)
     }
 
     /// Sends one NetworkStats report iff streaming and telemetry is enabled, then RESETS the windowed
@@ -951,8 +981,10 @@ public actor AislopdeskVideoClientSession {
                 "frame reassembled #\(frame.frameID) (kf=\(frame.keyframe) ltr=\(frame.isLTR) fec=\(frame.recoveredViaFEC)) → decoding",
             )
             winFramesReceived &+= 1
+            cumFramesReceived &+= 1
             if frame.recoveredViaFEC {
                 winFecRecovered &+= 1
+                cumFecRecovered &+= 1
                 // Component 5: an FEC recovery is the EARLY-WARNING loss event — bursts produce
                 // several of these before the first unrecoverable frame, so the burst's first
                 // frozen episode already runs the halved escalation clock.
@@ -1009,6 +1041,7 @@ public actor AislopdeskVideoClientSession {
         dbg("frame #\(lost) declared LOST (unrecoverable)")
         // Network-feedback telemetry: count an unrecoverable loss (the loss-rate numerator).
         winUnrecovered &+= 1
+        cumUnrecovered &+= 1
         // Component 5: feed the loss-observing window (gates the halved escalation clock).
         lossWindow.noteEvent(now: FramePacer.currentHostTimeSeconds())
         // SELF-HEAL: record the loss boundary so a SUCCESSFULLY-decoded frame newer than every loss

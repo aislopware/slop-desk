@@ -468,6 +468,37 @@ final class RemoteWindowFilterTests: XCTestCase {
         XCTAssertTrue(one.contains("“xcode”"), "the filter is trimmed before display")
         XCTAssertTrue(one.contains("1 window."), "singular when exactly one window is hidden")
     }
+
+    // MARK: First-frame fade + stats HUD (design-craft pass, 2026-07-04)
+
+    private let target = ConnectionTarget(host: "h.local", port: 7420, mediaPort: 9000, cursorPort: 9001)
+
+    /// The first-frame latch: `noteFirstFrame()` flips once (idempotent), and a RE-OPEN re-arms it —
+    /// a re-picked / re-opened stream must fade in again, never hard-cut.
+    func testFirstFrameLatchAndReopenRearm() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        XCTAssertFalse(m.hasDecodedFirstFrame)
+        m.noteFirstFrame()
+        XCTAssertTrue(m.hasDecodedFirstFrame)
+        m.noteFirstFrame() // idempotent — still latched
+        XCTAssertTrue(m.hasDecodedFirstFrame)
+        m.open() // a (re-)open is a NEW bring-up ⇒ the fade re-arms
+        XCTAssertFalse(m.hasDecodedFirstFrame, "open() must re-arm the first-frame fade")
+    }
+
+    /// The stats sample: stored verbatim by `noteVideoStats`, and DROPPED on a re-open — the HUD must
+    /// never show the previous stream's numbers.
+    func testVideoStatsStoreAndReopenClear() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        XCTAssertNil(m.videoStats)
+        m.noteVideoStats(rttMS: 12.4, framesReceived: 900, fecRecovered: 3, unrecovered: 1)
+        XCTAssertEqual(
+            m.videoStats,
+            RemoteWindowModel.VideoStats(rttMS: 12.4, framesReceived: 900, fecRecovered: 3, unrecovered: 1),
+        )
+        m.open()
+        XCTAssertNil(m.videoStats, "open() must drop the previous stream's sample")
+    }
 }
 
 // MARK: - Test support

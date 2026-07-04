@@ -226,8 +226,41 @@ struct GuiLeafView: View {
                     // STALL SCRIM: the live view pushes the stream's stall flips (host silent ↔ traffic
                     // resumed) so the overlay below shows/clears "Reconnecting…" (informational).
                     onStreamStall: { [weak model] stalled in model?.noteStreamStalled(stalled) },
+                    // LETTERBOX TINT (design-craft pass, 2026-07-04): the theme card tone as plain sRGB so
+                    // the Metal letterbox clears to the card colour, not black. Parsed from the theme's
+                    // canonical hex (no SwiftUI Color crosses the seam); nil (malformed) ⇒ black fallback.
+                    letterboxTint: VideoPaneTint(hex: Slate.theme.terminalBackgroundHex),
+                    // FIRST FRAME: fade the video in from the card-colour cover on the first decoded frame.
+                    onFirstFrame: { [weak model] in model?.noteFirstFrame() },
+                    // STATS HUD: the ~1 Hz video-transport sample (RTT + cumulative FEC counters).
+                    onVideoStats: { [weak model] rtt, received, recovered, lost in
+                        model?.noteVideoStats(
+                            rttMS: rtt, framesReceived: received, fecRecovered: recovered, unrecovered: lost,
+                        )
+                    },
                 ),
             )
+            // FIRST-FRAME FADE-IN (design-craft pass, 2026-07-04): until the first decoded frame presents,
+            // a card-colour cover hides the pipeline's bring-up (blank layer / first-clear) so the stream
+            // FADES in as one deliberate moment instead of popping. Kept in the tree at opacity 0 (cheap),
+            // never hit-tests; re-armed per stream bring-up by the model (`noteStreamRestarting`).
+            .overlay {
+                NativePaneColor.terminalBackground
+                    .opacity(model?.hasDecodedFirstFrame == false ? 1 : 0)
+                    .allowsHitTesting(false)
+                    .animation(.easeOut(duration: 0.3), value: model?.hasDecodedFirstFrame ?? true)
+            }
+            // STATS HUD (design-craft pass, 2026-07-04): the opt-in diagnostics overlay — the
+            // Moonlight/Parsec idiom (power-user stats behind an explicit toggle, monospace HUD, never
+            // first-impression chrome). Top-LEADING so it never collides with the top-trailing pill stack.
+            .overlay(alignment: .topLeading) {
+                if !staticMirror, let model, model.statsHUDVisible {
+                    VideoStatsHUD(fps: model.streamFps, stats: model.videoStats)
+                        .padding(8)
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.15), value: model?.statsHUDVisible ?? false)
             // STALL SCRIM (the reconnect-wedge residual): while the host is silent past the stall threshold
             // the pane would otherwise look healthy-but-dead (a frozen last frame that swallows clicks).
             // A translucent veil + spinner card says "the client noticed; recovery is automatic" (the
@@ -294,6 +327,43 @@ private struct StreamStallScrim: View {
     }
 }
 
+/// STATS HUD (design-craft pass, 2026-07-04): the opt-in stream-diagnostics overlay — monospace digits
+/// on the shared glass chip, the Moonlight/Parsec power-user idiom. Shows the host-announced cadence +
+/// the ~1 Hz video-transport sample (RTT, cumulative FEC recovered / lost / received). Renders whatever
+/// subset is known so it is useful from the first second of a stream. Ticking digits roll via
+/// `.numericText` — never a full cross-fade.
+private struct VideoStatsHUD: View {
+    let fps: Int?
+    let stats: RemoteWindowModel.VideoStats?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if fps != nil || stats != nil {
+                Text(topLine)
+                    .contentTransition(.numericText())
+            }
+            if let stats {
+                Text("FEC \(stats.fecRecovered) · lost \(stats.unrecovered) · \(stats.framesReceived) frames")
+                    .contentTransition(.numericText())
+            }
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .glassPanel(radius: 6, shadowRadius: 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Stream statistics: \(topLine)")
+    }
+
+    private var topLine: String {
+        var parts: [String] = []
+        if let fps { parts.append("\(fps) fps") }
+        if let stats { parts.append("\(Int(stats.rttMS.rounded())) ms rtt") }
+        return parts.joined(separator: " · ")
+    }
+}
+
 /// The bottom CONTROL bar for a LIVE window pane (issue 5): the window controls that used to clutter the pane
 /// CONTENT — a "Resize…" button (opens a numeric size popover; replaced the old fiddly DRAG grip), a "lock
 /// position" toggle (freezes the edge-hover auto-pan), and zoom out / reset / in (client-side compositor zoom
@@ -343,6 +413,18 @@ private struct GuiPaneControlBar: View {
                 ) {
                     panLocked.toggle()
                     model.sendViewport(.toggleLock)
+                }
+            }
+            // STATS HUD toggle (design-craft pass, 2026-07-04): the opt-in diagnostics overlay — the
+            // Moonlight `Ctrl+Alt+Shift+S` idiom as a discoverable footer toggle. Model-held so the
+            // state survives tab switches.
+            if let model {
+                SlatePlateButton(
+                    symbol: .chartBarXaxis,
+                    help: model.statsHUDVisible ? "Hide stream stats" : "Show stream stats (fps · RTT · FEC)",
+                    tint: model.statsHUDVisible ? Color.accentColor : Color.secondary,
+                ) {
+                    model.statsHUDVisible.toggle()
                 }
             }
         }

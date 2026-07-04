@@ -108,6 +108,62 @@ public final class RemoteWindowModel {
         isStreamStalled = stalled
     }
 
+    // MARK: First frame + stats HUD (design-craft pass, 2026-07-04)
+
+    /// Whether the live view has presented its FIRST decoded frame for the current stream bring-up —
+    /// the pane fades the video in from its card-colour placeholder on the flip (never a hard cut from
+    /// blank to pixels). Reset by ``noteStreamRestarting()`` so a re-opened / self-healed stream fades
+    /// in again. Defaults `false`.
+    public private(set) var hasDecodedFirstFrame = false
+
+    /// Records the first decoded frame of a stream bring-up (idempotent — only the first flip writes).
+    public func noteFirstFrame() {
+        guard !hasDecodedFirstFrame else { return }
+        hasDecodedFirstFrame = true
+    }
+
+    /// Re-arms the first-frame fade for a NEW stream bring-up (open / re-pick / self-heal rebuild) and
+    /// drops the stale stats sample — the HUD must not show the previous stream's numbers.
+    public func noteStreamRestarting() {
+        hasDecodedFirstFrame = false
+        videoStats = nil
+    }
+
+    /// One ~1 Hz video-transport stats sample from the live view (design-craft pass, 2026-07-04): the
+    /// session's smoothed RTT + CUMULATIVE frame counters since bring-up. `nil` until the first sample.
+    public struct VideoStats: Equatable, Sendable {
+        /// Video-transport smoothed RTT, milliseconds (NOT the terminal control-channel ping).
+        public let rttMS: Double
+        /// Cumulative video frames received since stream bring-up.
+        public let framesReceived: UInt64
+        /// Cumulative frames recovered by FEC.
+        public let fecRecovered: UInt64
+        /// Cumulative frames lost beyond FEC (unrecovered).
+        public let unrecovered: UInt64
+
+        public init(rttMS: Double, framesReceived: UInt64, fecRecovered: UInt64, unrecovered: UInt64) {
+            self.rttMS = rttMS
+            self.framesReceived = framesReceived
+            self.fecRecovered = fecRecovered
+            self.unrecovered = unrecovered
+        }
+    }
+
+    /// The latest stats sample (see ``VideoStats``); `nil` until the live view pushes one.
+    public private(set) var videoStats: VideoStats?
+
+    /// Records a stats sample from the live view.
+    public func noteVideoStats(rttMS: Double, framesReceived: UInt64, fecRecovered: UInt64, unrecovered: UInt64) {
+        videoStats = VideoStats(
+            rttMS: rttMS, framesReceived: framesReceived, fecRecovered: fecRecovered, unrecovered: unrecovered,
+        )
+    }
+
+    /// Whether the opt-in diagnostics HUD overlays this pane (the Moonlight/Parsec idiom: power-user
+    /// stats behind an explicit toggle, never first-impression chrome). Lives on the MODEL so the
+    /// toggle survives tab switches; flipped by the pane's control-bar button.
+    public var statsHUDVisible = false
+
     /// Request an ABSOLUTE host-window POINT size from the "Resize…" popover (no-op when no sink is wired —
     /// the pane is not streaming or is read-only). The host clamps to the window's achievable min/max and
     /// re-anchors the window at its display origin so an up-to-display-max size takes.
@@ -328,6 +384,8 @@ public final class RemoteWindowModel {
     public func open() {
         guard let wid = parsedWindowID else { return }
         let t = target()
+        // A (re-)open is a NEW stream bring-up: re-arm the first-frame fade + drop the stale HUD sample.
+        noteStreamRestarting()
         active = RemoteWindowDescriptor(
             title: title.isEmpty ? "window \(wid)" : title,
             windowID: wid,

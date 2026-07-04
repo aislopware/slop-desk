@@ -140,6 +140,26 @@ final class VideoWindowPipeline {
     /// `activate`. (Same value that re-bases the pacer below — surfaced for display, not control.)
     var onStreamCadenceChanged: ((Int) -> Void)?
 
+    /// FIRST FRAME (design-craft pass, 2026-07-04): fired on the @MainActor ONCE per `activate` — on the
+    /// first decoded-size notification (which the session sends on the very first decoded frame, since
+    /// the size is always "new" then) — so the pane fades the video in from its card-colour cover.
+    /// Latched by ``firstFrameNotified``; re-armed by each `activate` (a self-heal rebuild fades again).
+    var onFirstFramePresented: (() -> Void)?
+    /// The per-activation latch behind ``onFirstFramePresented``.
+    private var firstFrameNotified = false
+
+    /// STATS HUD (design-craft pass, 2026-07-04): the session's ~1 Hz informational sample — smoothed
+    /// video-transport RTT (ms) + cumulative frames received / FEC-recovered / unrecovered. Forwarded on
+    /// the @MainActor to the pane model. Set by the view in `activate`.
+    var onVideoStats: ((_ rttMS: Double, _ received: UInt64, _ recovered: UInt64, _ lost: UInt64) -> Void)?
+
+    /// LETTERBOX TINT (design-craft pass, 2026-07-04): the theme card tone the renderer clears its
+    /// letterbox/pillarbox area to (`nil` ⇒ black, the prior default). Forwarded to the live renderer
+    /// immediately AND applied at the next `activate` (the renderer is rebuilt per activation).
+    var letterboxTint: (red: Double, green: Double, blue: Double)? {
+        didSet { renderer?.letterboxClear = letterboxTint }
+    }
+
     #if os(macOS)
     /// The LOCAL `NSCursor` mirroring the host's CURRENT cursor SHAPE (Parsec model: the OS draws it at
     /// the instant local mouse position, so the pointer never lags by an RTT). `nil` until the shape
@@ -220,6 +240,10 @@ final class VideoWindowPipeline {
             log.error("MetalVideoRenderer init failed — no Metal device")
             return
         }
+        // LETTERBOX TINT + FIRST-FRAME latch (design-craft pass, 2026-07-04): each activation builds a
+        // fresh renderer (apply the theme clear) and re-arms the one-shot first-frame notification.
+        renderer.letterboxClear = letterboxTint
+        firstFrameNotified = false
         let compositor = ClientCursorCompositor()
         #if !os(macOS)
         // iOS composites the host cursor POSITION as an overlay layer. macOS instead draws the host
@@ -489,7 +513,16 @@ final class VideoWindowPipeline {
             notifyDecodedPoints: { [weak self] points in
                 // ACTUAL-SIZE VIEWPORT: hop to main and hand the host window's point size to the view so
                 // it can auto-zoom the stream to 1:1 inside its fixed pane viewport (no-op if unbound).
-                Task { @MainActor in self?.onDecodedPointsChanged?(points) }
+                // FIRST FRAME: the session's first decoded-size notification IS the first decoded frame
+                // (the size is always "new" then) — fire the one-shot fade-in latch.
+                Task { @MainActor in
+                    guard let self else { return }
+                    if !self.firstFrameNotified {
+                        self.firstFrameNotified = true
+                        self.onFirstFramePresented?()
+                    }
+                    self.onDecodedPointsChanged?(points)
+                }
             },
             notifyDisplayMax: { [weak self] points in
                 // HOST-WINDOW RESIZE: hop to main and hand the captured window's display max (points) to
@@ -501,6 +534,10 @@ final class VideoWindowPipeline {
                 // WHOLE pipeline in place — fresh lane + hello + renderer/pacer/decoder — so a
                 // videohostd restart self-heals instead of freezing the pane with dead input.
                 Task { @MainActor in self?.rebuildAfterHostEndedSession() }
+            },
+            notifyVideoStats: { [weak self] rtt, received, recovered, lost in
+                // STATS HUD: hop to main and forward the ~1 Hz sample to the pane model (no-op if unbound).
+                Task { @MainActor in self?.onVideoStats?(rtt, received, recovered, lost) }
             },
         )
 

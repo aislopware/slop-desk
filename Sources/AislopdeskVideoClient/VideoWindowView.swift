@@ -116,6 +116,15 @@ public struct VideoWindowView: View {
     /// went silent past the stall threshold (show the pane's "Reconnecting…" scrim), `false` ⇒ traffic
     /// resumed (clear it). Sticky through the self-heal rebuild. `nil` ⇒ no canvas wired it.
     let onStreamStallChanged: ((_ stalled: Bool) -> Void)?
+    /// LETTERBOX TINT (design-craft pass, 2026-07-04): the theme card tone (plain sRGB components) the
+    /// Metal render pass clears its letterbox/pillarbox area to. `nil` ⇒ black (the prior default).
+    let letterboxTint: (red: Double, green: Double, blue: Double)?
+    /// FIRST FRAME: fired once per stream bring-up when the first decoded frame is ready — the pane
+    /// fades the video in from its card-colour cover. `nil` ⇒ no canvas wired it.
+    let onFirstFramePresented: (() -> Void)?
+    /// STATS HUD: the ~1 Hz informational sample (RTT ms + cumulative received/recovered/lost) for the
+    /// pane's opt-in diagnostics overlay. `nil` ⇒ no canvas wired it.
+    let onVideoStats: ((_ rttMS: Double, _ received: UInt64, _ recovered: UInt64, _ lost: UInt64) -> Void)?
 
     /// The existing seam signature (title-only): renders the Metal-backed view chrome
     /// without a live connection. Kept so `VideoWindowFactory` callers compile.
@@ -134,6 +143,9 @@ public struct VideoWindowView: View {
         onWindowGeometryReady = nil
         onStreamCadenceReady = nil
         onStreamStallChanged = nil
+        letterboxTint = nil
+        onFirstFramePresented = nil
+        onVideoStats = nil
     }
 
     /// Live remote-window view: brings up the orchestrator against `connection`. `isActive` /
@@ -154,6 +166,10 @@ public struct VideoWindowView: View {
         onWindowGeometryReady: ((_ curW: Double, _ curH: Double, _ maxW: Double, _ maxH: Double) -> Void)? = nil,
         onStreamCadenceReady: ((_ fps: Int) -> Void)? = nil,
         onStreamStallChanged: ((_ stalled: Bool) -> Void)? = nil,
+        letterboxTint: (red: Double, green: Double, blue: Double)? = nil,
+        onFirstFramePresented: (() -> Void)? = nil,
+        onVideoStats: ((_ rttMS: Double, _ received: UInt64, _ recovered: UInt64, _ lost: UInt64) -> Void)? =
+            nil,
     ) {
         self.title = title
         self.connection = connection
@@ -169,6 +185,9 @@ public struct VideoWindowView: View {
         self.onWindowGeometryReady = onWindowGeometryReady
         self.onStreamCadenceReady = onStreamCadenceReady
         self.onStreamStallChanged = onStreamStallChanged
+        self.letterboxTint = letterboxTint
+        self.onFirstFramePresented = onFirstFramePresented
+        self.onVideoStats = onVideoStats
     }
 
     /// Owns the control bridge for this view's lifetime; the backing view wires its closures.
@@ -195,6 +214,9 @@ public struct VideoWindowView: View {
             onWindowGeometryReady: onWindowGeometryReady,
             onStreamCadenceReady: onStreamCadenceReady,
             onStreamStallChanged: onStreamStallChanged,
+            letterboxTint: letterboxTint,
+            onFirstFramePresented: onFirstFramePresented,
+            onVideoStats: onVideoStats,
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityLabel(Text("Remote GUI window: \(title)"))
@@ -228,6 +250,9 @@ struct MetalVideoLayerView: NSViewRepresentable {
     var onWindowGeometryReady: ((Double, Double, Double, Double) -> Void)?
     var onStreamCadenceReady: ((Int) -> Void)?
     var onStreamStallChanged: ((Bool) -> Void)?
+    var letterboxTint: (red: Double, green: Double, blue: Double)?
+    var onFirstFramePresented: (() -> Void)?
+    var onVideoStats: ((Double, UInt64, UInt64, UInt64) -> Void)?
 
     func makeNSView(context _: Context) -> MetalLayerBackedView {
         let view = MetalLayerBackedView()
@@ -244,6 +269,11 @@ struct MetalVideoLayerView: NSViewRepresentable {
         view.onStreamCadenceReady = onStreamCadenceReady
         // STALL SCRIM: before activate so a stall detected on the very first monitor tick reaches the model.
         view.onStreamStallReady = onStreamStallChanged
+        // LETTERBOX TINT + FIRST FRAME + STATS HUD (design-craft pass, 2026-07-04): before activate so the
+        // fresh renderer clears to the theme tone from its first pass and the first decoded frame fires.
+        view.letterboxTint = letterboxTint
+        view.onFirstFrameReady = onFirstFramePresented
+        view.onVideoStatsReady = onVideoStats
         view.activate(connection: connection)
         // PASTE AS KEYSTROKES: publish a key-injection sink routed to THIS view's pipeline (the
         // `pipeline.key` guard no-ops until the session is up, so publishing now is safe). The
@@ -290,6 +320,11 @@ struct MetalVideoLayerView: NSViewRepresentable {
         nsView.onStreamCadenceReady = onStreamCadenceReady
         // STALL SCRIM: keep the stall push current (model persists per pane).
         nsView.onStreamStallReady = onStreamStallChanged
+        // LETTERBOX TINT + FIRST FRAME + STATS HUD: keep current (a THEME switch re-renders the seam with
+        // a new tint; the pipeline forwards it to the live renderer immediately).
+        nsView.letterboxTint = letterboxTint
+        nsView.onFirstFrameReady = onFirstFramePresented
+        nsView.onVideoStatsReady = onVideoStats
         nsView.activate(connection: connection)
         if inputGateFlipped {
             nsView.onKeyInjectorReady = onKeyInjectorReady
@@ -407,6 +442,18 @@ final class MetalLayerBackedView: NSView {
     /// flips (`true` ⇒ host silent past threshold, show "Reconnecting…"; `false` ⇒ traffic resumed) so the
     /// pane can overlay/clear its scrim. Set by the representable.
     var onStreamStallReady: ((Bool) -> Void)?
+    /// LETTERBOX TINT (design-craft pass, 2026-07-04): the theme card tone the renderer clears its
+    /// letterbox area to. Forwarded to the pipeline in `activate` and live on change (theme switch).
+    var letterboxTint: (red: Double, green: Double, blue: Double)? {
+        didSet { pipeline.letterboxTint = letterboxTint }
+    }
+
+    /// FIRST FRAME: the canvas publishes a one-shot first-frame SINK through this — the pane fades the
+    /// video in from its card-colour cover. Set by the representable.
+    var onFirstFrameReady: (() -> Void)?
+    /// STATS HUD: the canvas publishes a stats SINK through this — the ~1 Hz RTT + cumulative FEC
+    /// sample for the opt-in diagnostics overlay. Set by the representable.
+    var onVideoStatsReady: ((Double, UInt64, UInt64, UInt64) -> Void)?
     /// VIEWPORT CONTROLS: the canvas publishes a client-viewport command sink through this (and `nil` on
     /// teardown), so the pane's bottom control bar drives zoom / pan-lock. The byte is `RemoteWindowModel.
     /// ViewportCommand` (0 zoom-in / 1 zoom-out / 2 reset / 3 toggle-lock). Set by the representable.
@@ -597,6 +644,13 @@ final class MetalLayerBackedView: NSView {
         // STALL SCRIM: forward the pipeline's stall flips to the pane model (no-op if unbound). The closure
         // reads the live `onStreamStallReady`, so updateNSView refreshing the seam closure is picked up.
         pipeline.onStreamStallChanged = { [weak self] stalled in self?.onStreamStallReady?(stalled) }
+        // FIRST FRAME + STATS HUD (design-craft pass, 2026-07-04): forward the pipeline's one-shot
+        // first-frame latch + the ~1 Hz stats sample to the pane model (no-op if unbound). The closures
+        // read the live sinks, so updateNSView refreshing them is picked up.
+        pipeline.onFirstFramePresented = { [weak self] in self?.onFirstFrameReady?() }
+        pipeline.onVideoStats = { [weak self] rtt, received, recovered, lost in
+            self?.onVideoStatsReady?(rtt, received, recovered, lost)
+        }
         // Wire the SwiftUI overlay's buttons to THIS view's pipeline (live connection only). The fit/fill
         // toggle was removed (the ACTUAL-SIZE viewport auto-drives content mode), so only the 1× reset wires.
         if connection != nil, let controls {
@@ -1283,6 +1337,12 @@ struct MetalVideoLayerView: UIViewRepresentable {
     // Signature parity with the macOS representable. The iOS pane has no scrim overlay wired yet, so the
     // stall push is accepted + ignored here.
     var onStreamStallChanged: ((Bool) -> Void)?
+    // Signature parity with the macOS representable (design-craft pass, 2026-07-04). The iOS pipeline
+    // wiring for the letterbox tint / first-frame fade / stats HUD is not threaded yet — accepted +
+    // ignored here (the iOS pane keeps the prior black letterbox and hard first frame).
+    var letterboxTint: (red: Double, green: Double, blue: Double)?
+    var onFirstFramePresented: (() -> Void)?
+    var onVideoStats: ((Double, UInt64, UInt64, UInt64) -> Void)?
 
     func makeUIView(context _: Context) -> MetalLayerBackedView {
         let view = MetalLayerBackedView()
