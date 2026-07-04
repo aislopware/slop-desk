@@ -91,7 +91,6 @@ struct ClientAppMain {
                     onWindowGeometryReady: paneContext.onWindowGeometryChanged,
                     onStreamCadenceReady: paneContext.onStreamCadenceChanged,
                     onStreamBitrateReady: paneContext.onStreamBitrateChanged,
-                    onStreamPreviewReady: paneContext.onStreamPreviewChanged,
                     onStreamStallChanged: paneContext.onStreamStallChanged,
                 ))
             }
@@ -120,16 +119,6 @@ struct ClientAppMain {
                         height: $0.height,
                     )
                 }
-            }
-        }
-
-        // Window-preview seam (MERIDIAN C4 thumbnails): inject the one-shot snapshot fetch so the
-        // picker/sidebar shows thumbnails. `nil` result (old host / lost chunk) ⇒ monogram fallback.
-        MainActor.assumeIsolated {
-            RemoteWindowPreviews.shared = { host, mediaPort, cursorPort, windowID in
-                await VideoWindowDiscovery.discoverWindowPreview(
-                    host: host, mediaPort: mediaPort, cursorPort: cursorPort, windowID: windowID,
-                )
             }
         }
 

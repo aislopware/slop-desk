@@ -68,30 +68,26 @@ struct NavigatorColumn: View {
     // MARK: - WINDOWS section (MERIDIAN C4)
 
     /// The remote-GUI pane rows, rendered as the sidebar's SECOND section (TABS · WINDOWS — same row
-    /// anatomy, spec §3.6): the only difference is the leading identity plate (live thumbnail /
-    /// drained monogram). Narrowed by the same search query as the tab rows.
+    /// anatomy, spec §3.6): the only difference is the leading identity monogram. Narrowed by the same
+    /// search query as the tab rows.
     private func windowRows(from allRows: [RailRow]) -> [RailRow] {
         RailRowsBuilder.filtered(allRows.filter { $0.kind == .remoteGUI }, query: query)
     }
 
-    /// The per-pane live remote-window model (thumbnail / app name / stall state) — the same
+    /// The per-pane live remote-window model (app name / streaming / stall state) — the same
     /// store-registry lookup ``ConnectionTelemetry`` uses, per row instead of active-only.
     private func remoteModel(for row: RailRow) -> RemoteWindowModel? {
         (store.handle(for: row.id) as? LivePaneSession)?.remoteWindow
     }
 
-    /// The WINDOWS row's leading identity plate: the ~2 s live-stream sample when one exists, else the
-    /// owning app's monogram. `live` = actually streaming and not stalled — a stalled/closed stream's
-    /// plate drains to grayscale (MERIDIAN L1: colour is live data, grayscale is the past).
-    private func identityPlate(for row: RailRow) -> WindowIdentityPlate {
+    /// The WINDOWS row's leading identity monogram (the C2 identity system at row scale): hash-hue from
+    /// the owning app, saturation = actually streaming and not stalled (MERIDIAN L1 — colour is live
+    /// data; a stalled/closed stream's plate drains to grayscale).
+    private func identityMonogram(for row: RailRow) -> SlateMonogram {
         let model = remoteModel(for: row)
         let streaming = model?.active != nil && model?.isStreamStalled != true
         let identity = model?.appName.isEmpty == false ? model?.appName ?? row.title : row.title
-        return WindowIdentityPlate(
-            image: model?.liveThumbnail,
-            identity: identity,
-            live: streaming,
-        )
+        return SlateMonogram(identity: identity, live: streaming)
     }
 
     var body: some View {
@@ -226,7 +222,7 @@ struct NavigatorColumn: View {
     private var macSidebar: some View {
         let allRows = RailRowsBuilder.rows(for: store)
         // TABS · WINDOWS (MERIDIAN C4): remote-GUI pane rows leave the tab list for their own section
-        // below — same anatomy, the leading identity plate is the only difference (spec §3.6).
+        // below — same anatomy, the leading identity monogram is the only difference (spec §3.6).
         let tabRows = allRows.filter { $0.kind != .remoteGUI }
         let windows = windowRows(from: allRows)
         let sections = buildSections(tabRows, query: query)
@@ -307,8 +303,8 @@ struct NavigatorColumn: View {
                             }
                         }
                         // The WINDOWS section (MERIDIAN C4): open remote-window panes, same row anatomy
-                        // with the live-thumbnail/monogram plate. Not drag-reorderable — manual order is
-                        // a TABS affordance; a window row's home is this derived section.
+                        // with the identity monogram. Not drag-reorderable — manual order is a TABS
+                        // affordance; a window row's home is this derived section.
                         if !windows.isEmpty {
                             SlateSectionHeader("Windows")
                             ForEach(windows) { row in
@@ -352,8 +348,8 @@ struct NavigatorColumn: View {
     }
 
     /// One macOS WINDOWS row (MERIDIAN C4): the SAME `SlateTabRow` chrome as a tab row (rename / badge /
-    /// hover close / context menu all included) plus the leading identity plate, with the owning APP as
-    /// the instrument-voice subtitle. NOT wrapped `reorderable` — manual order is a TABS affordance.
+    /// hover close / context menu all included) plus the leading identity monogram, with the owning APP
+    /// as the instrument-voice subtitle. NOT wrapped `reorderable` — manual order is a TABS affordance.
     private func windowRow(_ row: RailRow) -> some View {
         let model = remoteModel(for: row)
         return SlateTabRow(
@@ -365,7 +361,7 @@ struct NavigatorColumn: View {
             readOnly: row.readOnly,
             isEditing: row.isEditing,
             helpText: row.cwd,
-            identityPlate: identityPlate(for: row),
+            identityPlate: identityMonogram(for: row),
             onSelect: { select(row.id) },
             onClose: { store.requestClosePaneTree(row.id) },
             onRename: { commitRename(row, to: $0) },
@@ -388,7 +384,7 @@ struct NavigatorColumn: View {
     private var iosSidebar: some View {
         let allRows = RailRowsBuilder.rows(for: store)
         // TABS · WINDOWS (MERIDIAN C4) — same split as the macOS panel: remote-GUI pane rows render in
-        // their own trailing section (iOS keeps the system list rows; the thumbnail plate is macOS-only).
+        // their own trailing section (iOS keeps the system list rows).
         let tabRows = allRows.filter { $0.kind != .remoteGUI }
         let windows = windowRows(from: allRows)
         let sections = buildSections(tabRows, query: query)

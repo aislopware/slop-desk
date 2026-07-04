@@ -3946,24 +3946,6 @@
       ],
       "hex": "0c000100000009019000c801000d53656375726974794167656e740000",
       "variant": "systemDialogList"
-    },
-    {
-      "hex": "100000025c0140cafef00d",
-      "maxEdge": 320,
-      "token": 3405705229,
-      "variant": "windowPreviewRequest",
-      "windowID": 604
-    },
-    {
-      "chunkCount": 3,
-      "chunkIndex": 1,
-      "hex": "11cafef00d0000025c014000c8000100030006ffd8ffe00010",
-      "imageHeight": 200,
-      "imageWidth": 320,
-      "payloadHex": "ffd8ffe00010",
-      "token": 3405705229,
-      "variant": "windowPreviewChunk",
-      "windowID": 604
     }
   ],
   "virtualDisplayGeometry": [

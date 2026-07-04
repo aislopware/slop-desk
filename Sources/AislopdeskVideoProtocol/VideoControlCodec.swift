@@ -53,10 +53,6 @@ import Foundation
 /// type 13 scrollOffset:  UInt16 dx | UInt16 dy | UInt16 bandTop | UInt16 bandBottom
 ///                            (dx/dy are i16 stored as a bit-preserving u16; decode casts back)
 /// type 14 contentMask:   UInt16 count | per rect: UInt16 x | UInt16 y | UInt16 w | UInt16 h
-/// type 16 windowPreviewRequest: UInt32 windowID | UInt16 maxEdge | UInt32 token
-/// type 17 windowPreviewChunk:   UInt32 token | UInt32 windowID | UInt16 imageWidth
-///                            | UInt16 imageHeight | UInt16 chunkIndex | UInt16 chunkCount
-///                            | UInt16 payloadLen | payload bytes
 /// ```
 ///
 /// Liveness keepalive (additive after the resize pair — CONCURRENCY-HOST-1 crash-without-bye):
@@ -219,41 +215,6 @@ public enum VideoControlMessage: Equatable, Sendable {
     /// achieve (paired with the host's resize-to-display-origin so that maximum is reachable). Inert to an
     /// old peer (unknown type → dropped); a client that never receives it simply leaves its fields uncapped.
     case displayMax(width: UInt16, height: UInt16)
-    /// Client → host: "send me a one-shot thumbnail of window `windowID`" — a session-LESS request
-    /// (the host answers with ``windowPreviewChunk(token:windowID:imageWidth:imageHeight:chunkIndex:chunkCount:payload:)``
-    /// datagrams WITHOUT minting a capture session), mirroring ``listWindows``. Carries the remote-window
-    /// picker's thumbnail grid + the sidebar WINDOWS rows (MERIDIAN C4). `maxEdge` caps the snapshot's
-    /// longer point dimension (the host may answer smaller, never bigger). `token` is client-minted and
-    /// echoed on every reply chunk so a late reply to an EARLIER request for the same window can't be
-    /// stitched into the current one. An old host drops it (unknown type) → the client times out and
-    /// falls back to the monogram plate.
-    case windowPreviewRequest(windowID: UInt32, maxEdge: UInt16, token: UInt32)
-    /// Host → client: one chunk of a JPEG-encoded window snapshot, in response to
-    /// ``windowPreviewRequest(windowID:maxEdge:token:)``. The control channel is NOT packetized, so the
-    /// host splits the image across `chunkCount` datagrams of ≤ ``VideoControlMessage/previewChunkPayloadMax``
-    /// payload bytes each; the client reassembles by `(token, chunkIndex)` and decodes once all arrive.
-    /// Plain UDP, no FEC/retransmit — a lost chunk simply drops the preview (the client re-requests or
-    /// keeps the monogram; a thumbnail is decorative, never load-bearing). `imageWidth`/`imageHeight`
-    /// are the DECODED pixel dimensions (so the client can reserve layout before decode).
-    case windowPreviewChunk(
-        token: UInt32,
-        windowID: UInt32,
-        imageWidth: UInt16,
-        imageHeight: UInt16,
-        chunkIndex: UInt16,
-        chunkCount: UInt16,
-        payload: Data,
-    )
-
-    /// The per-datagram payload budget for ``windowPreviewChunk``: header + payload must clear the
-    /// WireGuard-mesh path MTU (~1420) with margin, so a chunk datagram never IP-fragments (one lost
-    /// fragment would kill the whole datagram). Shared by the host's chunker and the client's
-    /// validate-then-drop bound.
-    public static let previewChunkPayloadMax = 1100
-    /// The maximum `chunkCount` a peer will accept/emit for one preview (caps the reassembly buffer an
-    /// untrusted datagram can make the client allocate: 64 × 1100 B ≈ 70 KiB). The host re-encodes at
-    /// lower quality until the JPEG fits.
-    public static let previewChunkCountMax = 64
 
     public var messageType: UInt8 {
         switch self {
@@ -272,8 +233,6 @@ public enum VideoControlMessage: Equatable, Sendable {
         case .scrollOffset: 13
         case .contentMask: 14
         case .displayMax: 15
-        case .windowPreviewRequest: 16
-        case .windowPreviewChunk: 17
         }
     }
 
@@ -362,20 +321,6 @@ public enum VideoControlMessage: Equatable, Sendable {
         case let .displayMax(width, height):
             out.appendBE(width)
             out.appendBE(height)
-        case let .windowPreviewRequest(windowID, maxEdge, token):
-            out.appendBE(windowID)
-            out.appendBE(maxEdge)
-            out.appendBE(token)
-        case let .windowPreviewChunk(token, windowID, imageWidth, imageHeight, chunkIndex, chunkCount, payload):
-            // The CALLER (host) must keep `payload` ≤ `previewChunkPayloadMax` (control is not
-            // packetized); the length prefix is truncated to UInt16 like the record strings.
-            out.appendBE(token)
-            out.appendBE(windowID)
-            out.appendBE(imageWidth)
-            out.appendBE(imageHeight)
-            out.appendBE(chunkIndex)
-            out.appendBE(chunkCount)
-            out.appendVideoControlLengthPrefixed(payload)
         }
         return out
     }
@@ -500,31 +445,6 @@ public enum VideoControlMessage: Equatable, Sendable {
             let w = try reader.readUInt16()
             let h = try reader.readUInt16()
             return .displayMax(width: w, height: h)
-        case 16:
-            let windowID = try reader.readUInt32()
-            let maxEdge = try reader.readUInt16()
-            let token = try reader.readUInt32()
-            return .windowPreviewRequest(windowID: windowID, maxEdge: maxEdge, token: token)
-        case 17:
-            let token = try reader.readUInt32()
-            let windowID = try reader.readUInt32()
-            let iw = try reader.readUInt16()
-            let ih = try reader.readUInt16()
-            let chunkIndex = try reader.readUInt16()
-            let chunkCount = try reader.readUInt16()
-            // The payload length prefix is validated against the remaining datagram BEFORE the read
-            // (same discipline as the record strings) — a corrupt/oversized prefix throws `.truncated`
-            // and DROPS the datagram rather than over-reading.
-            let payload = try reader.readVideoControlLengthPrefixedBytes()
-            return .windowPreviewChunk(
-                token: token,
-                windowID: windowID,
-                imageWidth: iw,
-                imageHeight: ih,
-                chunkIndex: chunkIndex,
-                chunkCount: chunkCount,
-                payload: payload,
-            )
         default:
             throw VideoProtocolError.malformed("unknown video control message type \(type)")
         }
@@ -548,16 +468,6 @@ private extension Data {
         appendBE(UInt16(bytes.count))
         append(contentsOf: bytes)
     }
-
-    /// Appends a `UInt16`-length-prefixed RAW byte payload (the binary twin of the string helper,
-    /// carrying `windowPreviewChunk` JPEG chunks). Over-long input truncates at the prefix ceiling —
-    /// the chunker never emits more than ``VideoControlMessage/previewChunkPayloadMax`` so this only
-    /// guards a pathological caller.
-    mutating func appendVideoControlLengthPrefixed(_ payload: Data) {
-        let bytes = payload.count > Int(UInt16.max) ? payload.prefix(Int(UInt16.max)) : payload[...]
-        appendBE(UInt16(bytes.count))
-        append(contentsOf: bytes)
-    }
 }
 
 private extension VideoByteReader {
@@ -575,13 +485,5 @@ private extension VideoByteReader {
         // which would diverge from the core's lossy parity, so the lossy initializer is kept on purpose.
         // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: bytes, as: UTF8.self)
-    }
-
-    /// Reads a `UInt16`-length-prefixed RAW byte payload (counterpart to the `Data` append overload).
-    /// The length is validated against the remaining buffer BEFORE the read, so a corrupt prefix
-    /// throws ``VideoProtocolError/truncated`` and the datagram is dropped — never over-read.
-    mutating func readVideoControlLengthPrefixedBytes() throws -> Data {
-        let len = try Int(readUInt16())
-        return try Data(readBytes(len))
     }
 }

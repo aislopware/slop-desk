@@ -116,9 +116,6 @@ public struct VideoWindowView: View {
     /// CONNECTION STATS: the live view pushes the client-measured video PAYLOAD bitrate (kilobits/sec,
     /// ~1 Hz) here — the titlebar cluster's stream-weight complication. `nil` ⇒ no canvas wired it.
     let onStreamBitrateReady: ((_ kbps: Int) -> Void)?
-    /// LIVE THUMBNAIL (MERIDIAN C4): the live view pushes a small CGImage sampled ~every 2 s from the
-    /// decoded stream here — the sidebar WINDOWS row's live plate. `nil` ⇒ no canvas wired it.
-    let onStreamPreviewReady: ((_ image: CGImage) -> Void)?
     /// STALL SCRIM: the live view pushes the stream's stall state here when it FLIPS — `true` ⇒ the host
     /// went silent past the stall threshold (show the pane's "Reconnecting…" scrim), `false` ⇒ traffic
     /// resumed (clear it). Sticky through the self-heal rebuild. `nil` ⇒ no canvas wired it.
@@ -141,7 +138,6 @@ public struct VideoWindowView: View {
         onWindowGeometryReady = nil
         onStreamCadenceReady = nil
         onStreamBitrateReady = nil
-        onStreamPreviewReady = nil
         onStreamStallChanged = nil
     }
 
@@ -163,7 +159,6 @@ public struct VideoWindowView: View {
         onWindowGeometryReady: ((_ curW: Double, _ curH: Double, _ maxW: Double, _ maxH: Double) -> Void)? = nil,
         onStreamCadenceReady: ((_ fps: Int) -> Void)? = nil,
         onStreamBitrateReady: ((_ kbps: Int) -> Void)? = nil,
-        onStreamPreviewReady: ((_ image: CGImage) -> Void)? = nil,
         onStreamStallChanged: ((_ stalled: Bool) -> Void)? = nil,
     ) {
         self.title = title
@@ -180,7 +175,6 @@ public struct VideoWindowView: View {
         self.onWindowGeometryReady = onWindowGeometryReady
         self.onStreamCadenceReady = onStreamCadenceReady
         self.onStreamBitrateReady = onStreamBitrateReady
-        self.onStreamPreviewReady = onStreamPreviewReady
         self.onStreamStallChanged = onStreamStallChanged
     }
 
@@ -208,7 +202,6 @@ public struct VideoWindowView: View {
             onWindowGeometryReady: onWindowGeometryReady,
             onStreamCadenceReady: onStreamCadenceReady,
             onStreamBitrateReady: onStreamBitrateReady,
-            onStreamPreviewReady: onStreamPreviewReady,
             onStreamStallChanged: onStreamStallChanged,
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -243,7 +236,6 @@ struct MetalVideoLayerView: NSViewRepresentable {
     var onWindowGeometryReady: ((Double, Double, Double, Double) -> Void)?
     var onStreamCadenceReady: ((Int) -> Void)?
     var onStreamBitrateReady: ((Int) -> Void)?
-    var onStreamPreviewReady: ((CGImage) -> Void)?
     var onStreamStallChanged: ((Bool) -> Void)?
 
     func makeNSView(context _: Context) -> MetalLayerBackedView {
@@ -260,7 +252,6 @@ struct MetalVideoLayerView: NSViewRepresentable {
         // CONNECTION STATS: before activate so the first host cadence announcement reaches the model's FPS row.
         view.onStreamCadenceReady = onStreamCadenceReady
         view.onStreamBitrateReady = onStreamBitrateReady
-        view.onStreamPreviewReady = onStreamPreviewReady
         // STALL SCRIM: before activate so a stall detected on the very first monitor tick reaches the model.
         view.onStreamStallReady = onStreamStallChanged
         view.activate(connection: connection)
@@ -308,7 +299,6 @@ struct MetalVideoLayerView: NSViewRepresentable {
         // CONNECTION STATS: keep the cadence + bitrate pushes current (model persists per pane).
         nsView.onStreamCadenceReady = onStreamCadenceReady
         nsView.onStreamBitrateReady = onStreamBitrateReady
-        nsView.onStreamPreviewReady = onStreamPreviewReady
         // STALL SCRIM: keep the stall push current (model persists per pane).
         nsView.onStreamStallReady = onStreamStallChanged
         nsView.activate(connection: connection)
@@ -428,7 +418,6 @@ final class MetalLayerBackedView: NSView {
     /// client-measured video PAYLOAD bitrate (kilobits/sec) for the titlebar's stream-weight complication.
     /// Set by the representable.
     var onStreamBitrateReady: ((Int) -> Void)?
-    var onStreamPreviewReady: ((CGImage) -> Void)?
     /// STALL SCRIM: the canvas publishes a stall SINK through this — the view pushes the pipeline's stall
     /// flips (`true` ⇒ host silent past threshold, show "Reconnecting…"; `false` ⇒ traffic resumed) so the
     /// pane can overlay/clear its scrim. Set by the representable.
@@ -644,9 +633,6 @@ final class MetalLayerBackedView: NSView {
         // CONNECTION STATS: forward the host-announced stream cadence to the model's FPS row (no-op if unbound).
         pipeline.onStreamCadenceChanged = { [weak self] fps in self?.onStreamCadenceReady?(fps) }
         pipeline.onStreamBitrateChanged = { [weak self] kbps in self?.onStreamBitrateReady?(kbps) }
-        // LIVE THUMBNAIL (MERIDIAN C4): forward the ~2 s decoded-stream sample to the pane model (→ the
-        // sidebar WINDOWS row's live plate; no-op if unbound). Reads the live closure like the stats hooks.
-        pipeline.onStreamPreviewChanged = { [weak self] image in self?.onStreamPreviewReady?(image) }
         // STALL: drain THIS surface to grayscale (MERIDIAN L1 — the material says "stale", see
         // `applyStallDrain`) and forward the flip to the pane model (→ the corner age caption; no-op if
         // unbound). The closure reads the live `onStreamStallReady`, so updateNSView refreshing the seam
@@ -1339,7 +1325,6 @@ struct MetalVideoLayerView: UIViewRepresentable {
     // host-cadence + bitrate pushes are accepted + ignored here.
     var onStreamCadenceReady: ((Int) -> Void)?
     var onStreamBitrateReady: ((Int) -> Void)?
-    var onStreamPreviewReady: ((CGImage) -> Void)?
     // Signature parity with the macOS representable. The iOS pane has no scrim overlay wired yet, so the
     // stall push is accepted + ignored here.
     var onStreamStallChanged: ((Bool) -> Void)?

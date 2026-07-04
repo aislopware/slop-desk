@@ -80,45 +80,4 @@ struct SlateMonogram: View {
             .accessibilityHidden(true) // decorative — the owning cluster carries the host/status label
     }
 }
-
-/// The WINDOWS-row identity plate (MERIDIAN C4): the LIVE stream thumbnail when one has been sampled,
-/// else the identity monogram — "monogram yields to the live picture" (the Screens-5 lesson), and the
-/// fallback IS the identity system, never a spinner. A STALLED stream keeps its last frame but drains
-/// it to grayscale (MERIDIAN L1: colour = live data, grayscale = the past) — same law the pane's Metal
-/// layer applies, spoken at row scale.
-struct WindowIdentityPlate: View {
-    /// The last sampled live-stream frame (`RemoteWindowModel.liveThumbnail`). `nil` ⇒ monogram.
-    let image: CGImage?
-    /// The identity behind the monogram fallback (the window's owning app name).
-    let identity: String
-    /// Whether the stream is LIVE right now (streaming and not stalled) — saturation on.
-    var live = false
-
-    /// Fixed leading-accessory footprint: wide enough to read as a picture, short enough for the
-    /// `heightRow` 32pt single-line row.
-    private static let plateSize = CGSize(width: 40, height: 26)
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                .fill(Slate.Surface.raised)
-            if let image {
-                Image(decorative: image, scale: 1)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: Self.plateSize.width, height: Self.plateSize.height)
-                    .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall))
-                    .saturation(live ? 1 : 0) // stalled/closed stream = the past = grayscale (L1)
-            } else {
-                SlateMonogram(identity: identity, live: live)
-            }
-        }
-        .frame(width: Self.plateSize.width, height: Self.plateSize.height)
-        .overlay(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
-        )
-        .accessibilityHidden(true) // decorative — the row carries the window's title/app text
-    }
-}
 #endif
