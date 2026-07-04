@@ -8,11 +8,12 @@
 //   • `.paper`'s hand-tuned "Paper" light palette.
 //   • `Slate.Anim` → the exact timing curves (no springs anywhere).
 //
-// Design DNA — "clean / modern / minimalist", FLAT:
-//   - FLAT pane: the terminal viewport fills its leaf edge-to-edge with NO corner radius and NO card — its
-//     surface (`card`) is the SAME colour as the backdrop beneath it (`window`/`content`), so a pane never
-//     reads as a floating panel. Adjacent split panes are separated only by the hairline `PaneDivider`.
-//   - ONE backdrop: sidebar + titlebar + the pane area share one flat background (no per-section fills).
+// Design DNA — "clean / modern / minimalist", FLAT, relit by MERIDIAN L5 (2026-07-04):
+//   - FLAT pane: the terminal viewport fills its leaf edge-to-edge with NO corner radius and NO card;
+//     adjacent split panes are separated only by the hairline `PaneDivider`.
+//   - MERIDIAN L5 (depth by light, not lines): the CHROME (`window` = titlebar band, `sidebar`) sits ONE
+//     luminance step BELOW the pane surface (`card`/`content` = the seed background) — the pane is the lit
+//     face of the instrument, the chrome its unlit housing. The step IS the structure; no divider between.
 //   - 8pt grid; ultra-thin structure: borders ~6% opacity, hover ~4–5% — low contrast = minimalist.
 //   - Minimal palette: three text levels + an accent used ONLY for active state.
 //
@@ -96,7 +97,8 @@ struct SlateTheme: Equatable {
     /// "Paper" — the original warm off-white + green light palette; kept as a selectable theme (the default
     /// is now Monokai Pro Classic).
     static let paper = Self(
-        window: Color(slateHex: 0xFCFBF9),
+        // MERIDIAN L5: chrome recedes onto the sidebar tone; the pane keeps the brighter paper (`card`).
+        window: Color(slateHex: 0xF5F4F0),
         sidebar: Color(slateHex: 0xF5F4F0),
         content: Color(slateHex: 0xFCFBF9),
         card: Color(slateHex: 0xFCFBF9), // terminal surface = warm paper — flush, borderless panel (flat: no card look)
@@ -138,8 +140,10 @@ struct SlateTheme: Equatable {
 
     /// Dark — neutral grays + system-blue accent, opacity-based structure.
     static let dark = Self(
-        window: Color(slateHex: 0x161616),
-        sidebar: Color(slateHex: 0x1C1C1C),
+        // MERIDIAN L5: chrome DARKER than the pane surface (0x161616) — inverted from the old
+        // sidebar-lighter-than-window layout so the pane reads as the lit face.
+        window: Color(slateHex: 0x111111),
+        sidebar: Color(slateHex: 0x111111),
         content: Color(slateHex: 0x121212),
         card: Color(slateHex: 0x161616), // FLAT: pane surface == window backdrop (flat design, no card)
         selectedCard: Color(slateHex: 0x2A2A2A), // active-tab card = slightly elevated panel on the dark sidebar
@@ -184,8 +188,8 @@ struct SlateTheme: Equatable {
 
     /// The seed colours a Monokai Pro filter contributes; every other chrome role is DERIVED from these with
     /// the shared structure opacities, so all variants have identical chrome geometry — only the hues change.
-    /// FLAT by construction: `window == content == card == background`, so a pane's surface matches the
-    /// backdrop beneath it (flat design — no floating card, no corner radius).
+    /// MERIDIAN L5: `content == card == background` (the lit pane face) while `window == sidebar` (the
+    /// dimmed chrome housing) — one luminance step, no divider, no floating card, no corner radius.
     private struct MonokaiSeed {
         let name: String
         let background: UInt32 // window + content + card (the one flat background)
@@ -214,7 +218,11 @@ struct SlateTheme: Equatable {
         // theme đang màu trắng / hardcode" report. Light filters keep a near-black structure line.
         let line = Color(slateHex: s.isLight ? 0x000000 : s.foreground)
         return Self(
-            window: Color(slateHex: s.background),
+            // MERIDIAN L5 (depth by light, not lines): the CHROME (titlebar band + sidebar) recedes onto the
+            // seed's dimmed `sidebar` tone while the PANE surface (`card`/terminal bg) keeps the brighter
+            // seed `background` — the pane is the lit face of the instrument, the chrome its unlit housing.
+            // The luminance step IS the structure; no divider is added between them.
+            window: Color(slateHex: s.sidebar),
             sidebar: Color(slateHex: s.sidebar),
             content: Color(slateHex: s.background),
             card: Color(slateHex: s.background), // FLAT: pane surface == backdrop
@@ -442,6 +450,18 @@ enum Slate {
         /// Captions, kbd hints, tab subtext.
         static let small: CGFloat = 10
         static let mono = "JetBrains Mono"
+
+        /// MERIDIAN L2 (typography is the only ornament) — the INSTRUMENT voice: every number, caps
+        /// micro-label, keycap and technical subtitle (cwd / git line / host-app / telemetry) renders in the
+        /// mono face, the "engraved on the tool" register that separates data from prose. Numbers stay
+        /// tabular by the face itself. Prose (titles, menus, sentences) keeps the system face.
+        static func instrument(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+            .custom(mono, size: size).weight(weight)
+        }
+
+        /// Tracking (pt) for caps micro-labels set in the instrument voice ("TABS", section headers,
+        /// status captions) — wide enough to read as engraving, applied ONLY to all-caps labels.
+        static let instrumentTracking: CGFloat = 1.2
     }
 
     /// Animation timing — extracted verbatim from `ReplicaKit.Anim` (cubic-bezier, NO springs anywhere).
@@ -458,6 +478,9 @@ enum Slate {
         static let smallFade = Animation.timingCurve(0, 0, 0.58, 1, duration: 0.12)
         /// Divider / plate hover — EaseInEaseOut 0.16s.
         static let dividerHover = Animation.timingCurve(0.42, 0, 0.58, 1, duration: 0.16)
+        /// MERIDIAN L4 "needle" — the mechanical settle used for the ONE orchestrated moment (the connect
+        /// handshake's colour-in). Fast attack, long decel, no overshoot (no springs anywhere).
+        static let needle = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.24)
     }
 }
 
