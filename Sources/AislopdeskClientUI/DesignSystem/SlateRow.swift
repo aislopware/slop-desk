@@ -24,6 +24,12 @@ struct SlateListRow<Leading: View, Title: View, Trailing: View>: View {
     var active = false
     /// The muted truncating-middle second line (cwd / git line / host app). `nil`/empty ⇒ single-line row.
     var subtitle: String?
+    /// An optional COLOURED rendering of the same second line — used by the git line to tint its status
+    /// tokens (`↑ahead` / `↓behind` / `· N changed`) while the branch inherits the row's muted secondary
+    /// (MERIDIAN "colour = state, not ornament"). When present it renders in place of ``subtitle`` but keeps
+    /// the SAME instrument font + secondary default, so a caller can only supply per-run COLOUR, never restyle
+    /// the voice. Its plain text MUST equal ``subtitle`` (the height/search/truncation still key on that).
+    var subtitleColored: AttributedString?
     /// Tap action for the whole row. `nil` ⇒ no-op (a presentation-only row).
     var onTap: (() -> Void)?
     @ViewBuilder let leading: () -> Leading
@@ -40,7 +46,9 @@ struct SlateListRow<Leading: View, Title: View, Trailing: View>: View {
             VStack(alignment: .leading, spacing: 1) {
                 title()
                 if hasSubtitle {
-                    Text(subtitle ?? "")
+                    // The COLOURED git line (when supplied) renders in place of the plain string — same
+                    // instrument font, same secondary default, only per-run status colour differs.
+                    (subtitleColored.map(Text.init) ?? Text(subtitle ?? ""))
                         .font(Slate.Typeface.instrument(Slate.Typeface.small))
                         .foregroundStyle(Slate.Text.secondary)
                         .lineLimit(1)
@@ -76,12 +84,13 @@ extension SlateListRow where Leading == EmptyView {
     init(
         active: Bool = false,
         subtitle: String? = nil,
+        subtitleColored: AttributedString? = nil,
         onTap: (() -> Void)? = nil,
         @ViewBuilder title: @escaping () -> Title,
         @ViewBuilder trailing: @escaping (_ hovering: Bool) -> Trailing,
     ) {
         self.init(
-            active: active, subtitle: subtitle, onTap: onTap,
+            active: active, subtitle: subtitle, subtitleColored: subtitleColored, onTap: onTap,
             leading: { EmptyView() }, title: title, trailing: trailing,
         )
     }

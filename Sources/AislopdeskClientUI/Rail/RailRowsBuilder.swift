@@ -41,6 +41,12 @@ struct RailRow: Identifiable, Equatable {
     let isEditing: Bool
     /// Selected = the row's tab is active AND this pane is the tab's active pane.
     let isSelected: Bool
+    /// The pane's folded git state (branch/ahead/behind/changed) when its cwd is a repo — carried as the pure
+    /// domain value (no view coupling, so tests still pin the mapping) so the VIEW renders the git line with
+    /// per-token STATUS colour, while `subtitle` keeps the plain single-colour string for height/search/
+    /// fallback. `nil` for a non-repo cwd or a video pane. Default keeps the direct-construction call sites
+    /// (the Equatable pins) source-compatible.
+    var gitSummary: PaneGitSummary?
 
     /// A copy of this row with a new `title` (C3 BUG A collision disambiguation) — every other field is
     /// carried verbatim. Kept here so ``RailRowsBuilder/disambiguated(_:)`` need not restate the memberwise init.
@@ -48,7 +54,7 @@ struct RailRow: Identifiable, Equatable {
         Self(
             id: id, tabID: tabID, kind: kind, title: newTitle, subtitle: subtitle, status: status,
             tabNumber: tabNumber, badge: badge, processLabel: processLabel, readOnly: readOnly, cwd: cwd,
-            isEditing: isEditing, isSelected: isSelected,
+            isEditing: isEditing, isSelected: isSelected, gitSummary: gitSummary,
         )
     }
 }
@@ -91,7 +97,8 @@ enum RailRowsBuilder {
                 // `PaneConnectionStatus.from` returns `.none` for a video pane by design, and surfacing a live
                 // phase needs a `RemoteWindowModel`→store→row thread that would widen this WI past the gate;
                 // recorded as an E21 §7 follow-up.)
-                let gitLine = kind == .terminal ? store.paneGitSummary[paneID]?.compactLine : nil
+                let gitSummary = kind == .terminal ? store.paneGitSummary[paneID] : nil
+                let gitLine = gitSummary?.compactLine
                 let subtitle = gitLine ?? spec?.railSubtitle
                 let status = store.paneAgentStatus[paneID] ?? .none
                 let isSelected = tabIsActive && tab.activePane == paneID
@@ -134,6 +141,7 @@ enum RailRowsBuilder {
                     cwd: kind == .terminal ? spec?.lastKnownCwd : nil,
                     isEditing: isEditing,
                     isSelected: isSelected,
+                    gitSummary: gitSummary,
                 ))
             }
         }

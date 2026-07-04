@@ -322,6 +322,7 @@ struct NavigatorColumn: View {
                 title: row.title.isEmpty ? defaultTitle(for: row.kind) : row.title,
                 active: row.id == selectedPane,
                 subtitle: row.subtitle,
+                gitSummary: row.gitSummary,
                 processLabel: row.processLabel,
                 badge: row.badge,
                 readOnly: row.readOnly,

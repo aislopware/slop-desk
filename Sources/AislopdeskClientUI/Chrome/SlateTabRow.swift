@@ -21,6 +21,10 @@ struct SlateTabRow: View {
     /// The row's muted truncating-middle second line (a terminal's git line / cwd, a video pane's host
     /// app). `nil`/empty ⇒ single-line.
     var subtitle: String?
+    /// The pane's folded git state — when its cwd is a repo, the row's second line renders the git line with
+    /// per-token STATUS colour (branch muted, `↑ahead` green, `↓behind` blue, `· N changed` amber) instead of
+    /// the flat ``subtitle``. `nil` ⇒ no repo (or a non-terminal row) → the plain ``subtitle`` renders.
+    var gitSummary: PaneGitSummary?
     /// The host's coarse foreground-process label ("zsh"), shown trailing on the ACTIVE row only.
     var processLabel: String?
     /// The single fused status badge (spinner / check / dot / error / hand / coffee / shield). `nil` ⇒ none.
@@ -58,6 +62,7 @@ struct SlateTabRow: View {
         SlateListRow(
             active: active,
             subtitle: subtitle,
+            subtitleColored: gitSummary.flatMap(Self.gitLine),
             // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the field.
             onTap: { if !isEditing { onSelect() } },
         ) {
@@ -80,6 +85,28 @@ struct SlateTabRow: View {
             }
         }
         .help(helpText ?? "")
+    }
+
+    /// The instrument-voice git line with per-token STATUS colour (MERIDIAN "colour = state, not ornament"):
+    /// the branch stays MUTED (inherits the row's secondary — a branch is structure, not a signal), `↑ahead`
+    /// reads OK-green (outgoing commits, ready to push), `↓behind` reads info-blue (behind upstream, pull) and
+    /// `· N changed` reads warn-amber (a dirty worktree — the "you have uncommitted work" flag). A CLEAN repo
+    /// is just the muted branch, no colour — nothing to flag. `nil` for a non-repo cwd. The rendered text is
+    /// byte-identical to ``PaneGitSummary/compactLine`` so the plain fallback / search key / row height (all
+    /// keyed on ``subtitle``) never diverge from what the coloured line shows.
+    @MainActor
+    static func gitLine(_ g: PaneGitSummary) -> AttributedString? {
+        guard g.hasRepo else { return nil }
+        func token(_ text: String, _ colour: Color) -> AttributedString {
+            var seg = AttributedString(text)
+            seg.foregroundColor = colour
+            return seg
+        }
+        var line = AttributedString(g.branch.isEmpty ? "detached" : g.branch)
+        if g.ahead > 0 { line += token(" ↑\(g.ahead)", Slate.Status.ok) }
+        if g.behind > 0 { line += token(" ↓\(g.behind)", Slate.Status.info) }
+        if g.changedCount > 0 { line += token(" · \(g.changedCount) changed", Slate.Status.warn) }
+        return line
     }
 
     /// The inline-rename `TextField` (C3 BUG B): seeded from the current title on open, auto-focused, commits
