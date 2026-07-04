@@ -93,7 +93,8 @@ struct SplitContainer: View {
             .onAppear { if !staticMirror { store.updateContainerBounds(bounds) } }
             .onChange(of: bounds) { _, newBounds in if !staticMirror { store.updateContainerBounds(newBounds) } }
         }
-        .background(NativePaneColor.window)
+        // CARD-ON-GLASS (2026-07-04 v3): NO backdrop fill here — the pane cards float on the
+        // `WindowGlassBackdrop` the hosting column renders behind this container.
     }
 
     /// One tab's pane tree, placed absolutely in a ZStack. Rendered for EVERY tab; the caller hides +
@@ -171,8 +172,11 @@ struct SplitContainer: View {
             solo: solo,
             staticMirror: staticMirror,
         )
-        // FLAT CANVAS (2026-07-04 v2): the leaf fills its solver rect edge-to-edge — the card-era
-        // half-gap visual inset is gone (panes tile fully; the seam is the PaneDivider hairline).
+        // CARD-ON-GLASS (2026-07-04 v3): inset the card by half the inter-pane gap inside its solver
+        // rect, so two adjacent cards sit `paneGap` apart and the divider hit band lives in the glass
+        // gutter between them. Geometry (solver rects, divider seams, move handles) is untouched — this
+        // is a pure visual inset inside each placed frame.
+        .padding(Slate.Metric.paneGap / 2)
         .frame(width: entry.leaf.rect.width, height: entry.leaf.rect.height)
         .position(x: entry.leaf.rect.midX, y: entry.leaf.rect.midY)
         // ZOOM keep-mounted: a zoomed tab still emits every sibling as a HIDDEN compositor leaf at

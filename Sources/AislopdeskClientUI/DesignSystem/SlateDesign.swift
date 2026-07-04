@@ -4,11 +4,13 @@
 // no longer styles chrome. What it owns is the terminal/video CANVAS: the `SlateTheme` palettes (the six
 // Monokai Pro filters — `.monokaiProClassic` the DEFAULT — plus the legacy `.paper`/`.dark`), whose
 // `terminalBackgroundHex`/`terminalForegroundHex`/`ansiPalette`/cursor fields pin the libghostty CELLS,
-// and whose surface roles paint the canvas FABRIC around them (the pane surface, the pane hairline
-// divider, the build-status placeholder). FLAT HAIRLINE CANVAS (2026-07-04 v2, replacing the one-day
-// card-canvas — docs/research/ui-restructure-2026-07-04.md): panes tile ONE continuous `Surface.card`
-// surface edge-to-edge; adjacent split panes are separated by a resting `Line.divider` hairline; focus
-// reads as the unfocused-sibling dim, not chrome. The chrome around the canvas follows the OS.
+// and whose surface roles paint the canvas FABRIC around them (the pane surface, the pane card border,
+// the build-status placeholder). CARD-ON-GLASS CANVAS (2026-07-04 v3): each pane — terminal or remote
+// window — is its own rounded `Surface.card` card (theme fill, theme hairline border, soft shadow)
+// floating on the window's NATIVE glass backdrop (`WindowGlassBackdrop`, NOT a theme colour — the v1
+// card-canvas failed because its theme margin was near-identical to the card tone, so no depth read);
+// the seam between split cards is the `Metric.paneGap` glass gutter, not a drawn hairline. Focus reads
+// as the unfocused-sibling dim, not chrome. The chrome around the canvas follows the OS.
 //
 // The surviving `Slate.*` accessors read `Slate.theme`, which (D3) indirects through
 // `ThemeStore.shared.active` so a runtime theme switch repoints the canvas live (one SwiftUI hierarchy now
@@ -328,9 +330,10 @@ enum Slate {
     // every field (it is the theme DATA, shipped per theme and read by the terminal-colour resolution).
     @MainActor
     enum Surface {
-        /// THE canvas surface (flat hairline canvas, 2026-07-04 v2): the one continuous theme
-        /// background every pane, column and the detail region render on — matches the libghostty
-        /// terminal cells' background, so pane content and canvas fabric are a single field.
+        /// THE pane-card surface (card-on-glass canvas, 2026-07-04 v3): the theme background each pane
+        /// card renders on — matches the libghostty terminal cells' background, so card fill and cell
+        /// content are a single field. The backdrop BEHIND the cards is the native window glass
+        /// (`WindowGlassBackdrop`), deliberately NOT a theme colour.
         static var card: Color { Slate.theme.card }
     }
 
@@ -344,10 +347,16 @@ enum Slate {
 
     @MainActor
     enum Line {
-        /// The resting 1pt hairline between two split panes / the two workspace columns (flat hairline
-        /// canvas, 2026-07-04 v2) — theme-derived so it carries the filter's own hue over the canvas
-        /// (never a flat system gray that would clash with a warm/tinted filter).
-        static var divider: Color { Slate.theme.divider }
+        /// The pane card's resting 1pt border (card-on-glass canvas, 2026-07-04 v3) — theme-derived so
+        /// it carries the filter's own hue (never a flat system gray that would clash with a warm/tinted
+        /// filter). Defines the card edge against the glass backdrop.
+        static var cardBorder: Color { Slate.theme.cardBorder }
+    }
+
+    @MainActor
+    enum Effect {
+        /// The pane card's soft drop shadow — lifts the card off the glass backdrop.
+        static var panelShadow: Color { Slate.theme.panelShadow }
     }
 
     @MainActor
@@ -373,12 +382,18 @@ enum Slate {
         static let secureInput = Color(slateHex: 0x2D6FE8)
     }
 
-    /// Geometry — theme-independent. Only the canvas-consumed dimension survives (chrome geometry is
-    /// native SwiftUI literals now; the card-era `paneCornerRadius`/`paneGap` died with the flat
-    /// hairline canvas, 2026-07-04 v2 — panes tile edge-to-edge).
+    /// Geometry — theme-independent. Only the canvas-consumed dimensions survive (chrome geometry is
+    /// native SwiftUI literals now).
     enum Metric {
-        /// The pane divider's thicker active-drag hairline (PaneDivider).
+        /// The pane divider's active-drag accent line (PaneDivider / GuiPanelDivider).
         static let dividerHoverWidth: CGFloat = 2
+        /// The glass gutter between two adjacent pane cards (card-on-glass canvas, 2026-07-04 v3). Each
+        /// placed leaf insets by HALF this inside its solver rect, so siblings sit exactly this far
+        /// apart and the divider hit band lives in the gap; the columns pad by the same half so the
+        /// window-edge margin matches the inter-card gap (one 8pt rhythm, no bigger space tax).
+        static let paneGap: CGFloat = 8
+        /// The pane card's continuous corner radius.
+        static let paneCornerRadius: CGFloat = 10
     }
 
     /// Typography — only the canvas placeholder's sizes survive (chrome text is system text styles now).

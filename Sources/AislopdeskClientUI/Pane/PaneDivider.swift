@@ -1,6 +1,6 @@
-// PaneDivider — the resize handle between two split panes (REBUILD-V2, L2). A resting 1pt theme
-// hairline centred on the seam (flat hairline canvas, 2026-07-04 v2 — panes tile edge-to-edge, the
-// hairline IS the seam; it thickens to the accent line while dragging); a resize cursor on hover.
+// PaneDivider — the resize handle between two split panes (REBUILD-V2, L2). An invisible-at-rest hit
+// band centred on the card gutter (card-on-glass canvas, 2026-07-04 v3: the glass gap between two
+// cards IS the seam; an accent line appears only while dragging); a resize cursor on hover.
 // Dragging resizes the panes LIVE — the layout
 // updates every frame, like an AppKit `NSSplitView` divider — while the host grid-resize SEND is deferred
 // until release (the shell brackets the drag with `setTerminalResizeSuspended`, so the server gets ONE resize
@@ -55,10 +55,11 @@ struct PaneDivider: View {
         ZStack {
             // Transparent hit band (the full handle rect) — grabbable.
             Color.clear.contentShape(Rectangle())
-            // Flat canvas: a resting 1pt theme hairline marks the seam between the tiled panes; while
-            // actively dragging it thickens to the accent line as the drag affordance.
+            // Card-on-glass: the seam at REST is the visible glass gutter between the two cards (no
+            // drawn hairline); while actively dragging an accent line appears in the gap as the drag
+            // affordance.
             hairlineShape(
-                color: gestureActive ? Slate.State.accent : Slate.Line.divider,
+                color: gestureActive ? Slate.State.accent : .clear,
                 thickness: gestureActive ? Slate.Metric.dividerHoverWidth : hairline,
             )
         }

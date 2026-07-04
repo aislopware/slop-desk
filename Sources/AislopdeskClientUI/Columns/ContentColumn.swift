@@ -26,11 +26,12 @@ struct ContentColumn: View {
 
     var body: some View {
         paneArea
-            // FLAT CANVAS (2026-07-04 v2): the pane area IS the column, edge-to-edge — the card-era
-            // half-gap outer margin is gone (content-to-chrome ratio wins; the researched
-            // Ghostty/Zed/macOS-27 direction — docs/research/ui-restructure-2026-07-04.md §2.1).
+            // CARD-ON-GLASS (2026-07-04 v3): pad by half the inter-card gap so the window-edge margin
+            // equals the gap between two split cards (one 8pt rhythm) — the cards float on the NATIVE
+            // window glass, never a theme backdrop (macDetail renders the shared `WindowGlassBackdrop`
+            // behind both columns).
+            .padding(Slate.Metric.paneGap / 2)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Slate.Surface.card)
     }
 
     private var paneArea: some View {

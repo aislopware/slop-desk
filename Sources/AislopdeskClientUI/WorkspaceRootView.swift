@@ -255,6 +255,9 @@ public struct WorkspaceRootView: View {
             )
         } detail: {
             ContentColumn(store: store, connection: connection, chrome: chrome)
+                // CARD-ON-GLASS (2026-07-04 v3): the iOS twin of macDetail's backdrop — the native
+                // system background behind the floating pane cards (iOS has no under-window glass).
+                .background(WindowGlassBackdrop())
         }
         // Match the macOS shell: the workspace window's appearance follows the CANVAS theme's lightness
         // (native chrome, resolved in the canvas's appearance — never light glass around a dark terminal).
@@ -341,10 +344,11 @@ public struct WorkspaceRootView: View {
             .allowsHitTesting(!chrome.guiCollapsed)
             .clipped()
         }
-        // FLAT CANVAS (2026-07-04 v2): the WHOLE detail is one continuous theme surface — without this
-        // the collapse animation could flash a strip of the system window background between the two
-        // themed columns. The GuiPanelDivider hairline is the only visible seam.
-        .background(Slate.Surface.card)
+        // CARD-ON-GLASS (2026-07-04 v3): the WHOLE detail — both columns and the divider band — renders
+        // on ONE native under-window glass surface (the same material the system sidebar/titlebar sit
+        // on), so the window reads as a single continuous liquid-glass backdrop with the themed pane
+        // cards floating on it. Deliberately NOT a theme colour (the v1 card-canvas depth-read failure).
+        .background(WindowGlassBackdrop())
         .animation(.easeInOut(duration: 0.2), value: chrome.guiCollapsed)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width
@@ -583,9 +587,9 @@ public struct WorkspaceRootView: View {
 
 #if os(macOS)
 /// The draggable divider between the terminal content column and the RIGHT remote-windows column —
-/// flat-canvas region seam (2026-07-04 v2): a resting 1pt theme hairline (the `PaneDivider` language;
-/// the two columns tile edge-to-edge, so the hairline IS the seam), thickening to the accent line while
-/// actively dragging, a column-resize pointer, and the commit-on-release resize discipline —
+/// card-on-glass region seam (2026-07-04 v3): invisible at rest (the glass gutter between the terminal
+/// card and the remote-window card IS the seam — the `PaneDivider` language), showing the accent line
+/// while actively dragging, a column-resize pointer, and the commit-on-release resize discipline —
 /// `setTerminalResizeSuspended` brackets the drag so the host gets ONE grid flush on settle, not one per
 /// frame. Double-click resets the column to its default width.
 private struct GuiPanelDivider: View {
@@ -607,10 +611,10 @@ private struct GuiPanelDivider: View {
 
     var body: some View {
         Rectangle()
-            .fill(Slate.Line.divider)
+            .fill(Color.clear)
             .frame(width: Self.layoutWidth)
-            // The drag affordance: the accent line thickens OVER the hairline (an overlay, so the 1pt
-            // layout band never shifts the columns while dragging).
+            // The drag affordance: the accent line appears OVER the invisible seam (an overlay, so the
+            // 1pt layout band never shifts the columns while dragging).
             .overlay {
                 Rectangle()
                     .fill(gestureActive ? Color.accentColor : Color.clear)

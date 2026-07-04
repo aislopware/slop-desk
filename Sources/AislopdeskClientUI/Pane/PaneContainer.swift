@@ -1,14 +1,16 @@
-// PaneContainer — one placed leaf, rendered FLAT and edge-to-edge (flat hairline canvas, 2026-07-04 v2;
-// replaces the one-day card-canvas — docs/research/ui-restructure-2026-07-04.md §2.1: the Ghostty/Zed
-// content-first school; no rounded card, no border, no shadow, no margin gutter).
+// PaneContainer — one placed leaf = a rounded pane CARD on the native glass backdrop (card-on-glass
+// canvas, 2026-07-04 v3; user-directed: "terminal ở 1 card riêng, remote window ở 1 card riêng" on a
+// fully NATIVE window background — the v1 card-canvas failed on a theme-coloured margin that was
+// near-identical to the card tone, not on the card idea itself).
 //
 // Resolves the pane's `LivePaneSession` handle + `PaneSpec` from the store, routes by pane kind to the
 // content view (terminal → `TerminalLeafView`; `.remoteGUI`/`.systemDialog` → the `VideoWindowFactory`
-// seam, else a native placeholder). Panes tile the canvas fully on one continuous theme surface;
-// adjacent panes are separated by the `PaneDivider` resting hairline. In a SPLIT, focus reads as
-// CONTENT, not chrome: the UNFOCUSED siblings dim gently under a theme-background veil (Ghostty's
-// unfocused-split treatment, gentler); a lone pane never dims. Tap anywhere focuses the pane via the
-// store.
+// seam, else a native placeholder). The content — scrim and drop overlays included — clips to a
+// continuous rounded card on the theme card fill, with a theme hairline border and a soft shadow,
+// floating on the `WindowGlassBackdrop` the columns render (siblings sit `Metric.paneGap` apart). In a
+// SPLIT, focus reads as CONTENT, not chrome: the UNFOCUSED siblings dim gently under a
+// theme-background veil (Ghostty's unfocused-split treatment, gentler); a lone pane never dims. Tap
+// anywhere focuses the pane via the store.
 //
 // The whole pane is keyed `.id(PaneID)` by the SplitContainer so the surface/connection are never reused
 // across panes (identity hazard). SYSTEM colours/fonts only.
@@ -141,7 +143,7 @@ struct PaneContainer: View {
         paneContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Slate.Surface.card)
-            // FLAT-CANVAS focus treatment: dim the UNFOCUSED siblings of a split under a gentle
+            // Focus treatment: dim the UNFOCUSED siblings of a split under a gentle
             // theme-background veil (the Ghostty unfocused-split dim, tuned subtler so a streamed
             // window pane never reads as "broken"). Kept in the tree at opacity 0 (cheap). NO
             // animation, deliberately: pane focus moves are keyboard-frequency actions — the
@@ -205,9 +207,21 @@ struct PaneContainer: View {
             .onChange(of: dragging) { _, active in
                 if !active { resizedDuringDrag = false }
             }
-            // NO per-pane header bar (the active pane's title + split/close controls live in the titlebar
-            // `⋯` menu); adjacent split panes are separated by the `PaneDivider` resting hairline drawn
-            // in its own layer above the tiled leaves.
+            // CARD-ON-GLASS (2026-07-04 v3): clip the pane — content, scrim and drop overlays included —
+            // to a continuous rounded card. The clip masks the hosted libghostty / video CAMetalLayer too
+            // (the terminal surface keeps its own inner inset, so no corner glyph is ever cut). The border
+            // rides an overlay AFTER the clip (strokeBorder draws inward, never clipped): the theme
+            // hairline defines the card edge against the glass; a soft theme shadow lifts it off the
+            // backdrop. NO per-pane header bar (the active pane's title + split/close controls live in
+            // the titlebar `⋯` menu); adjacent split cards sit `Metric.paneGap` apart with the
+            // `PaneDivider` hit band living in the glass gap between them.
+            .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous)
+                    .strokeBorder(Slate.Line.cardBorder, lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+            .shadow(color: Slate.Effect.panelShadow, radius: 5, x: 0, y: 2)
             .contentShape(Rectangle())
             .onTapGesture { store.focusPaneTree(paneID) }
             // E18 WI-5/WI-6: accept external file/folder/URL/text drags. The receiver is disabled on the
