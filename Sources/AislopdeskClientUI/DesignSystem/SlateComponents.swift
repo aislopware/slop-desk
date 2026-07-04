@@ -1,29 +1,23 @@
 // SlateComponents — the reusable chrome component kit on the token layer (REBUILD-V2, L9).
 //
 // Small, composable pieces factored out of the chrome so every surface stays consistent and new views are
-// quick to assemble: a status dot (with an optional Pow glow on change), a key/value row, a pill/badge, and
-// an `.slateCard()` surface modifier. All built on `Slate.*` tokens + `SlateTheme`. See also SlateControls
-// (`SlatePlateButton`) and SlateRow (`SlateSidebarRow` / `SlateSectionHeader`).
+// quick to assemble: a status dot, a key/value row, a pill/badge, and an `.slateCard()` surface modifier.
+// All built on `Slate.*` tokens + `SlateTheme`. See also SlateControls (`SlatePlateButton`) and SlateRow
+// (`SlateSidebarRow` / `SlateSectionHeader`).
 
 #if canImport(SwiftUI)
-import Pow
 import SFSafeSymbols
 import SwiftUI
 
-/// A small status dot. When `glowKey` is supplied it briefly glows (Pow) whenever the key changes.
+/// A small status dot. State changes are a HARD CUT by design (MERIDIAN L3: a dot never glows, pops or
+/// pulses on a state flip — animation is reserved for sustained "live" signals, of which there are none
+/// at rest). This removed the last Pow `changeEffect` in the design system.
 struct SlateStatusDot: View {
     let color: Color
     var size: CGFloat = 7
-    /// An Equatable key (e.g. the status label) — a change triggers the glow. `nil` ⇒ no animation.
-    var glowKey: String?
 
     var body: some View {
-        let dot = Circle().fill(color).frame(width: size, height: size)
-        if let glowKey {
-            dot.changeEffect(.glow(color: color), value: glowKey)
-        } else {
-            dot
-        }
+        Circle().fill(color).frame(width: size, height: size)
     }
 }
 

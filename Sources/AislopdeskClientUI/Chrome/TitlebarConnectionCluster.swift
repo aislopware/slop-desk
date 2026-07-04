@@ -53,25 +53,35 @@ struct TitlebarConnectionCluster: View {
         HStack(spacing: Slate.Metric.space1) {
             Button(action: onConnect) {
                 HStack(spacing: Slate.Metric.space2) {
-                    SlateStatusDot(
-                        color: StatusPresentation.connectionColor(status),
-                        glowKey: StatusPresentation.connectionLabel(status),
-                    )
+                    SlateStatusDot(color: StatusPresentation.connectionColor(status))
                     Text(host)
                         .font(.system(size: Slate.Typeface.base))
                         .foregroundStyle(hover ? Slate.Text.primary : Slate.Text.secondary)
                         .lineLimit(1).truncationMode(.middle)
                     if let trailing {
+                        // The telemetry is a COMPLICATION (MERIDIAN L2): instrument voice for the numbers,
+                        // prose voice for a status word. Its INSERTION rides the flood (below) with a small
+                        // stagger after the dot's colour-in; its per-sample value ticks never animate.
                         Text(trailing.text)
-                            .font(.system(size: Slate.Typeface.footnote).monospacedDigit())
+                            .font(
+                                trailing.isMetric
+                                    ? Slate.Typeface.instrument(Slate.Typeface.footnote)
+                                    : .system(size: Slate.Typeface.footnote),
+                            )
                             .foregroundStyle(trailing.isMetric ? Slate.Text.tertiary : Slate.Text.secondary)
                             .lineLimit(1)
+                            .transition(.opacity.animation(isConnected ? Slate.Anim.needle.delay(0.08) : nil))
                     }
                 }
                 .padding(.horizontal, Slate.Metric.space2)
                 .frame(height: 24)
                 .background(hover ? Slate.State.hover : .clear, in: .rect(cornerRadius: Slate.Metric.radiusControl))
                 .contentShape(.rect)
+                // THE FLOOD (MERIDIAN L4 — the one orchestrated moment): on handshake the colour flows IN —
+                // the dot needles to green, then the metrics fade in 80ms behind it. Every OTHER transition
+                // (connected → reconnecting/failed) is a HARD CUT: the ternary evaluates with the NEW value,
+                // so only the entry into `.connected` animates.
+                .animation(isConnected ? Slate.Anim.needle : nil, value: isConnected)
             }
             .buttonStyle(.plain)
             .onHover { hover = $0 }

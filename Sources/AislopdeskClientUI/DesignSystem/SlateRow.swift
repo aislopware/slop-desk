@@ -91,8 +91,11 @@ struct SlateSectionHeader<Accessory: View>: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            // MERIDIAN L2: caps micro-labels speak the INSTRUMENT voice — mono + wide tracking, the
+            // "engraved on the tool" register that marks taxonomy against the prose rows below.
             Text(title.uppercased())
-                .font(.system(size: Slate.Typeface.small, weight: .semibold))
+                .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
+                .tracking(Slate.Typeface.instrumentTracking)
                 .foregroundStyle(Slate.State.header)
             Spacer(minLength: 0)
             accessory

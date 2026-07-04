@@ -50,9 +50,6 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/siteline/swiftui-introspect.git", from: "26.0.1"),
         .package(url: "https://github.com/SFSafeSymbols/SFSafeSymbols.git", from: "7.0.0"),
-        // Pow floor pinned to 1.0.6: 1.0.5 fails to COMPILE on Xcode 26.4+ (our CI floor is 26.5);
-        // 1.0.6 (PR #83) is the fix. GitHub's "Latest" badge still shows 1.0.5 but SPM resolves 1.0.6.
-        .package(url: "https://github.com/EmergeTools/Pow.git", from: "1.0.6"),
         // KeyboardShortcuts floor pinned to 3.0.1: 3.0.0 CRASHES in release builds compiled by the
         // Swift 6.3 compiler (Xcode 26.5 ships Swift 6.3.2); 3.0.1 is the crash fix. macOS-only.
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", from: "3.0.1"),
@@ -227,10 +224,10 @@ let package = Package(
                 // below ClientUI) — no HW deps, no cycle.
                 "AislopdeskCLICore",
                 // L8: external UI libraries (chrome). Cross-platform: SwiftUIIntrospect (reach AppKit
-                // under SwiftUI), SFSafeSymbols (type-safe SF Symbols), Pow (micro-interactions).
+                // under SwiftUI), SFSafeSymbols (type-safe SF Symbols). (Pow was dropped with the last
+                // `changeEffect` — MERIDIAN L3: status dots hard-cut, nothing glows at rest.)
                 .product(name: "SwiftUIIntrospect", package: "swiftui-introspect"),
                 .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
-                .product(name: "Pow", package: "Pow"),
                 // macOS-only: user-customizable global shortcuts + the recorder view.
                 .product(
                     name: "KeyboardShortcuts",

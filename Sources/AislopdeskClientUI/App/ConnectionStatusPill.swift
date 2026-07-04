@@ -40,10 +40,7 @@ struct ConnectionStatusPill: View {
     private var pill: some View {
         Button(action: onTap) {
             HStack(spacing: 6) {
-                SlateStatusDot(
-                    color: StatusPresentation.connectionColor(status),
-                    glowKey: StatusPresentation.connectionLabel(status),
-                )
+                SlateStatusDot(color: StatusPresentation.connectionColor(status))
                 Text(host)
                     .font(.system(size: Slate.Typeface.base, weight: .medium))
                     .foregroundStyle(Slate.Text.primary)

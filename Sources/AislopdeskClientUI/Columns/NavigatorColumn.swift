@@ -219,9 +219,11 @@ struct NavigatorColumn: View {
             }
             .frame(height: 40)
             HStack(spacing: 0) {
+                // MERIDIAN L2: the panel label speaks the INSTRUMENT voice (mono + wide tracking) — same
+                // register as `SlateSectionHeader`, one size up for the panel-level label.
                 Text("TABS")
-                    .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                    .tracking(0.6)
+                    .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .semibold))
+                    .tracking(Slate.Typeface.instrumentTracking)
                     .foregroundStyle(Slate.State.header)
                 Spacer(minLength: 0)
                 SlateSortMenuButton(store: store)

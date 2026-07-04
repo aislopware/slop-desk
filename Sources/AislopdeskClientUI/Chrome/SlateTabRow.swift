@@ -66,8 +66,10 @@ struct SlateTabRow: View {
                         .lineLimit(1)
                 }
                 if hasSubtitle {
+                    // MERIDIAN L2: the technical second line (cwd / git line / host-app) speaks the
+                    // INSTRUMENT voice — data, not prose. The title above stays in the system face.
                     Text(subtitle ?? "")
-                        .font(.system(size: Slate.Typeface.small))
+                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
                         .foregroundStyle(Slate.Text.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -158,7 +160,7 @@ struct SlateTabRow: View {
             }
             if active, let processLabel, !processLabel.isEmpty {
                 Text(processLabel)
-                    .font(.system(size: Slate.Typeface.small, design: .monospaced))
+                    .font(Slate.Typeface.instrument(Slate.Typeface.small))
                     .foregroundStyle(Slate.Text.secondary)
                     .lineLimit(1)
             }
@@ -244,8 +246,8 @@ private struct SortSection: View {
     init(_ title: String) { self.title = title }
     var body: some View {
         Text(title)
-            .font(.system(size: Slate.Typeface.small, weight: .semibold))
-            .tracking(0.5)
+            .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
+            .tracking(Slate.Typeface.instrumentTracking)
             .foregroundStyle(Slate.State.header)
             .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
