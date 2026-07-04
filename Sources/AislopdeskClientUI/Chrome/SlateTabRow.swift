@@ -1,6 +1,6 @@
 // SlateTabRow — the sidebar tab row (`TabsPanelRowView`) + the sort/group hamburger (`SortMenuButton`),
-// built on the `Slate` tokens and wired to the live store via the navigator. The resting row is the tab
-// name on the warm sidebar; ACTIVE is a WHITE CARD (radius-7 fill + 1px cardBorder + faint shadow), hover
+// built on the shared `SlateListRow` shell and wired to the live store via the navigator. The resting row
+// is the tab name on the sidebar ground; ACTIVE is the RAISED card (fill + 1px hairline, no shadow), hover
 // is a flat plate, and a close `×` reveals on hover. No native list selection / vibrancy — this is a flat
 // silhouette by design.
 
@@ -9,12 +9,12 @@ import AislopdeskWorkspaceCore
 import SFSafeSymbols
 import SwiftUI
 
-/// One sidebar tab row. ACTIVE = white card treatment; hover = flat plate + close `×`.
+/// One sidebar tab row. ACTIVE = the raised-card treatment; hover = flat plate + close `×`.
 ///
 /// E6 WI-4 grew the row from a name-only plate to its full chrome: an optional second-line cwd subtitle
-/// and a trailing cluster of the fused status `badge`, the monospaced light-gray `⌘N` SWITCH-SHORTCUT badge,
-/// and — on the ACTIVE row — the foreground-process label ("zsh"). Name-only rows stay ~34pt; a subtitle grows
-/// the row to ~44pt (`docs/ui-shell/screenshots/tab-badge.png`). The trailing cluster fades under hover `×`.
+/// and a trailing cluster of the fused status `badge` and — on the ACTIVE row — the foreground-process
+/// label ("zsh"). Heights ride the ladder via ``SlateListRow`` (`heightRow` name-only, `heightRowTall`
+/// with a subtitle — `docs/ui-shell/screenshots/tab-badge.png`). The trailing cluster fades under hover `×`.
 struct SlateTabRow: View {
     let title: String
     let active: Bool
@@ -41,7 +41,6 @@ struct SlateTabRow: View {
     /// C3 BUG B: dismiss the inline rename without renaming (escape / focus loss). No-op default.
     var onCancelRename: () -> Void = {}
 
-    @State private var hovering = false
     @State private var closeHover = false
     /// The inline-rename draft text (C3 BUG B) — seeded from `title` when the field opens.
     @State private var draft = ""
@@ -52,57 +51,35 @@ struct SlateTabRow: View {
     @State private var renameResolved = false
     @FocusState private var fieldFocused: Bool
 
-    private var hasSubtitle: Bool { !(subtitle ?? "").isEmpty }
-
     var body: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                if isEditing {
-                    renameField
-                } else {
-                    Text(title)
-                        .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
-                        .foregroundStyle(Slate.Text.primary)
-                        .lineLimit(1)
-                }
-                if hasSubtitle {
-                    // MERIDIAN L2: the technical second line (cwd / git line / host-app) speaks the
-                    // INSTRUMENT voice — data, not prose. The title above stays in the system face.
-                    Text(subtitle ?? "")
-                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                        .foregroundStyle(Slate.Text.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
+        // The row is the shared ``SlateListRow`` shell (MERIDIAN C2): the shell owns the height ladder,
+        // padding, hover plate and the active raised-card treatment; this view supplies only the
+        // tab-specific slots — the title/rename field and the hover-swapped trailing cluster.
+        SlateListRow(
+            active: active,
+            subtitle: subtitle,
+            // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the field.
+            onTap: { if !isEditing { onSelect() } },
+        ) {
+            if isEditing {
+                renameField
+            } else {
+                Text(title)
+                    .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
+                    .foregroundStyle(Slate.Text.primary)
+                    .lineLimit(1)
             }
-            Spacer(minLength: 6)
+        } trailing: { hovering in
             if !isEditing {
-                trailingMeta
-                    .opacity(hovering ? 0 : 1)
+                ZStack(alignment: .trailing) {
+                    trailingMeta.opacity(hovering ? 0 : 1)
+                    closeButton
+                        .opacity(hovering ? 1 : 0)
+                        .allowsHitTesting(hovering)
+                }
             }
         }
-        .overlay(alignment: .trailing) {
-            if !isEditing {
-                closeButton
-                    .opacity(hovering ? 1 : 0)
-                    .allowsHitTesting(hovering)
-            }
-        }
-        .padding(.horizontal, 14)
-        .frame(height: hasSubtitle ? 44 : 34)
-        .background(rowBackground, in: .rect(cornerRadius: Slate.Metric.radiusTab))
-        .overlay { if active { RoundedRectangle(cornerRadius: Slate.Metric.radiusTab).strokeBorder(
-            Slate.Line.card,
-            lineWidth: 1,
-        ) } }
-        .shadow(color: active ? .black.opacity(0.04) : .clear, radius: 2, y: 1)
-        .contentShape(.rect)
-        // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the field.
-        .onTapGesture { if !isEditing { onSelect() } }
-        .onHover { hovering = $0 }
         .help(helpText ?? "")
-        .animation(Slate.Anim.smallFade, value: hovering)
-        .animation(Slate.Anim.smallFade, value: active)
     }
 
     /// The inline-rename `TextField` (C3 BUG B): seeded from the current title on open, auto-focused, commits
@@ -182,12 +159,6 @@ struct SlateTabRow: View {
         .buttonStyle(.plain)
         .onHover { closeHover = $0 }
     }
-
-    private var rowBackground: Color {
-        if active { Slate.Surface.selectedCard }
-        else if hovering { Slate.State.hover }
-        else { .clear }
-    }
 }
 
 /// The sidebar hamburger — a sort/group popover (`SortMenuButton`). E6 WI-5 made it write the STORE (the
@@ -256,7 +227,7 @@ private struct SortSection: View {
 
 private struct SortDivider: View {
     var body: some View {
-        Rectangle().fill(Slate.Line.divider).frame(height: 1)
+        Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
             .padding(.vertical, 5).padding(.horizontal, 10)
     }
 }
@@ -289,7 +260,7 @@ private struct SortRow: View {
                         .foregroundStyle(Slate.Text.secondary)
                 }
             }
-            .padding(.horizontal, 12).frame(height: 26)
+            .padding(.horizontal, Slate.Metric.space3).frame(height: Slate.Metric.heightControl)
             .background(hovering ? Slate.State.hover : .clear)
         }
         .buttonStyle(.plain)

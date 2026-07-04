@@ -127,7 +127,7 @@ struct RemoteWindowPickerView: View {
         .padding(Slate.Metric.space2)
         .background(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                .fill(Slate.Surface.element),
+                .fill(Slate.Surface.raised),
         )
     }
 
@@ -206,7 +206,7 @@ struct RemoteWindowPickerView: View {
                 .padding(Slate.Metric.space2)
                 .background(
                     RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                        .fill(Slate.Surface.element),
+                        .fill(Slate.Surface.raised),
                 )
                 .onSubmit { openManual() }
             Button("Open") { openManual() }

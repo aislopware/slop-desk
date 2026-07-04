@@ -5,7 +5,7 @@
 //
 // Faithful to `spec/user-interface__command-palette.md` (the centered floating panel, the magnifier +
 // blue/accent caret, ALL-CAPS section headers with the WORKING-DIRECTORY badge, per-symbol keycap chips,
-// the subtle selected-row fill) — mapped onto the DARK Monokai-default Slate token layer (`Slate.Surface.card`
+// the subtle selected-row fill) — mapped onto the DARK Monokai-default Slate token layer (`Slate.Surface.face`
 // panel, `Slate.State.selected` row fill, `Slate.State.accent` caret/highlight, `Slate.State.header` section
 // labels) rather than the light theme shown in the reference screenshot.
 //
@@ -93,7 +93,7 @@ struct PaletteView: View {
                 .onSubmit { coordinator.acceptSelected() } // plain ↩ runs + closes
         }
         .padding(.horizontal, Slate.Metric.space4)
-        .frame(height: 48)
+        .frame(height: Slate.Metric.heightInput)
         .onAppear {
             // A `@FocusState` set in the same tick the view appears (before its backing responder exists) is
             // dropped — defer one runloop hop (the same idiom InPaneChooserView uses).
@@ -188,7 +188,7 @@ struct PaletteView: View {
         .padding(.vertical, Slate.Metric.space1)
         .background(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                .fill(Slate.Surface.element),
+                .fill(Slate.Surface.raised),
         )
     }
 
@@ -223,7 +223,7 @@ struct PaletteView: View {
             }
         }
         .padding(.horizontal, Slate.Metric.space3)
-        .frame(height: 34)
+        .frame(height: Slate.Metric.heightRow)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusItem)
@@ -247,7 +247,7 @@ struct PaletteView: View {
             .padding(.horizontal, Slate.Metric.space1)
             .background(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                    .fill(Slate.Surface.element),
+                    .fill(Slate.Surface.raised),
             )
     }
 

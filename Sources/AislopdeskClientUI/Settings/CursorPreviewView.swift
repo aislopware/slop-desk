@@ -181,7 +181,7 @@ struct CursorPreviewView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusCard, style: .continuous)
-                .fill(Slate.Surface.element),
+                .fill(Slate.Surface.raised),
         )
         .overlay(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusCard, style: .continuous)

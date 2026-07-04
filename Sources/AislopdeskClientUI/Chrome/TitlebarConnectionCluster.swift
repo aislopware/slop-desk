@@ -1,6 +1,7 @@
 // TitlebarConnectionCluster — the titlebar's trailing connection-status cluster (the sidebar-footer
-// status line, reseated as window chrome on the traffic-light row). One whisper-quiet line: a
-// state-coloured dot + the host in muted text + the live telemetry ("9 ms · 30 fps") in tertiary
+// status line, reseated as window chrome on the traffic-light row). One whisper-quiet line: the host's
+// identity MONOGRAM (hash-hue plate; saturation = connection state) + the host in muted text + the live
+// telemetry ("9 ms · 30 fps") in tertiary
 // monospaced digits — or, when not connected, the status word ("Connecting…", "Unreachable") plus a
 // one-tap Retry in the give-up states. ALWAYS visible (not hover-gated like the pane controls): the
 // connection is ambient window state, and it must stay readable while the sidebar is collapsed. The
@@ -53,7 +54,11 @@ struct TitlebarConnectionCluster: View {
         HStack(spacing: Slate.Metric.space1) {
             Button(action: onConnect) {
                 HStack(spacing: Slate.Metric.space2) {
-                    SlateStatusDot(color: StatusPresentation.connectionColor(status))
+                    // The host-identity MONOGRAM (MERIDIAN C2): the plate's hash-hue is the host's
+                    // permanent colour; its SATURATION is the connection state (connected = colour,
+                    // else grayscale — L1 applied to identity). Replaces the status dot here — the
+                    // plate is the one status pixel, the not-connected states keep their status WORD.
+                    SlateMonogram(identity: host, live: isConnected)
                     Text(host)
                         .font(.system(size: Slate.Typeface.base))
                         .foregroundStyle(hover ? Slate.Text.primary : Slate.Text.secondary)
@@ -74,7 +79,7 @@ struct TitlebarConnectionCluster: View {
                     }
                 }
                 .padding(.horizontal, Slate.Metric.space2)
-                .frame(height: 24)
+                .frame(height: Slate.Metric.heightControl)
                 .background(hover ? Slate.State.hover : .clear, in: .rect(cornerRadius: Slate.Metric.radiusControl))
                 .contentShape(.rect)
                 // THE FLOOD (MERIDIAN L4 — the one orchestrated moment): on handshake the colour flows IN —
@@ -97,7 +102,7 @@ struct TitlebarConnectionCluster: View {
                     Image(systemSymbol: .arrowClockwise)
                         .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
                         .foregroundStyle(Slate.Text.secondary)
-                        .frame(width: 24, height: 24)
+                        .frame(width: Slate.Metric.plate, height: Slate.Metric.plate)
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)

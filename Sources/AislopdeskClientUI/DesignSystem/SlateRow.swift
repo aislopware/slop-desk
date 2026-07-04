@@ -1,81 +1,89 @@
-// SlateRow — the sidebar/list row idiom on the token layer (REBUILD-V2, L7/L9 restyle).
+// SlateRow — THE list-row shell (MERIDIAN C2) + the sidebar section header.
 //
-// Row hover/selection rule:
-//   idle     → transparent, icon tint, secondary title
-//   hover    → `Slate.State.hover` plate, title → primary
-//   selected → a WHITE CARD: `Slate.Surface.selectedCard` fill + a 1px `Slate.Line.card` border + a faint
-//              `black@0.04` shadow (radius 2, y 1) — a white-card-on-paper active tab, NOT a flat
-//              neutral-gray plate.
-// A radius-7 item card, `smallFade` on hover. The whole row is a plain button.
+// `SlateListRow` is the ONE row anatomy every sidebar/list row shares (the Raycast model): an optional
+// leading accessory, a title slot, an optional instrument-voice subtitle, and ordered trailing accessories.
+// One shell = one set of constants, so a row can never drift off the system:
+//   height    → the ladder: `heightRow` single-line, `heightRowTall` with a subtitle
+//   padding   → horizontal `space3`
+//   idle      → transparent;  hover → `Slate.State.hover` flat plate
+//   active    → a RAISED card: `Slate.Surface.raised` fill + 1px `Slate.Line.card` hairline.
+//               NO shadow — at-rest depth is the surface ladder, never a cast shadow (MERIDIAN L5).
+// The subtitle always speaks the INSTRUMENT voice (MERIDIAN L2: it is data — cwd / git line / host app —
+// not prose), so no caller can restyle it.
+// (The old `SlateSidebarRow` — icon+title rows for a navigator list that no longer exists — is DELETED;
+// `SlateTabRow` and future host/window rows build on this shell instead.)
 
 #if canImport(SwiftUI)
-import SFSafeSymbols
 import SwiftUI
 
-/// One navigator/sidebar row: leading SF Symbol + title (+ optional subtitle), with hover/selection styling.
-struct SlateSidebarRow: View {
-    let symbol: SFSymbol
-    let title: String
+/// One list row: `leading` accessory + `title` slot (+ optional instrument `subtitle`) + `trailing`
+/// accessories. The `trailing` builder receives the live hover flag so a caller can swap clusters under
+/// hover (e.g. status meta ↔ close button) without owning its own hover state.
+struct SlateListRow<Leading: View, Title: View, Trailing: View>: View {
+    /// Active/selected treatment — the raised card. Default resting row.
+    var active = false
+    /// The muted truncating-middle second line (cwd / git line / host app). `nil`/empty ⇒ single-line row.
     var subtitle: String?
-    /// A right-aligned tab badge (e.g. the shell name "zsh"). `nil` ⇒ no badge.
-    var badge: String?
-    var isSelected: Bool
-    var action: () -> Void
+    /// Tap action for the whole row. `nil` ⇒ no-op (a presentation-only row).
+    var onTap: (() -> Void)?
+    @ViewBuilder let leading: () -> Leading
+    @ViewBuilder let title: () -> Title
+    @ViewBuilder let trailing: (_ hovering: Bool) -> Trailing
 
     @State private var hovering = false
 
+    private var hasSubtitle: Bool { !(subtitle ?? "").isEmpty }
+
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: Slate.Metric.space2) {
-                Image(systemSymbol: symbol)
-                    .font(.system(size: Slate.Metric.iconSize))
-                    .foregroundStyle(isSelected ? Slate.Text.primary : Slate.Text.icon)
-                    .frame(width: 18)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: Slate.Typeface.base))
-                        .foregroundStyle(isSelected ? Slate.Text.primary : Slate.Text.secondary)
+        HStack(spacing: Slate.Metric.space2) {
+            leading()
+            VStack(alignment: .leading, spacing: 1) {
+                title()
+                if hasSubtitle {
+                    Text(subtitle ?? "")
+                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                        .foregroundStyle(Slate.Text.secondary)
                         .lineLimit(1)
-                    if let subtitle, !subtitle.isEmpty {
-                        Text(subtitle)
-                            .font(.system(size: Slate.Typeface.small))
-                            .foregroundStyle(Slate.Text.tertiary)
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                    }
-                }
-                Spacer(minLength: 0)
-                if let badge, !badge.isEmpty {
-                    Text(badge)
-                        .font(.system(size: Slate.Typeface.small))
-                        .foregroundStyle(Slate.Text.tertiary)
-                        .fixedSize()
+                        .truncationMode(.middle)
                 }
             }
-            .padding(.horizontal, Slate.Metric.space2)
-            .padding(.vertical, 6)
-            .background { rowBackground }
-            .contentShape(.rect)
+            Spacer(minLength: Slate.Metric.space2)
+            trailing(hovering)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, Slate.Metric.space3)
+        .frame(height: hasSubtitle ? Slate.Metric.heightRowTall : Slate.Metric.heightRow)
+        .background(rowBackground, in: .rect(cornerRadius: Slate.Metric.radiusTab))
+        .overlay { if active { RoundedRectangle(cornerRadius: Slate.Metric.radiusTab).strokeBorder(
+            Slate.Line.card,
+            lineWidth: Slate.Metric.cardBorderWidth,
+        ) } }
+        .contentShape(.rect)
+        .onTapGesture { onTap?() }
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
-        .animation(Slate.Anim.smallFade, value: isSelected)
+        .animation(Slate.Anim.smallFade, value: active)
     }
 
-    /// The selected row is a white card (fill + hairline border + faint shadow); hover is a flat plate.
-    @ViewBuilder private var rowBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: Slate.Metric.radiusTab, style: .continuous)
-        if isSelected {
-            shape
-                .fill(Slate.Surface.selectedCard)
-                .overlay(shape.strokeBorder(Slate.Line.card, lineWidth: 1))
-                .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
-        } else if hovering {
-            shape.fill(Slate.State.hover)
-        } else {
-            Color.clear
-        }
+    private var rowBackground: Color {
+        if active { Slate.Surface.raised }
+        else if hovering { Slate.State.hover }
+        else { .clear }
+    }
+}
+
+extension SlateListRow where Leading == EmptyView {
+    /// A row with no leading accessory (the sidebar tab rows — name-first, no icon).
+    init(
+        active: Bool = false,
+        subtitle: String? = nil,
+        onTap: (() -> Void)? = nil,
+        @ViewBuilder title: @escaping () -> Title,
+        @ViewBuilder trailing: @escaping (_ hovering: Bool) -> Trailing,
+    ) {
+        self.init(
+            active: active, subtitle: subtitle, onTap: onTap,
+            leading: { EmptyView() }, title: title, trailing: trailing,
+        )
     }
 }
 

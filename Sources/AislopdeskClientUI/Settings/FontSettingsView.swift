@@ -92,7 +92,7 @@ struct FontSettingsView: View {
         return Button { scope = tab } label: {
             Text(tab.label)
                 .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(selected ? Slate.Surface.window : Slate.Text.secondary)
+                .foregroundStyle(selected ? Slate.Surface.ground : Slate.Text.secondary)
                 .padding(.horizontal, Slate.Metric.space3)
                 .padding(.vertical, Slate.Metric.space1)
                 .background(Capsule().fill(selected ? Slate.Text.primary : Color.clear))
@@ -454,7 +454,7 @@ private struct FontFamilyComboBox: View {
         .padding(.vertical, Slate.Metric.space1)
         .background(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusControl, style: .continuous)
-                .fill(Slate.Surface.element),
+                .fill(Slate.Surface.raised),
         )
         .overlay(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusControl, style: .continuous)
@@ -491,7 +491,7 @@ private struct FontFamilyComboBox: View {
             }
         }
         .frame(width: 280, height: 320)
-        .background(Slate.Surface.window)
+        .background(Slate.Surface.ground)
     }
 
     private func specimenRow(_ family: String) -> some View {

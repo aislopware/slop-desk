@@ -81,7 +81,7 @@ struct ViModePill: View {
         }
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space1)
-        .background(Slate.Surface.element, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+        .background(Slate.Surface.raised, in: .rect(cornerRadius: Slate.Metric.radiusControl))
         .overlay(
             // Plain navigation wears the same subtle hairline as the read-only pill; a visual selection swaps in
             // the accent ring so the "I am selecting" state is unmistakable beside the count.
@@ -199,7 +199,7 @@ struct ViKeyHintBar: View {
         }
         .padding(.horizontal, Slate.Metric.space3)
         .padding(.vertical, Slate.Metric.space2)
-        .background(Slate.Surface.element, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+        .background(Slate.Surface.raised, in: .rect(cornerRadius: Slate.Metric.radiusControl))
         .overlay(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
                 .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
@@ -251,7 +251,7 @@ struct ViKeyHintBar: View {
                 .foregroundStyle(Slate.Text.secondary)
                 .frame(minWidth: 18, minHeight: 18)
                 .padding(.horizontal, Slate.Metric.space1)
-                .background(Slate.Surface.card, in: .rect(cornerRadius: Slate.Metric.radiusSmall))
+                .background(Slate.Surface.face, in: .rect(cornerRadius: Slate.Metric.radiusSmall))
                 .overlay(
                     RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
                         .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),

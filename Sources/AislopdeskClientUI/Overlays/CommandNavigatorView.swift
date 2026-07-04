@@ -94,7 +94,7 @@ struct CommandNavigatorView: View {
             footerBar
         }
         .frame(width: panelWidth)
-        .background(Slate.Surface.card)
+        .background(Slate.Surface.face)
         .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusCard))
         .overlay(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
@@ -159,7 +159,7 @@ struct CommandNavigatorView: View {
                 .onSubmit { actSelected() } // plain ↩ jumps + closes
         }
         .padding(.horizontal, Slate.Metric.space4)
-        .frame(height: 48)
+        .frame(height: Slate.Metric.heightInput)
         .onAppear {
             // A `@FocusState` set in the same tick the view appears (before its backing responder exists) is
             // dropped — defer one runloop hop (the palette / find-bar / Jump-To idiom).
@@ -177,7 +177,7 @@ struct CommandNavigatorView: View {
             Spacer(minLength: Slate.Metric.space2)
         }
         .padding(.horizontal, Slate.Metric.space3)
-        .frame(height: 36)
+        .frame(height: Slate.Metric.heightRow)
     }
 
     private func filterPill(_ segment: BlockNavigatorFilter) -> some View {
@@ -193,10 +193,10 @@ struct CommandNavigatorView: View {
             }
             .foregroundStyle(active ? Slate.Text.primary : Slate.Text.secondary)
             .padding(.horizontal, Slate.Metric.space2)
-            .frame(height: 24)
+            .frame(height: Slate.Metric.heightControl)
             .background(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                    .fill(active ? Slate.Surface.element : Color.clear),
+                    .fill(active ? Slate.Surface.raised : Color.clear),
             )
             .contentShape(Rectangle())
         }
@@ -278,7 +278,7 @@ struct CommandNavigatorView: View {
             starButton(block)
         }
         .padding(.horizontal, Slate.Metric.space3)
-        .frame(height: 34)
+        .frame(height: Slate.Metric.heightRow)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusItem)
@@ -390,7 +390,7 @@ struct CommandNavigatorView: View {
             footerHint("Close", glyph: "esc")
         }
         .padding(.horizontal, Slate.Metric.space4)
-        .frame(height: 34)
+        .frame(height: Slate.Metric.heightRow)
     }
 
     private func footerHint(_ label: String, glyph: String) -> some View {
@@ -404,7 +404,7 @@ struct CommandNavigatorView: View {
                 .padding(.horizontal, Slate.Metric.space1)
                 .background(
                     RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                        .fill(Slate.Surface.element),
+                        .fill(Slate.Surface.raised),
                 )
         }
     }

@@ -144,7 +144,7 @@ struct OpenQuicklyView: View {
                 .onSubmit { actSelected() } // plain ↩ acts + closes
         }
         .padding(.horizontal, Slate.Metric.space4)
-        .frame(height: 48)
+        .frame(height: Slate.Metric.heightInput)
         .onAppear {
             // A `@FocusState` set in the same tick the view appears (before its backing responder exists) is
             // dropped — defer one runloop hop (the palette / find-bar idiom).
@@ -289,7 +289,7 @@ struct OpenQuicklyView: View {
             #endif
         }
         .padding(.horizontal, Slate.Metric.space3)
-        .frame(height: 38)
+        .frame(height: Slate.Metric.heightRow)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusItem)
@@ -317,7 +317,7 @@ struct OpenQuicklyView: View {
             .padding(.vertical, 1)
             .background(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                    .fill(Slate.Surface.element),
+                    .fill(Slate.Surface.raised),
             )
     }
 
@@ -357,7 +357,7 @@ struct OpenQuicklyView: View {
             footerHint("Actions", glyph: "⌘K")
         }
         .padding(.horizontal, Slate.Metric.space4)
-        .frame(height: 34)
+        .frame(height: Slate.Metric.heightRow)
     }
 
     private func footerHint(_ label: String, glyph: String) -> some View {
@@ -371,7 +371,7 @@ struct OpenQuicklyView: View {
                 .padding(.horizontal, Slate.Metric.space1)
                 .background(
                     RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                        .fill(Slate.Surface.element),
+                        .fill(Slate.Surface.raised),
                 )
         }
     }
@@ -417,7 +417,7 @@ struct OpenQuicklyView: View {
         }
         .padding(.vertical, Slate.Metric.space1)
         .frame(minWidth: 240)
-        .background(Slate.Surface.card)
+        .background(Slate.Surface.face)
         // The popover owns the keyboard while open (its field is focused): ↑/↓ move the highlight over the
         // FILTERED list; ↩ is the field's `.onSubmit`; Esc closes just the popover (not the whole picker).
         .onKeyPress(phases: .down) { press in handleActionsKey(press, count: actions.count) }
@@ -437,7 +437,7 @@ struct OpenQuicklyView: View {
                 .onSubmit { runHighlightedAction() }
         }
         .padding(.horizontal, Slate.Metric.space3)
-        .frame(height: 34)
+        .frame(height: Slate.Metric.heightRow)
         .onAppear {
             // Same one-runloop-hop focus idiom as the main search field (a `@FocusState` set in the appear
             // tick, before the backing responder exists, is dropped).
@@ -459,7 +459,7 @@ struct OpenQuicklyView: View {
             }
             .foregroundStyle(Slate.Text.primary)
             .padding(.horizontal, Slate.Metric.space3)
-            .frame(height: 30)
+            .frame(height: Slate.Metric.heightRow)
             .background(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusItem)
                     .fill(isHighlighted ? Slate.State.selected : Color.clear),

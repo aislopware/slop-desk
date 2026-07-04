@@ -34,19 +34,25 @@ fi
 
 font_pat='\.font\(\.system\(size: ?[0-9]'
 radius_pat='cornerRadius[(:] *[0-9]'
+# MERIDIAN C1: every fixed row/bar/strip height rides the ladder (`Slate.Metric.height*` /
+# `titlebarHeight` / `paneHeaderHeight` / `hairline`) — a raw `.frame(height: N)` literal is a leak.
+# (`.frame(width: N, height: M)` square icon boxes are intrinsic glyph sizing, not the vertical rhythm,
+# and stay out of scope — the pattern anchors on `height` as the FIRST argument.)
+height_pat='\.frame\(height: ?[0-9]'
 
 # `|| true`: grep exits 1 on no-match, which is the PASS case here. Comment-only lines (after `path:line:`,
 # the content starts with `//` / `///` / `*`) are filtered out so docs that mention the shape don't fail.
-hits="$(grep -rnE "${font_pat}|${radius_pat}" "${root}" --include='*.swift' |
+hits="$(grep -rnE "${font_pat}|${radius_pat}|${height_pat}" "${root}" --include='*.swift' |
   grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|\*)' || true)"
 
 if [[ -n "${hits}" ]]; then
   echo "check-ds-leaks: RAW design-token literals found in ${root} — use the Slate token scale instead:" >&2
   echo "  font size    → Slate.Typeface.{display,body,base,footnote,small}" >&2
   echo "  cornerRadius → Slate.Metric.radius{Card,Tab,Control,Item,Small,Pill}" >&2
+  echo "  frame height → Slate.Metric.height{Control,Bar,Row,Strip,RowTall,Input} (or hairline)" >&2
   echo "" >&2
   echo "${hits}" >&2
   exit 1
 fi
 
-echo "check-ds-leaks: no raw font/radius literals in ${root} — Slate token scale intact."
+echo "check-ds-leaks: no raw font/radius/height literals in ${root} — Slate token scale intact."

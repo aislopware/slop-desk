@@ -137,8 +137,8 @@ private struct TitleMenuButton: View {
                     .foregroundStyle(Slate.Text.icon)
                     .opacity(hover || show ? 1 : 0)
             }
-            .padding(.horizontal, 8)
-            .frame(height: 24)
+            .padding(.horizontal, Slate.Metric.space2)
+            .frame(height: Slate.Metric.heightControl)
             .background(hover || show ? Slate.State.hover : .clear, in: .rect(cornerRadius: Slate.Metric.radiusControl))
             .contentShape(.rect)
         }
@@ -204,18 +204,20 @@ private struct TitleMenuSection: View {
     let title: String
     init(_ title: String) { self.title = title }
     var body: some View {
+        // MERIDIAN L2: caps micro-labels speak the INSTRUMENT voice — same register as `SlateSectionHeader`
+        // and the sort popover's section label (one voice per role, no per-popover drift).
         Text(title)
-            .font(.system(size: Slate.Typeface.small, weight: .semibold))
-            .tracking(0.4)
+            .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
+            .tracking(Slate.Typeface.instrumentTracking)
             .foregroundStyle(Slate.State.header)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 2)
+            .padding(.horizontal, Slate.Metric.space3).padding(.top, Slate.Metric.space2).padding(.bottom, 2)
     }
 }
 
 private struct TitleMenuDivider: View {
     var body: some View {
-        Rectangle().fill(Slate.Line.divider).frame(height: 1)
+        Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
             .padding(.vertical, 5).padding(.horizontal, 10)
     }
 }
@@ -246,7 +248,7 @@ private struct TitleMenuRow: View {
                     Text(shortcut).font(.system(size: Slate.Typeface.footnote)).foregroundStyle(Slate.Text.secondary)
                 }
             }
-            .padding(.horizontal, 12).frame(height: 28)
+            .padding(.horizontal, Slate.Metric.space3).frame(height: Slate.Metric.heightBar)
             .background(hovering ? Slate.State.hover : .clear)
             .contentShape(.rect)
         }

@@ -1,6 +1,6 @@
 // PeekReplyOverlay — the "Peek & Reply" card (P4 / E13 WI-8, ⌘⌥J), NATIVE SwiftUI. Everything outside the
 // workspace + panes is native chrome, so this is a native `.sheet` body (native title / status / `Divider` /
-// `TextField` / prominent send button) — NOT the old bespoke `Slate.Surface.card` panel. It targets the
+// `TextField` / prominent send button) — NOT the old bespoke `Slate.Surface.face` panel. It targets the
 // OLDEST pane needing attention (`WorkspaceStore.peekReplyTargetPane`), shows that pane's cheap headless
 // `PeekContent` (title + the agent's blocking question + a few recent command-block lines), and offers a
 // reply field — so the user can ANSWER a blocked agent INLINE without a full tab/context switch.

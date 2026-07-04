@@ -313,7 +313,7 @@ struct TerminalFindBar: View {
         // hairline stroke around the CARD (verified by pixel-scanning find.png: the pane→shadow gradient
         // transitions straight into the card fill with no border line). Only the `Aa`/`ab`/`.*` mode chips keep
         // their OWN individual hairline outlines (FindTogglePill); the card itself wears no border/overlay.
-        .background(Slate.Surface.element, in: RoundedRectangle(cornerRadius: Slate.Metric.radiusControl))
+        .background(Slate.Surface.raised, in: RoundedRectangle(cornerRadius: Slate.Metric.radiusControl))
         .shadow(color: Slate.State.shadow, radius: 12, x: 0, y: 4)
         .onAppear {
             // A `@FocusState` set in the same tick the view appears (before its backing responder exists) is
@@ -353,14 +353,14 @@ struct TerminalFindBar: View {
             .padding(.horizontal, Slate.Metric.space2)
             .padding(.vertical, Slate.Metric.space1)
             // find.png: the query text sits in its OWN delineated inset — a distinct FILLED gray rounded field
-            // INSIDE the find-bar card (NOT flush on it). The card itself is `Surface.element` (≈ white/elevated
-            // in light themes), so a flush `Surface.card` field reads as near-invisible there; instead the field
+            // INSIDE the find-bar card (NOT flush on it). The card itself is `Surface.raised` (≈ white/elevated
+            // in light themes), so a flush `Surface.face` field reads as near-invisible there; instead the field
             // wears `State.selected` — a translucent neutral wash that composites over the `element` card to a
             // gray inset. CROSS-THEME caveat (Batch-5b): `State.selected` is a BLACK wash in light themes (so the
             // field composites DARKER than the card → a recessed inset, matching find.png) but a WHITE wash in
             // dark themes (so it composites LIGHTER than the card — which on its OWN reads RAISED, not recessed).
             // No single solid/wash token is reliably recessed-AND-visible on both themes (the only darker-than-
-            // card token in dark — `Surface.card`/the backdrop — is near-invisible in light). So rather than
+            // card token in dark — `Surface.face`/the backdrop — is near-invisible in light). So rather than
             // chase a darker fill, we DELINEATE the field with its own inner `Line.subtle` hairline: a hard field
             // boundary that reads as a distinct inset REGARDLESS of which way the fill contrasts, keeping the
             // query field clearly delineated on every theme. This is the INNER field only — the card's
@@ -431,7 +431,7 @@ struct FindTogglePillTray<Content: View>: View {
 
 /// A compact `Aa` / `ab` / `.*` toggle pill (the find-bar mode buttons), laid out inside a ``FindTogglePillTray``.
 /// LOCKED rendering (see the tray's doc comment — screenshot-matched, final): each chip is INDIVIDUALLY
-/// outlined. idle → its OWN `Surface.card` resting plate + a `Line.subtle` hairline border (delineated, never a
+/// outlined. idle → its OWN `Surface.face` resting plate + a `Line.subtle` hairline border (delineated, never a
 /// bare glyph); hover → a `State.hover` plate (border held); on → accent text on an `accentMuted` wash + an
 /// accent hairline ring. There is NO shared backing tray — `find.png` / `global-search.png` show detached,
 /// individually-bordered chips with gaps between them. Factored to file scope (internal) so the WI-4
@@ -458,8 +458,8 @@ struct FindTogglePill: View {
                 .padding(.horizontal, Slate.Metric.space1)
                 .background(
                     // Each chip carries its OWN resting plate (find.png / global-search.png): idle = a subtle
-                    // `Surface.card` plate, hover = a `State.hover` plate, on = the accent wash. No shared tray.
-                    isOn ? Slate.State.accentMuted : (hovering ? Slate.State.hover : Slate.Surface.card),
+                    // `Surface.face` plate, hover = a `State.hover` plate, on = the accent wash. No shared tray.
+                    isOn ? Slate.State.accentMuted : (hovering ? Slate.State.hover : Slate.Surface.face),
                     in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall),
                 )
                 .overlay(

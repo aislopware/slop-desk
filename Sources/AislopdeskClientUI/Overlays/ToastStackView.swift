@@ -5,7 +5,7 @@
 //
 // Each card mirrors the macOS banner anatomy (notification.png): a leading flavour glyph, a bold title, an
 // optional secondary body line, and a trailing X to dismiss — wrapped in the shared floating-panel shell
-// (`Slate.Surface.card` body, `Slate.Line.subtle` hairline, `Slate.Metric.radiusCard` corners, a soft drop
+// (`Slate.Surface.face` body, `Slate.Line.subtle` hairline, `Slate.Metric.radiusCard` corners, a soft drop
 // shadow). The flavour tint follows the model's `Toast.Flavor`: success → `Slate.Status.ok`, error →
 // `Slate.Status.err`, default → `Slate.Status.info`, attention → `Slate.State.accent`.
 //
@@ -91,7 +91,7 @@ struct ToastStackView: View {
         .padding(.horizontal, Slate.Metric.space3)
         .padding(.vertical, Slate.Metric.space2)
         .frame(width: cardWidth, alignment: .leading)
-        .background(Slate.Surface.card)
+        .background(Slate.Surface.face)
         .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusCard))
         .overlay(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)

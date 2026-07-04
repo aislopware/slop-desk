@@ -12,10 +12,10 @@ import SwiftUI
 @MainActor
 enum NativePaneColor {
     /// The chrome / window background (pane header, divider bands, empty content) — the Slate window backdrop.
-    static var window: Color { Slate.Surface.window }
+    static var window: Color { Slate.Surface.ground }
 
     /// The terminal / editable content surface background — the floating card surface.
-    static var terminalBackground: Color { Slate.Surface.card }
+    static var terminalBackground: Color { Slate.Surface.face }
 
     /// The hairline separator colour — the Slate divider.
     static var separator: Color { Slate.Line.divider }

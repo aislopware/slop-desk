@@ -2,7 +2,7 @@
 // workspace + panes is native chrome, so this is a native `.sheet` body — a grouped `List` of `Section`s (one
 // per binding category: Panes / Tabs / Sessions / Focus / View / Agents), each row a native `LabeledContent`
 // pairing the binding's title (leading) with its chord glyph (trailing) — the System-Settings shortcut idiom.
-// NOT the old bespoke `Slate.Surface.card` panel. Presented as a real sheet by ``OverlayHostView``.
+// NOT the old bespoke `Slate.Surface.face` panel. Presented as a real sheet by ``OverlayHostView``.
 //
 // The rows render the single source-of-truth binding table (``WorkspaceBindingRegistry/groupedForDisplay``),
 // with each chord taken from the SAME registry the keyboard dispatcher fires (``WorkspaceBindingRegistry/glyph``)

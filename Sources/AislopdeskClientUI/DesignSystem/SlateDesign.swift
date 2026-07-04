@@ -37,13 +37,14 @@ import SwiftUI
 
 /// A full colour theme (every chrome role). Two instances ship: `.paper` (light, default) and `.dark`.
 struct SlateTheme: Equatable {
-    // Surfaces (back → front)
-    let window: Color // titlebar + margin backdrop (the "bg")
-    let sidebar: Color // navigator / tabs panel
-    let content: Color // the area behind the floating card
-    let card: Color // the terminal surface — flush paper (RC.bg), NOT a brighter-white card
-    let selectedCard: Color // the active sidebar-tab card fill (white-on-paper, RC.card)
-    let element: Color // inset controls (search field, kbd, chips)
+    // Surfaces — the 3-rung ladder (MERIDIAN C1). Exactly three names, each REAL in every theme (a rung
+    // that collapses to another in practice gets DELETED, not kept as aspirational vocabulary):
+    //   ground → the chrome housing: sidebar column + auxiliary windows (Settings / overlays' backdrop)
+    //   face   → the lit pane surface: terminal cells, the content column, sheet/popover grounds
+    //   raised → one step lifted: the active row card, popover panels, inset controls (search / kbd / chips)
+    let ground: Color
+    let face: Color
+    let raised: Color
 
     // Text
     let textPrimary: Color
@@ -101,13 +102,10 @@ struct SlateTheme: Equatable {
     /// "Paper" — the original warm off-white + green light palette; kept as a selectable theme (the default
     /// is now Monokai Pro Classic).
     static let paper = Self(
-        // MERIDIAN L5: chrome recedes onto the sidebar tone; the pane keeps the brighter paper (`card`).
-        window: Color(slateHex: 0xF5F4F0),
-        sidebar: Color(slateHex: 0xF5F4F0),
-        content: Color(slateHex: 0xFCFBF9),
-        card: Color(slateHex: 0xFCFBF9), // terminal surface = warm paper — flush, borderless panel (flat: no card look)
-        selectedCard: .white, // active-tab card = pure white on paper (RC.card)
-        element: Color(slateHex: 0xF0EFEA),
+        // MERIDIAN L5: chrome recedes onto the `ground` tone; the pane keeps the brighter paper (`face`).
+        ground: Color(slateHex: 0xF5F4F0),
+        face: Color(slateHex: 0xFCFBF9), // terminal surface = warm paper — flush, borderless panel (flat: no card look)
+        raised: .white, // active-tab card / popover / inset controls = pure white on paper (RC.card)
         textPrimary: Color(slateHex: 0x37352F),
         textSecondary: Color(slateHex: 0xB8B5AE),
         textTertiary: Color(slateHex: 0xC9C6BE),
@@ -146,12 +144,9 @@ struct SlateTheme: Equatable {
     static let dark = Self(
         // MERIDIAN L5: chrome DARKER than the pane surface (0x161616) — inverted from the old
         // sidebar-lighter-than-window layout so the pane reads as the lit face.
-        window: Color(slateHex: 0x111111),
-        sidebar: Color(slateHex: 0x111111),
-        content: Color(slateHex: 0x121212),
-        card: Color(slateHex: 0x161616), // FLAT: pane surface == window backdrop (flat design, no card)
-        selectedCard: Color(slateHex: 0x2A2A2A), // active-tab card = slightly elevated panel on the dark sidebar
-        element: Color(slateHex: 0x262626),
+        ground: Color(slateHex: 0x111111),
+        face: Color(slateHex: 0x161616),
+        raised: Color(slateHex: 0x2A2A2A), // active-tab card / popover / inset controls, one step lifted
         textPrimary: Color(slateHex: 0xEEEEEE),
         textSecondary: Color(slateHex: 0x888888),
         textTertiary: Color(slateHex: 0x8A8A8A),
@@ -222,16 +217,13 @@ struct SlateTheme: Equatable {
         // theme đang màu trắng / hardcode" report. Light filters keep a near-black structure line.
         let line = Color(slateHex: s.isLight ? 0x000000 : s.foreground)
         return Self(
-            // MERIDIAN L5 (depth by light, not lines): the chrome ground (`window` — auxiliary windows;
-            // the sidebar column) recedes onto the seed's dimmed `sidebar` tone while the PANE surface
-            // (`card`/terminal bg) keeps the brighter seed `background` — the pane is the lit face of the
-            // instrument. The workspace CONTENT column paints `card`, not `window` (see ContentColumn).
-            window: Color(slateHex: s.sidebar),
-            sidebar: Color(slateHex: s.sidebar),
-            content: Color(slateHex: s.background),
-            card: Color(slateHex: s.background), // FLAT: pane surface == backdrop
-            selectedCard: Color(slateHex: s.elevated),
-            element: Color(slateHex: s.elevated),
+            // MERIDIAN L5 (depth by light, not lines): the chrome `ground` (the sidebar column; auxiliary
+            // windows) recedes onto the seed's dimmed `sidebar` tone while the PANE surface (`face` /
+            // terminal bg) keeps the brighter seed `background` — the pane is the lit face of the
+            // instrument. The workspace CONTENT column paints `face`, not `ground` (see ContentColumn).
+            ground: Color(slateHex: s.sidebar),
+            face: Color(slateHex: s.background),
+            raised: Color(slateHex: s.elevated),
             textPrimary: Color(slateHex: s.foreground),
             textSecondary: Color(slateHex: s.secondary),
             textTertiary: Color(slateHex: s.tertiary),
@@ -347,14 +339,13 @@ enum Slate {
 
     // The colour namespaces are `@MainActor` because they read the runtime ``ThemeStore`` via
     // ``Slate/theme`` (D3) — every read site is a SwiftUI `body` / AppKit lifecycle hook (all MainActor).
+    /// The 3-rung surface ladder (MERIDIAN C1) — the ONLY surface vocabulary view code speaks:
+    /// `ground` (chrome housing) → `face` (the lit pane) → `raised` (one step lifted).
     @MainActor
     enum Surface {
-        static var window: Color { Slate.theme.window }
-        static var sidebar: Color { Slate.theme.sidebar }
-        static var content: Color { Slate.theme.content }
-        static var card: Color { Slate.theme.card }
-        static var selectedCard: Color { Slate.theme.selectedCard }
-        static var element: Color { Slate.theme.element }
+        static var ground: Color { Slate.theme.ground }
+        static var face: Color { Slate.theme.face }
+        static var raised: Color { Slate.theme.raised }
     }
 
     @MainActor
@@ -415,14 +406,29 @@ enum Slate {
         static let space3: CGFloat = 12
         static let space4: CGFloat = 16
 
+        // The HEIGHT LADDER (MERIDIAN C1) — the closed vertical rhythm, every step a multiple of 4.
+        // View code picks a rung, never a raw `frame(height: N)` literal (`check-ds-leaks.sh` enforces it).
+        /// Popover/menu rows, chips, the titlebar clusters, plate buttons.
+        static let heightControl: CGFloat = 24
+        /// Bars: the pane header, title-menu rows.
+        static let heightBar: CGFloat = 28
+        /// The standard single-line list row (sidebar tabs, palette results, footers).
+        static let heightRow: CGFloat = 32
+        /// Chrome strips: the titlebar / traffic-light band.
+        static let heightStrip: CGFloat = 40
+        /// The two-line list row (title + subtitle) and chooser cards.
+        static let heightRowTall: CGFloat = 44
+        /// The overlay search-input strip (palette / navigator / global search / open-quickly).
+        static let heightInput: CGFloat = 48
+
         // Floating-card insets — the card is inset from the window so the backdrop wraps around it.
         static let cardMargin = EdgeInsets(top: 4, leading: 16, bottom: 16, trailing: 16)
 
-        // Chrome dimensions
-        static let paneHeaderHeight: CGFloat = 28
+        // Chrome dimensions (semantic aliases INTO the height ladder — never a sixth literal)
+        static let paneHeaderHeight: CGFloat = heightBar
         /// The hover-reveal titlebar strip height — the content area reserves this at its top so the
         /// terminal starts BELOW the titlebar (the resting silhouette), not under the centred title.
-        static let titlebarHeight: CGFloat = 40
+        static let titlebarHeight: CGFloat = heightStrip
         static let sidebarWidth: CGFloat = 220
         /// The Settings window's left navigator column (a two-column Settings layout — wider than the
         /// workspace sidebar so the icon+label section rows + the search pill sit comfortably).
@@ -435,9 +441,11 @@ enum Slate {
         /// underline / dot / top-bar iterations). REPLACING the old unfocused-dim treatment.
         static let focusCornerSize: CGFloat = 12
 
-        // Control plate (PlateIconButton)
-        static let plate: CGFloat = 24
+        // Control plate (PlateIconButton) — rides the ladder's control rung.
+        static let plate: CGFloat = heightControl
         static let iconSize: CGFloat = 13
+        /// The host-identity monogram plate (``SlateMonogram``) — sized to sit inside a control-height row.
+        static let monogram: CGFloat = 18
     }
 
     /// Typography scale — one named role per size; UI = system, code = JetBrains Mono. A closed scale (no

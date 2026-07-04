@@ -290,7 +290,7 @@ private struct StreamStallCaption: View {
             .padding(.horizontal, Slate.Metric.space2)
             .padding(.vertical, Slate.Metric.space1)
             .background(
-                Slate.Surface.window.opacity(0.88),
+                Slate.Surface.ground.opacity(0.88),
                 in: .rect(cornerRadius: Slate.Metric.radiusSmall),
             )
         }
@@ -358,7 +358,7 @@ private struct GuiPaneControlBar: View {
         .padding(.horizontal, Slate.Metric.space2)
         .frame(height: Slate.Metric.paneHeaderHeight)
         .frame(maxWidth: .infinity)
-        .background(Slate.Surface.card) // FLAT: bar background == pane background
+        .background(Slate.Surface.face) // FLAT: bar background == pane background
         .overlay(alignment: .top) {
             Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
         }
@@ -524,7 +524,7 @@ private struct PasteFeedbackBanner: View {
             }
             .padding(.horizontal, Slate.Metric.space3)
             .padding(.vertical, Slate.Metric.space2)
-            .background(Slate.Surface.card, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+            .background(Slate.Surface.face, in: .rect(cornerRadius: Slate.Metric.radiusControl))
             .overlay(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
                     .strokeBorder(Slate.Line.divider, lineWidth: Slate.Metric.hairline),

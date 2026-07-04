@@ -39,7 +39,7 @@ public struct FirstLaunchView: View {
             footer
         }
         .frame(width: 540, height: 580)
-        .background(Slate.Surface.window)
+        .background(Slate.Surface.ground)
         // Safety net: any dismissal (Done / Skip Setup / Esc / window-close) marks first-launch complete so it
         // never re-presents. Idempotent (sets a single `Defaults` flag).
         .onDisappear { model.finish() }
@@ -225,7 +225,7 @@ private struct FirstLaunchThemeStep: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                    .fill(isSelected ? Slate.State.selected : Slate.Surface.card),
+                    .fill(isSelected ? Slate.State.selected : Slate.Surface.face),
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
@@ -319,7 +319,7 @@ struct FirstLaunchCard<Content: View>: View {
             .padding(Slate.Metric.space4)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusCard).fill(Slate.Surface.card),
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusCard).fill(Slate.Surface.face),
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)

@@ -94,7 +94,7 @@ final class SlateSnapshotRender: XCTestCase {
         }
         .padding(8)
         .frame(width: 260)
-        .background(Slate.Surface.sidebar)
+        .background(Slate.Surface.ground)
         try render(panel, size: CGSize(width: 260, height: 340), to: dir, named: "tab-row-badges.png")
     }
 
@@ -167,7 +167,7 @@ final class SlateSnapshotRender: XCTestCase {
     @MainActor
     private func scrimmed(_ panel: some View) -> some View {
         ZStack {
-            Slate.Surface.window
+            Slate.Surface.ground
             Slate.State.shadow // the host's dim scrim role
             panel
         }
@@ -194,10 +194,10 @@ final class SlateSnapshotRender: XCTestCase {
 }
 
 /// A static mock of the chrome, built from the real token layer + component kit. Mirrors the resting
-/// window: a "TABS" sidebar (white-card active tab via `SlateSidebarRow` + a hamburger `SlateSectionHeader`
-/// accessory) beside a FLUSH, borderless two-pane terminal on paper — NO floating card, NO accent ring, NO
-/// per-pane header bar, NO cwd pill and NO right inspector. Green appears ONLY on the prompt `❯` glyph
-/// (accent rationing), never as chrome.
+/// window: a "TABS" sidebar (raised-card active tab via the shared `SlateListRow` shell + a hamburger
+/// `SlateSectionHeader` accessory) beside a FLUSH, borderless two-pane terminal on paper — NO floating
+/// card, NO accent ring, NO per-pane header bar, NO cwd pill and NO right inspector. Green appears ONLY on
+/// the prompt `❯` glyph (accent rationing), never as chrome.
 private struct SlateShowcase: View {
     var body: some View {
         HStack(spacing: 0) {
@@ -205,7 +205,7 @@ private struct SlateShowcase: View {
             content
         }
         .frame(width: 920, height: 560)
-        .background(Slate.Surface.window)
+        .background(Slate.Surface.ground)
     }
 
     private var sidebar: some View {
@@ -215,14 +215,30 @@ private struct SlateShowcase: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(Slate.Text.icon)
             }
-            SlateSidebarRow(symbol: .terminal, title: "~/aislopdesk", badge: "zsh", isSelected: true) {}
-            SlateSidebarRow(symbol: .terminal, title: "build", badge: "zsh", isSelected: false) {}
-            SlateSidebarRow(symbol: .display, title: "Remote window", isSelected: false) {}
+            showcaseRow(title: "~/aislopdesk", badge: "zsh", active: true)
+            showcaseRow(title: "build", badge: "zsh", active: false)
+            showcaseRow(title: "Remote window", badge: nil, active: false)
             Spacer()
         }
         .padding(Slate.Metric.space2)
         .frame(width: Slate.Metric.sidebarWidth)
-        .background(Slate.Surface.sidebar)
+        .background(Slate.Surface.ground)
+    }
+
+    /// One showcase tab row on the shared ``SlateListRow`` shell (the same anatomy `SlateTabRow` rides).
+    private func showcaseRow(title: String, badge: String?, active: Bool) -> some View {
+        SlateListRow(active: active) {
+            Text(title)
+                .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
+                .foregroundStyle(Slate.Text.primary)
+                .lineLimit(1)
+        } trailing: { _ in
+            if let badge {
+                Text(badge)
+                    .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                    .foregroundStyle(Slate.Text.secondary)
+            }
+        }
     }
 
     private var content: some View {
@@ -247,7 +263,7 @@ private struct SlateShowcase: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Slate.Surface.card) // flush paper terminal surface (#FCFBF9), not a brighter-white card
+        .background(Slate.Surface.face) // flush paper terminal surface (#FCFBF9), not a brighter-white card
     }
 
     private func terminalPane(promptPath: String, command: String?) -> some View {

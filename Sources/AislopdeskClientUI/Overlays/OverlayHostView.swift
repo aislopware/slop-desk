@@ -254,7 +254,7 @@ private struct PrefixArmedChip: View {
         }
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space1)
-        .background(Slate.Surface.card, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+        .background(Slate.Surface.face, in: .rect(cornerRadius: Slate.Metric.radiusControl))
         .overlay(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
                 .strokeBorder(Slate.Line.subtle, lineWidth: 1),
@@ -285,7 +285,7 @@ private struct ConnectionAlertChip: View {
             }
             .padding(.horizontal, Slate.Metric.space2)
             .padding(.vertical, Slate.Metric.space1)
-            .background(Slate.Surface.card, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+            .background(Slate.Surface.face, in: .rect(cornerRadius: Slate.Metric.radiusControl))
             .overlay(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
                     .strokeBorder(Slate.Line.subtle, lineWidth: 1),

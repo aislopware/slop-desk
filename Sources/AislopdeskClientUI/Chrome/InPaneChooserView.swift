@@ -96,8 +96,8 @@ private struct InPaneChooserCard: View {
                     .foregroundStyle(Slate.Text.secondary)
             }
             .padding(.horizontal, Slate.Metric.space3)
-            .frame(height: 44)
-            .background(hovering ? Slate.State.hover : Slate.Surface.element)
+            .frame(height: Slate.Metric.heightRowTall)
+            .background(hovering ? Slate.State.hover : Slate.Surface.raised)
             .overlay(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
                     .stroke(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),

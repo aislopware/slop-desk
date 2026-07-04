@@ -61,7 +61,7 @@ struct ConnectionStatusPill: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .background(Slate.Surface.element, in: Capsule())
+        .background(Slate.Surface.raised, in: Capsule())
         .overlay(Capsule().strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline))
         .help(StatusPresentation.connectionHelp(host: host, status: status))
         .accessibilityElement(children: .combine)
@@ -82,7 +82,7 @@ struct ConnectionStatusPill: View {
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .background(Slate.Surface.element, in: Capsule())
+        .background(Slate.Surface.raised, in: Capsule())
         .overlay(Capsule().strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline))
         .help("Retry connecting to \(host)")
         .accessibilityLabel("Retry connecting to \(host)")

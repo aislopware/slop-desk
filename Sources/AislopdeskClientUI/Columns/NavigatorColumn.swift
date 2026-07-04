@@ -1,5 +1,5 @@
 // NavigatorColumn — the left sidebar navigator. macOS renders a flat "TABS" panel: a warm
-// `Slate.Surface.sidebar` background (NOT the native `.sidebar` vibrancy/inset-grouped selection — the host
+// `Slate.Surface.ground` background (NOT the native `.sidebar` vibrancy/inset-grouped selection — the host
 // split item is a PLAIN item now), a "TABS" header with the sort hamburger, a flat search field, and the
 // active session's tabs rendered as `SlateTabRow`s — grouped into `SlateSectionHeader` sections when the
 // hamburger's Group-By is set (E6 WI-5). The top 40pt is reserved for the traffic lights under the hidden
@@ -179,7 +179,7 @@ struct NavigatorColumn: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(Slate.Surface.card, in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall))
+        .background(Slate.Surface.face, in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall))
         .overlay(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
                 .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
@@ -217,7 +217,7 @@ struct NavigatorColumn: View {
                         .padding(.trailing, 8)
                 }
             }
-            .frame(height: 40)
+            .frame(height: Slate.Metric.titlebarHeight)
             HStack(spacing: 0) {
                 // MERIDIAN L2: the panel label speaks the INSTRUMENT voice (mono + wide tracking) — same
                 // register as `SlateSectionHeader`, one size up for the panel-level label.
@@ -260,7 +260,7 @@ struct NavigatorColumn: View {
             .frame(maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Slate.Surface.sidebar)
+        .background(Slate.Surface.ground)
     }
 
     /// One macOS tab row: the full chrome (badge / subtitle / process label) plus the
@@ -325,7 +325,7 @@ struct NavigatorColumn: View {
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
-        .background(Slate.Surface.sidebar)
+        .background(Slate.Surface.ground)
         .tint(Slate.State.accent)
         .searchable(text: $query, prompt: "Search tabs")
         .toolbar {

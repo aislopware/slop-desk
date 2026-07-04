@@ -59,7 +59,7 @@ struct KeybindingsEditorView: View {
                                 }
                             } header: {
                                 SlateSectionHeader(category.rawValue)
-                                    .background(Slate.Surface.window)
+                                    .background(Slate.Surface.ground)
                             }
                         }
                     }
@@ -137,7 +137,7 @@ struct KeybindingsEditorView: View {
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space1)
         .background(
-            Slate.Surface.element,
+            Slate.Surface.raised,
             in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous),
         )
         .overlay(
@@ -206,7 +206,7 @@ struct KeybindingsEditorView: View {
                 .padding(.vertical, 2)
                 .frame(minWidth: 64)
                 .background(
-                    isRecording ? Slate.State.accentMuted : Slate.Surface.element,
+                    isRecording ? Slate.State.accentMuted : Slate.Surface.raised,
                     in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous),
                 )
                 .overlay(

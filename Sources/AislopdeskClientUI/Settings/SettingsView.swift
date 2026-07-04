@@ -11,7 +11,7 @@
 // top and a vertical icon+label section list, and a content column on the right
 // (`docs/ui-shell/screenshots/{all-settings,launch-option,editor-settings,cursor-style}.png`). This view
 // reproduces that with a flat two-column `HStack` (NOT a macOS `TabView` top tab strip): a fixed-width
-// `Slate.Surface.sidebar` navigator (`settingsSidebarWidth`) holding `SettingsSidebarSearchField` + the
+// `Slate.Surface.ground` navigator (`settingsSidebarWidth`) holding `SettingsSidebarSearchField` + the
 // `SettingsSidebarRow` list, a hairline divider, and the selected section's `Form` on the right. The sidebar
 // search pill (which SECTION ROWS show) is DISTINCT from the Advanced → All-Settings content search (which
 // config KEYS show) — both searches are surfaced side by side.

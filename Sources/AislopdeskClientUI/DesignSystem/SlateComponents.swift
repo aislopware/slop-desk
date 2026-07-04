@@ -2,8 +2,8 @@
 //
 // Small, composable pieces factored out of the chrome so every surface stays consistent and new views are
 // quick to assemble: a status dot, a key/value row, a pill/badge, and an `.slateCard()` surface modifier.
-// All built on `Slate.*` tokens + `SlateTheme`. See also SlateControls (`SlatePlateButton`) and SlateRow
-// (`SlateSidebarRow` / `SlateSectionHeader`).
+// All built on `Slate.*` tokens + `SlateTheme`. See also SlateControls (`SlatePlateButton`), SlateRow
+// (`SlateListRow` / `SlateSectionHeader`) and SlateMonogram (the host-identity plate).
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -55,7 +55,7 @@ struct SlatePill: View {
         .lineLimit(1)
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, 2)
-        .background(Slate.Surface.element, in: Capsule())
+        .background(Slate.Surface.raised, in: Capsule())
         .overlay(Capsule().strokeBorder(Slate.Line.subtle, lineWidth: 1))
     }
 }
@@ -81,7 +81,7 @@ extension View {
     /// Wraps the view in a card surface (element fill + hairline border + rounded corners).
     func slateCard(
         radius: CGFloat = Slate.Metric.radiusControl,
-        fill: Color = Slate.Surface.element,
+        fill: Color = Slate.Surface.raised,
     ) -> some View {
         modifier(SlateCardModifier(radius: radius, fill: fill))
     }

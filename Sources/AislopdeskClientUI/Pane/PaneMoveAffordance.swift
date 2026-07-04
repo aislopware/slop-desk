@@ -246,7 +246,7 @@ struct PaneMoveOverlay: View {
         .padding(.vertical, 6)
         .background(
             Capsule(style: .continuous)
-                .fill(Slate.Surface.card)
+                .fill(Slate.Surface.face)
                 .overlay(
                     Capsule(style: .continuous)
                         .strokeBorder(

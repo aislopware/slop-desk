@@ -57,7 +57,7 @@ struct ReadOnlyPill: View {
         // Subtly-filled chip: the inset-control surface + a hairline — distinct from, but not louder than, the
         // chrome behind it (the screenshot's "bordered or subtly filled chip rather than a brightly coloured
         // badge"). A small shadow lifts it off busy terminal output for legibility.
-        .background(Slate.Surface.element, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+        .background(Slate.Surface.raised, in: .rect(cornerRadius: Slate.Metric.radiusControl))
         .overlay(
             RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
                 .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),

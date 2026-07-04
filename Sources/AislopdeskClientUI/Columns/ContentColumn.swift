@@ -26,7 +26,7 @@ struct ContentColumn: View {
             // (`card`), never the dimmed chrome `window` tone. Panes are flush under the band (no gap, no
             // radius), so a darker strip here reads as a mispainted header, not a housing; the dimmed
             // housing is the SIDEBAR column only.
-            .background(Slate.Surface.card)
+            .background(Slate.Surface.face)
         #if os(macOS)
             // The hover-reveal titlebar floats as a TOP overlay. New-pane gestures (`+` / title-menu split)
             // mint an in-pane `.chooser` pane directly — the chooser is the pane's CONTENT, not a modal.

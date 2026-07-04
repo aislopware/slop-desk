@@ -97,17 +97,17 @@ struct GlobalSearchView: View {
                 .tint(Slate.State.accent) // the active caret is the accent colour
                 .focused($queryFocused)
                 // The query text sits inside a FILLED, hairline-bordered rounded plate (global-search.png): a
-                // `Surface.card` fill + `radiusSmall` + its own `Line.subtle` hairline, because this overlay's
-                // field sits on bare `Surface.window` and needs the ring to read as a field plate. The find bar's
+                // `Surface.face` fill + `radiusSmall` + its own `Line.subtle` hairline, because this overlay's
+                // field sits on bare `Surface.ground` and needs the ring to read as a field plate. The find bar's
                 // sibling field (`TerminalFindBar.queryField`) ALSO wears a `Line.subtle` hairline now (Batch-5b),
-                // but its FILL is `State.selected`, not `Surface.card` — that fill difference is the INTENTIONAL
-                // context delta (the find-bar field sits on the elevated, borderless `Surface.element` card whose
+                // but its FILL is `State.selected`, not `Surface.face` — that fill difference is the INTENTIONAL
+                // context delta (the find-bar field sits on the elevated, borderless `Surface.raised` card whose
                 // `State.selected` wash inverts contrast by theme, so the hairline delineates it regardless of
                 // direction). The two fills stay context-specific; both fields are hairline-delineated and
                 // screenshot-faithful. The `Aa` / `.*` pills stay OUTSIDE this plate (siblings in the HStack).
                 .padding(.horizontal, Slate.Metric.space2)
                 .padding(.vertical, Slate.Metric.space1)
-                .background(Slate.Surface.card, in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall))
+                .background(Slate.Surface.face, in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall))
                 .overlay(
                     RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
                         .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
@@ -127,7 +127,7 @@ struct GlobalSearchView: View {
             }
         }
         .padding(.horizontal, Slate.Metric.space4)
-        .frame(height: 48)
+        .frame(height: Slate.Metric.heightInput)
     }
 
     // MARK: - Summary line (`N results — M tabs`)
@@ -311,7 +311,7 @@ private struct GlobalSearchHitRow: View {
                 .opacity(hovering ? 1 : 0)
         }
         .padding(.horizontal, Slate.Metric.space4)
-        .frame(height: 26)
+        .frame(height: Slate.Metric.heightControl)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
