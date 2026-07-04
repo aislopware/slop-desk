@@ -95,6 +95,21 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
     /// Cursor glide animation (`cursor.animation`), default ``CursorAnimation/off``.
     public var cursorAnimation: CursorAnimation
 
+    /// Canvas texture post-pass (`canvas.texture`) — the terminal surface's MATERIAL finish.
+    public enum CanvasTexture: String, Codable, Sendable, CaseIterable {
+        /// Flat pixels — no post-pass (the pre-2026-07-04 look).
+        case off
+        /// Static film grain + a soft edge vignette (visible-design pass, 2026-07-04): a fixed
+        /// per-pixel hash (NO `iTime` — the grain never shimmers) plus a gentle corner darkening that
+        /// reinforces the rounded card silhouette. Delivered via ``CanvasTextureShader`` as a second
+        /// `custom-shader` line (the key is a ghostty `RepeatablePath` — passes chain).
+        case film
+    }
+
+    /// Canvas texture (`canvas.texture`), default ``CanvasTexture/film`` — the textured surface IS the
+    /// shipped look (a flat fill reads as unfinished next to the grained canvas margin).
+    public var canvasTexture: CanvasTexture
+
     // E15 (WI-2): FONT-PARITY render prefs (Appearance → Font). Like the cursor render fields these are
     // pure-chrome prefs with real defaults — applied live via `TerminalConfigBuilder` → libghostty — NEVER
     // env overrides / `video-prefs.json` / golden corpus. Every default value below is the one that emits NO
@@ -151,6 +166,7 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         cursorTextColor: String = "",
         cursorOpacity: Double = 1.0,
         cursorAnimation: CursorAnimation = .smooth,
+        canvasTexture: CanvasTexture = .film,
         fontFamilyFallback: String = "",
         fontFamilyBold: String = "",
         fontFamilyItalic: String = "",
@@ -178,6 +194,7 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         self.cursorTextColor = cursorTextColor
         self.cursorOpacity = cursorOpacity
         self.cursorAnimation = cursorAnimation
+        self.canvasTexture = canvasTexture
         self.fontFamilyFallback = fontFamilyFallback
         self.fontFamilyBold = fontFamilyBold
         self.fontFamilyItalic = fontFamilyItalic
@@ -207,6 +224,7 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         case cursorTextColor
         case cursorOpacity
         case cursorAnimation
+        case canvasTexture
         case fontFamilyFallback
         case fontFamilyBold
         case fontFamilyItalic
@@ -248,6 +266,7 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
             cursorTextColor: c.decodeIfPresent(String.self, forKey: .cursorTextColor) ?? d.cursorTextColor,
             cursorOpacity: c.decodeIfPresent(Double.self, forKey: .cursorOpacity) ?? d.cursorOpacity,
             cursorAnimation: c.decodeIfPresent(CursorAnimation.self, forKey: .cursorAnimation) ?? d.cursorAnimation,
+            canvasTexture: c.decodeIfPresent(CanvasTexture.self, forKey: .canvasTexture) ?? d.canvasTexture,
             fontFamilyFallback: c.decodeIfPresent(String.self, forKey: .fontFamilyFallback) ?? d.fontFamilyFallback,
             fontFamilyBold: c.decodeIfPresent(String.self, forKey: .fontFamilyBold) ?? d.fontFamilyBold,
             fontFamilyItalic: c.decodeIfPresent(String.self, forKey: .fontFamilyItalic) ?? d.fontFamilyItalic,

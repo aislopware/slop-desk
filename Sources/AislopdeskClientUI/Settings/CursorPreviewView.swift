@@ -158,6 +158,25 @@ struct CursorPreviewView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+
+            LabeledContent {
+                Picker("", selection: $store.terminal.canvasTexture) {
+                    Text("Off").tag(TerminalPreferences.CanvasTexture.off)
+                    Text("Film").tag(TerminalPreferences.CanvasTexture.film)
+                }
+                .labelsHidden()
+                .fixedSize()
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Canvas Texture")
+                    Text("Film adds a static grain and a soft edge vignette to the terminal surface — "
+                        + "a fixed per-pixel texture (it never moves or shimmers), so it costs nothing "
+                        + "at rest.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 

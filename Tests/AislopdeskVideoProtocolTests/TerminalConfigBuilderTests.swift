@@ -171,10 +171,13 @@ final class TerminalConfigBuilderTests: XCTestCase {
     /// turns ligatures off, including for a font that ships them; item 7). No per-face / palette /
     /// cell-height / thicken default leaks a line. FAILS if any other font-parity default emits.
     func testDefaultPathEmitsTheExpectedLinesExactly() throws {
-        // The default output gained EXACTLY one line since the design-craft pass (2026-07-04): the
-        // cursor-trail `custom-shader` (animation defaults `.smooth` now). Its path is machine-local
-        // Application Support, so the pin resolves it through the same single source the builder uses.
-        let shaderPath = try XCTUnwrap(CursorTrailShader.materializedPath())
+        // The default output carries EXACTLY two `custom-shader` lines (design-craft + visible-design
+        // passes, 2026-07-04): the cursor trail (animation defaults `.smooth`) then the canvas film
+        // texture (defaults `.film`), in that order — the texture pass runs LAST so the grain also
+        // covers the trail. Paths are machine-local Application Support, so the pin resolves them
+        // through the same single sources the builder uses.
+        let trailPath = try XCTUnwrap(CursorTrailShader.materializedPath())
+        let texturePath = try XCTUnwrap(CanvasTextureShader.materializedPath())
         let expected = [
             "font-family = SF Mono",
             "font-size = 13",
@@ -184,7 +187,8 @@ final class TerminalConfigBuilderTests: XCTestCase {
             "background = FCFBF9",
             "foreground = 37352F",
             "cursor-style = block",
-            "custom-shader = \(shaderPath)",
+            "custom-shader = \(trailPath)",
+            "custom-shader = \(texturePath)",
             "scrollback-limit = 2560000",
         ].joined(separator: "\n")
         XCTAssertEqual(TerminalConfigBuilder.string(for: TerminalPreferences()), expected)
@@ -192,11 +196,34 @@ final class TerminalConfigBuilderTests: XCTestCase {
 
     // MARK: - Cursor motion trail (design-craft pass, 2026-07-04)
 
-    /// `.off` emits NO `custom-shader` line — byte-identical to the pre-trail output for a user who
-    /// turns the animation off.
-    func testCursorAnimationOffEmitsNoShaderLine() {
-        let config = TerminalConfigBuilder.string(for: TerminalPreferences(cursorAnimation: .off))
-        XCTAssertFalse(config.contains("custom-shader"), "`.off` must not reference any shader")
+    /// Both shader prefs `.off` ⇒ NO `custom-shader` line — byte-identical to the pre-shader output
+    /// for a user who turns everything off.
+    func testAllShaderPrefsOffEmitNoShaderLine() {
+        let config = TerminalConfigBuilder.string(
+            for: TerminalPreferences(cursorAnimation: .off, canvasTexture: .off),
+        )
+        XCTAssertFalse(config.contains("custom-shader"), "everything-off must not reference any shader")
+    }
+
+    /// The two shader gates are independent: trail off + film on emits ONLY the canvas texture.
+    func testCanvasTextureAloneEmitsOnlyTheTexturePass() throws {
+        let config = TerminalConfigBuilder.string(
+            for: TerminalPreferences(cursorAnimation: .off, canvasTexture: .film),
+        )
+        let shaderLines = config.split(separator: "\n").filter { $0.hasPrefix("custom-shader = ") }
+        XCTAssertEqual(shaderLines.count, 1)
+        let path = try String(XCTUnwrap(shaderLines.first).dropFirst("custom-shader = ".count))
+        XCTAssertTrue(
+            path.hasSuffix("canvas-texture-v\(CanvasTextureShader.version).glsl"),
+            "the emitted path is the VERSIONED materialized texture shader",
+        )
+        XCTAssertEqual(
+            try String(contentsOfFile: path, encoding: .utf8), CanvasTextureShader.source,
+            "the on-disk shader is the bundled source",
+        )
+        // The static-texture contract: the pass must never reference iTime (a time-keyed grain
+        // shimmers AND forces continuous re-render — the exact failure this shader is designed out of).
+        XCTAssertFalse(CanvasTextureShader.source.contains("iTime"), "canvas texture must be static")
     }
 
     /// `.smooth` materializes the versioned trail shader on disk (idempotent) and points libghostty at

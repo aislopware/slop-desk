@@ -139,6 +139,13 @@ public enum TerminalConfigBuilder {
         if prefs.cursorAnimation == .smooth, let shader = CursorTrailShader.materializedPath() {
             lines.append("custom-shader = \(shader)")
         }
+        // Canvas texture (visible-design pass, 2026-07-04): static grain + vignette as a SECOND
+        // `custom-shader` line — the key is a ghostty `RepeatablePath`, passes chain in emission
+        // order, and this one runs LAST so the film also covers the cursor trail. `.off` emits
+        // nothing; a materialization failure also emits nothing (validate-then-drop).
+        if prefs.canvasTexture == .film, let texture = CanvasTextureShader.materializedPath() {
+            lines.append("custom-shader = \(texture)")
+        }
         lines.append("scrollback-limit = \(scrollbackLimitBytes(lines: prefs.scrollbackLines))")
 
         // Additive keybind lines (one per user rebind), validate-then-skip an empty one.
