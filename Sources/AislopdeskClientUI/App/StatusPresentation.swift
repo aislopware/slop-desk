@@ -120,6 +120,17 @@ enum StatusPresentation {
         }
     }
 
+    /// Progress-aware overload (design-craft pass, 2026-07-04, revives the orphaned E14/K1 percent): a
+    /// `.running` badge whose pane carries a DETERMINATE OSC 9;4 progress upgrades from the anonymous
+    /// spinner to a percent RING — a 90%-done task and a plain busy shell stop looking identical. Every
+    /// other kind (and an indeterminate/error progress, which the base map already voices) is unchanged.
+    static func tabBadge(_ kind: TabBadgeKind, progress: PaneProgress?) -> TabBadgeStyle {
+        if kind == .running, case let .determinate(fraction, label) = progressPresentation(progress) {
+            return .ring(fraction: fraction, label: label)
+        }
+        return tabBadge(kind)
+    }
+
     /// The accessibility / tooltip label for a tab badge, so the otherwise icon-only glyph is VoiceOver-
     /// legible and testable. Pure text — mirrors the `progress-state.md` badge vocabulary.
     static func tabBadgeLabel(_ kind: TabBadgeKind) -> String {
@@ -174,7 +185,7 @@ enum ProgressPresentation: Equatable {
 /// The rendering recipe for one tab badge (see ``StatusPresentation/tabBadge(_:)``). `.spinner` and `.dot`
 /// are bespoke shapes the view draws directly; `.symbol` is an SF-symbol name + its tint. A pure value (no
 /// view), so the badge map can be unit-tested without rendering.
-enum TabBadgeStyle {
+enum TabBadgeStyle: Equatable {
     /// An indeterminate gray spinner (a running command / working agent). A pure SwiftUI animation — never a
     /// video/capture session (CLAUDE.md hang-safety rule #6).
     case spinner
@@ -182,5 +193,9 @@ enum TabBadgeStyle {
     case dot(Color)
     /// A tinted SF-symbol fill (completed / error / awaiting-input / caffeinate / sudo).
     case symbol(name: String, tint: Color)
+    /// A DETERMINATE progress ring (design-craft pass, 2026-07-04): the 0…1 arc a `.running` pane with an
+    /// OSC 9;4 percent fills, with its "NN%" a11y/tooltip label. Replaces the spinner ONLY when a real
+    /// percent exists (``StatusPresentation/tabBadge(_:progress:)``).
+    case ring(fraction: Double, label: String)
 }
 #endif

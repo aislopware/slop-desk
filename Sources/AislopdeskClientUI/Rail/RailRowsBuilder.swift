@@ -45,15 +45,21 @@ struct RailRow: Identifiable, Equatable {
     /// — the sidebar Windows row resolves the app's LOCAL icon from it (``AppIconResolver``). Empty (a
     /// terminal row / a legacy binding) ⇒ the row keeps its SF-symbol icon.
     var bundleID: String = ""
+    /// The pane's live OSC 9;4 progress (design-craft pass, 2026-07-04) — carried RAW beside the fused
+    /// `badge` so a `.running` badge with a DETERMINATE percent renders as a progress RING instead of the
+    /// anonymous spinner (a 90%-done task and a plain busy shell used to look identical). `nil` ⇒ none.
+    var progress: PaneProgress?
 
     /// A copy of this row with a new `title` (C3 BUG A collision disambiguation) — every other field is
     /// carried verbatim. Kept here so ``RailRowsBuilder/disambiguated(_:)`` need not restate the memberwise init.
     func retitled(_ newTitle: String) -> Self {
-        Self(
+        var copy = Self(
             id: id, tabID: tabID, kind: kind, title: newTitle, subtitle: subtitle, status: status,
             tabNumber: tabNumber, badge: badge, processLabel: processLabel, readOnly: readOnly, cwd: cwd,
             isEditing: isEditing, isSelected: isSelected, bundleID: bundleID,
         )
+        copy.progress = progress
+        return copy
     }
 }
 
@@ -119,13 +125,14 @@ enum RailRowsBuilder {
                 // toggles gate their OWN badge families independently — a program's busy / OSC 9;4 progress
                 // spinner and an OSC 9;4;2 progress error are never silenced by an agent toggle. Freshness
                 // decays the clean-completion badge (store owns the clock); the resolver stays pure.
+                let progress = store.progress(for: paneID)
                 let gatedBadge = TabBadgeGating.resolve(
                     agent: status,
                     completion: store.panePendingCompletion[paneID],
                     isBusy: store.paneIsBusy(paneID),
                     foregroundProcess: processLabel,
                     completionFreshness: store.completionFreshness(forPane: paneID),
-                    progress: store.progress(for: paneID),
+                    progress: progress,
                     agentGates: store.agentBadgeGates(for: paneID),
                     commandGates: store.commandBadgeGates,
                 )
@@ -151,6 +158,7 @@ enum RailRowsBuilder {
                     isEditing: isEditing,
                     isSelected: isSelected,
                     bundleID: spec?.video?.bundleID ?? "",
+                    progress: progress,
                 ))
             }
         }

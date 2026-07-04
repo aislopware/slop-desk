@@ -45,11 +45,16 @@ struct ContentColumn: View {
                 SplitContainer(store: store)
                 #endif
             } else {
-                ContentUnavailableView(
-                    "No Session",
-                    systemImage: "terminal",
-                    description: Text("Connect to a host or open a tab"),
-                )
+                // The ONE showy moment (design-craft pass, 2026-07-04): the theme-hued aurora washes the
+                // glass BEHIND the empty state only — it never mounts once real content exists.
+                ZStack {
+                    EmptyStateAurora()
+                    ContentUnavailableView(
+                        "No Session",
+                        systemImage: "terminal",
+                        description: Text("Connect to a host or open a tab"),
+                    )
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -519,7 +519,7 @@ private struct NavigatorRow: View {
                     .help("Read only")
             }
             if let badge = row.badge {
-                TabBadgeView(kind: badge)
+                TabBadgeView(kind: badge, progress: row.progress)
             }
             if active, let processLabel = row.processLabel, !processLabel.isEmpty {
                 Text(processLabel)

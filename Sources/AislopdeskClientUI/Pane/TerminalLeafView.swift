@@ -198,6 +198,12 @@ struct TerminalLeafView: View {
                     SecureInputPill()
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
+                // The long-command elapsed/outcome chip (design-craft pass, 2026-07-04) — mounted
+                // UNCONDITIONALLY (it renders nothing until a block runs ≥ 2s) so its watched-it-run
+                // latch survives its own hidden phases; see `CommandElapsedChip.swift`.
+                if !staticMirror, let model = live?.terminalModel {
+                    CommandElapsedChip(blocks: model.blocks)
+                }
                 if !staticMirror, findBar.visible, live?.terminalModel != nil {
                     TerminalFindBar(model: findBar)
                         .transition(.move(edge: .top).combined(with: .opacity))

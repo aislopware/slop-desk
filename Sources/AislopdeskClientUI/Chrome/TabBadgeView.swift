@@ -15,12 +15,25 @@ import SwiftUI
 /// icon-only badge is VoiceOver-legible (and snapshot/AX-testable).
 struct TabBadgeView: View {
     let kind: TabBadgeKind
+    /// The pane's live OSC 9;4 progress (design-craft pass, 2026-07-04): a `.running` kind with a
+    /// DETERMINATE percent renders the ring instead of the anonymous spinner. `nil` ⇒ resolved-kind glyph.
+    var progress: PaneProgress?
 
     /// The trailing badge column is ~16px (`tab-badge.png`); the glyph centers in this fixed box so rows
     /// with different badge shapes keep a stable trailing edge.
     private static let side: CGFloat = 16
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var style: TabBadgeStyle { StatusPresentation.tabBadge(kind, progress: progress) }
+
+    /// The a11y/tooltip text — the kind label, plus the live percent when the ring is showing.
+    private var label: String {
+        if case let .ring(_, percent) = style {
+            return "\(StatusPresentation.tabBadgeLabel(kind)) — \(percent)"
+        }
+        return StatusPresentation.tabBadgeLabel(kind)
+    }
 
     var body: some View {
         glyph
@@ -30,12 +43,12 @@ struct TabBadgeView: View {
             // never keyboard-frequency — so the beat is earned; Reduce Motion collapses it to a plain swap.
             .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.35), value: kind)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(StatusPresentation.tabBadgeLabel(kind))
-            .help(StatusPresentation.tabBadgeLabel(kind))
+            .accessibilityLabel(label)
+            .help(label)
     }
 
     @ViewBuilder private var glyph: some View {
-        switch StatusPresentation.tabBadge(kind) {
+        switch style {
         case .spinner:
             // A pure SwiftUI indeterminate spinner — the gray ring of `tab-badge.png` row #1. NO video.
             ProgressView()
@@ -53,6 +66,20 @@ struct TabBadgeView: View {
                 // Symbol→symbol swaps (completed → error) morph via the SF-Symbols replace, not a hard cut.
                 .contentTransition(.symbolEffect(.replace))
                 .transition(.scale(scale: 0.4).combined(with: .opacity))
+        case let .ring(fraction, _):
+            // The determinate OSC 9;4 percent ring: a muted track + an accent arc from 12 o'clock. The
+            // arc's growth animates gently (progress arrivals are sparse wire events, not per-frame).
+            ZStack {
+                Circle()
+                    .stroke(Color.secondary.opacity(0.25), lineWidth: 2)
+                Circle()
+                    .trim(from: 0, to: fraction)
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+            .padding(2)
+            .animation(.easeOut(duration: 0.3), value: fraction)
+            .transition(.opacity)
         }
     }
 }
