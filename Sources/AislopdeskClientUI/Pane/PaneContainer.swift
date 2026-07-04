@@ -218,13 +218,15 @@ struct PaneContainer: View {
             .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous))
             .overlay {
                 // Focus border (design-craft pass, 2026-07-04): in a SPLIT, the focused card's hairline
-                // swaps to the accent-hued `cardBorderFocused` — a hue shift at the same 1pt weight (the
-                // Zed idiom: border hue, never a glow), complementing the sibling dim. A lone pane keeps
-                // the resting border (nothing to disambiguate). NO animation — pane focus moves are
-                // keyboard-frequency (the zero-animation rule, §2.5).
+                // swaps to an accent hue — a hue shift at the same 1pt weight (the Zed idiom: border
+                // hue, never a glow), complementing the sibling dim. The hue is the SESSION's identity
+                // colour (per-session colour identity, 2026-07-04 — same knock-back opacity as the old
+                // theme-accent `cardBorderFocused`), so the focus ring, rail icons and margin wash all
+                // speak one colour. A lone pane keeps the resting border (nothing to disambiguate).
+                // NO animation — pane focus moves are keyboard-frequency (the zero-animation rule, §2.5).
                 RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous)
                     .strokeBorder(
-                        isFocused && !solo ? Slate.Line.cardBorderFocused : Slate.Line.cardBorder,
+                        isFocused && !solo ? focusedBorder : Slate.Line.cardBorder,
                         lineWidth: 1,
                     )
                     .allowsHitTesting(false)
@@ -253,5 +255,12 @@ struct PaneContainer: View {
     /// non-focused panes. Ghostty ships 0.3 (an `unfocused-split-opacity` of 0.7); ours is deliberately
     /// gentler — a streamed remote-window pane is often watched while unfocused.
     static let unfocusedDim: Double = 0.15
+
+    /// The focused-in-a-split border hue: the active SESSION's identity colour at the established
+    /// knock-back opacity, falling back to the theme-accent `cardBorderFocused` when no session exists.
+    private var focusedBorder: Color {
+        SessionAccentPalette.color(for: store.tree.activeSessionID)?.opacity(0.45)
+            ?? Slate.Line.cardBorderFocused
+    }
 }
 #endif

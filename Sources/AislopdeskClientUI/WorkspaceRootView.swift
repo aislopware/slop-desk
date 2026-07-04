@@ -265,7 +265,10 @@ public struct WorkspaceRootView: View {
                 // around the detail region, on the same theme-derived margin + grain (CanvasBackdrop
                 // wraps the system background itself on iOS — there is no under-window glass).
                 .padding(Slate.Metric.paneGap / 2)
-                .background { CanvasBackdrop().ignoresSafeArea() }
+                .background {
+                    CanvasBackdrop(sessionTint: SessionAccentPalette.color(for: store.tree.activeSessionID))
+                        .ignoresSafeArea()
+                }
         }
         // Match the macOS shell: the workspace window's appearance follows the CANVAS theme's lightness
         // (native chrome, resolved in the canvas's appearance — never light glass around a dark terminal).
@@ -362,7 +365,10 @@ public struct WorkspaceRootView: View {
         // grain. `.ignoresSafeArea()` extends it under the hidden-material titlebar, so header band and
         // canvas stay ONE surface (the "2 cái background khác nhau" guard). v3's bare glass failed the
         // depth read the OPPOSITE way to v1's theme margin — dark desktop ⇒ glass ≈ card tone ⇒ flat.
-        .background { CanvasBackdrop().ignoresSafeArea() }
+        .background {
+            CanvasBackdrop(sessionTint: SessionAccentPalette.color(for: store.tree.activeSessionID))
+                .ignoresSafeArea()
+        }
         .animation(.easeInOut(duration: 0.2), value: chrome.guiCollapsed)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width

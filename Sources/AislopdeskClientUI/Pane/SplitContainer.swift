@@ -271,6 +271,7 @@ struct SplitContainer: View {
             .contentShape(Rectangle())
             .onTapGesture { store.leaveControlRoom() }
         let sessionByTab = sessionNameByTabID
+        let accentByTab = sessionAccentByTabID
         ForEach(Array(ordered.enumerated()), id: \.element.id) { index, tab in
             if slots.indices.contains(index) {
                 let slot = slots[index]
@@ -279,6 +280,7 @@ struct SplitContainer: View {
                     sessionName: sessionByTab[tab.id],
                     isCurrent: tab.id == shownTabID,
                     isBusy: tab.allPaneIDs().contains { store.paneIsBusy($0) },
+                    accent: accentByTab[tab.id] ?? Slate.theme.accent,
                 )
                 .frame(width: slot.width, height: slot.height)
                 .position(x: slot.midX, y: slot.midY)
@@ -295,6 +297,18 @@ struct SplitContainer: View {
         let activeID = store.tree.activeSessionID
         for session in store.tree.sessions where session.id != activeID {
             for tab in session.tabs { result[tab.id] = session.name }
+        }
+        return result
+    }
+
+    /// Every overview card's OWNER-session identity colour (per-session colour identity, 2026-07-04) —
+    /// unlike the name qualifier, the ACTIVE session's tabs carry theirs too: in a cross-session wall
+    /// the colour IS the grouping cue (which cards belong together reads at a glance).
+    private var sessionAccentByTabID: [TabID: Color] {
+        var result: [TabID: Color] = [:]
+        for session in store.tree.sessions {
+            guard let accent = SessionAccentPalette.color(for: session.id) else { continue }
+            for tab in session.tabs { result[tab.id] = accent }
         }
         return result
     }

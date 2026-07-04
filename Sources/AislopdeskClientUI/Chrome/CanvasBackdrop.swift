@@ -22,9 +22,17 @@
 import SwiftUI
 
 struct CanvasBackdrop: View {
+    /// The active session's identity colour (`SessionAccentPalette`) — washes the margin's top edge so
+    /// SWITCHING SESSIONS visibly recolours the whole frame (the Arc-Spaces "the chrome is the
+    /// context" idiom). `nil` ⇒ no wash (no session).
+    var sessionTint: Color?
+
     /// The margin tint's coverage over the glass. 1.0 would kill the glass entirely; the band that
     /// reads as "smoked glass over the desktop" is ~0.85–0.92.
     static let tintOpacity: Double = 0.88
+    /// The session wash's peak opacity at the top edge — identity, never decoration: strong enough to
+    /// name the session at a glance, weak enough that terminal text never fights it.
+    static let sessionWashOpacity: Double = 0.12
 
     var body: some View {
         ZStack {
@@ -33,8 +41,20 @@ struct CanvasBackdrop: View {
             #endif
             Slate.Surface.canvasBackdrop
                 .opacity(Self.tintOpacity)
+            if let sessionTint {
+                LinearGradient(
+                    stops: [
+                        .init(color: sessionTint.opacity(Self.sessionWashOpacity), location: 0),
+                        .init(color: sessionTint.opacity(0), location: 0.45),
+                    ],
+                    startPoint: .top, endPoint: .bottom,
+                )
+            }
             GrainOverlay()
         }
+        // A session switch DRIFTS the wash to the new identity (never snaps — the recolour is the
+        // "you moved somewhere else" cue, so it should read as a move, not a glitch).
+        .animation(.easeInOut(duration: 0.8), value: sessionTint)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }

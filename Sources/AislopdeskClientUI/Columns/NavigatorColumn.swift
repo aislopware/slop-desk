@@ -165,6 +165,7 @@ struct NavigatorColumn: View {
             title: row.title.isEmpty ? defaultTitle(for: row.kind) : row.title,
             active: row.id == selectedPane,
             symbol: Self.symbol(for: row.kind),
+            accent: sessionAccent,
             onClose: { store.requestClosePaneTree(row.id) },
             onRename: { commitRename(row, to: $0) },
             onCancelRename: { store.clearTabRenameRequest() },
@@ -187,6 +188,7 @@ struct NavigatorColumn: View {
                 title: row.title.isEmpty ? defaultTitle(for: row.kind) : row.title,
                 active: row.id == selectedPane,
                 symbol: Self.symbol(for: row.kind),
+                accent: sessionAccent,
                 onClose: { store.requestClosePaneTree(row.id) },
                 onRename: { commitRename(row, to: $0) },
                 onCancelRename: { store.clearTabRenameRequest() },
@@ -195,6 +197,13 @@ struct NavigatorColumn: View {
             row: row,
         )
         .contextMenu { rowContextMenu(row) }
+    }
+
+    /// The active session's identity colour (per-session colour identity, 2026-07-04): tints every row
+    /// icon so a session switch visibly recolours the rail — the Arc-Spaces cue, in sync with the
+    /// canvas margin wash. Falls back to the system accent when no session exists.
+    private var sessionAccent: Color {
+        SessionAccentPalette.color(for: store.tree.activeSessionID) ?? .accentColor
     }
 
     /// The sidebar toolbar: the native sort/group menu (writes the STORE — the single source of row
@@ -440,6 +449,8 @@ private struct NavigatorRow: View {
     let title: String
     let active: Bool
     let symbol: SFSymbol
+    /// The owning session's identity colour (per-session colour identity, 2026-07-04) — the icon tint.
+    let accent: Color
     var onClose: () -> Void
     var onRename: (String) -> Void
     var onCancelRename: () -> Void
@@ -474,14 +485,15 @@ private struct NavigatorRow: View {
                         .scaledToFit()
                         .frame(width: 18, height: 18)
                 } else {
-                    // Accent-tinted sidebar icons — the modern system-sidebar idiom (Mail/Finder); the row
-                    // text stays primary/secondary.
+                    // SESSION-tinted sidebar icons (per-session colour identity, 2026-07-04) — the
+                    // Mail/Finder tinted-icon idiom, but the hue names the SESSION, not the app; the
+                    // row text stays primary/secondary.
                     Image(systemSymbol: symbol)
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(accent)
                 }
                 #else
                 Image(systemSymbol: symbol)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(accent)
                 #endif
             }
             Spacer(minLength: 4)
