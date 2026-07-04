@@ -105,6 +105,13 @@ struct SplitContainer: View {
         let layout = SplitTreeRenderModel.layout(for: tab, in: bounds)
         let frames = Dictionary(layout.leaves.map { ($0.id, $0.rect) }, uniquingKeysWith: { a, _ in a })
         ZStack(alignment: .topLeading) {
+            // AMBIENT LIGHT (design-craft big-swing A, 2026-07-04): the tab's light field, drawn FIRST so
+            // every card sits above its own cast light — video panes bleed their live frame colours, busy
+            // terminals glow theme-accent (see `AmbientCanvasUnderlay`). Shown tab only (a hidden tab's
+            // layer is opacity-0 anyway; skipping it skips the per-leaf model reads too).
+            if isShown, !staticMirror {
+                AmbientCanvasUnderlay(store: store, leaves: layout.leaves)
+            }
             // EVERY pane — visible AND zoom-hidden — renders from ONE `ForEach` over
             // ``SplitTreeRenderModel/Layout/compositorLeaves``. `.id` only dedups WITHIN one `ForEach`, so
             // one keyed list keeps the zoom hidden↔visible flip within one collection and the hosted

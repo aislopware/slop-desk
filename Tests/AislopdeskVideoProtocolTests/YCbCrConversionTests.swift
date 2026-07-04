@@ -85,6 +85,28 @@ final class YCbCrConversionTests: XCTestCase {
         assertRGB(out, SIMD3(1.0, 1.0 - v.cbToG * cbc, 1.0 + v.cbToB * cbc))
     }
 
+    /// The CPU-side texel conversion (`YCbCrConversion.rgb`, the ambient-light readback) must agree
+    /// with this file's shader-mirror reference for every range — same coefficients, same math, plus
+    /// [0,1] clamping (the shader's render target clamps implicitly; the CPU path must do it itself).
+    func testCPUTexelConversionMatchesShaderMath() {
+        for range in [ColorRange.video, .full] {
+            let c = YCbCrConversion.coefficients(range)
+            for (y, cb, cr) in [(16, 128, 128), (235, 128, 128), (126, 90, 200), (80, 255, 0)] {
+                let want = rgb(yByte: Float(y), cbByte: Float(cb), crByte: Float(cr), c)
+                let got = YCbCrConversion.rgb(y: UInt8(y), cb: UInt8(cb), cr: UInt8(cr), coefficients: c)
+                XCTAssertEqual(got.red, Float.minimum(Float.maximum(want.x, 0), 1), accuracy: 1e-5)
+                XCTAssertEqual(got.green, Float.minimum(Float.maximum(want.y, 0), 1), accuracy: 1e-5)
+                XCTAssertEqual(got.blue, Float.minimum(Float.maximum(want.z, 0), 1), accuracy: 1e-5)
+            }
+        }
+        // Below the studio-swing black floor the unclamped math goes negative — the CPU path clamps.
+        let v = YCbCrConversion.coefficients(.video)
+        let floor = YCbCrConversion.rgb(y: 0, cb: 128, cr: 128, coefficients: v)
+        XCTAssertEqual(floor.red, 0)
+        XCTAssertEqual(floor.green, 0)
+        XCTAssertEqual(floor.blue, 0)
+    }
+
     private func assertRGB(_ got: SIMD3<Float>, _ want: SIMD3<Float>, line: UInt = #line) {
         XCTAssertEqual(got.x, want.x, accuracy: 1e-5, line: line)
         XCTAssertEqual(got.y, want.y, accuracy: 1e-5, line: line)

@@ -142,6 +142,12 @@ public struct RemotePaneContext {
     /// pane's opt-in diagnostics HUD renders live numbers. Pure informational push; NOT read-only-gated.
     /// `nil` ⇒ none.
     public var onVideoStats: ((_ rttMS: Double, _ received: UInt64, _ recovered: UInt64, _ lost: UInt64) -> Void)?
+    /// AMBIENT LIGHT (design-craft big-swing A, 2026-07-04): the live video view PUSHES the renderer's
+    /// ≥0.5 s 4×4 downsample of the decoded frame (raw grid colours) so the pane can bleed the stream's
+    /// real colours into the canvas backdrop (the bias-light glow). The REDUCTION to glow colours is
+    /// ``AmbientPalette`` on the model side — the seam ships raw primitives. Pure informational push;
+    /// NOT read-only-gated. `nil` ⇒ the renderer never samples.
+    public var onAmbientColors: ((_ samples: [VideoPaneTint]) -> Void)?
 
     public init(
         isActive: Bool = true,
@@ -159,6 +165,7 @@ public struct RemotePaneContext {
         letterboxTint: VideoPaneTint? = nil,
         onFirstFramePresented: (() -> Void)? = nil,
         onVideoStats: ((_ rttMS: Double, _ received: UInt64, _ recovered: UInt64, _ lost: UInt64) -> Void)? = nil,
+        onAmbientColors: ((_ samples: [VideoPaneTint]) -> Void)? = nil,
     ) {
         self.isActive = isActive
         self.inputEnabled = inputEnabled
@@ -175,6 +182,7 @@ public struct RemotePaneContext {
         self.letterboxTint = letterboxTint
         self.onFirstFramePresented = onFirstFramePresented
         self.onVideoStats = onVideoStats
+        self.onAmbientColors = onAmbientColors
     }
 
     /// The standalone default (no canvas around it): always active, INPUT-ENABLED, no-op callbacks — for
@@ -209,6 +217,7 @@ public struct RemotePaneContext {
         letterboxTint: VideoPaneTint? = nil,
         onFirstFrame: (() -> Void)? = nil,
         onVideoStats: ((_ rttMS: Double, _ received: UInt64, _ recovered: UInt64, _ lost: UInt64) -> Void)? = nil,
+        onAmbientColors: ((_ samples: [VideoPaneTint]) -> Void)? = nil,
     ) -> Self {
         Self(
             isActive: isActive,
@@ -241,6 +250,7 @@ public struct RemotePaneContext {
             letterboxTint: letterboxTint,
             onFirstFramePresented: onFirstFrame,
             onVideoStats: onVideoStats,
+            onAmbientColors: onAmbientColors,
         )
     }
 }

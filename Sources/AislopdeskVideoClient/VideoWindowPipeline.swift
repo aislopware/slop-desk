@@ -160,6 +160,14 @@ final class VideoWindowPipeline {
         didSet { renderer?.letterboxClear = letterboxTint }
     }
 
+    /// AMBIENT LIGHT (design-craft big-swing A, 2026-07-04): the renderer's ≥0.5 s 4×4 frame
+    /// downsample, forwarded up for the canvas bias-light glow. Renderer-local data — it never
+    /// touches the session/GUIHooks path; `render` runs on the @MainActor so the forward is a
+    /// direct call, no hop. Set by the view in `activate`; applied to each rebuilt renderer.
+    var onAmbientColors: (([(red: Double, green: Double, blue: Double)]) -> Void)? {
+        didSet { renderer?.onAmbientColors = onAmbientColors }
+    }
+
     #if os(macOS)
     /// The LOCAL `NSCursor` mirroring the host's CURRENT cursor SHAPE (Parsec model: the OS draws it at
     /// the instant local mouse position, so the pointer never lags by an RTT). `nil` until the shape
@@ -243,6 +251,7 @@ final class VideoWindowPipeline {
         // LETTERBOX TINT + FIRST-FRAME latch (design-craft pass, 2026-07-04): each activation builds a
         // fresh renderer (apply the theme clear) and re-arms the one-shot first-frame notification.
         renderer.letterboxClear = letterboxTint
+        renderer.onAmbientColors = onAmbientColors
         firstFrameNotified = false
         let compositor = ClientCursorCompositor()
         #if !os(macOS)

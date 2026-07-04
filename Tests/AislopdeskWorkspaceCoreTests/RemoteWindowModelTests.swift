@@ -499,6 +499,21 @@ final class RemoteWindowFilterTests: XCTestCase {
         m.open()
         XCTAssertNil(m.videoStats, "open() must drop the previous stream's sample")
     }
+
+    /// The ambient palette: raw samples reduce and store; garbage never writes; a re-open drops the
+    /// palette — the canvas glow must not carry the previous window's colours.
+    func testAmbientPaletteReduceStoreAndReopenClear() throws {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        XCTAssertNil(m.ambientPalette)
+        m.noteAmbientSamples(Array(repeating: VideoPaneTint(red: 0.1, green: 0.2, blue: 0.9), count: 16))
+        XCTAssertNotNil(m.ambientPalette)
+        XCTAssertGreaterThan(try XCTUnwrap(m.ambientPalette?.strength), 0.9)
+        // A garbage push (all non-finite) must not clobber the stored palette.
+        m.noteAmbientSamples([VideoPaneTint(red: .nan, green: .nan, blue: .nan)])
+        XCTAssertNotNil(m.ambientPalette)
+        m.open()
+        XCTAssertNil(m.ambientPalette, "open() must drop the previous stream's palette")
+    }
 }
 
 // MARK: - Test support

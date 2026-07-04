@@ -94,6 +94,31 @@ public struct YCbCrCoefficients: Sendable, Equatable {
 /// diverges the low bits and breaks the pinned bit-patterns. The four matrix coefficients + the
 /// chroma centre are range-independent; only the luma scale/bias differ between the two ranges.
 public enum YCbCrConversion {
+    /// CPU-side companion of the shader math documented on ``YCbCrCoefficients`` — converts ONE NV12
+    /// texel (raw Y/Cb/Cr bytes) to clamped [0,1] RGB with the SAME coefficients the GPU uses. Added
+    /// for the ambient-light downsample readback (design-craft big-swing A, 2026-07-04): the renderer
+    /// samples a handful of texels per second and must agree with what is on screen, so the conversion
+    /// lives HERE beside the single source of truth, not re-derived at the call site. `Float` end-to-end
+    /// like the shader; the ambient consumer only needs perceptual agreement, not bit-exactness.
+    public static func rgb(
+        y: UInt8,
+        cb: UInt8,
+        cr: UInt8,
+        coefficients c: YCbCrCoefficients,
+    ) -> (red: Float, green: Float, blue: Float) {
+        let yy = (Float(y) / 255.0 - c.lumaBias) * c.lumaScale
+        let cbN = Float(cb) / 255.0 - c.chromaBias
+        let crN = Float(cr) / 255.0 - c.chromaBias
+        let r = yy + c.crToR * crN
+        let g = yy - c.cbToG * cbN - c.crToG * crN
+        let b = yy + c.cbToB * cbN
+        return (clamp01(r), clamp01(g), clamp01(b))
+    }
+
+    private static func clamp01(_ value: Float) -> Float {
+        Float.minimum(Float.maximum(value, 0), 1)
+    }
+
     public static func coefficients(_ range: ColorRange) -> YCbCrCoefficients {
         // Shared (range-independent): chroma centre + the four BT.709 matrix coefficients.
         let chromaBias: Float = 128.0 / 255.0

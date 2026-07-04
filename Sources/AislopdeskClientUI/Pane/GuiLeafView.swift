@@ -238,6 +238,9 @@ struct GuiLeafView: View {
                             rttMS: rtt, framesReceived: received, fecRecovered: recovered, unrecovered: lost,
                         )
                     },
+                    // AMBIENT LIGHT (big-swing A): the renderer's ≤2 Hz live-frame downsample — the model
+                    // reduces it (AmbientPalette) and the pane's card bleeds the glow into the canvas.
+                    onAmbientColors: { [weak model] samples in model?.noteAmbientSamples(samples) },
                 ),
             )
             // FIRST-FRAME FADE-IN (design-craft pass, 2026-07-04): until the first decoded frame presents,
