@@ -2,11 +2,11 @@
 // 2026-07-04). Each pane card casts a soft light field onto the canvas behind it, TV-bias-light style:
 //   • a `.remoteGUI` pane bleeds the REAL dominant colours of its live decoded video
 //     (renderer 4×4 downsample → `AmbientPalette` reduction on `RemoteWindowModel`),
-//   • a terminal pane whose shell is BUSY glows with the SESSION's identity colour — "something is
-//     running here" you can see from across the room,
-//   • an idle pane casts a FAINT session-hued wash (visible-design pass, 2026-07-04 — the canvas is
-//     never dead even at rest; a grey-white video frame still contributes no CONTENT colour,
-//     `AmbientPalette.strength` ≈ 0 just falls back to the idle wash).
+//   • a terminal pane whose shell is BUSY glows with the theme accent — "something is running here"
+//     you can see from across the room,
+//   • an idle pane casts NOTHING (restraint pass, 2026-07-04: the resting canvas stays quiet — the
+//     glow is an activity cue, not decoration; intensity 0 keeps the gradient mounted so the
+//     fade-out still animates).
 //
 // Rendering discipline: the underlay is drawn FIRST in the tab's compositor ZStack, so light can never
 // wash over a neighbouring card's content — it lives only in the glass gutters and margins. No blur
@@ -25,13 +25,9 @@ struct AmbientGlowStyle: Equatable {
     /// 0 ⇒ invisible (the gradient stays mounted so the fade-out animates).
     let intensity: Double
 
-    /// The resting wash strength (visible-design pass, 2026-07-04): every card sits in a faint pool
-    /// of its session's light even when idle — the canvas reads as lit, never dead. Deliberately well
-    /// below the busy glow so activity still visibly outshines rest.
-    static let idleIntensity = 0.16
-
     /// Video palette wins over shell-busy (a streaming pane's own light IS its activity cue);
-    /// a busy shell casts the accent bright; anything else casts the faint resting wash.
+    /// a busy shell casts the accent bright; an idle pane casts nothing (intensity 0 — the glow is
+    /// an activity cue, not decoration).
     static func resolve(palette: AmbientPalette?, shellBusy: Bool, accent: Color) -> Self {
         if let palette, palette.strength > 0.01 {
             return Self(
@@ -45,7 +41,7 @@ struct AmbientGlowStyle: Equatable {
         if shellBusy {
             return Self(inner: accent, outer: accent, intensity: 0.55)
         }
-        return Self(inner: accent, outer: accent, intensity: Self.idleIntensity)
+        return Self(inner: accent, outer: accent, intensity: 0)
     }
 }
 
@@ -81,9 +77,7 @@ private struct AmbientLeafGlow: View {
         let glow = AmbientGlowStyle.resolve(
             palette: model?.ambientPalette,
             shellBusy: store.paneIsBusy(paneID),
-            // The cast light is the SESSION's identity colour (per-session colour identity,
-            // 2026-07-04) — idle wash, busy glow, rail icons and margin wash all speak one hue.
-            accent: SessionAccentPalette.color(for: store.tree.activeSessionID) ?? Slate.theme.accent,
+            accent: Slate.theme.accent,
         )
         Rectangle()
             .fill(EllipticalGradient(

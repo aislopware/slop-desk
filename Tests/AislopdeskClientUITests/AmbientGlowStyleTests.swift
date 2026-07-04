@@ -30,13 +30,11 @@ final class AmbientGlowStyleTests: XCTestCase {
         XCTAssertGreaterThan(glow.intensity, 0)
     }
 
-    /// Visible-design pass (2026-07-04): idle is a FAINT wash, not darkness — the canvas is never
-    /// dead — but it must stay well below the busy glow so activity still reads.
-    func testIdleCastsTheFaintRestingWash() {
+    /// Restraint pass (2026-07-04): an idle pane casts NOTHING — the glow is an activity cue, not
+    /// decoration. Colours stay valid so the fade-out animates instead of snapping to clear.
+    func testIdleCastsNothing() {
         let glow = AmbientGlowStyle.resolve(palette: nil, shellBusy: false, accent: .orange)
-        XCTAssertEqual(glow.intensity, AmbientGlowStyle.idleIntensity)
+        XCTAssertEqual(glow.intensity, 0)
         XCTAssertEqual(glow.inner, Color.orange)
-        let busy = AmbientGlowStyle.resolve(palette: nil, shellBusy: true, accent: .orange)
-        XCTAssertLessThan(glow.intensity, busy.intensity / 2, "rest must stay well below activity")
     }
 }

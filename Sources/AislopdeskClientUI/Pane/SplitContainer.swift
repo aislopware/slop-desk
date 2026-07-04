@@ -226,21 +226,6 @@ struct SplitContainer: View {
         // gutter between them. Geometry (solver rects, divider seams, move handles) is untouched — this
         // is a pure visual inset inside each placed frame.
         .padding(Slate.Metric.paneGap / 2)
-        // FLEET corner bug (visible-design pass, 2026-07-04): the permanent broadcast-style corner
-        // ornament — session dot + tab name — in the SAME top-leading spot on every card, so a wall
-        // of panes reads as a monitoring wall. Rides the leaf layer (scales with the Control Room
-        // transform); inset clear of the card's corner radius.
-        .overlay(alignment: .topLeading) {
-            if !entry.isHidden {
-                PaneCornerBug(
-                    store: store,
-                    paneID: entry.id,
-                    title: tab.title,
-                    accent: sessionAccentByTabID[tab.id] ?? Slate.theme.accent,
-                )
-                .padding(Slate.Metric.paneGap / 2 + 8)
-            }
-        }
         .frame(width: entry.leaf.rect.width, height: entry.leaf.rect.height)
         .position(x: entry.leaf.rect.midX, y: entry.leaf.rect.midY)
         // ZOOM keep-mounted: a zoomed tab still emits every sibling as a HIDDEN compositor leaf at
@@ -286,7 +271,6 @@ struct SplitContainer: View {
             .contentShape(Rectangle())
             .onTapGesture { store.leaveControlRoom() }
         let sessionByTab = sessionNameByTabID
-        let accentByTab = sessionAccentByTabID
         ForEach(Array(ordered.enumerated()), id: \.element.id) { index, tab in
             if slots.indices.contains(index) {
                 let slot = slots[index]
@@ -295,7 +279,6 @@ struct SplitContainer: View {
                     sessionName: sessionByTab[tab.id],
                     isCurrent: tab.id == shownTabID,
                     isBusy: tab.allPaneIDs().contains { store.paneIsBusy($0) },
-                    accent: accentByTab[tab.id] ?? Slate.theme.accent,
                 )
                 .frame(width: slot.width, height: slot.height)
                 .position(x: slot.midX, y: slot.midY)
@@ -312,18 +295,6 @@ struct SplitContainer: View {
         let activeID = store.tree.activeSessionID
         for session in store.tree.sessions where session.id != activeID {
             for tab in session.tabs { result[tab.id] = session.name }
-        }
-        return result
-    }
-
-    /// Every overview card's OWNER-session identity colour (per-session colour identity, 2026-07-04) —
-    /// unlike the name qualifier, the ACTIVE session's tabs carry theirs too: in a cross-session wall
-    /// the colour IS the grouping cue (which cards belong together reads at a glance).
-    private var sessionAccentByTabID: [TabID: Color] {
-        var result: [TabID: Color] = [:]
-        for session in store.tree.sessions {
-            guard let accent = SessionAccentPalette.color(for: session.id) else { continue }
-            for tab in session.tabs { result[tab.id] = accent }
         }
         return result
     }

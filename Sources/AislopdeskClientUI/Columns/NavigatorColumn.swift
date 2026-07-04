@@ -170,7 +170,6 @@ struct NavigatorColumn: View {
             title: row.title.isEmpty ? defaultTitle(for: row.kind) : row.title,
             active: row.id == selectedPane,
             symbol: Self.symbol(for: row.kind),
-            accent: sessionAccent,
             onClose: { store.requestClosePaneTree(row.id) },
             onRename: { commitRename(row, to: $0) },
             onCancelRename: { store.clearTabRenameRequest() },
@@ -193,7 +192,6 @@ struct NavigatorColumn: View {
                 title: row.title.isEmpty ? defaultTitle(for: row.kind) : row.title,
                 active: row.id == selectedPane,
                 symbol: Self.symbol(for: row.kind),
-                accent: sessionAccent,
                 onClose: { store.requestClosePaneTree(row.id) },
                 onRename: { commitRename(row, to: $0) },
                 onCancelRename: { store.clearTabRenameRequest() },
@@ -204,34 +202,22 @@ struct NavigatorColumn: View {
         .contextMenu { rowContextMenu(row) }
     }
 
-    /// The active session's identity colour (per-session colour identity, 2026-07-04): tints every row
-    /// icon so a session switch visibly recolours the rail — the Arc-Spaces cue, in sync with the
-    /// canvas margin wash. Falls back to the system accent when no session exists.
-    private var sessionAccent: Color {
-        SessionAccentPalette.color(for: store.tree.activeSessionID) ?? .accentColor
-    }
-
     /// The sidebar's display-type masthead: the active session's name, oversized and tightly tracked
-    /// (the Linear register), led by its identity dot. Hidden when no session exists (the empty state
-    /// owns that moment).
+    /// (the Linear register) — pure type, no ornament (restraint pass, 2026-07-04). Hidden when no
+    /// session exists (the empty state owns that moment).
     @ViewBuilder private var sessionMasthead: some View {
         if let session = store.tree.activeSession {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Circle()
-                    .fill(sessionAccent)
-                    .frame(width: 8, height: 8)
-                Text(session.name)
-                    .font(.system(size: 23, weight: .bold))
-                    .tracking(-0.6)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .foregroundStyle(.primary)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 10)
-            .padding(.bottom, 4)
-            .accessibilityAddTraits(.isHeader)
+            Text(session.name)
+                .font(.system(size: 23, weight: .bold))
+                .tracking(-0.6)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
+                .accessibilityAddTraits(.isHeader)
         }
     }
 
@@ -478,8 +464,6 @@ private struct NavigatorRow: View {
     let title: String
     let active: Bool
     let symbol: SFSymbol
-    /// The owning session's identity colour (per-session colour identity, 2026-07-04) — the icon tint.
-    let accent: Color
     var onClose: () -> Void
     var onRename: (String) -> Void
     var onCancelRename: () -> Void
@@ -514,15 +498,10 @@ private struct NavigatorRow: View {
                         .scaledToFit()
                         .frame(width: 18, height: 18)
                 } else {
-                    // SESSION-tinted sidebar icons (per-session colour identity, 2026-07-04) — the
-                    // Mail/Finder tinted-icon idiom, but the hue names the SESSION, not the app; the
-                    // row text stays primary/secondary.
                     Image(systemSymbol: symbol)
-                        .foregroundStyle(accent)
                 }
                 #else
                 Image(systemSymbol: symbol)
-                    .foregroundStyle(accent)
                 #endif
             }
             Spacer(minLength: 4)

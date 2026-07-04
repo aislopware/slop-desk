@@ -19,26 +19,23 @@ struct ControlRoomCardChrome: View {
     let isCurrent: Bool
     /// Any pane in the tab has a busy shell — the "something is running here" dot.
     let isBusy: Bool
-    /// The OWNER session's identity colour (per-session colour identity, 2026-07-04): the current-card
-    /// ring, the hover lift and the busy dot all speak it, so cross-session cards visibly group by hue.
-    let accent: Color
     @State private var hovering = false
 
     var body: some View {
         RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous)
             .strokeBorder(
-                isCurrent ? accent.opacity(0.45) : GlassPanel.ring,
+                isCurrent ? Slate.theme.accent.opacity(0.45) : GlassPanel.ring,
                 lineWidth: hovering ? 2 : 1,
             )
             .background(
                 // A whisper of accent lift on hover — the "this card is clickable" cue.
                 RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous)
-                    .fill(accent.opacity(hovering ? 0.06 : 0)),
+                    .fill(Slate.theme.accent.opacity(hovering ? 0.06 : 0)),
             )
             .overlay(alignment: .bottom) {
                 HStack(spacing: 6) {
                     if isBusy {
-                        Circle().fill(accent).frame(width: 6, height: 6)
+                        Circle().fill(Slate.theme.accent).frame(width: 6, height: 6)
                     }
                     if let sessionName {
                         Text(sessionName).foregroundStyle(.secondary)

@@ -266,7 +266,7 @@ public struct WorkspaceRootView: View {
                 // wraps the system background itself on iOS — there is no under-window glass).
                 .padding(Slate.Metric.paneGap / 2)
                 .background {
-                    CanvasBackdrop(sessionTint: SessionAccentPalette.color(for: store.tree.activeSessionID))
+                    CanvasBackdrop()
                         .ignoresSafeArea()
                 }
         }
@@ -366,7 +366,7 @@ public struct WorkspaceRootView: View {
         // canvas stay ONE surface (the "2 cái background khác nhau" guard). v3's bare glass failed the
         // depth read the OPPOSITE way to v1's theme margin — dark desktop ⇒ glass ≈ card tone ⇒ flat.
         .background {
-            CanvasBackdrop(sessionTint: SessionAccentPalette.color(for: store.tree.activeSessionID))
+            CanvasBackdrop()
                 .ignoresSafeArea()
         }
         .animation(.easeInOut(duration: 0.2), value: chrome.guiCollapsed)

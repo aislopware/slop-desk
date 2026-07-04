@@ -226,7 +226,7 @@ struct PaneContainer: View {
                 // NO animation — pane focus moves are keyboard-frequency (the zero-animation rule, §2.5).
                 RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous)
                     .strokeBorder(
-                        isFocused && !solo ? focusedBorder : Slate.Line.cardBorder,
+                        isFocused && !solo ? Slate.Line.cardBorderFocused : Slate.Line.cardBorder,
                         lineWidth: 1,
                     )
                     .allowsHitTesting(false)
@@ -255,12 +255,5 @@ struct PaneContainer: View {
     /// non-focused panes. Ghostty ships 0.3 (an `unfocused-split-opacity` of 0.7); ours is deliberately
     /// gentler — a streamed remote-window pane is often watched while unfocused.
     static let unfocusedDim: Double = 0.15
-
-    /// The focused-in-a-split border hue: the active SESSION's identity colour at the established
-    /// knock-back opacity, falling back to the theme-accent `cardBorderFocused` when no session exists.
-    private var focusedBorder: Color {
-        SessionAccentPalette.color(for: store.tree.activeSessionID)?.opacity(0.45)
-            ?? Slate.Line.cardBorderFocused
-    }
 }
 #endif
