@@ -145,6 +145,14 @@ final class VideoWindowPipeline {
     /// view in `activate`. Display-only (never reaches the host).
     var onStreamBitrateChanged: ((Int) -> Void)?
 
+    /// LIVE THUMBNAIL (MERIDIAN C4): fired on the @MainActor ~every 2 s with a small CGImage sampled
+    /// from the decoded stream — the sidebar WINDOWS row's live plate. Set by the view in `activate`.
+    /// Display-only (never reaches the host).
+    var onStreamPreviewChanged: ((CGImage) -> Void)?
+    /// The throttled decoded-frame → CGImage sampler feeding ``onStreamPreviewChanged``. Created in
+    /// `activate` alongside the GUI hooks; conversion runs OFF the decode path (utility queue).
+    private var previewSampler: DecodedFrameThumbnailSampler?
+
     #if os(macOS)
     /// The LOCAL `NSCursor` mirroring the host's CURRENT cursor SHAPE (Parsec model: the OS draws it at
     /// the instant local mouse position, so the pointer never lags by an RTT). `nil` until the shape
@@ -424,6 +432,14 @@ final class VideoWindowPipeline {
                     Task { @MainActor in self?.onStreamNativePoints?(points) }
                 }
             }
+        // LIVE THUMBNAIL (MERIDIAN C4): a throttled decoded-frame sampler feeding the sidebar
+        // WINDOWS row. Rides the same submitDecodedFrame hook as the pacer; conversion runs off
+        // the decode path (see the sampler). The closure reads the LIVE `onStreamPreviewChanged`
+        // so late/re-wired seam closures are picked up.
+        let sampler = DecodedFrameThumbnailSampler { [weak self] image in
+            self?.onStreamPreviewChanged?(image)
+        }
+        previewSampler = sampler
         // GUI hooks: each hops to the main actor to touch the (main-confined) pacer /
         // compositor. The orchestrator actor calls these from its own executor.
         let gui = AislopdeskVideoClientSession.GUIHooks(
@@ -434,6 +450,7 @@ final class VideoWindowPipeline {
                 // immutable CV/CG handles under strict concurrency). The pacer's submit
                 // is internally locked, so the main hop only re-presents at vsync.
                 pacer.submit(buffer)
+                sampler.ingest(buffer)
             },
             applyCursor: { [weak self] update, placement in
                 // COALESCE onto the main actor (BUG-1): store most-recent-wins + schedule at most one

@@ -38,20 +38,23 @@ final class StreamCadenceCodecTests: XCTestCase {
         XCTAssertThrowsError(try VideoControlMessage.decode(Data([10, 0x00])))
     }
 
-    /// The decoder's `default` arm still drops a type PAST the highest defined (15 = displayMax) as
-    /// `.malformed` — the forward-compatibility contract (a future control type claims 16+). Type 15
-    /// (displayMax) is now DEFINED, so a bare type byte for it throws `.truncated` (short body), not
-    /// `.malformed`; the "unknown type" probe must sit past the max.
+    /// The decoder's `default` arm still drops a type PAST the highest defined (17 = windowPreviewChunk)
+    /// as `.malformed` — the forward-compatibility contract (a future control type claims 18+). Types
+    /// 15–17 (displayMax / windowPreviewRequest / windowPreviewChunk) are now DEFINED, so a bare type
+    /// byte for each throws `.truncated` (short body), not `.malformed`; the "unknown type" probe must
+    /// sit past the max.
     func testUnknownTypePastDefinedStillThrowsMalformed() {
-        XCTAssertThrowsError(try VideoControlMessage.decode(Data([16]))) { error in
+        XCTAssertThrowsError(try VideoControlMessage.decode(Data([18]))) { error in
             guard case VideoProtocolError.malformed = error else {
                 return XCTFail("unknown type must throw .malformed, got \(error)")
             }
         }
-        // displayMax (type 15) is DEFINED → a bare type byte (no 4-byte body) throws `.truncated`.
-        XCTAssertThrowsError(try VideoControlMessage.decode(Data([15]))) { error in
-            guard case VideoProtocolError.truncated = error else {
-                return XCTFail("short displayMax body must throw .truncated, got \(error)")
+        // Defined types with a missing body throw `.truncated` — bounds-checked, never over-read.
+        for defined: UInt8 in [15, 16, 17] {
+            XCTAssertThrowsError(try VideoControlMessage.decode(Data([defined]))) { error in
+                guard case VideoProtocolError.truncated = error else {
+                    return XCTFail("short type-\(defined) body must throw .truncated, got \(error)")
+                }
             }
         }
     }

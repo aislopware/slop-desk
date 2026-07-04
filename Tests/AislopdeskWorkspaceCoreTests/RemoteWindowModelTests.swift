@@ -235,10 +235,11 @@ final class RemoteWindowModelTests: XCTestCase {
 
     // MARK: - Picker discovery (docs/31) — the refresh()/pick() state machine via the injected seam
 
-    /// `RemoteWindowDiscovery.shared` is a process-global static — reset it after every test so a stub
-    /// set here never bleeds into another test (or the app's AppMain wiring).
+    /// `RemoteWindowDiscovery.shared` / `RemoteWindowPreviews.shared` are process-global statics — reset
+    /// them after every test so a stub set here never bleeds into another test (or the app's AppMain wiring).
     override func tearDown() {
         RemoteWindowDiscovery.shared = nil
+        RemoteWindowPreviews.shared = nil
         super.tearDown()
     }
 
@@ -276,6 +277,67 @@ final class RemoteWindowModelTests: XCTestCase {
         XCTAssertEqual(m.availableWindows, rows, "the seam result populates the picker, queried with the app target")
         XCTAssertNil(m.loadError)
         XCTAssertFalse(m.isLoading)
+    }
+
+    // MARK: - Window previews (MERIDIAN C4 thumbnails)
+
+    /// A tiny 1×1 CGImage for the preview stubs (pure CoreGraphics — no SCK/Metal, hang-safety rule).
+    private static func makeTestImage() -> CGImage {
+        let ctx = CGContext(
+            data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue,
+        )
+        guard let image = ctx?.makeImage() else { preconditionFailure("1×1 bitmap context always makes an image") }
+        return image
+    }
+
+    func testFetchPreviewsSkipsCachedIdsAndStoresResults() async {
+        let image = Self.makeTestImage()
+        let fetchedBox = FetchLog()
+        RemoteWindowPreviews.shared = { _, _, _, wid in
+            await fetchedBox.note(wid)
+            return image
+        }
+        let m = RemoteWindowModel(target: { self.target })
+        let rows = [
+            RemoteWindowSummary(windowID: 1, appName: "A", title: "", width: 10, height: 10),
+            RemoteWindowSummary(windowID: 2, appName: "B", title: "", width: 10, height: 10),
+        ]
+        m.fetchPreviews(for: rows)
+        // The sequential fetch task runs on the main actor — poll until both land.
+        for _ in 0..<100 where m.windowPreviews.count < 2 { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(m.windowPreviews.count, 2)
+        // A second call with the same rows re-fetches NOTHING (both cached).
+        m.fetchPreviews(for: rows)
+        try? await Task.sleep(for: .milliseconds(50))
+        let fetched = await fetchedBox.all()
+        XCTAssertEqual(fetched.sorted(), [1, 2], "cached ids are never re-requested")
+    }
+
+    func testRefreshPrunesPreviewsToTheLiveList() async {
+        let image = Self.makeTestImage()
+        RemoteWindowPreviews.shared = { _, _, _, _ in image }
+        let first = [RemoteWindowSummary(windowID: 1, appName: "A", title: "", width: 10, height: 10)]
+        let second = [RemoteWindowSummary(windowID: 2, appName: "B", title: "", width: 10, height: 10)]
+        RemoteWindowDiscovery.shared = { _, _, _ in first }
+        let m = RemoteWindowModel(target: { self.target })
+        await m.refresh()
+        for _ in 0..<100 where m.windowPreviews[1] == nil { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertNotNil(m.windowPreviews[1])
+        // The next refresh lists a DIFFERENT window — the stale snapshot is pruned.
+        RemoteWindowDiscovery.shared = { _, _, _ in second }
+        await m.refresh()
+        XCTAssertNil(m.windowPreviews[1], "a window no longer listed loses its cached snapshot")
+    }
+
+    func testCloseClearsLiveThumbnail() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "1")
+        m.open()
+        m.noteLiveThumbnail(Self.makeTestImage())
+        XCTAssertNotNil(m.liveThumbnail)
+        m.close()
+        XCTAssertNil(m.liveThumbnail, "a closed pane's sidebar row must not keep showing the dead stream")
     }
 
     func testPickFillsWindowIDAndTitleWithAppNameFallback() {
@@ -482,4 +544,12 @@ private final class StrokeRecorder {
     }
 
     var events: [Edge] = []
+}
+
+/// Records which windowIDs the preview-seam stub was asked for (actor — the stub is called off the
+/// test's main-actor context).
+private actor FetchLog {
+    private var ids: [UInt32] = []
+    func note(_ id: UInt32) { ids.append(id) }
+    func all() -> [UInt32] { ids }
 }

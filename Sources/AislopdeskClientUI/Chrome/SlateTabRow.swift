@@ -34,6 +34,9 @@ struct SlateTabRow: View {
     var isEditing: Bool = false
     /// C3 BUG A: the row's tooltip text (the full cwd) — shown on hover via `.help`. Empty/`nil` ⇒ no tooltip.
     var helpText: String?
+    /// MERIDIAN C4: the WINDOWS-section leading identity plate (live thumbnail / drained monogram).
+    /// `nil` (every terminal tab row) ⇒ no leading accessory — the name-first row is unchanged.
+    var identityPlate: WindowIdentityPlate?
     var onSelect: () -> Void
     var onClose: () -> Void
     /// C3 BUG B: commit the inline rename with the field's current text. No-op default keeps call sites compatible.
@@ -61,6 +64,9 @@ struct SlateTabRow: View {
             // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the field.
             onTap: { if !isEditing { onSelect() } },
         ) {
+            // MERIDIAN C4: a WINDOWS row leads with its identity plate; a tab row stays name-first.
+            if let identityPlate { identityPlate }
+        } title: {
             if isEditing {
                 renameField
             } else {

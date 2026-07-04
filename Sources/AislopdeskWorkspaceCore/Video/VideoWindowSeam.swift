@@ -131,6 +131,10 @@ public struct RemotePaneContext {
     /// `false` ⇒ traffic resumed. Pure informational view→model push (never reaches the host), so it is NOT
     /// read-only-gated. `nil` ⇒ none.
     public var onStreamStallChanged: ((_ stalled: Bool) -> Void)?
+    /// LIVE THUMBNAIL (MERIDIAN C4): the live video view PUSHES a small CGImage sampled ~every 2 s from
+    /// the decoded stream through this — the sidebar WINDOWS row's live plate. Pure informational
+    /// view→model push (never reaches the host), so it is NOT read-only-gated. `nil` ⇒ none.
+    public var onStreamPreviewChanged: ((_ image: CGImage) -> Void)?
 
     public init(
         isActive: Bool = true,
@@ -146,6 +150,7 @@ public struct RemotePaneContext {
         onStreamCadenceChanged: ((_ fps: Int) -> Void)? = nil,
         onStreamBitrateChanged: ((_ kbps: Int) -> Void)? = nil,
         onStreamStallChanged: ((_ stalled: Bool) -> Void)? = nil,
+        onStreamPreviewChanged: ((_ image: CGImage) -> Void)? = nil,
     ) {
         self.isActive = isActive
         self.inputEnabled = inputEnabled
@@ -160,6 +165,7 @@ public struct RemotePaneContext {
         self.onStreamCadenceChanged = onStreamCadenceChanged
         self.onStreamBitrateChanged = onStreamBitrateChanged
         self.onStreamStallChanged = onStreamStallChanged
+        self.onStreamPreviewChanged = onStreamPreviewChanged
     }
 
     /// The standalone default (no canvas around it): always active, INPUT-ENABLED, no-op callbacks — for
@@ -192,6 +198,7 @@ public struct RemotePaneContext {
         onStreamCadence: @escaping (_ fps: Int) -> Void = { _ in },
         onStreamBitrate: @escaping (_ kbps: Int) -> Void = { _ in },
         onStreamStall: @escaping (_ stalled: Bool) -> Void = { _ in },
+        onStreamPreview: @escaping (_ image: CGImage) -> Void = { _ in },
     ) -> Self {
         Self(
             isActive: isActive,
@@ -220,6 +227,8 @@ public struct RemotePaneContext {
             // STALL SCRIM: informational (never reaches the host) — stays live regardless of read-only, so
             // a locked pane still shows "Reconnecting…" when its host goes dark.
             onStreamStallChanged: onStreamStall,
+            // LIVE THUMBNAIL: informational (never reaches the host) — stays live regardless of read-only.
+            onStreamPreviewChanged: onStreamPreview,
         )
     }
 }
@@ -289,6 +298,22 @@ public final class RemoteWindowDiscovery {
     /// App-registered window-list query (set once at launch). `nil` → the picker uses manual entry.
     public static var shared: (@MainActor (_ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16) async
         -> [RemoteWindowSummary])?
+}
+
+/// The **window-preview seam** (MERIDIAN C4 thumbnails): the GUI app injects a closure that fetches a
+/// one-shot host-side snapshot of ONE shareable window (implemented in
+/// `AislopdeskVideoClient.VideoWindowDiscovery.discoverWindowPreview` — the `windowPreviewRequest` ↔
+/// chunked `windowPreviewChunk` control pair), so the picker/sidebar can show thumbnails WITHOUT
+/// importing the gated video module. `nil` → no previews; every row keeps its monogram plate. A `nil`
+/// RESULT (old host / capture failed / a chunk lost) likewise just keeps the monogram — previews are
+/// decorative, never load-bearing.
+@preconcurrency
+@MainActor
+public final class RemoteWindowPreviews {
+    /// App-registered one-shot snapshot fetch (set once at launch).
+    public static var shared: (@MainActor (
+        _ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16, _ windowID: UInt32,
+    ) async -> CGImage?)?
 }
 
 /// One host-side SYSTEM dialog/prompt the client's monitor surfaces in its own pane (the user's case: a

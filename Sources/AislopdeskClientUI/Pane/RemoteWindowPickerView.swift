@@ -131,6 +131,11 @@ struct RemoteWindowPickerView: View {
         )
     }
 
+    /// The MERIDIAN C4 thumbnail GRID — choosing a window is visual recognition, not reading a list
+    /// (the Screens-5 lesson: a live picture identifies a window faster than its title). Each card is
+    /// a host SNAPSHOT (fetched lazily over the `RemoteWindowPreviews` seam) with the app/title
+    /// beneath; a window whose snapshot hasn't arrived (old host / lost chunk / still fetching) shows
+    /// its drained monogram plate instead — the fallback IS the identity system, not a spinner.
     @ViewBuilder private var windowList: some View {
         let windows = filteredWindows
         if windows.isEmpty {
@@ -139,39 +144,27 @@ struct RemoteWindowPickerView: View {
                 .foregroundStyle(Slate.Text.tertiary)
         } else {
             ScrollView {
-                VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 168, maximum: 260), spacing: Slate.Metric.space2)],
+                    alignment: .leading,
+                    spacing: Slate.Metric.space2,
+                ) {
                     ForEach(windows) { window in
-                        windowRow(window)
+                        WindowThumbnailCard(
+                            window: window,
+                            preview: model.windowPreviews[window.windowID],
+                        ) {
+                            onActivate()
+                            // pickAndOpen (not bare pick+open): opens optimistically, then revalidates
+                            // against a fresh host query so a window that closed between the list fetch
+                            // and this tap falls back to the picker with an error instead of streaming a
+                            // permanent black surface (host rejects a dead id silently).
+                            model.pickAndOpen(window)
+                        }
                     }
                 }
             }
         }
-    }
-
-    private func windowRow(_ window: RemoteWindowSummary) -> some View {
-        Button {
-            onActivate()
-            // pickAndOpen (not bare pick+open): opens optimistically, then revalidates against a fresh host
-            // query so a window that closed between the list fetch and this tap falls back to the picker with
-            // an error instead of streaming a permanent black surface (host rejects a dead id silently).
-            model.pickAndOpen(window)
-        } label: {
-            HStack(spacing: Slate.Metric.space2) {
-                Image(systemSymbol: .macwindow)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
-                Text(window.displayLabel)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.primary)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, Slate.Metric.space1)
-            .padding(.horizontal, Slate.Metric.space2)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: Manual fallback (DEMOTED — collapsed disclosure under the list)
@@ -227,6 +220,65 @@ struct RemoteWindowPickerView: View {
         model.windowID = manualID
         guard model.canOpen else { return }
         model.open()
+    }
+}
+
+/// One picker-grid card (MERIDIAN C4): a 16:10 snapshot plate (host thumbnail aspect-fitted on the
+/// raised surface; the drained monogram when no snapshot) with the app name + window title beneath.
+/// Owns its own hover flag (a `@ViewBuilder` helper can't hold `@State`) — hover lifts the plate to
+/// the standard hover wash, exactly the popover-row idiom.
+private struct WindowThumbnailCard: View {
+    let window: RemoteWindowSummary
+    let preview: CGImage?
+    let onPick: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: onPick) {
+            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+                snapshotPlate
+                Text(window.appName.isEmpty ? "window \(window.windowID)" : window.appName)
+                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                    .foregroundStyle(Slate.Text.primary)
+                    .lineLimit(1)
+                Text(window.title.isEmpty ? "\(window.width)×\(window.height)" : window.title)
+                    .font(.system(size: Slate.Typeface.small))
+                    .foregroundStyle(Slate.Text.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(Slate.Anim.smallFade, value: hovering)
+        .accessibilityLabel(Text(window.displayLabel))
+    }
+
+    private var snapshotPlate: some View {
+        ZStack {
+            Rectangle()
+                .fill(hovering ? Slate.State.hover : Slate.Surface.raised)
+            if let preview {
+                Image(decorative: preview, scale: 1)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            } else {
+                // No snapshot (yet) — the identity plate stands in, DRAINED (not yet live — MERIDIAN L1).
+                SlateMonogram(
+                    identity: window.appName.isEmpty ? "window \(window.windowID)" : window.appName,
+                    live: false,
+                    size: Slate.Metric.plate,
+                )
+            }
+        }
+        .aspectRatio(16 / 10, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusControl))
+        .overlay(
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
+                .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
+        )
     }
 }
 #endif

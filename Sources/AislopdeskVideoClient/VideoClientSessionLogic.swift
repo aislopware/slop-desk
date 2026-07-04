@@ -171,11 +171,14 @@ public struct VideoClientStateMachine: Sendable {
              .windowList,
              .focusWindow,
              .listSystemDialogs,
-             .systemDialogList:
+             .systemDialogList,
+             .windowPreviewRequest,
+             .windowPreviewChunk:
             // The client never receives a hello / resizeRequest / keepalive / listWindows / focusWindow /
-            // listSystemDialogs (all client→host). `windowList` and `systemDialogList` ARE host→client but
-            // are handled out-of-band by the discovery / system-dialog-monitor queries (transient lanes),
-            // NOT by a streaming session's FSM — defensive no-op here.
+            // listSystemDialogs / windowPreviewRequest (all client→host). `windowList`, `systemDialogList`
+            // and `windowPreviewChunk` ARE host→client but are handled out-of-band by the discovery /
+            // system-dialog-monitor / preview queries (transient lanes), NOT by a streaming session's FSM —
+            // defensive no-op here.
             return []
         }
     }

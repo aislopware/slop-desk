@@ -472,6 +472,88 @@ func answerSystemDialogList(
     if !dialogs.isEmpty { log("answered listSystemDialogs on chan=\(channelID): \(dialogs.count) dialog(s)") }
 }
 
+/// Serializes the one-shot window-preview captures (MERIDIAN C4 picker/sidebar thumbnails). An actor so
+/// a picker refresh fanning out one request PER window runs the SCScreenshotManager captures one at a
+/// time — each is a window-server round-trip; letting a burst run them concurrently would spike the
+/// window server for zero benefit (the client renders thumbnails as they trickle in).
+actor WindowPreviewCapturer {
+    /// The JPEG quality ladder: re-encode downward until the image fits the 64-chunk wire budget
+    /// (`WindowPreviewChunker` refuses an over-budget image). At 320-edge even 0.6 fits comfortably;
+    /// the tail entries only guard a pathologically noisy window.
+    private static let qualityLadder: [CGFloat] = [0.6, 0.45, 0.3, 0.2]
+
+    /// One-shot capture of `windowID`, downscaled so its longer edge ≤ `maxEdge` (clamped 64…512
+    /// host-side — the client field is untrusted), JPEG-encoded to fit the chunk budget. `nil` when
+    /// the window is gone/unshareable or capture/encode fails (the daemon then answers nothing and
+    /// the client times out to its monogram fallback).
+    func jpegSnapshot(windowID: UInt32, maxEdge: UInt16) async -> (jpeg: Data, width: UInt16, height: UInt16)? {
+        guard let window = try? await shareableWindows().first(where: { $0.windowID == windowID })
+        else { return nil }
+        let frame = window.frame
+        guard frame.width >= 1, frame.height >= 1 else { return nil }
+        let edge = CGFloat(min(max(maxEdge, 64), 512))
+        let scale = CGFloat.minimum(edge / CGFloat.maximum(frame.width, frame.height), 1)
+        let config = SCStreamConfiguration()
+        config.width = max(Int((frame.width * scale).rounded()), 1)
+        config.height = max(Int((frame.height * scale).rounded()), 1)
+        config.showsCursor = false
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+        else { return nil }
+        let width = UInt16(clamping: image.width)
+        let height = UInt16(clamping: image.height)
+        let rep = NSBitmapImageRep(cgImage: image)
+        for quality in Self.qualityLadder {
+            guard let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: quality])
+            else { continue }
+            // Fits the chunk budget? (The chunker is the single source of truth for that bound.)
+            if WindowPreviewChunker.chunks(
+                token: 0, windowID: windowID, imageWidth: width, imageHeight: height, jpeg: jpeg,
+            ) != nil {
+                return (jpeg, width, height)
+            }
+        }
+        return nil
+    }
+}
+
+let previewCapturer = WindowPreviewCapturer()
+
+/// Answers a client `windowPreviewRequest` (MERIDIAN C4 thumbnails): one-shot SCK snapshot → JPEG →
+/// `windowPreviewChunk` datagrams on the request's channelID → RETIRE the session-less lane. Mirrors
+/// ``answerWindowList``; a failed capture answers NOTHING (the client's timeout falls back to the
+/// monogram plate — no error message on the wire by design).
+@Sendable
+func answerWindowPreview(
+    channelID: UInt32,
+    windowID: UInt32,
+    maxEdge: UInt16,
+    token: UInt32,
+    mux: NWVideoMuxDatagramTransport,
+    answerGuard: ListAnswerGuard,
+) async {
+    defer {
+        answerGuard.end(channelID)
+        mux.retire(channelID)
+    }
+    guard let snap = await previewCapturer.jpegSnapshot(windowID: windowID, maxEdge: maxEdge),
+          let chunks = WindowPreviewChunker.chunks(
+              token: token,
+              windowID: windowID,
+              imageWidth: snap.width,
+              imageHeight: snap.height,
+              jpeg: snap.jpeg,
+          )
+    else {
+        log("windowPreview chan=\(channelID) win=\(windowID): capture/encode failed — answering nothing")
+        return
+    }
+    for chunk in chunks {
+        mux.send(chunk.encode(), on: .control, channelID: channelID)
+    }
+    log("answered windowPreview on chan=\(channelID) win=\(windowID): \(snap.jpeg.count) B in \(chunks.count) chunk(s)")
+}
+
 // What is held for the process lifetime; SIGINT drives the orderly stop. Set by the bring-up
 // Task, read by the SIGINT Task — different threads, so a lock guards the shared vars (the
 // `@unchecked Sendable` would otherwise hide a real data race). The daemon always runs the
@@ -913,6 +995,22 @@ Task {
                 // reply, NEVER mint a session. Bootstraps its reply flow exactly like listWindows.
                 if listAnswerGuard.begin(channelID) {
                     Task { await answerSystemDialogList(channelID: channelID, mux: mux, answerGuard: listAnswerGuard) }
+                }
+            } else if channel == .control, let msg = try? VideoControlMessage.decode(data),
+                      case let .windowPreviewRequest(windowID, maxEdge, token) = msg
+            {
+                // Session-LESS window-preview snapshot (MERIDIAN C4 thumbnails): one-shot SCK capture +
+                // chunked JPEG reply, NEVER mint a session. Bootstraps its reply flow exactly like
+                // listWindows; the capturer actor serializes a picker burst's captures.
+                if listAnswerGuard.begin(channelID) {
+                    Task { await answerWindowPreview(
+                        channelID: channelID,
+                        windowID: windowID,
+                        maxEdge: maxEdge,
+                        token: token,
+                        mux: mux,
+                        answerGuard: listAnswerGuard,
+                    ) }
                 }
             } else {
                 Task { await registry.dispatch(channelID: channelID, channel: channel, data: data) }

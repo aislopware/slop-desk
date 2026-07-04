@@ -65,6 +65,35 @@ struct NavigatorColumn: View {
         store.tree.activeSession?.activeTab?.activePane
     }
 
+    // MARK: - WINDOWS section (MERIDIAN C4)
+
+    /// The remote-GUI pane rows, rendered as the sidebar's SECOND section (TABS · WINDOWS — same row
+    /// anatomy, spec §3.6): the only difference is the leading identity plate (live thumbnail /
+    /// drained monogram). Narrowed by the same search query as the tab rows.
+    private func windowRows(from allRows: [RailRow]) -> [RailRow] {
+        RailRowsBuilder.filtered(allRows.filter { $0.kind == .remoteGUI }, query: query)
+    }
+
+    /// The per-pane live remote-window model (thumbnail / app name / stall state) — the same
+    /// store-registry lookup ``ConnectionTelemetry`` uses, per row instead of active-only.
+    private func remoteModel(for row: RailRow) -> RemoteWindowModel? {
+        (store.handle(for: row.id) as? LivePaneSession)?.remoteWindow
+    }
+
+    /// The WINDOWS row's leading identity plate: the ~2 s live-stream sample when one exists, else the
+    /// owning app's monogram. `live` = actually streaming and not stalled — a stalled/closed stream's
+    /// plate drains to grayscale (MERIDIAN L1: colour is live data, grayscale is the past).
+    private func identityPlate(for row: RailRow) -> WindowIdentityPlate {
+        let model = remoteModel(for: row)
+        let streaming = model?.active != nil && model?.isStreamStalled != true
+        let identity = model?.appName.isEmpty == false ? model?.appName ?? row.title : row.title
+        return WindowIdentityPlate(
+            image: model?.liveThumbnail,
+            identity: identity,
+            live: streaming,
+        )
+    }
+
     var body: some View {
         #if os(macOS)
         macSidebar
@@ -196,7 +225,11 @@ struct NavigatorColumn: View {
     /// native vibrancy/rounding).
     private var macSidebar: some View {
         let allRows = RailRowsBuilder.rows(for: store)
-        let sections = buildSections(allRows, query: query)
+        // TABS · WINDOWS (MERIDIAN C4): remote-GUI pane rows leave the tab list for their own section
+        // below — same anatomy, the leading identity plate is the only difference (spec §3.6).
+        let tabRows = allRows.filter { $0.kind != .remoteGUI }
+        let windows = windowRows(from: allRows)
+        let sections = buildSections(tabRows, query: query)
         return VStack(alignment: .leading, spacing: 0) {
             // The titlebar / traffic-light strip. The sidebar-collapse toggle sits INSIDE the sidebar —
             // top-trailing on the traffic-light row (top 3 centres the 24pt plate's icon at y≈15, the same
@@ -262,7 +295,7 @@ struct NavigatorColumn: View {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     if allRows.isEmpty {
                         emptyLabel("No tabs open")
-                    } else if sections.isEmpty {
+                    } else if sections.isEmpty, windows.isEmpty {
                         emptyLabel("No matches")
                     } else {
                         ForEach(sections) { section in
@@ -271,6 +304,15 @@ struct NavigatorColumn: View {
                             }
                             ForEach(section.rows) { row in
                                 macRow(row)
+                            }
+                        }
+                        // The WINDOWS section (MERIDIAN C4): open remote-window panes, same row anatomy
+                        // with the live-thumbnail/monogram plate. Not drag-reorderable — manual order is
+                        // a TABS affordance; a window row's home is this derived section.
+                        if !windows.isEmpty {
+                            SlateSectionHeader("Windows")
+                            ForEach(windows) { row in
+                                windowRow(row)
                             }
                         }
                     }
@@ -309,6 +351,29 @@ struct NavigatorColumn: View {
         .contextMenu { rowContextMenu(row) }
     }
 
+    /// One macOS WINDOWS row (MERIDIAN C4): the SAME `SlateTabRow` chrome as a tab row (rename / badge /
+    /// hover close / context menu all included) plus the leading identity plate, with the owning APP as
+    /// the instrument-voice subtitle. NOT wrapped `reorderable` — manual order is a TABS affordance.
+    private func windowRow(_ row: RailRow) -> some View {
+        let model = remoteModel(for: row)
+        return SlateTabRow(
+            title: row.title.isEmpty ? defaultTitle(for: row.kind) : row.title,
+            active: row.id == selectedPane,
+            subtitle: (model?.appName.isEmpty == false ? model?.appName : nil) ?? row.subtitle,
+            processLabel: row.processLabel,
+            badge: row.badge,
+            readOnly: row.readOnly,
+            isEditing: row.isEditing,
+            helpText: row.cwd,
+            identityPlate: identityPlate(for: row),
+            onSelect: { select(row.id) },
+            onClose: { store.requestClosePaneTree(row.id) },
+            onRename: { commitRename(row, to: $0) },
+            onCancelRename: { store.clearTabRenameRequest() },
+        )
+        .contextMenu { rowContextMenu(row) }
+    }
+
     private func emptyLabel(_ text: String) -> some View {
         Text(text)
             .font(.system(size: Slate.Typeface.body))
@@ -322,7 +387,11 @@ struct NavigatorColumn: View {
     /// grouped `Section`s, badge, and drag reorder (E6 WI-5).
     private var iosSidebar: some View {
         let allRows = RailRowsBuilder.rows(for: store)
-        let sections = buildSections(allRows, query: query)
+        // TABS · WINDOWS (MERIDIAN C4) — same split as the macOS panel: remote-GUI pane rows render in
+        // their own trailing section (iOS keeps the system list rows; the thumbnail plate is macOS-only).
+        let tabRows = allRows.filter { $0.kind != .remoteGUI }
+        let windows = windowRows(from: allRows)
+        let sections = buildSections(tabRows, query: query)
         let selection = Binding<PaneID?>(
             get: { selectedPane },
             set: { if let paneID = $0 { select(paneID) } },
@@ -331,13 +400,20 @@ struct NavigatorColumn: View {
             if allRows.isEmpty {
                 Label("No tabs open", systemSymbol: .squareSplit2x1)
                     .foregroundStyle(Slate.Text.secondary)
-            } else if sections.isEmpty {
+            } else if sections.isEmpty, windows.isEmpty {
                 Label("No matches", systemSymbol: .magnifyingglass)
                     .foregroundStyle(Slate.Text.secondary)
             } else {
                 ForEach(sections) { section in
                     Section(section.header ?? "Tabs") {
                         ForEach(section.rows) { row in
+                            iosRow(row)
+                        }
+                    }
+                }
+                if !windows.isEmpty {
+                    Section("Windows") {
+                        ForEach(windows) { row in
                             iosRow(row)
                         }
                     }

@@ -108,9 +108,24 @@ struct RemoteWindowPickerModal: View {
                     // A pick opens a NEW `.remoteGUI` tab pre-bound to this window, then closes the modal.
                     coordinator.openRemoteWindow(window)
                 } label: {
-                    Label(window.displayLabel, systemImage: "macwindow")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
+                    HStack(spacing: 8) {
+                        // MERIDIAN C4: the host snapshot leads the row when it has arrived (recognition
+                        // beats reading); the generic window glyph stands in until then / on an old host.
+                        if let preview = model.windowPreviews[window.windowID] {
+                            Image(decorative: preview, scale: 1)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 44, height: 28)
+                                .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall))
+                        } else {
+                            Image(systemName: "macwindow")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 44)
+                        }
+                        Text(window.displayLabel)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }

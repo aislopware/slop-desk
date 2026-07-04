@@ -51,7 +51,12 @@ public enum UnboundLaneByeDecider {
                  .listWindows,
                  .windowList,
                  .listSystemDialogs,
-                 .systemDialogList:
+                 .systemDialogList,
+                 .windowPreviewRequest,
+                 .windowPreviewChunk:
+                // `windowPreviewRequest` is session-less discovery like listWindows (answered by the
+                // daemon, no session belief to correct); `windowPreviewChunk` is host→client-only —
+                // arriving inbound it is corrupt/hostile, never reflected.
                 return false
             }
         case .video,

@@ -349,6 +349,32 @@ root["videoControl"] = [
     ]), ["dialogs": [
         ["windowID": 9, "owner": "SecurityAgent", "title": "", "width": 400, "height": 200, "isSecure": true],
     ]]),
+    vc(
+        "windowPreviewRequest",
+        .windowPreviewRequest(windowID: 604, maxEdge: 320, token: 0xCAFE_F00D),
+        ["windowID": 604, "maxEdge": 320, "token": 0xCAFE_F00D],
+    ),
+    vc(
+        "windowPreviewChunk",
+        .windowPreviewChunk(
+            token: 0xCAFE_F00D,
+            windowID: 604,
+            imageWidth: 320,
+            imageHeight: 200,
+            chunkIndex: 1,
+            chunkCount: 3,
+            payload: Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]),
+        ),
+        [
+            "token": 0xCAFE_F00D,
+            "windowID": 604,
+            "imageWidth": 320,
+            "imageHeight": 200,
+            "chunkIndex": 1,
+            "chunkCount": 3,
+            "payloadHex": "ffd8ffe00010",
+        ],
+    ),
 ]
 
 // MARK: RecoveryMessage

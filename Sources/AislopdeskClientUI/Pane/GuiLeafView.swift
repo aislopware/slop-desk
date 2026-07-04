@@ -230,6 +230,9 @@ struct GuiLeafView: View {
                     // STALL SCRIM: the live view pushes the stream's stall flips (host silent ↔ traffic
                     // resumed) so the overlay below shows/clears "Reconnecting…" (informational).
                     onStreamStall: { [weak model] stalled in model?.noteStreamStalled(stalled) },
+                    // LIVE THUMBNAIL (MERIDIAN C4): the ~2 s decoded-stream sample feeding the sidebar
+                    // WINDOWS row's live plate (informational).
+                    onStreamPreview: { [weak model] image in model?.noteLiveThumbnail(image) },
                 ),
             )
             // STALL — MERIDIAN L1 "colour is live data, grayscale is the past": the DRAIN happens on the

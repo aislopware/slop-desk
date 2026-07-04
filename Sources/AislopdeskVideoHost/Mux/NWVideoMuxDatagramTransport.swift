@@ -433,15 +433,17 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
         return true
     }
 
-    /// One-shot peek: does a control-channel payload decode as a session-LESS discovery request — either
-    /// `listWindows` (docs/31 picker) or `listSystemDialogs` (the system-popup-pane feature)? Like the
-    /// hello peek, only the control channel can carry these. Lets such a request bootstrap its reply flow
-    /// so the daemon can answer it without minting a capture session.
+    /// One-shot peek: does a control-channel payload decode as a session-LESS discovery request —
+    /// `listWindows` (docs/31 picker), `listSystemDialogs` (the system-popup-pane feature), or
+    /// `windowPreviewRequest` (the MERIDIAN C4 thumbnail snapshot)? Like the hello peek, only the
+    /// control channel can carry these. Lets such a request bootstrap its reply flow so the daemon
+    /// can answer it without minting a capture session.
     private static func payloadIsListRequest(channel: VideoChannel, payload: Data) -> Bool {
         guard channel == .control, let msg = try? VideoControlMessage.decode(payload) else { return false }
         switch msg {
         case .listWindows,
-             .listSystemDialogs: return true
+             .listSystemDialogs,
+             .windowPreviewRequest: return true
         default: return false
         }
     }

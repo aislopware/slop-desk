@@ -572,6 +572,20 @@ before any media flows. `[UInt8 type][body]`, big-endian:
   POINT size the captured window can reach (the bounds of its display, or the parked VD). The host
   sends it once at capture start, paired with its resize-to-display-origin step, so the client's
   "Resize…" popover can cap its width/height fields at a size the remote can actually adopt.
+- **Session-less discovery family** (answered at the daemon level, no capture session minted; the
+  transient lane is retired after the answer): `listWindows` (7) → `windowList` (8),
+  `listSystemDialogs` (11) → `systemDialogList` (12), and the **window-preview snapshot pair
+  (MERIDIAN C4)**: `windowPreviewRequest` (16, client → host) = `UInt32 windowID` + `UInt16 maxEdge`
+  + `UInt32 token` requests a one-shot thumbnail of one shareable window (`maxEdge` caps the longer
+  point dimension; `token` is client-minted); the host answers with `windowPreviewChunk` (17,
+  host → client) datagrams = `UInt32 token`(echoed) + `UInt32 windowID` + `UInt16 imageWidth` +
+  `UInt16 imageHeight` + `UInt16 chunkIndex` + `UInt16 chunkCount` + `UInt16 payloadLen` + payload.
+  The control channel is not packetized, so the JPEG is split into chunks of ≤ 1100 payload bytes
+  (clears the WireGuard path MTU without IP fragmentation), at most 64 chunks — the host re-encodes
+  at lower quality until it fits. Plain UDP, no FEC/retransmit: a lost chunk abandons the image
+  (previews are decorative; the client falls back to a monogram plate and may re-request). The
+  echoed `token` keeps a straggler reply to an earlier request from being stitched into the current
+  one. Both types are inert to an old peer (unknown type → dropped).
 
 ## 9.3 Video frame datagrams — `FrameFragment` (video channel)
 

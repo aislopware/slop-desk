@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 // L0: extracted from the deleted SwiftUI `RemoteWindowPanel.swift`. `RemoteWindowModel` is the
@@ -30,6 +31,46 @@ public final class RemoteWindowModel {
     public private(set) var isLoading = false
     /// A short message when discovery yielded nothing / no discovery seam (the panel offers manual entry).
     public private(set) var loadError: String?
+
+    /// One-shot host snapshots for the picker's rows, keyed by CGWindowID (MERIDIAN C4). Filled lazily
+    /// by ``fetchPreviews(for:)`` over the ``RemoteWindowPreviews`` seam; a window with no entry renders
+    /// its monogram plate. Pruned to the live list on every ``refresh()`` so a long picker session can't
+    /// accumulate snapshots of long-closed windows.
+    public private(set) var windowPreviews: [UInt32: CGImage] = [:]
+    /// Window ids with a preview fetch in flight — a second `fetchPreviews` while one runs skips them
+    /// (the host serializes captures; re-requesting mid-flight only wastes a capture).
+    @ObservationIgnored private var previewsInFlight: Set<UInt32> = []
+
+    /// Fetch missing previews for `windows`, SEQUENTIALLY (the host serializes its SCK captures anyway;
+    /// a burst of parallel requests would only pile up lanes). Cached/in-flight ids are skipped, so the
+    /// picker can call this on every refresh/appear. No seam ⇒ no-op (monograms stand).
+    public func fetchPreviews(for windows: [RemoteWindowSummary]) {
+        guard let fetch = RemoteWindowPreviews.shared else { return }
+        let t = target()
+        let missing = windows.map(\.windowID).filter { windowPreviews[$0] == nil && !previewsInFlight.contains($0) }
+        guard !missing.isEmpty else { return }
+        previewsInFlight.formUnion(missing)
+        Task { @MainActor [weak self] in
+            for wid in missing {
+                let image = await fetch(t.host, t.mediaPort, t.cursorPort, wid)
+                guard let self else { return }
+                if let image { windowPreviews[wid] = image }
+                previewsInFlight.remove(wid)
+            }
+        }
+    }
+
+    /// The LIVE stream thumbnail for this pane's remote window (MERIDIAN C4 sidebar WINDOWS row):
+    /// a small CGImage sampled ~every 2 s from the decoded stream by the live ``VideoWindowView``
+    /// (via ``RemotePaneContext/onStreamPreviewChanged``). `nil` until the first sample — the row
+    /// then shows the monogram plate. Kept across a stall (the last frame is honest "past" —
+    /// MERIDIAN L1 grayscale is the ROW's job, not the model's) and cleared on ``close()``.
+    public private(set) var liveThumbnail: CGImage?
+
+    /// Records one live-stream thumbnail sample from the view.
+    public func noteLiveThumbnail(_ image: CGImage) {
+        liveThumbnail = image
+    }
 
     /// Resolves the app-global ``ConnectionTarget`` (host + UDP ports) at open-time, so every video pane
     /// rides the one shared UDP flow at the app host (docs/31). The pane no longer enters a host/ports.
@@ -301,6 +342,11 @@ public final class RemoteWindowModel {
         loadError = windows.isEmpty
             ? "No windows found on the host (screen-recording permission?). You can enter a window id manually."
             : nil
+        // Thumbnails (MERIDIAN C4): prune snapshots of windows no longer listed, then top up the
+        // missing ones. Sequential + cached — safe on every refresh.
+        let live = Set(windows.map(\.windowID))
+        windowPreviews = windowPreviews.filter { live.contains($0.key) }
+        fetchPreviews(for: windows)
     }
 
     /// The window list narrowed by a filter query — every whitespace-separated token must match
@@ -481,5 +527,6 @@ public final class RemoteWindowModel {
         revalidationTask?.cancel()
         endAwaitingReflow() // a closed window will not re-capture — never leave the scrim hung
         isStreamStalled = false // a closed pane shows the picker, not a stale "Reconnecting…" scrim
+        liveThumbnail = nil // a closed pane's sidebar row must not keep showing the dead stream
     }
 }
