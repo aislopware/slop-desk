@@ -1,12 +1,12 @@
-// SlateTitlebar — the full-width hover-reveal titlebar (`TitlebarHoverView` + chrome controls). It floats
-// as a top overlay over the content area (the window runs `.hiddenTitleBar`, so there is NO system unified
-// toolbar — this IS the chrome). A click-through hover catcher reveals the controls (fade-in 0.15s; on
-// exit, dwell 0.40s + fade-out 0.20s) so the resting window stays clean and uncluttered:
-//   • left  — the sidebar toggle (hover-revealed; stays visible while the sidebar is collapsed)
+// SlateTitlebar — the full-width titlebar chrome. It floats as a top overlay over the content area (the
+// window runs `.hiddenTitleBar`, so there is NO system unified toolbar — this IS the chrome):
+//   • left  — the sidebar REOPEN button, shown ONLY while the sidebar is collapsed. The expanded-state
+//     toggle lives INSIDE the sidebar (`NavigatorColumn`'s traffic-light strip) — the button belongs to
+//     the panel it hides; the titlebar hosts it only when that panel is gone.
 //   • centre— the active tab's title as a `⋯` menu (working dir / split / move / find / close pane)
 //   • right — the ALWAYS-visible connection-status cluster (`TitlebarConnectionCluster`): dot + host +
-//     live ping/fps, tap → the Connect-to-Host editor. Ambient window state, so it is NOT hover-gated.
-// The sidebar toggle flips the shared `WorkspaceChromeState` flag that the split representable reads
+//     live ping/fps, tap → the Connect-to-Host editor. Ambient window state.
+// The reopen button flips the shared `WorkspaceChromeState` flag that the split representable reads
 // to collapse the matching `NSSplitViewItem` — same machinery the old toolbar drove.
 
 #if canImport(SwiftUI)
@@ -26,9 +26,6 @@ struct SlateTitlebar: View {
     var connection: AppConnection?
     /// Tapping the status cluster opens the Connect-to-Host editor (``OverlayCoordinator/openConnect()``).
     var onConnect: () -> Void = {}
-
-    @State private var chromeShown = false
-    @State private var hideWork: DispatchWorkItem?
 
     /// The active tab's active pane id — drives the centre title + the menu's pane actions.
     private var activePane: PaneID? { store.tree.activeSession?.activeTab?.activePane }
@@ -71,33 +68,17 @@ struct SlateTitlebar: View {
         // strip.
         let rowTop: CGFloat = 3
         return ZStack(alignment: .top) {
-            #if os(macOS)
-            TitlebarHoverCatcher { setHover($0) }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            #endif
-
-            // Left: the sidebar toggle, on the traffic-light row (aligned with the Details toggle on the
-            // right). The toggle lives in the CONTENT overlay, whose origin is the DIVIDER when the sidebar is
-            // expanded but the WINDOW's left edge when collapsed. A single button with a state-dependent lead
-            // therefore either DARTED right on collapse (the lead grew a frame before the content slid) or sat
-            // too far in (a constant lead). So render TWO cross-fading instances, each at a FIXED lead, gated
-            // by opacity + hit-testing so only one is live:
-            //   • EXPANDED → tucked just past the divider (lead 12), hover-revealed.
-            //   • COLLAPSED → clear of the traffic lights (lead 80), always visible; it fades in only AFTER the
-            //     collapse settles (delay), so it never flashes at the wide-content position.
-            ZStack(alignment: .topLeading) {
-                PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
-                    .opacity(sidebarVisible && chromeShown ? 1 : 0)
-                    .allowsHitTesting(sidebarVisible && chromeShown)
-                    .padding(.leading, 12)
-                PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
-                    .opacity(sidebarVisible ? 0 : 1)
-                    .allowsHitTesting(!sidebarVisible)
-                    .padding(.leading, 80)
-                    .animation(Slate.Anim.standard.delay(sidebarVisible ? 0 : 0.15), value: sidebarVisible)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, rowTop)
+            // Left: the sidebar REOPEN button, live only while the sidebar is collapsed (the expanded-state
+            // toggle sits inside the sidebar itself — `NavigatorColumn`'s traffic-light strip). Fixed lead 80
+            // clears the traffic lights; it fades in only AFTER the collapse settles (delay), so it never
+            // flashes at the wide-content position mid-slide.
+            PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
+                .opacity(sidebarVisible ? 0 : 1)
+                .allowsHitTesting(!sidebarVisible)
+                .padding(.leading, 80)
+                .animation(Slate.Anim.standard.delay(sidebarVisible ? 0 : 0.15), value: sidebarVisible)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, rowTop)
 
             // Centre: the active title as a menu, on the traffic-light row.
             TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
@@ -126,23 +107,8 @@ struct SlateTitlebar: View {
     // `WorkspaceKeyDispatcher` NSEvent monitor (registry action `.toggleSidebar`,
     // wired to `chrome.toggleSidebar` in `WorkspaceRootView`). A SwiftUI shortcut
     // here would be DEAD — the monitor swallows the chord before the responder chain sees it — so we keep a
-    // SINGLE owner per chord. The visible plate button (the sidebar toggle on the
-    // left row) still drives the same `chrome` flag on click.
-
-    /// The reveal timing: fade-in 0.15s on enter; on exit, dwell 0.40s then fade-out 0.20s (keeps the
-    /// controls clickable while the pointer travels to them).
-    private func setHover(_ over: Bool) {
-        hideWork?.cancel()
-        if over {
-            withAnimation(Slate.Anim.reveal) { chromeShown = true }
-            return
-        }
-        let work = DispatchWorkItem {
-            withAnimation(.timingCurve(0.42, 0, 1, 1, duration: Slate.Anim.titlebarFadeOut)) { chromeShown = false }
-        }
-        hideWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Slate.Anim.titlebarDwell, execute: work)
-    }
+    // SINGLE owner per chord. The visible plate buttons (the sidebar's own toggle and this reopen
+    // button) still drive the same `chrome` flag on click.
 }
 
 // MARK: - Title menu (centre)

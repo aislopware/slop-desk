@@ -79,7 +79,7 @@ final class AislopdeskSplitViewController: NSSplitViewController {
         //    replacing. A plain item lets `NavigatorColumn` paint its own flat warm panel + white-card rows.
         //    Holding priority above the content's default so window-resize grows the content, not the sidebar.
         let navigator = NSHostingController(rootView: NavigatorColumn(
-            store: store, preferences: preferences,
+            store: store, preferences: preferences, chrome: chrome,
         ))
         let sidebarItem = NSSplitViewItem(viewController: navigator)
         sidebarItem.minimumThickness = Self.defaultSidebarWidth

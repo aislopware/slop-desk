@@ -458,11 +458,6 @@ enum Slate {
         static let smallFade = Animation.timingCurve(0, 0, 0.58, 1, duration: 0.12)
         /// Divider / plate hover — EaseInEaseOut 0.16s.
         static let dividerHover = Animation.timingCurve(0.42, 0, 0.58, 1, duration: 0.16)
-
-        /// Titlebar hover-reveal DWELL before fade-out (seconds) — keeps controls clickable on exit.
-        static let titlebarDwell: Double = 0.40
-        /// Titlebar chrome fade-out duration (seconds) after the dwell.
-        static let titlebarFadeOut: Double = 0.20
     }
 }
 

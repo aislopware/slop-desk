@@ -1,6 +1,7 @@
 // WorkspaceChromeState — the small @Observable chrome model the toolbar toggles drive (REBUILD-V2, L4a).
 //
-// Owns the sidebar collapse flag the titlebar toggle flips. The macOS
+// Owns the sidebar collapse flag the sidebar's own toggle (and the titlebar's collapsed-state reopen
+// button) flips. The macOS
 // `WorkspaceSplitRepresentable.updateNSViewController` reads it each update and animates the matching
 // `NSSplitViewItem.isCollapsed`. Kept separate from `WorkspaceStore` (whose legacy `sidebarCollapsed`
 // predates the native rebuild and isn't read by the new navigator) so the chrome flags live in one

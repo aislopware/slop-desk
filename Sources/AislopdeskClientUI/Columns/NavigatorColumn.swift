@@ -40,6 +40,13 @@ struct NavigatorColumn: View {
     /// the value via the `NavigationSplitView`, but it is still passed explicitly for parity.
     var preferences: PreferencesStore?
 
+    /// The shared chrome state — the macOS sidebar hosts its OWN collapse toggle at the top-trailing corner
+    /// of the traffic-light strip (the button lives inside the panel it hides; the content titlebar keeps
+    /// only the collapsed-state REOPEN button). Threaded in by the split-view host like `preferences` (the
+    /// sidebar's `NSHostingController` inherits no environment). `nil` (previews / iOS, where the
+    /// `NavigationSplitView` provides its own toggle) simply omits the button.
+    var chrome: WorkspaceChromeState?
+
     // (The connection status line that used to pin at the sidebar bottom moved to the titlebar's trailing
     // ``TitlebarConnectionCluster`` — the single ambient home for host/status/telemetry, readable even while
     // the sidebar is collapsed.)
@@ -186,7 +193,19 @@ struct NavigatorColumn: View {
         let allRows = RailRowsBuilder.rows(for: store)
         let sections = buildSections(allRows, query: query)
         return VStack(alignment: .leading, spacing: 0) {
-            Color.clear.frame(height: 40) // reserve the titlebar / traffic-light strip
+            // The titlebar / traffic-light strip. The sidebar-collapse toggle sits INSIDE the sidebar —
+            // top-trailing on the traffic-light row (top 3 centres the 24pt plate's icon at y≈15, the same
+            // row the titlebar plates sit on). The content titlebar carries only the collapsed-state
+            // reopen button (there is no sidebar to host it then).
+            ZStack(alignment: .topTrailing) {
+                Color.clear
+                if let chrome {
+                    PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
+                        .padding(.top, 3)
+                        .padding(.trailing, 8)
+                }
+            }
+            .frame(height: 40)
             HStack(spacing: 0) {
                 Text("TABS")
                     .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
