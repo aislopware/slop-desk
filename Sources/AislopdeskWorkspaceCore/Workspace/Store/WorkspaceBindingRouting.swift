@@ -251,6 +251,10 @@ public extension WorkspaceBindingRegistry {
         // pill / ⌘1–9 / Tab / ⌘K chords stay PICKER-LOCAL (handled in the panel, never routed here). `nil`
         // (the headless / test default) is a graceful no-op — never a dead chord.
         case .openQuickly: toggles.openQuickly?()
+        // Control Room (big-swing B): flip the store's overview flag — the compositor renders the
+        // Exposé grid, the dispatcher owns Esc/typing while it is up. A pure store toggle (no view
+        // closure needed), so it works headlessly.
+        case .controlRoom: store.toggleControlRoom()
         // Tabs
         // `.newTab` is the generic new-pane entry (the `+` button / a future generic chord): it creates an
         // in-pane `.chooser` pane (Terminal / Remote window), focused. ⌘T stays a direct-terminal escape hatch
@@ -416,6 +420,9 @@ public extension WorkspaceBindingRegistry {
         // Open Quickly is a view overlay (the tree-shell picker); the canvas path still toggles it via the
         // closure (a graceful no-op when none is supplied, like the palette / global search / jump-to).
         case .openQuickly: toggles.openQuickly?()
+        // Control Room overviews the TREE compositor's mounted tabs; the retained-but-dead canvas has no
+        // tab layers to overview, so the flag still flips (harmless) but nothing renders it.
+        case .controlRoom: store.toggleControlRoom()
         case .nextTab,
              .prevTab,
              .selectTab,

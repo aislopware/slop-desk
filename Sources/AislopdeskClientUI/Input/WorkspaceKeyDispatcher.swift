@@ -234,6 +234,18 @@ final class WorkspaceKeyDispatcher {
         // key through UNCHANGED so the picker's `.onKeyPress` owns its picker-local chords (⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J,
         // ⌘1–9, ⌘K) and Esc / a scrim-tap close it. (⌘⇧O / ⌘J are global only while the picker is hidden.)
         if isOverlayCapturingKeys() { return event }
+        // CONTROL ROOM (big-swing B, 2026-07-04): while the overview is up, the WORKSPACE owns the
+        // keyboard — the focused terminal is a shrunk live card and must never receive typing. Esc
+        // (keyCode 53, not modelled as a KeyChord) exits; workspace chords still resolve below (⌘⇧M
+        // toggles back out, ⌘1–9 jumps straight to a tab); everything unresolved is SWALLOWED, not
+        // passed through.
+        if store.controlRoomActive {
+            if event.keyCode == 53 { // Esc
+                store.leaveControlRoom()
+                return nil
+            }
+            return handleChordOrSwallow(event)
+        }
         // A keystroke that does not normalize to a chord we model (a pure modifier, a dead key, …) is left
         // untouched — never swallow what we cannot classify.
         guard let chord = KeyChordNormalizer.chord(
@@ -295,6 +307,27 @@ final class WorkspaceKeyDispatcher {
         case .disarmSwallow:
             return nil // an unbound key while armed (tmux-faithful: disarm + eat the key, prefix not replayed)
         }
+    }
+
+    /// CONTROL ROOM keyboard: resolve a workspace single chord (and dispatch it), swallow anything else.
+    /// The prefix machine is NOT fed here — a tmux prefix sequence makes no sense over the overview, and
+    /// feeding it would arm state the user cannot see. Modifier-only / unclassifiable keys are swallowed
+    /// too (nothing behind the overview may type).
+    private func handleChordOrSwallow(_ event: NSEvent) -> NSEvent? {
+        guard let chord = KeyChordNormalizer.chord(
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+            keyCode: event.keyCode,
+            modifierFlags: KeyChordNormalizer.Modifiers(
+                shift: event.modifierFlags.contains(.shift),
+                control: event.modifierFlags.contains(.control),
+                option: event.modifierFlags.contains(.option),
+                command: event.modifierFlags.contains(.command),
+            ),
+        ) else { return nil }
+        if let action = WorkspaceBindingRegistry.resolvedChordTable[chord] {
+            dispatch(action)
+        }
+        return nil
     }
 
     /// Report the machine's armed state to the indicator seam and (re-)schedule the timeout expiry. Called

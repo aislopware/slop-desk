@@ -83,26 +83,49 @@ struct SplitContainer: View {
             ZStack {
                 let ordered = tabs
                 let shownIndex = ordered.firstIndex { $0.id == shownTabID }
-                ForEach(ordered) { tab in
+                // CONTROL ROOM (big-swing B): while active, every mounted tab layer is transform-shrunk
+                // into a grid slot — LIVE cards (the terminals keep ticking), never a snapshot. Pure
+                // render transforms (scale anchored top-leading + offset), so entering/leaving the
+                // overview can never touch a leaf frame → never a PTY/grid resize.
+                let overview = store.controlRoomActive && !staticMirror
+                let slots = overview ? ControlRoomLayout.slots(count: ordered.count, in: bounds) : []
+                ForEach(Array(ordered.enumerated()), id: \.element.id) { index, tab in
                     let isShown = tab.id == shownTabID
-                    let index = ordered.firstIndex { $0.id == tab.id }
+                    let slot = slots.indices.contains(index) ? slots[index] : nil
                     tabLayer(tab, isShown: isShown, in: bounds)
-                        .opacity(isShown ? 1 : 0)
+                        .opacity(overview || isShown ? 1 : 0)
                         // CINEMATIC NAVIGATION (big-swing C): a hidden tab PARKS slightly toward its rail
                         // direction at 98.5% scale; revealing it springs it to identity, so a switch reads
                         // as the new tab sliding in from where its sidebar row sits (down the rail ⇒ rises
                         // in from below) while the old one recedes the opposite way. Pure render transforms
                         // — the leaf frames never change, so no PTY/grid resize is ever triggered. Keyed on
-                        // `isShown` only (divider drags / solver re-rects never animate through this).
-                        .scaleEffect(isShown ? 1 : 0.985)
-                        .offset(y: isShown ? 0 : Self.parkOffset(index: index, shownIndex: shownIndex))
+                        // `isShown`/overview only (divider drags / solver re-rects never animate through this).
+                        .scaleEffect(
+                            overview ? (slot.map { $0.width / max(bounds.width, 1) } ?? 1)
+                                : (isShown ? 1 : 0.985),
+                            anchor: .topLeading,
+                        )
+                        .offset(
+                            x: overview ? (slot?.minX ?? 0) : 0,
+                            y: overview
+                                ? (slot?.minY ?? 0)
+                                : (isShown ? 0 : Self.parkOffset(index: index, shownIndex: shownIndex)),
+                        )
                         .animation(
                             reduceMotion || staticMirror ? nil : .spring(duration: 0.3, bounce: 0.12),
                             value: isShown,
                         )
-                        .allowsHitTesting(isShown)
-                        .accessibilityHidden(!isShown)
+                        .animation(
+                            reduceMotion || staticMirror ? nil : .spring(duration: 0.45, bounce: 0.14),
+                            value: overview,
+                        )
+                        .allowsHitTesting(!overview && isShown)
+                        .accessibilityHidden(!overview && !isShown)
                         .id(tab.id) // OUTER key only — inner pane leaves stay keyed by PaneID
+                }
+                if overview {
+                    controlRoomChrome(ordered: ordered, slots: slots)
+                        .zIndex(Self.controlRoomZ)
                 }
             }
             .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
@@ -233,9 +256,48 @@ struct SplitContainer: View {
     }
 
     /// The z-index band the compositor ZStack stacks by: panes at the base (0), then the divider layer,
-    /// then the move-handle / drag-overlay layer.
+    /// then the move-handle / drag-overlay layer, then the Control Room chrome (the overview owns the
+    /// whole click surface while it is up).
     static let dividerZ: Double = 10
     static let moveZ: Double = 20
+    static let controlRoomZ: Double = 40
+
+    /// The Control Room's interaction + label layer: a full-canvas backdrop catcher (click = exit), then
+    /// one ``ControlRoomCardChrome`` per slot (click = fly into that tab). Fades with the overview.
+    @ViewBuilder
+    private func controlRoomChrome(ordered: [AislopdeskWorkspaceCore.Tab], slots: [CGRect]) -> some View {
+        // Backdrop: any click that lands off-card just leaves the overview.
+        Color.clear
+            .contentShape(Rectangle())
+            .onTapGesture { store.leaveControlRoom() }
+        let sessionByTab = sessionNameByTabID
+        ForEach(Array(ordered.enumerated()), id: \.element.id) { index, tab in
+            if slots.indices.contains(index) {
+                let slot = slots[index]
+                ControlRoomCardChrome(
+                    title: tab.title,
+                    sessionName: sessionByTab[tab.id],
+                    isCurrent: tab.id == shownTabID,
+                    isBusy: tab.allPaneIDs().contains { store.paneIsBusy($0) },
+                )
+                .frame(width: slot.width, height: slot.height)
+                .position(x: slot.midX, y: slot.midY)
+                .onTapGesture { store.leaveControlRoom(selecting: tab.id) }
+                .transition(.opacity)
+            }
+        }
+    }
+
+    /// Session-name qualifier for overview cards: only tabs of a RETAINED non-active session carry one
+    /// (the active session's tabs need no qualifier — they are "here").
+    private var sessionNameByTabID: [TabID: String] {
+        var result: [TabID: String] = [:]
+        let activeID = store.tree.activeSessionID
+        for session in store.tree.sessions where session.id != activeID {
+            for tab in session.tabs { result[tab.id] = session.name }
+        }
+        return result
+    }
 
     /// CINEMATIC NAVIGATION (big-swing C): where a hidden tab PARKS, relative to the shown tab's rail
     /// position — above the shown tab ⇒ parked slightly up, below ⇒ slightly down, so the reveal always

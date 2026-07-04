@@ -2456,6 +2456,32 @@ public final class WorkspaceStore {
     /// Flip the sessions-sidebar collapsed state (the ⌘B "Toggle Sidebar" routing target).
     public func toggleSidebarCollapsed() { sidebarCollapsed.toggle() }
 
+    // MARK: - Control Room (design-craft big-swing B, 2026-07-04)
+
+    /// Whether the CONTROL ROOM overview is up — the Exposé zoom-out that lays every mounted tab out as a
+    /// LIVE scaled-down card (Mission Control for the workspace: see every agent/session at once). VIEW
+    /// state, transient (never persisted); the compositor (`SplitContainer`) renders the overview, the key
+    /// dispatcher owns Esc/typing while it is up, and clicking a card leaves via
+    /// ``leaveControlRoom(selecting:)``.
+    public private(set) var controlRoomActive = false
+
+    /// Toggle the Control Room overview (⌘⇧M / menu / palette).
+    public func toggleControlRoom() { controlRoomActive.toggle() }
+
+    /// Leave the overview, optionally flying into `tabID` (a card click). Handles a card from a RETAINED
+    /// but non-active session too: the owning session is activated first, then its tab selected — so the
+    /// overview is a real cross-session switcher, not just a tab picker. `nil` (Esc / toggle) just exits.
+    public func leaveControlRoom(selecting tabID: TabID? = nil) {
+        controlRoomActive = false
+        guard let tabID else { return }
+        if tree.activeSession?.tabs.contains(where: { $0.id == tabID }) != true,
+           let owner = tree.sessions.first(where: { session in session.tabs.contains { $0.id == tabID } })
+        {
+            selectSession(owner.id)
+        }
+        selectTab(id: tabID)
+    }
+
     /// Selects tab at `index` in the active session — a pure active-state change (the FULL leaf set stays
     /// registered; only focus follows). Reconcile is a registry no-op.
     public func selectTab(_ index: Int) {
