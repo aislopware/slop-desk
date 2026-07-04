@@ -197,10 +197,22 @@ struct NavigatorColumn: View {
             // top-trailing on the traffic-light row (top 3 centres the 24pt plate's icon at y≈15, the same
             // row the titlebar plates sit on). The content titlebar carries only the collapsed-state
             // reopen button (there is no sidebar to host it then).
+            //
+            // The button is anchored to the sidebar's TRAILING edge, which RIDES the collapse animation to
+            // the window's left edge — left visible, it glides to x≈0 then the titlebar reopen button pops
+            // in at lead 80, reading as a flash. So it hides INSTANTLY the moment the collapse flag flips
+            // (before the slide starts) and, on expand, fades back in only AFTER the slide settles —
+            // mirroring the reopen button's settle-delayed fade on the other side.
             ZStack(alignment: .topTrailing) {
                 Color.clear
                 if let chrome {
                     PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
+                        .opacity(chrome.sidebarCollapsed ? 0 : 1)
+                        .allowsHitTesting(!chrome.sidebarCollapsed)
+                        .animation(
+                            chrome.sidebarCollapsed ? nil : Slate.Anim.standard.delay(0.15),
+                            value: chrome.sidebarCollapsed,
+                        )
                         .padding(.top, 3)
                         .padding(.trailing, 8)
                 }
