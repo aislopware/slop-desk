@@ -22,12 +22,6 @@ import SwiftUI
 
 struct SplitContainer: View {
     let store: WorkspaceStore
-    /// TabSide partition: which COLUMN of the workspace this container renders. `nil` (iOS, the
-    /// single-region shell) renders every tab and reveals the active one; `.terminal` / `.gui` renders
-    /// only that side's tabs and reveals the side's DISPLAYED tab (``WorkspaceStore/displayedTab(on:)``)
-    /// — the active tab when it is on this side, else the side's last-active tab. Keyboard focus stays
-    /// keyed on the GLOBAL active tab, so only one pane across both columns owns first responder.
-    var side: TabSide?
     /// EAGER/STATIC render path for headless ImageRenderer snapshots.
     var staticMirror: Bool = false
 
@@ -35,37 +29,22 @@ struct SplitContainer: View {
     /// terminal-grid / remote-window redraw fires once on commit, not per drag frame.
     @State private var move: PaneMoveDrag?
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     /// EVERY tab of every RETAINED session (the active session + the LRU-retained previous ones — see
-    /// ``WorkspaceStore/retainedSessionIDs``), in session-then-tab-bar order — narrowed to this
-    /// container's ``side`` (a tab is rendered by exactly ONE container; the side derivation partitions).
-    /// We render ALL of them (see `body`), revealing only the displayed one, so NEITHER a tab switch NOR
-    /// an A→B→A session switch unmounts a pane subtree (R-lifecycle #3 — a session switch used to
-    /// dismantle every outgoing surface and repaint via the lossy ring replay). Stale retained ids (a
-    /// since-closed session) are dropped by the `tree.sessions` intersection; the active session is always
-    /// included even before the first switch (when the retention set is still empty).
+    /// ``WorkspaceStore/retainedSessionIDs``), in session-then-tab-bar order. We render ALL of them (see
+    /// `body`), revealing only the active session's active tab, so NEITHER a tab switch NOR an A→B→A session
+    /// switch unmounts a pane subtree (R-lifecycle #3 — a session switch used to dismantle every outgoing
+    /// surface and repaint via the lossy ring replay). Stale retained ids (a since-closed session) are dropped
+    /// by the `tree.sessions` intersection; the active session is always included even before the first switch
+    /// (when the retention set is still empty).
     private var tabs: [AislopdeskWorkspaceCore.Tab] {
         let retained = store.retainedSessionIDs
         let activeID = store.tree.activeSessionID
         return store.tree.sessions
             .filter { retained.contains($0.id) || $0.id == activeID }
-            .flatMap { session in
-                guard let side else { return session.tabs }
-                return session.tabs.filter { session.side(ofTab: $0) == side }
-            }
+            .flatMap(\.tabs)
     }
 
-    /// The tab this container REVEALS (+ makes interactive); every other tab is mounted but hidden. For a
-    /// side-scoped container this is the side's displayed tab — which may differ from the global active
-    /// tab while focus lives in the OTHER column.
-    private var shownTabID: TabID? {
-        if let side { return store.displayedTabID(on: side) }
-        return store.tree.activeSession?.activeTab?.id
-    }
-
-    /// The GLOBAL active tab's id — the keyboard-focus owner (first responder lives in it, whichever
-    /// column shows it) and the solved-layout reporter's gate.
+    /// The selected tab's id — the ONE tab shown + interactive; every other tab is mounted but hidden.
     private var activeTabID: TabID? { store.tree.activeSession?.activeTab?.id }
 
     var body: some View {
@@ -79,37 +58,13 @@ struct SplitContainer: View {
             // re-feed that dropped an unfocused pane's prompt). PaneIDs are unique across a session's tabs, so
             // one ZStack keyed per-tab (and per-`PaneID` within) has no identity collision.
             ZStack {
-                let ordered = tabs
-                // CONTROL ROOM (big-swing B): while active, every mounted tab layer is transform-shrunk
-                // into a grid slot — LIVE cards (the terminals keep ticking), never a snapshot. Pure
-                // render transforms (scale anchored top-leading + offset), so entering/leaving the
-                // overview can never touch a leaf frame → never a PTY/grid resize.
-                let overview = store.controlRoomActive && !staticMirror
-                let slots = overview ? ControlRoomLayout.slots(count: ordered.count, in: bounds) : []
-                ForEach(Array(ordered.enumerated()), id: \.element.id) { index, tab in
-                    let isShown = tab.id == shownTabID
-                    let slot = slots.indices.contains(index) ? slots[index] : nil
-                    tabLayer(tab, isShown: isShown, in: bounds)
-                        .opacity(overview || isShown ? 1 : 0)
-                        .scaleEffect(
-                            overview ? (slot.map { $0.width / max(bounds.width, 1) } ?? 1) : 1,
-                            anchor: .topLeading,
-                        )
-                        .offset(
-                            x: overview ? (slot?.minX ?? 0) : 0,
-                            y: overview ? (slot?.minY ?? 0) : 0,
-                        )
-                        .animation(
-                            reduceMotion || staticMirror ? nil : .spring(duration: 0.45, bounce: 0.14),
-                            value: overview,
-                        )
-                        .allowsHitTesting(!overview && isShown)
-                        .accessibilityHidden(!overview && !isShown)
+                ForEach(tabs) { tab in
+                    let isActive = tab.id == activeTabID
+                    tabLayer(tab, isActive: isActive, in: bounds)
+                        .opacity(isActive ? 1 : 0)
+                        .allowsHitTesting(isActive)
+                        .accessibilityHidden(!isActive)
                         .id(tab.id) // OUTER key only — inner pane leaves stay keyed by PaneID
-                }
-                if overview {
-                    controlRoomChrome(ordered: ordered, slots: slots)
-                        .zIndex(Self.controlRoomZ)
                 }
             }
             .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
@@ -119,15 +74,14 @@ struct SplitContainer: View {
             .onAppear { if !staticMirror { store.updateContainerBounds(bounds) } }
             .onChange(of: bounds) { _, newBounds in if !staticMirror { store.updateContainerBounds(newBounds) } }
         }
-        // CARD-ON-GLASS (2026-07-04 v3): NO backdrop fill here — the pane cards float on the
-        // `WindowGlassBackdrop` the hosting column renders behind this container.
+        .background(NativePaneColor.window)
     }
 
     /// One tab's pane tree, placed absolutely in a ZStack. Rendered for EVERY tab; the caller hides +
-    /// disables all but the SHOWN one (this container's revealed tab). Interaction chrome (dividers, move
-    /// handles, drop) is drawn only for the shown tab — a hidden tab is non-interactive, so it needs none.
+    /// disables all but the active one. Interaction chrome (dividers, move handles, drop) is drawn only for
+    /// the active tab — a hidden tab is non-interactive, so it needs none.
     @ViewBuilder
-    private func tabLayer(_ tab: AislopdeskWorkspaceCore.Tab, isShown: Bool, in bounds: CGRect) -> some View {
+    private func tabLayer(_ tab: AislopdeskWorkspaceCore.Tab, isActive: Bool, in bounds: CGRect) -> some View {
         let layout = SplitTreeRenderModel.layout(for: tab, in: bounds)
         let frames = Dictionary(layout.leaves.map { ($0.id, $0.rect) }, uniquingKeysWith: { a, _ in a })
         ZStack(alignment: .topLeading) {
@@ -136,17 +90,34 @@ struct SplitContainer: View {
             // one keyed list keeps the zoom hidden↔visible flip within one collection and the hosted
             // terminal / `.remoteGUI` video surface is never torn down.
             ForEach(layout.compositorLeaves, id: \.id) { entry in
-                paneLeaf(
-                    entry,
-                    tab: tab,
-                    isShown: isShown,
-                    // Solo = ONE visible tiled leaf (a zoomed pane counts: its hidden siblings don't
-                    // disambiguate anything on screen) → no unfocused-sibling dim.
-                    solo: layout.leaves.count == 1,
+                PaneContainer(
+                    store: store,
+                    paneID: entry.id,
+                    // A zoom-hidden pane must never claim first responder (mirrors the keep-all-mounted
+                    // focus-steal guard for hidden tabs).
+                    isFocused: !entry.isHidden && Self.isPaneFocused(entry.id, in: tab, activeTabID: activeTabID),
+                    // ON-SCREEN gate (A2/R-lifecycle #2): visible ⟺ the pane's tab is the active tab AND it is
+                    // not zoom-hidden. A `.remoteGUI` pane drives its `liveVideoCap` activation off THIS — a
+                    // hidden tab / zoom-collapsed sibling releases its slot + stops the UDP/VT/Metal pipeline,
+                    // re-activating when it returns (onDisappear never fires under keep-all-mounted).
+                    isVisible: isActive && !entry.isHidden,
+                    // The content's live size IS the resize signal `PaneContainer`'s scrim keys off.
+                    size: entry.leaf.rect.size,
+                    staticMirror: staticMirror,
                 )
+                .frame(width: entry.leaf.rect.width, height: entry.leaf.rect.height)
+                .position(x: entry.leaf.rect.midX, y: entry.leaf.rect.midY)
+                // ZOOM keep-mounted: a zoomed tab still emits every sibling as a HIDDEN compositor leaf at
+                // its un-zoomed rect — revealed/hidden here exactly like an inactive tab's layer, so the
+                // libghostty surface / `.remoteGUI` stream survives the zoom toggle and un-zoom is a pure
+                // visibility flip (no teardown, no lossy ring-replay).
+                .opacity(entry.isHidden ? 0 : 1)
+                .allowsHitTesting(!entry.isHidden)
+                .accessibilityHidden(entry.isHidden)
+                .id(entry.id) // identity hazard: never reuse a surface across panes
             }
-            // Interaction chrome only for the shown tab (a hidden tab is non-interactive anyway).
-            if isShown {
+            // Interaction chrome only for the active tab (a hidden tab is non-interactive anyway).
+            if isActive {
                 // Dividers + the grab-handles / live drag overlay sit ABOVE the panes (z 0) via an
                 // explicit z-index band.
                 ForEach(layout.dividers, id: \.key) { handle in
@@ -163,109 +134,23 @@ struct SplitContainer: View {
         // Report the ACTIVE tab's solved leaf rects to the store (`updateSolvedLayout`) — the production
         // wiring the L0/L2 rewrite dropped with `SplitTreeView`, which left `lastSolvedLayout` forever nil
         // and the ⌃⌘arrow / ⌥⌘⇧arrow chords resolving against the store's nominal fallback. View-only state;
-        // never reconciles. Gated on the GLOBAL active tab (the keyboard ops' target), not merely shown —
-        // the OTHER column's displayed-but-unfocused tab must not overwrite the focus geometry. Skipped for
-        // hidden tabs + the static path.
-        .onAppear { reportSolvedLayout(frames, isShown: isShown, tabID: tab.id) }
-        .onChange(of: frames) { _, newFrames in reportSolvedLayout(newFrames, isShown: isShown, tabID: tab.id) }
-        .onChange(of: isShown) { _, nowShown in reportSolvedLayout(frames, isShown: nowShown, tabID: tab.id) }
-        .onChange(of: activeTabID) { _, _ in reportSolvedLayout(frames, isShown: isShown, tabID: tab.id) }
+        // never reconciles. Skipped for hidden tabs (only the visible geometry counts) + the static path.
+        .onAppear { reportSolvedLayout(frames, isActive: isActive) }
+        .onChange(of: frames) { _, newFrames in reportSolvedLayout(newFrames, isActive: isActive) }
+        .onChange(of: isActive) { _, nowActive in reportSolvedLayout(frames, isActive: nowActive) }
     }
 
-    /// One compositor leaf: the pane card placed absolutely at its solver rect (extracted from the
-    /// `ForEach` to keep `tabLayer`'s ZStack type-checkable).
-    private func paneLeaf(
-        _ entry: SplitTreeRenderModel.CompositorLeaf,
-        tab: AislopdeskWorkspaceCore.Tab,
-        isShown: Bool,
-        solo: Bool,
-    ) -> some View {
-        PaneContainer(
-            store: store,
-            paneID: entry.id,
-            // A zoom-hidden pane must never claim first responder (mirrors the keep-all-mounted
-            // focus-steal guard for hidden tabs).
-            isFocused: !entry.isHidden && Self.isPaneFocused(entry.id, in: tab, activeTabID: activeTabID),
-            // ON-SCREEN gate (A2/R-lifecycle #2): visible ⟺ the pane's tab is SHOWN (this column
-            // reveals it) AND it is not zoom-hidden. A `.remoteGUI` pane drives its `liveVideoCap`
-            // activation off THIS — a hidden tab / zoom-collapsed sibling releases its slot + stops
-            // the UDP/VT/Metal pipeline, re-activating when it returns (onDisappear never fires
-            // under keep-all-mounted).
-            isVisible: isShown && !entry.isHidden,
-            // The content's live size IS the resize signal `PaneContainer`'s scrim keys off.
-            size: entry.leaf.rect.size,
-            // Card-canvas: a lone pane skips the accent focus ring (nothing to disambiguate).
-            solo: solo,
-            staticMirror: staticMirror,
-        )
-        // CARD-ON-GLASS (2026-07-04 v3): inset the card by half the inter-pane gap inside its solver
-        // rect, so two adjacent cards sit `paneGap` apart and the divider hit band lives in the glass
-        // gutter between them. Geometry (solver rects, divider seams, move handles) is untouched — this
-        // is a pure visual inset inside each placed frame.
-        .padding(Slate.Metric.paneGap / 2)
-        .frame(width: entry.leaf.rect.width, height: entry.leaf.rect.height)
-        .position(x: entry.leaf.rect.midX, y: entry.leaf.rect.midY)
-        // ZOOM keep-mounted: a zoomed tab still emits every sibling as a HIDDEN compositor leaf at
-        // its un-zoomed rect — revealed/hidden here exactly like an inactive tab's layer, so the
-        // libghostty surface / `.remoteGUI` stream survives the zoom toggle and un-zoom is a pure
-        // visibility flip (no teardown, no lossy ring-replay).
-        .opacity(entry.isHidden ? 0 : 1)
-        .allowsHitTesting(!entry.isHidden)
-        .accessibilityHidden(entry.isHidden)
-        .id(entry.id) // identity hazard: never reuse a surface across panes
-    }
-
-    /// Forwards the GLOBAL active tab's solved frames to `store.updateSolvedLayout` (a hidden tab, the
-    /// other column's unfocused tab, or the static snapshot path never reports — the store must only ever
-    /// hold the geometry keyboard focus ops act on).
-    private func reportSolvedLayout(_ frames: [PaneID: CGRect], isShown: Bool, tabID: TabID) {
-        guard isShown, tabID == activeTabID, !staticMirror, !frames.isEmpty else { return }
+    /// Forwards the active tab's solved frames to `store.updateSolvedLayout` (a hidden tab / the static
+    /// snapshot path never reports — the store must only ever hold the geometry the user actually sees).
+    private func reportSolvedLayout(_ frames: [PaneID: CGRect], isActive: Bool) {
+        guard isActive, !staticMirror, !frames.isEmpty else { return }
         store.updateSolvedLayout(SolvedLayout(frames: frames))
     }
 
     /// The z-index band the compositor ZStack stacks by: panes at the base (0), then the divider layer,
-    /// then the move-handle / drag-overlay layer, then the Control Room chrome (the overview owns the
-    /// whole click surface while it is up).
+    /// then the move-handle / drag-overlay layer.
     static let dividerZ: Double = 10
     static let moveZ: Double = 20
-    static let controlRoomZ: Double = 40
-
-    /// The Control Room's interaction + label layer: a full-canvas backdrop catcher (click = exit), then
-    /// one ``ControlRoomCardChrome`` per slot (click = fly into that tab). Fades with the overview.
-    @ViewBuilder
-    private func controlRoomChrome(ordered: [AislopdeskWorkspaceCore.Tab], slots: [CGRect]) -> some View {
-        // Backdrop: any click that lands off-card just leaves the overview.
-        Color.clear
-            .contentShape(Rectangle())
-            .onTapGesture { store.leaveControlRoom() }
-        let sessionByTab = sessionNameByTabID
-        ForEach(Array(ordered.enumerated()), id: \.element.id) { index, tab in
-            if slots.indices.contains(index) {
-                let slot = slots[index]
-                ControlRoomCardChrome(
-                    title: tab.title,
-                    sessionName: sessionByTab[tab.id],
-                    isCurrent: tab.id == shownTabID,
-                    isBusy: tab.allPaneIDs().contains { store.paneIsBusy($0) },
-                )
-                .frame(width: slot.width, height: slot.height)
-                .position(x: slot.midX, y: slot.midY)
-                .onTapGesture { store.leaveControlRoom(selecting: tab.id) }
-                .transition(.opacity)
-            }
-        }
-    }
-
-    /// Session-name qualifier for overview cards: only tabs of a RETAINED non-active session carry one
-    /// (the active session's tabs need no qualifier — they are "here").
-    private var sessionNameByTabID: [TabID: String] {
-        var result: [TabID: String] = [:]
-        let activeID = store.tree.activeSessionID
-        for session in store.tree.sessions where session.id != activeID {
-            for tab in session.tabs { result[tab.id] = session.name }
-        }
-        return result
-    }
 
     /// Whether pane `paneID` (in `tab`) should own the renderer's keyboard focus — the guard that makes
     /// keep-all-mounted safe. TRUE only when `tab` is the ACTIVE tab AND `paneID` is that tab's `activePane`.
@@ -329,7 +214,7 @@ struct SplitContainer: View {
                 .allowsHitTesting(false)
                 // Quick opacity snap between zones (paired with the per-zone `.id` cross-fade in the
                 // overlay) — NOT the 0.20s slab frame-morph, which swept a big rectangle edge-to-edge.
-                .animation(.easeOut(duration: 0.12), value: move.zone)
+                .animation(Slate.Anim.smallFade, value: move.zone)
             }
         }
     }

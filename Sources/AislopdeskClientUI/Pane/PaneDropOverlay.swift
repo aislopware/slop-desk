@@ -12,8 +12,8 @@
 // In-Place — over the "green / terminal half" and "blue / pane half" split, plus a tall ellipse hugging each
 // side edge (Split Left / Split Right) whose off-edge half is clipped away. The hovered zone glows
 // status-green; the rest sit as faint washes — green for the terminal half, accent for the pane half — and a
-// disabled zone (the green New-Tab half for a file/URL) reads as a barely-there neutral. NATIVE system
-// semantic colours (the 2026-07-03 native-chrome migration).
+// disabled zone (the green New-Tab half for a file/URL) reads as a barely-there neutral. `Slate.*` tokens
+// only (raw colour / size literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -42,7 +42,7 @@ struct PaneDropOverlay: View {
         // half-circle the screenshot shows hugging each edge.
         .clipShape(Rectangle())
         .allowsHitTesting(false)
-        .animation(.easeOut(duration: 0.15), value: activeZone)
+        .animation(Slate.Anim.reveal, value: activeZone)
     }
 
     /// One zone's blob (a soft ellipse) + its centred label.
@@ -55,13 +55,13 @@ struct PaneDropOverlay: View {
             .fill(fill(zone, active: active, allowed: allowed))
             .overlay {
                 if active {
-                    Ellipse().strokeBorder(Color.green.opacity(0.7), lineWidth: 1)
+                    Ellipse().strokeBorder(Slate.Status.ok.opacity(0.7), lineWidth: Slate.Metric.hairline)
                 }
             }
             .frame(width: max(shape.radiusX * 2, 0), height: max(shape.radiusY * 2, 0))
             .position(shape.center)
         Text(label(zone))
-            .font(.subheadline.weight(.semibold))
+            .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
             .foregroundStyle(labelColor(active: active, allowed: allowed))
             .position(labelCenter(zone, shape: shape))
     }
@@ -69,20 +69,20 @@ struct PaneDropOverlay: View {
     // MARK: - Per-zone styling
 
     /// The blob fill: the hovered zone glows status-green; an allowed zone sits as a faint wash (green for
-    /// the terminal half, accent for the pane half); a disabled zone is a barely-there neutral wash.
+    /// the terminal half, accent for the pane half); a disabled zone is a barely-there neutral.
     private func fill(_ zone: DropZone, active: Bool, allowed: Bool) -> Color {
-        if active { return Color.green.opacity(0.5) }
-        if !allowed { return Color.primary.opacity(0.06) }
+        if active { return Slate.Status.ok.opacity(0.5) }
+        if !allowed { return Slate.State.accentMuted }
         return Self.terminalHalf.contains(zone)
-            ? Color.green.opacity(0.14)
-            : Color.accentColor.opacity(0.10)
+            ? Slate.Status.ok.opacity(0.14)
+            : Slate.State.accent.opacity(0.10)
     }
 
-    /// The label style tracks the zone state: bright on the active zone, secondary on an allowed one,
+    /// The label colour tracks the zone state: bright on the active zone, secondary on an allowed one,
     /// tertiary (faded) on a disabled one.
-    private func labelColor(active: Bool, allowed: Bool) -> AnyShapeStyle {
-        if active { return AnyShapeStyle(.primary) }
-        return allowed ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)
+    private func labelColor(active: Bool, allowed: Bool) -> Color {
+        if active { return Slate.Text.primary }
+        return allowed ? Slate.Text.secondary : Slate.Text.tertiary
     }
 
     /// Where the label sits: at the blob centre for the three central circles; inset from the edge for the

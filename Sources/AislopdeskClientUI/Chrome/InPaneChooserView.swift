@@ -8,8 +8,7 @@
 // pane. Replaces the old `PaneChooserPopover` (a centred overlay), per the "create + focus, content = the
 // choices" UX.
 //
-// Native system styling: semantic colors / system text styles, and a `.regularMaterial` card (the
-// native-SwiftUI chrome migration — docs/DECISIONS.md 2026-07-03).
+// Slate.* tokens only (raw font/radius literals fail scripts/check-ds-leaks.sh).
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -30,16 +29,16 @@ struct InPaneChooserView: View {
     private var options: [PaneChooserOption] { PaneChooserRegistry.options }
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: Slate.Metric.space2) {
             Spacer(minLength: 0)
             Text("New Pane")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.primary)
+                .font(.system(size: Slate.Typeface.body, weight: .semibold))
+                .foregroundStyle(Slate.Text.primary)
             Text("Choose what to open in this pane")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .padding(.bottom, 8)
-            VStack(spacing: 8) {
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.secondary)
+                .padding(.bottom, Slate.Metric.space2)
+            VStack(spacing: Slate.Metric.space2) {
                 ForEach(options, id: \.kind) { option in
                     InPaneChooserCard(option: option) { store.choosePaneKind(paneID, kind: option.kind) }
                 }
@@ -47,7 +46,7 @@ struct InPaneChooserView: View {
             .frame(maxWidth: 320)
             Spacer(minLength: 0)
         }
-        .padding(16)
+        .padding(Slate.Metric.space4)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
         // Claim the keyboard for the NEW pane: `.focusable()` + `@FocusState` makes this view the window's
@@ -83,32 +82,27 @@ private struct InPaneChooserCard: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
+            HStack(spacing: Slate.Metric.space3) {
                 Image(systemName: option.symbol)
-                    .font(.body)
-                    .foregroundStyle(Color.accentColor)
+                    .font(.system(size: Slate.Typeface.body))
+                    .foregroundStyle(Slate.State.accent)
                     .frame(width: 22)
                 Text(option.title)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                Spacer(minLength: 8)
+                    .font(.system(size: Slate.Typeface.body))
+                    .foregroundStyle(Slate.Text.primary)
+                Spacer(minLength: Slate.Metric.space2)
                 Text(String(option.mnemonic).uppercased())
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                    .foregroundStyle(Slate.Text.secondary)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, Slate.Metric.space3)
             .frame(height: 44)
-            // A native material card with a hover plate over it — the material replaces the old inset
-            // element fill, so the card reads as native chrome without a bespoke surface color.
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(hovering ? Slate.State.hover : Slate.Surface.element)
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(hovering ? Color.primary.opacity(0.08) : Color.clear),
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
+                    .stroke(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(.separator, lineWidth: 1),
-            )
+            .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusControl))
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

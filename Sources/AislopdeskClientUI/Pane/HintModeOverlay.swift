@@ -21,9 +21,9 @@
 // `cellMetrics()` is absent and the overlay renders nothing — labels are ABSENT, never wrong. The actuation
 // itself is wired by ``TerminalLeafView`` (``TerminalViewModel/onHintConfirmed``).
 //
-// NATIVE system chrome (2026-07-03 native-chrome migration); the badge is a FIXED yellow plate with BLACK
-// text (the hint-mode spec's "yellow background / black text" — theme/appearance-independent so it reads over
-// any terminal background, the secure-input-pill rationale).
+// `Slate.*` tokens for chrome; the badge is a FIXED yellow plate with BLACK text (the hint-mode spec's "yellow
+// background / black text" — theme-independent so it reads over any terminal background, the secure-input-pill
+// rationale). check-ds-leaks forbids only raw font-size / radius literals, not these colours.
 
 #if canImport(SwiftUI)
 import AislopdeskTerminal
@@ -50,10 +50,10 @@ struct HintModeOverlay: View {
             let matched = Set(HintLabelAssigner.filter(typed: typed, labels: labels).matched)
 
             ZStack(alignment: .topLeading) {
-                // Dim the surface so the labels pop — the plain translucent-black scrim the modal overlays
+                // Dim the surface so the labels pop — the SAME scrim token the modal overlays
                 // use. Tapping the dim plate cancels the mode (and blocks stray clicks to the terminal while up).
                 Rectangle()
-                    .fill(Color.black.opacity(0.25))
+                    .fill(Slate.State.shadow)
                     .contentShape(Rectangle())
                     .onTapGesture { model.cancelHintMode() }
 
@@ -74,7 +74,7 @@ struct HintModeOverlay: View {
             }
             .overlay(alignment: .topTrailing) {
                 HintModeBadge(intent: intent, typed: typed, onExit: { model.cancelHintMode() })
-                    .padding(8)
+                    .padding(Slate.Metric.space2)
             }
             // Belt-and-suspenders Escape dismiss (C4): the primary cancel is the renderer's `keyDown` →
             // `cancelHintMode()` once the terminal is first responder (the routing now nudges focus there). This
@@ -105,15 +105,14 @@ private struct HintLabelBadge: View {
 
     var body: some View {
         labelText
-            .font(.caption.weight(.bold).monospaced())
-            .padding(.horizontal, 4)
+            .font(.system(size: Slate.Typeface.small, weight: .bold, design: .monospaced))
+            .padding(.horizontal, Slate.Metric.space1)
             .frame(minHeight: 14)
-            // The FIXED yellow hint plate (spec: yellow background / black text, theme-independent).
-            .background(Color.yellow, in: .rect(cornerRadius: 4))
+            .background(Slate.Status.warn, in: .rect(cornerRadius: Slate.Metric.radiusSmall))
             .overlay(
-                RoundedRectangle(cornerRadius: 4)
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
                     // A thin dark hairline so the yellow plate reads on a light background too.
-                    .strokeBorder(Color.black.opacity(0.35), lineWidth: 1),
+                    .strokeBorder(Color.black.opacity(0.35), lineWidth: Slate.Metric.hairline),
             )
             .opacity(dimmed ? 0.2 : 1)
             .fixedSize()
@@ -153,27 +152,26 @@ private struct HintModeBadge: View {
     }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Slate.Metric.space1) {
             Text("HINTS")
-                .font(.subheadline.weight(.bold))
+                .font(.system(size: Slate.Typeface.footnote, weight: .bold))
                 .tracking(0.5)
                 .foregroundStyle(Color.black)
             Text(intentLabel)
-                .font(.caption.weight(.semibold))
+                .font(.system(size: Slate.Typeface.small, weight: .semibold))
                 .tracking(0.5)
                 .foregroundStyle(Color.black.opacity(0.6))
             if !typed.isEmpty {
                 Text(typed.uppercased())
-                    .font(.subheadline.weight(.bold).monospaced())
+                    .font(.system(size: Slate.Typeface.footnote, weight: .bold, design: .monospaced))
                     .foregroundStyle(Color.black)
             }
             closeButton
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        // The same FIXED yellow as the hint label plates (theme-independent by design).
-        .background(Color.yellow, in: .rect(cornerRadius: 6))
-        .shadow(color: Color.black.opacity(0.25), radius: 4, x: 0, y: 1)
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.vertical, Slate.Metric.space1)
+        .background(Slate.Status.warn, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+        .shadow(color: Slate.State.shadow, radius: 4, x: 0, y: 1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Hint mode \(intentLabel)")
         .accessibilityHint("Press a label, or Escape to exit")
@@ -183,7 +181,7 @@ private struct HintModeBadge: View {
     private var closeButton: some View {
         Button(action: onExit) {
             Image(systemName: "xmark")
-                .font(.caption.weight(.bold))
+                .font(.system(size: Slate.Typeface.small, weight: .bold))
                 .foregroundStyle(Color.black.opacity(closeHover ? 1 : 0.6))
                 .frame(width: 16, height: 16)
                 .contentShape(.rect)

@@ -135,10 +135,6 @@ public final class OverlayCoordinator {
     /// titlebar button + the palette ✓ all read — never the legacy `store.sidebarCollapsed` the native shell
     /// never reads. The default is a no-op (iOS / tests / previews), so the row is never a trap.
     @ObservationIgnored public var toggleSidebar: @MainActor () -> Void = {}
-    /// TabSide partition: toggles the RIGHT remote-windows column. Bound by ``WorkspaceRootView`` to
-    /// `chrome.toggleWindowsPanel()` so the palette row flips the SAME live `chrome.guiCollapsed` the ⌘⇧E
-    /// chord + the split shell read. No-op default (iOS / tests / previews) — never a trap.
-    @ObservationIgnored public var toggleWindowsPanel: @MainActor () -> Void = {}
     /// E19/A30 (WI-4): toggles the window-pin flag (the View ▸ Pin Window menu row). Bound by ``WorkspaceRootView`` to
     /// `chrome.togglePin()` so any palette / command surface routed here flips the SAME live
     /// `WorkspaceChromeState.pinned` the menu Button + the macOS `NSWindow.level` glue read. No-op by default
@@ -423,9 +419,6 @@ public final class OverlayCoordinator {
         case .toggleSidebar:
             toggleSidebar()
             if !keepOpen { closePalette() }
-        case .toggleWindowsPanel:
-            toggleWindowsPanel()
-            if !keepOpen { closePalette() }
         case .togglePinWindow:
             togglePinWindow()
             if !keepOpen { closePalette() }
@@ -613,7 +606,6 @@ public final class OverlayCoordinator {
     public func openRemoteWindow(_ summary: RemoteWindowSummary) {
         store?.newRemoteWindowTab(
             windowID: summary.windowID, title: summary.title, appName: summary.appName,
-            bundleID: summary.bundleID,
         )
         store?.recordRecentCommand(.newPane(.remoteGUI))
         closeRemotePicker()

@@ -112,15 +112,6 @@ public final class WorkspaceStore {
     /// new concurrency / Sendable surface).
     public private(set) var videoPromotionGeneration: Int = 0
 
-    /// SIDE PARTITION (terminal ⟂ remote-window columns): the tab each ``TabSide`` LAST displayed, per
-    /// session — the memory that keeps a column's content stable while focus lives in the OTHER column.
-    /// The workspace has ONE active tab (keyboard focus); the column whose side matches shows it, the
-    /// other column keeps showing the side's last-active tab from this map. Runtime view-state (NOT
-    /// persisted — a relaunch re-derives from the active tab + first-of-side); stamped in
-    /// ``reconcileTree()`` (the funnel every tree mutation passes) and pruned there against the live
-    /// tab set. Read via ``displayedTab(on:)``.
-    var displayedSideTab: [SessionID: [TabSide: TabID]] = [:]
-
     /// The pane whose sidebar row should open its inline rename field — set by the ⌘R / menu /
     /// palette "Rename" entry points, CONSUMED by the sidebar (``clearRenameRequest()``) once the
     /// field is open. A pending ID rather than a counter nudge: when the sidebar column is collapsed
@@ -2456,32 +2447,6 @@ public final class WorkspaceStore {
     /// Flip the sessions-sidebar collapsed state (the ⌘B "Toggle Sidebar" routing target).
     public func toggleSidebarCollapsed() { sidebarCollapsed.toggle() }
 
-    // MARK: - Control Room (design-craft big-swing B, 2026-07-04)
-
-    /// Whether the CONTROL ROOM overview is up — the Exposé zoom-out that lays every mounted tab out as a
-    /// LIVE scaled-down card (Mission Control for the workspace: see every agent/session at once). VIEW
-    /// state, transient (never persisted); the compositor (`SplitContainer`) renders the overview, the key
-    /// dispatcher owns Esc/typing while it is up, and clicking a card leaves via
-    /// ``leaveControlRoom(selecting:)``.
-    public private(set) var controlRoomActive = false
-
-    /// Toggle the Control Room overview (⌘⇧M / menu / palette).
-    public func toggleControlRoom() { controlRoomActive.toggle() }
-
-    /// Leave the overview, optionally flying into `tabID` (a card click). Handles a card from a RETAINED
-    /// but non-active session too: the owning session is activated first, then its tab selected — so the
-    /// overview is a real cross-session switcher, not just a tab picker. `nil` (Esc / toggle) just exits.
-    public func leaveControlRoom(selecting tabID: TabID? = nil) {
-        controlRoomActive = false
-        guard let tabID else { return }
-        if tree.activeSession?.tabs.contains(where: { $0.id == tabID }) != true,
-           let owner = tree.sessions.first(where: { session in session.tabs.contains { $0.id == tabID } })
-        {
-            selectSession(owner.id)
-        }
-        selectTab(id: tabID)
-    }
-
     /// Selects tab at `index` in the active session — a pure active-state change (the FULL leaf set stays
     /// registered; only focus follows). Reconcile is a registry no-op.
     public func selectTab(_ index: Int) {
@@ -3089,9 +3054,6 @@ public final class WorkspaceStore {
         // tree. Keyed by TabID / a tree-only concept, so pruned here against the tree rather than in the
         // pane-keyed `reconcileRegistry` cache-prune. The helper lives in WorkspaceStore+TabOrdering.
         pruneTreeSidebarMirrors()
-        // SIDE PARTITION: stamp the active tab as its column's last-displayed tab (+ prune stale ids) so
-        // the terminal / GUI column each keep showing their own tab while focus lives in the other one.
-        noteDisplayedSideTabs()
         // E6 WI-7: a newly-materialized pane (or a launch already in By-Project, hydrated from prefs) needs
         // its git toplevel resolved — sweep the visible panes for any uncached key. Debounced + de-duped +
         // self-guarded (a no-op unless grouping is By-Project), so this is cheap on the hot reconcile path.
@@ -4218,29 +4180,13 @@ public func apply(_ command: WorkspaceCommand, to store: WorkspaceStore) {
 /// stay OUT of the `WorkspaceStore` primary body's `type_body_length` budget. `choosePaneKind` must live in
 /// THIS file (it calls the file-private `updateSpecLive` / `defaultTitle`).
 public extension WorkspaceStore {
-    /// Create a new pane placed by `context`, focused, with its kind resolved by the TabSide partition —
-    /// the in-pane Terminal/Remote-window CHOOSER is no longer minted (2026-07-03): the terminal column
-    /// is terminal-ONLY (a remote window is opened from the GUI column's dock / `+` / the picker), so
-    /// there is nothing to choose.
-    ///   • `.newTab` (⌘T / the `+`) ⇒ a TERMINAL tab (the left column's gesture; the GUI column adds
-    ///     windows through its dock).
-    ///   • `.split` ⇒ a pane of the ACTIVE TAB'S side: a terminal-side split mints a terminal; a GUI-side
-    ///     split mints an UNBOUND `.remoteGUI` pane whose content is the in-pane window picker (the
-    ///     existing `.entryForm` state), so both stay side-pure with no chooser step.
-    /// The `.chooser` kind itself is retained for persisted legacy panes (``choosePaneKind(_:kind:)``
-    /// still resolves them); it is just never minted here any more.
+    /// Create a new pane whose CONTENT is the pane-type chooser (Terminal / Remote window), placed by
+    /// `context` and FOCUSED — the user picks the kind INSIDE the pane, no modal popup. The pane carries the
+    /// `.chooser` kind, which materializes NO session until ``choosePaneKind(_:kind:)`` flips it to a real one.
     func openChooserPane(_ context: PaneChooserContext) {
         switch context {
-        case let .split(axis, leading):
-            let side: TabSide =
-                if let session = tree.activeSession, let tab = session.activeTab {
-                    session.side(ofTab: tab)
-                } else {
-                    .terminal
-                }
-            splitActivePane(axis: axis, kind: side == .gui ? .remoteGUI : .terminal, leading: leading)
-        case .newTab:
-            newTab(kind: .terminal)
+        case let .split(axis, leading): splitActivePane(axis: axis, kind: .chooser, leading: leading)
+        case .newTab: newTab(kind: .chooser)
         }
     }
 
@@ -4264,18 +4210,6 @@ public extension WorkspaceStore {
         updateSpecLive(paneID) { spec in
             spec.kind = kind
             spec.title = title
-        }
-        // SIDE PARTITION: a chooser SPLIT can resolve to a kind on the OTHER side of its tab (a Remote
-        // window picked beside a terminal, or a terminal picked beside a remote window). A mixed tab
-        // would straddle the two columns, so eject the just-resolved pane into its own tab — the side
-        // derivation then routes that new tab to its proper column. A chooser opened as its OWN tab
-        // (⌘T) never mixes, so this is a no-op on the common new-tab path.
-        if let (sID, tabID) = tree.tab(containing: paneID),
-           let session = tree.sessions.first(where: { $0.id == sID }),
-           let tab = session.tabs.first(where: { $0.id == tabID }),
-           session.isMixedTab(tab)
-        {
-            breakPaneToTab(paneID)
         }
         focusPaneTree(paneID)
     }

@@ -159,19 +159,6 @@ public actor AislopdeskVideoClientSession {
         /// resizable POINT size (its display bounds). The macOS view forwards it to the model so the
         /// "Resize…" popover caps its width/height fields. `nil` ⇒ no view wants it (iOS / standalone).
         public var notifyDisplayMax: (@Sendable (VideoSize) -> Void)?
-        /// RECONNECT-WEDGE FIX (2026-07-03): the HOST ended this session (a received `bye` — daemon
-        /// shutdown/restart, VD termination, or the restarted daemon answering an unbound lane). The
-        /// pipeline rebuilds the WHOLE pipeline (fresh lane + hello + renderer/pacer/decoder) so a
-        /// videohostd restart self-heals instead of freezing the pane with dead input. `nil` ⇒ no
-        /// rebuild owner (standalone/preview) — the session just stays stopped.
-        public var notifySessionEnded: (@Sendable () -> Void)?
-        /// STATS HUD (design-craft pass, 2026-07-04): a ~1 Hz sample for the pane's opt-in diagnostics
-        /// overlay — the video-transport smoothed RTT (ms) + the CUMULATIVE frames received /
-        /// FEC-recovered / unrecovered since bring-up. Purely informational (drives no policy); `nil` ⇒
-        /// no HUD wants it (standalone / preview).
-        public var notifyVideoStats: (@Sendable (
-            _ rttMS: Double, _ received: UInt64, _ recovered: UInt64, _ lost: UInt64,
-        ) -> Void)?
         @preconcurrency
         public init(
             submitDecodedFrame: @escaping @Sendable (CVImageBuffer) -> Void,
@@ -187,10 +174,6 @@ public actor AislopdeskVideoClientSession {
             applyContentMask: (@Sendable ([MaskRect]) -> Void)? = nil,
             notifyDecodedPoints: (@Sendable (VideoSize) -> Void)? = nil,
             notifyDisplayMax: (@Sendable (VideoSize) -> Void)? = nil,
-            notifySessionEnded: (@Sendable () -> Void)? = nil,
-            notifyVideoStats: (@Sendable (
-                _ rttMS: Double, _ received: UInt64, _ recovered: UInt64, _ lost: UInt64,
-            ) -> Void)? = nil,
         ) {
             self.submitDecodedFrame = submitDecodedFrame
             self.applyCursor = applyCursor
@@ -205,8 +188,6 @@ public actor AislopdeskVideoClientSession {
             self.applyContentMask = applyContentMask
             self.notifyDecodedPoints = notifyDecodedPoints
             self.notifyDisplayMax = notifyDisplayMax
-            self.notifySessionEnded = notifySessionEnded
-            self.notifyVideoStats = notifyVideoStats
         }
     }
 
@@ -310,26 +291,6 @@ public actor AislopdeskVideoClientSession {
     /// Cancelled in ``stop()``. ⚠️ Timer firing is [MS-confirm] (real-clock glue); the reap
     /// DECISION it feeds is covered by `IdleReapDeciderTests`.
     private var keepaliveTask: Task<Void, Never>?
-
-    /// RECONNECT-WEDGE FIX: the hello-retry loop. Over plain UDP the one-shot hello or its ack can
-    /// be lost, and after a pipeline rebuild the restarted host may not be listening yet — either
-    /// way the session used to wedge in `.connecting` forever. This actor-owned Task re-sends the
-    /// hello on the pure ``HelloRetryPolicy`` backoff while the FSM stays `.connecting`, and ends
-    /// itself the first time ``VideoClientStateMachine/resendHello()`` returns no effects (the
-    /// state resolved — streaming / rejected / stopped). Cancelled in ``stop()``. ⚠️ Timer firing
-    /// is real-clock glue; the retry DECISION + cadence are covered by `VideoClientStateMachineTests`
-    /// / `HelloRetryPolicyTests`.
-    private var helloRetryTask: Task<Void, Never>?
-
-    // MARK: Stall-scrim liveness stamps (2026-07-03, the reconnect-wedge residual)
-
-    /// Uptime (``ProcessInfo/systemUptime`` seconds) of the last VIDEO fragment that arrived, and of
-    /// the last successfully-decoded host CONTROL message (the host's 1 s heartbeat keepalive rides
-    /// control, but ANY decodable control datagram proves the host is alive). The pipeline's stall
-    /// monitor reads both via ``livenessSnapshot()`` and feeds ``StreamStallPolicy`` — no timer here;
-    /// the stamps are just writes on paths the actor already runs per datagram.
-    private var lastVideoSignalAt: TimeInterval?
-    private var lastControlSignalAt: TimeInterval?
 
     /// Single batch-drain consumer of the inbound datagram queue (see ``start()``). Mirrors the
     /// host's `InboundQueue` pump; replaces the legacy per-datagram `Task { await receive… }`
@@ -480,12 +441,6 @@ public actor AislopdeskVideoClientSession {
     /// The stream's content frame interval (ms) — seeds the owd-late threshold. Updated by the
     /// FPS governor's `streamCadence` message (`.applyStreamCadence`); 60 fps until announced.
     private var contentIntervalMs: Double = 1000.0 / 60.0
-    /// STATS HUD (design-craft pass, 2026-07-04): CUMULATIVE since bring-up (never reset per report,
-    /// unlike the `win*` window below) — the pane's diagnostics HUD shows totals, not 50 ms windows.
-    /// Wrapping adds by idiom (a u64 frame counter cannot realistically wrap; the guard costs nothing).
-    private var cumFramesReceived: UInt64 = 0
-    private var cumFecRecovered: UInt64 = 0
-    private var cumUnrecovered: UInt64 = 0
     /// Windowed counters reset after every report: frames completed / FEC-recovered / unrecovered.
     private var winFramesReceived: UInt32 = 0
     private var winFecRecovered: UInt32 = 0
@@ -562,33 +517,7 @@ public actor AislopdeskVideoClientSession {
         for effect in stateMachine.start() { await apply(effect) }
         startKeepalive()
         startNetworkStats()
-        startHelloRetry()
         log.info("video client session started; hello sent")
-    }
-
-    /// Starts the hello-retry loop (see ``helloRetryTask``). Mirrors ``startKeepalive()``'s safe
-    /// weak pattern; the loop ends itself once the FSM leaves `.connecting`.
-    private func startHelloRetry() {
-        helloRetryTask?.cancel()
-        helloRetryTask = Task { [weak self] in
-            var attempt = 0
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: UInt64(HelloRetryPolicy.delay(attempt: attempt) * 1_000_000_000))
-                guard !Task.isCancelled, let self else { return }
-                guard await resendHelloIfStillConnecting(attempt: attempt) else { return }
-                attempt += 1
-            }
-        }
-    }
-
-    /// One retry tick: re-sends the hello iff the FSM is still `.connecting`. Returns whether the
-    /// loop should keep running (false once the state resolved).
-    private func resendHelloIfStillConnecting(attempt: Int) async -> Bool {
-        let effects = stateMachine.resendHello()
-        guard !effects.isEmpty else { return false }
-        dbg("hello retry #\(attempt + 1) — still connecting (no ack yet)")
-        for effect in effects { await apply(effect) }
-        return true
     }
 
     /// Drains one inbound batch in arrival order on the actor.
@@ -605,8 +534,6 @@ public actor AislopdeskVideoClientSession {
     public func stop() async {
         keepaliveTask?.cancel()
         keepaliveTask = nil
-        helloRetryTask?.cancel()
-        helloRetryTask = nil
         networkStatsTask?.cancel()
         networkStatsTask = nil
         resizeSettleTask?.cancel()
@@ -645,27 +572,6 @@ public actor AislopdeskVideoClientSession {
         transport.send(VideoControlMessage.keepalive.encode(), on: .control)
     }
 
-    // MARK: Stall-scrim liveness snapshot (2026-07-03)
-
-    /// One reading of the session's liveness signals for the pipeline's stall monitor: whether the
-    /// FSM is `.streaming`, plus the uptime stamps of the last video fragment and the last decodable
-    /// host control message (the host's 1 s heartbeat rides control). All stamps share the
-    /// ``ProcessInfo/systemUptime`` clock the monitor evaluates ``StreamStallPolicy`` against.
-    public struct LivenessSnapshot: Sendable, Equatable {
-        public let streaming: Bool
-        public let lastVideoSignalAt: TimeInterval?
-        public let lastControlSignalAt: TimeInterval?
-    }
-
-    /// The current liveness reading (see ``LivenessSnapshot``).
-    public func livenessSnapshot() -> LivenessSnapshot {
-        LivenessSnapshot(
-            streaming: stateMachine.mediaFlowing,
-            lastVideoSignalAt: lastVideoSignalAt,
-            lastControlSignalAt: lastControlSignalAt,
-        )
-    }
-
     // MARK: Network-feedback telemetry (the network-feedback channel)
 
     /// Starts the self-owned ~50 ms NetworkStats timer. COPIES ``startKeepalive()``'s safe weak
@@ -674,25 +580,12 @@ public actor AislopdeskVideoClientSession {
     private func startNetworkStats() {
         networkStatsTask?.cancel()
         networkStatsTask = Task { [weak self] in
-            var tick = 0
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 50_000_000)
                 guard let self else { return }
                 await sendNetworkStatsIfStreaming()
-                // STATS HUD: publish the cumulative sample every ~1 s (20 × 50 ms), independent of the
-                // host-report `telemetryEnabled` gate — the local HUD must work with telemetry off.
-                tick += 1
-                if tick.isMultiple(of: 20) { await publishHUDStats() }
             }
         }
-    }
-
-    /// STATS HUD (design-craft pass, 2026-07-04): one ~1 Hz informational sample for the pane's opt-in
-    /// diagnostics overlay — smoothed video-transport RTT (ms) + the cumulative frame counters. Drives
-    /// no policy; skipped while media is not flowing (a stale sample would lie).
-    private func publishHUDStats() {
-        guard stateMachine.mediaFlowing else { return }
-        gui.notifyVideoStats?(rttEstimate * 1000, cumFramesReceived, cumFecRecovered, cumUnrecovered)
     }
 
     /// Sends one NetworkStats report iff streaming and telemetry is enabled, then RESETS the windowed
@@ -907,13 +800,8 @@ public actor AislopdeskVideoClientSession {
         }
         switch router.route(channel: channel, data: data, mediaFlowing: stateMachine.mediaFlowing) {
         case let .control(message):
-            // Stall-scrim liveness: any decodable host control message (the 1 s heartbeat keepalive,
-            // acks, cadence, …) proves the host is alive — stamp BEFORE the FSM (which deliberately
-            // no-ops a keepalive).
-            lastControlSignalAt = ProcessInfo.processInfo.systemUptime
             for effect in stateMachine.handleControl(message) { await apply(effect) }
         case let .videoFragment(fragment):
-            lastVideoSignalAt = ProcessInfo.processInfo.systemUptime
             ingestVideo(fragment)
         case let .geometry(message):
             applyGeometry(message)
@@ -981,10 +869,8 @@ public actor AislopdeskVideoClientSession {
                 "frame reassembled #\(frame.frameID) (kf=\(frame.keyframe) ltr=\(frame.isLTR) fec=\(frame.recoveredViaFEC)) → decoding",
             )
             winFramesReceived &+= 1
-            cumFramesReceived &+= 1
             if frame.recoveredViaFEC {
                 winFecRecovered &+= 1
-                cumFecRecovered &+= 1
                 // Component 5: an FEC recovery is the EARLY-WARNING loss event — bursts produce
                 // several of these before the first unrecoverable frame, so the burst's first
                 // frozen episode already runs the halved escalation clock.
@@ -1041,7 +927,6 @@ public actor AislopdeskVideoClientSession {
         dbg("frame #\(lost) declared LOST (unrecoverable)")
         // Network-feedback telemetry: count an unrecoverable loss (the loss-rate numerator).
         winUnrecovered &+= 1
-        cumUnrecovered &+= 1
         // Component 5: feed the loss-observing window (gates the halved escalation clock).
         lossWindow.noteEvent(now: FramePacer.currentHostTimeSeconds())
         // SELF-HEAL: record the loss boundary so a SUCCESSFULLY-decoded frame newer than every loss
@@ -1646,13 +1531,6 @@ public actor AislopdeskVideoClientSession {
             // so the "Resize…" popover caps its width/height fields at a size the remote can adopt.
             dbg("displayMax → max resize \(Int(size.width))x\(Int(size.height))pt")
             gui.notifyDisplayMax?(size)
-        case .sessionEndedByHost:
-            // RECONNECT-WEDGE FIX: the host ended this session (bye) — surface it so the pipeline
-            // rebuilds (fresh lane + hello + presentation path). The FSM is already `.stopped`, so
-            // the keepalive/stats timers self-quiesce on their mediaFlowing gates; the rebuild's
-            // deactivate → stop() then cancels them and closes the lane.
-            dbg("session ended by HOST (bye) → notifying pipeline for a full rebuild")
-            gui.notifySessionEnded?()
         }
     }
 

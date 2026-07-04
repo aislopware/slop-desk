@@ -40,8 +40,6 @@ excluded:
   # Capture-cadence + latency diagnostic instruments (not shipped product) — same rationale as above.
   - Sources/aislopdesk-capture-probe
   - Sources/aislopdesk-fake-client
-  # Headless VT encode/decode TIMING benchmark (perf instrument, not shipped product).
-  - Sources/aislopdesk-perfbench
 
 disabled_rules:
   # ---- SwiftFormat owns formatting (don't let SwiftLint fight the formatter) ----

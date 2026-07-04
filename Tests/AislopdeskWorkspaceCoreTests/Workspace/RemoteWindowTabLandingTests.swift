@@ -53,36 +53,6 @@ final class RemoteWindowTabLandingTests: XCTestCase {
         XCTAssertEqual(spec.video?.appName, "Finder")
     }
 
-    /// The picker's discovery `bundleID` is stamped into the endpoint at mint time (the sidebar Windows
-    /// row's local icon-lookup key — no re-poll needed), and defaults to "" when the caller has none.
-    func testNewRemoteWindowTabStampsBundleID() {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
-
-        let picked = store.newRemoteWindowTab(
-            windowID: 9, title: "main.swift", appName: "Xcode", bundleID: "com.apple.dt.Xcode",
-        )
-        XCTAssertEqual(
-            store.tree.activeSession?.specs[picked]?.video?.bundleID, "com.apple.dt.Xcode",
-            "the discovery bundleID rides the endpoint",
-        )
-
-        let legacy = store.newRemoteWindowTab(windowID: 10, title: "W", appName: "App")
-        XCTAssertEqual(
-            store.tree.activeSession?.specs[legacy]?.video?.bundleID, "",
-            "no bundleID ⇒ empty (icon falls back to the generic symbol)",
-        )
-    }
-
-    /// A ``VideoEndpoint`` persisted BEFORE the `bundleID` field still decodes (tolerant decode → ""), so
-    /// a pre-existing workspace tree loads instead of decode-failing the whole pane.
-    func testVideoEndpointDecodesWithoutBundleID() throws {
-        let legacyJSON = Data(#"{"windowID":42,"title":"Apple","appName":"Safari"}"#.utf8)
-        let decoded = try JSONDecoder().decode(VideoEndpoint.self, from: legacyJSON)
-        XCTAssertEqual(decoded.windowID, 42)
-        XCTAssertEqual(decoded.appName, "Safari")
-        XCTAssertEqual(decoded.bundleID, "", "missing key decodes to empty, never throws")
-    }
-
     // MARK: - onEndpointCommitted persists into spec.video (the real wiring)
 
     /// With a real ``LivePaneSession`` materialized, the store's `wireMaterializedLeaf` set the model's

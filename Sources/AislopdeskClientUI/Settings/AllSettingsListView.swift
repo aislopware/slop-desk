@@ -10,8 +10,7 @@
 //
 // The catalog is the single source of WHAT to show; this view owns the `Defaults.Key` bindings + the
 // cross-tab jump (it sets the shared `selectedSection`). Cross-tab HIGHLIGHT of the target control is
-// deferred (the jump alone is the E7 deliverable). NATIVE styling (native-chrome migration, 2026-07-03):
-// system semantic colors + text styles, no Slate token reads.
+// deferred (the jump alone is the E7 deliverable). Slate.* tokens only (no raw font/radius literals).
 
 #if canImport(SwiftUI)
 import AislopdeskVideoProtocol
@@ -112,7 +111,7 @@ struct AllSettingsListView: View {
     var body: some View {
         Group {
             Section {
-                HStack(spacing: 8) {
+                HStack(spacing: Slate.Metric.space2) {
                     Button("Reset All Settings") { confirmResetAll = true }
                     Button("Reset Advanced Only") { confirmResetAdvanced = true }
                     Spacer()
@@ -121,17 +120,17 @@ struct AllSettingsListView: View {
 
                 if filtered.isEmpty {
                     Text("No settings match “\(query)”.")
-                        .font(.subheadline)
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: Slate.Typeface.footnote))
+                        .foregroundStyle(Slate.Text.tertiary)
                 } else {
                     ForEach(filtered) { entry in row(for: entry) }
                 }
             } header: {
                 HStack {
                     Text("ALL SETTINGS")
-                        .font(.subheadline.weight(.medium))
+                        .font(.system(size: Slate.Typeface.footnote, weight: .medium))
                         .tracking(1)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Slate.Text.tertiary)
                     Spacer()
                     TextField("Search", text: $query)
                         .textFieldStyle(.roundedBorder)
@@ -164,20 +163,20 @@ struct AllSettingsListView: View {
     // MARK: - Row
 
     private func row(for entry: AllSettingsCatalog.SettingEntry) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
             HStack(alignment: .firstTextBaseline) {
                 Text(entry.key)
-                    .font(.body.monospaced())
-                    .foregroundStyle(.primary)
-                Spacer(minLength: 8)
+                    .font(.system(size: Slate.Typeface.body, design: .monospaced))
+                    .foregroundStyle(Slate.Text.primary)
+                Spacer(minLength: Slate.Metric.space2)
                 control(for: entry)
             }
             Text("\(entry.description) · Default: \(entry.defaultText)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, Slate.Metric.space1)
     }
 
     /// The trailing control: an inline editor for an `.advancedOnly` key, or a value + ✎ jump button for a
@@ -197,13 +196,13 @@ struct AllSettingsListView: View {
                 selectedSection = section
             }
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: Slate.Metric.space1) {
                 Text(dedicatedValue(for: entry))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Slate.Text.secondary)
                 Image(systemSymbol: .pencil)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Slate.Text.icon)
             }
-            .font(.subheadline)
+            .font(.system(size: Slate.Typeface.footnote))
         }
         .buttonStyle(.borderless)
     }
@@ -300,10 +299,10 @@ struct AllSettingsListView: View {
                 Text("First Line In Middle").tag(ScrollPastFirst.firstLineInMiddle)
             }
         case SettingsKey.scrollMultiplier:
-            AnyView(HStack(spacing: 4) {
+            AnyView(HStack(spacing: Slate.Metric.space1) {
                 Text(String(format: "%.2f×", scrollMultiplier))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.secondary)
                     .monospacedDigit()
                 Stepper("", value: refreshing($scrollMultiplier), in: 0.25...5, step: 0.25).labelsHidden()
             })
@@ -349,8 +348,8 @@ struct AllSettingsListView: View {
         case SettingsKey.customLinkSchemes:
             // Read-only live summary here — the full editor lives on the Controls → Link Schemes section.
             AnyView(Text(customLinkSchemes.isEmpty ? "None" : customLinkSchemes.joined(separator: ", "))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.secondary)
                 .lineLimit(1))
         // Notifications / sounds / agent-notify (Shell groups) — plain live toggles, no config rebuild.
         case SettingsKey.notifyOnFinish: boolControl($notifyOnFinish)
@@ -379,14 +378,14 @@ struct AllSettingsListView: View {
             // Read-only live summary — the list shows what the host's auto-progress matcher is driven from;
             // editing the prefix list is a power-user JSON / env action (no inline list editor by design).
             AnyView(Text(autoProgressCommands.isEmpty ? "None" : "\(autoProgressCommands.count) commands")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.secondary)
                 .lineLimit(1))
         default:
             // No inline editor wired (should not happen for an `.advancedOnly` entry) — show the default.
             AnyView(Text(entry.defaultText)
-                .font(.subheadline)
-                .foregroundStyle(.tertiary))
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.tertiary))
         }
     }
 

@@ -120,24 +120,10 @@ public struct VideoEndpoint: Codable, Sendable, Equatable {
     /// binding to the same app's window instead of streaming a dead/recycled id. Empty for
     /// legacy/manual-entry bindings (presence-of-id is then the only validity signal).
     public var appName: String
-    /// The owning app's bundle identifier at pick time (discovery `RemoteWindowSummary.bundleID`) — lets
-    /// the client resolve the app's LOCAL icon (NSWorkspace; both ends are Macs) for the sidebar's
-    /// Windows rows without re-polling discovery. Empty for legacy/manual bindings (icon falls back to
-    /// the generic window symbol). Decoded tolerantly so a tree persisted before this field still loads.
-    public var bundleID: String
-    public init(windowID: UInt32, title: String, appName: String = "", bundleID: String = "") {
+    public init(windowID: UInt32, title: String, appName: String = "") {
         self.windowID = windowID
         self.title = title
         self.appName = appName
-        self.bundleID = bundleID
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        windowID = try container.decode(UInt32.self, forKey: .windowID)
-        title = try container.decode(String.self, forKey: .title)
-        appName = try container.decode(String.self, forKey: .appName)
-        bundleID = try container.decodeIfPresent(String.self, forKey: .bundleID) ?? ""
     }
 }
 

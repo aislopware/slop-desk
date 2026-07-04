@@ -393,8 +393,6 @@ func pickerSummary(_ w: SCWindow) -> WindowSummary? {
         title: w.title ?? "",
         width: UInt16(clamping: width),
         height: UInt16(clamping: height),
-        // The client's window dock resolves the app ICON locally from this (NSWorkspace lookup).
-        bundleID: w.owningApplication?.bundleIdentifier ?? "",
     )
 }
 
@@ -559,16 +557,6 @@ func performGracefulShutdown(_ signalName: String) {
     shutdownGate.close() // reject any hello that lands during the drain (no new mint onto the VD)
     Task {
         if let (registry, mux) = holder.currentMux() {
-            // RECONNECT-WEDGE FIX (2026-07-03): tell every live client FIRST — a clean daemon stop
-            // (redeploy/restart) used to close the sockets silently, leaving each client's session
-            // `.streaming` forever (frozen pane + dead input until app relaunch). The bye triggers
-            // the client's rebuild-and-re-hello path immediately; ×2 because a bye is one unacked
-            // UDP datagram (same discipline as the VD-termination drain).
-            let bye = VideoControlMessage.bye.encode()
-            for id in await registry.liveChannelIDs {
-                mux.send(bye, on: .control, channelID: id)
-                mux.send(bye, on: .control, channelID: id)
-            }
             await registry.stopAll()
             await mux.stop()
         }

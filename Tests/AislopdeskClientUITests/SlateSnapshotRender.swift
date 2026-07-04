@@ -14,8 +14,25 @@ import XCTest
 @testable import AislopdeskWorkspaceCore
 
 final class SlateSnapshotRender: XCTestCase {
-    // (The old `testRenderSlateShowcase` — a hand-built mock of the FLAT otty chrome — is deleted with
-    // that design; native-chrome migration, 2026-07-03. The remaining renders pin live views.)
+    @MainActor
+    func testRenderSlateShowcase() throws {
+        // Opt-in only: inert under `swift test` / `make check` unless an output path is requested.
+        guard let out = ProcessInfo.processInfo.environment["AISLOPDESK_SNAPSHOT_OUT"] else {
+            throw XCTSkip("set AISLOPDESK_SNAPSHOT_OUT=<path.png> to render the showcase")
+        }
+        let renderer = ImageRenderer(content: SlateShowcase().frame(width: 920, height: 560))
+        renderer.scale = 2
+        guard let image = renderer.nsImage,
+              let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:])
+        else {
+            XCTFail("ImageRenderer produced no image")
+            return
+        }
+        try png.write(to: URL(fileURLWithPath: out))
+        print("AISLOPDESK_SNAPSHOT_WRITTEN \(out)")
+    }
 
     // MARK: - E2 / WI-6: opt-in render of the new overlay panels (palette + cheat sheet)
 
@@ -51,38 +68,40 @@ final class SlateSnapshotRender: XCTestCase {
 
     // MARK: - E6 / WI-4: opt-in render of the sidebar tab-row badge states
 
-    /// Renders the fused tab badge in each state (spinner / error / hand / check / accent dot) beside a
-    /// native sidebar-style label — the visual lock for the E6 badge states. (The old custom `SlateTabRow`
-    /// white-card row is deleted in the native-chrome migration; the sidebar row is a native `List` row
-    /// now, so the badge — the surviving custom piece — is what this render pins.) SAME `ImageRenderer`
-    /// opt-in idiom as the showcase; inert (skipped) unless `AISLOPDESK_TABROW_SNAPSHOT_DIR=<dir>` is set,
-    /// where it writes `tab-row-badges.png`. NO video/Metal — a badge is pure SwiftUI.
+    /// Renders `SlateTabRow` in each badge state (spinner / error / hand / check / accent dot) plus the active
+    /// white card with a subtitle + process label — the visual lock for the E6 sidebar row. SAME
+    /// `ImageRenderer` opt-in idiom as the showcase; inert (skipped) unless `AISLOPDESK_TABROW_SNAPSHOT_DIR=<dir>`
+    /// is set, where it writes `tab-row-badges.png`. NO video/Metal — a badge is pure SwiftUI.
     @MainActor
     func testRenderTabRowBadges() throws {
         guard let dir = ProcessInfo.processInfo.environment["AISLOPDESK_TABROW_SNAPSHOT_DIR"] else {
             throw XCTSkip("set AISLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the E6 tab-row badge states")
         }
-        let panel = VStack(alignment: .leading, spacing: 8) {
+        let panel = VStack(alignment: .leading, spacing: 2) {
             badgeRow("full-release.sh", badge: .running)
             badgeRow("running build task", badge: .error)
             badgeRow("plan next move", badge: .awaitingInput)
             badgeRow("OpenCode", badge: .completed)
             badgeRow("abner@MacBook-AB:…", badge: .finished)
+            SlateTabRow(
+                title: "aislopdesk",
+                active: true,
+                subtitle: "main · 3 changed",
+                processLabel: "zsh",
+                onSelect: {},
+                onClose: {},
+            )
         }
         .padding(8)
         .frame(width: 260)
-        try render(panel, size: CGSize(width: 260, height: 220), to: dir, named: "tab-row-badges.png")
+        .background(Slate.Surface.sidebar)
+        try render(panel, size: CGSize(width: 260, height: 340), to: dir, named: "tab-row-badges.png")
     }
 
-    /// A native sidebar-style label carrying one fused badge, for the badge-state showcase.
+    /// A resting (non-active) tab row carrying one fused badge, for the badge-state showcase.
     @MainActor
     private func badgeRow(_ title: String, badge: TabBadgeKind) -> some View {
-        HStack(spacing: 6) {
-            Label(title, systemImage: "terminal")
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            TabBadgeView(kind: badge)
-        }
+        SlateTabRow(title: title, active: false, badge: badge, onSelect: {}, onClose: {})
     }
 
     // MARK: - E6 / WI-5: opt-in render of the grouped NavigatorColumn (search + By-Project sections)
@@ -148,8 +167,8 @@ final class SlateSnapshotRender: XCTestCase {
     @MainActor
     private func scrimmed(_ panel: some View) -> some View {
         ZStack {
-            Slate.Surface.card // the one canvas surface (flat hairline canvas, 2026-07-04 v2)
-            Color.black.opacity(0.25) // the host's dim scrim (native-chrome value)
+            Slate.Surface.window
+            Slate.State.shadow // the host's dim scrim role
             panel
         }
     }
@@ -174,4 +193,77 @@ final class SlateSnapshotRender: XCTestCase {
     }
 }
 
+/// A static mock of the chrome, built from the real token layer + component kit. Mirrors the resting
+/// window: a "TABS" sidebar (white-card active tab via `SlateSidebarRow` + a hamburger `SlateSectionHeader`
+/// accessory) beside a FLUSH, borderless two-pane terminal on paper — NO floating card, NO accent ring, NO
+/// per-pane header bar, NO cwd pill and NO right inspector. Green appears ONLY on the prompt `❯` glyph
+/// (accent rationing), never as chrome.
+private struct SlateShowcase: View {
+    var body: some View {
+        HStack(spacing: 0) {
+            sidebar
+            content
+        }
+        .frame(width: 920, height: 560)
+        .background(Slate.Surface.window)
+    }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            SlateSectionHeader("Tabs") {
+                Image(systemSymbol: .line3Horizontal)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Slate.Text.icon)
+            }
+            SlateSidebarRow(symbol: .terminal, title: "~/aislopdesk", badge: "zsh", isSelected: true) {}
+            SlateSidebarRow(symbol: .terminal, title: "build", badge: "zsh", isSelected: false) {}
+            SlateSidebarRow(symbol: .display, title: "Remote window", isSelected: false) {}
+            Spacer()
+        }
+        .padding(Slate.Metric.space2)
+        .frame(width: Slate.Metric.sidebarWidth)
+        .background(Slate.Surface.sidebar)
+    }
+
+    private var content: some View {
+        VStack(spacing: 0) {
+            // The active path lives in the window titlebar, centered + muted — not a per-pane header bar.
+            Text("~/aislopdesk")
+                .font(.system(size: Slate.Typeface.base))
+                .foregroundStyle(Slate.Text.secondary)
+                .frame(maxWidth: .infinity)
+                .frame(height: Slate.Metric.paneHeaderHeight)
+            // Two flush, borderless terminal panes separated by a single hairline divider.
+            HStack(spacing: 0) {
+                terminalPane(
+                    promptPath: "~",
+                    command: "swift build",
+                )
+                Rectangle().fill(Slate.Line.divider).frame(width: Slate.Metric.hairline)
+                terminalPane(
+                    promptPath: "~/aislopdesk",
+                    command: nil,
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Slate.Surface.card) // flush paper terminal surface (#FCFBF9), not a brighter-white card
+    }
+
+    private func terminalPane(promptPath: String, command: String?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            (Text("\(promptPath) ").foregroundStyle(Slate.Status.info)
+                + Text("via ").foregroundStyle(Slate.Text.secondary)
+                + Text("🥭 jmango").foregroundStyle(Slate.Status.ok))
+                .font(.system(size: 13, design: .monospaced))
+            (Text("/\\ - τ -▽ ").foregroundStyle(Slate.Text.secondary)
+                + Text("❯ ").foregroundStyle(Slate.State.accent) // the ONLY green — accent rationing
+                + Text(command ?? "").foregroundStyle(Slate.Text.primary))
+                .font(.system(size: 13, design: .monospaced))
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(Slate.Metric.space3)
+    }
+}
 #endif

@@ -83,22 +83,12 @@ public enum WorkspaceAction: Hashable, Sendable {
     // clipboard. A graceful no-op for a terminal (its own paste pipeline) / empty / read-only pane.
     case pasteAsKeystrokes
     case toggleSidebar // ⌘⇧L — show/hide the sessions sidebar
-    // Windows panel (TabSide partition): show/hide the RIGHT remote-windows column (the GUI tabs + the
-    // window dock). Like `.toggleSidebar` it flips view-owned chrome (`WorkspaceChromeState.guiCollapsed`,
-    // read by the native split shell), so it routes through a passed-in closure; iOS keeps the
-    // single-region shell (documented no-op).
-    case toggleWindowsPanel // ⌘⇧E — show/hide the remote-windows column
     // View → Pin Window (E19 ES-E19-1): keep the window floating above ALL other apps' windows.
     // CHORD-LESS — no default chord; the live macOS app flips `WorkspaceChromeState.pinned` →
     // `NSWindow.level = .floating` via the route closure. A window-scope view concern → needs no active pane;
     // iOS has no window level (documented no-op).
     case pinWindow
     case openQuickly // ⌘⇧O — open the fuzzy "open quickly" file/symbol switcher (E11 stub)
-    // Control Room (design-craft big-swing B, 2026-07-04): ⌘⇧M toggles the Exposé overview — every
-    // mounted tab (active + retained sessions) laid out as a LIVE scaled-down card; click flies in,
-    // Esc exits. A STORE flag (`WorkspaceStore.controlRoomActive`) — the compositor renders it, the
-    // dispatcher owns the keyboard while it is up.
-    case controlRoom // ⌘⇧M — toggle the Control Room overview
     // Jump-To (E10 ES-E10-5): ⌘J opens the floating Jump-To panel — the active pane's detected paths/URLs
     // (over its scrollback) + its OSC-133 command/prompt index, fuzzy-filterable, ↩ to act / ⌘K for the
     // per-row actions. A VIEW overlay (the OverlayCoordinator owns it), so it routes through a passed-in
@@ -258,10 +248,8 @@ public extension WorkspaceAction {
              .closeWindow, // closes the whole window (→ Session) — a window-scope action, needs no active pane
              .reopenClosed, // restores a closed pane into the active tab — acts on history, not a live pane
              .toggleSidebar,
-             .toggleWindowsPanel, // window-scope chrome, the sidebar toggle's right-column twin
              .pinWindow, // a window-scope NSWindow.level toggle — needs no active pane (like the sidebar toggle)
              .openQuickly, // a global fuzzy switcher — needs no active pane
-             .controlRoom, // the overview acts on ALL tabs/sessions — needs no active pane
              .toggleSyncInput, // the tab must exist, but the palette can still show it (mirrors .newTab)
              .jumpToAttention, // acts globally across all tabs/sessions — needs no active pane
              .peekAndReply: // acts globally (targets the oldest attention pane) — needs no active pane
@@ -696,24 +684,6 @@ public enum WorkspaceBindingRegistry {
             id: "view.toggleSidebar", action: .toggleSidebar, title: "Toggle Tabs Panel",
             category: .view, chord: KeyChord(character: "l", [.command, .shift]),
             symbol: "sidebar.left", keywords: "sidebar sessions tabs panel rail hide show collapse",
-        ),
-        // Toggle Windows Panel ⌘⇧E (TabSide partition) — the sidebar toggle's RIGHT-column twin: shows/hides
-        // the remote-windows column (GUI tabs + the window dock). ⌘⇧E is FREE (`e` appears in no other
-        // chord — the old ⌘⇧E holder was pruned with the theme editor, 2026-07-03). Routes through a
-        // view-closure onto `WorkspaceChromeState.guiCollapsed` exactly like `view.toggleSidebar`.
-        WorkspaceBinding(
-            id: "view.toggleWindowsPanel", action: .toggleWindowsPanel, title: "Toggle Windows Panel",
-            category: .view, chord: KeyChord(character: "e", [.command, .shift]),
-            symbol: "sidebar.right", keywords: "windows panel remote gui column dock video hide show collapse right",
-        ),
-        // Control Room ⌘⇧M (design-craft big-swing B): the Exposé overview of every mounted tab as a
-        // LIVE card — Mission Control for the workspace. ⌘⇧M is FREE (`m` appears in NO other chord)
-        // and ⌘-prefixed (the §5 rule). Pinned unique by the chord-uniqueness guard.
-        WorkspaceBinding(
-            id: "view.controlRoom", action: .controlRoom, title: "Control Room",
-            category: .view, chord: KeyChord(character: "m", [.command, .shift]),
-            symbol: "square.grid.2x2",
-            keywords: "control room overview expose mission control all tabs sessions live cards grid zoom out supervise agents",
         ),
         // Pin Window (E19 ES-E19-1, "View ▸ Pin Window" — `spec/user-interface__window-tab-split.md:14`
         // "keeps the window floating above all other apps' windows"). No default chord — `chord:

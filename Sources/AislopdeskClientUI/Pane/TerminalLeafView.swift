@@ -91,17 +91,16 @@ struct TerminalLeafView: View {
         VStack(spacing: 0) {
             terminalSurface
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Inner breathing room so the terminal content doesn't sit flush against the pane edges
-                // (issue: "thêm padding vào các pane") — and, since card-canvas (2026-07-04), what keeps the
-                // card's rounded corners from ever clipping a corner glyph. The
-                // `NativePaneColor.terminalBackground` on the VStack fills the inset gutter. NB this insets
-                // the libghostty surface, so the host PTY grid loses ~1 col/row each side — it reflows through
-                // the existing PaneContainer.size → resize-scrim → host TIOCSWINSZ path, no new signal needed.
-                .padding(8)
+                // Inner breathing room so the terminal content doesn't sit flush against the pane edges /
+                // the split divider (issue: "thêm padding vào các pane"). The `NativePaneColor.terminalBackground`
+                // on the VStack fills the inset gutter, so the pane stays flat (no card). NB this insets the
+                // libghostty surface, so the host PTY grid loses ~1 col/row each side — it reflows through the
+                // existing PaneContainer.size → resize-scrim → host TIOCSWINSZ path, no new signal needed.
+                .padding(Slate.Metric.space2)
             // NO per-pane status strip on a TERMINAL pane (issue: "pane footer cho terminal không có giá trị
             // gì lắm, nên bỏ đi"). The cwd / exit / progress cues are low-value chrome; the host + connection
-            // status — the only fields common to EVERY pane — live ONCE in the toolbar's ambient
-            // `ConnectionStatusItem`, not duplicated per pane. The GUI/window pane keeps
+            // status — the only fields common to EVERY pane — now live ONCE in the sidebar's connection header
+            // (`NavigatorColumn` → `ConnectionStatusPill`), not duplicated per pane. The GUI/window pane keeps
             // a bottom bar, but as a CONTROL bar (resize / lock / zoom), not a status strip.
         }
         .background(NativePaneColor.terminalBackground)
@@ -185,7 +184,7 @@ struct TerminalLeafView: View {
         // `showReadOnlyPill` is gated `!copyModeBadgeActive`, so the lock pill steps aside while vi mode owns
         // the slot.
         .overlay(alignment: .topTrailing) {
-            VStack(alignment: .trailing, spacing: 8) {
+            VStack(alignment: .trailing, spacing: Slate.Metric.space2) {
                 if !staticMirror, showViModePill, let model = live?.terminalModel {
                     ViModePill(model: model, onExit: { model.exitCopyMode() })
                         .transition(.move(edge: .top).combined(with: .opacity))
@@ -198,18 +197,12 @@ struct TerminalLeafView: View {
                     SecureInputPill()
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                // The long-command elapsed/outcome chip (design-craft pass, 2026-07-04) — mounted
-                // UNCONDITIONALLY (it renders nothing until a block runs ≥ 2s) so its watched-it-run
-                // latch survives its own hidden phases; see `CommandElapsedChip.swift`.
-                if !staticMirror, let model = live?.terminalModel {
-                    CommandElapsedChip(blocks: model.blocks)
-                }
                 if !staticMirror, findBar.visible, live?.terminalModel != nil {
                     TerminalFindBar(model: findBar)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
-            .padding(8)
+            .padding(Slate.Metric.space2)
         }
         // The vi key-hint bar (E17 WI-5) floats along the pane BOTTOM (the vi-mode spec's likely position) when
         // `⌘/` has toggled it on during a vi session — `showViHintBar` gates it on `copyModeBadgeActive` so it
@@ -217,16 +210,16 @@ struct TerminalLeafView: View {
         .overlay(alignment: .bottom) {
             if !staticMirror, showViHintBar {
                 ViKeyHintBar()
-                    .padding(8)
+                    .padding(Slate.Metric.space2)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.easeOut(duration: 0.15), value: findBar.visible)
-        .animation(.easeOut(duration: 0.15), value: showReadOnlyPill)
-        .animation(.easeOut(duration: 0.15), value: showSecureInputPill)
-        .animation(.easeOut(duration: 0.15), value: showViModePill)
-        .animation(.easeOut(duration: 0.15), value: showViHintBar)
-        .animation(.easeOut(duration: 0.15), value: navigatorChrome.isVisible)
+        .animation(Slate.Anim.reveal, value: findBar.visible)
+        .animation(Slate.Anim.reveal, value: showReadOnlyPill)
+        .animation(Slate.Anim.reveal, value: showSecureInputPill)
+        .animation(Slate.Anim.reveal, value: showViModePill)
+        .animation(Slate.Anim.reveal, value: showViHintBar)
+        .animation(Slate.Anim.reveal, value: navigatorChrome.isVisible)
     }
 
     /// Whether the `🛡 SECURE INPUT` pill is shown (E17 ES-E17-4 / WI-7). Visible iff secure input is active for
@@ -437,32 +430,7 @@ struct TerminalLeafView: View {
         // a tab switch never tears down a healthy session or wipes the replay ring (the "switch tab mất
         // history" regression). A genuinely idle/dead channel still dials.
         await live?.connection?.connectIfNeeded()
-        await runAutotypeIfRequested()
     }
-
-    /// The `AISLOPDESK_AUTOTYPE` OUT-path proof seam (docs/22 §7) — RESTORED: it lived in the retired
-    /// `PaneLeafView.runAutotypeIfRequested` and was dropped (unnoticed) in the REBUILD-V2 L0 UI deletion,
-    /// leaving `LivePaneSession.isAutotypeTarget` written-but-never-read and `check-macos.sh --connect`'s
-    /// OUT-path proof permanently red. After tab0/pane0's terminal connects, if `AISLOPDESK_AUTOTYPE` is
-    /// set, push the command bytes through the REAL OUT path — `terminalModel.sendInput` → the ordered
-    /// drain in `ConnectionViewModel` → host PTY: the exact keystroke→host chain the renderer drives, so
-    /// the typed command actually executes on the host and renders back. IDEMPOTENT per pane: fires only
-    /// while this leaf is the store-marked autotype target and only once per process (a tab-switch remount
-    /// re-runs the `.task`; the latch keeps a second copy of the command off the shell). Unset in normal
-    /// use, so a production launch is unaffected.
-    private func runAutotypeIfRequested() async {
-        guard let live, live.isAutotypeTarget, !Self.autotypeFired,
-              let cmd = ProcessInfo.processInfo.environment["AISLOPDESK_AUTOTYPE"], !cmd.isEmpty,
-              let connection = live.connection, case .connected = connection.status,
-              let terminalModel = live.terminalModel else { return }
-        Self.autotypeFired = true
-        try? await Task.sleep(nanoseconds: 1_500_000_000) // let the remote prompt come up
-        terminalModel.sendInput(Data((cmd + "\n").utf8))
-    }
-
-    /// Once-per-process latch for ``runAutotypeIfRequested()`` — the `.task` re-fires on every remount, and
-    /// the proof command must land exactly once. `@MainActor`-confined (the leaf body/task both are).
-    @MainActor private static var autotypeFired = false
 
     // MARK: - Hint Mode actuation (E10 WI-9 / ES-E10-6)
 

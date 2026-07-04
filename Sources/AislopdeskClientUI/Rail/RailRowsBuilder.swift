@@ -14,7 +14,7 @@ struct RailRow: Identifiable, Equatable {
     let tabID: TabID
     let kind: PaneKind
     let title: String
-    /// The row's muted second line (the sidebar row subtitle). Kind-generic ``PaneSpec/railSubtitle`` (E21
+    /// The row's muted second line (``SlateTabRow`` subtitle). Kind-generic ``PaneSpec/railSubtitle`` (E21
     /// WI-5): a terminal's cwd, or a video pane's host-app/window label; `nil` ⇒ a single-line row.
     let subtitle: String?
     let status: ClaudeStatus
@@ -28,7 +28,7 @@ struct RailRow: Identifiable, Equatable {
     let processLabel: String?
     /// Whether this pane's input gate is READ-ONLY (E17 ES-E17-1 / WI-3) — read from the store's convergent
     /// ``WorkspaceStore/paneReadOnly`` set so the sidebar lock indicator and the pane's `🔒 READ ONLY ×` pill
-    /// share one source of truth. Drives the sidebar row's trailing lock glyph.
+    /// share one source of truth. Drives ``SlateTabRow``'s trailing lock glyph.
     let readOnly: Bool
     /// The pane's raw last-known working directory (C3 BUG A) — a terminal pane's `lastKnownCwd`, `nil` for a
     /// video pane. NOT rendered as chrome: it is the row's TOOLTIP (`.help`) text AND a hidden search key so a
@@ -37,29 +37,19 @@ struct RailRow: Identifiable, Equatable {
     let cwd: String?
     /// Whether this row is in inline-RENAME mode (C3 BUG B): the store's ``WorkspaceStore/pendingTabRename``
     /// names this row's tab AND this pane is that tab's representative (active) pane — so exactly one row per
-    /// pending tab opens its rename field. Consumed by the sidebar row to swap the title for a `TextField`.
+    /// pending tab opens its rename field. Consumed by ``SlateTabRow`` to swap the title for a `TextField`.
     let isEditing: Bool
     /// Selected = the row's tab is active AND this pane is the tab's active pane.
     let isSelected: Bool
-    /// A `.remoteGUI` row's host-app bundle identifier (``VideoEndpoint/bundleID``, stamped at pick time)
-    /// — the sidebar Windows row resolves the app's LOCAL icon from it (``AppIconResolver``). Empty (a
-    /// terminal row / a legacy binding) ⇒ the row keeps its SF-symbol icon.
-    var bundleID: String = ""
-    /// The pane's live OSC 9;4 progress (design-craft pass, 2026-07-04) — carried RAW beside the fused
-    /// `badge` so a `.running` badge with a DETERMINATE percent renders as a progress RING instead of the
-    /// anonymous spinner (a 90%-done task and a plain busy shell used to look identical). `nil` ⇒ none.
-    var progress: PaneProgress?
 
     /// A copy of this row with a new `title` (C3 BUG A collision disambiguation) — every other field is
     /// carried verbatim. Kept here so ``RailRowsBuilder/disambiguated(_:)`` need not restate the memberwise init.
     func retitled(_ newTitle: String) -> Self {
-        var copy = Self(
+        Self(
             id: id, tabID: tabID, kind: kind, title: newTitle, subtitle: subtitle, status: status,
             tabNumber: tabNumber, badge: badge, processLabel: processLabel, readOnly: readOnly, cwd: cwd,
-            isEditing: isEditing, isSelected: isSelected, bundleID: bundleID,
+            isEditing: isEditing, isSelected: isSelected,
         )
-        copy.progress = progress
-        return copy
     }
 }
 
@@ -67,14 +57,8 @@ enum RailRowsBuilder {
     /// Build the rail rows for the active session. One row per pane of each tab,
     /// in tab order then pre-order pane order. `selected` = the tab is active AND the pane is that tab's
     /// active pane. Agent status comes from the store's per-pane mirror (`.none` ⇒ plain terminal).
-    ///
-    /// `side` scopes the rail to ONE column of the TabSide partition: the macOS sidebar builds
-    /// `.terminal` (the Terminals list) and `.gui` (the Windows section) separately; `nil` (iOS, which
-    /// keeps the single-region shell) lists every tab. The row's
-    /// `tabNumber` is the 1-based ordinal WITHIN the tab's side, matching the side-scoped ⌘1…⌘9
-    /// (`WorkspaceStore/selectTabNumber(_:)` counts terminal tabs the same way).
     @MainActor
-    static func rows(for store: WorkspaceStore, side: TabSide? = nil) -> [RailRow] {
+    static func rows(for store: WorkspaceStore) -> [RailRow] {
         guard let session = store.tree.activeSession else { return [] }
         // FIX 1: observe the flash-decay tick so the rail re-renders ONCE at the completion flash-window
         // boundary. `completionFreshness(forPane:)` below reads the wall clock at build time (NOT an
@@ -84,13 +68,7 @@ enum RailRowsBuilder {
         _ = store.completionFlashTick
         let activeTabIndex = session.activeTabIndex
         var out: [RailRow] = []
-        // Per-side ordinal counters (the rendered numbering skips the OTHER side's tabs).
-        var sideOrdinals: [TabSide: Int] = [:]
         for (tabIndex, tab) in session.tabs.enumerated() {
-            let tabSide = session.side(ofTab: tab)
-            let ordinal = (sideOrdinals[tabSide] ?? 0) + 1
-            sideOrdinals[tabSide] = ordinal
-            if let side, tabSide != side { continue }
             let tabIsActive = tabIndex == activeTabIndex
             // E20 ES-E20-3: a MANUAL `tab badge --kind` override (if any) is rendered on the tab's
             // REPRESENTATIVE (active) pane row — the badge is per-tab, so it lands on the one row that
@@ -125,14 +103,13 @@ enum RailRowsBuilder {
                 // toggles gate their OWN badge families independently — a program's busy / OSC 9;4 progress
                 // spinner and an OSC 9;4;2 progress error are never silenced by an agent toggle. Freshness
                 // decays the clean-completion badge (store owns the clock); the resolver stays pure.
-                let progress = store.progress(for: paneID)
                 let gatedBadge = TabBadgeGating.resolve(
                     agent: status,
                     completion: store.panePendingCompletion[paneID],
                     isBusy: store.paneIsBusy(paneID),
                     foregroundProcess: processLabel,
                     completionFreshness: store.completionFreshness(forPane: paneID),
-                    progress: progress,
+                    progress: store.progress(for: paneID),
                     agentGates: store.agentBadgeGates(for: paneID),
                     commandGates: store.commandBadgeGates,
                 )
@@ -150,15 +127,13 @@ enum RailRowsBuilder {
                     title: title,
                     subtitle: subtitle,
                     status: status,
-                    tabNumber: ordinal,
+                    tabNumber: tabIndex + 1,
                     badge: badge,
                     processLabel: processLabel,
                     readOnly: store.isReadOnly(for: paneID),
                     cwd: kind == .terminal ? spec?.lastKnownCwd : nil,
                     isEditing: isEditing,
                     isSelected: isSelected,
-                    bundleID: spec?.video?.bundleID ?? "",
-                    progress: progress,
                 ))
             }
         }

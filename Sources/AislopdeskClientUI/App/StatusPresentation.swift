@@ -10,8 +10,8 @@ import AislopdeskAgentDetect
 import AislopdeskWorkspaceCore
 import SwiftUI
 
-// `@MainActor` — every call site is a SwiftUI view body (all MainActor); kept so the annotation can't
-// churn call sites even though the system-color mappers below are theme-independent.
+// `@MainActor` because the colour mappers read the runtime ``Slate/theme`` (D3) — every call site is a
+// SwiftUI view body, all MainActor.
 @MainActor
 enum StatusPresentation {
     // MARK: Connection
@@ -21,15 +21,15 @@ enum StatusPresentation {
         ConnectionPresenter.shortLabel(for: status)
     }
 
-    /// The status-dot colour — system status colors (adaptive light/dark).
+    /// The status-dot colour — cohesive on the active theme.
     static func connectionColor(_ status: ConnectionStatus) -> Color {
         switch status {
-        case .connected: .green
+        case .connected: Slate.Status.ok
         case .connecting,
-             .reconnecting: .orange
+             .reconnecting: Slate.Status.warn
         case .failed,
-             .unreachable: .red
-        case .disconnected: .secondary
+             .unreachable: Slate.Status.err
+        case .disconnected: Slate.Text.secondary
         }
     }
 
@@ -45,23 +45,6 @@ enum StatusPresentation {
     /// The hover/accessibility help: host + the actionable headline.
     static func connectionHelp(host: String, status: ConnectionStatus) -> String {
         "Connection: \(host) — \(ConnectionPresenter.headline(for: status))"
-    }
-
-    /// The ambient status item's trailing summary (``ConnectionStatusItem``): live metrics
-    /// ("9 ms · 30 fps", tertiary mono) when connected, else the status word ("connecting…",
-    /// "reconnecting 3/20") — the dropped-"connected" rule: a green dot + a ping already say it.
-    /// `nil` ⇒ connected with no sample yet (dot + host alone read as connected). Pure, so the
-    /// healthy-collapses / degraded-earns-space contract is unit-testable without rendering.
-    static func connectionSummary(
-        status: ConnectionStatus, pingMS: Double?, fps: Int?,
-    ) -> (text: String, isMetric: Bool)? {
-        if case .connected = status {
-            var metrics: [String] = []
-            if let pingMS { metrics.append("\(Int(pingMS.rounded())) ms") }
-            if let fps { metrics.append("\(fps) fps") }
-            return metrics.isEmpty ? nil : (metrics.joined(separator: " · "), true)
-        }
-        return (connectionLabel(status), false)
     }
 
     // MARK: Agent (Claude Code)
@@ -80,11 +63,11 @@ enum StatusPresentation {
     /// Tint for an agent status (docs/42 glyph palette: idle🟢 working🟡 done🔵 needs🔴).
     static func agentTint(_ status: ClaudeStatus) -> Color {
         switch status {
-        case .none: .secondary
-        case .idle: .green
-        case .working: .orange
-        case .done: .blue
-        case .needsPermission: .red
+        case .none: Slate.Text.secondary
+        case .idle: Slate.Status.ok
+        case .working: Slate.Status.warn
+        case .done: Slate.Status.info
+        case .needsPermission: Slate.Status.err
         }
     }
 
@@ -103,24 +86,13 @@ enum StatusPresentation {
     static func tabBadge(_ kind: TabBadgeKind) -> TabBadgeStyle {
         switch kind {
         case .running: .spinner
-        case .completed: .symbol(name: "checkmark.circle.fill", tint: .green)
-        case .finished: .dot(.green)
-        case .error: .symbol(name: "exclamationmark.triangle.fill", tint: .red)
-        case .awaitingInput: .symbol(name: "hand.raised.fill", tint: .orange)
-        case .caffeinate: .symbol(name: "cup.and.saucer.fill", tint: .secondary)
-        case .sudo: .symbol(name: "shield.lefthalf.filled", tint: .secondary)
+        case .completed: .symbol(name: "checkmark.circle.fill", tint: Slate.Status.ok)
+        case .finished: .dot(Slate.Status.ok)
+        case .error: .symbol(name: "exclamationmark.triangle.fill", tint: Slate.Status.err)
+        case .awaitingInput: .symbol(name: "hand.raised.fill", tint: Slate.Status.warn)
+        case .caffeinate: .symbol(name: "cup.and.saucer.fill", tint: Slate.Text.secondary)
+        case .sudo: .symbol(name: "shield.lefthalf.filled", tint: Slate.Text.secondary)
         }
-    }
-
-    /// Progress-aware overload (design-craft pass, 2026-07-04, revives the orphaned E14/K1 percent): a
-    /// `.running` badge whose pane carries a DETERMINATE OSC 9;4 progress upgrades from the anonymous
-    /// spinner to a percent RING — a 90%-done task and a plain busy shell stop looking identical. Every
-    /// other kind (and an indeterminate/error progress, which the base map already voices) is unchanged.
-    static func tabBadge(_ kind: TabBadgeKind, progress: PaneProgress?) -> TabBadgeStyle {
-        if kind == .running, case let .determinate(fraction, label) = progressPresentation(progress) {
-            return .ring(fraction: fraction, label: label)
-        }
-        return tabBadge(kind)
     }
 
     /// The accessibility / tooltip label for a tab badge, so the otherwise icon-only glyph is VoiceOver-
@@ -177,7 +149,7 @@ enum ProgressPresentation: Equatable {
 /// The rendering recipe for one tab badge (see ``StatusPresentation/tabBadge(_:)``). `.spinner` and `.dot`
 /// are bespoke shapes the view draws directly; `.symbol` is an SF-symbol name + its tint. A pure value (no
 /// view), so the badge map can be unit-tested without rendering.
-enum TabBadgeStyle: Equatable {
+enum TabBadgeStyle {
     /// An indeterminate gray spinner (a running command / working agent). A pure SwiftUI animation — never a
     /// video/capture session (CLAUDE.md hang-safety rule #6).
     case spinner
@@ -185,9 +157,5 @@ enum TabBadgeStyle: Equatable {
     case dot(Color)
     /// A tinted SF-symbol fill (completed / error / awaiting-input / caffeinate / sudo).
     case symbol(name: String, tint: Color)
-    /// A DETERMINATE progress ring (design-craft pass, 2026-07-04): the 0…1 arc a `.running` pane with an
-    /// OSC 9;4 percent fills, with its "NN%" a11y/tooltip label. Replaces the spinner ONLY when a real
-    /// percent exists (``StatusPresentation/tabBadge(_:progress:)``).
-    case ring(fraction: Double, label: String)
 }
 #endif

@@ -1,21 +1,21 @@
-// SlateControls — small reusable chrome controls, styled NATIVELY (system semantic styles; the Slate
-// token layer is retiring from chrome — native-chrome migration, 2026-07-03).
+// SlateControls — the reusable chrome controls on the token layer (REBUILD-V2, L6/L9).
 //
-// The hover-plate button idiom survives (idle → transparent plate; hover → a faint fill) because macOS
-// borderless buttons outside a toolbar show no hover affordance of their own — but the colors/timing are
-// system-semantic now, not theme tokens.
+// The hover-plate button idiom:
+//   idle  → transparent plate, icon tint
+//   hover → plate fills with `Slate.State.hover`, ~120ms `smallFade`
+// No springs — every transition uses the timing curves in `Slate.Anim`.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
 import SwiftUI
 
-/// A small icon button with a rounded hover plate: transparent when idle, fills faintly on hover.
+/// A small icon button with a rounded hover plate: transparent when idle, fills on hover.
 struct SlatePlateButton: View {
     let symbol: SFSymbol
     var help: String?
-    var size: CGFloat = 13
-    var plate: CGFloat = 24
-    var tint: Color = .secondary
+    var size: CGFloat = Slate.Metric.iconSize
+    var plate: CGFloat = Slate.Metric.plate
+    var tint: Color = Slate.Text.icon
     var action: () -> Void = {}
 
     @State private var hovering = false
@@ -27,15 +27,15 @@ struct SlatePlateButton: View {
                 .foregroundStyle(tint)
                 .frame(width: plate, height: plate)
                 .background(
-                    hovering ? Color.primary.opacity(0.08) : .clear,
-                    in: .rect(cornerRadius: 6),
+                    hovering ? Slate.State.hover : .clear,
+                    in: .rect(cornerRadius: Slate.Metric.radiusControl),
                 )
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .slateHelp(help)
         .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(Slate.Anim.smallFade, value: hovering)
     }
 }
 

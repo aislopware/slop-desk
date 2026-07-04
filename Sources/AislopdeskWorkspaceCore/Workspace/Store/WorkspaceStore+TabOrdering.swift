@@ -138,32 +138,25 @@ public extension WorkspaceStore {
         }
     }
 
-    /// Selects the tab `delta` away from the active tab WITHIN THE ACTIVE TAB'S SIDE, clamped to that
-    /// side's range (no wrap — a list stops at its ends, like the palette). The "next/prev tab" command
-    /// entry. Side-scoped (the TabSide partition): cycling from a terminal tab steps through terminal
-    /// tabs only, from a GUI tab through GUI tabs only — the two columns' tab sets are unrelated. No-op
-    /// without an active session/tab.
+    /// Selects the tab `delta` away from the active tab in the active session, clamped to the tab range
+    /// (no wrap — a list stops at its ends, like the palette). The "next/prev tab" command entry. No-op
+    /// without an active session.
     func cycleTab(by delta: Int) {
-        guard let session = tree.activeSession, let active = session.activeTab else { return }
-        let side = session.side(ofTab: active)
-        let indices = session.tabIndices(on: side)
-        guard indices.count > 1,
-              let activeIndex = session.tabs.firstIndex(where: { $0.id == active.id }),
-              let pos = indices.firstIndex(of: activeIndex) else { return }
-        let nextPos = min(max(pos + delta, 0), indices.count - 1)
-        guard indices[nextPos] != activeIndex else { return }
-        selectTab(indices[nextPos])
+        guard let session = tree.activeSession else { return }
+        let count = session.tabs.count
+        guard count > 1 else { return }
+        let next = min(max(session.activeTabIndex + delta, 0), count - 1)
+        guard next != session.activeTabIndex else { return }
+        selectTab(next)
     }
 
-    /// Selects the `number`-th TERMINAL tab (1-based) of the active session, if it exists. The ⌘1…⌘9
-    /// command entry; the numbering counts terminal-side tabs only — matching the sidebar, which lists
-    /// only them (GUI tabs live in the right column's dock, not under ⌘N). A number past the terminal tab
-    /// count is a no-op (a missing tab number simply does nothing, the native ⌘N tab idiom).
+    /// Selects the `number`-th tab (1-based) of the active session, if it exists. The ⌘1…⌘9 command entry;
+    /// a number past the tab count is a no-op (clamps to nothing rather than the last tab — a missing tab
+    /// number simply does nothing, the native ⌘N tab idiom).
     func selectTabNumber(_ number: Int) {
         guard let session = tree.activeSession else { return }
-        let indices = session.tabIndices(on: .terminal)
-        let pos = number - 1
-        guard indices.indices.contains(pos) else { return }
-        selectTab(indices[pos])
+        let index = number - 1
+        guard session.tabs.indices.contains(index) else { return }
+        selectTab(index)
     }
 }

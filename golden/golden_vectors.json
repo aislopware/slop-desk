@@ -3875,12 +3875,11 @@
       "variant": "listWindows"
     },
     {
-      "hex": "0800020000000104b00320000d476f6f676c65204368726f6d65000d54616220e28094205469746c650011636f6d2e676f6f676c652e4368726f6d65000000020050001800085465726d696e616c00000000",
+      "hex": "0800020000000104b00320000d476f6f676c65204368726f6d65000d54616220e28094205469746c65000000020050001800085465726d696e616c0000",
       "variant": "windowList",
       "windows": [
         {
           "appName": "Google Chrome",
-          "bundleID": "com.google.Chrome",
           "height": 800,
           "title": "Tab — Title",
           "width": 1200,
@@ -3888,7 +3887,6 @@
         },
         {
           "appName": "Terminal",
-          "bundleID": "",
           "height": 24,
           "title": "",
           "width": 80,

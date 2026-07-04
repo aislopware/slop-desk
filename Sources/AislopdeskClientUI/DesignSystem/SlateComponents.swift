@@ -1,7 +1,9 @@
-// SlateComponents — small reusable chrome components, styled NATIVELY (system semantic styles; the Slate
-// token layer is retiring from chrome — native-chrome migration, 2026-07-03): a status dot (with an
-// optional Pow glow on change) and the `.slateCard()` inset-card surface modifier. See also SlateControls
-// (`SlatePlateButton`).
+// SlateComponents — the reusable chrome component kit on the token layer (REBUILD-V2, L9).
+//
+// Small, composable pieces factored out of the chrome so every surface stays consistent and new views are
+// quick to assemble: a status dot (with an optional Pow glow on change), a key/value row, a pill/badge, and
+// an `.slateCard()` surface modifier. All built on `Slate.*` tokens + `SlateTheme`. See also SlateControls
+// (`SlatePlateButton`) and SlateRow (`SlateSidebarRow` / `SlateSectionHeader`).
 
 #if canImport(SwiftUI)
 import Pow
@@ -25,26 +27,69 @@ struct SlateStatusDot: View {
     }
 }
 
-/// A "card" surface: a faint system fill, hairline separator border, rounded corners. The inset-content
-/// idiom (command output, detail boxes). Use `.slateCard()` on any view.
+/// A compact label/value row: a secondary label on the left, a trailing primary value.
+struct SlateKeyValueRow<Value: View>: View {
+    let label: String
+    @ViewBuilder var value: () -> Value
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space2) {
+            Text(label)
+                .foregroundStyle(Slate.Text.secondary)
+            Spacer(minLength: Slate.Metric.space2)
+            value()
+                .foregroundStyle(Slate.Text.primary)
+        }
+    }
+}
+
+/// A small pill / badge — optional leading symbol + text, on the theme's element surface with a hairline.
+struct SlatePill: View {
+    var symbol: SFSymbol?
+    let text: String
+    var tint: Color = Slate.Text.secondary
+
+    var body: some View {
+        HStack(spacing: Slate.Metric.space1) {
+            if let symbol {
+                Image(systemSymbol: symbol)
+            }
+            Text(text)
+        }
+        .font(.system(size: Slate.Typeface.footnote))
+        .foregroundStyle(tint)
+        .lineLimit(1)
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.vertical, 2)
+        .background(Slate.Surface.element, in: Capsule())
+        .overlay(Capsule().strokeBorder(Slate.Line.subtle, lineWidth: 1))
+    }
+}
+
+/// A "card" surface: element background, hairline border, rounded corners. The floating-card idiom
+/// for inset content (command output, detail boxes). Use `.slateCard()` on any view.
 private struct SlateCardModifier: ViewModifier {
     var radius: CGFloat
+    var fill: Color
 
     func body(content: Content) -> some View {
         content
-            .background(Color.primary.opacity(0.04))
+            .background(fill)
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(.separator, lineWidth: 1),
+                    .strokeBorder(Slate.Line.subtle, lineWidth: 1),
             )
     }
 }
 
 extension View {
-    /// Wraps the view in a card surface (faint fill + hairline border + rounded corners).
-    func slateCard(radius: CGFloat = 6) -> some View {
-        modifier(SlateCardModifier(radius: radius))
+    /// Wraps the view in a card surface (element fill + hairline border + rounded corners).
+    func slateCard(
+        radius: CGFloat = Slate.Metric.radiusControl,
+        fill: Color = Slate.Surface.element,
+    ) -> some View {
+        modifier(SlateCardModifier(radius: radius, fill: fill))
     }
 }
 #endif

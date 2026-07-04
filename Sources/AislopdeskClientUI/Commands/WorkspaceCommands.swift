@@ -34,9 +34,6 @@ struct WorkspaceCommands: Commands {
     var toggleFind: (() -> Void)?
     var togglePeekReply: (() -> Void)?
     var toggleSidebar: (() -> Void)?
-    /// TabSide partition: the View ▸ Toggle Windows Panel item (⌘⇧E hint) — the remote-windows column
-    /// collapse. `nil` keeps the item a graceful no-op via `route`, never dead.
-    var toggleWindowsPanel: (() -> Void)?
     /// E5 / WI-4: the cross-tab Global Search overlay toggle (⇧⌘F, the View ▸ Global Search… menu item).
     /// `nil` keeps the menu item a graceful no-op via `route`, never dead.
     var toggleGlobalSearch: (() -> Void)?
@@ -138,7 +135,6 @@ struct WorkspaceCommands: Commands {
                 toggleFind: toggleFind,
                 togglePeekReply: togglePeekReply,
                 toggleSidebar: toggleSidebar,
-                toggleWindowsPanel: toggleWindowsPanel,
                 toggleGlobalSearch: toggleGlobalSearch,
                 toggleJumpTo: toggleJumpTo,
                 openQuickly: openQuickly,

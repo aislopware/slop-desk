@@ -1,16 +1,11 @@
-// PaneContainer — one placed leaf = a rounded pane CARD on the native glass backdrop (card-on-glass
-// canvas, 2026-07-04 v3; user-directed: "terminal ở 1 card riêng, remote window ở 1 card riêng" on a
-// fully NATIVE window background — the v1 card-canvas failed on a theme-coloured margin that was
-// near-identical to the card tone, not on the card idea itself).
+// PaneContainer — one placed leaf = the flush, borderless pane content.
 //
 // Resolves the pane's `LivePaneSession` handle + `PaneSpec` from the store, routes by pane kind to the
 // content view (terminal → `TerminalLeafView`; `.remoteGUI`/`.systemDialog` → the `VideoWindowFactory`
-// seam, else a native placeholder). The content — scrim and drop overlays included — clips to a
-// continuous rounded card on the theme card fill, with a theme hairline border and a soft shadow,
-// floating on the `WindowGlassBackdrop` the columns render (siblings sit `Metric.paneGap` apart). In a
-// SPLIT, focus reads as CONTENT, not chrome: the UNFOCUSED siblings dim gently under a
-// theme-background veil (Ghostty's unfocused-split treatment, gentler); a lone pane never dims. Tap
-// anywhere focuses the pane via the store.
+// seam, else a native placeholder). The terminal renders as a FLUSH, borderless panel on paper — there
+// is NO floating card, NO accent ring, NO drop shadow and NO inset gutter. The per-pane controls
+// (split/close) hover-reveal as a top overlay instead of a resting header bar; focus is conveyed only by
+// dimming the unfocused panes (the `⌘D` split treatment). Tap anywhere focuses the pane via the store.
 //
 // The whole pane is keyed `.id(PaneID)` by the SplitContainer so the surface/connection are never reused
 // across panes (identity hazard). SYSTEM colours/fonts only.
@@ -38,10 +33,6 @@ struct PaneContainer: View {
     /// split add/remove, a zoom, a balance, a tab switch — the content has been resized and its (frozen /
     /// stretched) surface won't match until it re-renders, so the scrim is shown until things settle.
     var size: CGSize = .zero
-    /// Whether this pane is the ONLY compositor leaf of its tab: a lone pane skips the unfocused dim —
-    /// there is no sibling to disambiguate from. Defaults `true` (dim off) so standalone
-    /// callers/previews render calm.
-    var solo: Bool = true
     /// EAGER/STATIC render path for headless ImageRenderer snapshots.
     var staticMirror: Bool = false
 
@@ -143,16 +134,6 @@ struct PaneContainer: View {
         paneContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Slate.Surface.card)
-            // Focus treatment: dim the UNFOCUSED siblings of a split under a gentle
-            // theme-background veil (the Ghostty unfocused-split dim, tuned subtler so a streamed
-            // window pane never reads as "broken"). Kept in the tree at opacity 0 (cheap). NO
-            // animation, deliberately: pane focus moves are keyboard-frequency actions — the
-            // zero-animation rule (docs/research/ui-restructure-2026-07-04.md §2.5).
-            .overlay {
-                Slate.Surface.card
-                    .opacity(isFocused || solo ? 0 : Self.unfocusedDim)
-                    .allowsHitTesting(false)
-            }
             // While this pane is mid-resize, cover its (frozen / stretched) surface with a calm scrim so the
             // moment reads as a deliberate "resizing" state, not a glitchy stretch. Kept in the tree at
             // opacity 0 (cheap) and faded in — never hit-tests, so taps / the divider gesture pass through.
@@ -160,7 +141,7 @@ struct PaneContainer: View {
                 PaneResizeScrim()
                     .opacity(showResizeScrim ? 1 : 0)
                     .allowsHitTesting(false)
-                    .animation(.easeOut(duration: 0.15), value: showResizeScrim)
+                    .animation(Slate.Anim.reveal, value: showResizeScrim)
             }
             // E18 WI-5: the external-drag drop-zone overlay. Kept in the tree at opacity 0 (cheap, never
             // hit-tests) and faded in only while a supported drag hovers the pane (`dropModel.isActive`). It
@@ -174,7 +155,7 @@ struct PaneContainer: View {
                 )
                 .opacity(dropModel.isActive ? 1 : 0)
                 .allowsHitTesting(false)
-                .animation(.easeOut(duration: 0.15), value: dropModel.isActive)
+                .animation(Slate.Anim.reveal, value: dropModel.isActive)
             }
             // Generic resize signal: when this pane's laid-out `size` changes (from ANY source) show the
             // scrim, then hold it until the size has been steady for `resizeScrimSettle`. `.task(id:)`
@@ -207,21 +188,10 @@ struct PaneContainer: View {
             .onChange(of: dragging) { _, active in
                 if !active { resizedDuringDrag = false }
             }
-            // CARD-ON-GLASS (2026-07-04 v3): clip the pane — content, scrim and drop overlays included —
-            // to a continuous rounded card. The clip masks the hosted libghostty / video CAMetalLayer too
-            // (the terminal surface keeps its own inner inset, so no corner glyph is ever cut). The border
-            // rides an overlay AFTER the clip (strokeBorder draws inward, never clipped): the theme
-            // hairline defines the card edge against the glass; a soft theme shadow lifts it off the
-            // backdrop. NO per-pane header bar (the active pane's title + split/close controls live in
-            // the titlebar `⋯` menu); adjacent split cards sit `Metric.paneGap` apart with the
-            // `PaneDivider` hit band living in the glass gap between them.
-            .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous)
-                    .strokeBorder(Slate.Line.cardBorder, lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
-            .shadow(color: Slate.Effect.panelShadow, radius: 5, x: 0, y: 2)
+            // The terminal is a FLUSH, borderless panel on paper — fills the leaf rect edge-to-edge.
+            // No rounded card, no accent ring, no drop shadow, no gutter, and NO per-pane header bar (the
+            // active pane's title + split/close controls live in the titlebar `⋯` menu). Adjacent split
+            // panes are separated only by the `PaneDivider` hairline `SplitContainer` places between leaves.
             .contentShape(Rectangle())
             .onTapGesture { store.focusPaneTree(paneID) }
             // E18 WI-5/WI-6: accept external file/folder/URL/text drags. The receiver is disabled on the
@@ -239,11 +209,36 @@ struct PaneContainer: View {
                 terminalModel: live?.terminalModel,
                 overlayCoordinator: overlayCoordinator,
             ))
+            // FOCUS = a small FILLED accent triangle tucked into the active pane's TOP-LEFT corner (Warp-style,
+            // the KEPT marker after the box/bracket/underline/dot/top-bar iterations). `Slate.State.accent`,
+            // faded in only while focused; the unfocused panes render at FULL opacity (no dim — it washed out
+            // live content). `allowsHitTesting(false)` so taps / the divider gesture pass through. OUTERMOST
+            // overlay → above the resize-scrim + drop-zone overlays (KEPT exactly as-is — re-render logic).
+            .overlay(alignment: .topLeading) {
+                PaneFocusCorner(size: Slate.Metric.focusCornerSize)
+                    .fill(Slate.State.accent)
+                    .opacity(isFocused ? 1 : 0)
+                    .allowsHitTesting(false)
+            }
+            .animation(Slate.Anim.standard, value: isFocused)
     }
+}
 
-    /// The unfocused-sibling dim strength: a theme-background veil at this opacity over a split's
-    /// non-focused panes. Ghostty ships 0.3 (an `unfocused-split-opacity` of 0.7); ours is deliberately
-    /// gentler — a streamed remote-window pane is often watched while unfocused.
-    static let unfocusedDim: Double = 0.15
+/// The active-pane focus marker: a small FILLED right-triangle in the TOP-LEFT corner (Warp-style) — the
+/// two legs run along the top + left pane edges, the hypotenuse cuts across. Sized by `size` (leg length),
+/// auto-capped at the smaller pane side so a tiny pane keeps it.
+private struct PaneFocusCorner: Shape {
+    /// Leg length (points) of the corner triangle.
+    var size: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let s = Swift.min(size, Swift.min(rect.width, rect.height))
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY)) // the corner
+        p.addLine(to: CGPoint(x: rect.minX + s, y: rect.minY)) // along the top edge
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.minY + s)) // along the left edge
+        p.closeSubpath()
+        return p
+    }
 }
 #endif

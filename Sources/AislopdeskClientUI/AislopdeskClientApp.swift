@@ -525,9 +525,6 @@ public struct AislopdeskClientApp: App {
             overlay: overlayCoordinator,
             chrome: chrome,
             installSidebarToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleSidebar(toggle) },
-            // TabSide partition: hand the dispatcher the Toggle Windows Panel actuator (⌘⇧E), so the chord
-            // flips the SAME `chrome.guiCollapsed` the palette row + the split shell read.
-            installWindowsToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleWindowsPanel(toggle) },
             // E19 WI-4: hand the dispatcher the (chord-less by default) Pin Window toggle, so a user-bound
             // chord for `.pinWindow` flips the SAME `chrome.pinned` the menu Button + the `NSWindow.level` glue
             // read, through the one NSEvent monitor that owns every chord.
@@ -565,10 +562,14 @@ public struct AislopdeskClientApp: App {
                 // `.onDisappear → model.finish()`), so it never re-presents. The sheet inherits the injected
                 // `agentHooksController` (re-injected here defensively) for the Claude-hooks step.
                 .sheet(isPresented: $presentFirstLaunch) {
-                    // Native sheet: system appearance + system accent (the whole chrome follows the OS now —
-                    // native-chrome migration; the theme drives only the terminal/video canvases).
                     FirstLaunchView(model: firstLaunchModel, store: preferences)
                         .agentHooksController(agentHooks)
+                        // Native sheet → SYSTEM accent (reset the inherited theme tint) so its stock controls read
+                        // as native macOS controls; appearance still follows the theme via `preferredColorScheme`.
+                        .tint(nil)
+                        // Adopt the active theme's light/dark like every other surface (issue 1) — without it
+                        // the sheet inherited the OS appearance and could render light over a dark workspace.
+                        .preferredColorScheme(Slate.colorScheme)
                 }
                 .task {
                     presentFirstLaunch = FirstLaunchModel.shouldPresent(
@@ -576,9 +577,12 @@ public struct AislopdeskClientApp: App {
                         automationActive: Self.hasAutomationEnvironment(),
                     )
                 }
-                // NATIVE chrome (native-chrome migration, 2026-07-03): the window follows the SYSTEM
-                // appearance + accent — no theme pin, no scene tint. The Monokai/Slate theme now drives ONLY
-                // the terminal-cell/video canvases (the Terminal.app model: system chrome, themed canvas).
+                // L6: the app chrome is a PINNED palette (default Monokai Pro Classic — flat dark filter).
+                // Pin the window's colour scheme to the active theme so every system semantic colour we don't
+                // tokenize resolves with the right contrast, and route the global tint to the theme's accent
+                // colour so stock controls/selection adopt it.
+                .tint(Slate.State.accent)
+                .preferredColorScheme(Slate.colorScheme)
                 .onChange(of: scenePhase) { _, phase in handleScenePhase(phase) }
                 // System-dialog monitor poll loop, scoped to the scene. Skipped under automation / when
                 // AISLOPDESK_SYSTEM_DIALOG_PANES=0; inert anyway with no discovery seam registered.
@@ -737,9 +741,9 @@ public struct AislopdeskClientApp: App {
             #endif
         }
         #if os(macOS)
-        // NATIVE chrome (native-chrome migration, 2026-07-03): the stock window style — system titlebar +
-        // unified glass toolbar (the toolbar items live in `WorkspaceRootView.macToolbar`; the old
-        // hover-reveal `SlateTitlebar` is deleted).
+        // The app has NO system unified toolbar: hide the titlebar (the window keeps traffic lights + a
+        // full-size content view) so its own hover-reveal titlebar (`SlateTitlebar`) is the only chrome.
+        .windowStyle(.hiddenTitleBar)
         .windowResizability(.automatic)
         // G1: open at the odiff reference geometry (1280×800) so a fresh window matches the reference.
         .defaultSize(width: 1280, height: 800)
@@ -767,10 +771,6 @@ public struct AislopdeskClientApp: App {
                 // E13 / WI-8 (P4): the View ▸ Peek & Reply menu row opens the SAME overlay the ⌘⌥J chord
                 // drives (the menu mirrors the chord; the NSEvent dispatcher owns the chord itself).
                 togglePeekReply: { [overlayCoordinator] in overlayCoordinator.togglePeekReply() },
-                // TabSide partition: the View ▸ Toggle Windows Panel row flips the SAME live
-                // `chrome.guiCollapsed` the ⌘⇧E chord + the palette row drive (directly off the app-owned
-                // chrome, like Pin Window — no overlay round-trip needed).
-                toggleWindowsPanel: { [chrome] in chrome.toggleWindowsPanel() },
                 toggleGlobalSearch: { [overlayCoordinator] in overlayCoordinator.toggleGlobalSearch() },
                 // E10 / WI-8 → E11 / WI-7: the View ▸ Jump To… menu item opens the folded-in Jump-To (the
                 // Open-Quickly picker at the `.current` pill), the SAME overlay the ⌘J chord drives.
@@ -951,11 +951,10 @@ public struct AislopdeskClientApp: App {
             width: window.frame.size.width - window.contentLayoutRect.size.width,
             height: window.frame.size.height - window.contentLayoutRect.size.height,
         )
-        // In-window non-terminal overhead for `grid` mode: the revealed sidebar width. The NATIVE
-        // titlebar/toolbar costs no extra math here — `chromeInsets` already subtracts it (window frame
-        // minus `contentLayoutRect`); vertical-tabs-only → no horizontal tab bar.
+        // In-window non-terminal overhead for `grid` mode: the revealed sidebar width
+        // (the titlebar is an overlay → no vertical cost; vertical-tabs-only → no horizontal tab bar).
         let overheadWidth =
-            (chrome.sidebarCollapsed ? 0 : WorkspaceChromeState.defaultSidebarWidth)
+            (chrome.sidebarCollapsed ? 0 : AislopdeskSplitViewController.defaultSidebarWidth)
         let chromeOverhead = CGSize(width: overheadWidth, height: 0)
         guard let size = WindowSizeMath.resolvedContentSize(
             mode: mode,

@@ -57,12 +57,12 @@ struct OverlayHostView: View {
             .overlay(alignment: .bottomLeading) {
                 if coordinator.prefixArmed {
                     PrefixArmedChip(glyph: WorkspaceBindingRegistry.glyph(store.workspaceKeyPrefix))
-                        .padding(16)
+                        .padding(Slate.Metric.space4)
                         .allowsHitTesting(false)
                         .transition(.opacity)
                 }
             }
-            .animation(.easeOut(duration: 0.12), value: coordinator.prefixArmed)
+            .animation(Slate.Anim.smallFade, value: coordinator.prefixArmed)
             // C8 improvement 3: the durable connection indicator — a compact amber/red chip shown at the
             // bottom ONLY while the tabs panel is collapsed AND some pane is unhealthy. With the sidebar hidden
             // a dropped/reconnecting pane otherwise has no per-pane surface; clicking the chip focuses the worst
@@ -70,11 +70,11 @@ struct OverlayHostView: View {
             .overlay(alignment: .bottom) {
                 if sidebarCollapsed, let alert = connectionAlert {
                     ConnectionAlertChip(alert: alert) { store.focusPaneTree(alert.worstPane) }
-                        .padding(16)
+                        .padding(Slate.Metric.space4)
                         .transition(.opacity)
                 }
             }
-            .animation(.easeOut(duration: 0.12), value: connectionAlert)
+            .animation(Slate.Anim.smallFade, value: connectionAlert)
             .sheet(item: activeSheetBinding) { sheet in
                 // System accent inside the sheet too (a sheet roots a fresh environment, so reset the tint on the
                 // presented content directly — not only on the presenter below — to be order-independent).
@@ -93,11 +93,13 @@ struct OverlayHostView: View {
                 },
                 message: { Text(closeAlertMessage) },
             )
-            // Kept as an explicit reset even though the WindowGroup no longer tints its subtree (the
-            // native-chrome migration removed the theme accent at the scene root): a `nil` tint here makes
-            // the overlays' sheets + the close `.alert` immune to any FUTURE tint an intermediate container
-            // might introduce, so their toggles / bordered buttons / focus rings always read as native
-            // system controls.
+            // Native chrome uses the SYSTEM accent, not the workspace theme accent. The WindowGroup tints its
+            // whole subtree with `Slate.State.accent` (so stock controls in the workspace/pane chrome adopt the
+            // theme); resetting the tint to nil here scopes the overlays' sheets + the close `.alert` back to the
+            // macOS default accent so their toggles / bordered buttons / focus rings read as native System-Settings
+            // controls. Only affects THIS overlay subtree (+ the sheets/alert it presents) — the workspace beneath
+            // keeps the theme tint. Appearance (light/dark) still follows the parent window via each sheet's own
+            // `.preferredColorScheme`, matching how a real macOS sheet inherits its window's appearance.
             .tint(nil)
     }
 
@@ -217,8 +219,6 @@ struct OverlayHostView: View {
         { item in
             switch item.id {
             case "action.toggleSidebar": !chrome.sidebarCollapsed
-            // TabSide partition: the windows-panel row's ✓ tracks the live GUI-column visibility.
-            case "action.toggleWindowsPanel": !chrome.guiCollapsed
             // E19 WI-4: Pin Window is a CHECKABLE toggle — light the ✓ gutter while the window is pinned, so the
             // palette (and the View menu) tell the user the current pinned state. Mirrors the sidebar
             // treatment, reading the SAME live `chrome.pinned` the menu Button + the `NSWindow.level` glue flip.
@@ -237,27 +237,27 @@ struct OverlayHostView: View {
 // MARK: - PrefixArmedChip (the minimal "prefix armed" indicator)
 
 /// The tiny keyboard-centric chip shown while the workspace prefix is ARMED: the configured prefix glyph
-/// (e.g. `⌃A`) + the word "prefix" on the native floating-card shell (system Material + `.separator`
-/// hairline). Text-minimal by design (no icon zoo, no panel) — it only answers "did my prefix land?" while
-/// the machine awaits the follow-up key.
+/// (e.g. `⌃A`) + the word "prefix" on the shared floating-card shell. Text-minimal by design (no icon zoo,
+/// no panel) — it only answers "did my prefix land?" while the machine awaits the follow-up key. `Slate.*`
+/// tokens only (the ds-leaks ratchet).
 private struct PrefixArmedChip: View {
     let glyph: String
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Slate.Metric.space1) {
             Text(glyph)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.accentColor)
+                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                .foregroundStyle(Slate.State.accent)
             Text("prefix")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.secondary)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(.regularMaterial, in: .rect(cornerRadius: 6))
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.vertical, Slate.Metric.space1)
+        .background(Slate.Surface.card, in: .rect(cornerRadius: Slate.Metric.radiusControl))
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(.separator, lineWidth: 1),
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
+                .strokeBorder(Slate.Line.subtle, lineWidth: 1),
         )
         .accessibilityLabel("Prefix armed")
     }
@@ -268,27 +268,27 @@ private struct PrefixArmedChip: View {
 /// The compact connection-health chip (C8 improvement 3): an amber/red status dot + a count label
 /// ("1 reconnecting" / "2 disconnected") shown at the bottom while the tabs panel is collapsed and some pane
 /// is unhealthy. A `Button` (unlike the non-interactive prefix chip) so a click focuses the worst-affected
-/// pane. Native styling (system Material + `.separator` hairline); the dot reuses the system status colours.
+/// pane. `Slate.*` tokens only (the ds-leaks ratchet); the dot colour reuses the shared status roles.
 private struct ConnectionAlertChip: View {
     let alert: WorkspaceConnectionAlert
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 4) {
+            HStack(spacing: Slate.Metric.space1) {
                 Circle()
                     .fill(Self.tint(for: alert.worst))
                     .frame(width: 7, height: 7)
                 Text(alert.label)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                    .foregroundStyle(Slate.Text.secondary)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(.regularMaterial, in: .rect(cornerRadius: 6))
+            .padding(.horizontal, Slate.Metric.space2)
+            .padding(.vertical, Slate.Metric.space1)
+            .background(Slate.Surface.card, in: .rect(cornerRadius: Slate.Metric.radiusControl))
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(.separator, lineWidth: 1),
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
+                    .strokeBorder(Slate.Line.subtle, lineWidth: 1),
             )
         }
         .buttonStyle(.plain)
@@ -300,9 +300,9 @@ private struct ConnectionAlertChip: View {
     /// the same status roles the toolbar connection pill (`StatusPresentation`) uses.
     private static func tint(for severity: WorkspaceConnectionAlert.Severity) -> Color {
         switch severity {
-        case .reconnecting: .orange
+        case .reconnecting: Slate.Status.warn
         case .failed,
-             .unreachable: .red
+             .unreachable: Slate.Status.err
         }
     }
 }

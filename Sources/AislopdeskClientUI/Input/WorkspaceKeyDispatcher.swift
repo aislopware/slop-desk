@@ -60,11 +60,6 @@ final class WorkspaceKeyDispatcher {
     /// ``setToggleSidebar(_:)`` on appear. Until then `nil` ⇒ `.toggleSidebar` falls back to the store flag in
     /// `route` (a non-trapping graceful op), never a dead chord.
     private var toggleSidebar: (() -> Void)?
-    /// The RIGHT remote-windows column toggle (⌘⇧E, TabSide partition). View-owned `@State`
-    /// (`WorkspaceChromeState.guiCollapsed`), so the root view installs the real closure via
-    /// ``setToggleWindowsPanel(_:)`` on appear; until then `nil` ⇒ `.toggleWindowsPanel` is a graceful
-    /// no-op (never a dead chord).
-    private var toggleWindowsPanel: (() -> Void)?
     /// E19/A30 (WI-4): "Pin Window" (View ▸ Pin Window). View-owned `@State` (`WorkspaceChromeState`), so
     /// it is installed late by the root view via ``setTogglePinWindow(_:)`` once the chrome exists. Pin Window
     /// is CHORD-LESS by default (no chord ships out of the box), so this fires only if a user binds a chord to the
@@ -179,10 +174,6 @@ final class WorkspaceKeyDispatcher {
     /// closure makes ⌘⇧L actually collapse the native sidebar item ("Toggle Tabs Panel").
     func setToggleSidebar(_ toggle: @escaping () -> Void) { toggleSidebar = toggle }
 
-    /// Install the remote-windows column toggle once the `WorkspaceChromeState` exists (the root view wires
-    /// this to `chrome.toggleWindowsPanel()` on appear) — ⌘⇧E's actuator, mirroring ``setToggleSidebar(_:)``.
-    func setToggleWindowsPanel(_ toggle: @escaping () -> Void) { toggleWindowsPanel = toggle }
-
     /// Install the "Pin Window" toggle once the `WorkspaceChromeState` exists (the root view wires this to
     /// `chrome.togglePin()` on appear). Pin Window is chord-less by default, so this only fires when a user
     /// binds a chord to the `.pinWindow` action; until installed `.pinWindow` is a graceful no-op.
@@ -234,18 +225,6 @@ final class WorkspaceKeyDispatcher {
         // key through UNCHANGED so the picker's `.onKeyPress` owns its picker-local chords (⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J,
         // ⌘1–9, ⌘K) and Esc / a scrim-tap close it. (⌘⇧O / ⌘J are global only while the picker is hidden.)
         if isOverlayCapturingKeys() { return event }
-        // CONTROL ROOM (big-swing B, 2026-07-04): while the overview is up, the WORKSPACE owns the
-        // keyboard — the focused terminal is a shrunk live card and must never receive typing. Esc
-        // (keyCode 53, not modelled as a KeyChord) exits; workspace chords still resolve below (⌘⇧M
-        // toggles back out, ⌘1–9 jumps straight to a tab); everything unresolved is SWALLOWED, not
-        // passed through.
-        if store.controlRoomActive {
-            if event.keyCode == 53 { // Esc
-                store.leaveControlRoom()
-                return nil
-            }
-            return handleChordOrSwallow(event)
-        }
         // A keystroke that does not normalize to a chord we model (a pure modifier, a dead key, …) is left
         // untouched — never swallow what we cannot classify.
         guard let chord = KeyChordNormalizer.chord(
@@ -309,27 +288,6 @@ final class WorkspaceKeyDispatcher {
         }
     }
 
-    /// CONTROL ROOM keyboard: resolve a workspace single chord (and dispatch it), swallow anything else.
-    /// The prefix machine is NOT fed here — a tmux prefix sequence makes no sense over the overview, and
-    /// feeding it would arm state the user cannot see. Modifier-only / unclassifiable keys are swallowed
-    /// too (nothing behind the overview may type).
-    private func handleChordOrSwallow(_ event: NSEvent) -> NSEvent? {
-        guard let chord = KeyChordNormalizer.chord(
-            charactersIgnoringModifiers: event.charactersIgnoringModifiers,
-            keyCode: event.keyCode,
-            modifierFlags: KeyChordNormalizer.Modifiers(
-                shift: event.modifierFlags.contains(.shift),
-                control: event.modifierFlags.contains(.control),
-                option: event.modifierFlags.contains(.option),
-                command: event.modifierFlags.contains(.command),
-            ),
-        ) else { return nil }
-        if let action = WorkspaceBindingRegistry.resolvedChordTable[chord] {
-            dispatch(action)
-        }
-        return nil
-    }
-
     /// Report the machine's armed state to the indicator seam and (re-)schedule the timeout expiry. Called
     /// after every `feed`: a disarm cancels any pending expiry; an arm schedules one at `machine.timeout` + a
     /// small epsilon, which expires the stale arm (`expireIfStale` — idempotent, keystroke-safe: a keystroke
@@ -365,7 +323,6 @@ final class WorkspaceKeyDispatcher {
             toggleFind: toggleFind,
             togglePeekReply: togglePeekReply,
             toggleSidebar: toggleSidebar,
-            toggleWindowsPanel: toggleWindowsPanel,
             toggleGlobalSearch: toggleGlobalSearch,
             toggleJumpTo: toggleJumpTo,
             openQuickly: toggleOpenQuickly,

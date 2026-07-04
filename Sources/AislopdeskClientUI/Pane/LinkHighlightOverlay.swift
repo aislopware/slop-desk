@@ -18,7 +18,7 @@
 // still compiles for iOS (no `#if os` here — `Canvas` is iOS 15+; the gate is runtime state, not platform).
 //
 // Never intercepts hits (`allowsHitTesting(false)`): clicks fall through to the renderer, which owns ⌘click /
-// ⌘⇧click / right-click on a detected link (WI-6). SYSTEM colours only (`Color.accentColor`).
+// ⌘⇧click / right-click on a detected link (WI-6). SYSTEM/theme colours only (`Slate.State.accent`).
 
 #if canImport(SwiftUI)
 import AislopdeskTerminal
@@ -56,7 +56,7 @@ struct LinkHighlightOverlay: View {
             let _ = model.bytesReceived
             // swiftlint:disable:next redundant_discardable_let
             let _ = model.viewportRevision
-            let accent = Color.accentColor
+            let accent = Slate.State.accent
             let links = TerminalLinkDetector.detect(
                 rows: snapshot.viewportTextRows(),
                 cwd: cwd,

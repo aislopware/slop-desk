@@ -223,65 +223,70 @@ final class CwdInheritanceStoreTests: XCTestCase {
         XCTAssertEqual(newFake?.sentBytes ?? [], [], "no inherit source → no `cd`")
     }
 
-    // MARK: - The PRIMARY ⌘T / ⌘D gesture preserves cwd without a startup `cd` (ES-E3-2)
+    // MARK: - The PRIMARY ⌘T / ⌘D chooser flow preserves cwd without a startup `cd` (ES-E3-2)
 
-    // The dominant new-tab / split gestures route through `openChooserPane`, which now mints the pane's
-    // side-resolved kind DIRECTLY (terminal on the terminal side — the chooser step is gone, 2026-07-03).
-    // The cwd hint must land on the new spec so the host spawns the PTY there (no visible `cd`).
+    // The dominant new-tab / split gestures route through a `.chooser` pane (`openChooserPane`), NOT a direct
+    // `.terminal` `newTab` / `splitActivePane`. The cwd hint must stay on the chooser spec so that when the
+    // user picks Terminal (`choosePaneKind`), the host can spawn the terminal in that cwd directly.
 
-    func testGestureNewTabMintsTerminalAndSendsNoStartupCd() async throws {
+    func testChooserNewTabThenPickTerminalSendsNoStartupCd() async throws {
         UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
 
-        // ⌘T (the generic new-tab gesture) — mints a TERMINAL directly now, no chooser step.
+        // ⌘T routes through the chooser (the generic new-tab action), not `newTab(kind: .terminal)`.
         store.openChooserPane(.newTab)
-        let added = try XCTUnwrap(allPaneIDs(store).subtracting(before).first, "the ⌘T path mints a new pane")
-        XCTAssertEqual(store.tree.spec(for: added)?.kind, .terminal, "⌘T mints a terminal directly")
-        XCTAssertEqual(
-            store.tree.spec(for: added)?.lastKnownCwd, "/Users/me/project",
-            "the inherit policy stamps the cwd on the new spec (rides channelOpen — host-side spawn)",
-        )
-        let newFake = store.handle(for: added) as? FakePaneSession
+        let chooser = try XCTUnwrap(allPaneIDs(store).subtracting(before).first, "the chooser path mints a new pane")
+        XCTAssertEqual(store.tree.spec(for: chooser)?.kind, .chooser, "⌘T opens a chooser pane")
+        // While it is still a chooser there is no PTY — nothing is sent.
         await settleDeferredSends()
-        XCTAssertEqual(newFake?.sentBytes ?? [], [], "host-side spawn cwd, never a visible `cd`")
+        XCTAssertEqual((store.handle(for: chooser) as? FakePaneSession)?.sentBytes ?? [], [])
+
+        // Picking Terminal flips the chooser → terminal; cwd is already on the spec and must not be typed.
+        store.choosePaneKind(chooser, kind: .terminal, launchGrace: .zero)
+        let newFake = store.handle(for: chooser) as? FakePaneSession
+        await settleDeferredSends()
+        XCTAssertEqual(
+            newFake?.sentBytes ?? [], [],
+            "the chooser-resolved terminal uses host-side spawn cwd, not a visible `cd`",
+        )
         // The original pane is untouched.
         XCTAssertEqual((store.handle(for: pane) as? FakePaneSession)?.sentBytes ?? [], [])
     }
 
-    func testGestureSplitMintsTerminalAndSendsNoStartupCd() async throws {
+    func testChooserSplitThenPickTerminalSendsNoStartupCd() async throws {
         UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/srv/app"))
         let before = allPaneIDs(store)
 
-        store.openChooserPane(.split(axis: .horizontal)) // ⌘D — mints a terminal directly now
-        let added = try XCTUnwrap(allPaneIDs(store).subtracting(before).first, "the split mints a new pane")
-        XCTAssertEqual(store.tree.spec(for: added)?.kind, .terminal, "a terminal-side split mints a terminal")
-        XCTAssertEqual(store.tree.spec(for: added)?.lastKnownCwd, "/srv/app", "inherit stamps the split cwd")
+        store.openChooserPane(.split(axis: .horizontal))
+        let chooser = try XCTUnwrap(allPaneIDs(store).subtracting(before).first, "a chooser split mints a new pane")
 
-        let newFake = store.handle(for: added) as? FakePaneSession
+        store.choosePaneKind(chooser, kind: .terminal, launchGrace: .zero)
+        let newFake = store.handle(for: chooser) as? FakePaneSession
         await settleDeferredSends()
         XCTAssertEqual(
             newFake?.sentBytes ?? [], [],
-            "the split terminal inherits cwd through channelOpen, not shell input",
+            "the chooser-resolved split terminal inherits cwd through channelOpen, not shell input",
         )
     }
 
-    func testGestureHomePolicyMintsTerminalWithNoCd() async throws {
+    func testChooserHomePolicyThenPickTerminalSendsNoCd() async throws {
         UserDefaults.standard.set("home", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
 
         store.openChooserPane(.newTab)
-        let added = try XCTUnwrap(allPaneIDs(store).subtracting(before).first)
-        XCTAssertNil(store.tree.spec(for: added)?.lastKnownCwd, "home stamps nil on the new spec")
+        let chooser = try XCTUnwrap(allPaneIDs(store).subtracting(before).first)
+        XCTAssertNil(store.tree.spec(for: chooser)?.lastKnownCwd, "home stamps nil on the chooser spec")
 
-        let newFake = store.handle(for: added) as? FakePaneSession
+        store.choosePaneKind(chooser, kind: .terminal, launchGrace: .zero)
+        let newFake = store.handle(for: chooser) as? FakePaneSession
         await settleDeferredSends()
-        XCTAssertEqual(newFake?.sentBytes ?? [], [], "home resolves nil → no `cd` on the gesture flow")
+        XCTAssertEqual(newFake?.sentBytes ?? [], [], "home resolves nil → no `cd` even via the chooser flow")
     }
 
     func testChooserPickRemoteGuiSendsNoCd() async throws {

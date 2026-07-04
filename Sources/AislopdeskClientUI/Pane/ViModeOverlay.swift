@@ -11,9 +11,9 @@
 // the pane BOTTOM. The leaf gates BOTH on `copyModeBadgeActive` and tears them down when copy-mode exits
 // (``TerminalViewModel/exitCopyMode()`` clears the flag + resets the hint bar).
 //
-// NATIVE chrome (system semantic colors / text styles / materials — the 2026-07-03 native-chrome migration);
-// the pill and hint bar float over the theme-driven terminal canvas. No libghostty / Metal / VideoToolbox is
-// touched (CLAUDE.md rule #6): plain SwiftUI chips driven by the pane model's observables.
+// `Slate.*` tokens ONLY — raw font / radius / colour literals fail `scripts/check-ds-leaks.sh`. No libghostty /
+// Metal / VideoToolbox is touched (CLAUDE.md rule #6): plain SwiftUI chips driven by the pane model's
+// observables.
 //
 // HONESTY (the "nothing is a dead key" rule + the documented libghostty ceiling): the ``ViKeyHintBar`` lists
 // ONLY the keys ``TerminalViewModel/handleCopyModeKey(_:)`` actually wires in aislopdesk's copy-mode — a faithful
@@ -56,44 +56,44 @@ struct ViModePill: View {
     private var inVisualMode: Bool { model.viVisualMode != .none }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Slate.Metric.space1) {
             Image(systemSymbol: .characterCursorIbeam)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.primary)
+                .font(.system(size: Slate.Typeface.small, weight: .semibold))
+                .foregroundStyle(Slate.Text.primary)
             Text(modeLabel)
-                .font(.subheadline.weight(.semibold))
+                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
                 .tracking(0.5) // the small-caps / uppercase spacing the visual labels share
-                .foregroundStyle(.primary)
+                .foregroundStyle(Slate.Text.primary)
                 .lineLimit(1)
                 .fixedSize()
             // The LIVE repeat-count: the accumulated digits the user typed before a motion (e.g. `5` before `j`).
             // Accent-toned + monospaced so the running count reads at a glance; absent when no count is pending.
             if let count = model.viPendingCount {
                 Text(String(count))
-                    .font(.subheadline.weight(.semibold).monospaced())
+                    .font(.system(size: Slate.Typeface.footnote, weight: .semibold, design: .monospaced))
                     .monospacedDigit()
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Slate.State.accent)
                     .lineLimit(1)
                     .fixedSize()
                     .transition(.opacity)
             }
             closeButton
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(.regularMaterial, in: .rect(cornerRadius: 6))
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.vertical, Slate.Metric.space1)
+        .background(Slate.Surface.element, in: .rect(cornerRadius: Slate.Metric.radiusControl))
         .overlay(
             // Plain navigation wears the same subtle hairline as the read-only pill; a visual selection swaps in
             // the accent ring so the "I am selecting" state is unmistakable beside the count.
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
                 .strokeBorder(
-                    inVisualMode ? AnyShapeStyle(Color.accentColor.opacity(0.5)) : AnyShapeStyle(.separator),
-                    lineWidth: 1,
+                    inVisualMode ? Slate.State.accent.opacity(0.5) : Slate.Line.subtle,
+                    lineWidth: Slate.Metric.hairline,
                 ),
         )
-        .shadow(color: Color.black.opacity(0.25), radius: 4, x: 0, y: 1)
-        .animation(.easeOut(duration: 0.12), value: model.viPendingCount)
-        .animation(.easeOut(duration: 0.12), value: model.viVisualMode)
+        .shadow(color: Slate.State.shadow, radius: 4, x: 0, y: 1)
+        .animation(Slate.Anim.smallFade, value: model.viPendingCount)
+        .animation(Slate.Anim.smallFade, value: model.viVisualMode)
         // Belt-and-suspenders Escape dismiss (C5): the primary exit is the renderer's `keyDown` →
         // `exitCopyMode()` once the terminal is first responder (the routing now nudges focus there on arm).
         // This safety net — if Escape lands in the pill's responder chain instead of the surface — still leaves
@@ -124,12 +124,12 @@ struct ViModePill: View {
     private var closeButton: some View {
         Button(action: onExit) {
             Image(systemSymbol: .xmark)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
+                .font(.system(size: Slate.Typeface.small, weight: .medium))
+                .foregroundStyle(Slate.Text.secondary)
                 .frame(width: 16, height: 16)
                 .background(
-                    closeHover ? Color.primary.opacity(0.12) : .clear,
-                    in: .rect(cornerRadius: 4),
+                    closeHover ? Slate.State.selected : .clear,
+                    in: .rect(cornerRadius: Slate.Metric.radiusSmall),
                 )
                 .contentShape(.rect)
         }
@@ -192,31 +192,31 @@ struct ViKeyHintBar: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
+        HStack(alignment: .top, spacing: Slate.Metric.space4) {
             column("MOTION", Self.motion)
             column("SELECT", Self.selection)
             column("SEARCH", Self.search)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.regularMaterial, in: .rect(cornerRadius: 6))
+        .padding(.horizontal, Slate.Metric.space3)
+        .padding(.vertical, Slate.Metric.space2)
+        .background(Slate.Surface.element, in: .rect(cornerRadius: Slate.Metric.radiusControl))
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(.separator, lineWidth: 1),
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
+                .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
         )
-        .shadow(color: Color.black.opacity(0.25), radius: 12, x: 0, y: 4)
+        .shadow(color: Slate.State.shadow, radius: 12, x: 0, y: 4)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Vi mode key hints")
     }
 
     /// One labelled column of hints (heading + rows).
     private func column(_ heading: String, _ hints: [Hint]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
             Text(heading)
-                .font(.caption.weight(.semibold))
+                .font(.system(size: Slate.Typeface.small, weight: .semibold))
                 .tracking(0.5)
-                .foregroundStyle(.tertiary)
-                .padding(.bottom, 4)
+                .foregroundStyle(Slate.Text.tertiary)
+                .padding(.bottom, Slate.Metric.space1)
             ForEach(hints) { hint in
                 hintRow(hint)
             }
@@ -225,13 +225,13 @@ struct ViKeyHintBar: View {
 
     /// One hint row — the key chip(s) followed by the description.
     private func hintRow(_ hint: Hint) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Slate.Metric.space1) {
             ForEach(Array(hint.keys.enumerated()), id: \.offset) { _, key in
                 keycap(key)
             }
             Text(hint.label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: Slate.Typeface.small))
+                .foregroundStyle(Slate.Text.secondary)
                 .lineLimit(1)
                 .fixedSize()
         }
@@ -243,19 +243,18 @@ struct ViKeyHintBar: View {
     private func keycap(_ key: String) -> some View {
         if key == "…" {
             Text(key)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.tertiary)
+                .font(.system(size: Slate.Typeface.small, weight: .medium))
+                .foregroundStyle(Slate.Text.tertiary)
         } else {
             Text(key)
-                .font(.caption.weight(.medium).monospaced())
-                .foregroundStyle(.secondary)
+                .font(.system(size: Slate.Typeface.small, weight: .medium, design: .monospaced))
+                .foregroundStyle(Slate.Text.secondary)
                 .frame(minWidth: 18, minHeight: 18)
-                .padding(.horizontal, 4)
-                // The native keycap inset: a faint primary wash + hairline, on the material bar above.
-                .background(Color.primary.opacity(0.05), in: .rect(cornerRadius: 4))
+                .padding(.horizontal, Slate.Metric.space1)
+                .background(Slate.Surface.card, in: .rect(cornerRadius: Slate.Metric.radiusSmall))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(.separator, lineWidth: 1),
+                    RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
+                        .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
                 )
         }
     }

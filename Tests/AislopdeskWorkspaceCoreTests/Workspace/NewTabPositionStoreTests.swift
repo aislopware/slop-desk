@@ -75,11 +75,11 @@ final class NewTabPositionStoreTests: XCTestCase {
         XCTAssertEqual(store.tree.activeSession?.activeTabIndex, 2, "the inserted tab is selected")
     }
 
-    /// The PRIMARY ⌘T flow routes through `openChooserPane(.newTab)` — which now mints a TERMINAL tab
-    /// directly (no chooser step) — so it must read the SAME placement policy. Pins that the dominant
-    /// gesture honours `after-current` (a regression that hardcoded `.end` on the gesture path would slip
-    /// past the direct-`newTab` test above).
-    func testGestureNewTabAfterCurrentLandsAfterMiddleActiveTab() throws {
+    /// The PRIMARY ⌘T flow routes through `openChooserPane(.newTab)` (a `.chooser` pane), NOT
+    /// `newTab(kind: .terminal)` — so it must read the SAME placement policy. Pins that the dominant gesture
+    /// honours `after-current` (a regression that hardcoded `.end` on the chooser path would slip past the
+    /// direct-`newTab` test above).
+    func testChooserNewTabAfterCurrentLandsAfterMiddleActiveTab() throws {
         UserDefaults.standard.set("after-current", forKey: key)
         let (tree, _) = threeTabSession(activeIndex: 1)
         let store = makeTreeStore(restoringTree: tree)
@@ -88,8 +88,8 @@ final class NewTabPositionStoreTests: XCTestCase {
         store.openChooserPane(.newTab) // the real ⌘T gesture
 
         let added = try newLeaf(store, since: before)
-        XCTAssertEqual(store.tree.spec(for: added)?.kind, .terminal, "⌘T mints a terminal tab directly")
-        XCTAssertEqual(tabIndex(of: added, in: store), 2, "the new tab also lands after the active (middle) tab")
+        XCTAssertEqual(store.tree.spec(for: added)?.kind, .chooser, "⌘T mints a chooser pane")
+        XCTAssertEqual(tabIndex(of: added, in: store), 2, "the chooser tab also lands after the active (middle) tab")
         XCTAssertEqual(store.tree.activeSession?.activeTabIndex, 2, "and is selected")
     }
 

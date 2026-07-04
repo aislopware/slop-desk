@@ -23,8 +23,8 @@
 // This is expected, not a stall: it is the literal-highlight ceiling surfacing at row granularity, not a bug.
 // Literal mode is unchanged: it arms `search:` + `navigate_search:next`/`previous`.
 //
-// Anatomy matches `find.png` (top-trailing of the focused pane, a floating material card — native chrome per
-// the 2026-07-03 native-chrome migration):
+// Anatomy matches `find.png` (top-trailing of the focused pane, floating card, `Slate.*` tokens ONLY — raw
+// font / radius literals fail `scripts/check-ds-leaks.sh`):
 //   [ query field ][ Aa case pill ][ ab whole-word pill ][ .* regex pill ][ N of M ][ ∧ prev ][ ∨ next ]
 //   [ ▣ search-all-tabs ][ × close ]
 // (the `rectangle.stack` "search all tabs" button escalates to cross-tab Global Search ⇧⌘F — see
@@ -258,13 +258,13 @@ struct TerminalFindBar: View {
     private let iconSize: CGFloat = 16
     private let fieldWidth: CGFloat = 200
     #else
-    private let plate: CGFloat = 24
-    private let iconSize: CGFloat = 13
+    private let plate: CGFloat = Slate.Metric.plate
+    private let iconSize: CGFloat = Slate.Metric.iconSize
     private let fieldWidth: CGFloat = 130
     #endif
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Slate.Metric.space1) {
             queryField
             // find.png's THREE individually-outlined mode chips: case (`Aa`), whole-word (underlined `ab`),
             // and regex (`.*`), in that order. ``FindTogglePillTray`` lays them out identically to global-search.
@@ -307,15 +307,14 @@ struct TerminalFindBar: View {
                 model.close()
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.vertical, Slate.Metric.space1)
         // find.png: the floating find-bar card is delineated by its FILL + drop SHADOW only — there is NO
         // hairline stroke around the CARD (verified by pixel-scanning find.png: the pane→shadow gradient
         // transitions straight into the card fill with no border line). Only the `Aa`/`ab`/`.*` mode chips keep
         // their OWN individual hairline outlines (FindTogglePill); the card itself wears no border/overlay.
-        // Native chrome: the fill is `.regularMaterial` (the floating-card idiom over the terminal canvas).
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
-        .shadow(color: Color.black.opacity(0.25), radius: 12, x: 0, y: 4)
+        .background(Slate.Surface.element, in: RoundedRectangle(cornerRadius: Slate.Metric.radiusControl))
+        .shadow(color: Slate.State.shadow, radius: 12, x: 0, y: 4)
         .onAppear {
             // A `@FocusState` set in the same tick the view appears (before its backing responder exists) is
             // dropped — defer one runloop hop (the palette / cheat-sheet idiom).
@@ -346,23 +345,30 @@ struct TerminalFindBar: View {
     private var queryField: some View {
         TextField("Find", text: queryBinding)
             .textFieldStyle(.plain)
-            .font(.body)
-            .foregroundStyle(.primary)
-            .tint(Color.accentColor) // the active caret is the accent colour
+            .font(.system(size: Slate.Typeface.body))
+            .foregroundStyle(Slate.Text.primary)
+            .tint(Slate.State.accent) // the active caret is the accent colour
             .focused($queryFocused)
             .frame(width: fieldWidth)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            // find.png: the query text sits in its OWN delineated inset — a distinct FILLED rounded field
-            // INSIDE the find-bar card (NOT flush on it). Native chrome: a faint `Color.primary` wash (the
-            // small-inset-box idiom, appearance-adaptive over the material card) DELINEATED by its own inner
-            // `.separator` hairline — a hard field boundary that reads as a distinct inset in both light and
-            // dark. This is the INNER field only — the card's no-border / fill+shadow chrome (Batch-4) is NOT
-            // re-stroked (the outer card stays borderless).
-            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 4))
+            .padding(.horizontal, Slate.Metric.space2)
+            .padding(.vertical, Slate.Metric.space1)
+            // find.png: the query text sits in its OWN delineated inset — a distinct FILLED gray rounded field
+            // INSIDE the find-bar card (NOT flush on it). The card itself is `Surface.element` (≈ white/elevated
+            // in light themes), so a flush `Surface.card` field reads as near-invisible there; instead the field
+            // wears `State.selected` — a translucent neutral wash that composites over the `element` card to a
+            // gray inset. CROSS-THEME caveat (Batch-5b): `State.selected` is a BLACK wash in light themes (so the
+            // field composites DARKER than the card → a recessed inset, matching find.png) but a WHITE wash in
+            // dark themes (so it composites LIGHTER than the card — which on its OWN reads RAISED, not recessed).
+            // No single solid/wash token is reliably recessed-AND-visible on both themes (the only darker-than-
+            // card token in dark — `Surface.card`/the backdrop — is near-invisible in light). So rather than
+            // chase a darker fill, we DELINEATE the field with its own inner `Line.subtle` hairline: a hard field
+            // boundary that reads as a distinct inset REGARDLESS of which way the fill contrasts, keeping the
+            // query field clearly delineated on every theme. This is the INNER field only — the card's
+            // no-border / fill+shadow chrome (Batch-4) is NOT re-stroked (the outer card stays borderless).
+            .background(Slate.State.selected, in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall))
             .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(.separator, lineWidth: 1),
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
+                    .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
             )
             .onSubmit { model.next() } // plain ↩ → next match
     }
@@ -378,11 +384,12 @@ struct TerminalFindBar: View {
     @ViewBuilder private var counter: some View {
         if let label = counterText {
             Text(label)
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .font(.system(size: Slate.Typeface.footnote))
+                .monospacedDigit()
+                .foregroundStyle(Slate.Text.secondary)
                 .lineLimit(1)
                 .fixedSize()
-                .padding(.horizontal, 4)
+                .padding(.horizontal, Slate.Metric.space1)
         }
     }
 
@@ -410,13 +417,13 @@ struct TerminalFindBar: View {
 ///
 /// `FindTogglePillTray` is therefore just a TRANSPARENT layout container — an `HStack` with the screenshot's
 /// inter-chip gap and NO background / border of its own (the delineation lives on each ``FindTogglePill``).
-/// Reused by BOTH the find bar and the global-search query bar (the EXACT same control). Native chrome.
+/// Reused by BOTH the find bar and the global-search query bar (the EXACT same control). `Slate.*` tokens only.
 struct FindTogglePillTray<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
         // No shared plate/border here — the chips delineate themselves; the tray only spaces them with a gap.
-        HStack(spacing: 4) {
+        HStack(spacing: Slate.Metric.space1) {
             content
         }
     }
@@ -424,16 +431,16 @@ struct FindTogglePillTray<Content: View>: View {
 
 /// A compact `Aa` / `ab` / `.*` toggle pill (the find-bar mode buttons), laid out inside a ``FindTogglePillTray``.
 /// LOCKED rendering (see the tray's doc comment — screenshot-matched, final): each chip is INDIVIDUALLY
-/// outlined. idle → its OWN faint resting plate + a `.separator` hairline border (delineated, never a
-/// bare glyph); hover → a slightly stronger plate (border held); on → accent text on an accent wash + an
+/// outlined. idle → its OWN `Surface.card` resting plate + a `Line.subtle` hairline border (delineated, never a
+/// bare glyph); hover → a `State.hover` plate (border held); on → accent text on an `accentMuted` wash + an
 /// accent hairline ring. There is NO shared backing tray — `find.png` / `global-search.png` show detached,
 /// individually-bordered chips with gaps between them. Factored to file scope (internal) so the WI-4
-/// GlobalSearch surface reuses the EXACT pill (the two surfaces render identically). Native chrome.
+/// GlobalSearch surface reuses the EXACT pill (the two surfaces render identically). `Slate.*` tokens only.
 struct FindTogglePill: View {
     let label: String
     let isOn: Bool
     var help: String?
-    var plate: CGFloat = 24
+    var plate: CGFloat = Slate.Metric.plate
     /// Underline the glyph (the whole-word `ab` chip in find.png / global-search.png draws underlined). The
     /// `Aa` / `.*` chips pass `false` so only the whole-word chip wears the underline.
     var underlined: Bool = false
@@ -445,24 +452,23 @@ struct FindTogglePill: View {
         Button(action: action) {
             Text(label)
                 .underline(underlined)
-                .font(.subheadline.weight(.semibold).monospaced())
-                .foregroundStyle(isOn ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+                .font(.system(size: Slate.Typeface.footnote, weight: .semibold, design: .monospaced))
+                .foregroundStyle(isOn ? Slate.State.accent : Slate.Text.secondary)
                 .frame(minWidth: plate, minHeight: plate)
-                .padding(.horizontal, 4)
+                .padding(.horizontal, Slate.Metric.space1)
                 .background(
-                    // Each chip carries its OWN resting plate (find.png / global-search.png): idle = a faint
-                    // primary wash, hover = a stronger wash, on = the accent wash. No shared tray.
-                    isOn ? Color.accentColor.opacity(0.15)
-                        : (hovering ? Color.primary.opacity(0.08) : Color.primary.opacity(0.05)),
-                    in: RoundedRectangle(cornerRadius: 4),
+                    // Each chip carries its OWN resting plate (find.png / global-search.png): idle = a subtle
+                    // `Surface.card` plate, hover = a `State.hover` plate, on = the accent wash. No shared tray.
+                    isOn ? Slate.State.accentMuted : (hovering ? Slate.State.hover : Slate.Surface.card),
+                    in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall),
                 )
                 .overlay(
-                    // Every chip is individually outlined: idle/hover wear a `.separator` hairline so the chip is
+                    // Every chip is individually outlined: idle/hover wear a `Line.subtle` hairline so the chip is
                     // delineated (never a bare glyph); the ON chip swaps in the accent ring.
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
                         .strokeBorder(
-                            isOn ? AnyShapeStyle(Color.accentColor.opacity(0.5)) : AnyShapeStyle(.separator),
-                            lineWidth: 1,
+                            isOn ? Slate.State.accent.opacity(0.5) : Slate.Line.subtle,
+                            lineWidth: Slate.Metric.hairline,
                         ),
                 )
                 .contentShape(.rect)
@@ -470,7 +476,7 @@ struct FindTogglePill: View {
         .buttonStyle(.plain)
         .slateHelp(help)
         .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(Slate.Anim.smallFade, value: hovering)
     }
 }
 #endif

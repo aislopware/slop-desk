@@ -146,14 +146,6 @@ public struct ActionsPaletteSource: PaletteDataSource {
             subtitle: nil, shortcut: glyph(.toggleSidebar), filter: .actions, category: .view,
             action: .toggleSidebar,
         ),
-        // "Toggle Windows Panel" (TabSide partition) — the sidebar row's right-column twin: toggles the live
-        // `WorkspaceChromeState.guiCollapsed` via the coordinator's injected chrome closure (the ⌘⇧E chord +
-        // the ✓ gutter read the same flag).
-        PaletteItem(
-            id: "action.toggleWindowsPanel", icon: "sidebar.right", title: "Toggle Windows Panel",
-            subtitle: nil, shortcut: glyph(.toggleWindowsPanel), filter: .actions, category: .view,
-            action: .toggleWindowsPanel,
-        ),
         // Read Only (E17 ES-E17-1): toggle the active pane's input gate. Under the SHELL section as the
         // first shell verb in the catalog. The spec accepts
         // "read only" plus the synonyms `readonly` / `lock` / `freeze` / `view only` — folded into the row's

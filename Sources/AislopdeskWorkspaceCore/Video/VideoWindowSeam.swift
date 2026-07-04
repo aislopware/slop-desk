@@ -122,26 +122,6 @@ public struct RemotePaneContext {
     /// a per-pane "FPS" row. Pure informational view→model push (never reaches the host), so it is NOT
     /// read-only-gated. `nil` ⇒ none.
     public var onStreamCadenceChanged: ((_ fps: Int) -> Void)?
-    /// STALL SCRIM (2026-07-03): the live video view PUSHES the stream's stall state through this when it
-    /// FLIPS — `true` ⇒ the host went silent past the stall threshold (the pane overlays "Reconnecting…"),
-    /// `false` ⇒ traffic resumed. Pure informational view→model push (never reaches the host), so it is NOT
-    /// read-only-gated. `nil` ⇒ none.
-    public var onStreamStallChanged: ((_ stalled: Bool) -> Void)?
-    /// LETTERBOX TINT (design-craft pass, 2026-07-04): the THEME card colour as plain sRGB components, so
-    /// the app-target Metal renderer clears its letterbox/pillarbox area to the pane's card tone instead
-    /// of hardcoded black (an aspect-mismatched remote window then reads as a card, not a broken video
-    /// player). Plain Doubles — the seam ships primitives, never a SwiftUI `Color`. `nil` ⇒ black (the
-    /// prior default; previews/standalone).
-    public var letterboxTint: VideoPaneTint?
-    /// FIRST FRAME (design-craft pass, 2026-07-04): the live video view fires this ONCE per stream
-    /// bring-up when the first decoded frame is ready to present, so the pane can fade the video in from
-    /// its card-colour placeholder instead of hard-cutting. Pure informational push; NOT read-only-gated.
-    public var onFirstFramePresented: (() -> Void)?
-    /// STATS HUD (design-craft pass, 2026-07-04): the live video view PUSHES a ~1 Hz stats sample —
-    /// video-transport RTT (ms) + CUMULATIVE frames received / FEC-recovered / unrecovered — so the
-    /// pane's opt-in diagnostics HUD renders live numbers. Pure informational push; NOT read-only-gated.
-    /// `nil` ⇒ none.
-    public var onVideoStats: ((_ rttMS: Double, _ received: UInt64, _ recovered: UInt64, _ lost: UInt64) -> Void)?
 
     public init(
         isActive: Bool = true,
@@ -155,10 +135,6 @@ public struct RemotePaneContext {
         onInputReleaseReady: (((() -> Void)?) -> Void)? = nil,
         onWindowGeometryChanged: ((_ curW: Double, _ curH: Double, _ maxW: Double, _ maxH: Double) -> Void)? = nil,
         onStreamCadenceChanged: ((_ fps: Int) -> Void)? = nil,
-        onStreamStallChanged: ((_ stalled: Bool) -> Void)? = nil,
-        letterboxTint: VideoPaneTint? = nil,
-        onFirstFramePresented: (() -> Void)? = nil,
-        onVideoStats: ((_ rttMS: Double, _ received: UInt64, _ recovered: UInt64, _ lost: UInt64) -> Void)? = nil,
     ) {
         self.isActive = isActive
         self.inputEnabled = inputEnabled
@@ -171,10 +147,6 @@ public struct RemotePaneContext {
         self.onInputReleaseReady = onInputReleaseReady
         self.onWindowGeometryChanged = onWindowGeometryChanged
         self.onStreamCadenceChanged = onStreamCadenceChanged
-        self.onStreamStallChanged = onStreamStallChanged
-        self.letterboxTint = letterboxTint
-        self.onFirstFramePresented = onFirstFramePresented
-        self.onVideoStats = onVideoStats
     }
 
     /// The standalone default (no canvas around it): always active, INPUT-ENABLED, no-op callbacks — for
@@ -205,10 +177,6 @@ public struct RemotePaneContext {
             -> Void = { _, _, _, _ in
             },
         onStreamCadence: @escaping (_ fps: Int) -> Void = { _ in },
-        onStreamStall: @escaping (_ stalled: Bool) -> Void = { _ in },
-        letterboxTint: VideoPaneTint? = nil,
-        onFirstFrame: (() -> Void)? = nil,
-        onVideoStats: ((_ rttMS: Double, _ received: UInt64, _ recovered: UInt64, _ lost: UInt64) -> Void)? = nil,
     ) -> Self {
         Self(
             isActive: isActive,
@@ -233,39 +201,7 @@ public struct RemotePaneContext {
             // CONNECTION STATS: the host-cadence push is informational (never reaches the host), so it stays
             // live regardless of read-only — the Connection section's FPS row tracks the stream either way.
             onStreamCadenceChanged: onStreamCadence,
-            // STALL SCRIM: informational (never reaches the host) — stays live regardless of read-only, so
-            // a locked pane still shows "Reconnecting…" when its host goes dark.
-            onStreamStallChanged: onStreamStall,
-            // LETTERBOX TINT + FIRST FRAME + STATS HUD (design-craft pass, 2026-07-04): all informational
-            // (never reach the host) — not read-only-gated.
-            letterboxTint: letterboxTint,
-            onFirstFramePresented: onFirstFrame,
-            onVideoStats: onVideoStats,
         )
-    }
-}
-
-/// A plain sRGB colour triple crossing the video seam (design-craft pass, 2026-07-04): the theme card
-/// tone the Metal renderer clears its letterbox area to. Primitives only — the seam never ships a
-/// SwiftUI `Color` (the video client must not depend on the UI layer's theme types). Built from the
-/// theme's canonical 6-hex palette strings; a malformed hex yields `nil` (black fallback), never a trap.
-public struct VideoPaneTint: Equatable, Sendable {
-    public let red: Double
-    public let green: Double
-    public let blue: Double
-
-    public init(red: Double, green: Double, blue: Double) {
-        self.red = red
-        self.green = green
-        self.blue = blue
-    }
-
-    /// Parses a canonical 6-hex string ("2D2A2E", no `#`). Validate-then-drop: anything else ⇒ `nil`.
-    public init?(hex: String) {
-        guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return nil }
-        red = Double((value >> 16) & 0xFF) / 255
-        green = Double((value >> 8) & 0xFF) / 255
-        blue = Double(value & 0xFF) / 255
     }
 }
 
@@ -298,22 +234,14 @@ public struct RemoteWindowSummary: Sendable, Equatable, Identifiable {
     public var title: String
     public var width: UInt16
     public var height: UInt16
-    /// The owning app's bundle identifier ("" when unknown) — the sidebar Windows row's LOCAL icon-lookup key
-    /// (`NSWorkspace.urlForApplication(withBundleIdentifier:)`; both ends are Macs, so the app is usually
-    /// installed client-side too). Display-only — never used for stream selection.
-    public var bundleID: String
     public var id: UInt32 { windowID }
 
-    public init(
-        windowID: UInt32, appName: String, title: String, width: UInt16, height: UInt16,
-        bundleID: String = "",
-    ) {
+    public init(windowID: UInt32, appName: String, title: String, width: UInt16, height: UInt16) {
         self.windowID = windowID
         self.appName = appName
         self.title = title
         self.width = width
         self.height = height
-        self.bundleID = bundleID
     }
 
     /// "App — Title  (W×H)" for one picker row (title omitted when empty).

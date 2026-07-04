@@ -42,14 +42,14 @@ struct KeybindingsEditorView: View {
         // The set of binding ids that collide with at least one other id on the same chord (for the badge).
         let conflictingIDs = Set(conflicts.values.flatMap(\.self))
 
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Slate.Metric.space3) {
             header
             searchField
             if !conflicts.isEmpty {
                 conflictBanner(conflicts)
             }
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12, pinnedViews: [.sectionHeaders]) {
+                LazyVStack(alignment: .leading, spacing: Slate.Metric.space3, pinnedViews: [.sectionHeaders]) {
                     ForEach(WorkspaceAction.Category.allCases, id: \.self) { category in
                         let rows = bindings(in: category)
                         if !rows.isEmpty {
@@ -58,17 +58,15 @@ struct KeybindingsEditorView: View {
                                     row(for: binding, isConflicting: conflictingIDs.contains(binding.id))
                                 }
                             } header: {
-                                // Opaque system-background fill so scrolled rows never show through the
-                                // pinned header (native `.background` style — no theme surface token).
                                 SlateSectionHeader(category.rawValue)
-                                    .background(.background)
+                                    .background(Slate.Surface.window)
                             }
                         }
                     }
                 }
             }
         }
-        .padding(16)
+        .padding(Slate.Metric.space4)
         .confirmationDialog(
             "Reset all key bindings?",
             isPresented: $showResetConfirm,
@@ -94,22 +92,22 @@ struct KeybindingsEditorView: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
                 Text("Keyboard Shortcuts")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: Slate.Typeface.body, weight: .semibold))
+                    .foregroundStyle(Slate.Text.primary)
                 Text("Click a shortcut to record a replacement; Backspace clears it, Esc cancels.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.secondary)
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: Slate.Metric.space2)
             // The "Reset to Default" button appears in the top-right ONLY once a binding has been
             // customized; clicking it confirms then clears ALL overrides (there is NO per-row revert).
             if KeybindingsEditorModel.hasCustomizations(store.keybindings) {
                 Button("Reset to Default") { showResetConfirm = true }
                     .buttonStyle(.plain)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Color.accentColor)
+                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                    .foregroundStyle(Slate.State.accent)
                     .help("Reset every customized shortcut to its default")
             }
         }
@@ -118,33 +116,33 @@ struct KeybindingsEditorView: View {
     /// The full-width rounded "Search key bindings" field (magnifier + clear button) that filters rows by
     /// action name OR chord — see `KeybindingsEditorModel.matches`.
     private var searchField: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Slate.Metric.space2) {
             Image(systemSymbol: .magnifyingglass)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.secondary)
             TextField("Search key bindings", text: $searchQuery)
                 .textFieldStyle(.plain)
-                .font(.callout)
-                .foregroundStyle(.primary)
+                .font(.system(size: Slate.Typeface.base))
+                .foregroundStyle(Slate.Text.primary)
             if !searchQuery.isEmpty {
                 Button { searchQuery = "" } label: {
                     Image(systemSymbol: .xmarkCircleFill)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: Slate.Typeface.footnote))
+                        .foregroundStyle(Slate.Text.secondary)
                 }
                 .buttonStyle(.plain)
                 .help("Clear search")
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.vertical, Slate.Metric.space1)
         .background(
-            Color.primary.opacity(0.05),
-            in: RoundedRectangle(cornerRadius: 4, style: .continuous),
+            Slate.Surface.element,
+            in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous),
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .strokeBorder(.separator, lineWidth: 1),
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
+                .strokeBorder(Slate.Line.subtle, lineWidth: 1),
         )
     }
 
@@ -154,39 +152,39 @@ struct KeybindingsEditorView: View {
             let titles = ids.compactMap { id in binding(forID: id)?.title }.sorted()
             return "\(chord): \(titles.joined(separator: ", "))"
         }.sorted()
-        return VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: Slate.Metric.space1) {
             Label("Shortcut conflicts", systemImage: "exclamationmark.triangle.fill")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.orange)
+                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                .foregroundStyle(Slate.Status.warn)
             ForEach(lines, id: \.self) { line in
                 Text(line)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: Slate.Typeface.small))
+                    .foregroundStyle(Slate.Text.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(8)
+        .padding(Slate.Metric.space2)
         .slateCard()
     }
 
     private func row(for binding: WorkspaceBinding, isConflicting: Bool) -> some View {
         let isRecording = recordingID == binding.id
-        return HStack(spacing: 8) {
+        return HStack(spacing: Slate.Metric.space2) {
             Image(systemName: binding.symbol)
-                .font(.body)
-                .foregroundStyle(.secondary)
+                .font(.system(size: Slate.Metric.iconSize))
+                .foregroundStyle(Slate.Text.icon)
                 .frame(width: 18)
             Text(binding.title)
-                .font(.callout)
-                .foregroundStyle(.primary)
+                .font(.system(size: Slate.Typeface.base))
+                .foregroundStyle(Slate.Text.primary)
                 .lineLimit(1)
             if isConflicting {
                 Image(systemSymbol: .exclamationmarkTriangleFill)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                    .font(.system(size: Slate.Typeface.small))
+                    .foregroundStyle(Slate.Status.warn)
                     .help("This shortcut conflicts with another command")
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: Slate.Metric.space2)
             // There is NO per-row revert — the chord chip records a replacement; Backspace (while recording)
             // clears it, and the header's "Reset to Default" reverts everything at once.
             chordChip(for: binding, isRecording: isRecording)
@@ -201,24 +199,19 @@ struct KeybindingsEditorView: View {
             toggleRecording(binding.id)
         } label: {
             Text(isRecording ? "Press a key…" : effectiveGlyph(for: binding))
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(isRecording ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+                .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                .foregroundStyle(isRecording ? Slate.State.accent : Slate.Text.secondary)
                 .lineLimit(1)
-                .padding(.horizontal, 8)
+                .padding(.horizontal, Slate.Metric.space2)
                 .padding(.vertical, 2)
                 .frame(minWidth: 64)
                 .background(
-                    // Recording = the selected-state wash; idle = the inset keycap fill (native semantics —
-                    // no theme accent/surface tokens).
-                    Color.primary.opacity(isRecording ? 0.12 : 0.05),
-                    in: RoundedRectangle(cornerRadius: 4, style: .continuous),
+                    isRecording ? Slate.State.accentMuted : Slate.Surface.element,
+                    in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous),
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .strokeBorder(
-                            isRecording ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.separator),
-                            lineWidth: 1,
-                        ),
+                    RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
+                        .strokeBorder(isRecording ? Slate.State.accent : Slate.Line.subtle, lineWidth: 1),
                 )
         }
         .buttonStyle(.plain)

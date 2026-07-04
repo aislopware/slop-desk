@@ -1,21 +1,30 @@
-// SlateDesign — the CANVAS theme engine (native-chrome migration, 2026-07-03; see docs/DECISIONS.md).
+// SlateDesign — the clean, minimalist design-token layer (REBUILD-V2, L5/L6).
 //
-// The window chrome is native SwiftUI now (system semantic colors / materials / text styles) — this file
-// no longer styles chrome. What it owns is the terminal/video CANVAS: the `SlateTheme` palettes (the six
-// Monokai Pro filters — `.monokaiProClassic` the DEFAULT — plus the legacy `.paper`/`.dark`), whose
-// `terminalBackgroundHex`/`terminalForegroundHex`/`ansiPalette`/cursor fields pin the libghostty CELLS,
-// and whose surface roles paint the canvas FABRIC around them (the pane surface, the pane card border,
-// the build-status placeholder). CARD-ON-GLASS CANVAS (2026-07-04 v3): each pane — terminal or remote
-// window — is its own rounded `Surface.card` card (theme fill, theme hairline border, soft shadow)
-// floating on the window's NATIVE glass backdrop (`WindowGlassBackdrop`, NOT a theme colour — the v1
-// card-canvas failed because its theme margin was near-identical to the card tone, so no depth read);
-// the seam between split cards is the `Metric.paneGap` glass gutter, not a drawn hairline. Focus reads
-// as the unfocused-sibling dim, not chrome. The chrome around the canvas follows the OS.
+// A THIN, headless token layer (no separate SPM target — the deleted `AislopdeskDesignSystem` stays
+// deleted; these are just `Color`/`CGFloat`/`Animation` constants compiled into `AislopdeskClientUI`).
 //
-// The surviving `Slate.*` accessors read `Slate.theme`, which (D3) indirects through
-// `ThemeStore.shared.active` so a runtime theme switch repoints the canvas live (one SwiftUI hierarchy now
-// — plain `@Observable` observation is all it takes; the old `NSWindow.appearance` re-pin died with the
-// AppKit split shell).
+// These declarations ARE the source of truth for the token layer:
+//   • the dark + light theme structs below → the canonical token table for each chrome role.
+//   • `.paper`'s hand-tuned "Paper" light palette.
+//   • `Slate.Anim` → the exact timing curves (no springs anywhere).
+//
+// Design DNA — "clean / modern / minimalist", FLAT:
+//   - FLAT pane: the terminal viewport fills its leaf edge-to-edge with NO corner radius and NO card — its
+//     surface (`card`) is the SAME colour as the backdrop beneath it (`window`/`content`), so a pane never
+//     reads as a floating panel. Adjacent split panes are separated only by the hairline `PaneDivider`.
+//   - ONE backdrop: sidebar + titlebar + the pane area share one flat background (no per-section fills).
+//   - 8pt grid; ultra-thin structure: borders ~6% opacity, hover ~4–5% — low contrast = minimalist.
+//   - Minimal palette: three text levels + an accent used ONLY for active state.
+//
+// MULTI-THEME: `SlateTheme` ships the six Monokai Pro filters (`.monokaiProClassic` — the DEFAULT — plus
+// Light / Octagon / Machine / Ristretto / Spectrum) and keeps the legacy `.paper` / `.dark`. The `Slate.*`
+// accessors read `Slate.theme`, which (D3) indirects through `ThemeStore.shared.active` (default
+// `.monokaiProClassic`) so runtime switching repoints every token live. Each theme also carries the
+// `terminalBackgroundHex`/`terminalForegroundHex` that pin the libghostty cells to the same flat palette.
+// SwiftUI `@Environment`/`.preferredColorScheme` does NOT cross the
+// AppKit split-controller boundary into the column `NSHostingController`s, so the runtime theme rides this
+// `@Observable` store + an `NSWindow.appearance` re-pin (in `AislopdeskSplitViewController`) instead — the
+// `ThemeStore`-backed `@MainActor` accessors keep the `NativePaneColor` injection pattern.
 
 #if canImport(SwiftUI)
 import AislopdeskVideoProtocol
@@ -175,9 +184,8 @@ struct SlateTheme: Equatable {
 
     /// The seed colours a Monokai Pro filter contributes; every other chrome role is DERIVED from these with
     /// the shared structure opacities, so all variants have identical chrome geometry — only the hues change.
-    /// FLAT by construction (re-affirmed by the flat hairline canvas, 2026-07-04 v2): `window == content ==
-    /// card == background`, so a pane's surface matches the backdrop beneath it — one continuous field, no
-    /// floating card, no corner radius.
+    /// FLAT by construction: `window == content == card == background`, so a pane's surface matches the
+    /// backdrop beneath it (flat design — no floating card, no corner radius).
     private struct MonokaiSeed {
         let name: String
         let background: UInt32 // window + content + card (the one flat background)
@@ -313,64 +321,61 @@ struct SlateTheme: Equatable {
     ))
 }
 
-/// The CANVAS token namespace (native-chrome migration, 2026-07-03): the window chrome is native SwiftUI
-/// (system semantic colors / materials / text styles) and no longer reads tokens; what survives here is
-/// exactly what the terminal/video CANVAS FABRIC needs — the theme-driven backdrops the panes/dividers/
-/// placeholder sit on, plus the few theme-legible roles that must render over them (a system semantic
-/// color could land dark-on-dark when the OS appearance and the canvas theme disagree).
+/// Static token namespace. Colours read the active `theme` (default Monokai Pro Classic); metrics/anim are
+/// theme-free.
 enum Slate {
     /// The active theme. Indirected through ``ThemeStore/shared`` (D3) so runtime theme switching repoints
-    /// every token live — `@MainActor` because the store is, and every read site is a SwiftUI `body`
-    /// (all MainActor).
+    /// every token live — `@MainActor` because the store is, and every read site is a SwiftUI `body` /
+    /// AppKit lifecycle hook (all MainActor). Default Paper (the store's default) ⇒ a headless / no-store
+    /// render resolves the SAME palette as the old `static let theme = .paper`, byte-identical.
     @MainActor static var theme: SlateTheme { ThemeStore.shared.active }
 
+    /// The preferred SwiftUI colour scheme for the active theme (drives `.preferredColorScheme`).
+    @MainActor static var colorScheme: ColorScheme { theme.isLight ? .light : .dark }
+
     // The colour namespaces are `@MainActor` because they read the runtime ``ThemeStore`` via
-    // ``Slate/theme`` (D3). Only the CANVAS-consumed roles survive — chrome roles (hover/selected/header/
-    // shadow/element/…) were deleted with their last consumers; the underlying ``SlateTheme`` struct keeps
-    // every field (it is the theme DATA, shipped per theme and read by the terminal-colour resolution).
+    // ``Slate/theme`` (D3) — every read site is a SwiftUI `body` / AppKit lifecycle hook (all MainActor).
     @MainActor
     enum Surface {
-        /// THE pane-card surface (card-on-glass canvas, 2026-07-04 v3): the theme background each pane
-        /// card renders on — matches the libghostty terminal cells' background, so card fill and cell
-        /// content are a single field. The backdrop BEHIND the cards is the native window glass
-        /// (`WindowGlassBackdrop`), deliberately NOT a theme colour.
+        static var window: Color { Slate.theme.window }
+        static var sidebar: Color { Slate.theme.sidebar }
+        static var content: Color { Slate.theme.content }
         static var card: Color { Slate.theme.card }
+        static var selectedCard: Color { Slate.theme.selectedCard }
+        static var element: Color { Slate.theme.element }
     }
 
     @MainActor
     enum Text {
-        // Theme-legible text over the canvas backdrop (BuildStatusPlaceholderView) — a system semantic
-        // color would follow the OS appearance and could vanish against a dark themed canvas.
         static var primary: Color { Slate.theme.textPrimary }
         static var secondary: Color { Slate.theme.textSecondary }
+        static var tertiary: Color { Slate.theme.textTertiary }
+        static var icon: Color { Slate.theme.icon }
     }
 
     @MainActor
     enum Line {
-        /// The pane card's resting 1pt border (card-on-glass canvas, 2026-07-04 v3) — theme-derived so
-        /// it carries the filter's own hue (never a flat system gray that would clash with a warm/tinted
-        /// filter). Defines the card edge against the glass backdrop.
-        static var cardBorder: Color { Slate.theme.cardBorder }
-    }
-
-    @MainActor
-    enum Effect {
-        /// The pane card's soft drop shadow — lifts the card off the glass backdrop.
-        static var panelShadow: Color { Slate.theme.panelShadow }
+        static var divider: Color { Slate.theme.divider }
+        static var card: Color { Slate.theme.cardBorder }
+        static var subtle: Color { Slate.theme.border }
+        static var active: Color { Slate.theme.borderActive }
     }
 
     @MainActor
     enum State {
-        /// The theme accent — the pane divider's active-drag hairline (canvas-adjacent).
+        static var hover: Color { Slate.theme.hover }
+        static var selected: Color { Slate.theme.selected }
         static var accent: Color { Slate.theme.accent }
+        static var accentMuted: Color { Slate.theme.accentMuted }
+        static var header: Color { Slate.theme.header }
+        static var shadow: Color { Slate.theme.panelShadow }
     }
 
     @MainActor
     enum Status {
-        /// Theme-legible "live" dot on the canvas placeholder (BuildStatusPlaceholderView).
         static var ok: Color { Slate.theme.statusOK }
-        /// The theme info tone — kept as the counter-example ``SecureInputPillColorTests`` pins
-        /// ``secureInput`` against (re-routing the pill back to a theme tone is the guarded regression).
+        static var warn: Color { Slate.theme.statusWarn }
+        static var err: Color { Slate.theme.statusErr }
         static var info: Color { Slate.theme.statusInfo }
 
         /// FIXED security-blue — theme-INDEPENDENT (NOT derived from `Slate.theme`), unlike ``info``. The
@@ -382,36 +387,82 @@ enum Slate {
         static let secureInput = Color(slateHex: 0x2D6FE8)
     }
 
-    /// Geometry — theme-independent. Only the canvas-consumed dimensions survive (chrome geometry is
-    /// native SwiftUI literals now).
+    /// Geometry — theme-independent. Radii + the 8pt grid + chrome dimensions.
     enum Metric {
-        /// The pane divider's active-drag accent line (PaneDivider / GuiPanelDivider).
+        // Radii (from design-tokens.css)
+        static let radiusCard: CGFloat = 8
+        static let radiusTab: CGFloat = 7 // the measured tab / sidebar-row card radius
+        static let radiusControl: CGFloat = 6
+        static let radiusItem: CGFloat = 6
+        static let radiusSmall: CGFloat = 4 // small inner plate (e.g. tab close-button hover)
+        static let radiusPill: CGFloat = 20
+
+        // 8pt spacing grid
+        static let space1: CGFloat = 4
+        static let space2: CGFloat = 8
+        static let space3: CGFloat = 12
+        static let space4: CGFloat = 16
+
+        // Floating-card insets — the card is inset from the window so the backdrop wraps around it.
+        static let cardMargin = EdgeInsets(top: 4, leading: 16, bottom: 16, trailing: 16)
+
+        // Chrome dimensions
+        static let paneHeaderHeight: CGFloat = 28
+        /// The hover-reveal titlebar strip height — the content area reserves this at its top so the
+        /// terminal starts BELOW the titlebar (the resting silhouette), not under the centred title.
+        static let titlebarHeight: CGFloat = 40
+        static let sidebarWidth: CGFloat = 220
+        /// The Settings window's left navigator column (a two-column Settings layout — wider than the
+        /// workspace sidebar so the icon+label section rows + the search pill sit comfortably).
+        static let settingsSidebarWidth: CGFloat = 260
+        static let hairline: CGFloat = 1
+        static let cardBorderWidth: CGFloat = 1
         static let dividerHoverWidth: CGFloat = 2
-        /// The glass gutter between two adjacent pane cards (card-on-glass canvas, 2026-07-04 v3). Each
-        /// placed leaf insets by HALF this inside its solver rect, so siblings sit exactly this far
-        /// apart and the divider hit band lives in the gap; the detail region pads by the same half so
-        /// the window-edge margin AND the column seam match the inter-card gap (one 6pt rhythm — user
-        /// tightened from 8, "gap đang hơi rộng").
-        static let paneGap: CGFloat = 6
-        /// The pane card's continuous corner radius.
-        static let paneCornerRadius: CGFloat = 10
+        /// The active-pane focus marker: leg length (points) of the small FILLED accent triangle tucked into
+        /// the focused pane's TOP-LEFT corner (Warp-style — the kept treatment after the box / bracket /
+        /// underline / dot / top-bar iterations). REPLACING the old unfocused-dim treatment.
+        static let focusCornerSize: CGFloat = 12
+
+        // Control plate (PlateIconButton)
+        static let plate: CGFloat = 24
+        static let iconSize: CGFloat = 13
     }
 
-    /// Typography — only the canvas placeholder's sizes survive (chrome text is system text styles now).
+    /// Typography scale — one named role per size; UI = system, code = JetBrains Mono. A closed scale (no
+    /// raw `.font(.system(size:))` literals in view code — `scripts/check-ds-leaks.sh` enforces it).
     enum Typeface {
-        /// Large empty-state / placeholder glyph (BuildStatusPlaceholderView).
+        /// Large empty-state / placeholder glyph (build-status / empty pane).
         static let display: CGFloat = 40
-        /// The placeholder's primary line.
+        /// Primary content + the command input field — the slightly-larger reading size.
         static let body: CGFloat = 13
-        /// The placeholder's secondary/mono line.
+        /// Default UI label size.
+        static let base: CGFloat = 12
+        /// Secondary labels, chips, pills, tab titles.
         static let footnote: CGFloat = 11
+        /// Captions, kbd hints, tab subtext.
+        static let small: CGFloat = 10
+        static let mono = "JetBrains Mono"
     }
 
-    /// Animation timing — only the pane divider's hover curve survives (chrome animation is native
-    /// `.easeOut`/`.easeInOut` literals now; still NO springs anywhere).
+    /// Animation timing — extracted verbatim from `ReplicaKit.Anim` (cubic-bezier, NO springs anywhere).
     enum Anim {
-        /// Divider hover/drag — EaseInEaseOut 0.16s.
+        /// Relayout / panel / tab-select / indicator slide — EaseInEaseOut 0.20s.
+        static let standard = Animation.timingCurve(0.42, 0, 0.58, 1, duration: 0.20)
+        /// animateIn / row reflow / toggle thumb — EaseOut 0.18s.
+        static let fadeSlideIn = Animation.timingCurve(0, 0, 0.58, 1, duration: 0.18)
+        /// Hover reveal / panel-toggle show — EaseOut 0.15s.
+        static let reveal = Animation.timingCurve(0, 0, 0.58, 1, duration: 0.15)
+        /// animateOut — EaseIn 0.14s.
+        static let fadeOut = Animation.timingCurve(0.42, 0, 1, 1, duration: 0.14)
+        /// Scroll fade / link pill / hover plate — EaseOut 0.12s.
+        static let smallFade = Animation.timingCurve(0, 0, 0.58, 1, duration: 0.12)
+        /// Divider / plate hover — EaseInEaseOut 0.16s.
         static let dividerHover = Animation.timingCurve(0.42, 0, 0.58, 1, duration: 0.16)
+
+        /// Titlebar hover-reveal DWELL before fade-out (seconds) — keeps controls clickable on exit.
+        static let titlebarDwell: Double = 0.40
+        /// Titlebar chrome fade-out duration (seconds) after the dwell.
+        static let titlebarFadeOut: Double = 0.20
     }
 }
 

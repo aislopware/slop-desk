@@ -5,15 +5,15 @@
 //
 // Faithful to `spec/user-interface__command-palette.md` (the centered floating panel, the magnifier +
 // blue/accent caret, ALL-CAPS section headers with the WORKING-DIRECTORY badge, per-symbol keycap chips,
-// the subtle selected-row fill) — rendered with NATIVE semantic styling (system text styles, the system
-// accent for caret/highlight/selected-row wash, `.tertiary` section labels) so the panel follows the
-// system light/dark appearance rather than a bespoke theme.
+// the subtle selected-row fill) — mapped onto the DARK Monokai-default Slate token layer (`Slate.Surface.card`
+// panel, `Slate.State.selected` row fill, `Slate.State.accent` caret/highlight, `Slate.State.header` section
+// labels) rather than the light theme shown in the reference screenshot.
 //
 // SEAM discipline: the palette OWNS no state — every read/mutation goes through the coordinator (the single
 // `@Observable` reducer) so the GUI and the headless model can't drift. Presented as a NATIVE `.sheet` by the
 // `OverlayHostView` that mounts it (the system provides the window chrome — bg / rounded corners / shadow);
-// this view carries only the search field + result rows, styled NATIVELY (system semantic colors + system
-// text styles — no design-token chrome).
+// this view carries only the search field + result rows. `Slate.*` tokens ONLY for that content (raw
+// font/colour/radius literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -80,19 +80,19 @@ struct PaletteView: View {
     // MARK: - Search bar
 
     private var searchBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Slate.Metric.space2) {
             Image(systemSymbol: .magnifyingglass)
-                .font(.body)
-                .foregroundStyle(.secondary)
+                .font(.system(size: Slate.Typeface.body))
+                .foregroundStyle(Slate.Text.secondary)
             TextField("Search for commands…", text: $coordinator.paletteQuery)
                 .textFieldStyle(.plain)
-                .font(.body)
-                .foregroundStyle(.primary)
-                .tint(Color.accentColor) // the active caret is the accent colour (spec)
+                .font(.system(size: Slate.Typeface.body))
+                .foregroundStyle(Slate.Text.primary)
+                .tint(Slate.State.accent) // the active caret is the accent colour (spec)
                 .focused($searchFocused)
                 .onSubmit { coordinator.acceptSelected() } // plain ↩ runs + closes
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, Slate.Metric.space4)
         .frame(height: 48)
         .onAppear {
             // A `@FocusState` set in the same tick the view appears (before its backing responder exists) is
@@ -111,12 +111,12 @@ struct PaletteView: View {
                         row(entry.ranked, selectableIndex: entry.selectableIndex)
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, Slate.Metric.space1)
             }
             .frame(maxHeight: resultsMaxHeight)
             .onChange(of: coordinator.paletteSelection) { _, _ in
                 guard let id = selectedRowID else { return }
-                withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id, anchor: .center) }
+                withAnimation(Slate.Anim.smallFade) { proxy.scrollTo(id, anchor: .center) }
             }
         }
     }
@@ -133,20 +133,20 @@ struct PaletteView: View {
     // MARK: - Section header (+ WORKING DIRECTORY badge)
 
     private func sectionHeader(_ item: PaletteItem) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Slate.Metric.space2) {
             // Batch-5b (B): mirror the action-row's 20pt leading ✓/icon gutter so the uppercase header text
             // shares the row LABELS' left margin (command-palette.png: the headers are FLUSH with the row
             // labels, the ✓/icon gutter sitting to their LEFT). A section header carries no glyph, so this is an
             // empty placeholder — only its width matters.
             Color.clear.frame(width: 20)
             Text(item.title.uppercased())
-                .font(.caption.weight(.semibold))
+                .font(.system(size: Slate.Typeface.small, weight: .semibold))
                 .tracking(0.8)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(Slate.State.header)
                 // The section label always wins the layout: a long cwd pill truncates its path, never the
                 // "WORKING DIRECTORY" header it sits on.
                 .layoutPriority(1)
-            Spacer(minLength: 8)
+            Spacer(minLength: Slate.Metric.space2)
             // The contextual cwd badge sits flush-right on the WORKING DIRECTORY header it OWNS — matched by
             // the category label, NOT "whichever separator sorts first" (which mislabelled a Recents/Actions
             // header before this section existed).
@@ -164,31 +164,31 @@ struct PaletteView: View {
         // Batch-4 inset highlight + ✓-gutter are left untouched). The trailing `space2` mirrors the action
         // row's OUTER inset (space3 + space2 = 20pt) so the cwd pill's RIGHT edge lines up with the keycap-chip
         // column instead of jutting `space2` past it (command-palette.png: pill + keycaps share one right edge).
-        .padding(.horizontal, 12)
-        .padding(.leading, 8)
-        .padding(.trailing, 8)
-        .padding(.top, 12)
-        .padding(.bottom, 4)
+        .padding(.horizontal, Slate.Metric.space3)
+        .padding(.leading, Slate.Metric.space2)
+        .padding(.trailing, Slate.Metric.space2)
+        .padding(.top, Slate.Metric.space3)
+        .padding(.bottom, Slate.Metric.space1)
         .id(item.id)
     }
 
     private func cwdBadge(_ cwd: String) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Slate.Metric.space1) {
             Image(systemSymbol: .folder)
-                .font(.caption)
+                .font(.system(size: Slate.Typeface.small))
             Text(cwd)
-                .font(.caption)
+                .font(.system(size: Slate.Typeface.small))
                 .lineLimit(1)
                 // Head-truncate so the leaf (the directory you're actually in) stays visible when the pill
                 // shrinks — default `.tail` would drop the most meaningful part of the path.
                 .truncationMode(.head)
         }
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .foregroundStyle(Slate.Text.secondary)
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.vertical, Slate.Metric.space1)
         .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.primary.opacity(0.05)),
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
+                .fill(Slate.Surface.element),
         )
     }
 
@@ -197,39 +197,39 @@ struct PaletteView: View {
     private func actionRow(_ ranked: RankedRow, selectableIndex: Int) -> some View {
         let item = ranked.item
         let isSelected = selectableIndex == coordinator.paletteSelection
-        return HStack(spacing: 8) {
+        return HStack(spacing: Slate.Metric.space2) {
             // Leading 24pt gutter: the ✓ toggled-state checkmark (Unicode check, dark accent), or empty.
             ZStack {
                 if toggledState(item) {
                     Image(systemSymbol: .checkmark)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.accentColor)
+                        .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                        .foregroundStyle(Slate.State.accent)
                 }
             }
             .frame(width: 20, alignment: .center)
 
             highlightedTitle(ranked)
-                .font(.body)
+                .font(.system(size: Slate.Typeface.body))
                 .lineLimit(1)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: Slate.Metric.space2)
 
             if let shortcut = item.shortcut, !shortcut.isEmpty {
-                HStack(spacing: 4) {
+                HStack(spacing: Slate.Metric.space1) {
                     ForEach(Array(keycaps(shortcut).enumerated()), id: \.offset) { _, key in
                         keycapChip(key)
                     }
                 }
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, Slate.Metric.space3)
         .frame(height: 34)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? Color.accentColor.opacity(0.22) : Color.clear),
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusItem)
+                .fill(isSelected ? Slate.State.selected : Color.clear),
         )
-        .padding(.horizontal, 8)
+        .padding(.horizontal, Slate.Metric.space2)
         .contentShape(Rectangle())
         // Hover moves the keyboard selection onto this row (spec: hover/tap → run).
         .onHover { hovering in
@@ -241,13 +241,13 @@ struct PaletteView: View {
 
     private func keycapChip(_ key: String) -> some View {
         Text(key)
-            .font(.caption.weight(.medium))
-            .foregroundStyle(.secondary)
+            .font(.system(size: Slate.Typeface.small, weight: .medium))
+            .foregroundStyle(Slate.Text.secondary)
             .frame(minWidth: 18, minHeight: 18)
-            .padding(.horizontal, 4)
+            .padding(.horizontal, Slate.Metric.space1)
             .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color.primary.opacity(0.05)),
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
+                    .fill(Slate.Surface.element),
             )
     }
 
@@ -258,7 +258,7 @@ struct PaletteView: View {
     private func highlightedTitle(_ ranked: RankedRow) -> Text {
         let title = ranked.item.title
         guard !ranked.titleRanges.isEmpty else {
-            return Text(title).foregroundStyle(.primary)
+            return Text(title).foregroundStyle(Slate.Text.primary)
         }
         // Accumulate `Text` segments then fold with `+` — `Text` has no `+=`, so a `result = result + …`
         // reassignment can't be a shorthand op; the array fold keeps it clean.
@@ -266,13 +266,13 @@ struct PaletteView: View {
         var cursor = title.startIndex
         for range in ranked.titleRanges where range.lowerBound >= cursor {
             if cursor < range.lowerBound {
-                segments.append(Text(title[cursor..<range.lowerBound]).foregroundStyle(.primary))
+                segments.append(Text(title[cursor..<range.lowerBound]).foregroundStyle(Slate.Text.primary))
             }
-            segments.append(Text(title[range]).foregroundStyle(Color.accentColor).fontWeight(.semibold))
+            segments.append(Text(title[range]).foregroundStyle(Slate.State.accent).fontWeight(.semibold))
             cursor = range.upperBound
         }
         if cursor < title.endIndex {
-            segments.append(Text(title[cursor...]).foregroundStyle(.primary))
+            segments.append(Text(title[cursor...]).foregroundStyle(Slate.Text.primary))
         }
         return segments.reduce(Text(verbatim: "")) { $0 + $1 }
     }

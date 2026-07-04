@@ -33,12 +33,13 @@ public struct FirstLaunchView: View {
     public var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
-            ScrollView { stepBody.padding(16) }
-            Divider()
+            Divider().overlay(Slate.Line.divider)
+            ScrollView { stepBody.padding(Slate.Metric.space4) }
+            Divider().overlay(Slate.Line.divider)
             footer
         }
         .frame(width: 540, height: 580)
+        .background(Slate.Surface.window)
         // Safety net: any dismissal (Done / Skip Setup / Esc / window-close) marks first-launch complete so it
         // never re-presents. Idempotent (sets a single `Defaults` flag).
         .onDisappear { model.finish() }
@@ -47,26 +48,26 @@ public struct FirstLaunchView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: Slate.Metric.space3) {
             Image(systemName: model.currentStep.systemImage)
-                .font(.system(size: 40))
-                .foregroundStyle(Color.accentColor)
+                .font(.system(size: Slate.Typeface.display))
+                .foregroundStyle(Slate.State.accent)
                 .frame(width: 56)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
                 Text("Step \(model.stepNumber) of \(model.stepCount)")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: Slate.Typeface.small))
+                    .foregroundStyle(Slate.Text.tertiary)
                 Text(model.currentStep.title)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: Slate.Typeface.body, weight: .semibold))
+                    .foregroundStyle(Slate.Text.primary)
                 Text(model.currentStep.subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
-        .padding(16)
+        .padding(Slate.Metric.space4)
     }
 
     // MARK: - Step body (exhaustive switch; macOS-only cases never reached on iOS)
@@ -98,7 +99,7 @@ public struct FirstLaunchView: View {
     // MARK: - Footer
 
     private var footer: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Slate.Metric.space2) {
             if !model.isFirstStep {
                 Button("Back") { model.back() }
                     .buttonStyle(.bordered)
@@ -108,7 +109,7 @@ public struct FirstLaunchView: View {
             Spacer()
             Button("Skip Setup") { finishAndDismiss() }
                 .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Slate.Text.secondary)
             if model.isLastStep {
                 Button("Done") { finishAndDismiss() }
                     .buttonStyle(.borderedProminent)
@@ -117,14 +118,14 @@ public struct FirstLaunchView: View {
                     .buttonStyle(.borderedProminent)
             }
         }
-        .padding(16)
+        .padding(Slate.Metric.space4)
     }
 
     private var progressDots: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Slate.Metric.space1) {
             ForEach(Array(model.steps.enumerated()), id: \.element) { index, _ in
                 Circle()
-                    .fill(index == model.index ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.separator))
+                    .fill(index == model.index ? Slate.State.accent : Slate.Line.subtle)
                     .frame(width: 6, height: 6)
             }
         }
@@ -190,7 +191,7 @@ private struct FirstLaunchThemeStep: View {
         (.monokaiProSpectrum, "Spectrum"),
     ]
 
-    private let columns = [GridItem(.adaptive(minimum: 150), spacing: 8)]
+    private let columns = [GridItem(.adaptive(minimum: 150), spacing: Slate.Metric.space2)]
 
     private var selected: ThemeChoice {
         store.appearance.theme ?? .monokaiProClassic
@@ -198,7 +199,7 @@ private struct FirstLaunchThemeStep: View {
 
     var body: some View {
         FirstLaunchCard {
-            LazyVGrid(columns: columns, spacing: 8) {
+            LazyVGrid(columns: columns, spacing: Slate.Metric.space2) {
                 ForEach(choices, id: \.0) { choice, label in
                     themeSwatch(choice, label)
                 }
@@ -207,32 +208,28 @@ private struct FirstLaunchThemeStep: View {
         }
     }
 
-    /// One theme option card: a check circle + name chip; the selected card gets an accent wash + accent ring.
     private func themeSwatch(_ choice: ThemeChoice, _ label: String) -> some View {
         let isSelected = selected == choice
         return Button {
             select(choice)
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: Slate.Metric.space2) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.tertiary))
+                    .foregroundStyle(isSelected ? Slate.State.accent : Slate.Text.tertiary)
                 Text(label)
-                    .font(.subheadline)
-                    .foregroundStyle(.primary)
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.primary)
                 Spacer(minLength: 0)
             }
-            .padding(8)
+            .padding(Slate.Metric.space2)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected ? Color.accentColor.opacity(0.22) : Color.primary.opacity(0.05)),
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
+                    .fill(isSelected ? Slate.State.selected : Slate.Surface.card),
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(
-                        isSelected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.separator),
-                        lineWidth: 1,
-                    ),
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
+                    .stroke(isSelected ? Slate.State.accent : Slate.Line.card, lineWidth: Slate.Metric.hairline),
             )
         }
         .buttonStyle(.plain)
@@ -260,13 +257,13 @@ private struct FirstLaunchClaudeHooksStep: View {
     var body: some View {
         FirstLaunchCard {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: Slate.Metric.space1) {
                     Text("Claude Code")
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(.primary)
+                        .font(.system(size: Slate.Typeface.base, weight: .semibold))
+                        .foregroundStyle(Slate.Text.primary)
                     Text("Add hooks to ~/.claude/settings.json for real-time agent state.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: Slate.Typeface.footnote))
+                        .foregroundStyle(Slate.Text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
@@ -284,12 +281,12 @@ private struct FirstLaunchClaudeHooksStep: View {
     private var installControl: some View {
         switch state {
         case .installed:
-            Label("Installed", systemImage: "checkmark").foregroundStyle(.green)
+            Label("Installed", systemImage: "checkmark").foregroundStyle(Slate.Status.ok)
         case .installedInactive:
             // Queue-safety cluster (2026-07-02): written to settings.json but the host listener is not
             // bound — honest amber, not the green check (Settings ▸ Agents carries the restart hint).
             Label("Installed — inactive", systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
+                .foregroundStyle(Slate.Status.warn)
                 .help("Restart the host daemon with AISLOPDESK_AGENT_HOOKS=1, then open new panes.")
         case .notInstalled:
             Button("Install") {
@@ -310,23 +307,23 @@ private struct FirstLaunchClaudeHooksStep: View {
     }
 }
 
-// MARK: - Shared step chrome (an inset card + a subordinate note)
+// MARK: - Shared step chrome (a flat card + a gray note)
 
-/// An inset card wrapping a step's controls — a subtle primary-tint fill with a hairline separator border
-/// (the native inset-box treatment).
+/// A flat card wrapping a step's controls (card == window background, hairline border — the E-series flat
+/// pane aesthetic).
 struct FirstLaunchCard<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) { content }
-            .padding(16)
+        VStack(alignment: .leading, spacing: Slate.Metric.space3) { content }
+            .padding(Slate.Metric.space4)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)),
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusCard).fill(Slate.Surface.card),
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(.separator, lineWidth: 1),
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
+                    .stroke(Slate.Line.card, lineWidth: Slate.Metric.hairline),
             )
     }
 }
@@ -338,8 +335,8 @@ struct FirstLaunchNote: View {
 
     var body: some View {
         Text(text)
-            .font(.subheadline)
-            .foregroundStyle(.tertiary)
+            .font(.system(size: Slate.Typeface.footnote))
+            .foregroundStyle(Slate.Text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -363,7 +360,7 @@ private struct FirstLaunchDefaultTerminalStep: View {
                 "Handle `ssh://` links and shell scripts opened from Finder or `open`.",
             ) {
                 if isDefault {
-                    Label("Default", systemImage: "checkmark").foregroundStyle(.green)
+                    Label("Default", systemImage: "checkmark").foregroundStyle(Slate.Status.ok)
                 } else {
                     Button("Set as Default Terminal") {
                         Task {
@@ -382,7 +379,7 @@ private struct FirstLaunchDefaultTerminalStep: View {
                     + "editor — an editor on the remote host needs a host-side agent, so this is unavailable "
                     + "in the remote model.",
             ) {
-                Text("Unavailable").foregroundStyle(.tertiary)
+                Text("Unavailable").foregroundStyle(Slate.Text.tertiary)
             }
             actionRow(
                 "Finder Integration",
@@ -408,17 +405,17 @@ private struct FirstLaunchDefaultTerminalStep: View {
         _ subtitle: String,
         @ViewBuilder trailing: () -> some View,
     ) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .top, spacing: Slate.Metric.space3) {
+            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
                 Text(title)
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: Slate.Typeface.base, weight: .semibold))
+                    .foregroundStyle(Slate.Text.primary)
                 Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: Slate.Metric.space2)
             trailing()
         }
     }
@@ -462,9 +459,9 @@ struct CLIInstallCardBody: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Slate.Metric.space3) {
             installRow
-            Divider()
+            Divider().overlay(Slate.Line.divider)
             Toggle("Omit `aislopdesk` Prefix", isOn: $omitPrefix)
                 .onChange(of: omitPrefix) { _, on in
                     installer.applyOmitPrefix(enabled: on, allowOverwrite: allowOverwrite)
@@ -484,17 +481,17 @@ struct CLIInstallCardBody: View {
     }
 
     private var installRow: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .top, spacing: Slate.Metric.space3) {
+            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
                 Text("Install CLI")
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: Slate.Typeface.base, weight: .semibold))
+                    .foregroundStyle(Slate.Text.primary)
                 Text("Adds `/usr/local/bin/aislopdesk` (requests admin once).")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: Slate.Metric.space2)
             installControl
         }
     }
@@ -504,8 +501,8 @@ struct CLIInstallCardBody: View {
         if installer.phase == .working {
             ProgressView().controlSize(.small)
         } else if cliInstalled {
-            HStack(spacing: 8) {
-                Label("Installed", systemImage: "checkmark").foregroundStyle(.green)
+            HStack(spacing: Slate.Metric.space2) {
+                Label("Installed", systemImage: "checkmark").foregroundStyle(Slate.Status.ok)
                 Button("Uninstall") { Task { await installer.uninstall() } }
                     .buttonStyle(.bordered)
             }

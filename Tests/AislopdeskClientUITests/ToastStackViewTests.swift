@@ -15,16 +15,17 @@ import XCTest
 final class ToastStackViewTests: XCTestCase {
     // MARK: - Flavour tint mapping (the leading-glyph colour role)
 
-    /// The toast glyph is tinted by flavour: success → green, error → red, default → blue, attention →
-    /// the system accent (E2 plan WI-4, colors NATIVE since the native-chrome migration — system status
-    /// hues, not theme tokens). Pin the SPEC mapping — a regression that swapped success/error (or pointed
-    /// a flavour at the wrong status hue) would fail here, and the view + this test read the SAME
-    /// `tint(for:)` so the rendered colour can't drift from the asserted contract.
+    /// The toast glyph is tinted by flavour: success → OK, error → error, default → info, attention → accent
+    /// (E2 plan WI-4). Pin the SPEC mapping — a regression that swapped success/error (or pointed a flavour at
+    /// the wrong status role) would fail here, and the view + this test read the SAME `tint(for:)` so the
+    /// rendered colour can't drift from the asserted contract. (Distinctness is asserted only for OK vs error,
+    /// which are distinct hues in every theme; default/attention coincide under the Monokai Classic palette
+    /// where `info == accent`, so they are NOT asserted distinct.)
     func testToastFlavorTintMapping() {
-        XCTAssertEqual(ToastStackView.tint(for: .success), .green, "success → system green")
-        XCTAssertEqual(ToastStackView.tint(for: .error), .red, "error → system red")
-        XCTAssertEqual(ToastStackView.tint(for: .default), .blue, "default/info → system blue")
-        XCTAssertEqual(ToastStackView.tint(for: .attention), .accentColor, "attention → system accent")
+        XCTAssertEqual(ToastStackView.tint(for: .success), Slate.Status.ok, "success → OK status tint")
+        XCTAssertEqual(ToastStackView.tint(for: .error), Slate.Status.err, "error → error status tint")
+        XCTAssertEqual(ToastStackView.tint(for: .default), Slate.Status.info, "default → info status tint")
+        XCTAssertEqual(ToastStackView.tint(for: .attention), Slate.State.accent, "attention → active accent")
         XCTAssertNotEqual(
             ToastStackView.tint(for: .success),
             ToastStackView.tint(for: .error),

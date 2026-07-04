@@ -26,7 +26,7 @@
 // the iOS settings host is unit-testable on the headless macOS `swift test` host — iOS view code otherwise
 // rots silently (CLAUDE.md). It is referenced only inside `WorkspaceRootView`'s `#if os(iOS)` branch.
 //
-// NATIVE styling (native-chrome migration, 2026-07-03): stock navigation/list chrome, no Slate token reads.
+// Slate.* tokens only (raw font/radius literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import AislopdeskWorkspaceCore
@@ -84,10 +84,10 @@ struct SettingsSheet: View {
                 }
             }
         }
-        // Native settings sheet → SYSTEM accent (reset the inherited theme tint) and SYSTEM appearance —
-        // no `preferredColorScheme` pin, so the sheet follows the OS light/dark mode exactly like the macOS
-        // Settings window (System Settings behavior; the terminal theme styles the workspace only).
+        // Native settings sheet → SYSTEM accent (reset the inherited theme tint) so its stock controls read as
+        // native controls; appearance still tracks the theme via `preferredColorScheme`.
         .tint(nil)
+        .preferredColorScheme(Slate.colorScheme)
     }
 }
 

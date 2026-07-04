@@ -76,13 +76,6 @@ public final class MetalVideoRenderer {
     /// per-frame coefficient uniform values differ, so no shader recompile is needed.
     public var colorRange: ColorRange = .video
 
-    /// LETTERBOX TINT (design-craft pass, 2026-07-04): the sRGB tone the render pass CLEARS to — the
-    /// letterbox/pillarbox area around an aspect-fit frame shows this. `nil` ⇒ black (the prior
-    /// hardcoded default). Set from the pane's THEME card colour via the pipeline so an
-    /// aspect-mismatched remote window reads as a card, not a broken video player. Orthogonal to the
-    /// content-mask alpha logic (a masked frame still clears alpha 0 — transparent, whatever the tint).
-    public var letterboxClear: (red: Double, green: Double, blue: Double)?
-
     /// CONTENT MASK (transparency, 2026-06-17): the opaque-content rects (capture PIXELS, top-left)
     /// the host sent after a DIALOG-EXPAND region change — the window block + each popup. The
     /// fragment shader masks every sample OUTSIDE these rects to alpha 0, so a popup overhanging the
@@ -241,16 +234,10 @@ public final class MetalVideoRenderer {
         passDescriptor.colorAttachments[0].texture = drawable.texture
         passDescriptor.colorAttachments[0].loadAction = .clear
         // Clear alpha 0 while a content mask is active so uncovered area (letterbox bars + the masked
-        // flank the shader discards) is TRANSPARENT, not an opaque black bar; opaque otherwise.
-        // LETTERBOX TINT: the opaque clear is the theme card tone when the pane provided one (black
-        // otherwise — byte-identical to the prior default); the mask alpha logic is untouched.
+        // flank the shader discards) is TRANSPARENT, not an opaque black bar; opaque black otherwise
+        // (the prior default — byte-identical when no mask).
         let clearAlpha = contentMask.isEmpty ? 1.0 : 0.0
-        passDescriptor.colorAttachments[0].clearColor = MTLClearColor(
-            red: letterboxClear?.red ?? 0,
-            green: letterboxClear?.green ?? 0,
-            blue: letterboxClear?.blue ?? 0,
-            alpha: clearAlpha,
-        )
+        passDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: clearAlpha)
         passDescriptor.colorAttachments[0].storeAction = .store
 
         guard let commandBuffer = commandQueue.makeCommandBuffer(),

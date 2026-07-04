@@ -22,10 +22,6 @@ struct RouteToggles {
     var find: (() -> Void)?
     var peekReply: (() -> Void)?
     var sidebar: (() -> Void)?
-    /// Toggles the RIGHT remote-windows column (TabSide partition) — `WorkspaceChromeState.guiCollapsed`
-    /// view chrome, so it is a passed-in closure exactly like `sidebar`; `nil` (headless / test / iOS) is
-    /// a graceful no-op, never a dead chord.
-    var windowsPanel: (() -> Void)?
     var globalSearch: (() -> Void)?
     /// Toggles the Jump-To affordance (E10 WI-8, ⌘J). A VIEW overlay, so — like `globalSearch` — it is a
     /// passed-in closure; `nil` (the headless / test default) is a graceful no-op, never a dead chord. E11
@@ -67,7 +63,6 @@ public extension WorkspaceBindingRegistry {
         toggleFind: (() -> Void)? = nil,
         togglePeekReply: (() -> Void)? = nil,
         toggleSidebar: (() -> Void)? = nil,
-        toggleWindowsPanel: (() -> Void)? = nil,
         toggleGlobalSearch: (() -> Void)? = nil,
         toggleJumpTo: (() -> Void)? = nil,
         openQuickly: (() -> Void)? = nil,
@@ -77,8 +72,7 @@ public extension WorkspaceBindingRegistry {
         let toggles = RouteToggles(
             palette: togglePalette, cheatSheet: toggleCheatSheet, find: toggleFind,
             peekReply: togglePeekReply,
-            sidebar: toggleSidebar, windowsPanel: toggleWindowsPanel,
-            globalSearch: toggleGlobalSearch, jumpTo: toggleJumpTo,
+            sidebar: toggleSidebar, globalSearch: toggleGlobalSearch, jumpTo: toggleJumpTo,
             openQuickly: openQuickly, pinWindow: togglePinWindow,
             closeWindow: closeWindow,
         )
@@ -213,10 +207,6 @@ public extension WorkspaceBindingRegistry {
         // the store flag so the action is a non-trapping graceful op (and any store-flag reader still toggles).
         case .toggleSidebar:
             if let s = toggles.sidebar { s() } else { store.toggleSidebarCollapsed() }
-        // Toggle Windows Panel (⌘⇧E): the RIGHT remote-windows column collapse is VIEW @State
-        // (`WorkspaceChromeState.guiCollapsed`, read by the native split controller) — a passed-in closure
-        // like `.toggleSidebar`; `nil` (headless / test / iOS) is a graceful no-op, never a dead chord.
-        case .toggleWindowsPanel: toggles.windowsPanel?()
         // Pin Window (E19 ES-E19-1 / WI-3): float the window above all other apps. A macOS NSWindow.level
         // concern (VIEW @State `WorkspaceChromeState.pinned`), so it is a passed-in closure like
         // `.toggleSidebar`; `nil` (the headless / test / iOS default) is a graceful
@@ -251,10 +241,6 @@ public extension WorkspaceBindingRegistry {
         // pill / ⌘1–9 / Tab / ⌘K chords stay PICKER-LOCAL (handled in the panel, never routed here). `nil`
         // (the headless / test default) is a graceful no-op — never a dead chord.
         case .openQuickly: toggles.openQuickly?()
-        // Control Room (big-swing B): flip the store's overview flag — the compositor renders the
-        // Exposé grid, the dispatcher owns Esc/typing while it is up. A pure store toggle (no view
-        // closure needed), so it works headlessly.
-        case .controlRoom: store.toggleControlRoom()
         // Tabs
         // `.newTab` is the generic new-pane entry (the `+` button / a future generic chord): it creates an
         // in-pane `.chooser` pane (Terminal / Remote window), focused. ⌘T stays a direct-terminal escape hatch
@@ -393,8 +379,6 @@ public extension WorkspaceBindingRegistry {
         // Sidebar is the tree-shell chrome; the canvas path still toggles it via the closure (the live macOS
         // app wires `chrome.toggleSidebar`). `nil` (the canvas test default) is a graceful no-op.
         case .toggleSidebar: toggles.sidebar?()
-        // Windows panel is tree-shell chrome; the canvas path forwards the same closure (graceful no-op).
-        case .toggleWindowsPanel: toggles.windowsPanel?()
         // Pin Window is a window-level concern (the live macOS app flips `WorkspaceChromeState.pinned`); the
         // canvas path forwards it via the closure too — a graceful no-op when none is supplied, never a dead chord.
         case .pinWindow: toggles.pinWindow?()
@@ -420,9 +404,6 @@ public extension WorkspaceBindingRegistry {
         // Open Quickly is a view overlay (the tree-shell picker); the canvas path still toggles it via the
         // closure (a graceful no-op when none is supplied, like the palette / global search / jump-to).
         case .openQuickly: toggles.openQuickly?()
-        // Control Room overviews the TREE compositor's mounted tabs; the retained-but-dead canvas has no
-        // tab layers to overview, so the flag still flips (harmless) but nothing renders it.
-        case .controlRoom: store.toggleControlRoom()
         case .nextTab,
              .prevTab,
              .selectTab,

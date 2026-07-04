@@ -1,23 +1,25 @@
-// NavigatorColumn — the left sidebar navigator (native-chrome migration, 2026-07-03). ONE implementation
-// for both platforms now: a system `List(selection:)` with `.listStyle(.sidebar)` — native vibrancy/glass,
-// native rounded selection, `.searchable` for the filter field, and a native sort/group `Menu` in the
-// sidebar's toolbar. (The old macOS-only flat "TABS" panel — warm `Slate.Surface.sidebar` backdrop,
-// hand-built search plate, `SlateTabRow` white-card rows — is deleted; the flat doctrine survives only
-// inside the terminal/video canvases.)
+// NavigatorColumn — the left sidebar navigator. macOS renders a flat "TABS" panel: a warm
+// `Slate.Surface.sidebar` background (NOT the native `.sidebar` vibrancy/inset-grouped selection — the host
+// split item is a PLAIN item now), a "TABS" header with the sort hamburger, a flat search field, and the
+// active session's tabs rendered as `SlateTabRow`s — grouped into `SlateSectionHeader` sections when the
+// hamburger's Group-By is set (E6 WI-5). The top 40pt is reserved for the traffic lights under the hidden
+// titlebar.
 //
-// On macOS the sidebar is the whole window's navigator (dock removal, 2026-07-04): the terminal tabs
-// first, then a "Windows" section — one native row per OPEN remote-window tab (real app icon via
-// ``AppIconResolver``, window title, host-app subtitle). Selecting a Windows row activates its GUI tab
-// (the right column's displayed tab). Browsing NOT-yet-open host windows is the Remote-Window picker,
-// minted from the footer's window-`+` (this replaces the GUI column's launcher dock strip).
+// E6 WI-5 wires the panel to the STORE as the single source of row order:
+//   • a flat search field filters via the pure ``RailRowsBuilder/filtered(_:query:)`` (reused, not rebuilt);
+//   • the rendered SECTIONS are ``WorkspaceStore/orderedTabGroups(now:)`` (a pure derivation of the store's
+//     ``WorkspaceStore/tabGrouping`` / ``WorkspaceStore/tabSort`` / recency), so the hamburger's choice — and
+//     a manual drag — mutate the STORE, never local `@State` (the E6-carryover binding constraint);
+//   • each row carries the new ``RailRow`` chrome (subtitle / fused badge / process label);
+//   • dragging a row reorders the session's tabs via ``WorkspaceStore/moveTabRendered(from:to:)`` — a WYSIWYG
+//     move by RENDERED position (so only the dragged row moves, even under `.updated`), which flips Sort to
+//     Manual; the leaf set is unchanged, so reconcile is a registry no-op (no surface teardown). Manual order
+//     is a flat-list affordance, so the drag source/target are OFF whenever a grouping is active.
 //
-// E6 WI-5 wiring is unchanged — the STORE stays the single source of row order:
-//   • `.searchable`'s query filters via the pure ``RailRowsBuilder/filtered(_:query:)``;
-//   • the rendered SECTIONS are ``WorkspaceStore/orderedTabGroups(now:)`` (grouping/sort/recency), so the
-//     sort menu's choice — and a manual drag — mutate the STORE, never local `@State`;
-//   • each row carries the ``RailRow`` chrome (subtitle / fused badge / process label / read-only lock);
-//   • dragging a row reorders via ``WorkspaceStore/moveTabRendered(from:to:)`` (WYSIWYG by RENDERED
-//     position, flips Sort → Manual); drag is OFF whenever grouping or a search filter is active.
+// iOS: a `List(selection:)` so NavigationSplitView pushes to the content column on a compact iPhone (a custom
+// button list does not drive column navigation). Themed to match the macOS chrome but keeps the system list's
+// navigation wiring; it gains the same search field, grouped `Section`s, badge, and drag reorder
+// under `#if os(iOS)`.
 
 #if canImport(SwiftUI)
 import AislopdeskVideoProtocol // AgentPreferences — the `preventSleep` flag the tab context menu toggles (B4)
@@ -30,15 +32,17 @@ struct NavigatorColumn: View {
     let store: WorkspaceStore
 
     /// The live ``PreferencesStore`` — threaded in so the tab context menu can surface the host-LOCAL
-    /// **Prevent Sleep While Processing** flag (Batch 4). `nil` (a preview / pre-injection scene) hides
-    /// the row. Inherited via the environment on both platforms now that the shell is one SwiftUI
-    /// hierarchy, but still passed explicitly for preview-mountability.
+    /// **Prevent Sleep While Processing** flag (Batch 4 catalog-completeness;
+    /// `docs/ui-shell/screenshots/open-code-agent-history.png` shows it on the tab menu). The macOS sidebar
+    /// is hosted in a SEPARATE `NSHostingController` that does not
+    /// inherit the WindowGroup environment, so the split-view host passes it explicitly (`nil` on a preview /
+    /// pre-injection ⇒ the Prevent-Sleep row is simply hidden, never a dead control). On iOS the column inherits
+    /// the value via the `NavigationSplitView`, but it is still passed explicitly for parity.
     var preferences: PreferencesStore?
 
-    /// Opens the Remote-Window picker modal (``OverlayCoordinator/openRemotePicker()``) — the sidebar
-    /// footer's window-`+` affordance (the dock's old mint, relocated with the Windows section). No-op
-    /// default keeps the column standalone-mountable in previews / iOS.
-    var onOpenPicker: () -> Void = {}
+    // (The connection status line that used to pin at the sidebar bottom moved to the titlebar's trailing
+    // ``TitlebarConnectionCluster`` — the single ambient home for host/status/telemetry, readable even while
+    // the sidebar is collapsed.)
 
     /// The transient sidebar search query — narrows the rows via the pure ``RailRowsBuilder/filtered`` (E6
     /// WI-5). View-local `@State`: it is a presentational filter, NOT row order (which lives on the store).
@@ -50,184 +54,10 @@ struct NavigatorColumn: View {
     }
 
     var body: some View {
-        // TabSide partition (macOS): the sidebar is the whole window's navigator now — the terminal tabs
-        // first, then a "Windows" section listing the OPEN remote-window tabs (the right GUI column is
-        // pure content since the dock removal; browsing/opening host windows is the picker). iOS keeps
-        // the single-region shell (one flat list, all tabs).
         #if os(macOS)
-        let allRows = RailRowsBuilder.rows(for: store, side: .terminal)
-        let windowRows = RailRowsBuilder.filtered(
-            RailRowsBuilder.rows(for: store, side: .gui), query: query,
-        )
+        macSidebar
         #else
-        let allRows = RailRowsBuilder.rows(for: store)
-        let windowRows: [RailRow] = []
-        #endif
-        let sections = buildSections(allRows, query: query)
-        let selection = Binding<PaneID?>(
-            get: { selectedPane },
-            set: { if let paneID = $0 { select(paneID) } },
-        )
-        return List(selection: selection) {
-            if allRows.isEmpty, windowRows.isEmpty {
-                Label("No tabs open", systemSymbol: .squareSplit2x1)
-                    .foregroundStyle(.secondary)
-            } else if sections.isEmpty, windowRows.isEmpty {
-                Label("No matches", systemSymbol: .magnifyingglass)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(sections) { section in
-                    if let header = section.header {
-                        Section(header) {
-                            ForEach(section.rows) { row in
-                                navRow(row)
-                            }
-                        }
-                    } else if windowRows.isEmpty {
-                        ForEach(section.rows) { row in
-                            navRow(row)
-                        }
-                    } else {
-                        // With a Windows section below, the flat terminal list gets its own header so
-                        // the two groups read as named peers (a bare list over a labelled section looks
-                        // like a rendering accident).
-                        Section("Terminals") {
-                            ForEach(section.rows) { row in
-                                navRow(row)
-                            }
-                        }
-                    }
-                }
-                #if os(macOS)
-                if !windowRows.isEmpty {
-                    Section("Windows") {
-                        ForEach(windowRows) { row in
-                            windowRow(row)
-                        }
-                    }
-                }
-                #endif
-            }
-        }
-        .listStyle(.sidebar)
-        // `.sidebar` placement pins the field at the TOP OF THE SIDEBAR column (the System-Settings
-        // idiom) — the default placement floated it into the window toolbar's trailing edge, where it
-        // ate half the unified toolbar.
-        .searchable(text: $query, placement: .sidebar, prompt: "Search tabs")
-        #if os(macOS)
-            // The sidebar FOOTER New-Tab affordance (the Things/Reminders "Add List" idiom): before this the
-            // ONLY macOS entry points were ⌘T / the palette / the pane-actions menu — no mouse-visible mint
-            // anywhere in the window. iOS keeps its toolbar `+` instead.
-            .safeAreaInset(edge: .bottom, spacing: 0) { newTabFooter }
-        #endif
-            .toolbar { navToolbar }
-    }
-
-    #if os(macOS)
-    /// The pinned sidebar footer: a borderless "New Tab" mint on the left (terminal tabs — the sidebar's
-    /// primary kind) and the window-`+` on the right, which opens the Remote-Window picker (the mint for
-    /// the Windows section — relocated here from the deleted GUI-column dock).
-    private var newTabFooter: some View {
-        HStack {
-            Button {
-                store.newTab(kind: .terminal)
-            } label: {
-                Label("New Tab", systemSymbol: .plusCircle)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.borderless)
-            .help("New Tab (⌘T)")
-            Spacer(minLength: 0)
-            Button {
-                onOpenPicker()
-            } label: {
-                Image(systemSymbol: .macwindowBadgePlus)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.borderless)
-            .help("Open a Remote Window…")
-            .accessibilityLabel("Open a Remote Window")
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .overlay(alignment: .top) { Divider() }
-    }
-
-    /// One Windows-section row: the same native ``NavigatorRow`` chrome as a terminal row (real app icon
-    /// via the row's `bundleID`, window title, host-app subtitle, hover close) — but NOT drag-reorderable
-    /// (the section lists open order; the terminal rail's manual reorder stays terminal-scoped) and with
-    /// the slim window context menu (rename/close — the agent-badge cluster is terminal chrome).
-    private func windowRow(_ row: RailRow) -> some View {
-        NavigatorRow(
-            row: row,
-            title: row.title.isEmpty ? defaultTitle(for: row.kind) : row.title,
-            active: row.id == selectedPane,
-            symbol: Self.symbol(for: row.kind),
-            onClose: { store.requestClosePaneTree(row.id) },
-            onRename: { commitRename(row, to: $0) },
-            onCancelRename: { store.clearTabRenameRequest() },
-        )
-        .tag(row.id)
-        .contextMenu {
-            Button("Rename") { store.requestRenameTab(row.tabID) }
-            Button("Close Window Tab", role: .destructive) { store.requestClosePaneTree(row.id) }
-        }
-    }
-    #endif
-
-    /// One sidebar row: the native `Label` row (title / subtitle / trailing status cluster / hover close)
-    /// plus the drag-reorder source + drop target and the tab context menu. The drop routes `reorderable`
-    /// → `handleTabDrop` → ``WorkspaceStore/moveTabRendered(from:to:)``.
-    private func navRow(_ row: RailRow) -> some View {
-        reorderable(
-            NavigatorRow(
-                row: row,
-                title: row.title.isEmpty ? defaultTitle(for: row.kind) : row.title,
-                active: row.id == selectedPane,
-                symbol: Self.symbol(for: row.kind),
-                onClose: { store.requestClosePaneTree(row.id) },
-                onRename: { commitRename(row, to: $0) },
-                onCancelRename: { store.clearTabRenameRequest() },
-            )
-            .tag(row.id),
-            row: row,
-        )
-        .contextMenu { rowContextMenu(row) }
-    }
-
-    /// The sidebar toolbar: the native sort/group menu (writes the STORE — the single source of row
-    /// order), plus the iOS `+` (macOS mints tabs via ⌘T / the palette / the pane-actions menu).
-    @ToolbarContentBuilder
-    private var navToolbar: some ToolbarContent {
-        ToolbarItem {
-            Menu {
-                Picker("Group By", selection: Binding(
-                    get: { store.tabGrouping },
-                    set: { store.setTabGrouping($0) },
-                )) {
-                    Label("No Grouping", systemImage: "list.bullet").tag(TabGrouping.none)
-                    Label("By Project", systemImage: "folder").tag(TabGrouping.byProject)
-                    Label("By Date", systemImage: "calendar").tag(TabGrouping.byDate)
-                }
-                Picker("Order", selection: Binding(
-                    get: { store.tabSort },
-                    set: { store.setTabSort($0) },
-                )) {
-                    Label("Created Time", systemImage: "clock").tag(TabSort.created)
-                    Label("Updated Time", systemImage: "clock.arrow.circlepath").tag(TabSort.updated)
-                    Label("Manual", systemImage: "arrow.up.arrow.down").tag(TabSort.manual)
-                }
-            } label: {
-                Label("Sort Tabs", systemSymbol: .line3HorizontalDecrease)
-            }
-            .help("Group / sort the tab list")
-        }
-        #if os(iOS)
-        ToolbarItem(placement: .primaryAction) {
-            Button { store.openChooserPane(.newTab) } label: { Image(systemSymbol: .plus) }
-        }
+        iosSidebar
         #endif
     }
 
@@ -316,10 +146,211 @@ struct NavigatorColumn: View {
         }
     }
 
+    #if os(macOS)
+    /// The flat macOS search field: a filled, hairline-bordered plate with a leading magnifier and a
+    /// trailing clear `×` (only when non-empty). Binds the view-local `query`. (iOS uses the system
+    /// `.searchable` instead, so this custom field is macOS-only.)
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemSymbol: .magnifyingglass)
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.icon)
+            TextField("Search tabs", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: Slate.Typeface.body))
+                .foregroundStyle(Slate.Text.primary)
+                .tint(Slate.State.accent) // the active caret is the accent colour
+            if !query.isEmpty {
+                Button { query = "" } label: {
+                    Image(systemSymbol: .xmarkCircleFill)
+                        .font(.system(size: Slate.Typeface.footnote))
+                        .foregroundStyle(Slate.Text.icon)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Slate.Surface.card, in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
+                .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
+        )
+    }
+
+    /// macOS: the flat "TABS" panel — name rows + white-card active, hamburger sort, search field, grouped
+    /// sections. Paints its own warm background (the host `NSSplitViewItem` is a plain item, so there is no
+    /// native vibrancy/rounding).
+    private var macSidebar: some View {
+        let allRows = RailRowsBuilder.rows(for: store)
+        let sections = buildSections(allRows, query: query)
+        return VStack(alignment: .leading, spacing: 0) {
+            Color.clear.frame(height: 40) // reserve the titlebar / traffic-light strip
+            HStack(spacing: 0) {
+                Text("TABS")
+                    .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(Slate.State.header)
+                Spacer(minLength: 0)
+                SlateSortMenuButton(store: store)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 6)
+
+            // The 8pt inset matches the tab list's `LazyVStack` inset below, so the search plate and the
+            // row cards share LEFT/RIGHT edges (they were 12 vs 8 — visibly misaligned).
+            searchField
+                .padding(.horizontal, 8)
+                .padding(.bottom, 6)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    if allRows.isEmpty {
+                        emptyLabel("No tabs open")
+                    } else if sections.isEmpty {
+                        emptyLabel("No matches")
+                    } else {
+                        ForEach(sections) { section in
+                            if let header = section.header {
+                                SlateSectionHeader(header)
+                            }
+                            ForEach(section.rows) { row in
+                                macRow(row)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 8)
+            }
+            .scrollIndicators(.hidden) // scrollbars stay invisible for the flat sidebar look
+            .frame(maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Slate.Surface.sidebar)
+    }
+
+    /// One macOS tab row: the full chrome (badge / subtitle / process label) plus the
+    /// drag-reorder source + drop target. The drop routes `reorderable` → `handleTabDrop` →
+    /// ``WorkspaceStore/moveTabRendered(from:to:)`` (the WYSIWYG, rendered-position entry the row uses); the
+    /// non-rendered ``WorkspaceStore/moveTab(from:to:)`` is only exercised by tests now.
+    private func macRow(_ row: RailRow) -> some View {
+        reorderable(
+            SlateTabRow(
+                title: row.title.isEmpty ? defaultTitle(for: row.kind) : row.title,
+                active: row.id == selectedPane,
+                subtitle: row.subtitle,
+                processLabel: row.processLabel,
+                badge: row.badge,
+                readOnly: row.readOnly,
+                isEditing: row.isEditing,
+                helpText: row.cwd,
+                onSelect: { select(row.id) },
+                onClose: { store.requestClosePaneTree(row.id) },
+                onRename: { commitRename(row, to: $0) },
+                onCancelRename: { store.clearTabRenameRequest() },
+            ),
+            row: row,
+        )
+        .contextMenu { rowContextMenu(row) }
+    }
+
+    private func emptyLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: Slate.Typeface.body))
+            .foregroundStyle(Slate.Text.secondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+    }
+    #else
+    /// iOS: a system `List(selection:)` so NavigationSplitView pushes to content on compact; themed to match. Gains
+    /// the system `.searchable` field (keeps the `List` as the column root so the navigation push is unchanged),
+    /// grouped `Section`s, badge, and drag reorder (E6 WI-5).
+    private var iosSidebar: some View {
+        let allRows = RailRowsBuilder.rows(for: store)
+        let sections = buildSections(allRows, query: query)
+        let selection = Binding<PaneID?>(
+            get: { selectedPane },
+            set: { if let paneID = $0 { select(paneID) } },
+        )
+        return List(selection: selection) {
+            if allRows.isEmpty {
+                Label("No tabs open", systemSymbol: .squareSplit2x1)
+                    .foregroundStyle(Slate.Text.secondary)
+            } else if sections.isEmpty {
+                Label("No matches", systemSymbol: .magnifyingglass)
+                    .foregroundStyle(Slate.Text.secondary)
+            } else {
+                ForEach(sections) { section in
+                    Section(section.header ?? "Tabs") {
+                        ForEach(section.rows) { row in
+                            iosRow(row)
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .background(Slate.Surface.sidebar)
+        .tint(Slate.State.accent)
+        .searchable(text: $query, prompt: "Search tabs")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { store.openChooserPane(.newTab) } label: { Image(systemSymbol: .plus) }
+            }
+        }
+    }
+
+    /// One iOS list row: the system `Label` (navigation wiring via `.tag`) plus the trailing fused badge,
+    /// and the same drag-reorder source/target as macOS.
+    private func iosRow(_ row: RailRow) -> some View {
+        reorderable(
+            HStack(spacing: 8) {
+                Label {
+                    if row.isEditing {
+                        iosRenameField(row)
+                    } else {
+                        Text(row.title.isEmpty ? defaultTitle(for: row.kind) : row.title)
+                            .lineLimit(1)
+                    }
+                } icon: {
+                    Image(systemSymbol: Self.symbol(for: row.kind))
+                }
+                Spacer(minLength: 6)
+                if row.readOnly {
+                    Image(systemSymbol: .lockFill)
+                        .font(.system(size: Slate.Typeface.small, weight: .semibold))
+                        .foregroundStyle(Slate.Text.secondary)
+                        .accessibilityLabel("Read only")
+                }
+                if let badge = row.badge {
+                    TabBadgeView(kind: badge)
+                }
+            }
+            .tag(row.id),
+            row: row,
+        )
+        .contextMenu { rowContextMenu(row) }
+    }
+
+    /// The iOS inline-rename field (C3 BUG B) — commits the pane rename + clears the pending state on
+    /// submit/blur (escape is macOS-only). Reuses ``commitRename(_:to:)`` so the iOS + macOS paths share the
+    /// same commit semantics (rename the pane so the row title wins, then dismiss the field).
+    private func iosRenameField(_ row: RailRow) -> some View {
+        InlineRenameField(seed: row.title.isEmpty ? defaultTitle(for: row.kind) : row.title) { text in
+            commitRename(row, to: text)
+        } onCancel: {
+            store.clearTabRenameRequest()
+        }
+    }
+    #endif
+
     /// Commit an inline row rename (C3 BUG B): rename the pane (so ``RailRowsBuilder/rowTitle`` — which reads
     /// the pane spec — surfaces it, winning over the folder name) then clear the pending state so the field
     /// closes. A blank draft renames nothing (``WorkspaceStore/renamePane(_:to:)`` no-ops), keeping the folder
-    /// name; the pending state still clears so the field dismisses.
+    /// name; the pending state still clears so the field dismisses. Shared across the macOS + iOS row builders
+    /// (outside the platform guards) so both paths land the same commit semantics.
     private func commitRename(_ row: RailRow, to text: String) {
         store.renamePane(row.id, to: text)
         store.clearTabRenameRequest()
@@ -334,9 +365,11 @@ struct NavigatorColumn: View {
     /// default); the two NOTIFY items toggle the GLOBAL fire-time keys (notify preferences are global, not
     /// per-pane). Claude-only.
     /// **Prevent Sleep While Processing** (Batch 4) is a host-LOCAL `AgentPreferences` flag living in
-    /// `PreferencesStore` (it rides the sidecar → applies on reconnect; default-OFF), bound to the SAME global
-    /// `agent.preventSleep` Settings → Agent Behaviour edits. A `nil` store (preview / pre-injection) simply
-    /// hides the row.
+    /// `PreferencesStore` (it rides the sidecar → applies on reconnect; default-OFF). It is surfaced here only
+    /// when the store is threaded in (the split-view host now does), bound to the SAME global `agent.preventSleep`
+    /// Settings → Agent Behaviour edits — the tab menu lists it too (see
+    /// `docs/ui-shell/screenshots/open-code-agent-history.png`). A `nil` store
+    /// (preview / pre-injection) simply hides the row.
     @ViewBuilder
     private func rowContextMenu(_ row: RailRow) -> some View {
         // C3 BUG B: a mouse-reachable "Rename" — sets the pending-rename for THIS row's tab so its inline
@@ -346,8 +379,6 @@ struct NavigatorColumn: View {
         if row.kind == .terminal {
             Button("Refresh Git Status") { store.refreshGitSummary(for: row.id) }
         }
-        // The mouse-reachable close (twin of the row's hover `×` and ⌘W on the focused pane).
-        Button("Close Tab", role: .destructive) { store.requestClosePaneTree(row.id) }
         Divider()
         Button("Clear Badge") { store.clearAgentBadge(row.id) }
         Divider()
@@ -423,107 +454,10 @@ struct NavigatorColumn: View {
         PaneChooserRegistry.option(for: kind).title
     }
 
-    /// Type-safe SF Symbol for a pane kind. Reads the symbol *name* from the shared
-    /// ``PaneChooserRegistry`` and wraps it in a type-safe `SFSymbol`.
+    /// Type-safe SF Symbol for a pane kind (iOS rows only; macOS rows are name-only). Reads the
+    /// symbol *name* from the shared ``PaneChooserRegistry`` and wraps it in a type-safe `SFSymbol`.
     private static func symbol(for kind: PaneKind) -> SFSymbol {
         SFSymbol(rawValue: PaneChooserRegistry.option(for: kind).symbol)
-    }
-}
-
-/// One native sidebar row: a system `Label` (icon + title, an optional muted subtitle line) with the
-/// trailing status cluster — the read-only lock, the fused ``TabBadgeView`` badge, and the foreground-
-/// process label on the ACTIVE row — and a hover-revealed close `×` (macOS). Selection/hover chrome is
-/// the SYSTEM list selection (no custom card/plate). Inline rename swaps the title for the shared
-/// committing ``InlineRenameField``.
-private struct NavigatorRow: View {
-    let row: RailRow
-    let title: String
-    let active: Bool
-    let symbol: SFSymbol
-    var onClose: () -> Void
-    var onRename: (String) -> Void
-    var onCancelRename: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Label {
-                VStack(alignment: .leading, spacing: 1) {
-                    if row.isEditing {
-                        InlineRenameField(seed: title, onCommit: onRename, onCancel: onCancelRename)
-                    } else {
-                        Text(title).lineLimit(1)
-                    }
-                    if let subtitle = row.subtitle, !subtitle.isEmpty {
-                        Text(subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-            } icon: {
-                #if os(macOS)
-                if row.kind == .remoteGUI, let icon = AppIconResolver.icon(bundleID: row.bundleID) {
-                    // A Windows row shows the HOST app's real icon (resolved locally from the endpoint's
-                    // bundleID — both ends are Macs), the Mail-account/Finder-favorite source-list idiom.
-                    Image(nsImage: icon)
-                        .resizable()
-                        .interpolation(.high)
-                        .scaledToFit()
-                        .frame(width: 18, height: 18)
-                } else {
-                    Image(systemSymbol: symbol)
-                }
-                #else
-                Image(systemSymbol: symbol)
-                #endif
-            }
-            Spacer(minLength: 4)
-            if !row.isEditing {
-                trailingMeta
-                    .opacity(hovering ? 0 : 1)
-            }
-        }
-        #if os(macOS)
-        .overlay(alignment: .trailing) {
-            if hovering, !row.isEditing {
-                Button(action: onClose) {
-                    Image(systemSymbol: .xmark)
-                        .font(.caption2.weight(.medium))
-                }
-                .buttonStyle(.borderless)
-                .help("Close Tab")
-                .accessibilityLabel("Close Tab")
-            }
-        }
-        #endif
-        .onHover { hovering = $0 }
-        .help(row.cwd ?? "")
-    }
-
-    /// The trailing status cluster: the read-only lock (if locked), the fused `badge` (if any), then the
-    /// foreground-process label on the ACTIVE row — all muted, right-aligned. Fades under the hover `×`.
-    private var trailingMeta: some View {
-        HStack(spacing: 6) {
-            if row.readOnly {
-                Image(systemSymbol: .lockFill)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("Read only")
-                    .help("Read only")
-            }
-            if let badge = row.badge {
-                TabBadgeView(kind: badge, progress: row.progress)
-            }
-            if active, let processLabel = row.processLabel, !processLabel.isEmpty {
-                Text(processLabel)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        }
     }
 }
 
@@ -564,7 +498,7 @@ private struct ReorderableRow<Content: View>: View {
             .dropDestination(for: String.self) { items, _ in onDrop(items) } isTargeted: { isTargeted = $0 }
             .overlay(alignment: .top) {
                 Rectangle()
-                    .fill(Color.accentColor)
+                    .fill(Slate.State.accent)
                     .frame(height: TabReorderInsertionLine.thickness)
                     .opacity(showsInsertionLine ? 1 : 0)
                     .animation(.easeOut(duration: 0.12), value: showsInsertionLine)
@@ -573,7 +507,7 @@ private struct ReorderableRow<Content: View>: View {
     }
 }
 
-/// A small self-focusing inline rename `TextField` (C3 BUG B) — owns its own draft `@State` so
+/// A small self-focusing inline rename `TextField` (C3 BUG B, iOS list rows) — owns its own draft `@State` so
 /// a `@ViewBuilder` row helper (which cannot hold state) can drop it in. Seeds from `seed` on open, commits on
 /// Return / focus-loss (`onCommit`), and — on macOS only — cancels on Escape (`onCancel`). A blank commit is a
 /// no-op rename downstream, so the field never blanks the row.

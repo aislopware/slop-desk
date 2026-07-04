@@ -90,13 +90,6 @@ struct ClientAppMain {
                     onInputReleaseReady: paneContext.onInputReleaseReady,
                     onWindowGeometryReady: paneContext.onWindowGeometryChanged,
                     onStreamCadenceReady: paneContext.onStreamCadenceChanged,
-                    onStreamStallChanged: paneContext.onStreamStallChanged,
-                    // Design-craft pass (2026-07-04): the theme letterbox tint (destructured to a plain
-                    // tuple — the video client never sees the seam's `VideoPaneTint` type), the first-
-                    // frame fade latch, and the ~1 Hz stats-HUD sample.
-                    letterboxTint: paneContext.letterboxTint.map { ($0.red, $0.green, $0.blue) },
-                    onFirstFramePresented: paneContext.onFirstFramePresented,
-                    onVideoStats: paneContext.onVideoStats,
                 ))
             }
             return AnyView(VideoWindowView(title: descriptor.title))
@@ -122,7 +115,6 @@ struct ClientAppMain {
                         title: $0.title,
                         width: $0.width,
                         height: $0.height,
-                        bundleID: $0.bundleID,
                     )
                 }
             }

@@ -3,8 +3,8 @@
 // results *tab*, which we do not add to avoid blast-radius across every `switch PaneKind` site).
 // Presented as a NATIVE `.sheet` by ``OverlayHostView`` — a large results window on macOS (system chrome).
 //
-// Anatomy matches `screenshots/global-search.png` (NATIVE styling — system semantic colors + system text
-// styles; the sheet supplies the window chrome):
+// Anatomy matches `screenshots/global-search.png` (`Slate.*` tokens ONLY — raw font / colour / radius literals
+// fail `scripts/check-ds-leaks.sh`):
 //   ┌ query field [ Aa ][ .* ] ────────────────────────────────────────┐
 //   │ N results — M tabs                                               │
 //   │ ▸ <terminal-glyph> <group title (tab)>                           │
@@ -51,12 +51,12 @@ struct GlobalSearchView: View {
     @FocusState private var queryFocused: Bool
 
     // Platform mode-pill plate size — MUST match ``TerminalFindBar``'s `plate` exactly (34 on iOS for the touch
-    // target, the 24pt control plate on macOS) so the locked invariant "the find bar and the global-search query
+    // target, `Slate.Metric.plate` on macOS) so the locked invariant "the find bar and the global-search query
     // bar render the pills IDENTICALLY" holds on BOTH platforms. Threaded into each ``FindTogglePill`` below.
     #if os(iOS)
     private let plate: CGFloat = 34
     #else
-    private let plate: CGFloat = 24
+    private let plate: CGFloat = Slate.Metric.plate
     #endif
 
     var body: some View {
@@ -89,23 +89,28 @@ struct GlobalSearchView: View {
     private var queryBar: some View {
         // No leading magnifier — the query text is flush-left per global-search.png. No in-bar `×` either: the
         // overlay's dismiss affordance is Esc (`onExitCommand` / `.onKeyPress(.escape)` on the surface).
-        HStack(spacing: 8) {
+        HStack(spacing: Slate.Metric.space2) {
             TextField("Search across all tabs…", text: queryBinding)
                 .textFieldStyle(.plain)
-                .font(.body)
-                .foregroundStyle(.primary)
-                .tint(Color.accentColor) // the active caret is the accent colour
+                .font(.system(size: Slate.Typeface.body))
+                .foregroundStyle(Slate.Text.primary)
+                .tint(Slate.State.accent) // the active caret is the accent colour
                 .focused($queryFocused)
                 // The query text sits inside a FILLED, hairline-bordered rounded plate (global-search.png): a
-                // subtle `Color.primary.opacity(0.05)` inset fill + a `.separator` hairline, so the field reads
-                // as a native input plate on the sheet background in light AND dark. The `Aa` / `.*` pills stay
-                // OUTSIDE this plate (siblings in the HStack).
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 4))
+                // `Surface.card` fill + `radiusSmall` + its own `Line.subtle` hairline, because this overlay's
+                // field sits on bare `Surface.window` and needs the ring to read as a field plate. The find bar's
+                // sibling field (`TerminalFindBar.queryField`) ALSO wears a `Line.subtle` hairline now (Batch-5b),
+                // but its FILL is `State.selected`, not `Surface.card` — that fill difference is the INTENTIONAL
+                // context delta (the find-bar field sits on the elevated, borderless `Surface.element` card whose
+                // `State.selected` wash inverts contrast by theme, so the hairline delineates it regardless of
+                // direction). The two fills stay context-specific; both fields are hairline-delineated and
+                // screenshot-faithful. The `Aa` / `.*` pills stay OUTSIDE this plate (siblings in the HStack).
+                .padding(.horizontal, Slate.Metric.space2)
+                .padding(.vertical, Slate.Metric.space1)
+                .background(Slate.Surface.card, in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(.separator, lineWidth: 1),
+                    RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
+                        .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
                 )
             // The mode pills render as INDIVIDUALLY-OUTLINED chips (each its own resting plate + hairline,
             // gaps between — NO shared backing tray) per global-search.png. ``FindTogglePillTray`` is the EXACT
@@ -121,7 +126,7 @@ struct GlobalSearchView: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, Slate.Metric.space4)
         .frame(height: 48)
     }
 
@@ -130,10 +135,11 @@ struct GlobalSearchView: View {
     @ViewBuilder private var summaryLine: some View {
         if let results = store.globalSearch, !query.trimmingCharacters(in: .whitespaces).isEmpty {
             Text(results.summary)
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .font(.system(size: Slate.Typeface.footnote))
+                .monospacedDigit()
+                .foregroundStyle(Slate.Text.secondary)
+                .padding(.horizontal, Slate.Metric.space4)
+                .padding(.vertical, Slate.Metric.space2)
         }
     }
 
@@ -156,7 +162,7 @@ struct GlobalSearchView: View {
                     }
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, Slate.Metric.space1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -166,10 +172,10 @@ struct GlobalSearchView: View {
         Text(query.trimmingCharacters(in: .whitespaces).isEmpty
             ? "Search every tab’s scrollback."
             : "No results.")
-            .font(.body)
-            .foregroundStyle(.tertiary)
+            .font(.system(size: Slate.Typeface.body))
+            .foregroundStyle(Slate.Text.tertiary)
             .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, 16)
+            .padding(.vertical, Slate.Metric.space4)
     }
 
     // MARK: - Group header (one per tab/pane)
@@ -181,14 +187,14 @@ struct GlobalSearchView: View {
         // header row toggles the group (a disclosure-row idiom). (No ⌘ordinal badge: the ⌘1/⌘2/⌘3 numbers
         // in the screenshot are SIDEBAR tab numbers, not group headers.)
         let collapsed = collapse.isCollapsed(group.paneID)
-        return HStack(spacing: 8) {
+        return HStack(spacing: Slate.Metric.space2) {
             // The disclosure control: a right-chevron when collapsed, a down-chevron when expanded — the
             // checkbox-style expand/collapse affordance the spec puts to the LEFT of the header. Sized to the
             // footnote metric so it sits flush with the terminal glyph + title on the same baseline.
             Image(systemSymbol: collapsed ? .chevronRight : .chevronDown)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 13, alignment: .center)
+                .font(.system(size: Slate.Typeface.small, weight: .semibold))
+                .foregroundStyle(Slate.Text.secondary)
+                .frame(width: Slate.Typeface.body, alignment: .center)
             // `.appleTerminal` (rawValue "apple.terminal") renders the `>_` PROMPT-BOX terminal glyph that
             // global-search.png shows — it is NOT an Apple-logo mark (verified by rendering the symbol). It is
             // the CURRENT, non-deprecated name; the bare `.terminal` case is the SAME glyph under its old name,
@@ -197,17 +203,17 @@ struct GlobalSearchView: View {
             // future "this is Apple-branded, switch to `.terminal`" flag is already-resolved — both are the `>_`
             // box; `.appleTerminal` is the non-deprecated spelling.
             Image(systemSymbol: .appleTerminal)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.secondary)
             Text(group.groupTitle)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
+                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                .foregroundStyle(Slate.Text.primary)
                 .lineLimit(1)
-            Spacer(minLength: 8)
+            Spacer(minLength: Slate.Metric.space2)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 4)
+        .padding(.horizontal, Slate.Metric.space4)
+        .padding(.top, Slate.Metric.space3)
+        .padding(.bottom, Slate.Metric.space1)
         .contentShape(Rectangle())
         .onTapGesture { collapse.toggle(group.paneID) }
         .accessibilityAddTraits(.isButton)
@@ -237,16 +243,16 @@ struct GlobalSearchView: View {
             low <= high
         else {
             var flat = AttributedString(excerpt)
-            flat.foregroundColor = Color.secondary
+            flat.foregroundColor = Slate.Text.secondary
             return flat
         }
         var before = AttributedString(String(excerpt[excerpt.startIndex..<low]))
-        before.foregroundColor = Color.secondary
+        before.foregroundColor = Slate.Text.secondary
         var match = AttributedString(String(excerpt[low..<high]))
-        match.foregroundColor = Color.primary
-        match.backgroundColor = Color.orange.opacity(0.35)
+        match.foregroundColor = Slate.Text.primary
+        match.backgroundColor = Slate.Status.warn.opacity(0.35)
         var after = AttributedString(String(excerpt[high...]))
-        after.foregroundColor = Color.secondary
+        after.foregroundColor = Slate.Text.secondary
         return before + match + after
     }
 
@@ -292,19 +298,19 @@ private struct GlobalSearchHitRow: View {
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Slate.Metric.space2) {
             Text(excerpt)
-                .font(.body.monospaced())
+                .font(.system(size: Slate.Typeface.body, design: .monospaced))
                 .lineLimit(1)
                 .truncationMode(.tail)
-            Spacer(minLength: 8)
+            Spacer(minLength: Slate.Metric.space2)
             // Horizontal → (global-search.png), hover-revealed: visible only on the row under the pointer.
             Image(systemSymbol: .arrowRight)
-                .font(.subheadline)
-                .foregroundStyle(.tertiary)
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.tertiary)
                 .opacity(hovering ? 1 : 0)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, Slate.Metric.space4)
         .frame(height: 26)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())

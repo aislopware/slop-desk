@@ -323,17 +323,11 @@ root["videoControl"] = [
     vc("keepalive", .keepalive, [:]),
     vc("listWindows", .listWindows, [:]),
     vc("windowList", .windowList([
-        WindowSummary(
-            windowID: 1, appName: "Google Chrome", title: "Tab — Title", width: 1200, height: 800,
-            bundleID: "com.google.Chrome",
-        ),
-        WindowSummary(windowID: 2, appName: "Terminal", title: "", width: 80, height: 24, bundleID: ""),
+        WindowSummary(windowID: 1, appName: "Google Chrome", title: "Tab — Title", width: 1200, height: 800),
+        WindowSummary(windowID: 2, appName: "Terminal", title: "", width: 80, height: 24),
     ]), ["windows": [
-        [
-            "windowID": 1, "appName": "Google Chrome", "title": "Tab — Title", "width": 1200, "height": 800,
-            "bundleID": "com.google.Chrome",
-        ],
-        ["windowID": 2, "appName": "Terminal", "title": "", "width": 80, "height": 24, "bundleID": ""],
+        ["windowID": 1, "appName": "Google Chrome", "title": "Tab — Title", "width": 1200, "height": 800],
+        ["windowID": 2, "appName": "Terminal", "title": "", "width": 80, "height": 24],
     ]]),
     vc("focusWindow", .focusWindow, [:]),
     vc("streamCadence", .streamCadence(fps: 60), ["fps": 60]),

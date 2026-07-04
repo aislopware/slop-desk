@@ -30,9 +30,7 @@
 //
 // PLATFORM: cross-platform (compiled on iOS too). The installed-font enumeration goes through CoreText
 // (`CTFontManagerCopyAvailableFontFamilyNames`), nonisolated + cross-platform — no AppKit/UIKit, no
-// MainActor hop. NATIVE styling (native-chrome migration, 2026-07-03): system semantic colors + text
-// styles for the chrome; `.custom(family, …)` stays ONLY in the "Aa" specimens, which preview the actual
-// terminal font by design.
+// MainActor hop. Slate.* tokens only (no raw font/radius literals — `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import AislopdeskVideoProtocol
@@ -79,11 +77,11 @@ struct FontSettingsView: View {
 
     /// The "Settings for" label + the pill row of scope tabs (Computed / Global / Light / Dark / Fallback).
     private var scopeTabs: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
             Text("Settings for")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 8) {
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.secondary)
+            HStack(spacing: Slate.Metric.space2) {
                 ForEach(FontScope.allCases) { tab in scopePill(tab) }
             }
         }
@@ -93,14 +91,12 @@ struct FontSettingsView: View {
         let selected = tab == scope
         return Button { scope = tab } label: {
             Text(tab.label)
-                .font(.subheadline)
-                // Selected = inverted pill (system-background text on a primary fill) — native semantics,
-                // no theme surface/text tokens.
-                .foregroundStyle(selected ? AnyShapeStyle(.background) : AnyShapeStyle(.secondary))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(selected ? Color.primary : Color.clear))
-                .overlay(Capsule().strokeBorder(.separator, lineWidth: selected ? 0 : 1))
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(selected ? Slate.Surface.window : Slate.Text.secondary)
+                .padding(.horizontal, Slate.Metric.space3)
+                .padding(.vertical, Slate.Metric.space1)
+                .background(Capsule().fill(selected ? Slate.Text.primary : Color.clear))
+                .overlay(Capsule().strokeBorder(Slate.Line.subtle, lineWidth: selected ? 0 : 1))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -134,8 +130,8 @@ struct FontSettingsView: View {
         case .computed:
             LabeledContent("Font Family") {
                 Text(computedFamily)
-                    .font(.body.monospaced())
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: Slate.Typeface.body, design: .monospaced))
+                    .foregroundStyle(Slate.Text.secondary)
             }
         case .global:
             globalFamilyEditors
@@ -201,10 +197,10 @@ struct FontSettingsView: View {
             }
             if lineHeightChoiceBinding.wrappedValue == .custom {
                 LabeledContent("Multiplier") {
-                    HStack(spacing: 8) {
+                    HStack(spacing: Slate.Metric.space2) {
                         Slider(value: customMultiplierBinding, in: 0.8...2.0, step: 0.05)
                         Text(String(format: "%.2f×", customMultiplier))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Slate.Text.secondary)
                             .monospacedDigit()
                     }
                 }
@@ -361,30 +357,30 @@ struct FontSettingsView: View {
     /// A muted footnote note (a gray contextual line).
     private func note(_ text: String) -> some View {
         Text(text)
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
+            .font(.system(size: Slate.Typeface.footnote))
+            .foregroundStyle(Slate.Text.secondary)
             .fixedSize(horizontal: false, vertical: true)
     }
 
     /// The red/amber-tinted banner styling (`font-setting-bold.png`), reused for the Global-scope
     /// precedence call-out (a per-theme font can override Global).
     private func warnNote(_ text: String) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Slate.Metric.space1) {
             Image(systemSymbol: .exclamationmarkTriangle)
             Text(text)
         }
-        .font(.subheadline)
-        .foregroundStyle(.orange)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .font(.system(size: Slate.Typeface.footnote))
+        .foregroundStyle(Slate.Status.warn)
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.vertical, Slate.Metric.space1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(Color.orange.opacity(0.12)),
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
+                .fill(Slate.Status.warn.opacity(0.12)),
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .strokeBorder(Color.orange.opacity(0.4), lineWidth: 1),
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
+                .strokeBorder(Slate.Status.warn.opacity(0.4), lineWidth: 1),
         )
     }
 }
@@ -439,30 +435,30 @@ private struct FontFamilyComboBox: View {
     @State private var query = ""
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Slate.Metric.space1) {
             TextField(placeholder, text: $selection)
                 .textFieldStyle(.plain)
-                .font(.body)
+                .font(.system(size: Slate.Typeface.body))
                 .frame(minWidth: 150, alignment: .leading)
             Button {
                 showingList.toggle()
             } label: {
                 Image(systemSymbol: .chevronUpChevronDown)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: Slate.Typeface.small))
+                    .foregroundStyle(Slate.Text.tertiary)
             }
             .buttonStyle(.plain)
             .popover(isPresented: $showingList, arrowEdge: .bottom) { specimenList }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.vertical, Slate.Metric.space1)
         .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.primary.opacity(0.05)),
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl, style: .continuous)
+                .fill(Slate.Surface.element),
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(.separator, lineWidth: 1),
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl, style: .continuous)
+                .strokeBorder(Slate.Line.subtle, lineWidth: 1),
         )
     }
 
@@ -470,16 +466,16 @@ private struct FontFamilyComboBox: View {
     /// per-row "Aa" renders in the actual font (menu items flatten custom fonts).
     private var specimenList: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: Slate.Metric.space2) {
                 Image(systemSymbol: .magnifyingglass)
-                    .font(.subheadline)
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.tertiary)
                 TextField("Search fonts", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.callout)
+                    .font(.system(size: Slate.Typeface.base))
             }
-            .padding(8)
-            Divider()
+            .padding(Slate.Metric.space2)
+            Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(filtered, id: \.self) { family in
@@ -487,16 +483,15 @@ private struct FontFamilyComboBox: View {
                     }
                     if filtered.isEmpty {
                         Text("No matching fonts on this device.")
-                            .font(.subheadline)
-                            .foregroundStyle(.tertiary)
-                            .padding(8)
+                            .font(.system(size: Slate.Typeface.footnote))
+                            .foregroundStyle(Slate.Text.tertiary)
+                            .padding(Slate.Metric.space2)
                     }
                 }
             }
         }
-        // No explicit background fill — the native popover supplies its own system material, which is the
-        // point of the native-chrome migration (the old `Slate.Surface.window` fill pinned the theme color).
         .frame(width: 280, height: 320)
+        .background(Slate.Surface.window)
     }
 
     private func specimenRow(_ family: String) -> some View {
@@ -504,22 +499,22 @@ private struct FontFamilyComboBox: View {
             selection = family
             showingList = false
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: Slate.Metric.space2) {
                 Text("Aa")
-                    .font(.custom(family, size: 13))
+                    .font(.custom(family, size: Slate.Typeface.body))
                     .frame(width: 28, alignment: .leading)
                 Text(family)
-                    .font(.body)
-                    .foregroundStyle(.primary)
+                    .font(.system(size: Slate.Typeface.body))
+                    .foregroundStyle(Slate.Text.primary)
                 Spacer(minLength: 0)
                 if family == selection {
                     Image(systemSymbol: .checkmark)
-                        .font(.subheadline)
-                        .foregroundStyle(Color.accentColor)
+                        .font(.system(size: Slate.Typeface.footnote))
+                        .foregroundStyle(Slate.State.accent)
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.horizontal, Slate.Metric.space2)
+            .padding(.vertical, Slate.Metric.space1)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(.rect)
         }
@@ -549,30 +544,30 @@ private struct FallbackListEditor: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Slate.Metric.space2) {
             if entries.isEmpty {
                 Text("No fallback fonts.")
-                    .font(.subheadline)
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.tertiary)
             } else {
                 ForEach(Array(entries.enumerated()), id: \.offset) { index, family in
-                    HStack(spacing: 8) {
+                    HStack(spacing: Slate.Metric.space2) {
                         Text("Aa")
-                            .font(.custom(family, size: 13))
+                            .font(.custom(family, size: Slate.Typeface.body))
                             .frame(width: 28, alignment: .leading)
                         Text(family)
-                            .font(.body)
+                            .font(.system(size: Slate.Typeface.body))
                         Spacer(minLength: 0)
                         Button { remove(at: index) } label: {
                             Image(systemSymbol: .minusCircle)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(Slate.Text.tertiary)
                         }
                         .buttonStyle(.plain)
                         .help("Remove fallback font")
                     }
                 }
             }
-            HStack(spacing: 8) {
+            HStack(spacing: Slate.Metric.space2) {
                 FontFamilyComboBox(selection: $draft, placeholder: "Add a fallback font")
                 Button("Add") { add() }
                     .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
