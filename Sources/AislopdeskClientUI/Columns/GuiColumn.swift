@@ -24,8 +24,8 @@ struct GuiColumn: View {
     var body: some View {
         paneArea
             // CARD-ON-GLASS (2026-07-04 v3): no padding here — macDetail pads the whole detail region
-            // by half the gap (column seam == in-split gap); the remote-window card floats on the shared
-            // `WindowGlassBackdrop` and TOP-ALIGNS with the terminal card (no header band above it).
+            // by half the gap (column seam == in-split gap); the remote-window card floats on the
+            // window's own system glass (the transparent detail) and TOP-ALIGNS with the terminal card.
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

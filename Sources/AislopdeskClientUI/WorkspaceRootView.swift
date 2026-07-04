@@ -356,11 +356,12 @@ public struct WorkspaceRootView: View {
         // with each leaf's half-gap inset, the window-edge margin, the in-split card gap AND the
         // column seam all resolve to `paneGap` (padding inside the columns doubled the seam to ~2×).
         .padding(Slate.Metric.paneGap / 2)
-        // The WHOLE detail — both columns and the divider band — renders on ONE native glass surface
-        // (the sidebar/header material), so the window reads as a single continuous liquid-glass
-        // backdrop with the themed pane cards floating on it. Deliberately NOT a theme colour (the v1
-        // card-canvas depth-read failure).
-        .background(WindowGlassBackdrop())
+        // NO background here — the detail stays TRANSPARENT so the window's OWN glass shows through:
+        // a NavigationSplitView window already hosts one window-spanning NSVisualEffectView
+        // (`.contentBackground`, behind-window) that the sidebar/titlebar sit on, so the canvas,
+        // sidebar surround and header band are literally the same surface (see WindowGlassBackdrop.swift
+        // for the hierarchy dump; custom VEVs here could never colour-match it). Deliberately NOT a
+        // theme colour either (the v1 card-canvas depth-read failure).
         .animation(.easeInOut(duration: 0.2), value: chrome.guiCollapsed)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width

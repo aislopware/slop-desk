@@ -28,8 +28,9 @@ struct ContentColumn: View {
         paneArea
             // CARD-ON-GLASS (2026-07-04 v3): no padding here — the DETAIL region pads by half the
             // inter-card gap around BOTH columns (WorkspaceRootView), so the column seam equals the
-            // in-split card gap instead of doubling up. The cards float on the NATIVE window glass,
-            // never a theme backdrop (macDetail renders the shared `WindowGlassBackdrop`).
+            // in-split card gap instead of doubling up. The cards float on the window's OWN glass
+            // (macOS: the split view's window-spanning system VEV shows through the transparent detail;
+            // iOS: `WindowGlassBackdrop`) — never a theme backdrop.
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
