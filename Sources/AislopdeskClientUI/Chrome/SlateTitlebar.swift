@@ -70,13 +70,15 @@ struct SlateTitlebar: View {
         return ZStack(alignment: .top) {
             // Left: the sidebar REOPEN button, live only while the sidebar is collapsed (the expanded-state
             // toggle sits inside the sidebar itself — `NavigatorColumn`'s traffic-light strip). Fixed lead 80
-            // clears the traffic lights; it fades in only AFTER the collapse settles (delay), so it never
-            // flashes at the wide-content position mid-slide.
+            // clears the traffic lights. Each direction shows the button only in its SETTLED state: it fades
+            // in only AFTER the collapse slide settles (delay), and on expand it hides INSTANTLY (`nil`
+            // animation) the moment the flag flips — anchored to the sliding content, a fade-out would RIDE
+            // the expand slide rightward (x 80→300) and read as a flash.
             PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
                 .opacity(sidebarVisible ? 0 : 1)
                 .allowsHitTesting(!sidebarVisible)
                 .padding(.leading, 80)
-                .animation(Slate.Anim.standard.delay(sidebarVisible ? 0 : 0.15), value: sidebarVisible)
+                .animation(sidebarVisible ? nil : Slate.Anim.standard.delay(0.15), value: sidebarVisible)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, rowTop)
 
