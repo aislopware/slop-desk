@@ -74,20 +74,10 @@ struct NavigatorColumn: View {
         RailRowsBuilder.filtered(allRows.filter { $0.kind == .remoteGUI }, query: query)
     }
 
-    /// The per-pane live remote-window model (app name / streaming / stall state) — the same
+    /// The per-pane live remote-window model (the owning app name for the subtitle) — the same
     /// store-registry lookup ``ConnectionTelemetry`` uses, per row instead of active-only.
     private func remoteModel(for row: RailRow) -> RemoteWindowModel? {
         (store.handle(for: row.id) as? LivePaneSession)?.remoteWindow
-    }
-
-    /// The WINDOWS row's leading identity monogram (the C2 identity system at row scale): hash-hue from
-    /// the owning app, saturation = actually streaming and not stalled (MERIDIAN L1 — colour is live
-    /// data; a stalled/closed stream's plate drains to grayscale).
-    private func identityMonogram(for row: RailRow) -> SlateMonogram {
-        let model = remoteModel(for: row)
-        let streaming = model?.active != nil && model?.isStreamStalled != true
-        let identity = model?.appName.isEmpty == false ? model?.appName ?? row.title : row.title
-        return SlateMonogram(identity: identity, live: streaming)
     }
 
     var body: some View {
@@ -348,8 +338,9 @@ struct NavigatorColumn: View {
     }
 
     /// One macOS WINDOWS row (MERIDIAN C4): the SAME `SlateTabRow` chrome as a tab row (rename / badge /
-    /// hover close / context menu all included) plus the leading identity monogram, with the owning APP
-    /// as the instrument-voice subtitle. NOT wrapped `reorderable` — manual order is a TABS affordance.
+    /// hover close / context menu all included) — name-first like every other row (the thumbnail, then
+    /// the monogram, were both pruned by user verdict); the owning APP is the instrument-voice subtitle.
+    /// NOT wrapped `reorderable` — manual order is a TABS affordance.
     private func windowRow(_ row: RailRow) -> some View {
         let model = remoteModel(for: row)
         return SlateTabRow(
@@ -361,7 +352,6 @@ struct NavigatorColumn: View {
             readOnly: row.readOnly,
             isEditing: row.isEditing,
             helpText: row.cwd,
-            identityPlate: identityMonogram(for: row),
             onSelect: { select(row.id) },
             onClose: { store.requestClosePaneTree(row.id) },
             onRename: { commitRename(row, to: $0) },
