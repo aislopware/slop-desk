@@ -123,27 +123,10 @@ public final class RemoteWindowModel {
     }
 
     /// Re-arms the first-frame fade for a NEW stream bring-up (open / re-pick / self-heal rebuild) and
-    /// drops the stale stats sample — the HUD must not show the previous stream's numbers — plus the
-    /// stale ambient palette (the glow must not carry the previous window's colours).
+    /// drops the stale stats sample — the HUD must not show the previous stream's numbers.
     public func noteStreamRestarting() {
         hasDecodedFirstFrame = false
         videoStats = nil
-        ambientPalette = nil
-    }
-
-    // MARK: Ambient light (design-craft big-swing A, 2026-07-04)
-
-    /// The reduced bias-light palette of the CURRENT decoded frame (`nil` until the first sample, and
-    /// while nothing streams). Written ≤2 Hz from the live view's raw downsample push; the pane's glow
-    /// layer animates between values slowly, so the canvas light drifts like a TV bias light instead of
-    /// flickering with the content.
-    public private(set) var ambientPalette: AmbientPalette?
-
-    /// Reduces one raw frame-downsample push from the live view (see ``AmbientPalette/reduce(samples:)``)
-    /// and stores it. Equal palettes don't re-write (no spurious observation churn on a static frame).
-    public func noteAmbientSamples(_ samples: [VideoPaneTint]) {
-        guard let reduced = AmbientPalette.reduce(samples: samples), reduced != ambientPalette else { return }
-        ambientPalette = reduced
     }
 
     /// One ~1 Hz video-transport stats sample from the live view (design-craft pass, 2026-07-04): the

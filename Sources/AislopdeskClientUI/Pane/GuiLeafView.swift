@@ -238,9 +238,6 @@ struct GuiLeafView: View {
                             rttMS: rtt, framesReceived: received, fecRecovered: recovered, unrecovered: lost,
                         )
                     },
-                    // AMBIENT LIGHT (big-swing A): the renderer's ≤2 Hz live-frame downsample — the model
-                    // reduces it (AmbientPalette) and the pane's card bleeds the glow into the canvas.
-                    onAmbientColors: { [weak model] samples in model?.noteAmbientSamples(samples) },
                 ),
             )
             // FIRST-FRAME FADE-IN (design-craft pass, 2026-07-04): until the first decoded frame presents,
@@ -325,7 +322,7 @@ private struct StreamStallScrim: View {
                     .foregroundStyle(.secondary)
             }
             .padding(16)
-            .glassPanel(radius: 8, shadowRadius: 12)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         }
     }
 }
@@ -354,7 +351,7 @@ private struct VideoStatsHUD: View {
         .foregroundStyle(.primary)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .glassPanel(radius: 6, shadowRadius: 6)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Stream statistics: \(topLine)")
     }
@@ -600,7 +597,11 @@ private struct PasteFeedbackBanner: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .glassPanel(radius: 6, shadowRadius: 8)
+            .background(.regularMaterial, in: .rect(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(.separator, lineWidth: 1),
+            )
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

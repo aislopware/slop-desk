@@ -35,8 +35,6 @@ struct SplitContainer: View {
     /// terminal-grid / remote-window redraw fires once on commit, not per drag frame.
     @State private var move: PaneMoveDrag?
 
-    /// CINEMATIC NAVIGATION (design-craft big-swing C, 2026-07-04): tab switches spring instead of
-    /// hard-cutting. Gated off under Reduce Motion and on the static snapshot path.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// EVERY tab of every RETAINED session (the active session + the LRU-retained previous ones — see
@@ -82,7 +80,6 @@ struct SplitContainer: View {
             // one ZStack keyed per-tab (and per-`PaneID` within) has no identity collision.
             ZStack {
                 let ordered = tabs
-                let shownIndex = ordered.firstIndex { $0.id == shownTabID }
                 // CONTROL ROOM (big-swing B): while active, every mounted tab layer is transform-shrunk
                 // into a grid slot — LIVE cards (the terminals keep ticking), never a snapshot. Pure
                 // render transforms (scale anchored top-leading + offset), so entering/leaving the
@@ -94,26 +91,13 @@ struct SplitContainer: View {
                     let slot = slots.indices.contains(index) ? slots[index] : nil
                     tabLayer(tab, isShown: isShown, in: bounds)
                         .opacity(overview || isShown ? 1 : 0)
-                        // CINEMATIC NAVIGATION (big-swing C): a hidden tab PARKS slightly toward its rail
-                        // direction at 98.5% scale; revealing it springs it to identity, so a switch reads
-                        // as the new tab sliding in from where its sidebar row sits (down the rail ⇒ rises
-                        // in from below) while the old one recedes the opposite way. Pure render transforms
-                        // — the leaf frames never change, so no PTY/grid resize is ever triggered. Keyed on
-                        // `isShown`/overview only (divider drags / solver re-rects never animate through this).
                         .scaleEffect(
-                            overview ? (slot.map { $0.width / max(bounds.width, 1) } ?? 1)
-                                : (isShown ? 1 : 0.985),
+                            overview ? (slot.map { $0.width / max(bounds.width, 1) } ?? 1) : 1,
                             anchor: .topLeading,
                         )
                         .offset(
                             x: overview ? (slot?.minX ?? 0) : 0,
-                            y: overview
-                                ? (slot?.minY ?? 0)
-                                : (isShown ? 0 : Self.parkOffset(index: index, shownIndex: shownIndex)),
-                        )
-                        .animation(
-                            reduceMotion || staticMirror ? nil : .spring(duration: 0.3, bounce: 0.12),
-                            value: isShown,
+                            y: overview ? (slot?.minY ?? 0) : 0,
                         )
                         .animation(
                             reduceMotion || staticMirror ? nil : .spring(duration: 0.45, bounce: 0.14),
@@ -147,13 +131,6 @@ struct SplitContainer: View {
         let layout = SplitTreeRenderModel.layout(for: tab, in: bounds)
         let frames = Dictionary(layout.leaves.map { ($0.id, $0.rect) }, uniquingKeysWith: { a, _ in a })
         ZStack(alignment: .topLeading) {
-            // AMBIENT LIGHT (design-craft big-swing A, 2026-07-04): the tab's light field, drawn FIRST so
-            // every card sits above its own cast light — video panes bleed their live frame colours, busy
-            // terminals glow theme-accent (see `AmbientCanvasUnderlay`). Shown tab only (a hidden tab's
-            // layer is opacity-0 anyway; skipping it skips the per-leaf model reads too).
-            if isShown, !staticMirror {
-                AmbientCanvasUnderlay(store: store, leaves: layout.leaves)
-            }
             // EVERY pane — visible AND zoom-hidden — renders from ONE `ForEach` over
             // ``SplitTreeRenderModel/Layout/compositorLeaves``. `.id` only dedups WITHIN one `ForEach`, so
             // one keyed list keeps the zoom hidden↔visible flip within one collection and the hosted
@@ -233,15 +210,6 @@ struct SplitContainer: View {
         // libghostty surface / `.remoteGUI` stream survives the zoom toggle and un-zoom is a pure
         // visibility flip (no teardown, no lossy ring-replay).
         .opacity(entry.isHidden ? 0 : 1)
-        // CINEMATIC NAVIGATION (big-swing C): zoom-hidden siblings recede (fade + slight shrink) and
-        // return with a spring instead of blinking. Transform+opacity ONLY, keyed on the hidden flip —
-        // the leaf's rect/frame is never animated (an animated frame would storm the PTY grid-resize
-        // path), so the zoomed pane itself snaps to its new rect and settles.
-        .scaleEffect(entry.isHidden ? 0.96 : 1)
-        .animation(
-            reduceMotion || staticMirror ? nil : .spring(duration: 0.3, bounce: 0.1),
-            value: entry.isHidden,
-        )
         .allowsHitTesting(!entry.isHidden)
         .accessibilityHidden(entry.isHidden)
         .id(entry.id) // identity hazard: never reuse a surface across panes
@@ -297,15 +265,6 @@ struct SplitContainer: View {
             for tab in session.tabs { result[tab.id] = session.name }
         }
         return result
-    }
-
-    /// CINEMATIC NAVIGATION (big-swing C): where a hidden tab PARKS, relative to the shown tab's rail
-    /// position — above the shown tab ⇒ parked slightly up, below ⇒ slightly down, so the reveal always
-    /// slides in from the direction the user travelled in the sidebar. Pure + static (headlessly
-    /// testable); unknown indices park in place (no directional cue, still a clean cross-fade).
-    static func parkOffset(index: Int?, shownIndex: Int?, magnitude: CGFloat = 14) -> CGFloat {
-        guard let index, let shownIndex, index != shownIndex else { return 0 }
-        return index < shownIndex ? -magnitude : magnitude
     }
 
     /// Whether pane `paneID` (in `tab`) should own the renderer's keyboard focus — the guard that makes

@@ -81,18 +81,17 @@ struct ViModePill: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        // The shared theme-tinted glass shell, but with `ringed: false` — this pill draws its OWN ring so a
-        // visual selection can swap in the accent (below); plain navigation wears the standard glass ring tone.
-        .glassPanel(radius: 6, shadowRadius: 6, ringed: false)
+        .background(.regularMaterial, in: .rect(cornerRadius: 6))
         .overlay(
             // Plain navigation wears the same subtle hairline as the read-only pill; a visual selection swaps in
             // the accent ring so the "I am selecting" state is unmistakable beside the count.
             RoundedRectangle(cornerRadius: 6)
                 .strokeBorder(
-                    inVisualMode ? AnyShapeStyle(Color.accentColor.opacity(0.5)) : AnyShapeStyle(GlassPanel.ring),
+                    inVisualMode ? AnyShapeStyle(Color.accentColor.opacity(0.5)) : AnyShapeStyle(.separator),
                     lineWidth: 1,
                 ),
         )
+        .shadow(color: Color.black.opacity(0.25), radius: 4, x: 0, y: 1)
         .animation(.easeOut(duration: 0.12), value: model.viPendingCount)
         .animation(.easeOut(duration: 0.12), value: model.viVisualMode)
         // Belt-and-suspenders Escape dismiss (C5): the primary exit is the renderer's `keyDown` →
@@ -200,7 +199,12 @@ struct ViKeyHintBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .glassPanel(radius: 6, shadowRadius: 12)
+        .background(.regularMaterial, in: .rect(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(.separator, lineWidth: 1),
+        )
+        .shadow(color: Color.black.opacity(0.25), radius: 12, x: 0, y: 4)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Vi mode key hints")
     }

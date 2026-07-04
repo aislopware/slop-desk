@@ -110,11 +110,6 @@ struct NavigatorColumn: View {
             }
         }
         .listStyle(.sidebar)
-        // The oversized session MASTHEAD (visible-design pass, 2026-07-04): the one typographic flex —
-        // Linear's display idiom (big, tightly tracked) naming the active session, with its identity
-        // dot. Sits above the search field; a session switch re-renders name + hue together with the
-        // canvas wash, so the whole frame announces "you are HERE".
-        .safeAreaInset(edge: .top, spacing: 0) { sessionMasthead }
         // `.sidebar` placement pins the field at the TOP OF THE SIDEBAR column (the System-Settings
         // idiom) — the default placement floated it into the window toolbar's trailing edge, where it
         // ate half the unified toolbar.
@@ -200,25 +195,6 @@ struct NavigatorColumn: View {
             row: row,
         )
         .contextMenu { rowContextMenu(row) }
-    }
-
-    /// The sidebar's display-type masthead: the active session's name, oversized and tightly tracked
-    /// (the Linear register) — pure type, no ornament (restraint pass, 2026-07-04). Hidden when no
-    /// session exists (the empty state owns that moment).
-    @ViewBuilder private var sessionMasthead: some View {
-        if let session = store.tree.activeSession {
-            Text(session.name)
-                .font(.system(size: 23, weight: .bold))
-                .tracking(-0.6)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-                .padding(.bottom, 4)
-                .accessibilityAddTraits(.isHeader)
-        }
     }
 
     /// The sidebar toolbar: the native sort/group menu (writes the STORE — the single source of row

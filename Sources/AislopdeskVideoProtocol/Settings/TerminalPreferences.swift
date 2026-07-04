@@ -69,14 +69,11 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
 
     /// Cursor body-glide animation (`cursor.animation`).
     public enum CursorAnimation: String, Codable, Sendable, CaseIterable {
-        /// No animation — the caret jumps discretely (the libghostty default).
+        /// No animation — the caret jumps discretely (the libghostty default; also the default here).
         case off
-        /// A brief critically-damped motion TRAIL when the caret JUMPS (≥ 1.5× its own size — typing
-        /// never smears). DELIVERED (design-craft pass, 2026-07-04) via the ghostty 1.2 custom-shader
-        /// cursor uniforms: ``TerminalConfigBuilder`` materializes ``CursorTrailShader`` and emits a
-        /// `custom-shader` line. (E8 had deferred this as "no cursor-animation key in the fork" — the
-        /// 1.2 shader uniforms are the sanctioned hook.) NOW THE DEFAULT: the trail is the terminal's
-        /// signature moment, and its jump gate keeps it out of keystroke-frequency territory.
+        /// Glide the caret on same-row moves and add a small elastic overshoot on click / focus. A
+        /// CLIENT-side render layer (the pinned libghostty fork exposes no cursor-animation key, so the
+        /// glide is the documented ceiling, deferred — E8 DECISIONS); the value persists + surfaces today.
         case smooth
     }
 
@@ -94,21 +91,6 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
     public var cursorOpacity: Double
     /// Cursor glide animation (`cursor.animation`), default ``CursorAnimation/off``.
     public var cursorAnimation: CursorAnimation
-
-    /// Canvas texture post-pass (`canvas.texture`) — the terminal surface's MATERIAL finish.
-    public enum CanvasTexture: String, Codable, Sendable, CaseIterable {
-        /// Flat pixels — no post-pass (the pre-2026-07-04 look).
-        case off
-        /// Static film grain + a soft edge vignette (visible-design pass, 2026-07-04): a fixed
-        /// per-pixel hash (NO `iTime` — the grain never shimmers) plus a gentle corner darkening that
-        /// reinforces the rounded card silhouette. Delivered via ``CanvasTextureShader`` as a second
-        /// `custom-shader` line (the key is a ghostty `RepeatablePath` — passes chain).
-        case film
-    }
-
-    /// Canvas texture (`canvas.texture`), default ``CanvasTexture/film`` — the textured surface IS the
-    /// shipped look (a flat fill reads as unfinished next to the grained canvas margin).
-    public var canvasTexture: CanvasTexture
 
     // E15 (WI-2): FONT-PARITY render prefs (Appearance → Font). Like the cursor render fields these are
     // pure-chrome prefs with real defaults — applied live via `TerminalConfigBuilder` → libghostty — NEVER
@@ -165,8 +147,7 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         cursorColor: String = "",
         cursorTextColor: String = "",
         cursorOpacity: Double = 1.0,
-        cursorAnimation: CursorAnimation = .smooth,
-        canvasTexture: CanvasTexture = .film,
+        cursorAnimation: CursorAnimation = .off,
         fontFamilyFallback: String = "",
         fontFamilyBold: String = "",
         fontFamilyItalic: String = "",
@@ -194,7 +175,6 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         self.cursorTextColor = cursorTextColor
         self.cursorOpacity = cursorOpacity
         self.cursorAnimation = cursorAnimation
-        self.canvasTexture = canvasTexture
         self.fontFamilyFallback = fontFamilyFallback
         self.fontFamilyBold = fontFamilyBold
         self.fontFamilyItalic = fontFamilyItalic
@@ -224,7 +204,6 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         case cursorTextColor
         case cursorOpacity
         case cursorAnimation
-        case canvasTexture
         case fontFamilyFallback
         case fontFamilyBold
         case fontFamilyItalic
@@ -266,7 +245,6 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
             cursorTextColor: c.decodeIfPresent(String.self, forKey: .cursorTextColor) ?? d.cursorTextColor,
             cursorOpacity: c.decodeIfPresent(Double.self, forKey: .cursorOpacity) ?? d.cursorOpacity,
             cursorAnimation: c.decodeIfPresent(CursorAnimation.self, forKey: .cursorAnimation) ?? d.cursorAnimation,
-            canvasTexture: c.decodeIfPresent(CanvasTexture.self, forKey: .canvasTexture) ?? d.canvasTexture,
             fontFamilyFallback: c.decodeIfPresent(String.self, forKey: .fontFamilyFallback) ?? d.fontFamilyFallback,
             fontFamilyBold: c.decodeIfPresent(String.self, forKey: .fontFamilyBold) ?? d.fontFamilyBold,
             fontFamilyItalic: c.decodeIfPresent(String.self, forKey: .fontFamilyItalic) ?? d.fontFamilyItalic,

@@ -150,28 +150,9 @@ struct CursorPreviewView: View {
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Cursor Animation")
-                    Text("Smooth draws a brief motion trail when the caret JUMPS (a prompt hop, a vi "
-                        + "motion, a click) — never while typing. Rendered by the terminal itself "
-                        + "(a cursor-aware shader), so it costs nothing while the caret is still.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            LabeledContent {
-                Picker("", selection: $store.terminal.canvasTexture) {
-                    Text("Off").tag(TerminalPreferences.CanvasTexture.off)
-                    Text("Film").tag(TerminalPreferences.CanvasTexture.film)
-                }
-                .labelsHidden()
-                .fixedSize()
-            } label: {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Canvas Texture")
-                    Text("Film adds a static grain and a soft edge vignette to the terminal surface — "
-                        + "a fixed per-pixel texture (it never moves or shimmers), so it costs nothing "
-                        + "at rest.")
+                    Text("Smooth would glide the caret on same-row moves and overshoot on click/focus — "
+                        + "preference saved, but deferred: the renderer exposes no cursor-animation hook, so "
+                        + "the caret does not yet animate.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

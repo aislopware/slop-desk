@@ -54,18 +54,4 @@ final class ConnectionSummaryPresentationTests: XCTestCase {
             XCTAssertFalse(summary?.text.isEmpty ?? true, "\(status) must not be blank")
         }
     }
-
-    /// The breathing-dot gate (design-craft pass, 2026-07-04): ONLY `.connected` is a genuinely ongoing
-    /// healthy state — every other status must keep a STILL dot (stillness beside the live dot is itself
-    /// the degraded cue, and a looped ambient animation on a non-ongoing state is noise).
-    func testOnlyConnectedIsLive() {
-        XCTAssertTrue(StatusPresentation.isLive(.connected))
-        let stillStates: [ConnectionStatus] = [
-            .disconnected, .connecting, .reconnecting(attempt: 1, nextRetry: nil),
-            .unreachable, .failed("boom"),
-        ]
-        for status in stillStates {
-            XCTAssertFalse(StatusPresentation.isLive(status), "\(status) must NOT breathe")
-        }
-    }
 }

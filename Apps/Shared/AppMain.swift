@@ -97,13 +97,6 @@ struct ClientAppMain {
                     letterboxTint: paneContext.letterboxTint.map { ($0.red, $0.green, $0.blue) },
                     onFirstFramePresented: paneContext.onFirstFramePresented,
                     onVideoStats: paneContext.onVideoStats,
-                    // Big-swing A (ambient light): raw tuples from the renderer → seam `VideoPaneTint`s
-                    // (same primitives-only discipline as `letterboxTint`, reversed direction).
-                    onAmbientColors: paneContext.onAmbientColors.map { push in
-                        { samples in
-                            push(samples.map { VideoPaneTint(red: $0.red, green: $0.green, blue: $0.blue) })
-                        }
-                    },
                 ))
             }
             return AnyView(VideoWindowView(title: descriptor.title))

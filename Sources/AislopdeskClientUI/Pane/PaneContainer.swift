@@ -217,18 +217,8 @@ struct PaneContainer: View {
             // `PaneDivider` hit band living in the glass gap between them.
             .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous))
             .overlay {
-                // Focus border (design-craft pass, 2026-07-04): in a SPLIT, the focused card's hairline
-                // swaps to an accent hue — a hue shift at the same 1pt weight (the Zed idiom: border
-                // hue, never a glow), complementing the sibling dim. The hue is the SESSION's identity
-                // colour (per-session colour identity, 2026-07-04 — same knock-back opacity as the old
-                // theme-accent `cardBorderFocused`), so the focus ring, rail icons and margin wash all
-                // speak one colour. A lone pane keeps the resting border (nothing to disambiguate).
-                // NO animation — pane focus moves are keyboard-frequency (the zero-animation rule, §2.5).
                 RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous)
-                    .strokeBorder(
-                        isFocused && !solo ? Slate.Line.cardBorderFocused : Slate.Line.cardBorder,
-                        lineWidth: 1,
-                    )
+                    .strokeBorder(Slate.Line.cardBorder, lineWidth: 1)
                     .allowsHitTesting(false)
             }
             .shadow(color: Slate.Effect.panelShadow, radius: 5, x: 0, y: 2)

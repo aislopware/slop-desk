@@ -237,9 +237,9 @@ struct OverlayHostView: View {
 // MARK: - PrefixArmedChip (the minimal "prefix armed" indicator)
 
 /// The tiny keyboard-centric chip shown while the workspace prefix is ARMED: the configured prefix glyph
-/// (e.g. `⌃A`) + the word "prefix" on the shared theme-tinted glass shell (GlassPanel). Text-minimal by
-/// design (no icon zoo, no panel) — it only answers "did my prefix land?" while the machine awaits the
-/// follow-up key.
+/// (e.g. `⌃A`) + the word "prefix" on the native floating-card shell (system Material + `.separator`
+/// hairline). Text-minimal by design (no icon zoo, no panel) — it only answers "did my prefix land?" while
+/// the machine awaits the follow-up key.
 private struct PrefixArmedChip: View {
     let glyph: String
 
@@ -254,7 +254,11 @@ private struct PrefixArmedChip: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .glassPanel(radius: 6, shadowRadius: 6)
+        .background(.regularMaterial, in: .rect(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(.separator, lineWidth: 1),
+        )
         .accessibilityLabel("Prefix armed")
     }
 }
@@ -281,7 +285,11 @@ private struct ConnectionAlertChip: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .glassPanel(radius: 6, shadowRadius: 6)
+            .background(.regularMaterial, in: .rect(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(.separator, lineWidth: 1),
+            )
         }
         .buttonStyle(.plain)
         .help("\(alert.label) — click to focus the affected pane")

@@ -125,9 +125,6 @@ public struct VideoWindowView: View {
     /// STATS HUD: the ~1 Hz informational sample (RTT ms + cumulative received/recovered/lost) for the
     /// pane's opt-in diagnostics overlay. `nil` ⇒ no canvas wired it.
     let onVideoStats: ((_ rttMS: Double, _ received: UInt64, _ recovered: UInt64, _ lost: UInt64) -> Void)?
-    /// AMBIENT LIGHT (big-swing A, 2026-07-04): the renderer's ≥0.5 s 4×4 live-frame downsample (raw
-    /// grid RGB) for the canvas bias-light glow. `nil` ⇒ the renderer never samples.
-    let onAmbientColors: (([(red: Double, green: Double, blue: Double)]) -> Void)?
 
     /// The existing seam signature (title-only): renders the Metal-backed view chrome
     /// without a live connection. Kept so `VideoWindowFactory` callers compile.
@@ -149,7 +146,6 @@ public struct VideoWindowView: View {
         letterboxTint = nil
         onFirstFramePresented = nil
         onVideoStats = nil
-        onAmbientColors = nil
     }
 
     /// Live remote-window view: brings up the orchestrator against `connection`. `isActive` /
@@ -174,7 +170,6 @@ public struct VideoWindowView: View {
         onFirstFramePresented: (() -> Void)? = nil,
         onVideoStats: ((_ rttMS: Double, _ received: UInt64, _ recovered: UInt64, _ lost: UInt64) -> Void)? =
             nil,
-        onAmbientColors: (([(red: Double, green: Double, blue: Double)]) -> Void)? = nil,
     ) {
         self.title = title
         self.connection = connection
@@ -193,7 +188,6 @@ public struct VideoWindowView: View {
         self.letterboxTint = letterboxTint
         self.onFirstFramePresented = onFirstFramePresented
         self.onVideoStats = onVideoStats
-        self.onAmbientColors = onAmbientColors
     }
 
     /// Owns the control bridge for this view's lifetime; the backing view wires its closures.
@@ -223,7 +217,6 @@ public struct VideoWindowView: View {
             letterboxTint: letterboxTint,
             onFirstFramePresented: onFirstFramePresented,
             onVideoStats: onVideoStats,
-            onAmbientColors: onAmbientColors,
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityLabel(Text("Remote GUI window: \(title)"))
@@ -260,7 +253,6 @@ struct MetalVideoLayerView: NSViewRepresentable {
     var letterboxTint: (red: Double, green: Double, blue: Double)?
     var onFirstFramePresented: (() -> Void)?
     var onVideoStats: ((Double, UInt64, UInt64, UInt64) -> Void)?
-    var onAmbientColors: (([(red: Double, green: Double, blue: Double)]) -> Void)?
 
     func makeNSView(context _: Context) -> MetalLayerBackedView {
         let view = MetalLayerBackedView()
@@ -282,7 +274,6 @@ struct MetalVideoLayerView: NSViewRepresentable {
         view.letterboxTint = letterboxTint
         view.onFirstFrameReady = onFirstFramePresented
         view.onVideoStatsReady = onVideoStats
-        view.onAmbientColorsReady = onAmbientColors
         view.activate(connection: connection)
         // PASTE AS KEYSTROKES: publish a key-injection sink routed to THIS view's pipeline (the
         // `pipeline.key` guard no-ops until the session is up, so publishing now is safe). The
@@ -334,7 +325,6 @@ struct MetalVideoLayerView: NSViewRepresentable {
         nsView.letterboxTint = letterboxTint
         nsView.onFirstFrameReady = onFirstFramePresented
         nsView.onVideoStatsReady = onVideoStats
-        nsView.onAmbientColorsReady = onAmbientColors
         nsView.activate(connection: connection)
         if inputGateFlipped {
             nsView.onKeyInjectorReady = onKeyInjectorReady
@@ -464,10 +454,6 @@ final class MetalLayerBackedView: NSView {
     /// STATS HUD: the canvas publishes a stats SINK through this — the ~1 Hz RTT + cumulative FEC
     /// sample for the opt-in diagnostics overlay. Set by the representable.
     var onVideoStatsReady: ((Double, UInt64, UInt64, UInt64) -> Void)?
-    /// AMBIENT LIGHT (big-swing A, 2026-07-04): the canvas publishes an ambient-sample SINK through
-    /// this — the renderer's ≥0.5 s 4×4 live-frame downsample for the bias-light glow. Set by the
-    /// representable; forwarded to the pipeline in `activate`.
-    var onAmbientColorsReady: (([(red: Double, green: Double, blue: Double)]) -> Void)?
     /// VIEWPORT CONTROLS: the canvas publishes a client-viewport command sink through this (and `nil` on
     /// teardown), so the pane's bottom control bar drives zoom / pan-lock. The byte is `RemoteWindowModel.
     /// ViewportCommand` (0 zoom-in / 1 zoom-out / 2 reset / 3 toggle-lock). Set by the representable.
@@ -665,9 +651,6 @@ final class MetalLayerBackedView: NSView {
         pipeline.onVideoStats = { [weak self] rtt, received, recovered, lost in
             self?.onVideoStatsReady?(rtt, received, recovered, lost)
         }
-        // AMBIENT LIGHT (big-swing A): forward the renderer's ≥0.5 s frame downsample to the pane model
-        // for the canvas bias-light glow (no-op if unbound).
-        pipeline.onAmbientColors = { [weak self] samples in self?.onAmbientColorsReady?(samples) }
         // Wire the SwiftUI overlay's buttons to THIS view's pipeline (live connection only). The fit/fill
         // toggle was removed (the ACTUAL-SIZE viewport auto-drives content mode), so only the 1× reset wires.
         if connection != nil, let controls {
@@ -1360,7 +1343,6 @@ struct MetalVideoLayerView: UIViewRepresentable {
     var letterboxTint: (red: Double, green: Double, blue: Double)?
     var onFirstFramePresented: (() -> Void)?
     var onVideoStats: ((Double, UInt64, UInt64, UInt64) -> Void)?
-    var onAmbientColors: (([(red: Double, green: Double, blue: Double)]) -> Void)?
 
     func makeUIView(context _: Context) -> MetalLayerBackedView {
         let view = MetalLayerBackedView()

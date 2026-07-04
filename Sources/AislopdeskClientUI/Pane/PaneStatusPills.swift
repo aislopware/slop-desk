@@ -56,10 +56,15 @@ struct ReadOnlyPill: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        // Subtly-filled chip: the shared theme-tinted glass shell (GlassPanel) — distinct from, but not
-        // louder than, the chrome behind it (the screenshot's "bordered or subtly filled chip rather than
-        // a brightly coloured badge"); the small float lifts it off busy terminal output for legibility.
-        .glassPanel(radius: 6, shadowRadius: 6)
+        // Subtly-filled chip: a material fill + a hairline — distinct from, but not louder than, the
+        // chrome behind it (the screenshot's "bordered or subtly filled chip rather than a brightly coloured
+        // badge"). A small shadow lifts it off busy terminal output for legibility.
+        .background(.regularMaterial, in: .rect(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(.separator, lineWidth: 1),
+        )
+        .shadow(color: Color.black.opacity(0.25), radius: 4, x: 0, y: 1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Read only")
         .accessibilityHint("Disable read-only mode to allow input again")

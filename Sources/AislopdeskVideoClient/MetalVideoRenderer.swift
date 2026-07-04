@@ -83,14 +83,6 @@ public final class MetalVideoRenderer {
     /// content-mask alpha logic (a masked frame still clears alpha 0 — transparent, whatever the tint).
     public var letterboxClear: (red: Double, green: Double, blue: Double)?
 
-    /// AMBIENT LIGHT (design-craft big-swing A, 2026-07-04): every ≥0.5 s, a 4×4 CPU downsample of the
-    /// live decoded NV12 frame (raw grid RGB, shader-identical conversion via `YCbCrConversion.rgb`)
-    /// is published here for the canvas bias-light glow. `nil` ⇒ the sampler never runs and `render`
-    /// is byte-for-byte the prior hot path. Fired synchronously on the main actor from `render(_:)`
-    /// — the consumer must only stash the values (the reduction is `AmbientPalette`, upstream).
-    public var onAmbientColors: (([(red: Double, green: Double, blue: Double)]) -> Void)?
-    private var lastAmbientSampleTime: CFTimeInterval = 0
-
     /// CONTENT MASK (transparency, 2026-06-17): the opaque-content rects (capture PIXELS, top-left)
     /// the host sent after a DIALOG-EXPAND region change — the window block + each popup. The
     /// fragment shader masks every sample OUTSIDE these rects to alpha 0, so a popup overhanging the
@@ -403,55 +395,6 @@ public final class MetalVideoRenderer {
         // registry does not grow unbounded across frames (the wrappers above keep the
         // in-flight surfaces alive regardless of the flush).
         CVMetalTextureCacheFlush(textureCache, 0)
-
-        publishAmbientSampleIfDue(pixelBuffer, width: width, height: height)
-    }
-
-    /// AMBIENT LIGHT readback: samples a 4×4 grid of the NV12 frame on the CPU and fires
-    /// ``onAmbientColors``. Wall-clock gated to ≥0.5 s so at any fps this is 16 texel reads twice a
-    /// second — invisible next to the encode/decode cost. Runs AFTER `commit()`: the GPU reads the same
-    /// pixel buffer concurrently, but both sides only read. Conversion reuses the shader's exact
-    /// coefficient source (`YCbCrConversion`), so the published colours agree with what's on screen.
-    private func publishAmbientSampleIfDue(_ pixelBuffer: CVPixelBuffer, width: Int, height: Int) {
-        guard let onAmbientColors else { return }
-        let now = CACurrentMediaTime()
-        guard now - lastAmbientSampleTime >= 0.5 else { return }
-        guard width >= 8, height >= 8,
-              CVPixelBufferGetPlaneCount(pixelBuffer) >= 2,
-              CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess
-        else { return }
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
-        guard let lumaBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0),
-              let chromaBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1)
-        else { return }
-        lastAmbientSampleTime = now
-
-        let lumaStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
-        let chromaStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1)
-        let chromaHeight = CVPixelBufferGetHeightOfPlane(pixelBuffer, 1)
-        let luma = lumaBase.assumingMemoryBound(to: UInt8.self)
-        let chroma = chromaBase.assumingMemoryBound(to: UInt8.self)
-        let coeffs = YCbCrConversion.coefficients(colorRange)
-
-        var samples: [(red: Double, green: Double, blue: Double)] = []
-        samples.reserveCapacity(16)
-        for gridY in 0..<4 {
-            for gridX in 0..<4 {
-                // Cell centres: x ∈ {w/8, 3w/8, 5w/8, 7w/8}, same for y — clamped by the ≥8 guard.
-                let x = (2 * gridX + 1) * width / 8
-                let y = (2 * gridY + 1) * height / 8
-                let cx = min(x / 2, (width / 2) - 1)
-                let cy = min(y / 2, chromaHeight - 1)
-                let rgb = YCbCrConversion.rgb(
-                    y: luma[y * lumaStride + x],
-                    cb: chroma[cy * chromaStride + cx * 2],
-                    cr: chroma[cy * chromaStride + cx * 2 + 1],
-                    coefficients: coeffs,
-                )
-                samples.append((Double(rgb.red), Double(rgb.green), Double(rgb.blue)))
-            }
-        }
-        onAmbientColors(samples)
     }
 
     private func makeTexture(

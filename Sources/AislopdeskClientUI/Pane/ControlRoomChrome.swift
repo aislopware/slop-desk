@@ -24,7 +24,7 @@ struct ControlRoomCardChrome: View {
     var body: some View {
         RoundedRectangle(cornerRadius: Slate.Metric.paneCornerRadius, style: .continuous)
             .strokeBorder(
-                isCurrent ? Slate.theme.accent.opacity(0.45) : GlassPanel.ring,
+                isCurrent ? Slate.theme.accent.opacity(0.45) : Slate.Line.cardBorder,
                 lineWidth: hovering ? 2 : 1,
             )
             .background(
@@ -47,7 +47,7 @@ struct ControlRoomCardChrome: View {
                 .lineLimit(1)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .glassPanel(radius: 7, shadowRadius: 8)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .padding(.bottom, 10)
                 .allowsHitTesting(false)
             }

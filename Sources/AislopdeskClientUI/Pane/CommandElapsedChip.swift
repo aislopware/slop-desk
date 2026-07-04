@@ -146,7 +146,7 @@ struct CommandElapsedChip: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .glassPanel(radius: 6, shadowRadius: 6)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .transition(.move(edge: .top).combined(with: .opacity))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Command \(text)")

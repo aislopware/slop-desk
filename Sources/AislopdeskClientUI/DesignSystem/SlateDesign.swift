@@ -28,15 +28,6 @@ struct SlateTheme: Equatable {
     let sidebar: Color // navigator / tabs panel
     let content: Color // the area behind the floating card
     let card: Color // the terminal surface — flush paper (RC.bg), NOT a brighter-white card
-    /// The canvas MARGIN behind the pane cards (depth-ladder canvas, 2026-07-04 v4): a theme-derived
-    /// tone a full LIFT-STEP below ``card`` (Linear's surface-ladder idiom — depth from tonal lift, not
-    /// shadow). The v1 card-canvas failed because its margin was near-identical to the card tone; the
-    /// v3 native-glass margin failed the other way (card == glass ≈ card tone again on a dark desktop,
-    /// "không thấy khác gì"). This role exists precisely to guarantee the contrast: dark themes scale
-    /// the background way down (×0.55), light themes dim it a touch (×0.94).
-    let canvasBackdrop: Color
-    /// ``canvasBackdrop`` as a canonical 6-hex string (no `#`) — mirrors the colour for pinnable tests.
-    let canvasBackdropHex: String
     let selectedCard: Color // the active sidebar-tab card fill (white-on-paper, RC.card)
     let element: Color // inset controls (search field, kbd, chips)
 
@@ -100,8 +91,6 @@ struct SlateTheme: Equatable {
         sidebar: Color(slateHex: 0xF5F4F0),
         content: Color(slateHex: 0xFCFBF9),
         card: Color(slateHex: 0xFCFBF9), // terminal surface = warm paper — flush, borderless panel (flat: no card look)
-        canvasBackdrop: Color(slateHex: 0xEDECEA), // paper margin: 0xFCFBF9 × 0.94 (light lift-step)
-        canvasBackdropHex: "EDECEA",
         selectedCard: .white, // active-tab card = pure white on paper (RC.card)
         element: Color(slateHex: 0xF0EFEA),
         textPrimary: Color(slateHex: 0x37352F),
@@ -144,8 +133,6 @@ struct SlateTheme: Equatable {
         sidebar: Color(slateHex: 0x1C1C1C),
         content: Color(slateHex: 0x121212),
         card: Color(slateHex: 0x161616), // FLAT: pane surface == window backdrop (flat design, no card)
-        canvasBackdrop: Color(slateHex: 0x0C0C0C), // dark margin: 0x161616 × 0.55 (dark lift-step)
-        canvasBackdropHex: "0C0C0C",
         selectedCard: Color(slateHex: 0x2A2A2A), // active-tab card = slightly elevated panel on the dark sidebar
         element: Color(slateHex: 0x262626),
         textPrimary: Color(slateHex: 0xEEEEEE),
@@ -218,18 +205,11 @@ struct SlateTheme: Equatable {
         // Spectrum) instead of one flat `Color.white` outlier shared by all five — the "divider của dark
         // theme đang màu trắng / hardcode" report. Light filters keep a near-black structure line.
         let line = Color(slateHex: s.isLight ? 0x000000 : s.foreground)
-        // Depth-ladder margin (2026-07-04 v4): one lift-step BELOW the card. Dark filters drop hard
-        // (×0.55 — e.g. Classic 0x2D2A2E → 0x191719) so the card visibly floats; light filters dim
-        // gently (×0.94) so the margin reads as shaded paper, not grey. Hue-preserving by construction
-        // (per-channel scale keeps the seed's channel ratios).
-        let backdrop = scaledHex(s.background, by: s.isLight ? 0.94 : 0.55)
         return Self(
             window: Color(slateHex: s.background),
             sidebar: Color(slateHex: s.sidebar),
             content: Color(slateHex: s.background),
             card: Color(slateHex: s.background), // FLAT: pane surface == backdrop
-            canvasBackdrop: Color(slateHex: backdrop),
-            canvasBackdropHex: hex6(backdrop),
             selectedCard: Color(slateHex: s.elevated),
             element: Color(slateHex: s.elevated),
             textPrimary: Color(slateHex: s.foreground),
@@ -268,17 +248,6 @@ struct SlateTheme: Equatable {
             cursorHex: hex6(s.foreground),
             cursorTextHex: nil,
         )
-    }
-
-    /// Per-channel scale of a 24-bit RGB literal (round-half-up, clamped) — the depth-ladder derivation.
-    /// Hue-preserving: every channel scales by the same factor, so a warm/tinted seed keeps its cast.
-    /// Internal (not private) so the derivation math is pinnable by tests.
-    static func scaledHex(_ v: UInt32, by factor: Double) -> UInt32 {
-        func channel(_ x: UInt32) -> UInt32 {
-            let scaled = (Double(x & 0xFF) * factor).rounded()
-            return UInt32(Double.maximum(0, Double.minimum(255, scaled)))
-        }
-        return channel(v >> 16) << 16 | channel(v >> 8) << 8 | channel(v)
     }
 
     /// 6-hex uppercase string (no `#`) for a 24-bit RGB literal — the libghostty `background`/`foreground`
@@ -366,10 +335,6 @@ enum Slate {
         /// content are a single field. The backdrop BEHIND the cards is the native window glass
         /// (`WindowGlassBackdrop`), deliberately NOT a theme colour.
         static var card: Color { Slate.theme.card }
-        /// The canvas MARGIN tone behind the pane cards (depth-ladder canvas, 2026-07-04 v4) — a full
-        /// lift-step below ``card`` so the cards actually float (drawn by `CanvasBackdrop` at high-but-
-        /// not-full opacity over the window glass, so the glass still breathes underneath).
-        static var canvasBackdrop: Color { Slate.theme.canvasBackdrop }
     }
 
     @MainActor
@@ -386,10 +351,6 @@ enum Slate {
         /// it carries the filter's own hue (never a flat system gray that would clash with a warm/tinted
         /// filter). Defines the card edge against the glass backdrop.
         static var cardBorder: Color { Slate.theme.cardBorder }
-        /// The FOCUSED split-sibling's card border (design-craft pass, 2026-07-04): the theme accent
-        /// knocked back by opacity — a HUE shift at hairline weight, the Zed/Raycast focus idiom (never a
-        /// glow/shadow ring). Same 1pt geometry as ``cardBorder`` so focus reads as tone, not chrome.
-        static var cardBorderFocused: Color { Slate.theme.accent.opacity(0.45) }
     }
 
     @MainActor
