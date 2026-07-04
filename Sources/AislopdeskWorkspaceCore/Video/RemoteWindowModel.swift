@@ -102,10 +102,16 @@ public final class RemoteWindowModel {
     /// it clears only when traffic actually resumes). Defaults `false`.
     public private(set) var isStreamStalled = false
 
+    /// When the current stall was detected (`nil` while live) — drives the scrim's frame-age caption
+    /// ("RECONNECTING · 12S"), honest information about how old the frozen frame is instead of a bare
+    /// spinner. Set/cleared together with ``isStreamStalled``.
+    public private(set) var streamStalledAt: Date?
+
     /// Records a stall flip from the live view. Only writes the observable on a real change.
     public func noteStreamStalled(_ stalled: Bool) {
         guard isStreamStalled != stalled else { return }
         isStreamStalled = stalled
+        streamStalledAt = stalled ? Date() : nil
     }
 
     /// Request an ABSOLUTE host-window POINT size from the "Resize…" popover (no-op when no sink is wired —

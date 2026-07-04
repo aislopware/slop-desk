@@ -230,15 +230,16 @@ struct GuiLeafView: View {
                     onStreamStall: { [weak model] stalled in model?.noteStreamStalled(stalled) },
                 ),
             )
-            // STALL SCRIM (the reconnect-wedge residual): while the host is silent past the stall threshold
-            // the pane would otherwise look healthy-but-dead (a frozen last frame that swallows clicks).
-            // A flat translucent veil + spinner says "the client noticed; recovery is automatic" (the
-            // self-heal rebuild + hello retry run underneath). Hit-testing stays OFF — purely visual, so
-            // any interaction still reaches the surface (harmless while the host is dark).
-            .overlay {
+            // STALL — MERIDIAN L1 "colour is live data, grayscale is the past": the DRAIN happens on the
+            // Metal layer itself (`MetalLayerBackedView.applyStallDrain` desaturates the frozen last frame),
+            // so the material says "this is the past" with no veil hiding context. This overlay adds only
+            // the INFORMATION the drain can't carry: a corner caption with the frame's age. Hit-testing
+            // stays OFF — recovery is automatic underneath (self-heal rebuild + hello retry).
+            .overlay(alignment: .bottomLeading) {
                 if model?.isStreamStalled == true {
-                    StreamStallScrim()
+                    StreamStallCaption(since: model?.streamStalledAt)
                         .allowsHitTesting(false)
+                        .padding(Slate.Metric.space3)
                         .transition(.opacity)
                 }
             }
@@ -267,27 +268,38 @@ struct GuiLeafView: View {
     }
 }
 
-/// STALL SCRIM (2026-07-03): the "Reconnecting…" veil over a live video surface whose host has gone
-/// silent (dead daemon / network drop — ``RemoteWindowModel/isStreamStalled``). A flat translucent
-/// dim over the frozen last frame + a compact spinner/label pill, matching the placeholder typography.
-/// Purely visual (the caller disables hit-testing); recovery is automatic underneath (self-heal
-/// rebuild + hello retry), so there is deliberately no button here.
-private struct StreamStallScrim: View {
+/// STALL CAPTION (MERIDIAN L1/L2, replacing the 2026-07-03 dim-veil scrim): the drained (desaturated)
+/// frame IS the "not live" signal, so this caption carries only what the material can't — that recovery
+/// is running, and how OLD the frozen frame is ("RECONNECTING · 12S", ticking). Instrument voice on a
+/// small dark chip pinned bottom-leading; no centered card, no veil, deliberately no button (recovery is
+/// automatic underneath).
+private struct StreamStallCaption: View {
+    /// When the stall was detected (``RemoteWindowModel/streamStalledAt``) — the age counter's epoch.
+    let since: Date?
+
     var body: some View {
-        ZStack {
-            // Dim the stale frame so it reads "not live" without hiding context entirely.
-            NativePaneColor.terminalBackground.opacity(0.6)
-            VStack(spacing: Slate.Metric.space3) {
+        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            HStack(spacing: Slate.Metric.space2) {
                 ProgressView()
-                    .controlSize(.small)
-                Text("Reconnecting…")
-                    .font(.system(size: Slate.Typeface.body, weight: .semibold))
+                    .controlSize(.mini)
+                Text(caption(at: timeline.date))
+                    .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
+                    .tracking(Slate.Typeface.instrumentTracking)
                     .foregroundStyle(Slate.Text.primary)
-                Text("The remote host stopped responding")
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
             }
+            .padding(.horizontal, Slate.Metric.space2)
+            .padding(.vertical, Slate.Metric.space1)
+            .background(
+                Slate.Surface.window.opacity(0.88),
+                in: .rect(cornerRadius: Slate.Metric.radiusSmall),
+            )
         }
+    }
+
+    private func caption(at now: Date) -> String {
+        guard let since else { return "RECONNECTING" }
+        let age = max(0, Int(now.timeIntervalSince(since).rounded(.down)))
+        return "RECONNECTING · \(age)S"
     }
 }
 

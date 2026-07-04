@@ -1,5 +1,6 @@
 #if canImport(SwiftUI) && canImport(QuartzCore) && canImport(Metal) && canImport(VideoToolbox)
 import AislopdeskVideoProtocol
+import CoreImage
 import CoreVideo
 import Metal
 import QuartzCore
@@ -555,10 +556,33 @@ final class MetalLayerBackedView: NSView {
         // layer, so we can translate it for panning while the pane masks the overflow. (It used to BE the
         // backing layer, filling the pane.)
         wantsLayer = true
+        // MERIDIAN DRAIN: allow CI filters on the layer tree (the stall desaturation below). The flag alone
+        // does not change the live compositing path — the expensive in-process render kicks in only while a
+        // filter is actually ATTACHED, and we attach one only over a STALLED (frozen, no new presents) frame,
+        // so the 60fps hot path never pays for it.
+        layerUsesCoreImageFilters = true
         let host = CALayer()
         host.masksToBounds = true
         host.addSublayer(videoLayer)
         layer = host
+    }
+
+    /// MERIDIAN L1 — "colour is live data, grayscale is the past": while the stream is STALLED the frozen
+    /// last frame drains to grayscale (slightly darkened), so the material itself says "this is the past"
+    /// instead of a dim veil hiding it. Applied to `videoLayer` (the cursor overlay is its sublayer, so it
+    /// drains with the surface — correct: the whole picture is stale). Removed the instant traffic resumes;
+    /// sticky through the self-heal rebuild exactly like the stall latch that drives it.
+    private func applyStallDrain(_ stalled: Bool) {
+        if stalled {
+            guard let drain = CIFilter(
+                name: "CIColorControls",
+                parameters: [kCIInputSaturationKey: 0.0, kCIInputBrightnessKey: -0.06],
+            ) else { return }
+            drain.name = "stallDrain"
+            videoLayer.filters = [drain]
+        } else {
+            videoLayer.filters = nil
+        }
     }
 
     @available(*, unavailable)
@@ -594,9 +618,14 @@ final class MetalLayerBackedView: NSView {
         }
         // CONNECTION STATS: forward the host-announced stream cadence to the model's FPS row (no-op if unbound).
         pipeline.onStreamCadenceChanged = { [weak self] fps in self?.onStreamCadenceReady?(fps) }
-        // STALL SCRIM: forward the pipeline's stall flips to the pane model (no-op if unbound). The closure
-        // reads the live `onStreamStallReady`, so updateNSView refreshing the seam closure is picked up.
-        pipeline.onStreamStallChanged = { [weak self] stalled in self?.onStreamStallReady?(stalled) }
+        // STALL: drain THIS surface to grayscale (MERIDIAN L1 — the material says "stale", see
+        // `applyStallDrain`) and forward the flip to the pane model (→ the corner age caption; no-op if
+        // unbound). The closure reads the live `onStreamStallReady`, so updateNSView refreshing the seam
+        // closure is picked up.
+        pipeline.onStreamStallChanged = { [weak self] stalled in
+            self?.applyStallDrain(stalled)
+            self?.onStreamStallReady?(stalled)
+        }
         // Wire the SwiftUI overlay's buttons to THIS view's pipeline (live connection only). The fit/fill
         // toggle was removed (the ACTUAL-SIZE viewport auto-drives content mode), so only the 1× reset wires.
         if connection != nil, let controls {
