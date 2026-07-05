@@ -39,12 +39,13 @@ struct VideoHostdArguments {
     var scale: Double = 1.0 // capture at window-points × scale PIXELS (1 = point-res/light; raise for sharper)
     var bitrateMbps: Int = 12 // live-encoder target bitrate (Mbps); raise for crisper text
     var fps: Int = 30 // encoder frame-rate cap (coding tool, not game stream); --fps 60 for smoother motion
-    // Feature #1: create a HiDPI 2× virtual display and move each remoted window onto it, so the
-    // window renders at REAL Retina backing (sharp text) instead of point-res-upscale on a 1× host.
-    // DEFAULT ON since the 2026-06-16 sharp-text reframe — it is the single biggest text-sharpness lever
-    // and was a silent footgun when a deploy forgot the flag. `--no-virtual-display` / `AISLOPDESK_VD=0`
-    // disables it (e.g. a headless/SSH run with no GUI session, where it would just fall back to 1×).
-    var virtualDisplay = true
+    // Feature #1: OPTIONALLY create a HiDPI 2× virtual display and move each remoted window onto it, so
+    // the window renders at REAL Retina backing (sharp text) instead of a point-res upscale on a 1× host.
+    // DEFAULT OFF (2026-07-05, user directive): capture the REAL display directly — no synthetic display
+    // appearing in the host's arrangement, no window parking. On a 1× host that means 1× capture (softer
+    // text, the display's native detail); the VD is the ONLY way to get 2× on a 1× host, so opt back in
+    // with `--virtual-display` / `AISLOPDESK_VD=1` when text sharpness matters more than a clean setup.
+    var virtualDisplay = false
     var vdPointWidth = 1920 // VD logical (point) size; windows larger than this are resized to fit
     var vdPointHeight = 1080
 
@@ -64,11 +65,11 @@ struct VideoHostdArguments {
                              text raise --scale instead, or use an all-intra mode)
           --fps N            encoder frame-rate cap (default 30 — a coding tool, not a game stream;
                              pass 60 for smoother motion)
-          --virtual-display  force-create a HiDPI 2× virtual display (DEFAULT ON) and move each remoted
-                             window onto it so it renders at REAL Retina backing (razor-sharp text)
-                             instead of a point-resolution upscale. Falls back to 1× if unavailable.
-          --no-virtual-display  disable the virtual display (capture the real 1× display; softer text).
-                             Also via AISLOPDESK_VD=0.
+          --virtual-display  create a HiDPI 2× virtual display and move each remoted window onto it so it
+                             renders at REAL Retina backing (razor-sharp text) — the only way to get 2×
+                             on a 1× host. DEFAULT OFF. Also via AISLOPDESK_VD=1.
+          --no-virtual-display  (default) capture the real display directly — no synthetic display, no
+                             window parking; 1× capture on a 1× host. Also via AISLOPDESK_VD=0.
           --vd-point-size WxH  virtual-display logical size in points (default 1920x1080 → 3840x2160 px)
 
         Needs Screen-Recording (capture) + Accessibility & Post-Event (input) TCC, and a
@@ -134,10 +135,10 @@ struct VideoHostdArguments {
             }
             i += 1
         }
-        // Env override (only when no explicit CLI flag was given): AISLOPDESK_VD=0 disables the now-default
-        // virtual display (any other value keeps it on). A `--virtual-display`/`--no-virtual-display` flag
-        // always wins over the env. W12: resolve through `EnvConfig` (ProcessInfo env → settings overlay)
-        // so a GUI toggle can drive it; an EMPTY overlay is byte-identical to the previous read.
+        // Env override (only when no explicit CLI flag was given): AISLOPDESK_VD=1 opts the now-default-OFF
+        // virtual display back ON (only "0" keeps it off; any other value enables). A
+        // `--virtual-display`/`--no-virtual-display` flag always wins over the env. W12: resolve through
+        // `EnvConfig` (ProcessInfo env → settings overlay) so a GUI toggle can drive it.
         if !vdExplicit, let vd = EnvConfig.string("AISLOPDESK_VD") {
             a.virtualDisplay = (vd != "0")
         }
@@ -261,27 +262,16 @@ func resolvePaneCapture(
     )
 }
 
-/// The default capture-scale CAP when `AISLOPDESK_CAPTURE_SCALE` is unset. Measured on M1 Max
-/// (`aislopdesk-perfbench`, `docs/research/perf-2026-07-04-encode-wall.md`): capturing the 2× VD at
-/// its full backing scale (3840×2160 4K) costs ~23 ms/frame — over the 60 fps budget and marginal at
-/// 30 fps — AND balloons scroll frames (bigger encode → more send-pacing spread → present judder,
-/// the 2026-07-05 smoothness finding). 1.25× (a SUPERSAMPLED downscale of the 2× render, sharper than
-/// a native-1× capture) drops encode to ~13 ms — under the 60 fps budget — while staying crisp with
-/// the client's `AISLOPDESK_SHARPEN` + the static crisp re-anchor. This is the "bias the default toward
-/// ~1.25×" the perf doc recommended landing. Override up (→ 2, sharpest) or down (→ 1, lightest) via
-/// `AISLOPDESK_CAPTURE_SCALE`; a host whose VD is already ≤1.25× is unaffected (min()).
-let defaultCaptureScaleCap = 1.25
-
 /// Optional capture-scale override (`AISLOPDESK_CAPTURE_SCALE`), clamped to `[1, vdScale]`. Unset ⇒
-/// `min(vdScale, defaultCaptureScaleCap)` (smoothness-first — see `defaultCaptureScaleCap`). Set to a
-/// value ⇒ that scale clamped to `[1, vdScale]` (`1` = lightest 1× downscale of the 2× VD render).
+/// the VD's backing scale (today's 2×). Set to `1` ⇒ encode at 1× (downscaled from the 2× VD), the
+/// smoothness-over-sharpness lever measured to keep the HW encoder under the 60fps frame budget.
 @Sendable
 func resolveCaptureScaleOverride(vdScale: Double) -> Double {
     // W12: resolve through `EnvConfig` (ProcessInfo env → settings overlay) so a GUI setting can
-    // override it; an EMPTY overlay resolves to the smoothness-first default cap.
+    // override it; an EMPTY overlay is byte-identical to the previous `ProcessInfo` read.
     guard let s = EnvConfig.string("AISLOPDESK_CAPTURE_SCALE"),
           let v = Double(s), v >= 1
-    else { return min(vdScale, defaultCaptureScaleCap) }
+    else { return vdScale }
     return min(vdScale, v)
 }
 

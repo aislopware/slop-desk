@@ -35,42 +35,38 @@ final class SettingsReachConsumerTests: XCTestCase {
     // MARK: AISLOPDESK_VD — `aislopdesk-videohostd` VideoHostdArguments.virtualDisplay
 
     /// The daemon's VD override: `if let vd = EnvConfig.string("AISLOPDESK_VD") { virtualDisplay = (vd != "0") }`
-    /// (default-ON; only `"0"` disables). An overlay value reaches it; absent ⇒ the daemon keeps its
-    /// `virtualDisplay = true` default (the override branch isn't taken).
+    /// (default-OFF since 2026-07-05; only a non-`"0"` value enables). An overlay value reaches it; absent
+    /// ⇒ the daemon keeps its `virtualDisplay = false` default (the override branch isn't taken).
     func testOverlayReachesVirtualDisplay() throws {
         try skipIfRealEnv("AISLOPDESK_VD")
-        // Mirror the call site: start from the daemon default (true) and apply the override branch.
+        // Mirror the call site: start from the daemon default (false) and apply the override branch.
         func resolveVirtualDisplay(default def: Bool) -> Bool {
             guard let vd = EnvConfig.string("AISLOPDESK_VD") else { return def }
             return vd != "0"
         }
-        XCTAssertTrue(resolveVirtualDisplay(default: true), "empty overlay ⇒ daemon default (VD on)")
-        EnvConfig.overlay["AISLOPDESK_VD"] = "0"
-        XCTAssertFalse(resolveVirtualDisplay(default: true), "overlay AISLOPDESK_VD=0 ⇒ VD off")
+        XCTAssertFalse(resolveVirtualDisplay(default: false), "empty overlay ⇒ daemon default (VD off)")
         EnvConfig.overlay["AISLOPDESK_VD"] = "1"
-        XCTAssertTrue(resolveVirtualDisplay(default: true), "overlay AISLOPDESK_VD=1 ⇒ VD on")
+        XCTAssertTrue(resolveVirtualDisplay(default: false), "overlay AISLOPDESK_VD=1 ⇒ VD on")
+        EnvConfig.overlay["AISLOPDESK_VD"] = "0"
+        XCTAssertFalse(resolveVirtualDisplay(default: false), "overlay AISLOPDESK_VD=0 ⇒ VD off")
     }
 
     // MARK: AISLOPDESK_CAPTURE_SCALE — `resolveCaptureScaleOverride(vdScale:)`
 
     /// The daemon's capture-scale override: parse `Double`, require `>= 1`, then `min(vdScale, v)`.
-    /// Unset ⇒ `min(vdScale, defaultCaptureScaleCap)` (smoothness-first default, 2026-07-05). The
-    /// overlay must reach this exact clamp.
+    /// Unset ⇒ the VD's backing scale. The overlay must reach this exact clamp.
     func testOverlayReachesCaptureScale() throws {
         try skipIfRealEnv("AISLOPDESK_CAPTURE_SCALE")
-        let defaultCaptureScaleCap = 1.25
         func resolveCaptureScaleOverride(vdScale: Double) -> Double {
             guard let s = EnvConfig.string("AISLOPDESK_CAPTURE_SCALE"), let v = Double(s), v >= 1
-            else { return min(vdScale, defaultCaptureScaleCap) }
+            else { return vdScale }
             return min(vdScale, v)
         }
-        XCTAssertEqual(resolveCaptureScaleOverride(vdScale: 2.0), 1.25, "empty overlay ⇒ smoothness-first cap")
-        EnvConfig.overlay["AISLOPDESK_CAPTURE_SCALE"] = "2" // explicit 2 restores the full VD scale
-        XCTAssertEqual(resolveCaptureScaleOverride(vdScale: 2.0), 2.0, "overlay 2 ⇒ full VD scale (sharpest)")
+        XCTAssertEqual(resolveCaptureScaleOverride(vdScale: 2.0), 2.0, "empty overlay ⇒ the VD scale")
         EnvConfig.overlay["AISLOPDESK_CAPTURE_SCALE"] = "1"
         XCTAssertEqual(resolveCaptureScaleOverride(vdScale: 2.0), 1.0, "overlay 1 ⇒ 1× (downscaled)")
-        EnvConfig.overlay["AISLOPDESK_CAPTURE_SCALE"] = "0.5" // below the >= 1 gate ⇒ rejected → default cap
-        XCTAssertEqual(resolveCaptureScaleOverride(vdScale: 2.0), 1.25, "sub-1 rejected ⇒ default cap")
+        EnvConfig.overlay["AISLOPDESK_CAPTURE_SCALE"] = "0.5" // below the >= 1 gate ⇒ rejected → default
+        XCTAssertEqual(resolveCaptureScaleOverride(vdScale: 2.0), 2.0, "sub-1 rejected ⇒ VD scale")
         EnvConfig.overlay["AISLOPDESK_CAPTURE_SCALE"] = "9" // capped to vdScale
         XCTAssertEqual(resolveCaptureScaleOverride(vdScale: 2.0), 2.0, "above VD scale ⇒ capped to vdScale")
     }
