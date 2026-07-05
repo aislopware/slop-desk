@@ -1,12 +1,12 @@
-# Aislopdesk UI-Shell — Design Gap Analysis
+# SlopDesk UI-Shell — Design Gap Analysis
 
-Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + behavior) against the current client implementation, then extending it with the user's own feature (**remote window**).
+Feature-by-feature matrix tracking slopdesk's own UI-shell design spec (UI + behavior) against the current client implementation, then extending it with the user's own feature (**remote window**).
 
 **Out of scope** (per directive): cloud-sync workflows; non-Claude agents (Codex / OpenCode). Where the spec mixes agent-generic and Claude-specific behavior, only the Claude Code path is in scope.
 
 **Status legend**
-- **done** — fully implemented & wired in aislopdesk today.
-- **partial** — domain/engine/data exists but the view or a wiring step is missing (the most common state — aislopdesk has built most engines, the gap is the rendered surface + one mount).
+- **done** — fully implemented & wired in slopdesk today.
+- **partial** — domain/engine/data exists but the view or a wiring step is missing (the most common state — slopdesk has built most engines, the gap is the rendered surface + one mount).
 - **missing** — no implementation.
 - **na-remote** — the documented behavior cannot map 1:1 onto the remote-host architecture; the cell records the closest faithful equivalent to build instead, or notes why it is dropped.
 
@@ -18,7 +18,7 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 
 ## A. Window, Tab & Split — `spec/user-interface__window-tab-split.md`
 
-| # | Documented behavior | Aislopdesk status | Gap delta | Pri |
+| # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | A1 | Window → Tab → Pane hierarchy | **done** — `TreeWorkspace`/`Session`/`Tab`/`SplitNode` (`workspace-domain.md`) | none | — |
 | A2 | New tab `⌘T` | **done** — `openChooserPane(.newTab)` (`ui-shell.md`) | none | — |
@@ -27,10 +27,10 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 | A5 | Next/prev tab `⌘⇧]` / `⌘⇧[` | **done** — `cycleTab(by:)` | none | — |
 | A6 | Go to tab 1–9 `⌘1`–`⌘9` | **done** — `selectTabNumber` + `selectTabBindings` | none | — |
 | A7 | Split right/left/down/up `⌘D`/`⌘⌥D`/`⌘⇧D`/`⌘⌥⇧D` | **partial** — horizontal (`⌘D`) & vertical (`⌘⇧D`) done; **left/up variants** not registered | add split-left/split-up directional bindings | 3 |
-| A8 | Resize divider (drag) + keyboard nudge `⌘⌃⇧arrow` | **done** — `PaneDivider` live-resize; `resizeActivePane` keyboard (aislopdesk uses `⌥⌘arrow`) | reconcile chord to the documented `⌘⌃⇧arrow` (or document divergence) | 4 |
-| A9 | Equalize splits (dbl-click divider / `⌘⌃=`) | **done** — `balanceActivePaneSplits` (aislopdesk `⌥⌘=`) | reconcile chord to `⌘⌃=` | 4 |
+| A8 | Resize divider (drag) + keyboard nudge `⌘⌃⇧arrow` | **done** — `PaneDivider` live-resize; `resizeActivePane` keyboard (slopdesk uses `⌥⌘arrow`) | reconcile chord to the documented `⌘⌃⇧arrow` (or document divergence) | 4 |
+| A9 | Equalize splits (dbl-click divider / `⌘⌃=`) | **done** — `balanceActivePaneSplits` (slopdesk `⌥⌘=`) | reconcile chord to `⌘⌃=` | 4 |
 | A10 | Focus next/prev pane `⌘]` / `⌘[` (sequential cycle) | **missing** — directional focus exists; no sequential cycle action | add `cyclePaneFocus(next/prev)` action + bindings | 2 |
-| A11 | Directional focus `⌘⌃arrow` | **done** — `moveFocusTreeUsingReportedLayout` (aislopdesk `⌥⌘arrow`) | reconcile chord | 4 |
+| A11 | Directional focus `⌘⌃arrow` | **done** — `moveFocusTreeUsingReportedLayout` (slopdesk `⌥⌘arrow`) | reconcile chord | 4 |
 | A12 | Vertical sidebar tab list (default layout) | **done** — `NavigatorColumn` + `SlateTabRow` | none | — |
 | A13 | Horizontal tab bar (top/bottom layout option) | **missing** — only vertical sidebar exists | add a horizontal tab-bar layout + `layout` setting | 4 |
 | A14 | Active tab = white rounded card; `#N` shortcut badge; shell name | **partial** — white-card active row done; `#N` number & shell-name trailing label not shown | add number badge + process/shell trailing label to row | 3 |
@@ -44,7 +44,7 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 | A22 | Toggle tabs sidebar `⌘⇧L` | **done** — `WorkspaceChromeState` | none | — |
 | A23 | Toggle details panel `⌘⇧R` | **done** — inspector collapse | none | — |
 | A24 | Drag-drop pane rearrange (split/swap/dock zones) | **done** — `SplitContainer.resolveZone` swap/resplit/dock + `PaneMoveOverlay` | none | — |
-| A25 | Zoom/maximize active pane `⌘⇧↩` | **done** — `toggleZoomActivePane` | reconcile chord (aislopdesk `⌥⌘↩`) | 4 |
+| A25 | Zoom/maximize active pane `⌘⇧↩` | **done** — `toggleZoomActivePane` | reconcile chord (slopdesk `⌥⌘↩`) | 4 |
 | A26 | Working-directory inheritance for new window/tab/split | **missing** — `newTab`/`splitActivePane` never read active pane `lastKnownCwd`; OSC 7 not piped into `lastKnownCwd` | wire OSC 7 → `lastKnownCwd`; add `working-directory` (inherit/home/path) policy | 2 |
 | A27 | Close confirmation (Closing Tab / Window: process/always/multiple_tabs) | **partial** — busy-shell close guard done; no per-target `process/always/multiple_tabs` policy or settings | add close-confirm policy enum + settings | 3 |
 | A28 | Save layout as Recipe `⌘S` (scope/content levels) | **partial** — `saveLayoutPreset` is **canvas-only**; `SessionTemplate` is a different abstraction | build tree-path Recipe save/restore subsystem | 3 |
@@ -52,13 +52,13 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 | A30 | Pin window / always-on-top (View → Pin Window) | **missing** — no `NSWindow.level = .floating` path | add pin-window toggle (macOS) | 4 |
 | A31 | Picture-in-Picture (Current Pane / Follow Active) | **na-remote** — pane is a UDP HEVC stream, not a PiP layer | substitute: always-on-top window for the active pane (P4); true PiP deferred | 5 |
 | A32 | Multi-session UI (session list / switcher) | **partial** — `sessions: [Session]` + ops exist; `NavigatorColumn` renders only active session | add a session list / switcher in the sidebar | 3 |
-| A33 | `watch <CMD>` badge driver | **missing** | host-side `aislopdesk watch` wrapper emitting OSC 9;4 + badge | 4 |
+| A33 | `watch <CMD>` badge driver | **missing** | host-side `slopdesk watch` wrapper emitting OSC 9;4 + badge | 4 |
 
 ---
 
 ## B. Details Panel (Inspector) — `spec/user-interface__details-panel.md`
 
-| # | Documented behavior | Aislopdesk status | Gap delta | Pri |
+| # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | B1 | Right docked panel, toggle `⌘⇧R`, hover titlebar button | **done** — inspector column + collapse | none | — |
 | B2 | Four tabs: Info / Outline / Git / Files (click + bindable) | **partial** — 3-tab header Info/Git/Files done; **no Outline tab**; `Details: *` jump commands missing | add Outline tab; register 4 bindable `Details: *` actions | 3 |
@@ -74,7 +74,7 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 
 ## C. Status Bar — `spec/user-interface__status-bar.md`
 
-| # | Documented behavior | Aislopdesk status | Gap delta | Pri |
+| # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | C1 | Persistent status strip (cwd / process / git / last exit) | **missing** — no bottom status bar; `hideStatusBar` key exists with no UI | build a thin bottom strip: cwd (OSC 7), last exit (OSC 133 D), pane kind, host; honour `hideStatusBar` | 3 |
 | C2 | Full-path hover preview in bottom-left status area | **missing** — paired with link detection (see D) | render resolved path in status strip on ⌘-hover | 3 |
@@ -83,7 +83,7 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 
 ## D. Files, Folders & Links — `spec/user-interface__files-and-links.md`
 
-| # | Documented behavior | Aislopdesk status | Gap delta | Pri |
+| # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | D1 | Path/URL detection in output (abs/tilde/rel/`:line:col`/url/`file://`) | **missing** — no client path-scan overlay | build client-side path/URL detector over the cell grid | 2 |
 | D2 | OSC 8 hyperlinks (always underlined, click-to-open) | **done** — libghostty owns hit-test; `GHOSTTY_ACTION_OPEN_URL` → open | none | — |
@@ -102,7 +102,7 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 
 ## E. Drag and Drop — `spec/user-interface__drag-and-drop.md`
 
-| # | Documented behavior | Aislopdesk status | Gap delta | Pri |
+| # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | E1 | Pane drag rearrange (split/swap/dock/tab/tear-off) | **done** (intra-window) — `SplitContainer` zones + `PaneMoveOverlay` | tear-off into NEW window deferred (single-window) | 3 |
 | E2 | Tab reorder via drag (insertion-line indicator) | **missing** — no sidebar drag reorder | add manual tab reorder (ties to A16) | 4 |
@@ -116,7 +116,7 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 
 ## F. Find — `spec/user-interface__find.md`
 
-| # | Documented behavior | Aislopdesk status | Gap delta | Pri |
+| # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | F1 | In-pane find bar `⌘F` (live highlight, N of M) | **partial** — `TerminalSearchController` engine + `onRequestFind` seam done; **no `TerminalFindBar` view**, callback never assigned | build `TerminalFindBar` overlay; assign `onRequestFind` from leaf view | 1 |
 | F2 | Next/prev `↩`/`⌘G`, `⇧↩`/`⇧⌘G`; `Esc` close | **partial** — engine has next/prev/wrap; needs find-bar wiring | wire keys into find bar | 2 |
@@ -128,7 +128,7 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 
 ## G. Open Quickly / Command Palette / Outline / Jump-To — `spec/user-interface__{open-quickly,command-palette,outline}.md`
 
-| # | Documented behavior | Aislopdesk status | Gap delta | Pri |
+| # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | G1 | Command Palette `⌘⇧P` (sections, keycaps, ✓ toggle, ⌘↩ chain) | **partial** — `PaletteModel`/`SearchMixer`/`ActionsPaletteSource` done; **no PaletteView; OverlayCoordinator not mounted; ⌘K dispatch is nil no-op** | build PaletteView; mount OverlayCoordinator; pass `togglePalette` closure | 1 |
 | G2 | Palette CWD context badge (folder + path) | **partial** — needs cwd from OSC 7 cache | render cwd badge from cached OSC 7 | 3 |
@@ -147,7 +147,7 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 
 ## H. Cursor & Mouse — `spec/terminal-features__cursor-and-mouse.md`
 
-| # | Documented behavior | Aislopdesk status | Gap delta | Pri |
+| # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | H1 | Cursor style (block/hollow/bar/underline), DECSCUSR override | **done** — `cursor-style` via `TerminalConfigBuilder` | confirm hollow-block option exposed | 4 |
 | H2 | Cursor blink (Default/On/Off) | **done** — `cursor-style-blink` | none | — |
@@ -168,7 +168,7 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 
 ## I. Selection / Copy-Paste / Scroll / Input — `spec/terminal-features__{selection,copy-and-paste,scroll,input}.md`
 
-| # | Documented behavior | Aislopdesk status | Gap delta | Pri |
+| # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | I1 | Word/line/drag/rect selection; ⇧-click extend | **done** — libghostty selection | none | — |
 | I2 | ⇧+arrow native selection (extend char/line) | **partial** — not intercepted client-side | intercept ⇧+arrow before PTY (gated by setting) | 3 |
@@ -200,7 +200,7 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 
 ## J. Unicode / Box-Drawing / Images / Text-Styles — `spec/terminal-features__{unicode-and-text-styles,box-drawing,images}.md`
 
-| # | Documented behavior | Aislopdesk status | Gap delta | Pri |
+| # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | J1 | Full Unicode, combining, wide CJK, BiDi, emoji ZWJ/VS/skin-tone | **done** — libghostty | none | — |
 | J2 | SGR styles (bold/italic/dim/underline×5/blink/strike/reverse) + SGR 58 underline color | **done** — libghostty | none | — |
@@ -218,7 +218,7 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 
 ## K. Progress / Notifications / Privilege — `spec/terminal-features__{progress-state,notifications}.md`
 
-| # | Documented behavior | Aislopdesk status | Gap delta | Pri |
+| # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | K1 | OSC 9;4 progress state (clear/in-progress/error/indeterminate) | **missing (by design)** — `HostOutputSniffer` filters 9;4 | replace filter with a wire message + client consumer (spinner/badge) | 3 |
 | K2 | Auto-progress for known slow commands (curl/git/npm…) | **missing** | host-side prefix-list auto-emit OSC 9;4 + setting | 4 |
@@ -238,7 +238,7 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 
 ## L. Vi Mode / Hint Mode / Read-Only / Shell-Integration / $TERM — `spec/terminal-features__{vi-mode,hint-mode,read-only-mode,shell-integration,term-value}.md`
 
-| # | Documented behavior | Aislopdesk status | Gap delta | Pri |
+| # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | L1 | Copy-mode (vi-like scrollback nav) `⌃⇧Space` | **partial** — `isCopyMode` + motions done; entry chord/pill differ | add Vi-Mode pill + repeat-count + entry binding | 3 |
 | L2 | Vi visual char/line/block selection + yank | **missing** — documented libghostty C-API ceiling (no programmatic set-selection) | line/block via existing selection; char-selection blocked (document) | 4 |
@@ -250,18 +250,18 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 | L8 | Shell integration OSC 133 A/B/C/D + OSC 7 | **done** — host sniffer + client tracker | wire OSC 7 → `lastKnownCwd` (see A26) | 2 |
 | L9 | Shell-integration script injection (zsh ZDOTDIR / fish / bash / tmux) | **partial** — host spawns PTY; auto-inject scripts not yet shipped | host daemon ships integration scripts + injects env | 3 |
 | L10 | SSH wrapper (terminfo forward) / `edit`/`view`/`jump`/`learn` wrappers | **na-remote / partial** — host-side; deferred | defer SSH wrapper; ctl wrappers low-pri | 5 |
-| L11 | `$TERM`/`COLORTERM`/`TERM_PROGRAM`/`CW_TERM`; DA1/DA2/DSR | **done** — `HostEnvironment.curated` unconditionally sets `TERM_PROGRAM=aislopdesk` + `TERM_PROGRAM_VERSION` + `CW_TERM=aislopdesk` (no longer mirrors the launcher's `TERM_PROGRAM`); `TERM`/`COLORTERM` + DA1/DA2/DSR via libghostty | none | — |
+| L11 | `$TERM`/`COLORTERM`/`TERM_PROGRAM`/`CW_TERM`; DA1/DA2/DSR | **done** — `HostEnvironment.curated` unconditionally sets `TERM_PROGRAM=slopdesk` + `TERM_PROGRAM_VERSION` + `CW_TERM=slopdesk` (no longer mirrors the launcher's `TERM_PROGRAM`); `TERM`/`COLORTERM` + DA1/DA2/DSR via libghostty | none | — |
 | L12 | `term` setting (auto→xterm-256color w/ validation) | **partial** — TERM enum exists; no validated `term` setting | add `term` setting + host validation | 4 |
 
 ---
 
 ## M. Themes / Fonts — `spec/customization__{themes,fonts}.md`
 
-| # | Documented behavior | Aislopdesk status | Gap delta | Pri |
+| # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | M1 | Built-in themes + live switch (menu/palette/settings) | **done** — `ThemeStore` (Monokai Pro 6 + Paper + Dark + System), live-apply across NSSplitViewController | none | — |
 | M2 | Light/dark slot (`theme`/`theme-dark`) follow OS | **partial** — `ThemeChoice` + System; explicit dual-slot follow-OS toggle | add "use separated dark theme" toggle | 4 |
-| M3 | Custom `.aislopdesktheme` TOML + user themes dir | **missing** | add `~/.config/aislopdesk/themes/` scan + parser | 4 |
+| M3 | Custom `.slopdesktheme` TOML + user themes dir | **missing** | add `~/.config/slopdesk/themes/` scan + parser | 4 |
 | M4 | Import iTerm2/Kitty/Alacritty/Ghostty themes | **missing** | add theme import pipeline → ThemeStore | 4 |
 | M5 | Theme editor (swatch grid, chrome regions, Duplicate/Edit/Open Folder) | **missing** | build theme editor UI | 4 |
 | M6 | Theme container styling (radius/shadow/border/padding/margin) | **partial** — flat tokens exist; per-theme container config missing | thread container tokens into theme | 4 |
@@ -277,7 +277,7 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 
 ## N. Keybindings / Custom-Commands / Settings / Import-Export — `spec/customization__{custom-keybindings,custom-commands,config-file,advanced-settings,import-export}.md`
 
-| # | Documented behavior | Aislopdesk status | Gap delta | Pri |
+| # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | N1 | Keybindings editor (search, keycaps, click-to-record, conflict, unbind, reset) | **done** — `KeybindingsEditorView` + overrides + conflicts | none | — |
 | N2 | Default keymap full set | **partial** — 35+ actions; gaps = split-left/up, pane-cycle, scroll keys, font-size, ⌘⇧E/⌘⇧M/⌘⇧P/⌘⇧O | register the missing actions (see A7/A10/I12/M8/I23/I24/G1/G4) | 2 |
@@ -285,7 +285,7 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 | N4 | Text/Sequence bindings (`text:`/`csi:`/`esc:`) | **missing** | add literal-byte binding rows + dispatch | 4 |
 | N5 | `unbind:` + parameterized actions (`goto_tab:N`) | **partial** — `selectTab` done; generic unbind/param-action | add unbind directive + param-action parse | 4 |
 | N6 | SwiftUI `.commands` menu-bar surface | **missing** — no `WorkspaceCommands` in rebuilt shell | port menu bar with `.keyboardShortcut` items | 3 |
-| N7 | Recipes (layouts/snippets/command-replay) | **partial** — snippet model + CRUD exist, **no UI**; no recipe file/replay | build Recipes/Snippets UI + `.aislopdeskrecipe` save/restore (ties A28) | 3 |
+| N7 | Recipes (layouts/snippets/command-replay) | **partial** — snippet model + CRUD exist, **no UI**; no recipe file/replay | build Recipes/Snippets UI + `.slopdeskrecipe` save/restore (ties A28) | 3 |
 | N8 | Text snippets (alias→text, placeholders `{{date}}` etc.) | **partial** — `SnippetExpander`/`SendKeysParser` done, **no UI** | add snippet editor + expansion trigger | 3 |
 | N9 | Settings: General / Shell / Controls / Editor / Appearance / Agents / Advanced | **partial** — 5 tabs (General/Terminal/Video/Keybindings/Advanced); missing Controls/Editor/Agents/Shell-named sections + many toggles | expand settings tabs to the documented sections + missing toggles | 2 |
 | N10 | Advanced "All Settings" searchable list + Reset All/Advanced | **partial** — Advanced raw-override box + Restore-All done; no searchable all-keys list | add searchable all-settings list + cross-tab jump | 4 |
@@ -297,11 +297,11 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 
 ## O. First-Launch / CLI / Agents (Claude Code) — `spec/getting-started__first-launch.md`, `spec/reference__cli.md`, `spec/agents__*.md`
 
-| # | Documented behavior | Aislopdesk status | Gap delta | Pri |
+| # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | O1 | On-Launch (Restore Last Session) | **done** — `DetachedSessionStore` reattach; persistence | surface "On Launch" setting | 3 |
 | O2 | Set-as-default-terminal / OS integration | **na-remote / partial** — local editors only; remote-host editors can't be rewritten | offer for local launches only (P4) | 5 |
-| O3 | Install CLI (`/usr/local/bin/aislopdesk`) + omit-prefix | **partial** — `aislopdesk-ctl` exists; no installer/omit-prefix | add CLI installer flow | 4 |
+| O3 | Install CLI (`/usr/local/bin/slopdesk`) + omit-prefix | **partial** — `slopdesk-ctl` exists; no installer/omit-prefix | add CLI installer flow | 4 |
 | O4 | Agents tab: Install/Uninstall Claude Code hooks + Status | **partial** — host detection stack done; no install-card UI; hooks installed host-side | build Agents settings card writing host `~/.claude/settings.json` over channel | 2 |
 | O5 | Agent Behavior toggles (badge×3, notify×2, prevent-sleep, resume-on-recovery) | **partial** — attention notifications live; per-toggle settings + prevent-sleep missing | add 7 toggles + `IOPMAssertion` prevent-sleep | 3 |
 | O6 | Tab badges for agent state (processing/idle/awaiting) | **partial** — `ClaudeStatus` end-to-end; **dot not rendered on tab row** | render dot on `SlateTabRow` (ties A20) | 2 |
@@ -309,17 +309,17 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 | O8 | Prompt Queue `⌘⇧M` | **missing** — see I24 | build prompt queue | 3 |
 | O9 | Send to Chat `⌘⌃↩` (capture dialog, session routing) | **missing** | build send-to-chat dialog + agent-pane routing | 3 |
 | O10 | History viewer (JSONL transcript, Resume, Open-Quickly Agents) | **missing** — `BlockHistoryView` is command-block only; session files host-side | host RPC to list/read `~/.claude/projects/*.jsonl`; client transcript renderer + Resume | 3 |
-| O11 | Fork / Branch (`/branch`) detect + route to split/tab | **na-remote / partial** — agent runs `/branch`; aislopdesk detects new session + routes | detect new session id, spawn `claude --resume <id>` pane; palette "Fork in…" | 4 |
+| O11 | Fork / Branch (`/branch`) detect + route to split/tab | **na-remote / partial** — agent runs `/branch`; slopdesk detects new session + routes | detect new session id, spawn `claude --resume <id>` pane; palette "Fork in…" | 4 |
 | O12 | Monitor Tasks (per-tab badge/notify toggles, prevent-sleep, clear-badge) | **partial** — global attention only | add per-pane toggles + clear-badge action | 4 |
 | O13 | Resume (`claude --resume <id>`) | **partial** — PTY spawn path exists; not wired to history/UI | wire Resume from history viewer / inspector | 4 |
-| O14 | CLI parity (`open/view/edit/config/font/theme/keybind/pane/tab/watch/jump/learn/state/ipc`) | **partial** — `aislopdesk-ctl` covers send-keys/spawn/etc.; many subcommands missing | extend CLI to the documented subcommand set (incremental) | 4 |
-| O15 | Agent self-report state (`aislopdesk state:<agent>`) | **done** — `AgentControlListener.reportAgent` / hook listener | none | — |
+| O14 | CLI parity (`open/view/edit/config/font/theme/keybind/pane/tab/watch/jump/learn/state/ipc`) | **partial** — `slopdesk-ctl` covers send-keys/spawn/etc.; many subcommands missing | extend CLI to the documented subcommand set (incremental) | 4 |
+| O15 | Agent self-report state (`slopdesk state:<agent>`) | **done** — `AgentControlListener.reportAgent` / hook listener | none | — |
 
 ---
 
-## P. The User's Extension — Remote Window (aislopdesk-native, no external analog)
+## P. The User's Extension — Remote Window (slopdesk-native, no external analog)
 
-| # | Behavior | Aislopdesk status | Gap delta | Pri |
+| # | Behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
 | P1 | Remote-GUI pane (UDP HEVC video of a host window) in the split tree | **done** — `.remoteGUI` pane kind; `GuiLeafView`; in-pane chooser Terminal/Remote | keep first-class as the UI shell's tabs/splits/palette/drag-drop land | 2 |
 | P2 | Remote-window picker (over-wire discovery) | **partial** — `OverlayCoordinator` remote-picker state exists; mounted with the same OverlayCoordinator gap | mount remote picker when OverlayCoordinator is mounted | 2 |
@@ -338,4 +338,4 @@ Feature-by-feature matrix tracking aislopdesk's own UI-shell design spec (UI + b
 
 4. **Host RPC gap**: Details Git/Files/processes/ports (B3/B5/B6), history JSONL (O10), folders frecency-over-host, listening ports — all need a host control-channel directory/git/process listing service. This is the largest genuinely-new backend surface and should land as one shared epic.
 
-5. **Keybinding chord divergence**: aislopdesk currently uses `⌥⌘` for several pane ops where the documented default keymap uses `⌘⌃`/`⌘⌃⇧`. Reconcile the default keymap to the documented chords (or make them overridable defaults) — low-risk since the override pipeline already exists.
+5. **Keybinding chord divergence**: slopdesk currently uses `⌥⌘` for several pane ops where the documented default keymap uses `⌘⌃`/`⌘⌃⇧`. Reconcile the default keymap to the documented chords (or make them overridable defaults) — low-risk since the override pipeline already exists.

@@ -55,7 +55,7 @@ Run on the real MacBook (unlocked Aqua + Screen-Recording TCC):
    video/FEC changes write `video-prefs.json` and apply **on reconnect**; rebinding a shortcut takes effect.
 3. **Claude auto-detect**: run `claude` in a terminal pane on the host → the sidebar/tab **status dot**
    lights (🟡 working / 🔴 needs-permission / 🔵 done → 🟢 idle decay). Optionally
-   `aislopdesk-hostd integration install claude` for the richer hook path (`AISLOPDESK_AGENT_HOOKS=1`).
+   `slopdesk-hostd integration install claude` for the richer hook path (`SLOPDESK_AGENT_HOOKS=1`).
 4. **Terminal features**: ⌘F find bar, right-click menu (copy/paste/clear/split), OSC 8 link click,
    jump-to-prompt, launch presets (Claude Code / htop / Git log).
 5. **iOS**: compiles; the **compact per-tab carousel is deferred** (decision #8) — iOS currently
@@ -71,8 +71,8 @@ Run on the real MacBook (unlocked Aqua + Screen-Recording TCC):
 
 ## Flags added
 
-- `AISLOPDESK_AGENT_DETECT` (default-ON, process-watch) · `AISLOPDESK_AGENT_HOOKS` (default-OFF, opt-in socket).
-- `AISLOPDESK_LEGACY_CANVAS` — reserved intent (the `liveModel` switch); the app defaults to the tree shell.
+- `SLOPDESK_AGENT_DETECT` (default-ON, process-watch) · `SLOPDESK_AGENT_HOOKS` (default-OFF, opt-in socket).
+- `SLOPDESK_LEGACY_CANVAS` — reserved intent (the `liveModel` switch); the app defaults to the tree shell.
 - Settings persist to `UserDefaults` (`settings.<model>.v1`) + `video-prefs.json` sidecar in App Support.
 
 ## Final gate (all green)
@@ -81,8 +81,8 @@ Run on the real MacBook (unlocked Aqua + Screen-Recording TCC):
   (from a 2322 baseline — ~385 new). `make lint` (SwiftFormat + SwiftLint `--strict`, the CI gate) clean.
 - **`golden-check.sh`** → **PASS, byte-identical**; all 13 frozen wire keys intact. Wire types 26/27 added
   additively + golden-pinned.
-- **`scripts/check-ios.sh`** → **BUILD SUCCEEDED** (both `ClientApp-iOS` + `AislopdeskClientUI` schemes).
-- **`aislopdesk-loopback-validate --frames 120`** (real-VT encode→FEC→reassemble→decode) → **exit 0**
+- **`scripts/check-ios.sh`** → **BUILD SUCCEEDED** (both `ClientApp-iOS` + `SlopDeskClientUI` schemes).
+- **`slopdesk-loopback-validate --frames 120`** (real-VT encode→FEC→reassemble→decode) → **exit 0**
   across clean / 2% / 10% loss, FEC tiers, interleave, RS m=2/3, LTR.
 - **22 atomic green commits** on `feat/coding-workspace-redesign` (HEAD `0436798`). Unpushed, unmerged.
 - **5 adversarial review rounds** (C1×2, C2, C3, C4+C5) — every confirmed finding fixed + re-gated.
@@ -99,7 +99,7 @@ A follow-on requested in conversation; spiked → built → reviewed → fast-fo
 - **Host segments the PTY stream into per-command blocks from the OSC 133 marks it already sniffs**
   (`CommandBlockSegmenter` + `CommandBlockTracker`, bounded ring). New wire types **28 `commandBlock`** /
   **15 `requestBlockOutput`** / **29 `blockOutput`** (additive, golden-pinned `blocksWireMessages`, 13 frozen
-  keys intact). Gated `AISLOPDESK_BLOCKS` (default-ON; off ⇒ byte-pipeline byte-identical, proven).
+  keys intact). Gated `SLOPDESK_BLOCKS` (default-ON; off ⇒ byte-pipeline byte-identical, proven).
 - **Client UI**: Command Navigator (⌃⌘O), sticky command header, chrome status chip, jump prev/next
   (⌃⌘[ / ⌃⌘]), "Copy Command Output" in the right-click menu. **No inline row-aligned gutter** — libghostty 1.3.1
   exposes no prompt-mark positions (verified in `ghostty.h` + `PageList.zig`), so jump uses `scroll_to_bottom`

@@ -161,11 +161,11 @@ modal dialog.
 - `find.png` — in-pane find bar with "doc" query, multiple amber highlights in buffer
 - `global-search.png` — Global Search results tab for "doc", 4 results across 3 tabs
 
-## Aislopdesk mapping notes
+## SlopDesk mapping notes
 
 ### What maps 1:1
 
-- **In-pane find bar**: can be implemented entirely client-side. Aislopdesk's
+- **In-pane find bar**: can be implemented entirely client-side. SlopDesk's
   `TerminalSurface` (backed by libghostty) maintains the scrollback; a find overlay
   can scan that buffer and draw highlights via the same render pass or an overlay
   view positioned top-right of the pane `NSView`. The `Aa` / `.*` toggle state is
@@ -173,7 +173,7 @@ modal dialog.
 - **Keybindings** (`⌘F`, `⌘G`, `⇧⌘G`, `Esc`, `⇧⌘F`): all can be bound in
   `WorkspaceBindingRegistry` / the NSEvent monitor already used for the prefix key.
   No host involvement needed.
-- **Match highlighting in viewport**: libghostty renders the buffer; aislopdesk can
+- **Match highlighting in viewport**: libghostty renders the buffer; slopdesk can
   request a re-render pass with highlight ranges injected, or draw a transparent
   overlay view with highlight rects computed from cell coordinates. The latter avoids
   patching libghostty's render path and is sufficient.
@@ -182,22 +182,22 @@ modal dialog.
   flag; the `.*` toggle's regex syntax maps approximately to `NSRegularExpression`
   (POSIX-extended). Minor syntax differences (lookaheads, named groups) are
   acceptable — document the divergence.
-- **Scope differences by pane type**: aislopdesk has Terminal panes (scrollback from
+- **Scope differences by pane type**: slopdesk has Terminal panes (scrollback from
   libghostty) and potentially file/folder panes. For the initial implementation, only
   Terminal panes are required; file/folder panes can be stubbed.
 
 ### What cannot map 1:1 / flags
 
-- **Global Search across all tabs' scrollback**: aislopdesk panes connect to a
+- **Global Search across all tabs' scrollback**: slopdesk panes connect to a
   *remote* host. The scrollback buffer lives client-side (libghostty), so scanning
   it locally is fine. However panes that have never received data (not yet connected
   or reconnected) will have empty scrollback — the search results will be incomplete
   if any pane has dropped its buffer. This is an acceptable limitation; document it.
-- **Folder pane "file names only" search**: aislopdesk does not currently have a
+- **Folder pane "file names only" search**: slopdesk does not currently have a
   folder-browser pane. Skip for v1; note as future work.
 - **File pane "full file contents" search**: same — file pane not yet present in
-  aislopdesk. Skip for v1.
-- **Global Search "dedicated results tab"**: aislopdesk uses `PaneKind` + the
+  slopdesk. Skip for v1.
+- **Global Search "dedicated results tab"**: slopdesk uses `PaneKind` + the
   workspace reconciler. A read-only results pane would need a new `PaneKind.findResults`
   or reuse a `.systemDialog`-style ephemeral pane. The sidebar "SEARCH" header
   replacing "TABS" is a purely cosmetic state — implementable by toggling a view mode
@@ -213,6 +213,6 @@ modal dialog.
   ICU semantics in our help text.
 - **Result click to jump**: in Global Search, clicking a result must scroll the
   target pane's buffer to the matched line. If the target pane is on a different tab,
-  aislopdesk must switch to that tab first. This maps onto `WorkspaceStore` tab
+  slopdesk must switch to that tab first. This maps onto `WorkspaceStore` tab
   switching + libghostty's scroll-to-row API. Feasible but requires coordinating
   two async operations (tab switch → scroll).

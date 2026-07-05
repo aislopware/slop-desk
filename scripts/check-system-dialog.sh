@@ -6,8 +6,8 @@
 set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DD="${REPO_ROOT}/.work/sysdialog-verify/DD"
-APP_BIN="${DD}/Build/Products/Debug/Aislopdesk.app/Contents/MacOS/Aislopdesk"
-HOSTD="${REPO_ROOT}/.build/debug/aislopdesk-videohostd"
+APP_BIN="${DD}/Build/Products/Debug/SlopDesk.app/Contents/MacOS/SlopDesk"
+HOSTD="${REPO_ROOT}/.build/debug/slopdesk-videohostd"
 WORK="${REPO_ROOT}/.work/sysdialog-verify"
 mkdir -p "${WORK}"
 SHOT="${WORK}/client-shot.png"
@@ -15,7 +15,7 @@ HOSTLOG="${WORK}/host.log"
 CLIENTLOG="${WORK}/client.log"
 MEDIA_PORT=9000
 CURSOR_PORT=9001
-APP_PROC_PAT="sysdialog-verify/DD.*MacOS/Aislopdesk"
+APP_PROC_PAT="sysdialog-verify/DD.*MacOS/SlopDesk"
 HOSTD_PID=""
 cleanup() {
   pkill -f "${APP_PROC_PAT}" 2> /dev/null
@@ -46,7 +46,7 @@ WTITLE="$(echo "${LISTING}" | grep -E "id=${WID}\b" | sed -E 's/.*id=[0-9]+ +//'
 echo "==> primary pane window id=${WID} (${WTITLE})"
 
 # 2. Host: serve the mux (per-hello windows + session-less listSystemDialogs).
-AISLOPDESK_VIDEO_DEBUG=1 "${HOSTD}" --media-port "${MEDIA_PORT}" --cursor-port "${CURSOR_PORT}" > "${HOSTLOG}" 2>&1 &
+SLOPDESK_VIDEO_DEBUG=1 "${HOSTD}" --media-port "${MEDIA_PORT}" --cursor-port "${CURSOR_PORT}" > "${HOSTLOG}" 2>&1 &
 HOSTD_PID=$!
 sleep 1
 kill -0 "${HOSTD_PID}" 2> /dev/null || {
@@ -59,13 +59,13 @@ echo "==> host up (pid ${HOSTD_PID})"
 # 3. Client: video-autoconnect (primary pane) + FORCE the system-dialog monitor on.
 pkill -f "${APP_PROC_PAT}" 2> /dev/null
 sleep 0.5
-AISLOPDESK_VIDEO_DEBUG=1 \
-  AISLOPDESK_SYSTEM_DIALOG_PANES=force \
-  AISLOPDESK_VIDEO_AUTOCONNECT_HOST=127.0.0.1 \
-  AISLOPDESK_VIDEO_AUTOCONNECT_MEDIA_PORT="${MEDIA_PORT}" \
-  AISLOPDESK_VIDEO_AUTOCONNECT_CURSOR_PORT="${CURSOR_PORT}" \
-  AISLOPDESK_VIDEO_AUTOCONNECT_WINDOW_ID="${WID}" \
-  AISLOPDESK_VIDEO_AUTOCONNECT_TITLE="${WTITLE} (remote)" \
+SLOPDESK_VIDEO_DEBUG=1 \
+  SLOPDESK_SYSTEM_DIALOG_PANES=force \
+  SLOPDESK_VIDEO_AUTOCONNECT_HOST=127.0.0.1 \
+  SLOPDESK_VIDEO_AUTOCONNECT_MEDIA_PORT="${MEDIA_PORT}" \
+  SLOPDESK_VIDEO_AUTOCONNECT_CURSOR_PORT="${CURSOR_PORT}" \
+  SLOPDESK_VIDEO_AUTOCONNECT_WINDOW_ID="${WID}" \
+  SLOPDESK_VIDEO_AUTOCONNECT_TITLE="${WTITLE} (remote)" \
   "${APP_BIN}" > "${CLIENTLOG}" 2>&1 &
 for _ in $(seq 1 16); do
   pgrep -f "${APP_PROC_PAT}" > /dev/null && break
@@ -93,7 +93,7 @@ osascript -e 'do shell script "true" with administrator privileges' > /dev/null 
 sleep 6
 
 # 6. Raise client + screenshot.
-osascript -e 'tell application "System Events" to set frontmost of first process whose name is "Aislopdesk" to true' 2> /dev/null
+osascript -e 'tell application "System Events" to set frontmost of first process whose name is "SlopDesk" to true' 2> /dev/null
 sleep 1
 screencapture -x "${SHOT}"
 echo "==> screenshot saved: ${SHOT}"

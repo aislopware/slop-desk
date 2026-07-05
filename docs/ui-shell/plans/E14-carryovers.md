@@ -12,8 +12,8 @@ progress/notification/dock surface.
 ## This is a WIRE-TOUCHING epic — K1 done right (THE headline)
 
 **K1 = "Replace the OSC-9;4 filter with a wire message + client spinner/progress badge."** The host
-already SEES OSC 9;4 — `Sources/AislopdeskHost/HostOutputSniffer.swift` parses it (grep `9;4`/
-`progress`), and `Sources/AislopdeskWorkspaceCore/Workspace/Tabs/TabBadge.swift` already documents
+already SEES OSC 9;4 — `Sources/SlopDeskHost/HostOutputSniffer.swift` parses it (grep `9;4`/
+`progress`), and `Sources/SlopDeskWorkspaceCore/Workspace/Tabs/TabBadge.swift` already documents
 the badge taxonomy mapping `OSC 9;4;1/3` → Running spinner and `OSC 9;4;2` → Error (built in E6).
 What is MISSING is the **transport**: the host must forward the extracted progress *state + value*
 to the client as a structured app-level message (the terminal renders client-side via libghostty, but
@@ -23,8 +23,8 @@ VT stream; it needs its own control-channel message). Build it EXACTLY like E17'
 - **Follow the type-31 `inputEcho` precedent verbatim.** Host: a pure detector folds sniffer output
   (see `EchoModeWatcher.swift` / `EchoModeDetector` and `MuxChannelSession.swift:~601` for the
   enqueue-on-CONTROL-channel pattern) → enqueues a NEW `WireMessage` case → client handles it in the
-  `case .inputEcho:`-style switch (`Sources/aislopdesk-client/main.swift:383`,
-  `Sources/AislopdeskClient/AislopdeskClient.swift:113` define the case + decode). Add the progress
+  `case .inputEcho:`-style switch (`Sources/slopdesk-client/main.swift:383`,
+  `Sources/SlopDeskClient/SlopDeskClient.swift:113` define the case + decode). Add the progress
   case next to `inputEcho`. **Find the next free wire type byte** in the encode/decode switch (type-31
   is taken; the type bytes are assigned in the codec switch, not as enum raw values — read the actual
   assignment site, do not guess a number).
@@ -56,11 +56,11 @@ Grep these and BUILD ON them:
 - **K1/K3 badges** → `TabBadge.swift` (the E6 badge taxonomy already references the OSC-9;4 states),
   `TabOrdering.swift`, `WorkspaceStore+Completion.swift` (the `completionFlashTick` re-render seam that
   E6 used to make `.finished` actually paint — drive the progress badge through the SAME re-render
-  path), `Sources/AislopdeskClientUI/Rail/RailRowsBuilder.swift` (renders rail-row badges, vertical
+  path), `Sources/SlopDeskClientUI/Rail/RailRowsBuilder.swift` (renders rail-row badges, vertical
   rail only). OSC-133-D exit status is already tracked by `CommandBlockTracker.swift` /
   `CommandBlockSegmenter.swift`. K3 is mostly already-built — wire progress through it, don't add a
-  second badge model. Client-side progress presentation: `AislopdeskClientUI/App/StatusPresentation.swift`.
-- **K9/K10 notifications** → `Sources/AislopdeskWorkspaceCore/Connection/CommandCompletionNotifier.swift`,
+  second badge model. Client-side progress presentation: `SlopDeskClientUI/App/StatusPresentation.swift`.
+- **K9/K10 notifications** → `Sources/SlopDeskWorkspaceCore/Connection/CommandCompletionNotifier.swift`,
   `Workspace/Domain/AttentionSupervision.swift`, `Workspace/Store/WorkspaceStore+Completion.swift`,
   `Workspace/Store/WorkspaceStore+Attention.swift`. The completion/attention DETECTION already exists —
   E14 adds the **delivery + policy** (banner/beep/bounce) and the Notify-on-Finish/Error/Watch +
@@ -72,8 +72,8 @@ Grep these and BUILD ON them:
   NOT reimplement clipboard confirm. Title-report toggle + the **system-permission status row** are
   Settings/Details surfaces atop the E7 settings taxonomy (Shell/General sections) — reuse the E7
   navigator, no new settings framework.
-- **K13 IPC guards** → the EXISTING host control socket: `aislopdesk-ctl` / `AgentControlListener.swift`
-  / `AislopdeskCtlCore`. Map IPC guards onto it. **No new socket. No tokens/crypto.**
+- **K13 IPC guards** → the EXISTING host control socket: `slopdesk-ctl` / `AgentControlListener.swift`
+  / `SlopDeskCtlCore`. Map IPC guards onto it. **No new socket. No tokens/crypto.**
 
 ## SCOPE EXCLUSIONS that touch E14 (binding)
 
@@ -91,8 +91,8 @@ Grep these and BUILD ON them:
 - **Dock progress / bounce / red-tint are macOS-ONLY; iOS no-ops them.** `NSApp.dockTile` /
   `requestUserAttention(.informationalRequest)` / dock-tile badge are AppKit — gate them `#if os(macOS)`.
   iOS has no Dock: the iOS path no-ops K5/K8 (banners via `UNUserNotificationCenter` still work, but the
-  foreground policy differs). **The picker/badge/notification code lives in shared `AislopdeskClientUI`
-  / `AislopdeskWorkspaceCore` → run `bash scripts/check-ios.sh` in the gate** — `swift build` on macOS
+  foreground policy differs). **The picker/badge/notification code lives in shared `SlopDeskClientUI`
+  / `SlopDeskWorkspaceCore` → run `bash scripts/check-ios.sh` in the gate** — `swift build` on macOS
   will NOT catch iOS rot.
 - **Notify-While-Foreground policy must actually gate.** Don't banner-spam when the app/pane is focused
   unless the policy says to; honour focus + the per-event Finish/Error/Watch toggles. The policy

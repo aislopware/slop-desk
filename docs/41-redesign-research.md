@@ -7,7 +7,7 @@
 
 ## 0. Executive Summary
 
-**What changes.** We replace the single free-floating infinite `Canvas` with a tiled **Session → Tab → Pane** tree, swap the generic `NavigationSplitView` chrome for an IDE shell (sessions sidebar + tab bar + split-pane detail + hidden/minimal title bar), make Claude Code a **runtime-detected status on an ordinary terminal pane** instead of a stored `PaneKind`, and surface the ~80 `AISLOPDESK_*` env flags through real GUI settings.
+**What changes.** We replace the single free-floating infinite `Canvas` with a tiled **Session → Tab → Pane** tree, swap the generic `NavigationSplitView` chrome for an IDE shell (sessions sidebar + tab bar + split-pane detail + hidden/minimal title bar), make Claude Code a **runtime-detected status on an ordinary terminal pane** instead of a stored `PaneKind`, and surface the ~80 `SLOPDESK_*` env flags through real GUI settings.
 
 **Why.** The infinite canvas (drag/snap/non-overlap/camera) is the wrong primitive for a coding tool — every competitor (tmux, Zellij, WezTerm, Muxy, Herdr, Warp) converged on a recursive split tree under named sessions/tabs because it is keyboard-drivable, deterministic, and trivially serializable. The dedicated "Claude Code pane kind" forces the user to pre-declare intent; Muxy/Herdr/Warp instead detect a running `claude` and surface status — strictly better UX. Env-only config blocks non-developers and makes the product undemoable.
 
@@ -20,8 +20,8 @@
 ## 1. Current State (condensed; file:line pointers retained)
 
 ### 1.1 Shell / scene
-- Entry: `Apps/Shared/AppMain.swift:26` (`ClientAppMain`, `@main`) → `AislopdeskClientApp.main()`.
-- App: `Sources/AislopdeskClientUI/AislopdeskClientApp.swift:31`; `body` = one `WindowGroup { WorkspaceRootView }` + `.commands { WorkspaceCommands() }` + `.windowResizability(.contentSize)` + `Settings { SettingsView() }` (`AislopdeskClientApp.swift:197`).
+- Entry: `Apps/Shared/AppMain.swift:26` (`ClientAppMain`, `@main`) → `SlopDeskClientApp.main()`.
+- App: `Sources/SlopDeskClientUI/SlopDeskClientApp.swift:31`; `body` = one `WindowGroup { WorkspaceRootView }` + `.commands { WorkspaceCommands() }` + `.windowResizability(.contentSize)` + `Settings { SettingsView() }` (`SlopDeskClientApp.swift:197`).
 - **No window styling today**: zero `windowStyle(.hiddenTitleBar)`, no transparent titlebar, no `NSWindowDelegate`. Stock title bar + traffic lights. Min size `720×480` set on the root view (`WorkspaceRootView.swift:85`).
 - Root: `WorkspaceRootView.swift:24` = `NavigationSplitView` (sidebar `min:200 ideal:240 max:360`, `WorkspaceRootView.swift:74`); detail branches on `WorkspaceLayout.isCompact(...)` (`WorkspaceLayout.swift:70`) → `PaneCarouselView` (phone) else `CanvasView`. This is the ONLY responsive branch.
 - `detailToolbar` (`WorkspaceRootView.swift:255`): two items — connection-status menu (`.navigation`) + "New Pane" split button (`.primaryAction`). Overlays: `ConnectionGateView`, `CommandPaletteView` (⌘K), `KeyboardCheatSheetView` (⌘/).
@@ -41,26 +41,26 @@
 - Transient (NOT persisted): `liveCameraOffset`, `videoPromotionGeneration`, `pendingRename`, `pendingClose`, `focusHistory` (MRU, `WorkspaceStore.swift:580`), `selectedPanes`, `broadcastActive`, `overviewActive`, `lastSolvedLayout`, `lastViewport`, `recentlyClosed`.
 
 ### 1.4 Persistence
-- File: `<AppSupport>/Aislopdesk/workspace.json` (`WorkspacePersistence.swift:41`); pretty-printed sorted-keys JSON, atomic, debounced 600ms.
+- File: `<AppSupport>/SlopDesk/workspace.json` (`WorkspacePersistence.swift:41`); pretty-printed sorted-keys JSON, atomic, debounced 600ms.
 - Schema: `currentSchemaVersion = 9` (`Workspace.swift:141`). Migration `WorkspaceSchemaMigration.migrate` (`WorkspaceSchemaMigration.swift:21`) is **forward-only, no field upgrades** — a version mismatch returns `nil` → `defaultWorkspace()` (file moved aside as `workspace.json.corrupt`). Single-user, no backward-compat policy.
 - Hosts: `Workspace.connection` (last host, in workspace.json) + `AppConnection.recentTargets` (5-entry MRU in `UserDefaults` key `connection.recentTargets`, `AppConnection.swift:70`). Only ONE host connected at a time (`AppConnection`, `AppConnection.swift:18`).
-- Portable export: `WorkspaceTransfer.swift:17` (`Document` envelope, `format: "aislopdesk.workspace"`, `formatVersion: 1`).
+- Portable export: `WorkspaceTransfer.swift:17` (`Document` envelope, `format: "slopdesk.workspace"`, `formatVersion: 1`).
 
 ### 1.5 Terminal stack (transport — layout-agnostic, preserved)
 - Renderer behind `TerminalSurface` seam (`TerminalSurface.swift:21`); prod conformer `GhosttySurface` (`GhosttySurface.swift:138`, Xcode-only, not in SwiftPM graph). Injected via `TerminalRendererFactory.shared` (`TerminalRenderingView.swift:83`); `nil` → `BuildStatusPlaceholderView`.
-- Keystroke path: `GhosttyLayerBackedView.keyDown` (`GhosttyTerminalView.swift:674`) → `ghostty_surface_key` → `onWrite` → `TerminalViewModel.sendInput` (`TerminalViewModel.swift:214`) → `AislopdeskClient.sendInput` → `MuxClientTransport.sendInput` (`MuxClientTransport.swift:82`, `WireMessage.input` type 3 on DATA sub-channel).
+- Keystroke path: `GhosttyLayerBackedView.keyDown` (`GhosttyTerminalView.swift:674`) → `ghostty_surface_key` → `onWrite` → `TerminalViewModel.sendInput` (`TerminalViewModel.swift:214`) → `SlopDeskClient.sendInput` → `MuxClientTransport.sendInput` (`MuxClientTransport.swift:82`, `WireMessage.input` type 3 on DATA sub-channel).
 - Output path: `PTYReadLoop.runLoop` (`PTYReadLoop.swift:94`, 32 KiB blocking read) → `HostOutputSniffer.observe` (`HostOutputSniffer.swift:47`, OSC 0/2/9/133/777 + BEL) → `WireMessage.output` (type 1) + `ReplayBuffer` → client `outputInbox` → `TerminalViewModel.ingestBatch` (`TerminalViewModel.swift:407`) → `GhosttySurface.feedBatch` (`GhosttySurface.swift:387`, off-main `SerialFeedGate`).
 - Mux: two physical `NWConnection`s (DATA + CONTROL) per host, SSH-style channels (`MuxRoutingCore.swift:21`); flow control credit-at-consumption (`MuxFlowControl`); `ReplayBuffer` 64 MiB / 4 MiB offline gate (`ReplayBuffer.swift:58`).
 - Wire: `[UInt32 BE len][UInt8 type][body]`, big-endian, manual binary, never JSON on hot path. DATA types 1/2/3; CONTROL 10–14 (c→h) / 20–25 (h→c); next free h→c type byte = **26**. New types are golden-additive (surgical-merge `golden/golden_vectors.json`).
 
 ### 1.6 Claude Code today (explicit kind — being removed)
-- `AislopdeskClaudeCode` module = pure client-side output analysis only: `TerminalModeTracker` (`TerminalModeTracker.swift:39`, DECSET 1049/47/1047 + OSC 133 → `.shellPrompt`/`.altScreen`), `InputBoxModel` (`InputBoxModel.swift:23`, A/B1 affordance + echo dedup), `InputDedupRing`. **No process detection, no IPC, no MCP, no OSC 777.**
+- `SlopDeskClaudeCode` module = pure client-side output analysis only: `TerminalModeTracker` (`TerminalModeTracker.swift:39`, DECSET 1049/47/1047 + OSC 133 → `.shellPrompt`/`.altScreen`), `InputBoxModel` (`InputBoxModel.swift:23`, A/B1 affordance + echo dedup), `InputDedupRing`. **No process detection, no IPC, no MCP, no OSC 777.**
 - Host: `ClaudeCodeProfile` (`ClaudeCodeProfile.swift:30`) curated PTY launch (`["-lc","claude"]`, forced env `CLAUDE_CODE_ENTRYPOINT=remote_mobile`). `HostServer.LaunchMode` (`HostServer.swift:32`) is a **construction-time constant** (`--claude` flag, `HostdArguments.swift:76`) — whole daemon is shell OR claude, no per-pane switch.
 - `.claudeCode` is created explicitly (⇧⌘N `CommandInterpreter.swift:208`, palette, pill picker) → `addPane(kind:.claudeCode)` → `ClaudeCodePaneView` (`PaneLeafView.swift:401`) = terminal + `InspectorPanel` on `port+1` (inspector wired but **no host daemon exists yet**).
 
 ### 1.7 Settings today
 - Real UI exists: `SettingsScene.swift:75`, 3 `@AppStorage` tabs (Canvas / Notifications / Advanced), 9 keys in `SettingsKey` enum (`SettingsScene.swift:9`), fire-time readers allow live toggle.
-- NOT in UI: all ~80 `AISLOPDESK_*` flags (video/FEC/QP/pacer/capture/mux/terminal), read once at static-`let` init from `ProcessInfo.environment`. No live reload. Terminal font/theme/keys: deliberately not loaded (`GhosttyTerminalView.swift:139`); bridge = `ghostty_config_load_string` (`ghostty.h:1133`), blocked on grid-reflow → host PTY resize.
+- NOT in UI: all ~80 `SLOPDESK_*` flags (video/FEC/QP/pacer/capture/mux/terminal), read once at static-`let` init from `ProcessInfo.environment`. No live reload. Terminal font/theme/keys: deliberately not loaded (`GhosttyTerminalView.swift:139`); bridge = `ghostty_config_load_string` (`ghostty.h:1133`), blocked on grid-reflow → host PTY resize.
 
 ---
 
@@ -90,7 +90,7 @@
 ### 2.4 Ghostty / libghostty (our renderer; what the C API exposes)
 - `ghostty_surface_binding_action(surface, "action_name", len)` = **universal lever** — fire any action by name string: `new_split:right`, `goto_split:left`, `toggle_split_zoom`, `new_tab`, `goto_tab:N`, `jump_to_prompt:-1`, `copy_to_clipboard`, `paste_from_clipboard`, `start_search`/`navigate_search`, `clear_screen`, `scroll_page_up`, etc.
 - `ghostty_config_get(config, &out, "key", len)` reads any config value by string key at runtime; `ghostty_config_load_string` (`ghostty.h:1133`) injects font/theme/palette/keybind config. `ghostty_app_update_config` / `ghostty_surface_update_config` hot-reload; `ghostty_app_set_color_scheme` pushes light/dark.
-- Config-only (not enumerable via C): the keybind table, most `macos-*`. **Splits/tabs at the Ghostty level are NOT used** — Aislopdesk drives one surface per pane and does its own tiling at the SwiftUI layer; libghostty splits/tabs flow through `action_cb` which we don't host. We keep our own split tree.
+- Config-only (not enumerable via C): the keybind table, most `macos-*`. **Splits/tabs at the Ghostty level are NOT used** — SlopDesk drives one surface per pane and does its own tiling at the SwiftUI layer; libghostty splits/tabs flow through `action_cb` which we don't host. We keep our own split tree.
 - Terminal features libghostty owns (already working): VT/Unicode, scrollback, selection/copy, bracketed paste, mouse modes, cursor styles, OSC 8 (internal), OSC 52, Kitty graphics (build-gated). Gaps in OUR embedding: font/theme/keybind config (no load-string call), scrollback search (no exposed API), OSC 8 click-to-open (sniffer skips it).
 
 ### 2.5 tmux / Zellij / WezTerm (split-tree + persistence canon)
@@ -173,7 +173,7 @@ struct Workspace: Codable, Sendable, Equatable {               // schemaVersion 
 A new `SplitLayoutSolver.solve(_ root: SplitNode, in rect: CGRect) -> [PaneID: CGRect]`: recursive descent, partitioning `rect` along each node's axis by normalized flex weights (fixed children subtracted first). Feeds both render and `FocusResolver`. Keep `FocusResolver.swift` (geometric neighbor detection is layout-model-independent).
 
 ### 3.4 App shell / chrome
-- `AislopdeskClientApp.swift:197`: change `.windowResizability(.contentSize)` → `.automatic`; add `.windowStyle(.hiddenTitleBar)` (macOS 13+) so traffic lights float; or `NSWindow` `.fullSizeContentView` + `titlebarAppearsTransparent`.
+- `SlopDeskClientApp.swift:197`: change `.windowResizability(.contentSize)` → `.automatic`; add `.windowStyle(.hiddenTitleBar)` (macOS 13+) so traffic lights float; or `NSWindow` `.fullSizeContentView` + `titlebarAppearsTransparent`.
 - `WorkspaceRootView.swift:71`: keep `NavigationSplitView` spine but re-purpose columns:
   - **Sidebar** = Sessions list (grouped by host), each row showing session name + rollup agent-status dot (Herdr-style) + unread badge. Footer: "New Session". (`PaneSidebarView.swift:22` repurposed.)
   - **Detail top** = a **tab bar** (custom `HStack` of tab pills + `+`, or macOS 26 `Tab`/`TabSection` with `.tabViewStyle(.sidebarAdaptable)`); injected via `ToolbarItem(.principal)` or a view above the split area.
@@ -213,7 +213,7 @@ A new `SplitLayoutSolver.solve(_ root: SplitNode, in rect: CGRect) -> [PaneID: C
 
 ### 4.2 Detection signals (defense in depth, ordered by reliability)
 1. **Host process detection (primary, most robust).** After PTY fork, the host watches the PTY master's foreground process group (`tcgetpgrp` + `proc_pidpath`/`kinfo_proc`) on a low-rate kqueue/poll; when the leaf process becomes `claude`, emit a new CONTROL message `WireMessage.foregroundProcess(name:)` (type **26**). `MuxChannelSession` already knows what it spawned; add a foreground watcher. Definitive "this PTY is running claude".
-2. **Claude Code hooks (richest state, opt-in).** Ship an installer (`aislopdesk integration install claude`, Muxy/Herdr-style) that writes `~/.claude/hooks/aislopdesk-agent.sh` + patches `settings.json`. The hook posts JSON to a host-local Unix socket (`MUXY`-style: export `AISLOPDESK_SOCKET_PATH` + `AISLOPDESK_PANE_ID` into every pane env from the host). Events used: `SessionStart` (identity + active), `Notification`/`permission_prompt` (blocked), `Stop` (done/waiting), `SessionEnd` (gone). Host folds socket events → `WireMessage.claudeStatus(paneSeq:, state:, label:)` (type **27**) on CONTROL.
+2. **Claude Code hooks (richest state, opt-in).** Ship an installer (`slopdesk integration install claude`, Muxy/Herdr-style) that writes `~/.claude/hooks/slopdesk-agent.sh` + patches `settings.json`. The hook posts JSON to a host-local Unix socket (`MUXY`-style: export `SLOPDESK_SOCKET_PATH` + `SLOPDESK_PANE_ID` into every pane env from the host). Events used: `SessionStart` (identity + active), `Notification`/`permission_prompt` (blocked), `Stop` (done/waiting), `SessionEnd` (gone). Host folds socket events → `WireMessage.claudeStatus(paneSeq:, state:, label:)` (type **27**) on CONTROL.
 3. **Screen-manifest fallback (no hooks, Herdr-style).** Client-side: when foregroundProcess == `claude`, run the existing `TerminalModeTracker` for alt-screen, plus a small bottom-buffer matcher (from `TerminalViewModel.ring`) against known Claude approval/spinner/idle UI. Conservative blocked (only known approval UI; unknown → idle). Debuggable.
 4. **OSC 2 title** (`Claude: …`) — already arrives as `WireMessage.title`; weak corroboration only.
 
@@ -240,7 +240,7 @@ Session rows **roll up to most-urgent child** (blocked > working > done > idle),
 
 ### 5.1 Two bridge mechanisms
 1. **`@AppStorage` (live, client-side)** — already proven for the 9 canvas/notification keys (`SettingsScene.swift:9`). Used for client UI + terminal-render prefs.
-2. **Prefs sidecar → daemon-at-launch (video/host/mux)** — the ~80 video flags are read at static-`let` init from `ProcessInfo.environment` and cannot live-reload. The `envInt/envDouble` resolver helpers already accept an injected dict in tests (`LiveCongestionController.swift:566`, `QPController.swift:25`). Refactor the static resolvers to read from an injectable `[String:String]` populated at process start from a `video-prefs.json` sidecar. UI marks these **"applies on reconnect/restart."** Flag host+client-symmetric keys (`AISLOPDESK_FEC_M/_K`, `AISLOPDESK_MUX_WINDOW`) with an explicit "set on both ends" warning.
+2. **Prefs sidecar → daemon-at-launch (video/host/mux)** — the ~80 video flags are read at static-`let` init from `ProcessInfo.environment` and cannot live-reload. The `envInt/envDouble` resolver helpers already accept an injected dict in tests (`LiveCongestionController.swift:566`, `QPController.swift:25`). Refactor the static resolvers to read from an injectable `[String:String]` populated at process start from a `video-prefs.json` sidecar. UI marks these **"applies on reconnect/restart."** Flag host+client-symmetric keys (`SLOPDESK_FEC_M/_K`, `SLOPDESK_MUX_WINDOW`) with an explicit "set on both ends" warning.
 
 ### 5.2 Panels (extend `SettingsScene.swift`, widen its `frame` at :87)
 - **General** — default shell, working dir, startup, scrollback, confirm-close.
@@ -254,7 +254,7 @@ Session rows **roll up to most-urgent child** (blocked > working > done > idle),
 - **Advanced / JSON** — raw `settings.json`/prefs editor (Muxy/Warp-style escape hatch).
 
 ### 5.3 Settings persistence
-- Client/terminal/keybind prefs: `@AppStorage` + `terminal-prefs.json` under `<AppSupport>/Aislopdesk/`.
+- Client/terminal/keybind prefs: `@AppStorage` + `terminal-prefs.json` under `<AppSupport>/SlopDesk/`.
 - Video/host prefs: `video-prefs.json` (daemon reads at launch).
 - New `SettingsKey` cases under `terminal.*`, `video.*`, `agents.*`, `keys.*`.
 

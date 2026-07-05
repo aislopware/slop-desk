@@ -2,7 +2,7 @@
 
 ## Summary
 
-Line up several prompts while an agent is still working. Aislopdesk holds them in a queue and feeds the next one the moment the current turn finishes — no need to babysit the session.
+Line up several prompts while an agent is still working. SlopDesk holds them in a queue and feeds the next one the moment the current turn finishes — no need to babysit the session.
 
 The queue works in both agent panes (Claude Code, etc.) and normal terminal panes. For terminal panes it is analogous to shell command-chaining (`build.sh && release.sh`) but works retroactively — you can append a command after the previous one is already running.
 
@@ -46,11 +46,11 @@ No config keys are documented on this page. The queue is always available; there
 
 **Overall layout**
 
-The screenshot shows a macOS window with a standard title bar (traffic-light buttons top-left, title "aislopdesk" centered). The window is divided into two columns by a thin vertical divider:
+The screenshot shows a macOS window with a standard title bar (traffic-light buttons top-left, title "slopdesk" centered). The window is divided into two columns by a thin vertical divider:
 
 - **Left column — tabs/sidebar** (narrow, ~110 px wide): labeled "TABS" in small uppercase grey text at the top. Below are two rows:
   - Row 1: "OC | Explore config…" with a badge "⌘1" right-aligned in a faint monospace style.
-  - Row 2: "aislopdesk" (selected/active tab, shown in slightly bolder text) with badge "⌘2" right-aligned.
+  - Row 2: "slopdesk" (selected/active tab, shown in slightly bolder text) with badge "⌘2" right-aligned.
   The background of the sidebar is a light grey (~#F5F5F5 or similar off-white); selected row has no strong highlight visible at this zoom — it relies on text weight or a subtle underline.
 
 - **Right column — pane content** (~550 px wide): Fills most of the window. The terminal content area shows white background with monospace text in dark (~#1A1A1A) showing a file-tree listing:
@@ -58,7 +58,7 @@ The screenshot shows a macOS window with a standard title bar (traffic-light but
   ```
   Local source of truth remains:
 
-  ~/.config/aislopdesk/
+  ~/.config/slopdesk/
       config.toml
       themes/
       recipes/
@@ -66,11 +66,11 @@ The screenshot shows a macOS window with a standard title bar (traffic-light but
 
   Sync bundle:
 
-  <chosen-sync-folder>/Aislopdesk/
+  <chosen-sync-folder>/SlopDesk/
       manifest.json
       config/config.toml
       themes/*.toml
-      recipes/*.aislopdeskrecipe
+      recipes/*.slopdeskrecipe
       fonts/*    # optional
       tombstones.json
       devices/<device-id>.json
@@ -80,7 +80,7 @@ The screenshot shows a macOS window with a standard title bar (traffic-light but
 
 A full-width row with light grey background (#F0F0F0 approx), left-padded with a right-pointing triangle (`▶`) followed by a blinking block cursor and the text `Implement {feature}` — this represents the agent's current input line / shell prompt area. This is the "current turn" indicator showing the agent is active.
 
-Below it, a status row showing: `gpt-5.5 xhigh · ~/Workplace/aislopdesk` in small monospace text with subtle color — `gpt-5.5` in blue/teal, `xhigh` in muted text, path in grey.
+Below it, a status row showing: `gpt-5.5 xhigh · ~/Workplace/slopdesk` in small monospace text with subtle color — `gpt-5.5` in blue/teal, `xhigh` in muted text, path in grey.
 
 **Queue strip** (the feature being documented):
 
@@ -135,13 +135,13 @@ The bottom bar has a white or near-white background, a faint top border separati
 
 ### Direct implementation
 
-- **Queue input bar (`⌘⇧M`)**: Maps to a pane-local overlay input bar at the bottom of the focused pane. In aislopdesk, a pane corresponds to a PTY session routed through the terminal mux. The keybinding should be registered in the macOS client's `WorkspaceBindingRegistry` / `NSEvent` monitor layer (prefix or direct), opening a transient SwiftUI input field anchored to the bottom of the focused pane's `TerminalSurface`.
+- **Queue input bar (`⌘⇧M`)**: Maps to a pane-local overlay input bar at the bottom of the focused pane. In slopdesk, a pane corresponds to a PTY session routed through the terminal mux. The keybinding should be registered in the macOS client's `WorkspaceBindingRegistry` / `NSEvent` monitor layer (prefix or direct), opening a transient SwiftUI input field anchored to the bottom of the focused pane's `TerminalSurface`.
 
-- **Queue strip (chip UI)**: A SwiftUI `HStack` of chip views rendered above the Composer in the pane's bottom chrome area. State lives in a `PromptQueueStore` (or similar) scoped per `PaneID`. Since aislopdesk panes are not torn down (they stay mounted at opacity-0 when not focused — per memory: "mount all tabs opacity-0"), the queue state persists across tab switches.
+- **Queue strip (chip UI)**: A SwiftUI `HStack` of chip views rendered above the Composer in the pane's bottom chrome area. State lives in a `PromptQueueStore` (or similar) scoped per `PaneID`. Since slopdesk panes are not torn down (they stay mounted at opacity-0 when not focused — per memory: "mount all tabs opacity-0"), the queue state persists across tab switches.
 
-- **Enqueue from Composer (`⌥⌘↩`)**: The Composer (`⌘⇧E`) already exists in aislopdesk. Add a second submission path that appends to the `PromptQueueStore` instead of writing to the PTY immediately.
+- **Enqueue from Composer (`⌥⌘↩`)**: The Composer (`⌘⇧E`) already exists in slopdesk. Add a second submission path that appends to the `PromptQueueStore` instead of writing to the PTY immediately.
 
-- **Auto-dispatch on idle**: The dispatch trigger is "the agent's shell prompt appears" — i.e., OSC 133 mark A/B/C/D (shell integration). Aislopdesk already uses OSC 133 (`AislopdeskWorkspaceCore` / `BlockOutputView`, per memory). Wire `promptQueue.dispatchNext()` into the OSC 133 prompt-start handler, guarded by `queue.isEmpty == false`.
+- **Auto-dispatch on idle**: The dispatch trigger is "the agent's shell prompt appears" — i.e., OSC 133 mark A/B/C/D (shell integration). SlopDesk already uses OSC 133 (`SlopDeskWorkspaceCore` / `BlockOutputView`, per memory). Wire `promptQueue.dispatchNext()` into the OSC 133 prompt-start handler, guarded by `queue.isEmpty == false`.
 
 - **Chip reorder**: SwiftUI drag-to-reorder on a `List` or custom `DragGesture`. Works the same on macOS and iOS clients.
 
@@ -152,13 +152,13 @@ The bottom bar has a white or near-white background, a faint top border separati
 ### Architecture notes
 
 - Queue state should be **client-local** — it does not need to be transmitted to the host. The host simply receives PTY writes at the moment each prompt is dispatched. No wire-protocol changes required.
-- The dispatch write should go through the existing PTY write path (`AislopdeskTransport` data channel) with `TCP_NODELAY` already set, so latency is minimal.
+- The dispatch write should go through the existing PTY write path (`SlopDeskTransport` data channel) with `TCP_NODELAY` already set, so latency is minimal.
 - The "idle" detection on the macOS client is via OSC 133 prompt markers already parsed by the shell-integration layer. On iOS the same OSC 133 path applies (libghostty handles the OSC parsing behind `TerminalSurface`).
 
 ### Platform / architecture constraints
 
-- **`gpt-5.5 xhigh` model/priority status line**: the design shows the active agent model and a priority level (`xhigh`) below the agent prompt row. Aislopdesk does not yet expose agent metadata over the wire (the host-side `ClaudeStatus`/`ClaudePaneDetector` exists per memory but model name is not surfaced). This is a follow-on; the queue feature does not require it.
-- **Normal terminal pane use**: In aislopdesk, normal terminal panes go through the same PTY mux — the queue dispatch (write on OSC 133 idle) works identically. No special case needed.
+- **`gpt-5.5 xhigh` model/priority status line**: the design shows the active agent model and a priority level (`xhigh`) below the agent prompt row. SlopDesk does not yet expose agent metadata over the wire (the host-side `ClaudeStatus`/`ClaudePaneDetector` exists per memory but model name is not surfaced). This is a follow-on; the queue feature does not require it.
+- **Normal terminal pane use**: In slopdesk, normal terminal panes go through the same PTY mux — the queue dispatch (write on OSC 133 idle) works identically. No special case needed.
 - **Drag-to-reorder on iOS**: SwiftUI `.onMove` / `DragGesture` works on iOS but the hit targets need to be large enough for finger use. Standard SwiftUI `List` with `.onMove` is the path of least resistance.
 
 ### See also

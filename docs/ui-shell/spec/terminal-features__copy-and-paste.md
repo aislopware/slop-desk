@@ -4,7 +4,7 @@
 
 ## Summary
 
-How aislopdesk moves text between the terminal and the system clipboard, plus the safety net that catches risky pastes. Everything is configured in the GUI — no config file needed. Core actions are ⌘C (copy), ⌘V (paste), and ⌘X (cut). Bracketed paste is handled automatically. A paste-protection dialog warns before pasting potentially dangerous content. "Paste as…" provides several clipboard transformation variants. Terminal programs can access the clipboard via OSC 52, with per-direction (read/write) permission controls.
+How slopdesk moves text between the terminal and the system clipboard, plus the safety net that catches risky pastes. Everything is configured in the GUI — no config file needed. Core actions are ⌘C (copy), ⌘V (paste), and ⌘X (cut). Bracketed paste is handled automatically. A paste-protection dialog warns before pasting potentially dangerous content. "Paste as…" provides several clipboard transformation variants. Terminal programs can access the clipboard via OSC 52, with per-direction (read/write) permission controls.
 
 ## Behaviors
 
@@ -112,7 +112,7 @@ No content screenshots are present for this page. The page is purely prose + tab
 
 ### Requires special handling
 
-- **OSC 52 Clipboard Write/Read over a remote session**: In aislopdesk, the terminal PTY runs on the macOS HOST, but the clipboard lives on the CLIENT. OSC 52 sequences emitted by a remote program (e.g. vim over SSH inside the hosted aislopdesk terminal) reach the HOST-side libghostty. The host must forward OSC 52 write payloads over the aislopdesk wire to the CLIENT to write to the client's `NSPasteboard.general`. Similarly, OSC 52 read requests must be forwarded to the client, which returns the clipboard content over the wire to the host for injection into the PTY. This is a non-trivial wire extension — define a new `ClipboardWrite` / `ClipboardRead` control-channel message pair. The Ask/Allow/Deny permission gate must live on the CLIENT (where the user sits), not the host.
+- **OSC 52 Clipboard Write/Read over a remote session**: In slopdesk, the terminal PTY runs on the macOS HOST, but the clipboard lives on the CLIENT. OSC 52 sequences emitted by a remote program (e.g. vim over SSH inside the hosted slopdesk terminal) reach the HOST-side libghostty. The host must forward OSC 52 write payloads over the slopdesk wire to the CLIENT to write to the client's `NSPasteboard.general`. Similarly, OSC 52 read requests must be forwarded to the client, which returns the clipboard content over the wire to the host for injection into the PTY. This is a non-trivial wire extension — define a new `ClipboardWrite` / `ClipboardRead` control-channel message pair. The Ask/Allow/Deny permission gate must live on the CLIENT (where the user sits), not the host.
 - **Right Click Action (paste-on-right-click)**: The right-click context menu is a CLIENT-side `NSMenu`. Implementing bare-right-click-to-paste is a client gesture recogniser change (`TerminalSurface` / `TerminalRendererFactory` view), not a host change. No wire needed.
 - **Paste as… → Paste and continue in Composer**: The Composer is a CLIENT-side UI element (`WorkspaceStore` / Composer pane). This is pure client state — no wire involvement.
 - **Full-screen TUI detection for paste-protection skip**: libghostty tracks the alternate screen (`?1049h`) which is a reliable proxy for "full-screen TUI active." Read this state from the libghostty surface config before deciding whether to show the protection dialog.

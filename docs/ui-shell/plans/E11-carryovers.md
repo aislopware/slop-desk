@@ -44,7 +44,7 @@ from-scratch surface:
   routes `.openQuickly` to a `break` no-op. E11 fills these: build the picker view, mount it through
   the **existing E2 `OverlayCoordinator`** (same mount path as palette/JumpTo/CommandNavigator), and
   make `.openQuickly` toggle it. Pass the toggle closure through `WorkspaceKeyDispatcher` exactly like
-  `toggleJumpTo`/`togglePalette` (see `AislopdeskClientApp.swift`).
+  `toggleJumpTo`/`togglePalette` (see `SlopDeskClientApp.swift`).
 - **E10's Jump-To IS the spec's "Current" filter — GENERALIZE it, don't duplicate.** E10 shipped a full
   floating picker: `JumpToView` (`Overlays/JumpToView.swift`) + the PURE, headlessly-tested
   `JumpToModel` (`WorkspaceCore/.../Domain/JumpToModel.swift`, with `JumpToItem` + `filtered`) +
@@ -96,7 +96,7 @@ from-scratch surface:
   free stub (it is) and that `⌘J` is owned by Jump-To/Current (it is, from E10).
 - **`⌘1`–`⌘9` quick-pick and `Tab`/`⇧Tab` cycling are picker-local too.** Same rule — handle inside
   the panel, scoped to the visible result list / pill order. `⌘1–9` open the Nth visible result
-  directly (ES-E11-3). Never bind a bare key (`[[aislopdesk-orchestrator-rounds-2026-06-13]]`).
+  directly (ES-E11-3). Never bind a bare key (`[[slopdesk-orchestrator-rounds-2026-06-13]]`).
 - **Reveal/Open in the Actions popover ROUTE TO THE HOST — reuse E10's verbs, do NOT "disable for
   remote".** The open-quickly spec's "cannot map 1:1" section recommends *disabling* Reveal-in-Finder /
   Open-in-Default-App for remote panes — that recommendation is **SUPERSEDED by E10**, which already
@@ -105,7 +105,7 @@ from-scratch surface:
   Open in Default App** reuse **E10's existing host verbs 9/10** (paths live on the HOST Mac) — no new
   wire, and the actions actuate rather than being disabled. **Copy Path / Copy CWD Path / Copy
   Command / Copy Session ID** = client pasteboard (no wire). **Change Directory Here** = inject
-  `cd <path>\n` as **VERBATIM UTF-8** into the PTY (NOT SendKeysParser — `[[aislopdesk-coding-workspace-redesign-2026-06-20]]`)
+  `cd <path>\n` as **VERBATIM UTF-8** into the PTY (NOT SendKeysParser — `[[slopdesk-coding-workspace-redesign-2026-06-20]]`)
   and — folding E10's polish — **cd to the PARENT** when the target is a FILE, not the file itself.
   **Re-Run in Current/New** = the existing verbatim re-run path. Reuse E10's `LinkActionPolicy` for
   File/URL item actions.
@@ -118,7 +118,7 @@ from-scratch surface:
   `golden/golden_vectors.json` surgically so the **13 frozen keys** survive + run `golden-check.sh`;
   update `docs/20-wire-protocol.md` + justify in `DECISIONS.md`. **Default: no wire change.**
 - **iOS rots silently.** The picker, filter pills, and Actions popover live in shared
-  `AislopdeskClientUI` and must compile for iOS (⌘ chords get a tap/affordance fallback; the picker is
+  `SlopDeskClientUI` and must compile for iOS (⌘ chords get a tap/affordance fallback; the picker is
   still presentable; Agents/Folders are host-/client-sourced and work). **Run `bash scripts/check-ios.sh`
   in the gate** — `swift build` on macOS will NOT catch iOS rot.
 - **Honesty discipline (E8/E12/E15/E17/E10).** Never ship a filter pill or Actions row that silently

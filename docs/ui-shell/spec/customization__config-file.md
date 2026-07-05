@@ -2,13 +2,13 @@
 
 ## Summary
 
-Aislopdesk stores all settings in `~/.config/aislopdesk/config.toml` — a lenient TOML file (flat `key = value` pairs, one per line, `#` comments). The Settings panel writes this same file, so panel edits and manual edits are always in sync. Editing the file directly is useful for version-control, cross-machine copying, commenting choices, or setting keys that only exist in the file and not in the GUI. The file is optional; Aislopdesk runs on compiled defaults until it is created. Saving the file triggers an immediate hot-reload across every open window with no restart required.
+SlopDesk stores all settings in `~/.config/slopdesk/config.toml` — a lenient TOML file (flat `key = value` pairs, one per line, `#` comments). The Settings panel writes this same file, so panel edits and manual edits are always in sync. Editing the file directly is useful for version-control, cross-machine copying, commenting choices, or setting keys that only exist in the file and not in the GUI. The file is optional; SlopDesk runs on compiled defaults until it is created. Saving the file triggers an immediate hot-reload across every open window with no restart required.
 
 ---
 
 ## Behaviors
 
-- **File location:** `~/.config/aislopdesk/config.toml`. The file need not exist; Aislopdesk runs on defaults until created.
+- **File location:** `~/.config/slopdesk/config.toml`. The file need not exist; SlopDesk runs on defaults until created.
 - **Format:** TOML — flat `key = value` pairs, one assignment per line, `#` for comments.
 - **Leniency:** Quotes around simple string values are optional. Unknown keys are silently ignored (typo-safe; newer configs load on older builds).
 - **Whitespace:** Whitespace around `=` is optional.
@@ -16,8 +16,8 @@ Aislopdesk stores all settings in `~/.config/aislopdesk/config.toml` — a lenie
 - **Environment expansion:** `~` and `$VAR` expand inside string values. Example: `working-directory = ~/projects`.
 - **Includes:** `include = <path>` pulls in another TOML file. Later includes win; the main file is read last. Useful for splitting config or sharing a base across machines.
 - **Settings panel parity:** The Advanced tab's Config File section shows the exact path and an "Open Config File" button that opens the file in the system default editor, creating an empty file first if needed. All panel changes write through to this file.
-- **Hot-reload:** Aislopdesk watches the file with a file-system observer. Saving the file applies changes immediately to every open window — no restart, no SIGHUP.
-- **Force reload:** After editing an `include`d file (which Aislopdesk may not watch directly), use Settings → Advanced → Config File → Reload Config, or run the **Reload Config** command from the Command Palette.
+- **Hot-reload:** SlopDesk watches the file with a file-system observer. Saving the file applies changes immediately to every open window — no restart, no SIGHUP.
+- **Force reload:** After editing an `include`d file (which SlopDesk may not watch directly), use Settings → Advanced → Config File → Reload Config, or run the **Reload Config** command from the Command Palette.
 - **Value types supported:** String (quoted or bare), Integer, Float, Boolean (`true`/`false` or `on`/`off`), Color (`#RRGGBB`, `#RRGGBBAA`, named), Enum (bare word), List (repeated keys).
 
 ---
@@ -37,7 +37,7 @@ The `config-file` page itself defines no keybindings. The table below covers key
 
 ## Config keys
 
-The full configuration reference lives at `/reference/configuration`. Below is every key documented across the Aislopdesk reference, with its default and effect.
+The full configuration reference lives at `/reference/configuration`. Below is every key documented across the SlopDesk reference, with its default and effect.
 
 ### Font
 
@@ -231,7 +231,7 @@ Built-in themes: April, April Dark, Ayu Dark, Ayu Light, Catppuccin Mocha, Dracu
 |---|---|---|
 | `shell-integration` | `true` | Install managed shell-rc integration block |
 | `ssh-integration` | `true` | Forward shell integration over SSH |
-| `omit-aislopdesk-prefix` | `false` | Install CLI functions without the `aislopdesk` command prefix |
+| `omit-slopdesk-prefix` | `false` | Install CLI functions without the `slopdesk` command prefix |
 | `cli-allow-overwrite` | `false` | Allow replacing user-defined shell functions |
 | `cli-alias` | (none) | User CLI aliases (repeatable) |
 | `progress-bar-commands` | (built-in set) | Command prefixes that show progress bar |
@@ -311,7 +311,7 @@ Built-in themes: April, April Dark, Ayu Dark, Ayu Light, Catppuccin Mocha, Dracu
 | Key | Default | Effect |
 |---|---|---|
 | `recipe-replay-saved` | `ask_once` | Command replay behavior for saved recipes |
-| `recipe-replay-file` | `manually` | Command replay behavior for `.aislopdeskrecipe` files |
+| `recipe-replay-file` | `manually` | Command replay behavior for `.slopdeskrecipe` files |
 
 ### Open Quickly, Frecency & Jump
 
@@ -376,7 +376,7 @@ The **config-file** page itself contains no screenshots — it is a purely textu
 ## Client/host implementation notes
 
 ### Architecture context
-Aislopdesk is a remote coding tool: a Swift macOS host runs `aislopdesk-hostd` (PTY, screen capture, video encode/FEC), and macOS/iOS clients render the remote terminal via libghostty behind a `TerminalSurface` seam. This config file is the CLIENT-SIDE UX layer; because aislopdesk splits a session across a client and a host, some keys resolve entirely on the client while others must round-trip to the host.
+SlopDesk is a remote coding tool: a Swift macOS host runs `slopdesk-hostd` (PTY, screen capture, video encode/FEC), and macOS/iOS clients render the remote terminal via libghostty behind a `TerminalSurface` seam. This config file is the CLIENT-SIDE UX layer; because slopdesk splits a session across a client and a host, some keys resolve entirely on the client while others must round-trip to the host.
 
 ### Straightforward client-side keys
 
@@ -392,7 +392,7 @@ Aislopdesk is a remote coding tool: a Swift macOS host runs `aislopdesk-hostd` (
 | `autocomplete-*` | Client-side inline suggestion UI |
 | `clipboard-*` | Client-side clipboard handling via OSC 52 |
 | `ui-*` colors | Theme token overrides / `ThemeStore` |
-| Config hot-reload | `PreferencesStore` + `Defaults`, plus a file-watcher on `~/.config/aislopdesk/config.toml` |
+| Config hot-reload | `PreferencesStore` + `Defaults`, plus a file-watcher on `~/.config/slopdesk/config.toml` |
 | `include = <path>` | Config parser |
 | `$VAR` and `~` expansion | String-value parser |
 
@@ -403,32 +403,32 @@ Aislopdesk is a remote coding tool: a Swift macOS host runs `aislopdesk-hostd` (
 | `working-directory` | CWD is the HOST's filesystem, not the client's. `working-directory = ~/projects` is resolved on the host and communicated at session open via the wire protocol. The value lives in client config but applies on the host. |
 | `tab-working-directory` / `split-working-directory` | Same HOST-side resolution. On new tab/split, the CWD is inherited from the host-side PTY, not the client's local filesystem. |
 | `window-working-directory` | `home` default means the HOST's home directory. |
-| `command` | The command runs on the HOST (in `aislopdesk-hostd`). Client config stores a preferred command sent over the wire at session-open, but cannot enforce it after launch. |
+| `command` | The command runs on the HOST (in `slopdesk-hostd`). Client config stores a preferred command sent over the wire at session-open, but cannot enforce it after launch. |
 | `env` | Environment variables apply on the HOST side in the PTY. Client stores them and sends them at session open. |
-| `ssh-integration` | Aislopdesk IS the transport — this is "integration forwarding" over the aislopdesk mux channel, not a secondary SSH hop. |
-| `session-restore-*` | Session restore uses `DetachedSessionStore` (`AISLOPDESK_DETACH_ENABLED`), aligned with the host-side detach mechanism rather than a purely client-side session log. |
+| `ssh-integration` | SlopDesk IS the transport — this is "integration forwarding" over the slopdesk mux channel, not a secondary SSH hop. |
+| `session-restore-*` | Session restore uses `DetachedSessionStore` (`SLOPDESK_DETACH_ENABLED`), aligned with the host-side detach mechanism rather than a purely client-side session log. |
 | `shell-integration` | Shell integration RC block must be injected on the HOST shell (not client). Host manages this; client config controls whether to request it at session open. |
 
 ### Platform-specific or deferred keys
 
 | Key / behavior | Constraint |
 |---|---|
-| `quick-terminal-*` (Quick Terminal) | A system-wide dropdown terminal (like Visor). Aislopdesk's client is a full windowed app; there is no OS-level overlay mechanism to implement this without a separate helper app or Accessibility API. Deferred. |
-| `dock-icon-*` | Dock icon badges and animations are macOS-only and client-local. Implementable on the macOS client (`AislopdeskClientUI`) but not on iOS. |
-| `auto-secure-input` / `secure-input-indication` | Secure input (IOHIDSetSecureInput) applies to the CLIENT's event stream. Since aislopdesk injects input events via the host, "secure input" on the client does not protect the host shell from interception — the semantics differ fundamentally from a local terminal. N/A for remote sessions. |
-| `freeze-inactive-tab` | For a local terminal this would release a local GPU Metal surface. In aislopdesk the video decode surface is always "remote" — inactive panes can suspend the video stream (already possible via the FEC/packetizer path) but libghostty surface management differs. Needs host-side stream-pause integration. |
+| `quick-terminal-*` (Quick Terminal) | A system-wide dropdown terminal (like Visor). SlopDesk's client is a full windowed app; there is no OS-level overlay mechanism to implement this without a separate helper app or Accessibility API. Deferred. |
+| `dock-icon-*` | Dock icon badges and animations are macOS-only and client-local. Implementable on the macOS client (`SlopDeskClientUI`) but not on iOS. |
+| `auto-secure-input` / `secure-input-indication` | Secure input (IOHIDSetSecureInput) applies to the CLIENT's event stream. Since slopdesk injects input events via the host, "secure input" on the client does not protect the host shell from interception — the semantics differ fundamentally from a local terminal. N/A for remote sessions. |
+| `freeze-inactive-tab` | For a local terminal this would release a local GPU Metal surface. In slopdesk the video decode surface is always "remote" — inactive panes can suspend the video stream (already possible via the FEC/packetizer path) but libghostty surface management differs. Needs host-side stream-pause integration. |
 | `link-open-with`, `file-open-with`, `folder-open-with` | Paths detected in terminal output are HOST filesystem paths. Opening them requires routing the open-request back through the wire to the host, then having the host open the file in its local app — not a pure client operation. |
-| `progress-bar-commands` | Progress detection requires parsing shell output; since the shell runs on the host, OSC 133 (already tracked by aislopdesk's `Blocks/OSC-133` integration) is the correct seam for progress signaling. |
+| `progress-bar-commands` | Progress detection requires parsing shell output; since the shell runs on the host, OSC 133 (already tracked by slopdesk's `Blocks/OSC-133` integration) is the correct seam for progress signaling. |
 | `window-opacity` (window-level blur/transparency) | macOS vibrancy/window translucency is client-local and feasible on macOS. On iOS, background blur behind the terminal view requires a different API. Platform-specific. |
 | `notification-foreground`, `privilege-*` (notifications) | Notifications are delivered to the CLIENT device. For iOS remote clients, notifications require APNS push tokens — not just local `UNUserNotificationCenter`. iOS-specific complexity. |
-| `ipc-allow-send-keys` / `ipc-allow-sensitive-sessions` | For a local terminal, IPC refers to a local Unix-socket IPC between processes on the same Mac. In aislopdesk, the equivalent is the host-side agent-control socket (`AISLOPDESK_AGENT_CONTROL=1`, AF_UNIX NDJSON). The client config key guards client exposure; maps to `AgentControlListener` access policy on the host. |
+| `ipc-allow-send-keys` / `ipc-allow-sensitive-sessions` | For a local terminal, IPC refers to a local Unix-socket IPC between processes on the same Mac. In slopdesk, the equivalent is the host-side agent-control socket (`SLOPDESK_AGENT_CONTROL=1`, AF_UNIX NDJSON). The client config key guards client exposure; maps to `AgentControlListener` access policy on the host. |
 | Config file format — `include` | Not yet implemented in the config stack; on the parser backlog. |
 
 ### Implementation order
 
-1. **Config file path:** `~/.config/aislopdesk/config.toml`.
+1. **Config file path:** `~/.config/slopdesk/config.toml`.
 2. **Parser:** TOML, lenient, `~`/`$VAR` expansion, `include` support, silent unknown-key handling.
 3. **Hot-reload:** File-system watcher posting to `PreferencesStore` / `Defaults`.
 4. **Key groups by priority:** Font → Theme → Cursor → Scrollback → Keybinds → Clipboard → UI chrome.
 5. **Settings panel bridge:** Advanced tab showing path + "Open Config File" + "Reload Config".
-6. **Host-side keys** (`working-directory`, `command`, `env`, `shell-integration`): send at session open via the aislopdesk wire protocol session-init message.
+6. **Host-side keys** (`working-directory`, `command`, `env`, `shell-integration`): send at session open via the slopdesk wire protocol session-init message.

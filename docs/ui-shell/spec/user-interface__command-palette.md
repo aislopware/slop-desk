@@ -2,7 +2,7 @@
 
 ## Summary
 
-The VSCode-style command palette for _running an action_. Counterpart to Open Quickly, which is for _jumping to a thing_. Opened with ⌘⇧P from anywhere, it exposes every Aislopdesk action — including ones without keyboard shortcuts — in a searchable, categorised list. Actions are tagged with their scope (pane, window, or app level).
+The VSCode-style command palette for _running an action_. Counterpart to Open Quickly, which is for _jumping to a thing_. Opened with ⌘⇧P from anywhere, it exposes every SlopDesk action — including ones without keyboard shortcuts — in a searchable, categorised list. Actions are tagged with their scope (pane, window, or app level).
 
 ## Behaviors
 
@@ -16,7 +16,7 @@ The VSCode-style command palette for _running an action_. Counterpart to Open Qu
 - Actions that have a keyboard shortcut show keycap chips to the right of the label (e.g. ⇧⌘L for "Toggle Tabs Panel", ⇧⌘R for "Toggle Details Panel"). Keycap chips are rendered as individual rounded-rectangle badges per key symbol.
 - Actions that have a submenu show a right-facing chevron "›" at the far right (e.g. "Open in…").
 - The palette shows context-aware content at the top: under "WORKING DIRECTORY" it shows the focused pane's current working directory as a tinted badge (folder icon + path like `~/Workplace/project/`). This badge appears in the top-right of the section header row.
-- Actions cover all scope levels: pane-scoped (e.g. Find, Toggle Bold Brightens), window-scoped (e.g. Close Window, Toggle Tabs Panel), and app-scoped (e.g. About Aislopdesk). Each action is tagged with its scope internally (the reference screenshot shows this through grouping/section headers).
+- Actions cover all scope levels: pane-scoped (e.g. Find, Toggle Bold Brightens), window-scoped (e.g. Close Window, Toggle Tabs Panel), and app-scoped (e.g. About SlopDesk). Each action is tagged with its scope internally (the reference screenshot shows this through grouping/section headers).
 - Example action categories from the docs:
   - Window: New Tab, Close Tab, Reopen Closed Tab, Move Tab to New Window
   - Pane: Open Folder Pane, Split Right (planned), Swap Panes
@@ -90,11 +90,11 @@ No dedicated config keys are documented for the Command Palette itself. Actions 
 
 - `command-palette.png`
 
-## Aislopdesk mapping notes
+## SlopDesk mapping notes
 
 ### Maps cleanly
-- **Search field + fuzzy filtering:** Aislopdesk already has a vendored FuzzyMatchV2 (`FuzzyMatcher`) used in the sidebar chooser. The same matcher can power command-palette filtering.
-- **Action registry / command list:** Aislopdesk has `WorkspaceBindingRegistry` and keybinding infrastructure. All registered actions can be enumerated and exposed in a palette.
+- **Search field + fuzzy filtering:** SlopDesk already has a vendored FuzzyMatchV2 (`FuzzyMatcher`) used in the sidebar chooser. The same matcher can power command-palette filtering.
+- **Action registry / command list:** SlopDesk has `WorkspaceBindingRegistry` and keybinding infrastructure. All registered actions can be enumerated and exposed in a palette.
 - **Keycap badges:** Pure SwiftUI rendering; no platform dependency.
 - **Checkmark for toggled state:** Each action's current boolean state (e.g. panel visible) can be queried at open time and shown as a checkmark.
 - **⌘↩ "keep open" chaining:** Standard SwiftUI / AppKit event handling — suppress dismiss on ⌘↩.
@@ -102,12 +102,12 @@ No dedicated config keys are documented for the Command Palette itself. Actions 
 - **Section grouping:** Static grouping by action category is straightforward.
 
 ### Requires attention
-- **Working directory badge (CWD context):** The palette shows the focused pane's CWD via OSC 7 / shell integration. In aislopdesk the CWD lives on the REMOTE HOST, not the local client. The client receives it via the OSC 7 wire path (if the shell emits it and the host forwards it). Implementation: ensure the host relays OSC 7 CWD updates over the mux to the client, and cache it per-pane in `WorkspaceStore`/pane state. The CWD badge then reads from that cached value. Flag: CWD badge may be stale by RTT; acceptable for display purposes.
-- **Pane-scope vs window-scope action routing:** Some actions (e.g. "Split Right") operate on the focused pane; others (e.g. "Close Window") operate on the window. In aislopdesk's remote architecture, pane-scoped actions that affect the remote PTY (e.g. Send Bell, Toggle Mouse Reporting) must be forwarded to the host over the control channel rather than executed locally. Window-scoped UI actions (e.g. Toggle Tabs Panel) are fully local.
-- **"Split Right":** Aislopdesk has pane splitting in `WorkspaceStore`. Exposing it in the palette is straightforward.
+- **Working directory badge (CWD context):** The palette shows the focused pane's CWD via OSC 7 / shell integration. In slopdesk the CWD lives on the REMOTE HOST, not the local client. The client receives it via the OSC 7 wire path (if the shell emits it and the host forwards it). Implementation: ensure the host relays OSC 7 CWD updates over the mux to the client, and cache it per-pane in `WorkspaceStore`/pane state. The CWD badge then reads from that cached value. Flag: CWD badge may be stale by RTT; acceptable for display purposes.
+- **Pane-scope vs window-scope action routing:** Some actions (e.g. "Split Right") operate on the focused pane; others (e.g. "Close Window") operate on the window. In slopdesk's remote architecture, pane-scoped actions that affect the remote PTY (e.g. Send Bell, Toggle Mouse Reporting) must be forwarded to the host over the control channel rather than executed locally. Window-scoped UI actions (e.g. Toggle Tabs Panel) are fully local.
+- **"Split Right":** SlopDesk has pane splitting in `WorkspaceStore`. Exposing it in the palette is straightforward.
 - **"Open in…" submenu:** Submenu navigation within the palette (pressing ↩ on a row with ›) requires a secondary list state. Not complex but needs explicit implementation — the basic palette only handles flat action dispatch.
-- **Recipes integration:** Aislopdesk does not yet have a Recipes system equivalent. The "Save Recipe" / "Export Recipe" / "Open Recipe" actions cannot map 1:1 until Recipes are implemented. Flag as future work.
-- **"Send to All Panes":** Aislopdesk supports multiple panes; broadcasting a shell command to all is feasible via the mux by iterating pane channels. Implement as a pane-level action that iterates `WorkspaceStore` pane list.
+- **Recipes integration:** SlopDesk does not yet have a Recipes system equivalent. The "Save Recipe" / "Export Recipe" / "Open Recipe" actions cannot map 1:1 until Recipes are implemented. Flag as future work.
+- **"Send to All Panes":** SlopDesk supports multiple panes; broadcasting a shell command to all is feasible via the mux by iterating pane channels. Implement as a pane-level action that iterates `WorkspaceStore` pane list.
 - **iOS client:** The palette trigger ⌘⇧P maps to a hardware keyboard shortcut. On iOS without a keyboard, the palette must be reachable via a toolbar button or swipe gesture. Flag: need a touch-accessible entry point for iOS (e.g. a toolbar "..." menu or dedicated button).
-- **"Open Settings" / "Reload Config":** On aislopdesk, "settings" could mean local client preferences (handled locally) vs remote host config (requires a control-channel message). Distinguish these two action classes clearly.
-- **Theme actions (Switch Theme, Reload Theme, Open Theme File):** Theme is local client state in aislopdesk (ThemeStore). These are all local actions with no remote dependency. Clean mapping.
+- **"Open Settings" / "Reload Config":** On slopdesk, "settings" could mean local client preferences (handled locally) vs remote host config (requires a control-channel message). Distinguish these two action classes clearly.
+- **Theme actions (Switch Theme, Reload Theme, Open Theme File):** Theme is local client state in slopdesk (ThemeStore). These are all local actions with no remote dependency. Clean mapping.

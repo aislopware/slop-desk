@@ -85,7 +85,7 @@ rejection-audit re-examined all four of my rejections and confirmed these three 
   were tautologies (asserting against a value derived from the output). Every fix here is now backed by a
   test verified to FAIL when the fix is reverted (checked by temporarily reverting each).
 - **Layering decides the single-source-of-truth site**: the reconnect cap had to live in the LOWER module
-  (`AislopdeskClient`) — `ConnectionPresenter` (UI) can depend down but not up. The finding's "make
+  (`SlopDeskClient`) — `ConnectionPresenter` (UI) can depend down but not up. The finding's "make
   ReconnectManager read ConnectionPresenter" was backwards.
 - **Concurrency rejections need a runnable repro, not a static read.** My rank-8 rejection reasoned
   correctly about the guard but missed the actor-hop timing of *when* `sessionEpoch` is sampled. The

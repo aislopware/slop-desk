@@ -4,11 +4,11 @@
 
 Jump between user-run commands, prompts, files (available in jump to panel) in the scrollback. Powered by the prompt marks your shell already emits.
 
-When Shell Integration is active, the shell emits OSC 133 marks around each prompt and command. Aislopdesk uses those marks to build a per-pane index of user commands with exit status. The Outline feature is surfaced in two places: (1) the Jump To panel (⌘J / ⌘⇧O), a floating quick-switcher overlay that also lists commands under a "Current" filter tab, and (2) the Outline sidebar panel shown in the Details Panel (right sidebar).
+When Shell Integration is active, the shell emits OSC 133 marks around each prompt and command. SlopDesk uses those marks to build a per-pane index of user commands with exit status. The Outline feature is surfaced in two places: (1) the Jump To panel (⌘J / ⌘⇧O), a floating quick-switcher overlay that also lists commands under a "Current" filter tab, and (2) the Outline sidebar panel shown in the Details Panel (right sidebar).
 
 ## Behaviors
 
-- **Per-pane command index**: Aislopdesk builds a per-pane index of all user-entered commands by consuming OSC 133 marks (shell integration). The index is live — new commands appear as they are run.
+- **Per-pane command index**: SlopDesk builds a per-pane index of all user-entered commands by consuming OSC 133 marks (shell integration). The index is live — new commands appear as they are run.
 - **Exit-status decoration in gutter**: Each indexed command row displays an exit-status badge in the left gutter:
   - Green tick (✓) = exit code 0 (success)
   - Red cross (✗) = non-zero exit code (failure)
@@ -20,9 +20,9 @@ When Shell Integration is active, the shell emits OSC 133 marks around each prom
   - **Supported code agent session** (e.g. Claude Code): Also lists history prompts (the prompts the user sent to the agent), in addition to shell commands.
   - **Markdown file preview session**: Shows all headings (H1–H6) found in the markdown file, as a navigable table of contents.
 - **Right-click context menu on outline rows**: Right-clicking any row in the outline sidebar panel offers at minimum two actions: jump to that location in the scrollback, and copy the text content of that row.
-- **No prompt modification required**: Aislopdesk injects shell integration via shell hooks; users do not need to modify their PS1/PROMPT. Integration is done entirely through shell hook injection.
+- **No prompt modification required**: SlopDesk injects shell integration via shell hooks; users do not need to modify their PS1/PROMPT. Integration is done entirely through shell hook injection.
 - **Scrollback jump behavior**: Selecting a command/prompt/heading in either the Jump To panel or the Outline sidebar scrolls the terminal's scrollback buffer to bring that entry into view.
-- **Requirements**: A supported shell (bash/zsh/fish) with Aislopdesk's shell integration hooks installed and Shell Integration activated in Aislopdesk settings.
+- **Requirements**: A supported shell (bash/zsh/fish) with SlopDesk's shell integration hooks installed and Shell Integration activated in SlopDesk settings.
 
 ## Keybindings
 
@@ -132,26 +132,26 @@ No dedicated config keys are documented for this feature. The Outline / Jump To 
 - `jump-to.png` — Jump To panel (⌘J), showing Open Quickly overlay with "Current" tab active, listing agent prompts and shell commands from the focused pane.
 - `outline-panel.png` — Outline Panel, showing the right sidebar Details Panel "Outline" tab with a code agent session's prompt history entries.
 
-## Aislopdesk mapping notes
+## SlopDesk mapping notes
 
 ### Direct mappings
 
-- **OSC 133 marks**: Aislopdesk already consumes OSC 133 (shell integration) for the Blocks system (`OSC-133`, `OSC_133` references in the codebase). The per-pane command index for Outline can be built on top of the existing block/mark infrastructure. Each `OSC 133 ; A` (prompt start) and `OSC 133 ; C/D` (command end + exit code) marker gives the data needed.
+- **OSC 133 marks**: SlopDesk already consumes OSC 133 (shell integration) for the Blocks system (`OSC-133`, `OSC_133` references in the codebase). The per-pane command index for Outline can be built on top of the existing block/mark infrastructure. Each `OSC 133 ; A` (prompt start) and `OSC 133 ; C/D` (command end + exit code) marker gives the data needed.
 - **Exit status decoration**: The exit code is available from `OSC 133 ; D ; <exit_code>` — map to green/red/grey glyph in the Outline sidebar row. Already partially tracked in the Blocks system.
 - **Outline sidebar panel**: Maps to a tab in the Details Panel (right sidebar in the macOS client UI). Implementation: a `BlockOutputView` or custom `OutlineView` SwiftUI component that reads the current pane's `BlockIndex` and renders command rows with timestamps and exit-status badges.
 - **Jump To panel**: Maps to a floating overlay sheet/panel in the macOS client UI. Can reuse the existing fzf `FuzzyMatcher` (vendored as of 2026-06-25) for filtering. The "Current" filter tab shows only commands from the focused pane's index; other tabs (All, Recent, etc.) map to existing Open Quickly filters.
 - **Keybinding ⌘J / ⌘⇧O**: Register via the existing `WorkspaceBindingRegistry` / NSEvent monitor prefix system. ⌘⇧O is already noted as the Open Quickly keybinding in the codebase.
 - **Agent prompt history in Outline**: For code agent sessions (Claude Code), the outline should also list history prompts. These can be sourced from the `BlockKind.prompt` entries already tracked in the agent block parser. This is agent-generic (any supported agent), not Claude-Code-specific.
-- **Markdown heading outline**: For markdown file preview panes (if/when Aislopdesk supports them), parse headings. Currently not a priority — Aislopdesk is a coding/remote tool, not a document viewer.
+- **Markdown heading outline**: For markdown file preview panes (if/when SlopDesk supports them), parse headings. Currently not a priority — SlopDesk is a coding/remote tool, not a document viewer.
 - **Right-click context menu on outline rows**: Standard `contextMenu` SwiftUI modifier on each outline row, offering "Jump to" and "Copy".
 - **Scrollback jump**: On selection, scroll the terminal's libghostty surface to the row corresponding to the selected block's scrollback offset. libghostty supports programmatic scroll positioning.
 - **Truncation with ellipsis**: Rows in the sidebar are compact (~36–40px height) with ellipsis truncation for long commands/prompts, matching the visual.
 
 ### Cannot map 1:1 — caveats and gaps
 
-- **Host-side CWD in outline rows**: A local-only design could show `~/Workspace/project` as the session path because it runs locally. In Aislopdesk, the CWD comes from OSC 7 (`OSC 7 ; file://host/path`) emitted by the remote shell. The remote path is available over the wire but requires the remote shell to emit OSC 7; if it does not, the session path label will be absent or stale.
+- **Host-side CWD in outline rows**: A local-only design could show `~/Workspace/project` as the session path because it runs locally. In SlopDesk, the CWD comes from OSC 7 (`OSC 7 ; file://host/path`) emitted by the remote shell. The remote path is available over the wire but requires the remote shell to emit OSC 7; if it does not, the session path label will be absent or stale.
 - **"Current" tab in Open Quickly across remote sessions**: When multiple remote sessions from different hosts are open, "Current" must scope to the focused pane's pane-local index (not a global command history), which is the natural behavior if the index is stored per-pane. No architectural blocker, but the per-pane index must be maintained in the client (built from the stream of OSC 133 marks received over the wire).
-- **Timestamp accuracy**: Relative timestamps ("4m ago") are shown per command. These timestamps are local. In Aislopdesk, the timestamp of a command's mark arriving at the client may differ from the actual shell execution time on the host by RTT. This is negligible for the UX but worth noting: use client-receive-time as the timestamp, not a host-provided clock.
-- **Supported agent session detection**: The design lists "history prompts" for "supported code agent sessions." In Aislopdesk, Claude Code agent sessions are auto-detected via `ClaudeStatus`/`ClaudePaneDetector`. The outline should check `PaneKind` to decide whether to show the "prompt history" view vs the plain command list view.
+- **Timestamp accuracy**: Relative timestamps ("4m ago") are shown per command. These timestamps are local. In SlopDesk, the timestamp of a command's mark arriving at the client may differ from the actual shell execution time on the host by RTT. This is negligible for the UX but worth noting: use client-receive-time as the timestamp, not a host-provided clock.
+- **Supported agent session detection**: The design lists "history prompts" for "supported code agent sessions." In SlopDesk, Claude Code agent sessions are auto-detected via `ClaudeStatus`/`ClaudePaneDetector`. The outline should check `PaneKind` to decide whether to show the "prompt history" view vs the plain command list view.
 - **iOS client**: The Outline sidebar panel maps to a sheet or secondary panel on iOS (no persistent sidebar). The Jump To panel (⌘J) has no direct iOS keyboard shortcut equivalent — expose via a toolbar button or gesture. The compact row layout (36–40px) works on iOS but touch targets should be at least 44pt.
-- **Remote SSH badge on outline rows**: Not applicable for Aislopdesk (all sessions are remote by definition); no extra badge needed to distinguish local vs remote.
+- **Remote SSH badge on outline rows**: Not applicable for SlopDesk (all sessions are remote by definition); no extra badge needed to distinguish local vs remote.

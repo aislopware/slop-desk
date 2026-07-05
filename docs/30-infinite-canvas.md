@@ -29,7 +29,7 @@ Status: spec of record; shipped as written, except the v2 persistence carries **
 
 ## 2. Data model — exact Swift
 
-New file `Sources/AislopdeskClientUI/Workspace/Domain/Canvas.swift`. `import Foundation` + `import CoreGraphics` only (Domain purity — no SwiftUI, no AislopdeskClient — same as `LayoutSolver.swift`/`FocusResolver.swift`).
+New file `Sources/SlopDeskClientUI/Workspace/Domain/Canvas.swift`. `import Foundation` + `import CoreGraphics` only (Domain purity — no SwiftUI, no SlopDeskClient — same as `LayoutSolver.swift`/`FocusResolver.swift`).
 
 ```swift
 import Foundation
@@ -104,7 +104,7 @@ public extension Canvas {
 }
 ```
 
-### Change to `Tab` (`Sources/AislopdeskClientUI/Workspace/Domain/Tab.swift`)
+### Change to `Tab` (`Sources/SlopDeskClientUI/Workspace/Domain/Tab.swift`)
 
 ```swift
 public struct Tab: Identifiable, Codable, Sendable, Equatable {
@@ -141,7 +141,7 @@ public extension Tab {
 
 ## 3. Pure ops
 
-New files `Sources/AislopdeskClientUI/Workspace/Domain/Canvas+Ops.swift` (queries + mutations + camera/arrange) and `Sources/AislopdeskClientUI/Workspace/Domain/CanvasGeometry.swift` (pure static geometry: resize/placement/screenRect/culling). All on `Canvas`, each returns a new value or a pure read.
+New files `Sources/SlopDeskClientUI/Workspace/Domain/Canvas+Ops.swift` (queries + mutations + camera/arrange) and `Sources/SlopDeskClientUI/Workspace/Domain/CanvasGeometry.swift` (pure static geometry: resize/placement/screenRect/culling). All on `Canvas`, each returns a new value or a pure read.
 
 ### Queries (drive reconcile + coupling — replace PaneNode reads)
 ```swift
@@ -246,7 +246,7 @@ public extension Canvas {
 ### 4.1 Codable for the new types
 `CanvasCamera`, `CanvasItem`, `Canvas` are flat (no recursion) → **synthesized `Codable` is safe** (`CGRect`/`CGPoint`/`CGSize` are Codable via CoreGraphics). The hand-written discriminated codec that `PaneNode+Codable` needed (recursive `indirect enum`) is no longer required.
 
-Add ONE defensive `init(from:)`/`encode(to:)` on `Canvas` in `Sources/AislopdeskClientUI/Workspace/Domain/Canvas+Codable.swift` to enforce invariants on decode (mirroring `PaneNode+Codable`'s `children.count >= 2` guard), so corruption fails the decode → `load()` falls back cleanly:
+Add ONE defensive `init(from:)`/`encode(to:)` on `Canvas` in `Sources/SlopDeskClientUI/Workspace/Domain/Canvas+Codable.swift` to enforce invariants on decode (mirroring `PaneNode+Codable`'s `children.count >= 2` guard), so corruption fails the decode → `load()` falls back cleanly:
 
 ```swift
 extension Canvas {
@@ -706,13 +706,13 @@ case .toggleZoom:         store.toggleZoom()
 ## 8. File-by-file plan
 
 **Create**
-- `Sources/AislopdeskClientUI/Workspace/Domain/Canvas.swift` — `Canvas`, `CanvasItem`, `CanvasCamera` + metrics.
-- `Sources/AislopdeskClientUI/Workspace/Domain/Canvas+Ops.swift` — queries + mutations + camera/arrange + `solvedLayout()`.
-- `Sources/AislopdeskClientUI/Workspace/Domain/Canvas+Codable.swift` — defensive `init(from:)`/`encode(to:)` + `sanitize`.
-- `Sources/AislopdeskClientUI/Workspace/Domain/CanvasGeometry.swift` — `ResizeAnchor`, `resizing`, `placement`, `screenRect`, `visibleItems`, `viewportMembers`.
-- `Sources/AislopdeskClientUI/Workspace/Domain/SolvedLayout.swift` — the `SolvedLayout { frames: [PaneID: CGRect] }` type `FocusResolver` consumes.
-- `Sources/AislopdeskClientUI/Workspace/Views/CanvasView.swift` — pannable plane + `CanvasScrollCatcher` + recenter button + maximize branch.
-- `Sources/AislopdeskClientUI/Workspace/Views/CanvasItemView.swift` — positioned pane + move/resize gestures + handles.
+- `Sources/SlopDeskClientUI/Workspace/Domain/Canvas.swift` — `Canvas`, `CanvasItem`, `CanvasCamera` + metrics.
+- `Sources/SlopDeskClientUI/Workspace/Domain/Canvas+Ops.swift` — queries + mutations + camera/arrange + `solvedLayout()`.
+- `Sources/SlopDeskClientUI/Workspace/Domain/Canvas+Codable.swift` — defensive `init(from:)`/`encode(to:)` + `sanitize`.
+- `Sources/SlopDeskClientUI/Workspace/Domain/CanvasGeometry.swift` — `ResizeAnchor`, `resizing`, `placement`, `screenRect`, `visibleItems`, `viewportMembers`.
+- `Sources/SlopDeskClientUI/Workspace/Domain/SolvedLayout.swift` — the `SolvedLayout { frames: [PaneID: CGRect] }` type `FocusResolver` consumes.
+- `Sources/SlopDeskClientUI/Workspace/Views/CanvasView.swift` — pannable plane + `CanvasScrollCatcher` + recenter button + maximize branch.
+- `Sources/SlopDeskClientUI/Workspace/Views/CanvasItemView.swift` — positioned pane + move/resize gestures + handles.
 - Tests: `CanvasOpsTests.swift`, `CanvasGeometryTests.swift`, `CanvasCullingTests.swift`, `CanvasFocusTests.swift`.
 
 **Modify**
@@ -788,4 +788,4 @@ case .toggleZoom:         store.toggleZoom()
 ---
 
 ### Source anchors (verified)
-`Sources/AislopdeskClientUI/Workspace/Domain/{Tab.swift,Workspace.swift,LayoutSolver.swift,CompactLayoutResolver.swift,PaneNode.swift,PaneNode+Codable.swift}`, `Sources/AislopdeskClientUI/Workspace/Store/{WorkspaceStore.swift,WorkspacePersistence.swift,WorkspaceSchemaMigration.swift,CommandInterpreter.swift}`, `Sources/AislopdeskClientUI/Workspace/Views/{PaneTreeView.swift,SplitContainer.swift,PaneChromeView.swift,PaneCarouselView.swift,PaneLeafView.swift,WorkspaceRootView.swift,CommandPaletteView.swift,TabSidebarView.swift,WorkspaceCommands.swift}`, and the libghostty spine `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift` (`layout()` bounds×scale + `layer.bounds==view.bounds`; `mouseDown` y-flip) + `Sources/AislopdeskClientUI/Terminal/TerminalViewModel.swift` (`sendResize` dedup).
+`Sources/SlopDeskClientUI/Workspace/Domain/{Tab.swift,Workspace.swift,LayoutSolver.swift,CompactLayoutResolver.swift,PaneNode.swift,PaneNode+Codable.swift}`, `Sources/SlopDeskClientUI/Workspace/Store/{WorkspaceStore.swift,WorkspacePersistence.swift,WorkspaceSchemaMigration.swift,CommandInterpreter.swift}`, `Sources/SlopDeskClientUI/Workspace/Views/{PaneTreeView.swift,SplitContainer.swift,PaneChromeView.swift,PaneCarouselView.swift,PaneLeafView.swift,WorkspaceRootView.swift,CommandPaletteView.swift,TabSidebarView.swift,WorkspaceCommands.swift}`, and the libghostty spine `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift` (`layout()` bounds×scale + `layer.bounds==view.bounds`; `mouseDown` y-flip) + `Sources/SlopDeskClientUI/Terminal/TerminalViewModel.swift` (`sendResize` dedup).

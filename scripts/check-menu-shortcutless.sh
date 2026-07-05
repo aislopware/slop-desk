@@ -12,7 +12,7 @@
 # runs in `make lint` / CI swift-lint. See docs/DECISIONS.md (E1 menu-bar entry).
 set -euo pipefail
 
-file="Sources/AislopdeskClientUI/Commands/WorkspaceCommands.swift"
+file="Sources/SlopDeskClientUI/Commands/WorkspaceCommands.swift"
 
 # Fail CLOSED: a missing file is a setup/cwd error (or the file was renamed without updating this gate),
 # not "clean" — surface it rather than silently passing.

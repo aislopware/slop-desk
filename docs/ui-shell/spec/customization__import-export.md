@@ -2,24 +2,24 @@
 
 ## Summary
 
-Aislopdesk can read configs from other terminals (Ghostty, Kitty, Alacritty) and write the current Aislopdesk config back out in any of those formats. Useful when trying Aislopdesk alongside an existing setup, or when sharing a configuration with someone who has not switched. Access is via Settings → Advanced → Config File (two action rows) or via the CLI (`aislopdesk import` / `aislopdesk export`).
+SlopDesk can read configs from other terminals (Ghostty, Kitty, Alacritty) and write the current SlopDesk config back out in any of those formats. Useful when trying SlopDesk alongside an existing setup, or when sharing a configuration with someone who has not switched. Access is via Settings → Advanced → Config File (two action rows) or via the CLI (`slopdesk import` / `slopdesk export`).
 
 ## Behaviors
 
 - A classification engine categorises every line in the source config into one of four buckets:
-  - **Supported** — Aislopdesk has the same key; value written as-is or value-translated automatically.
-  - **Conflict** — Same key exists in Aislopdesk but the current value differs; user decides per-row whether to overwrite or keep.
-  - **Similar** — Aislopdesk has a close analog but it is not auto-imported; user decides manually.
-  - **Source-only** — Source terminal feature with no Aislopdesk equivalent; docs links are provided.
+  - **Supported** — SlopDesk has the same key; value written as-is or value-translated automatically.
+  - **Conflict** — Same key exists in SlopDesk but the current value differs; user decides per-row whether to overwrite or keep.
+  - **Similar** — SlopDesk has a close analog but it is not auto-imported; user decides manually.
+  - **Source-only** — Source terminal feature with no SlopDesk equivalent; docs links are provided.
 - Three source terminals are supported: **Ghostty**, **Kitty**, **Alacritty** (TOML only; Alacritty YAML not supported).
 - Import operates in **preview mode by default** — no changes are written until the user confirms (CLI: running without flags; GUI: reviewing the summary dialog before tapping "Apply Import").
 - In the GUI flow the summary dialog surfaces all four buckets; conflict rows each have a per-row dropdown (Overwrite / Keep current) plus bulk-action buttons.
 - All keys in the summary dialog include links to the configuration reference docs.
-- On export, the output file is a complete drop-in for the target terminal — Aislopdesk fills every key the target supports; unsupported Aislopdesk-only keys go into a "dropped" list (printed to stderr in text mode, returned as JSON in `--json` mode).
-- Kitty format uses space-separated `key value` with underscores; the adapter converts to Aislopdesk's hyphenated format on import and back on export.
-- Alacritty format is TOML with nested sections flattened to dotted paths; color sections are transformed to the Aislopdesk palette format.
-- Value translations are performed automatically where semantics differ (e.g. `mouse_hide_wait` seconds → boolean; `cursor_shape beam` → `cursor-style bar`; Alacritty startup modes → Aislopdesk window sizing keywords).
-- Aislopdesk-only keys (font fallbacks, font rendering, ligatures, sidebar/panel controls, SSH integration, autocomplete, privilege/notification settings, quick terminal, recipes, editor settings, etc.) are silently dropped on export to any external terminal.
+- On export, the output file is a complete drop-in for the target terminal — SlopDesk fills every key the target supports; unsupported SlopDesk-only keys go into a "dropped" list (printed to stderr in text mode, returned as JSON in `--json` mode).
+- Kitty format uses space-separated `key value` with underscores; the adapter converts to SlopDesk's hyphenated format on import and back on export.
+- Alacritty format is TOML with nested sections flattened to dotted paths; color sections are transformed to the SlopDesk palette format.
+- Value translations are performed automatically where semantics differ (e.g. `mouse_hide_wait` seconds → boolean; `cursor_shape beam` → `cursor-style bar`; Alacritty startup modes → SlopDesk window sizing keywords).
+- SlopDesk-only keys (font fallbacks, font rendering, ligatures, sidebar/panel controls, SSH integration, autocomplete, privilege/notification settings, quick terminal, recipes, editor settings, etc.) are silently dropped on export to any external terminal.
 
 ### Ghostty-specific behaviors
 - Default path: `~/.config/ghostty/config` (macOS: `~/Library/Application Support/com.mitchellh.ghostty/config`).
@@ -55,7 +55,7 @@ No dedicated keybindings are documented for this feature. All access is via the 
 
 ## Config keys
 
-The import/export feature does not expose runtime config keys of its own. The table below captures the keys relevant to interoperability — specifically the Aislopdesk keys that serve as the mapping targets.
+The import/export feature does not expose runtime config keys of its own. The table below captures the keys relevant to interoperability — specifically the SlopDesk keys that serve as the mapping targets.
 
 | Key | Default | Effect |
 |-----|---------|--------|
@@ -138,7 +138,7 @@ The import/export feature does not expose runtime config keys of its own. The ta
 **Right content area (detail column):**
 - Section header "CONFIG FILE" in small-caps gray uppercase label (~11 pt, color approx. #8A8A8E) at the top, left-aligned.
 - Below the header, a white card/list group with individual rows separated by hairline dividers:
-  - **Path** row: label "Path" left-aligned; value `~/.config/aislopdesk/config.toml` right-aligned in gray text.
+  - **Path** row: label "Path" left-aligned; value `~/.config/slopdesk/config.toml` right-aligned in gray text.
   - **Open Config File** row: label "Open Config File" left-aligned; a rounded-rectangle button "Open Config File" right-aligned (gray background, ~#EBEBEB, dark text, ~6 pt radius, standard macOS button style).
   - **Reload Config** row: label "Reload Config" left-aligned; "Reload Config" button right-aligned, same button style.
   - **Import from another terminal** row: label left-aligned; a pill/button labeled "Import" with a chevron-down (▾) right-aligned — this is a **split button or menu button** (the button + dropdown together).
@@ -179,13 +179,13 @@ The import/export feature does not expose runtime config keys of its own. The ta
 
 - `settings-import-export.png`
 
-## Aislopdesk mapping notes
+## SlopDesk mapping notes
 
 ### Maps cleanly (1:1)
 
-- **Settings UI location:** Aislopdesk's Settings → Advanced (or equivalent) panel can host Import/Export rows exactly as shown. The two-row group (Import from another terminal / Export to another terminal) with a source picker dropdown maps directly to a macOS SwiftUI `Form`/`List` section.
-- **Classification engine:** The four-bucket engine (Supported / Conflict / Similar / Source-only) is pure logic with no platform dependency; implement in `AislopdeskWorkspaceCore` or a dedicated `ConfigImportEngine` type.
-- **CLI commands:** `aislopdesk import` / `aislopdesk export` subcommands, with flags `--overwrite`, `--keep`, `--json`, `-o`. The `--json` mode follows aislopdesk's existing structured output conventions.
+- **Settings UI location:** SlopDesk's Settings → Advanced (or equivalent) panel can host Import/Export rows exactly as shown. The two-row group (Import from another terminal / Export to another terminal) with a source picker dropdown maps directly to a macOS SwiftUI `Form`/`List` section.
+- **Classification engine:** The four-bucket engine (Supported / Conflict / Similar / Source-only) is pure logic with no platform dependency; implement in `SlopDeskWorkspaceCore` or a dedicated `ConfigImportEngine` type.
+- **CLI commands:** `slopdesk import` / `slopdesk export` subcommands, with flags `--overwrite`, `--keep`, `--json`, `-o`. The `--json` mode follows slopdesk's existing structured output conventions.
 - **Ghostty config format:** Line-based `key = value` parsing is straightforward Swift; the default Ghostty path (`~/Library/Application Support/com.mitchellh.ghostty/config`) is accessible on macOS without entitlements beyond file read.
 - **Kitty / Alacritty config parsing:** Space-separated and TOML formats respectively; a TOML parser (e.g. via `TOMLKit` SPM package) is needed for Alacritty. Both files are local reads.
 - **Value translation table:** All translations documented (seconds→boolean, shape enums, startup modes) are pure value mapping with no OS dependencies.
@@ -194,16 +194,16 @@ The import/export feature does not expose runtime config keys of its own. The ta
 
 ### Requires adaptation
 
-- **`working-directory` on a remote host:** Aislopdesk sessions run on a REMOTE macOS host; the `working-directory` key's value is a path on the HOST, not the local client machine. On import, the UI should clarify that this path is interpreted on the host. The config file itself lives on the client (or synced), but the directory resolution happens remotely.
+- **`working-directory` on a remote host:** SlopDesk sessions run on a REMOTE macOS host; the `working-directory` key's value is a path on the HOST, not the local client machine. On import, the UI should clarify that this path is interpreted on the host. The config file itself lives on the client (or synced), but the directory resolution happens remotely.
 - **`command` / `shell` key:** The shell or program launched is on the remote host. If the imported config references a local-only binary path, it will silently fail on the remote. A warning should be surfaced in the "Similar" or "Source-only" bucket when importing this key.
-- **`background-opacity` / `background-blur-radius`:** Window-level opacity and blur on macOS are applied to the client window, not the remote host terminal content. These map to aislopdesk client-side rendering properties (via `TerminalRenderingView`), not to anything sent over the wire. The imported value should be applied to the CLIENT config, and the summary dialog should note "applied locally."
+- **`background-opacity` / `background-blur-radius`:** Window-level opacity and blur on macOS are applied to the client window, not the remote host terminal content. These map to slopdesk client-side rendering properties (via `TerminalRenderingView`), not to anything sent over the wire. The imported value should be applied to the CLIENT config, and the summary dialog should note "applied locally."
 - **`link-open-with` / `link-previews`:** Link opening is a client-side action (the client machine opens URLs), so the imported value applies to the local client. This is consistent but worth noting in the mapping notes.
-- **`macos-option-as-alt`:** macOS-only; maps to the client-side key event translation layer (aislopdesk's input handling). Not applicable on the iOS client — mark as client-platform-conditional.
-- **`font-*` keys:** Font rendering is performed by libghostty on the CLIENT side (via `TerminalSurface`). Importing font keys from Ghostty's own config is the highest-fidelity mapping since aislopdesk uses libghostty. The imported font names must be available on the CLIENT machine.
-- **`theme` key:** Aislopdesk uses `ThemeStore` with Monokai Pro as default. Ghostty theme names are not directly compatible; only the `palette` (16 ANSI colors) and named color keys can be faithfully imported. Mark `theme` as "Similar" (manual review) rather than "Supported" in the aislopdesk import engine.
-- **`kitty-keyboard` protocol:** Aislopdesk's PTY/mux layer would need to propagate the Kitty keyboard protocol flag to the host PTY. This is a wire-level feature — flag as "Similar / manual" until the protocol is confirmed supported in the aislopdesk terminal mux.
-- **`clipboard-read` / `clipboard-write` (OSC 52):** OSC 52 clipboard access in a remote terminal requires explicit proxying. Aislopdesk's clipboard policy lives client-side; the mapping is valid but the behavior semantics differ (it is a CLIENT permission, not a host permission). Note in docs.
-- **`scrollback-limit` / `scrollback-lines`:** The aislopdesk replay buffer (64 MiB ceiling) and the libghostty scrollback are separate. The imported value applies to the libghostty scrollback on the CLIENT rendering side. Clarify in the summary dialog.
+- **`macos-option-as-alt`:** macOS-only; maps to the client-side key event translation layer (slopdesk's input handling). Not applicable on the iOS client — mark as client-platform-conditional.
+- **`font-*` keys:** Font rendering is performed by libghostty on the CLIENT side (via `TerminalSurface`). Importing font keys from Ghostty's own config is the highest-fidelity mapping since slopdesk uses libghostty. The imported font names must be available on the CLIENT machine.
+- **`theme` key:** SlopDesk uses `ThemeStore` with Monokai Pro as default. Ghostty theme names are not directly compatible; only the `palette` (16 ANSI colors) and named color keys can be faithfully imported. Mark `theme` as "Similar" (manual review) rather than "Supported" in the slopdesk import engine.
+- **`kitty-keyboard` protocol:** SlopDesk's PTY/mux layer would need to propagate the Kitty keyboard protocol flag to the host PTY. This is a wire-level feature — flag as "Similar / manual" until the protocol is confirmed supported in the slopdesk terminal mux.
+- **`clipboard-read` / `clipboard-write` (OSC 52):** OSC 52 clipboard access in a remote terminal requires explicit proxying. SlopDesk's clipboard policy lives client-side; the mapping is valid but the behavior semantics differ (it is a CLIENT permission, not a host permission). Note in docs.
+- **`scrollback-limit` / `scrollback-lines`:** The slopdesk replay buffer (64 MiB ceiling) and the libghostty scrollback are separate. The imported value applies to the libghostty scrollback on the CLIENT rendering side. Clarify in the summary dialog.
 - **iOS client:** Several keys are macOS-only and have no iOS equivalent: `macos-option-as-alt`, `background-blur-radius` (no window blur on iOS), `focus-follows-mouse`, `mouse-*` keys. These should be marked "Source-only" or suppressed in the iOS Settings UI. The Import/Export GUI should be surfaced in the macOS Settings only (or with per-platform filtering).
-- **Config file location:** Aislopdesk's own config file is at `~/.config/aislopdesk/config.toml` (per the screenshot). This lives on the CLIENT machine. The Settings → Advanced → Config File section with Path, Open Config File, Reload Config rows is part of this same screen.
-- **No SSH badge / remote indicator:** Ghostty, Kitty, and Alacritty are all local terminals; aislopdesk sessions are remote. The Import/Export UI itself needs no remote-specific badge, but error states (e.g. "command path not found on host") should distinguish client-side vs host-side resolution failures.
+- **Config file location:** SlopDesk's own config file is at `~/.config/slopdesk/config.toml` (per the screenshot). This lives on the CLIENT machine. The Settings → Advanced → Config File section with Path, Open Config File, Reload Config rows is part of this same screen.
+- **No SSH badge / remote indicator:** Ghostty, Kitty, and Alacritty are all local terminals; slopdesk sessions are remote. The Import/Export UI itself needs no remote-specific badge, but error states (e.g. "command path not found on host") should distinguish client-side vs host-side resolution failures.

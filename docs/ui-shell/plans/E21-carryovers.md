@@ -4,11 +4,11 @@
 
 ## 0. What E21 IS — and what it is NOT (read first)
 
-E21 is the **user's headline feature**: the aislopdesk-native *remote-window* (a `.remoteGUI` pane streaming a real host window over the UDP video path) must flow through **every UI-shell surface built in E1–E20 as a first-class peer of a terminal pane** — no surface may silently special-case it out.
+E21 is the **user's headline feature**: the slopdesk-native *remote-window* (a `.remoteGUI` pane streaming a real host window over the UDP video path) must flow through **every UI-shell surface built in E1–E20 as a first-class peer of a terminal pane** — no surface may silently special-case it out.
 
-**This is aislopdesk-original — there is no reference screenshot for it** (the BACKLOG `specRefs` is empty by design). So:
+**This is slopdesk-original — there is no reference screenshot for it** (the BACKLOG `specRefs` is empty by design). So:
 
-- The **visual/behavioral standard is the EXISTING aislopdesk UI-shell surfaces**, not a reference screenshot. A `.remoteGUI` pane must look and behave like a peer *within* the already-shipped E6 sidebar rows, E10 status bar, E11 Open-Quickly picker, E18 drop zones, the split/zoom container, and the floating-pane layer. Read `spec/user-interface__window-tab-split.md` and `spec/user-interface__open-quickly.md` only for the surrounding surface conventions — do **not** expect a remote-window mock to compare against.
+- The **visual/behavioral standard is the EXISTING slopdesk UI-shell surfaces**, not a reference screenshot. A `.remoteGUI` pane must look and behave like a peer *within* the already-shipped E6 sidebar rows, E10 status bar, E11 Open-Quickly picker, E18 drop zones, the split/zoom container, and the floating-pane layer. Read `spec/user-interface__window-tab-split.md` and `spec/user-interface__open-quickly.md` only for the surrounding surface conventions — do **not** expect a remote-window mock to compare against.
 - Because the standard is "matches the terminal-pane peer," the cheapest correct implementation usually routes `.remoteGUI` through the **same generic `PaneSpec.kind` path** the terminal pane already uses, rather than adding a parallel branch. Prefer that.
 
 **E21 is overwhelmingly VERIFY-NOT-REBUILD.** Most of the machinery already exists (see §1). The E9/E18 lesson applies in force here: the BACKLOG scope was written in Phase 1 and **describes gaps that later epics already closed**. The design phase's FIRST job is a **current-state audit** of `.remoteGUI` participation per surface (§2) — then build ONLY the genuine gaps. Do not rebuild working code.
@@ -17,9 +17,9 @@ E21 is the **user's headline feature**: the aislopdesk-native *remote-window* (a
 
 Confirmed present on disk (`grep`-grounded 2026-06-28). Read each before planning against it (symbols can drift):
 
-- **`PaneKind.remoteGUI`** — `Sources/AislopdeskWorkspaceCore/Workspace/Domain/PaneSpec.swift:52`. Plumbed across ~30 files already.
-- **Picker + connect overlay = ALREADY MOUNTED** — `Sources/AislopdeskClientUI/Overlays/OverlayHostView.swift:52` `ConnectHostView`, `:56` `RemoteWindowPickerModal` (both ride E2's `OverlayCoordinator`/`OverlayHostView` mount). So **ES-E21-1's "open from the workspace" is largely DONE** — audit it end-to-end (does selecting a window actually create a `.remoteGUI` pane?), don't re-mount.
-- **Picker domain/view** — `RemoteWindowPickerView.swift`, `RemoteWindowPickerModal.swift`, `RemoteWindowModel.swift`, `WorkspaceStore+RemoteWindow.swift`. Over-wire window discovery already uses **VideoControl types 7/8** (see memory `aislopdesk-remote-window-picker`) — these EXIST; do not invent a new discovery channel.
+- **`PaneKind.remoteGUI`** — `Sources/SlopDeskWorkspaceCore/Workspace/Domain/PaneSpec.swift:52`. Plumbed across ~30 files already.
+- **Picker + connect overlay = ALREADY MOUNTED** — `Sources/SlopDeskClientUI/Overlays/OverlayHostView.swift:52` `ConnectHostView`, `:56` `RemoteWindowPickerModal` (both ride E2's `OverlayCoordinator`/`OverlayHostView` mount). So **ES-E21-1's "open from the workspace" is largely DONE** — audit it end-to-end (does selecting a window actually create a `.remoteGUI` pane?), don't re-mount.
+- **Picker domain/view** — `RemoteWindowPickerView.swift`, `RemoteWindowPickerModal.swift`, `RemoteWindowModel.swift`, `WorkspaceStore+RemoteWindow.swift`. Over-wire window discovery already uses **VideoControl types 7/8** (see memory `slopdesk-remote-window-picker`) — these EXIST; do not invent a new discovery channel.
 - **Render path (app-target/runtime only)** — `GuiLeafView.swift`, `PaneContainer.swift` (`.remoteGUI` case), `Video/RemoteGUIDisplay.swift`, `Video/VideoWindowSeam.swift`, `Video/WindowRebind.swift`. This is the **hang-safety-sensitive** code (SCStream/VTDecompression/Metal family) — see §3.
 - **Sidebar rows / badges (E6)** — `Rail/RailRowsBuilder.swift`, `Chrome/TabBadgeView.swift`, `Workspace/Tabs/TabBadge.swift`. These are **kind-generic** (driven by `PaneSpec`); a `.remoteGUI` pane probably already gets a row — audit icon/subtitle/status-dot correctness, not existence.
 - **Status bar (E10)** — `Terminal/StatusBarModel.swift` (already has 1 `.remoteGUI` ref — partial).
@@ -50,7 +50,7 @@ For ES-E21-4 ("every surface treats `.remoteGUI` as a first-class peer; no speci
 - **Untrusted input.** Any datagram/parser on the remote-window path: validate-then-drop, validate counts/lengths before allocating, never force-unwrap attacker-controlled input, read interop booleans as `byte != 0`.
 - **Input injection stays VERBATIM / native.** Remote-window input forwards **keycodes** (not Unicode) and coalesced mouse motion on the video input path — never route it through `SendKeysParser`.
 - **Menu/keybind hygiene.** `WorkspaceCommands.swift` carries **no `.keyboardShortcut`** (the menu-shortcutless lint rule); chords are registered via the keybind registry. Any new Float/Read-Only-on-remoteGUI command obeys this.
-- **Headless-first + iOS rots silently.** The picker, Open-Quickly, sidebar, status bar, read-only policy are **shared `AislopdeskClientUI`** → set `touchesIOS:true` and the gate MUST run `scripts/check-ios.sh`. Guard any macOS-only render/window glue with `#if os(macOS)`; provide an iOS path or an explicit, documented no-op for the remote-window render on iOS (memory `rwork-duplicate-cursor-hide`: iOS keeps the cursor overlay).
+- **Headless-first + iOS rots silently.** The picker, Open-Quickly, sidebar, status bar, read-only policy are **shared `SlopDeskClientUI`** → set `touchesIOS:true` and the gate MUST run `scripts/check-ios.sh`. Guard any macOS-only render/window glue with `#if os(macOS)`; provide an iOS path or an explicit, documented no-op for the remote-window render on iOS (memory `rwork-duplicate-cursor-hide`: iOS keeps the cursor overlay).
 
 ## 4. Scope reductions / exclusions (do NOT build)
 
@@ -69,5 +69,5 @@ For ES-E21-4 ("every surface treats `.remoteGUI` as a first-class peer; no speci
 ## 6. Notes for the design agent
 
 - Frame the plan as an **audit → fill-genuine-gaps** epic, not a build-from-scratch. Lead the plan with the surface audit table.
-- This is the LAST integration epic before **E20** (CLI parity + watch + first-launch). Nothing routes deferrals *into* E21 from earlier epics (checked) — but E21 itself may surface follow-ups for E20 (e.g. an `aislopdesk` CLI verb to open a remote window) — record those as follow-ups, don't build them here.
+- This is the LAST integration epic before **E20** (CLI parity + watch + first-launch). Nothing routes deferrals *into* E21 from earlier epics (checked) — but E21 itself may surface follow-ups for E20 (e.g. an `slopdesk` CLI verb to open a remote window) — record those as follow-ups, don't build them here.
 - Expect a small, surgical diff concentrated in `OpenQuicklyModel`, the read-only seam, the float wiring, and a few enumeration sites — plus tests. If the design proposes large new files, that's a signal it's rebuilding something that already exists — re-audit.

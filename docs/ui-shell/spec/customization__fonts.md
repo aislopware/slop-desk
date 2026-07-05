@@ -2,18 +2,18 @@
 
 ## Summary
 
-This page covers every dimension of font configuration in aislopdesk: font installation without system Font Book, font family selection (global vs per-theme vs fallback), font size, line height (cell height), ligatures, bold/italic/underline/blink rendering modes, and sub-pixel glyph blending. The bundled default is JetBrains Mono. Fonts are loaded from `~/.config/aislopdesk/fonts/` via CoreText at launch — no system-wide install required. Settings are scoped to Computed / Global / Light Theme / Dark Theme / Fallback tabs, and can be written to either global `config.toml` or per-theme TOML files.
+This page covers every dimension of font configuration in slopdesk: font installation without system Font Book, font family selection (global vs per-theme vs fallback), font size, line height (cell height), ligatures, bold/italic/underline/blink rendering modes, and sub-pixel glyph blending. The bundled default is JetBrains Mono. Fonts are loaded from `~/.config/slopdesk/fonts/` via CoreText at launch — no system-wide install required. Settings are scoped to Computed / Global / Light Theme / Dark Theme / Fallback tabs, and can be written to either global `config.toml` or per-theme TOML files.
 
 ## Behaviors
 
-- At launch, aislopdesk registers all font files found in `~/.config/aislopdesk/fonts/` with CoreText so they are immediately available to the Font Family picker and `font-family` config key — no Font Book or system installation needed.
+- At launch, slopdesk registers all font files found in `~/.config/slopdesk/fonts/` with CoreText so they are immediately available to the Font Family picker and `font-family` config key — no Font Book or system installation needed.
 - Accepted font file extensions: `.ttf`, `.otf`, `.ttc`, `.otc` (case-insensitive; all other extensions ignored).
-- Font installation shortcut: Settings → Appearance → Font Family → "Open font folder" button opens `~/.config/aislopdesk/fonts/` in Finder. Alternatively, `open ~/.config/aislopdesk/fonts` from a shell.
-- CLI font import: `aislopdesk font import <font file path>`.
+- Font installation shortcut: Settings → Appearance → Font Family → "Open font folder" button opens `~/.config/slopdesk/fonts/` in Finder. Alternatively, `open ~/.config/slopdesk/fonts` from a shell.
+- CLI font import: `slopdesk font import <font file path>`.
 - After dropping a font file into the folder while Settings is open, close and reopen Settings to trigger a rescan; the font then appears in the Font Family combobox.
-- Font Family setting has three scope tabs: **Global** (writes to `~/.config/aislopdesk/config.toml`, applies everywhere), **Light Theme** / **Dark Theme** (writes to the active theme TOML, travels with the theme), and **Fallback** (comma-separated list of fonts used when the primary font lacks a glyph, e.g. for CJK or icon characters).
-- When "Auto-match weight & style" toggle is ON (default), aislopdesk automatically selects the real bold, italic, and bold-italic faces of the chosen font family without user intervention.
-- When "Auto-match weight & style" toggle is OFF, four separate pickers appear for Font Family (regular), Font Family (Bold), Font Family (Italic), and Font Family (Bold Italic), each populated with all available faces from all installed and `~/.config/aislopdesk/fonts/` fonts.
+- Font Family setting has three scope tabs: **Global** (writes to `~/.config/slopdesk/config.toml`, applies everywhere), **Light Theme** / **Dark Theme** (writes to the active theme TOML, travels with the theme), and **Fallback** (comma-separated list of fonts used when the primary font lacks a glyph, e.g. for CJK or icon characters).
+- When "Auto-match weight & style" toggle is ON (default), slopdesk automatically selects the real bold, italic, and bold-italic faces of the chosen font family without user intervention.
+- When "Auto-match weight & style" toggle is OFF, four separate pickers appear for Font Family (regular), Font Family (Bold), Font Family (Italic), and Font Family (Bold Italic), each populated with all available faces from all installed and `~/.config/slopdesk/fonts/` fonts.
 - Font size is adjustable via Settings → Appearance → Text, via the menu bar, or via keyboard shortcuts `⌘+`, `⌘-`, `⌘0` (reset).
 - Line height (cell height) has four modes: **Default** (uses what theme TOML defines), **Compact** (1.0 multiplier), **Loose** (1.2 multiplier), **Custom** (user-supplied multiplier e.g. 1.0 or 1.5, or "Adjust Cell Height" to add/subtract fixed pixels).
 - Ligatures have three modes: `off` (no ligation, default), `calt` (standard + contextual alternates: `=>`, `!=`, `>=`, …), `dlig` (everything in `calt` plus discretionary ligatures).
@@ -23,7 +23,7 @@ This page covers every dimension of font configuration in aislopdesk: font insta
 - Underline is on by default. When off, underlined cells skip drawing the underline decoration. Note: only SGR underlines are affected; link underlines (⌘-hover / OSC 8) and strikethrough are unaffected regardless of this setting.
 - Blink (SGR 5/6) is off by default because it is an accessibility concern and is frequently emitted by accident. When enabled, affected cells blink at approximately 1 Hz.
 - Font blending controls how glyph edges are anti-aliased onto the background, affecting perceived stroke weight especially for dark text on light themes. The recommendation is to leave it on **Default** unless text appears too thin or too heavy.
-- Blending modes: `Default` (defers to active theme, which falls back to `srgb-over`), `srgb-over` (aislopdesk baseline; stroke weight lands where font designer intended), `macos-like` (matches macOS native blending, Display P3 path, closest to other Mac apps), `linear` (physically-correct linear-light blend; pure white stays pure white but thin dark strokes come out ~15% lighter), `perceptual` (like `linear` but boosts thin dark text back toward intended weight).
+- Blending modes: `Default` (defers to active theme, which falls back to `srgb-over`), `srgb-over` (slopdesk baseline; stroke weight lands where font designer intended), `macos-like` (matches macOS native blending, Display P3 path, closest to other Mac apps), `linear` (physically-correct linear-light blend; pure white stays pure white but thin dark strokes come out ~15% lighter), `perceptual` (like `linear` but boosts thin dark text back toward intended weight).
 - Blending is a taste-driven, subtle setting; the guidance is to switch between modes with text on screen and keep whichever looks crispest.
 
 ## Keybindings
@@ -148,20 +148,20 @@ Same light background. perceptual blending compensates for linear's tendency to 
 - blending-perceptual-dark.png
 - blending-perceptual-light.png
 
-## Aislopdesk mapping notes
+## SlopDesk mapping notes
 
 ### Font installation
-- **Needs a host-side seam.** The `~/.config/aislopdesk/fonts/` + CoreText-registration flow described above assumes a local install. Aislopdesk runs a remote macOS host; the terminal rendering (libghostty) executes on the HOST. Font installation must happen on the host machine, not the client. The client Settings UI can only configure font names, not install font files to the host. The `aislopdesk font import` CLI command would need to be a host-side operation (e.g. via the aislopdesk-ctl agent socket or a dedicated protocol message). For the initial client, expose the font family field as a text entry (no local discovery); show a note that fonts must be installed on the host.
+- **Needs a host-side seam.** The `~/.config/slopdesk/fonts/` + CoreText-registration flow described above assumes a local install. SlopDesk runs a remote macOS host; the terminal rendering (libghostty) executes on the HOST. Font installation must happen on the host machine, not the client. The client Settings UI can only configure font names, not install font files to the host. The `slopdesk font import` CLI command would need to be a host-side operation (e.g. via the slopdesk-ctl agent socket or a dedicated protocol message). For the initial client, expose the font family field as a text entry (no local discovery); show a note that fonts must be installed on the host.
 - Ghostty (libghostty) has its own font loading mechanism. Map `font-family` / `font-family-fallback` / `font-size` to the corresponding Ghostty config keys passed to `TerminalConfigBuilder`. Ghostty supports `.ttf`/`.otf` system fonts and user fonts.
 
 ### Font Family scope tabs (Computed / Global / Light Theme / Dark Theme / Fallback)
-- Aislopdesk has a ThemeStore with light/dark variants, so the per-theme font storage described above maps onto the existing Light Theme / Dark Theme split. Global writes to the top-level PreferencesStore/config. Implement as: a scope selector (Global / Light Theme / Dark Theme / Fallback) above the Font Family combobox in Appearance settings, writing to the appropriate config layer.
+- SlopDesk has a ThemeStore with light/dark variants, so the per-theme font storage described above maps onto the existing Light Theme / Dark Theme split. Global writes to the top-level PreferencesStore/config. Implement as: a scope selector (Global / Light Theme / Dark Theme / Fallback) above the Font Family combobox in Appearance settings, writing to the appropriate config layer.
 
 ### Auto-match weight & style toggle
 - **Maps.** Ghostty supports separate bold/italic font face specification. When auto-match is ON, pass only `font-family`; Ghostty selects bold/italic faces automatically. When OFF, surface `font-family-bold`, `font-family-italic`, `font-family-bold-italic` fields (map to Ghostty's equivalent config keys).
 
 ### Font size shortcuts (⌘+/⌘-/⌘0)
-- **Maps.** Implement in AislopdeskClientUI as window-level keybindings that increment/decrement the font size preference and trigger a TerminalConfigBuilder rebuild + libghostty `updateConfiguration`. Note: a font-SIZE change DOES change the cell pixel size, so for a fixed pane viewport the cell COUNT changes → a SIGWINCH/PTY reflow (the same as a line-height change; coordinate with the existing resize debounce path). This is correct — only a font FAMILY/STYLE change is grid-preserving (cell box unchanged). The earlier "size is reflow-free" note was wrong; see `PreferencesStore.increaseFontSize()`.
+- **Maps.** Implement in SlopDeskClientUI as window-level keybindings that increment/decrement the font size preference and trigger a TerminalConfigBuilder rebuild + libghostty `updateConfiguration`. Note: a font-SIZE change DOES change the cell pixel size, so for a fixed pane viewport the cell COUNT changes → a SIGWINCH/PTY reflow (the same as a line-height change; coordinate with the existing resize debounce path). This is correct — only a font FAMILY/STYLE change is grid-preserving (cell box unchanged). The earlier "size is reflow-free" note was wrong; see `PreferencesStore.increaseFontSize()`.
 
 ### Line height
 - **Maps via Ghostty.** Ghostty has `cell-height` / line-height config. Map Default/Compact/Loose/Custom to the appropriate Ghostty values passed through TerminalConfigBuilder. Note: changing line height changes cell pixel dimensions, which triggers a SIGWINCH/resize; coordinate with the existing resize debounce path.
@@ -176,7 +176,7 @@ Same light background. perceptual blending compensates for linear's tendency to 
 - **Maps to Ghostty's `font-thicken` / blending config.** Ghostty has `font-thicken` (a boolean for macOS-style subpixel thickening) and its own blending/anti-aliasing pipeline. The five blending modes described above do not map 1:1 onto Ghostty's options. Recommended mapping: `Default` → Ghostty default, `macos-like` → enable `font-thicken`, others as best-effort. Document this as a known deviation; expose only Default/macOS-like in the initial client.
 
 ### Remote rendering boundary
-- All font rendering happens on the HOST inside libghostty. The client sees only HEVC video frames over the aislopdesk video path. Font config changes are transmitted to the host as config updates and take effect on the next frame. There is no local client-side font rendering — the visual blending differences between modes are encoded by the HOST's libghostty, not the client's GPU.
+- All font rendering happens on the HOST inside libghostty. The client sees only HEVC video frames over the slopdesk video path. Font config changes are transmitted to the host as config updates and take effect on the next frame. There is no local client-side font rendering — the visual blending differences between modes are encoded by the HOST's libghostty, not the client's GPU.
 
 ### iOS client
 - Font size increase/decrease shortcuts (`⌘+`/`⌘-`) need to map to iOS equivalents (pinch-to-zoom or Settings UI). No keyboard shortcut path on a software keyboard. Expose font size as a stepper in iOS Appearance settings.

@@ -2,7 +2,7 @@
 
 ## Summary
 
-Aislopdesk lets users rebind almost any action from a dedicated **Key Bindings** settings pane, or by editing `~/.config/aislopdesk/config.toml` directly. The GUI and the config file stay in sync — changes made in the GUI are written back to `config.toml` automatically. The pane has three sub-sections: the main bindable-action list (grouped by category), a **Text / Sequence** section for sending literal byte sequences to the terminal, and a **Commands / Recipe** section that mirrors recipe shortcuts.
+SlopDesk lets users rebind almost any action from a dedicated **Key Bindings** settings pane, or by editing `~/.config/slopdesk/config.toml` directly. The GUI and the config file stay in sync — changes made in the GUI are written back to `config.toml` automatically. The pane has three sub-sections: the main bindable-action list (grouped by category), a **Text / Sequence** section for sending literal byte sequences to the terminal, and a **Commands / Recipe** section that mirrors recipe shortcuts.
 
 ## Behaviors
 
@@ -150,7 +150,7 @@ Aislopdesk lets users rebind almost any action from a dedicated **Key Bindings**
 | Action | Keys |
 |--------|------|
 | Save recipe | `⌘S` |
-| Export `.aislopdeskrecipe` | `⌘⇧S` |
+| Export `.slopdeskrecipe` | `⌘⇧S` |
 
 ## Config keys
 
@@ -243,25 +243,25 @@ keybind = unbind:cmd+q
 - `keybindings-text.png` — Text / Sequence section with a `text:hi` binding entry and Commands / Recipe empty state
 - `keybindings-recipe.png` — Commands / Recipe section with a populated "simplify" recipe binding
 
-## Aislopdesk mapping notes
+## SlopDesk mapping notes
 
 ### Maps cleanly
 
 - **Action-list UI with search + keycap chips**: implementable as a SwiftUI List in the macOS Settings window (SettingsView / PreferencesStore). The chip style (individual rounded-rect per modifier key) is a custom SwiftUI view — no AppKit dependency.
-- **Rebind by click + press**: use an NSEvent global monitor to capture the next key event after a row enters edit mode. Aislopdesk already has an NSEvent monitor for the prefix chord; the same mechanism can serve here.
+- **Rebind by click + press**: use an NSEvent global monitor to capture the next key event after a row enters edit mode. SlopDesk already has an NSEvent monitor for the prefix chord; the same mechanism can serve here.
 - **Conflict detection**: maintain a reverse index `[KeyChord: ActionID]` in `PreferencesStore`; look up on every chord entry attempt.
 - **Unbind via Backspace**: handled in the same NSEvent monitor path — if the captured key is Backspace, clear the binding.
-- **Config file sync** (`~/.config/aislopdesk/config.toml`): aislopdesk uses `Defaults`/`PreferencesStore`; keybindings should be persisted there and also written out to a TOML/plist representation if the project exposes config-file editing.
+- **Config file sync** (`~/.config/slopdesk/config.toml`): slopdesk uses `Defaults`/`PreferencesStore`; keybindings should be persisted there and also written out to a TOML/plist representation if the project exposes config-file editing.
 - **Text / Sequence bindings** (`text:`, `csi:`, `esc:` prefixes): entirely client-side. On action, inject the resolved byte sequence into the focused terminal's PTY input channel (the same path as keyboard injection). Works identically for local and remote terminals because the client owns the keystroke → PTY write path.
 - **+ Add / trash-icon row**: standard SwiftUI dynamic list with an `@State` array of `(KeyChord?, String)` pairs.
 - **Reset to Default**: clear the `keybind` array in `PreferencesStore` and write defaults back. The "Reset all key bindings?" confirmation is a standard `Alert`.
 
 ### Requires adaptation
 
-- **Commands / Recipe section** ("Open Recipes →"): aislopdesk has recipes/commands via the agent-control and workspace system, but the exact "Recipes tab" equivalent does not exist as of the current UI. This section can be stubbed as empty-state with a navigation link to wherever custom commands are configured. Mark as **deferred** until a Recipes analog is built.
-- **Multi-key sequence chords** (`cmd+b>cmd+v` prefix chains): aislopdesk already has a prefix-chord NSEvent monitor (used for `⌘B` prefix). The same mechanism supports recording and dispatching `>` sequences. However, the GUI for displaying and recording a two-step chord requires a two-phase recording UI — record first key, then second key — which is non-trivial and should be a follow-up.
-- **`unbind:` directive in config**: when a user unbinds a default action, aislopdesk must suppress that chord from its default handler. The NSEvent monitor must check the keybind table before passing events to AppKit/SwiftUI default responders.
-- **iOS client**: the Key Bindings settings pane is macOS-only (hardware keyboard assumed). On iOS the equivalent is either absent or limited to a reduced set that makes sense for an external Bluetooth keyboard. The `csi:` / `esc:` text-sequence feature works on iOS as long as the PTY injection path is available (it is — same `AislopdeskTransport` channel). The GUI for recording chords on iOS (no modifier keys on the software keyboard) cannot map 1:1; flag as **not supported** on iOS software keyboard, supported only with external keyboard.
-- **`goto_tab:N` parameterized actions**: the action syntax `cmd+1:goto_tab:1` uses a colon-separated parameter. Aislopdesk's keybind parser must support parameterized actions (action name + optional argument), not just bare action identifiers.
-- **"Jump to Current Pane…" (`⌘J`)**: aislopdesk has `WorkspaceStore` pane focus logic; this action maps to the in-pane pane chooser (`openChooserPane`). The mapping is direct but the label should be adapted to aislopdesk's pane vocabulary.
-- **Workspace Commands / Open Agent / Open Folder** (unbound by default): these correspond to aislopdesk workspace concepts (session open, agent launch, folder mount). They can be stubbed as unbound actions in the registry with the correct labels, to be wired up as those features mature.
+- **Commands / Recipe section** ("Open Recipes →"): slopdesk has recipes/commands via the agent-control and workspace system, but the exact "Recipes tab" equivalent does not exist as of the current UI. This section can be stubbed as empty-state with a navigation link to wherever custom commands are configured. Mark as **deferred** until a Recipes analog is built.
+- **Multi-key sequence chords** (`cmd+b>cmd+v` prefix chains): slopdesk already has a prefix-chord NSEvent monitor (used for `⌘B` prefix). The same mechanism supports recording and dispatching `>` sequences. However, the GUI for displaying and recording a two-step chord requires a two-phase recording UI — record first key, then second key — which is non-trivial and should be a follow-up.
+- **`unbind:` directive in config**: when a user unbinds a default action, slopdesk must suppress that chord from its default handler. The NSEvent monitor must check the keybind table before passing events to AppKit/SwiftUI default responders.
+- **iOS client**: the Key Bindings settings pane is macOS-only (hardware keyboard assumed). On iOS the equivalent is either absent or limited to a reduced set that makes sense for an external Bluetooth keyboard. The `csi:` / `esc:` text-sequence feature works on iOS as long as the PTY injection path is available (it is — same `SlopDeskTransport` channel). The GUI for recording chords on iOS (no modifier keys on the software keyboard) cannot map 1:1; flag as **not supported** on iOS software keyboard, supported only with external keyboard.
+- **`goto_tab:N` parameterized actions**: the action syntax `cmd+1:goto_tab:1` uses a colon-separated parameter. SlopDesk's keybind parser must support parameterized actions (action name + optional argument), not just bare action identifiers.
+- **"Jump to Current Pane…" (`⌘J`)**: slopdesk has `WorkspaceStore` pane focus logic; this action maps to the in-pane pane chooser (`openChooserPane`). The mapping is direct but the label should be adapted to slopdesk's pane vocabulary.
+- **Workspace Commands / Open Agent / Open Folder** (unbound by default): these correspond to slopdesk workspace concepts (session open, agent launch, folder mount). They can be stubbed as unbound actions in the registry with the correct labels, to be wired up as those features mature.

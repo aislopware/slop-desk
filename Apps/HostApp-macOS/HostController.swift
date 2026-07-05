@@ -1,13 +1,13 @@
-import AislopdeskHost
-import AislopdeskTransport
 import Foundation
 import Observation
+import SlopDeskHost
+import SlopDeskTransport
 
 /// `@MainActor @Observable` start/stop wrapper over the in-process terminal ``HostServer``.
 ///
-/// This is the in-process path (NOT a `aislopdesk-hostd` subprocess): `AislopdeskHost` is a clean
+/// This is the in-process path (NOT a `slopdesk-hostd` subprocess): `SlopDeskHost` is a clean
 /// library product and `HostServer` has a fully app-usable public surface, so the menu-bar app
-/// runs the SAME server the CLI runs — replicating the ~6 lines of `aislopdesk-hostd/main.swift`
+/// runs the SAME server the CLI runs — replicating the ~6 lines of `slopdesk-hostd/main.swift`
 /// (construct → `start()` → read back `boundPort()`; `stop()` on teardown) on a background
 /// task driven by a Start/Stop toggle. The plain-shell `LaunchMode` is hard-coded (no
 /// `--claude`); the inspector is out of MVP scope.
@@ -84,7 +84,7 @@ final class HostController {
         // Surface session lifecycle to this process's stderr (same shape as the CLI's logger),
         // so a `Console.app` / launch-from-Terminal run shows "mux connection … accepted".
         server.onLog = { message in
-            FileHandle.standardError.write(Data("AislopdeskHost: \(message)\n".utf8))
+            FileHandle.standardError.write(Data("SlopDeskHost: \(message)\n".utf8))
         }
         // Live client count (R15 #5/#7). The hook fires off the main actor (from the server's
         // lock-guarded spawn/remove paths AND from a stopped server's drain), so it must hop to this
@@ -161,16 +161,16 @@ final class HostController {
     }
 
     /// A compact, user-facing error description (avoid dumping a giant Swift error). The listener-start
-    /// failure surfaces as ``AislopdeskTransportError/listenerFailed(_:)`` (NOT an `NSPOSIXErrorDomain` NSError
+    /// failure surfaces as ``SlopDeskTransportError/listenerFailed(_:)`` (NOT an `NSPOSIXErrorDomain` NSError
     /// — the old `ns.code == 48` branch was therefore dead), and is overwhelmingly a port collision for a
     /// known port. Name the concrete port so the operator can fix it (change the port / kill the holder).
     static func describe(_ error: Error, port: UInt16) -> String {
-        if case let .listenerFailed(detail)? = error as? AislopdeskTransportError {
+        if case let .listenerFailed(detail)? = error as? SlopDeskTransportError {
             // Robust EADDRINUSE classification (R15 #6): the old `detail.contains("48")` fallback
             // misclassified any error whose text merely embedded the digits "48" (a port like 4843,
             // errno 148, a size like 1048576) as a port collision. Delegate to the transport's pure
             // classifier, which matches the errno only as a standalone token plus the "in use" phrase.
-            if AislopdeskTransportError.listenerDetailIndicatesAddressInUse(detail) {
+            if SlopDeskTransportError.listenerDetailIndicatesAddressInUse(detail) {
                 return "Port \(port) is already in use"
             }
             return "Could not open port \(port)"

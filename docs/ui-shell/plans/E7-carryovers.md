@@ -18,7 +18,7 @@ fixing its behavior must happen together.
 ## E1 carry-overs (keybindings — 3 mediums)
 
 1. **Registry enum-case comments show pre-reconciliation chords (doc drift).** In
-   `Sources/AislopdeskWorkspaceCore/Workspace/Domain/WorkspaceBindingRegistry.swift`, update the
+   `Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingRegistry.swift`, update the
    stale per-case chord comments to the reconciled chords: focus = `⌃⌘`, divider = `⌃⌘⇧`,
    zoom = `⌘⇧↩`.
 2. **ES-E1-4 "without reflowing PTY grid" claim is false.** A font-size change DOES SIGWINCH /
@@ -35,7 +35,7 @@ fixing its behavior must happen together.
 
 4. **Close-confirmation dialog hardcodes "A process is still running."**
    `CloseConfirmationPanel.body` in
-   `Sources/AislopdeskClientUI/Overlays/OverlayHostView.swift` hardcodes that subtitle, which is
+   `Sources/SlopDeskClientUI/Overlays/OverlayHostView.swift` hardcodes that subtitle, which is
    false for the `always` and `multiple_tabs` policies (idle shell / >1 tab — no process). Pass
    the resolved `CloseConfirmationPolicy` (or a precomputed reason string) into the panel and
    branch the subtitle: process → "A process is still running…"; always → "Are you sure you want

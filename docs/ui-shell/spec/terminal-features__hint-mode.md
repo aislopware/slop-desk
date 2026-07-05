@@ -86,7 +86,7 @@ behavioral description) implies:
   is keyboard-driven.
 
 The exact color scheme, font size, badge shape, and dimming treatment are NOT
-yet pinned down and must be determined by cross-referencing aislopdesk's
+yet pinned down and must be determined by cross-referencing slopdesk's
 theme/design system when this feature is built.
 
 ## Screenshots
@@ -97,8 +97,8 @@ theme/design system when this feature is built.
 
 ### Architecture context
 
-Aislopdesk renders the terminal via libghostty behind a `TerminalSurface`
-seam (`AislopdeskTerminal`). The terminal content displayed to the user is a
+SlopDesk renders the terminal via libghostty behind a `TerminalSurface`
+seam (`SlopDeskTerminal`). The terminal content displayed to the user is a
 remote session running on the macOS host, with the macOS and iOS clients
 rendering locally via libghostty. Hint mode is a **client-side UX layer** —
 it scans the visible terminal text and overlays labels — so it belongs in the

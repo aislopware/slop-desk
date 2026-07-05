@@ -9,7 +9,7 @@ plus the **platform/wire/UX traps** that specifically bite path-detection + host
 
 ## SCOPE REDUCTIONS (binding — do NOT build these)
 
-- **Vertical-tabs-only.** aislopdesk is vertical-tabs-only (product decision encoded at E7-close in
+- **Vertical-tabs-only.** slopdesk is vertical-tabs-only (product decision encoded at E7-close in
   `docs/DECISIONS.md`; the horizontal/top tab bar was deliberately dropped per the user). E10's
   **status bar is a BOTTOM strip** (cwd / last-exit / pane-kind / host) — that is legitimate and in
   scope. Do **NOT** introduce any top/horizontal tab-bar region. Place the status surface as a
@@ -29,11 +29,11 @@ plus the **platform/wire/UX traps** that specifically bite path-detection + host
 ## TRAPS specific to E10 (respect these)
 
 - **The host-side OPEN / REVEAL action is E10's ONE wire/RPC decision point (ES-E10-2, ES-E10-6,
-  L6).** aislopdesk is REMOTE — a detected path/file lives on the **HOST Mac** (or the SSH host),
+  L6).** slopdesk is REMOTE — a detected path/file lives on the **HOST Mac** (or the SSH host),
   NOT on the client. So:
   - **`Copy Path`** → client-side pasteboard. No wire.
   - **`Change Directory Here`** → inject `cd <path>\n` into the PTY as **VERBATIM UTF-8 bytes**
-    (NOT via SendKeysParser — see [[aislopdesk-coding-workspace-redesign-2026-06-20]]: re-run/cd is
+    (NOT via SendKeysParser — see [[slopdesk-coding-workspace-redesign-2026-06-20]]: re-run/cd is
     verbatim UTF-8). This is the existing terminal input path; no new wire.
   - **`Open` / `Reveal in Finder` / `Open in…`** → must execute **on the host** (the Mac that owns
     the file). PREFER extending the **existing E4 host-metadata control channel** with an *action*
@@ -60,7 +60,7 @@ plus the **platform/wire/UX traps** that specifically bite path-detection + host
   `ConnectionRegistry`. Honour the **`hideStatusBar`** config key (don't ship a status bar that
   can't be hidden). ES-E10-3/-4 are partly unit-testable (cwd/exit derivation) + partly GUI.
 - **⌘-hold link underline / 2-letter hint mode are NOT the reverted titlebar hint-chips.** Memory
-  [[aislopdesk-keyboard-hints-prefix-substitute-2026-06-25]]: the user disliked ⌘-hold **keybinding
+  [[slopdesk-keyboard-hints-prefix-substitute-2026-06-25]]: the user disliked ⌘-hold **keybinding
   hint keycaps in the titlebar** ("không đẹp") and they were **REVERTED**. E10's ⌘-hold **path/URL
   underline** (ES-E10-1) and **2-letter link-hint mode** (ES-E10-6, Vimium-style) are DIFFERENT,
   legitimate, distinct features over the terminal grid — build them faithfully per `files-and-links.png`
@@ -71,8 +71,8 @@ plus the **platform/wire/UX traps** that specifically bite path-detection + host
   to confirm none collide with an existing binding before registering. NOTE: E13 (later) also wants
   `⌘⇧J` for Peek-and-Reply — **E10 comes first and OWNS `⌘⇧J` for Hint Mode**; the later epic will
   reconcile, so use `⌘⇧J` for hint mode here and leave a one-line note. **Never bind a bare key**
-  (see [[aislopdesk-orchestrator-rounds-2026-06-13]]).
-- **iOS rots silently.** Status bar, Jump-To, and hint mode live in shared `AislopdeskClientUI` and
+  (see [[slopdesk-orchestrator-rounds-2026-06-13]]).
+- **iOS rots silently.** Status bar, Jump-To, and hint mode live in shared `SlopDeskClientUI` and
   must compile for iOS (⌘ gestures get a tap fallback; open/reveal route to host). **Run
   `bash scripts/check-ios.sh` in the gate** — `swift build` on macOS will NOT catch iOS rot.
 - **Honesty discipline (E8/E12/E15/E17).** Never ship a status-bar field, Jump-To row, or hint

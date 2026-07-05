@@ -1,6 +1,6 @@
 //
 //  GhosttySurface.swift
-//  Aislopdesk — the ONLY terminal renderer (libghostty-only, no SwiftTerm, no fallback).
+//  SlopDesk — the ONLY terminal renderer (libghostty-only, no SwiftTerm, no fallback).
 //
 //  ─────────────────────────────────────────────────────────────────────────────
 //  THIS FILE IS DELIBERATELY OUTSIDE THE DEFAULT `swift build` GRAPH.
@@ -76,14 +76,14 @@
 //
 
 import Foundation
-import AislopdeskTerminal       // TerminalSurface protocol (the renderer seam)
-import AislopdeskProtocol       // not strictly needed here; kept for parity with the seam
+import SlopDeskTerminal       // TerminalSurface protocol (the renderer seam)
+import SlopDeskProtocol       // not strictly needed here; kept for parity with the seam
 import CGhostty            // the clang module over include/ghostty.h (link "ghostty")
 
-/// TEMPORARY render-path tracer, gated on the `AISLOPDESK_RENDER_DEBUG` env var. Used to diagnose
+/// TEMPORARY render-path tracer, gated on the `SLOPDESK_RENDER_DEBUG` env var. Used to diagnose
 /// the macOS blank-glyph issue (terminal connected + fed bytes but no text painted). Writes to
-/// stderr so a `Aislopdesk.app/Contents/MacOS/Aislopdesk` launch captures it. Remove once resolved.
-let kRenderDebug = ProcessInfo.processInfo.environment["AISLOPDESK_RENDER_DEBUG"] != nil
+/// stderr so a `SlopDesk.app/Contents/MacOS/SlopDesk` launch captures it. Remove once resolved.
+let kRenderDebug = ProcessInfo.processInfo.environment["SLOPDESK_RENDER_DEBUG"] != nil
 @inline(__always) func rdbg(_ msg: @autoclosure () -> String) {
     if kRenderDebug { FileHandle.standardError.write(Data(("[RDBG] " + msg() + "\n").utf8)) }
 }
@@ -118,7 +118,7 @@ func ghosttyOnMainActor(_ body: @escaping @MainActor () -> Void) {
     }
 }
 
-/// libghostty-backed ``TerminalSurface`` — Aislopdesk's only renderer.
+/// libghostty-backed ``TerminalSurface`` — SlopDesk's only renderer.
 ///
 /// Wraps a `ghostty_surface_t` (header line 31, opaque `void*`) configured for the
 /// EXTERNAL backend (`GHOSTTY_BACKEND_EXTERNAL`, line 424) so it parses+renders the
@@ -182,7 +182,7 @@ public final class GhosttySurface: @MainActor TerminalSurface, FeedBackpressurin
 
     /// The per-surface serial feed queue + teardown barrier + backpressure (docs/31
     /// follow-up #5). See `SerialFeedGate` for the mechanism and the no-deadlock rule.
-    private let feedGate = SerialFeedGate(label: "aislopdesk.ghostty.feed")
+    private let feedGate = SerialFeedGate(label: "slopdesk.ghostty.feed")
 
     /// Current grid, mirrored for `setSize` pixel conversion. libghostty's size API
     /// is in PIXELS (`ghostty_surface_set_size`, line 1174); we convert cols/rows ×
@@ -329,7 +329,7 @@ public final class GhosttySurface: @MainActor TerminalSurface, FeedBackpressurin
     /// Reports whether the host terminal is on the ALTERNATE screen (a full-screen TUI owns the viewport).
     /// The view wires this to `TerminalViewModel.isAlternateScreen` (the real DECSET 1049/47/1047 parse from
     /// the client `TerminalModeTracker`) so the libghostty-initiated paste BACKSTOP (`write`/middle-click,
-    /// which reaches `aislopdeskConfirmUnsafePaste` WITHOUT going through the view's `requestPaste`) can apply
+    /// which reaches `slopdeskConfirmUnsafePaste` WITHOUT going through the view's `requestPaste`) can apply
     /// the same alt-screen suppression rule as the ⌘V path. `nil` (or unset) ⇒ treat as the primary screen.
     public var isAlternateScreen: (() -> Bool)?
 
@@ -878,7 +878,7 @@ public final class GhosttySurface: @MainActor TerminalSurface, FeedBackpressurin
     /// passes `confirmed: false` to EXERCISE the gate: for an OSC-52 read, or a paste of unsafe
     /// (non-bracketed, control-char) content, core then returns `UnauthorizedPaste`/`UnsafePaste` and
     /// re-asks via `confirm_read_clipboard_cb`. That confirm path is the embedder's approve/deny decision
-    /// point (upstream shows a dialog); Aislopdesk has no dialog, so it AUTO-APPROVES by passing
+    /// point (upstream shows a dialog); SlopDesk has no dialog, so it AUTO-APPROVES by passing
     /// `confirmed: true` there. Passing `false` on the confirm path would re-trip the same gate and
     /// recurse forever (stack overflow) — the `true` is what actually terminates the request.
     public func completeClipboardRead(_ string: String, state: UnsafeMutableRawPointer?, confirmed: Bool = false) {

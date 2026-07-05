@@ -1,7 +1,7 @@
 # Custom Commands / Layouts / Snippets (Recipes)
 
 > This page covers custom commands, layouts, and snippets together, since
-> aislopdesk implements them as a single unified feature. The name for this
+> slopdesk implements them as a single unified feature. The name for this
 > feature set is **Recipes**.
 
 ## Summary
@@ -9,9 +9,9 @@
 A **recipe** is a portable snapshot of repeatable work. It ranges from a simple
 text snippet (alias → expanded text) up to a whole workspace: tabs, split panes,
 working directories, and optionally the exact commands that were run — saved as a
-`.aislopdeskrecipe` TOML file that can be re-opened later or shared with a teammate.
+`.slopdeskrecipe` TOML file that can be re-opened later or shared with a teammate.
 
-Recipes are stored in `~/.config/aislopdesk/recipes/` and surface in:
+Recipes are stored in `~/.config/slopdesk/recipes/` and surface in:
 - **Settings → Recipes**
 - **File → Recipe** menu
 - The **command palette**
@@ -35,7 +35,7 @@ template variables at save time and re-resolved at open time:
 |----------|-------------|
 | `{{current_folder}}` | Directory where the recipe opens |
 | `{{home_folder}}` | Home directory (`~`) |
-| `{{recipe_location}}` | Folder containing the `.aislopdeskrecipe` file |
+| `{{recipe_location}}` | Folder containing the `.slopdeskrecipe` file |
 
 ### Snapshot Workspace with Commands
 
@@ -43,7 +43,7 @@ template variables at save time and re-resolved at open time:
   replays them sequentially on recipe open. Requires active shell integration
   (OSC 133 command marks).
 - A third content level, **Include Scrollback**, stores terminal output but is
-  only available for internally-saved recipes (not exported `.aislopdeskrecipe` files).
+  only available for internally-saved recipes (not exported `.slopdeskrecipe` files).
 - Steps: press `⌘S` → select scope → set Content to "Include Commands (replay on
   open)" → save.
 
@@ -85,11 +85,11 @@ template variables at save time and re-resolved at open time:
 
 | Method | Result |
 |--------|--------|
-| Double-click `.aislopdeskrecipe` in Finder | Opens in a new window |
-| `aislopdesk open foo.aislopdeskrecipe` (CLI) | Same result |
+| Double-click `.slopdeskrecipe` in Finder | Opens in a new window |
+| `slopdesk open foo.slopdeskrecipe` (CLI) | Same result |
 | **File → Open Recipe** menu | Pick from the internal recipe database |
 
-### The `.aislopdeskrecipe` File Format
+### The `.slopdeskrecipe` File Format
 
 - Plain TOML — human-readable, diffable, version-control-friendly.
 - Exported files omit: scrollback, machine-local keybindings, and agent sessions.
@@ -134,18 +134,18 @@ commands = ["npm run preview"]
 | Manually | Commands are fed one at a time; press Enter for each |
 | Skip | Layout opens; no commands execute |
 
-- Opening an unfamiliar `.aislopdeskrecipe` displays all commands before execution with
+- Opening an unfamiliar `.slopdeskrecipe` displays all commands before execution with
   three choices:
   - **Always Trust** — remember the file by SHA-256 hash; follow replay settings.
   - **Run Once** — execute this instance only; prompt again next time.
   - **Cancel** — open nothing.
 - Editing the file changes its hash, triggering a fresh trust prompt.
-- Trusted-file records live in `~/Library/Application Support/Aislopdesk/trusted_recipes.json`.
+- Trusted-file records live in `~/Library/Application Support/SlopDesk/trusted_recipes.json`.
 - Self-saved recipes bypass the trust dialog entirely.
 
 ### Shell Handoff Recognition
 
-- Aislopdesk recognizes interactive programs (`ssh`, `tmux attach`, `docker exec -it`,
+- SlopDesk recognizes interactive programs (`ssh`, `tmux attach`, `docker exec -it`,
   `su`, etc.) and **pauses** sequential command replay after such a command in
   Auto/Ask Once modes until the inner shell returns to a prompt or the user
   manually continues.
@@ -166,16 +166,16 @@ commands = ["npm run preview"]
 
 | Key | Default | Effect |
 |-----|---------|--------|
-| `scope` (in `.aislopdeskrecipe`) | — | `"tab"` \| `"window"` \| `"commands"` — determines what is saved/replayed |
-| `split` (per pane in `.aislopdeskrecipe`) | — | `"right"` (or other direction) — split direction relative to previous pane |
-| `size` (per pane in `.aislopdeskrecipe`) | — | `0.0`–`1.0` fraction of parent container |
-| `version` (in `.aislopdeskrecipe`) | `1` | Recipe format version |
+| `scope` (in `.slopdeskrecipe`) | — | `"tab"` \| `"window"` \| `"commands"` — determines what is saved/replayed |
+| `split` (per pane in `.slopdeskrecipe`) | — | `"right"` (or other direction) — split direction relative to previous pane |
+| `size` (per pane in `.slopdeskrecipe`) | — | `0.0`–`1.0` fraction of parent container |
+| `version` (in `.slopdeskrecipe`) | `1` | Recipe format version |
 | Command Replay — Saved Recipes | `Auto` | Replay mode for internally-saved recipes |
-| Command Replay — Recipe Files | `Ask Once` | Replay mode for externally-opened `.aislopdeskrecipe` files |
+| Command Replay — Recipe Files | `Ask Once` | Replay mode for externally-opened `.slopdeskrecipe` files |
 
 > Runtime configuration paths:
-> - Recipes directory: `~/.config/aislopdesk/recipes/`
-> - Trusted-recipe hashes: `~/Library/Application Support/Aislopdesk/trusted_recipes.json`
+> - Recipes directory: `~/.config/slopdesk/recipes/`
+> - Trusted-recipe hashes: `~/Library/Application Support/SlopDesk/trusted_recipes.json`
 
 ## Visual Spec
 
@@ -263,18 +263,18 @@ light gray ~#E5E5EA.
 - `textsnippet-setting.png` — "Edit Text Snippet" modal dialog in Settings → Recipes
 - `textsnippet-apply.gif` — Animated demo of snippet alias expansion at the shell prompt
 
-## Aislopdesk Mapping Notes
+## SlopDesk Mapping Notes
 
 ### What maps 1:1
 
 - **Text snippets (alias → text expansion):** The alias-expansion logic runs
-  entirely client-side in the terminal app. Aislopdesk can implement this as a
+  entirely client-side in the terminal app. SlopDesk can implement this as a
   client-side interceptor on the terminal input path before bytes reach
   `libghostty` or the PTY write path. The `{{date}}`, `{{time}}`, and
   `{{clipboard}}` placeholders resolve locally. `{{cursor}}` is a cursor-position
   marker applied to the injected text and needs no host involvement.
 
-- **Recipe file format (`.aislopdeskrecipe` TOML):** Fully client-side concern. The
+- **Recipe file format (`.slopdeskrecipe` TOML):** Fully client-side concern. The
   parse-and-open logic, the in-memory recipe database (`~/.config/…`), and the
   trust-hash store (`~/Library/…`) all live on the **client** (macOS or iOS).
 
@@ -308,7 +308,7 @@ light gray ~#E5E5EA.
   the path is explicitly set to a host-known path).
 
 - **`commands` replay:** Commands are sent as PTY input over the existing
-  aislopdesk write path. The sequencing logic (wait for OSC 133 prompt mark
+  slopdesk write path. The sequencing logic (wait for OSC 133 prompt mark
   before injecting the next command) requires shell integration to be active on
   the host shell, which is the expected deployment mode. This is feasible but the
   client must wait for prompt marks that traverse the full host→client wire path,
@@ -316,13 +316,13 @@ light gray ~#E5E5EA.
 
 - **"Include Scrollback" content level:** Storing terminal scrollback in a recipe
   requires capturing it from `libghostty`'s scroll buffer on the **client** side
-  (not the host). For aislopdesk the terminal surface is local, so this is
+  (not the host). For slopdesk the terminal surface is local, so this is
   technically feasible for the client's scrollback cache. However, the scrollback
   is ephemeral and not persisted on the host. Internally-only restriction (no
-  export) matches aislopdesk's architecture naturally.
+  export) matches slopdesk's architecture naturally.
 
 - **OSC 133 dependency for command replay:** Shell integration must be installed
-  in the remote shell on the host. Aislopdesk already relies on OSC 133 for other
+  in the remote shell on the host. SlopDesk already relies on OSC 133 for other
   features (block output, Claude detection), so this is consistent but must be
   documented as a prerequisite for recipe command replay.
 
@@ -331,11 +331,11 @@ light gray ~#E5E5EA.
   translates naturally to a `UINavigationController`-pushed form sheet on iOS. No
   fundamental blocker.
 
-- **File system access for `.aislopdeskrecipe` opening:** On iOS, Finder-style
+- **File system access for `.slopdeskrecipe` opening:** On iOS, Finder-style
   double-click is unavailable. The iOS client would use a `UIDocumentPickerViewController`
-  or the share sheet to receive `.aislopdeskrecipe` files and register a UTI for the
+  or the share sheet to receive `.slopdeskrecipe` files and register a UTI for the
   extension.
 
-- **`aislopdesk open foo.aislopdeskrecipe` CLI:** Maps to the existing `aislopdesk-client`
+- **`slopdesk open foo.slopdeskrecipe` CLI:** Maps to the existing `slopdesk-client`
   CLI. A `--recipe` flag or subcommand would forward the TOML to the client app
   for processing. Straightforward addition.

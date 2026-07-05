@@ -2,7 +2,7 @@
 
 ## Summary
 
-How Aislopdesk handles native text selection and copying to the clipboard.
+How SlopDesk handles native text selection and copying to the clipboard.
 Selected text is copied with ⌘C. A "Copy on Select" setting causes every selection to drop straight into the clipboard automatically. When a program enables mouse reporting, holding ⌥ (or the user's bound modifier) forces native selection instead of forwarding the mouse event to the program.
 
 There are no screenshots on this page; the feature is entirely behavior/settings-driven.
@@ -79,16 +79,16 @@ The closest visual reference will come from the general terminal window renderin
 
 (none — this page contains no content screenshots)
 
-## Aislopdesk mapping notes
+## SlopDesk mapping notes
 
-Aislopdesk runs libghostty behind a `TerminalSurface` seam on the **client** side. The client renders the terminal locally; selection is a client-side concern and does not need a host round-trip for the gestures themselves. Mapping notes:
+SlopDesk runs libghostty behind a `TerminalSurface` seam on the **client** side. The client renders the terminal locally; selection is a client-side concern and does not need a host round-trip for the gestures themselves. Mapping notes:
 
 ### Maps 1:1
 
 - **Double-click / triple-click / drag selection** — libghostty (ghostty terminal emulator) supports word, line, and drag selection natively. Wire up via `ghosttySelectWord`, `ghosttySelectLine`, `ghosttyExtendSelection` equivalents in `TerminalSurface`. On macOS client, NSView mouse events drive this directly.
 - **⌥ + drag rectangular selection** — ghostty supports rectangular selection; pass the `rect` flag on drag begin.
 - **⇧ + click extend** — standard selection extension; supported by ghostty's selection model.
-- **⇧ + arrow extend** — intercept ⇧+arrow in the `AislopdeskClientUI` key handler BEFORE forwarding to the pty; call ghostty's selection extension API. Gate behind the "Shift+Arrow Select" preference key (default on). When off, forward as escape sequence as normal.
+- **⇧ + arrow extend** — intercept ⇧+arrow in the `SlopDeskClientUI` key handler BEFORE forwarding to the pty; call ghostty's selection extension API. Gate behind the "Shift+Arrow Select" preference key (default on). When off, forward as escape sequence as normal.
 - **⌘C copy** — read the current selection from ghostty's surface and write to `NSPasteboard` / `UIPasteboard`. Already partially done via OSC 52 support noted in CLAUDE.md.
 - **⌘X cut** — copy selection then send Delete/Backspace sequence for the selected range on the editable line.
 - **Copy on Select** — hook into ghostty's selection-change callback; on each change, copy to pasteboard if the preference is enabled.
@@ -99,8 +99,8 @@ Aislopdesk runs libghostty behind a `TerminalSurface` seam on the **client** sid
 
 ### Requires care / partial mapping
 
-- **Backspace Deletes Selection** — this requires knowing whether the cursor is on the "editable prompt line" (i.e., shell prompt, not inside a running program). This relies on Shell Integration (OSC 133) marks to distinguish prompt vs. program context. Aislopdesk already has OSC 133 support listed in CLAUDE.md (`Blocks/OSC-133`). When OSC 133 marks are present and the cursor is in the prompt zone, intercept Backspace to delete the whole selection; otherwise fall back to standard behavior. On iOS client, this works the same way via `UITextInput` / custom key handling.
-- **Force native selection under mouse reporting** — when the remote program has mouse reporting enabled (tracked in ghostty's terminal state), ⌥+drag must bypass mouse-event forwarding and instead start a native selection. Aislopdesk's mouse reporting passthrough is in `AislopdeskTransport`; add a modifier check before deciding whether to send the mouse event over the wire or handle it locally as a selection.
+- **Backspace Deletes Selection** — this requires knowing whether the cursor is on the "editable prompt line" (i.e., shell prompt, not inside a running program). This relies on Shell Integration (OSC 133) marks to distinguish prompt vs. program context. SlopDesk already has OSC 133 support listed in CLAUDE.md (`Blocks/OSC-133`). When OSC 133 marks are present and the cursor is in the prompt zone, intercept Backspace to delete the whole selection; otherwise fall back to standard behavior. On iOS client, this works the same way via `UITextInput` / custom key handling.
+- **Force native selection under mouse reporting** — when the remote program has mouse reporting enabled (tracked in ghostty's terminal state), ⌥+drag must bypass mouse-event forwarding and instead start a native selection. SlopDesk's mouse reporting passthrough is in `SlopDeskTransport`; add a modifier check before deciding whether to send the mouse event over the wire or handle it locally as a selection.
 
 ### Cannot map 1:1 (iOS-specific)
 
@@ -110,4 +110,4 @@ Aislopdesk runs libghostty behind a `TerminalSurface` seam on the **client** sid
 
 ### Remote-host considerations
 
-None of the selection behaviors require host-side logic. Selection, copy, and the associated preferences are entirely client-side. The host (aislopdesk-hostd) does not need to know about the user's selection. OSC 52 clipboard manipulation (which lets a remote program SET the clipboard) is already tracked separately in the OSC 52 reference.
+None of the selection behaviors require host-side logic. Selection, copy, and the associated preferences are entirely client-side. The host (slopdesk-hostd) does not need to know about the user's selection. OSC 52 clipboard manipulation (which lets a remote program SET the clipboard) is already tracked separately in the OSC 52 reference.

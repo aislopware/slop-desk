@@ -1,9 +1,9 @@
 # Remote-window performance: where the milliseconds go (M1 Max, network removed)
 
 **Date:** 2026-07-04 · **Machine:** Mac Studio, Apple M1 Max, 1920×1080@60 display ·
-**Instrument:** `aislopdesk-perfbench` (headless — real `VideoEncoder` + `VideoDecoder` + packetizer/FEC
+**Instrument:** `slopdesk-perfbench` (headless — real `VideoEncoder` + `VideoDecoder` + packetizer/FEC
 on synthetic scrolling NV12; no SCStream, so it runs from any shell — capture is the only GUI/TCC-gated
-stage). Reproduce: `swift run -c release aislopdesk-perfbench`.
+stage). Reproduce: `swift run -c release slopdesk-perfbench`.
 
 ## TL;DR
 
@@ -30,7 +30,7 @@ so a heavier frame stalls the next capture = periodic hitch).
 
 ## `SPEED_OVER_QUALITY` buys nothing here
 
-`AISLOPDESK_SPEED_OVER_QUALITY=1` (set by the shipped profiles) measured **~9 ms either way at 1080p**
+`SLOPDESK_SPEED_OVER_QUALITY=1` (set by the shipped profiles) measured **~9 ms either way at 1080p**
 — on M1 Max the low-latency HEVC block is already at its throughput floor, so the speed hint does not
 shorten encode; it only tilts rate-distortion toward coarser quantization = a **free sharpness loss.**
 Turn it OFF.

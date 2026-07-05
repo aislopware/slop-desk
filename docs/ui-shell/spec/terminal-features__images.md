@@ -2,7 +2,7 @@
 
 ## Summary
 
-Aislopdesk supports inline images inside the terminal viewport via two protocols: **iTerm2's OSC 1337** and the **Kitty graphics protocol**. Both render bitmap images directly in terminal cell grids with no external viewer. A third protocol — **Sixel** — is planned but not yet implemented.
+SlopDesk supports inline images inside the terminal viewport via two protocols: **iTerm2's OSC 1337** and the **Kitty graphics protocol**. Both render bitmap images directly in terminal cell grids with no external viewer. A third protocol — **Sixel** — is planned but not yet implemented.
 
 ---
 
@@ -12,7 +12,7 @@ Aislopdesk supports inline images inside the terminal viewport via two protocols
 - Two protocols are supported simultaneously: OSC 1337 (iTerm2) and Kitty graphics protocol.
 - **OSC 1337 / iTerm2 protocol:**
   - Accepts base64-encoded PNG, JPEG, or GIF payloads delivered via the `\e]1337;File=inline=1:<base64data>\a` escape sequence.
-  - The `imgcat` utility (ships with iTerm2 utilities) is the canonical convenience wrapper and works in aislopdesk unchanged.
+  - The `imgcat` utility (ships with iTerm2 utilities) is the canonical convenience wrapper and works in slopdesk unchanged.
   - Manual invocation: `printf '\e]1337;File=inline=1:%s\a' "$(base64 < ./icon.png)"`
   - Supported parameters: `inline`, `name`, `size`, `width`, `height`, `preserveAspectRatio`.
 - **Kitty graphics protocol:**
@@ -94,7 +94,7 @@ A standard macOS app window with native traffic-light window controls (red/yello
 **Bottom status / keybinding bar:**
 - A single line at the very bottom of the terminal content area, in small monospace text (~11pt), dark gray on white.
 - Content: `[↑↓/hjkl] 导航  [Enter] 播放  [r] 刷新  [q] 退出  [t] 切换主题`
-- This is a standard terminal UI hint bar showing the app's own keybindings (not aislopdesk keybindings).
+- This is a standard terminal UI hint bar showing the app's own keybindings (not slopdesk keybindings).
 - Keys are shown in square brackets `[…]` in slightly lighter or same weight as the label text.
 
 **Typography / spacing:**
@@ -129,18 +129,18 @@ A standard macOS app window with native traffic-light window controls (red/yello
 
 - **OSC 1337 (iTerm2 inline images):** libghostty supports OSC 1337 — this passes through the `TerminalSurface` seam unchanged. The host terminal process emits the escape, libghostty decodes and renders it in the terminal cell buffer. No client-side special handling required beyond what ghostty already provides.
 - **Kitty graphics protocol:** libghostty (ghostty's terminal engine) implements the Kitty graphics protocol. All currently-supported Kitty features (direct/file/chunked transmission, RGB/RGBA/PNG, placement, management, query, Unicode placeholders) flow through the libghostty render path transparently.
-- **Sixel (planned):** When aislopdesk ships Sixel support, it will also be a protocol that libghostty can support. Track ghostty upstream for Sixel implementation status.
+- **Sixel (planned):** When slopdesk ships Sixel support, it will also be a protocol that libghostty can support. Track ghostty upstream for Sixel implementation status.
 
 ### What requires attention in the remote architecture
 
-- **File transmission mode (`t=f` / `t=t`):** Kitty `t=f` (file path) and `t=t` (temp file) reference **local filesystem paths** on the machine running the terminal process. In aislopdesk's architecture, the terminal process runs on the **macOS host**, so file paths are resolved on the host — this is correct. The aislopdesk client receives the already-rendered pixel/cell output via the video path; it never needs to resolve image file paths itself. No special handling needed.
-- **Shared memory (`t=s`, planned):** Kitty shared-memory transmission uses POSIX shared memory on the host. This is again host-local and resolved by libghostty on the host machine. The aislopdesk client is unaffected. No cross-machine concern.
-- **Image atlas / caching ("uploaded once per ID"):** Image upload and atlas management happens entirely inside libghostty on the host, driven by the escape sequences in the terminal data stream. The aislopdesk video path encodes the terminal frame output (including rendered images) as HEVC and streams it to the client. The client decodes pixels; it has no awareness of image protocol semantics. This is transparent.
+- **File transmission mode (`t=f` / `t=t`):** Kitty `t=f` (file path) and `t=t` (temp file) reference **local filesystem paths** on the machine running the terminal process. In slopdesk's architecture, the terminal process runs on the **macOS host**, so file paths are resolved on the host — this is correct. The slopdesk client receives the already-rendered pixel/cell output via the video path; it never needs to resolve image file paths itself. No special handling needed.
+- **Shared memory (`t=s`, planned):** Kitty shared-memory transmission uses POSIX shared memory on the host. This is again host-local and resolved by libghostty on the host machine. The slopdesk client is unaffected. No cross-machine concern.
+- **Image atlas / caching ("uploaded once per ID"):** Image upload and atlas management happens entirely inside libghostty on the host, driven by the escape sequences in the terminal data stream. The slopdesk video path encodes the terminal frame output (including rendered images) as HEVC and streams it to the client. The client decodes pixels; it has no awareness of image protocol semantics. This is transparent.
 - **`clear` behavior (images persist by ID):** Kitty image persistence after `clear` is libghostty behavior on the host. No client-side implication.
-- **Large images / chunked mode:** Performance guidance (>5 MB use chunked/file mode) applies to the app running on the host. Relevant if aislopdesk users run image-heavy TUI apps remotely — chunked/file mode reduces the escape-sequence byte volume in the terminal stream, which is beneficial for the aislopdesk terminal TCP path.
-- **iOS client:** libghostty is compiled for both macOS and iOS targets in aislopdesk. The iOS client renders the same TerminalSurface output. Inline images rendered by libghostty on the host appear in the video stream delivered to the iOS client as ordinary pixel frames — no iOS-specific image protocol handling is needed. The iOS client is fully passive here.
-- **Animation (planned):** Multi-frame Kitty animation will require libghostty to update cell contents at animation frame rate. This is host-side rendering; the aislopdesk video capture path (SCStream) naturally captures the frame updates and delivers them to the client. No special handling beyond ensuring capture framerate is adequate.
+- **Large images / chunked mode:** Performance guidance (>5 MB use chunked/file mode) applies to the app running on the host. Relevant if slopdesk users run image-heavy TUI apps remotely — chunked/file mode reduces the escape-sequence byte volume in the terminal stream, which is beneficial for the slopdesk terminal TCP path.
+- **iOS client:** libghostty is compiled for both macOS and iOS targets in slopdesk. The iOS client renders the same TerminalSurface output. Inline images rendered by libghostty on the host appear in the video stream delivered to the iOS client as ordinary pixel frames — no iOS-specific image protocol handling is needed. The iOS client is fully passive here.
+- **Animation (planned):** Multi-frame Kitty animation will require libghostty to update cell contents at animation frame rate. This is host-side rendering; the slopdesk video capture path (SCStream) naturally captures the frame updates and delivers them to the client. No special handling beyond ensuring capture framerate is adequate.
 
 ### Summary
 
-All image protocol behavior in this feature is terminal-emulator-side (host-side in aislopdesk's model) and is provided by libghostty. The aislopdesk client is a pixel consumer; it has no protocol-level interaction with OSC 1337 or Kitty graphics. This feature is implemented entirely at the host terminal layer with zero client-side implementation work.
+All image protocol behavior in this feature is terminal-emulator-side (host-side in slopdesk's model) and is provided by libghostty. The slopdesk client is a pixel consumer; it has no protocol-level interaction with OSC 1337 or Kitty graphics. This feature is implemented entirely at the host terminal layer with zero client-side implementation work.

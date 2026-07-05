@@ -2,7 +2,7 @@
 
 ## Summary
 
-Aislopdesk stores all configuration in `~/.config/aislopdesk/config.toml` as flat TOML `key = value` pairs (one per line, `#` for comments). The reader is lenient — quotes around simple strings are optional, and unknown keys are silently ignored (so a newer config loads on an older build). Most keys are also editable from the in-app Settings UI, which writes the same file. The page covers the complete set of config keys grouped by domain, built-in theme names, and an example config snippet.
+SlopDesk stores all configuration in `~/.config/slopdesk/config.toml` as flat TOML `key = value` pairs (one per line, `#` for comments). The reader is lenient — quotes around simple strings are optional, and unknown keys are silently ignored (so a newer config loads on an older build). Most keys are also editable from the in-app Settings UI, which writes the same file. The page covers the complete set of config keys grouped by domain, built-in theme names, and an example config snippet.
 
 No screenshots are embedded on this page; it is a pure text reference.
 
@@ -10,7 +10,7 @@ No screenshots are embedded on this page; it is a pure text reference.
 
 ## Behaviors
 
-- Config file location: `~/.config/aislopdesk/config.toml`
+- Config file location: `~/.config/slopdesk/config.toml`
 - Format: TOML — flat list, no nested tables required for most keys
 - Unknown keys silently ignored — forward-compatible loading
 - Most keys editable in-app via Settings (writes same file)
@@ -26,9 +26,9 @@ No screenshots are embedded on this page; it is a pure text reference.
 - `open-with-app` is repeatable and Settings-managed
 - `cli-alias` is repeatable and Settings-managed
 - `zoxide-local-path` is Settings-hidden
-- `omit-aislopdesk-prefix` is live-toggleable at runtime (no restart required)
+- `omit-slopdesk-prefix` is live-toggleable at runtime (no restart required)
 - `auto-theme-dark-mode = true` makes the terminal follow OS appearance — `theme` used for light, `theme-dark` for dark
-- Custom theme `.toml` files dropped into `~/.config/aislopdesk/themes/` are auto-discovered
+- Custom theme `.toml` files dropped into `~/.config/slopdesk/themes/` are auto-discovered
 - Themes can be imported from other terminals
 - `on-device-learning` for autocomplete stays entirely local (never sent off device)
 - `shell-integration = true` installs a managed shell-rc block that provides OSC 133, CWD reporting, and edit/view/jump wrappers
@@ -100,7 +100,7 @@ Keybindings on this reference page are not independently listed — the page onl
 |-----|---------|--------|
 | `command` | `$SHELL` (else `/bin/zsh`) | Shell/command to run. Alias: `shell`. |
 | `env` | (none) | Set an environment variable (KEY=VALUE). Repeatable — one `env` line per variable. |
-| `term` | `auto` | Value of `$TERM`. `auto` picks the best-supported value for Aislopdesk. |
+| `term` | `auto` | Value of `$TERM`. `auto` picks the best-supported value for SlopDesk. |
 | `working-directory` | `inherit` | Initial directory. `inherit`, `home`, or absolute path (`~/` allowed). |
 | `window-working-directory` | `home` | Directory for a brand-new window's first pane. |
 | `tab-working-directory` | `inherit` | Directory for a new tab (inherits the active pane's CWD). |
@@ -195,7 +195,7 @@ Keybindings on this reference page are not independently listed — the page onl
 **Available built-in themes (case-insensitive):**
 April, April Dark, Ayu Dark, Ayu Light, Catppuccin Mocha, Dracula, Floating Card, Glass Dark, Glass Light, Gruvbox Dark, Monokai Classic, Newsprint, Night, Nord, One Dark, One Light, Owl, Paper, Pink, Rosé Pine, Seafoam Pastel, Solarized Dark, Solarized Light, Tokyo Night
 
-Custom themes: drop `.toml` files into `~/.config/aislopdesk/themes/` or import from other terminals.
+Custom themes: drop `.toml` files into `~/.config/slopdesk/themes/` or import from other terminals.
 
 ### UI Chrome Colors
 
@@ -240,9 +240,9 @@ Custom themes: drop `.toml` files into `~/.config/aislopdesk/themes/` or import 
 
 | Key | Default | Effect |
 |-----|---------|--------|
-| `link-open-with` | `browser` | Clicked URL destination: `browser` or `aislopdesk`. |
-| `file-open-with` | `default-app` | Clicked file: `default-app` or `aislopdesk`. |
-| `folder-open-with` | `default-app` | Clicked folder: `default-app` or `aislopdesk`. |
+| `link-open-with` | `browser` | Clicked URL destination: `browser` or `slopdesk`. |
+| `file-open-with` | `default-app` | Clicked file: `default-app` or `slopdesk`. |
+| `folder-open-with` | `default-app` | Clicked folder: `default-app` or `slopdesk`. |
 | `link-schemes` | `all` | Extra URL schemes: `all` (any `scheme://`) or `custom` (allowlist only). `http(s)`, `file`, `mailto` always detected. |
 | `link-scheme-allowlist` | (none) | Extra schemes for `custom` mode (bare names). |
 | `link-previews` | `true` | Show corner pill with hovered link URL on Cmd-hover. |
@@ -280,7 +280,7 @@ Custom themes: drop `.toml` files into `~/.config/aislopdesk/themes/` or import 
 |-----|---------|--------|
 | `shell-integration` | `true` | Install managed shell-rc block (OSC 133, CWD reporting, edit/view/jump wrappers). |
 | `ssh-integration` | `true` | Forward shell integration over SSH. |
-| `omit-aislopdesk-prefix` | `false` | Install edit/view/watch functions without the `aislopdesk` prefix. Live-toggleable. |
+| `omit-slopdesk-prefix` | `false` | Install edit/view/watch functions without the `slopdesk` prefix. Live-toggleable. |
 | `cli-allow-overwrite` | `false` | Allow CLI wrappers to replace user-defined function names. |
 | `cli-alias` | (none) | User CLI alias (name=cmd). Installs a shell function. Repeatable, Settings-managed. |
 | `progress-bar-commands` | (built-in) | Command prefixes that auto-emit OSC 9;4 progress (curl, git, npm, etc.). |
@@ -313,7 +313,7 @@ Custom themes: drop `.toml` files into `~/.config/aislopdesk/themes/` or import 
 
 | Key | Default | Effect |
 |-----|---------|--------|
-| `notification-foreground` | `off` | Show banner while Aislopdesk is in the foreground. Values: `off`, `always`, `tab-unfocused`. |
+| `notification-foreground` | `off` | Show banner while SlopDesk is in the foreground. Values: `off`, `always`, `tab-unfocused`. |
 | `privilege-sound-on-error` | `false` | Play sound on non-zero exit code. |
 | `privilege-sound-shell` | `true` | Allow shell-integration commands to trigger sounds. |
 | `privilege-notification-on-finish` | `false` | Notify when a long command finishes. |
@@ -362,7 +362,7 @@ Custom themes: drop `.toml` files into `~/.config/aislopdesk/themes/` or import 
 | Key | Default | Effect |
 |-----|---------|--------|
 | `recipe-replay-saved` | `ask_once` | Command replay for internal recipes. Values: `auto`, `ask_once`, `manually`. |
-| `recipe-replay-file` | `manually` | Command replay for external `.aislopdeskrecipe` files. Same values as above. |
+| `recipe-replay-file` | `manually` | Command replay for external `.slopdeskrecipe` files. Same values as above. |
 
 ### Open Quickly, Frecency & Jump
 
@@ -434,48 +434,48 @@ No screenshots were captured for this page — it contains no embedded images be
 
 ### Direct implementation
 
-- **`font-family`, `font-size`, `font-blending`, `font-ligatures`, `font-thicken`** — these route through libghostty's `TerminalConfigBuilder` font/rendering settings. Aislopdesk already routes theme colors through `resolveTerminalColors`; font config should follow the same path.
+- **`font-family`, `font-size`, `font-blending`, `font-ligatures`, `font-thicken`** — these route through libghostty's `TerminalConfigBuilder` font/rendering settings. SlopDesk already routes theme colors through `resolveTerminalColors`; font config should follow the same path.
 - **`cursor-style`, `cursor-style-blink`, `cursor-color`, `cursor-opacity`, `cursor-animation`** — direct libghostty cursor config. Pass through `TerminalConfigBuilder` or equivalent ghostty config key.
-- **`theme`, `theme-dark`, `auto-theme-dark-mode`** — Aislopdesk already has `ThemeStore` and Monokai Pro as default. Built-in theme names resolve to `ThemeStore` entries; `auto-theme-dark-mode` follows OS appearance.
-- **`ui-panel-*`, `ui-text-*`, `ui-hover`, `ui-active`, `ui-accent`** — already approximated by Aislopdesk's `SlateDesign` token system. These config keys would allow per-user override of design tokens.
+- **`theme`, `theme-dark`, `auto-theme-dark-mode`** — SlopDesk already has `ThemeStore` and Monokai Pro as default. Built-in theme names resolve to `ThemeStore` entries; `auto-theme-dark-mode` follows OS appearance.
+- **`ui-panel-*`, `ui-text-*`, `ui-hover`, `ui-active`, `ui-accent`** — already approximated by SlopDesk's `SlateDesign` token system. These config keys would allow per-user override of design tokens.
 - **`font-size`, `adjust-cell-height`** — route to libghostty cell sizing config. `adjust-cell-height` uses Ghostty-compatible syntax — directly passable.
-- **`foreground`, `background`, `palette-0`–`palette-15`** — already handled via `resolveTerminalColors` → `TerminalConfigBuilder` in Aislopdesk.
+- **`foreground`, `background`, `palette-0`–`palette-15`** — already handled via `resolveTerminalColors` → `TerminalConfigBuilder` in SlopDesk.
 - **`scrollback-lines`** — routes to libghostty scrollback config.
 - **`text-bold`, `text-italic`, `text-underline`, `text-blink`** — route to libghostty text rendering options.
 - **`mouse-reporting`, `mouse-scroll-multiplier`, `macos-option-as-alt`** — route to libghostty / NSEvent input handling.
 - **`kitty-keyboard`** — libghostty supports Kitty keyboard protocol; pass through.
 - **`minimum-contrast`, `bold-color`, `faint-opacity`, `selection-foreground`, `selection-background`** — libghostty renderer config; pass through.
-- **`shell-integration`** — Aislopdesk already has OSC 133 / CWD detection. This key controls whether the managed shell-rc block is installed.
-- **`live-resize-sigwinch-delay-ms`** — Aislopdesk already implements `onResizeSettled` / deferred SIGWINCH. Maps to that delay constant.
-- **`terminal-scroll-smooth`** — Aislopdesk already has smooth scrollback; this is a user toggle.
-- **`window-layout`** — Aislopdesk has sidebar-left layout currently. `tabs-top`/`tabs-bottom` are additional layout modes to implement.
-- **`sidebar-visible`, `sidebar-width`, `details-panel-width`** — direct sidebar visibility/sizing config; Aislopdesk already has sidebar toggle.
-- **`autocomplete-*`** — Aislopdesk's own autocomplete engine; these config keys define its behavior surface. `autocomplete-on-device-learning` gates local history learning only.
-- **`privilege-badge-*`**, **`privilege-notify-*`** — Aislopdesk's agent monitoring (`ClaudeStatus`/`ClaudePaneDetector`) produces these events. These keys control opt-in/opt-out per signal type.
+- **`shell-integration`** — SlopDesk already has OSC 133 / CWD detection. This key controls whether the managed shell-rc block is installed.
+- **`live-resize-sigwinch-delay-ms`** — SlopDesk already implements `onResizeSettled` / deferred SIGWINCH. Maps to that delay constant.
+- **`terminal-scroll-smooth`** — SlopDesk already has smooth scrollback; this is a user toggle.
+- **`window-layout`** — SlopDesk has sidebar-left layout currently. `tabs-top`/`tabs-bottom` are additional layout modes to implement.
+- **`sidebar-visible`, `sidebar-width`, `details-panel-width`** — direct sidebar visibility/sizing config; SlopDesk already has sidebar toggle.
+- **`autocomplete-*`** — SlopDesk's own autocomplete engine; these config keys define its behavior surface. `autocomplete-on-device-learning` gates local history learning only.
+- **`privilege-badge-*`**, **`privilege-notify-*`** — SlopDesk's agent monitoring (`ClaudeStatus`/`ClaudePaneDetector`) produces these events. These keys control opt-in/opt-out per signal type.
 - **`privilege-caffeinate-agent-processing`** — routes to `IOPMAssertion` / `caffeinate` while Claude is processing. Worth implementing.
 - **`privilege-resume-agent-session`** — ties to `session-restore-multiplayer` + agent session state on restore.
 
 ### Remote-architecture constraints
 
-- **`working-directory`, `window-working-directory`, `tab-working-directory`, `split-working-directory`** — in Aislopdesk the CWD is always on the **host machine** (remote). The client cannot set CWD to a local path. Only `inherit` semantics make sense client-side; the initial directory must be configured on the host. Flag in Settings as "host-side only".
-- **`command`, `shell`** — the shell runs on the **host** (`aislopdesk-hostd`), not locally. This config key belongs in host configuration, not the client config file.
+- **`working-directory`, `window-working-directory`, `tab-working-directory`, `split-working-directory`** — in SlopDesk the CWD is always on the **host machine** (remote). The client cannot set CWD to a local path. Only `inherit` semantics make sense client-side; the initial directory must be configured on the host. Flag in Settings as "host-side only".
+- **`command`, `shell`** — the shell runs on the **host** (`slopdesk-hostd`), not locally. This config key belongs in host configuration, not the client config file.
 - **`env`** — environment variables are set on the host process. Client cannot inject env vars into the remote shell. Host-side config only.
-- **`ssh-integration`** — Aislopdesk IS the remote transport; SSH integration inside the terminal would be SSH-over-aislopdesk. Lower priority; flag as N/A unless the remote session itself then SSHes onward.
+- **`ssh-integration`** — SlopDesk IS the remote transport; SSH integration inside the terminal would be SSH-over-slopdesk. Lower priority; flag as N/A unless the remote session itself then SSHes onward.
 - **`login-greeting`** — host-side only (controls remote shell startup mode).
 - **`quick-terminal-*`** — Quick Terminal is a macOS-global hotkey drop-down terminal. Applies on macOS client. Does not apply to iOS client.
 - **`dock-icon-*`** — macOS Dock only; not applicable on iOS client.
-- **`auto-secure-input`, `secure-input-indication`** — macOS Secure Keyboard Entry applies locally on the client machine. Since the remote end is `aislopdesk-hostd` on a different Mac, "secure input" semantics are local to the client keyboard. The indication pill can still be shown on the macOS client. Not applicable on iOS (iOS has its own secure field handling).
+- **`auto-secure-input`, `secure-input-indication`** — macOS Secure Keyboard Entry applies locally on the client machine. Since the remote end is `slopdesk-hostd` on a different Mac, "secure input" semantics are local to the client keyboard. The indication pill can still be shown on the macOS client. Not applicable on iOS (iOS has its own secure field handling).
 - **`window-opacity`** — window-level translucency requires a local NSWindow. On iOS client, not applicable. On macOS client, maps to the local app window opacity.
 - **`background-opacity`** — same as above; local NSWindow blending. On iOS, UIKit compositing has no direct equivalent.
 - **`font-thicken`** — macOS only per the docs. Applicable on macOS client; skip on iOS.
 - **`macos-option-as-alt`** — macOS only; not applicable on iOS (no hardware Option key in general).
-- **`open-with-app`, `default-git-client`, `file-open-with`, `folder-open-with`** — "open in app" semantics require opening local files. On aislopdesk, files are remote. Only `link-open-with = browser` (opening URLs) maps cleanly since URLs are scheme-based and can be forwarded to the client browser.
-- **`zoxide-enabled`, `zoxide-local-path`** — `zoxide` runs on the host. frecency sync with a local `zoxide` binary doesn't apply on the client. The aislopdesk client has its own frecency table (Open Quickly uses it per the existing implementation).
-- **`session-log-mode = redacted`** — secret masking is a host-side concern since the raw PTY stream passes through `aislopdesk-hostd`. Client-side session log would only capture what arrives over the wire.
-- **`ipc-allow-send-keys`, `ipc-allow-sensitive-sessions`** — aislopdesk's IPC security model runs on the `aislopdesk-ctl` NDJSON control channel — these concepts map to `AISLOPDESK_AGENT_CONTROL` permission gating.
-- **`recipe-replay-*`** — recipe files (`.aislopdeskrecipe`) are a local file format. File paths would be local to the client machine, while execution happens on the host.
+- **`open-with-app`, `default-git-client`, `file-open-with`, `folder-open-with`** — "open in app" semantics require opening local files. On slopdesk, files are remote. Only `link-open-with = browser` (opening URLs) maps cleanly since URLs are scheme-based and can be forwarded to the client browser.
+- **`zoxide-enabled`, `zoxide-local-path`** — `zoxide` runs on the host. frecency sync with a local `zoxide` binary doesn't apply on the client. The slopdesk client has its own frecency table (Open Quickly uses it per the existing implementation).
+- **`session-log-mode = redacted`** — secret masking is a host-side concern since the raw PTY stream passes through `slopdesk-hostd`. Client-side session log would only capture what arrives over the wire.
+- **`ipc-allow-send-keys`, `ipc-allow-sensitive-sessions`** — slopdesk's IPC security model runs on the `slopdesk-ctl` NDJSON control channel — these concepts map to `SLOPDESK_AGENT_CONTROL` permission gating.
+- **`recipe-replay-*`** — recipe files (`.slopdeskrecipe`) are a local file format. File paths would be local to the client machine, while execution happens on the host.
 - **`progress-bar-commands`** — the progress injection wraps host-side commands via shell integration. Client-side config would need to be forwarded to the host shell-rc block. Treat as host-side config.
-- **`session-restore-multiplayer` (tmux reattach)** — Aislopdesk has its own detach/reattach via `DetachedSessionStore`. tmux reattach in the remote shell is an orthogonal concern; can be supported via `AISLOPDESK_DETACH_ENABLED` + custom session restore logic.
+- **`session-restore-multiplayer` (tmux reattach)** — SlopDesk has its own detach/reattach via `DetachedSessionStore`. tmux reattach in the remote shell is an orthogonal concern; can be supported via `SLOPDESK_DETACH_ENABLED` + custom session restore logic.
 
 ### Implementation priority order
 
@@ -485,7 +485,7 @@ No screenshots were captured for this page — it contains no embedded images be
 4. `sidebar-visible`, `sidebar-width`, `window-layout` → already partially done
 5. Mouse/input config keys → NSEvent / libghostty
 6. Scrollback/scroll config keys → libghostty
-7. `autocomplete-*` → aislopdesk autocomplete engine
+7. `autocomplete-*` → slopdesk autocomplete engine
 8. `privilege-badge-*` / `privilege-notify-*` → agent monitoring integration
 9. Session restore keys → `DetachedSessionStore` + agent resume
 10. Transparency keys → macOS client only

@@ -2,11 +2,11 @@
 
 ## Summary
 
-Aislopdesk's autocomplete feature provides two complementary surfaces — inline ghost-text and a candidate panel — driven by a Fig-compatible spec database (715+ CLI tools bundled) plus on-device learning from command history, `--help` probes, and project README files. It is always-on and passive: there is no summon key. After a brief pause in typing, the most likely continuation appears as dim ghost text; when multiple completions are plausible, a candidate panel opens beneath the cursor. All processing is fully offline — no keystrokes or history ever leave the machine.
+SlopDesk's autocomplete feature provides two complementary surfaces — inline ghost-text and a candidate panel — driven by a Fig-compatible spec database (715+ CLI tools bundled) plus on-device learning from command history, `--help` probes, and project README files. It is always-on and passive: there is no summon key. After a brief pause in typing, the most likely continuation appears as dim ghost text; when multiple completions are plausible, a candidate panel opens beneath the cursor. All processing is fully offline — no keystrokes or history ever leave the machine.
 
 ## Behaviors
 
-- Aislopdesk watches the shell prompt line continuously; there is no key to summon autocomplete — it appears automatically after a pause in typing.
+- SlopDesk watches the shell prompt line continuously; there is no key to summon autocomplete — it appears automatically after a pause in typing.
 - A single clear winner is shown as **ghost text**: a dim (faded) continuation rendered after the cursor on the same line.
 - Ghost text: accept with `Tab` (or `→` when `autocomplete-shortcut = tab+right-arrow`); keep typing to refine; `Backspace` to clear; `Esc` to dismiss without leaving the line.
 - When multiple completions are plausible, a **candidate panel** (dropdown) opens beneath the cursor. Up to 8 rows are visible. A side column shows the selected item's description.
@@ -16,10 +16,10 @@ Aislopdesk's autocomplete feature provides two complementary surfaces — inline
 - **Source 1 — Fig-compatible spec database**: 715 commands bundled (`git`, `npm`, `kubectl`, `docker`, `aws`, …). Manually refreshed via Settings → Controls → Autocomplete → Update Now. No automatic background sync. Local specs are never overwritten by an update.
 - **Source 2 — Recent used (frecency)**: each executed command is tokenized and recorded locally, ranked by frecency (frequency + recency blend, strong boost for current session). `git checkout ` surfaces most-used branches; a bare prompt offers commands you reach for in that folder.
 - Frecency secrets handling: values after `--password` / `--token` / `--api-key` flags are never stored; commands matching `autocomplete-history-ignore` globs are skipped; commands exiting 127 (not found) or obviously mistyped `--flag` are pruned back out.
-- **Source 3 — Auto correction**: when a command fails, Aislopdesk reads the error output and offers the fix as ghost text on the next prompt line (thefuck-style). Recognizes correction output from `git`, `npm`, `cargo`, `pip`, `brew`, `rustup`, and the shell's command-not-found handler. Accept like any suggestion, or type to ignore.
-- **Per-folder scripts via `aislopdesk learn`**: `aislopdesk learn 'npm run deploy:staging'` pins a command to the current directory; it is offered first when returning to that folder. Repeating on the same command bumps its rank. Aislopdesk does NOT auto-scan `package.json`, `Makefile`, or `justfile`.
-- **README scanning**: Aislopdesk reads fenced code blocks from a project's `README` and offers those commands in the same folder automatically with no setup.
-- **Adding new binaries**: `aislopdesk learn ripgrep` — for a bare binary on `$PATH`, `learn` runs `<binary> --help` (fallback: `-h` or a `help` subcommand), parses options and subcommands, writes a spec into the local completion DB. These user-added specs are tagged separately and survive app updates.
+- **Source 3 — Auto correction**: when a command fails, SlopDesk reads the error output and offers the fix as ghost text on the next prompt line (thefuck-style). Recognizes correction output from `git`, `npm`, `cargo`, `pip`, `brew`, `rustup`, and the shell's command-not-found handler. Accept like any suggestion, or type to ignore.
+- **Per-folder scripts via `slopdesk learn`**: `slopdesk learn 'npm run deploy:staging'` pins a command to the current directory; it is offered first when returning to that folder. Repeating on the same command bumps its rank. SlopDesk does NOT auto-scan `package.json`, `Makefile`, or `justfile`.
+- **README scanning**: SlopDesk reads fenced code blocks from a project's `README` and offers those commands in the same folder automatically with no setup.
+- **Adding new binaries**: `slopdesk learn ripgrep` — for a bare binary on `$PATH`, `learn` runs `<binary> --help` (fallback: `-h` or a `help` subcommand), parses options and subcommands, writes a spec into the local completion DB. These user-added specs are tagged separately and survive app updates.
 - **Disabling options** (Settings → Controls → Autocomplete):
   - Hide ghost text: turn off Inline Suggestion toggle.
   - Disable candidate panel: set Candidate Panel to Disabled (Esc/Option+Esc no longer opens dropdown).
@@ -63,7 +63,7 @@ Aislopdesk's autocomplete feature provides two complementary surfaces — inline
 
 The screenshot shows a macOS terminal window (rounded corners, drop shadow, white/light background). The window has a standard macOS traffic-light close/minimize/maximize cluster (red/yellow/green) in the top-left. The title bar reads "abner@MacBook-Pro: ~/Workplace/o…" in system font, centered.
 
-The terminal area shows a shell prompt line: `~/Workplace/aislopdesk (main ✓) ▷ git |` — the directory is rendered in light cyan/teal, `(main ✓)` in green, the prompt symbol `▷` in green, `git` in default text color (near-black), and a blinking block cursor after it.
+The terminal area shows a shell prompt line: `~/Workplace/slopdesk (main ✓) ▷ git |` — the directory is rendered in light cyan/teal, `(main ✓)` in green, the prompt symbol `▷` in green, `git` in default text color (near-black), and a blinking block cursor after it.
 
 Directly below the cursor and slightly to the right, a **candidate panel** appears as a floating rounded-rectangle popup with a light gray background (approximately #E8E8E8). It contains 8 rows of git subcommand names in monospace font (dark/black text), left-aligned with consistent padding. The rows are:
 1. `archive`
@@ -148,11 +148,11 @@ Window is approximately 1366 × 768 at 2x. Panel is positioned below-and-slightl
 
 Video (not downloaded, MP4):
 - `autocomplete-correct.mp4` — Auto correction demo: command fails, ghost text appears with fix on next prompt line.
-- `cli-learn.mp4` — `aislopdesk learn` demo: per-folder command pinning workflow.
+- `cli-learn.mp4` — `slopdesk learn` demo: per-folder command pinning workflow.
 
 ## Implementation notes
 
-Aislopdesk is a remote coding tool (macOS host + macOS/iOS clients) with the terminal rendered by libghostty behind a `TerminalSurface` seam. The following notes lay out how each autocomplete behavior fits this architecture:
+SlopDesk is a remote coding tool (macOS host + macOS/iOS clients) with the terminal rendered by libghostty behind a `TerminalSurface` seam. The following notes lay out how each autocomplete behavior fits this architecture:
 
 **Straightforward (client-side rendering on top of libghostty):**
 
@@ -164,21 +164,21 @@ Aislopdesk is a remote coding tool (macOS host + macOS/iOS clients) with the ter
 
 **Requires host-side data (cwd, history) — partial:**
 
-- **Frecency / recent command history**: The command history lives on the HOST machine (in `~/.zsh_history` or equivalent). The client must either (a) query the host via the aislopdesk control channel to read history, or (b) maintain a session-scoped local history cache fed by the host as commands complete (OSC 133 / shell integration marks commands). Option (b) is more practical: aislopdesk already has OSC-133 block output detection. Flag: **requires host-side OSC-133 integration to feed per-command history to the client**.
-- **Per-folder context (cwd)**: The current working directory is on the HOST, not the client. OSC 7 (cwd notification) or shell integration provides cwd to the client. Already tracked in aislopdesk's OSC integration. Flag: **cwd must be received from host via OSC 7 or equivalent**.
-- **Fig spec database**: The 715-command spec database can be bundled LOCALLY in the aislopdesk client app (it is a static JSON/binary asset). No host dependency. The "Update Now" button needs a download source — aislopdesk would need its own spec bundle or a compatible source (the withfig/autocomplete GitHub repo is open source).
-- **`aislopdesk learn` per-folder pinning**: This is a CLI tool that runs on the HOST. Aislopdesk already has `aislopdesk-ctl` / AF_UNIX agent control as a base to build on. Flag: **requires a host-side CLI companion and a protocol message to sync learned commands to the client**.
-- **README scanning**: Happens on the HOST filesystem. Requires either host-side scanning (daemon) with results sent to the client, or a file-protocol read over the existing aislopdesk channel. Flag: **host-side feature, needs protocol extension**.
+- **Frecency / recent command history**: The command history lives on the HOST machine (in `~/.zsh_history` or equivalent). The client must either (a) query the host via the slopdesk control channel to read history, or (b) maintain a session-scoped local history cache fed by the host as commands complete (OSC 133 / shell integration marks commands). Option (b) is more practical: slopdesk already has OSC-133 block output detection. Flag: **requires host-side OSC-133 integration to feed per-command history to the client**.
+- **Per-folder context (cwd)**: The current working directory is on the HOST, not the client. OSC 7 (cwd notification) or shell integration provides cwd to the client. Already tracked in slopdesk's OSC integration. Flag: **cwd must be received from host via OSC 7 or equivalent**.
+- **Fig spec database**: The 715-command spec database can be bundled LOCALLY in the slopdesk client app (it is a static JSON/binary asset). No host dependency. The "Update Now" button needs a download source — slopdesk would need its own spec bundle or a compatible source (the withfig/autocomplete GitHub repo is open source).
+- **`slopdesk learn` per-folder pinning**: This is a CLI tool that runs on the HOST. SlopDesk already has `slopdesk-ctl` / AF_UNIX agent control as a base to build on. Flag: **requires a host-side CLI companion and a protocol message to sync learned commands to the client**.
+- **README scanning**: Happens on the HOST filesystem. Requires either host-side scanning (daemon) with results sent to the client, or a file-protocol read over the existing slopdesk channel. Flag: **host-side feature, needs protocol extension**.
 
 **Harder constraints:**
 
-- **`--help` probes in a network-denied sandbox**: The host is a daemon running on the remote Mac — it CAN run `--help` probes (no sandbox concern), but the aislopdesk client is the UI layer and cannot run host binaries. The host daemon would need to execute the probe and return parsed results. Flag: **host-side probe execution needed; client cannot run host binaries directly**.
+- **`--help` probes in a network-denied sandbox**: The host is a daemon running on the remote Mac — it CAN run `--help` probes (no sandbox concern), but the slopdesk client is the UI layer and cannot run host binaries. The host daemon would need to execute the probe and return parsed results. Flag: **host-side probe execution needed; client cannot run host binaries directly**.
 - **"Clear my data" and "On-device Learning" toggle**: Learned data lives on the host (command history) and potentially also on the client (spec DB, frecency cache). The settings UI is on the client, but clearing host-side history may require a control message. Flag: **dual-store: client-local spec/frecency vs host-side history**.
-- **Auto-correction (thefuck-style)**: Requires reading the stderr/stdout of the failed command on the HOST, detecting correction patterns. Aislopdesk's OSC-133 block marks can capture command exit status, but reading tool-specific correction output requires the host daemon to parse it and push a correction suggestion to the client. Flag: **host-side pattern matching needed; not purely client-side**.
+- **Auto-correction (thefuck-style)**: Requires reading the stderr/stdout of the failed command on the HOST, detecting correction patterns. SlopDesk's OSC-133 block marks can capture command exit status, but reading tool-specific correction output requires the host daemon to parse it and push a correction suggestion to the client. Flag: **host-side pattern matching needed; not purely client-side**.
 - **`autocomplete-description-language = chinese`**: Requires localized description strings in the spec DB. Feasible if the bundled spec DB includes translations. No architecture barrier, just data dependency.
-- **Completion Database "Update Now"**: Needs a hosted source to contact. Aislopdesk would need its own update mechanism or to point at the open-source withfig/autocomplete repo. Flag: **CDN dependency; aislopdesk must host or mirror the spec bundle**.
+- **Completion Database "Update Now"**: Needs a hosted source to contact. SlopDesk would need its own update mechanism or to point at the open-source withfig/autocomplete repo. Flag: **CDN dependency; slopdesk must host or mirror the spec bundle**.
 
 **Summary of difficulty tiers:**
 - Easy (pure client): ghost text rendering, candidate panel UI, kind icons, description column, keyboard interception, static Fig spec DB bundled in app.
 - Medium (needs OSC integration already partially present): cwd-aware suggestions (OSC 7), session command history (OSC 133 marks), frecency ranking on client side.
-- Hard (needs new protocol messages): `aislopdesk learn` (host-side pinning + sync to client), README scanning (host reads files, pushes to client), `--help` probes (host executes, returns parsed spec), auto-correction (host parses tool error output, pushes correction).
+- Hard (needs new protocol messages): `slopdesk learn` (host-side pinning + sync to client), README scanning (host reads files, pushes to client), `--help` probes (host executes, returns parsed spec), auto-correction (host parses tool error output, pushes correction).

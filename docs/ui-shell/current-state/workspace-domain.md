@@ -1,7 +1,7 @@
 # Workspace Domain — Current State
 
 Assessed: 2026-06-25  
-Source truth: `Sources/AislopdeskWorkspaceCore/`
+Source truth: `Sources/SlopDeskWorkspaceCore/`
 
 ---
 
@@ -25,7 +25,7 @@ All assessments below focus on the **tree path** (the shipping UI-shell target) 
 | Reconcile / registry | **done** | `WorkspaceStore.reconcileTree()` (`:2974`) diffs `tree.allPaneIDs()` against the `[PaneID: any PaneSessionHandle]` registry; shared `reconcileRegistry` helper carries orphan-remove-then-async-teardown, video-cap ceiling, per-pane cache pruning; live wiring (pane rebind, OSC-9, agent signal, command-completion, title/cwd/resume-identity callbacks) factored into `wireMaterializedLeaf` (`:2998`) |
 | Layout save-restore (⌘S / named presets) | **partial** | `saveLayoutPreset(name:triggerAppName:)` (`:1910`) saves canvas snapshots into `WorkspacePersistence`; `CommandInterpreter.saveLayout` (`:36`) routes ⌘S. **Canvas path only** — no equivalent tree path method (`SessionTemplate` captures session geometry for template spawning, but not mid-session named saves from the tree shell). App-launch-triggered preset switching exists on canvas only. |
 | Reopen-last-closed (⇧⌘T) | **partial** | `recentlyClosed: RecentlyClosedPane?` single-slot (`:563`) + `reopenClosedPane()` (`:635`) — **canvas path only**: the store records the canvas item + frame on `closePane(_:)`, restores it via `Canvas.restoring`. On the tree path `closePaneTree` does NOT populate `recentlyClosed`, so ⇧⌘T is a no-op after a tree-path close. `CommandInterpreter.reopenClosedPane` chord `⇧⌘T` (`:18`, `:254`) routes to `store.reopenClosedPane()` which internally calls `workspace.canvas.restoring(...)` — dead on tree. |
-| Session recovery / persistence (relaunch) | **done** | `WorkspacePersistence.loadTree()` (`:159`) peeks schema version, decodes `TreeWorkspace`, runs `normalized()`, promotes `lastKnownTitle`; `save(_ tree:)` writes atomically sorted-key JSON to `Application Support/Aislopdesk/workspace.json`. Corrupt file → `.corrupt` sidecar + default. Resume-identity fields `resumeSessionID` / `resumeLastReceivedSeq` (in `PaneSpec`) allow reattach to a running host PTY session across relaunch when `AISLOPDESK_DETACH_ENABLED` (wired in `LivePaneSession` at `:269`; `onResumeIdentitySnapshot` snapshotted ~3 s cadence and on reconnect). Schema migrations: v10→v11 identity re-decode; v5–v9 canvas migration DELETED (no-backcompat directive). |
+| Session recovery / persistence (relaunch) | **done** | `WorkspacePersistence.loadTree()` (`:159`) peeks schema version, decodes `TreeWorkspace`, runs `normalized()`, promotes `lastKnownTitle`; `save(_ tree:)` writes atomically sorted-key JSON to `Application Support/SlopDesk/workspace.json`. Corrupt file → `.corrupt` sidecar + default. Resume-identity fields `resumeSessionID` / `resumeLastReceivedSeq` (in `PaneSpec`) allow reattach to a running host PTY session across relaunch when `SLOPDESK_DETACH_ENABLED` (wired in `LivePaneSession` at `:269`; `onResumeIdentitySnapshot` snapshotted ~3 s cadence and on reconnect). Schema migrations: v10→v11 identity re-decode; v5–v9 canvas migration DELETED (no-backcompat directive). |
 | Working-directory inheritance for new pane/tab | **partial** | `PaneSpec.lastKnownCwd` field (`PaneSpec.swift:156`) is stored + persisted + displayed (palette subtitle, titlebar menu, inspector column, sidebar row). It is **written by the file explorer / agent footer** (`AgentInputFooterCoordinator.updateCwd` at `Footer/AgentInputFooterCoordinator.swift:68`) but **not by OSC 7** (no wire-level OSC-7 parser pipes into `lastKnownCwd`; the spec doc notes OSC 7 as the host-side mechanism). Critically, `newTab(kind:)` and `splitActivePane` never read `lastKnownCwd` of the active pane to pre-populate the new pane's cwd — the new pane always starts with `nil` cwd and the shell default. No `inheritCwd` logic exists anywhere. `SessionTemplate` per-pane `cwd` field (`SessionTemplate.swift:52`) allows templates to specify a working directory, sent as a literal `cd` after PTY comes up. |
 | New-tab position | **missing** | `WorkspaceTreeOps.newTab` always `tabs.append(tab)` (`WorkspaceTreeOps.swift:587`). There is no "insert after active tab" or configurable `newTabPosition` option. Same for `breakPaneToTab` (`WorkspaceTreeOps.swift:721`). |
 | Spec side table (rename without tree churn) | **done** | Specs live in `Session.specs: [PaneID: PaneSpec]`, not in the split tree. `WorkspaceTreeOps.updatingSpec` mutates the side table without touching the tree. Rename/title/video edits all go through this seam. |
@@ -45,18 +45,18 @@ All assessments below focus on the **tree path** (the shipping UI-shell target) 
 
 ## Key files
 
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskWorkspaceCore/Workspace/Domain/Tree/TreeWorkspace.swift` — top-level tree value; invariant; normalizing repairs; `defaultWorkspace()`
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskWorkspaceCore/Workspace/Domain/Tree/Session.swift` — `Session` value (tabs + specs side table); deterministic `Codable`
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskWorkspaceCore/Workspace/Domain/Tree/Tab.swift` — `Tab` (split tree + zoom + floating layer)
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskWorkspaceCore/Workspace/Domain/Tree/WorkspaceTreeOps.swift` — all pure tree operations (split, close, zoom, resize, layout, focus, sessions, tabs, floating)
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskWorkspaceCore/Workspace/Store/WorkspaceStore.swift` — store: `reconcile()` / `reconcileTree()`, tree-mutation methods, `recentlyClosed`, `saveLayoutPreset`, `sidebarCollapsed`, `newTab`, `newSession`, etc.
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskWorkspaceCore/Workspace/Store/WorkspacePersistence.swift` — `load()` / `loadTree()` / `save()` / `save(_ tree:)` / schema-version peek
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskWorkspaceCore/Workspace/Store/WorkspaceSchemaMigration.swift` — version gate; `migrateToTree`
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskWorkspaceCore/Workspace/Store/LivePaneSession.swift` — production handle; lazy connect; resume-identity wiring
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskWorkspaceCore/Workspace/Domain/PaneSpec.swift` — per-pane spec: `lastKnownCwd`, `lastKnownTitle`, `resumeSessionID`, `resumeLastReceivedSeq`, `floatingFrame`
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskWorkspaceCore/Workspace/Store/WorkspaceStore+Templates.swift` — session-template spawn + capture
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskWorkspaceCore/Workspace/Domain/SessionTemplate.swift` — `SessionTemplate` / `TemplatePane` / `TemplateNode`; three built-in templates
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskWorkspaceCore/Workspace/Store/CommandInterpreter.swift` — command enum; chord-to-command mapping including `reopenClosedPane` / `saveLayout`
+- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Domain/Tree/TreeWorkspace.swift` — top-level tree value; invariant; normalizing repairs; `defaultWorkspace()`
+- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Domain/Tree/Session.swift` — `Session` value (tabs + specs side table); deterministic `Codable`
+- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Domain/Tree/Tab.swift` — `Tab` (split tree + zoom + floating layer)
+- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Domain/Tree/WorkspaceTreeOps.swift` — all pure tree operations (split, close, zoom, resize, layout, focus, sessions, tabs, floating)
+- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore.swift` — store: `reconcile()` / `reconcileTree()`, tree-mutation methods, `recentlyClosed`, `saveLayoutPreset`, `sidebarCollapsed`, `newTab`, `newSession`, etc.
+- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspacePersistence.swift` — `load()` / `loadTree()` / `save()` / `save(_ tree:)` / schema-version peek
+- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceSchemaMigration.swift` — version gate; `migrateToTree`
+- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Store/LivePaneSession.swift` — production handle; lazy connect; resume-identity wiring
+- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Domain/PaneSpec.swift` — per-pane spec: `lastKnownCwd`, `lastKnownTitle`, `resumeSessionID`, `resumeLastReceivedSeq`, `floatingFrame`
+- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Templates.swift` — session-template spawn + capture
+- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Domain/SessionTemplate.swift` — `SessionTemplate` / `TemplatePane` / `TemplateNode`; three built-in templates
+- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Store/CommandInterpreter.swift` — command enum; chord-to-command mapping including `reopenClosedPane` / `saveLayout`
 
 ---
 

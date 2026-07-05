@@ -8,7 +8,7 @@ that specifically bite read-only-gate + secure-input work.
 
 ## SCOPE REDUCTIONS (binding — do NOT build these)
 
-- **Vertical-tabs-only.** aislopdesk is vertical-tabs-only (committed product decision in
+- **Vertical-tabs-only.** slopdesk is vertical-tabs-only (committed product decision in
   `docs/DECISIONS.md`, encoded at E7-close; the horizontal/top tab bar was deliberately dropped per
   the user). E17's chrome is per-pane / title-region pills (`🔒 READ ONLY`, Vi-mode pill,
   `SECURE INPUT` title pill) + an overlay key-hint bar — all fine in the vertical-rail layout. Do
@@ -32,7 +32,7 @@ that specifically bite read-only-gate + secure-input work.
 
 - **Secure input is macOS-only; iOS rots silently.** `EnableSecureEventInput()` /
   `DisableSecureEventInput()` are **AppKit/Carbon, macOS-only** — there is no iOS equivalent. The
-  secure-input feature (I22) must be `#if os(macOS)`-gated, and the shared `AislopdeskClientUI`
+  secure-input feature (I22) must be `#if os(macOS)`-gated, and the shared `SlopDeskClientUI`
   Settings/title surfaces it touches MUST still compile for iOS (no-op or hidden on iOS). **Run
   `bash scripts/check-ios.sh` in the gate** — `swift build` on macOS will NOT catch iOS rot.
 - **`EnableSecureEventInput` is PROCESS-GLOBAL and MUST be balanced.** Every `Enable` needs exactly

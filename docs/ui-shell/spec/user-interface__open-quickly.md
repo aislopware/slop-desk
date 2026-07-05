@@ -51,7 +51,7 @@ focused pane's commands and links, and saved recipes.
   previous session.
 
 ### Filter: Folders (`⌘Z`)
-- Frequently-used folders ranked by Aislopdesk's built-in frecency database.
+- Frequently-used folders ranked by SlopDesk's built-in frecency database.
 
 ### Filter: SSH (`⌘S`)
 - Hosts parsed from `~/.ssh/config`.
@@ -85,7 +85,7 @@ focused pane's commands and links, and saved recipes.
 | SSH host | Connect · Connect in New Tab / New Window · Copy Command |
 | Agent session | View Session History · Resume · Copy Project Path · Copy Session ID |
 | Command | Re-Run in Current Pane · Re-Run in New Tab · Copy Command |
-| File / URL | Preview · Open in Default App · Open in Aislopdesk (current pane, new tab, split) · Change Directory Here · Reveal · Copy |
+| File / URL | Preview · Open in Default App · Open in SlopDesk (current pane, new tab, split) · Change Directory Here · Reveal · Copy |
 
 ## Keybindings
 
@@ -204,7 +204,7 @@ the background.
 
 - `open-quickly.png`
 
-## Aislopdesk mapping notes
+## SlopDesk mapping notes
 
 ### Direct mappings (1:1 feasible)
 
@@ -223,7 +223,7 @@ the background.
 - **Recipes filter:** Maps to the Recipes feature (workspace recipes); 1:1 once
   Recipes are implemented.
 - **Current filter — commands:** Shell history from the focused pane's `OSC 133`
-  integration (already tracked in `AislopdeskWorkspaceCore`). 1:1 feasible.
+  integration (already tracked in `SlopDeskWorkspaceCore`). 1:1 feasible.
 - **Current filter — URLs/files/folders:** `Files and Links` detection from terminal
   output — already in scope (see the Files and Links spec). 1:1 feasible.
 - **Current filter — outline:** Markdown/JSON/YAML/TOML outline from focused file pane.
@@ -242,7 +242,7 @@ the background.
   channel, not the local filesystem. Flag: **iOS — SSH config must come from host.**
 - **Agents filter (`⌘G`):** "Sessions whose project contains the current directory"
   requires knowing the CWD of each agent session. CWDs are available via OSC 7
-  (`AISLOPDESK_*` shell integration), but only for local sessions. For remote-SSH panes,
+  (`SLOPDESK_*` shell integration), but only for local sessions. For remote-SSH panes,
   the CWD is the remote host's filesystem — the agent-session-to-CWD lookup must be
   done on the host side and relayed over the inspector/control channel.
   **Agent session history** (View Session History) requires access to the agent's
@@ -265,7 +265,7 @@ the background.
   standard macOS open is fine.
 - **macOS Picture-in-Picture (PiP):** Not applicable to this feature page.
 - **Remote SSH badge on the result row:** Not covered by the base spec above, but in
-  aislopdesk every pane is implicitly remote. A "remote" indicator (host badge or
+  slopdesk every pane is implicitly remote. A "remote" indicator (host badge or
   truncated hostname) on each row would be needed if/when multi-host sessions are
   supported (not in scope for v1).
 

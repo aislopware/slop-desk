@@ -179,5 +179,5 @@ Capability check: `VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC)`.
 
 - [ ] (P1, macOS) Decode + render frames received from the host → pixels on screen.
 - [ ] Rendering behind a `VideoRenderer` protocol (Metal + AVSampleBuffer impls).
-- [ ] (P3, iOS) Build `AislopdeskVideoClient` + rendering for iOS, test on a real device (Simulator has no HW decode).
+- [ ] (P3, iOS) Build `SlopDeskVideoClient` + rendering for iOS, test on a real device (Simulator has no HW decode).
 - [ ] Measure glass-to-glass latency (host timestamp → client display).

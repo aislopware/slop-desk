@@ -2,7 +2,7 @@
 
 ## Summary
 
-Aislopdesk structures its workspace as a three-level hierarchy: **Window → Tab → Pane**. A window is the top-level macOS container; a tab is an independent terminal session housed within a window; a pane is the leaf — the actual content you interact with (a terminal, file, folder, or URL). Panes can be split arbitrarily, tabs can be grouped/sorted/named/badged, and windows support pin-above, Picture-in-Picture, and persistent size/restore. Layouts can be saved and restored as "Recipes."
+SlopDesk structures its workspace as a three-level hierarchy: **Window → Tab → Pane**. A window is the top-level macOS container; a tab is an independent terminal session housed within a window; a pane is the leaf — the actual content you interact with (a terminal, file, folder, or URL). Panes can be split arbitrarily, tabs can be grouped/sorted/named/badged, and windows support pin-above, Picture-in-Picture, and persistent size/restore. Layouts can be saved and restored as "Recipes."
 
 ---
 
@@ -49,7 +49,7 @@ Aislopdesk structures its workspace as a three-level hierarchy: **Window → Tab
   - Coffee cup: `caffeinate` is keeping the system awake.
   - Shield: `sudo`/`su` session is active.
   - Devices icon: remote SSH session.
-- `aislopdesk watch <COMMAND>` — wraps a command and drives spinner/checkmark/error badge based on its exit status.
+- `slopdesk watch <COMMAND>` — wraps a command and drives spinner/checkmark/error badge based on its exit status.
 - Jump to unread/changed tab: `⌘⇧U`.
 - Toggle the tabs sidebar panel: `⌘⇧L`.
 
@@ -157,7 +157,7 @@ The window has macOS traffic-light controls (red/yellow/green) in the top-left. 
 - Tab rows are full-width, each ~28 px tall, left-aligned label text in regular weight (~13 pt), medium gray (#666).
 - The **active tab** is shown with a white rounded-rect card (white pill/row highlight) behind the label text, and the shell/process name (e.g. `zsh`) appears in a secondary gray at the far right of that row.
 - Inactive tabs have no background highlight — just the label text in medium gray, with no badge visible in this screenshot.
-- Tab labels use the OSC-set title or a path fragment (e.g. `~/Workplace/aislopdesk`, `abner@MacBook-AB:...`, `CREDITS.md`).
+- Tab labels use the OSC-set title or a path fragment (e.g. `~/Workplace/slopdesk`, `abner@MacBook-AB:...`, `CREDITS.md`).
 - A small numeric badge (e.g. `#1`, `#2`, `#4`) appears at the right edge of each tab row, rendered in a small monospace font, very light gray — these appear to be shortcut number indicators.
 - No border line between sidebar and terminal area; the two regions meet at a faint vertical separator.
 
@@ -235,7 +235,7 @@ A context menu/popover appears over the titlebar area, showing:
 
 **Text field** — below the toggle, a single-line text input pre-filled with the current name (e.g. "Workspace"), with the text selected/highlighted in blue.
 
-**WORKING DIRECTORY** subsection — shows the current directory path (e.g. `~/Workplace/aislopdesk/`).
+**WORKING DIRECTORY** subsection — shows the current directory path (e.g. `~/Workplace/slopdesk/`).
 
 **Action rows** below — the same dropdown also shows additional context menu items separated by dividers:
 - Copy Path
@@ -316,32 +316,32 @@ Same visual treatment as open-option.png: uppercase section header in small gray
 
 ### Already implemented or straightforward
 
-- **Window→Tab→Pane hierarchy**: aislopdesk already has a `Session → Tab → Pane` (`PaneKind`) tree in `WorkspaceStore`. The three levels map directly.
-- **Tab keybindings** (`⌘T`, `⌘W`, `⌘D`, `⌘⇧D`, `⌘]`/`[`, etc.): aislopdesk has a `WorkspaceBindingRegistry` + prefix key system. These bindings can be registered there.
+- **Window→Tab→Pane hierarchy**: slopdesk already has a `Session → Tab → Pane` (`PaneKind`) tree in `WorkspaceStore`. The three levels map directly.
+- **Tab keybindings** (`⌘T`, `⌘W`, `⌘D`, `⌘⇧D`, `⌘]`/`[`, etc.): slopdesk has a `WorkspaceBindingRegistry` + prefix key system. These bindings can be registered there.
 - **Vertical sidebar tab list**: the current client design system already implements a left sidebar. The tab row visual (label + badge + optional card highlight for active) maps to the existing `TabRow` / `SidebarView` components.
-- **Tab badges**: the badge types (spinner, checkmark, dot, error, hand, shield, SSH, coffee) map to detectable shell/process states aislopdesk already tracks (OSC-133 command tracking, Claude agent state, `sudo` detection, SSH session detection via `AISLOPDESK_SYSTEM_DIALOG_PANES`). Implemented as a `TabBadge` enum in `WorkspaceStore`.
-- **Split panes**: `NSSplitView`-based live-resize already exists in aislopdesk; equalize (`⌘⌃=`) and directional focus (`⌘⌃←/→/↑/↓`) need wiring.
-- **Tab grouping (By Project / By Date)**: the git-repo grouping is straightforward since aislopdesk tracks `cwd` per pane and can call `git rev-parse --show-toplevel` to derive a project key. Date grouping is trivial.
+- **Tab badges**: the badge types (spinner, checkmark, dot, error, hand, shield, SSH, coffee) map to detectable shell/process states slopdesk already tracks (OSC-133 command tracking, Claude agent state, `sudo` detection, SSH session detection via `SLOPDESK_SYSTEM_DIALOG_PANES`). Implemented as a `TabBadge` enum in `WorkspaceStore`.
+- **Split panes**: `NSSplitView`-based live-resize already exists in slopdesk; equalize (`⌘⌃=`) and directional focus (`⌘⌃←/→/↑/↓`) need wiring.
+- **Tab grouping (By Project / By Date)**: the git-repo grouping is straightforward since slopdesk tracks `cwd` per pane and can call `git rev-parse --show-toplevel` to derive a project key. Date grouping is trivial.
 - **Rename tab (Name / Prefix modes)**: `WorkspaceStore` pane model can hold an optional `fixedName` and optional `titlePrefix`; the OSC 0/2 handler prepends prefix if set.
-- **⌘W cascade**: current aislopdesk `⌘W` already closes panes; extend to check `isLastPaneInTab` and `isLastTabInWindow` to cascade.
+- **⌘W cascade**: current slopdesk `⌘W` already closes panes; extend to check `isLastPaneInTab` and `isLastTabInWindow` to cascade.
 - **`⌘⇧T` reopen**: keep a `recentlyClosedTabStack` in `WorkspaceStore`, push on close, pop on `⌘⇧T`.
-- **Open Quickly (`⌘⇧O`)**: aislopdesk has a fzf-backed `SearchMixer`; wire it to tabs/panes/recent-files.
+- **Open Quickly (`⌘⇧O`)**: slopdesk has a fzf-backed `SearchMixer`; wire it to tabs/panes/recent-files.
 - **`auto-hide-tabs-panel`**: the sidebar `isVisible` toggle is already implemented; add a `single-tab = auto-hide` policy check on tab-count change.
 - **Config keys** (`window-size`, `window-cols`, `window-rows`, etc.): backed by `PreferencesStore` / `Defaults`-backed `SettingsKey` values.
-- **Close confirmation (Running Process / Always)**: aislopdesk can query child process count via `TIOCGPGRP` / `ps` on the PTY.
-- **`aislopdesk watch <CMD>` badge driver**: implemented (`WatchProgress`, `HostOutputSniffer` → `ProgressOSCParser` → `ProgressState`, `WorkspaceStore+Progress`) — wraps a command and emits exit-status badge/notification via the OSC 9;4 progress protocol, consumed by aislopdesk's existing OSC-133 / block-output detection.
+- **Close confirmation (Running Process / Always)**: slopdesk can query child process count via `TIOCGPGRP` / `ps` on the PTY.
+- **`slopdesk watch <CMD>` badge driver**: implemented (`WatchProgress`, `HostOutputSniffer` → `ProgressOSCParser` → `ProgressState`, `WorkspaceStore+Progress`) — wraps a command and emits exit-status badge/notification via the OSC 9;4 progress protocol, consumed by slopdesk's existing OSC-133 / block-output detection.
 
 ### Partial — needs additional work
 
 - **`new-tab-position`** (`after-current` / `end` / `auto`): `WorkspaceStore.reconcile()` currently appends tabs; insertion-after-current needs an index-aware insert path. Medium effort.
 - **Tab sorting (Created / Updated / Manual drag)**: tabs are currently in insertion order. Adding `createdAt`/`updatedAt` timestamps and drag-reorder requires a `TabOrder` model. Medium effort.
 - **Details Panel (git status, processes, file outline, command history)**: the file-tree view exists (Files panel). Git status and process list require per-pane async queries. The panel toggle `⌘⇧R` and the hover-reveal on titlebar are new UX surface. Medium-to-high effort.
-- **Recipes (save/restore layouts)**: aislopdesk has no layout persistence beyond `DetachedSessionStore`. Implementing full Recipe serialization (pane tree + cwd + optional scrollback/commands) is a new subsystem. High effort; design the schema in `DECISIONS.md` first.
+- **Recipes (save/restore layouts)**: slopdesk has no layout persistence beyond `DetachedSessionStore`. Implementing full Recipe serialization (pane tree + cwd + optional scrollback/commands) is a new subsystem. High effort; design the schema in `DECISIONS.md` first.
 
 ### Architectural constraints / open design questions
 
-- **Picture in Picture (PiP)**: macOS PiP is a system AVFoundation/PlayerLayer feature normally used for video. On aislopdesk, the client sees a **decoded video stream** (HEVC from host), so true PiP for floating a terminal pane above other apps would need to pipe that stream into an `AVPictureInPictureController`. Possible in principle but requires careful integration with `AislopdeskVideoClient`'s decoder output. Flag as **not in scope for the initial implementation**; a simpler "always-on-top window" via `NSWindow.level = .floating` is a viable approximation for the Current Pane mode.
-- **Host-side cwd detection**: reading a shell's `cwd` directly via `lsof`/`proc_pidvnodepathinfo` only works for a *local* process. Aislopdesk's terminal runs on a **remote host**; `cwd` must be read via the existing `AISLOPDESK_AGENT_CONTROL` NDJSON channel or an OSC 7 (`file://host/path`) sequence emitted by the shell. OSC 7 is the standard approach — add it to the shell integration shim.
-- **SSH badge (remote session indicator)**: a local `ps` query for a child SSH process only makes sense on a local terminal. In aislopdesk every session IS remote; the "remote" badge would need a different semantic — e.g., badge for a *nested* SSH from within the remote shell. Approach: detect `ssh` child of the PTY via the NDJSON control channel or OSC-133 command prefix.
-- **Drag-and-drop pane rearrangement**: aislopdesk panes are rendered as `NSSplitView` subviews with live video streams. Drag-to-reorder panes without tearing down and recreating the video session is the architectural constraint (memory note: "mount all tabs opacity-0, never tear down surface"). Reordering requires swapping `WorkspaceStore` pane positions and re-binding the `TerminalSurface` without destroying it — feasible but non-trivial. Medium-high effort.
+- **Picture in Picture (PiP)**: macOS PiP is a system AVFoundation/PlayerLayer feature normally used for video. On slopdesk, the client sees a **decoded video stream** (HEVC from host), so true PiP for floating a terminal pane above other apps would need to pipe that stream into an `AVPictureInPictureController`. Possible in principle but requires careful integration with `SlopDeskVideoClient`'s decoder output. Flag as **not in scope for the initial implementation**; a simpler "always-on-top window" via `NSWindow.level = .floating` is a viable approximation for the Current Pane mode.
+- **Host-side cwd detection**: reading a shell's `cwd` directly via `lsof`/`proc_pidvnodepathinfo` only works for a *local* process. SlopDesk's terminal runs on a **remote host**; `cwd` must be read via the existing `SLOPDESK_AGENT_CONTROL` NDJSON channel or an OSC 7 (`file://host/path`) sequence emitted by the shell. OSC 7 is the standard approach — add it to the shell integration shim.
+- **SSH badge (remote session indicator)**: a local `ps` query for a child SSH process only makes sense on a local terminal. In slopdesk every session IS remote; the "remote" badge would need a different semantic — e.g., badge for a *nested* SSH from within the remote shell. Approach: detect `ssh` child of the PTY via the NDJSON control channel or OSC-133 command prefix.
+- **Drag-and-drop pane rearrangement**: slopdesk panes are rendered as `NSSplitView` subviews with live video streams. Drag-to-reorder panes without tearing down and recreating the video session is the architectural constraint (memory note: "mount all tabs opacity-0, never tear down surface"). Reordering requires swapping `WorkspaceStore` pane positions and re-binding the `TerminalSurface` without destroying it — feasible but non-trivial. Medium-high effort.
 - **Manual tab sort via drag**: same surface concern; the sidebar tab list drag must update `WorkspaceStore` order without triggering a session teardown.

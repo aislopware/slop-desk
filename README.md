@@ -1,6 +1,6 @@
-# Aislopdesk
+# SlopDesk
 
-Aislopdesk drives a remote Mac from another Apple device. A macOS **host** exposes its
+SlopDesk drives a remote Mac from another Apple device. A macOS **host** exposes its
 shells and windows; macOS and iOS/iPadOS **clients** present them as a tiling workspace of
 panes — sessions grouped by host, tabs per session, and recursive splits per tab, with
 optional floating scratch panes on top. A pane is either a terminal or a live GUI window,
@@ -13,7 +13,7 @@ Two things make that work:
   controllers — is native Swift, the single source of truth, with no second implementation
   and no FFI boundary. The Swift/SwiftUI apps are the platform shell around it (capture,
   hardware codec, Metal, input, PTY, UI).
-- There is no app-layer encryption or auth. Aislopdesk expects to run on a trusted private
+- There is no app-layer encryption or auth. SlopDesk expects to run on a trusted private
   network, normally a WireGuard mesh such as [NetBird](https://netbird.io) or Tailscale,
   which already provides end-to-end encryption, node identity, and per-port ACLs. The
   security boundary is the network, not the app.
@@ -53,7 +53,7 @@ done) that shows even on a background pane, plus tab glow, an OS notification on
 **jump-to-unread** (⌘⇧U) to focus the oldest pane needing attention. The app never adds its
 own approval gate — it surfaces the agent's own blocked state and lets you type the answer;
 the security boundary stays the network. The same status is exposed headlessly through
-`aislopdesk-ctl`: a push events stream and per-pane state so an orchestrator can supervise
+`slopdesk-ctl`: a push events stream and per-pane state so an orchestrator can supervise
 without polling. Other workspace conveniences: **sync-input** (⌘⇧I) fans keystrokes to every
 pane in a tab, and a keyboard **copy-mode** (⌘⇧C) navigates and copies scrollback with
 tmux/zellij-style keys. The UI is a modern dark IDE — pane focus ring, elevation, semantic
@@ -72,7 +72,7 @@ its SSH-style channel mux and per-channel flow control. There is no second imple
 keep in sync and no FFI boundary; the wire is frozen by a golden corpus
 (`golden/golden_vectors.json`) so a refactor can't silently shift a byte.
 
-The only non-Swift code is `Sources/CAislopdeskSIMD`: ONE aarch64 NEON kernel, the GF(2⁸)
+The only non-Swift code is `Sources/CSlopDeskSIMD`: ONE aarch64 NEON kernel, the GF(2⁸)
 region multiply used by FEC, guarded `#if defined(__aarch64__)` with a scalar fallback
 otherwise. SwiftPM compiles it from source every build — no cbindgen, no marshalling, no
 prebuilt staticlib, no build ordering. Frame hashing is pure scalar Swift (xxHash64 is
@@ -84,41 +84,41 @@ bit-for-bit against their scalar references by differential tests.
 
 | Target | Kind | Role |
 |--------|------|------|
-| `AislopdeskProtocol`     | lib  | Terminal wire format (framing, seq, hello/ack). No platform deps. |
-| `AislopdeskTransport`    | lib  | TCP channels, replay buffer, reconnect handshake. |
-| `AislopdeskHost`         | lib  | macOS host: PTY spawn/relay, session manager, agent-detect gates. |
-| `AislopdeskClient`       | lib  | Shared client: connection/reconnect, input, gap-free output stream. |
-| `AislopdeskTerminal`     | lib  | `TerminalSurface` seam (libghostty-backed in the GUI apps). |
-| `AislopdeskTTY`          | lib  | Local raw-mode termios + winsize for the CLI. |
-| `AislopdeskInspector`    | lib  | JSONL transcript tailer, typed events, read-only views. |
-| `AislopdeskClaudeCode`   | lib  | Claude Code integration: terminal-mode sniffer, input dedup/state. |
-| `AislopdeskAgentDetect`  | lib  | Headless per-pane Claude status machine + no-hooks manifest matcher. |
-| `AislopdeskClientUI`     | lib  | SwiftUI client views/view-models + iOS input host. |
-| `AislopdeskVideoProtocol`| lib  | Video wire format: packetizer, FEC, cursor/geometry/input codec. |
-| `AislopdeskVideoHost`    | lib  | macOS capture + encode + input injection + UDP host session. |
-| `AislopdeskVideoClient`  | lib  | macOS/iOS decode + Metal render + pacing + client session. |
-| `AislopdeskCtlCore`      | lib  | Pure `aislopdesk-ctl` core: arg parsing + NDJSON request/response. |
-| `CAislopdeskSIMD`        | C    | The only non-Swift code: the aarch64 NEON GF(2⁸) region-multiply kernel (scalar fallback). |
-| `CAislopdeskVirtualDisplay` | C | Private `CGVirtualDisplay*` headers for the host's 2× HiDPI virtual display. |
-| `aislopdesk-hostd`       | exec | Headless host daemon (terminal panes). |
-| `aislopdesk-client`      | exec | Interactive remote terminal client. |
-| `aislopdesk-ctl`         | exec | Agent-control CLI over the host's Unix-domain NDJSON socket. |
-| `aislopdesk-videohostd`  | exec | GUI-window host daemon (needs a GUI session + TCC). |
-| `aislopdesk-loopback-validate` | exec | Headless video-pipeline validator (real HW encode→decode, FEC, ABR). |
-| `aislopdesk-corevectors` | exec | Emits the golden corpus the golden-corpus check diffs against. |
-| `aislopdesk-bench`       | exec | Micro-benchmark for the hot paths (frame hash, GF region multiply, RS FEC). |
-| `aislopdesk-framewatch`, `aislopdesk-capture-probe`, `aislopdesk-fake-client` | exec | Diagnostics: ScreenCaptureKit cadence, window capture, host-side fake client. |
+| `SlopDeskProtocol`     | lib  | Terminal wire format (framing, seq, hello/ack). No platform deps. |
+| `SlopDeskTransport`    | lib  | TCP channels, replay buffer, reconnect handshake. |
+| `SlopDeskHost`         | lib  | macOS host: PTY spawn/relay, session manager, agent-detect gates. |
+| `SlopDeskClient`       | lib  | Shared client: connection/reconnect, input, gap-free output stream. |
+| `SlopDeskTerminal`     | lib  | `TerminalSurface` seam (libghostty-backed in the GUI apps). |
+| `SlopDeskTTY`          | lib  | Local raw-mode termios + winsize for the CLI. |
+| `SlopDeskInspector`    | lib  | JSONL transcript tailer, typed events, read-only views. |
+| `SlopDeskClaudeCode`   | lib  | Claude Code integration: terminal-mode sniffer, input dedup/state. |
+| `SlopDeskAgentDetect`  | lib  | Headless per-pane Claude status machine + no-hooks manifest matcher. |
+| `SlopDeskClientUI`     | lib  | SwiftUI client views/view-models + iOS input host. |
+| `SlopDeskVideoProtocol`| lib  | Video wire format: packetizer, FEC, cursor/geometry/input codec. |
+| `SlopDeskVideoHost`    | lib  | macOS capture + encode + input injection + UDP host session. |
+| `SlopDeskVideoClient`  | lib  | macOS/iOS decode + Metal render + pacing + client session. |
+| `SlopDeskCtlCore`      | lib  | Pure `slopdesk-ctl` core: arg parsing + NDJSON request/response. |
+| `CSlopDeskSIMD`        | C    | The only non-Swift code: the aarch64 NEON GF(2⁸) region-multiply kernel (scalar fallback). |
+| `CSlopDeskVirtualDisplay` | C | Private `CGVirtualDisplay*` headers for the host's 2× HiDPI virtual display. |
+| `slopdesk-hostd`       | exec | Headless host daemon (terminal panes). |
+| `slopdesk-client`      | exec | Interactive remote terminal client. |
+| `slopdesk-ctl`         | exec | Agent-control CLI over the host's Unix-domain NDJSON socket. |
+| `slopdesk-videohostd`  | exec | GUI-window host daemon (needs a GUI session + TCC). |
+| `slopdesk-loopback-validate` | exec | Headless video-pipeline validator (real HW encode→decode, FEC, ABR). |
+| `slopdesk-corevectors` | exec | Emits the golden corpus the golden-corpus check diffs against. |
+| `slopdesk-bench`       | exec | Micro-benchmark for the hot paths (frame hash, GF region multiply, RS FEC). |
+| `slopdesk-framewatch`, `slopdesk-capture-probe`, `slopdesk-fake-client` | exec | Diagnostics: ScreenCaptureKit cadence, window capture, host-side fake client. |
 
 There is no FFI boundary: the codecs, FEC, controllers, and terminal protocol are native
 Swift, linked directly. The package is 14 Swift libraries, 10 executables, 12 test targets,
-and 2 C targets (`CAislopdeskSIMD`, the NEON kernel, plus `CAislopdeskVirtualDisplay`, a
+and 2 C targets (`CSlopDeskSIMD`, the NEON kernel, plus `CSlopDeskVirtualDisplay`, a
 virtual-display header shim) — both compiled from source by SwiftPM.
 
 ## Build & run
 
 The libraries, CLIs, and tests are headless: no GUI, no libghostty, no signing. A clean
 checkout builds with no prerequisite — there is no Rust toolchain, no staticlib to
-pre-build, and no build ordering. The only C is the in-tree `CAislopdeskSIMD` target, which
+pre-build, and no build ordering. The only C is the in-tree `CSlopDeskSIMD` target, which
 SwiftPM compiles from source.
 
 ```sh
@@ -133,8 +133,8 @@ A terminal host:
 
 ```sh
 swift build -c release
-.build/release/aislopdesk-hostd --port 7420                 # plain login shell
-.build/release/aislopdesk-hostd --port 7420 --inspector     # + read-only inspector on port+1
+.build/release/slopdesk-hostd --port 7420                 # plain login shell
+.build/release/slopdesk-hostd --port 7420 --inspector     # + read-only inspector on port+1
 ```
 
 | Flag | Meaning |
@@ -156,8 +156,8 @@ A GUI-window host (needs Screen Recording + Accessibility, and a real GUI sessio
 SSH):
 
 ```sh
-.build/release/aislopdesk-videohostd --list             # enumerate windows
-.build/release/aislopdesk-videohostd --window-id <N>     # serve one window (60 fps default)
+.build/release/slopdesk-videohostd --list             # enumerate windows
+.build/release/slopdesk-videohostd --window-id <N>     # serve one window (60 fps default)
 ```
 
 `--fps N` overrides the capture/encode rate (default 60; 30 is lighter but visibly less
@@ -166,7 +166,7 @@ smooth on scroll and motion).
 ### Interactive terminal client
 
 ```sh
-.build/release/aislopdesk-client --host <host> --port 7420
+.build/release/slopdesk-client --host <host> --port 7420
 ```
 
 Every keystroke, including `Ctrl-C`, is forwarded raw to the remote shell. The only local
@@ -175,7 +175,7 @@ including on signals. For scripting, `--no-raw` pipe mode waits for the remote s
 exit:
 
 ```sh
-printf 'echo hello\nexit\n' | .build/release/aislopdesk-client --host <host> --port 7420 --no-raw
+printf 'echo hello\nexit\n' | .build/release/slopdesk-client --host <host> --port 7420 --no-raw
 ```
 
 ### GUI client apps (libghostty renderer + video)

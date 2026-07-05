@@ -2,27 +2,27 @@
 
 ## Summary
 
-Aislopdesk does NOT run agents itself — users continue using Claude Code, Codex, or OpenCode exactly as they normally would. The one-time setup described on this page teaches each agent to report its runtime state back to Aislopdesk, so Aislopdesk can show live tab badges, fire system notifications, resume sessions, and surface history. It is a single click per agent.
+SlopDesk does NOT run agents itself — users continue using Claude Code, Codex, or OpenCode exactly as they normally would. The one-time setup described on this page teaches each agent to report its runtime state back to SlopDesk, so SlopDesk can show live tab badges, fire system notifications, resume sessions, and surface history. It is a single click per agent.
 
-The integration is hook-based: Aislopdesk writes into the agent's own config file (e.g. `~/.claude/settings.json` for Claude Code) and the agent calls those hooks at lifecycle events. Aislopdesk never runs agents or intercepts their I/O; it only receives state signals.
+The integration is hook-based: SlopDesk writes into the agent's own config file (e.g. `~/.claude/settings.json` for Claude Code) and the agent calls those hooks at lifecycle events. SlopDesk never runs agents or intercepts their I/O; it only receives state signals.
 
 ---
 
 ## Behaviors
 
 - **Settings entry point**: User opens Settings (⌘,) and navigates to the **Agents** tab in the sidebar.
-- **Per-agent install card**: Each supported agent has its own card section. Clicking **Install** (or **Install Hooks** / **Install Plugin** depending on agent) writes Aislopdesk's config into the agent's config file. Only the Aislopdesk-specific entries are touched; the rest of the file is left untouched.
+- **Per-agent install card**: Each supported agent has its own card section. Clicking **Install** (or **Install Hooks** / **Install Plugin** depending on agent) writes SlopDesk's config into the agent's config file. Only the SlopDesk-specific entries are touched; the rest of the file is left untouched.
 - **Install button state transition**: After clicking Install, the button label changes to **Installed** (pill/outline style, inactive/disabled appearance), and an **Uninstall** button appears alongside it. The Status row beneath shows a green checkmark label "✓ Installed".
 - **Not-yet-installed state**: The Install button is present and active. The Status row shows "Not Installed" in a neutral/grey color (no checkmark).
-- **Uninstall**: Clicking **Uninstall** cleanly removes Aislopdesk's entries from the agent's config file and leaves the remainder untouched. The card reverts to the Install button.
+- **Uninstall**: Clicking **Uninstall** cleanly removes SlopDesk's entries from the agent's config file and leaves the remainder untouched. The card reverts to the Install button.
 - **Restart requirement**: The integration takes effect only after the agent restarts with the new config. If an agent was already running in a tab it must be restarted.
   - For **OpenCode**: send one message after restart so the plugin registers the session.
-  - For **Codex**: if Aislopdesk or Codex was recently updated, approve the trust prompt when it restarts.
+  - For **Codex**: if SlopDesk or Codex was recently updated, approve the trust prompt when it restarts.
 - **Agent Behavior toggles activate when at least one integration is installed**: The "Agent Behavior" section at the top of the Agents tab is greyed out until at least one agent's hooks are installed. Once installed, the section becomes interactive.
 - **Seven behavior toggles** (see Config Keys table below).
 - **State signals power downstream features**: The hooks supply the state events that drive tab badges, the Monitor Tasks dashboard, the History transcript with Resume, and the branch/fork actions for spinning off a new task from an existing context.
 
-**Agent-generic vs Claude-Code-specific notes** (relevant for aislopdesk's initial Claude Code scope):
+**Agent-generic vs Claude-Code-specific notes** (relevant for slopdesk's initial Claude Code scope):
 - The install mechanism is identical in concept for all three agents; only the config file path and install action label differ.
 - The seven behavior toggles are agent-generic — they apply uniformly to whichever agents are installed.
 - "Resume Session on Recovery" is particularly relevant for Claude Code where session continuity across reconnects matters.
@@ -83,7 +83,7 @@ These are the seven toggles in the **Agent Behavior** section of the Agents tab.
 **CLAUDE CODE** section:
 - Section header: all-caps small label "CLAUDE CODE" in a muted grey (#999), ~11pt, uppercase tracking. No separator line.
 - A card row (white background, rounded border ~6px radius, subtle #E5E5E5 border) containing:
-  - Left: bold label **"Install Hooks"** (~14pt, #1A1A1A), below it a description line in grey (#666, ~12pt): "Add Aislopdesk hooks to ~/.claude/settings.json for real-time state updates"
+  - Left: bold label **"Install Hooks"** (~14pt, #1A1A1A), below it a description line in grey (#666, ~12pt): "Add SlopDesk hooks to ~/.claude/settings.json for real-time state updates"
   - Right: two pill buttons side-by-side:
     - **"Installed"** — pill outline button (rounded, white fill, #D0D0D0 border, label in black), appears inactive/dimmed (indicating already-installed state, not clickable / no hover effect implied)
     - **"Uninstall"** — identical pill outline button (rounded, white fill, #D0D0D0 border, black label), appears active/clickable
@@ -92,13 +92,13 @@ These are the seven toggles in the **Agent Behavior** section of the Agents tab.
 **CODEX** section:
 - Same visual treatment as Claude Code section.
 - Section header: "CODEX" in all-caps muted grey.
-- Card: bold **"Install Hooks"**, description "Add Aislopdesk hooks to ~/.codex/hooks.json for real-time state updates".
+- Card: bold **"Install Hooks"**, description "Add SlopDesk hooks to ~/.codex/hooks.json for real-time state updates".
 - Two buttons: "Installed" + "Uninstall" (same styling as Claude Code section).
 - Status: "✓ Installed" in green.
 
 **OPENCODE** section:
 - Section header: "OPENCODE" in all-caps muted grey.
-- Card: bold **"Install Plugin"**, description "Add Aislopdesk plugin to ~/.config/opencode/plugins/ for real-time state updates".
+- Card: bold **"Install Plugin"**, description "Add SlopDesk plugin to ~/.config/opencode/plugins/ for real-time state updates".
 - One button: **"Install"** — single pill outline button (rounded, white fill, border, black label). Only one button (not yet installed so no Uninstall button).
 - Status: "Not Installed" in neutral grey (#999), no checkmark.
 
@@ -120,33 +120,33 @@ These are the seven toggles in the **Agent Behavior** section of the Agents tab.
 
 ### Direct implementation
 
-1. **Settings panel / Agents tab**: Aislopdesk already has `ConfigStore` (EnvConfig + EnvBridge + PreferencesStore). An "Agents" settings section with per-agent install cards can be added as a new `SettingsSection.agents` view inside the existing macOS Settings sheet.
+1. **Settings panel / Agents tab**: SlopDesk already has `ConfigStore` (EnvConfig + EnvBridge + PreferencesStore). An "Agents" settings section with per-agent install cards can be added as a new `SettingsSection.agents` view inside the existing macOS Settings sheet.
 
-2. **Claude Code hook installation**: Aislopdesk targets Claude Code as its primary agent. The install action writes `~/.claude/settings.json` hooks — this is pure local filesystem I/O on the **client Mac** (same machine where the terminal runs). This maps cleanly: the macOS client app can write the file directly.
+2. **Claude Code hook installation**: SlopDesk targets Claude Code as its primary agent. The install action writes `~/.claude/settings.json` hooks — this is pure local filesystem I/O on the **client Mac** (same machine where the terminal runs). This maps cleanly: the macOS client app can write the file directly.
 
-3. **Badge While Processing / Badge When Task Completes / Badge When Awaiting Input**: These drive tab badges. Aislopdesk's `WorkspaceStore` and `PaneModel` already carry per-pane state. A `ClaudeAgentState` enum (`.idle`, `.processing`, `.awaitingInput`, `.complete`) can be injected via `ClaudeStatus` / `ClaudePaneDetector` (already referenced in memory: `aislopdesk-night-supervision-roadmap`). Tab badge rendering maps onto the existing tab bar UI.
+3. **Badge While Processing / Badge When Task Completes / Badge When Awaiting Input**: These drive tab badges. SlopDesk's `WorkspaceStore` and `PaneModel` already carry per-pane state. A `ClaudeAgentState` enum (`.idle`, `.processing`, `.awaitingInput`, `.complete`) can be injected via `ClaudeStatus` / `ClaudePaneDetector` (already referenced in memory: `slopdesk-night-supervision-roadmap`). Tab badge rendering maps onto the existing tab bar UI.
 
 4. **Notify When Task Completes / Notify When Awaiting Input**: Standard macOS `UNUserNotificationCenter` calls from the client app. Straightforward.
 
-5. **Resume Session on Recovery**: Aislopdesk already has `DetachedSessionStore` (`AISLOPDESK_DETACH_ENABLED`) and detach/reattach logic. "Reopen the agent session when a recovered terminal comes back" maps to triggering a Claude Code session resume (re-sending the session ID or re-cd-ing and running `claude --resume`) after a reconnect event.
+5. **Resume Session on Recovery**: SlopDesk already has `DetachedSessionStore` (`SLOPDESK_DETACH_ENABLED`) and detach/reattach logic. "Reopen the agent session when a recovered terminal comes back" maps to triggering a Claude Code session resume (re-sending the session ID or re-cd-ing and running `claude --resume`) after a reconnect event.
 
 6. **Prevent Sleep While Processing**: `IOPMAssertion` on macOS. Trivial client-side implementation.
 
-7. **Uninstall**: Reverse the hook write — parse `~/.claude/settings.json` and remove Aislopdesk's hook entries, leaving the rest intact.
+7. **Uninstall**: Reverse the hook write — parse `~/.claude/settings.json` and remove SlopDesk's hook entries, leaving the rest intact.
 
 ### Platform / architecture constraints
 
-1. **"Status: ✓ Installed" verification**: Reading back the config file after writing to confirm install is straightforward on the local client. However, if the user's Claude Code config lives on the **remote host** (e.g. if the user SSHes into a dev box and runs Claude Code there), the `~/.claude/settings.json` being modified is on the remote machine — aislopdesk's client app cannot directly write it. Mitigation: for now, aislopdesk's agent integration is scoped to **local Claude Code sessions** (Claude Code running on the client Mac). Remote-host Claude Code sessions would need a host-side install helper (future work). Flag this with a UI note: "Install applies to local Claude Code sessions."
+1. **"Status: ✓ Installed" verification**: Reading back the config file after writing to confirm install is straightforward on the local client. However, if the user's Claude Code config lives on the **remote host** (e.g. if the user SSHes into a dev box and runs Claude Code there), the `~/.claude/settings.json` being modified is on the remote machine — slopdesk's client app cannot directly write it. Mitigation: for now, slopdesk's agent integration is scoped to **local Claude Code sessions** (Claude Code running on the client Mac). Remote-host Claude Code sessions would need a host-side install helper (future work). Flag this with a UI note: "Install applies to local Claude Code sessions."
 
-2. **Codex and OpenCode support**: Aislopdesk's initial scope is Claude Code only. The settings panel should show only a Claude Code card (not Codex/OpenCode cards), or show the others as greyed-out / "coming soon."
+2. **Codex and OpenCode support**: SlopDesk's initial scope is Claude Code only. The settings panel should show only a Claude Code card (not Codex/OpenCode cards), or show the others as greyed-out / "coming soon."
 
-3. **"Branch / fork actions for spinning a new task off an existing context"**: This downstream feature requires Claude Code's `--resume` / session branching CLI flags and the History panel. Aislopdesk should mark this as a follow-on feature once the basic hook integration is working (History panel and Composer are not yet built).
+3. **"Branch / fork actions for spinning a new task off an existing context"**: This downstream feature requires Claude Code's `--resume` / session branching CLI flags and the History panel. SlopDesk should mark this as a follow-on feature once the basic hook integration is working (History panel and Composer are not yet built).
 
-4. **Hook mechanism on iOS client**: On iOS, the client cannot write to `~/.claude/settings.json` at all (sandboxed filesystem). If Claude Code runs on a remote macOS host, the install button in an iOS aislopdesk session would need to send an install command over the existing aislopdesk control channel to the host-side daemon (`aislopdesk-hostd`). This is a non-trivial architectural addition; flag it as iOS-deferred.
+4. **Hook mechanism on iOS client**: On iOS, the client cannot write to `~/.claude/settings.json` at all (sandboxed filesystem). If Claude Code runs on a remote macOS host, the install button in an iOS slopdesk session would need to send an install command over the existing slopdesk control channel to the host-side daemon (`slopdesk-hostd`). This is a non-trivial architectural addition; flag it as iOS-deferred.
 
 5. **"Approve the trust prompt" (Codex)**: Codex-specific, not relevant to Claude Code scope.
 
-6. **Agent Behavior toggles greyed out until install**: This UX gating is straightforward to implement — observe whether `~/.claude/settings.json` contains Aislopdesk's hooks and conditionally enable the toggles. The check should be re-run each time the Settings panel opens (not cached forever).
+6. **Agent Behavior toggles greyed out until install**: This UX gating is straightforward to implement — observe whether `~/.claude/settings.json` contains SlopDesk's hooks and conditionally enable the toggles. The check should be re-run each time the Settings panel opens (not cached forever).
 
 ### Implementation order recommendation
 

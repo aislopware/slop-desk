@@ -4,7 +4,7 @@
 
 > ⚠️ **GUI video-path only.** The terminal path ([12](12-coding-profile.md)) has a different latency model: network RTT (~1–5ms LAN) + local echo, **no vsync/encode/decode**. Many techniques below (pacer, beam-racing) are over-engineering for the coding profile — see [12 §3.3](12-coding-profile.md).
 
-> Synthesis of production techniques mapped onto the Apple stack. Moonlight/Sunshine are open source (code traced); Parsec publishes its philosophy, not numbers. The realtime logic below — pacer drop heuristics, FEC reassembly, speculative loss, LTR admission, congestion/ABR — lives in the Rust core (`aislopdesk-core`) behind the C-ABI; the Swift shell owns the Apple-specific pieces (ScreenCaptureKit, VideoToolbox, CVDisplayLink/Metal).
+> Synthesis of production techniques mapped onto the Apple stack. Moonlight/Sunshine are open source (code traced); Parsec publishes its philosophy, not numbers. The realtime logic below — pacer drop heuristics, FEC reassembly, speculative loss, LTR admission, congestion/ABR — lives in the Rust core (`slopdesk-core`) behind the C-ABI; the Swift shell owns the Apple-specific pieces (ScreenCaptureKit, VideoToolbox, CVDisplayLink/Metal).
 
 ## 0. Core philosophy (Parsec)
 
@@ -81,7 +81,7 @@ Predict frame loss **before** the next frame arrives — once the shard count pr
 ### LAN policy (with [03](03-transport-protocol.md))
 1. Clean wired LAN: low FEC (0–10%) + LTR + speculative loss. Wi-Fi/lossy: 15–20%, multi-block. `AdaptiveFECPolicy` scales this automatically.
 2. Recovery prefers **LTR refresh** (§1); keyframe only when no acked LTR remains.
-3. **FEC-first, with a NACK backstop** (re-scoped 2026-06-18, `AISLOPDESK_NACK`, default OFF — see [03 §FEC vs retransmit](03-transport-protocol.md)): FEC recovers loss at zero added latency; a frame it can't recover is held briefly and the client NACKs the missing fragments, which the host re-sends from a ring. The old "no retransmit (1 RTT → stutter)" rule assumed naive replay-and-stall; with a playout buffer ≫ RTT the retransmit lands *inside* the buffer → no stutter. LTR-refresh / IDR is the fallback once the retransmit grace expires.
+3. **FEC-first, with a NACK backstop** (re-scoped 2026-06-18, `SLOPDESK_NACK`, default OFF — see [03 §FEC vs retransmit](03-transport-protocol.md)): FEC recovers loss at zero added latency; a frame it can't recover is held briefly and the client NACKs the missing fragments, which the host re-sends from a ring. The old "no retransmit (1 RTT → stutter)" rule assumed naive replay-and-stall; with a playout buffer ≫ RTT the retransmit lands *inside* the buffer → no stutter. LTR-refresh / IDR is the fallback once the retransmit grace expires.
 
 ---
 

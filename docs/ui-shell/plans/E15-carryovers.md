@@ -9,7 +9,7 @@ work, so read it carefully.
 ## SCOPE REDUCTIONS (binding — do NOT build these)
 
 - **Vertical-tabs-only — the one that bites E15.** The theme editor exposes per-region chrome
-  colours (M5/M6: "chrome regions", container tokens per theme). aislopdesk is **vertical-tabs-only**
+  colours (M5/M6: "chrome regions", container tokens per theme). slopdesk is **vertical-tabs-only**
   (a committed product decision in `docs/DECISIONS.md`, encoded at E7-close — the horizontal/top tab
   bar was deliberately dropped per the user). So the theme editor's chrome regions must
   **NOT** introduce a "tab bar" region that implies a horizontal/top tab strip, and must not add a

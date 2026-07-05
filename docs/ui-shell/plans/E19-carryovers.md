@@ -11,7 +11,7 @@ genuinely-new surfaces (pin, window-size, session switcher); (4) the **wire** po
 ## SCOPE REDUCTION (binding, user 2026-06-26) — DROP the horizontal tab bar
 
 **`ES-E19-4` is DROPPED in full. Do NOT build it.** The story is literally "switch to a horizontal
-(top/bottom) tab-bar layout with auto-hide-tab-bar" — that is the user's dropped scope (aislopdesk is
+(top/bottom) tab-bar layout with auto-hide-tab-bar" — that is the user's dropped scope (slopdesk is
 **vertical-tabs-only** by deliberate product decision, encoded in E7-close commit `f3ea994`). Concretely:
 - **NO** `layout` setting / Layout selector (Vertical Tabs / Tabs Top / Tabs Bottom).
 - **NO** horizontal tab-bar view, **NO** `auto-hide-tab-bar` policy (the horizontal-bar one).
@@ -44,7 +44,7 @@ A18 (vertical-sidebar auto-hide only)** — and nothing horizontal.
 There is NO `NSWindow.level = .floating` path today. Build it on the EXISTING sanctioned NSWindow reach,
 **never** `NSApplication.windows`:
 - The scene already exposes `.introspect(.window, on: .macOS(.v14,.v15,.v26)) { window in … }`
-  (`AislopdeskClientApp.swift:499`) — the comment at `:21`/`:497` declares this the ONLY blessed
+  (`SlopDeskClientApp.swift:499`) — the comment at `:21`/`:497` declares this the ONLY blessed
   WindowGroup-level NSWindow hook. Set `window.level = pinned ? .floating : .normal` there, driven by a
   store/chrome flag (mirror the close-gate idempotency idiom — guard so the repeat-firing introspect
   callback doesn't thrash).
@@ -84,7 +84,7 @@ genuinely new client-window sizing:
   `setContentSize(width×height px)`. Apply **once per window open** (idempotent guard) so a later manual
   resize isn't fought every render.
 - **The cols×rows→pixels math (given cell size + chrome insets, clamped to the visible screen) MUST be a
-  PURE function, unit-tested** — mirror `AislopdeskVideoHost/WindowPlacementMath.placement(...)`
+  PURE function, unit-tested** — mirror `SlopDeskVideoHost/WindowPlacementMath.placement(...)`
   (which already clamps a size into display bounds with the ordered-comparison / no-FMA idioms). The
   NSWindow `setContentSize`/`setFrameAutosaveName` glue is the only app-target part (hang-safety: never
   instantiate an `NSWindow` in a test).
@@ -111,14 +111,14 @@ NO host round-trip for any E19 feature; do not add a wire message.
 - Pin Window / window-size / always-on-top are **macOS NSWindow** concepts → `#if os(macOS)` gate them;
   iOS has no resizable/floating window (no-op, documented — do not ship a dead iOS toggle).
 - The **multi-session switcher** IS relevant on iPad — the session-list view + `selectSession` are shared
-  `AislopdeskClientUI`/`AislopdeskWorkspaceCore`; make sure the switcher renders on iOS too.
+  `SlopDeskClientUI`/`SlopDeskWorkspaceCore`; make sure the switcher renders on iOS too.
 - `auto-hide-tabs-panel` policy is shared (sidebar exists on both).
 - **`swift build` on macOS will NOT catch iOS rot → the gate MUST run `bash scripts/check-ios.sh`.**
 
 ## TRAPS specific to E19 (respect these)
 
 - **NSWindow reach ONLY via the existing `.introspect(.window)` hook** — never `NSApplication.windows`
-  (forbidden by the scene comment at `AislopdeskClientApp.swift:21`). Make every introspect callback
+  (forbidden by the scene comment at `SlopDeskClientApp.swift:21`). Make every introspect callback
   idempotent (it re-fires) — follow the close-gate's `!isKeyWindow`-style guard.
 - **Do NOT regress the E7 vertical-tabs-only product-decision comment** in `AppearanceSettingsTab` —
   rewrite only the stale "Window Size / Auto Hide Tabs Panel are deferred-until-backed" sentence (now

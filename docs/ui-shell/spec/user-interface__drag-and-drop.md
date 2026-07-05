@@ -2,11 +2,11 @@
 
 ## Summary
 
-Aislopdesk accepts files, folders, and URLs from Finder, browsers, and any app that exports the standard pasteboard types. When content is dragged over a pane, a visual overlay appears with labelled drop zones offering different actions depending on the content type and the zone chosen. Aislopdesk's own tabs and panes are also draggable and can be reordered, moved between windows, or torn off into new windows.
+SlopDesk accepts files, folders, and URLs from Finder, browsers, and any app that exports the standard pasteboard types. When content is dragged over a pane, a visual overlay appears with labelled drop zones offering different actions depending on the content type and the zone chosen. SlopDesk's own tabs and panes are also draggable and can be reordered, moved between windows, or torn off into new windows.
 
 ## Behaviors
 
-- Aislopdesk accepts drag sources that export standard pasteboard types: file/folder URLs, web URLs, and plain text.
+- SlopDesk accepts drag sources that export standard pasteboard types: file/folder URLs, web URLs, and plain text.
 - When dragging external content over a pane, the pane shows a full-screen overlay with multiple labelled circular/elliptical drop targets spread across the pane surface.
 - The overlay zones for file drops (observed in `drop-overlay.mp4` frame 3) are:
   - **New Tab** (top-center, small circular zone): opens a new terminal tab with `cwd = <folder>`.
@@ -28,9 +28,9 @@ Aislopdesk accepts files, folders, and URLs from Finder, browsers, and any app t
 
 - The "green half" (terminal action) is disabled for files and URLs — there is no "open as terminal" semantic for those types.
 - After a file drop resolves to "Insert Path", the file path is inserted as literal text into the terminal prompt and a command filter line appears at the bottom of the terminal (e.g. `No matching items` / the path string).
-- **Dragging Aislopdesk's own tabs**: drag a tab in the tab strip to reorder it (a thin insertion-line indicator shows the landing position between tabs), tear it off into a new window (drag off the strip and release over empty space), or move it into another window's tab strip. While dragging, the tab follows the cursor as a floating preview; the original dims to a ghost.
+- **Dragging SlopDesk's own tabs**: drag a tab in the tab strip to reorder it (a thin insertion-line indicator shows the landing position between tabs), tear it off into a new window (drag off the strip and release over empty space), or move it into another window's tab strip. While dragging, the tab follows the cursor as a floating preview; the original dims to a ghost.
 - Right-click a tab for menu alternatives: **Move Tab to New Window**, **Move Up**, **Move Down**.
-- **Dragging Aislopdesk's own panes**: each pane has a drag handle along its top edge; move the pointer near the top and a small capsule appears. Drag from there to pick the pane up. Drop zones light up as follows:
+- **Dragging SlopDesk's own panes**: each pane has a drag handle along its top edge; move the pointer near the top and a small capsule appears. Drag from there to pick the pane up. Drop zones light up as follows:
 
   | Drop zone | Highlight color | Result |
   |---|---|---|
@@ -118,26 +118,26 @@ Extracted still frames (for reference):
 - `drop-view-cross-tab-frame03.png` — Mid cross-tab drag showing preview card
 - `drop-view-cross-tab-frame04.png` — Post-merge 3-way split layout
 
-## Aislopdesk mapping notes
+## SlopDesk mapping notes
 
 ### What maps cleanly
 
-- **External file/folder/URL drops onto a pane**: Aislopdesk can accept NSDraggingDestination on the pane's NSView, inspect pasteboard types (NSFilenamesPboardType / NSURLPboardType / NSStringPboardType), and show a custom overlay. The overlay zones (New Tab, Insert Path, Open In-Place, Split Left, Split Right) are local client-side decisions that do not require host-side involvement for path insertion.
+- **External file/folder/URL drops onto a pane**: SlopDesk can accept NSDraggingDestination on the pane's NSView, inspect pasteboard types (NSFilenamesPboardType / NSURLPboardType / NSStringPboardType), and show a custom overlay. The overlay zones (New Tab, Insert Path, Open In-Place, Split Left, Split Right) are local client-side decisions that do not require host-side involvement for path insertion.
 - **"Insert Path" action**: Once the local file path is known from the pasteboard, the client can send the path string as terminal input to the remote PTY via the existing data channel. This is a pure text injection — maps 1:1.
 - **"New Tab" with cwd = folder**: This CANNOT be a 1:1 local action. The cwd must be set on the HOST, not the client. Implementation: send a `cd <path>` command to the terminal followed by Enter, or open a new session with a `--cwd` argument via the host daemon. The path must be a HOST-side path, not the drag-source Mac's path — this only makes sense when the drag source IS the host machine, or when the path is valid on the host.
-- **Pane reordering (split/swap/tear-off into new tab or window)**: All pane layout operations in aislopdesk are local client-side (WorkspaceStore + PaneKind layout). These map 1:1: drag handle on pane top edge, drop zones for split/swap, tab strip for move-to-new-tab, tear-off for new window.
+- **Pane reordering (split/swap/tear-off into new tab or window)**: All pane layout operations in slopdesk are local client-side (WorkspaceStore + PaneKind layout). These map 1:1: drag handle on pane top edge, drop zones for split/swap, tab strip for move-to-new-tab, tear-off for new window.
 - **Tab reordering**: Local tab strip reorder maps 1:1 via WorkspaceStore.
 - **Double-click divider to equalize**: Local NSSplitView double-click gesture — maps 1:1.
 
 ### What cannot map 1:1
 
-1. **"Open In-Place" / File pane / Folder pane for remote paths**: The design assumes the file is local and the pane opens a native file viewer. In aislopdesk, the client's filesystem is the user's LOCAL machine; the host is remote. If the drag source is a file from the CLIENT machine, opening it "in-place" as a file pane can be done locally (the client renders it). If it represents a HOST-side file path, the client must request the file content over the wire — this needs a new wire message type (e.g., `FileContentRequest`/`FileContentResponse` on the inspector/control channel). Flag as PARTIAL MAP.
+1. **"Open In-Place" / File pane / Folder pane for remote paths**: The design assumes the file is local and the pane opens a native file viewer. In slopdesk, the client's filesystem is the user's LOCAL machine; the host is remote. If the drag source is a file from the CLIENT machine, opening it "in-place" as a file pane can be done locally (the client renders it). If it represents a HOST-side file path, the client must request the file content over the wire — this needs a new wire message type (e.g., `FileContentRequest`/`FileContentResponse` on the inspector/control channel). Flag as PARTIAL MAP.
 
 2. **"New terminal rooted at dragged path"**: Only meaningful if the dragged path exists on the HOST. From a client-side file drag, the host-side path equivalence is not guaranteed. Implementation must either (a) warn the user the path may not exist on the host, (b) only support this for paths that are already visible via the existing remote file tree, or (c) transmit the path as a `cd` command string and let the host shell error naturally. Flag as PARTIAL MAP — no automatic cwd negotiation protocol exists.
 
-3. **URL pane**: The design calls for opening a URL pane natively. Aislopdesk has no built-in browser pane. A URL could be opened in the host's default browser via `open <url>` sent as terminal input, but a dedicated "URL pane" renderer does not exist yet. Flag as OUT OF SCOPE (phase 1).
+3. **URL pane**: The design calls for opening a URL pane natively. SlopDesk has no built-in browser pane. A URL could be opened in the host's default browser via `open <url>` sent as terminal input, but a dedicated "URL pane" renderer does not exist yet. Flag as OUT OF SCOPE (phase 1).
 
-4. **Cross-window drag (tear-off into new window, or merge across windows)**: Aislopdesk runs as a single-session client or multi-tab within one window group. Cross-window pane drag requires multiple NSWindow instances with a shared WorkspaceStore. This is architecturally possible but not currently implemented — the WorkspaceStore's reconcile() is window-scoped. Flag as DEFERRED.
+4. **Cross-window drag (tear-off into new window, or merge across windows)**: SlopDesk runs as a single-session client or multi-tab within one window group. Cross-window pane drag requires multiple NSWindow instances with a shared WorkspaceStore. This is architecturally possible but not currently implemented — the WorkspaceStore's reconcile() is window-scoped. Flag as DEFERRED.
 
 5. **Text snippet paste as drop**: Accepting NSStringPboardType and pasting it into the terminal via the data channel maps 1:1 technically, but the "drop target" UI (showing the overlay) needs to detect that the pasteboard is plain text to route it to the terminal paste path. This is IMPLEMENTABLE but requires explicit pasteboard type inspection in the drag entry handler.
 

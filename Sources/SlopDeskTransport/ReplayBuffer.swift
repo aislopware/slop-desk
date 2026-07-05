@@ -1,0 +1,392 @@
+import Foundation
+import SlopDeskProtocol
+
+/// Host-side replay buffer for lossless reconnect — an SlopDesk-native port of
+/// Eternal Terminal's `BackedWriter` over plain TCP.
+///
+/// This is **pure logic**: it has no networking dependency and is unit-testable in
+/// isolation. It retains host→client `output` payloads keyed by a monotonic
+/// `Int64` seq until the client acks them, and produces the un-acked tail for
+/// replay on reconnect.
+///
+/// ## Why
+/// iOS kills the TCP connection a few seconds after backgrounding. To resume
+/// **byte-exact** without tmux, the host retains recently-sent `output` payloads
+/// keyed by their monotonic `Int64` seq. On reconnect the client's
+/// `hello.lastReceivedSeq` tells the host which tail to replay (everything with
+/// `seq > lastReceivedSeq`). This is functionally equivalent to ET's byte-level
+/// `BackedWriter` seq, lifted to a **per-message** seq (see `docs/20-wire-protocol.md`).
+///
+/// **Only `.output` is sequenced and replayed.** Control messages
+/// (`resize`/`ack`/`title`/`bell`/…) are lifecycle/metadata and are *not* retained:
+/// re-deriving terminal size or re-sending a title on reconnect is cheap and stateless
+/// on the host side, whereas PTY output is the irreplaceable byte stream.
+///
+/// ## Caps, gates, and the load-bearing invariant
+/// - **`maxBackupBytes` = 64 MiB** (ET `MAX_BACKUP_BYTES`): the retained-byte ceiling
+///   we *aim* to stay under.
+/// - **`offlineGateBytes` = 4 MiB**: while the client is offline, once retained bytes
+///   reach this gate, ``shouldPauseDrain`` flips `true` (ET `SKIPPED`); below it the
+///   host keeps buffering (ET `BUFFERED_ONLY`).
+/// - **INVARIANT — never silently drop un-acked data.** Dropping un-acked output to
+///   satisfy the 64 MiB cap would break byte-exact resume (the client would see a gap
+///   it can never recover). So this buffer **never evicts un-acked entries**. Memory
+///   while the client is offline is bounded *instead* by ``shouldPauseDrain``: when it
+///   is asserted, the host relay (WF-3) stops reading the PTY, so the kernel PTY buffer
+///   backpressures the shell and **no output is produced that we'd have to drop**.
+/// - **INVARIANT — dead-channel send = retain, never throw.** A retained entry is only
+///   ever removed by a client ``ack(upTo:)``; a *failed wire send* never evicts it.
+///   The host relay retains the bytes (via ``append(bytes:)``) BEFORE the send. So if a
+///   live send loses its channel (the data channel is cancelled mid-flight — POSIX 89),
+///   the entry stays retained and is re-sent by the next ``replay(after:)``. This is what
+///   lets the host treat a dead-channel send as "client offline → replay later" instead of
+///   a fatal fault, with zero byte loss.
+/// - **Slow-consumer case (client online but acking slowly):** if retained bytes exceed
+///   `maxBackupBytes` while online, ``shouldPauseDrain`` is asserted *anyway* (see its
+///   doc) — we still refuse to drop un-acked data; we pause draining until the client
+///   catches up via `ack`. There is no path that discards un-acked output.
+///
+/// - Seq is **`Int64`** (ET proto2 used int32, which truncates on very long sessions).
+/// - **No `CryptoHandler`.** WireGuard already encrypts; the buffer stores raw bytes.
+///   Do not reintroduce ET's libsodium secretbox / nonce-reset layer here
+///   ([18](../../docs/18-risk-resolutions.md) §H).
+///
+/// `ReplayBuffer` is a `Sendable` value type. The owning host relay holds it as stored state
+/// and mutates it under a lock / actor isolation; the derived ``shouldPauseDrain`` signal drives
+/// the PTY read-loop pause. Keeping the buffer a pure value type is what makes its invariants
+/// exhaustively testable without standing up a socket.
+public struct ReplayBuffer: Sendable {
+    /// Retained-byte ceiling: 64 MiB (ET `MAX_BACKUP_BYTES`).
+    public static let maxBackupBytes = 64 * 1024 * 1024
+
+    /// Offline buffering gate: 4 MiB. At/above this while offline, pause the PTY drain.
+    public static let offlineGateBytes = 4 * 1024 * 1024
+
+    /// Default scrollback ring size: 4 MiB (override with `SLOPDESK_SCROLLBACK_BYTES` env var).
+    ///
+    /// This ring retains ACKED entries (history) separately from the un-acked live tail, so a
+    /// cold-reattach replay can deliver the full visible scrollback to a fresh terminal — the same
+    /// behaviour as `tmux attach-session`. The ring is bounded and evicted with line-alignment so a
+    /// replay never starts mid-escape-sequence. Disable entirely by setting
+    /// `SLOPDESK_SCROLLBACK_PERSIST=0`.
+    public static let defaultScrollbackBytes = 4 * 1024 * 1024
+
+    /// Action signalled to the PTY relay as output is enqueued.
+    ///
+    /// This mirrors ET's `BackedWriter` `BufferState`: `bufferedOnly` = keep draining
+    /// the PTY and buffering output; `skipped` = stop draining the PTY (the offline
+    /// gate was crossed) so the kernel backpressures the shell instead of us buffering
+    /// unboundedly.
+    public enum DrainState: Sendable, Equatable {
+        /// Keep buffering and draining the PTY normally (below the gate, or online).
+        case bufferedOnly
+        /// Gate exceeded — pause draining the PTY until the client catches up / returns.
+        case skipped
+    }
+
+    // MARK: Stored state
+
+    /// One retained host→client output payload and its assigned seq.
+    private struct Entry {
+        let seq: Int64
+        let bytes: Data
+    }
+
+    /// Un-acked retained entries, in ascending seq order (FIFO; oldest at the front).
+    private var entries: [Entry] = []
+
+    /// Scrollback ring: acked entries kept for cold-reattach replay, newest-at-back, oldest-at-front.
+    ///
+    /// Bounded by ``scrollbackBytesCap``. Eviction is LINE-ALIGNED: when the oldest surviving
+    /// entry would split a line, the eviction cursor advances to the next `\n` boundary so a cold
+    /// replay never starts mid-escape-sequence and garbles the terminal. Separate from `entries`
+    /// (un-acked) so the never-drop invariant on un-acked data is completely untouched.
+    private var scrollbackRing: [Entry] = []
+
+    /// Running byte total in ``scrollbackRing``.
+    private var scrollbackBytes: Int = 0
+
+    /// Highest seq assigned so far (last produced `output.seq`). Starts at 0; the
+    /// first output is seq 1.
+    public private(set) var highestSeq: Int64 = 0
+
+    /// Highest contiguous seq the client has acked; entries up to here are released.
+    public private(set) var ackedSeq: Int64 = 0
+
+    /// Sum of `bytes.count` over all currently-retained (un-acked) entries.
+    ///
+    /// This is maintained incrementally on every ``append(bytes:)`` / ``ack(upTo:)``
+    /// so it is O(1) to read and always equals the true retained total.
+    public private(set) var retainedBytes: Int = 0
+
+    /// Whether the connection layer currently considers the client reachable.
+    ///
+    /// Set by the transport when a channel becomes ready (`true`) or fails/cancels
+    /// (`false`). Drives the offline gate via ``shouldPauseDrain``.
+    public var isClientOnline: Bool = true
+
+    /// The effective caps for THIS buffer. Default to the ET constants
+    /// (``maxBackupBytes`` / ``offlineGateBytes``); injectable so the relay's read-loop-pause wiring can
+    /// be integration-tested at a tiny cap (no 64 MiB allocation) and so a deployment could tune them.
+    public let maxBackupBytesCap: Int
+    public let offlineGateBytesCap: Int
+
+    /// The scrollback ring byte cap (0 = scrollback disabled). Injected at construction from
+    /// `SLOPDESK_SCROLLBACK_BYTES` (default ``defaultScrollbackBytes`` = 4 MiB). Completely
+    /// independent of ``maxBackupBytesCap`` — the ring holds ACKED history only, so it never
+    /// contributes to ``retainedBytes`` or the offline-gate / 64 MiB live-tail guarantees.
+    public let scrollbackBytesCap: Int
+
+    /// Optional COLD-reattach scrollback cleaner (injected by the host as an OSC-133 distiller). When
+    /// present, ``replay(after:)`` runs it over the scrollback-ring portion of a cold replay to collapse
+    /// the transient B→C line-editor churn (tab-completion menus, autosuggestions, per-keystroke redraws)
+    /// to the committed command line — see ``ScrollbackDistiller``. `nil` ⇒ the ring replays raw (the
+    /// pre-distiller behaviour; all transport tests default to this). NEVER touches the un-acked live tail
+    /// (byte-exact resume) or ``messages(after:)`` (the raw primitive used for control-channel snapshots).
+    public let scrollbackDistiller: (@Sendable (Data) -> Data)?
+
+    @preconcurrency
+    public init(
+        maxBackupBytes: Int = Self.maxBackupBytes,
+        offlineGateBytes: Int = Self.offlineGateBytes,
+        scrollbackBytes: Int = Self.defaultScrollbackBytes,
+        scrollbackDistiller: (@Sendable (Data) -> Data)? = nil,
+    ) {
+        maxBackupBytesCap = max(0, maxBackupBytes)
+        offlineGateBytesCap = max(0, offlineGateBytes)
+        scrollbackBytesCap = max(0, scrollbackBytes)
+        self.scrollbackDistiller = scrollbackDistiller
+    }
+
+    // MARK: Derived signals
+
+    /// Whether the PTY relay should **pause draining** the PTY right now.
+    ///
+    /// `true` when either:
+    /// 1. the client is **offline** and retained bytes have reached
+    ///    ``offlineGateBytes`` (4 MiB) — the ET `SKIPPED` state; or
+    /// 2. retained bytes have reached ``maxBackupBytes`` (64 MiB) regardless of
+    ///    online state — the slow-consumer guard. We still never drop un-acked data;
+    ///    we hold the pause until acks drain the backlog.
+    ///
+    /// When this is `true` the host (WF-3) stops `read()`ing the PTY master, so the
+    /// kernel PTY buffer fills and backpressures the child — no output is generated
+    /// that we would otherwise have to drop. This is the mechanism that bounds memory
+    /// while honoring the never-drop invariant.
+    public var shouldPauseDrain: Bool {
+        if retainedBytes >= maxBackupBytesCap { return true }
+        if !isClientOnline, retainedBytes >= offlineGateBytesCap { return true }
+        return false
+    }
+
+    /// The ``DrainState`` corresponding to ``shouldPauseDrain`` (the ET vocabulary).
+    public var drainState: DrainState {
+        shouldPauseDrain ? .skipped : .bufferedOnly
+    }
+
+    // MARK: Spec API (primary)
+
+    /// Appends a host→client output payload, assigning it the next monotonic seq
+    /// (`highestSeq + 1`, starting at 1), and retains it until acked.
+    ///
+    /// - Parameter bytes: the raw PTY output payload (no framing, no seq prefix).
+    /// - Returns: the seq assigned to this payload.
+    @discardableResult
+    public mutating func append(bytes: Data) -> Int64 {
+        highestSeq += 1
+        entries.append(Entry(seq: highestSeq, bytes: bytes))
+        retainedBytes += bytes.count
+        return highestSeq
+    }
+
+    /// Records a client ack, dropping all retained entries with `seq <= seq` and
+    /// updating ``retainedBytes``.
+    ///
+    /// Idempotent and monotonic: a stale or duplicate ack (`seq <= ackedSeq`) is a
+    /// no-op; ``ackedSeq`` only ever advances. Acking past ``highestSeq`` simply
+    /// clears everything and pins `ackedSeq` to the requested value (harmless — the
+    /// next `append` still produces `highestSeq + 1`).
+    ///
+    /// When ``scrollbackBytesCap`` > 0, the acked prefix is MOVED into ``scrollbackRing``
+    /// (retained for cold-reattach replay) rather than discarded. ``evictScrollbackToFit()``
+    /// trims the ring to the cap with line-aligned eviction. The un-acked ``entries`` array
+    /// and ``retainedBytes`` are updated identically to the pre-scrollback behaviour — the
+    /// never-drop invariant on un-acked data is completely preserved.
+    public mutating func ack(upTo seq: Int64) {
+        guard seq > ackedSeq else { return }
+        ackedSeq = seq
+        // entries are ascending by seq; identify the released prefix.
+        var dropCount = 0
+        var releasedBytes = 0
+        for entry in entries {
+            if entry.seq <= seq {
+                dropCount += 1
+                releasedBytes += entry.bytes.count
+            } else {
+                break
+            }
+        }
+        guard dropCount > 0 else { return }
+        if scrollbackBytesCap > 0 {
+            // Move the acked prefix into the ring (retain for cold replay).
+            for entry in entries.prefix(dropCount) {
+                scrollbackRing.append(entry)
+                scrollbackBytes += entry.bytes.count
+            }
+            evictScrollbackToFit()
+        }
+        entries.removeFirst(dropCount)
+        retainedBytes -= releasedBytes
+    }
+
+    /// Evicts the OLDEST scrollback entries until `scrollbackBytes <= scrollbackBytesCap`.
+    ///
+    /// LINE-ALIGNED: after evicting a whole entry that puts us at or under the cap, the
+    /// NEW oldest entry may start mid-line (the evicted chunk was the tail of a \n-terminated
+    /// sequence). Trim the front of the new oldest entry to the next `\n` + 1 so a cold replay
+    /// always starts on a clean line boundary and never mid-escape-sequence. If the new oldest
+    /// has no `\n`, it is left intact (the next eviction cycle will remove it if still over cap,
+    /// and a line longer than the cap cannot be split usefully — the entry following it starts
+    /// cleanly already).
+    private mutating func evictScrollbackToFit() {
+        while scrollbackBytes > scrollbackBytesCap, !scrollbackRing.isEmpty {
+            let oldest = scrollbackRing.removeFirst()
+            scrollbackBytes -= oldest.bytes.count
+            // If we just landed at/under cap, apply a line-alignment trim to the new oldest
+            // so the ring never starts mid-escape-sequence.
+            if scrollbackBytes <= scrollbackBytesCap, !scrollbackRing.isEmpty {
+                let head = scrollbackRing[0]
+                if let nlIdx = head.bytes.firstIndex(of: UInt8(ascii: "\n")) {
+                    let afterNL = head.bytes.index(after: nlIdx)
+                    let trimmed = Data(head.bytes[afterNL...])
+                    let removed = head.bytes.count - trimmed.count
+                    scrollbackRing[0] = Entry(seq: head.seq, bytes: trimmed)
+                    scrollbackBytes -= removed
+                }
+                // If no \n in the new oldest, leave it intact — the replay will start at
+                // this entry's beginning, which is a PTY-read chunk boundary (acceptable).
+            }
+        }
+    }
+
+    /// Returns the retained output payloads with `seq > lastReceivedSeq`, in
+    /// ascending seq order, for replay after reconnect.
+    ///
+    /// ### Replay semantics
+    ///
+    /// **Cold reattach** (`lastReceivedSeq == 0`, or below the oldest scrollback entry):
+    /// returns all entries in ``scrollbackRing`` whose seq > lastReceivedSeq, followed by
+    /// all un-acked ``entries``. The fresh client terminal re-renders the full scrollback,
+    /// exactly as `tmux attach-session` does.
+    ///
+    /// **Warm reconnect** (`lastReceivedSeq` is at or near the live frontier):
+    /// scrollback ring entries all have `seq ≤ ackedSeq ≤ lastReceivedSeq`, so the filter
+    /// removes them all. Only the un-acked tail with `seq > lastReceivedSeq` is returned —
+    /// identical behaviour to the pre-scrollback implementation.
+    ///
+    /// **Ring-wrapped edge** (ring wrapped past the reconnect point):
+    /// `entry.seq > lastReceivedSeq` selects whatever ring entries survive; the client's
+    /// `highestSeqFed` dedup (deliverOutput guard) drops any whose seq ≤ highestSeqFed,
+    /// so no duplicate output is possible.
+    ///
+    /// - `messages(after: 0)` returns the entire scrollback ring PLUS the un-acked tail.
+    /// - `messages(after: highestSeq)` returns an empty array (client is current).
+    /// - Un-acked entries already in ``entries`` are never absent (never-drop invariant).
+    public func messages(after lastReceivedSeq: Int64) -> [(seq: Int64, bytes: Data)] {
+        var result: [(seq: Int64, bytes: Data)] = []
+        // 1. From the scrollback ring (acked history, oldest-first).
+        for entry in scrollbackRing where entry.seq > lastReceivedSeq {
+            result.append((seq: entry.seq, bytes: entry.bytes))
+        }
+        // 2. From the un-acked live tail.
+        for entry in entries where entry.seq > lastReceivedSeq {
+            result.append((seq: entry.seq, bytes: entry.bytes))
+        }
+        return result
+    }
+
+    // MARK: Compatibility API (used by SlopDeskHost WF-3 stub + transport)
+
+    /// Assigns the next monotonic seq, retains the payload, and reports the resulting
+    /// ``DrainState`` — the convenience form the host relay consumes so it can act on
+    /// backpressure in the same call that produces the seq.
+    ///
+    /// - Returns: the assigned seq and the resulting ``DrainState``.
+    @discardableResult
+    public mutating func enqueueOutput(_ bytes: Data) -> (seq: Int64, drain: DrainState) {
+        let seq = append(bytes: bytes)
+        return (seq, drainState)
+    }
+
+    /// Records a client ack, releasing retained entries with `seq <= seq`.
+    /// Synonym for ``ack(upTo:)``.
+    public mutating func acknowledge(upTo seq: Int64) {
+        ack(upTo: seq)
+    }
+
+    /// Returns the retained `output` messages with `seq > lastReceivedSeq`, in order, already wrapped as
+    /// ``WireMessage/output(seq:bytes:)`` ready to re-send — the reconnect/reattach replay.
+    ///
+    /// When a ``scrollbackDistiller`` is injected AND this replay reaches into the scrollback ring (a COLD
+    /// reattach — `lastReceivedSeq` below the acked frontier), the scrollback portion is DISTILLED (the
+    /// transient B→C editing churn collapsed to the committed command) and RE-CHUNKED across the same seq
+    /// range it occupied (distilled bytes ≤ raw, so the chunk count never exceeds the entry count → seqs
+    /// stay ascending and strictly below the un-acked tail). The un-acked live tail is ALWAYS re-sent RAW
+    /// (byte-exact resume). Without a distiller, or on a warm reconnect (no scrollback entries pass the
+    /// filter), this is byte-identical to `messages(after:)` mapped to `.output`.
+    public func replay(after lastReceivedSeq: Int64) -> [WireMessage] {
+        let scrollback = scrollbackRing.filter { $0.seq > lastReceivedSeq }
+        var result: [WireMessage] = []
+        if let scrollbackDistiller, !scrollback.isEmpty {
+            var raw = Data()
+            for entry in scrollback { raw.append(entry.bytes) }
+            let cleaned = scrollbackDistiller(raw)
+            result.append(contentsOf: Self.rechunk(cleaned, across: scrollback.map(\.seq)))
+        } else {
+            for entry in scrollback { result.append(.output(seq: entry.seq, bytes: entry.bytes)) }
+        }
+        // Un-acked live tail — never distilled (byte-exact resume of in-flight output).
+        for entry in entries where entry.seq > lastReceivedSeq {
+            result.append(.output(seq: entry.seq, bytes: entry.bytes))
+        }
+        return result
+    }
+
+    /// Splits `data` (the distilled scrollback) into at most `seqs.count` `.output` messages, assigning
+    /// the scrollback seqs in ascending order. `data.count <= sum(original entry sizes)`, so at a chunk
+    /// size of `max(32 KiB, ceil(count / maxChunks))` the chunk count is `<= maxChunks`; the LAST allowed
+    /// chunk absorbs any remainder so every byte is emitted and no seq is reused. Empty `data` ⇒ no
+    /// messages (the client's forward-jump tolerance in `deliverOutput` handles the resulting seq gap).
+    private static func rechunk(_ data: Data, across seqs: [Int64]) -> [WireMessage] {
+        guard !data.isEmpty, !seqs.isEmpty else { return [] }
+        let maxChunks = seqs.count
+        let chunkSize = max(32 * 1024, (data.count + maxChunks - 1) / maxChunks)
+        var result: [WireMessage] = []
+        var start = data.startIndex
+        var k = 0
+        while start < data.endIndex, k < maxChunks {
+            let isLast = k == maxChunks - 1
+            let end = isLast
+                ? data.endIndex
+                : (data.index(start, offsetBy: chunkSize, limitedBy: data.endIndex) ?? data.endIndex)
+            result.append(.output(seq: seqs[k], bytes: Data(data[start..<end])))
+            start = end
+            k += 1
+        }
+        return result
+    }
+
+    // MARK: Test seams (scrollback ring inspection)
+
+    /// Number of entries currently in the scrollback ring. For tests only.
+    public var scrollbackRingCountForTesting: Int { scrollbackRing.count }
+
+    /// Total bytes currently in the scrollback ring. For tests only.
+    public var scrollbackRingBytesForTesting: Int { scrollbackBytes }
+
+    /// The seq values in the scrollback ring, oldest-first. For tests only.
+    public var scrollbackRingSeqsForTesting: [Int64] { scrollbackRing.map(\.seq) }
+
+    /// The leading bytes of the oldest scrollback ring entry (to verify line-alignment). For tests only.
+    public var scrollbackRingOldestBytesForTesting: Data? { scrollbackRing.first?.bytes }
+}

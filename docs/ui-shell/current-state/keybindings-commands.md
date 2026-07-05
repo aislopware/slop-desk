@@ -16,7 +16,7 @@ The keybinding and command-routing stack is **substantially complete** for the c
 |---|---|---|
 | Binding registry — single source of truth | done | `WorkspaceBindingRegistry.swift:222` — `allBindings` array + `selectTabBindings`; referenced by menu, palette, cheat sheet, dispatcher, tests |
 | Default keymap (full set) | done | 35+ actions registered: split/close/focus/tab/session/view/blocks; ⌘1…⌘9 select-tab generated; `WorkspaceBindingRegistry.swift:228–488` |
-| NSEvent prefix monitor (tmux ⌃A-style) | done | `WorkspaceKeyDispatcher.swift:78` — `NSEvent.addLocalMonitorForEvents(matching:.keyDown)`; installed via `.task { keyDispatcher.install() }` at `AislopdeskClientApp.swift:234` |
+| NSEvent prefix monitor (tmux ⌃A-style) | done | `WorkspaceKeyDispatcher.swift:78` — `NSEvent.addLocalMonitorForEvents(matching:.keyDown)`; installed via `.task { keyDispatcher.install() }` at `SlopDeskClientApp.swift:234` |
 | Prefix state machine (arm/resolve/timeout/disarm) | done | `PrefixStateMachine` in `CommandInterpreter.swift:369`; 6-state transitions (arm, resolve, passthrough, sendPrefixLiteral, disarmSwallow, expire); pinned by `PrefixStateMachineTests` |
 | Configurable prefix chord | done | Default `KeyChord("a", [.control])` at `WorkspaceStore.swift:1848`; `WorkspaceKeyDispatcher` adopts `store.workspaceKeyPrefix`; `setPrefix()` for live change |
 | Double-tap prefix → send literal | done | `WorkspaceKeyDispatcher.swift:126–134`; `KeyChordNormalizer.literalBytes(for:)` emits the C0 byte to the focused pane |
@@ -29,12 +29,12 @@ The keybinding and command-routing stack is **substantially complete** for the c
 | Keybindings settings editor UI | done | `KeybindingsEditorView.swift:26`; grouped by `WorkspaceAction.Category`, `NSEvent` capture monitor on macOS, read-only on iOS; wired in `SettingsView.swift:349` |
 | Conflict detection | done | `KeybindingPreferences.conflicts()` surfaced via `store.keybindingConflicts()`; shown in `KeybindingsEditorView` conflict banner |
 | ⌘K command palette — OverlayCoordinator | done | `OverlayCoordinator.swift:104`; `togglePalette()`, `openPalette()`, `closePalette()`; `SearchMixer` + `ActionsPaletteSource` + `TabsPaletteSource` + empty stubs for files/conversations/repos |
-| ⌘K palette — keyboard dispatch wired | **partial** | `WorkspaceAction.commandPalette` is registered (registry id `"view.palette"`, chord ⌘K); `WorkspaceBindingRouting.routeTree:96` calls `togglePalette?()`; BUT `WorkspaceKeyDispatcher` is constructed at `AislopdeskClientApp.swift:195` with NO `togglePalette` closure. ⌘K from the keyboard is silently a no-op. The palette can be opened via the palette's own UI rows. |
+| ⌘K palette — keyboard dispatch wired | **partial** | `WorkspaceAction.commandPalette` is registered (registry id `"view.palette"`, chord ⌘K); `WorkspaceBindingRouting.routeTree:96` calls `togglePalette?()`; BUT `WorkspaceKeyDispatcher` is constructed at `SlopDeskClientApp.swift:195` with NO `togglePalette` closure. ⌘K from the keyboard is silently a no-op. The palette can be opened via the palette's own UI rows. |
 | ⌘/ cheat sheet — OverlayCoordinator | done | `OverlayCoordinator.swift:256`; `cheatSheetVisible` flag + `toggleCheatSheet()`/`openCheatSheet()`/`closeCheatSheet()` |
-| ⌘/ cheat sheet — keyboard dispatch wired | **partial** | Same gap as palette: `WorkspaceBindingRouting.routeTree:97` calls `toggleCheatSheet?()`; dispatcher built without that closure at `AislopdeskClientApp.swift:195`. ⌘/ from keyboard is a no-op. |
+| ⌘/ cheat sheet — keyboard dispatch wired | **partial** | Same gap as palette: `WorkspaceBindingRouting.routeTree:97` calls `toggleCheatSheet?()`; dispatcher built without that closure at `SlopDeskClientApp.swift:195`. ⌘/ from keyboard is a no-op. |
 | Cheat sheet view | **partial** | `OverlayCoordinator.cheatSheetVisible` is defined; `WorkspaceBindingRegistry.groupedForDisplay` provides the data. No `KeyboardCheatSheetView.swift` file found in the tree — the view that renders `cheatSheetVisible` does not appear to exist yet. |
 | SwiftUI `.commands` menu | **partial** | Referenced in docs (`WorkspaceCommands: Commands`), `WorkspaceBindingRegistry.swift:211` docstring mentions it. No `WorkspaceCommands.swift` found in the live source tree — the menu surface appears not yet ported to the rebuilt shell. Chords fire via the NSEvent monitor instead. |
-| Palette — fuzzy match (fzf) | done | `FuzzyMatcher` (vendored fzf FuzzyMatchV2) used in `SearchMixer.ranked()` at `PaletteDataSource.swift:277`; bench = `aislopdesk-fuzzybench` |
+| Palette — fuzzy match (fzf) | done | `FuzzyMatcher` (vendored fzf FuzzyMatchV2) used in `SearchMixer.ranked()` at `PaletteDataSource.swift:277`; bench = `slopdesk-fuzzybench` |
 | Palette — scope filters (actions/tabs/files/…) | partial | `.actions` and `.tabs` are live; `.files`, `.conversations`, `.repos` are registered with empty stubs (`EmptyPaletteSource`) — TODO host directory/AI wire |
 | Palette — recents | done | `OverlayCoordinator.recentPaletteItems()` maps `store.recentCommands` ring to catalog rows |
 | ⌘1…⌘9 select-tab | done | `WorkspaceBindingRegistry.selectTabBindings` (9 entries); `selectTabRepresentative` for display; dispatch in `routeTree:121` via `store.selectTabNumber(n)` |
@@ -46,21 +46,21 @@ The keybinding and command-routing stack is **substantially complete** for the c
 
 ## Key Files
 
-- `Sources/AislopdeskWorkspaceCore/Workspace/Domain/WorkspaceBindingRegistry.swift` — single source of truth: all `WorkspaceAction` cases, `WorkspaceBinding` rows, `chordTable`, `sequenceTable`, `glyph()` helpers
-- `Sources/AislopdeskWorkspaceCore/Workspace/Domain/WorkspaceBindingOverrides.swift` — W13 override layer: `resolvedChordTable`, `resolvedSequenceTable`, `resolvedChord(for:)`, `resolvedSequence(for:)`; `KeybindingPreferences.KeyChord/KeySequence → registry` mapping
-- `Sources/AislopdeskWorkspaceCore/Workspace/Store/WorkspaceBindingRouting.swift` — `route()` dispatcher: action → `WorkspaceStore` tree op
-- `Sources/AislopdeskClientUI/Input/WorkspaceKeyDispatcher.swift` — live NSEvent monitor + `PrefixStateMachine` wiring (macOS only)
-- `Sources/AislopdeskWorkspaceCore/Workspace/Store/CommandInterpreter.swift:369` — `PrefixStateMachine` + `PrefixIntent` enum (pure, AppKit-free)
-- `Sources/AislopdeskWorkspaceCore/Workspace/Store/TerminalKeyInterceptor.swift` — per-surface fallback interceptor (libghostty surface `keyDown`)
-- `Sources/AislopdeskWorkspaceCore/Workspace/Store/WorkspaceStore+Keybinding.swift` — `wireKeyInterceptor()` wiring point
-- `Sources/AislopdeskClientUI/Overlays/OverlayCoordinator.swift` — overlay state machine (palette / cheat sheet / settings / connect / remote picker)
-- `Sources/AislopdeskClientUI/Palette/PaletteDataSource.swift` — `ActionsPaletteSource.catalog`, `TabsPaletteSource`, `SearchMixer`, `EmptyPaletteSource`
-- `Sources/AislopdeskClientUI/AislopdeskClientApp.swift:195,234` — dispatcher construction (missing toggle closures) + install
-- `Sources/AislopdeskClientUI/Settings/KeybindingsEditorView.swift` — Settings > Keybindings UI
-- `Sources/AislopdeskVideoProtocol/Settings/KeybindingPreferences.swift` — serialisable override model
-- `Tests/AislopdeskWorkspaceCoreTests/Workspace/TreeCommandRoutingTests.swift` — routing correctness + chord-uniqueness pins
-- `Tests/AislopdeskWorkspaceCoreTests/Workspace/PrefixStateMachineTests.swift` — prefix machine unit tests
-- `Tests/AislopdeskWorkspaceCoreTests/Workspace/KeySequenceRegistryTests.swift` — sequence table tests
+- `Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingRegistry.swift` — single source of truth: all `WorkspaceAction` cases, `WorkspaceBinding` rows, `chordTable`, `sequenceTable`, `glyph()` helpers
+- `Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingOverrides.swift` — W13 override layer: `resolvedChordTable`, `resolvedSequenceTable`, `resolvedChord(for:)`, `resolvedSequence(for:)`; `KeybindingPreferences.KeyChord/KeySequence → registry` mapping
+- `Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceBindingRouting.swift` — `route()` dispatcher: action → `WorkspaceStore` tree op
+- `Sources/SlopDeskClientUI/Input/WorkspaceKeyDispatcher.swift` — live NSEvent monitor + `PrefixStateMachine` wiring (macOS only)
+- `Sources/SlopDeskWorkspaceCore/Workspace/Store/CommandInterpreter.swift:369` — `PrefixStateMachine` + `PrefixIntent` enum (pure, AppKit-free)
+- `Sources/SlopDeskWorkspaceCore/Workspace/Store/TerminalKeyInterceptor.swift` — per-surface fallback interceptor (libghostty surface `keyDown`)
+- `Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Keybinding.swift` — `wireKeyInterceptor()` wiring point
+- `Sources/SlopDeskClientUI/Overlays/OverlayCoordinator.swift` — overlay state machine (palette / cheat sheet / settings / connect / remote picker)
+- `Sources/SlopDeskClientUI/Palette/PaletteDataSource.swift` — `ActionsPaletteSource.catalog`, `TabsPaletteSource`, `SearchMixer`, `EmptyPaletteSource`
+- `Sources/SlopDeskClientUI/SlopDeskClientApp.swift:195,234` — dispatcher construction (missing toggle closures) + install
+- `Sources/SlopDeskClientUI/Settings/KeybindingsEditorView.swift` — Settings > Keybindings UI
+- `Sources/SlopDeskVideoProtocol/Settings/KeybindingPreferences.swift` — serialisable override model
+- `Tests/SlopDeskWorkspaceCoreTests/Workspace/TreeCommandRoutingTests.swift` — routing correctness + chord-uniqueness pins
+- `Tests/SlopDeskWorkspaceCoreTests/Workspace/PrefixStateMachineTests.swift` — prefix machine unit tests
+- `Tests/SlopDeskWorkspaceCoreTests/Workspace/KeySequenceRegistryTests.swift` — sequence table tests
 
 ---
 
@@ -68,7 +68,7 @@ The keybinding and command-routing stack is **substantially complete** for the c
 
 ### Wiring gaps
 
-1. **⌘K / ⌘/ keyboard dispatch is broken (no-op).** `WorkspaceKeyDispatcher` is constructed at `AislopdeskClientApp.swift:195` as `WorkspaceKeyDispatcher(store: store)` — without `togglePalette:` or `toggleCheatSheet:` closures. Both closures default to `nil`. `WorkspaceBindingRouting.routeTree` calls `togglePalette?()` and `toggleCheatSheet?()` which silently skip. Fix: pass closures capturing the live `OverlayCoordinator` into the dispatcher at construction time, OR wire the overlay coordinator into `route()` via a different mechanism (e.g. a `FocusedValue` seam as noted in `docs/29-NIGHT-HANDOFF.md:831`).
+1. **⌘K / ⌘/ keyboard dispatch is broken (no-op).** `WorkspaceKeyDispatcher` is constructed at `SlopDeskClientApp.swift:195` as `WorkspaceKeyDispatcher(store: store)` — without `togglePalette:` or `toggleCheatSheet:` closures. Both closures default to `nil`. `WorkspaceBindingRouting.routeTree` calls `togglePalette?()` and `toggleCheatSheet?()` which silently skip. Fix: pass closures capturing the live `OverlayCoordinator` into the dispatcher at construction time, OR wire the overlay coordinator into `route()` via a different mechanism (e.g. a `FocusedValue` seam as noted in `docs/29-NIGHT-HANDOFF.md:831`).
 
 2. **Cheat sheet view missing.** `OverlayCoordinator.cheatSheetVisible` exists and `WorkspaceBindingRegistry.groupedForDisplay` supplies the data, but no `KeyboardCheatSheetView.swift` was found — the view that presents when `cheatSheetVisible == true` does not appear to exist yet.
 

@@ -1,10 +1,10 @@
-# Aislopdesk — design docs
+# SlopDesk — design docs
 
-> Design docs for Aislopdesk, a low-latency remote-coding tool for Apple platforms (macOS
+> Design docs for SlopDesk, a low-latency remote-coding tool for Apple platforms (macOS
 > host, macOS + iOS/iPadOS clients). The client is an infinite canvas of panes; each pane is
 > either a terminal (host PTY → TCP → libghostty) or a live GUI window (ScreenCaptureKit →
 > VideoToolbox HEVC → UDP). Both are first-class. The performance core is Rust
-> (`rust/aislopdesk-core`, behind a C ABI — wire codecs, FEC, realtime controllers, terminal
+> (`rust/slopdesk-core`, behind a C ABI — wire codecs, FEC, realtime controllers, terminal
 > protocol); the shell is Swift/SwiftUI (capture, HW codec, Metal, input, UI). Some older docs
 > use the codename "PaneCast" and frame the terminal as the only path — that split has since
 > been levelled (see [00-overview.md](00-overview.md)).

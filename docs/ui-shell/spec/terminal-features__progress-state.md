@@ -2,28 +2,28 @@
 
 ## Summary
 
-Aislopdesk surfaces the live state of long-running commands and tasks visually — a spinner or badge on the tab, an animated Dock icon, and (on supported platforms) a taskbar-style progress bar. The state is driven by the **ConEmu `OSC 9;4` progress protocol**, fed by three mechanisms:
+SlopDesk surfaces the live state of long-running commands and tasks visually — a spinner or badge on the tab, an animated Dock icon, and (on supported platforms) a taskbar-style progress bar. The state is driven by the **ConEmu `OSC 9;4` progress protocol**, fed by three mechanisms:
 
 1. **Programs** emit `OSC 9;4` themselves (curl, package managers, ConEmu/Windows-Terminal-aware programs).
 2. **Shell integration** auto-emits it for a configurable list of commands — no program changes needed.
-3. **`aislopdesk watch`** wraps any command to give it a spinner-to-finish badge.
+3. **`slopdesk watch`** wraps any command to give it a spinner-to-finish badge.
 
 System notifications (banners, sounds, Dock bounce) that fire when a task ends are covered separately in Privilege and Notifications.
 
 ## Behaviors
 
-- A program emits `OSC 9;4;<state>[;<pct>]` to report progress. The four canonical states are: `0` = clear, `1;<pct>` = in-progress (0–100), `2[;<pct>]` = error, `3` = indeterminate/spinner. State `4` (paused/warning) is recognized by the spec but ignored by aislopdesk. State `5` is an aislopdesk extension: `OSC 9;4;5;<exit>[;watch]` = finished with exit code; the `watch` suffix routes to a separate notification toggle.
+- A program emits `OSC 9;4;<state>[;<pct>]` to report progress. The four canonical states are: `0` = clear, `1;<pct>` = in-progress (0–100), `2[;<pct>]` = error, `3` = indeterminate/spinner. State `4` (paused/warning) is recognized by the spec but ignored by slopdesk. State `5` is an slopdesk extension: `OSC 9;4;5;<exit>[;watch]` = finished with exit code; the `watch` suffix routes to a separate notification toggle.
 - Example sequences:
   - `printf '\e]9;4;1;40\a'` — determinate, 40%
   - `printf '\e]9;4;3\a'` — indeterminate spinner
   - `printf '\e]9;4;2;80\a'` — error, held at 80%
   - `printf '\e]9;4;0\a'` — clear the indicator
-- `aislopdesk features try progress` fires a live determinate bar for testing; `aislopdesk features try error-state` fires the error variant.
-- When shell integration is active, aislopdesk auto-wraps a built-in list of slow commands to emit an indeterminate spinner while running and a finish/error badge on exit. The built-in list includes: `curl`, `wget`, `rsync`, `scp`, `git fetch/pull/push/clone`, `brew install/update/upgrade`, `npm/pnpm/yarn/bun install`, `pip install`, `cargo build/install/update`, `docker pull/push/build`, `apt`/`apt-get install/update/upgrade`, and more.
+- `slopdesk features try progress` fires a live determinate bar for testing; `slopdesk features try error-state` fires the error variant.
+- When shell integration is active, slopdesk auto-wraps a built-in list of slow commands to emit an indeterminate spinner while running and a finish/error badge on exit. The built-in list includes: `curl`, `wget`, `rsync`, `scp`, `git fetch/pull/push/clone`, `brew install/update/upgrade`, `npm/pnpm/yarn/bun install`, `pip install`, `cargo build/install/update`, `docker pull/push/build`, `apt`/`apt-get install/update/upgrade`, and more.
 - Auto-progress commands are configurable under **Settings → Advanced → Auto Progress-Bar Commands**. Each entry is matched as a whitespace-delimited prefix (`git push` matches `git push origin main` but not `git status`). Clearing the field disables auto-progress entirely.
-- `aislopdesk watch <cmd>` wraps any command: shows an indeterminate spinner while it runs, then a success or error badge on exit, and posts a "Notify on Watch Finish" notification (unless `-q`/`--quiet`). Because it tags its finish with `watch`, the watch notification can be kept on while the noisier per-command finish notifications are off.
+- `slopdesk watch <cmd>` wraps any command: shows an indeterminate spinner while it runs, then a success or error badge on exit, and posts a "Notify on Watch Finish" notification (unless `-q`/`--quiet`). Because it tags its finish with `watch`, the watch notification can be kept on while the noisier per-command finish notifications are off.
 - Tab badges reflect the current progress state per tab. All badges use a small icon right-aligned on the tab row. The full badge set:
-  - **Running** (spinner) — `OSC 9;4;1`/`3` in progress, or `aislopdesk watch` running.
+  - **Running** (spinner) — `OSC 9;4;1`/`3` in progress, or `slopdesk watch` running.
   - **Completed** (checkmark) — brief success flash, settles to Finished.
   - **Finished** (accent dot) — command exited 0 (unread-output marker).
   - **Error** (alert triangle) — command exited non-zero, or `OSC 9;4;2`.
@@ -33,7 +33,7 @@ System notifications (banners, sounds, Dock bounce) that fire when a task ends a
   - **Tab Badge — When Command Finishes** — accent dot after a successful command.
   - **Tab Badge — When Command Fails** — alert badge after non-zero exit.
   - **Tab Badge — When Command Awaits Input** — hand badge when a running command stops at `[y/n]`, password read, or "Press ENTER to continue" (detection waits ~1.5 s; typing clears it).
-- Scripts can set a badge directly via the CLI: `aislopdesk tab badge --kind running` (kinds: running, completed, finished, unread, error, awaiting-input) or `aislopdesk tab badge --clear`. The caffeinate/sudo badges are intentionally not settable via CLI.
+- Scripts can set a badge directly via the CLI: `slopdesk tab badge --kind running` (kinds: running, completed, finished, unread, error, awaiting-input) or `slopdesk tab badge --clear`. The caffeinate/sudo badges are intentionally not settable via CLI.
 - The Dock icon reflects aggregate progress across all tabs. Two settings under **Settings → Appearance**:
   - **Animate Icon on Progress** (off by default) — rotates the icon's "eye" while any session has active `OSC 9;4` progress/indeterminate.
   - **Red Icon on Error** (on by default) — tints the icon red when any session reports non-zero exit or `OSC 9;4;2`; clicking the Dock icon jumps to the next failing tab and clears the tint.
@@ -41,7 +41,7 @@ System notifications (banners, sounds, Dock bounce) that fire when a task ends a
   - **Claude Code — While Processing** (off by default) — spinner while the agent is thinking.
   - **Claude Code — When Task Completes** (on by default) — dot when the agent goes idle.
   - **Claude Code — When Awaiting Input** (on by default) — indicator when the agent needs approval or input.
-- `aislopdesk watch:<agent>` blocks a script until an agent session is idle: `aislopdesk watch:claude <id>`, `aislopdesk watch:codex <id> --timeout-secs 600`, `aislopdesk watch:opencode <id> --interval-ms 2000 -v`. Exit codes: `0` = idle/closed, `4` = session ID never seen, `9` = timeout.
+- `slopdesk watch:<agent>` blocks a script until an agent session is idle: `slopdesk watch:claude <id>`, `slopdesk watch:codex <id> --timeout-secs 600`, `slopdesk watch:opencode <id> --interval-ms 2000 -v`. Exit codes: `0` = idle/closed, `4` = session ID never seen, `9` = timeout.
 
 ## Keybindings
 
@@ -88,11 +88,11 @@ System notifications (banners, sounds, Dock bounce) that fire when a task ends a
 
 **Right pane — Terminal area:**
 - Background is near-white / very light gray (~#F8F8F8 or pure white).
-- The shell prompt line is visible at the top of the content area: `~/path/to/project (main ✗)` followed by two small colored icons — a red/orange asterisk-like asterisk glyph and a green right-triangle play icon. This is a zsh prompt with git status indicators and likely an aislopdesk-specific run/watch indicator.
+- The shell prompt line is visible at the top of the content area: `~/path/to/project (main ✗)` followed by two small colored icons — a red/orange asterisk-like asterisk glyph and a green right-triangle play icon. This is a zsh prompt with git status indicators and likely an slopdesk-specific run/watch indicator.
   - `~/path/to/project` — rendered in cyan/teal monospace.
   - `(main ✗)` — rendered in magenta/pink monospace, indicating a dirty git branch.
   - The asterisk/splat: orange-red color (~#CC3300), possibly indicating modified files.
-  - The triangle play button: green (~#2E7D32), possibly an aislopdesk watch or agent indicator.
+  - The triangle play button: green (~#2E7D32), possibly an slopdesk watch or agent indicator.
 - The cursor is not visible (or blinking). The pane is otherwise empty (no command output shown).
 
 **Typography:** Monospace font in the terminal pane (appears to be a standard terminal font, approximately 13–14px at 1x). The tab labels use a proportional sans-serif at approximately 13px.
@@ -112,25 +112,25 @@ System notifications (banners, sounds, Dock bounce) that fire when a task ends a
 
 ## Implementation notes
 
-**Architecture context:** Aislopdesk is a macOS host (running aislopdesk-hostd) + macOS/iOS client app. The terminal is rendered by libghostty behind a `TerminalSurface` seam. The host runs actual shell sessions; the client displays them.
+**Architecture context:** SlopDesk is a macOS host (running slopdesk-hostd) + macOS/iOS client app. The terminal is rendered by libghostty behind a `TerminalSurface` seam. The host runs actual shell sessions; the client displays them.
 
 ### Straightforward
 
 - **OSC 9;4 protocol parsing (host side):** The hostd already processes PTY output streams. It can parse `OSC 9;4;*` sequences out of the byte stream (before or alongside forwarding to the client) and emit progress-state events over the control channel to the client. This is a clean mapping.
-- **Tab badges on the client:** Aislopdesk's client UI has a pane/tab model (`WorkspaceStore`, `PaneKind`). Badge state (running, error, finished, awaiting-input) can be stored per-pane and rendered as overlay icons on tab/pane headers. The visual design (right-aligned small icons per the screenshot) maps directly onto the existing sidebar tab rows.
+- **Tab badges on the client:** SlopDesk's client UI has a pane/tab model (`WorkspaceStore`, `PaneKind`). Badge state (running, error, finished, awaiting-input) can be stored per-pane and rendered as overlay icons on tab/pane headers. The visual design (right-aligned small icons per the screenshot) maps directly onto the existing sidebar tab rows.
 - **Spinner badge for in-progress:** A simple animated spinner view can be placed right-aligned on each pane row when state == running/indeterminate.
 - **Auto-progress for known commands (host side):** Shell integration on the host (`OSC 133;D` exit marks) is already a planned feature. Auto-wrapping known slow commands to emit `OSC 9;4` is a host-side concern and fully mappable.
-- **`aislopdesk watch`:** Implemented as a host-side CLI wrapper that emits `OSC 9;4` sequences into the PTY. Not blocked by remote architecture.
-- **Agent IPC badges (Claude Code specifically):** Aislopdesk already has `ClaudeStatus`/`ClaudePaneDetector`/`AgentControlListener` (per MEMORY.md). The processing/idle/awaiting-input states from the agent IPC can drive the same badge types described above. Direct implementation.
-- **`aislopdesk watch:<agent>` blocking:** Can be implemented as a host-side CLI tool that polls the agent control socket and exits with the same codes (0/4/9).
+- **`slopdesk watch`:** Implemented as a host-side CLI wrapper that emits `OSC 9;4` sequences into the PTY. Not blocked by remote architecture.
+- **Agent IPC badges (Claude Code specifically):** SlopDesk already has `ClaudeStatus`/`ClaudePaneDetector`/`AgentControlListener` (per MEMORY.md). The processing/idle/awaiting-input states from the agent IPC can drive the same badge types described above. Direct implementation.
+- **`slopdesk watch:<agent>` blocking:** Can be implemented as a host-side CLI tool that polls the agent control socket and exits with the same codes (0/4/9).
 
 ### Needs care / caveats
 
-- **Dock icon animation and red-icon-on-error (macOS Dock):** This is a macOS-only feature that requires the client app to be a first-class macOS app with a Dock presence. Aislopdesk's macOS client app can implement this (NSDockTile + animated icon). The iOS client has no Dock equivalent — this feature is macOS-only and should be conditioned on `#if os(macOS)`.
-- **Taskbar-style progress bar (macOS/Windows taskbar):** Aislopdesk surfaces a taskbar-style progress bar on supported platforms. On macOS this would be the Dock tile progress indicator (`NSDockTile.badgeLabel` or custom drawing). This is implementable on macOS only; iOS has no equivalent.
+- **Dock icon animation and red-icon-on-error (macOS Dock):** This is a macOS-only feature that requires the client app to be a first-class macOS app with a Dock presence. SlopDesk's macOS client app can implement this (NSDockTile + animated icon). The iOS client has no Dock equivalent — this feature is macOS-only and should be conditioned on `#if os(macOS)`.
+- **Taskbar-style progress bar (macOS/Windows taskbar):** SlopDesk surfaces a taskbar-style progress bar on supported platforms. On macOS this would be the Dock tile progress indicator (`NSDockTile.badgeLabel` or custom drawing). This is implementable on macOS only; iOS has no equivalent.
 - **"Awaiting input" detection (~1.5 s cursor-at-prompt heuristic):** This heuristic requires the host to observe PTY output quiescence at a cursor position. Since the host has direct PTY access, it can implement this detection and forward the state to the client. However, the 1.5 s timer and the "typing clears it" behavior must be coordinated host-side (the host sees keystrokes and PTY output). This maps, but requires care in the host's PTY observer to not fire spuriously on long-running silent commands.
-- **Remote host-side shell integration:** Shell integration (`OSC 133`) must be installed in the remote shell on the host machine. Since aislopdesk manages its own PTY (aislopdesk-hostd), it can inject the integration shim into the shell environment. Already planned per MEMORY; no fundamental blocker.
-- **`aislopdesk tab badge` direct CLI badge override:** In aislopdesk the "client" and "host" are separate processes. A CLI command running on the host would need to communicate badge state to the client over the control channel. This requires a small host→client control message for "set badge on pane X". Mappable but requires a new wire message type (or reuse of the agent control IPC path).
+- **Remote host-side shell integration:** Shell integration (`OSC 133`) must be installed in the remote shell on the host machine. Since slopdesk manages its own PTY (slopdesk-hostd), it can inject the integration shim into the shell environment. Already planned per MEMORY; no fundamental blocker.
+- **`slopdesk tab badge` direct CLI badge override:** In slopdesk the "client" and "host" are separate processes. A CLI command running on the host would need to communicate badge state to the client over the control channel. This requires a small host→client control message for "set badge on pane X". Mappable but requires a new wire message type (or reuse of the agent control IPC path).
 - **Caffeinate / Sudo badges:** These require the host to detect `caffeinate` processes or `sudo` sessions in the PTY, which requires process inspection on the host (e.g. polling for child processes with `kinfo_proc`). Mappable on macOS host; more complex but feasible.
-- **Settings UI location:** These settings live under "Settings → Advanced / Appearance / Shell". Aislopdesk uses `PreferencesStore` + `EnvConfig`. The config keys should be added to `PreferencesStore` with the defaults documented above. The Settings UI pane in the client needs sections for these toggles.
+- **Settings UI location:** These settings live under "Settings → Advanced / Appearance / Shell". SlopDesk uses `PreferencesStore` + `EnvConfig`. The config keys should be added to `PreferencesStore` with the defaults documented above. The Settings UI pane in the client needs sections for these toggles.
 - **iOS client specifics:** iOS has no Dock, no taskbar. Badge indicators on tabs/panes are fully applicable on iOS. Agent badges and command badges all map. Only Dock/taskbar features are macOS-only.

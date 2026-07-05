@@ -1,8 +1,8 @@
 #!/usr/bin/env swift
 // capture-mouse-probe.swift — Isolation diagnostic for the THREE-FINGER-DRAG
-// drag-select ("bôi đen") bug in Aislopdesk's remote-mouse path.
+// drag-select ("bôi đen") bug in SlopDesk's remote-mouse path.
 //
-// WHY: over Aislopdesk a single click lands correctly (right coordinates), but a
+// WHY: over SlopDesk a single click lands correctly (right coordinates), but a
 // THREE-FINGER drag-select does nothing. The whole drag path depends on the CLIENT
 // forwarding a clean  mouseDown → mouseDragged…N → mouseUp : the host turns the
 // in-between moves into `.leftMouseDragged` ONLY while it believes a button is held
@@ -22,7 +22,7 @@
 //
 // HOW I READ IT:
 //   • 3-finger drag prints  mouseDown → mouseDragged×N → mouseUp   ⇒ client is FINE;
-//     the bug is the host-side heldButton race in AislopdeskVideoHostSession.inject — fix host.
+//     the bug is the host-side heldButton race in SlopDeskVideoHostSession.inject — fix host.
 //   • 3-finger drag prints  mouseDragged / mouseMoved with NO preceding mouseDown
 //     (or never a mouseUp)  ⇒ the client must synthesise the down / send drag explicitly.
 //   • clickCount==0 on the down is itself a useful tell (host does max(1,count) already).
@@ -41,7 +41,7 @@ final class ProbeView: NSView {
         if t0 == 0 { t0 = e.timestamp }
         let dt = Int((e.timestamp - t0) * 1000)
         let p = convert(e.locationInWindow, from: nil)
-        // Y flipped to top-left origin to match how Aislopdesk forwards points.
+        // Y flipped to top-left origin to match how SlopDesk forwards points.
         let y = Int((bounds.height - p.y).rounded())
         let padded = kind.padding(toLength: 18, withPad: " ", startingAt: 0)
         let line = "+\(String(format: "%5d", dt))ms  \(padded) btn=\(e.buttonNumber) count=\(e.clickCount)  (\(Int(p.x.rounded())),\(y))\n"
@@ -95,7 +95,7 @@ let win = NSWindow(
     styleMask: [.titled, .closable, .miniaturizable],
     backing: .buffered, defer: false,
 )
-win.title = "Aislopdesk mouse probe — click, 1-finger drag, 3-finger drag, then ⌘Q"
+win.title = "SlopDesk mouse probe — click, 1-finger drag, 3-finger drag, then ⌘Q"
 win.acceptsMouseMovedEvents = true
 let view = ProbeView(frame: win.contentView!.bounds)
 view.autoresizingMask = [.width, .height]

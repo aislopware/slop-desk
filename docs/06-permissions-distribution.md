@@ -17,11 +17,11 @@ The client (Mac/iOS) only needs **Local Network**, for same-LAN Bonjour discover
 ```xml
 <!-- Host: Screen Recording -->
 <key>NSScreenCaptureUsageDescription</key>
-<string>Aislopdesk shares your application windows with paired devices.</string>
+<string>SlopDesk shares your application windows with paired devices.</string>
 
 <!-- Client + Host: Local Network — without it Bonjour fails silently on iOS -->
 <key>NSLocalNetworkUsageDescription</key>
-<string>Aislopdesk discovers and connects to devices on the same local network.</string>
+<string>SlopDesk discovers and connects to devices on the same local network.</string>
 <key>NSBonjourServices</key>
 <array><string>_panecast._udp</string></array>
 ```

@@ -5,7 +5,7 @@ Gaps from `GAP-ANALYSIS.md` clustered into shippable epics, topologically ordere
 - **Estimate**: S ≈ <0.5 day, M ≈ 1 day, L ≈ 2–3 days, XL ≈ 1 week.
 - **Priority**: 1 (highest) … 5.
 - **specRefs**: spec files implemented. **gapRefs** in prose map back to `GAP-ANALYSIS.md` rows.
-- **Reuse first**: every epic notes the existing aislopdesk seam to extend — do not rebuild working engines (the current-state maps catalog them).
+- **Reuse first**: every epic notes the existing slopdesk seam to extend — do not rebuild working engines (the current-state maps catalog them).
 
 The ordered list:
 
@@ -30,7 +30,7 @@ The ordered list:
 | 17 | E17 Read-only mode + Vi-mode pill + secure input | 3 | M | E2,E7 |
 | 18 | E18 External drag-drop zones + tab reorder + web pane | 3 | M | E3,E6 |
 | 19 | E19 Window options (pin · size modes · multi-session UI · horizontal tab bar) | 4 | M | E3,E6 |
-| 20 | E20 CLI parity (`aislopdesk` subcommands) + watch + first-launch | 4 | L | E4,E13 |
+| 20 | E20 CLI parity (`slopdesk` subcommands) + watch + first-launch | 4 | L | E4,E13 |
 | 21 | E21 Remote-window extension first-class through UI-shell surfaces | 2 | M | E2,E6,E10,E11 |
 
 ---
@@ -45,7 +45,7 @@ The ordered list:
 ## E2 — Overlay host mount
 **Goal.** Mount the fully-built `OverlayCoordinator` into the live scene and pass its toggle closures into `WorkspaceKeyDispatcher`, then build the three missing overlay views, unlocking palette/cheat-sheet/find/toasts/connect/remote-picker in one structural pass.
 **specRefs.** `spec/user-interface__command-palette.md`, `spec/customization__custom-keybindings.md`, `spec/user-interface__find.md`.
-**Scope.** Instantiate `OverlayCoordinator` in `AislopdeskClientApp`; call `overlayCoordinator(_:)` on the scene root; construct `WorkspaceKeyDispatcher` with `togglePalette`/`toggleCheatSheet`/`toggleFind`/`togglePeekReply`/connect/remote-picker closures. Build **PaletteView** (search field, section headers, keycap chips, ✓ toggle-state, selected-row fill, ⌘↩ chain, Esc), **KeyboardCheatSheetView** (from `groupedForDisplay`), and the **toast** host. Wire connect-to-host overlay + remote-window picker mounts. (Find bar view lands in E5; this epic exposes its toggle.)
+**Scope.** Instantiate `OverlayCoordinator` in `SlopDeskClientApp`; call `overlayCoordinator(_:)` on the scene root; construct `WorkspaceKeyDispatcher` with `togglePalette`/`toggleCheatSheet`/`toggleFind`/`togglePeekReply`/connect/remote-picker closures. Build **PaletteView** (search field, section headers, keycap chips, ✓ toggle-state, selected-row fill, ⌘↩ chain, Esc), **KeyboardCheatSheetView** (from `groupedForDisplay`), and the **toast** host. Wire connect-to-host overlay + remote-window picker mounts. (Find bar view lands in E5; this epic exposes its toggle.)
 **Est** L · **Pri** 1 · **dependsOn** E1
 **Acceptance:** ES-E2-1…ES-E2-6.
 
@@ -120,7 +120,7 @@ The ordered list:
 **Acceptance:** ES-E12-1…ES-E12-5.
 
 ## E13 — Agent integration UI (Claude Code)
-**Goal.** Surface the complete host detection stack as aislopdesk's agent experience: install card, behavior toggles, tab badges, Send-to-Chat, History, Resume/Fork. Claude Code only.
+**Goal.** Surface the complete host detection stack as slopdesk's agent experience: install card, behavior toggles, tab badges, Send-to-Chat, History, Resume/Fork. Claude Code only.
 **specRefs.** `spec/agents__{setup,supported-agents,agents-overview,send-to-chat,history,fork-branch-session,parallel-tasks}.md`, `spec/getting-started__first-launch.md`.
 **Scope.** **Agents settings card**: Install/Uninstall hooks into host `~/.claude/settings.json` over the control channel + Status row (O4). **Behavior toggles** (badge×3, notify×2, prevent-sleep via `IOPMAssertion` on host, resume-on-recovery) (O5/O12) with per-pane overrides + Clear-Badge action. **Tab badges** already from E6. **AgentInputFooter** view mounted (notifications/rich-input/file-explorer chips). **Send to Chat `⌘⌃↩`** (O9): capture selection / last-output (OSC-133 D), modal dialog (quoted preview, Send-to session picker, comment, Copy/Cancel/Send), route to active agent pane, auto-focus. **History viewer** (O10): host RPC (E4) lists/reads `~/.claude/projects/*.jsonl`; client transcript renderer (reuse `MarkdownText`) + raw-toggle + **Resume** (`claude --resume <id>`, jump-if-live). **Fork** (O11): detect new session id from PTY, route to split/tab; palette "Fork in…". Peek-and-Reply overlay `⌘⇧J` (build the missing view over existing logic).
 **Est** XL · **Pri** 2 · **dependsOn** E2, E4, E6, E12
@@ -136,14 +136,14 @@ The ordered list:
 ## E15 — Theming editor + custom/import themes + fonts parity
 **Goal.** Add the theme editor, custom/imported themes, and the documented font settings.
 **specRefs.** `spec/customization__{themes,fonts}.md`, `spec/terminal-features__unicode-and-text-styles.md`.
-**Scope.** Dual-slot follow-OS toggle (M2); custom `~/.config/aislopdesk/themes/*.toml` scan+parser (M3); import iTerm2/Kitty/Alacritty/Ghostty (M4); theme editor (swatch grid, chrome regions, Duplicate/Edit/Open-Folder) (M5); container tokens per theme (M6). Fonts: family picker w/ specimens (host-install caveat) (M9), fallback + scope tabs (M10/J5), line-height modes (M11), ligature/bold/italic/underline/blink/blending settings (J4/J6/M12). (`⌘+`/`⌘-`/`⌘0` already from E1; wire to config-builder rebuild without PTY reflow.)
+**Scope.** Dual-slot follow-OS toggle (M2); custom `~/.config/slopdesk/themes/*.toml` scan+parser (M3); import iTerm2/Kitty/Alacritty/Ghostty (M4); theme editor (swatch grid, chrome regions, Duplicate/Edit/Open-Folder) (M5); container tokens per theme (M6). Fonts: family picker w/ specimens (host-install caveat) (M9), fallback + scope tabs (M10/J5), line-height modes (M11), ligature/bold/italic/underline/blink/blending settings (J4/J6/M12). (`⌘+`/`⌘-`/`⌘0` already from E1; wire to config-builder rebuild without PTY reflow.)
 **Est** L · **Pri** 3 · **dependsOn** E7
 **Acceptance:** ES-E15-1…ES-E15-5.
 
 ## E16 — Recipes + snippets
 **Goal.** Build the Recipes subsystem (save/restore layouts, command replay) and surface the existing snippet engine.
 **specRefs.** `spec/customization__custom-commands.md`, `spec/user-interface__window-tab-split.md`.
-**Scope.** Tree-path **Save Layout `⌘S`** (scope tab/window, content layout/commands) → `.aislopdeskrecipe` TOML (A28/N7); Open Recipe restore via `reconcileTree`; portable-path vars; command-replay modes (Auto/Ask-Once/Manually/Skip) + trust-hash store; shell-handoff pause via OSC-133. **Snippets UI** (N8): editor (Name/Alias/Text + `{{clipboard}}`/`{{date}}`/`{{time}}`/`{{cursor}}`), alias expansion at prompt, palette entries — reuse `SnippetExpander`/`SendKeysParser`/CRUD store methods.
+**Scope.** Tree-path **Save Layout `⌘S`** (scope tab/window, content layout/commands) → `.slopdeskrecipe` TOML (A28/N7); Open Recipe restore via `reconcileTree`; portable-path vars; command-replay modes (Auto/Ask-Once/Manually/Skip) + trust-hash store; shell-handoff pause via OSC-133. **Snippets UI** (N8): editor (Name/Alias/Text + `{{clipboard}}`/`{{date}}`/`{{time}}`/`{{cursor}}`), alias expansion at prompt, palette entries — reuse `SnippetExpander`/`SendKeysParser`/CRUD store methods.
 **Est** L · **Pri** 3 · **dependsOn** E3, E7, E11
 **Acceptance:** ES-E16-1…ES-E16-4.
 
@@ -169,15 +169,15 @@ The ordered list:
 **Acceptance:** ES-E19-1…ES-E19-4.
 
 ## E20 — CLI parity + watch + first-launch
-**Goal.** Extend the `aislopdesk` CLI to full parity with the reference command set and add the first-launch flow.
+**Goal.** Extend the `slopdesk` CLI to full parity with the reference command set and add the first-launch flow.
 **specRefs.** `spec/reference__cli.md`, `spec/terminal-features__progress-state.md`, `spec/getting-started__first-launch.md`.
-**Scope.** Map the reference subcommands onto `aislopdesk-ctl`/store ops: `open/view/edit`, `config get/set/reload`, `font/theme/keybind list`, `tab/pane/window` (`send-keys` already exists), `tab badge --kind`, `pane capture`, `watch <cmd>` (OSC 9;4 wrapper), `watch:claude <id>` (exit 0/4/9), `jump/learn/ignore` (frecency), `version`, `completions`, `state:`/`ipc` (done). Install-CLI flow + omit-prefix (O3). First-launch settings (On-Launch, default-terminal local-only, install hooks card) (O1/O2).
+**Scope.** Map the reference subcommands onto `slopdesk-ctl`/store ops: `open/view/edit`, `config get/set/reload`, `font/theme/keybind list`, `tab/pane/window` (`send-keys` already exists), `tab badge --kind`, `pane capture`, `watch <cmd>` (OSC 9;4 wrapper), `watch:claude <id>` (exit 0/4/9), `jump/learn/ignore` (frecency), `version`, `completions`, `state:`/`ipc` (done). Install-CLI flow + omit-prefix (O3). First-launch settings (On-Launch, default-terminal local-only, install hooks card) (O1/O2).
 **Est** L · **Pri** 4 · **dependsOn** E4, E13
 **Acceptance:** ES-E20-1…ES-E20-4.
 
 ## E21 — Remote-window extension first-class through UI-shell surfaces
 **Goal.** Ensure the user's remote-window feature flows through every UI-shell surface as a first-class peer of terminal panes.
-**specRefs.** (aislopdesk-native extension, no external analog; design alongside `spec/user-interface__window-tab-split.md` and `spec/user-interface__open-quickly.md`.)
+**specRefs.** (slopdesk-native extension, no external analog; design alongside `spec/user-interface__window-tab-split.md` and `spec/user-interface__open-quickly.md`.)
 **Scope.** Mount the remote-window picker + connect-to-host overlay (rides E2's OverlayCoordinator mount) (P2/P3). Ensure `.remoteGUI` panes participate in: palette/Open-Quickly results, drag-drop zones (E18), zoom, floating render, sidebar rows + badges (E6), status bar (E10), read-only gate (E17). Floating-pane renderer in `SplitContainer` (covers the floating-pane gap that also blocks composer-pin/float). Per-host badge in pickers where multi-host lands.
 **Est** M · **Pri** 2 · **dependsOn** E2, E6, E10, E11
 **Acceptance:** ES-E21-1…ES-E21-4.

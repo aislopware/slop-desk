@@ -2,7 +2,7 @@
 
 ## Summary
 
-Desktop notifications, bell behaviour, focus/attention requests, and the security toggles that gate what a program in the terminal is allowed to do. Programs can post macOS system notifications via OSC 9, OSC 777, or OSC 99. The bell (`BEL 0x07`) plays via `NSSound.beep()`. The Dock icon bounces when a notification fires while aislopdesk is not the active app. A comprehensive set of per-pane toggles under Settings → Shell control when notifications fire; privilege toggles under Settings → Advanced and Settings → Controls gate risky escape sequences (clipboard read/write, title reporting, secure keyboard entry, IPC injection).
+Desktop notifications, bell behaviour, focus/attention requests, and the security toggles that gate what a program in the terminal is allowed to do. Programs can post macOS system notifications via OSC 9, OSC 777, or OSC 99. The bell (`BEL 0x07`) plays via `NSSound.beep()`. The Dock icon bounces when a notification fires while slopdesk is not the active app. A comprehensive set of per-pane toggles under Settings → Shell control when notifications fire; privilege toggles under Settings → Advanced and Settings → Controls gate risky escape sequences (clipboard read/write, title reporting, secure keyboard entry, IPC injection).
 
 ## Behaviors
 
@@ -13,16 +13,16 @@ Desktop notifications, bell behaviour, focus/attention requests, and the securit
 - Notifications can be suppressed by disabling **Notification — Shell Controlled** (Settings → Shell).
 - `BEL` (`0x07`) rings the system alert sound via `NSSound.beep()`. Controlled by **Sound — Shell Controlled** (Settings → Shell, on by default).
 - **Sound on Error Exit** (Settings → Shell, off by default) beeps when a command exits with non-zero status; requires shell integration.
-- Aislopdesk does **not** implement a visual/flash bell — audio only.
-- When a notification fires and aislopdesk is not the active application, the Dock icon bounces via `NSApplication.requestUserAttention`. Controlled by **Bounce Dock Icon** (Settings → Shell, on by default).
-- Aislopdesk drives the dock bounce from notification OSCs (9 / 777 / 99), **not** from the bell — unlike Ghostty.
-- By default macOS suppresses notification banners while aislopdesk is the foreground app. **Notify While Foreground** overrides this with three states: `off` (default, system suppresses), `always` (always show banners even when frontmost), `tab-unfocused` (show banner only when notification comes from a tab that is not the active one).
+- SlopDesk does **not** implement a visual/flash bell — audio only.
+- When a notification fires and slopdesk is not the active application, the Dock icon bounces via `NSApplication.requestUserAttention`. Controlled by **Bounce Dock Icon** (Settings → Shell, on by default).
+- SlopDesk drives the dock bounce from notification OSCs (9 / 777 / 99), **not** from the bell — unlike Ghostty.
+- By default macOS suppresses notification banners while slopdesk is the foreground app. **Notify While Foreground** overrides this with three states: `off` (default, system suppresses), `always` (always show banners even when frontmost), `tab-unfocused` (show banner only when notification comes from a tab that is not the active one).
 - In the notification-setting screenshot, the actual rendered label for this dropdown is "Only when source tab is unfocused", indicating the UI uses human-readable labels rather than raw enum values.
-- A **System Permission** status row (green dot = allowed, amber/red = blocked) is shown at the top of Settings → Shell → Notification section, with an **Open System Settings** button that deep-links to System Settings → Notifications → Aislopdesk.
+- A **System Permission** status row (green dot = allowed, amber/red = blocked) is shown at the top of Settings → Shell → Notification section, with an **Open System Settings** button that deep-links to System Settings → Notifications → SlopDesk.
 - All notification/privilege toggles are **per-pane defaults** — a new pane inherits the current values; shell-integration-dependent toggles require shell integration active.
 - **Notify on Finish** (off by default): fires when any command exits with code 0.
 - **Notify on Error** (on by default): fires when a command exits non-zero.
-- **Notify on Watch Finish** (on by default): fires when an `aislopdesk watch`-wrapped command finishes.
+- **Notify on Watch Finish** (on by default): fires when an `slopdesk watch`-wrapped command finishes.
 - **Code Agent — Notify When Task Completes** (on by default): fires via IPC when a coding agent (Claude Code, Codex, OpenCode) finishes a task and goes idle. Does NOT require shell integration.
 - **Code Agent — Notify When Awaiting Input** (on by default): fires via IPC when a coding agent needs approval or input. Does NOT require shell integration.
 - **Title Report** (off by default, Settings → Advanced): allows apps to read the window title back via `OSC 21` / XTWINOPS. Default off because a program that can both set and read the title can exfiltrate data through a pane.
@@ -53,9 +53,9 @@ All toggles live under Settings → Shell, Settings → Advanced, or Settings �
 | Notification — Shell Controlled (Allow App Notifications) | on | Allow shell apps to post notifications via OSC 9 / 777 / 99 |
 | Notify on Finish (Notify on Command Finish) | off | Notify when any command exits with code 0 |
 | Notify on Error (Notify on Error Exit) | on | Notify when a command exits non-zero |
-| Notify on Watch Finish | on | Notify when an `aislopdesk watch`-wrapped command finishes |
-| Notify While Foreground | off / `tab-unfocused` | Banner policy while aislopdesk is frontmost: `off` (suppress), `always`, `tab-unfocused` |
-| Bounce Dock Icon | on | Bounce Dock icon when notification arrives and aislopdesk is not focused |
+| Notify on Watch Finish | on | Notify when an `slopdesk watch`-wrapped command finishes |
+| Notify While Foreground | off / `tab-unfocused` | Banner policy while slopdesk is frontmost: `off` (suppress), `always`, `tab-unfocused` |
+| Bounce Dock Icon | on | Bounce Dock icon when notification arrives and slopdesk is not focused |
 | Sound — Shell Controlled | on | Allow shell apps to ring `BEL` (plays `NSSound.beep()`) |
 | Sound on Error Exit | off | Beep when a command exits with non-zero status (requires shell integration) |
 | Code Agent — Notify When Task Completes | on | Notification via IPC when coding agent finishes and goes idle |
@@ -77,13 +77,13 @@ All toggles live under Settings → Shell, Settings → Advanced, or Settings �
 A macOS system notification banner (standard Notification Center style, rendered by the OS). The banner is a rounded-rectangle card (~740×130 pt visible area) with a light grey background (approx #F2F2F2), large corner radius (~16 pt), subtle drop shadow on a neutral grey desktop background.
 
 Layout (left to right):
-- **App icon** (left-aligned, vertically centred): the aislopdesk app icon — a dark near-black circle (~50×50 pt) containing a `>_` prompt glyph in white/light grey. Positioned with ~16 pt leading inset from the card edge.
+- **App icon** (left-aligned, vertically centred): the slopdesk app icon — a dark near-black circle (~50×50 pt) containing a `>_` prompt glyph in white/light grey. Positioned with ~16 pt leading inset from the card edge.
 - **Text block** (right of icon, ~16 pt gap): two lines of text, left-aligned, vertically centred.
   - Line 1 — **title**: "Deploy" — system-default semibold or bold weight, ~15–16 pt, near-black (~#111111).
   - Line 2 — **body**: "Production is live" — system-default regular weight, ~13–14 pt, mid-grey (~#555555).
 - No action buttons, close button, or expand chevron visible in this state (banner-style, not alert-style).
 
-The notification is entirely OS-rendered; the app supplies only the title string, body string, and app icon. No custom UI from aislopdesk.
+The notification is entirely OS-rendered; the app supplies only the title string, body string, and app icon. No custom UI from slopdesk.
 
 ### notification-setting.png — Settings → Shell → Notification panel
 
@@ -111,9 +111,9 @@ Toggle rows under NOTIFICATION (each row: label left, control right, subtitle be
 1. **Allow App Notifications** — toggle ON (green, iOS-style rounded pill ~51×31 pt). Subtitle: "Allow shell apps to send system notifications".
 2. **Notify on Command Finish** — toggle OFF (grey/white, same pill shape). Subtitle: "Notify when a background command finishes".
 3. **Notify on Error Exit** — toggle ON (green). Subtitle: "Notify when a command fails".
-4. **Notify on Watch Finish** — toggle ON (green). Subtitle: "Notify when an `aislopdesk watch`-wrapped command finishes".
-5. **Notify While Foreground** — no toggle; instead a dropdown/segmented control on the right showing "Only when source tab is unfocused ∨" (with a downward chevron). Subtitle: "Banner behavior while aislopdesk is the foreground app". The dropdown has a light rounded-rectangle border (~1 pt stroke, ~#CCCCCC), white fill, system-default font ~13 pt.
-6. **Bounce Dock Icon** — toggle ON (green). Subtitle: "Bounce the Dock icon when a notification arrives and aislopdesk isn't focused".
+4. **Notify on Watch Finish** — toggle ON (green). Subtitle: "Notify when an `slopdesk watch`-wrapped command finishes".
+5. **Notify While Foreground** — no toggle; instead a dropdown/segmented control on the right showing "Only when source tab is unfocused ∨" (with a downward chevron). Subtitle: "Banner behavior while slopdesk is the foreground app". The dropdown has a light rounded-rectangle border (~1 pt stroke, ~#CCCCCC), white fill, system-default font ~13 pt.
+6. **Bounce Dock Icon** — toggle ON (green). Subtitle: "Bounce the Dock icon when a notification arrives and slopdesk isn't focused".
 
 **Section header "TAB BADGE"** — same all-caps grey label style, ~24 pt top padding below last Notification row.
 
@@ -139,7 +139,7 @@ A terminal window in light mode. Window chrome: traffic-light buttons (red/yello
 
 Terminal content area: white background, monospace font. Two lines of terminal output visible: `~ > sudo ls` (with green prompt triangle `▷` glyph and tilde in cyan/teal) and `Password:` with a block cursor (black rectangle).
 
-The secure-input indicator is entirely within aislopdesk's window frame — it is NOT a system-level overlay. The active (all-green) traffic-light buttons confirm the window is focused.
+The secure-input indicator is entirely within slopdesk's window frame — it is NOT a system-level overlay. The active (all-green) traffic-light buttons confirm the window is focused.
 
 ## Screenshots
 
@@ -151,12 +151,12 @@ The secure-input indicator is entirely within aislopdesk's window frame — it i
 
 ### Straightforward
 
-- **OSC 9 / 777 / 99 → native macOS notifications**: On the macOS client, these can be forwarded from the remote host PTY stream via the existing terminal mux. The client intercepts OSC sequences in the rendered stream and posts `UNUserNotificationContent` directly. This is straightforward since aislopdesk's client runs on macOS and has full UserNotifications access.
+- **OSC 9 / 777 / 99 → native macOS notifications**: On the macOS client, these can be forwarded from the remote host PTY stream via the existing terminal mux. The client intercepts OSC sequences in the rendered stream and posts `UNUserNotificationContent` directly. This is straightforward since slopdesk's client runs on macOS and has full UserNotifications access.
 - **Bell (`BEL 0x07`) → `NSSound.beep()`**: Trivial in the macOS client. The client intercepts `0x07` from the terminal stream and calls `NSSound.beep()`.
 - **Bounce Dock Icon**: `NSApplication.requestUserAttention(.informationalRequest)` on the macOS client. Same trigger point as notifications.
 - **Notify While Foreground / tab-unfocused**: The client already knows which pane/tab is active, so the `tab-unfocused` filtering is local client logic.
-- **Per-pane toggle defaults**: Already aligned with aislopdesk's per-pane preference model (PreferencesStore is injected).
-- **Secure Input Indicator pill**: Client-side title-bar badge; aislopdesk already has a title bar and can insert a SwiftUI overlay or NSTextField pill. Blue pill, white "SECURE INPUT" all-caps + lock icon. Position: far-right of title bar.
+- **Per-pane toggle defaults**: Already aligned with slopdesk's per-pane preference model (PreferencesStore is injected).
+- **Secure Input Indicator pill**: Client-side title-bar badge; slopdesk already has a title bar and can insert a SwiftUI overlay or NSTextField pill. Blue pill, white "SECURE INPUT" all-caps + lock icon. Position: far-right of title bar.
 - **Auto Secure Input** (canonical-no-echo detection): Requires detecting when the remote PTY enters canonical no-echo mode. The host PTY layer can observe termios `c_lflag & ECHO == 0 && c_lflag & ICANON != 0` and send a control message to the client; the client then calls `enableSecureEventInput()`. The host needs to signal this state over the control channel (a new control message type), and the client must call the macOS API — not blocked, but requires a new wire event.
 - **Clipboard — Shell Controlled / Clipboard Read / Write** (`OSC 52`): The remote host may generate `OSC 52` sequences. Because the clipboard lives on the client side, the client intercepts `OSC 52` from the terminal stream and applies the read/write policy locally. `ask` mode requires a client-side permission dialog.
 - **Title — Shell Controlled** (`OSC 0` / `OSC 2`): Client intercepts from the terminal stream and updates the tab/window title. Already common in terminal emulators and straightforward.
@@ -164,11 +164,11 @@ The secure-input indicator is entirely within aislopdesk's window frame — it i
 
 ### Needs care / caveats
 
-- **Code Agent notifications via IPC** (Claude Code / Codex / OpenCode): The agent runs on the **remote host** in aislopdesk's architecture. The `ClaudeStatus` / `ClaudePaneDetector` / `AgentControlListener` infrastructure already exists in aislopdesk (per memory note 2026-06-21). The IPC path must be tunnelled over the existing control channel (TCP control connection) from host to client — it requires the host agent-detector to forward state events over the wire, and the client to fire local macOS notifications based on those events. **Flag: agent IPC state must transit the control channel.**
+- **Code Agent notifications via IPC** (Claude Code / Codex / OpenCode): The agent runs on the **remote host** in slopdesk's architecture. The `ClaudeStatus` / `ClaudePaneDetector` / `AgentControlListener` infrastructure already exists in slopdesk (per memory note 2026-06-21). The IPC path must be tunnelled over the existing control channel (TCP control connection) from host to client — it requires the host agent-detector to forward state events over the wire, and the client to fire local macOS notifications based on those events. **Flag: agent IPC state must transit the control channel.**
 - **System Permission status row** (green/amber dot + "Open System Settings" button): On macOS client this is straightforward — query `UNUserNotificationCenter.current().getNotificationSettings` and deep-link to the preference pane. On **iOS client**, the deep-link to System Settings uses `UIApplication.open(URL(string: UIApplication.openSettingsURLString)!)` which opens the app's own settings, NOT the system notifications pane. The Notification settings pane is not directly deep-linkable on iOS. **Flag: iOS cannot deep-link to the OS notification settings panel for a specific app.**
-- **IPC Allow Send Keys / IPC Allow Sensitive Sessions**: "IPC" from the client side travels over the authenticated control channel. The security model is the trusted WireGuard mesh (per CLAUDE.md design), not a local-process IPC threat model. These toggles are implemented as host-side guards on the agent-control socket (`AISLOPDESK_AGENT_CONTROL=1` path). **Flag: semantics differ from a local-IPC threat model; implement as host-side agent-control guards.**
-- **Sound on Error Exit**: Requires shell integration (OSC 133 marks). Aislopdesk supports OSC 133 already (per workspace-ui-multiplexer memory). The host detects non-zero exit via the mark, sends a control event, and the client plays the sound. Feasible but depends on shell integration being active on the remote host shell.
+- **IPC Allow Send Keys / IPC Allow Sensitive Sessions**: "IPC" from the client side travels over the authenticated control channel. The security model is the trusted WireGuard mesh (per CLAUDE.md design), not a local-process IPC threat model. These toggles are implemented as host-side guards on the agent-control socket (`SLOPDESK_AGENT_CONTROL=1` path). **Flag: semantics differ from a local-IPC threat model; implement as host-side agent-control guards.**
+- **Sound on Error Exit**: Requires shell integration (OSC 133 marks). SlopDesk supports OSC 133 already (per workspace-ui-multiplexer memory). The host detects non-zero exit via the mark, sends a control event, and the client plays the sound. Feasible but depends on shell integration being active on the remote host shell.
 - **Notify on Finish / Notify on Error**: Same dependency on OSC 133 shell integration on the remote shell. The host must forward the exit-code event over the control channel.
-- **`aislopdesk watch` / Notify on Watch Finish**: `aislopdesk watch` would be a host-side CLI wrapper command that emits the same watch-tagged finish event. Not yet implemented. **Flag: requires an aislopdesk-side watch command.**
-- **Configuration key names** (`privilege-*`, `notification-*`, `title-report`, `clipboard-read`, `clipboard-write`, `auto-secure-input`): Aislopdesk uses `AISLOPDESK_*` env vars and `PreferencesStore` / `SettingsKey` (`Defaults` product) rather than a config file. Map each toggle to a `SettingsKey` in `PreferencesStore`. No config-file parser needed (per aislopdesk architecture).
-- **Privileges menu** (separate macOS menu): Aislopdesk does not currently have a Privileges menu. These toggles should appear in the command palette and settings panel; a dedicated menu item group under the app menu may be added but is not architecturally required.
+- **`slopdesk watch` / Notify on Watch Finish**: `slopdesk watch` would be a host-side CLI wrapper command that emits the same watch-tagged finish event. Not yet implemented. **Flag: requires an slopdesk-side watch command.**
+- **Configuration key names** (`privilege-*`, `notification-*`, `title-report`, `clipboard-read`, `clipboard-write`, `auto-secure-input`): SlopDesk uses `SLOPDESK_*` env vars and `PreferencesStore` / `SettingsKey` (`Defaults` product) rather than a config file. Map each toggle to a `SettingsKey` in `PreferencesStore`. No config-file parser needed (per slopdesk architecture).
+- **Privileges menu** (separate macOS menu): SlopDesk does not currently have a Privileges menu. These toggles should appear in the command palette and settings panel; a dedicated menu item group under the app menu may be added but is not architecturally required.

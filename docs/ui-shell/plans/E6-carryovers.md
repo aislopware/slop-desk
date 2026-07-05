@@ -4,7 +4,7 @@ These fold into E6's acceptance criteria. The design + implementation MUST honor
 
 ## Scope reduction (BINDING — user directive, do NOT build)
 
-**Horizontal tab bar is DROPPED.** aislopdesk is **vertical-tabs-only** by deliberate product decision (already encoded in E7 Settings → Appearance → Tabs, and in the `e7-close` commit `f3ea994`).
+**Horizontal tab bar is DROPPED.** slopdesk is **vertical-tabs-only** by deliberate product decision (already encoded in E7 Settings → Appearance → Tabs, and in the `e7-close` commit `f3ea994`).
 
 For E6 specifically:
 

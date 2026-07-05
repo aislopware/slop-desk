@@ -1,24 +1,24 @@
-# XcodeGen spec for the Aislopdesk macOS client app.
+# XcodeGen spec for the SlopDesk macOS client app.
 #
 # This project.yml is the SOURCE OF TRUTH; the generated `.xcodeproj` is gitignored
 # (regenerate with: `xcodegen generate --spec Apps/ClientApp-macOS/project.yml`).
 #
-# The app target depends on the LOCAL SwiftPM package product `AislopdeskClientUI` (which
-# transitively pulls AislopdeskClient/AislopdeskInspector/AislopdeskClaudeCode/AislopdeskTerminal). The `@main`
-# entry is `Apps/Shared/AppMain.swift` → `AislopdeskClientApp` (in the library).
+# The app target depends on the LOCAL SwiftPM package product `SlopDeskClientUI` (which
+# transitively pulls SlopDeskClient/SlopDeskInspector/SlopDeskClaudeCode/SlopDeskTerminal). The `@main`
+# entry is `Apps/Shared/AppMain.swift` → `SlopDeskClientApp` (in the library).
 #
 # The libghostty `GhosttyTerminalView` (Metal + GhosttySurface) is added once the
 # xcframework exists (see Apps/Shared/AppMain.swift wiring notes + ThirdParty/ghostty/README);
 # until then the BUILD-STATUS placeholder renders (libghostty-only policy, no fallback).
 name: ClientApp-macOS
 options:
-  bundleIdPrefix: com.aislopdesk
+  bundleIdPrefix: com.slopdesk
   deploymentTarget:
     macOS: "26.0"
   createIntermediateGroups: true
 
 packages:
-  Aislopdesk:
+  SlopDesk:
     # The local SwiftPM package at the repo root (two levels up from this spec).
     path: ../..
 
@@ -35,15 +35,15 @@ targets:
       # `import CGhostty` resolves and `#if canImport(CGhostty)` flips true.
       - path: ../../ThirdParty/ghostty/integration/GhosttySurface
     dependencies:
-      # The rebuilt SwiftUI scene (L2): AppMain launches `AislopdeskClientApp` from this product, which
-      # transitively pulls in AislopdeskWorkspaceCore (logic + seam types) + AislopdeskDesignSystem (tokens).
-      - package: Aislopdesk
-        product: AislopdeskClientUI
+      # The rebuilt SwiftUI scene (L2): AppMain launches `SlopDeskClientApp` from this product, which
+      # transitively pulls in SlopDeskWorkspaceCore (logic + seam types) + SlopDeskDesignSystem (tokens).
+      - package: SlopDesk
+        product: SlopDeskClientUI
       # PATH 2 (GUI video path): links the client decode/render/cursor pipeline so
       # AppMain can register VideoWindowFactory.shared with the real VideoWindowView.
       # Carries VideoToolbox/Metal — never instantiated in tests, only at GUI launch.
-      - package: Aislopdesk
-        product: AislopdeskVideoClient
+      - package: SlopDesk
+        product: SlopDeskVideoClient
       # PATH 1 (libghostty renderer): the libghostty static binary (the link-time
       # `ghostty` C-ABI symbols) packaged as an xcframework, built ON this macOS-26.5 host
       # by ThirdParty/ghostty/build-libghostty.sh. The universal build also ships iOS
@@ -67,8 +67,8 @@ targets:
         com.apple.security.network.client: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.aislopdesk.client.macos
-        PRODUCT_NAME: Aislopdesk
+        PRODUCT_BUNDLE_IDENTIFIER: com.slopdesk.client.macos
+        PRODUCT_NAME: SlopDesk
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"

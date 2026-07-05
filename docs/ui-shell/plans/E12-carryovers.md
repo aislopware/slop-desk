@@ -17,7 +17,7 @@ agent-support reduction applies. Treat each reduction below as a **hard exclusio
   not agent-driving — keep the OSC-133 `.commandFinished` idle-dispatch seam; just don't surface a
   multi-agent chooser.)
 - **No horizontal tab bar.** Not relevant to the composer, but standing: never introduce a
-  horizontal/top tab-bar layout anywhere E12 touches. aislopdesk is vertical-tabs-only (encoded in
+  horizontal/top tab-bar layout anywhere E12 touches. slopdesk is vertical-tabs-only (encoded in
   `docs/DECISIONS.md`).
 - **No SSH-host filter.** Standing exclusion (primary impact E11); do not add an SSH-host filter/pill
   in any surface E12 touches.

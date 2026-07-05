@@ -1,5 +1,5 @@
-import AislopdeskTransport // PortValidation (R16 HOSTVIEW-1)
 import AppKit
+import SlopDeskTransport // PortValidation (R16 HOSTVIEW-1)
 import SwiftUI
 
 /// The body of the menu-bar popover (research §C4 / §C1).
@@ -95,7 +95,7 @@ struct MenuContentView: View {
         var title: String {
             switch self {
             case .stopHost: "Stop the host?"
-            case .quit: "Quit Aislopdesk Host?"
+            case .quit: "Quit SlopDesk Host?"
             }
         }
 
@@ -120,7 +120,7 @@ struct MenuContentView: View {
                 .fill(statusColor)
                 .frame(width: 9, height: 9)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Aislopdesk Host")
+                Text("SlopDesk Host")
                     .font(.headline)
                 Text(statusText)
                     .font(.caption)
@@ -269,7 +269,7 @@ struct MenuContentView: View {
                 NSApplication.shared.terminate(nil)
             }
         } label: {
-            Text("Quit Aislopdesk Host")
+            Text("Quit SlopDesk Host")
                 .frame(maxWidth: .infinity)
         }
         .controlSize(.regular)
@@ -297,7 +297,7 @@ private struct TCCRowView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 if !granted, row.requiresRelaunch {
-                    Text("Quit & Reopen Aislopdesk Host after granting.")
+                    Text("Quit & Reopen SlopDesk Host after granting.")
                         .font(.caption2)
                         .foregroundStyle(.orange)
                 }

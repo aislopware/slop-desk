@@ -57,25 +57,25 @@
 | **Renderer** | Low-latency display | `CAMetalLayer` or `AVSampleBufferDisplayLayer` |
 | **Input Capture** | Capture mouse/keyboard/touch → send to host | NSEvent / UIKit gestures |
 
-> The wire codec, packetization, **FEC** (Reed–Solomon over GF(2⁸), NEON-accelerated — `m=1` byte-identical to the original XOR parity, `m≥2` recovers multi-packet loss; with adaptive tiering), frame reassembly, and the realtime controllers — **ABR/congestion, FPS governor, LTR, decode gate/sequencer, jitter-depth pacer, delay-gradient trendline, coordinate mapping** — live in the Rust core (`aislopdesk-core`, safe Rust, zero runtime deps) behind a C-ABI (`aislopdesk-ffi`, header `aislopdesk_ffi.h`). The Swift modules **AislopdeskVideoHost** (capture/encode) and **AislopdeskVideoClient** (decode/render/input) call it through the **CAislopdeskFFI** C target.
+> The wire codec, packetization, **FEC** (Reed–Solomon over GF(2⁸), NEON-accelerated — `m=1` byte-identical to the original XOR parity, `m≥2` recovers multi-packet loss; with adaptive tiering), frame reassembly, and the realtime controllers — **ABR/congestion, FPS governor, LTR, decode gate/sequencer, jitter-depth pacer, delay-gradient trendline, coordinate mapping** — live in the Rust core (`slopdesk-core`, safe Rust, zero runtime deps) behind a C-ABI (`slopdesk-ffi`, header `slopdesk_ffi.h`). The Swift modules **SlopDeskVideoHost** (capture/encode) and **SlopDeskVideoClient** (decode/render/input) call it through the **CSlopDeskFFI** C target.
 
 ## 3. Package structure
 
 ```
-aislopdesk/
+slopdesk/
 ├── Package.swift
 ├── rust/
-│   ├── aislopdesk-core/   # safe Rust (no `unsafe`, 0 runtime deps): the
+│   ├── slopdesk-core/   # safe Rust (no `unsafe`, 0 runtime deps): the
 │   │                      #   performance core — wire codecs, FEC + reassembly,
 │   │                      #   ABR/congestion, FPS governor, LTR, decode gate/
 │   │                      #   sequencer, jitter pacer, coordinate mapping
-│   └── aislopdesk-ffi/    # C-ABI boundary (the only crate allowed `unsafe`)
-│                          #   → libaislopdesk_ffi.a + aislopdesk_ffi.h
+│   └── slopdesk-ffi/    # C-ABI boundary (the only crate allowed `unsafe`)
+│                          #   → libslopdesk_ffi.a + slopdesk_ffi.h
 ├── Sources/
-│   ├── CAislopdeskFFI/           # C target; links libaislopdesk_ffi.a
-│   ├── AislopdeskVideoProtocol/  # Swift surface over the core's video codec
-│   ├── AislopdeskVideoHost/      # macOS — capture, HW encode, send
-│   └── AislopdeskVideoClient/    # client — receive, HW decode, Metal render
+│   ├── CSlopDeskFFI/           # C target; links libslopdesk_ffi.a
+│   ├── SlopDeskVideoProtocol/  # Swift surface over the core's video codec
+│   ├── SlopDeskVideoHost/      # macOS — capture, HW encode, send
+│   └── SlopDeskVideoClient/    # client — receive, HW decode, Metal render
 └── docs/
 ```
 

@@ -175,13 +175,13 @@ The Details Panel is a right-side panel that gives context about the focused pan
 - `git-panel.png` — Git tab: branch/remote summary, changed-file list, inline diff overlay
 - `file-panel.png` — Files tab: search field + expandable file tree
 
-## Aislopdesk mapping notes
+## SlopDesk mapping notes
 
 ### What maps 1:1
 
 - **Panel toggle (⌘⇧R):** Can be bound in the existing `WorkspaceBindingRegistry` / keybindings system. The panel lives in the macOS client window chrome, no host involvement.
-- **Four tabs (Info / Outline / Git / Files):** Pure client-side UI; all read from the host connection's metadata. Tab switching via click and bindable commands maps directly to Aislopdesk's keybindings system.
-- **Process list (Info tab):** The host's `aislopdesk-hostd` already has PTY/process awareness; surface via an existing or new control-channel message that streams child-process list + uptime. PID is host-side but display is client-side.
+- **Four tabs (Info / Outline / Git / Files):** Pure client-side UI; all read from the host connection's metadata. Tab switching via click and bindable commands maps directly to SlopDesk's keybindings system.
+- **Process list (Info tab):** The host's `slopdesk-hostd` already has PTY/process awareness; surface via an existing or new control-channel message that streams child-process list + uptime. PID is host-side but display is client-side.
 - **Outline tab — command marks:** OSC 133 shell integration is already planned/implemented (`OSC-133` in the CLAUDE.md). Command marks from the host PTY stream can be indexed client-side to populate the outline list.
 - **Files tab:** Can be populated by asking the host for a directory listing rooted at the current working directory. Already precedented by the remote-window picker pattern (VideoControl types 7/8). Requires a new control-channel RPC: `listDirectory(path:)`.
 - **Ports section (Info tab):** Requires the host to emit listening-port information per pane. Can be sourced from `lsof -i` or `ss` on the host and sent over the control channel.
@@ -189,11 +189,11 @@ The Details Panel is a right-side panel that gives context about the focused pan
 
 ### What cannot map 1:1 and why
 
-- **Working directory (Info tab):** The working directory is HOST-side (reported by the remote shell via OSC 7 or by ptrace/proc-fs). Aislopdesk already tracks OSC 7 (`OSC 7 — Current Working Directory` in the VT reference). This works, but the PATH shown is always the host's filesystem path, not the client's — must display it clearly as a remote path.
-- **"Reveal in Finder" action:** Not applicable for a remote host. Should be replaced with "Copy Path" only, or a "Show in Remote Files" action that opens the path in aislopdesk's own file panel. Cannot open macOS Finder on a remote machine.
+- **Working directory (Info tab):** The working directory is HOST-side (reported by the remote shell via OSC 7 or by ptrace/proc-fs). SlopDesk already tracks OSC 7 (`OSC 7 — Current Working Directory` in the VT reference). This works, but the PATH shown is always the host's filesystem path, not the client's — must display it clearly as a remote path.
+- **"Reveal in Finder" action:** Not applicable for a remote host. Should be replaced with "Copy Path" only, or a "Show in Remote Files" action that opens the path in slopdesk's own file panel. Cannot open macOS Finder on a remote machine.
 - **"Open in VS Code / Cursor / Xcode / Typora" actions:** These open local applications on the CLIENT machine, pointing at a REMOTE path. Requires either: (a) a remote-open protocol (VS Code Remote / SSH extension), (b) mounting the remote filesystem via SSHFS first, or (c) omitting these actions until remote-FS support exists. Flag as P2.
-- **"Copy Session ID / View Session History / Fork in…" (agent actions, Info tab):** These are agent-pane-specific (OpenCode/Claude Code integration). Aislopdesk's `ClaudeStatus`/`ClaudePaneDetector` already exists per memory; wire these to the agent's session metadata from the host. "Fork in…" requires knowing the remote agent's fork API.
-- **Git "Commit" / "Fork" toolbar buttons (Git tab):** Executing git commit requires running a command on the HOST. "Fork" opens a native Git client (configured in Settings → Controls → Open With). For aislopdesk, the Commit action must either: (a) send a PTY command to the host's terminal, or (b) be omitted (read-only git status view only initially). Flag as P2 (requires host-side command execution beyond PTY).
+- **"Copy Session ID / View Session History / Fork in…" (agent actions, Info tab):** These are agent-pane-specific (OpenCode/Claude Code integration). SlopDesk's `ClaudeStatus`/`ClaudePaneDetector` already exists per memory; wire these to the agent's session metadata from the host. "Fork in…" requires knowing the remote agent's fork API.
+- **Git "Commit" / "Fork" toolbar buttons (Git tab):** Executing git commit requires running a command on the HOST. "Fork" opens a native Git client (configured in Settings → Controls → Open With). For slopdesk, the Commit action must either: (a) send a PTY command to the host's terminal, or (b) be omitted (read-only git status view only initially). Flag as P2 (requires host-side command execution beyond PTY).
 - **Git inline diff viewer (Git tab):** `git diff` output can be retrieved from the host over the control channel and rendered client-side as a diff view. The diff viewer overlay positioning (floating over the panel) is a client-side layout concern. Maps with effort.
 - **Hover actions on file rows (Git tab):** These are purely client-side UI interactions — fully implementable.
 - **Files tab — file tree:** Directory listing is a host-side query. Each expand/collapse requires a new RPC call to the host for subdirectory contents, or a full-tree snapshot up to N levels. Implement as lazy loading per directory expand. Fully feasible over the control channel.

@@ -12,7 +12,7 @@ E6); (2) the **reuse-map** for the two genuinely-new surfaces (external drop + w
 
 **Tab reorder is ALREADY BUILT in E6 — do NOT rebuild it.** The backlog's "Tab reorder manual drag
 (shares E6 sort=Manual)" is largely SATISFIED:
-- `Sources/AislopdeskClientUI/Columns/NavigatorColumn.swift:103` `handleTabDrop` + `:121`
+- `Sources/SlopDeskClientUI/Columns/NavigatorColumn.swift:103` `handleTabDrop` + `:121`
   `.dropDestination(for: String.self)` is the live rail drag-reorder source + drop target.
 - It routes → `WorkspaceStore.moveTab(from:to:)` / `moveTabRendered(from:to:)`
   (`Workspace/Store/WorkspaceStore+TabOrdering.swift:38/54`, both call `setTabSort(.manual)`) →
@@ -36,7 +36,7 @@ There is NO `NSDraggingDestination` / file-`onDrop` / `NSItemProvider` external-
 (New-Tab / Insert-Path / Open-In-Place / Split-L / Split-R) NEW, but reuse the actuators:
 - **Split-L / Split-R** → the existing split machinery: `Chrome/SlateTitlebar.swift:177 split(_ axis:)`,
   `WorkspaceRootView.swift WorkspaceSplitRepresentable` (NSViewControllerRepresentable),
-  `App/AislopdeskSplitViewController.swift`. Do NOT build a second split path.
+  `App/SlopDeskSplitViewController.swift`. Do NOT build a second split path.
 - **New-Tab** → the existing new-tab op (the same one ⌘T drives); honour New-Tab-Position + cwd-inherit
   (E3) when the drop creates a tab.
 - **Insert-Path** (inject the dropped path to the PTY) and **folder→`cd`** → the SINGLE client→host
@@ -63,7 +63,7 @@ cookies/cache). There is no `WKWebView`/`import WebKit` anywhere yet.
 **HEADLESS / HANG-SAFETY (binding).** WKWebView is a GUI/WebKit component — it belongs to the SAME
 family as `SCStream`/`VTCompression…`/Metal/a real `NSWindow`: **never instantiate it in a test, and
 never in a headless build.** Put the web view behind a SEAM exactly like the libghostty terminal
-renderer (`TerminalRenderingView` / `TerminalRendererFactory` in `AislopdeskClientUI`): the WKWebView
+renderer (`TerminalRenderingView` / `TerminalRendererFactory` in `SlopDeskClientUI`): the WKWebView
 is compiled ONLY inside the Xcode app target; the headless `swift build`/`swift test` slice renders a
 placeholder (the `BuildStatusPlaceholderView` pattern). The PURE parts ARE testable and MUST be tested:
 URL validation/normalization (validate-then-drop a malformed/non-http(s) URL, never force-unwrap),
@@ -87,13 +87,13 @@ DECISIONS, redeploy-together, validate-then-drop). Default: no new wire.
   covers `.fileURL`/`.url`/`.text` on both platforms; otherwise provide the iOS drop via
   `UIDropInteraction`, or **document the iOS external-drop as deferred + no-op** (honesty discipline —
   do not ship a dead iOS affordance).
-- The web pane seam + `PaneKind.web` live in shared `AislopdeskWorkspaceCore`/`AislopdeskClientUI`.
+- The web pane seam + `PaneKind.web` live in shared `SlopDeskWorkspaceCore`/`SlopDeskClientUI`.
 - **`swift build` on macOS will NOT catch iOS rot → the gate MUST run `bash scripts/check-ios.sh`.**
 
 ## TRAPS specific to E18 (respect these)
 
 - **Subclassing `NSSplitView` via `loadView()` CRASHES `_setupSplitView`** — observe
-  `didResizeSubviewsNotification` instead (already done at `AislopdeskSplitViewController.swift:165` —
+  `didResizeSubviewsNotification` instead (already done at `SlopDeskSplitViewController.swift:165` —
   do NOT regress it when adding Split-L/R drop targets).
 - **Drop-zone overlay hit-testing: `.contentShape` BEFORE `.position`** (HW-GUI-debug-loop lesson) so
   the circular zones hit-test where they are drawn, not at their pre-offset origin.

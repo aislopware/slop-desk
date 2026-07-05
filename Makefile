@@ -7,7 +7,7 @@
 #   make check  — lint + swift build + swift test + golden pin (the full local gate)
 #
 # Tools are pinned/installed via `make install-tools`.
-# Single language: Swift + a tiny native SIMD C kernel (Sources/CAislopdeskSIMD). No Rust, no FFI,
+# Single language: Swift + a tiny native SIMD C kernel (Sources/CSlopDeskSIMD). No Rust, no FFI,
 # no build ordering — `swift build` compiles from a clean checkout with no prerequisite.
 
 SWIFT_PATHS  := Sources Tests Apps
@@ -87,7 +87,7 @@ lint-swift-analyze: ## SwiftLint analyzer rules (compiles the package first)
 .PHONY: check build test golden
 check: lint build test golden ## lint + build + test + golden pin (full local gate)
 
-build: ## swift build (Swift + CAislopdeskSIMD, no prerequisites)
+build: ## swift build (Swift + CSlopDeskSIMD, no prerequisites)
 	swift build
 
 test: ## swift test (~2300 native Swift tests)

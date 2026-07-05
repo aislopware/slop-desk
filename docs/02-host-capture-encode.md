@@ -2,7 +2,7 @@
 
 > **STATUS: REFERENCE — GUI video-path design depth.** This path is shipped and co-equal with terminal panes — the old "Phase 4 / secondary" framing is retired. Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-Host-side pipeline (Swift platform shell): **ScreenCaptureKit (capture one window)** → **VideoToolbox (low-latency HW encode)** → NALUs handed to the Rust core (`rust/aislopdesk-core`, via the C-ABI) for packetization + FEC + ABR → transport ([03](03-transport-protocol.md)). This doc covers only the capture + encode shell.
+Host-side pipeline (Swift platform shell): **ScreenCaptureKit (capture one window)** → **VideoToolbox (low-latency HW encode)** → NALUs handed to the Rust core (`rust/slopdesk-core`, via the C-ABI) for packetization + FEC + ABR → transport ([03](03-transport-protocol.md)). This doc covers only the capture + encode shell.
 
 ---
 

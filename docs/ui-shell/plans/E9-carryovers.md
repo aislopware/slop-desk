@@ -16,9 +16,9 @@ data and fixing these must happen together.
   agent E9 may surface as a "work with this agent" affordance (e.g. the Info-tab "View Session
   History" entry point). **Subtlety — keep, do not rip out:** the EXISTING host-metadata session-FILE
   enumeration is a shipped E4 feature and must stay intact — `AgentKind { claude, codex, opencode }`
-  in `Sources/AislopdeskProtocol/Metadata/MetadataCodec.swift` (~:186, a forward-tolerant wire enum),
+  in `Sources/SlopDeskProtocol/Metadata/MetadataCodec.swift` (~:186, a forward-tolerant wire enum),
   the `~/.codex/sessions` / opencode roots in `HostMetadataProbe.sessionRoots()`
-  (`Sources/AislopdeskHost/HostMetadataProbe.swift` ~:291), and the `readAgentSession` read path
+  (`Sources/SlopDeskHost/HostMetadataProbe.swift` ~:291), and the `readAgentSession` read path
   (~:275) all read **what is on disk** and are NOT agent-driving. The reduction bites only on NEW
   agent-DRIVING / supervision UI and on surfacing codex/opencode as first-class agents — it is NOT a
   license to delete the working host enumeration. (See carry-over 3 for the precise resolution.)
@@ -32,8 +32,8 @@ data and fixing these must happen together.
 ## E4 carry-overs (host metadata — 4 mediums)
 
 1. **Info tab omits the spec's "Working Directory" section and the Copy-Path action E4 committed to ship.**
-   In `Sources/AislopdeskClientUI/Columns/InspectorColumn.swift`, `infoContent` (~:197) leads with the
-   aislopdesk-specific `sessionSection` (~:245); the host cwd appears only as a truncated, read-only
+   In `Sources/SlopDeskClientUI/Columns/InspectorColumn.swift`, `infoContent` (~:197) leads with the
+   slopdesk-specific `sessionSection` (~:245); the host cwd appears only as a truncated, read-only
    `SlateKeyValueRow(label: "Dir")` with `.truncationMode(.head)` (~:279-280) buried in that Session
    block, and the ONLY Copy-Path affordance lives in `RemoteFileTreeView`'s per-row context menu. But
    `spec/user-interface__details-panel.md` + `info-panel.png` make the Info tab LEAD with a dedicated
@@ -43,12 +43,12 @@ data and fixing these must happen together.
    prominent path `Text` to `infoContent` **above** `ProcessPortsView` (~:201), with a "Copy Path"
    action row (`doc.on.doc` icon + label) that writes `activeModel.cwd` to `NSPasteboard` /
    `UIPasteboard` — reuse the `copyPath` idiom already in
-   `Sources/AislopdeskClientUI/Inspector/RemoteFileTreeView.swift` (~:151). Keep the Session
+   `Sources/SlopDeskClientUI/Inspector/RemoteFileTreeView.swift` (~:151). Keep the Session
    status/host/ping block as the remote-specific addition, but restore the spec's Working-Directory
    prominence (this is the ES-E9-1 Info-tab surface).
 
 2. **Host-side output parsers (lsof / git porcelain) are pure but UNTESTED — ES-E9-1 ports & ES-E9-3
-   git data extraction is unproven.** In `Sources/AislopdeskHost/HostMetadataProbe.swift`, the
+   git data extraction is unproven.** In `Sources/SlopDeskHost/HostMetadataProbe.swift`, the
    functions that turn raw `lsof -F cn` into `PortInfo` (`parseLsof` ~:123) and `git status
    --porcelain -b` into `GitStatusPayload` (`parseBranchHeader` ~:186, `parseStatusLine` ~:208,
    `packStatus` ~:243) are the heart of the data E9 renders in the Info-ports and Git tabs — yet they
@@ -59,7 +59,7 @@ data and fixing these must happen together.
    behind M]` extraction, port-after-last-colon for `[::1]:443`). A parse bug renders wrong data in
    E9 with no failing test. **Acceptance:** make `parseLsof` / `parseBranchHeader` / `parseStatusLine`
    / `packStatus` `internal static` (or extract them to a pure `GitPorcelainParser` / `LsofParser`
-   namespace) and add `AislopdeskHostTests` feeding canned strings — a rename `R  old -> new`,
+   namespace) and add `SlopDeskHostTests` feeding canned strings — a rename `R  old -> new`,
    untracked `?? f`, staged+worktree `MM f`, detached `## HEAD (no branch)`,
    `## main...origin/main [ahead 2, behind 1]`, and lsof `n*:8080` / `n[::1]:443` / a malformed line —
    asserting the resulting structs and that garbage lines are skipped (revert-to-confirm-fail on each
@@ -67,7 +67,7 @@ data and fixing these must happen together.
 
 3. **Codex agent sessions are never enumerated; `AgentKind.codex` + the codex `sessionRoots` entry are
    dead scaffolding — resolve by DEFERRING, not by building OR ripping out.** In
-   `Sources/AislopdeskHost/HostMetadataProbe.swift`, `listAgentSessions(project:)` (~:268) calls only
+   `Sources/SlopDeskHost/HostMetadataProbe.swift`, `listAgentSessions(project:)` (~:268) calls only
    `claudeSessions` (~:302) + `opencodeSessions` (~:310) — codex is missing — yet `AgentKind.codex`
    exists and `sessionRoots()` (~:291) includes `~/.codex/sessions`, reachable via `readAgentSession`
    but never discoverable via enumeration. The E4 review flagged this as a silently-dropped plan
@@ -87,7 +87,7 @@ data and fixing these must happen together.
 
 4. **Opaque payloads (`readAgentSession`, `gitDiff`) are read fully into host memory before the 15 MiB
    cap is applied.** `MetadataResponseBuilder.cappedOpaque()` truncates to `maxOpaquePayloadBytes`
-   (15 MiB), but `Sources/AislopdeskHost/HostMetadataProbe.swift` materializes the ENTIRE source
+   (15 MiB), but `Sources/SlopDeskHost/HostMetadataProbe.swift` materializes the ENTIRE source
    first: `readAgentSession` does `Data(contentsOf: URL(...))` on the whole session file (~:287), and
    `gitDiff` drains the subprocess pipe with `runProcessData`'s `readDataToEndOfFile()` (~:409). These
    are exactly E9's consumers — the Git tab's read-only inline diff overlay (`gitDiff`) and the

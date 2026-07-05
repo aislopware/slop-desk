@@ -1,0 +1,64 @@
+import Foundation
+import XCTest
+@testable import SlopDeskProtocol
+
+/// Pins `WireMessage.wireByteCount == encode().count` for EVERY variant — the receive-side
+/// flow-control credit is computed from `wireByteCount` while the sender debits the actual
+/// encoded frame, so any drift slowly stalls (under-credit) or unbounds (over-credit) the
+/// window.
+final class WireMessageWireByteCountTests: XCTestCase {
+    func testWireByteCountMatchesEncodeForEveryVariant() {
+        let payloads: [Data] = [
+            Data(),
+            Data("x".utf8),
+            Data(repeating: 0x41, count: 128 * 1024),
+        ]
+        var messages: [WireMessage] = []
+        for p in payloads {
+            messages.append(.output(seq: 1, bytes: p))
+            messages.append(.output(seq: Int64.max, bytes: p))
+            messages.append(.input(p))
+        }
+        messages += [
+            .exit(code: 0), .exit(code: -1),
+            .hello(protocolVersion: 1, sessionID: UUID(), lastReceivedSeq: 42),
+            .hello(protocolVersion: UInt16.max, sessionID: WireMessage.newSessionID, lastReceivedSeq: 0),
+            .resize(cols: 80, rows: 24, pxWidth: 0, pxHeight: 0),
+            .ack(seq: 7),
+            .bye,
+            .ping(timestampMS: 0), .ping(timestampMS: UInt64.max),
+            .pong(timestampMS: 12345),
+            .helloAck(sessionID: UUID(), resumeFromSeq: 3, returningClient: true),
+            .helloAck(sessionID: UUID(), resumeFromSeq: 0, returningClient: false),
+            .title(""),
+            .title("hello"),
+            .title("tiếng Việt — đa byte ✓"),
+            .bell,
+            .commandStatus(.running),
+            .commandStatus(.idle(exitCode: 0, durationMS: 12)),
+            .commandStatus(.idle(exitCode: nil, durationMS: 0)),
+            .commandStatus(.idle(exitCode: -127, durationMS: UInt32.max)),
+            .notification(title: "", body: "done"),
+            .notification(title: "CI", body: "green ✅ — đa byte"),
+            .notification(title: "only title", body: ""),
+            .notification(
+                title: String(repeating: "T", count: 70000),
+                body: "overlong title is clamped",
+            ), // wireByteCount must track the clamp
+            .inputEcho(enabled: true),
+            .inputEcho(enabled: false),
+            .progress(state: 0, percent: 0),
+            .progress(state: 1, percent: 40),
+            .progress(state: 2, percent: 80),
+            .progress(state: 3, percent: 0),
+            .cwd("/Users/me/project dir"),
+        ]
+        for message in messages {
+            XCTAssertEqual(
+                message.wireByteCount,
+                message.encode().count,
+                "wireByteCount must equal encode().count for \(message)",
+            )
+        }
+    }
+}

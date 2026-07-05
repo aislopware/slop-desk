@@ -9,30 +9,30 @@ rebuilt it as a 1:1 Warp clone), see `DECISIONS.md`; for the headless core invar
 ## Three modules + the dependency direction
 
 ```
-AislopdeskClientUI   (SwiftUI views — the only target that imports SwiftUI view bodies)
+SlopDeskClientUI   (SwiftUI views — the only target that imports SwiftUI view bodies)
         │  depends on
         ▼
-AislopdeskWorkspaceCore   (headless logic / state / seams — no SwiftUI view bodies)
+SlopDeskWorkspaceCore   (headless logic / state / seams — no SwiftUI view bodies)
         │  depends on
         ▼
-AislopdeskDesignSystem    (headless theme model + tokens — value types only)
+SlopDeskDesignSystem    (headless theme model + tokens — value types only)
 ```
 
 Dependencies point **down only**. Nothing in `WorkspaceCore` or `DesignSystem` imports `ClientUI`, and
 `DesignSystem` is leaf (it imports SwiftUI only for the thin `Color`/`KeyEquivalent`-bridging conveniences,
 never an AppKit/UIKit view body). All three build headless.
 
-- **`AislopdeskDesignSystem`** — the Warp **seed + derive** theme model (`Theme`, `WarpTheme`,
+- **`SlopDeskDesignSystem`** — the Warp **seed + derive** theme model (`Theme`, `WarpTheme`,
   `PureBlackDark`), the resolved-color layer (`ResolvedColors`), the view-facing token bundle
   (`DesignTokens`, exposed via `@Environment(\.theme)`), the fixed token scales
   (`WarpType`/`WarpSize`/`WarpSpace`/`WarpRadius`/`WarpBorder`/`WarpShadow`/`WarpMotion`), and bundled fonts
   (`Fonts`, Hack mono + Roboto UI under `Resources/Fonts`).
-- **`AislopdeskWorkspaceCore`** — the proven domain: the `Session → Tab → Pane` tree, `WorkspaceStore`
+- **`SlopDeskWorkspaceCore`** — the proven domain: the `Session → Tab → Pane` tree, `WorkspaceStore`
   (the single mutation funnel), the split-tree solver + render model, `InputBarModel`, `PreferencesStore`,
   the `WorkspaceBindingRegistry` command catalog + routing, agent-detect rollups, and every seam
   (`TerminalRendererFactory`, `VideoWindowFactory`, `RemoteWindowDiscovery`, `SystemDialogDiscovery`,
   `TerminalSurface`). No SwiftUI view bodies → unit-testable with no window server.
-- **`AislopdeskClientUI`** — thin SwiftUI views. Every mutation routes through `WorkspaceStore`; the views
+- **`SlopDeskClientUI`** — thin SwiftUI views. Every mutation routes through `WorkspaceStore`; the views
   never write `tree` directly. Each leaf host view is keyed `.id(PaneID)` so a surface/connection is never
   reused across panes (the identity hazard).
 
@@ -101,15 +101,15 @@ registry catalog, so they cannot drift (the "no dead chord / glyph cannot drift"
 ## Env seams honored
 
 The app scene preserves the automation/runtime seams (keep these names stable):
-`AISLOPDESK_AUTOCONNECT_*` / `AISLOPDESK_VIDEO_AUTOCONNECT_*` (auto-connect + front-on-autoconnect),
-`AISLOPDESK_SYSTEM_DIALOG_PANES` (system-dialog pane spawn), `AISLOPDESK_SKIP_AUTO_RECONNECT`. Notification
+`SLOPDESK_AUTOCONNECT_*` / `SLOPDESK_VIDEO_AUTOCONNECT_*` (auto-connect + front-on-autoconnect),
+`SLOPDESK_SYSTEM_DIALOG_PANES` (system-dialog pane spawn), `SLOPDESK_SKIP_AUTO_RECONNECT`. Notification
 delivery is gated by `SettingsKey.oscNotifications` (default-ON). See the top-level `CLAUDE.md` "Runtime env
 flags" table for the full set and the default idiom.
 
 ## Headless ImageRenderer odiff harness
 
 Pixel fidelity is measured by **headless `ImageRenderer` snapshot tests** (`*SnapshotOdiffTests` in
-`Tests/AislopdeskClientUITests/`), NOT by instantiating a live window (hang-safety: no `SCStream`/`VT*`/Metal
+`Tests/SlopDeskClientUITests/`), NOT by instantiating a live window (hang-safety: no `SCStream`/`VT*`/Metal
 /libghostty in a test). Each test hand-assembles the SAME production components in an EAGER layout (lazy /
 interactive / `GeometryReader` containers swapped for eager ones so they materialize offscreen), renders at
 scale 1.0 over the `#1D2022` theme base, and odiffs against a live-Warp reference crop.

@@ -1,8 +1,8 @@
 ## Overview
 
-The aislopdesk client UI shell is a native SwiftUI + AppKit hybrid implementing a 3-column IDE layout
+The slopdesk client UI shell is a native SwiftUI + AppKit hybrid implementing a 3-column IDE layout
 (navigator | content | inspector) modelled on CodeEdit's split shell. The macOS host is an
-`NSSplitViewController` (`AislopdeskSplitViewController`) with three `NSHostingController` columns;
+`NSSplitViewController` (`SlopDeskSplitViewController`) with three `NSHostingController` columns;
 iOS uses `NavigationSplitView`. The window runs `.hiddenTitleBar`; the client's own hover-reveal
 `SlateTitlebar` is the sole chrome. The domain model is a fully implemented `TreeWorkspace`
 (`Session → Tab → SplitNode tree → Pane`) stored in `WorkspaceStore`.
@@ -16,12 +16,12 @@ All assessment is against the macOS path unless noted.
 | Feature | Status | Evidence file(s) / symbol(s) |
 |---------|--------|-------------------------------|
 | **Window / shell** | | |
-| 3-column IDE shell (navigator \| content \| inspector) | done | `AislopdeskSplitViewController:L16`, `WorkspaceRootView:L47` |
-| Hidden-titlebar + hover-reveal chrome | done | `SlateTitlebar.swift`, `AislopdeskClientApp.swift:L282` `.windowStyle(.hiddenTitleBar)` |
-| Sidebar collapse (⌘⇧L) | done | `WorkspaceChromeState:L23`, `SlateTitlebar:L101`, `applyCollapse:L210` in `AislopdeskSplitViewController` |
+| 3-column IDE shell (navigator \| content \| inspector) | done | `SlopDeskSplitViewController:L16`, `WorkspaceRootView:L47` |
+| Hidden-titlebar + hover-reveal chrome | done | `SlateTitlebar.swift`, `SlopDeskClientApp.swift:L282` `.windowStyle(.hiddenTitleBar)` |
+| Sidebar collapse (⌘⇧L) | done | `WorkspaceChromeState:L23`, `SlateTitlebar:L101`, `applyCollapse:L210` in `SlopDeskSplitViewController` |
 | Inspector collapse (⌘⇧R) | done | `WorkspaceChromeState:L25`, `SlateTitlebar:L104`, same `applyCollapse` path |
-| Animated collapse (NSSplitViewItem animator) | done | `AislopdeskSplitViewController:L211–216` |
-| Theme-aware flat divider (ISA-swizzle `FlatDividerSplitView`) | done | `AislopdeskSplitViewController:L54`, `FlatDividerSplitView:L226` |
+| Animated collapse (NSSplitViewItem animator) | done | `SlopDeskSplitViewController:L211–216` |
+| Theme-aware flat divider (ISA-swizzle `FlatDividerSplitView`) | done | `SlopDeskSplitViewController:L54`, `FlatDividerSplitView:L226` |
 | macOS window appearance pinned to active theme | done | `pinWindowAppearance():L176` |
 | iOS NavigationSplitView shell | done | `WorkspaceRootView:L50–58` |
 | Connect-to-host overlay (host/port editor) | partial | `OverlayCoordinator.connectVisible:L52`, `openConnect():L251` — state exists, overlay view **not mounted** in `WorkspaceRootView`; `openConnect()` in pill is a `TODO(L4b)` no-op (`WorkspaceRootView:L88`) |
@@ -93,7 +93,7 @@ All assessment is against the macOS path unless noted.
 | Ping display in pill | done | `ConnectionStatusPill:L39–43` |
 | Bottom status bar | missing | No footer status bar component exists in the UI module |
 | **Command palette / overlays** | | |
-| OverlayCoordinator (palette / settings / toasts / cheat-sheet) | partial | `OverlayCoordinator.swift` fully implemented; **not mounted** in `WorkspaceRootView` (only referenced in `Settings` comment: `AislopdeskClientApp:L289`) |
+| OverlayCoordinator (palette / settings / toasts / cheat-sheet) | partial | `OverlayCoordinator.swift` fully implemented; **not mounted** in `WorkspaceRootView` (only referenced in `Settings` comment: `SlopDeskClientApp:L289`) |
 | ⌘K command palette | partial | `PaletteModel`, `PaletteDataSource`, `SearchMixer` all implemented; palette view not wired into the live scene root (no `overlayCoordinator(_:)` call in `WorkspaceRootView`) |
 | Keyboard cheat sheet (⌘/) | partial | `cheatSheetVisible` in coordinator — same wiring gap |
 | Toast notifications | partial | `OverlayCoordinator.pushToast` / `Toast.swift` — same wiring gap |
@@ -114,28 +114,28 @@ All assessment is against the macOS path unless noted.
 
 ## Key files
 
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/AislopdeskClientApp.swift` — app scene, store/connection init, lifecycle
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/WorkspaceRootView.swift` — root SwiftUI view, iOS split view
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/App/AislopdeskSplitViewController.swift` — macOS 3-column AppKit shell
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/App/WorkspaceChromeState.swift` — sidebar/inspector collapse flags
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/Chrome/SlateTitlebar.swift` — hover-reveal titlebar + title menu
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/Chrome/SlateTabRow.swift` — sidebar tab row + sort hamburger
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/Chrome/InPaneChooserView.swift` — in-pane new-pane chooser
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/Columns/NavigatorColumn.swift` — left sidebar column
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/Columns/ContentColumn.swift` — centre content + titlebar overlay
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/Columns/InspectorColumn.swift` — right details panel
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/Pane/SplitContainer.swift` — absolute-rect pane compositor + drag drop zones
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/Pane/PaneContainer.swift` — per-leaf view (routing + resize scrim + focus dim)
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/Pane/PaneDivider.swift` — live-resize drag handle
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/Pane/PaneMoveAffordance.swift` — grab-pill + drag overlay + drop zones
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/Rail/RailRowsBuilder.swift` — pure store→rail row mapping (carries `ClaudeStatus`)
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/Overlays/OverlayCoordinator.swift` — palette/settings/toast/cheat-sheet state (unmounted)
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/Overlays/ContextMenuModel.swift` — pane/tab context menu item catalog (unrendered)
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/App/ConnectionStatusPill.swift` — connection status pill
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/App/StatusPresentation.swift` — connection + agent colour/label mapping
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskClientUI/Input/WorkspaceKeyDispatcher.swift` — NSEvent keybinding dispatcher
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskWorkspaceCore/Workspace/Domain/Tree/TreeWorkspace.swift` — top-level domain model
-- `/Volumes/Lacie/Workspace/oss/aislopdesk/Sources/AislopdeskWorkspaceCore/Workspace/Store/WorkspaceBindingRouting.swift` — action → store-op dispatch (single source of truth)
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/SlopDeskClientApp.swift` — app scene, store/connection init, lifecycle
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/WorkspaceRootView.swift` — root SwiftUI view, iOS split view
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/App/SlopDeskSplitViewController.swift` — macOS 3-column AppKit shell
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/App/WorkspaceChromeState.swift` — sidebar/inspector collapse flags
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Chrome/SlateTitlebar.swift` — hover-reveal titlebar + title menu
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Chrome/SlateTabRow.swift` — sidebar tab row + sort hamburger
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Chrome/InPaneChooserView.swift` — in-pane new-pane chooser
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Columns/NavigatorColumn.swift` — left sidebar column
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Columns/ContentColumn.swift` — centre content + titlebar overlay
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Columns/InspectorColumn.swift` — right details panel
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Pane/SplitContainer.swift` — absolute-rect pane compositor + drag drop zones
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Pane/PaneContainer.swift` — per-leaf view (routing + resize scrim + focus dim)
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Pane/PaneDivider.swift` — live-resize drag handle
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Pane/PaneMoveAffordance.swift` — grab-pill + drag overlay + drop zones
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Rail/RailRowsBuilder.swift` — pure store→rail row mapping (carries `ClaudeStatus`)
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Overlays/OverlayCoordinator.swift` — palette/settings/toast/cheat-sheet state (unmounted)
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Overlays/ContextMenuModel.swift` — pane/tab context menu item catalog (unrendered)
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/App/ConnectionStatusPill.swift` — connection status pill
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/App/StatusPresentation.swift` — connection + agent colour/label mapping
+- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Input/WorkspaceKeyDispatcher.swift` — NSEvent keybinding dispatcher
+- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Domain/Tree/TreeWorkspace.swift` — top-level domain model
+- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceBindingRouting.swift` — action → store-op dispatch (single source of truth)
 
 ---
 
@@ -146,7 +146,7 @@ All assessment is against the macOS path unless noted.
 remote picker) but `WorkspaceRootView` does not mount it (no `overlayCoordinator(_:)` call, no
 `OverlayCoordinator` `@State`). The key dispatcher (`WorkspaceKeyDispatcher`) is built with nil
 toggles for palette and cheat-sheet so those chords are no-ops at runtime. The settings surface
-falls back to a separate macOS `Settings` scene window (`AislopdeskSettingsScene`). All of the
+falls back to a separate macOS `Settings` scene window (`SlopDeskSettingsScene`). All of the
 coordinator's overlay surfaces are behind a single mount wiring gap — adding it to `WorkspaceRootView`
 would unlock palette + cheat-sheet + toasts + connect-to-host in one shot.
 
@@ -184,7 +184,7 @@ There is no sequential "cycle focus to next/previous pane" action in `WorkspaceA
 Directional focus (`focusLeft/Right/Up/Down`) exists; a tmux-style bare-cycle does not.
 
 ### No status bar
-There is no bottom footer status bar anywhere in `AislopdeskClientUI`. The connection pill in the
+There is no bottom footer status bar anywhere in `SlopDeskClientUI`. The connection pill in the
 titlebar / iOS toolbar serves as the only persistent status indicator.
 
 ### Pin window / PiP

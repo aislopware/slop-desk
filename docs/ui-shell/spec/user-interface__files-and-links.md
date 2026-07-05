@@ -2,7 +2,7 @@
 
 ## Summary
 
-Paths and URLs in terminal output are interactive — `⌘click` opens them in the best handler (file pane for text files, default app otherwise), `⌘⇧click` reveals in Finder or copies a URL. Aislopdesk also embeds a full text editor/file previewer (powered by syntect for syntax highlighting), a directory browser (folder pane), and a native WKWebView web browser pane. All these panes can appear inline in the same workspace as the terminal — in the current pane, a new tab, or a split. Agent session history files (Claude Code, Codex, OpenCode) render as readable conversation transcripts rather than raw JSON.
+Paths and URLs in terminal output are interactive — `⌘click` opens them in the best handler (file pane for text files, default app otherwise), `⌘⇧click` reveals in Finder or copies a URL. SlopDesk also embeds a full text editor/file previewer (powered by syntect for syntax highlighting), a directory browser (folder pane), and a native WKWebView web browser pane. All these panes can appear inline in the same workspace as the terminal — in the current pane, a new tab, or a split. Agent session history files (Claude Code, Codex, OpenCode) render as readable conversation transcripts rather than raw JSON.
 
 ---
 
@@ -10,7 +10,7 @@ Paths and URLs in terminal output are interactive — `⌘click` opens them in t
 
 ### Path and Link Detection in Terminal Output
 
-- Aislopdesk detects the following in live terminal output and scrollback:
+- SlopDesk detects the following in live terminal output and scrollback:
   - Absolute paths: `/usr/local/bin/foo`, `/Users/me/project`
   - Tilde paths: `~/project/file.swift`
   - Relative paths: `./src/lib.rs`, `../config/foo.toml`
@@ -26,7 +26,7 @@ Paths and URLs in terminal output are interactive — `⌘click` opens them in t
 
 | Target | Click | ⌘click | ⌘⇧click | Right-click |
 |--------|-------|---------|----------|-------------|
-| Path | nothing (prevents accidental opens) | Open in best handler — file pane for text, default app otherwise | Reveal in Finder | Context menu: Open With…, Copy Path, Reveal, Change Directory Here, Open in Aislopdesk |
+| Path | nothing (prevents accidental opens) | Open in best handler — file pane for text, default app otherwise | Reveal in Finder | Context menu: Open With…, Copy Path, Reveal, Change Directory Here, Open in SlopDesk |
 | URL | nothing | Open in URL pane (or system browser, per config) | Copy URL | Context menu: Copy, Open in Browser |
 
 ### Right-click Context Menu Items (paths)
@@ -36,7 +36,7 @@ Paths and URLs in terminal output are interactive — `⌘click` opens them in t
 - **Copy Path / Copy URL** — copy the resolved absolute path.
 - **Reveal in Finder**.
 - **Change Directory Here** — cd the focused terminal to the path (or its parent folder).
-- **Open in Aislopdesk** — submenu: open in current pane, new tab, or split.
+- **Open in SlopDesk** — submenu: open in current pane, new tab, or split.
 
 ### Keyboard-only Path/Link Interaction
 
@@ -47,18 +47,18 @@ Paths and URLs in terminal output are interactive — `⌘click` opens them in t
 
 ### File Pane / Editor
 
-- Aislopdesk can open and preview common file types and embeds a text editor.
+- SlopDesk can open and preview common file types and embeds a text editor.
 - Ways to open a file:
   - Drag a file from Finder onto the window's "New Tab" drag zone → new file pane in a new tab.
-  - Context menu → Open in Aislopdesk → opens view pane.
-  - `aislopdesk view <file>` — open in preview/read-only mode.
-  - `aislopdesk edit <file>` — open in edit mode.
+  - Context menu → Open in SlopDesk → opens view pane.
+  - `slopdesk view <file>` — open in preview/read-only mode.
+  - `slopdesk edit <file>` — open in edit mode.
 - Syntax highlighting is powered by syntect (Sublime/TextMate grammars). Language detection is by file extension, with a shebang fallback for the first line. When an extension is ambiguous (`.m` → Objective-C, `.h` → C, `.v` → Verilog, `.pl` → Perl), a language dropdown in the toolbar lets the user override; "Auto-detect" undoes the override.
 - The active syntax theme follows the terminal theme (see Themes).
 - The editor font and size follow the terminal theme — there is no separate editor font setting.
 - Save: `⌘S` (edit mode only).
 - Reload from disk: `⌘R` — discards unsaved changes.
-- Files modified outside Aislopdesk trigger a banner with "Reload" / "Keep my changes" options.
+- Files modified outside SlopDesk trigger a banner with "Reload" / "Keep my changes" options.
 - File panes are designed for text up to a few MB; very large files fall back to a streamed view (no in-place edit). Binary files open as hex (read-only).
 
 #### Markup with Live Preview (Source ⇄ Preview)
@@ -119,15 +119,15 @@ Coding-agent session logs render as a readable transcript instead of raw JSON. T
 ### Folder Pane
 
 - A folder pane is a directory browser — click to open files, drag rows out to move them into terminal or file panes.
-- Open via: `aislopdesk view <dir>` or right-click a folder and select "Open in Aislopdesk".
+- Open via: `slopdesk view <dir>` or right-click a folder and select "Open in SlopDesk".
 - The pane shows a tree/list of the directory hierarchy. Folders expand inline; files open in a new pane.
 
 ---
 
 ### Web Browser Pane
 
-- Aislopdesk includes a built-in web browser (native WKWebView), allowing a link from the terminal to open right next to work — in the current pane, a new tab, or a split.
-- Default handler for `http(s)` links is the system browser; can be changed to Aislopdesk so `⌘click` opens links directly in the terminal.
+- SlopDesk includes a built-in web browser (native WKWebView), allowing a link from the terminal to open right next to work — in the current pane, a new tab, or a split.
+- Default handler for `http(s)` links is the system browser; can be changed to SlopDesk so `⌘click` opens links directly in the terminal.
 - URL panes use a non-persistent data store — cookies and local storage never bleed across panes or survive a restart.
 - Audio and video do not autoplay until the user interacts with the page.
 - A bare host in the address bar gets `https://` prepended; otherwise it acts as a DuckDuckGo search.
@@ -174,7 +174,7 @@ Coding-agent session logs render as a readable transcript instead of raw JSON. T
 
 ## Config Keys
 
-These are set in the Aislopdesk config file (`~/.config/aislopdesk/config.toml`) under the relevant section. See the Configuration Reference doc for the full key inventory.
+These are set in the SlopDesk config file (`~/.config/slopdesk/config.toml`) under the relevant section. See the Configuration Reference doc for the full key inventory.
 
 | Key | Default | Effect |
 |-----|---------|--------|
@@ -186,9 +186,9 @@ These are set in the Aislopdesk config file (`~/.config/aislopdesk/config.toml`)
 
 | Setting | Default | Effect |
 |---------|---------|--------|
-| Open Links With | Browser | Where `⌘click` and right-click "Open Link" item open a URL. Options include Browser, Aislopdesk. |
-| Open Files With | Aislopdesk | Where `⌘click` and right-click "Open File" item open a file path. |
-| Open Folders With | Finder | Where `⌘click` and right-click "Open Folder" item open a folder path. Options: Finder, Aislopdesk. |
+| Open Links With | Browser | Where `⌘click` and right-click "Open Link" item open a URL. Options include Browser, SlopDesk. |
+| Open Files With | SlopDesk | Where `⌘click` and right-click "Open File" item open a file path. |
+| Open Folders With | Finder | Where `⌘click` and right-click "Open Folder" item open a folder path. Options: Finder, SlopDesk. |
 | Default Git Client | Auto (first installed) | The git GUI used as primary "Open in <App>" target on the Details › Git toolbar. |
 | Custom Open With Apps | — | Add third-party apps (e.g. Fork, Typora) to the folder/file "Open in…" submenus. |
 
@@ -270,7 +270,7 @@ A full-size window (no separate floating chrome visible). Title bar: `Fill in th
 - User message: `fill in the TODO` in plain text.
 - An expandable tool-call block: `> Claude · Agent, 5xBash, Edit, 6xRead · 553 chars` (chevron `>` to expand, gray metadata).
 - Assistant prose paragraph: "Filled in the **Web Browser** section of `docs/user/workspace/files-and-links.md` (it was previously `TODO`). Everything is verified against the source:"
-- A list of "Sources verified" with blue hyperlinks: file paths like `link-open-with → browser | aislopdesk — packages/config/src/lib.rs:924,3484,5801`, `aislopdesk open <url> opens a URL pane — docs/...`, etc.
+- A list of "Sources verified" with blue hyperlinks: file paths like `link-open-with → browser | slopdesk — packages/config/src/lib.rs:924,3484,5801`, `slopdesk open <url> opens a URL pane — docs/...`, etc.
 - Bullet items with inline code formatting in gray background, file links underlined in blue.
 
 **Left sidebar (TABS):** `npm run dev #1`, `localhost #2` (with a green dot badge — indicating active/running session), `abner@MacBook-AB... #3` (with orange dot), `Fill in the TODOs in the... #4` (active, selected row, no dot), `OC | Reviewing todos #5`.
@@ -313,9 +313,9 @@ Same settings window, "Controls" selected.
 
 **Right panel content area (OPEN WITH section):**
 - **Open Links With** — "Where Cmd+click and the right-click 'Open Link' item open a URL" — dropdown showing "Browser"
-- **Open Files With** — "Where Cmd+click and the right-click 'Open File' item open a file path" — dropdown showing "Aislopdesk"
-- **Open Folders With** — "Where Cmd+click and the right-click 'Open Folder' item open a folder path" — dropdown showing "Finder" with a dropdown open below it showing two options: "Finder" (top) and "Aislopdesk" (bottom), in a white popup menu with light shadow and rounded corners
-- **Default Git Client** — "The git GUI used as the primary 'Open in App>' target on the Details › Git toolbar. Other installed clients and your custom Open With apps still appear in the dropdown." — dropdown partially obscured by the Finder/Aislopdesk popup
+- **Open Files With** — "Where Cmd+click and the right-click 'Open File' item open a file path" — dropdown showing "SlopDesk"
+- **Open Folders With** — "Where Cmd+click and the right-click 'Open Folder' item open a folder path" — dropdown showing "Finder" with a dropdown open below it showing two options: "Finder" (top) and "SlopDesk" (bottom), in a white popup menu with light shadow and rounded corners
+- **Default Git Client** — "The git GUI used as the primary 'Open in App>' target on the Details › Git toolbar. Other installed clients and your custom Open With apps still appear in the dropdown." — dropdown partially obscured by the Finder/SlopDesk popup
 - **Custom Open With Apps** — "Add third-party apps (e.g. Fork, Typora) to the folder/file 'Open in…' submenus." — "Configure…" button
 
 Below: **KEYBOARD** section header, partially visible.
@@ -347,19 +347,19 @@ The mode indicator **HINTS** in the top-right is a small rounded-rect badge with
 
 ---
 
-## Aislopdesk Mapping Notes
+## SlopDesk Mapping Notes
 
 ### What maps 1:1
 
-- **⌘click / ⌘⇧click on paths/URLs:** Fully implementable in the client UI. The client already tracks the pane's last-known working directory via OSC 7 (which aislopdesk passes through). Path detection regex (absolute, tilde, relative, `path:line:col`, `http(s)://`, `file://`) is a pure client-side text scan on the rendered terminal grid.
+- **⌘click / ⌘⇧click on paths/URLs:** Fully implementable in the client UI. The client already tracks the pane's last-known working directory via OSC 7 (which slopdesk passes through). Path detection regex (absolute, tilde, relative, `path:line:col`, `http(s)://`, `file://`) is a pure client-side text scan on the rendered terminal grid.
 - **OSC 8 hyperlinks:** Already in libghostty's protocol surface — ghostty surfaces these as metadata on text runs. The client layer can read them and underline/make-clickable.
 - **Right-click context menu:** Standard macOS `NSMenu` from the client view. All menu items (Open, Copy, Reveal, Change Directory Here) are client-initiated actions. "Change Directory Here" sends a `cd <path>\n` to the host PTY over the terminal channel — no special protocol needed.
-- **Jump To (⌘J):** Client-side: scan the current scrollback buffer for detected paths/links/commands and show a fuzzy-searchable list. Open Quickly pattern already exists in aislopdesk.
+- **Jump To (⌘J):** Client-side: scan the current scrollback buffer for detected paths/links/commands and show a fuzzy-searchable list. Open Quickly pattern already exists in slopdesk.
 - **Hint Mode:** Client-side overlay; assigns letter labels to detected links in the current viewport. No host involvement.
 - **⌘-hold underline highlight:** Client-side rendering hint — when `⌘` is held, re-render detected paths with underline decoration. Implementable in the terminal view without host round-trips.
 - **Status bar path display on hover:** The bottom-left status region of the workspace window shows the resolved path. Already adjacent to the existing status bar infrastructure.
 - **Editor Settings (soft wrap, line numbers, whitespace, tab size, scroll-past, preview default):** Pure client-side file pane settings. No host involvement.
-- **Web browser (WKWebView pane):** Client-side. A new `PaneKind` (`.web`) hosting `WKWebView`. Already partially noted in aislopdesk as `.remoteGUI` reuse candidate — but a web pane is fully local (no remote involvement). Can be a new `PaneKind.web`.
+- **Web browser (WKWebView pane):** Client-side. A new `PaneKind` (`.web`) hosting `WKWebView`. Already partially noted in slopdesk as `.remoteGUI` reuse candidate — but a web pane is fully local (no remote involvement). Can be a new `PaneKind.web`.
 - **Folder pane:** Client-side file system access. Works for the LOCAL client filesystem trivially. For remote (host-side) directories, needs a directory-listing protocol over the control channel.
 - **Agent session history (Claude Code / Codex / OpenCode transcript rendering):** Client-side JSON parsing and custom SwiftUI rendering. The session files live on the LOCAL client filesystem for local sessions, or on the HOST for remote sessions (requires file transfer). JSONL parsing and transcript view are client-only UI.
 
@@ -370,7 +370,7 @@ The mode indicator **HINTS** in the top-right is a small rounded-rect badge with
    - Use `open -R <path>` sent to the host as a PTY command, which reveals in the HOST's Finder (useful for a local Mac host; meaningless for a remote server).
    - **Decision needed:** Does "Reveal" mean client Finder or host Finder? For the local macOS host case, sending `open -R` to the host PTY is viable.
 
-2. **File pane for remote files:** `aislopdesk view`/`aislopdesk edit` open files on the LOCAL filesystem. In aislopdesk, the host terminal session's filesystem is REMOTE. To open a remote file in the client's file pane, aislopdesk needs an SFTP/SCP-style file transfer channel (not currently in the wire protocol). **Cannot map 1:1 without adding a file-transfer sub-protocol.**
+2. **File pane for remote files:** `slopdesk view`/`slopdesk edit` open files on the LOCAL filesystem. In slopdesk, the host terminal session's filesystem is REMOTE. To open a remote file in the client's file pane, slopdesk needs an SFTP/SCP-style file transfer channel (not currently in the wire protocol). **Cannot map 1:1 without adding a file-transfer sub-protocol.**
 
 3. **"Open in best handler" for remote binary files (non-text):** Opening a remote `.png` or `.pdf` via `⌘click` requires transferring the file to the client first. The current protocol has no file-transfer mechanism.
 
@@ -381,20 +381,20 @@ The mode indicator **HINTS** in the top-right is a small rounded-rect badge with
 6. **Agent session history for REMOTE sessions:** If the agent runs on the host and the session files are at `~/.claude/projects/...` on the host, the client cannot read them directly. Options:
    - Stream/tail the `.jsonl` file via PTY (`tail -f`).
    - Add a file-read sub-protocol.
-   - For aislopdesk's primary use case (Mac Studio host + macOS/iOS client), the Claude Code session files are on the Mac Studio. The client must either read them over the network or the host can push session events over the control channel. **This is the agent supervision feature already partially designed (ClaudeStatus/ClaudePaneDetector).**
+   - For slopdesk's primary use case (Mac Studio host + macOS/iOS client), the Claude Code session files are on the Mac Studio. The client must either read them over the network or the host can push session events over the control channel. **This is the agent supervision feature already partially designed (ClaudeStatus/ClaudePaneDetector).**
 
 7. **macOS Lookup (force-touch / three-finger tap) for link preview:** iOS client supports 3D Touch peek on supported hardware, but the interaction model differs from macOS. On macOS client it maps directly. On iOS client, force touch or long-press can trigger a preview popover.
 
-8. **WKWebView browser pane:** Available on both macOS and iOS (WKWebView is cross-platform Apple). Maps 1:1 for both clients. The `link-open-with = browser | aislopdesk` config sets whether URLs open externally or in this pane.
+8. **WKWebView browser pane:** Available on both macOS and iOS (WKWebView is cross-platform Apple). Maps 1:1 for both clients. The `link-open-with = browser | slopdesk` config sets whether URLs open externally or in this pane.
 
 9. **Non-persistent WKWebView data store (`.nonPersistent()`):** Maps 1:1 — WKWebView's `.nonPersistent()` data store is available on both macOS and iOS.
 
 10. **Security confirmation for non-standard schemes / executables:** Client-side; show a confirmation dialog before launching. Maps 1:1 on macOS; on iOS, opening executables is not possible (sandboxed), but opening `codex://`, `vscode://`, `ssh://` etc. via `UIApplication.open()` is the equivalent.
 
-### Aislopdesk-specific notes
+### SlopDesk-specific notes
 
-- The `link-detection = off` config key is important for TUI apps that use mouse reporting — aislopdesk already passes mouse events through, so this toggle should suppress the path-detection regex overlay when mouse reporting is active (or when the user configures it off).
-- The "Open in Aislopdesk" context menu submenu (current pane / new tab / split) maps exactly onto aislopdesk's `PaneChooser` and `WorkspaceStore.reconcile()` infrastructure.
-- Syntax highlighting via syntect is a Rust/Swift library choice. In aislopdesk's all-Swift client, use `swift-syntax` or a bundled tree-sitter grammar set, or embed a `syntect`-equivalent (e.g. ship bundled `.tmLanguage` grammar files and use a Swift port or link a Swift package).
-- The `⌘E` source/preview toggle and the pane toolbar's Source/Preview segmented control should live in the aislopdesk pane's toolbar area (the strip above the content in a non-terminal pane).
-- The "Resume" button for agent sessions ties directly into aislopdesk's agent supervision design (ClaudeStatus/AgentControlListener). It should send `--resume <session-id>` to a new Claude Code PTY session.
+- The `link-detection = off` config key is important for TUI apps that use mouse reporting — slopdesk already passes mouse events through, so this toggle should suppress the path-detection regex overlay when mouse reporting is active (or when the user configures it off).
+- The "Open in SlopDesk" context menu submenu (current pane / new tab / split) maps exactly onto slopdesk's `PaneChooser` and `WorkspaceStore.reconcile()` infrastructure.
+- Syntax highlighting via syntect is a Rust/Swift library choice. In slopdesk's all-Swift client, use `swift-syntax` or a bundled tree-sitter grammar set, or embed a `syntect`-equivalent (e.g. ship bundled `.tmLanguage` grammar files and use a Swift port or link a Swift package).
+- The `⌘E` source/preview toggle and the pane toolbar's Source/Preview segmented control should live in the slopdesk pane's toolbar area (the strip above the content in a non-terminal pane).
+- The "Resume" button for agent sessions ties directly into slopdesk's agent supervision design (ClaudeStatus/AgentControlListener). It should send `--resume <session-id>` to a new Claude Code PTY session.

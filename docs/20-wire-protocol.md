@@ -1,4 +1,4 @@
-# 20 — Aislopdesk wire protocol (PATH 1 terminal + PATH 2 GUI video)
+# 20 — SlopDesk wire protocol (PATH 1 terminal + PATH 2 GUI video)
 
 > **STATUS: CURRENT.** §1–8 spec the **PATH 1** terminal byte pipeline (TCP); §9 specs the
 > independent **PATH 2** GUI video path (plain UDP). The two paths share nothing — different
@@ -6,8 +6,8 @@
 > `WireMessage` / `FrameDecoder` / `Channel`.
 >
 > The framing, codecs, channel mux and flow control are implemented in **native Swift** — the
-> `AislopdeskProtocol` module (never panics / traps on untrusted input: a malformed frame throws and
-> is dropped), with `AislopdeskTransport` driving the sockets. The codecs are the single source of
+> `SlopDeskProtocol` module (never panics / traps on untrusted input: a malformed frame throws and
+> is dropped), with `SlopDeskTransport` driving the sockets. The codecs are the single source of
 > truth for the wire, frozen bit-for-bit by the golden corpus (`golden/golden_vectors.json`). The
 > wire format below is the contract both ends implement. Binding decisions it realizes: dual
 > data/control channel + plain TCP + `TCP_NODELAY` + ET-style replay-buffer reconnect
@@ -28,7 +28,7 @@ must not delay a `resize`-ack or a disconnect intent. Putting control messages o
 TCP connection keeps them head-of-line-independent from output bursts.
 
 `TCP_NODELAY` is set on **both** sockets immediately after connect — this happens in
-`AislopdeskTransport`, not in the protocol layer. (Nagle can add up to ~200 ms to single-keystroke
+`SlopDeskTransport`, not in the protocol layer. (Nagle can add up to ~200 ms to single-keystroke
 writes.) The framing and decoder are identical on both channels; `WireMessage.channel` is
 advisory metadata stating where each message is expected to travel.
 
@@ -42,8 +42,8 @@ Every message on either channel is a single length-prefixed frame:
 
 - `payloadLength` **excludes** the 4 prefix bytes — it counts only the payload.
 - `payload = [ UInt8 messageType ][ message body... ]`.
-- A `payloadLength` greater than **16 MiB** (`16 * 1024 * 1024`, `Aislopdesk.maxFramePayloadLength`)
-  is rejected with `AislopdeskError.frameTooLarge(_:)` — we never allocate or wait for an
+- A `payloadLength` greater than **16 MiB** (`16 * 1024 * 1024`, `SlopDesk.maxFramePayloadLength`)
+  is rejected with `SlopDeskError.frameTooLarge(_:)` — we never allocate or wait for an
   implausibly large frame.
 
 The body uses **manual binary encoding**. The keystroke/output hot path must **not** use
@@ -105,7 +105,7 @@ UUIDs (`sessionID`) are sent as their **16 raw bytes** in canonical order (not a
 | 32 | `progress` | host → client | control | `UInt8 state` (`0` clear / `1` in-progress / `2` error / `3` indeterminate) + `UInt8 percent` (`0`–`100`; meaningful for state `1`/`2`) — OSC 9;4 taskbar progress (E14/K1) |
 | 33 | `cwd` | host → client | control | `path` UTF-8 (absolute; rest-of-frame, no length prefix — same shape as `title`) — OSC 7 shell-reported working directory; feeds new-tab/split cwd inheritance |
 
-`protocolVersion` is currently **1** (`Aislopdesk.protocolVersion`). There is **no version
+`protocolVersion` is currently **1** (`SlopDesk.protocolVersion`). There is **no version
 negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` whose
 `protocolVersion` differs is rejected outright with a generic `handshakeFailed`
 (`HostTransport`); the host never offers or falls back to another version.
@@ -121,9 +121,9 @@ negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` who
 - **`helloAck.returningClient`** is decided **by the host** (see §5), not asserted by the
   client.
 - **`title`** payload must be valid UTF-8; a non-UTF-8 body decodes to
-  `AislopdeskError.malformedBody`.
+  `SlopDeskError.malformedBody`.
 - **`title` (21) and `bell` (22) are PRODUCED by the host** by a non-destructive OSC/BEL sniffer
-  (`HostTitleBellSniffer` in `AislopdeskHost`, wired into `HostSession`'s output relay): as it
+  (`HostTitleBellSniffer` in `SlopDeskHost`, wired into `HostSession`'s output relay): as it
   relays the raw PTY stream it observes a copy of the bytes and emits:
   - **`title`** ← **OSC 0** (`ESC ] 0 ; <text> <term>`, icon + window) or **OSC 2**
     (`ESC ] 2 ; <text> <term>`, window), `<term>` = `BEL` (`0x07`) **or** `ST` (`ESC \`). **OSC 1**
@@ -137,7 +137,7 @@ negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` who
   terminal) and is **streaming-safe**: a byte-at-a-time state machine that holds partial state
   across read chunks, bounds the buffered OSC payload against an unterminated/hostile OSC, and
   re-syncs on a stray `ESC` without swallowing the next introducer. The client surfaces both as
-  `AislopdeskClient.Event.title` / `.bell`. They ride the head-of-line-independent CONTROL channel
+  `SlopDeskClient.Event.title` / `.bell`. They ride the head-of-line-independent CONTROL channel
   and are **not** sequenced/replayed.
 
 - **`foregroundProcess` (26) and `claudeStatus` (27) carry per-pane Claude-Code agent status**
@@ -149,24 +149,24 @@ negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` who
     `claude` is in the foreground; `""` (or any other name) clears it. The client derives a
     `ClaudeStatus` FLOOR (claude present → `.idle`).
   - **`claudeStatus`** is the rich hook path: the host folds Claude Code `Notification`/`Stop`/
-    `SessionEnd` hooks (via `AislopdeskInspector.HookParser`) into `[UInt8 state][UInt8 kind][UInt16
+    `SessionEnd` hooks (via `SlopDeskInspector.HookParser`) into `[UInt8 state][UInt8 kind][UInt16
     labelLen (BE)][label UTF-8]`. `state` = `ClaudeStatus.urgency` (`0` none / `1` idle / `2` done /
     `3` working / `4` needsPermission); `kind` = the notification class (`0` none / `1` permission /
     `2` waitingForInput / `3` other); `label` = the (often empty, length-prefixed) Stop/Notification
     message, capped at the UInt16 length field. The wire carries the RAW `state`/`kind` bytes —
-    `AislopdeskProtocol` does not depend on `AislopdeskAgentDetect`; the client maps them back, and a
+    `SlopDeskProtocol` does not depend on `SlopDeskAgentDetect`; the client maps them back, and a
     decoder is forward-tolerant of an unknown future `state`/`kind` value (the consumer clamps it).
   - The decoder **validates the declared `labelLen` before reading** (a short body → `truncated`,
     never an over-read of a hostile datagram) and requires strict UTF-8 for the name/label (an
     invalid sequence → `malformedBody`). Both ride the head-of-line-independent CONTROL channel like
     `title`/`commandStatus` and are **not** sequenced/replayed.
-  - **Host delivery (W10).** Both are emitted from `AislopdeskHost` and gated by two env flags
-    (the repo idiom — check the exact comparison): **`AISLOPDESK_AGENT_DETECT`** (DEFAULT-ON, only
+  - **Host delivery (W10).** Both are emitted from `SlopDeskHost` and gated by two env flags
+    (the repo idiom — check the exact comparison): **`SLOPDESK_AGENT_DETECT`** (DEFAULT-ON, only
     `"0"` disables) drives the foreground-process watch → type 26/27 (the PRIMARY, zero-config
-    signal, Decision #5); **`AISLOPDESK_AGENT_HOOKS`** (DEFAULT-OFF, only `"1"` enables) binds an
+    signal, Decision #5); **`SLOPDESK_AGENT_HOOKS`** (DEFAULT-OFF, only `"1"` enables) binds an
     opt-in `AF_UNIX` hook socket. When the socket is bound, every PTY exports
-    **`AISLOPDESK_SOCKET_PATH`** (the socket) + **`AISLOPDESK_PANE_ID`** (the routing key) so an
-    installed Claude hook (`aislopdesk-hostd integration install claude`) POSTs `pane=<id>\n<json>`
+    **`SLOPDESK_SOCKET_PATH`** (the socket) + **`SLOPDESK_PANE_ID`** (the routing key) so an
+    installed Claude hook (`slopdesk-hostd integration install claude`) POSTs `pane=<id>\n<json>`
     records the host folds into type 27 for the owning pane. The host **dedupes** both: type 26 only
     on a basename edge, type 27 only when the `(state, kind, label)` triple changes — an idle
     `claude` never spams identical frames.
@@ -210,7 +210,7 @@ negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` who
     13 is a **pure read** that returns status `ok` + a **2-byte** payload
     `[UInt8 installed][UInt8 listenerActive]` — `installed` (`1`/`0`) is the `settings.json` install
     marker, and `listenerActive` (`1`/`0`) is the **LIVE bind state of the host's AF_UNIX hook
-    listener** (bound only when hostd was *launched* with `AISLOPDESK_AGENT_HOOKS=1`), so the client
+    listener** (bound only when hostd was *launched* with `SLOPDESK_AGENT_HOOKS=1`), so the client
     can show installed-but-inactive (hooks written but the daemon isn't listening → a hostd restart is
     required) instead of a false green "Installed". The client decodes the second byte tolerantly (a
     1-byte reply reads as `listenerActive = 0` — conservative, never a false green). It reads ONLY the
@@ -306,7 +306,7 @@ later taken by the Warp-style `commandBlock`. See DECISIONS.md "W14 terminal par
 ## 5. Seq / ack / replay semantics
 
 The host assigns every `output` message a **monotonic `Int64` `seq` starting at 1** — a
-per-message index, not a byte count. The replay buffer (implemented in `AislopdeskTransport`,
+per-message index, not a byte count. The replay buffer (implemented in `SlopDeskTransport`,
 WF-2) retains un-acked `output` messages so a reconnect is lossless:
 
 - The client sends `ack(seq)` carrying the **highest contiguous** seq it has durably
@@ -337,12 +337,12 @@ WF-2) retains un-acked `output` messages so a reconnect is lossless:
 This design is **functionally equivalent to Eternal Terminal's byte-level `BackedWriter`
 sequence number**, lifted from byte offsets to a per-message index. ET tags each chunk of PTY
 output with a monotonically increasing sequence and replays the tail after the last
-client-acknowledged sequence on reconnect (`recover(lastValidSeq)`); Aislopdesk does the same at
+client-acknowledged sequence on reconnect (`recover(lastValidSeq)`); SlopDesk does the same at
 the granularity of one `output` message. The reconnect handshake (`hello.lastReceivedSeq` →
 host replays `seq > lastReceivedSeq`) mirrors ET's reconnect path, minus the crypto handler,
 over plain TCP on the trusted private network.
 
-## 6. Errors (`AislopdeskError`)
+## 6. Errors (`SlopDeskError`)
 
 | Case | Meaning |
 |------|---------|
@@ -351,9 +351,9 @@ over plain TCP on the trusted private network.
 | `unknownMessageType(UInt8)` | First payload byte is not a recognized type. |
 | `malformedBody(String)` | Right-length body with invalid contents (e.g. bad UTF-8 in `title`); reason string attached. |
 
-## 7. Public API (`AislopdeskProtocol`)
+## 7. Public API (`SlopDeskProtocol`)
 
-The Swift `AislopdeskProtocol` module *is* the terminal codecs: the encode/decode and the streaming
+The Swift `SlopDeskProtocol` module *is* the terminal codecs: the encode/decode and the streaming
 `FrameDecoder` are native Swift, and these are the public types.
 
 - `enum Channel { case data, control }`
@@ -363,18 +363,18 @@ The Swift `AislopdeskProtocol` module *is* the terminal codecs: the encode/decod
 - `struct FrameDecoder` — `init()`, `mutating func append(_ data: Data)`,
   `mutating func nextMessage() throws -> WireMessage?` (handles partial reads + multiple
   frames per append; **not** `Sendable`, lives inside one actor/task).
-- `enum AislopdeskError: Error, Equatable, Sendable`.
-- `enum Aislopdesk` namespace — `static let protocolVersion: UInt16 = 1`,
+- `enum SlopDeskError: Error, Equatable, Sendable`.
+- `enum SlopDesk` namespace — `static let protocolVersion: UInt16 = 1`,
   `static let maxFramePayloadLength = 16 * 1024 * 1024`.
 
-`WireMessage`, `Channel`, and `AislopdeskError` are `Sendable`; `FrameDecoder` is a non-`Sendable`
+`WireMessage`, `Channel`, and `SlopDeskError` are `Sendable`; `FrameDecoder` is a non-`Sendable`
 value type by design (it carries the receive buffer for a single connection/channel).
 
-## 8. Channel association & session handshake (WF-2, `AislopdeskTransport`)
+## 8. Channel association & session handshake (WF-2, `SlopDeskTransport`)
 
 > This section documents how the two physical TCP connections of one session are tied
 > together and how the `hello`/`helloAck` handshake runs. It is implemented in
-> `AislopdeskTransport` (`HostTransport` / `ClientTransport` / `ChannelAssociation`). It
+> `SlopDeskTransport` (`HostTransport` / `ClientTransport` / `ChannelAssociation`). It
 > does **not** change the framing (§2) or the message table (§4); the association
 > preamble is raw bytes the transport peels off *before* the first frame.
 
@@ -440,7 +440,7 @@ a DATA or CONTROL channel that finishes — whether by error *or* a clean FIN/ca
 half-close the host intends, so a clean finish is always a disconnect that reconnects
 (never a silent stall).
 
-### 8.4 `AislopdeskTransport` public API (WF-2)
+### 8.4 `SlopDeskTransport` public API (WF-2)
 
 - `enum TransportParameters` — `static func makeTCP() -> NWParameters` (the single
   canonical params: `TCP_NODELAY` + keepalive, no app crypto, no interface pin).
@@ -466,8 +466,8 @@ half-close the host intends, so a clean finish is always a disconnect that recon
 # PATH 2 — GUI video transport (UDP)
 
 > **STATUS: CURRENT.** The wire format, packetization, FEC and recovery logic are **native Swift**
-> (the `AislopdeskVideoProtocol` codecs, with the FEC's GF(2⁸) NEON kernel in `CAislopdeskSIMD`);
-> `AislopdeskVideoHost` (`NWVideoDatagramTransport`) and `AislopdeskVideoClient`
+> (the `SlopDeskVideoProtocol` codecs, with the FEC's GF(2⁸) NEON kernel in `CSlopDeskSIMD`);
+> `SlopDeskVideoHost` (`NWVideoDatagramTransport`) and `SlopDeskVideoClient`
 > (`NWVideoClientTransport`) capture/encode/decode/render and drive the sockets. This secondary GUI
 > video path (doc 17 §3, doc 18 measured spike config) is **independent of PATH 1** — its own
 > protocol over plain UDP, with NO TCP, no `WireMessage`, no `FrameDecoder`.
@@ -480,9 +480,9 @@ with a client-side composited cursor and client→host CGEvent input injection. 
 **datagram-oriented** — there is no stream framing, no length prefix, no replay buffer. Loss is
 absorbed by FEC and, when unrecoverable, by client→host recovery requests (LTR refresh → IDR).
 
-`AislopdeskVideoProtocol.version` is a **`UInt16`, currently `1`**, separate from PATH 1's
-`Aislopdesk.protocolVersion`. There is **no negotiation**: the host accepts a `hello` only when
-`protocolVersion == AislopdeskVideoProtocol.version` (strict, mirroring PATH 1 §4); any other value
+`SlopDeskVideoProtocol.version` is a **`UInt16`, currently `1`**, separate from PATH 1's
+`SlopDesk.protocolVersion`. There is **no negotiation**: the host accepts a `hello` only when
+`protocolVersion == SlopDeskVideoProtocol.version` (strict, mirroring PATH 1 §4); any other value
 is rejected. All multi-byte integers are **big-endian**, exactly as PATH 1 (§3); the
 sub-pixel geometry/cursor/input fields are big-endian IEEE-754 `Float64`. Each codec serialises
 as `[UInt8 messageType][body…]` and is decoded defensively — a short or inconsistent **single
@@ -520,9 +520,9 @@ the encode/decode pipeline and from video-burst head-of-line blocking (doc 17 §
 > (mouseMove/Down/Up), so multiplexing them onto `input` would have the host mis-decode a recovery
 > request as a phantom mouse event. The dedicated tag removes that ambiguity (no discriminator byte).
 
-The enum is defined identically (byte-for-byte raw values) in both `AislopdeskVideoHost` and
-`AislopdeskVideoClient`; the client cannot depend on the macOS-only host module, so it carries its
-own copy. *(Candidate to hoist into `AislopdeskVideoProtocol` so one definition is shared.)*
+The enum is defined identically (byte-for-byte raw values) in both `SlopDeskVideoHost` and
+`SlopDeskVideoClient`; the client cannot depend on the macOS-only host module, so it carries its
+own copy. *(Candidate to hoist into `SlopDeskVideoProtocol` so one definition is shared.)*
 
 ## 9.2 Session bring-up — `VideoControlMessage` (control channel)
 

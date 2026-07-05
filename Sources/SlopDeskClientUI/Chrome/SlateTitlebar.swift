@@ -1,0 +1,184 @@
+// SlateTitlebar — the full-width titlebar chrome. It floats as a top overlay over the content area (the
+// window runs `.hiddenTitleBar`, so there is NO system unified toolbar — this IS the chrome):
+//   • left  — the sidebar REOPEN button, shown ONLY while the sidebar is collapsed. The expanded-state
+//     toggle lives INSIDE the sidebar (`NavigatorColumn`'s traffic-light strip) — the button belongs to
+//     the panel it hides; the titlebar hosts it only when that panel is gone.
+//   • centre— the active tab's title as a `⋯` menu (working dir / split / move / find / close pane)
+//   • right — the connection cluster (`ConnectionCluster`), ONLY while the sidebar is collapsed. Its
+//     resting home is the SIDEBAR TOP (fixed-width column, leading-aligned — the ticking telemetry
+//     numbers can't shift anything there; trailing-aligned in the titlebar they wiggled the whole
+//     cluster every second). Same host-the-fallback pattern as the reopen button beside it.
+// The reopen button flips the shared `WorkspaceChromeState` flag that the split representable reads
+// to collapse the matching `NSSplitViewItem` — same machinery the old toolbar drove.
+
+#if canImport(SwiftUI)
+import Foundation
+import SFSafeSymbols
+import SlopDeskWorkspaceCore
+import SwiftUI
+#if os(macOS)
+import AppKit // NSPasteboard for "Copy Path"
+#endif
+
+struct SlateTitlebar: View {
+    let store: WorkspaceStore
+    let chrome: WorkspaceChromeState
+    /// The app-global connection — drives the trailing status cluster. Optional so the titlebar stays
+    /// standalone-mountable in previews / snapshot tests (`nil` simply hides the cluster).
+    var connection: AppConnection?
+    /// Tapping the status cluster opens the Connect-to-Host editor (``OverlayCoordinator/openConnect()``).
+    var onConnect: () -> Void = {}
+
+    /// The active tab's active pane id — drives the centre title + the menu's pane actions.
+    private var activePane: PaneID? { store.tree.activeSession?.activeTab?.activePane }
+
+    private var activeTitle: String {
+        guard let id = activePane else { return "~" }
+        let spec = store.tree.activeSession?.specs[id]
+        let title = spec?.lastKnownTitle ?? spec?.title ?? ""
+        return title.isEmpty ? "~" : title
+    }
+
+    private var sidebarVisible: Bool { !chrome.sidebarCollapsed }
+
+    var body: some View {
+        // Aligns the controls to the TRAFFIC-LIGHT row: top-anchored at `rowTop` so a 24pt plate's icon
+        // centres at y≈15 (the row the red/yellow/green buttons sit on), NOT the vertical centre of the 40pt
+        // strip.
+        let rowTop: CGFloat = 3
+        return ZStack(alignment: .top) {
+            // Left: the sidebar REOPEN button, live only while the sidebar is collapsed (the expanded-state
+            // toggle sits inside the sidebar itself — `NavigatorColumn`'s traffic-light strip). Fixed lead 80
+            // clears the traffic lights. Each direction shows the button only in its SETTLED state: it fades
+            // in only AFTER the collapse slide settles (delay), and on expand it hides INSTANTLY (`nil`
+            // animation) the moment the flag flips — anchored to the sliding content, a fade-out would RIDE
+            // the expand slide rightward (x 80→300) and read as a flash.
+            PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
+                .opacity(sidebarVisible ? 0 : 1)
+                .allowsHitTesting(!sidebarVisible)
+                .padding(.leading, 80)
+                .animation(sidebarVisible ? nil : Slate.Anim.standard.delay(0.15), value: sidebarVisible)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, rowTop)
+
+            // Centre: the active title as a menu, on the traffic-light row.
+            TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
+                .padding(.top, rowTop)
+
+            // Right: the connection cluster — the COLLAPSED-SIDEBAR fallback only (its resting home is
+            // the sidebar top; the connection state must never vanish entirely, so the titlebar hosts it
+            // while that panel is gone — the same pattern as the reopen button on the left).
+            if let connection, !sidebarVisible {
+                ConnectionCluster(
+                    connection: connection,
+                    pingMS: ConnectionTelemetry.pingMS(store),
+                    fps: ConnectionTelemetry.fps(store),
+                    kbps: ConnectionTelemetry.kbps(store),
+                    onConnect: onConnect,
+                )
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, Slate.Metric.space3)
+                .padding(.top, rowTop)
+            }
+        }
+        .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
+        .animation(Slate.Anim.standard, value: sidebarVisible)
+    }
+
+    // NOTE: the titlebar carries NO hidden SwiftUI `.keyboardShortcut` for the chrome chords. ⌘⇧L
+    // "Toggle Tabs Panel" (sidebar) is owned by the app-level
+    // `WorkspaceKeyDispatcher` NSEvent monitor (registry action `.toggleSidebar`,
+    // wired to `chrome.toggleSidebar` in `WorkspaceRootView`). A SwiftUI shortcut
+    // here would be DEAD — the monitor swallows the chord before the responder chain sees it — so we keep a
+    // SINGLE owner per chord. The visible plate buttons (the sidebar's own toggle and this reopen
+    // button) still drive the same `chrome` flag on click.
+}
+
+// MARK: - Title menu (centre)
+
+/// The centred active-title button. Hover shows a `⋯` + plate; click opens the pane menu (working dir /
+/// split / move / find / close pane). Wired to the live store.
+private struct TitleMenuButton: View {
+    let title: String
+    let store: WorkspaceStore
+    let activePane: PaneID?
+
+    @State private var hover = false
+    @State private var show = false
+
+    var body: some View {
+        Button { show.toggle() } label: {
+            HStack(spacing: 5) {
+                Text(title)
+                    .font(.system(size: Slate.Typeface.body, weight: .medium))
+                    .foregroundStyle(hover || show ? Slate.Text.primary : Slate.Text.secondary)
+                    .lineLimit(1)
+                Image(systemSymbol: .ellipsis)
+                    .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                    .foregroundStyle(Slate.Text.icon)
+                    .opacity(hover || show ? 1 : 0)
+            }
+            .padding(.horizontal, Slate.Metric.space2)
+            .frame(height: Slate.Metric.heightControl)
+            .background(hover || show ? Slate.State.hover : .clear, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .animation(Slate.Anim.smallFade, value: hover)
+        .popover(isPresented: $show, arrowEdge: .bottom) { menu }
+    }
+
+    private var cwd: String? {
+        guard let id = activePane else { return nil }
+        return store.tree.activeSession?.specs[id]?.lastKnownCwd
+    }
+
+    // The menu speaks the shared ``SlatePopoverSection``/``SlatePopoverRow``/``SlatePopoverDivider``
+    // vocabulary (MERIDIAN C3) — one menu chrome across the app, no per-popover drift.
+    private var menu: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SlatePopoverSection("WORKING DIRECTORY")
+            SlatePopoverRow(cwd ?? "~", icon: "folder", dim: true) {}
+            SlatePopoverRow("Copy Path") { copyPath() }
+            SlatePopoverDivider()
+            SlatePopoverRow("Split Right", shortcut: "⌘D") { split(.horizontal) }
+            SlatePopoverRow("Split Down", shortcut: "⌘⇧D") { split(.vertical) }
+            SlatePopoverRow("Move Pane Left", shortcut: "⌥⌘←") { move(.left) }
+            SlatePopoverRow("Move Pane Right", shortcut: "⌥⌘→") { move(.right) }
+            SlatePopoverDivider()
+            SlatePopoverRow("Close Pane", shortcut: "⌘W") { close() }
+        }
+        .padding(.vertical, 6)
+        .frame(width: 260)
+    }
+
+    private func split(_ axis: SplitAxis) {
+        show = false
+        // A split MINTS a pane → create an in-pane CHOOSER pane (Terminal / Remote window), focused. Defer one
+        // runloop tick so dismissing THIS menu's popover doesn't race the split's reconcile + focus.
+        DispatchQueue.main.async { store.openChooserPane(.split(axis: axis)) }
+    }
+
+    private func move(_ direction: FocusDirection) {
+        show = false
+        store.swapActivePaneInDirection(direction)
+    }
+
+    private func close() {
+        guard let id = activePane else { return }
+        show = false
+        store.requestClosePaneTree(id)
+    }
+
+    private func copyPath() {
+        show = false
+        #if os(macOS)
+        guard let path = cwd else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(path, forType: .string)
+        #endif
+    }
+}
+
+#endif

@@ -17,11 +17,11 @@ fork, etc. are all Claude-only.
 
 ## BINDING directive 2 — NEVER an approval gate (supervision is observe+notify+reply, never block)
 
-Per [[aislopdesk-night-supervision-roadmap-2026-06-21]] (DIRECTIVE: "never add an approval gate") and the
-E17 read-only disambiguation: aislopdesk supervision is **observe + notify + reply-on-user-initiative**.
-The agent NEVER blocks waiting for aislopdesk to approve an action; Peek-and-Reply / Send-to-Chat /
+Per [[slopdesk-night-supervision-roadmap-2026-06-21]] (DIRECTIVE: "never add an approval gate") and the
+E17 read-only disambiguation: slopdesk supervision is **observe + notify + reply-on-user-initiative**.
+The agent NEVER blocks waiting for slopdesk to approve an action; Peek-and-Reply / Send-to-Chat /
 notifications let the USER reach the agent when THEY choose. Do NOT build any flow where the agent pauses
-pending an aislopdesk confirmation. (Read-only mode from E17 is a per-pane INPUT gate the user toggles —
+pending an slopdesk confirmation. (Read-only mode from E17 is a per-pane INPUT gate the user toggles —
 that is legitimate and unrelated; do not turn it into an agent-approval gate.)
 
 ## VERIFY-NOT-REBUILD (the headline — almost everything exists; read current state first)
@@ -29,7 +29,7 @@ that is legitimate and unrelated; do not turn it into an agent-approval gate.)
 This is the heaviest verify-first epic (E9/E11 lesson: the current-state map LIES toward "missing" — grep
 + read before claiming a surface is absent). Confirmed ALREADY BUILT:
 
-**Host detection / control / install (all in `Sources/AislopdeskHost` + `Sources/AislopdeskAgentDetect`):**
+**Host detection / control / install (all in `Sources/SlopDeskHost` + `Sources/SlopDeskAgentDetect`):**
 - `AgentInstaller` — FULL pure API: `merge(into:command:)` / `remove(from:)` / `install(...)` /
   `uninstall(...)` / `hookScript()` / `hookCommand(scriptPath:)` / `defaultSettingsPath(...)` /
   `defaultScriptPath(...)`. It ALREADY writes the hook script + merges Claude Code `SessionStart`/`Stop`/
@@ -40,12 +40,12 @@ This is the heaviest verify-first epic (E9/E11 lesson: the current-state map LIE
   (already a wire message, `WireMessage.swift:168`). Detection is DONE — wire/render, don't rebuild.
 - `AgentControlListener` (`AgentControlHandler` pure verb dispatcher + `AgentControlAcceptor` AF_UNIX shim),
   `AgentControlState`, `AgentHookListener` — the LOCAL agent-control path (agent drives it via
-  `AISLOPDESK_AGENT_CONTROL`/`AISLOPDESK_CONTROL_SOCKET`). **This is NOT the client↔host RPC** — do not
+  `SLOPDESK_AGENT_CONTROL`/`SLOPDESK_CONTROL_SOCKET`). **This is NOT the client↔host RPC** — do not
   conflate; the client settings card cannot reach this socket (see WIRE below).
 - E4 metadata verbs **already include `listAgentSessions = 7` + `readAgentSession = 8`** — the History
   backend EXISTS. (Also `openPath = 9` / `revealPath = 10` from E10.)
 
-**Client side (all in `Sources/AislopdeskClientUI` + `Sources/AislopdeskWorkspaceCore`):**
+**Client side (all in `Sources/SlopDeskClientUI` + `Sources/SlopDeskWorkspaceCore`):**
 - `Inspector/AgentSessionHistoryView` — the History viewer EXISTS: fetches via `readAgentSession`, renders
   speaker turns + collapsed tool-call summaries + Markdown bodies (`AgentTranscriptEntry` +
   `AgentTranscriptProjection.entries(from:)` pure JSONL→turns). Its OWN comment (line 9) says: "E4 LISTS +
@@ -61,11 +61,11 @@ This is the heaviest verify-first epic (E9/E11 lesson: the current-state map LIE
 - `WorkspaceBindingRegistry`: `.sendToChat` action + `agent.sendToChat` binding (**⌘⌃↩**, "Send to Chat")
   EXIST but are an explicit **E13 STUB** (registry line 153) — gap = the capture + dialog + routing impl.
 - Composer/input (E12): `Input/ComposerModel` / `Input/InputBarModel` / `Pane/ComposerBar` / `Pane/InputBar`
-  + `AislopdeskClaudeCode/PromptQueueModel` + `WorkspaceStore+Composer` (sendSink ordered-out) — the
+  + `SlopDeskClaudeCode/PromptQueueModel` + `WorkspaceStore+Composer` (sendSink ordered-out) — the
   agent input/queue path. Send-to-Chat routes through THIS, not a new socket.
 - `Workspace/Tabs/TabBadge` (E6) — agent tab badges incl. spinner/check/error/hand/caffeinate/sudo; the
   badge×3 toggles ride this. `Workspace/Domain/AttentionSupervision` — attention/needs-input domain.
-- `AislopdeskInspector/*` (PATH 3 read-only inspector: `InspectorEngine`/`TranscriptLine`/`HookIngest`/
+- `SlopDeskInspector/*` (PATH 3 read-only inspector: `InspectorEngine`/`TranscriptLine`/`HookIngest`/
   `SubagentWatcher`/`EventBuilder`) — existing transcript/hook parsing; consult before writing new JSONL
   parsing for history/fork.
 
@@ -123,7 +123,7 @@ client RPC** (that's the agent's own local control path).
 ## iOS — shared ClientUI, RUN check-ios.sh
 
 - The Agents card, behavior toggles, history viewer, Send-to-Chat dialog, footer, and Peek-and-Reply view
-  are shared `AislopdeskClientUI` → **`touchesIOS: true`, the gate MUST run `bash scripts/check-ios.sh`.**
+  are shared `SlopDeskClientUI` → **`touchesIOS: true`, the gate MUST run `bash scripts/check-ios.sh`.**
 - Prevent-sleep `IOPMAssertion` is HOST-side (macOS host only) — no iOS concern there; but any AppKit-only
   UI (e.g. a macOS modal sheet) must be `#if os(macOS)` with an iOS path or documented deferral (no dead
   iOS affordance). Most stories are "both" per USER-STORIES.
@@ -143,7 +143,7 @@ client RPC** (that's the agent's own local control path).
 - **Validate-then-drop** on any new metadata verb (untrusted client→host) — never trap on a bad verb/
   payload; status-byte-only responses.
 - **Host hooks merge is idempotent** — `AgentInstaller.merge`/`remove` already dedupe by `hookMarker`
-  ("aislopdesk-agent"); reuse, don't write a second merge path.
+  ("slopdesk-agent"); reuse, don't write a second merge path.
 - **No app-layer crypto/auth/tokens** — the hook install writes a local script + settings.json on the
   trusted host; no pairing/token.
 - **Test-first, headless:** the PURE parts (transcript projection, send-to-chat capture/compose model,

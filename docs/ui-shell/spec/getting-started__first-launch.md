@@ -2,11 +2,11 @@
 
 ## Summary
 
-Four things worth setting up the first time you open Aislopdesk. All of them live in **Settings** (`⌘,`) — no config files required:
+Four things worth setting up the first time you open SlopDesk. All of them live in **Settings** (`⌘,`) — no config files required:
 
 1. Set Launch and New Tab / Window Options
 2. Set as Default Terminal
-3. Install the Aislopdesk CLI (and skip the `aislopdesk` prefix)
+3. Install the SlopDesk CLI (and skip the `slopdesk` prefix)
 4. Change Theme
 5. Install Agent Integration
 
@@ -25,33 +25,33 @@ Four things worth setting up the first time you open Aislopdesk. All of them liv
 
 macOS has no single "default terminal" setting; two separate integration points must be configured:
 
-- **System default** — registers Aislopdesk as the OS handler for `.command` / `.tool` / `.sh` file double-clicks in Finder, `open script.sh` from the command line, and `man://` / `ssh://` URL scheme opens.
+- **System default** — registers SlopDesk as the OS handler for `.command` / `.tool` / `.sh` file double-clicks in Finder, `open script.sh` from the command line, and `man://` / `ssh://` URL scheme opens.
   - Action: Settings → General → OS Integration → click **Set as Default Terminal**.
-- **Editors & git GUIs** — most editors (VS Code, Cursor, Windsurf, Sublime Text, etc.) and git GUIs hardcode Terminal.app or iTerm.app and ignore the system handler. Aislopdesk rewrites their per-app config to launch Aislopdesk instead.
+- **Editors & git GUIs** — most editors (VS Code, Cursor, Windsurf, Sublime Text, etc.) and git GUIs hardcode Terminal.app or iTerm.app and ignore the system handler. SlopDesk rewrites their per-app config to launch SlopDesk instead.
   - Action: Settings → General → OS Integration → click **Configure…** next to "Set as Default Terminal for Common Apps".
   - Apps not installed on the system are skipped automatically.
   - Any per-app override can be reverted from the same dialog.
-- **Finder Integration** — adds "Open in Aislopdesk" to Finder's right-click Services menu for folders. Enable or rebind in System Settings → Keyboard → Keyboard Shortcuts → Services. Button shown: **Open System Settings**.
-- **Full Disk Access** — needed when commands run inside Aislopdesk need to read/write protected files (mounting DMGs, reading `~/Library`, scripting Mail/Messages, etc.). Aislopdesk itself works without it. Button shown: **Open System Settings**.
+- **Finder Integration** — adds "Open in SlopDesk" to Finder's right-click Services menu for folders. Enable or rebind in System Settings → Keyboard → Keyboard Shortcuts → Services. Button shown: **Open System Settings**.
+- **Full Disk Access** — needed when commands run inside SlopDesk need to read/write protected files (mounting DMGs, reading `~/Library`, scripting Mail/Messages, etc.). SlopDesk itself works without it. Button shown: **Open System Settings**.
 
-### 3. Install the Aislopdesk CLI
+### 3. Install the SlopDesk CLI
 
-The `aislopdesk` command drives the app from any shell — open files in a pane, jump to recent folders, watch a long-running command, etc. It ships inside the app bundle but is not on `PATH` until installed.
+The `slopdesk` command drives the app from any shell — open files in a pane, jump to recent folders, watch a long-running command, etc. It ships inside the app bundle but is not on `PATH` until installed.
 
-Settings → Shell → Aislopdesk CLI:
+Settings → Shell → SlopDesk CLI:
 
-- **Install CLI** — adds `/usr/local/bin/aislopdesk`; requests admin privileges once.
-- **Omit `aislopdesk` Prefix** — toggle ON causes shells launched by Aislopdesk to get plain `edit`, `view`, `watch`, `jump`, and `learn` as shell functions, so you can type `edit foo.txt` instead of `aislopdesk edit foo.txt`.
-- **Allow Overwrite** — leave OFF unless you already have your own `edit`/`view`/etc. shell functions and want Aislopdesk to replace them.
+- **Install CLI** — adds `/usr/local/bin/slopdesk`; requests admin privileges once.
+- **Omit `slopdesk` Prefix** — toggle ON causes shells launched by SlopDesk to get plain `edit`, `view`, `watch`, `jump`, and `learn` as shell functions, so you can type `edit foo.txt` instead of `slopdesk edit foo.txt`.
+- **Allow Overwrite** — leave OFF unless you already have your own `edit`/`view`/etc. shell functions and want SlopDesk to replace them.
 
 CLI quick usage:
 
 ```sh
-aislopdesk jump Workspace   # jump to folder, like Zoxide or autojump
-aislopdesk view readme.md   # view file directly in Aislopdesk window
-aislopdesk watch build.sh   # run and watch script, show notification when done
+slopdesk jump Workspace   # jump to folder, like Zoxide or autojump
+slopdesk view readme.md   # view file directly in SlopDesk window
+slopdesk watch build.sh   # run and watch script, show notification when done
 
-# When "Omit `aislopdesk` Prefix" is enabled:
+# When "Omit `slopdesk` Prefix" is enabled:
 jump Workspace
 view readme.md
 watch build.sh
@@ -78,7 +78,7 @@ Settings → Agents:
   - Claude Code → `~/.claude/`
   - Codex → `~/.codex/`
   - OpenCode → `~/.config/opencode/plugins/`
-  - The hook lets the agent stream its live state back to Aislopdesk.
+  - The hook lets the agent stream its live state back to SlopDesk.
 - Click **Uninstall** from the same card at any time; this cleanly reverts the config files.
 
 Under **Agent Behavior** (Settings → Agents → Agent Behavior section):
@@ -110,19 +110,19 @@ The Agents settings pane also has a **CLAUDE CODE** subsection at the bottom (pa
 
 | Key / Setting | Default | Effect |
 |---|---|---|
-| **On Launch** (Settings → General) | `New Window` (recommended: `Restore Last Session`) | What Aislopdesk does when the app opens: start fresh or restore last session with scrollback and agent state |
+| **On Launch** (Settings → General) | `New Window` (recommended: `Restore Last Session`) | What SlopDesk does when the app opens: start fresh or restore last session with scrollback and agent state |
 | **Quit When All Windows Closed** (Settings → General) | (visible in screenshot, value not shown) | Whether the app quits when the last window is closed |
 | **Closing Tab** (Settings → General → Close Confirmation) | `Running Process` | When to prompt before closing a tab |
 | **Closing Window** (Settings → General → Close Confirmation) | `Running Process` | When to prompt before closing a window |
 | **Auto Update** (Settings → General → Update) | OFF | Check for new releases in background and prompt to install |
 | **Working Directory** (Settings → Shell) | (inherited) | Whether new windows/tabs/splits inherit the cwd of the current pane |
-| **Install CLI** (Settings → Shell → Aislopdesk CLI) | Not installed | Adds `/usr/local/bin/aislopdesk` to PATH; one-time admin prompt |
-| **Omit `aislopdesk` Prefix** (Settings → Shell → Aislopdesk CLI) | OFF | Exposes `edit`, `view`, `watch`, `jump`, `learn` as bare shell functions in Aislopdesk-launched shells |
-| **Allow Overwrite** (Settings → Shell → Aislopdesk CLI) | OFF | Whether prefix-less functions overwrite existing user-defined functions of the same name |
-| **Default Terminal** (Settings → General → OS Integration) | Not set | Registers Aislopdesk as the system URL/file handler for terminal launches |
-| **Set as Default Terminal for Common Apps** (Settings → General → OS Integration) | Not configured | Rewrites per-app config for VS Code, Cursor, Windsurf, Sublime Text, etc. to open Aislopdesk |
-| **Finder Integration** (Settings → General → OS Integration) | Inactive | Adds "Open in Aislopdesk" to Finder right-click Services menu |
-| **Full Disk Access** (Settings → General → OS Integration) | Not granted | Grants Aislopdesk permission to read/write protected system files |
+| **Install CLI** (Settings → Shell → SlopDesk CLI) | Not installed | Adds `/usr/local/bin/slopdesk` to PATH; one-time admin prompt |
+| **Omit `slopdesk` Prefix** (Settings → Shell → SlopDesk CLI) | OFF | Exposes `edit`, `view`, `watch`, `jump`, `learn` as bare shell functions in SlopDesk-launched shells |
+| **Allow Overwrite** (Settings → Shell → SlopDesk CLI) | OFF | Whether prefix-less functions overwrite existing user-defined functions of the same name |
+| **Default Terminal** (Settings → General → OS Integration) | Not set | Registers SlopDesk as the system URL/file handler for terminal launches |
+| **Set as Default Terminal for Common Apps** (Settings → General → OS Integration) | Not configured | Rewrites per-app config for VS Code, Cursor, Windsurf, Sublime Text, etc. to open SlopDesk |
+| **Finder Integration** (Settings → General → OS Integration) | Inactive | Adds "Open in SlopDesk" to Finder right-click Services menu |
+| **Full Disk Access** (Settings → General → OS Integration) | Not granted | Grants SlopDesk permission to read/write protected system files |
 | **Badge While Processing** (Settings → Agents → Agent Behavior) | ON | Show tab badge while agent is running |
 | **Badge When Task Completes** (Settings → Agents → Agent Behavior) | ON | Show tab badge when agent task finishes |
 | **Badge When Awaiting Input** (Settings → Agents → Agent Behavior) | ON | Show tab badge when agent awaits input/approval |
@@ -135,7 +135,7 @@ The Agents settings pane also has a **CLAUDE CODE** subsection at the bottom (pa
 
 ## Visual Spec
 
-### first-launch.png — Initial Aislopdesk window on first launch
+### first-launch.png — Initial SlopDesk window on first launch
 
 **Overall layout:** A light macOS window with rounded corners and a drop shadow. Two-column layout: narrow left sidebar and wide right terminal area, separated by a 1px hairline divider.
 
@@ -219,17 +219,17 @@ Three feature rows in this section, each with label, description text, and a but
 
 2. **Set as Default Terminal for Common Apps**
    - Label: "Set as Default Terminal for Common Apps" (bold)
-   - Description: "macOS has no real default-terminal concept — most editors and git GUIs hardcode Terminal.app. Rewrites each known third-party app's external-terminal setting so it opens Aislopdesk instead."
+   - Description: "macOS has no real default-terminal concept — most editors and git GUIs hardcode Terminal.app. Rewrites each known third-party app's external-terminal setting so it opens SlopDesk instead."
    - Button right: **"Configure…"** (rounded rectangle, light border)
 
 3. **Finder Integration**
    - Label: "Finder Integration" (bold)
-   - Description: "Adds 'Open in Aislopdesk' to Finder's right-click Services menu for folders. Enable or rebind in System Settings → Keyboard → Keyboard Shortcuts → Services."
+   - Description: "Adds 'Open in SlopDesk' to Finder's right-click Services menu for folders. Enable or rebind in System Settings → Keyboard → Keyboard Shortcuts → Services."
    - Button right: **"Open System Settings"** (rounded rectangle, light border)
 
 4. **Full Disk Access**
    - Label: "Full Disk Access" (bold)
-   - Description: "Needed when commands run inside Aislopdesk have to read or write protected files — mounting DMGs, reading `~/Library`, scripting Mail/Messages, etc. Aislopdesk itself works without it."
+   - Description: "Needed when commands run inside SlopDesk have to read or write protected files — mounting DMGs, reading `~/Library`, scripting Mail/Messages, etc. SlopDesk itself works without it."
    - Button right: **"Open System Settings"** (rounded rectangle, light border)
 
 **Button styling:** All action buttons in this section use a consistent style — rounded rectangle, approximately 130-160px wide, white/light background with a 1px border (~`#D0D0D0`), dark text, no fill color (not destructive or primary). Standard macOS borderless button look.
@@ -323,7 +323,7 @@ Toggle rows and their states:
 
 ## Screenshots
 
-- `first-launch.png` — Aislopdesk main window on first launch (light theme, single tab, empty shell)
+- `first-launch.png` — SlopDesk main window on first launch (light theme, single tab, empty shell)
 - `launch-option.png` — Settings → General with On Launch dropdown open showing two options
 - `first-launch-default-terminal.png` — Settings → General → OS Integration section showing Default Terminal, Configure…, Finder Integration, Full Disk Access buttons
 - `theme-list.png` — Theme picker floating panel over dark terminal (Command Palette flow)
@@ -332,30 +332,30 @@ Toggle rows and their states:
 
 ---
 
-## Aislopdesk Mapping Notes
+## SlopDesk Mapping Notes
 
 ### What maps 1:1
 
-- **Tab bar with agent state badges** — Aislopdesk already has `ClaudeStatus`/`ClaudePaneDetector`/`AgentControlListener` (per MEMORY.md). The badge states (running/awaiting input/task complete) map directly onto existing infrastructure; wire them to tab badge rendering in the tab bar.
-- **On Launch: Restore Last Session** — Aislopdesk has `DetachedSessionStore` (`AISLOPDESK_DETACH_ENABLED`) and scrollback; "restore last session" behavior is achievable via detach/reattach on app launch.
+- **Tab bar with agent state badges** — SlopDesk already has `ClaudeStatus`/`ClaudePaneDetector`/`AgentControlListener` (per MEMORY.md). The badge states (running/awaiting input/task complete) map directly onto existing infrastructure; wire them to tab badge rendering in the tab bar.
+- **On Launch: Restore Last Session** — SlopDesk has `DetachedSessionStore` (`SLOPDESK_DETACH_ENABLED`) and scrollback; "restore last session" behavior is achievable via detach/reattach on app launch.
 - **Working Directory inheritance** — for local panes this is straightforward; for remote panes it requires the host-side cwd (host knows cwd via `OSC 7` or direct PTY inquiry). Cwd is observable from the host side — no fundamental blocker, but it's host-driven, not client-side.
-- **Command Palette** — Aislopdesk has a Command Palette already. The theme-list-in-palette flow (type "themes", navigate with arrows, preview live, enter to apply) can be implemented using the existing palette + `ThemeStore`.
-- **Theme grid in Settings / Appearance** — Aislopdesk already has `ThemeStore` with Monokai Pro and other themes. A grid thumbnail view in Settings is achievable.
-- **Agent hook installation for Claude Code** — the hook writes to `~/.claude/`; this is a local-machine concern. Since Aislopdesk runs on the user's local Mac (client), the Settings → Agents → Install Hooks action writes config to the local `~/.claude/` and is fully applicable.
+- **Command Palette** — SlopDesk has a Command Palette already. The theme-list-in-palette flow (type "themes", navigate with arrows, preview live, enter to apply) can be implemented using the existing palette + `ThemeStore`.
+- **Theme grid in Settings / Appearance** — SlopDesk already has `ThemeStore` with Monokai Pro and other themes. A grid thumbnail view in Settings is achievable.
+- **Agent hook installation for Claude Code** — the hook writes to `~/.claude/`; this is a local-machine concern. Since SlopDesk runs on the user's local Mac (client), the Settings → Agents → Install Hooks action writes config to the local `~/.claude/` and is fully applicable.
 
 ### What requires adaptation (remote architecture)
 
-- **Default Terminal (OS-level handler)** — Aislopdesk can register itself as the system default for `.command`/`.sh`/`man://`/`ssh://` for local shell launches, but the remote session aspect means some of these (e.g., `ssh://` links) may open a remote connection rather than a local one. Flag for product decision: should clicking an `ssh://` link open a remote pane into that host via Aislopdesk's transport, or fall back to local Terminal?
-- **"Set as Default Terminal for Common Apps"** — rewrites config files for VS Code, Cursor, etc. to launch Aislopdesk instead of Terminal.app. This makes sense for local editors (client-side Mac). However, if the user's editor is running on the remote host, the config rewrite must happen on the remote host — not the local client. This cannot map 1:1 without a host-side agent or SSH-mediated rewrite. For MVP: only offer this for local editors.
-- **Finder Integration ("Open in Aislopdesk")** — adds a Services menu item. Fully achievable for client-local Finder. The opened folder would need to map to either a local pane or a remote SSH pane; the routing decision is Aislopdesk-specific.
-- **Full Disk Access** — client-local macOS TCC permission. Applicable as-is since the Aislopdesk client runs on the user's Mac. The remote host side has its own permission model (SSH credentials, sudo) which is separate.
+- **Default Terminal (OS-level handler)** — SlopDesk can register itself as the system default for `.command`/`.sh`/`man://`/`ssh://` for local shell launches, but the remote session aspect means some of these (e.g., `ssh://` links) may open a remote connection rather than a local one. Flag for product decision: should clicking an `ssh://` link open a remote pane into that host via SlopDesk's transport, or fall back to local Terminal?
+- **"Set as Default Terminal for Common Apps"** — rewrites config files for VS Code, Cursor, etc. to launch SlopDesk instead of Terminal.app. This makes sense for local editors (client-side Mac). However, if the user's editor is running on the remote host, the config rewrite must happen on the remote host — not the local client. This cannot map 1:1 without a host-side agent or SSH-mediated rewrite. For MVP: only offer this for local editors.
+- **Finder Integration ("Open in SlopDesk")** — adds a Services menu item. Fully achievable for client-local Finder. The opened folder would need to map to either a local pane or a remote SSH pane; the routing decision is SlopDesk-specific.
+- **Full Disk Access** — client-local macOS TCC permission. Applicable as-is since the SlopDesk client runs on the user's Mac. The remote host side has its own permission model (SSH credentials, sudo) which is separate.
 - **Prevent Sleep While Processing** — `NSProcessInfo.processInfo.beginActivity(...)` call; straightforward on the macOS client. No remote-side involvement.
-- **Resume Session on Recovery** — maps to `DetachedSessionStore` + `AISLOPDESK_DETACH_ENABLED`. Already exists; expose toggle in Settings → Agents.
-- **Notify When Task Completes / Awaiting Input** — macOS `UserNotifications` framework on the client. Achievable but the agent state must be streamed from the remote host through Aislopdesk's transport (OSC or control channel). `AgentControlListener` already handles this path.
-- **Install CLI (`/usr/local/bin/aislopdesk` equivalent)** — Aislopdesk has `aislopdesk-ctl` and related CLIs. A "Install CLI" button in Settings that symlinks `/usr/local/bin/aislopdesk` is directly applicable.
-- **Omit prefix / shell functions** — injecting shell functions (`edit`, `view`, `watch`, `jump`) into shells launched by Aislopdesk applies only to the LOCAL client shell (or the remote shell via the host's shell init). For remote shells, the functions must be injected on the host side via the PTY session's shell rc/profile. Medium complexity.
+- **Resume Session on Recovery** — maps to `DetachedSessionStore` + `SLOPDESK_DETACH_ENABLED`. Already exists; expose toggle in Settings → Agents.
+- **Notify When Task Completes / Awaiting Input** — macOS `UserNotifications` framework on the client. Achievable but the agent state must be streamed from the remote host through SlopDesk's transport (OSC or control channel). `AgentControlListener` already handles this path.
+- **Install CLI (`/usr/local/bin/slopdesk` equivalent)** — SlopDesk has `slopdesk-ctl` and related CLIs. A "Install CLI" button in Settings that symlinks `/usr/local/bin/slopdesk` is directly applicable.
+- **Omit prefix / shell functions** — injecting shell functions (`edit`, `view`, `watch`, `jump`) into shells launched by SlopDesk applies only to the LOCAL client shell (or the remote shell via the host's shell init). For remote shells, the functions must be injected on the host side via the PTY session's shell rc/profile. Medium complexity.
 
 ### Cannot map 1:1 (flag for product decision)
 
 - **"Restore Last Session" with remote agent auto-resume** — Because the agent (claude, codex) process runs on the remote host, not locally, "auto-resume" on launch means reconnecting the remote PTY and re-attaching to the detached session where the agent was running — not restarting a local process. This is architecturally different from a local resume: the agent never paused — it kept running on the host. The UX of "auto-resume" is actually just "reconnect to the still-running detached session." This is possible via `DetachedSessionStore`, but the framing/UX should make clear the agent was NEVER paused.
-- **Codex / OpenCode hook installation** — writes to `~/.codex/` and `~/.config/opencode/plugins/`. For aislopdesk-initial scope (Claude Code only), skip these. Mark as future work.
+- **Codex / OpenCode hook installation** — writes to `~/.codex/` and `~/.config/opencode/plugins/`. For slopdesk-initial scope (Claude Code only), skip these. Mark as future work.

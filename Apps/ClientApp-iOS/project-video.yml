@@ -1,17 +1,17 @@
 # Renderer-DISABLED iOS spec for the real-device GUI-video test (PATH 2 / ô ④).
 # Drops the libghostty renderer (the 566MB xcframework is not needed to verify video decode/
-# render) and keeps only AislopdeskClientUI + AislopdeskVideoClient. AppMain gates the renderer on
+# render) and keeps only SlopDeskClientUI + SlopDeskVideoClient. AppMain gates the renderer on
 # `#if canImport(CGhostty)`, so without CGhostty the terminal shows the placeholder while the
-# Remote-window video sheet (AislopdeskVideoClient) works fully — which is all this test needs.
+# Remote-window video sheet (SlopDeskVideoClient) works fully — which is all this test needs.
 name: ClientApp-iOS
 options:
-  bundleIdPrefix: com.aislopdesk
+  bundleIdPrefix: com.slopdesk
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
 
 packages:
-  Aislopdesk:
+  SlopDesk:
     path: ../..
 
 targets:
@@ -21,12 +21,12 @@ targets:
     sources:
       - path: ../Shared
     dependencies:
-      # The rebuilt SwiftUI scene (L2): AppMain launches `AislopdeskClientApp` from this product, which
-      # transitively pulls in AislopdeskWorkspaceCore (logic + seam types) + AislopdeskDesignSystem (tokens).
-      - package: Aislopdesk
-        product: AislopdeskClientUI
-      - package: Aislopdesk
-        product: AislopdeskVideoClient
+      # The rebuilt SwiftUI scene (L2): AppMain launches `SlopDeskClientApp` from this product, which
+      # transitively pulls in SlopDeskWorkspaceCore (logic + seam types) + SlopDeskDesignSystem (tokens).
+      - package: SlopDesk
+        product: SlopDeskClientUI
+      - package: SlopDesk
+        product: SlopDeskVideoClient
     info:
       path: Info.plist
       properties:
@@ -41,8 +41,8 @@ targets:
         CFBundleVersion: "1"
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.aislopdesk.client.ios
-        PRODUCT_NAME: Aislopdesk
+        PRODUCT_BUNDLE_IDENTIFIER: com.slopdesk.client.ios
+        PRODUCT_NAME: SlopDesk
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"

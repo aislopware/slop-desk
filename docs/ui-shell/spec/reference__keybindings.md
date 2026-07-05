@@ -2,7 +2,7 @@
 
 ## Summary
 
-Default key map shipped with Aislopdesk's terminal client. Every action is re-bindable via Settings → Key Bindings GUI or `~/.config/aislopdesk/config.toml`. Many actions exist that ship without a default binding (unbound). The page documents all default bindings grouped by category, plus the notation legend and a "See also" pointer to the customization guide for rebinding.
+Default key map shipped with SlopDesk's terminal client. Every action is re-bindable via Settings → Key Bindings GUI or `~/.config/slopdesk/config.toml`. Many actions exist that ship without a default binding (unbound). The page documents all default bindings grouped by category, plus the notation legend and a "See also" pointer to the customization guide for rebinding.
 
 Notation: ⌘ = Command, ⌃ = Control, ⌥ = Option, ⇧ = Shift, ↩ = Return, ⌫ = Delete, ⌦ = Forward Delete.
 
@@ -30,7 +30,7 @@ Notation: ⌘ = Command, ⌃ = Control, ⌥ = Option, ⇧ = Shift, ↩ = Return,
 - Font size changes (⌘= / ⌘− / ⌘0) are per-window and reset to the configured default with ⌘0.
 - Composer overlay (⌘⇧E) opens the agent Composer panel. Prompt queue addition (⌘⇧M) queues a prompt without immediately sending.
 - Vi mode toggle (⌃⇧Space) switches the focused pane between insert and Vi modal navigation.
-- Recipe save (⌘S) saves the current layout/command as a recipe; ⌘⇧S exports it as a `.aislopdeskrecipe` file.
+- Recipe save (⌘S) saves the current layout/command as a recipe; ⌘⇧S exports it as a `.slopdeskrecipe` file.
 - Global search (⌘⇧F) searches across all panes/tabs, not just the current pane.
 
 ## Keybindings
@@ -158,11 +158,11 @@ Notation: ⌘ = Command, ⌃ = Control, ⌥ = Option, ⇧ = Shift, ↩ = Return,
 | Action | Keys |
 |--------|------|
 | Save recipe | ⌘S |
-| Export .aislopdeskrecipe | ⌘⇧S |
+| Export .slopdeskrecipe | ⌘⇧S |
 
 ## Config keys
 
-Custom keybindings in `~/.config/aislopdesk/config.toml`:
+Custom keybindings in `~/.config/slopdesk/config.toml`:
 
 | Key | Default | Effect |
 |-----|---------|--------|
@@ -198,12 +198,12 @@ There are no in-page screenshots for this reference page — it is a pure text/t
 
 ### Direct implementation
 
-- **Tab management** (⌘T, ⌘W, ⌘⇧T, ⌘⇧[/], ⌘1-9, ⌘⇧L, ⌘⇧R, ⌘⇧U): Aislopdesk already has a tab/pane model with WorkspaceStore. These map directly to `WorkspaceStore` tab operations. ⌘⇧L / ⌘⇧R map to sidebar/details panel toggles already present in the UI.
+- **Tab management** (⌘T, ⌘W, ⌘⇧T, ⌘⇧[/], ⌘1-9, ⌘⇧L, ⌘⇧R, ⌘⇧U): SlopDesk already has a tab/pane model with WorkspaceStore. These map directly to `WorkspaceStore` tab operations. ⌘⇧L / ⌘⇧R map to sidebar/details panel toggles already present in the UI.
 - **Pane splits** (⌘D, ⌘⌥D, ⌘⇧D, ⌘⌥⇧D): Direct map to `WorkspaceStore` split operations — already partially implemented.
 - **Pane focus** (⌘]/⌘[, ⌃⌘↑/↓/←/→): Focus routing is client-side; maps to the existing pane-focus system.
 - **Zoom/unzoom** (⌘⇧↩): A "zoom" mode for the focused pane (hide other panes, fill the tab) — straightforward WorkspaceStore state flag.
 - **Equalize splits** (⌃⌘=): Distribute pane sizes equally — call into NSSplitView equalization on the host side.
-- **Divider move** (⌃⌘⇧↑/↓/←/→): Maps to the existing live-resize divider system (already implemented with `aislopdesk-divider-live-resize`).
+- **Divider move** (⌃⌘⇧↑/↓/←/→): Maps to the existing live-resize divider system (already implemented with `slopdesk-divider-live-resize`).
 - **Clipboard** (⌘C/X/V/A/Z/⌘⇧Z): Standard macOS clipboard — all client-side, no remote involvement needed for copy. Paste sends to PTY over the mux channel.
 - **Rectangular select** (⌥+drag): Requires libghostty support for block selection; check ghostty's selection API.
 - **Find in pane** (⌘F, ⌘G, ⌘⇧G): In-buffer search — implemented in libghostty/ghostty's search API. Client UI wraps it.
@@ -220,17 +220,17 @@ There are no in-page screenshots for this reference page — it is a pure text/t
 
 ### Partial / conditional
 
-- **Composer overlay** (⌘⇧E): Opens the existing Composer panel in aislopdesk. Fully client-side UI wrapping the agent interface. Already partially implemented per the agent-drive and ClaudeStatus work.
+- **Composer overlay** (⌘⇧E): Opens the existing Composer panel in slopdesk. Fully client-side UI wrapping the agent interface. Already partially implemented per the agent-drive and ClaudeStatus work.
 - **Add to prompt queue** (⌘⇧M): Maps to the PromptQueue system. Client-side.
-- **Recipes** (⌘S / ⌘⇧S): Recipes store named layouts/commands. ⌘S is currently the system Save shortcut; intercepting it requires checking focus context (terminal pane vs. other UI). The `.aislopdeskrecipe` export format is this spec's own format — aislopdesk can define it as JSON/TOML named sessions.
+- **Recipes** (⌘S / ⌘⇧S): Recipes store named layouts/commands. ⌘S is currently the system Save shortcut; intercepting it requires checking focus context (terminal pane vs. other UI). The `.slopdeskrecipe` export format is this spec's own format — slopdesk can define it as JSON/TOML named sessions.
 - **Show next unread tab** (⌘⇧U): Requires tracking per-tab "unread" state — a tab has unread activity if it has produced output since it was last focused. This is a buffer-side concern; ghostty can track last-rendered sequence vs. current sequence.
 - **Reopen last closed tab** (⌘⇧T): Requires a "recently closed tabs" stack in WorkspaceStore, retaining the session state for some window of time (or until the session naturally terminates).
 
 ### Platform / architecture constraints
 
-- **Half-page scroll in Vi mode** (⌃U/⌃D): When Vi mode is active, these are intercepted at the client before being forwarded to the PTY. In aislopdesk's architecture the PTY is remote; Vi mode scroll must be implemented at the client terminal (libghostty) level and NEVER forwarded to the host PTY while Vi mode is active — otherwise the host shell interprets ⌃U as "kill line." This is a correctness trap: Vi mode scroll state must be tracked client-side with explicit interception.
+- **Half-page scroll in Vi mode** (⌃U/⌃D): When Vi mode is active, these are intercepted at the client before being forwarded to the PTY. In slopdesk's architecture the PTY is remote; Vi mode scroll must be implemented at the client terminal (libghostty) level and NEVER forwarded to the host PTY while Vi mode is active — otherwise the host shell interprets ⌃U as "kill line." This is a correctness trap: Vi mode scroll state must be tracked client-side with explicit interception.
 - **Find in pane** (⌘F): ghostty's search API operates on the local terminal buffer. Over a remote session, the buffer is a client-side replica of the host's PTY output. Search works correctly as long as the scrollback buffer is fully replicated — which it is via the ReplayBuffer. No issue for forward search; historical scrollback beyond the ReplayBuffer window (64 MiB) may be truncated.
-- **Global search** (⌘⇧F): Searches across ALL pane buffers simultaneously. In aislopdesk each pane is a separate PTY session over the mux; all buffers are local replicas on the client. Global search is fully feasible but must query each pane's local ghostty buffer, not make any remote call.
-- **SSH/Remote badge on tabs**: A remote-session badge on tabs connected over SSH is a common pattern in local terminal apps. Aislopdesk IS always remote, so the badge convention could be repurposed (e.g. show host name or connection status) but doesn't apply directly — all sessions are remote by definition.
+- **Global search** (⌘⇧F): Searches across ALL pane buffers simultaneously. In slopdesk each pane is a separate PTY session over the mux; all buffers are local replicas on the client. Global search is fully feasible but must query each pane's local ghostty buffer, not make any remote call.
+- **SSH/Remote badge on tabs**: A remote-session badge on tabs connected over SSH is a common pattern in local terminal apps. SlopDesk IS always remote, so the badge convention could be repurposed (e.g. show host name or connection status) but doesn't apply directly — all sessions are remote by definition.
 - **Prefix/chord sequences** (`cmd+b>cmd+v` style): Requires a client-side key chord state machine that captures the first chord and waits for the second before dispatching. The NSEvent monitor already in place (for the prefix key system) supports this, but multi-step chords need explicit timeout/cancel handling.
-- **`text:`, `csi:`, `esc:` custom binding targets**: These require the client to send raw bytes/sequences directly to the PTY mux rather than dispatching a named action. The mux channel (`AislopdeskTransport`) already supports raw byte forwarding, so these are implementable but need a dedicated dispatch path in the keybinding handler.
+- **`text:`, `csi:`, `esc:` custom binding targets**: These require the client to send raw bytes/sequences directly to the PTY mux rather than dispatching a named action. The mux channel (`SlopDeskTransport`) already supports raw byte forwarding, so these are implementable but need a dedicated dispatch path in the keybinding handler.

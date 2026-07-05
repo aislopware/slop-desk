@@ -1,4 +1,0 @@
-module CAislopdeskSIMD {
-    header "aislopdesk_simd.h"
-    export *
-}

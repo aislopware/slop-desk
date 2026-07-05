@@ -2,7 +2,7 @@
 
 > **STATUS: REFERENCE — GUI video-path design depth.** This path is shipped and co-equal with terminal panes — the old "Phase 4 / secondary" framing is retired. Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-Three parts: discovery (Bonjour, same-LAN only), transport (plain UDP/TCP), and the packet format. The Swift shell owns the sockets (**Network.framework**, native — no libwebrtc) and the HW codec; the **Rust core** (`rust/aislopdesk-core`, video-protocol namespace, behind the C-ABI) implements the wire codec, FEC, frame reassembly, loss handling, and the congestion/ABR controllers.
+Three parts: discovery (Bonjour, same-LAN only), transport (plain UDP/TCP), and the packet format. The Swift shell owns the sockets (**Network.framework**, native — no libwebrtc) and the HW codec; the **Rust core** (`rust/slopdesk-core`, video-protocol namespace, behind the C-ABI) implements the wire codec, FEC, frame reassembly, loss handling, and the congestion/ABR controllers.
 
 ---
 
@@ -132,7 +132,7 @@ The video path **ships FEC + ABR + congestion control** (Rust core), with **FEC 
 **selective-retransmit (NACK) backstop** for what FEC can't recover.
 
 - **FEC (Reed–Solomon over GF(2⁸), NEON-accelerated):** recovers loss with **no added latency**, at a bandwidth cost — the primary mechanism. `m=1` is byte-identical to the original XOR parity; `m≥2` recovers multi-packet loss. **Adaptive tiering** (`FECScheme` + `AdaptiveFECPolicy`): low/none on a clean wired LAN (rely on drop-frame → request-recovery), ramping on Wi-Fi/lossy links. **Adaptive parity-`m`** (2026-06-18) steps `m` per-frame by measured loss (clean → m=2, burst → m=5) via the wire FEC-tier field — no format change.
-- **Retransmit (NACK / selective ARQ)** — *re-scoped 2026-06-18, `AISLOPDESK_NACK`, default OFF.* The original rule ("ARQ costs 1 RTT → visible stutter; never for video") assumed the **naive** form — replay the lost frame and stall the stream. That premise does **not** hold with a jitter/**playout buffer ≫ RTT** (e.g. 80 ms buffer vs a ~21 ms WAN RTT): a NACK'd fragment retransmit lands *inside* the buffer window → it fills the hole **before playout, no stutter** (the WebRTC model). So a frame FEC can't recover is **held** for a small retransmit grace, the client NACKs exactly the missing fragments, and the host re-sends them from a bounded send-history ring — far cheaper than the old recovery-IDR (and it recovers whole-frame losses FEC fundamentally cannot). The LTR-refresh / IDR path remains the fallback when the grace expires. Retransmit stays opt-in + deploy-together (adds wire recovery type 6).
+- **Retransmit (NACK / selective ARQ)** — *re-scoped 2026-06-18, `SLOPDESK_NACK`, default OFF.* The original rule ("ARQ costs 1 RTT → visible stutter; never for video") assumed the **naive** form — replay the lost frame and stall the stream. That premise does **not** hold with a jitter/**playout buffer ≫ RTT** (e.g. 80 ms buffer vs a ~21 ms WAN RTT): a NACK'd fragment retransmit lands *inside* the buffer window → it fills the hole **before playout, no stutter** (the WebRTC model). So a frame FEC can't recover is **held** for a small retransmit grace, the client NACKs exactly the missing fragments, and the host re-sends them from a bounded send-history ring — far cheaper than the old recovery-IDR (and it recovers whole-frame losses FEC fundamentally cannot). The LTR-refresh / IDR path remains the fallback when the grace expires. Retransmit stays opt-in + deploy-together (adds wire recovery type 6).
 
 ### Pacing
 

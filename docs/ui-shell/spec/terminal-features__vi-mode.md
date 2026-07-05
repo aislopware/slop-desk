@@ -4,7 +4,7 @@
 
 Vi Mode turns the terminal pane into a read-only, vi-style navigator of scrollback history. While active, the terminal stops forwarding keys to the shell; instead every keystroke drives the vi cursor through the scrollback buffer. The user can move, select text in three visual modes (character, line, block), search forward/backward, and yank the selection to the clipboard. A dedicated pill UI element shows the current mode and any pending repeat count. Exiting returns the terminal to normal input mode.
 
-> **Status:** Supported in terminal pane only. Aislopdesk has no built-in code editor pane, so this is a terminal-only feature.
+> **Status:** Supported in terminal pane only. SlopDesk has no built-in code editor pane, so this is a terminal-only feature.
 
 ---
 
@@ -125,16 +125,16 @@ No screenshots are present on this documentation page.
 
 - **Scrollback navigation motions** (`h`/`j`/`k`/`l`, `w`/`b`/`e`, `0`/`$`/`^`, `H`/`M`/`L`, `g g`/`G`, `⌃u`/`⌃d`, `⌃b`/`⌃f`): libghostty's terminal model tracks scrollback; motion can be implemented by translating vi keys into scrollback position updates, identical to local behavior.
 - **Numeric repeat-count prefix**: pure client-side state; count accumulates locally, then the resolved motion is applied. No host involvement.
-- **Visual selection modes** (character, line, block): libghostty supports selection; aislopdesk can extend it to support all three modes by driving libghostty's selection API client-side.
+- **Visual selection modes** (character, line, block): libghostty supports selection; slopdesk can extend it to support all three modes by driving libghostty's selection API client-side.
 - **Yank to clipboard** (`y` / `Enter`): copying selected text from libghostty's buffer to the system clipboard is client-side on macOS and iOS (NSPasteboard / UIPasteboard). No host involvement.
 - **Key-hint bar**: a pure client-side overlay UI; no host involvement.
 - **Vi Mode pill**: a client-side SwiftUI overlay on the terminal pane.
 
 ### Requires adaptation
 
-- **Find bar (`/` / `?`)**: Aislopdesk must implement its own in-pane search against libghostty's scrollback content. The behavior (open, type query, `Esc` to buffer, `n`/`N` to step) is well-specified and implementable, but requires a search index over scrollback lines. This is fully client-side on the aislopdesk client — no host involvement needed.
-- **Hint Mode (`f`)**: a complementary feature that keyboard-annotates visible links for clicking. On aislopdesk, link positions come from the libghostty render model. Clicking a link would inject a mouse-click event to the HOST via the aislopdesk input path (not a local browser open), because the terminal session lives on the macOS host. This is an architectural consequence of the remote model: a purely local terminal can just open the URL locally, but aislopdesk must decide whether to open the URL on the client (if OSC 8 hyperlink content is tunneled) or inject a click on the host. This needs an explicit decision on the URL-open side before it can be implemented.
+- **Find bar (`/` / `?`)**: SlopDesk must implement its own in-pane search against libghostty's scrollback content. The behavior (open, type query, `Esc` to buffer, `n`/`N` to step) is well-specified and implementable, but requires a search index over scrollback lines. This is fully client-side on the slopdesk client — no host involvement needed.
+- **Hint Mode (`f`)**: a complementary feature that keyboard-annotates visible links for clicking. On slopdesk, link positions come from the libghostty render model. Clicking a link would inject a mouse-click event to the HOST via the slopdesk input path (not a local browser open), because the terminal session lives on the macOS host. This is an architectural consequence of the remote model: a purely local terminal can just open the URL locally, but slopdesk must decide whether to open the URL on the client (if OSC 8 hyperlink content is tunneled) or inject a click on the host. This needs an explicit decision on the URL-open side before it can be implemented.
 - **Mark Mode (arrow-key + Shift-select emphasis)**: a variant entry point with no default binding. Fully implementable client-side; just a different key-input interpretation layer, once Keybindings support it.
 - **iOS client**: all vi-cursor motion and selection modes must work via on-screen key overlays or external keyboard on iOS. The `⌃⇧Space` entry binding needs an alternative trigger for software-keyboard users. The pill and key-hint bar must adapt to the iOS HIG (smaller touch targets, no hover states).
-- **Remote scrollback boundary**: aislopdesk streams terminal output from the host; the full scrollback history depends on what has been received by the client. If the client reconnects mid-session, older scrollback may not be locally available. This is a structural gap relative to a purely local terminal, where scrollback is always complete. The `ReplayBuffer` (64 MiB ceiling) mitigates this but does not guarantee full history.
-- **Key forwarding suspension**: in aislopdesk, keys are normally forwarded over the network to the host PTY. In Vi Mode, the client must intercept keys BEFORE they are enqueued for host transmission. This is an interception point at the `AislopdeskClientUI` key-event layer — must ensure no keys leak to the transport while Vi Mode is active.
+- **Remote scrollback boundary**: slopdesk streams terminal output from the host; the full scrollback history depends on what has been received by the client. If the client reconnects mid-session, older scrollback may not be locally available. This is a structural gap relative to a purely local terminal, where scrollback is always complete. The `ReplayBuffer` (64 MiB ceiling) mitigates this but does not guarantee full history.
+- **Key forwarding suspension**: in slopdesk, keys are normally forwarded over the network to the host PTY. In Vi Mode, the client must intercept keys BEFORE they are enqueued for host transmission. This is an interception point at the `SlopDeskClientUI` key-event layer — must ensure no keys leak to the transport while Vi Mode is active.

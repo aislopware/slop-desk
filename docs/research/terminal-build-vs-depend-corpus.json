@@ -11,9 +11,9 @@
           "detail": "The branch contains exactly one commit (91fe505, 2026-03-08), authored by wiedymi, on top of ghostty main at ghostty 1.3.2-dev. The repo has 3 stars, 5 forks, and was last pushed 2026-05-02 — no activity since the initial commit. The custom-IO surface is implemented as a new termio backend called `Callback` (src/termio/Callback.zig, ~170 lines). The C API adds two functions to ghostty.h: `ghostty_surface_feed_data` (push bytes from host into the terminal) and `ghostty_surface_set_write_callback` (register a callback that receives keystroke bytes to send back). Activation requires setting `use_custom_io: bool = true` on the embedded surface options struct. The implementation is plausible but minimal — no resize-callback, no process-exit signal, no thread-safety documentation for the callback invocation context. VVTerm, which reportedly uses this fork, does not appear to be a public GitHub repo, so there is no evidence of real production deployment.",
           "sources": [
             "https://github.com/wiedymi/ghostty/tree/custom-io",
-            "/Users/congtran/.cache/clio-repos/github.com--wiedymi--ghostty--custom-io/src/termio/Callback.zig",
-            "/Users/congtran/.cache/clio-repos/github.com--wiedymi--ghostty--custom-io/src/apprt/embedded.zig:2264-2292",
-            "/Users/congtran/.cache/clio-repos/github.com--wiedymi--ghostty--custom-io/include/ghostty.h:1119-1120"
+            "/Users/dev/.cache/clio-repos/github.com--wiedymi--ghostty--custom-io/src/termio/Callback.zig",
+            "/Users/dev/.cache/clio-repos/github.com--wiedymi--ghostty--custom-io/src/apprt/embedded.zig:2264-2292",
+            "/Users/dev/.cache/clio-repos/github.com--wiedymi--ghostty--custom-io/include/ghostty.h:1119-1120"
           ]
         },
         {
@@ -21,9 +21,9 @@
           "detail": "The branch is one commit (21c7173, 2026-03-10) on ghostty 1.3.0. It has 0 stars, 0 forks, and has not been updated since. The implementation is more thorough than wiedymi: it introduces a dedicated `src/termio/External.zig` (470 lines) with a proper `GHOSTTY_BACKEND_EXTERNAL` enum value in ghostty.h, write and resize callback types as part of `ghostty_surface_config_s`, and a `ghostty_surface_write_output()` function to push PTY bytes in. The AGENTS.md documents the iOS build pipeline (zig build -Demit-xcframework=true) and explicitly says issues are tracked on daiimus/geistty, not upstream. However there is no geistty repo visible, no iOS demo app in the tree, no CI, and no XCFramework artifact. The External.zig has unit tests for linefeed expansion, which is a positive signal for completeness, but overall this is a proof-of-concept, not a shippable dependency.",
           "sources": [
             "https://github.com/daiimus/ghostty/tree/ios-external-backend",
-            "/Users/congtran/.cache/clio-repos/github.com--daiimus--ghostty--ios-external-backend/src/termio/External.zig",
-            "/Users/congtran/.cache/clio-repos/github.com--daiimus--ghostty--ios-external-backend/include/ghostty.h:424-469",
-            "/Users/congtran/.cache/clio-repos/github.com--daiimus--ghostty--ios-external-backend/AGENTS.md"
+            "/Users/dev/.cache/clio-repos/github.com--daiimus--ghostty--ios-external-backend/src/termio/External.zig",
+            "/Users/dev/.cache/clio-repos/github.com--daiimus--ghostty--ios-external-backend/include/ghostty.h:424-469",
+            "/Users/dev/.cache/clio-repos/github.com--daiimus--ghostty--ios-external-backend/AGENTS.md"
           ]
         },
         {
@@ -31,28 +31,28 @@
           "detail": "The repo has a GitHub Actions workflow (`build.yml`) on a weekly cron (`23 6 * * 1` = Monday 6:23 UTC) that auto-detects the latest semver tag from ghostty-org/ghostty, clones it, applies the local Patches/ghostty/ directory, builds per-target static libraries for aarch64-macos, x86_64-macos, aarch64-ios, aarch64-ios-simulator, x86_64-ios-simulator, aarch64-ios-macabi, x86_64-ios-macabi, lipo-merges them, assembles a GhosttyKit.xcframework, runs swift test, then publishes a new GitHub release. The latest release (1.2.3, published 2026-06-01) was built from upstream v1.3.1 (sha 332b2ae). Package.swift uses a versioned binaryTarget pointing at the release ZIP with a hardcoded checksum, giving consumers reproducible builds. There is 1 open issue and 31 forks — meaningful for a 3-month-old package.",
           "sources": [
             "https://github.com/Lakr233/libghostty-spm",
-            "/Users/congtran/.cache/clio-repos/github.com--Lakr233--libghostty-spm/.github/workflows/build.yml",
-            "/Users/congtran/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Package.swift"
+            "/Users/dev/.cache/clio-repos/github.com--Lakr233--libghostty-spm/.github/workflows/build.yml",
+            "/Users/dev/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Package.swift"
           ]
         },
         {
           "claim": "Lakr233's host-managed-IO patch (0002) is functionally equivalent to daiimus's External backend and Wiedymi's Callback backend, but is structurally cleaner and documented in patch form for auditability",
           "detail": "Patch 0002 (518 lines) adds `src/termio/HostManaged.zig` (136 lines) — a termio backend with a `write` callback (fn(?*anyopaque, [*]const u8, usize)), an optional `resize` callback (fn(?*anyopaque, u16, u16, u32, u32)), and `ghostty_surface_write_buffer` / `ghostty_surface_process_exit` C-API functions. The `ghostty_surface_config_s` gains a `backend` enum field (`EXEC` vs `HOST_MANAGED`), `receive_userdata`, `receive_buffer`, and `receive_resize` callback pointers. The patch is a standard unified diff applied via `git apply`, idempotent (apply-patches.sh checks `--check --reverse` before re-applying). Patches 0004-0008 are shell scripts that handle iOS-specific quirks: kqueue panic suppression, CGSSetWindowBackgroundBlurRadius removal for App Store compliance, IOSurface ±1px tolerance fix, Metal texture storage changes, inspector disabling. These represent real iOS integration work that neither wiedymi nor daiimus surfaces in usable form. Critically, 0003 (prebuilt-framedata, 1720 lines) pre-computes Metal frame data at build time — a significant rendering optimization whose correctness has not been independently verified.",
           "sources": [
-            "/Users/congtran/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Patches/ghostty/0002-host-managed-io.patch",
-            "/Users/congtran/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Patches/ghostty/0004-ios-fixes.sh",
-            "/Users/congtran/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Patches/ghostty/0005-ios-metal-rendering.sh",
-            "/Users/congtran/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Patches/ghostty/README.md"
+            "/Users/dev/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Patches/ghostty/0002-host-managed-io.patch",
+            "/Users/dev/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Patches/ghostty/0004-ios-fixes.sh",
+            "/Users/dev/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Patches/ghostty/0005-ios-metal-rendering.sh",
+            "/Users/dev/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Patches/ghostty/README.md"
           ]
         },
         {
           "claim": "Lakr233/libghostty-spm ships a real Swift wrapper (GhosttyTerminal) with full iOS UIKit input, IME, keyboard accessory bar, Metal display link, and an InMemoryTerminalSession abstraction that directly maps to the host-owned-PTY pattern",
           "detail": "GhosttyTerminal (~40 Swift files) provides: TerminalSurfaceView (SwiftUI representable for both AppKit and UIKit), UITerminalView with full UITextInput conformance, hardware key translation via UIPress, sticky modifier state for the input accessory bar (Esc, Tab, arrows, Ctrl/Alt/Cmd), IME/marked text via preedit, touch scrolling with momentum via CADisplayLink, and Catalyst pointer/mouse support. InMemoryTerminalSession is the host-IO bridge: it holds a `write: @Sendable (Data) -> Void` (bytes to send to SSH) and `resize: @Sendable (InMemoryTerminalViewport) -> Void`, registers C callbacks for `receive_buffer` and `receive_resize`, and exposes `receive(_ data: Data)` for pushing PTY output from the network into the terminal. The `TerminalSessionBackend` enum has `.exec` and `.inMemory(InMemoryTerminalSession)` cases. The MobileGhosttyApp example demonstrates the full iOS integration. This is the most complete ready-to-use surface of any of the three forks.",
           "sources": [
-            "/Users/congtran/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSession.swift",
-            "/Users/congtran/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Sources/GhosttyTerminal/InMemory/TerminalSessionBackend.swift",
-            "/Users/congtran/.cache/clio-repos/github.com--Lakr233--libghostty-spm/AGENTS.md",
-            "/Users/congtran/.cache/clio-repos/github.com--Lakr233--libghostty-spm/README.md"
+            "/Users/dev/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSession.swift",
+            "/Users/dev/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Sources/GhosttyTerminal/InMemory/TerminalSessionBackend.swift",
+            "/Users/dev/.cache/clio-repos/github.com--Lakr233--libghostty-spm/AGENTS.md",
+            "/Users/dev/.cache/clio-repos/github.com--Lakr233--libghostty-spm/README.md"
           ]
         },
         {
@@ -60,17 +60,17 @@
           "detail": "The upstream ghostty.h header comment reads verbatim: 'This isn't meant to be a general purpose embedding API (yet) so there hasn't been documentation or example work beyond that. The only consumer of this API is the macOS app.' There are no tagged libghostty releases on ghostty-org/ghostty (the tag list shows only application releases like v1.3.1). The types in ghostty.h are documented as 'must be kept in sync with their Zig counterparts. Any changes to these types MUST have an associated Zig change' — i.e., Zig-side changes break the C ABI without a semver contract. For the host-managed-IO patches specifically, the patch context lines in Lakr233's 0002 patch will drift against upstream Surface.zig on every upstream refactor. The current patch targets v1.3.1; whether it will apply cleanly to v1.4.x is unknown. Lakr233's weekly CI will detect this breakage (a failing `git apply --check` exits non-zero), but it means downstream consumers can receive a broken xcframework until Lakr233 manually updates the patch.",
           "sources": [
             "https://github.com/ghostty-org/ghostty/blob/main/include/ghostty.h:1-7",
-            "/Users/congtran/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Patches/ghostty/README.md",
-            "/Users/congtran/.cache/clio-repos/github.com--Lakr233--libghostty-spm/.github/workflows/build.yml"
+            "/Users/dev/.cache/clio-repos/github.com--Lakr233--libghostty-spm/Patches/ghostty/README.md",
+            "/Users/dev/.cache/clio-repos/github.com--Lakr233--libghostty-spm/.github/workflows/build.yml"
           ]
         },
         {
           "claim": "Lakr233's license is MIT (personal copyright, not a ghostty-org fork license), which is clean for production use; wiedymi and daiimus retain the upstream MIT license with Ghostty contributor attribution",
           "detail": "Lakr233/libghostty-spm: 'MIT License, Copyright (c) 2026 @Lakr233'. wiedymi and daiimus both carry the upstream 'MIT License, Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors'. All three are permissive MIT and present no licensing obstacle to commercial use. GhosttyTheme (485 themes) also MIT from iTerm2-Color-Schemes. The binary XCFramework distributed by Lakr233 is a build artifact of upstream ghostty source (MIT) plus the patches — no additional license obligations.",
           "sources": [
-            "/Users/congtran/.cache/clio-repos/github.com--Lakr233--libghostty-spm/LICENSE",
-            "/Users/congtran/.cache/clio-repos/github.com--wiedymi--ghostty--custom-io/LICENSE",
-            "/Users/congtran/.cache/clio-repos/github.com--daiimus--ghostty--ios-external-backend/LICENSE"
+            "/Users/dev/.cache/clio-repos/github.com--Lakr233--libghostty-spm/LICENSE",
+            "/Users/dev/.cache/clio-repos/github.com--wiedymi--ghostty--custom-io/LICENSE",
+            "/Users/dev/.cache/clio-repos/github.com--daiimus--ghostty--ios-external-backend/LICENSE"
           ]
         },
         {
@@ -163,26 +163,26 @@
           "detail": "The canonical description at vt100.net/emu/dec_ansi_parser defines 14 states (ground, escape, escapeIntermediate, csiEntry, csiParam, csiIntermediate, csiIgnore, dcsEntry, dcsParam, dcsIntermediate, dcsPassthrough, dcsIgnore, oscString, sosPmApcString) and 14 actions (ignore, error, print, execute, clear, collect, param, escDispatch, csiDispatch, oscStart, oscPut, oscEnd, hook/put/unhook for DCS). SwiftTerm's EscapeSequenceParser.swift implementing exactly this is 898 LOC. alacritty/vte's lib.rs (the pure state machine) is 1,544 LOC; wezterm's vtparse/lib.rs is 1,165 LOC. All three are close to the same size. This layer is NOT the complexity bottleneck — it is well-understood, well-documented, and a Swift implementation can be completed in 1–2 weeks by one engineer. The real complexity is in the terminal-state layer that consumes the parser's output.",
           "sources": [
             "https://vt100.net/emu/dec_ansi_parser",
-            "/Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/EscapeSequenceParser.swift:22-38",
-            "/Users/congtran/.cache/clio-repos/github.com--alacritty--vte/src/lib.rs:1-9",
-            "/Users/congtran/.cache/clio-repos/github.com--wezterm--wezterm/vtparse/src/lib.rs"
+            "/Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/EscapeSequenceParser.swift:22-38",
+            "/Users/dev/.cache/clio-repos/github.com--alacritty--vte/src/lib.rs:1-9",
+            "/Users/dev/.cache/clio-repos/github.com--wezterm--wezterm/vtparse/src/lib.rs"
           ]
         },
         {
           "claim": "The terminal-state layer (the hard part) is 6,800–10,000+ LOC per mature library and grows over years of bug-fixing",
           "detail": "Measured directly from source: SwiftTerm's Terminal.swift is 6,821 LOC (plus 1,649 for Buffer/BufferLine, 957 for Kitty keyboard, 403 for Sixel, 262 for CharSets = ~10,000 LOC core). wezterm's equivalent layer is terminalstate/mod.rs (2,766) + performer.rs (1,109) + mouse.rs (364) + kitty.rs (979) + screen.rs (1,155) = ~6,400 LOC just for the performer/state side, backed by wezterm-escape-parser's csi.rs (3,395) + osc.rs (2,000) = a further 5,400 LOC of semantic decoding. xterm.js InputHandler.ts alone is 3,694 LOC. These numbers reflect years of incremental correctness fixes, not a first-pass implementation. A fresh DIY implementation will start at roughly 2,000–3,000 LOC but grow toward these numbers as real-world bugs surface.",
           "sources": [
-            "/Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-            "/Users/congtran/.cache/clio-repos/github.com--wezterm--wezterm/term/src/terminalstate/mod.rs",
-            "/Users/congtran/.cache/clio-repos/github.com--xtermjs--xterm.js/src/common/InputHandler.ts"
+            "/Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+            "/Users/dev/.cache/clio-repos/github.com--wezterm--wezterm/term/src/terminalstate/mod.rs",
+            "/Users/dev/.cache/clio-repos/github.com--xtermjs--xterm.js/src/common/InputHandler.ts"
           ]
         },
         {
           "claim": "SGR truecolor parsing has a real ambiguity trap: semicolons vs. colons, and 38;2 consumes subsequent parameters",
           "detail": "ECMA-48 specifies colon-separated sub-parameters (38:2:R:G:B), but xterm's historic implementation popularized semicolons (38;2;R;G;B). These semantically conflict because semicolons are also standard parameter delimiters, meaning a parser can't tell where the RGB triplet ends without heuristics. SwiftTerm's EscapeSequenceParser.swift explicitly notes this on line 8–11: 'The state machine has been extended to allow \":\" in the CSI Param state to initiate a new parameter value. This is strictly not part of the spec, but necessary to parse the color scheme CSI [ 48:2:R:G:B m sequence which uses \":\" instead of the more common \";\".' The safe approach is to accept both separators, which requires a minor state-machine extension. SwiftTerm's SGR handler is at Terminal.swift:3614+ and runs ~400 LOC covering 16-color, 256-color (38;5;n), truecolor (38;2;r;g;b), and the full SGR attribute table.",
           "sources": [
-            "/Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/EscapeSequenceParser.swift:8-11",
-            "/Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/Terminal.swift:3614-3991",
+            "/Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/EscapeSequenceParser.swift:8-11",
+            "/Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/Terminal.swift:3614-3991",
             "https://github.com/termstandard/colors"
           ]
         },
@@ -190,8 +190,8 @@
           "claim": "DEC private modes required for coding: alt-screen (1049), bracketed paste (2004), mouse (1000/1002/1003/1006), cursor keys, autowrap — each has edge cases",
           "detail": "SwiftTerm's Terminal.swift handles all of these. Key observations from the source: (1) Mouse encoding has four variants: X10 (1000), button (1002), any (1003), and SGR (1006) — each encodes coordinates differently and the emulator must track which is active and encode responses correctly. SwiftTerm tracks mouseMode + mouseProtocol as separate state variables. (2) Alt-screen (1049) saves/restores cursor position AND switches buffers; modes 1047 and 1049 behave slightly differently on clear. (3) DECSTBM (scroll regions) must interact correctly with cursor movement commands — Terminal.swift line 1012 shows the 'r' CSI handler. (4) Bracketed paste (2004) is straightforward but must not be forgotten — nvim relies on it. (5) Cursor key mode (DECCKM, mode 1) changes whether arrow keys send application or normal sequences — critical for vim. Each mode is ~5–30 LOC to implement but the interaction surface is large.",
           "sources": [
-            "/Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/Terminal.swift:482-636",
-            "/Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/Terminal.swift:4082-4439"
+            "/Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/Terminal.swift:482-636",
+            "/Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/Terminal.swift:4082-4439"
           ]
         },
         {
@@ -206,8 +206,8 @@
           "claim": "G0/G1 character sets and VT100 line drawing are required for vim/neovim borders and are not trivial",
           "detail": "vim and neovim use the VT100 Special Graphics character set (G1, invoked via SO/SI or ESC ( 0) for box-drawing characters (window borders, horizontal/vertical separators) when in legacy mode. The G0/G1 system requires tracking four G-sets (G0–G3), two active slots (GL/GR), SO (Shift Out, 0x0E) and SI (Shift In, 0x0F) control codes, and ESC ( / ) / ESC * / ESC + designate sequences for each slot. SwiftTerm implements this in CharSets.swift (262 LOC) plus Terminal.swift lines 2530–2581 (setgCharset) and 1675–1682 (SO/SI handlers). The dutch 'ij' ligature edge case is even commented in the source (Terminal.swift line 1225). For a coding-only use-case this is a required, not optional, feature — neovim tree-sitter highlights and many TUI apps rely on it.",
           "sources": [
-            "/Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/CharSets.swift",
-            "/Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/Terminal.swift:2530-2581"
+            "/Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/CharSets.swift",
+            "/Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/Terminal.swift:2530-2581"
           ]
         },
         {
@@ -217,15 +217,15 @@
             "https://mitchellh.com/writing/grapheme-clusters-in-terminals",
             "https://www.jeffquast.com/post/state-of-terminal-emulation-2025/",
             "https://github.com/microsoft/terminal/issues/14702",
-            "/Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/UnicodeWidthData.swift"
+            "/Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/UnicodeWidthData.swift"
           ]
         },
         {
           "claim": "OSC codes required for a coding use-case: OSC 0/1/2 (window title), OSC 52 (clipboard — essential for remote vim), OSC 7 (cwd — used by shells), OSC 8 (hyperlinks) are each distinct string parsers",
           "detail": "OSC strings arrive as ESC ] <code> ; <data> BEL|ST. Each code requires a separate handler. OSC 52 (clipboard) is critical for remote vim sessions over SSH/WireGuard — it allows :y to yank into the local clipboard. OSC 7 (cwd) is used by iTerm2, fish, and Ghostty for tab titles and new-tab inheritance. OSC 8 (hyperlinks) is increasingly used by modern ls, git log, and error formatters. wezterm's osc.rs is 2,000 LOC just for the OSC semantic layer. SwiftTerm implements OSC 52 at Terminal.swift lines 1787–1814. OSC is straightforward to parse (scan until BEL or ST) but the sheer variety of codes means there are always more to add. For the coding subset: OSC 0/2/7/52 are the required ones; OSC 8 and iTerm2-style OSC 1337 are nice-to-have.",
           "sources": [
-            "/Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/Terminal.swift:1787-1814",
-            "/Users/congtran/.cache/clio-repos/github.com--wezterm--wezterm/wezterm-escape-parser/src/osc.rs"
+            "/Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/Terminal.swift:1787-1814",
+            "/Users/dev/.cache/clio-repos/github.com--wezterm--wezterm/wezterm-escape-parser/src/osc.rs"
           ]
         },
         {
@@ -233,9 +233,9 @@
           "detail": "Without Kitty keyboard protocol, nvim cannot distinguish Ctrl-M from Enter, Ctrl-I from Tab, or Alt-modified keys from bare Escape sequences. The emulator must: (1) maintain independent mode stacks per screen (main/alt), (2) encode keydown/keyup/repeat events as CSI u sequences with modifier bitfields, (3) handle 5 progressive enhancement flags (disambiguate, report events, alternate keys, all-as-codes, associated text), (4) generate shifted/unshifted key variants. SwiftTerm implements this in KittyKeyboardProtocol.swift (53 LOC protocol) + KittyKeyboardEncoder.swift (904 LOC). xterm.js's KittyKeyboard.ts is 526 LOC. wezterm's kitty.rs is 979 LOC. This is a self-contained, well-specified feature that can be added incrementally — nvim works without it in legacy mode, so this can be deferred to iteration 2. Estimate: 1–2 engineer-weeks to implement correctly.",
           "sources": [
             "https://sw.kovidgoyal.net/kitty/keyboard-protocol/",
-            "/Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/KittyKeyboardEncoder.swift",
-            "/Users/congtran/.cache/clio-repos/github.com--xtermjs--xterm.js/src/common/input/KittyKeyboard.ts",
-            "/Users/congtran/.cache/clio-repos/github.com--wezterm--wezterm/term/src/terminalstate/kitty.rs"
+            "/Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/KittyKeyboardEncoder.swift",
+            "/Users/dev/.cache/clio-repos/github.com--xtermjs--xterm.js/src/common/input/KittyKeyboard.ts",
+            "/Users/dev/.cache/clio-repos/github.com--wezterm--wezterm/term/src/terminalstate/kitty.rs"
           ]
         },
         {
@@ -243,15 +243,15 @@
           "detail": "When the terminal width changes, wrapped lines should re-wrap at the new width rather than being truncated or corrupted. This requires each BufferLine to track a 'isWrapped' flag and the resize function to join wrapped runs back into logical lines before splitting them at the new width. SwiftTerm's Buffer.swift (1,255 LOC) tracks isWrapped per line and handles this in the resize path. Contour terminal has documented a 'line reflow mode' extension (as a DEC private mode toggle). A DIY implementation that ignores reflow will produce visually broken output whenever the user resizes the window — acceptable for a prototype but not for daily coding. Estimate: 1–2 weeks to get right.",
           "sources": [
             "https://contour-terminal.org/vt-extensions/line-reflow-mode/",
-            "/Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/Buffer.swift"
+            "/Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/Buffer.swift"
           ]
         },
         {
           "claim": "Kitty graphics protocol and Sixel are optional for vim/neovim/tmux/git — skip them in v1",
           "detail": "lazygit uses Kitty graphics for image previews in some configurations; btop can use Sixel or Kitty graphics for charts. But none of the core coding tools (vim, neovim, tmux, git, fzf) require graphics support for text operation. SwiftTerm has KittyGraphics.swift (1,936 LOC) and SixelDcsHandler.swift (403 LOC) — these are significant features but entirely deferrable. A v1 implementation that shows a 'graphics not supported' fallback remains fully usable. Ghostty took over a year to implement its Kitty graphics support after the initial terminal emulator was working.",
           "sources": [
-            "/Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/KittyGraphics.swift",
-            "/Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/SixelDcsHandler.swift"
+            "/Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/KittyGraphics.swift",
+            "/Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/SixelDcsHandler.swift"
           ]
         },
         {
@@ -267,7 +267,7 @@
           "detail": "SwiftTerm's HeadlessTerminal.swift provides a Terminal subclass with no rendering or UI dependency. The Terminal class is render-agnostic: it calls delegate callbacks for damage notifications and cursor moves; the consumer (your Metal renderer) reads Terminal.buffer and CharData cells. SwiftTerm has 1,035 commits over 7 years, active maintenance as of 2025 (last PR merged within days per search results), and is already used in commercial SSH apps (Secure Shellfish, La Terminal, CodeEdit). License: MIT. It handles all the features enumerated above — including Kitty keyboard (904 LOC encoder), Sixel, OSC 52, grapheme clusters via Swift's native String — making it the ideal 'mature VT state library' for the architecture the user is considering, and directly usable without any Rust or Zig toolchain.",
           "sources": [
             "https://github.com/migueldeicaza/SwiftTerm",
-            "/Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/HeadlessTerminal.swift"
+            "/Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm/Sources/SwiftTerm/HeadlessTerminal.swift"
           ]
         }
       ],
@@ -466,7 +466,7 @@
             "claim": "SwiftTerm's README \"relies extensively on esctest\" claim implies meaningful, measured esctest coverage — the README does not publish a pass percentage",
             "verdict": "confirmed",
             "confidence": "high",
-            "evidence": "Direct inspection of the SwiftTerm repository (cloned at /Users/congtran/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm, latest commit 2026-05-18) confirms both parts of the claim:\n\n**No published pass percentage:** The README states the library \"relies extensively on esctest to ensure compatibility\" but no percentage, dashboard, or CI report of esctest results appears anywhere in the repo — README, docs, CI workflows, or release notes.\n\n**Real esctest infrastructure exists (not vaporware):** Tests/SwiftTermTests/SwiftTermTests.swift contains a functional esctest runner (runTester()) that launches a HeadlessTerminal, invokes esctest.py against it, and parses the output. The Makefile includes a `clone-esctest` target that fetches migueldeicaza's own python3 branch of esctest (https://github.com/migueldeicaza/esctest). The test runner is opt-in: esctest is not bundled in the repo and is skipped automatically when not present (\"Skipping test - esctest not found\").\n\n**Known-passing vs known-failing inventory:** The testKnownGood() method lists ~76 test-name entries that must pass (BS, CAT, CHA, CHT, DCH, DCS, DECBI, DECDC, DECDSR, DECERA, DECFRA, DECIC, partial DECALN, partial DECCRA, partial DECRQM, partial DECSET, partial ECH, EL, IND, NEL, RI, RIS, VPA, ChangeColor, etc.). Inline comments document ~40 known failures with specific test names and in some cases brief explanations (e.g., \"linked to the two previous IND failures\", \"I disagree with this test\", \"ISO protection not implemented\", \"this is a problem with the mouse reporting\"). The ratio is roughly 76 passing : 40 failing entries in the curated list — but this is only the subset of esctest that migueldeicaza chose to run and annotate; the full esctest suite contains far more tests.\n\n**HeadlessTerminal is macOS-only:** HeadlessTerminal.swift begins with `#if !os(iOS) && !os(Windows)`. The esctest runner therefore does not run on iOS. Terminal.swift itself (the core VT state engine) has no platform guards and is available on iOS 14+, iPadOS 14+, tvOS 13+, visionOS 1+. The iOS terminal view lives in Sources/SwiftTerm/iOS/ and is well-maintained.\n\n**Activity level:** Only 1 commit in the past 12 months (the repo saw bursts of activity in prior years). The most recent commit (2026-05-18) fixes a DEC 2026 buffering regression, showing the maintainer is still active but cadence is slow.\n\n**Broader context — adversarial check on the other candidates:**\n\nlibghostty-vt (official ghostty-org): The C header vt.h opens with \"WARNING: This is an incomplete, work-in-progress API. It is not yet stable and is definitely going to change.\" CI runs a `test-lib-vt` job (Zig unit tests, not esctest). Mitchell Hashimoto's Sept 2025 post targeted a tagged release \"within 6 months.\" Ghostty itself has known vttest failures (screen update delays, text color regressions in vttest type 2, no VT52 — all documented in discussion #4047, with maintainer saying vttest compliance \"isn't a priority\"). iOS is not a supported libghostty-vt build target; macOS/Linux x86_64/aarch64 are the initial targets.\n\nwiedymi/ghostty fork: Shallow 1-commit fork of upstream ghostty, dated 2026-04-23, containing only a Windows-path fix (CreateProcessW). The fork name \"custom-io\" does not correspond to any custom-io feature in the code. The include/ghostty/vt.h and ghostty.h are present but identical to upstream. This fork provides no meaningful independent iOS embedding surface.\n\nlibvterm (neovim/libvterm and upstream leonerd): Not actively used by neovim — the canonical copy is now bundled in neovim/neovim/src/nvim/vterm. The neovim/libvterm repo has its own vttest-based test suite in t/90vttest_01*.test (limited coverage). Upstream at leonerd.org.uk is at version 0.3.3, last webpage update 2023-01-15 (Bazaar VCS, not GitHub). Mature and battle-tested inside neovim but the C interface requires vendoring, and no iOS binary distribution exists. No published esctest results either.\n\nSwiftTerm as the \"mature state lib + own Metal renderer\" sweet spot: The Terminal.feed(buffer:) / Terminal.feed(byteArray:) / Terminal.feed(text:) API is clean and fully available on iOS without any local PTY dependency. For a client-side PTY byte stream use case, you simply call terminal.feed(buffer: slice) with bytes from your TCP connection and implement TerminalDelegate callbacks for rendering. This is exactly the architecture the user described. The iOS terminal view (iOSTerminalView.swift) and optional Metal renderer (MetalTerminalRenderer.swift, available on macOS/iOS/visionOS) are bundled. The missing HeadlessTerminal on iOS is irrelevant because HeadlessTerminal only wraps LocalProcess (PTY), which the user explicitly does not need.",
+            "evidence": "Direct inspection of the SwiftTerm repository (cloned at /Users/dev/.cache/clio-repos/github.com--migueldeicaza--SwiftTerm, latest commit 2026-05-18) confirms both parts of the claim:\n\n**No published pass percentage:** The README states the library \"relies extensively on esctest to ensure compatibility\" but no percentage, dashboard, or CI report of esctest results appears anywhere in the repo — README, docs, CI workflows, or release notes.\n\n**Real esctest infrastructure exists (not vaporware):** Tests/SwiftTermTests/SwiftTermTests.swift contains a functional esctest runner (runTester()) that launches a HeadlessTerminal, invokes esctest.py against it, and parses the output. The Makefile includes a `clone-esctest` target that fetches migueldeicaza's own python3 branch of esctest (https://github.com/migueldeicaza/esctest). The test runner is opt-in: esctest is not bundled in the repo and is skipped automatically when not present (\"Skipping test - esctest not found\").\n\n**Known-passing vs known-failing inventory:** The testKnownGood() method lists ~76 test-name entries that must pass (BS, CAT, CHA, CHT, DCH, DCS, DECBI, DECDC, DECDSR, DECERA, DECFRA, DECIC, partial DECALN, partial DECCRA, partial DECRQM, partial DECSET, partial ECH, EL, IND, NEL, RI, RIS, VPA, ChangeColor, etc.). Inline comments document ~40 known failures with specific test names and in some cases brief explanations (e.g., \"linked to the two previous IND failures\", \"I disagree with this test\", \"ISO protection not implemented\", \"this is a problem with the mouse reporting\"). The ratio is roughly 76 passing : 40 failing entries in the curated list — but this is only the subset of esctest that migueldeicaza chose to run and annotate; the full esctest suite contains far more tests.\n\n**HeadlessTerminal is macOS-only:** HeadlessTerminal.swift begins with `#if !os(iOS) && !os(Windows)`. The esctest runner therefore does not run on iOS. Terminal.swift itself (the core VT state engine) has no platform guards and is available on iOS 14+, iPadOS 14+, tvOS 13+, visionOS 1+. The iOS terminal view lives in Sources/SwiftTerm/iOS/ and is well-maintained.\n\n**Activity level:** Only 1 commit in the past 12 months (the repo saw bursts of activity in prior years). The most recent commit (2026-05-18) fixes a DEC 2026 buffering regression, showing the maintainer is still active but cadence is slow.\n\n**Broader context — adversarial check on the other candidates:**\n\nlibghostty-vt (official ghostty-org): The C header vt.h opens with \"WARNING: This is an incomplete, work-in-progress API. It is not yet stable and is definitely going to change.\" CI runs a `test-lib-vt` job (Zig unit tests, not esctest). Mitchell Hashimoto's Sept 2025 post targeted a tagged release \"within 6 months.\" Ghostty itself has known vttest failures (screen update delays, text color regressions in vttest type 2, no VT52 — all documented in discussion #4047, with maintainer saying vttest compliance \"isn't a priority\"). iOS is not a supported libghostty-vt build target; macOS/Linux x86_64/aarch64 are the initial targets.\n\nwiedymi/ghostty fork: Shallow 1-commit fork of upstream ghostty, dated 2026-04-23, containing only a Windows-path fix (CreateProcessW). The fork name \"custom-io\" does not correspond to any custom-io feature in the code. The include/ghostty/vt.h and ghostty.h are present but identical to upstream. This fork provides no meaningful independent iOS embedding surface.\n\nlibvterm (neovim/libvterm and upstream leonerd): Not actively used by neovim — the canonical copy is now bundled in neovim/neovim/src/nvim/vterm. The neovim/libvterm repo has its own vttest-based test suite in t/90vttest_01*.test (limited coverage). Upstream at leonerd.org.uk is at version 0.3.3, last webpage update 2023-01-15 (Bazaar VCS, not GitHub). Mature and battle-tested inside neovim but the C interface requires vendoring, and no iOS binary distribution exists. No published esctest results either.\n\nSwiftTerm as the \"mature state lib + own Metal renderer\" sweet spot: The Terminal.feed(buffer:) / Terminal.feed(byteArray:) / Terminal.feed(text:) API is clean and fully available on iOS without any local PTY dependency. For a client-side PTY byte stream use case, you simply call terminal.feed(buffer: slice) with bytes from your TCP connection and implement TerminalDelegate callbacks for rendering. This is exactly the architecture the user described. The iOS terminal view (iOSTerminalView.swift) and optional Metal renderer (MetalTerminalRenderer.swift, available on macOS/iOS/visionOS) are bundled. The missing HeadlessTerminal on iOS is irrelevant because HeadlessTerminal only wraps LocalProcess (PTY), which the user explicitly does not need.",
             "sources": [
               "https://github.com/migueldeicaza/SwiftTerm/blob/main/README.md (line 46: \"relies extensively on esctest\")",
               "https://github.com/migueldeicaza/SwiftTerm/blob/main/Tests/SwiftTermTests/SwiftTermTests.swift (runTester, testKnownGood, inline failure comments)",

@@ -96,7 +96,7 @@ It's each agent's own command — `/branch` in Claude Code, `/fork` in Codex and
 
 - `fork-right.png` — Shows the command palette open with "fork" typed, highlighting "OpenCode: Fork in Split Right" as the selected action. The right panel displays session context (token count, cost, LSP status).
 
-## Aislopdesk mapping notes
+## SlopDesk mapping notes
 
 ### Agent-generic vs Claude-Code-specific
 
@@ -106,25 +106,25 @@ It's each agent's own command — `/branch` in Claude Code, `/fork` in Codex and
 | `/fork` command | Agent-generic (Codex, OpenCode) — not our initial target |
 | Fork detected by terminal, new session routed to split/tab | Agent-generic — the app detects the agent's own command output |
 
-### Mapping to aislopdesk remote architecture
+### Mapping to slopdesk remote architecture
 
-1. **Fork command initiation:** The `/branch` command is typed into the Claude Code CLI running on the **remote macOS host**. Aislopdesk's terminal (PTY path, TCP transport) carries the user's keystrokes to the host and the agent output back. No host-side special handling is needed for the command itself.
+1. **Fork command initiation:** The `/branch` command is typed into the Claude Code CLI running on the **remote macOS host**. SlopDesk's terminal (PTY path, TCP transport) carries the user's keystrokes to the host and the agent output back. No host-side special handling is needed for the command itself.
 
-2. **Fork detection:** The design calls for detecting the fork event from the agent's output (likely via OSC-133 shell integration marks or a proprietary VT sequence emitted when a fork/branch completes and a new session ID is advertised). In aislopdesk, this detection must happen on the **client** by parsing PTY output through the `TerminalSurface` seam. This is a non-trivial mapping: we need to define what signal the client watches for (e.g. a specific OSC sequence or a known output pattern from `claude --resume <new-session-id>`).
+2. **Fork detection:** The design calls for detecting the fork event from the agent's output (likely via OSC-133 shell integration marks or a proprietary VT sequence emitted when a fork/branch completes and a new session ID is advertised). In slopdesk, this detection must happen on the **client** by parsing PTY output through the `TerminalSurface` seam. This is a non-trivial mapping: we need to define what signal the client watches for (e.g. a specific OSC sequence or a known output pattern from `claude --resume <new-session-id>`).
 
-3. **New session routing (tab vs split):** When a fork is detected, a new tab or split pane opens for the forked session. In aislopdesk, this maps to adding a new `Pane` to the `WorkspaceStore` with `PaneKind.terminal` pointed at a new PTY/SSH session launched with `claude --resume <forked-session-id>` (or equivalent). The `WorkspaceStore.reconcile()` machinery already supports multi-pane layouts.
+3. **New session routing (tab vs split):** When a fork is detected, a new tab or split pane opens for the forked session. In slopdesk, this maps to adding a new `Pane` to the `WorkspaceStore` with `PaneKind.terminal` pointed at a new PTY/SSH session launched with `claude --resume <forked-session-id>` (or equivalent). The `WorkspaceStore.reconcile()` machinery already supports multi-pane layouts.
 
-4. **Command palette fork sub-commands:** The "Fork in Split Right/Left/Up/Down/Tab/Window" palette entries are **pure client UI** — they determine how the new pane is positioned. Aislopdesk's existing pane-split and tab machinery can implement these directly. The chosen split direction is orthogonal to the remote host.
+4. **Command palette fork sub-commands:** The "Fork in Split Right/Left/Up/Down/Tab/Window" palette entries are **pure client UI** — they determine how the new pane is positioned. SlopDesk's existing pane-split and tab machinery can implement these directly. The chosen split direction is orthogonal to the remote host.
 
-5. **Session context sidebar (tokens, cost, LSP):** This data is surfaced from the agent's own output or API. In aislopdesk, this would require parsing Claude Code's structured output (e.g. JSON progress events, OSC-9;4 progress sequences, or a sidecar protocol). This is **not a 1:1 map** — aislopdesk has no existing token/cost parsing; this would need to be added to `BlockOutputView`/`ClaudeStatus` machinery.
+5. **Session context sidebar (tokens, cost, LSP):** This data is surfaced from the agent's own output or API. In slopdesk, this would require parsing Claude Code's structured output (e.g. JSON progress events, OSC-9;4 progress sequences, or a sidecar protocol). This is **not a 1:1 map** — slopdesk has no existing token/cost parsing; this would need to be added to `BlockOutputView`/`ClaudeStatus` machinery.
 
-6. **Status bar (cwd, branch, agent version):** The cwd (e.g. `~/Workspace/<project>:<branch>`) displayed in the status bar comes from OSC-7 (Current Working Directory) emitted by the remote shell. Aislopdesk already supports OSC-7 routing. The git branch suffix and agent version string would need to be parsed from the agent's prompt or output. Flagged as **partial map** — cwd is handled, branch+version require additional parsing.
+6. **Status bar (cwd, branch, agent version):** The cwd (e.g. `~/Workspace/<project>:<branch>`) displayed in the status bar comes from OSC-7 (Current Working Directory) emitted by the remote shell. SlopDesk already supports OSC-7 routing. The git branch suffix and agent version string would need to be parsed from the agent's prompt or output. Flagged as **partial map** — cwd is handled, branch+version require additional parsing.
 
-7. **"Both threads stay live" (parallel sessions):** Aislopdesk already supports multiple live panes/sessions concurrently (`WorkspaceStore`, multiple PTY channels over the mux). This maps cleanly; no architectural gap.
+7. **"Both threads stay live" (parallel sessions):** SlopDesk already supports multiple live panes/sessions concurrently (`WorkspaceStore`, multiple PTY channels over the mux). This maps cleanly; no architectural gap.
 
 8. **iOS client:** Fork initiation via `/branch` works identically on iOS since it's just text typed into the terminal. The split-view fork destination may be constrained on iPhone (no multi-pane) — on iPhone, fall back to "Fork in New Tab". iPad supports split view natively.
 
 9. **Cannot map 1:1:**
-   - Token/cost/LSP sidebar data: requires structured agent output parsing not yet in aislopdesk.
+   - Token/cost/LSP sidebar data: requires structured agent output parsing not yet in slopdesk.
    - Automatic fork detection from PTY output: requires defining and implementing a detection protocol (OSC or pattern match).
-   - "OpenCode: Fork in New Window" — aislopdesk on iOS has no multi-window concept; would need to be suppressed or remapped.
+   - "OpenCode: Fork in New Window" — slopdesk on iOS has no multi-window concept; would need to be suppressed or remapped.

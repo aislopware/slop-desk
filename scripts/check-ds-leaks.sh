@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Design-token leak RATCHET for the client UI design system (REBUILD-V2).
 #
-# The client UI (`Sources/AislopdeskClientUI`) drives every font size + corner radius through the `Slate`
+# The client UI (`Sources/SlopDeskClientUI`) drives every font size + corner radius through the `Slate`
 # token layer (`DesignSystem/SlateDesign.swift`: `Slate.Typeface.*`, `Slate.Metric.radius*`). This gate fails
 # on a NEW raw literal in that view tree, so a dimension can't silently bypass the scale. Text-only (no
 # compile); runs in `make lint` / CI swift-lint.
@@ -23,7 +23,7 @@
 # `--lint` runs FIRST in `make lint` and normalizes spacing, so only canonical spellings reach this gate.)
 set -euo pipefail
 
-root="Sources/AislopdeskClientUI"
+root="Sources/SlopDeskClientUI"
 
 # Fail CLOSED: a missing target dir is a setup/cwd error, not "clean". (The old script reported
 # "intact" + exit 0 when $root was unreachable — a silent pass that could mask the whole gate.)

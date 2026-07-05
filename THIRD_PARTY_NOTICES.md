@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Aislopdesk includes software from third parties. Their licenses and copyright
+SlopDesk includes software from third parties. Their licenses and copyright
 notices are reproduced below.
 
 ---
@@ -9,7 +9,7 @@ notices are reproduced below.
 
 The workspace chrome — the borderless custom-title-bar window shell, the
 sessions sidebar, the tab strip, the pane divider, and the bottom status bar
-(under `Sources/AislopdeskClientUI/Workspace/`) — adapts design and code from
+(under `Sources/SlopDeskClientUI/Workspace/`) — adapts design and code from
 **Muxy** (https://github.com/muxy-app/muxy). Files derived from Muxy carry the
 header:
 

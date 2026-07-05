@@ -4,7 +4,7 @@
 
 ## Summary
 
-Aislopdesk provides a suite of per-tab, opt-in monitoring controls for agent tabs so that long-running or background agent tasks surface their state without requiring the user to babysit a terminal tab. Controls live in each agent tab's **Notifications & Privileges** panel (accessible from the Workspace Command panel and the menu bar); their global defaults live in **Settings**. Because they are per-tab, a noisy background task can badge and notify while an actively-watched tab stays quiet.
+SlopDesk provides a suite of per-tab, opt-in monitoring controls for agent tabs so that long-running or background agent tasks surface their state without requiring the user to babysit a terminal tab. Controls live in each agent tab's **Notifications & Privileges** panel (accessible from the Workspace Command panel and the menu bar); their global defaults live in **Settings**. Because they are per-tab, a noisy background task can badge and notify while an actively-watched tab stays quiet.
 
 The four monitoring capabilities are:
 1. **Tab Badge** — icon overlay on the tab row entry indicating agent state
@@ -118,9 +118,9 @@ All toggles are per-tab with global defaults in Settings. No TOML/JSON key names
 - TABS header: small-caps uppercase `TABS` in a muted gray, approximately 11 pt.
 
 **Terminal pane content (right side):**
-- Title bar text: `abner@MacBook-AB: ~/Workplace/aislopdesk` in gray centered text, standard macOS window title style.
-- Prompt line: `~/Workplace/aislopdesk (main ✗)` followed by two small colored icons — an orange/amber star-burst icon (representing dirty/stash state) and a green right-pointing triangle (play icon, likely representing a queued or running command indicator).
-- The cyan/teal colored path `~/Workplace/aislopdesk` and `(main ✗)` in a muted purple-gray demonstrate shell-integration-colored prompt segments.
+- Title bar text: `abner@MacBook-AB: ~/Workplace/slopdesk` in gray centered text, standard macOS window title style.
+- Prompt line: `~/Workplace/slopdesk (main ✗)` followed by two small colored icons — an orange/amber star-burst icon (representing dirty/stash state) and a green right-pointing triangle (play icon, likely representing a queued or running command indicator).
+- The cyan/teal colored path `~/Workplace/slopdesk` and `(main ✗)` in a muted purple-gray demonstrate shell-integration-colored prompt segments.
 - Terminal background is pure white or near-white.
 
 **Color palette summary:**
@@ -143,20 +143,20 @@ All toggles are per-tab with global defaults in Settings. No TOML/JSON key names
 
 ### Direct implementation
 
-- **Tab Badge / sidebar tab rows** — Aislopdesk already has a sidebar pane list (`WorkspaceStore`, pane rows). Badge icons (spinner, warning, check, hand, dot) can be layered onto each pane's row using SwiftUI overlays or NSView badges. The visual treatment (right-aligned, small icon, per-pane state) maps cleanly onto the existing pane chooser row layout.
-- **Agent state machine** — The badge states (processing, awaiting input, complete, error) map onto Claude Code's detectable states via OSC 133 shell integration markers (prompt = idle, command running = processing) plus `ClaudeStatus` / `ClaudePaneDetector` which already exist in aislopdesk. Wire the detected state into a per-pane `AgentBadgeState` enum.
+- **Tab Badge / sidebar tab rows** — SlopDesk already has a sidebar pane list (`WorkspaceStore`, pane rows). Badge icons (spinner, warning, check, hand, dot) can be layered onto each pane's row using SwiftUI overlays or NSView badges. The visual treatment (right-aligned, small icon, per-pane state) maps cleanly onto the existing pane chooser row layout.
+- **Agent state machine** — The badge states (processing, awaiting input, complete, error) map onto Claude Code's detectable states via OSC 133 shell integration markers (prompt = idle, command running = processing) plus `ClaudeStatus` / `ClaudePaneDetector` which already exist in slopdesk. Wire the detected state into a per-pane `AgentBadgeState` enum.
 - **Notification (macOS)** — standard `UNUserNotificationCenter` call when pane transitions to `.complete` or `.awaitingInput` states. Already done for other macOS notifications in the codebase; same pattern applies.
-- **Queue next command** — Aislopdesk's PTY/shell-integration path (OSC 133 prompt detection) can gate a command queue. When a fresh prompt is detected (OSC 133 type A = prompt start, type B = command start not yet seen), pop the next queued line and send it as PTY input. Implementation sits in `AislopdeskTransport` or a new `CommandQueue` actor.
+- **Queue next command** — SlopDesk's PTY/shell-integration path (OSC 133 prompt detection) can gate a command queue. When a fresh prompt is detected (OSC 133 type A = prompt start, type B = command start not yet seen), pop the next queued line and send it as PTY input. Implementation sits in `SlopDeskTransport` or a new `CommandQueue` actor.
 
 ### Partial / constrained
 
 - **"Prevent Sleep While Processing" power assertion** — on macOS host this is `IOPMAssertionCreateWithName` / `ProcessInfo.processInfo.beginActivity`. Maps cleanly for the macOS client. For the iOS client, the equivalent is `UIApplication.beginBackgroundTask` + `UIDevice.current.isBatteryMonitoringEnabled`; background execution is time-limited on iOS (30 s then system may suspend). Flag this limitation: iOS clients cannot guarantee the host won't sleep; the sleep prevention must run on the macOS HOST machine, not the iOS client.
-- **Per-tab global defaults in Settings** — Aislopdesk's `PreferencesStore` / `SettingsKey` (via `Defaults` product) can store global defaults. Expose them in the macOS Settings pane under an "Agents" or "Notifications" section.
+- **Per-tab global defaults in Settings** — SlopDesk's `PreferencesStore` / `SettingsKey` (via `Defaults` product) can store global defaults. Expose them in the macOS Settings pane under an "Agents" or "Notifications" section.
 - **"Clear Badge" manual action** — needs a tap/click target on the pane row. On iOS the natural affordance is a swipe action or long-press context menu; on macOS it is a right-click context menu item or a button that appears on hover.
 
 ### Platform / architecture constraints
 
 - **Notification Center click → correct tab focus** — on macOS client this works via `UNUserNotificationCenterDelegate` `userNotificationCenter(_:didReceive:)` carrying a pane identifier in the notification's `userInfo`. On iOS, deep-linking from a notification into a specific pane requires the app to be in foreground or background (not suspended); if the app is terminated on iOS, the pane context must be re-established. This is solvable but requires extra lifecycle handling.
-- **Shell integration prerequisite** — the command queue and prompt-based badge clearing require OSC 133 markers from the remote shell. If the remote shell (on the aislopdesk host) is not configured with shell integration, the feature degrades: no prompt detection means queued commands cannot be safely dispatched. Aislopdesk should surface a warning if OSC 133 is not detected within a timeout after connection.
-- **"Badge While Processing" spinner** — the processing badge is an animated spinner (NSProgressIndicator / system activity indicator equivalent). Aislopdesk's pane rows in SwiftUI can use `ProgressView()` (circular, indeterminate) for the same effect. Ensure the animation does not cause excessive re-render of the pane list on every frame — keep the spinner in a separate isolated View.
+- **Shell integration prerequisite** — the command queue and prompt-based badge clearing require OSC 133 markers from the remote shell. If the remote shell (on the slopdesk host) is not configured with shell integration, the feature degrades: no prompt detection means queued commands cannot be safely dispatched. SlopDesk should surface a warning if OSC 133 is not detected within a timeout after connection.
+- **"Badge While Processing" spinner** — the processing badge is an animated spinner (NSProgressIndicator / system activity indicator equivalent). SlopDesk's pane rows in SwiftUI can use `ProgressView()` (circular, indeterminate) for the same effect. Ensure the animation does not cause excessive re-render of the pane list on every frame — keep the spinner in a separate isolated View.
 - **Remote host vs. local process** — the agent (Claude Code) runs on the REMOTE macOS host over SSH/TCP, not locally in the client app. The badge state must be detected from the remote PTY stream (OSC 133 + `ClaudePaneDetector` heuristics), not from a local process observer. The existing `ClaudeStatus` / `AgentControlListener` infrastructure already handles this; wire badge state updates from those signals.

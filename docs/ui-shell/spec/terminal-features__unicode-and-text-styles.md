@@ -2,7 +2,7 @@
 
 ## Summary
 
-Aislopdesk renders text via GPU (Metal on macOS) with glyph caching. It supports
+SlopDesk renders text via GPU (Metal on macOS) with glyph caching. It supports
 the full Unicode range (U+0000–U+10FFFF) including combining marks, wide East Asian characters,
 right-to-left/bidirectional text, color emoji with multi-codepoint ZWJ sequences, programming
 ligatures for supporting fonts, an embedded Nerd Font for Private Use Area icon glyphs, and the
@@ -61,7 +61,7 @@ Monospaced font (looks like JetBrains Mono or similar), approximately 14 pt, gen
 (`#28c940`-ish), cursor as a solid black vertical block.
 
 Content rows (from top):
-1. Command line: `~ ▷  aislopdesk features emoji` — prompt + command in the default foreground.
+1. Command line: `~ ▷  slopdesk features emoji` — prompt + command in the default foreground.
 2. Section header: `▶ emoji — colorful and multi-codepoint emojis (ZWJ, flags, skin tones)` — the
    `▶` is a filled triangle in the same green as the prompt arrow; text is regular weight.
 3. `single:` label followed by 8 color emoji glyphs in a horizontal row, each occupying two cells:
@@ -88,7 +88,7 @@ window chrome.
 Same window chrome and layout as emoji.png. Background `#f8f8f8`, text `#1a1a1a`, monospaced font.
 
 Content rows:
-1. `~ ▷  aislopdesk features ligature` — command line.
+1. `~ ▷  slopdesk features ligature` — command line.
 2. `▶ ligature — programming ligatures (→, ⇒, ≠, ≥, …)` — section header; the parenthesized
    examples are already rendered as ligature glyphs (single joined symbols).
 3. `arrows:` — 7 ligature arrows: `→` `←` `⇒` `⇐` `⟶` `⟵` `↔` — all shaped as joined single
@@ -168,21 +168,21 @@ visibly orange, bold, italic, underlined simultaneously.
 - `ligature.png`
 - `text-styles.png`
 
-## Aislopdesk mapping notes
+## SlopDesk mapping notes
 
 ### Maps 1:1
 
 - **Full Unicode rendering (U+0000–U+10FFFF), combining marks, wide CJK, BiDi**: libghostty
-  (Ghostty renderer) handles all of this natively — no aislopdesk-layer work needed. The
+  (Ghostty renderer) handles all of this natively — no slopdesk-layer work needed. The
   `TerminalSurface` / `TerminalRenderingView` seam passes cell grids through directly.
 
 - **Color emoji with ZWJ sequences, variation selectors, skin-tone modifiers**: libghostty uses
   the system emoji font (Apple Color Emoji on macOS/iOS) and handles multi-codepoint collapsing
-  at the shaper level. No aislopdesk-layer work needed.
+  at the shaper level. No slopdesk-layer work needed.
 
 - **SGR text styles (bold, italic, dim, underline variants, blink, strikethrough, reverse, color)**:
   All SGR attributes are part of the standard VT/xterm protocol that libghostty's PTY parser and
-  renderer handle. Aislopdesk's wire codec passes them through the terminal data channel unchanged.
+  renderer handle. SlopDesk's wire codec passes them through the terminal data channel unchanged.
   `TerminalConfigBuilder` can control bold/italic face selection (already used for theme color
   overrides).
 
@@ -195,7 +195,7 @@ visibly orange, bold, italic, underlined simultaneously.
 
 - **Programming ligatures**: libghostty supports ligature shaping for fonts that ship them. The
   ligature level setting maps to a config key in the terminal configuration passed via
-  `TerminalConfigBuilder`. The aislopdesk client can expose this as a preference that feeds into
+  `TerminalConfigBuilder`. The slopdesk client can expose this as a preference that feeds into
   the libghostty config.
 
 - **Nerd Font / Private Use Area glyphs**: Ghostty embeds Nerd Font glyphs; libghostty will
@@ -210,7 +210,7 @@ visibly orange, bold, italic, underlined simultaneously.
 
 ### Requires attention
 
-- **Settings → Appearance → Text (ligature level UI)**: Aislopdesk's preferences UI needs to
+- **Settings → Appearance → Text (ligature level UI)**: SlopDesk's preferences UI needs to
   expose a per-level ligature selector that round-trips to a libghostty config key. The exact
   Ghostty config key is `font-feature` or `grapheme-width-method`; verify against libghostty's
   public config API before wiring.
@@ -221,9 +221,9 @@ visibly orange, bold, italic, underlined simultaneously.
   as-is; a coarser "widen all ambiguous" toggle is the achievable approximation. Flag this as a
   fidelity gap.
 
-- **Remote host `TERM`/`COLORTERM` propagation**: On a remote SSH session (aislopdesk's primary
+- **Remote host `TERM`/`COLORTERM` propagation**: On a remote SSH session (slopdesk's primary
   use case) the PTY is on the HOST side. The host's PTY inherits `TERM`/`COLORTERM` from the
-  aislopdesk-hostd environment, not from the client. Ensure aislopdesk-hostd sets `TERM=xterm-256color`
+  slopdesk-hostd environment, not from the client. Ensure slopdesk-hostd sets `TERM=xterm-256color`
   and `COLORTERM=truecolor` (or `TERM=ghostty` if shipping a terminfo entry) when spawning the
   PTY so that remote programs correctly detect truecolor. This is host-side plumbing, not a
   client rendering issue.

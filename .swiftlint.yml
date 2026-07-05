@@ -36,12 +36,12 @@ excluded:
   - Apps/HostApp-macOS/HostApp-macOS.xcodeproj
   # Validation harness: a closed-loop test instrument (not shipped product), test-adjacent
   # like the Tests tree — its scaffolding/size is by design, so don't strict-lint it.
-  - Sources/aislopdesk-loopback-validate
+  - Sources/slopdesk-loopback-validate
   # Capture-cadence + latency diagnostic instruments (not shipped product) — same rationale as above.
-  - Sources/aislopdesk-capture-probe
-  - Sources/aislopdesk-fake-client
+  - Sources/slopdesk-capture-probe
+  - Sources/slopdesk-fake-client
   # Headless VT encode/decode TIMING benchmark (perf instrument, not shipped product).
-  - Sources/aislopdesk-perfbench
+  - Sources/slopdesk-perfbench
 
 disabled_rules:
   # ---- SwiftFormat owns formatting (don't let SwiftLint fight the formatter) ----
@@ -220,7 +220,7 @@ type_body_length:
   # >32 consecutive comment lines; the full rationale for each bump is in this file's git history.
   # Recurring reasons: `@Observable` synthesises on stored properties and `private(set)` setters are
   # main-body-only, so stored-state/wrapper clusters can't move to extensions (the logic does).
-  # 1500→1600 06-18 AislopdeskVideoHostSession adaptive-m FEC + NACK/ARQ (one serial isolation domain).
+  # 1500→1600 06-18 SlopDeskVideoHostSession adaptive-m FEC + NACK/ARQ (one serial isolation domain).
   # 1600→1610 06-20 WorkspaceStore WB3 block-bookmark stored seam.
   # 1610→1630 06-20 keyboard pane-mgmt wrappers over pure WorkspaceTreeOps.
   # 1630→1660 06-20 B3 background-completion stored state (panePendingCompletion/isAppActive/onLongCommandNotify).

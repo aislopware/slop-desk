@@ -57,7 +57,7 @@ jobs:
   # Until GitHub's hosted images ship it, run this on a self-hosted runner or
   # locally via `make check`. Kept here so it activates automatically once the
   # hosted image updates. A clean checkout builds with no prerequisite — the
-  # package is pure Swift plus the in-tree `CAislopdeskSIMD` C target (compiled
+  # package is pure Swift plus the in-tree `CSlopDeskSIMD` C target (compiled
   # from source), no staticlib to pre-build.
   swift-build-test:
     name: Swift build + test (needs Xcode 26.5+)

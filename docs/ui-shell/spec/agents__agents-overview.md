@@ -2,7 +2,7 @@
 
 ## Summary
 
-Aislopdesk integrates with coding agents (Claude Code, Codex, OpenCode) rather than replacing those CLIs, via a small hook or plugin that lets the agent report its state (working / done / waiting). This unlocks live tab badges, system notifications, conversation history, prompt queuing, a multi-line Composer input surface, and Send-to-Chat context injection. The agent runs in a first-class pane; the client handles the supervisory UI layer on top.
+SlopDesk integrates with coding agents (Claude Code, Codex, OpenCode) rather than replacing those CLIs, via a small hook or plugin that lets the agent report its state (working / done / waiting). This unlocks live tab badges, system notifications, conversation history, prompt queuing, a multi-line Composer input surface, and Send-to-Chat context injection. The agent runs in a first-class pane; the client handles the supervisory UI layer on top.
 
 ## Behaviors
 
@@ -107,27 +107,27 @@ Compact: tabs are tightly stacked with minimal vertical padding (~4–6 px top/b
 
 - `code-agents.png`
 
-## Aislopdesk mapping notes
+## SlopDesk mapping notes
 
 ### Maps well (1:1 or near-1:1)
 
-- **Vertical tab strip with badges**: Aislopdesk already has a tab/pane model (`WorkspaceStore`, `PaneKind`). The badge states (working / done / waiting) map to the existing `ClaudeStatus` / `ClaudePaneDetector` infrastructure. Badge rendering should be added to the sidebar tab rows using the same dot-style.
+- **Vertical tab strip with badges**: SlopDesk already has a tab/pane model (`WorkspaceStore`, `PaneKind`). The badge states (working / done / waiting) map to the existing `ClaudeStatus` / `ClaudePaneDetector` infrastructure. Badge rendering should be added to the sidebar tab rows using the same dot-style.
 - **Live agent state detection**: `ClaudePaneDetector` and `AgentControlListener` already exist and detect Claude Code state. These cover the "working / done / waiting" badge states for Claude Code specifically.
-- **Prompt Queue**: Maps cleanly onto the `aislopdesk-ctl` / NDJSON agent-control socket. Queue entries can be dispatched as PTY writes at OSC-133 idle prompts.
+- **Prompt Queue**: Maps cleanly onto the `slopdesk-ctl` / NDJSON agent-control socket. Queue entries can be dispatched as PTY writes at OSC-133 idle prompts.
 - **Notification system**: macOS `UNUserNotificationCenter` can fire on state transitions detected by `ClaudePaneDetector`. iOS client can receive push notifications or local notifications from the host bridge.
-- **Built-in file viewer**: Aislopdesk has an editor pane / file pane concept in `WorkspaceStore`. File viewing beside the agent chat is achievable with the split-pane layout.
+- **Built-in file viewer**: SlopDesk has an editor pane / file pane concept in `WorkspaceStore`. File viewing beside the agent chat is achievable with the split-pane layout.
 - **History / session capture**: The `ReplayBuffer` provides lossless reconnect but is not a conversation history. A separate OSC-133 transcript capture per pane would be needed for history search.
 
 ### Partial maps (requires adaptation)
 
-- **Composer (float-on-top multi-line input)**: The current Aislopdesk Composer equivalent would need to be a floating panel that writes to the active PTY. The "float on top" property works on macOS (NSPanel with `.floating` window level) but on iOS it would be a sheet or popover — behavior differs, not 1:1.
+- **Composer (float-on-top multi-line input)**: The current SlopDesk Composer equivalent would need to be a floating panel that writes to the active PTY. The "float on top" property works on macOS (NSPanel with `.floating` window level) but on iOS it would be a sheet or popover — behavior differs, not 1:1.
 - **Send to Chat**: Requires a pane-selection action that injects text into a specific agent pane's PTY. The selection-to-PTY injection exists (OSC-52 clipboard + keystroke injection), but "drop into agent conversation" needs agent-aware targeting (knowing which pane is the active agent).
-- **Fork / Branch Session**: On aislopdesk the session is a remote PTY on the host Mac. Forking requires spawning a new PTY from the same working directory and shell state — achievable via `aislopdesk-ctl` creating a new session with `cwd` inherited, but conversation state (Claude Code's in-process context) cannot be cloned; only the shell/cwd can be forked.
+- **Fork / Branch Session**: On slopdesk the session is a remote PTY on the host Mac. Forking requires spawning a new PTY from the same working directory and shell state — achievable via `slopdesk-ctl` creating a new session with `cwd` inherited, but conversation state (Claude Code's in-process context) cannot be cloned; only the shell/cwd can be forked.
 
 ### Cannot map 1:1 (flag)
 
-- **Hook install UX**: The design calls for installing a hook into Claude Code's config file (`.claude/settings.json` or similar) with a UI approval dialog inside the terminal. In aislopdesk the host runs the agent; the client has no direct access to the host's Claude Code config files. Hook installation must happen on the host side, either via `aislopdesk-ctl` or a pre-configured setup script. There is no in-app "approve once" flow from the iOS client.
-- **Keep Mac awake during agent run**: `IOPMAssertionCreateWithName` (power assertion) must run on the macOS host, not the client. The host daemon (`aislopdesk-hostd`) can hold the assertion when an agent session is active, but the client cannot control this directly.
-- **Current working directory in status bar** (e.g. `~/Workspace/<project>:<branch>`): CWD comes from OSC-7 (shell integration) emitted by the host PTY. This is already supported via the OSC-7 seam in aislopdesk's wire protocol, so the status bar display is achievable.
+- **Hook install UX**: The design calls for installing a hook into Claude Code's config file (`.claude/settings.json` or similar) with a UI approval dialog inside the terminal. In slopdesk the host runs the agent; the client has no direct access to the host's Claude Code config files. Hook installation must happen on the host side, either via `slopdesk-ctl` or a pre-configured setup script. There is no in-app "approve once" flow from the iOS client.
+- **Keep Mac awake during agent run**: `IOPMAssertionCreateWithName` (power assertion) must run on the macOS host, not the client. The host daemon (`slopdesk-hostd`) can hold the assertion when an agent session is active, but the client cannot control this directly.
+- **Current working directory in status bar** (e.g. `~/Workspace/<project>:<branch>`): CWD comes from OSC-7 (shell integration) emitted by the host PTY. This is already supported via the OSC-7 seam in slopdesk's wire protocol, so the status bar display is achievable.
 - **Git branch in status bar** (`:main` suffix): Requires OSC-7 or a separate shell-integration hook that emits branch info. Claude Code's shell already emits this on supported setups.
 - **iOS client pane chooser for agent tabs**: The vertical tab strip with badge dots needs to render on the iOS client's pane chooser UI, but badge state must be forwarded from the host over the control channel — this is an additional wire message not currently defined.

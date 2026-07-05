@@ -46,7 +46,7 @@
 
 ## What we do DIFFERENTLY / BETTER
 1. **Full TUI fidelity via libghostty** — they do NOT stream the TUI to mobile; we relay the raw PTY (`TERM=xterm-ghostty`) preserving colors/cursor/compose-box. A fundamental difference.
-2. **No relay SPOF** — happy/happier die if their relay goes down. Aislopdesk connects directly over a trusted private network (a WireGuard mesh, e.g. NetBird/Tailscale), so no relay sits in the byte path: near-zero latency, one fewer trust boundary.
+2. **No relay SPOF** — happy/happier die if their relay goes down. SlopDesk connects directly over a trusted private network (a WireGuard mesh, e.g. NetBird/Tailscale), so no relay sits in the byte path: near-zero latency, one fewer trust boundary.
 3. **A single PTY codepath** instead of 2 launchers (local TUI + remote SDK).
 
 ## ⚠️ 3 points to weigh (honest; may adjust the architecture)

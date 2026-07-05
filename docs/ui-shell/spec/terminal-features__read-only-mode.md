@@ -78,17 +78,17 @@ Locks a pane so nothing you type reaches the shell. Useful when a long-running p
 
 - `readonly-mode.png`
 
-## Aislopdesk mapping notes
+## SlopDesk mapping notes
 
 ### Architecture context
-Aislopdesk: macOS host (runs PTY/shell, libghostty render, SCStream capture) + macOS/iOS client (receives video frames, injects input). Read-only mode is a **client-side input gate** — it blocks the client from forwarding keystrokes/mouse events to the host, not a host-side PTY lock.
+SlopDesk: macOS host (runs PTY/shell, libghostty render, SCStream capture) + macOS/iOS client (receives video frames, injects input). Read-only mode is a **client-side input gate** — it blocks the client from forwarding keystrokes/mouse events to the host, not a host-side PTY lock.
 
 ### Implementation mapping
 
-| Spec'd behavior | Aislopdesk implementation | Notes |
+| Spec'd behavior | SlopDesk implementation | Notes |
 |---------------|----------------------|-------|
 | Toggle per-pane via menu Shell → Read Only | `WorkspaceStore` per-pane `isReadOnly` bool; menu item in the macOS app's Shell menu | 1:1 on macOS client; iOS client can expose via context menu or command palette |
-| Toggle via command palette | Aislopdesk command palette (already exists) — add "Read Only" / "lock" / "freeze" search terms | 1:1 |
+| Toggle via command palette | SlopDesk command palette (already exists) — add "Read Only" / "lock" / "freeze" search terms | 1:1 |
 | Titlebar pill `🔒 READ ONLY ×` | Inject a pill/badge into the pane's `PaneHeaderView` / titlebar overlay; `×` button sets `isReadOnly = false` | 1:1 on macOS; iOS equivalent = a toolbar badge or header overlay chip |
 | Keyboard input blocked | Client: suppress forwarding keystrokes through `InputEventRouter` when pane `isReadOnly` is true | 1:1 — blocking happens before bytes reach the host TCP channel |
 | Paste blocked (`⌘V`, middle-click, drag-drop text) | Client: guard paste/drop handlers in `PaneView` | 1:1 |
@@ -97,17 +97,17 @@ Aislopdesk: macOS host (runs PTY/shell, libghostty render, SCStream capture) + m
 | Drag-and-drop of files/paths blocked | Client: reject drop onto pane in `NSDraggingDestination` / SwiftUI `onDrop` | 1:1 |
 | Beep on rejected input | Call libghostty `ghostty_surface_key` with BEL / use `NSSound.beep()` | 1:1 |
 | Output unaffected (text keeps streaming) | Host side is unchanged; video frames continue to arrive and display | 1:1 — read-only only gates outbound input from client, never inbound video |
-| Scroll / select / copy / search still work | These are already purely client-side in the aislopdesk model (scroll = local scrollback, copy = local selection) | 1:1 |
+| Scroll / select / copy / search still work | These are already purely client-side in the slopdesk model (scroll = local scrollback, copy = local selection) | 1:1 |
 | Vi Mode / Hint Mode hide the pill temporarily | Track `isViMode` / `isHintMode` per-pane; conditionally hide the READ ONLY pill in the header view | 1:1 |
 | Sudo / Auto-Approve / Secure Input pills hidden | Already separate pill components; add `isReadOnly` guard to their visibility | 1:1 |
-| File panes: lock editing / switch to preview | Aislopdesk does not currently have a built-in file editor pane — **cannot map 1:1 today**. Future editor panes (if added) should implement the same `isReadOnly` gate. |
+| File panes: lock editing / switch to preview | SlopDesk does not currently have a built-in file editor pane — **cannot map 1:1 today**. Future editor panes (if added) should implement the same `isReadOnly` gate. |
 | File pane: `⌘S` blocked with beep | Same caveat — relevant only when/if file editor panes are implemented. |
 | File pane: info panel Status row "Read-only" | Same caveat. |
 | File pane: command palette "Edit Mode" / "Make Editable" | Same caveat. |
-| No persistent config key | Consistent with aislopdesk's per-session state model — no AISLOPDESK_READ_ONLY launch flag needed initially. |
+| No persistent config key | Consistent with slopdesk's per-session state model — no SLOPDESK_READ_ONLY launch flag needed initially. |
 
 ### Cannot map 1:1
 
-1. **File pane read-only (text/code/Markdown/SVG/HTML editing):** Aislopdesk has no built-in file editor; this feature is irrelevant until editor panes are added.
+1. **File pane read-only (text/code/Markdown/SVG/HTML editing):** SlopDesk has no built-in file editor; this feature is irrelevant until editor panes are added.
 2. **Host-side enforcement:** Read-only is enforced only at the client input-gate layer; the lock is client-side only, not a PTY/shell-level lock. A sufficiently motivated remote agent on the host can still write to its own PTY. This is acceptable for the stated use case (preventing stray keystrokes from the viewer), but is not a security boundary.
-3. **`tail -f` title display:** The titlebar is expected to auto-name from the running process (`tail -f`). Aislopdesk must relay pane titles over the wire (OSC 0/2 or shell integration) for the client to display them — existing mechanism, just needs to be wired to the pane header.
+3. **`tail -f` title display:** The titlebar is expected to auto-name from the running process (`tail -f`). SlopDesk must relay pane titles over the wire (OSC 0/2 or shell integration) for the client to display them — existing mechanism, just needs to be wired to the pane header.

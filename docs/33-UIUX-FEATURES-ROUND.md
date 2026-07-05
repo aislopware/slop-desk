@@ -46,7 +46,7 @@ Schemas advanced 5→8 (single-user no-backcompat: stale data resets).
 
 ## ⚠️ HW-pending (verify on the real 2-machine rig)
 None of these are headless-failures — every one is green in `swift test`. What needs a real keyboard + the deployed host:
-1. **Paste-as-Keystrokes into a real password field** — needs the deployed `aislopdesk-hid-bridge` (root) on the Studio; assert the field fills.
+1. **Paste-as-Keystrokes into a real password field** — needs the deployed `slopdesk-hid-bridge` (root) on the Studio; assert the field fills.
 2. **OSC 9/777 notification** end-to-end (`printf '\e]9;done\e\\'` on the host → banner → click focuses the pane).
 3. **Overview ⌘\** visual + the **B8 scale-on-insert** over live Metal/libghostty surfaces.
 4. **Multi-select**: shift-click feel (`NSEvent.modifierFlags` read at commit) + the live group-drag preview.

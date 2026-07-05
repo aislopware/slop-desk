@@ -2,7 +2,7 @@
 
 ## Summary
 
-The Composer is the primary input affordance for agent (code-agent) sessions in aislopdesk. It is a multi-line text editor that floats at the bottom of the agent pane, providing cursor operations, undo/redo, rich paste, pinning (stay visible across tab switches), a floating Spotlight-style detached panel mode, and prompt-queue routing. It is also available in ordinary terminal panes as a GUI-quality input overlay. The key design principle is that Return alone never sends — accidental sends are impossible by design.
+The Composer is the primary input affordance for agent (code-agent) sessions in slopdesk. It is a multi-line text editor that floats at the bottom of the agent pane, providing cursor operations, undo/redo, rich paste, pinning (stay visible across tab switches), a floating Spotlight-style detached panel mode, and prompt-queue routing. It is also available in ordinary terminal panes as a GUI-quality input overlay. The key design principle is that Return alone never sends — accidental sends are impossible by design.
 
 ## Behaviors
 
@@ -16,7 +16,7 @@ The Composer is the primary input affordance for agent (code-agent) sessions in 
 - **Float panel mode.** Clicking the pop-out button (labeled ② in `composer.png`) detaches the composer into a floating, Spotlight-style window that stays on top of all other app windows without activating the app or claiming the menu bar. Draft text and inline attachments move with it. Sending or closing the float docks it back into the pane.
 - **Prompt Queue routing.** `⌥⌘↩` (or clicking the queue button, labeled ③ in `composer.png`) routes the draft into the pane's Prompt Queue instead of sending immediately. Each non-blank line becomes a separate queued command that auto-fires at the next idle prompt, enabling multi-step queuing while the agent is busy.
 - **Available in normal terminal panes.** `⌘⇧E` (also reachable via Edit > Composer, Command Palette, or terminal context menu) opens the composer in any non-agent terminal pane, providing comfortable multi-line editing, cursor movement, and undo/redo for shell input. `⌘↩` pastes the composed text into the originating terminal line. Re-triggering `⌘⇧E` closes it.
-- **Agent-generic vs Claude-Code-specific:** All behaviors above are agent-generic (described for any code agent). No behavior on this page is exclusively Claude-Code-specific, though the page is documented in the context of aislopdesk's code-agent integration (OpenCode shown in the reference screenshots).
+- **Agent-generic vs Claude-Code-specific:** All behaviors above are agent-generic (described for any code agent). No behavior on this page is exclusively Claude-Code-specific, though the page is documented in the context of slopdesk's code-agent integration (OpenCode shown in the reference screenshots).
 
 ## Keybindings
 
@@ -84,7 +84,7 @@ A single row of controls pinned to the very bottom, ~32px tall, slightly differe
 A browser window showing this design's documentation site is in the background. In the foreground is the app window (partially visible, showing the composer-in-pane view, darker, slightly scaled back). In the top-right foreground is the **floating Composer panel**.
 
 **Floating Composer panel:**
-- Title bar: "Aislopdesk Composer — OpenCode" in standard macOS window title bar style. Traffic-light buttons (red/yellow/green) on the left of the title bar. The window has the standard macOS floating panel appearance — no full window chrome, minimal footprint.
+- Title bar: "SlopDesk Composer — OpenCode" in standard macOS window title bar style. Traffic-light buttons (red/yellow/green) on the left of the title bar. The window has the standard macOS floating panel appearance — no full window chrome, minimal footprint.
 - **Window size:** Approximately 340×160pt. Compact, Spotlight-like proportions — wider than tall, like a command palette.
 - **Content area:** Dark background matching the main app theme. Two lines of body text visible in the input area: "> The composer is the input affordance for agent sessions — multi-line, cursor operations, undo / redo, float on top..." (appears as a quoted/prefilled context line in lighter/muted style), followed by "Rephrase this|" with a text cursor (blinking bar), indicating the user's active draft.
 - **Bottom toolbar:** Same layout as composer.png — `⌘↩ Send`, `⌘↩/ Queue`, `□ Cancel` labels on the left; pin and pop-in icon buttons on the right (the pop-out icon would now be a "dock back" / collapse icon in float mode).
@@ -97,16 +97,16 @@ The documentation page shows the Composer heading, a highlighted blue intro para
 ## Screenshots
 
 - `composer.png` — composer embedded in an agent pane, showing multi-line draft and the three toolbar buttons (Pin ①, Float ②, Queue ③)
-- `composer-float.png` — floating Composer panel detached over another app (docs browser), titled "Aislopdesk Composer — OpenCode"
+- `composer-float.png` — floating Composer panel detached over another app (docs browser), titled "SlopDesk Composer — OpenCode"
 
-## Aislopdesk mapping notes
+## SlopDesk mapping notes
 
-**Architecture context:** Aislopdesk is a remote-coding tool where the macOS host runs `aislopdesk-hostd` and the macOS/iOS client renders via libghostty behind a `TerminalSurface` seam. The composer is a CLIENT-side UI overlay — it does not involve the host or the wire protocol directly; composed text is injected as terminal input once sent.
+**Architecture context:** SlopDesk is a remote-coding tool where the macOS host runs `slopdesk-hostd` and the macOS/iOS client renders via libghostty behind a `TerminalSurface` seam. The composer is a CLIENT-side UI overlay — it does not involve the host or the wire protocol directly; composed text is injected as terminal input once sent.
 
 ### Mappings that work 1:1
 
 - **Multi-line text field at pane bottom:** Implemented as a SwiftUI/AppKit text view overlaid at the bottom of the `TerminalRenderingView`. No host involvement needed.
-- **Send via `⌘↩`:** Injects the composed text as PTY input (same as keyboard input). Maps cleanly via existing `AislopdeskTransport` input channel.
+- **Send via `⌘↩`:** Injects the composed text as PTY input (same as keyboard input). Maps cleanly via existing `SlopDeskTransport` input channel.
 - **Cancel / `⎋`:** Pure client state. Draft stored in pane's view model.
 - **Rich paste (`⌘V` → Markdown conversion):** Client-only; NSPasteboard read + conversion logic. No special host feature needed.
 - **Draft persistence across tab switches:** Draft stored in the pane's `WorkspaceStore` / pane view-model. Already has per-pane state.
@@ -116,11 +116,11 @@ The documentation page shows the Composer heading, a highlighted blue intro para
 
 ### Mappings that are non-trivial or cannot be 1:1
 
-- **Float panel (macOS):** The design calls for a float panel via `NSPanel` with `.floating` window level that does NOT activate the app or steal the menu bar — this requires `NSPanel` with `becomesKeyOnlyIfNeeded` and `.nonactivatingPanel` style mask. On the aislopdesk macOS client this is feasible but needs care: the panel must remain associated with the originating pane session so that `⌘↩` injects into the correct host's PTY. Panel identity must survive window-level changes.
-- **Float panel (iOS):** iOS has no concept of floating windows above other apps. The closest equivalent is a sheet or a persistent input toolbar that survives navigation — a full floating-over-other-apps experience is NOT possible on iOS due to OS sandboxing. Recommend implementing a bottom-sheet or slide-up overlay within the aislopdesk app instead, clearly scoped to the current pane.
-- **"Stays on top without activating the app":** The non-activating NSPanel behavior is macOS-only and is a specific Cocoa feature. On aislopdesk macOS this is achievable. On iOS there is no equivalent.
+- **Float panel (macOS):** The design calls for a float panel via `NSPanel` with `.floating` window level that does NOT activate the app or steal the menu bar — this requires `NSPanel` with `becomesKeyOnlyIfNeeded` and `.nonactivatingPanel` style mask. On the slopdesk macOS client this is feasible but needs care: the panel must remain associated with the originating pane session so that `⌘↩` injects into the correct host's PTY. Panel identity must survive window-level changes.
+- **Float panel (iOS):** iOS has no concept of floating windows above other apps. The closest equivalent is a sheet or a persistent input toolbar that survives navigation — a full floating-over-other-apps experience is NOT possible on iOS due to OS sandboxing. Recommend implementing a bottom-sheet or slide-up overlay within the slopdesk app instead, clearly scoped to the current pane.
+- **"Stays on top without activating the app":** The non-activating NSPanel behavior is macOS-only and is a specific Cocoa feature. On slopdesk macOS this is achievable. On iOS there is no equivalent.
 - **Pin across tab switches:** The `WorkspaceStore` / tab model needs to support a per-pane "pinned composer" flag that causes the composer view to be mounted at the window level (above the tab/pane switcher) rather than inside the pane's subtree. This is architecturally non-trivial — the composer overlay must be promoted out of the pane's SwiftUI view hierarchy.
-- **Float panel title ("Aislopdesk Composer — OpenCode"):** The agent name ("OpenCode" in the reference screenshot) comes from the agent integration layer. Aislopdesk currently integrates Claude Code; the float panel title reads "Aislopdesk Composer — Claude Code" for a Claude session. The agent name must be tracked per-pane in `WorkspaceStore`.
-- **Status bar line (`history.md  15.6K (8%)  ·  $0.04  ctrl+p commands`):** The file/cost/token metadata shown in the status bar between output and composer is agent-provided context (likely via OSC sequences or a Claude Code-specific protocol). The `$0.04` cost token implies the agent reports spend over the wire. Aislopdesk should surface whatever cost/context data Claude Code emits via OSC 133 or similar; if Claude Code does not emit this, the status bar can omit cost and show only session metadata.
+- **Float panel title ("SlopDesk Composer — OpenCode"):** The agent name ("OpenCode" in the reference screenshot) comes from the agent integration layer. SlopDesk currently integrates Claude Code; the float panel title reads "SlopDesk Composer — Claude Code" for a Claude session. The agent name must be tracked per-pane in `WorkspaceStore`.
+- **Status bar line (`history.md  15.6K (8%)  ·  $0.04  ctrl+p commands`):** The file/cost/token metadata shown in the status bar between output and composer is agent-provided context (likely via OSC sequences or a Claude Code-specific protocol). The `$0.04` cost token implies the agent reports spend over the wire. SlopDesk should surface whatever cost/context data Claude Code emits via OSC 133 or similar; if Claude Code does not emit this, the status bar can omit cost and show only session metadata.
 - **Rich HTML/RTF → Markdown paste:** Requires a Markdown conversion library on the client. Feasible on macOS (NSAttributedString + custom converter). On iOS, RTF is less common but HTML paste from Safari is realistic — a lightweight HTML-to-Markdown converter (e.g. a pure Swift implementation) is needed.
 - **Composer max height (configurable):** Maps to a `SettingsKey` in `PreferencesStore`. Default value not specified by docs; suggest defaulting to ~40% of pane height.

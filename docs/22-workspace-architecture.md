@@ -1,4 +1,4 @@
-# 22 — Workspace UI Architecture (the Aislopdesk multiplexer)
+# 22 — Workspace UI Architecture (the SlopDesk multiplexer)
 
 Status: design, ready to implement.
 Floor: macOS 26 / iOS 26, Swift tools 6.2, Swift 6 language mode (strict concurrency).
@@ -16,17 +16,17 @@ projection (`CompactLayoutResolver`).
 
 One LOAD-BEARING fact, verified against the code:
 
-- `AislopdeskClient` is a concrete `public actor` (`Sources/AislopdeskClient/AislopdeskClient.swift:42`) with
+- `SlopDeskClient` is a concrete `public actor` (`Sources/SlopDeskClient/SlopDeskClient.swift:42`) with
   `init(ackInterval:)` — there is **no protocol seam**.
-- `ConnectionViewModel.makeClient` is `@Sendable () -> AislopdeskClient` — the *concrete* type
-  (`Sources/AislopdeskClientUI/Connection/ConnectionViewModel.swift:54,82`). `InputBarModel.submit/sendRaw/sendText` also take the concrete type.
+- `ConnectionViewModel.makeClient` is `@Sendable () -> SlopDeskClient` — the *concrete* type
+  (`Sources/SlopDeskClientUI/Connection/ConnectionViewModel.swift:54,82`). `InputBarModel.submit/sendRaw/sendText` also take the concrete type.
 - The only existing `ConnectionViewModel` test stands up a **real `HostServer`** — forbidden for new
   tests (it deadlocks the pool).
 - The only genuine in-process no-network seam today is `LoopbackByteChannel.pair()` for the Inspector
-  (`Sources/AislopdeskInspector/InspectorChannel.swift:145`).
+  (`Sources/SlopDeskInspector/InspectorChannel.swift:145`).
 
-So injecting a `FakeAislopdeskClient` via `makeClient` is **NOT constructible**. We do NOT introduce a
-protocol over `AislopdeskClient` (it perturbs the proven core and buys nothing). We resolve it
+So injecting a `FakeSlopDeskClient` via `makeClient` is **NOT constructible**. We do NOT introduce a
+protocol over `SlopDeskClient` (it perturbs the proven core and buys nothing). We resolve it
 structurally — three layered facts make the whole new surface testable with zero `HostServer`:
 
 1. **Pure domain (~85% of new logic) has no client at all.** Pane tree, layout solver, focus
@@ -36,16 +36,16 @@ structurally — three layered facts make the whole new surface testable with ze
 2. **Session lifecycle is faked at the `makeSession` factory seam — NOT `makeClient`.** The
    injectable unit is the whole `PaneSession`. `WorkspaceStore` is built with
    `makeSession: @MainActor (PaneSpec) -> any PaneSessionHandle`; tests inject a `FakePaneSession`
-   that records `pause/resume/teardown` and never builds a real `AislopdeskClient`. This asserts
+   that records `pause/resume/teardown` and never builds a real `SlopDeskClient`. This asserts
    reconcile correctness (`registry.keys == leafIDs`), teardown ordering, and scenePhase fan-out
    **without a socket**. Production injects `LivePaneSession.make`.
 
-3. **`AislopdeskClient()` is socket-free at construction.** `connect()` builds the transport lazily
-   (`AislopdeskClient.swift:153`), so a test wanting a *real un-connected* `LivePaneSession` can build
+3. **`SlopDeskClient()` is socket-free at construction.** `connect()` builds the transport lazily
+   (`SlopDeskClient.swift:153`), so a test wanting a *real un-connected* `LivePaneSession` can build
    one (no `HostServer`, no socket) and assert structural wiring — but the default path is the fake.
 
 `PaneSessionHandle` is a tiny protocol the **store** depends on; it is NOT a protocol over
-`AislopdeskClient` and does not touch the proven core. `LivePaneSession` conforms to it and owns the
+`SlopDeskClient` and does not touch the proven core. `LivePaneSession` conforms to it and owns the
 real `ConnectionViewModel` verbatim.
 
 ```swift
@@ -119,7 +119,7 @@ the proven teardown order). The tree never holds a session; the registry never h
 ## 2. Data model (full Swift sketches)
 
 All pure-domain types are `Sendable + Codable + Equatable`, no `import SwiftUI`, no `import
-AislopdeskClient`. They live under `Sources/AislopdeskClientUI/Workspace/Domain/`.
+SlopDeskClient`. They live under `Sources/SlopDeskClientUI/Workspace/Domain/`.
 
 ```swift
 // ---- Identity ----
@@ -238,7 +238,7 @@ public enum CompactLayoutResolver {
     public var terminalModel: TerminalViewModel { connection.terminalModel }
 
     public static func make(_ spec: PaneSpec,
-                            makeClient: @escaping @Sendable () -> AislopdeskClient,
+                            makeClient: @escaping @Sendable () -> SlopDeskClient,
                             makeInspector: @MainActor (Endpoint) -> InspectorClient?) -> LivePaneSession
 
     public func pause() async  { await connection.pause();  await inspector?.client?.pause()  } // (close+resub for inspector)
@@ -420,7 +420,7 @@ public func apply(_ c: WorkspaceCommand, to store: WorkspaceStore)
 
 The pure `Workspace` value type IS the format — already `Codable`. `WorkspaceStore` persists it
 (debounced on mutation + on `scenePhase == .background`) to
-`Application Support/Aislopdesk/workspace.json` (app container on iOS); `SceneStorage("selectedTab")`
+`Application Support/SlopDesk/workspace.json` (app container on iOS); `SceneStorage("selectedTab")`
 holds only the active `TabID` for fast scene restoration.
 
 - **Codable shape:** `Workspace { schemaVersion, tabs, activeTabID }`,
@@ -474,14 +474,14 @@ Every proven seam is CALLED, never reopened — re-parented from "one global" to
   `LivePaneSession`, constructed with the threaded `makeClient`. The store never reaches into the OUT
   stream or events loop; it only calls public `connect/disconnect/pause/resume`.
 - **App shell:** `Apps/Shared/AppMain.swift` is UNCHANGED — factory registration stays the single
-  launch-time site and the ONLY importer of `CGhostty`/`AislopdeskVideoClient`.
-  `AislopdeskClientApp.swift` swaps its two `@State` vars for one `@State private var store:
+  launch-time site and the ONLY importer of `CGhostty`/`SlopDeskVideoClient`.
+  `SlopDeskClientApp.swift` swaps its two `@State` vars for one `@State private var store:
   WorkspaceStore`, renders `WorkspaceRootView(store:)`, fans `handleScenePhase` over
   `store.allSessions` in an AWAITED `TaskGroup`, and migrates the automation seams (below).
 - **Automation seams (env var names unchanged so `check-macos.sh`/`check-video.sh` keep working):**
-  `AISLOPDESK_AUTOCONNECT_HOST/PORT/AISLOPDESK_AUTOTYPE` move into
+  `SLOPDESK_AUTOCONNECT_HOST/PORT/SLOPDESK_AUTOTYPE` move into
   `WorkspaceStore.bootstrapFromEnvironment()` targeting `tabs[0]`'s first leaf;
-  `AISLOPDESK_VIDEO_AUTOCONNECT_*` migrate out of the retired `ClientRootView` into the same bootstrap.
+  `SLOPDESK_VIDEO_AUTOCONNECT_*` migrate out of the retired `ClientRootView` into the same bootstrap.
   Re-run both runtime scripts from a real unlocked GUI session after migration — they are the only
   runtime proof.
 
@@ -509,7 +509,7 @@ real-device pass on iPad-regular is required** and is NOT assumed free.
 ## 8. Test strategy (NO HostServer)
 
 ~85% of new logic is pure (no client); the session layer is faked at the `PaneSessionHandle`
-boundary — never via a fake `AislopdeskClient` (impossible) and never via a real `HostServer` (forbidden).
+boundary — never via a fake `SlopDeskClient` (impossible) and never via a real `HostServer` (forbidden).
 
 ### Pure unit (plain synchronous XCTest, no client, no async) — the bulk
 - `PaneNodeTests`: split (each axis, root/nested/deep), close (collapse singleton, empty→nil, refocus
@@ -553,7 +553,7 @@ green. No new `HostServer` instance is created.
 
 ## 9. File-by-file map
 
-### Create — pure domain (`Sources/AislopdeskClientUI/Workspace/Domain/`)
+### Create — pure domain (`Sources/SlopDeskClientUI/Workspace/Domain/`)
 - `PaneNode.swift` — recursive enum + pure ops.
 - `PaneSpec.swift` — `PaneKind`, `Endpoint`, `VideoEndpoint`, `PaneSpec`.
 - `Tab.swift` — `Tab`, `TabID`, `PaneID`, `SplitAxis`, `FocusDirection`.
@@ -563,14 +563,14 @@ green. No new `HostServer` instance is created.
 - `FocusResolver.swift` — geometric neighbor + cycle.
 - `CompactLayoutResolver.swift` — pages / selectedIndex / swipe focus.
 
-### Create — store + commands (`Sources/AislopdeskClientUI/Workspace/Store/`)
+### Create — store + commands (`Sources/SlopDeskClientUI/Workspace/Store/`)
 - `WorkspaceStore.swift` — store + registry + reconcile + bootstrapFromEnvironment.
 - `PaneSessionHandle.swift` — protocol + `LivePaneSession`.
 - `WorkspaceLayout.swift` — pure isCompact decision (size-class/width).
 - `WorkspacePersistence.swift` — debounced load/save.
 - `CommandInterpreter.swift` — pure command state machine + `WorkspaceCommand` + `apply`.
 
-### Create — views (`Sources/AislopdeskClientUI/Workspace/Views/`)
+### Create — views (`Sources/SlopDeskClientUI/Workspace/Views/`)
 - `WorkspaceRootView.swift` — `NavigationSplitView` shell + the one responsive switch.
 - `TabSidebarView.swift` — native source-list rail (add/close/reorder/rename/status/kind glyphs).
 - `PaneTreeView.swift` — recursive walker.
@@ -581,22 +581,22 @@ green. No new `HostServer` instance is created.
 - `WorkspaceCommands.swift` — macOS/iPad `Commands` + `.keyboardShortcut`.
 - `FocusedValues+Workspace.swift` — `@FocusedValue` keys for store + focused pane.
 
-### Create — iOS glue (`Sources/AislopdeskClientUI/iOS/`, `#if os(iOS)`)
+### Create — iOS glue (`Sources/SlopDeskClientUI/iOS/`, `#if os(iOS)`)
 - `FocusGenerationGuard.swift` — pure guard value type (macOS-testable).
 - `PaneFocusCoordinator.swift` — single-focus owner (resign-before-become).
 
 ### Modify
-- `Sources/AislopdeskClientUI/AislopdeskClientApp.swift` — one `@State store`; scenePhase fan-out (awaited
-  TaskGroup over `allSessions`); migrate `AISLOPDESK_AUTOCONNECT_*`/`AISLOPDESK_AUTOTYPE` to store pane-0.
-- `Sources/AislopdeskClientUI/Video/RemoteWindowPanel.swift` — add `showCloseButton: Bool = false` init
+- `Sources/SlopDeskClientUI/SlopDeskClientApp.swift` — one `@State store`; scenePhase fan-out (awaited
+  TaskGroup over `allSessions`); migrate `SLOPDESK_AUTOCONNECT_*`/`SLOPDESK_AUTOTYPE` to store pane-0.
+- `Sources/SlopDeskClientUI/Video/RemoteWindowPanel.swift` — add `showCloseButton: Bool = false` init
   param; gate the Close row on it.
-- `Sources/AislopdeskClientUI/ClientRootView.swift` — retire: role split into `PaneLeafView` +
-  `WorkspaceRootView`; migrate `AISLOPDESK_VIDEO_AUTOCONNECT_*` out. Keep as a thin shim or delete.
+- `Sources/SlopDeskClientUI/ClientRootView.swift` — retire: role split into `PaneLeafView` +
+  `WorkspaceRootView`; migrate `SLOPDESK_VIDEO_AUTOCONNECT_*` out. Keep as a thin shim or delete.
 
 ### Unchanged (asserted)
 - `Apps/Shared/AppMain.swift` — factory registration stays the single launch-time site.
 
-### Tests (`Tests/AislopdeskClientUITests/Workspace/`)
+### Tests (`Tests/SlopDeskClientUITests/Workspace/`)
 - `PaneNodeTests.swift`, `LayoutSolverTests.swift`, `FocusResolverTests.swift`,
   `CompactLayoutResolverTests.swift`, `FractionTests.swift`, `WorkspaceTests.swift`,
   `WorkspacePersistenceTests.swift`, `CommandInterpreterTests.swift`, `FocusGenerationGuardTests.swift`,
@@ -619,7 +619,7 @@ fan-out + video cap. Tested with `FakePaneSession` via `makeSession`. NO HostSer
 
 ### WF4 — UI shell: sidebar + splits (regular width)
 `WorkspaceRootView` (`NavigationSplitView`), `TabSidebarView`, `PaneTreeView`, `SplitContainer`,
-`PaneChromeView`. Renders the tree, draggable dividers (throttled resize), zoom. `AislopdeskClientApp`
+`PaneChromeView`. Renders the tree, draggable dividers (throttled resize), zoom. `SlopDeskClientApp`
 swap to one `@State store`; scenePhase fan-out. Typecheck + headless build + `check-macos.sh`.
 Depends on: WF3.
 
@@ -640,7 +640,7 @@ Depends on: WF5 (real content panes), WF2 (CommandInterpreter, CompactLayoutReso
 ## 11. Resolved concerns
 
 1. **Concrete-actor / no fakeable client** → `makeSession` factory seam + `PaneSessionHandle`
-   (store-level protocol, not over `AislopdeskClient`) + socket-free `AislopdeskClient()` construction.
+   (store-level protocol, not over `SlopDeskClient`) + socket-free `SlopDeskClient()` construction.
    No protocol over the proven core.
 2. **`.id(PaneID)` identity hazard** → explicit `.id` on every leaf host (terminal, video, input);
    PaneID stable for a session's lifetime; runtime-identity assertion in reconcile tests.

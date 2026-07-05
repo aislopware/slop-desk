@@ -2,7 +2,7 @@
 
 ## Summary
 
-Every agent conversation is captured and searchable. Users can resume a thread days later or fork a new task off an old context. Coding-agent session logs render as a readable transcript instead of raw JSON. Aislopdesk recognizes three agents by their session file paths and auto-opens matching files as rendered transcripts rather than plain JSONL.
+Every agent conversation is captured and searchable. Users can resume a thread days later or fork a new task off an old context. Coding-agent session logs render as a readable transcript instead of raw JSON. SlopDesk recognizes three agents by their session file paths and auto-opens matching files as rendered transcripts rather than plain JSONL.
 
 ## Behaviors
 
@@ -64,11 +64,11 @@ Every agent conversation is captured and searchable. Users can resume a thread d
 
 *Header block* (top of content):
 - Large bold heading: "Fill in the TODOs in the workspace files-and-links doc" (dark, ~18-20px, semibold)
-- Below heading: commit/session hash in small monospace gray text: `b2d476a8-1c3e-4a5b-9d7f-2e4c0a88d011.json` and path `~/Workspace/aislopdesk` / `main` / `v2.1.159` (breadcrumb style, gray, small)
+- Below heading: commit/session hash in small monospace gray text: `b2d476a8-1c3e-4a5b-9d7f-2e4c0a88d011.json` and path `~/Workspace/slopdesk` / `main` / `v2.1.159` (breadcrumb style, gray, small)
 - Below that: agent turn metadata: bullet "You · 19:30:21" in small gray text
 
 *Tool-call / assistant turn block*:
-- Gray italic path: `/Users/abner/Workplace/aislopdesk/docs/user/workspace/files-and-links.md`
+- Gray italic path: `/Users/abner/Workplace/slopdesk/docs/user/workspace/files-and-links.md`
 - User message in plain text: "fill in the TODO"
 - Collapsible/indented block starting with "▶ Claude · Agent, 0xBash, Edit, 6×Read · 553 chars" — this is a collapsed tool-call summary line (disclosure triangle + agent name + tool list + char count), rendered in subdued gray/muted style.
 - Body text below the tool summary, rendered as markdown with inline code spans in colored/highlighted style (greenish `#` prefixed links, standard body text ~14px):
@@ -97,7 +97,7 @@ Every agent conversation is captured and searchable. Users can resume a thread d
 
 Top section (working-directory group):
 - Section header label: "WORKING DIRECTORY" in small all-caps gray
-- "~/Workspace/aislopdesk" — monospace path text
+- "~/Workspace/slopdesk" — monospace path text
 - "Copy Path"
 - "Reveal in Finder"
 - "Open in"
@@ -147,18 +147,18 @@ Group header 1: "CODEX SESSIONS" — small all-caps gray label, ~11px.
 - Row 1 (selected/highlighted, light blue tint background ~#EBF2FF):
   - Left icon: small circular icon or agent logo (Codex)
   - Title: "consider data sync feature" (bold ~14px dark)
-  - Right side: path "~/Workspace/aislopdesk" in gray small text, then "43s ago" in muted gray, then "Agent" badge (small rounded rectangle, gray outline, gray text "Agent", ~11px)
+  - Right side: path "~/Workspace/slopdesk" in gray small text, then "43s ago" in muted gray, then "Agent" badge (small rounded rectangle, gray outline, gray text "Agent", ~11px)
   - Selection highlight: entire row is tinted blue
 
 Group header 2: "CLAUDE CODE SESSIONS" — same small all-caps gray label.
 - Row 2:
   - Title: "consider data sync feature" (same title, different agent)
-  - Right: "~/Workspace/aislopdesk" · "3 min ago" · "Agent" badge
+  - Right: "~/Workspace/slopdesk" · "3 min ago" · "Agent" badge
 
 Group header 3 (implied "CLAUDE CODE" or another): 
 - Row 3:
   - Title: "现在对于BSU|ESU|sync-update的处理，还有和..." (non-Latin session title, showing internationalization support)
-  - Right: "~/Workspace/aislopdesk" · "46s ago" · "Agent" badge
+  - Right: "~/Workspace/slopdesk" · "46s ago" · "Agent" badge
 
 *Footer bar* (bottom of panel, very subtle separator): 
 - Left: "Quick Select ⌘" (small gray text + keyboard icon)
@@ -180,19 +180,19 @@ Group header 3 (implied "CLAUDE CODE" or another):
 
 ### Straightforward
 
-- **Transcript rendering**: Aislopdesk can render JSONL/JSON session files as formatted transcripts inside a terminal pane (similar to how it renders OSC-133 block output in `BlockOutputView`). The libghostty surface is not needed for this — it is a SwiftUI view pane, not a PTY pane.
-- **Open from Command Palette**: Aislopdesk already has a command palette / Open Quickly mechanism (`WorkspaceBindingRegistry`). An "Agents" tab can be added there following the same pattern.
-- **Resume via `--resume` flag**: On the macOS host side, aislopdesk spawns a new PTY pane and passes `--resume <session-id>` to the agent CLI. This is a standard `makeSession` call — maps 1:1.
+- **Transcript rendering**: SlopDesk can render JSONL/JSON session files as formatted transcripts inside a terminal pane (similar to how it renders OSC-133 block output in `BlockOutputView`). The libghostty surface is not needed for this — it is a SwiftUI view pane, not a PTY pane.
+- **Open from Command Palette**: SlopDesk already has a command palette / Open Quickly mechanism (`WorkspaceBindingRegistry`). An "Agents" tab can be added there following the same pattern.
+- **Resume via `--resume` flag**: On the macOS host side, slopdesk spawns a new PTY pane and passes `--resume <session-id>` to the agent CLI. This is a standard `makeSession` call — maps 1:1.
 - **"Copy" from context menu**: Standard pasteboard operation — no mapping issues.
 - **View toggle (transcript ↔ raw JSONL)**: Implementable as a SwiftUI state toggle within the pane's view, switching between a `MarkdownText`/structured transcript renderer and a plain text/syntax-highlighted view.
-- **Fuzzy search across agent sessions**: The vendored `FuzzyMatcher` (FuzzyMatchV2) already in aislopdesk can power search across session file names and first-messages. Session files live on the **host** filesystem, so the host daemon must enumerate and index them.
-- **"Send to Chat"**: Maps to the aislopdesk Composer feature — sends selected text to the active agent session's input. Requires knowing which pane is the live session; maps onto the existing pane-routing infrastructure.
+- **Fuzzy search across agent sessions**: The vendored `FuzzyMatcher` (FuzzyMatchV2) already in slopdesk can power search across session file names and first-messages. Session files live on the **host** filesystem, so the host daemon must enumerate and index them.
+- **"Send to Chat"**: Maps to the slopdesk Composer feature — sends selected text to the active agent session's input. Requires knowing which pane is the live session; maps onto the existing pane-routing infrastructure.
 
 ### Constraints from the remote-host architecture
 
-- **Session file path is HOST-side**: All session files (`~/.claude/projects/...`, etc.) are on the **remote macOS host**, not the local client. The aislopdesk client cannot directly read them. The host daemon (`aislopdesk-hostd`) must expose a session-enumeration and session-file-read API over the existing control channel or a new inspector channel. This is the largest architectural gap: session files live on the host, so the client must proxy them over the wire rather than reading them from local disk.
+- **Session file path is HOST-side**: All session files (`~/.claude/projects/...`, etc.) are on the **remote macOS host**, not the local client. The slopdesk client cannot directly read them. The host daemon (`slopdesk-hostd`) must expose a session-enumeration and session-file-read API over the existing control channel or a new inspector channel. This is the largest architectural gap: session files live on the host, so the client must proxy them over the wire rather than reading them from local disk.
 - **Live tab detection for Resume**: Because sessions run on the remote host, the host daemon must report session liveness (which sessions have an active PTY). The client must query this before deciding whether to jump to an existing pane vs. spawn a new one.
-- **Auto-open by path**: Detecting session files purely by filesystem path (as when opening a `.jsonl` file) doesn't translate to aislopdesk's remote context — the client doesn't browse the host filesystem directly. The history viewer must be triggered explicitly (via Command Palette / context menu) rather than by "open file" drag-and-drop.
+- **Auto-open by path**: Detecting session files purely by filesystem path (as when opening a `.jsonl` file) doesn't translate to slopdesk's remote context — the client doesn't browse the host filesystem directly. The history viewer must be triggered explicitly (via Command Palette / context menu) rather than by "open file" drag-and-drop.
 - **iOS client**: On iOS, the context menu ("View Session History" from tab right-click) becomes a long-press or swipe action on the pane chooser / tab list. The "Open Quickly" panel maps to the iOS pane chooser with an Agents filter tab. The `--resume` spawn flow works the same (host-side PTY creation). No OS-level PiP or window management issues apply here.
 - **"Notify When Task Completes" / "Badge While Processing"** (visible in the context menu screenshot): These are tab-level notification/badge settings that are agent-generic across all supported agents. Badge state for remote panes is already tracked via the existing pane status/badge system (`AgentControlListener`, `ClaudeStatus`). These toggle behaviors should map onto the existing badge-while-processing infrastructure with per-pane preference storage.
-- **Remote SSH badge** on session results: Not applicable — aislopdesk's sessions ARE remote by construction; all sessions are implicitly remote. No extra "SSH" badge needed on results, but the working directory path shown in results would be the host-side path (e.g. `~/Workspace/project` on the host).
+- **Remote SSH badge** on session results: Not applicable — slopdesk's sessions ARE remote by construction; all sessions are implicitly remote. No extra "SSH" badge needed on results, but the working directory path shown in results would be the host-side path (e.g. `~/Workspace/project` on the host).

@@ -1,4 +1,4 @@
-# Aislopdesk UI-Shell — Acceptance User Stories (Self-Verification Checklist)
+# SlopDesk UI-Shell — Acceptance User Stories (Self-Verification Checklist)
 
 Flat list of every acceptance story across all epics in `BACKLOG.md`. Each is tagged with its epic id and a verifiability note:
 - **unit-testable** — provable headlessly (`swift test`) against domain/engine code.
@@ -101,23 +101,23 @@ Flat list of every acceptance story across all epics in `BACKLOG.md`. Each is ta
 - **ES-E13-4** [E13] As a user, the agent input footer renders with its notifications / rich-input / file-explorer chips. — GUI-verifiable
 - **ES-E13-5** [E13] As a user, `⌘⌃↩` captures my selection (or last command output) into a Send-to-Chat dialog where I pick the target agent session, add a comment, and send — the workspace then switches to that agent pane. — both
 - **ES-E13-6** [E13] As a user, I can open a Claude session as a rendered transcript, toggle to raw JSONL, and press Resume to jump to the live tab or spawn `claude --resume <id>`. — both
-- **ES-E13-7** [E13] As a user, after the agent `/branch`es, aislopdesk detects the new session and opens it in the split/tab I chose via the palette "Fork in…" entries. — both
+- **ES-E13-7** [E13] As a user, after the agent `/branch`es, slopdesk detects the new session and opens it in the split/tab I chose via the palette "Fork in…" entries. — both
 
 ## E14 — Progress + notifications + privilege
 - **ES-E14-1** [E14] As a user, a program emitting OSC 9;4 progress drives a spinner/progress badge instead of being silently filtered; auto-progress wraps known slow commands. — both
-- **ES-E14-2** [E14] As a user, OSC 9 / 777 / 99 notifications post macOS banners; BEL beeps; the Dock bounces when aislopdesk is unfocused per the Notify-While-Foreground policy. — both
+- **ES-E14-2** [E14] As a user, OSC 9 / 777 / 99 notifications post macOS banners; BEL beeps; the Dock bounces when slopdesk is unfocused per the Notify-While-Foreground policy. — both
 - **ES-E14-3** [E14] As a user, the Dock icon animates on progress and tints red on a failing session. — GUI-verifiable
 - **ES-E14-4** [E14] As a user, privilege toggles (title-report, OSC-52 read/write Ask/Allow/Deny) and the system-permission status row work per their settings. — both
 
 ## E15 — Theming + fonts
 - **ES-E15-1** [E15] As a user, with "use separated dark theme" on, the light slot applies in light mode and the dark slot in dark mode, switching live with OS appearance. — both
-- **ES-E15-2** [E15] As a user, dropping a `.aislopdesktheme` (or importing iTerm2/Kitty/Alacritty/Ghostty) adds it to the theme list and I can activate it. — both
+- **ES-E15-2** [E15] As a user, dropping a `.slopdesktheme` (or importing iTerm2/Kitty/Alacritty/Ghostty) adds it to the theme list and I can activate it. — both
 - **ES-E15-3** [E15] As a user, the theme editor lets me edit palette/chrome swatches and Duplicate / Edit / Open-Folder. — GUI-verifiable
 - **ES-E15-4** [E15] As a user, I can set the font family from a picker with specimens, a fallback list, and per-scope (Global/Light/Dark/Fallback) overrides. — GUI-verifiable
 - **ES-E15-5** [E15] As a user, line-height modes, ligature levels, and bold/italic/underline/blink/blending settings apply to the rendered terminal. — both
 
 ## E16 — Recipes + snippets
-- **ES-E16-1** [E16] As a user, `⌘S` saves the current tab/window layout as a recipe (layout-only or include-commands) to a `.aislopdeskrecipe` file. — both
+- **ES-E16-1** [E16] As a user, `⌘S` saves the current tab/window layout as a recipe (layout-only or include-commands) to a `.slopdeskrecipe` file. — both
 - **ES-E16-2** [E16] As a user, opening a recipe restores its pane tree and working directories, replaying commands per the chosen mode (Auto/Ask-Once/Manually/Skip), pausing on shell handoffs. — both
 - **ES-E16-3** [E16] As a user, an unfamiliar recipe file shows its commands before execution with Always-Trust / Run-Once / Cancel; editing it re-prompts. — both
 - **ES-E16-4** [E16] As a user, I can create a text snippet (Name/Alias/Text with `{{date}}`/`{{time}}`/`{{clipboard}}`/`{{cursor}}`) and typing its alias at the prompt expands it. — both
@@ -141,9 +141,9 @@ Flat list of every acceptance story across all epics in `BACKLOG.md`. Each is ta
 - **ES-E19-4** [E19] As a user, I can switch to a horizontal (top/bottom) tab-bar layout with auto-hide-tab-bar. — GUI-verifiable
 
 ## E20 — CLI parity + watch + first-launch
-- **ES-E20-1** [E20] As a user, `aislopdesk open/view/edit/config/font/theme/keybind/tab/pane/window` drive the running app and `--json` produces structured output. — both
-- **ES-E20-2** [E20] As a user, `aislopdesk watch <cmd>` shows a spinner during execution and a success/error badge on exit (exit codes 0/4/9 for `watch:claude`). — both
-- **ES-E20-3** [E20] As a user, `aislopdesk tab badge --kind <kind>`, `pane capture`, `jump/learn/ignore`, `version`, and `completions <shell>` behave per the CLI reference. — both
+- **ES-E20-1** [E20] As a user, `slopdesk open/view/edit/config/font/theme/keybind/tab/pane/window` drive the running app and `--json` produces structured output. — both
+- **ES-E20-2** [E20] As a user, `slopdesk watch <cmd>` shows a spinner during execution and a success/error badge on exit (exit codes 0/4/9 for `watch:claude`). — both
+- **ES-E20-3** [E20] As a user, `slopdesk tab badge --kind <kind>`, `pane capture`, `jump/learn/ignore`, `version`, and `completions <shell>` behave per the CLI reference. — both
 - **ES-E20-4** [E20] As a first-run user, I can set On-Launch behavior, install the CLI, and install Claude Code hooks from a first-launch flow. — GUI-verifiable
 
 ## E21 — Remote-window extension first-class

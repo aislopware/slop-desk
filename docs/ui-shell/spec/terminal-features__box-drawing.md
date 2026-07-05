@@ -2,12 +2,12 @@
 
 ## Summary
 
-Pixel-perfect rendering of Unicode box-drawing, block, Braille, and Powerline glyphs — drawn analytically rather than rasterized from a font. Unlike most terminals, Aislopdesk extends this to treat arrows (← → ↑ ↓) and triangles (◀ ▶ ▲ ▼) as part of the box-drawing system: when an arrow or triangle glyph sits adjacent to a connecting box-drawing line, the stem of the arrow/triangle extends to meet the rule, eliminating the visual gap that other terminals leave. This makes flow diagrams and pipeline-style CLI output render seamlessly.
+Pixel-perfect rendering of Unicode box-drawing, block, Braille, and Powerline glyphs — drawn analytically rather than rasterized from a font. Unlike most terminals, SlopDesk extends this to treat arrows (← → ↑ ↓) and triangles (◀ ▶ ▲ ▼) as part of the box-drawing system: when an arrow or triangle glyph sits adjacent to a connecting box-drawing line, the stem of the arrow/triangle extends to meet the rule, eliminating the visual gap that other terminals leave. This makes flow diagrams and pipeline-style CLI output render seamlessly.
 
 ## Behaviors
 
 - All Unicode box-drawing characters (U+2500–U+257F), block elements (U+2580–U+259F), Braille patterns, and Powerline glyphs are rendered analytically (vector/pixel math), not rasterized from font outlines. This makes them sharp at any font size, DPI, or scaling factor.
-- Arrow glyphs (← → ↑ ↓, U+2190–U+2193) and triangle glyphs (◀ ▶ ▲ ▼) are treated as box-drawing participants: when such a glyph is adjacent to a box-drawing line, Aislopdesk extends the stem of the arrow/triangle to meet the rule so there is no gap.
+- Arrow glyphs (← → ↑ ↓, U+2190–U+2193) and triangle glyphs (◀ ▶ ▲ ▼) are treated as box-drawing participants: when such a glyph is adjacent to a box-drawing line, SlopDesk extends the stem of the arrow/triangle to meet the rule so there is no gap.
 - This "join arrows & triangles to box-drawing rules" behavior is ON by default.
 - The behavior can be disabled: open Settings → All Settings, search for "Join arrows & triangles to box-drawing rules", and toggle it off. When off, arrows and triangles render in the standard way (with a gap between the arrowhead and any adjacent line), matching Ghostty and most other terminals.
 - The box-drawing rendering is independent of font choice — analytical rendering means the glyphs do not depend on the currently selected font having box-drawing coverage.
@@ -74,11 +74,11 @@ No keybindings are specific to box drawing.
 
 ## Implementation notes
 
-Aislopdesk uses libghostty (behind a `TerminalSurface` seam / `AislopdeskTerminal` + `TerminalRenderingView`) for terminal rendering. The relevant implementation considerations are:
+SlopDesk uses libghostty (behind a `TerminalSurface` seam / `SlopDeskTerminal` + `TerminalRenderingView`) for terminal rendering. The relevant implementation considerations are:
 
-1. **Analytical box-drawing rendering — mostly free via libghostty.** libghostty already performs analytical/pixel-perfect rendering of Unicode box-drawing characters (that is Ghostty's own feature). The comparison screenshot confirms that Ghostty renders box-drawing analytically (sharp corners, clean lines) but WITHOUT the arrow/triangle stem-extension behavior. Aislopdesk inherits Ghostty's box-drawing quality for free through libghostty.
+1. **Analytical box-drawing rendering — mostly free via libghostty.** libghostty already performs analytical/pixel-perfect rendering of Unicode box-drawing characters (that is Ghostty's own feature). The comparison screenshot confirms that Ghostty renders box-drawing analytically (sharp corners, clean lines) but WITHOUT the arrow/triangle stem-extension behavior. SlopDesk inherits Ghostty's box-drawing quality for free through libghostty.
 
-2. **Arrow/triangle stem joining — NOT available via libghostty.** This distinguishing feature — extending arrow/triangle stems to meet adjacent box-drawing rules — is NOT a libghostty/Ghostty feature; it requires custom analytical glyph composition on top of the renderer. Implementing it in aislopdesk requires either:
+2. **Arrow/triangle stem joining — NOT available via libghostty.** This distinguishing feature — extending arrow/triangle stems to meet adjacent box-drawing rules — is NOT a libghostty/Ghostty feature; it requires custom analytical glyph composition on top of the renderer. Implementing it in slopdesk requires either:
    - Patching libghostty (C/Zig layer) to add the join logic, which is upstream work and breaks the "don't patch ghostty" boundary; OR
    - Post-processing the rendered surface (impractical for a live terminal); OR
    - Intercepting the character grid before libghostty rasterization and substituting extended glyphs (would require a custom font with pre-joined variants or a custom rendering layer).
@@ -88,8 +88,8 @@ Aislopdesk uses libghostty (behind a `TerminalSurface` seam / `AislopdeskTermina
 
 4. **Block elements.** libghostty renders block elements analytically. Already covered.
 
-5. **Config key exposure.** The "Join arrows & triangles to box-drawing rules" setting cannot be wired to any libghostty behavior because libghostty does not implement this. Once aislopdesk adds its own glyph-join layer, this setting can be added to `PreferencesStore` via the `Defaults` product (as established in the codebase). Default should remain `true` to match the design spec's default, but the implementation will be a no-op stub until the join logic is built.
+5. **Config key exposure.** The "Join arrows & triangles to box-drawing rules" setting cannot be wired to any libghostty behavior because libghostty does not implement this. Once slopdesk adds its own glyph-join layer, this setting can be added to `PreferencesStore` via the `Defaults` product (as established in the codebase). Default should remain `true` to match the design spec's default, but the implementation will be a no-op stub until the join logic is built.
 
-6. **Remote display path.** Since aislopdesk streams video frames of the terminal surface over UDP (PATH 2), any analytical rendering done server-side by libghostty on the macOS host is preserved pixel-for-pixel in the video stream. The analytical quality is NOT degraded by the video path in normal operation (VT HEVC @ sufficient QP). The stem-joining feature, if ever implemented, would also be server-side (in libghostty on the host) and thus equally preserved.
+6. **Remote display path.** Since slopdesk streams video frames of the terminal surface over UDP (PATH 2), any analytical rendering done server-side by libghostty on the macOS host is preserved pixel-for-pixel in the video stream. The analytical quality is NOT degraded by the video path in normal operation (VT HEVC @ sufficient QP). The stem-joining feature, if ever implemented, would also be server-side (in libghostty on the host) and thus equally preserved.
 
 7. **iOS client.** The iOS client receives the same video stream; no platform-specific rendering difference applies here.

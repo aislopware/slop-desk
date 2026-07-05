@@ -1,12 +1,12 @@
 //
 //  GhosttyTerminalView.swift
-//  Aislopdesk — the SwiftUI host for the ONLY terminal renderer (libghostty-only).
+//  SlopDesk — the SwiftUI host for the ONLY terminal renderer (libghostty-only).
 //
 //  ─────────────────────────────────────────────────────────────────────────────
 //  THIS FILE IS DELIBERATELY OUTSIDE THE DEFAULT `swift build` GRAPH.
 //  ─────────────────────────────────────────────────────────────────────────────
 //  It is the production `TerminalRenderingView` conformer named in
-//  `Sources/AislopdeskClientUI/Terminal/TerminalRenderingView.swift` (the documented
+//  `Sources/SlopDeskClientUI/Terminal/TerminalRenderingView.swift` (the documented
 //  extension point). Like its sibling `GhosttySurface.swift` (same directory) it is
 //  NOT a member of any target in `/Package.swift`; it compiles only inside the
 //  macOS/iOS GUI app target (WF-8) which (a) links `libghostty.xcframework` and
@@ -53,7 +53,7 @@
 //  bytes via `onWrite`. This view routes them to `TerminalViewModel.sendInput(_:)`
 //  (and grid resizes via `onResize` → `sendResize`). The model funnels them through
 //  its `inputSink`/`resizeSink`, which the connection layer (`ConnectionViewModel`,
-//  which holds the live `AislopdeskClient`) points at `AislopdeskClient.sendInput`/`sendResize`
+//  which holds the live `SlopDeskClient`) points at `SlopDeskClient.sendInput`/`sendResize`
 //  on connect and clears on teardown. Going through the MODEL (not `model.surface
 //  .onWrite` directly) decouples view-attach timing from connect timing — whichever
 //  happens first, the sink is read at call time. NOW WIRED (was the remaining seam in
@@ -72,12 +72,12 @@
 
 import SwiftUI
 import QuartzCore          // CAMetalLayer
-import AislopdeskTerminal       // TerminalSurface protocol
-import AislopdeskWorkspaceCore  // TerminalRenderingView, TerminalViewModel, TerminalRendererFactory (L0 home)
+import SlopDeskTerminal       // TerminalSurface protocol
+import SlopDeskWorkspaceCore  // TerminalRenderingView, TerminalViewModel, TerminalRendererFactory (L0 home)
 import CGhostty            // the clang module over ghostty.h (link "ghostty")
 
 #if os(macOS)
-import AislopdeskClientUI    // PasteProtectionSheet (the macOS paste-protection confirmation surface, E8 WI-4)
+import SlopDeskClientUI    // PasteProtectionSheet (the macOS paste-protection confirmation surface, E8 WI-4)
 import AppKit
 import Carbon              // TIS keyboard-layout id (IME input-source-switch guard; framework already linked)
 #elseif os(iOS)
@@ -91,9 +91,9 @@ import UIKit
 /// clipboard; `SELECTION` is a PRIVATE pasteboard (mirrors upstream `NSPasteboard.ghostty(_:)`) so
 /// libghostty's default-ON copy-on-select does NOT clobber the user's system clipboard on every
 /// drag-select — only an explicit Cmd-C / `copy_to_clipboard` (STANDARD) touches `.general`.
-@inline(__always) func aislopdeskPasteboard(for location: ghostty_clipboard_e) -> NSPasteboard {
+@inline(__always) func slopdeskPasteboard(for location: ghostty_clipboard_e) -> NSPasteboard {
     location == GHOSTTY_CLIPBOARD_SELECTION
-        ? NSPasteboard(name: NSPasteboard.Name("com.aislopdesk.terminal.selection"))
+        ? NSPasteboard(name: NSPasteboard.Name("com.slopdesk.terminal.selection"))
         : .general
 }
 
@@ -108,7 +108,7 @@ import UIKit
 /// which short-circuits `Surface.completeClipboardPaste` (`if (data.len == 0) return;`) so the request
 /// frees cleanly with no paste and NO gate re-trip (the de-risked cancel contract — see the callback).
 @MainActor
-func aislopdeskConfirmUnsafePaste(
+func slopdeskConfirmUnsafePaste(
     surface: GhosttySurface,
     text: String,
     state: UnsafeMutableRawPointer?
@@ -174,7 +174,7 @@ func aislopdeskConfirmUnsafePaste(
 /// ``ClipboardAccess.silentClipboardRead(text:)`` "" outcome) — a well-formed but empty OSC-52 reply that
 /// frees the request exactly once and never leaks the clipboard. ALLOW passes the real text.
 @MainActor
-func aislopdeskConfirmClipboardRead(
+func slopdeskConfirmClipboardRead(
     surface: GhosttySurface,
     text: String,
     state: UnsafeMutableRawPointer?,
@@ -204,9 +204,9 @@ func aislopdeskConfirmClipboardRead(
 /// copy-on-select drag never clobbers the user's real clipboard). iOS has no selection clipboard. Split out
 /// of `write_clipboard_cb` so both the direct-write path and the post-confirm (clipboard-write = ask) path
 /// share one site. Pasteboard is main-thread-only; every caller is on the main actor.
-@MainActor func aislopdeskWriteClipboard(_ text: String, location: ghostty_clipboard_e) {
+@MainActor func slopdeskWriteClipboard(_ text: String, location: ghostty_clipboard_e) {
     #if os(macOS)
-    let pb = aislopdeskPasteboard(for: location)
+    let pb = slopdeskPasteboard(for: location)
     pb.declareTypes([.string], owner: nil)
     pb.setString(text, forType: .string)
     #elseif os(iOS)
@@ -301,7 +301,7 @@ final class GhosttyApp {
         //    NAMED themes like "Monokai Pro" resolve). Until that lands, keep the default config so the
         //    grid the GUI computes matches what libghostty renders. (The reported invisible
         //    zsh-autosuggestion was NOT a palette issue — it was the empty-HISTFILE shim bug, fixed in
-        //    AislopdeskHost/ShellIntegration.swift.)
+        //    SlopDeskHost/ShellIntegration.swift.)
         let config = ghostty_config_new()
         // W13: apply the user's terminal-render prefs (font / theme / cursor / scrollback) BEFORE
         // finalize. `TerminalConfigBroadcaster` (set by the client's `PreferencesStore` on every
@@ -319,7 +319,7 @@ final class GhosttyApp {
         ghostty_config_finalize(config)
 
         // 3. Runtime config (header 1073). The embedder must supply the callback set;
-        //    for Aislopdesk's external-backend viewer the surface's own write/resize
+        //    for SlopDesk's external-backend viewer the surface's own write/resize
         //    callbacks carry the data path, so these app-level runtime callbacks are
         //    minimal no-ops (wakeup just ticks the app; clipboard/close are stubs the
         //    GUI coordinator can later enrich). All fields zero-initialized first.
@@ -338,7 +338,7 @@ final class GhosttyApp {
             GhosttyApp.requestAppTick()
         }
         // action_cb returns whether the action was handled. The viewer handles none of the app-level
-        // window/split/tab actions (Aislopdesk does its OWN tiling at the SwiftUI layer) — EXCEPT
+        // window/split/tab actions (SlopDesk does its OWN tiling at the SwiftUI layer) — EXCEPT
         // GHOSTTY_ACTION_OPEN_URL: libghostty owns OSC 8 hyperlink hit-testing + the click internally and
         // asks the embedder to OPEN the resolved URL (W14 #7). We hand it to the system opener (the
         // embedder's job upstream too) so a clicked OSC 8 link / hovered-URL click opens — no wire change,
@@ -400,7 +400,7 @@ final class GhosttyApp {
         }
 
         // Clipboard callbacks — modeled on upstream `Ghostty.App.swift:324-405`. The `userdata`
-        // here is the SURFACE's userdata (libghostty passes it through), which aislopdesk set to the
+        // here is the SURFACE's userdata (libghostty passes it through), which slopdesk set to the
         // `GhosttySurface` in `GhosttySurface.init` (`config.userdata = passUnretained(self)`), so we
         // recover it via `Unmanaged<GhosttySurface>.fromOpaque(...).takeUnretainedValue()`. These fire
         // synchronously on the main thread from the surface's binding-action / OSC-52 path, so the
@@ -431,7 +431,7 @@ final class GhosttyApp {
                 // clipboard on every selection. Upstream maps SELECTION to a private pasteboard
                 // (NSPasteboard.ghostty(_:)); we mirror that. iOS has no selection clipboard.
                 #if os(macOS)
-                let pb = aislopdeskPasteboard(for: location)
+                let pb = slopdeskPasteboard(for: location)
                 let live = pb.string(forType: .string) ?? ""
                 #else
                 let live = (location == GHOSTTY_CLIPBOARD_SELECTION) ? "" : (UIPasteboard.general.string ?? "")
@@ -470,7 +470,7 @@ final class GhosttyApp {
         //
         // E8 WI-6 (I11) — the `request` arg now ROUTES the decision: PASTE → the paste-protection sheet
         // (WI-4); OSC-52 READ → the `clipboard-read` access gate (Allow / Ask / Deny, default Ask) via
-        // `aislopdeskConfirmClipboardRead`. An OSC-52 WRITE never routes through this READ-confirm callback in
+        // `slopdeskConfirmClipboardRead`. An OSC-52 WRITE never routes through this READ-confirm callback in
         // the pinned fork — a program WRITE goes via `write_clipboard_cb`, where `clipboard-write =
         // deny/ask/allow` is honoured: libghostty enforces `deny` (never calls the write callback) and
         // `allow` (calls with `confirm == false`), while `ask` is DELEGATED to that callback's `confirm` flag
@@ -486,9 +486,9 @@ final class GhosttyApp {
                 // Match the C enum by `==` (it imports as a RawRepresentable struct, not a Swift enum, so it
                 // is not `switch`-case-able); read it explicitly, never assuming a {0,1} layout.
                 if request == GHOSTTY_CLIPBOARD_REQUEST_PASTE {
-                    aislopdeskConfirmUnsafePaste(surface: surface, text: str, state: state)
+                    slopdeskConfirmUnsafePaste(surface: surface, text: str, state: state)
                 } else if request == GHOSTTY_CLIPBOARD_REQUEST_OSC_52_READ {
-                    aislopdeskConfirmClipboardRead(
+                    slopdeskConfirmClipboardRead(
                         surface: surface,
                         text: str,
                         state: state,
@@ -536,7 +536,7 @@ final class GhosttyApp {
                 case .drop:
                     return
                 case .write:
-                    aislopdeskWriteClipboard(text, location: location)
+                    slopdeskWriteClipboard(text, location: location)
                 case .confirm:
                     #if os(macOS)
                     // `clipboard-write = ask`: present the "a program wants to set your clipboard" sheet;
@@ -547,7 +547,7 @@ final class GhosttyApp {
                         dangers: [],
                         in: NSApp.keyWindow,
                     ) { allow in
-                        if allow { aislopdeskWriteClipboard(text, location: location) }
+                        if allow { slopdeskWriteClipboard(text, location: location) }
                     }
                     #else
                     // iOS has no confirmation sheet. An "Ask" we cannot present must NOT silently allow —
@@ -571,7 +571,7 @@ final class GhosttyApp {
 
 // MARK: - GhosttyTerminalView (the TerminalRenderingView conformer)
 
-/// libghostty-backed terminal renderer — Aislopdesk's production `TerminalRenderingView`.
+/// libghostty-backed terminal renderer — SlopDesk's production `TerminalRenderingView`.
 ///
 /// It hosts a Metal-backed platform view (`CAMetalLayer`) that owns a `GhosttySurface`
 /// configured for the EXTERNAL backend. The data flow:
@@ -583,7 +583,7 @@ final class GhosttyApp {
 ///  * **OUT** (keystrokes → host PTY stdin): the view forwards platform key/text
 ///    events to `surface.key(_:)` / `surface.text(_:)`; libghostty encodes them and
 ///    emits the bytes via `surface.onWrite`, which the connection layer bridges to
-///    `AislopdeskClient.sendInput` (documented seam — see file header + doc 21).
+///    `SlopDeskClient.sendInput` (documented seam — see file header + doc 21).
 ///  * **Resize**: layout changes convert the view's pixel size → cols/rows and call
 ///    `surface.setSize(cols:rows:)`; the surface mirrors the grid to the host via
 ///    `surface.onResize`.
@@ -798,7 +798,7 @@ final class GhosttyLayerBackedView: NSView {
     /// layout, settle-burst items, viewDidMoveToWindow) is main-thread, so the un-pause is
     /// strictly ordered before the tick that must serve it; resume latency = next vsync,
     /// identical to the old gated no-op tick. Any future arming path MUST route through
-    /// here or it will silently never present. Nil-safe for AISLOPDESK_NO_TICK.
+    /// here or it will silently never present. Nil-safe for SLOPDESK_NO_TICK.
     func requestPresent(_ ticks: Int = 3) {
         if kRenderDebug { rdbg("requestPresent(\(ticks)) [was \(presentTicks)]") }
         presentTicks = max(presentTicks, ticks)
@@ -897,7 +897,7 @@ final class GhosttyLayerBackedView: NSView {
                 rows: 24,
                 contentScale: Double(window?.backingScaleFactor ?? 2.0)
             )
-            // OUT path: encoded keystrokes → model input sink → live AislopdeskClient.sendInput.
+            // OUT path: encoded keystrokes → model input sink → live SlopDeskClient.sendInput.
             s.onWrite = { [weak model] (data: Data) in model?.sendInput(data) }
             // Grid changes (font reflow) → model resize sink → host TIOCSWINSZ.
             s.onResize = { [weak model] (cols: UInt16, rows: UInt16) in model?.sendResize(cols: cols, rows: rows) }
@@ -909,7 +909,7 @@ final class GhosttyLayerBackedView: NSView {
             s.onMouseShape = { [weak self] raw in self?.applyPointerShape(rawShape: raw) }
             // E8 (H9): mouse-hide-while-typing → hide/show this pane's NSCursor (libghostty decides; we actuate).
             s.onMouseVisibility = { [weak self] visible in self?.applyMouseVisibility(visible) }
-            // E8 (WI-5): the libghostty-initiated paste BACKSTOP (`aislopdeskConfirmUnsafePaste`, reached via
+            // E8 (WI-5): the libghostty-initiated paste BACKSTOP (`slopdeskConfirmUnsafePaste`, reached via
             // middle-click) reads the REAL alt-screen flag through this hook so it suppresses inside a true
             // full-screen TUI — matching the ⌘V `requestPaste` path (no more hardcoded `false`).
             s.isAlternateScreen = { [weak model] in model?.isAlternateScreen ?? false }
@@ -953,7 +953,7 @@ final class GhosttyLayerBackedView: NSView {
 
     private func startRenderTickIfNeeded() {
         guard renderDisplayLink == nil, window != nil,
-              ProcessInfo.processInfo.environment["AISLOPDESK_NO_TICK"] == nil else { return }
+              ProcessInfo.processInfo.environment["SLOPDESK_NO_TICK"] == nil else { return }
         let link = displayLink(target: self, selector: #selector(renderTick))
         link.add(to: .main, forMode: .common)
         renderDisplayLink = link
@@ -1847,8 +1847,8 @@ final class GhosttyLayerBackedView: NSView {
     }
 
     /// E8 WI-8 (H6, ES-E8-6): MOUSE-OVER-TO-FOCUS. When `focus-follows-mouse` (`focusFollowsMouse`) is
-    /// on, hovering a pane focuses it — but ONLY across aislopdesk's OWN panes: libghostty's native
-    /// `focus-follows-mouse` only relays focus inside ghostty's internal split tree, and each aislopdesk pane
+    /// on, hovering a pane focuses it — but ONLY across slopdesk's OWN panes: libghostty's native
+    /// `focus-follows-mouse` only relays focus inside ghostty's internal split tree, and each slopdesk pane
     /// is a SEPARATE `GhosttySurface` tiled at the SwiftUI layer, so this cross-pane focus relay must be ours.
     ///
     /// The PURE, headless-tested ``FocusFollowsMousePolicy/shouldRequestFocus(focusFollowsMouse:isAlreadyFocused:)``
@@ -2145,7 +2145,7 @@ final class GhosttyLayerBackedView: NSView {
     /// (on approve / safe) hand it to libghostty's `paste_from_selection` so it applies bracketed-paste
     /// framing. Empty selection → no-op.
     private func requestPasteFromSelection() {
-        let selection = aislopdeskPasteboard(for: GHOSTTY_CLIPBOARD_SELECTION).string(forType: .string) ?? ""
+        let selection = slopdeskPasteboard(for: GHOSTTY_CLIPBOARD_SELECTION).string(forType: .string) ?? ""
         guard !selection.isEmpty else { return }
         requestPaste(clipboard: selection, bindingAction: "paste_from_selection")
     }
@@ -2688,8 +2688,8 @@ struct GhosttyMetalLayerView: UIViewRepresentable {
 /// A `UIView` whose `layerClass` is `CAMetalLayer`, owning the `GhosttySurface`.
 ///
 /// Physical-key + IME text forwarding on iOS is handled by the existing UIKit
-/// table-stakes host (`AislopdeskClientUI.TerminalInputHost` — doc 17 §2.5), which already
-/// routes presses/IME to `AislopdeskClient.sendInput`. This view focuses on hosting the
+/// table-stakes host (`SlopDeskClientUI.TerminalInputHost` — doc 17 §2.5), which already
+/// routes presses/IME to `SlopDeskClient.sendInput`. This view focuses on hosting the
 /// Metal layer + surface; the input-host integration is the documented follow-up seam.
 final class GhosttyLayerBackedView: UIView {
     override class var layerClass: AnyClass { CAMetalLayer.self }
@@ -2920,7 +2920,7 @@ final class GhosttyLayerBackedView: UIView {
                 rows: 24,
                 contentScale: Double(scale)
             )
-            // OUT path: libghostty-encoded keystrokes → model sink → live AislopdeskClient.
+            // OUT path: libghostty-encoded keystrokes → model sink → live SlopDeskClient.
             // On iOS the physical-key/IME forwarding is owned by `TerminalInputHost`
             // (doc 17 §2.5), but routing onWrite here too is harmless+correct: it carries
             // whatever the surface itself encodes, and the model sink is the single funnel.

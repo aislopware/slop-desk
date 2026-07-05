@@ -41,8 +41,8 @@ deliberate, documented repaint design) — not fixed, correctly.
 
 ## Hardware validation (cua, Mac Studio, real Aqua session)
 
-Built the renderer-enabled `Aislopdesk.app` (`scripts/enable-macos-renderer.sh`), launched with
-autoconnect to a local `aislopdesk-hostd`, drove it as a user:
+Built the renderer-enabled `SlopDesk.app` (`scripts/enable-macos-renderer.sh`), launched with
+autoconnect to a local `slopdesk-hostd`, drove it as a user:
 
 - **#9 unfocused-pane repaint — CONFIRMED FIXED.** Streamed a `date` clock loop in pane A, split
   right (⌘D) so pane A became unfocused, and pane A's clock kept advancing across multiple
@@ -72,7 +72,7 @@ C0/DEL scalar (macOS already resolves Ctrl-C→U+0003, Ctrl-[→U+001B, etc.), s
 via the OUT path, BYPASSING the kitty encoder; plain + non-control keys still go through libghostty
 unchanged. Trade-off: a remote kitty-aware TUI (neovim) gets legacy Ctrl-keys (which every app handles)
 — the right call for a remote terminal where Ctrl-C must work. (iOS hardware keys take a separate
-Aislopdesk-side encoder, not libghostty, so they are unaffected.)
+SlopDesk-side encoder, not libghostty, so they are unaffected.)
 
 ### (original investigation, retained) — Ctrl-C does not interrupt a foreground command
 `sleep 30` in a pane ran its FULL 30s after Ctrl-C; the terminal printed **`^[[3;5u`** (a CSI-u
@@ -99,7 +99,7 @@ defaulting to LEGACY (so Ctrl-C → `0x03`) until the host actually pushes kitty
 
 **Next steps (not done — needs libghostty mode work, unsafe to blind-fix; would risk regressing
 real kitty-protocol apps like neovim):** (1) tap the live host→client PTY byte stream in a real
-Aislopdesk session to confirm the host never sends `CSI > … u`; (2) check whether libghostty's
+SlopDesk session to confirm the host never sends `CSI > … u`; (2) check whether libghostty's
 external-backend surface defaults kitty/focus modes ON, and force legacy-until-requested; (3) A/B the
 same zsh under native Ghostty to rule out an env-conditional shell config. HIGH priority — a terminal
 you can't ^C is broken for real dev work.
@@ -153,12 +153,12 @@ multi-pane now behaves correctly (unfocused panes live-repaint; keyboard follows
   deadlocks) — use `--filter <ClassName>` (class name, not `Target.Class`).
 
 ## Files changed (uncommitted on `main`)
-AislopdeskHost: `PTYProcess.swift`, `MuxChannelSession.swift`, `HostServer.swift`.
-AislopdeskTransport: `Mux/MuxNWConnection.swift`, `Mux/ConnectionRegistry.swift`.
-AislopdeskClient: `ReconnectManager.swift`.
-AislopdeskClientUI: `Connection/ConnectionViewModel.swift`, `Terminal/TerminalRenderingView.swift`,
+SlopDeskHost: `PTYProcess.swift`, `MuxChannelSession.swift`, `HostServer.swift`.
+SlopDeskTransport: `Mux/MuxNWConnection.swift`, `Mux/ConnectionRegistry.swift`.
+SlopDeskClient: `ReconnectManager.swift`.
+SlopDeskClientUI: `Connection/ConnectionViewModel.swift`, `Terminal/TerminalRenderingView.swift`,
   `Terminal/TerminalScreenView.swift`, `Workspace/Views/PaneLeafView.swift`.
-AislopdeskVideoClient: `VideoDecoder.swift`, `Mux/VideoConnectionRegistry.swift`.
+SlopDeskVideoClient: `VideoDecoder.swift`, `Mux/VideoConnectionRegistry.swift`.
 App: `Apps/Shared/AppMain.swift`; renderer: `ThirdParty/.../GhosttyTerminalView.swift`.
 Tests: `MuxBugFixRegressionTests.swift` (new), `ConnectionRegistryTests.swift`,
   `PTYProcessTests.swift`, `Support/InMemoryMuxLink.swift`.
@@ -167,5 +167,5 @@ Tests: `MuxBugFixRegressionTests.swift` (new), `ConnectionRegistryTests.swift`,
 (renderer-enable is reproduced on demand by `scripts/enable-macos-renderer.sh`).
 
 ---
-*Generated autonomously. HW evidence under `/tmp/aislopdesk-*.png`. Bug-hunt workflow result:
+*Generated autonomously. HW evidence under `/tmp/slopdesk-*.png`. Bug-hunt workflow result:
 the session task output.*

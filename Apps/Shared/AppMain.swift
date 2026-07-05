@@ -1,21 +1,21 @@
-// L2 of the Warp-clone UI rewrite RETARGETED this shell to the rebuilt `AislopdeskClientApp` scene
-// (in the `AislopdeskClientUI` library, over `AislopdeskWorkspaceCore` + `AislopdeskDesignSystem`). The
+// L2 of the Warp-clone UI rewrite RETARGETED this shell to the rebuilt `SlopDeskClientApp` scene
+// (in the `SlopDeskClientUI` library, over `SlopDeskWorkspaceCore` + `SlopDeskDesignSystem`). The
 // SEAM types (`TerminalRendererFactory`, `VideoWindowFactory`, `RemoteWindowDiscovery`,
-// `SystemDialogDiscovery`, `RemoteWindowSummary`, `SystemDialogInfo`) live in `AislopdeskWorkspaceCore`;
+// `SystemDialogDiscovery`, `RemoteWindowSummary`, `SystemDialogInfo`) live in `SlopDeskWorkspaceCore`;
 // the five seam registrations below stay PRESERVED — only the production renderer/video/discovery
-// closures are injected here (the GUI app target links libghostty/AislopdeskVideoClient; the
+// closures are injected here (the GUI app target links libghostty/SlopDeskVideoClient; the
 // cross-platform UI library cannot). This file is part of the xcodegen Xcode app target (NOT
 // `swift build`).
-import AislopdeskClientUI
-import AislopdeskWorkspaceCore
+import SlopDeskClientUI
+import SlopDeskWorkspaceCore
 import SwiftUI
-#if canImport(AislopdeskVideoClient)
-import AislopdeskVideoClient
+#if canImport(SlopDeskVideoClient)
+import SlopDeskVideoClient
 #endif
 
 /// The `@main` entry for both Xcode app targets (ClientApp-macOS, ClientApp-iOS).
 ///
-/// The whole scene lives in the `AislopdeskClientUI` SwiftPM library (`AislopdeskClientApp`); this
+/// The whole scene lives in the `SlopDeskClientUI` SwiftPM library (`SlopDeskClientApp`); this
 /// shell only attaches `@main` and, when the libghostty xcframework is present, registers the
 /// production terminal renderer with ``TerminalRendererFactory``. Until the xcframework is
 /// built, no factory is registered and the BUILD-STATUS placeholder shows (libghostty-only
@@ -35,10 +35,10 @@ import AislopdeskVideoClient
 struct ClientAppMain {
     // `main()` performs the five seam registrations (the load-bearing wiring that injects the production
     // renderer/video/discovery closures the cross-platform UI library cannot reference) and then launches
-    // the rebuilt `AislopdeskClientApp` scene. This app target is NOT in `swift build`.
+    // the rebuilt `SlopDeskClientApp` scene. This app target is NOT in `swift build`.
     static func main() {
         // PATH 1 (terminal, libghostty-only): register the production renderer. The
-        // cross-platform `AislopdeskClientUI` library cannot reference `GhosttyTerminalView`
+        // cross-platform `SlopDeskClientUI` library cannot reference `GhosttyTerminalView`
         // (it would force linking `libghostty.xcframework` + the `CGhostty` clang module
         // into the headless `swift build`/tests), so the GUI app target injects it here.
         //
@@ -54,12 +54,12 @@ struct ClientAppMain {
         #endif
 
         // PATH 2 (GUI video path, doc 17 §3): register the production remote-GUI-window
-        // view. The cross-platform `AislopdeskClientUI` library cannot reference
-        // `AislopdeskVideoClient.VideoWindowView` directly (it would pull VideoToolbox + Metal
+        // view. The cross-platform `SlopDeskClientUI` library cannot reference
+        // `SlopDeskVideoClient.VideoWindowView` directly (it would pull VideoToolbox + Metal
         // into the headless `swift build`/tests), so the GUI app target — which links
-        // `AislopdeskVideoClient` — injects it here at launch. With no registration the seam
+        // `SlopDeskVideoClient` — injects it here at launch. With no registration the seam
         // shows the gated `RemoteWindowPlaceholderView`.
-        #if canImport(AislopdeskVideoClient)
+        #if canImport(SlopDeskVideoClient)
         VideoWindowFactory.shared = { descriptor, paneContext in
             // LIVE path when the descriptor carries a full endpoint (host + media/cursor
             // ports), entered via the Remote-window panel: build the VideoWindowConnection
@@ -67,9 +67,9 @@ struct ClientAppMain {
             // chrome-only initializer (no live decode) — the seam's preview/placeholder path.
             //
             // `paneContext` (active state + the E21 WI-3 read-only `inputEnabled` gate + activate/canvas-
-            // scroll callbacks) is destructured into primitives here — `AislopdeskVideoClient` cannot import
-            // `AislopdeskClientUI` (the seam exists for exactly that reason), so the context type stays on the
-            // `AislopdeskClientUI` side and only its Bools + closures cross into `VideoWindowView`.
+            // scroll callbacks) is destructured into primitives here — `SlopDeskVideoClient` cannot import
+            // `SlopDeskClientUI` (the seam exists for exactly that reason), so the context type stays on the
+            // `SlopDeskClientUI` side and only its Bools + closures cross into `VideoWindowView`.
             if descriptor.hasEndpoint {
                 let connection = VideoWindowConnection(
                     host: descriptor.host,
@@ -97,7 +97,7 @@ struct ClientAppMain {
             return AnyView(VideoWindowView(title: descriptor.title))
         }
         // UDP-mux: install the per-host shared-flow registry on the video pipeline. Panes targeting the
-        // same host share ONE UDP flow (one flow per host, N panes); the host's `aislopdesk-videohostd`
+        // same host share ONE UDP flow (one flow per host, N panes); the host's `slopdesk-videohostd`
         // speaks the matching 19-byte channelID-prefixed wire — the only video wire there is now.
         MainActor.assumeIsolated { VideoMuxInstaller.install() }
 
@@ -145,8 +145,8 @@ struct ClientAppMain {
         }
         #endif
 
-        // Launch the rebuilt SwiftUI scene (over `AislopdeskWorkspaceCore` + `AislopdeskDesignSystem`).
+        // Launch the rebuilt SwiftUI scene (over `SlopDeskWorkspaceCore` + `SlopDeskDesignSystem`).
         // `App.main()` runs the app run loop and never returns.
-        AislopdeskClientApp.main()
+        SlopDeskClientApp.main()
     }
 }
