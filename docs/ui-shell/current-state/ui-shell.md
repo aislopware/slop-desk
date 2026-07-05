@@ -1,11 +1,11 @@
 ## Overview
 
-The slopdesk client UI shell is a native SwiftUI + AppKit hybrid implementing a 3-column IDE layout
-(navigator | content | inspector) modelled on CodeEdit's split shell. The macOS host is an
+The slopdesk client UI shell is a native SwiftUI + AppKit hybrid: a 3-column IDE layout
+(navigator | content | inspector) modelled on CodeEdit's split shell. macOS host =
 `NSSplitViewController` (`SlopDeskSplitViewController`) with three `NSHostingController` columns;
-iOS uses `NavigationSplitView`. The window runs `.hiddenTitleBar`; the client's own hover-reveal
-`SlateTitlebar` is the sole chrome. The domain model is a fully implemented `TreeWorkspace`
-(`Session → Tab → SplitNode tree → Pane`) stored in `WorkspaceStore`.
+iOS uses `NavigationSplitView`. The window runs `.hiddenTitleBar`; the hover-reveal `SlateTitlebar`
+is the sole chrome. Domain model = fully implemented `TreeWorkspace`
+(`Session → Tab → SplitNode tree → Pane`) in `WorkspaceStore`.
 
 All assessment is against the macOS path unless noted.
 
@@ -40,7 +40,7 @@ All assessment is against the macOS path unless noted.
 | Flat white-card active row | done | `SlateTabRow:L34–44` — white card + border + faint shadow when `active` |
 | Close × on hover | done | `SlateTabRow:L47–54` |
 | Sort / group hamburger | done | `SlateSortMenuButton` — UI present; grouping/ordering is **presentational only** (local `@State`, does not reorder the store) |
-| Agent-status badge on tab row | partial | `RailRow.status:ClaudeStatus` is computed by `RailRowsBuilder:L38`; `SlateTabRow` accepts only `title/active/onSelect/onClose` — the status field is **never rendered**. Badge dot missing. |
+| Agent-status badge on tab row | partial | `RailRow.status:ClaudeStatus` computed by `RailRowsBuilder:L38`; `SlateTabRow` accepts only `title/active/onSelect/onClose` — status field **never rendered**. Badge dot missing. |
 | Pane subtitle (cwd) in sidebar | partial | `RailRow.subtitle` populated from `spec.lastKnownCwd:L39`; `SlateTabRow` shows only the title — subtitle **not displayed** |
 | Tab search / filter in sidebar | missing | No search field in `NavigatorColumn`; `RailRowsBuilder.filtered(_:query:)` exists but is not called from any view |
 | iOS sidebar (List + NavigationSplitView) | done | `NavigatorColumn.iosSidebar:L78` |
@@ -68,7 +68,7 @@ All assessment is against the macOS path unless noted.
 | **Pane focus + cycle** | | |
 | Click to focus pane | done | `PaneContainer:L159` `.onTapGesture { store.focusPaneTree(paneID) }` |
 | Directional focus (⌥⌘←↑↓→) | done | `moveFocusTreeUsingReportedLayout(.left/.right/.up/.down)` in routing:L90–93 |
-| Sequential pane cycle | missing | No `cyclePaneFocus` / `cyclePane` action exists in `WorkspaceAction` or routing |
+| Sequential pane cycle | missing | No `cyclePaneFocus` / `cyclePane` action in `WorkspaceAction` or routing |
 | Focus pane via sidebar row click | done | `NavigatorColumn.select(_:):L115` → `store.focusPaneTree` |
 | **In-pane chooser** | | |
 | In-pane chooser (Terminal / Remote) | done | `InPaneChooserView` — focused `.chooser` pane with keyboard mnemonics (t/r) |
@@ -91,21 +91,21 @@ All assessment is against the macOS path unless noted.
 | Connection status pill (dot + host + label + ping) | done | `ConnectionStatusPill.swift` — live `@Observable` on `AppConnection.status` |
 | Retry on pill tap (give-up state) | done | `ConnectionStatusPill.tap():L58–63` |
 | Ping display in pill | done | `ConnectionStatusPill:L39–43` |
-| Bottom status bar | missing | No footer status bar component exists in the UI module |
+| Bottom status bar | missing | No footer status bar component in the UI module |
 | **Command palette / overlays** | | |
 | OverlayCoordinator (palette / settings / toasts / cheat-sheet) | partial | `OverlayCoordinator.swift` fully implemented; **not mounted** in `WorkspaceRootView` (only referenced in `Settings` comment: `SlopDeskClientApp:L289`) |
-| ⌘K command palette | partial | `PaletteModel`, `PaletteDataSource`, `SearchMixer` all implemented; palette view not wired into the live scene root (no `overlayCoordinator(_:)` call in `WorkspaceRootView`) |
+| ⌘K command palette | partial | `PaletteModel`, `PaletteDataSource`, `SearchMixer` implemented; view not wired into the live scene root (no `overlayCoordinator(_:)` call in `WorkspaceRootView`) |
 | Keyboard cheat sheet (⌘/) | partial | `cheatSheetVisible` in coordinator — same wiring gap |
 | Toast notifications | partial | `OverlayCoordinator.pushToast` / `Toast.swift` — same wiring gap |
-| Context-menu model (pane ⋮) | done | `ContextMenuModel.paneItems(…)` — built; not yet surfaced as a view (no context menu overlay in the current shell) |
+| Context-menu model (pane ⋮) | done | `ContextMenuModel.paneItems(…)` — built; not surfaced as a view (no context menu overlay in current shell) |
 | **Window-level extras** | | |
 | Pin window / always-on-top | missing | No `NSWindow.level` / `floating` window level anywhere |
-| Picture-in-Picture | na-remote | PiP is not applicable; the remote-GUI surface is a UDP video stream in a pane, not a PiP window |
+| Picture-in-Picture | na-remote | PiP N/A; remote-GUI surface is a UDP video stream in a pane, not a PiP window |
 | **Close guard / reopen** | | |
 | Close-confirm guard (busy shell) | done | `requestClosePaneTree:L589` — parks `pendingClose` when `isShellBusy`; `confirmPendingClose()` + `cancelPendingClose()` |
-| Reopen closed pane (⇧⌘T) | partial | `reopenClosedPane():L635` exists in store; keybinding `.reopenClosedPane` maps `⇧⌘T` in `CommandInterpreter:L254`; BUT this is the **canvas path** — `WorkspaceBindingRouting` has no `.reopenClosedPane` case for the tree path; the chord is therefore dead under `liveModel = .tree` |
+| Reopen closed pane (⇧⌘T) | partial | `reopenClosedPane():L635` exists in store; `.reopenClosedPane` maps `⇧⌘T` in `CommandInterpreter:L254`; BUT this is the **canvas path** — `WorkspaceBindingRouting` has no `.reopenClosedPane` case for the tree path; chord is dead under `liveModel = .tree` |
 | **Floating panes** | | |
-| Toggle float active pane | partial | `toggleFloatActivePaneCommand()` in store; `Tab.floatingPanes` domain field; but `SplitContainer` renders **only tiled leaves** — floating panes have no renderer in the UI shell |
+| Toggle float active pane | partial | `toggleFloatActivePaneCommand()` in store; `Tab.floatingPanes` domain field; but `SplitContainer` renders **only tiled leaves** — floating panes have no renderer |
 | Spawn floating pane (chooser) | partial | `openChooserPane(.floating)` in routing:L73 — mints the pane; same rendering gap |
 | **Multi-session sessions column** | | |
 | Multiple sessions listed / switchable | partial | `TreeWorkspace.sessions` is `[Session]`; `NavigatorColumn` renders only the **active session's** tabs — no cross-session list in the sidebar |
@@ -143,56 +143,52 @@ All assessment is against the macOS path unless noted.
 
 ### Dead seam: OverlayCoordinator not mounted
 `OverlayCoordinator` is fully implemented (palette, settings, toasts, cheat-sheet, connect-to-host,
-remote picker) but `WorkspaceRootView` does not mount it (no `overlayCoordinator(_:)` call, no
-`OverlayCoordinator` `@State`). The key dispatcher (`WorkspaceKeyDispatcher`) is built with nil
-toggles for palette and cheat-sheet so those chords are no-ops at runtime. The settings surface
-falls back to a separate macOS `Settings` scene window (`SlopDeskSettingsScene`). All of the
-coordinator's overlay surfaces are behind a single mount wiring gap — adding it to `WorkspaceRootView`
-would unlock palette + cheat-sheet + toasts + connect-to-host in one shot.
+remote picker) but `WorkspaceRootView` never mounts it (no `overlayCoordinator(_:)` call, no
+`@State`). `WorkspaceKeyDispatcher` is built with nil palette/cheat-sheet toggles, so those chords
+are runtime no-ops. Settings falls back to a separate macOS `Settings` scene (`SlopDeskSettingsScene`).
+One mount in `WorkspaceRootView` unlocks palette + cheat-sheet + toasts + connect-to-host together.
 
 ### Dead seam: ⇧⌘T reopen in tree mode
-`reopenClosedPane()` is implemented in `WorkspaceStore` (canvas path, L635). The keybinding
-`.reopenClosedPane` is declared in `CommandInterpreter:L254` and tested in `CloseUndoTests.swift`.
-However, `WorkspaceBindingRouting.routeTree(_:)` has no `case .reopenClosedPane` — the action is
-missing from the tree-path switch (only the canvas path, `CommandInterpreter.apply`, handles it).
-Under `liveModel = .tree` (the live app), ⇧⌘T is dead.
+`reopenClosedPane()` is implemented in `WorkspaceStore` (canvas path, L635); `.reopenClosedPane` is
+declared in `CommandInterpreter:L254` and tested in `CloseUndoTests.swift`. But
+`WorkspaceBindingRouting.routeTree(_:)` has no `case .reopenClosedPane` — only the canvas path
+(`CommandInterpreter.apply`) handles it. Under `liveModel = .tree` (live app), ⇧⌘T is dead.
 
 ### Partial seam: agent-status badge never rendered in sidebar
-`RailRow.status: ClaudeStatus` is computed per pane by `RailRowsBuilder` and held in each row's
-model, but `SlateTabRow` accepts no status parameter. The dot that should appear on the tab row
-(orange/amber working, green done, red needs-permission) is never shown. The data pipeline
-(`setAgentStatus` → `paneAgentStatus` → `RailRowsBuilder.rows`) is complete; only the view is missing.
+`RailRow.status: ClaudeStatus` is computed per pane by `RailRowsBuilder` and held in each row, but
+`SlateTabRow` accepts no status parameter. The tab-row dot (orange/amber working, green done, red
+needs-permission) never shows. Data pipeline (`setAgentStatus` → `paneAgentStatus` →
+`RailRowsBuilder.rows`) is complete; only the view is missing.
 
 ### Partial seam: floating panes not rendered
-`toggleFloatActivePaneCommand()` and `openChooserPane(.floating)` are wired. `Tab.floatingPanes`
-holds the floating pane IDs. However, `SplitContainer` only iterates `layout.leaves`
-(from `SplitTreeRenderModel.layout(for: tab, in: bounds)`) which produces **only tiled leaves** — it
-never renders `tab.floatingPanes`. There is no overlay layer for draggable/resizable floating cards.
+`toggleFloatActivePaneCommand()` and `openChooserPane(.floating)` are wired; `Tab.floatingPanes` holds
+the IDs. But `SplitContainer` iterates only `layout.leaves` (from
+`SplitTreeRenderModel.layout(for: tab, in: bounds)`) = tiled leaves only; it never renders
+`tab.floatingPanes`. No overlay layer for draggable/resizable floating cards.
 
 ### Partial seam: multi-session UI
-`TreeWorkspace.sessions` supports N sessions, and `WorkspaceStore` has `selectSession(at:)` and
-`openChooserPane(.newSession)`. However, `NavigatorColumn` renders only the active session's tabs
-— there is no session list or session switcher in the sidebar or elsewhere. Other sessions are
-reachable only via palette or keybinding.
+`TreeWorkspace.sessions` supports N sessions; `WorkspaceStore` has `selectSession(at:)` and
+`openChooserPane(.newSession)`. But `NavigatorColumn` renders only the active session's tabs — no
+session list/switcher in the sidebar or elsewhere. Other sessions reachable only via palette or
+keybinding.
 
 ### Sort hamburger is presentational only
-`SlateSortMenuButton` renders a group/order popover with local `@State` booleans. Changing the group
-or order does nothing to the store or the rendered row order. It is purely cosmetic scaffolding.
+`SlateSortMenuButton` renders a group/order popover with local `@State` booleans; changing the group
+or order does nothing to the store or rendered row order. Purely cosmetic scaffolding.
 
 ### No pane cycle action
-There is no sequential "cycle focus to next/previous pane" action in `WorkspaceAction` or routing.
-Directional focus (`focusLeft/Right/Up/Down`) exists; a tmux-style bare-cycle does not.
+No sequential "cycle focus to next/previous pane" action in `WorkspaceAction` or routing. Directional
+focus (`focusLeft/Right/Up/Down`) exists; a tmux-style bare-cycle does not.
 
 ### No status bar
-There is no bottom footer status bar anywhere in `SlopDeskClientUI`. The connection pill in the
-titlebar / iOS toolbar serves as the only persistent status indicator.
+No bottom footer status bar in `SlopDeskClientUI`. The titlebar / iOS-toolbar connection pill is the
+only persistent status indicator.
 
 ### Pin window / PiP
-Pin window (always-on-top `NSWindow.level`) is not implemented. PiP is not applicable — the
-remote-GUI surface is a UDP video stream displayed as an in-pane `GuiLeafView`, not a separate
-floating window.
+Pin window (always-on-top `NSWindow.level`) is not implemented. PiP N/A — the remote-GUI surface is a
+UDP video stream displayed as an in-pane `GuiLeafView`, not a separate floating window.
 
 ### Connect-to-host overlay
-`OverlayCoordinator.connectVisible` / `openConnect()` exist and are called from `ConnectionStatusPill`
-via `onTap`, but the overlay itself is not mounted (same OverlayCoordinator gap above). The current
-give-up path (Retry in the pill) is the only interactive reconnect path.
+`OverlayCoordinator.connectVisible` / `openConnect()` exist and are called from
+`ConnectionStatusPill.onTap`, but the overlay is not mounted (same OverlayCoordinator gap). Retry in
+the pill (give-up path) is the only interactive reconnect path.

@@ -1,12 +1,12 @@
 # 11 — Absolute Latency (latency-floor research)
 
-> **STATUS: REFERENCE — GUI video-path latency-floor research.** This path is shipped and co-equal with terminal panes — the old "Phase 4 / secondary" framing is retired. Architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
+> **STATUS: REFERENCE — GUI video-path latency-floor research.** Shipped, co-equal with terminal panes (old "Phase 4 / secondary" framing retired). Architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-> ⚠️ **Scope.** This floor analysis covers ONLY the GUI video-path. The GUI path is shipped and co-equal with terminal panes; it runs at **60 fps default with idle-skip** (30 fps reads stale on scroll/motion; idle-skip drops bandwidth toward ~0 when static). The goal is **feels-local at 60 fps, not a hard sub-16 ms motion-to-photon floor** — so the extreme-floor pursuit here is mostly **over-engineering for the coding profile** ([12](12-coding-profile.md)): motion-to-photon <16 ms, 120 fps/ProMotion, beam-racing all **DROP**. Terminal-pane latency = network RTT (~1–5 ms LAN), no vsync. **Keep the API corrections** (queueDepth default 8, `AllowOpenGOP=false`, `MaxFrameDelayCount=0`, disable AWDL, idle-skip/dirtyRects) — still valid for the GUI path.
+> ⚠️ **Scope.** Covers ONLY the GUI video-path (shipped, co-equal with terminal panes), running **60 fps default with idle-skip** (30 fps reads stale on scroll/motion; idle-skip drops bandwidth toward ~0 when static). Goal is **feels-local at 60 fps, not a hard sub-16 ms motion-to-photon floor** — so the extreme-floor pursuit here is mostly **over-engineering for the coding profile** ([12](12-coding-profile.md)): motion-to-photon <16 ms, 120 fps/ProMotion, beam-racing all **DROP**. Terminal-pane latency = network RTT (~1–5 ms LAN), no vsync. **Keep the API corrections** (queueDepth default 8, `AllowOpenGOP=false`, `MaxFrameDelayCount=0`, disable AWDL, idle-skip/dirtyRects) — still valid for the GUI path.
 
-> **Net-model note ([13](13-network-transport.md)).** The apps assume a trusted private network — typically a userspace-WireGuard mesh (NetBird/Tailscale as examples). Over such a tunnel DSCP is zeroed and the WG interface (utun) shows as `.other`, so `serviceClass`/DSCP marking and `requiredInterfaceType=.wiredEthernet` in this doc **do NOT apply** there.
+> **Net-model note ([13](13-network-transport.md)).** The apps assume a trusted private network — typically a userspace-WireGuard mesh (NetBird/Tailscale). Over such a tunnel DSCP is zeroed and the WG interface (utun) shows as `.other`, so `serviceClass`/DSCP marking and `requiredInterfaceType=.wiredEthernet` here **do NOT apply**.
 
-Goal: the absolute glass-to-glass (G2G) floor for the Apple/LAN/per-window stack (`ScreenCaptureKit → VideoToolbox HEVC → UDP/QUIC → VideoToolbox decode → Metal/CAMetalLayer`). **Every number is derived, not yet measured on this stack** → see the Phase-0 checklist at the end. Raw corpus: [research/latency-research-corpus.json](research/latency-research-corpus.json).
+Goal: absolute glass-to-glass (G2G) floor for the Apple/LAN/per-window stack (`ScreenCaptureKit → VideoToolbox HEVC → UDP/QUIC → VideoToolbox decode → Metal/CAMetalLayer`). **Every number is derived, not yet measured on this stack** → Phase-0 checklist at the end. Raw corpus: [research/latency-research-corpus.json](research/latency-research-corpus.json).
 
 ## Floor summary
 
@@ -17,7 +17,7 @@ Goal: the absolute glass-to-glass (G2G) floor for the Apple/LAN/per-window stack
 | 120 fps Wi-Fi 6E (6 GHz) | ~12 ms | ~17–26 ms |
 | 60 fps Wi-Fi 6/6E | ~16 ms | ~24–41 ms |
 
-The **two dominant stages are both vsync**: capture (waiting on the host compositor) and render+scanout (vsync at the client). On wired GigE the network all but disappears (one-way <0.1 ms). To compress the floor, **raise the refresh rate (60→120 Hz saves ~12 ms: ~8 ms capture + ~4 ms scanout), not the network.**
+The **two dominant stages are both vsync**: capture (host compositor wait) and render+scanout (client vsync). On wired GigE the network all but disappears (one-way <0.1 ms). To compress the floor, **raise refresh rate (60→120 Hz saves ~12 ms: ~8 ms capture + ~4 ms scanout), not the network.**
 
 > ⚠️ **Load-bearing API corrections** (details in §"Verified API claims"):
 > - `minimumFrameInterval`: macOS 15+ silently defaults to **1/60** (caps at 60 fps even on ProMotion) → must set explicitly; use `(1/fps)×0.9` (OBS PR#11896), **NOT** `kCMTimeZero` (refuted).
@@ -28,7 +28,7 @@ The **two dominant stages are both vsync**: capture (waiting on the host composi
 > - **VRR/adaptive-sync requires fullscreen** → a windowed app gets no benefit.
 > - **Slice/sub-frame pipelining is NOT available** via the public VideoToolbox API (frame-granular output) → drop.
 
-> **Cross-cutting measurement caveat.** Streamer overlays (Moonlight stats, Virtual Desktop indicator) **under-report true G2G by ~40 ms** — they catch network+decode but miss capture compositor delay, compositor buffering, and display scanout (Visser/Greendayle). Treat every self-reported number as a lower bound; measure with an LED+photodiode rig (~21  ns) or a 240/1000 fps camera.
+> **Measurement caveat.** Streamer overlays (Moonlight stats, Virtual Desktop indicator) **under-report true G2G by ~40 ms** — they catch network+decode but miss capture compositor delay, compositor buffering, and display scanout (Visser/Greendayle). Treat every self-reported number as a lower bound; measure with an LED+photodiode rig (~21 ns) or a 240/1000 fps camera.
 
 ## Table of contents
 - [Latency budget & theoretical floor](#latency-budget--theoretical-floor)
@@ -53,7 +53,7 @@ The **two dominant stages are both vsync**: capture (waiting on the host composi
 | **Render + vsync (Metal direct)** | 4.2 ms | 8.3–16.7 ms | ◆ | Avg scanout 8.3 ms @60 Hz. `CVMetalTextureCache → CAMetalLayer`; **NOT** AVSampleBufferDisplayLayer (≥1 frame buffering, #1885). `maximumDrawableCount=2`, `displaySyncEnabled` + `CAMetalDisplayLink preferredFrameLatency=1`. |
 | **TOTAL G2G** | **~14 ms** | **~22–26 ms** | | Capture+render vsync pair dominates. |
 
-> **Capture-stage subtlety:** the 16.67 ms is worst case (pixels change right after a compositor grab); average is half a vsync. The "1 ms capture" figure elsewhere is SCK's *callback overhead* after compositing, NOT the vsync wait. SCK's vsync-to-callback latency on Apple Silicon **has never been published by Apple** — the most important open question of the capture floor.
+> **Capture subtlety:** 16.67 ms is worst case (pixels change right after a compositor grab); average is half a vsync. The "1 ms capture" figure is SCK's *callback overhead* after compositing, NOT the vsync wait. SCK's vsync-to-callback latency on Apple Silicon **has never been published by Apple** — the biggest open question of the capture floor.
 
 ### Budget @120 fps — wired GigE, 120 Hz both ends
 
@@ -115,11 +115,11 @@ Wi-Fi changes only the transmit stage (host capture/encode and client decode/ren
 
 ## Per-stage absolute-minimum configuration
 
-Configuration down to the exact symbol per pipeline stage. Symbol spellings were verified against the installed `MacOSX.sdk`. Markers: `[VERIFIED-SDK]` = confirmed from a header on this machine; `[VERIFIED-CORPUS]` = corpus-confirmed, header not re-checked; `[UNVERIFIED]` = community-only, needs a runtime test; `[PRIVATE]` = private/undocumented, use at your own risk.
+Exact symbol per pipeline stage; spellings verified against the installed `MacOSX.sdk`. Markers: `[VERIFIED-SDK]` = confirmed from a header on this machine; `[VERIFIED-CORPUS]` = corpus-confirmed, header not re-checked; `[UNVERIFIED]` = community-only, needs a runtime test; `[PRIVATE]` = private/undocumented, use at your own risk.
 
 ### 1. Capture — ScreenCaptureKit
 
-`SCStream` + `SCContentFilter(desktopIndependentWindow:)` — the only public single-window path (CGDisplayStream / CGWindowListCreateImage were obsoleted in the macOS 15 SDK).
+`SCStream` + `SCContentFilter(desktopIndependentWindow:)` — the only public single-window path (CGDisplayStream / CGWindowListCreateImage obsoleted in the macOS 15 SDK).
 
 | Setting | Value | Rationale |
 |---|---|---|

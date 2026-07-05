@@ -1,13 +1,11 @@
 # UI-Shell Design — Implementation Backlog (Epics)
 
-Gaps from `GAP-ANALYSIS.md` clustered into shippable epics, topologically ordered by dependency. Foundational UI/domain epics (keybinding routing, overlay host, theming/settings plumbing, host RPC) precede leaf features that consume them. Each epic is sized to land in one focused implementation pass.
+Gaps from `GAP-ANALYSIS.md` clustered into shippable epics, topologically ordered by dependency: foundational epics (keybinding routing, overlay host, theming/settings, host RPC) precede the leaf features that consume them. Each epic sizes to one focused pass.
 
 - **Estimate**: S ≈ <0.5 day, M ≈ 1 day, L ≈ 2–3 days, XL ≈ 1 week.
 - **Priority**: 1 (highest) … 5.
 - **specRefs**: spec files implemented. **gapRefs** in prose map back to `GAP-ANALYSIS.md` rows.
 - **Reuse first**: every epic notes the existing slopdesk seam to extend — do not rebuild working engines (the current-state maps catalog them).
-
-The ordered list:
 
 | Order | Epic | Pri | Est | Depends on |
 |---|---|---|---|---|
@@ -36,14 +34,14 @@ The ordered list:
 ---
 
 ## E1 — Default-keymap parity & command routing completion
-**Goal.** Fill out the binding registry's default chords and register every action the UI shell needs, so later epics can bind their commands without touching routing. Reuse `WorkspaceBindingRegistry` (single source of truth), `WorkspaceBindingRouting.routeTree`, override pipeline — all done; this fills the action/chord gaps and adds missing `routeTree` cases.
+**Goal.** Fill the binding registry's default chords and register every action the UI shell needs, so later epics bind commands without touching routing. Reuse `WorkspaceBindingRegistry` (single source of truth), `WorkspaceBindingRouting.routeTree`, override pipeline (all done); fill the action/chord gaps + missing `routeTree` cases.
 **specRefs.** `spec/customization__custom-keybindings.md`, `spec/reference__keybindings.md`, `spec/user-interface__window-tab-split.md`.
-**Scope.** Register split-left/up (A7), sequential pane-cycle `⌘]`/`⌘[` (A10), scroll keys `⇧PageUp/Down`/`⇧Home/End` + command-jump `⌘PageUp/Down` (I12/I16), font-size `⌘+`/`⌘-`/`⌘0` (M8), `⌘⇧E`/`⌘⇧M`/`⌘⇧P`/`⌘⇧O`/`⌘⇧F`/`⌘⌃↩` action stubs; reconcile pane chords to the documented `⌘⌃`/`⌘⌃⇧` defaults (A8/A9/A11/A25); add `routeTree` cases for reopen-closed (delegated to E3) and palette/cheat/find (delegated to E2). Text/Sequence (`text:`/`csi:`/`esc:`) bindings (N4) + `unbind:`/param-action parse (N5). Optional: SwiftUI `.commands` menu-bar (N6).
+**Scope.** Register split-left/up (A7), sequential pane-cycle `⌘]`/`⌘[` (A10), scroll keys `⇧PageUp/Down`/`⇧Home/End` + command-jump `⌘PageUp/Down` (I12/I16), font-size `⌘+`/`⌘-`/`⌘0` (M8), `⌘⇧E`/`⌘⇧M`/`⌘⇧P`/`⌘⇧O`/`⌘⇧F`/`⌘⌃↩` action stubs; reconcile pane chords to the documented `⌘⌃`/`⌘⌃⇧` defaults (A8/A9/A11/A25); add `routeTree` cases for reopen-closed (→E3) and palette/cheat/find (→E2). Text/Sequence (`text:`/`csi:`/`esc:`) bindings (N4) + `unbind:`/param-action parse (N5). Optional: SwiftUI `.commands` menu-bar (N6).
 **Est** M · **Pri** 1 · **dependsOn** —
 **Acceptance:** ES-E1-1…ES-E1-6.
 
 ## E2 — Overlay host mount
-**Goal.** Mount the fully-built `OverlayCoordinator` into the live scene and pass its toggle closures into `WorkspaceKeyDispatcher`, then build the three missing overlay views, unlocking palette/cheat-sheet/find/toasts/connect/remote-picker in one structural pass.
+**Goal.** Mount the built `OverlayCoordinator` into the live scene, pass its toggle closures into `WorkspaceKeyDispatcher`, and build the three missing overlay views — unlocking palette/cheat-sheet/find/toasts/connect/remote-picker in one structural pass.
 **specRefs.** `spec/user-interface__command-palette.md`, `spec/customization__custom-keybindings.md`, `spec/user-interface__find.md`.
 **Scope.** Instantiate `OverlayCoordinator` in `SlopDeskClientApp`; call `overlayCoordinator(_:)` on the scene root; construct `WorkspaceKeyDispatcher` with `togglePalette`/`toggleCheatSheet`/`toggleFind`/`togglePeekReply`/connect/remote-picker closures. Build **PaletteView** (search field, section headers, keycap chips, ✓ toggle-state, selected-row fill, ⌘↩ chain, Esc), **KeyboardCheatSheetView** (from `groupedForDisplay`), and the **toast** host. Wire connect-to-host overlay + remote-window picker mounts. (Find bar view lands in E5; this epic exposes its toggle.)
 **Est** L · **Pri** 1 · **dependsOn** E1
@@ -57,9 +55,9 @@ The ordered list:
 **Acceptance:** ES-E3-1…ES-E3-5.
 
 ## E4 — Host metadata RPC service
-**Goal.** One shared host control-channel service that lists per-pane processes, listening ports, cwd, git status/branch/diff, directory contents (lazy), and Claude session files — the backend every remote-dependent surface needs. Extend the existing control channel / `AgentControlListener` ctl-socket patterns; never reintroduce app-layer crypto (trusted mesh).
+**Goal.** One shared host control-channel service listing per-pane processes, listening ports, cwd, git status/branch/diff, directory contents (lazy), and Claude session files — the backend every remote-dependent surface needs. Extend the existing control channel / `AgentControlListener` ctl-socket patterns; never reintroduce app-layer crypto (trusted mesh).
 **specRefs.** `spec/user-interface__details-panel.md`, `spec/agents__history.md`, `spec/terminal-features__shell-integration.md`.
-**Scope.** Wire messages / NDJSON verbs: `processes(pane)`, `ports(pane)`, `cwd(pane)` (or rely on OSC 7), `gitStatus(path)`/`gitBranch`/`gitDiff(file)`, `listDirectory(path)` (lazy per-expand), `listAgentSessions(project)` + `readAgentSession(id)`. Validate-then-drop on all inputs. Client-side caches + observable models. (Host-side shell-integration script injection L9 can ride here or as a follow-up.)
+**Scope.** Wire messages / NDJSON verbs: `processes(pane)`, `ports(pane)`, `cwd(pane)` (or rely on OSC 7), `gitStatus(path)`/`gitBranch`/`gitDiff(file)`, `listDirectory(path)` (lazy per-expand), `listAgentSessions(project)` + `readAgentSession(id)`. Validate-then-drop on all inputs. Client-side caches + observable models. (Host-side shell-integration script injection L9 can ride here or follow up.)
 **Est** XL · **Pri** 1 · **dependsOn** —
 **Acceptance:** ES-E4-1…ES-E4-5.
 
@@ -80,7 +78,7 @@ The ordered list:
 ## E7 — Settings sections parity + iOS settings + import/export surfacing
 **Goal.** Expand the 5-tab settings to the full documented section taxonomy, add the missing toggles, surface workspace import/export, and add an iOS settings sheet.
 **specRefs.** `spec/customization__{advanced-settings,import-export}.md`, `spec/getting-started__first-launch.md`, `spec/terminal-features__{cursor-and-mouse,scroll,copy-and-paste,input,notifications}.md`.
-**Scope.** Reorganize into General / Shell / Controls / Editor / Appearance / Agents / Keybindings / Advanced (N9). Add the orphan `SettingsKey` toggles that have no UI (`hideStatusBar`, `showBlockDividers`, `systemDialogPanes`, `autoSwitchLayouts`, `recordClipboardHistory`) + new Controls/Scroll/Copy toggles consumed by E8. Searchable **All Settings** list + Reset-Advanced (N10). Surface `WorkspaceTransfer` via `.fileExporter`/`.fileImporter` (N12). Add **iOS settings sheet** (N13). On-Launch setting (O1).
+**Scope.** Reorganize into General / Shell / Controls / Editor / Appearance / Agents / Keybindings / Advanced (N9). Add the orphan `SettingsKey` toggles with no UI (`hideStatusBar`, `showBlockDividers`, `systemDialogPanes`, `autoSwitchLayouts`, `recordClipboardHistory`) + new Controls/Scroll/Copy toggles consumed by E8. Searchable **All Settings** list + Reset-Advanced (N10). Surface `WorkspaceTransfer` via `.fileExporter`/`.fileImporter` (N12). Add **iOS settings sheet** (N13). On-Launch setting (O1).
 **Est** L · **Pri** 2 · **dependsOn** E1
 **Acceptance:** ES-E7-1…ES-E7-5.
 

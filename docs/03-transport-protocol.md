@@ -1,6 +1,6 @@
 # 03 — Transport, Discovery & Protocol
 
-> **STATUS: REFERENCE — GUI video-path design depth.** This path is shipped and co-equal with terminal panes — the old "Phase 4 / secondary" framing is retired. Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
+> **STATUS: REFERENCE — GUI video-path design depth.** This path is shipped and co-equal with terminal panes. Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
 Three parts: discovery (Bonjour, same-LAN only), transport (plain UDP/TCP), and the packet format. The Swift shell owns the sockets (**Network.framework**, native — no libwebrtc) and the HW codec; the **Rust core** (`rust/slopdesk-core`, video-protocol namespace, behind the C-ABI) implements the wire codec, FEC, frame reassembly, loss handling, and the congestion/ABR controllers.
 
@@ -8,7 +8,7 @@ Three parts: discovery (Bonjour, same-LAN only), transport (plain UDP/TCP), and 
 
 ## 1. Discovery — Bonjour zero-config
 
-> ⚠️ **Bonjour works on the same physical LAN only** — multicast does not traverse a WireGuard mesh. For peers reached over the mesh, connect by **IP/hostname** (e.g. a mesh DNS name, `100.64/10` address, or the mesh API). Support both: Bonjour same-LAN, manual IP/hostname for remote. Network-model reference: [13](13-network-transport.md).
+> ⚠️ **Bonjour works on the same physical LAN only** — multicast does not traverse a WireGuard mesh. For mesh peers, connect by **IP/hostname** (mesh DNS name, `100.64/10` address, or the mesh API). Support both. Network-model reference: [13](13-network-transport.md).
 
 ### Host advertise (`NWListener`)
 
@@ -45,7 +45,7 @@ browser.start(queue: .main)
 
 ## 2. Transport — plain UDP + plain TCP
 
-**Decision:** video → **plain UDP**; terminal + control → **plain TCP** (`TCP_NODELAY` mandatory). No app-layer TLS/QUIC: deployment **assumes a trusted private network** — typically a WireGuard mesh (e.g. NetBird/Tailscale) that already supplies E2E encryption, node auth, and per-port ACLs. The security boundary is the network, not the app; congestion and loss are handled adaptively in-app.
+**Decision:** video → **plain UDP**; terminal + control → **plain TCP** (`TCP_NODELAY` mandatory). No app-layer TLS/QUIC: deployment **assumes a trusted private network** — typically a WireGuard mesh (NetBird/Tailscale) that already supplies E2E encryption, node auth, and per-port ACLs. The security boundary is the network, not the app; congestion and loss are handled adaptively in-app.
 
 Why not QUIC for video:
 
@@ -56,11 +56,11 @@ Why not QUIC for video:
 | Encryption | Provided by the WG mesh | TLS 1.3 (redundant here) | TLS 1.3 (redundant here) |
 | Handshake | Zero | 1-RTT (0-RTT) | 1-RTT |
 
-TLS is redundant behind the mesh, and we run congestion control ourselves — so QUIC's two main draws don't apply.
+TLS is redundant behind the mesh, and we run congestion control ourselves — QUIC's two draws don't apply.
 
 ### NWParameters → single source in [13 §2]
 
-> The full `NWParameters` recipe lives in [13-network-transport.md §2](13-network-transport.md); not repeated here to avoid drift. Net-model facts that matter over any userspace-WireGuard mesh: a WG interface is `utun` / `.other` → **do not pin `requiredInterfaceType` / `.wiredEthernet`**; `serviceClass`/DSCP are zeroed through the tunnel → rely on **app-layer adaptive rate**; Bonjour doesn't cross the mesh; **clamp the UDP payload to the runtime MTU**.
+> Full `NWParameters` recipe lives in [13-network-transport.md §2](13-network-transport.md); not repeated here to avoid drift. Net-model facts over any userspace-WireGuard mesh: a WG interface is `utun` / `.other` → **do not pin `requiredInterfaceType` / `.wiredEthernet`**; `serviceClass`/DSCP are zeroed through the tunnel → rely on **app-layer adaptive rate**; Bonjour doesn't cross the mesh; **clamp the UDP payload to the runtime MTU**.
 
 ### MTU & fragmentation
 
@@ -73,7 +73,7 @@ TLS is redundant behind the mesh, and we run congestion control ourselves — so
 
 ## 3. Control (input) channel — reliable, separate
 
-Input events (mouse/keyboard) are small and **must not be lost**. Carry them on a separate reliable channel — never mix them into the lossy video channel.
+Input events (mouse/keyboard) are small and **must not be lost** — carry them on a separate reliable channel, never in the lossy video channel.
 
 > ⭐ **Input rules (from Moonlight):** batch mouse/pen motion in a **1ms** window (this *reduces* latency by preventing queueing inside the reliable stack); **button/key down/up are NEVER batched** — send immediately. Timestamp + sequence every input. This channel also carries the **cursor position** for the client-side overlay (see [10 §6–7](10-latency-optimization.md)).
 
@@ -122,17 +122,16 @@ Implemented in the Rust core (Moonlight `VideoDepacketizer.c`-style). The receiv
 2. **Whole frame missing** (frameID jumps ahead) → drop the partial, wait for the next clean frame.
 3. **Stale fragment** (frameID < nextFrameNumber) → drop silently.
 
-Recovery requests go over the **reliable control channel**. The buffer is limited to ~1 frame → no latency accumulation.
+Recovery requests go over the **reliable control channel**. Buffer limited to ~1 frame → no latency accumulation.
 
 > ⭐ **Recovery prefers LTR, not keyframes.** VideoToolbox Long-Term Reference: the client acks frames it received; on loss the host emits a small LTR-P predicted from an already-acked LTR, avoiding the 5–20× "keyframe spike". Force an IDR only when no acked LTR remains — details in [10 §1](10-latency-optimization.md). **Speculative loss detection** (guessing a loss before the next frame arrives) saves one frame-time.
 
 ### FEC vs retransmit
 
-The video path **ships FEC + ABR + congestion control** (Rust core), with **FEC first** and a
-**selective-retransmit (NACK) backstop** for what FEC can't recover.
+The video path **ships FEC + ABR + congestion control** (Rust core), **FEC first** with a **selective-retransmit (NACK) backstop** for what FEC can't recover.
 
 - **FEC (Reed–Solomon over GF(2⁸), NEON-accelerated):** recovers loss with **no added latency**, at a bandwidth cost — the primary mechanism. `m=1` is byte-identical to the original XOR parity; `m≥2` recovers multi-packet loss. **Adaptive tiering** (`FECScheme` + `AdaptiveFECPolicy`): low/none on a clean wired LAN (rely on drop-frame → request-recovery), ramping on Wi-Fi/lossy links. **Adaptive parity-`m`** (2026-06-18) steps `m` per-frame by measured loss (clean → m=2, burst → m=5) via the wire FEC-tier field — no format change.
-- **Retransmit (NACK / selective ARQ)** — *re-scoped 2026-06-18, `SLOPDESK_NACK`, default OFF.* The original rule ("ARQ costs 1 RTT → visible stutter; never for video") assumed the **naive** form — replay the lost frame and stall the stream. That premise does **not** hold with a jitter/**playout buffer ≫ RTT** (e.g. 80 ms buffer vs a ~21 ms WAN RTT): a NACK'd fragment retransmit lands *inside* the buffer window → it fills the hole **before playout, no stutter** (the WebRTC model). So a frame FEC can't recover is **held** for a small retransmit grace, the client NACKs exactly the missing fragments, and the host re-sends them from a bounded send-history ring — far cheaper than the old recovery-IDR (and it recovers whole-frame losses FEC fundamentally cannot). The LTR-refresh / IDR path remains the fallback when the grace expires. Retransmit stays opt-in + deploy-together (adds wire recovery type 6).
+- **Retransmit (NACK / selective ARQ)** — *re-scoped 2026-06-18, `SLOPDESK_NACK`, default OFF.* The original rule ("ARQ costs 1 RTT → visible stutter; never for video") assumed the **naive** form — replay the lost frame and stall the stream. That premise does **not** hold with a jitter/**playout buffer ≫ RTT** (e.g. 80 ms buffer vs a ~21 ms WAN RTT): a NACK'd fragment retransmit lands *inside* the buffer window → fills the hole **before playout, no stutter** (the WebRTC model). So a frame FEC can't recover is **held** for a small retransmit grace, the client NACKs exactly the missing fragments, and the host re-sends them from a bounded send-history ring — far cheaper than the old recovery-IDR (and it recovers whole-frame losses FEC fundamentally cannot). The LTR-refresh / IDR path remains the fallback when the grace expires. Retransmit stays opt-in + deploy-together (adds wire recovery type 6).
 
 ### Pacing
 

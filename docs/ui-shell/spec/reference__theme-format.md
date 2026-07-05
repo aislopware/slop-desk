@@ -2,26 +2,25 @@
 
 ## Summary
 
-Theme files live at `~/.config/slopdesk/themes/<name>.slopdesktheme` and use **real TOML** format (unlike the main config file, which uses a custom flat format). Only the `[terminal]` section is required; all other sections are optional. Themes can inherit from other themes to allow partial overrides. Activated by setting `theme = <name>` in the main config.
+Theme files live at `~/.config/slopdesk/themes/<name>.slopdesktheme` and use **real TOML** (unlike the main config's custom flat format). Only `[terminal]` is required; all other sections are optional. Themes can `inherit` to allow partial overrides. Activate by setting `theme = <name>` in the main config.
 
 ## Behaviors
 
-- Theme files are stored in `~/.config/slopdesk/themes/` with the `.slopdesktheme` extension and file name matching the theme name.
-- Theme files use **TOML** format (real TOML, not the custom config format used by the main config file).
-- Only `[terminal]` is required; `[ui]`, `[selection]`, `[cursor]`, and `[ghost]` are all optional.
-- `[terminal].cursor` falls back to `foreground` color if omitted.
-- `[terminal].selection-foreground` and `[terminal].selection-background` are legacy keys — the preferred way is the `[selection]` section.
-- `[ui]` controls window frame, tab sidebar, and command palette tint via `title-bar-bg`, `tab-bar-bg`, `tab-active-bg`, `tab-active-fg`, and `sidebar-divider`.
-- `[cursor].style` accepts exactly three values: `block`, `underline`, or `beam`.
-- `[cursor].blink` is a boolean.
-- `[ghost]` styles autocomplete ghost text (inline predictive completion) with a `foreground` color only.
-- Theme inheritance: add `inherits = "<theme-name>"` at the top level to derive from a built-in or user theme; only keys explicitly present in the inheriting file override the parent — all others remain from the parent theme. Useful for tweaking a built-in theme without restating all 16 palette entries.
-- To activate a theme, set `theme = <name>` (without the `.slopdesktheme` extension) in the main config file.
-- `palette` is an array of exactly 16 ANSI color strings (indices 0–15): 0=black, 1=red, 2=green, 3=yellow, 4=blue, 5=magenta, 6=cyan, 7=white, 8-15=bright variants of the same order.
+- Stored in `~/.config/slopdesk/themes/`, `.slopdesktheme` extension, file name = theme name.
+- Real **TOML** format (not the main config's custom format).
+- Required: `[terminal]`. Optional: `[ui]`, `[selection]`, `[cursor]`, `[ghost]`.
+- `[terminal].cursor` falls back to `foreground` if omitted.
+- `[terminal].selection-foreground` / `selection-background` are legacy — prefer the `[selection]` section.
+- `[ui]` controls window frame, tab sidebar, and command-palette tint via `title-bar-bg`, `tab-bar-bg`, `tab-active-bg`, `tab-active-fg`, `sidebar-divider`.
+- `[cursor].style` accepts exactly: `block`, `underline`, `beam`. `[cursor].blink` is boolean.
+- `[ghost]` styles autocomplete ghost text (inline predictive completion) — `foreground` only.
+- Inheritance: top-level `inherits = "<theme-name>"` derives from a built-in or user theme; only keys present in the child override the parent (rest inherited). Lets you tweak a built-in without restating all 16 palette entries.
+- Activate: `theme = <name>` (no `.slopdesktheme` extension) in the main config.
+- `palette` = exactly 16 ANSI color strings (0–15): 0=black, 1=red, 2=green, 3=yellow, 4=blue, 5=magenta, 6=cyan, 7=white, 8–15=bright variants in the same order.
 
 ## Keybindings
 
-No keybindings are defined by the theme format reference. Theme selection/switching is done via the config file (`theme = <name>`), not via keyboard shortcuts on this page.
+None. Theme selection/switching is via the config file (`theme = <name>`), not keyboard shortcuts.
 
 | Action | Keys |
 |--------|------|
@@ -33,84 +32,84 @@ No keybindings are defined by the theme format reference. Theme selection/switch
 
 | Key | Default | Effect |
 |-----|---------|--------|
-| `foreground` | (required) | Default text colour for the terminal |
-| `background` | (required) | Default background colour for the terminal |
-| `palette` | (required) | Array of 16 ANSI color strings (indices 0–15) |
+| `foreground` | (required) | Default text colour |
+| `background` | (required) | Default background colour |
+| `palette` | (required) | Array of 16 ANSI color strings (0–15) |
 | `cursor` | falls back to `foreground` | Cursor block color |
-| `cursor-text` | — | Foreground color while the cursor is active (text under cursor) |
-| `selection-foreground` | — | Legacy: selection foreground color (prefer `[selection]` section) |
-| `selection-background` | — | Legacy: selection background color (prefer `[selection]` section) |
+| `cursor-text` | — | Foreground of text under the cursor |
+| `selection-foreground` | — | Legacy: selection foreground (prefer `[selection]`) |
+| `selection-background` | — | Legacy: selection background (prefer `[selection]`) |
 
 ### `[ui]` — optional, UI chrome
 
 | Key | Default | Effect |
 |-----|---------|--------|
-| `title-bar-bg` | — | Background color of the title bar |
-| `tab-bar-bg` | — | Background color of the tab/sidebar bar |
-| `tab-active-bg` | — | Background color of the active tab |
-| `tab-active-fg` | — | Foreground/text color of the active tab |
-| `sidebar-divider` | — | Color of the divider line in the sidebar |
+| `title-bar-bg` | — | Title bar background |
+| `tab-bar-bg` | — | Tab/sidebar bar background |
+| `tab-active-bg` | — | Active tab background |
+| `tab-active-fg` | — | Active tab text |
+| `sidebar-divider` | — | Sidebar divider line color |
 
 ### `[selection]` — optional
 
 | Key | Default | Effect |
 |-----|---------|--------|
-| `foreground` | — | Text color of selected content |
-| `background` | — | Background color of selected content |
+| `foreground` | — | Selected text color |
+| `background` | — | Selected background color |
 
 ### `[cursor]` — optional
 
 | Key | Default | Effect |
 |-----|---------|--------|
 | `color` | — | Cursor color |
-| `style` | — | Cursor shape: `block`, `underline`, or `beam` |
-| `blink` | — | Boolean; enables/disables cursor blinking |
+| `style` | — | Shape: `block`, `underline`, or `beam` |
+| `blink` | — | Boolean; enable/disable blinking |
 
 ### `[ghost]` — optional, autocomplete ghost text
 
 | Key | Default | Effect |
 |-----|---------|--------|
-| `foreground` | — | Color of autocomplete ghost/suggestion text |
+| `foreground` | — | Autocomplete ghost/suggestion text color |
 
 ### Top-level inheritance key
 
 | Key | Default | Effect |
 |-----|---------|--------|
-| `inherits` | — | Name of another theme to inherit from; only keys present in this file override the parent |
+| `inherits` | — | Theme to inherit from; only keys present in this file override the parent |
 
 ## Visual spec
 
-This page contains no screenshots. It is a pure TOML schema reference page with code blocks only. The only images on the page are the site logo (`otty-icon.png`, the app's reference icon asset). No UI visual states, no layout diagrams, no color swatches shown.
+No screenshots — pure TOML schema reference, code blocks only. Only image is the site logo (`otty-icon.png`). No UI states, layout diagrams, or color swatches.
 
-The minimal example code block (`midnight.slopdesktheme`) reveals the expected color palette style: 8 dark/normal colors followed by 8 bright colors, expressed as hex strings `"#rrggbb"`. The example palette uses a dark indigo/navy aesthetic (background `#0a0a14`, foreground `#e0e0ff`), which matches the Monokai Pro / dark terminal aesthetic.
+The minimal example (`midnight.slopdesktheme`) shows the palette style: 8 dark/normal + 8 bright colors as hex `"#rrggbb"`, dark indigo/navy aesthetic (background `#0a0a14`, foreground `#e0e0ff`), matching the Monokai Pro / dark terminal look.
 
 ## Screenshots
 
-(none — this reference page has no screenshots)
+(none)
 
 ## Implementation notes
 
 ### Direct implementation
 
-- **`[terminal].foreground` / `background` / `palette`**: Map directly to libghostty's terminal color configuration. Ghostty's config accepts these as `foreground`, `background`, and `palette = N=<hex>` entries. The `TerminalConfigBuilder` override path in `SlopDeskTerminal` should forward all 16 palette entries plus fg/bg when the user selects a theme. Already partially implemented per `resolveTerminalColors` in the Monokai Pro work.
-- **`[terminal].cursor` / `cursor-text`**: Map to ghostty's `cursor-color` and `cursor-text` config keys. Pass through `TerminalConfigBuilder`.
-- **`[terminal].cursor` + `[cursor].style` / `blink`**: ghostty supports `cursor-style = block|underline|bar` and `cursor-style-blink = true|false`. The `beam` style in this spec maps to `bar` in ghostty.
-- **`[selection].foreground` / `background`**: Map to ghostty's `selection-foreground` and `selection-background` config keys.
-- **`[ghost].foreground`**: Maps to ghostty's `unfocused-split-opacity` or custom ghost-text styling. Ghostty has native support for suggestion/ghost text foreground color.
+- **`[terminal].foreground` / `background` / `palette`**: map to libghostty color config (`foreground`, `background`, `palette = N=<hex>`). `TerminalConfigBuilder` in `SlopDeskTerminal` forwards all 16 palette entries + fg/bg on theme select. Partially implemented via `resolveTerminalColors` (Monokai Pro work).
+- **`[terminal].cursor` / `cursor-text`**: map to ghostty `cursor-color` / `cursor-text` via `TerminalConfigBuilder`.
+- **`[cursor].style` / `blink`**: ghostty `cursor-style = block|underline|bar` and `cursor-style-blink = true|false`. Spec's `beam` maps to ghostty `bar`.
+- **`[selection].foreground` / `background`**: map to ghostty `selection-foreground` / `selection-background`.
+- **`[ghost].foreground`**: maps to ghostty `unfocused-split-opacity` or custom ghost-text styling; ghostty has native suggestion/ghost-text foreground support.
 
 ### UI chrome keys (`[ui]`)
 
-- **`title-bar-bg`**: In slopdesk, the macOS title bar background is controlled by `NSWindowAppearance` and SwiftUI window chrome. Can be approximated by setting window background + `titlebarAppearsTransparent`. The `SlateDesign` token `ThemeStore` can map this value.
-- **`tab-bar-bg`** / **`tab-active-bg`** / **`tab-active-fg`**: Map to slopdesk's sidebar/tab-bar styling in the `SlopDeskClientUI` SwiftUI layer. The `ThemeStore` and `SlateDesign` token system already handles sidebar background — `tab-bar-bg` → sidebar background color, `tab-active-bg` → active pane highlight background, `tab-active-fg` → active pane label color.
-- **`sidebar-divider`**: Maps to the `NSSplitView` divider / `DividerHandle` stroke color already present in the slopdesk workspace. The faint split divider introduced in the recent theme-aware work is exactly this key.
+- **`title-bar-bg`**: macOS title bar is `NSWindowAppearance` + SwiftUI chrome; approximate via window background + `titlebarAppearsTransparent`. Mappable by `SlateDesign`'s `ThemeStore`.
+- **`tab-bar-bg` / `tab-active-bg` / `tab-active-fg`**: map to `SlopDeskClientUI` sidebar/tab-bar styling; `ThemeStore` + `SlateDesign` already handle sidebar background — `tab-bar-bg` → sidebar background, `tab-active-bg` → active pane highlight, `tab-active-fg` → active pane label.
+- **`sidebar-divider`**: maps to the `NSSplitView` divider / `DividerHandle` stroke already present — the faint split divider from recent theme-aware work.
 
 ### Inheritance
 
-- **`inherits`**: SlopDesk's `ThemeStore` would need to implement a two-pass load: first load the parent theme, then overlay the child's keys. Since slopdesk currently ships a fixed set of built-in Monokai Pro filters via `monokai(MonokaiSeed)`, inheritance is primarily needed if user-custom themes are supported in a future iteration. For now, hardcoding the 6 Monokai seeds with their full palettes is sufficient — no inheritance chain needed yet.
+- **`inherits`**: needs a two-pass load in `ThemeStore` — load parent, overlay child keys. SlopDesk currently ships fixed built-in Monokai Pro filters via `monokai(MonokaiSeed)`; inheritance is only needed once user-custom themes are supported. For now, hardcoding the 6 Monokai seeds with full palettes suffices — no inheritance chain yet.
 
 ### Constraints from the remote-host architecture
 
-- **File location `~/.config/slopdesk/themes/`**: SlopDesk is a remote tool. The host's config/theme files live on the macOS host, but the terminal UI is rendered on the client. Theme config is currently resolved client-side via `ThemeStore` + `PreferencesStore`. If user-custom `.slopdesktheme` files are supported, they should be stored on the **client** device (e.g. `~/Library/Application Support/SlopDesk/themes/` on macOS, or in-app bundle on iOS), not on the remote host. Remote-host theme files would require syncing over the slopdesk wire, which is out of scope for now.
-- **`.slopdesktheme` TOML files**: SlopDesk currently has no TOML parser. Adding `swift-toml` or a vendored TOML library would be needed to support user-authored theme files. Baking themes as Swift structs (as done for the Monokai Pro seeds) avoids this dependency for now.
-- **iOS**: iOS has no title bar (`title-bar-bg` does not apply). Tab/sidebar concepts differ — iOS uses a different pane-chooser UI. The `[ui]` chrome keys need platform-conditional handling.
-- **`[ghost].foreground` on iOS**: Ghost/autocomplete text in the terminal is rendered by libghostty; the iOS build includes libghostty so this should work, but must be verified after the ghostty xcframework iOS build.
+- **File location**: SlopDesk is remote — host config/theme files live on the macOS host, but the terminal UI renders on the client. Theme config is resolved client-side via `ThemeStore` + `PreferencesStore`. User-custom `.slopdesktheme` files should be stored on the **client** (`~/Library/Application Support/SlopDesk/themes/` on macOS, or in-app bundle on iOS), not the remote host — host-side theme files would require syncing over the wire, out of scope for now.
+- **TOML parsing**: SlopDesk has no TOML parser. Supporting user-authored theme files needs `swift-toml` or a vendored TOML lib. Baking themes as Swift structs (as done for Monokai Pro seeds) avoids the dependency for now.
+- **iOS**: no title bar (`title-bar-bg` N/A); tab/sidebar differ (iOS uses a different pane-chooser). `[ui]` keys need platform-conditional handling.
+- **`[ghost].foreground` on iOS**: rendered by libghostty, which is in the iOS build, so it should work — verify after the ghostty xcframework iOS build.

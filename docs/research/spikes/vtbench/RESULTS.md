@@ -1,12 +1,12 @@
 # VideoToolbox de-risk harness — MEASURED results
 
-**Measured on 2 real machines over a trusted private network (a WireGuard mesh — NetBird in this run):**
+Measured on 2 real machines over a trusted WireGuard mesh (NetBird):
 - **HOST: Apple M1 Max** · macOS 26.5 (25F71) · arm64 · Swift 6.3.2
-- **CLIENT: Apple M2 Pro** · macOS 26.5 · arm64 (run inside the Terminal.app GUI)
+- **CLIENT: Apple M2 Pro** · macOS 26.5 · arm64 (run inside Terminal.app GUI)
 
-Both are Apple Silicon + macOS 26, so the numbers are directly load-bearing. *(The harness header hard-codes "M1 Max"; on the M2 Pro the numbers are still the M2 Pro's.)*
+Both Apple Silicon + macOS 26, so numbers are load-bearing. *(Harness header hard-codes "M1 Max"; on the M2 Pro the numbers are still the M2 Pro's.)*
 
-> ⚠️ **Run from the Terminal.app GUI.** The HW VideoToolbox encode harness **HANGS over SSH** (no window-server session). Decode-only is less session-sensitive but should still run from the GUI.
+> ⚠️ **Run from Terminal.app GUI.** The HW encode harness **HANGS over SSH** (no window-server session). Decode-only is less session-sensitive but still run from the GUI.
 
 ## Cross-machine summary (host vs client)
 
@@ -22,8 +22,8 @@ Both are Apple Silicon + macOS 26, so the numbers are directly load-bearing. *(T
 ## Network (WireGuard mesh, host M1 Max ↔ client M2 Pro)
 
 - **RTT: min 8.5 / avg 11.1 / max 14.5ms, 0% loss, stddev 1.7ms** (20 pings).
-- **Direct P2P** (the mesh reports a P2P connection): local `192.168.100.240` ↔ remote **public `116.104.177.173`** → NAT hole-punched **over the internet, NOT same-LAN**. The "5–20ms direct P2P" assumption holds under real internet conditions.
-- **App-level echo round-trip** (single-byte TCP ping-pong, `TCP_NODELAY`, `echolat.py`, 280 samples): **p50 9.2ms · p99 17.8ms · min 7.5ms** (max 139ms = one stray WiFi/scheduling blip). Matches the ping RTT.
+- **Direct P2P**: local `192.168.100.240` ↔ remote **public `116.104.177.173`** → NAT hole-punched **over the internet, NOT same-LAN**. The "5–20ms direct P2P" assumption holds under real internet conditions.
+- **App-level echo round-trip** (single-byte TCP ping-pong, `TCP_NODELAY`, `echolat.py`, 280 samples): **p50 9.2ms · p99 17.8ms · min 7.5ms** (max 139ms = one stray WiFi/scheduling blip). Matches ping RTT.
 - → **PATH 1 echo ≈ 9ms typical / ~18ms p99** = feels-local; **the Mosh predictor is NOT needed**. The 40–80ms GUI target has ample headroom (9 network + 7 encode + 1 decode + vsync).
 
 Reproduce:
@@ -34,13 +34,13 @@ swiftc -O concurrency-throughput.swift -o t && ./t
 
 ## Results
 
-### F — HEVC decode latency (the scariest empirical unknown: "is decode 2-frame-buffered?")
+### F — HEVC decode latency (scariest unknown: "is decode 2-frame-buffered?")
 - `VTDecompressionSession`, `decodeFlags=[]` (synchronous), 1080p HEVC, HW-backed.
 - **p50 = 0.73ms, p99 = 1.12ms, max = 3.15ms.** → **single-frame, NOT 2-frame-buffered. PASS** (≪ 33ms frame @30fps).
-- Decode is a non-issue on Apple Silicon. Remaining motion-to-photon is display pacing (CADisplayLink/Metal + one vsync), which is well-understood.
+- Non-issue on Apple Silicon. Remaining motion-to-photon is display pacing (CADisplayLink/Metal + one vsync), well-understood.
 
 ### G — concurrent hardware HEVC encoders (earlier "2–4" estimate was WRONG)
-- **Session-creation ceiling: 32** simultaneous HW-backed HEVC sessions; the 33rd fails with `-12903`.
+- **Session-creation ceiling: 32** simultaneous HW-backed HEVC sessions; 33rd fails `-12903`.
 - **Sustained throughput** (each stream encodes back-to-back, low-latency-RC, 1080p):
 
   | K streams | agg fps | per-stream fps | encode p99 | ≥30fps/stream? |
@@ -53,18 +53,18 @@ swiftc -O concurrency-throughput.swift -o t && ./t
   | 12 | 339 | 28 | 45.7ms | NO |
 
 - Aggregate throughput saturates ~**340 fps** on M1 Max (**2** encode engines) → **~8–10 simultaneous 1080p30 windows**. **CLIENT M2 Pro (1 engine)** saturates ~**184 fps** → **~6 windows** (K=6 = 31fps/stream edge; K=8 = NO). Throughput scales ~linearly with engine count.
-- **Real rule (measured, 2 machines): a host sustains ~6 live 1080p30 windows per video-encode-engine** (1 engine→~6, Max 2→~10, Ultra 4→~20 extrapolated). The "2–4 total" estimate conflated *engine throughput* with *session count* (creation ceiling is 32). For a coding tool (1–3 windows) this is a **non-issue on every chip**.
+- **Real rule (measured, 2 machines): ~6 live 1080p30 windows per video-encode-engine** (1→~6, Max 2→~10, Ultra 4→~20 extrapolated). The "2–4 total" estimate conflated *engine throughput* with *session count* (creation ceiling is 32). For a coding tool (1–3 windows) this is a **non-issue on every chip**.
 - A machine in the **client** role only decodes (~0.9ms); encode throughput constrains only the **host**.
 
 ### E — rate control: low-latency-RC vs constant-quality (decides the live-frame encoder)
 - **Low-latency-RC HEVC** (`EnableLowLatencyRateControl`+`AverageBitRate`): encode **p50 7.5ms / p99 8.2ms**, HW.
 - **Constant-quality 0.65** (`Quality` property): encode **p50 23.9ms** — ~**3× slower**, near the 33ms budget.
-- → **Live frame MUST use low-latency-RC**, NOT constant-quality. (Corrects the earlier "encode Quality 0.65 immediately" framing.) The two-session design holds: **Session A = low-latency-RC live** (7.5ms), **Session B = on-demand crisp**.
-- Confirmed: querying `UsingHardwareAcceleratedVideoEncoder` while low-latency mode is on returns `-12900` (kVTPropertyNotSupportedErr) — don't query it in low-latency mode.
+- → **Live frame MUST use low-latency-RC**, NOT constant-quality. (Corrects earlier "encode Quality 0.65 immediately".) Two-session design holds: **Session A = low-latency-RC live** (7.5ms), **Session B = on-demand crisp**.
+- Querying `UsingHardwareAcceleratedVideoEncoder` while low-latency mode is on returns `-12900` (kVTPropertyNotSupportedErr) — don't query it in low-latency mode.
 
 ### E Session-B — "lossless" availability
 - `Quality=1.0` accepted (status 0); `AllowTemporalCompression=false` accepted (status 0).
-- Raw `"Lossless"` property key → `-12900` (**not supported** on this encoder). → There is no dedicated lossless HEVC key; **Session B = `Quality=1.0` + all-intra** (`AllowTemporalCompression=false`) is the max-quality crisp path. (Note: HEVC 4:2:0 `Quality=1.0` still subsamples chroma — true lossless is not exposed.)
+- Raw `"Lossless"` property key → `-12900` (**not supported**). → No dedicated lossless HEVC key; **Session B = `Quality=1.0` + all-intra** (`AllowTemporalCompression=false`) is the max-quality crisp path. (HEVC 4:2:0 `Quality=1.0` still subsamples chroma — true lossless not exposed.)
 
 ### macOS 26 multi-NALU watch-item — DOWNGRADED
 - Steady-state P-frame: **1 NALU per CMSampleBuffer**. First IDR frame: **1 NALU** (param sets live in the format description, as normal HVCC).
@@ -73,7 +73,7 @@ swiftc -O concurrency-throughput.swift -o t && ./t
 ### D — cursor strip (MEASURED — PASS, client M2 Pro)
 - Harness `cursor-strip.swift` (`SCScreenshotManager.captureImage` + `SCContentFilter(desktopIndependentWindow:)`), captured a real app window (Ghostty 1800x1081) twice with cursor warped to window center: `showsCursor=true` vs `showsCursor=false`.
 - **diff = 120 pixels (0.006%)** — a localized cursor-sized cluster present in TRUE, absent in FALSE. → **`showsCursor=false` cleanly strips the cursor from per-window capture. PASS.**
-- Gotchas found: (1) a CLI process must init `NSApplication.shared` + `setActivationPolicy(.accessory)` or CG/AppKit asserts `CGS_REQUIRE_INIT`; (2) filter windows by `windowLayer == 0` + real `owningApplication` to avoid picking the "Display … Backstop" wallpaper window; (3) needs Screen Recording TCC (run from Terminal.app GUI, not SSH).
+- Gotchas: (1) a CLI process must init `NSApplication.shared` + `setActivationPolicy(.accessory)` or CG/AppKit asserts `CGS_REQUIRE_INIT`; (2) filter windows by `windowLayer == 0` + real `owningApplication` to avoid picking the "Display … Backstop" wallpaper window; (3) needs Screen Recording TCC (run from Terminal.app GUI, not SSH).
 
 ## Error codes seen
 `-12900` kVTPropertyNotSupportedErr · `-12902` kVTParameterErr · `-12903` resource/session-limit (33rd create).

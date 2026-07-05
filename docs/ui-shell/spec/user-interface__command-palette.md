@@ -2,31 +2,30 @@
 
 ## Summary
 
-The VSCode-style command palette for _running an action_. Counterpart to Open Quickly, which is for _jumping to a thing_. Opened with ⌘⇧P from anywhere, it exposes every SlopDesk action — including ones without keyboard shortcuts — in a searchable, categorised list. Actions are tagged with their scope (pane, window, or app level).
+VSCode-style palette for _running an action_ (counterpart to Open Quickly, which _jumps to a thing_). ⌘⇧P from anywhere exposes every SlopDesk action — including ones without keyboard shortcuts — in a searchable, categorised list. Each action is tagged with its scope (pane, window, or app).
 
 ## Behaviors
 
-- Triggered from anywhere in the app with ⌘⇧P; dismissed with Esc.
-- Search field is pre-focused on open with placeholder text "Search for commands…".
-- A magnifying-glass icon sits to the left of the search field; the caret is blue (accent color) when active.
-- Every registered action is listed, including actions that have no assigned keyboard shortcut.
-- Actions are grouped under capitalized section headers (e.g. "WORKING DIRECTORY", "VIEW"). Section headers are rendered in small-caps / uppercase gray text, visually separated from action rows.
-- The currently selected row is highlighted with a light gray background fill; no border or accent stripe — just a subtle background change.
-- Some actions show a checkmark (✓) to the left of the label, indicating the action is currently active / toggled on (e.g. "Toggle Tabs Panel" with ✓ when the tabs panel is visible).
-- Actions that have a keyboard shortcut show keycap chips to the right of the label (e.g. ⇧⌘L for "Toggle Tabs Panel", ⇧⌘R for "Toggle Details Panel"). Keycap chips are rendered as individual rounded-rectangle badges per key symbol.
-- Actions that have a submenu show a right-facing chevron "›" at the far right (e.g. "Open in…").
-- The palette shows context-aware content at the top: under "WORKING DIRECTORY" it shows the focused pane's current working directory as a tinted badge (folder icon + path like `~/Workplace/project/`). This badge appears in the top-right of the section header row.
-- Actions cover all scope levels: pane-scoped (e.g. Find, Toggle Bold Brightens), window-scoped (e.g. Close Window, Toggle Tabs Panel), and app-scoped (e.g. About SlopDesk). Each action is tagged with its scope internally (the reference screenshot shows this through grouping/section headers).
-- Example action categories from the docs:
+- ⌘⇧P opens from anywhere; Esc dismisses.
+- Search field is pre-focused, placeholder "Search for commands…". A magnifying-glass icon sits left of the field; the caret is blue (accent) when active.
+- Every registered action is listed, including those with no keyboard shortcut.
+- Actions are grouped under capitalized section headers (e.g. "WORKING DIRECTORY", "VIEW"), rendered small-caps/uppercase gray, separated from action rows. Headers are not selectable.
+- Selected row: light gray background fill only — no border or accent stripe.
+- A checkmark (✓) left of the label marks an active/toggled-on action (e.g. "Toggle Tabs Panel" when the tabs panel is visible).
+- Actions with a shortcut show keycap chips right of the label (e.g. ⇧⌘L "Toggle Tabs Panel", ⇧⌘R "Toggle Details Panel"), one rounded-rectangle badge per key symbol.
+- Actions with a submenu show a right-facing chevron "›" at the far right (e.g. "Open in…").
+- Context-aware top content: under "WORKING DIRECTORY" the focused pane's cwd shows as a tinted badge (folder icon + path like `~/Workplace/project/`) in the top-right of the header row.
+- Actions cover all scopes: pane (Find, Toggle Bold Brightens), window (Close Window, Toggle Tabs Panel), app (About SlopDesk). Scope is tagged internally (shown via grouping/section headers).
+- Example action categories:
   - Window: New Tab, Close Tab, Reopen Closed Tab, Move Tab to New Window
   - Pane: Open Folder Pane, Split Right (planned), Swap Panes
   - Theme: Switch Theme, Reload Theme, Open Theme File
   - Recipes: Save Recipe, Export Recipe, Open Recipe
   - Shell: Send to All Panes, Send Bell, Toggle Mouse Reporting
   - Settings: Open Settings, Reload Config
-- ⌘↩ runs the selected action AND keeps the palette open, enabling command chaining (run multiple actions in sequence without re-opening).
-- To save and replay sequences of commands, use Recipes (the palette's "Save Recipe" action captures them).
-- Distinct from Open Quickly: Open Quickly is for jumping to "things" (tabs, files, recent items, shell commands), Command Palette is for executing "verbs" (actions). They have separate triggers (⌘⇧O vs ⌘⇧P).
+- ⌘↩ runs the selected action AND keeps the palette open, enabling command chaining without re-opening.
+- Save/replay command sequences via Recipes (palette "Save Recipe" action captures them).
+- Distinct from Open Quickly: Open Quickly jumps to "things" (tabs, files, recent items, shell commands); Command Palette executes "verbs" (actions). Separate triggers (⌘⇧O vs ⌘⇧P).
 
 ## Keybindings
 
@@ -41,39 +40,39 @@ The VSCode-style command palette for _running an action_. Counterpart to Open Qu
 
 ## Config keys
 
-No dedicated config keys are documented for the Command Palette itself. Actions surfaced in the palette can be bound to custom shortcuts via the Keybindings system (see Keybindings reference). Custom command sequences can be captured as Recipes.
+No dedicated config keys for the palette itself. Actions can be bound to custom shortcuts via the Keybindings system (see Keybindings reference). Command sequences can be captured as Recipes.
 
 ## Visual spec
 
 ### command-palette.png
 
-**Overall layout:** A floating panel / sheet centered over the terminal window, with a soft drop shadow and large rounded corners (approximately 12–14 pt radius). The panel background is a very light warm gray (`#F2F1EF` approx.), distinct from the terminal background. The panel is roughly 900–1000 px wide (at 2× retina) and tall enough to show ~6–7 rows without scrolling; it is NOT full-height.
+**Overall layout:** Floating panel/sheet centered over the terminal window, soft drop shadow, large rounded corners (~12–14 pt radius). Background very light warm gray (`#F2F1EF` approx.), distinct from terminal bg. ~900–1000 px wide (2× retina), tall enough for ~6–7 rows without scrolling; NOT full-height.
 
 **Search bar (top region):**
-- Fixed-height row at the very top of the panel, roughly 48 pt tall.
-- Left: a gray magnifying-glass icon (~16 pt, medium gray `#8A8A8A` approx.).
-- Center/right: text field with placeholder "Search for commands…" in medium gray. When active, a blue text cursor (macOS accent blue, approximately `#007AFF`) is shown at the insertion point — the caret is the only active-state indicator; there is no border ring or glow on the field itself.
-- A 1 px hairline separator divides the search bar from the results list below.
+- Fixed-height row at the top, ~48 pt tall.
+- Left: gray magnifying-glass icon (~16 pt, `#8A8A8A` approx.).
+- Center/right: text field, placeholder "Search for commands…" in medium gray. When active, a blue text cursor (macOS accent, ~`#007AFF`) at the insertion point is the only active-state indicator — no border ring or glow.
+- 1 px hairline separator below.
 
 **Section headers:**
-- Short ALL-CAPS labels in small, light gray uppercase text (`#8A8A8A` approx., ~11 pt, tracking wide). Examples: "WORKING DIRECTORY", "VIEW".
-- Not selectable / not interactive.
-- May carry a contextual badge on the right side: in the "WORKING DIRECTORY" section, a pill-shaped badge shows a folder icon (dark gray, ~12 pt) followed by the cwd path string (e.g. `~/Workplace/project/`) in dark gray text, on a slightly darker gray pill background. The badge sits flush right inside the row.
+- Short ALL-CAPS labels, small light gray uppercase (`#8A8A8A` approx., ~11 pt, wide tracking). Examples: "WORKING DIRECTORY", "VIEW".
+- Not selectable / interactive.
+- May carry a right-side contextual badge: in "WORKING DIRECTORY", a pill with a folder icon (dark gray, ~12 pt) + cwd path (e.g. `~/Workplace/project/`) in dark gray, on a slightly darker gray pill, flush right.
 
 **Action rows:**
-- Height approximately 36–38 pt per row.
-- Left edge: reserved gutter (~24 pt wide) for optional checkmark (✓). The checkmark is a standard dark-gray check (not a filled circle or badge) — simply the Unicode check character in the gutter.
-- Label: action name in regular-weight system font (~14 pt), dark near-black (`#1C1C1E` approx.).
-- Right side (optional): keycap chips — individual rounded-rectangle badges, each ~20×22 pt, light gray fill (`#D1D1D6` approx.) with dark gray symbol inside. Chips are spaced 4 pt apart. Examples shown: ⇧ chip + ⌘ chip + L chip for "Toggle Tabs Panel"; ⇧ chip + ⌘ chip + R chip for "Toggle Details Panel".
-- Right side (submenu indicator): a single `›` chevron in gray when the action opens a submenu (e.g. "Open in…").
+- ~36–38 pt height.
+- Left gutter (~24 pt) for optional checkmark (✓) — the Unicode check character in dark gray, not a filled badge.
+- Label: action name, regular-weight system font (~14 pt), near-black (`#1C1C1E` approx.).
+- Right (optional): keycap chips — rounded-rectangle badges, each ~20×22 pt, light gray fill (`#D1D1D6` approx.), dark gray symbol, spaced 4 pt. Examples: ⇧+⌘+L "Toggle Tabs Panel"; ⇧+⌘+R "Toggle Details Panel".
+- Right (submenu): a single gray `›` chevron when the action opens a submenu (e.g. "Open in…").
 
 **Selection state:**
-- Selected row has a solid light gray fill spanning the full width of the panel (`#E5E5EA` approx.). Corners are slightly rounded on the highlighted row (approximately 6 pt). No border, no accent color on the row background — purely a fill change.
-- Non-selected rows have transparent background (showing the panel background).
+- Selected row: solid light gray fill (`#E5E5EA` approx.) spanning full panel width, corners ~6 pt rounded. No border/accent — fill only.
+- Non-selected rows: transparent (panel bg).
 
-**Typography summary:** System font (SF Pro), ~14 pt regular for action labels, ~11 pt uppercase tracking for section headers, ~14 pt placeholder text. No bold weight used in the list.
+**Typography:** SF Pro; ~14 pt regular action labels, ~11 pt uppercase tracking section headers, ~14 pt placeholder. No bold in the list.
 
-**Spacing / density:** Comfortable but compact. Section headers add ~8 pt vertical padding above/below their text. Action rows are tightly packed with ~36–38 pt height. No dividers between individual rows — only the section header creates visual grouping.
+**Spacing / density:** Compact. Section headers add ~8 pt vertical padding above/below text. Rows tightly packed ~36–38 pt. No per-row dividers — only section headers group visually.
 
 **Color palette (inferred):**
 - Panel background: `#F2F1EF` (light warm off-white)
@@ -93,21 +92,21 @@ No dedicated config keys are documented for the Command Palette itself. Actions 
 ## SlopDesk mapping notes
 
 ### Maps cleanly
-- **Search field + fuzzy filtering:** SlopDesk already has a vendored FuzzyMatchV2 (`FuzzyMatcher`) used in the sidebar chooser. The same matcher can power command-palette filtering.
-- **Action registry / command list:** SlopDesk has `WorkspaceBindingRegistry` and keybinding infrastructure. All registered actions can be enumerated and exposed in a palette.
-- **Keycap badges:** Pure SwiftUI rendering; no platform dependency.
-- **Checkmark for toggled state:** Each action's current boolean state (e.g. panel visible) can be queried at open time and shown as a checkmark.
-- **⌘↩ "keep open" chaining:** Standard SwiftUI / AppKit event handling — suppress dismiss on ⌘↩.
+- **Search field + fuzzy filtering:** Reuse the vendored FuzzyMatchV2 (`FuzzyMatcher`) already powering the sidebar chooser.
+- **Action registry / command list:** `WorkspaceBindingRegistry` + keybinding infra can enumerate all registered actions for the palette.
+- **Keycap badges:** Pure SwiftUI, no platform dependency.
+- **Checkmark for toggled state:** Query each action's boolean state (e.g. panel visible) at open time.
+- **⌘↩ "keep open" chaining:** Standard SwiftUI/AppKit — suppress dismiss on ⌘↩.
 - **Esc to dismiss:** Standard.
-- **Section grouping:** Static grouping by action category is straightforward.
+- **Section grouping:** Static grouping by action category.
 
 ### Requires attention
-- **Working directory badge (CWD context):** The palette shows the focused pane's CWD via OSC 7 / shell integration. In slopdesk the CWD lives on the REMOTE HOST, not the local client. The client receives it via the OSC 7 wire path (if the shell emits it and the host forwards it). Implementation: ensure the host relays OSC 7 CWD updates over the mux to the client, and cache it per-pane in `WorkspaceStore`/pane state. The CWD badge then reads from that cached value. Flag: CWD badge may be stale by RTT; acceptable for display purposes.
-- **Pane-scope vs window-scope action routing:** Some actions (e.g. "Split Right") operate on the focused pane; others (e.g. "Close Window") operate on the window. In slopdesk's remote architecture, pane-scoped actions that affect the remote PTY (e.g. Send Bell, Toggle Mouse Reporting) must be forwarded to the host over the control channel rather than executed locally. Window-scoped UI actions (e.g. Toggle Tabs Panel) are fully local.
-- **"Split Right":** SlopDesk has pane splitting in `WorkspaceStore`. Exposing it in the palette is straightforward.
-- **"Open in…" submenu:** Submenu navigation within the palette (pressing ↩ on a row with ›) requires a secondary list state. Not complex but needs explicit implementation — the basic palette only handles flat action dispatch.
-- **Recipes integration:** SlopDesk does not yet have a Recipes system equivalent. The "Save Recipe" / "Export Recipe" / "Open Recipe" actions cannot map 1:1 until Recipes are implemented. Flag as future work.
-- **"Send to All Panes":** SlopDesk supports multiple panes; broadcasting a shell command to all is feasible via the mux by iterating pane channels. Implement as a pane-level action that iterates `WorkspaceStore` pane list.
-- **iOS client:** The palette trigger ⌘⇧P maps to a hardware keyboard shortcut. On iOS without a keyboard, the palette must be reachable via a toolbar button or swipe gesture. Flag: need a touch-accessible entry point for iOS (e.g. a toolbar "..." menu or dedicated button).
-- **"Open Settings" / "Reload Config":** On slopdesk, "settings" could mean local client preferences (handled locally) vs remote host config (requires a control-channel message). Distinguish these two action classes clearly.
-- **Theme actions (Switch Theme, Reload Theme, Open Theme File):** Theme is local client state in slopdesk (ThemeStore). These are all local actions with no remote dependency. Clean mapping.
+- **Working directory badge (CWD context):** Palette shows the focused pane's CWD via OSC 7 / shell integration. In slopdesk the CWD lives on the REMOTE HOST; the client receives it via the OSC 7 wire path (if the shell emits it and the host forwards it). Impl: host relays OSC 7 CWD updates over the mux, cache per-pane in `WorkspaceStore`/pane state; badge reads the cached value. Flag: badge may be RTT-stale — acceptable for display.
+- **Pane- vs window-scope routing:** Pane-scoped actions affecting the remote PTY (Send Bell, Toggle Mouse Reporting) must be forwarded to the host over the control channel, not run locally. Window-scoped UI actions (Toggle Tabs Panel) are fully local.
+- **"Split Right":** Pane splitting exists in `WorkspaceStore`; exposing it is straightforward.
+- **"Open in…" submenu:** Submenu navigation (↩ on a `›` row) needs a secondary list state — not complex but explicit; the basic palette only does flat dispatch.
+- **Recipes integration:** No Recipes system yet, so "Save/Export/Open Recipe" can't map 1:1. Future work.
+- **"Send to All Panes":** Feasible via the mux by iterating pane channels; implement as a pane-level action over the `WorkspaceStore` pane list.
+- **iOS client:** ⌘⇧P needs a hardware keyboard. Without one, provide a touch entry point (toolbar "..." menu or dedicated button).
+- **"Open Settings" / "Reload Config":** "Settings" may be local client prefs (local) vs remote host config (control-channel message). Distinguish the two classes clearly.
+- **Theme actions (Switch Theme, Reload Theme, Open Theme File):** Theme is local client state (ThemeStore) — all local, no remote dependency. Clean mapping.

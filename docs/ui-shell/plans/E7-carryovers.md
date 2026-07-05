@@ -1,35 +1,32 @@
 # E7 carry-over directives (REQUIRED — fold into the E7 plan)
 
-These are folded-in fixes from earlier epics plus binding scope reductions. Treat each
-carry-over as an **additional acceptance criterion** for E7 and each scope reduction as a
-**hard exclusion**. E7's primary job (Settings sections parity) is the natural place to land
-them because E7 ships the settings rows that expose these policies — exposing a policy and
-fixing its behavior must happen together.
+Folded-in fixes from earlier epics plus binding scope reductions. Each carry-over is an
+**additional E7 acceptance criterion**; each scope reduction is a **hard exclusion**. They land
+in E7 because it ships the settings rows exposing these policies — exposing a policy and fixing
+its behavior must happen together.
 
 ## SCOPE REDUCTIONS (binding — do NOT build these)
 
-- **No horizontal tab bar.** Do not add a horizontal/top tab-bar layout option anywhere in
-  settings or UI. If the settings spec exposes a "tab bar position" (top vs left) row, render ONLY the
-  vertical/sidebar choice — omit the horizontal variant entirely (do not offer it as a
-  disabled/coming-soon row either).
-- **No SSH-host filter.** Do not add an SSH-host filter/pill in any settings surface. (Primary
-  impact is E11 Open Quickly; noted here so no settings cross-reference reintroduces it.)
+- **No horizontal tab bar** anywhere in settings/UI. If the spec exposes a "tab bar position"
+  (top vs left) row, render ONLY the vertical/sidebar choice — omit the horizontal variant
+  entirely (not even as a disabled/coming-soon row).
+- **No SSH-host filter/pill** in any settings surface. (Primary impact is E11 Open Quickly;
+  noted here so no settings cross-reference reintroduces it.)
 
 ## E1 carry-overs (keybindings — 3 mediums)
 
 1. **Registry enum-case comments show pre-reconciliation chords (doc drift).** In
-   `Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingRegistry.swift`, update the
-   stale per-case chord comments to the reconciled chords: focus = `⌃⌘`, divider = `⌃⌘⇧`,
+   `Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingRegistry.swift`, update stale
+   per-case chord comments to the reconciled chords: focus = `⌃⌘`, divider = `⌃⌘⇧`,
    zoom = `⌘⇧↩`.
 2. **ES-E1-4 "without reflowing PTY grid" claim is false.** A font-size change DOES SIGWINCH /
-   reflow the grid (per spec). Either correct the comment + acceptance note to say so, OR
-   implement a true no-reflow font change. Default: correct the note (no-reflow is not how the
-   remote PTY works).
+   reflow the grid (per spec). Either correct the comment + acceptance note, OR implement a true
+   no-reflow font change. Default: correct the note (no-reflow is not how the remote PTY works).
 3. **`KeybindGrammar.isValidBaseKey` validate-then-vanish.** It accepts
-   `space`/`escape`/`delete`/`backspace`/`forwarddelete` that no downstream mapper resolves —
-   so a binding to them validates but silently does nothing. Either drop those base keys from
-   the grammar, OR add the corresponding `KeyChord.Key` cases so they actually resolve. Also
-   verify `⌘+` (`⌘⇧=`) folds to `⌘=` for `increase_font_size`.
+   `space`/`escape`/`delete`/`backspace`/`forwarddelete` that no downstream mapper resolves — so
+   a binding to them validates but silently does nothing. Either drop those base keys, OR add the
+   corresponding `KeyChord.Key` cases so they resolve. Also verify `⌘+` (`⌘⇧=`) folds to `⌘=` for
+   `increase_font_size`.
 
 ## E3 carry-overs (close/cwd/new-tab policies — become user-visible once E7 ships their rows)
 
@@ -39,8 +36,8 @@ fixing its behavior must happen together.
    false for the `always` and `multiple_tabs` policies (idle shell / >1 tab — no process). Pass
    the resolved `CloseConfirmationPolicy` (or a precomputed reason string) into the panel and
    branch the subtitle: process → "A process is still running…"; always → "Are you sure you want
-   to close this tab?"; multipleTabs → "This window has multiple tabs." (The macOS NSAlert path
-   already uses softer copy — match intent.)
+   to close this tab?"; multipleTabs → "This window has multiple tabs." (Match the softer copy the
+   macOS NSAlert path already uses.)
 5. **`⌘⇧W` is bound to Close Tab, but the spec's `⌘⇧W` is Close Window.** Per the spec keybindings
    table (`user-interface__window-tab-split.md` lines 99/103/104): `⌘⇧W` = Close window, `⌘W` =
    close focused pane/tab/window cascade, `⌘⇧T` = reopen tab; the spec has NO dedicated Close-Tab

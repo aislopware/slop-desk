@@ -2,57 +2,30 @@
 
 ## Summary
 
-SlopDesk stores all configuration in `~/.config/slopdesk/config.toml` as flat TOML `key = value` pairs (one per line, `#` for comments). The reader is lenient — quotes around simple strings are optional, and unknown keys are silently ignored (so a newer config loads on an older build). Most keys are also editable from the in-app Settings UI, which writes the same file. The page covers the complete set of config keys grouped by domain, built-in theme names, and an example config snippet.
-
-No screenshots are embedded on this page; it is a pure text reference.
+SlopDesk stores config in `~/.config/slopdesk/config.toml` as flat TOML `key = value` pairs (one per line, `#` comments). The reader is lenient: quotes around simple strings are optional and unknown keys are silently ignored (so a newer config loads on an older build). Most keys are also editable in-app via Settings, which writes the same file. This page lists every config key grouped by domain, built-in theme names, and the default palette. Pure text reference — no screenshots.
 
 ---
 
 ## Behaviors
 
-- Config file location: `~/.config/slopdesk/config.toml`
-- Format: TOML — flat list, no nested tables required for most keys
-- Unknown keys silently ignored — forward-compatible loading
-- Most keys editable in-app via Settings (writes same file)
-- A handful are Settings-only or theme-only (noted inline)
-- Transparency keys (`background-opacity`, `window-opacity`) apply at window-creation time; requires reopening to take effect
-- Notification/badge `privilege-*` keys are defaults for new panes; most can be overridden per-pane at runtime
-- `background-opacity` minimum enforced at 0.5; values below rejected
-- `window-opacity` minimum enforced at 0.5
-- `font-thicken` auto-enabled when `background-opacity < 1.0`
-- `terminal-scroll-past-end` variants are always disabled on the alternate screen
-- `keybind` key is repeatable (multiple bindings supported)
-- `env` key is repeatable (one env line per variable)
-- `open-with-app` is repeatable and Settings-managed
-- `cli-alias` is repeatable and Settings-managed
-- `zoxide-local-path` is Settings-hidden
-- `omit-slopdesk-prefix` is live-toggleable at runtime (no restart required)
-- `auto-theme-dark-mode = true` makes the terminal follow OS appearance — `theme` used for light, `theme-dark` for dark
-- Custom theme `.toml` files dropped into `~/.config/slopdesk/themes/` are auto-discovered
-- Themes can be imported from other terminals
-- `on-device-learning` for autocomplete stays entirely local (never sent off device)
-- `shell-integration = true` installs a managed shell-rc block that provides OSC 133, CWD reporting, and edit/view/jump wrappers
-- `ssh-integration = true` forwards shell integration over SSH connections
-- `progress-bar-commands` defaults include curl, git, npm, and other common tools that auto-emit OSC 9;4 progress
-- `frecency-auto-record = true` records every CWD change to frecency table for Open Quickly
-- `zoxide-enabled = true` syncs removals to external `zoxide` binary when present
-- `dock-icon-error-badge`: clicking the tinted Dock icon focuses next error tab
-- `quick-terminal-persist-session`: controls whether quick terminal session survives toggle dismissal
-- `session-restore-multiplayer = true` reattaches tmux and other multiplexer sessions on restore
-- `session-restore-processes`: can relaunch running commands on restore (`none` / `whitelist` / `all`)
-- `live-resize-sigwinch-delay-ms = 0` disables mid-drag SIGWINCH entirely (drag-end still fires one)
-- `auto-secure-input = true` auto-enables macOS Secure Keyboard Entry at password prompts
-- `secure-input-indication = true` shows a title-bar pill while Secure Keyboard Entry is active
+Per-key behavior is documented inline in the tables below. Cross-cutting rules:
+
+- Some keys are Settings-only or theme-only (noted inline).
+- Transparency (`background-opacity`, `window-opacity`) applies at window creation; reopen to take effect. Minimum enforced at 0.5; lower values rejected.
+- `font-thicken` auto-enables when `background-opacity < 1.0`.
+- `privilege-*` notification/badge keys are defaults for new panes; most per-pane overridable at runtime.
+- `terminal-scroll-past-end*` variants are always disabled on the alternate screen.
+- `auto-theme-dark-mode = true` makes the terminal follow OS appearance — `theme` for light, `theme-dark` for dark.
+- Repeatable keys: `keybind`, `env`, `open-with-app`, `cli-alias`. `open-with-app`/`cli-alias` are Settings-managed; `zoxide-local-path` is Settings-hidden.
+- `omit-slopdesk-prefix` is live-toggleable (no restart).
+- Custom theme `.toml` files in `~/.config/slopdesk/themes/` are auto-discovered; themes can also be imported from other terminals.
+- `autocomplete-on-device-learning` stays entirely local (never sent off device).
 
 ---
 
 ## Keybindings
 
-Keybindings on this reference page are not independently listed — the page only documents the `keybind` config key type. See the Keybindings Reference page (`/reference/keybindings`) for the full default map.
-
-| Action | Keys |
-|--------|------|
-| (See Keybindings Reference) | `keybind = trigger=action` in config.toml |
+Individual keybindings are not listed here — this page documents only the `keybind` config key. Format: `keybind = trigger=action` (repeatable). See the Keybindings Reference (`/reference/keybindings`) for the full default map.
 
 ---
 
@@ -412,21 +385,18 @@ Custom themes: drop `.toml` files into `~/.config/slopdesk/themes/` or import fr
 
 ## Visual spec
 
-This reference page contains no screenshots. It is a pure text/table documentation page. The only image present is the app's reference icon asset (`otty-icon.png`).
+Pure text/table page — no screenshots; the only image is the app reference icon (`otty-icon.png`). Standard docs template:
 
-The page layout follows the standard docs template used across this spec:
-- Left sidebar: full navigation tree (Getting Started, User Interface, Workflows, Terminal Features, Working with Agents, Customization, Terminal API/VT, Reference, About)
-- Right sidebar: "On this page" anchor list of section headings
-- Center: page title, intro paragraph, then grouped config tables (Key | Type | Default | Description columns)
-- Tables use 4 columns; rows are dense, one config key per row
-- Section headings divide the table by domain (Font, Cursor, Shell & Environment, etc.)
-- Footer: Copyright notice, Previous/Next navigation links
+- Left sidebar: full nav tree (Getting Started, User Interface, Workflows, Terminal Features, Working with Agents, Customization, Terminal API/VT, Reference, About).
+- Right sidebar: "On this page" anchor list.
+- Center: title, intro, then domain-grouped config tables (Key | Type | Default | Description; 4 columns, one key per row).
+- Footer: copyright, Previous/Next links.
 
 ---
 
 ## Screenshots
 
-No screenshots were captured for this page — it contains no embedded images beyond the site logo.
+None — no embedded images beyond the site logo.
 
 ---
 
@@ -434,48 +404,48 @@ No screenshots were captured for this page — it contains no embedded images be
 
 ### Direct implementation
 
-- **`font-family`, `font-size`, `font-blending`, `font-ligatures`, `font-thicken`** — these route through libghostty's `TerminalConfigBuilder` font/rendering settings. SlopDesk already routes theme colors through `resolveTerminalColors`; font config should follow the same path.
-- **`cursor-style`, `cursor-style-blink`, `cursor-color`, `cursor-opacity`, `cursor-animation`** — direct libghostty cursor config. Pass through `TerminalConfigBuilder` or equivalent ghostty config key.
-- **`theme`, `theme-dark`, `auto-theme-dark-mode`** — SlopDesk already has `ThemeStore` and Monokai Pro as default. Built-in theme names resolve to `ThemeStore` entries; `auto-theme-dark-mode` follows OS appearance.
-- **`ui-panel-*`, `ui-text-*`, `ui-hover`, `ui-active`, `ui-accent`** — already approximated by SlopDesk's `SlateDesign` token system. These config keys would allow per-user override of design tokens.
-- **`font-size`, `adjust-cell-height`** — route to libghostty cell sizing config. `adjust-cell-height` uses Ghostty-compatible syntax — directly passable.
-- **`foreground`, `background`, `palette-0`–`palette-15`** — already handled via `resolveTerminalColors` → `TerminalConfigBuilder` in SlopDesk.
-- **`scrollback-lines`** — routes to libghostty scrollback config.
-- **`text-bold`, `text-italic`, `text-underline`, `text-blink`** — route to libghostty text rendering options.
-- **`mouse-reporting`, `mouse-scroll-multiplier`, `macos-option-as-alt`** — route to libghostty / NSEvent input handling.
-- **`kitty-keyboard`** — libghostty supports Kitty keyboard protocol; pass through.
-- **`minimum-contrast`, `bold-color`, `faint-opacity`, `selection-foreground`, `selection-background`** — libghostty renderer config; pass through.
-- **`shell-integration`** — SlopDesk already has OSC 133 / CWD detection. This key controls whether the managed shell-rc block is installed.
-- **`live-resize-sigwinch-delay-ms`** — SlopDesk already implements `onResizeSettled` / deferred SIGWINCH. Maps to that delay constant.
-- **`terminal-scroll-smooth`** — SlopDesk already has smooth scrollback; this is a user toggle.
-- **`window-layout`** — SlopDesk has sidebar-left layout currently. `tabs-top`/`tabs-bottom` are additional layout modes to implement.
-- **`sidebar-visible`, `sidebar-width`, `details-panel-width`** — direct sidebar visibility/sizing config; SlopDesk already has sidebar toggle.
-- **`autocomplete-*`** — SlopDesk's own autocomplete engine; these config keys define its behavior surface. `autocomplete-on-device-learning` gates local history learning only.
-- **`privilege-badge-*`**, **`privilege-notify-*`** — SlopDesk's agent monitoring (`ClaudeStatus`/`ClaudePaneDetector`) produces these events. These keys control opt-in/opt-out per signal type.
-- **`privilege-caffeinate-agent-processing`** — routes to `IOPMAssertion` / `caffeinate` while Claude is processing. Worth implementing.
-- **`privilege-resume-agent-session`** — ties to `session-restore-multiplayer` + agent session state on restore.
+- **`font-family`, `font-size`, `font-blending`, `font-ligatures`, `font-thicken`** → libghostty `TerminalConfigBuilder` font/rendering settings. Theme colors already route through `resolveTerminalColors`; font config follows the same path.
+- **`cursor-style`, `cursor-style-blink`, `cursor-color`, `cursor-opacity`, `cursor-animation`** → direct libghostty cursor config via `TerminalConfigBuilder`.
+- **`theme`, `theme-dark`, `auto-theme-dark-mode`** → existing `ThemeStore` (Monokai Pro default). Built-in names resolve to `ThemeStore` entries; auto mode follows OS appearance.
+- **`ui-panel-*`, `ui-text-*`, `ui-hover`, `ui-active`, `ui-accent`** → already approximated by `SlateDesign` tokens; these keys allow per-user override.
+- **`font-size`, `adjust-cell-height`** → libghostty cell sizing. `adjust-cell-height` uses Ghostty-compatible syntax — directly passable.
+- **`foreground`, `background`, `palette-0`–`palette-15`** → already via `resolveTerminalColors` → `TerminalConfigBuilder`.
+- **`scrollback-lines`** → libghostty scrollback config.
+- **`text-bold`, `text-italic`, `text-underline`, `text-blink`** → libghostty text rendering options.
+- **`mouse-reporting`, `mouse-scroll-multiplier`, `macos-option-as-alt`** → libghostty / NSEvent input handling.
+- **`kitty-keyboard`** → libghostty passthrough.
+- **`minimum-contrast`, `bold-color`, `faint-opacity`, `selection-foreground`, `selection-background`** → libghostty renderer config passthrough.
+- **`shell-integration`** → OSC 133 / CWD detection exists; key controls whether the managed shell-rc block installs.
+- **`live-resize-sigwinch-delay-ms`** → maps to existing `onResizeSettled` / deferred-SIGWINCH delay constant.
+- **`terminal-scroll-smooth`** → user toggle over existing smooth scrollback.
+- **`window-layout`** → sidebar-left exists; `tabs-top`/`tabs-bottom` are additional modes to implement.
+- **`sidebar-visible`, `sidebar-width`, `details-panel-width`** → direct config; sidebar toggle exists.
+- **`autocomplete-*`** → SlopDesk's own autocomplete engine; `autocomplete-on-device-learning` gates local history learning only.
+- **`privilege-badge-*`, `privilege-notify-*`** → agent monitoring (`ClaudeStatus`/`ClaudePaneDetector`) events; keys opt-in/out per signal.
+- **`privilege-caffeinate-agent-processing`** → `IOPMAssertion` / `caffeinate` while Claude processing.
+- **`privilege-resume-agent-session`** → ties to `session-restore-multiplayer` + agent session state on restore.
 
 ### Remote-architecture constraints
 
-- **`working-directory`, `window-working-directory`, `tab-working-directory`, `split-working-directory`** — in SlopDesk the CWD is always on the **host machine** (remote). The client cannot set CWD to a local path. Only `inherit` semantics make sense client-side; the initial directory must be configured on the host. Flag in Settings as "host-side only".
-- **`command`, `shell`** — the shell runs on the **host** (`slopdesk-hostd`), not locally. This config key belongs in host configuration, not the client config file.
-- **`env`** — environment variables are set on the host process. Client cannot inject env vars into the remote shell. Host-side config only.
-- **`ssh-integration`** — SlopDesk IS the remote transport; SSH integration inside the terminal would be SSH-over-slopdesk. Lower priority; flag as N/A unless the remote session itself then SSHes onward.
-- **`login-greeting`** — host-side only (controls remote shell startup mode).
-- **`quick-terminal-*`** — Quick Terminal is a macOS-global hotkey drop-down terminal. Applies on macOS client. Does not apply to iOS client.
-- **`dock-icon-*`** — macOS Dock only; not applicable on iOS client.
-- **`auto-secure-input`, `secure-input-indication`** — macOS Secure Keyboard Entry applies locally on the client machine. Since the remote end is `slopdesk-hostd` on a different Mac, "secure input" semantics are local to the client keyboard. The indication pill can still be shown on the macOS client. Not applicable on iOS (iOS has its own secure field handling).
-- **`window-opacity`** — window-level translucency requires a local NSWindow. On iOS client, not applicable. On macOS client, maps to the local app window opacity.
-- **`background-opacity`** — same as above; local NSWindow blending. On iOS, UIKit compositing has no direct equivalent.
-- **`font-thicken`** — macOS only per the docs. Applicable on macOS client; skip on iOS.
-- **`macos-option-as-alt`** — macOS only; not applicable on iOS (no hardware Option key in general).
-- **`open-with-app`, `default-git-client`, `file-open-with`, `folder-open-with`** — "open in app" semantics require opening local files. On slopdesk, files are remote. Only `link-open-with = browser` (opening URLs) maps cleanly since URLs are scheme-based and can be forwarded to the client browser.
-- **`zoxide-enabled`, `zoxide-local-path`** — `zoxide` runs on the host. frecency sync with a local `zoxide` binary doesn't apply on the client. The slopdesk client has its own frecency table (Open Quickly uses it per the existing implementation).
-- **`session-log-mode = redacted`** — secret masking is a host-side concern since the raw PTY stream passes through `slopdesk-hostd`. Client-side session log would only capture what arrives over the wire.
-- **`ipc-allow-send-keys`, `ipc-allow-sensitive-sessions`** — slopdesk's IPC security model runs on the `slopdesk-ctl` NDJSON control channel — these concepts map to `SLOPDESK_AGENT_CONTROL` permission gating.
-- **`recipe-replay-*`** — recipe files (`.slopdeskrecipe`) are a local file format. File paths would be local to the client machine, while execution happens on the host.
-- **`progress-bar-commands`** — the progress injection wraps host-side commands via shell integration. Client-side config would need to be forwarded to the host shell-rc block. Treat as host-side config.
-- **`session-restore-multiplayer` (tmux reattach)** — SlopDesk has its own detach/reattach via `DetachedSessionStore`. tmux reattach in the remote shell is an orthogonal concern; can be supported via `SLOPDESK_DETACH_ENABLED` + custom session restore logic.
+- **`working-directory`, `window-working-directory`, `tab-working-directory`, `split-working-directory`** → CWD is always on the host; client cannot set a local path. Only `inherit` makes sense client-side; initial dir configured on host. Flag "host-side only".
+- **`command`, `shell`** → shell runs on the host (`slopdesk-hostd`); host config, not client.
+- **`env`** → set on the host process; client cannot inject. Host-side only.
+- **`ssh-integration`** → SlopDesk IS the remote transport, so this is SSH-over-slopdesk. Low priority / N/A unless the remote session SSHes onward.
+- **`login-greeting`** → host-side only (remote shell startup mode).
+- **`quick-terminal-*`** → macOS-global hotkey drop-down; macOS client only, not iOS.
+- **`dock-icon-*`** → macOS Dock only; not iOS.
+- **`auto-secure-input`, `secure-input-indication`** → macOS Secure Keyboard Entry is local to the client keyboard (remote end is a separate `slopdesk-hostd`); pill can show on macOS client; not iOS (own secure-field handling).
+- **`window-opacity`** → needs a local NSWindow; macOS client only, N/A iOS.
+- **`background-opacity`** → local NSWindow blending; N/A iOS (UIKit has no equivalent).
+- **`font-thicken`** → macOS only; skip iOS.
+- **`macos-option-as-alt`** → macOS only; N/A iOS.
+- **`open-with-app`, `default-git-client`, `file-open-with`, `folder-open-with`** → "open in app" needs local files but files are remote; only `link-open-with = browser` maps cleanly (URLs forwarded to client browser).
+- **`zoxide-enabled`, `zoxide-local-path`** → `zoxide` runs on the host; local-binary sync N/A on client. Client has its own frecency table (Open Quickly uses it).
+- **`session-log-mode = redacted`** → secret masking is host-side (raw PTY passes through `slopdesk-hostd`); client log captures only what arrives over the wire.
+- **`ipc-allow-send-keys`, `ipc-allow-sensitive-sessions`** → IPC security runs on the `slopdesk-ctl` NDJSON control channel; map to `SLOPDESK_AGENT_CONTROL` permission gating.
+- **`recipe-replay-*`** → `.slopdeskrecipe` files are local; paths local to client, execution on host.
+- **`progress-bar-commands`** → progress injection wraps host commands via shell integration; client config must be forwarded to the host shell-rc block. Treat as host-side.
+- **`session-restore-multiplayer` (tmux reattach)** → SlopDesk has its own detach/reattach via `DetachedSessionStore`; tmux reattach is orthogonal, supportable via `SLOPDESK_DETACH_ENABLED` + custom restore logic.
 
 ### Implementation priority order
 

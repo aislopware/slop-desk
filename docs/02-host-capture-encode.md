@@ -1,8 +1,8 @@
 # 02 — Host: Per-Window Capture + Encode
 
-> **STATUS: REFERENCE — GUI video-path design depth.** This path is shipped and co-equal with terminal panes — the old "Phase 4 / secondary" framing is retired. Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
+> **STATUS: REFERENCE — GUI video-path design depth.** Shipped, co-equal with terminal panes (the old "Phase 4 / secondary" framing is retired). Architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-Host-side pipeline (Swift platform shell): **ScreenCaptureKit (capture one window)** → **VideoToolbox (low-latency HW encode)** → NALUs handed to the Rust core (`rust/slopdesk-core`, via the C-ABI) for packetization + FEC + ABR → transport ([03](03-transport-protocol.md)). This doc covers only the capture + encode shell.
+Host pipeline (Swift shell): **ScreenCaptureKit (capture one window)** → **VideoToolbox (low-latency HW encode)** → NALUs to the Rust core (`rust/slopdesk-core`, via C-ABI) for packetization + FEC + ABR → transport ([03](03-transport-protocol.md)). This doc covers only the capture + encode shell.
 
 ---
 
@@ -31,30 +31,28 @@ for window in content.windows {
 let filter = SCContentFilter(desktopIndependentWindow: targetWindow)
 ```
 
-Characteristics of `desktopIndependentWindow` (WWDC22 session 10155):
+`desktopIndependentWindow` characteristics (WWDC22 session 10155):
 - Output origin is always `(0,0)`, not the on-screen position.
-- Does **not** include child/popup windows — only the exact `SCWindow` selected.
+- Excludes child/popup windows — only the exact `SCWindow` selected.
 - Captures even when the window is **occluded** or offscreen.
-- Window **minimized** → the stream pauses, auto-resumes on restore.
-- Window **closed** → the stream stops, calls `stream(_:didStopWithError:)`.
+- **Minimized** → stream pauses, auto-resumes on restore.
+- **Closed** → stream stops, calls `stream(_:didStopWithError:)`.
 
 ### 1.3 Stream configuration
 
 ```swift
 let config = SCStreamConfiguration()
 config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange  // NV12 — cheapest for encode
-config.width  = Int(window.frame.width)  * scaleFactor   // scaleFactor comes from NSScreen, do NOT hardcode 2
+config.width  = Int(window.frame.width)  * scaleFactor   // scaleFactor from NSScreen, do NOT hardcode 2
 config.height = Int(window.frame.height) * scaleFactor
 // DECIDED: default 60fps (30 reads noticeably stale on scroll/motion); idle-skip keeps bandwidth ~0 when static ([DECISIONS]/[12]/[17]).
 // MUST be set explicitly (macOS 15+ silently defaults to 1/60, which happens to match).
-config.minimumFrameInterval = CMTimeMake(value: 1, timescale: 60)   // 60fps default; idle-skip takes it to ~0 when static
+config.minimumFrameInterval = CMTimeMake(value: 1, timescale: 60)   // 60fps; idle-skip → ~0 when static
 config.queueDepth = 3          // real default is 8 (not 3); 2–3 for low latency (release buffers quickly)
-config.showsCursor = false   // strip the cursor → draw it client-side for instant feel (see 10 §7)
+config.showsCursor = false   // strip cursor → draw it client-side for instant feel (see 10 §7)
 ```
 
-> ⚠️ **scaleFactor:** no API reads the scale from `SCShareableContent` — query `NSScreen` by `displayID`. Hardcoding `×2` breaks on non-Retina external displays.
-
-> ⚠️ **minimumFrameInterval & queueDepth (from [11](11-absolute-latency.md)):** macOS 15+ silently defaults `minimumFrameInterval` to `1/60` → **set it explicitly**; we default to **60fps** (30 reads noticeably stale on scroll/motion; idle-skip keeps bandwidth ~0 when static; ProMotion 120 dropped). `queueDepth` really defaults to **8** (no floor of 3 — that was a CGDisplayStream mix-up) → use **2–3** for low latency, releasing the IOSurface within `minimumFrameInterval × (queueDepth−1)`.
+> ⚠️ **scaleFactor / minimumFrameInterval / queueDepth (from [11](11-absolute-latency.md)):** No API reads scale from `SCShareableContent` — query `NSScreen` by `displayID`; hardcoding `×2` breaks non-Retina external displays. macOS 15+ silently defaults `minimumFrameInterval` to `1/60` → set it explicitly; default **60fps** (30 reads stale on scroll/motion; idle-skip → ~0 when static; ProMotion 120 dropped). `queueDepth` really defaults to **8** (no floor of 3 — a CGDisplayStream mix-up) → use **2–3**, releasing the IOSurface within `minimumFrameInterval × (queueDepth−1)`.
 
 ### 1.4 Receiving frames
 
@@ -75,20 +73,20 @@ func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer,
 }
 ```
 
-**Important optimizations:**
-- `status == .idle` → no new pixels (static window). **Skip encoding entirely.** When a coding window sits static between bursts of motion, idle-skip drives bandwidth toward ~0 — the 60fps default only spends frames while pixels actually change.
-- `dirtyRects` → could encode only the changed regions (advanced, later).
+**Optimizations:**
+- `status == .idle` → static window, no new pixels → **skip encoding entirely** (drives bandwidth toward ~0 between motion bursts; the 60fps default only spends frames when pixels change).
+- `dirtyRects` → encode only changed regions (advanced, later).
 
 ### 1.5 Lifecycle
 
 | Event | Behavior |
 |---------|---------|
-| Resize | SCKit auto-scales to `width`/`height`; the stream continues. `contentRect`/`contentScale` in the attachments reflect the new geometry |
-| Move to another display | Continues; `scaleFactor` may change if the DPI differs |
+| Resize | SCKit auto-scales to `width`/`height`; stream continues. `contentRect`/`contentScale` in attachments reflect new geometry |
+| Move to another display | Continues; `scaleFactor` may change if DPI differs |
 | Minimize | Stops emitting frames, auto-resumes |
 | Close | `stream(_:didStopWithError:)` → must `stopCapture()` + release |
 
-Dynamic updates without a restart:
+Dynamic updates without restart:
 ```swift
 try await stream.updateConfiguration(config)           // change fps/resolution
 try await stream.updateContentFilter(newFilter)        // change the captured window
@@ -119,8 +117,8 @@ VTSessionSetProperty(session!, key: kVTCompressionPropertyKey_AllowFrameReorderi
 // Infinite GOP + on-demand IDR — NO periodic timer-based keyframes (every keyframe = a useless latency spike).
 // Recovery via LTR (see 10-latency-optimization.md §1); only force an IDR when no acked LTR remains.
 VTSessionSetProperty(session!, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: Int.max as CFNumber)
-VTSessionSetProperty(session!, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: 60 as CFNumber) // match the 60fps capture default
-VTSessionSetProperty(session!, key: kVTCompressionPropertyKey_EnableLTR, value: kCFBooleanTrue) // LTR recovery — verify the symbol against the SDK
+VTSessionSetProperty(session!, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: 60 as CFNumber) // match 60fps capture
+VTSessionSetProperty(session!, key: kVTCompressionPropertyKey_EnableLTR, value: kCFBooleanTrue) // LTR recovery — verify symbol vs SDK
 VTSessionSetProperty(session!, key: kVTCompressionPropertyKey_AverageBitRate, value: (8_000_000/8) as CFNumber) // bytes/s!
 VTCompressionSessionPrepareToEncodeFrames(session!)
 
@@ -133,7 +131,7 @@ VTCompressionSessionSetOutputHandler(session!) { status, flags, sb in
 
 ### 2.2 HEVC 8-bit 4:2:0 (our default codec)
 
-> ✅ **Correcting an old assumption:** on **Apple Silicon**, `EnableLowLatencyRateControl` supports **HEVC as well** (confirmed via FFmpeg `videotoolboxenc.c`: gate `H264 || (arm64 && HEVC)`). Only **Intel Macs** are limited to H.264. → Use low-latency mode for HEVC too, but **feature-detect at session creation** (Apple hasn't pinned a version in the docs).
+> ✅ **Correcting an old assumption:** on **Apple Silicon**, `EnableLowLatencyRateControl` supports **HEVC too** (confirmed via FFmpeg `videotoolboxenc.c`: gate `H264 || (arm64 && HEVC)`). Only **Intel Macs** are H.264-only. → Use low-latency for HEVC, but **feature-detect at session creation** (Apple hasn't pinned a docs version).
 
 ```swift
 let spec: [CFString: Any] = [
@@ -141,7 +139,7 @@ let spec: [CFString: Any] = [
     kVTVideoEncoderSpecification_EnableLowLatencyRateControl: true   // OK on Apple Silicon — feature-detect
 ]
 VTCompressionSessionCreate(... codecType: kCMVideoCodecType_HEVC ...)
-// Main 10 only pays off if the input is also 10-bit (needs 10-bit capture = macOS 15 HDR preset, see below).
+// Main 10 only pays off if input is also 10-bit (needs 10-bit capture = macOS 15 HDR preset, see below).
 // Default is 8-bit → use kVTProfileLevel_HEVC_Main_AutoLevel:
 VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_HEVC_Main_AutoLevel)
 VTSessionSetProperty(s, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
@@ -155,9 +153,9 @@ VTSessionSetProperty(s, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value
 
 HEVC HW encode is always available on Apple Silicon & Intel Macs with a T2.
 
-> ⚠️ **10-bit pixel format CORRECTION (Z1, from [11](11-absolute-latency.md)):** `SCStreamConfiguration` does **NOT** accept `kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange` (`'x420'`) — this format is not in the supported list. 10-bit YCbCr is listed as `'xf44'` (4:4:4 full-range). For **10-bit HDR capture** use `SCStreamConfiguration(preset: .captureHDRStreamLocalDisplay)` — requires **macOS 15.0** (not 14.0). → The default pipeline should use **8-bit `'420v'`** (`420YpCbCr8BiPlanarVideoRange`) for zero-copy; 10-bit is an HDR option requiring macOS 15.
+> ⚠️ **10-bit pixel format CORRECTION (Z1, from [11](11-absolute-latency.md)):** `SCStreamConfiguration` does **NOT** accept `kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange` (`'x420'`) — not in the supported list. 10-bit YCbCr is listed as `'xf44'` (4:4:4 full-range). For **10-bit HDR capture** use `SCStreamConfiguration(preset: .captureHDRStreamLocalDisplay)` — requires **macOS 15.0** (not 14.0). → Default pipeline uses **8-bit `'420v'`** (`420YpCbCr8BiPlanarVideoRange`) for zero-copy; 10-bit is an HDR option requiring macOS 15.
 
-> ⚠️ **4:2:0 chroma is the quality ceiling for text** — Apple HW encode has **no 4:4:4** (neither H.264 nor HEVC). Changing the codec doesn't fix it. Mitigations: 10-bit (if macOS 15+) + high capture resolution. Details & options in [09-codec-choice.md](09-codec-choice.md).
+> ⚠️ **4:2:0 chroma is the quality ceiling for text** — Apple HW encode has **no 4:4:4** (neither H.264 nor HEVC); changing codec doesn't fix it. Mitigations: 10-bit (macOS 15+) + high capture resolution. See [09-codec-choice.md](09-codec-choice.md).
 
 ### 2.3 Encoding one frame + forcing a keyframe
 
@@ -173,7 +171,7 @@ VTCompressionSessionEncodeFrame(session, imageBuffer: pixelBuffer,
 
 ### 2.4 Extracting NALUs + parameter sets
 
-VideoToolbox returns **AVCC** (4-byte length prefix). It must be converted to **Annex-B** (`00 00 00 01`) or kept as AVCC depending on the protocol — we'll settle this in [03](03-transport-protocol.md).
+VideoToolbox returns **AVCC** (4-byte length prefix). Convert to **Annex-B** (`00 00 00 01`) or keep as AVCC depending on the protocol — settled in [03](03-transport-protocol.md).
 
 ```swift
 func handleEncoded(_ sb: CMSampleBuffer) {
@@ -215,6 +213,6 @@ func handleEncoded(_ sb: CMSampleBuffer) {
 
 ## 4. Phase 0 spike tasks
 
-- [ ] Capture one window → dump the actual fps, confirm idle-frame skipping works.
+- [ ] Capture one window → dump actual fps, confirm idle-frame skipping works.
 - [ ] Encode HEVC low-latency → **measure encode latency** on the target machine.
 - [ ] Verify parameter sets + NALUs can be extracted, then reassembled and decoded (host-internal loop).

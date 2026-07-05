@@ -2,13 +2,11 @@
 
 > **Historical session log (2026-06-05). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
 
-Autonomous overnight session. Branch **`fix/terminal-render-connect-once`** (off `main`), **UNCOMMITTED**. All work delivered via 10 sequential "ultracode" workflows, each **hardware-tested on the Mac Studio via cua-computer-use** (driven as a user — screenshots, not subjective scripts), with a definitive root cause for every fix.
+Autonomous overnight session. Branch **`fix/terminal-render-connect-once`** (off `main`), **UNCOMMITTED**. Delivered via 10 sequential "ultracode" workflows, each **hardware-tested on the Mac Studio via cua-computer-use** (driven as a user — screenshots), with a root cause for every fix.
 
 ## TL;DR
 
-**All 5 reported issues are fixed and hardware-validated.** The one item that was briefly deferred (resize repaint) is **also fixed** — and it turned out to be a deep bug, not cosmetic. Two additional latent bugs were found and fixed along the way. The whole tree builds coherently (5 products + 2 GUI apps) and **674 unit tests pass, 0 failures**.
-
-Nothing has been committed (you didn't ask). See the **pre-commit checklist** at the bottom before committing.
+All 5 reported issues are fixed and hardware-validated. The briefly-deferred item (resize repaint) is **also fixed** — a deep bug, not cosmetic. Two additional latent bugs were found and fixed. Tree builds coherently (5 products + 2 GUI apps); **674 unit tests pass, 0 failures**. Nothing committed. See the **pre-commit checklist** below.
 
 ---
 
@@ -32,8 +30,8 @@ New tabs/panes auto-inherit the existing host connection and connect immediately
 - HW-validated via the status dot: killing the host makes the pane dot go **green → reconnecting (orange) → unreachable (red)** within ~12s.
 
 ### #3 GUI video — RENDERS on hardware
-Host SCStream capture → VideoToolbox **HEVC** encode → UDP mux → client `VTDecompressionSession` HW-decode → Metal NV12 render. HW-validated in the live Aqua session (a real Slack window rendered in the "Slack (remote)" pane; host log "encoded+sent frame #1..990", client "DECODED frame #420 → render"). Path is healthy after the un-gate refactor: all 4 prior fixes present (encoder `-12900` guard, `NSApplication` CGS init, UDP receive re-arm, HEVC parameter-set send), mux is the sole UDP transport, frames delivered INLINE, and **VIDEO-HOST-1 (static-window IDR freeze) is already fixed** (`StaticIDRDecider`).
-- **Optimizations (research §A):** added `kVTCompressionPropertyKey_MaxAllowedFrameQP` for text sharpness (`EnableLowLatencyRateControl` was already on); FEC (`XORParityFEC`) + a client cursor overlay were found already wired on.
+Host SCStream capture → VideoToolbox **HEVC** encode → UDP mux → client `VTDecompressionSession` HW-decode → Metal NV12 render. HW-validated in the live Aqua session (a real Slack window rendered in the "Slack (remote)" pane; host log "encoded+sent frame #1..990", client "DECODED frame #420 → render"). Healthy after the un-gate refactor: all 4 prior fixes present (encoder `-12900` guard, `NSApplication` CGS init, UDP receive re-arm, HEVC parameter-set send), mux is the sole UDP transport, frames delivered INLINE, **VIDEO-HOST-1 (static-window IDR freeze) already fixed** (`StaticIDRDecider`).
+- **Optimizations (research §A):** added `kVTCompressionPropertyKey_MaxAllowedFrameQP` for text sharpness (`EnableLowLatencyRateControl` was already on); FEC (`XORParityFEC`) + a client cursor overlay found already wired on.
 - ⚠️ Requires **Screen Recording TCC** granted to the capture binary + a **real unlocked Aqua session** (a detached daemon-context launch hits `CGS_REQUIRE_INIT`).
 
 ### #4 Modern client UX
@@ -42,26 +40,26 @@ Host SCStream capture → VideoToolbox **HEVC** encode → UDP mux → client `V
 
 ### #5 Host-side menu-bar GUI
 New **`Apps/HostApp-macOS`** target → **`SlopDeskHost.app`** (LSUIElement menu-bar agent, bundle `com.slopdesk.host.macos` pinned for TCC). Runs the host **in-process** (links `SlopDeskHost`, via a new additive `HostServer.onConnectionCountChanged` hook). `MenuBarExtra` popover: Start/Stop + editable port + live client count + **TCC permission checklist** (Screen Recording + Accessibility with deep-links, research §C1) + Quit. Builds green, client app unregressed, serving path proven via harness (real client connected, PTY attached, command ran).
-- ⚠️ cua **cannot actuate `MenuBarExtra .window` popover buttons** (not in an enumerable AX window) — verify host-start via the harness/CLI, not a cua GUI click. CLI host default port is **7420** (`HostdArguments`), the apps default to 7779.
+- ⚠️ cua **cannot actuate `MenuBarExtra .window` popover buttons** (not in an enumerable AX window) — verify host-start via the harness/CLI, not a cua GUI click. CLI host default port is **7420** (`HostdArguments`); the apps default to 7779.
 
 ### #7 Resize — size convergence + the deep repaint fix
-- **Size convergence (the "broken" ("vỡ") / character-misalignment complaint):** latest-wins resize **coalescing** on the client OUT-path + a host-side micro-debounce (`MuxChannelSession`). HW-validated: after a fast drag, `stty size` matches the final window grid, scrollback reflows cleanly, no misalignment. (This disproves the "pty uses old console size" hypothesis — the PTY now converges to the final size.)
-- **Repaint (idle prompt blanked after resize):** initially deferred as cosmetic, then **root-caused and FIXED** — see the deep-bug section below.
+- **Size convergence (the "broken"/"vỡ"/char-misalignment complaint):** latest-wins resize **coalescing** on the client OUT-path + a host-side micro-debounce (`MuxChannelSession`). HW-validated: after a fast drag, `stty size` matches the final window grid, scrollback reflows cleanly, no misalignment. Disproves the "pty uses old console size" hypothesis — the PTY now converges to the final size.
+- **Repaint (idle prompt blanked after resize):** initially deferred as cosmetic, then **root-caused and FIXED** — see below.
 
 ---
 
 ## Two deep bugs found & fixed (beyond the 5 issues)
 
 ### A. Host PTY had no controlling terminal → broke SIGWINCH **and** job control (WF10)
-The "idle prompt blanks after resize" symptom was a surface effect of a real bug. The earlier hypothesis (powerlevel10k suppressing `reset-prompt`) was **wrong** — this user runs **starship**. The true cause: `PTYProcess.spawn` used `posix_spawn(POSIX_SPAWN_SETSID)` + `dup2(slave→0/1/2)` but **never `TIOCSCTTY`**, so the spawned interactive zsh had **no controlling terminal** (`TTY=??, TPGID=0`). With no ctty, the kernel sends **no SIGWINCH** on `TIOCSWINSZ` → zsh never learns it resized → no prompt reprint. The same missing ctty **also silently broke job control** (`^Z`, `^C`, foreground-process-group signaling).
+The "idle prompt blanks after resize" symptom was a surface effect. The earlier hypothesis (powerlevel10k suppressing `reset-prompt`) was **wrong** — this user runs **starship**. True cause: `PTYProcess.spawn` used `posix_spawn(POSIX_SPAWN_SETSID)` + `dup2(slave→0/1/2)` but **never `TIOCSCTTY`**, so the spawned interactive zsh had **no controlling terminal** (`TTY=??, TPGID=0`). With no ctty, the kernel sends **no SIGWINCH** on `TIOCSWINSZ` → zsh never learns it resized → no prompt reprint. The missing ctty **also silently broke job control** (`^Z`, `^C`, foreground-process-group signaling).
 - **Fix:** replaced `posix_spawn` with `fork()` (resolved via `dlsym`, since Swift marks `fork` unavailable) → child runs only raw async-signal-safe syscalls: `login_tty(slave)` (= `setsid` + `ioctl(TIOCSCTTY)` + `dup2`) → `close(master)` → `execve` (argv/envp/path built in the parent pre-fork). `Sources/SlopDeskHost/PTYProcess.swift` (heavily doc-commented).
 - New regression test `testInteractiveZshControllingTTYAndSigwinch` (spawns `zsh -i`, sends `TIOCSWINSZ` 80→132, asserts `$COLUMNS` updates).
 - HW-verified: resize (grow + shrink) → full starship prompt reprints **with no keystroke**, scrollback intact, CPU low.
-- ⚠️ **This is a core-path change** (every shell now spawns via fork). Re-validated by the final consolidation (all builds + 674 tests green).
+- ⚠️ **Core-path change** (every shell now spawns via fork). Re-validated by the final consolidation (all builds + 674 tests green).
 
 ### B. Host shutdown `close()` hang on a live child (WF9)
 `MuxChannelSession.shutdown()` → `PTYProcess.closeMaster()` → `close(masterFD)` **blocked forever** when the session's interactive shell was still alive and the PTY reader thread was parked in an in-kernel `read()`. Reachable in production from `HostServer.stop()` (SIGINT) and `removeMuxSession()` (peer channel-close / link drop).
-- **Fix:** `PTYProcess.forceTerminate()` (SIGKILL) + `waitUntilExited(timeout:step:)`; `shutdown()` now does SIGTERM → bounded grace → SIGKILL fallback → then `closeMaster`, so the reader always unblocks first. At this stage no `shutdown()` call site is resume-able, so this can't break connect-once.
+- **Fix:** `PTYProcess.forceTerminate()` (SIGKILL) + `waitUntilExited(timeout:step:)`; `shutdown()` now does SIGTERM → bounded grace → SIGKILL fallback → then `closeMaster`, so the reader always unblocks first. No `shutdown()` call site is resume-able, so this can't break connect-once.
 - HW sanity: host with an active live session, SIGINT → **exits promptly** (was: would hang). Full `SlopDeskHostTests` 80/80.
 
 ---
@@ -107,14 +105,14 @@ Debug seams left ON: `SLOPDESK_RENDER_DEBUG=1` (terminal render log), `SLOPDESK_
 
 ## Pre-commit checklist (when you decide to commit)
 
-1. **Debug logging** — `SLOPDESK_RENDER_DEBUG`/`rdbg` (GhosttyTerminalView.swift etc.) and `SLOPDESK_VIDEO_DEBUG` are still wired. They're env-gated (silent by default) but you may want to gate/trim the noisier `[RDBG]`/`[CONN]` lines before committing.
+1. **Debug logging** — `SLOPDESK_RENDER_DEBUG`/`rdbg` (GhosttyTerminalView.swift etc.) and `SLOPDESK_VIDEO_DEBUG` are still wired. Env-gated (silent by default), but consider gating/trimming the noisier `[RDBG]`/`[CONN]` lines.
 2. **`Apps/ClientApp-macOS/project.yml`** — currently renderer-ENABLED (+39 lines vs HEAD; the libghostty PATH-1 wiring). Required to build the GUI with the Metal renderer. Decide whether to commit the enabled spec or restore the committed placeholder + document the enable step.
-3. **WF4 `ShellIntegration` shim** — now somewhat redundant given the ctty fix (default zsh redraws on SIGWINCH once the ctty is correct), but it's **harmless belt-and-suspenders** (its `TRAPWINCH` forces `zle reset-prompt`; for starship which has no own TRAPWINCH, it guarantees the reprint). Keep, or drop if you prefer minimalism (opt-out is `SLOPDESK_SHELL_INTEGRATION=0`).
+3. **WF4 `ShellIntegration` shim** — now somewhat redundant given the ctty fix (default zsh redraws on SIGWINCH once ctty is correct), but **harmless belt-and-suspenders** (its `TRAPWINCH` forces `zle reset-prompt`; for starship, which has no own TRAPWINCH, it guarantees the reprint). Keep, or drop for minimalism (opt-out is `SLOPDESK_SHELL_INTEGRATION=0`).
 4. **Untracked artifacts** — `.work/` (build/DerivedData), the xcodegen-generated `.xcodeproj` files (gitignored), `skills-lock.json`. Don't commit `.work/`.
-5. **Branch** — `fix/terminal-render-connect-once` carries ~20+ changed/new files across SlopDeskHost, SlopDeskTransport, SlopDeskClient(UI), SlopDeskVideoHost, and the two app targets. It's a large but coherent diff; consider splitting into reviewable commits per issue.
+5. **Branch** — `fix/terminal-render-connect-once` carries ~20+ changed/new files across SlopDeskHost, SlopDeskTransport, SlopDeskClient(UI), SlopDeskVideoHost, and the two app targets. Large but coherent; consider splitting into reviewable commits per issue.
 
 ## Known caveats / environment
-- A couple of `xctest` processes are stuck in **uninterruptible U-state** (old binaries parked in the pre-fix `close()`-on-PTY hang) — **unkillable; a Studio reboot clears them.** Harmless/non-blocking.
+- A couple of `xctest` processes stuck in **uninterruptible U-state** (old binaries parked in the pre-fix `close()`-on-PTY hang) — **unkillable; a Studio reboot clears them.** Harmless/non-blocking.
 - cua can't actuate `MenuBarExtra .window` popover buttons (verify host start via harness/CLI).
 - Video requires Screen Recording TCC + a real Aqua session.
 

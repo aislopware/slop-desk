@@ -1,10 +1,10 @@
 # 33 — UI/UX + unique-features round (2026-06-12/13)
 
-> **Historical session log (2026-06-12/13). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
+> **Historical session log (2026-06-12/13). Records work as of that date, not current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
 
 **Status: DONE — 25 features across 2 research rounds + 2 adversarial self-reviews, all shipped to `main` with headless tests. Full suite 1972/0. Several runtime FEELs are HW-pending (no 2-machine rig from automation).**
 
-Base `faedc76` → HEAD `dac9813`. Each item is its own commit. Two ranked backlogs (5-agent research, then 22-agent review+research), implemented one-per-commit; two adversarial review passes (16 + 14 raw findings → 9 confirmed, all low-severity, all fixed).
+Base `faedc76` → HEAD `dac9813`, one commit per item. Two ranked backlogs (5-agent research, then 22-agent review+research); two adversarial passes (16 + 14 raw findings → 9 confirmed, all low-severity, all fixed).
 
 ## What shipped
 
@@ -39,17 +39,17 @@ Base `faedc76` → HEAD `dac9813`. Each item is its own commit. Two ranked backl
 Schemas advanced 5→8 (single-user no-backcompat: stale data resets).
 
 ## Design notes worth keeping
-- **Paste-as-Keystrokes** is the unique payoff of the virtual-HID work ([[../docs]] efa8407): `KeystrokeReplay` maps the clipboard to US-QWERTY key strokes; the host's `postKey` routes per-event to virtual HID under Secure Event Input, so it types into SecurityAgent/sudo fields where `keyboardSetUnicodeString` is OS-dropped. Payload is never logged/persisted; rate-limited (`NotificationRateLimiter` for OSC, paced injection for keystrokes).
-- **Overview is static cards, not `scaleEffect`** — transforming live CAMetalLayer/libghostty surfaces under SwiftUI scale tears/blanks; the static-card overview avoids it entirely and exits with no surface rebuild.
-- **Lifecycle + group-drag animations are value-scoped and applied OUTSIDE the camera `.offset`** so a live pan/drag is never animated (the BUG-1/BUG-2 freeze class) and `@GestureState` resets stay instant.
-- **New monitors** (`SystemDialogMonitor`, `ClipboardMonitor`, `AppLaunchMonitor`) follow one pattern: a scene `.task { await monitor.run() }`, poll loop ends on cancel, inert under automation / when nothing to do.
+- **Paste-as-Keystrokes** is the payoff of the virtual-HID work (efa8407): `KeystrokeReplay` maps clipboard to US-QWERTY strokes; host's `postKey` routes per-event to virtual HID under Secure Event Input, so it types into SecurityAgent/sudo fields where `keyboardSetUnicodeString` is OS-dropped. Payload never logged/persisted; rate-limited (`NotificationRateLimiter` for OSC, paced injection for keystrokes).
+- **Overview is static cards, not `scaleEffect`** — transforming live CAMetalLayer/libghostty surfaces under SwiftUI scale tears/blanks; static cards avoid it and exit with no surface rebuild.
+- **Lifecycle + group-drag animations are value-scoped, applied OUTSIDE the camera `.offset`** so a live pan/drag is never animated (the BUG-1/BUG-2 freeze class) and `@GestureState` resets stay instant.
+- **New monitors** (`SystemDialogMonitor`, `ClipboardMonitor`, `AppLaunchMonitor`) share one pattern: scene `.task { await monitor.run() }`, poll loop ends on cancel, inert under automation / when idle.
 
 ## ⚠️ HW-pending (verify on the real 2-machine rig)
-None of these are headless-failures — every one is green in `swift test`. What needs a real keyboard + the deployed host:
-1. **Paste-as-Keystrokes into a real password field** — needs the deployed `slopdesk-hid-bridge` (root) on the Studio; assert the field fills.
-2. **OSC 9/777 notification** end-to-end (`printf '\e]9;done\e\\'` on the host → banner → click focuses the pane).
-3. **Overview ⌘\** visual + the **B8 scale-on-insert** over live Metal/libghostty surfaces.
-4. **Multi-select**: shift-click feel (`NSEvent.modifierFlags` read at commit) + the live group-drag preview.
+All green in `swift test`; these need a real keyboard + deployed host:
+1. **Paste-as-Keystrokes into a real password field** — needs deployed `slopdesk-hid-bridge` (root) on the Studio; assert the field fills.
+2. **OSC 9/777 notification** end-to-end (`printf '\e]9;done\e\\'` on host → banner → click focuses pane).
+3. **Overview ⌘\** visual + **B8 scale-on-insert** over live Metal/libghostty surfaces.
+4. **Multi-select**: shift-click feel (`NSEvent.modifierFlags` read at commit) + live group-drag preview.
 5. **Off-screen beacon** pulse + click-to-reveal; **App-launch auto-switch** firing on a real host app launch.
 
 ## Deferred ideas (HW-feel, not built — next session with the rig)

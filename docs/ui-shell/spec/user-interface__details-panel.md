@@ -2,21 +2,19 @@
 
 ## Summary
 
-The Details Panel is a right-side panel that gives context about the focused pane without leaving the terminal — its working directory, what is running, git status, an outline of the content, and a file tree. It always reflects the focused pane, updating as you switch panes or tabs. The panel docks on the right, mirroring the tabs panel on the left. It has four tabs: Info, Outline, Git, and Files. Tab navigation is by click or by bindable commands (unbound by default).
+A right-side sidebar giving context about the focused pane without leaving the terminal: working directory, running processes, git status, content outline, and file tree. Always reflects the focused pane, updating on pane/tab switch. Docks right, mirroring the tabs panel on the left. Four tabs — Info, Outline, Git, Files — switched by click or bindable commands (unbound by default).
 
 ## Behaviors
 
-- The panel is toggled open/closed with ⌘⇧R, View → Toggle Details Panel, or the Toggle Details Panel button in the window title bar (visible on hover).
-- The panel docks to the right edge of the window, as a sidebar, mirroring the tabs panel on the left.
-- It always reflects the currently focused pane; switching panes or tabs updates all panel content immediately.
-- The panel has four tabs at the top: Info, Outline, Git, Files.
-- Tabs can be switched by clicking their label icons in the panel header.
-- Each tab can also be jumped to directly via the "Details: Info", "Details: Outline", "Details: Git", "Details: Files" commands (bindable under Keybindings; unbound by default).
-- **Info tab:** Shows the pane's working directory (path string), a list of running processes (name, PID, uptime), any listening ports ("No listening ports" if none), and quick open-in actions (Copy Path, Reveal in Finder, Open in VS Code, Open in Cursor, Open in Xcode, Open in Typora). For agent panes, also shows agent-specific actions: Copy Session ID, View Session History, Fork in…
-- **Outline tab:** A structural map of the focused pane's content. For a terminal or agent pane: lists command marks and agent prompts with timestamps and truncated text. For a file pane: shows table of contents (Markdown/HTML), changed-file list (diff), top-level keys (JSON/YAML/TOML), or transcript prompts (.jsonl).
-- **Git tab:** Shows a summary of the pane's git repo: branch name, remote URL (GitHub), commit counts (ahead/behind), a toolbar with Commit and Fork buttons, a list of unstaged changed files with checkboxes and hover actions, and an inline diff viewer that appears as an overlay when a file is selected.
-- **Files tab:** Shows a file tree rooted at the focused pane's working directory, with expand/collapse disclosure triangles. Has a Search/Find field at the top. Acts as a quick file browser without needing to open a folder pane.
-- The default Git client for the Git tab open-in action is configured via Settings → Controls → Open With.
+- Toggled open/closed with ⌘⇧R, View → Toggle Details Panel, or the Toggle Details Panel title-bar button (visible on hover).
+- Docks to the window's right edge as a sidebar, mirroring the left tabs panel.
+- Always reflects the focused pane; switching panes/tabs updates all content immediately.
+- Four header tabs: Info, Outline, Git, Files. Switch by clicking their label icons, or jump directly via the "Details: Info/Outline/Git/Files" commands (bindable under Keybindings; unbound by default).
+- **Info tab:** working directory (path string), running processes (name, PID, uptime), listening ports ("No listening ports" if none), and open-in actions (Copy Path, Reveal in Finder, Open in VS Code, Open in Cursor, Open in Xcode, Open in Typora). Agent panes also show: Copy Session ID, View Session History, Fork in…
+- **Outline tab:** structural map of pane content. Terminal/agent pane → command marks and agent prompts with timestamps and truncated text. File pane → table of contents (Markdown/HTML), changed-file list (diff), top-level keys (JSON/YAML/TOML), or transcript prompts (.jsonl).
+- **Git tab:** repo summary — branch name, remote URL (GitHub), ahead/behind commit counts, a toolbar with Commit and Fork buttons, a list of unstaged changed files with checkboxes and hover actions, and an inline diff viewer shown as an overlay when a file is selected.
+- **Files tab:** file tree rooted at the focused pane's working directory, with expand/collapse disclosure triangles and a Search/Find field. A quick file browser without opening a folder pane.
+- Default Git client for the Git tab open-in action is set via Settings → Controls → Open With.
 
 ## Keybindings
 
@@ -32,141 +30,98 @@ The Details Panel is a right-side panel that gives context about the focused pan
 
 | Key | Default | Effect |
 |---|---|---|
-| Settings → Controls → Open With (Git client) | (system default) | Sets which Git client app is used when opening files from the Git tab |
+| Settings → Controls → Open With (Git client) | (system default) | Which Git client app opens files from the Git tab |
 
 ## Visual spec
 
 ### info-panel.png — Info Tab
 
-**Overall layout:** The window shows the macOS chrome (traffic lights top-left, title "OpenCode" centered) with a terminal pane taking the left ~75% and the Details Panel occupying the right ~25% as a vertical sidebar. The sidebar has a light gray/off-white background (approximately #F2F2F2 or near-white), clearly separated from the terminal by a thin 1px divider.
+**Layout:** macOS chrome (traffic lights top-left, title "OpenCode" centered); terminal pane left ~75%, Details Panel right ~25% as a vertical sidebar. Sidebar background light gray/off-white (~#F2F2F2/near-white), separated from the terminal by a 1px divider.
 
-**Panel header (top of sidebar):** A row of four icon-buttons spanning the full panel width. From left to right:
-1. "Info" tab — active state: label "Info" in small caps next to a circled-i icon, colored in a muted teal/sage accent (approximately #5A9B8F or similar green-teal); the active tab has this accent coloring on both icon and label text.
-2. Outline icon (list/lines icon) — inactive, dark gray.
+**Panel header:** four icon-buttons spanning full width, left to right:
+1. "Info" tab — active: label "Info" in small caps beside a circled-i icon, muted teal/sage accent (~#5A9B8F); active tab accents both icon and label.
+2. Outline icon (list/lines) — inactive, dark gray.
 3. Rotate/refresh icon — inactive, dark gray.
 4. Folder/files icon — inactive, dark gray.
-5. Rightmost: a sidebar-collapse toggle icon (vertical bar + arrow), dark gray.
+5. Rightmost: sidebar-collapse toggle (vertical bar + arrow), dark gray.
 
 **Working Directory section:**
-- Section label: "Working Directory" in all-caps small text, medium gray, approximately 10–11pt, above the path.
-- Path value: "~/Workplace/project" in regular weight dark text (~13pt).
-- Below the path: a vertical stack of action rows, each with a small icon (monochrome, ~14pt) on the left and a label on the right:
-  - Copy icon + "Copy Path"
-  - Folder-open icon + "Reveal in Finder"
-  - Square-with-arrow icon + "Open in VS Code"
-  - Square-with-arrow icon + "Open in Cursor"
-  - Square-with-arrow icon + "Open in Xcode"
-  - Square-with-arrow icon + "Open in Typora"
-- Action rows use standard text size (~13pt), dark gray text, no background in resting state. Icons are monochrome dark.
+- Label "Working Directory" — all-caps, medium gray, ~10–11pt.
+- Path "~/Workplace/project" — regular dark text, ~13pt.
+- Action rows (small ~14pt monochrome dark icon + label, no resting background, ~13pt dark gray text): Copy → "Copy Path", Folder-open → "Reveal in Finder", Square-with-arrow → "Open in VS Code" / "Open in Cursor" / "Open in Xcode" / "Open in Typora".
 
-**OpenCode section** (agent-specific, appears below the directory actions when the focused pane is an agent pane):
-- Section label: "OpenCode" in all-caps small text, medium gray.
-- Action rows:
-  - Copy icon + "Copy Session ID"
-  - Clock/history icon + "View Session History"
-  - Fork/branch icon + "Fork in…"
+**OpenCode section** (agent-specific; below directory actions when the focused pane is an agent pane):
+- Label "OpenCode" — all-caps, medium gray.
+- Rows: Copy → "Copy Session ID", Clock/history → "View Session History", Fork/branch → "Fork in…".
 
 **Process section:**
-- Section label: "Process" in all-caps small text, medium gray.
-- Each process row: a filled green circle (~6px) dot, process name in bold or medium weight (e.g. "-zsh"), PID number in lighter gray (e.g. "64628"), and elapsed time right-aligned (e.g. "34s").
-- Two processes shown: "-zsh 64628  34s" and "opencode 64742  29s". Green dot indicates running/active.
+- Label "Process" — all-caps, medium gray.
+- Each row: filled green ~6px dot, process name (bold/medium, e.g. "-zsh"), PID (lighter gray, e.g. "64628"), elapsed time right-aligned (e.g. "34s"). Green dot = running.
+- Two rows: "-zsh 64628  34s" and "opencode 64742  29s".
 
 **Ports section:**
-- Section label: "Ports" in all-caps small text, medium gray.
-- Value: "No listening ports" in regular gray text when empty.
+- Label "Ports" — all-caps, medium gray.
+- Value "No listening ports" in regular gray when empty.
 
-**Spacing and typography:** All section labels use uppercase tracking, ~10pt, muted gray (#999 or similar). Content text is ~13pt, dark (#1A1A1A or similar). Vertical spacing between sections is approximately 16–20px. The panel has ~12–16px horizontal padding on both sides.
+**Spacing/typography:** section labels uppercase-tracked, ~10pt, muted gray (~#999). Content ~13pt, dark (~#1A1A1A). Section spacing ~16–20px. Panel horizontal padding ~12–16px.
 
-**Status bar (bottom of terminal pane, not part of sidebar):** Shows "~/Workplace/project:main" on the left and "1.15.13" on the right in small gray text on a slightly darker bar.
+**Status bar** (bottom of terminal pane, not sidebar): "~/Workplace/project:main" left, "1.15.13" right — small gray text on a slightly darker bar.
 
 ---
 
 ### outline-panel.png — Outline Tab
 
-**Overall layout:** Same window chrome. Title bar shows "QC | Reviewing todos". Terminal pane on left (~65% width) shows an agent (OpenCode) session with a conversation turn including a permission dialog ("Permission required / Access external directory…"). Details Panel on the right (~35% width).
+**Layout:** same chrome; title "QC | Reviewing todos". Terminal pane left (~65%) shows an OpenCode agent session with a permission dialog ("Permission required / Access external directory…"). Details Panel right (~35%).
 
-**Panel header:** Four tab icons at top. "Outline" tab is active — the list/lines icon is highlighted with a muted teal/green accent color, same style as Info tab active state. Other tabs are gray/inactive.
+**Panel header:** "Outline" tab active — list/lines icon highlighted muted teal/green (same active style as Info). Others gray/inactive.
 
-**Outline tab content:**
-- Top entry: "~/Workplace/myproject / 4m ago" — path and relative timestamp in small gray text. Below it: "opencode" in regular dark text (the pane/process name).
-- Second entry: "OpenCode — ...iewing todos / 7s ago" — truncated session context with timestamp.
-- Third entry: "<system-reminder>Note: The u..." — truncated command mark/prompt text in dark text.
-- Fourth entry: "give me more details about The..." — truncated agent prompt text.
-- Each entry is a row with the text flush-left and the timestamp right-aligned in gray, stacked vertically with ~1px separator lines or just spacing.
-- Selected/active entry may have a subtle highlight background.
-- Font size ~12–13pt; timestamps ~11pt gray.
-
-**No section headers** in the Outline tab — it is a flat chronological list of command marks and prompts.
+**Content** (flat chronological list of command marks and prompts, no section headers):
+- "~/Workplace/myproject / 4m ago" — path + relative timestamp, small gray; below it "opencode" (pane/process name), regular dark.
+- "OpenCode — ...iewing todos / 7s ago" — truncated session context + timestamp.
+- "<system-reminder>Note: The u..." — truncated command mark/prompt, dark.
+- "give me more details about The..." — truncated agent prompt.
+- Each row: text flush-left, timestamp right-aligned gray, stacked with ~1px separators or spacing. Selected/active entry may have a subtle highlight. Text ~12–13pt; timestamps ~11pt gray.
 
 ---
 
 ### git-panel.png — Git Tab
 
-**Overall layout:** Same window chrome. Title "QC | Reviewing todos". Terminal pane with agent conversation. Details Panel on right is notably wider than in other screenshots (~40% of window width), accommodating a file diff overlay that appears as a floating popover/overlay anchored above the panel content.
+**Layout:** same chrome; title "QC | Reviewing todos". Terminal pane with agent conversation. Details Panel notably wider (~40% of window) to fit a file diff overlay floating above the panel content.
 
-**Panel header:** Git tab icon (branch/fork icon) is active, highlighted in muted teal accent.
+**Panel header:** Git tab icon (branch/fork) active, muted teal accent.
 
-**Git tab top section:**
-- Branch name: "main" in bold/medium dark text, large (~15pt).
-- Remote URL: "https://github.com/example-org/project" in small gray text below the branch name.
-- Commit delta: "+418 -322" in small gray text, showing ahead/behind or changed lines.
-- Toolbar row (right-aligned or full-width below the branch info):
-  - "Commit" button: a rounded rectangle button with label "Commit", medium weight.
-  - "Fork" button (with a fork icon): another rounded rectangle button.
+**Top section:**
+- Branch "main" — bold/medium dark, ~15pt.
+- Remote URL "https://github.com/example-org/project" — small gray below branch.
+- Commit delta "+418 -322" — small gray (ahead/behind or changed lines).
+- Toolbar: "Commit" button (rounded rect, medium weight); "Fork" button (rounded rect + fork icon).
 
 **Unstaged/changed files list:**
-- Section label: "Unstaged (38)" in small uppercase gray label.
-- Each file row: checkbox (unchecked square) on the left, filename in dark text, path in smaller gray text. Files appear in a compact list:
-  - Examples shown: `_SCREENSHOT_TESTING.md`, `_CLI_SPEC.md`, `.ttng-started/first-launch.md`, `.user/getting-started/tour.md`, `docs/user/index.md`, `docs/hots/first-launch-agents.png`, `features/read-only-mode.md`, `docs/user/vt/osc/osc-0-2.md`, `docs/user/vt/osc/osc-7.md`, `docs/workflows/cli-usage.md`, `.kflows/command-palette.md`, `docs/workflows/outline.md`, `.workspace/drag-and-drop.md`, `.user/workspace/file-pane.md`, `.user/workspace/open-quickly.md`, `reference/files-and-links.md`, `.workspace/folder-pane.md`, `.user/workspace/panes.md`, `.user/workspace/splits.md`, `docs/user/workspace/tabs.md`
-  - File rows are compact (~22–24px row height), with small ~11–12pt text.
-  - Hover actions (implied by doc: not directly visible in screenshot but described).
+- Label "Unstaged (38)" — small uppercase gray.
+- Each row: unchecked checkbox, filename (dark), path (smaller gray). Compact ~22–24px rows, ~11–12pt text. Examples: `_SCREENSHOT_TESTING.md`, `_CLI_SPEC.md`, `.ttng-started/first-launch.md`, `.user/getting-started/tour.md`, `docs/user/index.md`, `docs/hots/first-launch-agents.png`, `features/read-only-mode.md`, `docs/user/vt/osc/osc-0-2.md`, `docs/user/vt/osc/osc-7.md`, `docs/workflows/cli-usage.md`, `.kflows/command-palette.md`, `docs/workflows/outline.md`, `.workspace/drag-and-drop.md`, `.user/workspace/file-pane.md`, `.user/workspace/open-quickly.md`, `reference/files-and-links.md`, `.workspace/folder-pane.md`, `.user/workspace/panes.md`, `.user/workspace/splits.md`, `docs/user/workspace/tabs.md`. Hover actions described in doc, not visible in screenshot.
 
-**Inline diff viewer (overlay):**
-- Appears as a floating card/popover layered over the panel and partially over the terminal.
-- Shows a standard unified diff for `docs/spec/CLI_SPEC.md`:
-  - File header: `diff --git a/docs/spec/CLI_SPEC.md b/docs/spec/CLI_SPEC.md` etc. in small monospace.
-  - Diff lines: removed lines (prefixed `-`) in a light red/pink tint, added lines (prefixed `+`) in light green tint.
-  - Hunk header `@@ -968,9 +968,9 @@` in gray/blue.
-  - Diff content shows tab badge behavior description in monospace font (~11–12pt).
-- The overlay has a white or very light background, rounded corners, subtle drop shadow.
+**Inline diff viewer (overlay):** floating card/popover layered over the panel and partially over the terminal; white/very-light background, rounded corners, subtle drop shadow. Standard unified diff for `docs/spec/CLI_SPEC.md`:
+- File header `diff --git a/docs/spec/CLI_SPEC.md b/docs/spec/CLI_SPEC.md` etc., small monospace.
+- Removed lines (`-`) light red/pink tint, added lines (`+`) light green tint.
+- Hunk header `@@ -968,9 +968,9 @@` gray/blue.
+- Content (tab badge behavior) in monospace ~11–12pt.
 
 ---
 
 ### file-panel.png — Files Tab
 
-**Overall layout:** Same window chrome. Title "QC | Reviewing todos". Terminal pane on left showing agent session with a TODO review table. Details Panel on right (~35% width).
+**Layout:** same chrome; title "QC | Reviewing todos". Terminal pane left shows an agent session with a TODO review table. Details Panel right (~35%).
 
-**Panel header:** Files tab icon (folder icon) is active, highlighted with muted teal accent.
+**Panel header:** Files tab icon (folder) active, muted teal accent.
 
-**Files tab content:**
-- **Search field at top:** Full-width input field with placeholder "Find", a small search icon on the left, and two small icon buttons on the right (likely filter/sort/refresh and collapse-all).
-- **File tree:** Directory tree rooted at the pane's working directory, using disclosure triangles (▶/▼) for expand/collapse:
-  - `> bin` (collapsed)
-  - `> build` (collapsed)
-  - `> docs` (collapsed)
-  - `> packages` (collapsed)
-  - `> resources` (collapsed)
-  - `▼ scripts` (expanded, showing children):
-    - `gen-dmg-v64.dmgCanvas`
-    - `gen-dmg.dmgCanvas`
-    - `bench-startup.sh`
-    - `build-settings-ui.sh`
-    - `build-windows.sh`
-    - `diagnose-unicode-paste.sh`
-    - `full-release.sh`
-    - `release.sh`
-    - `run.cmd`
-    - `run.ps1`
-    - `run.sh`
-    - `run.sh` (duplicate shown?)
-    - `test-panetree.sh`
-    - `test-statedb.sh`
-    - `verify-links.sh`
-  - `▼ skills` (expanded):
-    - `update-alacritty`
-    - (more items cut off)
-- **Tree styling:** Each row is ~22px tall, disclosure triangle is ~8px. Each row carries a leading **type glyph** — an accent/green outline **folder** icon for directories and a muted **doc** icon for files (visible in `file-panel.png`; an earlier draft of this note mis-read them as absent). Indentation ~16px per level. Active/selected rows would show a subtle blue highlight. Text ~12–13pt dark.
-- **No "Open" button** — clicking a file presumably opens it or reveals it.
+**Content:**
+- **Search field (top):** full-width input, placeholder "Find", search icon left, two small icon buttons right (likely filter/sort/refresh and collapse-all).
+- **File tree:** rooted at the pane's working directory, disclosure triangles (▶/▼):
+  - `> bin`, `> build`, `> docs`, `> packages`, `> resources` (collapsed)
+  - `▼ scripts` (expanded): `gen-dmg-v64.dmgCanvas`, `gen-dmg.dmgCanvas`, `bench-startup.sh`, `build-settings-ui.sh`, `build-windows.sh`, `diagnose-unicode-paste.sh`, `full-release.sh`, `release.sh`, `run.cmd`, `run.ps1`, `run.sh`, `run.sh` (duplicate shown?), `test-panetree.sh`, `test-statedb.sh`, `verify-links.sh`
+  - `▼ skills` (expanded): `update-alacritty`, (more cut off)
+- **Styling:** ~22px rows, ~8px disclosure triangle. Each row has a leading **type glyph** — accent/green outline **folder** icon for directories, muted **doc** icon for files (visible in `file-panel.png`; an earlier draft mis-read them as absent). Indentation ~16px/level. Active/selected rows show a subtle blue highlight. Text ~12–13pt dark.
+- **No "Open" button** — clicking a file presumably opens or reveals it.
 
 ## Screenshots
 
@@ -179,23 +134,23 @@ The Details Panel is a right-side panel that gives context about the focused pan
 
 ### What maps 1:1
 
-- **Panel toggle (⌘⇧R):** Can be bound in the existing `WorkspaceBindingRegistry` / keybindings system. The panel lives in the macOS client window chrome, no host involvement.
-- **Four tabs (Info / Outline / Git / Files):** Pure client-side UI; all read from the host connection's metadata. Tab switching via click and bindable commands maps directly to SlopDesk's keybindings system.
-- **Process list (Info tab):** The host's `slopdesk-hostd` already has PTY/process awareness; surface via an existing or new control-channel message that streams child-process list + uptime. PID is host-side but display is client-side.
-- **Outline tab — command marks:** OSC 133 shell integration is already planned/implemented (`OSC-133` in the CLAUDE.md). Command marks from the host PTY stream can be indexed client-side to populate the outline list.
-- **Files tab:** Can be populated by asking the host for a directory listing rooted at the current working directory. Already precedented by the remote-window picker pattern (VideoControl types 7/8). Requires a new control-channel RPC: `listDirectory(path:)`.
-- **Ports section (Info tab):** Requires the host to emit listening-port information per pane. Can be sourced from `lsof -i` or `ss` on the host and sent over the control channel.
-- **Git tab — branch/status:** Requires the host to run `git status --porcelain`, `git branch`, and `git log --oneline origin..HEAD` in the pane's working directory and stream results. This is a pure host-side query with client-side rendering.
+- **Panel toggle (⌘⇧R):** bind in the existing `WorkspaceBindingRegistry` / keybindings system. Panel lives in the macOS client window chrome, no host involvement.
+- **Four tabs (Info / Outline / Git / Files):** pure client-side UI reading from the host connection's metadata. Click + bindable-command switching maps directly to SlopDesk's keybindings.
+- **Process list (Info tab):** `slopdesk-hostd` already has PTY/process awareness; surface via a control-channel message streaming child-process list + uptime. PID host-side, display client-side.
+- **Outline tab — command marks:** OSC 133 shell integration already planned/implemented (`OSC-133`). Command marks from the host PTY stream can be indexed client-side to populate the list.
+- **Files tab:** populate by asking the host for a directory listing rooted at cwd. Precedented by the remote-window picker (VideoControl types 7/8). Needs a new control-channel RPC `listDirectory(path:)`.
+- **Ports section (Info tab):** host emits listening-port info per pane, sourced from `lsof -i` or `ss`, sent over the control channel.
+- **Git tab — branch/status:** host runs `git status --porcelain`, `git branch`, `git log --oneline origin..HEAD` in the pane's cwd and streams results. Pure host-side query, client-side rendering.
 
 ### What cannot map 1:1 and why
 
-- **Working directory (Info tab):** The working directory is HOST-side (reported by the remote shell via OSC 7 or by ptrace/proc-fs). SlopDesk already tracks OSC 7 (`OSC 7 — Current Working Directory` in the VT reference). This works, but the PATH shown is always the host's filesystem path, not the client's — must display it clearly as a remote path.
-- **"Reveal in Finder" action:** Not applicable for a remote host. Should be replaced with "Copy Path" only, or a "Show in Remote Files" action that opens the path in slopdesk's own file panel. Cannot open macOS Finder on a remote machine.
-- **"Open in VS Code / Cursor / Xcode / Typora" actions:** These open local applications on the CLIENT machine, pointing at a REMOTE path. Requires either: (a) a remote-open protocol (VS Code Remote / SSH extension), (b) mounting the remote filesystem via SSHFS first, or (c) omitting these actions until remote-FS support exists. Flag as P2.
-- **"Copy Session ID / View Session History / Fork in…" (agent actions, Info tab):** These are agent-pane-specific (OpenCode/Claude Code integration). SlopDesk's `ClaudeStatus`/`ClaudePaneDetector` already exists per memory; wire these to the agent's session metadata from the host. "Fork in…" requires knowing the remote agent's fork API.
-- **Git "Commit" / "Fork" toolbar buttons (Git tab):** Executing git commit requires running a command on the HOST. "Fork" opens a native Git client (configured in Settings → Controls → Open With). For slopdesk, the Commit action must either: (a) send a PTY command to the host's terminal, or (b) be omitted (read-only git status view only initially). Flag as P2 (requires host-side command execution beyond PTY).
-- **Git inline diff viewer (Git tab):** `git diff` output can be retrieved from the host over the control channel and rendered client-side as a diff view. The diff viewer overlay positioning (floating over the panel) is a client-side layout concern. Maps with effort.
-- **Hover actions on file rows (Git tab):** These are purely client-side UI interactions — fully implementable.
-- **Files tab — file tree:** Directory listing is a host-side query. Each expand/collapse requires a new RPC call to the host for subdirectory contents, or a full-tree snapshot up to N levels. Implement as lazy loading per directory expand. Fully feasible over the control channel.
-- **Files tab — file search ("Find" field):** Requires either client-side filtering of already-fetched tree, or a host-side `find`/`fd` query. Start with client-side filter of fetched subtree; upgrade to host-side search for large trees.
-- **iOS client:** The Details Panel is a sidebar; on iOS it should become a modal sheet or a bottom drawer that slides up, since the narrow screen cannot accommodate a persistent right-side panel alongside the terminal.
+- **Working directory (Info tab):** cwd is HOST-side (remote shell via OSC 7 or ptrace/proc-fs). SlopDesk already tracks OSC 7. Works, but the path is always the host's filesystem path, not the client's — must display clearly as a remote path.
+- **"Reveal in Finder":** N/A for a remote host (can't open macOS Finder remotely). Replace with "Copy Path" only, or a "Show in Remote Files" action opening the path in slopdesk's own file panel.
+- **"Open in VS Code / Cursor / Xcode / Typora":** open local CLIENT apps pointing at a REMOTE path. Needs either (a) a remote-open protocol (VS Code Remote / SSH extension), (b) mounting the remote FS via SSHFS first, or (c) omitting until remote-FS support exists. P2.
+- **"Copy Session ID / View Session History / Fork in…" (agent, Info tab):** agent-pane-specific (OpenCode/Claude Code). SlopDesk's `ClaudeStatus`/`ClaudePaneDetector` already exist; wire to the agent's session metadata from the host. "Fork in…" needs the remote agent's fork API.
+- **Git "Commit" / "Fork" (Git tab):** commit requires running a command on the HOST; "Fork" opens a native Git client (Settings → Controls → Open With). For slopdesk, Commit must either (a) send a PTY command to the host terminal, or (b) be omitted (read-only git status view initially). P2 (needs host-side command execution beyond PTY).
+- **Git inline diff viewer (Git tab):** retrieve `git diff` from the host over the control channel, render client-side. Overlay positioning (floating over the panel) is a client-side layout concern. Maps with effort.
+- **Hover actions on file rows (Git tab):** purely client-side UI — fully implementable.
+- **Files tab — file tree:** directory listing is host-side. Each expand/collapse needs an RPC for subdirectory contents, or a full-tree snapshot up to N levels. Implement as lazy loading per expand. Fully feasible over the control channel.
+- **Files tab — file search ("Find"):** client-side filtering of the fetched tree, or a host-side `find`/`fd` query. Start with client-side filter; upgrade to host-side search for large trees.
+- **iOS client:** the sidebar becomes a modal sheet or bottom drawer that slides up, since the narrow screen cannot fit a persistent right-side panel alongside the terminal.

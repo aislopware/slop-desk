@@ -2,30 +2,25 @@
 
 ## Summary
 
-Vi Mode turns the terminal pane into a read-only, vi-style navigator of scrollback history. While active, the terminal stops forwarding keys to the shell; instead every keystroke drives the vi cursor through the scrollback buffer. The user can move, select text in three visual modes (character, line, block), search forward/backward, and yank the selection to the clipboard. A dedicated pill UI element shows the current mode and any pending repeat count. Exiting returns the terminal to normal input mode.
+Vi Mode makes the terminal pane a read-only, vi-style navigator of scrollback. While active, keystrokes drive the vi cursor instead of the shell: move, select in three visual modes (character, line, block), search forward/backward, and yank to clipboard. A pill UI shows the current mode and pending repeat count. Exiting restores normal input.
 
-> **Status:** Supported in terminal pane only. SlopDesk has no built-in code editor pane, so this is a terminal-only feature.
+> **Status:** Terminal pane only. SlopDesk has no code-editor pane, so this is terminal-only.
 
 ---
 
 ## Behaviors
 
-- Entering Vi Mode suspends all key forwarding to the shell; keys exclusively drive the vi cursor through scrollback.
-- The Enter Vi Mode binding is `⌃⇧Space` (Control-Shift-Space) by default, and is remappable via the **Vi Mode** command in Keybindings.
-- A separate **Mark Mode** command (no default binding) enters the same mode with arrow-key + Shift-select emphasis, so the user can select without learning vi letters.
-- Arrow keys mirror `h`/`j`/`k`/`l`, enabling Mark Mode navigation without vi knowledge.
-- Any motion can be prefixed by a numeric repeat count (e.g. `5j` moves down five lines, `3w` jumps three words forward, `10k` up ten lines).
-- The pending repeat count is displayed live inside the Vi Mode pill as the user types the digits.
-- A key-hint bar can be toggled on/off with `⌘/` while in Vi Mode (**Vi Mode Key Hints** command in Keybindings).
-- Vi Mode is exited by pressing `Esc`, `q`, or clicking the `×` control on the pill.
-- Three visual selection modes are available: character-wise (`v`), line-wise (`V`), and block/rectangular (`⌃v`).
-- Within a selection, `o` swaps the cursor to the opposite end of the selection (anchor swap).
-- `y` yanks the selection to the system clipboard and exits Vi Mode.
-- `Enter` copies the selection and exits Vi Mode.
-- `/` opens the find bar and searches forward through the scrollback; `?` opens it searching backward.
-- After typing a query and pressing `Esc`, focus returns to the scrollback buffer; `n` steps the vi cursor to the next match in the search direction, `N` steps against it.
-- `f` enters Hint Mode for keyboard-driven clicking of on-screen links (complementary feature; see Hint Mode spec).
-- Vi Mode has no config-file keys; the only customization surface is remapping commands in Keybindings.
+- Entering suspends all key forwarding to the shell; keys exclusively drive the vi cursor through scrollback (client intercepts before transport).
+- Enter binding: `⌃⇧Space` by default, remappable via the **Vi Mode** command in Keybindings.
+- **Mark Mode** command (no default binding) enters the same mode with arrow-key + Shift-select emphasis, so users can select without vi letters. Arrow keys mirror `h`/`j`/`k`/`l`.
+- Any motion takes a numeric repeat-count prefix (`5j`, `3w`, `10k`); pending digits show live in the pill.
+- Key-hint bar toggles with `⌘/` (**Vi Mode Key Hints** command).
+- Exit with `Esc`, `q`, or the pill's `×`.
+- Visual selection: character `v`, line `V`, block/rectangular `⌃v`. `o` swaps the cursor to the opposite selection end (anchor swap).
+- `y` yanks to system clipboard and exits; `Enter` copies and exits.
+- `/` opens the find bar searching forward; `?` searches backward. After a query, `Esc` returns focus to scrollback; `n` steps to the next match in the search direction, `N` against it.
+- `f` enters Hint Mode for keyboard-driven link clicking (see Hint Mode spec).
+- No config-file keys; only customization is remapping commands in Keybindings.
 
 ---
 
@@ -90,32 +85,31 @@ Vi Mode has no config-file keys.
 
 ## Visual spec
 
-This page contains no screenshots. The following UI description is derived from the textual description in the documentation.
+No screenshots; description derived from the docs text.
 
 ### Vi Mode Pill
 
-- A pill-shaped badge appears in the terminal pane while Vi Mode is active.
-- The pill displays the current mode state (e.g. "Vi Mode", "VISUAL", "VISUAL LINE", "VISUAL BLOCK").
-- While the user types a numeric repeat-count prefix, the pending digits are shown live inside the pill.
-- The pill carries an `×` button that exits Vi Mode when clicked.
-- The pill is persistent and visible throughout the Vi Mode session.
+- Pill-shaped badge in the terminal pane while active; persistent throughout the session.
+- Displays mode state ("Vi Mode", "VISUAL", "VISUAL LINE", "VISUAL BLOCK").
+- Shows pending repeat-count digits live as typed.
+- Carries an `×` button that exits on click.
 
 ### Key-Hint Bar
 
-- Toggled by `⌘/` (remappable as **Vi Mode Key Hints** command).
-- A bar (position not specified — likely bottom of the pane or overlaid) showing available key bindings for quick reference.
-- Toggle is per-session and off by default (the `⌘/` binding suggests it is shown on demand).
+- Toggled by `⌘/` (remappable as **Vi Mode Key Hints**).
+- A bar (position unspecified — likely bottom of pane or overlaid) listing available bindings.
+- Per-session, off by default (on demand).
 
 ### Find Bar
 
 - `/` and `?` open the pane's shared find bar.
-- Pressing `Esc` closes the find bar and hands focus back to the scrollback buffer so vi cursor keys take effect again.
+- `Esc` closes it and returns focus to scrollback so vi cursor keys take effect.
 
 ---
 
 ## Screenshots
 
-No screenshots are present on this documentation page.
+None on this page.
 
 ---
 
@@ -123,18 +117,18 @@ No screenshots are present on this documentation page.
 
 ### Feasible directly
 
-- **Scrollback navigation motions** (`h`/`j`/`k`/`l`, `w`/`b`/`e`, `0`/`$`/`^`, `H`/`M`/`L`, `g g`/`G`, `⌃u`/`⌃d`, `⌃b`/`⌃f`): libghostty's terminal model tracks scrollback; motion can be implemented by translating vi keys into scrollback position updates, identical to local behavior.
-- **Numeric repeat-count prefix**: pure client-side state; count accumulates locally, then the resolved motion is applied. No host involvement.
-- **Visual selection modes** (character, line, block): libghostty supports selection; slopdesk can extend it to support all three modes by driving libghostty's selection API client-side.
-- **Yank to clipboard** (`y` / `Enter`): copying selected text from libghostty's buffer to the system clipboard is client-side on macOS and iOS (NSPasteboard / UIPasteboard). No host involvement.
-- **Key-hint bar**: a pure client-side overlay UI; no host involvement.
-- **Vi Mode pill**: a client-side SwiftUI overlay on the terminal pane.
+- **Scrollback navigation motions** (`h`/`j`/`k`/`l`, `w`/`b`/`e`, `0`/`$`/`^`, `H`/`M`/`L`, `g g`/`G`, `⌃u`/`⌃d`, `⌃b`/`⌃f`): libghostty tracks scrollback; translate vi keys into scrollback position updates, identical to local behavior.
+- **Numeric repeat-count prefix**: pure client-side state; count accumulates locally, then resolved motion applies. No host involvement.
+- **Visual selection modes** (character, line, block): libghostty supports selection; drive its selection API client-side for all three modes.
+- **Yank to clipboard** (`y` / `Enter`): client-side on macOS and iOS (NSPasteboard / UIPasteboard). No host involvement.
+- **Key-hint bar**: pure client-side overlay UI.
+- **Vi Mode pill**: client-side SwiftUI overlay on the terminal pane.
 
 ### Requires adaptation
 
-- **Find bar (`/` / `?`)**: SlopDesk must implement its own in-pane search against libghostty's scrollback content. The behavior (open, type query, `Esc` to buffer, `n`/`N` to step) is well-specified and implementable, but requires a search index over scrollback lines. This is fully client-side on the slopdesk client — no host involvement needed.
-- **Hint Mode (`f`)**: a complementary feature that keyboard-annotates visible links for clicking. On slopdesk, link positions come from the libghostty render model. Clicking a link would inject a mouse-click event to the HOST via the slopdesk input path (not a local browser open), because the terminal session lives on the macOS host. This is an architectural consequence of the remote model: a purely local terminal can just open the URL locally, but slopdesk must decide whether to open the URL on the client (if OSC 8 hyperlink content is tunneled) or inject a click on the host. This needs an explicit decision on the URL-open side before it can be implemented.
-- **Mark Mode (arrow-key + Shift-select emphasis)**: a variant entry point with no default binding. Fully implementable client-side; just a different key-input interpretation layer, once Keybindings support it.
-- **iOS client**: all vi-cursor motion and selection modes must work via on-screen key overlays or external keyboard on iOS. The `⌃⇧Space` entry binding needs an alternative trigger for software-keyboard users. The pill and key-hint bar must adapt to the iOS HIG (smaller touch targets, no hover states).
-- **Remote scrollback boundary**: slopdesk streams terminal output from the host; the full scrollback history depends on what has been received by the client. If the client reconnects mid-session, older scrollback may not be locally available. This is a structural gap relative to a purely local terminal, where scrollback is always complete. The `ReplayBuffer` (64 MiB ceiling) mitigates this but does not guarantee full history.
-- **Key forwarding suspension**: in slopdesk, keys are normally forwarded over the network to the host PTY. In Vi Mode, the client must intercept keys BEFORE they are enqueued for host transmission. This is an interception point at the `SlopDeskClientUI` key-event layer — must ensure no keys leak to the transport while Vi Mode is active.
+- **Find bar (`/` / `?`)**: SlopDesk implements its own in-pane search over libghostty scrollback content, requiring a search index over scrollback lines. Behavior (open, type, `Esc` to buffer, `n`/`N` step) is well-specified. Fully client-side — no host involvement.
+- **Hint Mode (`f`)**: keyboard-annotates visible links for clicking. Link positions come from the libghostty render model. Because the session lives on the macOS host, clicking either injects a mouse-click to the HOST via the input path or opens the URL on the client (if OSC 8 hyperlink content is tunneled) — an architectural consequence of the remote model. **Needs an explicit URL-open-side decision before implementation.**
+- **Mark Mode (arrow-key + Shift-select)**: variant entry point, no default binding. Fully client-side — a different key-input interpretation layer, once Keybindings support it.
+- **iOS client**: all vi-cursor motion and selection must work via on-screen key overlays or external keyboard. `⌃⇧Space` needs an alternative trigger for software-keyboard users. Pill and key-hint bar must adapt to iOS HIG (smaller touch targets, no hover).
+- **Remote scrollback boundary**: full history depends on what the client has received; after a mid-session reconnect, older scrollback may be locally unavailable — a structural gap vs a local terminal. The `ReplayBuffer` (64 MiB ceiling) mitigates but does not guarantee full history.
+- **Key forwarding suspension**: keys normally forward over the network to the host PTY; in Vi Mode the client must intercept them BEFORE enqueue for host transmission, at the `SlopDeskClientUI` key-event layer — no keys may leak to the transport while active.

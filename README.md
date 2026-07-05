@@ -1,11 +1,11 @@
 # SlopDesk
 
-SlopDesk drives a remote Mac from another Apple device. A macOS **host** exposes its
-shells and windows; macOS and iOS/iPadOS **clients** present them as a tiling workspace of
-panes — sessions grouped by host, tabs per session, and recursive splits per tab, with
-optional floating scratch panes on top. A pane is either a terminal or a live GUI window,
-and you mix both in the same workspace. The usual setup is several shells and **Claude Code**
-agents running on a workstation, supervised from a laptop or iPad with no perceptible lag.
+SlopDesk drives a remote Mac from another Apple device. A macOS **host** exposes its shells
+and windows; macOS and iOS/iPadOS **clients** present them as a tiling workspace of panes —
+sessions grouped by host, tabs per session, recursive splits per tab, with optional floating
+scratch panes on top. A pane is either a terminal or a live GUI window, and you mix both in
+one workspace. The usual setup: several shells and **Claude Code** agents on a workstation,
+supervised from a laptop or iPad with no perceptible lag.
 
 Two things make that work:
 
@@ -37,9 +37,9 @@ buffer gives byte-exact lossless reconnect after a drop.
 **GUI window panes** mirror a single host window — VS Code, Xcode, a browser — over UDP.
 ScreenCaptureKit captures the window, VideoToolbox encodes HEVC at up to 60 fps, and the
 client decodes to Metal. The path carries Reed–Solomon FEC, adaptive bitrate and congestion
-control, long-term-reference loss recovery, and a client-side cursor drawn at display
-refresh so pointer latency is just the round trip. Input is injected back into the host
-window with CGEvent.
+control, long-term-reference loss recovery, and a client-side cursor drawn at display refresh
+so pointer latency is just the round trip. Input is injected back into the host window with
+CGEvent.
 
 Alongside the panes, a **read-only Claude Code inspector** tails the JSONL transcript and
 hooks on a second TCP connection and surfaces tool calls, subagents, and todos. It only
@@ -49,35 +49,35 @@ Because the point is supervising several agents at once, the workspace is built 
 **"which agent needs me?" loop**. The host detects a `claude` running in any terminal pane
 and tracks its state (idle / working / blocked / done); the client renders that as a
 concentric attention ring (red when an agent is blocked on a permission prompt, green when
-done) that shows even on a background pane, plus tab glow, an OS notification on the edge, and
+done) visible even on a background pane, plus tab glow, an edge OS notification, and
 **jump-to-unread** (⌘⇧U) to focus the oldest pane needing attention. The app never adds its
 own approval gate — it surfaces the agent's own blocked state and lets you type the answer;
 the security boundary stays the network. The same status is exposed headlessly through
 `slopdesk-ctl`: a push events stream and per-pane state so an orchestrator can supervise
-without polling. Other workspace conveniences: **sync-input** (⌘⇧I) fans keystrokes to every
-pane in a tab, and a keyboard **copy-mode** (⌘⇧C) navigates and copies scrollback with
-tmux/zellij-style keys. The UI is a modern dark IDE — pane focus ring, elevation, semantic
-status accents, and a glass command palette — over the libghostty surfaces.
+without polling. Other conveniences: **sync-input** (⌘⇧I) fans keystrokes to every pane in a
+tab, and a keyboard **copy-mode** (⌘⇧C) navigates and copies scrollback with tmux/zellij-style
+keys. The UI is a modern dark IDE — pane focus ring, elevation, semantic status accents, and a
+glass command palette — over the libghostty surfaces.
 
 The three transports share nothing — separate sockets, message sets, and version constants.
 The host rejects any version other than `1` rather than negotiating.
 
 ## Architecture
 
-Native Swift is the single source of truth for everything on the wire: the terminal and
-video codecs, FEC and frame reassembly, the realtime controllers (congestion and ABR, the
-fps governor, LTR, the decode gate and sequencer, the jitter pacer, the delay-gradient
-trendline, recovery admission), coordinate mapping, and the terminal/PTY protocol including
-its SSH-style channel mux and per-channel flow control. There is no second implementation to
-keep in sync and no FFI boundary; the wire is frozen by a golden corpus
-(`golden/golden_vectors.json`) so a refactor can't silently shift a byte.
+Native Swift is the single source of truth for everything on the wire: the terminal and video
+codecs, FEC and frame reassembly, the realtime controllers (congestion and ABR, the fps
+governor, LTR, the decode gate and sequencer, the jitter pacer, the delay-gradient trendline,
+recovery admission), coordinate mapping, and the terminal/PTY protocol including its SSH-style
+channel mux and per-channel flow control. There is no second implementation to keep in sync
+and no FFI boundary; the wire is frozen by a golden corpus (`golden/golden_vectors.json`) so a
+refactor can't silently shift a byte.
 
-The only non-Swift code is `Sources/CSlopDeskSIMD`: ONE aarch64 NEON kernel, the GF(2⁸)
-region multiply used by FEC, guarded `#if defined(__aarch64__)` with a scalar fallback
-otherwise. SwiftPM compiles it from source every build — no cbindgen, no marshalling, no
-prebuilt staticlib, no build ordering. Frame hashing is pure scalar Swift (xxHash64 is
-64-bit-multiply-heavy and Apple Silicon has no native 64-bit lane multiply, so the scalar
-path beats a synthesized-NEON fold). Both the NEON kernel and the scalar hash are pinned
+The only non-Swift code is `Sources/CSlopDeskSIMD`: ONE aarch64 NEON kernel, the GF(2⁸) region
+multiply used by FEC, guarded `#if defined(__aarch64__)` with a scalar fallback otherwise.
+SwiftPM compiles it from source every build — no cbindgen, no marshalling, no prebuilt
+staticlib, no build ordering. Frame hashing is pure scalar Swift (xxHash64 is
+64-bit-multiply-heavy and Apple Silicon has no native 64-bit lane multiply, so the scalar path
+beats a synthesized-NEON fold). Both the NEON kernel and the scalar hash are pinned
 bit-for-bit against their scalar references by differential tests.
 
 ## Module map (SwiftPM)
@@ -109,17 +109,16 @@ bit-for-bit against their scalar references by differential tests.
 | `slopdesk-bench`       | exec | Micro-benchmark for the hot paths (frame hash, GF region multiply, RS FEC). |
 | `slopdesk-framewatch`, `slopdesk-capture-probe`, `slopdesk-fake-client` | exec | Diagnostics: ScreenCaptureKit cadence, window capture, host-side fake client. |
 
-There is no FFI boundary: the codecs, FEC, controllers, and terminal protocol are native
-Swift, linked directly. The package is 14 Swift libraries, 10 executables, 12 test targets,
-and 2 C targets (`CSlopDeskSIMD`, the NEON kernel, plus `CSlopDeskVirtualDisplay`, a
-virtual-display header shim) — both compiled from source by SwiftPM.
+The package is 14 Swift libraries, 10 executables, 12 test targets, and 2 C targets
+(`CSlopDeskSIMD`, the NEON kernel, plus `CSlopDeskVirtualDisplay`, a virtual-display header
+shim), both compiled from source by SwiftPM. The codecs, FEC, controllers, and terminal
+protocol are native Swift, linked directly with no FFI boundary.
 
 ## Build & run
 
 The libraries, CLIs, and tests are headless: no GUI, no libghostty, no signing. A clean
-checkout builds with no prerequisite — there is no Rust toolchain, no staticlib to
-pre-build, and no build ordering. The only C is the in-tree `CSlopDeskSIMD` target, which
-SwiftPM compiles from source.
+checkout builds with no prerequisite — no Rust toolchain, no staticlib to pre-build, no build
+ordering. The only C is the in-tree `CSlopDeskSIMD` target, which SwiftPM compiles from source.
 
 ```sh
 swift build               # 14 libs + 10 executables (+ 2 C targets, built from source)
@@ -145,23 +144,22 @@ swift build -c release
 | `--transcript PATH` | Inject the Claude Code JSONL transcript path the inspector tails (implies `--inspector`). |
 
 Every channel spawns a plain login shell; the curated `--claude` launch mode is retired. A
-Claude session is now just a `.terminal` pane that runs `claude`, auto-detected by the
-host's process-watch and hook listener and offered client-side as a launch preset. Terminal
-sessions survive client disconnects: a returning client resumes byte-exact from the replay
-buffer, and long-offline sessions are reaped on an idle timeout. The host defaults to the
-libghostty `TERM`, probes terminfo at spawn, and falls back to `xterm-256color` when the
-ghostty entry is missing.
+Claude session is now just a `.terminal` pane that runs `claude`, auto-detected by the host's
+process-watch and hook listener and offered client-side as a launch preset. Terminal sessions
+survive client disconnects: a returning client resumes byte-exact from the replay buffer, and
+long-offline sessions are reaped on an idle timeout. The host defaults to the libghostty
+`TERM`, probes terminfo at spawn, and falls back to `xterm-256color` when the ghostty entry is
+missing.
 
-A GUI-window host (needs Screen Recording + Accessibility, and a real GUI session — not
-SSH):
+A GUI-window host (needs Screen Recording + Accessibility, and a real GUI session — not SSH):
 
 ```sh
 .build/release/slopdesk-videohostd --list             # enumerate windows
 .build/release/slopdesk-videohostd --window-id <N>     # serve one window (60 fps default)
 ```
 
-`--fps N` overrides the capture/encode rate (default 60; 30 is lighter but visibly less
-smooth on scroll and motion).
+`--fps N` overrides the capture/encode rate (default 60; 30 is lighter but visibly less smooth
+on scroll and motion).
 
 ### Interactive terminal client
 
@@ -171,8 +169,7 @@ smooth on scroll and motion).
 
 Every keystroke, including `Ctrl-C`, is forwarded raw to the remote shell. The only local
 escape is `Ctrl-]`, a clean disconnect. The local terminal is always restored on exit,
-including on signals. For scripting, `--no-raw` pipe mode waits for the remote session to
-exit:
+including on signals. For scripting, `--no-raw` pipe mode waits for the remote session to exit:
 
 ```sh
 printf 'echo hello\nexit\n' | .build/release/slopdesk-client --host <host> --port 7420 --no-raw

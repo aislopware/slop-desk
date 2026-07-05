@@ -1,8 +1,8 @@
 # 01 — Overall Architecture
 
-> **STATUS: REFERENCE — GUI video-path design depth.** This path is shipped and co-equal with terminal panes — the old "Phase 4 / secondary" framing is retired. Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
+> **STATUS: REFERENCE — GUI video-path design depth.** Shipped and co-equal with terminal panes; the old "Phase 4 / secondary" framing is retired. Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-> The client is one unified infinite canvas of panes. A pane is either a **terminal pane** (host PTY → TCP → libghostty, pixel-perfect text) or a **GUI-window pane** (ScreenCaptureKit → VideoToolbox HEVC → UDP video) — two co-equal pane transports, both shipped. This doc covers the **GUI video-path**. For the overall split — and why the terminal transport avoids input-injection — read **[12-coding-profile.md](12-coding-profile.md)** first.
+> The client is one unified infinite canvas of panes. A pane is either a **terminal pane** (host PTY → TCP → libghostty, pixel-perfect text) or a **GUI-window pane** (ScreenCaptureKit → VideoToolbox HEVC → UDP video) — two co-equal, both-shipped pane transports. This doc covers the **GUI video-path**; for the overall split — and why the terminal transport avoids input-injection — read **[12-coding-profile.md](12-coding-profile.md)** first.
 
 ## 1. The big picture
 
@@ -79,7 +79,7 @@ slopdesk/
 └── docs/
 ```
 
-**Principle:** the codecs / FEC / controllers are platform-independent Rust, the same core a future **Android client** consumes over the same C-ABI/JNI (the ALVR split: Rust owns reassembly/FEC/jitter/ABR/recovery; the platform shell owns capture, the socket, and the HW codec). The Swift shell owns ScreenCaptureKit capture, VideoToolbox, Metal rendering, and input. Rendering is Metal, shared by macOS + iOS.
+**Principle:** the codecs / FEC / controllers are platform-independent Rust — the same core a future **Android client** consumes over the same C-ABI/JNI (the ALVR split: Rust owns reassembly/FEC/jitter/ABR/recovery; the platform shell owns capture, the socket, and the HW codec). The Swift shell owns ScreenCaptureKit capture, VideoToolbox, Metal rendering (shared macOS + iOS), and input.
 
 ## 4. Data flow for one frame (happy path)
 

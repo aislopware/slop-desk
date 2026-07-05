@@ -1,18 +1,18 @@
 # SlopDesk UI-Shell — Design Gap Analysis
 
-Feature-by-feature matrix tracking slopdesk's own UI-shell design spec (UI + behavior) against the current client implementation, then extending it with the user's own feature (**remote window**).
+Feature matrix: slopdesk's UI-shell design spec (UI + behavior) vs. the current client, extended with the user's **remote window** feature.
 
-**Out of scope** (per directive): cloud-sync workflows; non-Claude agents (Codex / OpenCode). Where the spec mixes agent-generic and Claude-specific behavior, only the Claude Code path is in scope.
+**Out of scope** (directive): cloud-sync; non-Claude agents (Codex / OpenCode). Where the spec mixes agent-generic and Claude-specific behavior, only Claude Code is in scope.
 
 **Status legend**
-- **done** — fully implemented & wired in slopdesk today.
-- **partial** — domain/engine/data exists but the view or a wiring step is missing (the most common state — slopdesk has built most engines, the gap is the rendered surface + one mount).
+- **done** — implemented & wired today.
+- **partial** — domain/engine/data exists but the view or a wiring step is missing (the common state: engines built, gap is the rendered surface + one mount).
 - **missing** — no implementation.
-- **na-remote** — the documented behavior cannot map 1:1 onto the remote-host architecture; the cell records the closest faithful equivalent to build instead, or notes why it is dropped.
+- **na-remote** — can't map 1:1 onto the remote-host architecture; the cell records the closest faithful equivalent to build, or why it's dropped.
 
-**Sources.** The documented behavior cites the spec file under `docs/ui-shell/spec/`. Current state cites the capability map under `docs/ui-shell/current-state/` and the evidence symbols therein.
+**Sources.** Documented behavior cites `docs/ui-shell/spec/`. Current state cites the capability map under `docs/ui-shell/current-state/` and its evidence symbols.
 
-**Priority** 1 (highest) … 5 (lowest). P1 = foundational/blocking & high user value; P2 = core UI-shell surface; P3 = secondary UI-shell surface; P4 = polish / lower-value; P5 = nice-to-have or deep-host-dependency.
+**Priority** 1 (highest) … 5 (lowest). P1 = foundational/blocking, high value; P2 = core UI-shell surface; P3 = secondary surface; P4 = polish; P5 = nice-to-have or deep-host-dependency.
 
 ---
 
@@ -22,20 +22,20 @@ Feature-by-feature matrix tracking slopdesk's own UI-shell design spec (UI + beh
 |---|---|---|---|---|
 | A1 | Window → Tab → Pane hierarchy | **done** — `TreeWorkspace`/`Session`/`Tab`/`SplitNode` (`workspace-domain.md`) | none | — |
 | A2 | New tab `⌘T` | **done** — `openChooserPane(.newTab)` (`ui-shell.md`) | none | — |
-| A3 | Close focused pane→tab→window cascade `⌘W` | **done** — `closeActiveTab`/`closePaneTree` with cascade in `WorkspaceTreeOps` | confirm window-close terminal step on last tab | 3 |
-| A4 | Reopen last closed tab `⇧⌘T` (LIFO stack) | **partial** — `reopenClosedPane()` is **canvas-only; dead on the tree path**; no `.reopenClosedPane` case in `routeTree` | build a tree-path reopen stack + routing case | 2 |
+| A3 | Close focused pane→tab→window cascade `⌘W` | **done** — `closeActiveTab`/`closePaneTree` cascade in `WorkspaceTreeOps` | confirm window-close terminal step on last tab | 3 |
+| A4 | Reopen last closed tab `⇧⌘T` (LIFO stack) | **partial** — `reopenClosedPane()` is **canvas-only; dead on the tree path**; no `.reopenClosedPane` case in `routeTree` | build tree-path reopen stack + routing case | 2 |
 | A5 | Next/prev tab `⌘⇧]` / `⌘⇧[` | **done** — `cycleTab(by:)` | none | — |
 | A6 | Go to tab 1–9 `⌘1`–`⌘9` | **done** — `selectTabNumber` + `selectTabBindings` | none | — |
 | A7 | Split right/left/down/up `⌘D`/`⌘⌥D`/`⌘⇧D`/`⌘⌥⇧D` | **partial** — horizontal (`⌘D`) & vertical (`⌘⇧D`) done; **left/up variants** not registered | add split-left/split-up directional bindings | 3 |
-| A8 | Resize divider (drag) + keyboard nudge `⌘⌃⇧arrow` | **done** — `PaneDivider` live-resize; `resizeActivePane` keyboard (slopdesk uses `⌥⌘arrow`) | reconcile chord to the documented `⌘⌃⇧arrow` (or document divergence) | 4 |
+| A8 | Resize divider (drag) + keyboard nudge `⌘⌃⇧arrow` | **done** — `PaneDivider` live-resize; `resizeActivePane` keyboard (slopdesk `⌥⌘arrow`) | reconcile chord to `⌘⌃⇧arrow` (or document divergence) | 4 |
 | A9 | Equalize splits (dbl-click divider / `⌘⌃=`) | **done** — `balanceActivePaneSplits` (slopdesk `⌥⌘=`) | reconcile chord to `⌘⌃=` | 4 |
-| A10 | Focus next/prev pane `⌘]` / `⌘[` (sequential cycle) | **missing** — directional focus exists; no sequential cycle action | add `cyclePaneFocus(next/prev)` action + bindings | 2 |
+| A10 | Focus next/prev pane `⌘]` / `⌘[` (sequential cycle) | **missing** — directional focus exists; no sequential cycle | add `cyclePaneFocus(next/prev)` action + bindings | 2 |
 | A11 | Directional focus `⌘⌃arrow` | **done** — `moveFocusTreeUsingReportedLayout` (slopdesk `⌥⌘arrow`) | reconcile chord | 4 |
 | A12 | Vertical sidebar tab list (default layout) | **done** — `NavigatorColumn` + `SlateTabRow` | none | — |
-| A13 | Horizontal tab bar (top/bottom layout option) | **missing** — only vertical sidebar exists | add a horizontal tab-bar layout + `layout` setting | 4 |
+| A13 | Horizontal tab bar (top/bottom layout option) | **missing** — only vertical sidebar | add horizontal tab-bar layout + `layout` setting | 4 |
 | A14 | Active tab = white rounded card; `#N` shortcut badge; shell name | **partial** — white-card active row done; `#N` number & shell-name trailing label not shown | add number badge + process/shell trailing label to row | 3 |
 | A15 | Tab grouping (None / By Project / By Date) | **missing** — sort hamburger is **presentational only** | implement grouping (git-toplevel for project, activity time for date) | 4 |
-| A16 | Tab sort (Created / Updated / Manual drag) | **missing** — rows are in insertion order; hamburger no-op | add `createdAt`/`updatedAt` + sort modes + manual drag-reorder | 4 |
+| A16 | Tab sort (Created / Updated / Manual drag) | **missing** — rows in insertion order; hamburger no-op | add `createdAt`/`updatedAt` + sort modes + manual drag-reorder | 4 |
 | A17 | New-tab position (`auto`/`end`/`after-current`) | **missing** — `newTab` always `tabs.append` | add `newTabPosition` setting + insert-after-active path | 3 |
 | A18 | Sidebar auto-hide (`default`/`always`/`auto`) | **partial** — sidebar collapse `⌘⇧L` done; no single-tab auto-hide policy | add `auto-hide-tabs-panel` policy on tab-count change | 4 |
 | A19 | Rename tab — Name vs Prefix mode + reset (↺) | **partial** — spec side-table supports `fixedName`; no rename dialog UI; OSC-0/2 title done | build rename popover (Name/Prefix segmented + reset) | 3 |
@@ -48,10 +48,10 @@ Feature-by-feature matrix tracking slopdesk's own UI-shell design spec (UI + beh
 | A26 | Working-directory inheritance for new window/tab/split | **missing** — `newTab`/`splitActivePane` never read active pane `lastKnownCwd`; OSC 7 not piped into `lastKnownCwd` | wire OSC 7 → `lastKnownCwd`; add `working-directory` (inherit/home/path) policy | 2 |
 | A27 | Close confirmation (Closing Tab / Window: process/always/multiple_tabs) | **partial** — busy-shell close guard done; no per-target `process/always/multiple_tabs` policy or settings | add close-confirm policy enum + settings | 3 |
 | A28 | Save layout as Recipe `⌘S` (scope/content levels) | **partial** — `saveLayoutPreset` is **canvas-only**; `SessionTemplate` is a different abstraction | build tree-path Recipe save/restore subsystem | 3 |
-| A29 | Window size (`remember`/`grid`/`frame`, cols/rows/px) | **partial** — window restore behavior exists; no `window-size` mode setting | add `window-size` setting + grid/frame sizing | 4 |
+| A29 | Window size (`remember`/`grid`/`frame`, cols/rows/px) | **partial** — window restore exists; no `window-size` mode setting | add `window-size` setting + grid/frame sizing | 4 |
 | A30 | Pin window / always-on-top (View → Pin Window) | **missing** — no `NSWindow.level = .floating` path | add pin-window toggle (macOS) | 4 |
-| A31 | Picture-in-Picture (Current Pane / Follow Active) | **na-remote** — pane is a UDP HEVC stream, not a PiP layer | substitute: always-on-top window for the active pane (P4); true PiP deferred | 5 |
-| A32 | Multi-session UI (session list / switcher) | **partial** — `sessions: [Session]` + ops exist; `NavigatorColumn` renders only active session | add a session list / switcher in the sidebar | 3 |
+| A31 | Picture-in-Picture (Current Pane / Follow Active) | **na-remote** — pane is a UDP HEVC stream, not a PiP layer | substitute: always-on-top window for active pane (P4); true PiP deferred | 5 |
+| A32 | Multi-session UI (session list / switcher) | **partial** — `sessions: [Session]` + ops exist; `NavigatorColumn` renders only active session | add session list / switcher in sidebar | 3 |
 | A33 | `watch <CMD>` badge driver | **missing** | host-side `slopdesk watch` wrapper emitting OSC 9;4 + badge | 4 |
 
 ---
@@ -66,7 +66,7 @@ Feature-by-feature matrix tracking slopdesk's own UI-shell design spec (UI + beh
 | B4 | Outline tab: command marks / agent prompts / file ToC | **missing** — no Outline view (`BlockHistoryView` is command-block only) | build Outline tab from OSC-133 marks + agent prompt blocks | 3 |
 | B5 | Git tab: branch/remote/ahead-behind, changed files, inline diff | **partial** — Git tab renders empty state | host `git status/branch/log/diff` RPC; client diff renderer (read-only first) | 3 |
 | B6 | Files tab: file tree rooted at cwd + search field | **partial** — Files tab renders empty state | host `listDirectory(path:)` lazy RPC; client tree + filter | 3 |
-| B7 | Info: Reveal in Finder / Open in VS Code/Cursor/Xcode | **na-remote** — remote path; client Finder cannot reveal host path | substitute: Copy Path + "open on host" (`open -R` over PTY) where host is the Mac | 4 |
+| B7 | Info: Reveal in Finder / Open in VS Code/Cursor/Xcode | **na-remote** — remote path; client Finder can't reveal host path | substitute: Copy Path + "open on host" (`open -R` over PTY) where host is the Mac | 4 |
 | B8 | Info (agent): Copy Session ID / View History / Fork in… | **partial** — agent metadata exists; history/fork unbuilt | wire to Claude session metadata + history viewer + fork routing (see G) | 4 |
 | B9 | iOS: panel becomes modal sheet / drawer | **missing** — iOS inspector adaptation | add iOS sheet form of inspector | 4 |
 
@@ -76,7 +76,7 @@ Feature-by-feature matrix tracking slopdesk's own UI-shell design spec (UI + beh
 
 | # | Documented behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
-| C1 | Persistent status strip (cwd / process / git / last exit) | **missing** — no bottom status bar; `hideStatusBar` key exists with no UI | build a thin bottom strip: cwd (OSC 7), last exit (OSC 133 D), pane kind, host; honour `hideStatusBar` | 3 |
+| C1 | Persistent status strip (cwd / process / git / last exit) | **missing** — no bottom status bar; `hideStatusBar` key exists with no UI | build thin bottom strip: cwd (OSC 7), last exit (OSC 133 D), pane kind, host; honour `hideStatusBar` | 3 |
 | C2 | Full-path hover preview in bottom-left status area | **missing** — paired with link detection (see D) | render resolved path in status strip on ⌘-hover | 3 |
 
 ---
@@ -90,7 +90,7 @@ Feature-by-feature matrix tracking slopdesk's own UI-shell design spec (UI + beh
 | D3 | ⌘-hold underline highlight of detected links | **missing** | render underline decoration overlay while ⌘ held | 3 |
 | D4 | ⌘click open / ⌘⇧click reveal/copy / right-click menu | **partial** — right-click menu exists (copy/paste/split/find); no path-aware items | add path-aware ⌘click/⌘⇧click + "Change Directory Here"/"Open in" menu items | 3 |
 | D5 | Jump To `⌘J` (paths/links/commands in current pane) | **missing** — no `⌘J` jump-to panel | build Jump-To panel (reuse FuzzyMatcher) scanning current pane | 3 |
-| D6 | File pane / editor (syntect, ~120 grammars, save/reload, source⇄preview) | **na-remote** — no local file editor; remote files need a transfer sub-protocol | defer; a client-local file/markdown viewer pane is the closest faithful subset (P4) | 5 |
+| D6 | File pane / editor (syntect, ~120 grammars, save/reload, source⇄preview) | **na-remote** — no local file editor; remote files need a transfer sub-protocol | defer; client-local file/markdown viewer pane is the closest faithful subset (P4) | 5 |
 | D7 | Markdown/SVG/HTML live preview (`⌘E` toggle) | **na-remote** — depends on D6 | defer with D6; markdown preview is the cheapest subset | 5 |
 | D8 | Folder pane (directory browser) | **na-remote** — host FS; needs `listDirectory` RPC (shares B6) | reuse B6 file-tree as a pane kind | 4 |
 | D9 | Web browser pane (WKWebView) | **missing** — fully client-local, feasible | add `PaneKind.web` hosting WKWebView (non-persistent store) | 4 |
@@ -133,7 +133,7 @@ Feature-by-feature matrix tracking slopdesk's own UI-shell design spec (UI + beh
 | G1 | Command Palette `⌘⇧P` (sections, keycaps, ✓ toggle, ⌘↩ chain) | **partial** — `PaletteModel`/`SearchMixer`/`ActionsPaletteSource` done; **no PaletteView; OverlayCoordinator not mounted; ⌘K dispatch is nil no-op** | build PaletteView; mount OverlayCoordinator; pass `togglePalette` closure | 1 |
 | G2 | Palette CWD context badge (folder + path) | **partial** — needs cwd from OSC 7 cache | render cwd badge from cached OSC 7 | 3 |
 | G3 | Palette ✓ toggled-state + submenu `›` | **missing** — flat dispatch only | add toggle-state queries + submenu nav | 4 |
-| G4 | Open Quickly `⌘⇧O` (All/Opened/Recent/Folders/SSH/Agents/Current/Recipes) | **missing** — no `⌘⇧O` binding; `TabsPaletteSource` covers Opened only | add `⌘⇧O` opening palette with filter pills (Opened first; SSH/Agents/Recipes incremental) | 2 |
+| G4 | Open Quickly `⌘⇧O` (All/Opened/Recent/Folders/SSH/Agents/Current/Recipes) | **missing** — no `⌘⇧O` binding; `TabsPaletteSource` covers Opened only | add `⌘⇧O` palette with filter pills (Opened first; SSH/Agents/Recipes incremental) | 2 |
 | G5 | Open Quickly Actions popover `⌘K`; `⌘1–9` quick-pick | **missing** | add per-item actions popover + index quick-pick | 4 |
 | G6 | Jump To `⌘J` / Open Quickly "Current" (commands/links/outline) | **missing** — block-navigator seam exists; no overlay | build Jump-To/Current filter from OSC-133 block index | 3 |
 | G7 | Outline (per-pane command index, exit-status gutter) | **partial** — OSC-133 blocks parsed; no outline view (shares B4) | render outline rows w/ green/red/grey gutter | 3 |
@@ -321,8 +321,8 @@ Feature-by-feature matrix tracking slopdesk's own UI-shell design spec (UI + beh
 
 | # | Behavior | SlopDesk status | Gap delta | Pri |
 |---|---|---|---|---|
-| P1 | Remote-GUI pane (UDP HEVC video of a host window) in the split tree | **done** — `.remoteGUI` pane kind; `GuiLeafView`; in-pane chooser Terminal/Remote | keep first-class as the UI shell's tabs/splits/palette/drag-drop land | 2 |
-| P2 | Remote-window picker (over-wire discovery) | **partial** — `OverlayCoordinator` remote-picker state exists; mounted with the same OverlayCoordinator gap | mount remote picker when OverlayCoordinator is mounted | 2 |
+| P1 | Remote-GUI pane (UDP HEVC video of a host window) in the split tree | **done** — `.remoteGUI` pane kind; `GuiLeafView`; in-pane chooser Terminal/Remote | keep first-class as tabs/splits/palette/drag-drop land | 2 |
+| P2 | Remote-window picker (over-wire discovery) | **partial** — `OverlayCoordinator` remote-picker state exists; blocked by the same OverlayCoordinator mount gap | mount remote picker when OverlayCoordinator is mounted | 2 |
 | P3 | Connect-to-host overlay (host/port editor) | **partial** — `connectVisible`/`openConnect` exist; not mounted; pill `openConnect` is a TODO no-op | mount connect overlay (same OverlayCoordinator mount) | 2 |
 | P4 | Remote-GUI surfaces in palette/drag-drop/zoom/float like terminal panes | **partial** — pane kind participates in split tree; floating render + cross-feature surfacing pending | ensure remote-GUI panes flow through every new UI-shell surface | 3 |
 
@@ -330,12 +330,12 @@ Feature-by-feature matrix tracking slopdesk's own UI-shell design spec (UI + beh
 
 ## Cross-cutting "single mount unlocks many" findings
 
-1. **OverlayCoordinator is fully built but never mounted** (`ui-shell.md`, `palette-search.md`, `keybindings-commands.md`). Mounting it + passing `togglePalette`/`toggleCheatSheet`/`toggleFind`/`togglePeekReply`/remote-picker/connect closures into `WorkspaceKeyDispatcher` unlocks **⌘K palette, ⌘/ cheat sheet, ⌘F find, toasts, connect-to-host, remote-window picker, peek-and-reply** in one structural change — pending the missing *views* (PaletteView, CheatSheetView, TerminalFindBar).
+1. **OverlayCoordinator is built but never mounted** (`ui-shell.md`, `palette-search.md`, `keybindings-commands.md`). Mounting it + passing `togglePalette`/`toggleCheatSheet`/`toggleFind`/`togglePeekReply`/remote-picker/connect closures into `WorkspaceKeyDispatcher` unlocks **⌘K palette, ⌘/ cheat sheet, ⌘F find, toasts, connect-to-host, remote-window picker, peek-and-reply** in one structural change — pending the missing *views* (PaletteView, CheatSheetView, TerminalFindBar).
 
-2. **Tree-path dead seams**: `⇧⌘T` reopen (A4), `⌘S` save-layout (A28), are wired only on the retiring canvas path. Each needs a tree-path implementation + a `routeTree` case.
+2. **Tree-path dead seams**: `⇧⌘T` reopen (A4), `⌘S` save-layout (A28) are wired only on the retiring canvas path. Each needs a tree-path implementation + a `routeTree` case.
 
 3. **Engine-without-view pattern** recurs: find (F1), palette (G1), cheat-sheet (G9), block-navigator (G8), composer (I23), agent footer (O7), peek-and-reply, sidebar status dot (A20/O6). The cheapest wins are the views, not new engines.
 
-4. **Host RPC gap**: Details Git/Files/processes/ports (B3/B5/B6), history JSONL (O10), folders frecency-over-host, listening ports — all need a host control-channel directory/git/process listing service. This is the largest genuinely-new backend surface and should land as one shared epic.
+4. **Host RPC gap**: Details Git/Files/processes/ports (B3/B5/B6), history JSONL (O10), folders frecency-over-host, listening ports — all need a host control-channel directory/git/process listing service. This is the largest genuinely-new backend surface; land it as one shared epic.
 
-5. **Keybinding chord divergence**: slopdesk currently uses `⌥⌘` for several pane ops where the documented default keymap uses `⌘⌃`/`⌘⌃⇧`. Reconcile the default keymap to the documented chords (or make them overridable defaults) — low-risk since the override pipeline already exists.
+5. **Keybinding chord divergence**: slopdesk uses `⌥⌘` for several pane ops where the documented default keymap uses `⌘⌃`/`⌘⌃⇧`. Reconcile the default keymap to the documented chords (or make them overridable defaults) — low-risk, the override pipeline exists.

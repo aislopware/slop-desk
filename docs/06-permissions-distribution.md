@@ -1,6 +1,6 @@
 # 06 — Permissions, Entitlements & Distribution
 
-> **STATUS: REFERENCE — GUI video-path design depth.** This path is shipped and co-equal with terminal panes — the old "Phase 4 / secondary" framing is retired. Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
+> **STATUS: REFERENCE — GUI video-path design depth.** Shipped, co-equal with terminal panes (old "Phase 4 / secondary" framing retired). Architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
 ## 1. Required permissions (macOS host)
 
@@ -10,7 +10,7 @@
 | **Accessibility** | Posting events to other apps + raising/controlling windows via AX | ✅ Required |
 | **Input Monitoring** | ONLY if using `CGEventTap` to *observe* local input | ❌ Not needed to *post* events |
 
-The client (Mac/iOS) only needs **Local Network**, for same-LAN Bonjour discovery — see [03](03-transport-protocol.md#1-discovery--bonjour-zero-config). Bonjour does not traverse a WireGuard mesh, so peers reached over a trusted private network connect by IP/hostname instead.
+Client (Mac/iOS) needs only **Local Network**, for same-LAN Bonjour discovery — see [03](03-transport-protocol.md#1-discovery--bonjour-zero-config). Bonjour does not traverse a WireGuard mesh, so peers on a trusted private network connect by IP/hostname instead.
 
 ## 2. Info.plist
 
@@ -43,17 +43,17 @@ if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
 
 - Permissions **cannot be granted programmatically** — the user enables them in System Settings.
 - Grants are tied to the **code signature** — unsigned/ad-hoc rebuilds may lose the grant.
-- **Poll `AXIsProcessTrusted()`** (or watch for app reactivation) to detect when the user finishes enabling → update onboarding UI.
+- **Poll `AXIsProcessTrusted()`** (or watch for app reactivation) to detect when the user finishes → update onboarding UI.
 
 ## 4. Sandbox — dealbreaker
 
-- A **sandboxed app CANNOT obtain Accessibility**: the prompt never appears, it can't be added in Settings, `AXIsProcessTrusted()` stays false, and no entitlement re-enables it.
-- The app's core purpose is controlling other apps → **App Sandbox is fully disabled** on the host.
+- A **sandboxed app CANNOT obtain Accessibility**: the prompt never appears, it can't be added in Settings, `AXIsProcessTrusted()` stays false, no entitlement re-enables it.
+- Core purpose is controlling other apps → **App Sandbox is fully disabled** on the host.
 - **Consequence: no Mac App Store** (MAS requires the sandbox).
 
 ## 5. Hardened Runtime & Distribution
 
-- **Hardened Runtime** (required for notarization / Developer-ID) is fine — independent of the sandbox, and does not block event posting or AX. Posting CGEvents / using AX needs no special entitlement.
+- **Hardened Runtime** (required for notarization / Developer-ID) is fine — independent of the sandbox, does not block event posting or AX. Posting CGEvents / using AX needs no special entitlement.
 - **Distribution:** Developer-ID signed + **notarized**, shipped outside the App Store (DMG / website / Sparkle auto-update).
 
 ## 6. Onboarding flow (proposed)

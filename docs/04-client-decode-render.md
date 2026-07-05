@@ -1,14 +1,14 @@
 # 04 — Client: Decode + Render
 
-> **STATUS: REFERENCE — GUI video-path design depth.** This path is shipped and co-equal with terminal panes — the old "Phase 4 / secondary" framing is retired. Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
+> **STATUS: REFERENCE — GUI video-path design depth.** Shipped, co-equal with terminal panes (old "Phase 4 / secondary" framing retired). Architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-Runs on **both macOS and iOS/iPadOS** (shared code). Platform floor: macOS 26 / iOS 26. Pipeline: NALU (reassembled + FEC-recovered by the Rust core) → `VTDecompressionSession` → `CVPixelBuffer` → Metal render. The Rust core hands the shell decoded-ready access units; this doc covers the Swift shell's decode + present.
+Runs on **both macOS and iOS/iPadOS** (shared code). Floor: macOS 26 / iOS 26. Pipeline: NALU (reassembled + FEC-recovered by the Rust core) → `VTDecompressionSession` → `CVPixelBuffer` → Metal render. The core hands the shell decoded-ready access units; this doc covers the Swift shell's decode + present.
 
 ---
 
 ## 1. Building a CMFormatDescription from parameter sets
 
-A `CMVideoFormatDescription` is required before creating the decode session. Build it once from the parameter sets (strip the Annex-B start codes before passing them in).
+Required before creating the decode session. Build once from the parameter sets (strip Annex-B start codes first).
 
 ```swift
 // H.264 — SPS + PPS
@@ -24,15 +24,15 @@ CMVideoFormatDescriptionCreateFromHEVCParameterSets(
     nalUnitHeaderLength: 4, extensions: nil, formatDescriptionOut: &fmt)
 ```
 
-> ⚠️ **Pointer lifetime:** `Data.withUnsafeBytes` is scoped. You must keep the `Data` alive across the call (nest `withUnsafeBytes` directly or use `withExtendedLifetime`), otherwise you get hard-to-reproduce crashes.
+> ⚠️ **Pointer lifetime:** `Data.withUnsafeBytes` is scoped. Keep the `Data` alive across the call (nest `withUnsafeBytes` directly or use `withExtendedLifetime`) or you get hard-to-reproduce crashes.
 
-When the parameter sets change (resolution change) → build a new `CMVideoFormatDescription` + a new session. Check `VTDecompressionSessionCanAcceptFormatDescription` before tearing down.
+On parameter-set change (resolution change) → build a new `CMVideoFormatDescription` + session. Check `VTDecompressionSessionCanAcceptFormatDescription` before tearing down.
 
 ---
 
 ## 2. Assembling NALUs → CMSampleBuffer (AVCC)
 
-VideoToolbox requires **AVCC** (length-prefixed), not Annex-B. If the transport sends Annex-B, convert:
+VideoToolbox requires **AVCC** (length-prefixed), not Annex-B. Convert if the transport sends Annex-B:
 
 ```swift
 func annexBToAVCC(_ body: Data) -> Data {
@@ -41,7 +41,7 @@ func annexBToAVCC(_ body: Data) -> Data {
 }
 ```
 
-> ⚠️ **Multi-slice:** one frame can contain multiple slice NALUs. Combine **all of them** into a single `CMBlockBuffer` (`[len][nalu][len][nalu]...`) and create one `CMSampleBuffer` with `sampleCount = 1`. Splitting into multiple samples → half-rendered frames, artifacts.
+> ⚠️ **Multi-slice:** one frame can hold multiple slice NALUs. Combine **all** into a single `CMBlockBuffer` (`[len][nalu][len][nalu]...`) and create one `CMSampleBuffer` with `sampleCount = 1`. Splitting → half-rendered frames, artifacts.
 
 ```swift
 var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: pts, decodeTimeStamp: .invalid)
@@ -71,7 +71,7 @@ VTDecompressionSessionCreate(allocator: kCFAllocatorDefault, formatDescription: 
 VTSessionSetProperty(session, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
 ```
 
-Decode (use the output-handler closure for brevity):
+Decode (output-handler closure):
 
 ```swift
 VTDecompressionSessionDecodeFrameWithOutputHandler(
@@ -84,11 +84,11 @@ VTDecompressionSessionDecodeFrameWithOutputHandler(
 }
 ```
 
-**Latency levers:** `RealTime=true`, drop `enableTemporalProcessing` (removes the reorder buffer), NV12 native + IOSurface (zero-copy), no heavy work in the callback.
+**Latency levers:** `RealTime=true`; drop `enableTemporalProcessing` (removes the reorder buffer); NV12 native + IOSurface (zero-copy); no heavy work in the callback.
 
 ### Decode error handling
 
-VideoToolbox has no "request keyframe" API — you must signal back to the **host** over the control channel.
+VideoToolbox has no "request keyframe" API — signal back to the **host** over the control channel.
 
 | Error code | Meaning | Action |
 |--------|---------|-----------|
@@ -105,7 +105,7 @@ VideoToolbox has no "request keyframe" API — you must signal back to the **hos
 
 ### Option A — CAMetalLayer + CVMetalTextureCache (lowest latency, **recommended**)
 
-The `CVPixelBuffer` from VideoToolbox is backed by an IOSurface → `CVMetalTextureCacheCreateTextureFromImage` maps it to an `MTLTexture` **zero-copy**.
+The `CVPixelBuffer` is IOSurface-backed → `CVMetalTextureCacheCreateTextureFromImage` maps it to an `MTLTexture` **zero-copy**.
 
 ```swift
 metalLayer.device = device
@@ -119,11 +119,11 @@ metalLayer.maximumDrawableCount = 2     // 2 = lowest latency (VALID on iOS — 
 // Per frame: create 2 textures (Y plane .r8Unorm, UV plane .rg8Unorm) from NV12 → YCbCr→RGB shader → present
 ```
 
-NV12→RGB fragment shader uses BT.601/709 coefficients (same coefficients the Rust core's YCbCr math is bit-checked against). iOS has no `displaySyncEnabled` (always presents at vsync; ProMotion 120Hz brings the worst case down to 8.3ms).
+NV12→RGB fragment shader uses BT.601/709 coefficients (the same coefficients the Rust core's YCbCr math is bit-checked against). iOS has no `displaySyncEnabled` (always presents at vsync; ProMotion 120Hz brings the worst case down to 8.3ms).
 
 ### Option B — AVSampleBufferDisplayLayer (simplest)
 
-Accepts a `CMSampleBuffer` directly (even compressed — the layer decodes by itself). Required for Picture-in-Picture on iOS.
+Accepts a `CMSampleBuffer` directly (even compressed — the layer decodes itself). Required for Picture-in-Picture on iOS.
 
 ```swift
 // Set controlTimebase BEFORE enqueueing; use the host clock to present immediately:
@@ -150,16 +150,16 @@ displayLayer.enqueue(sampleBuffer)   // displays when PTS <= timebase
 
 ## 4b. Frame pacing — render-on-arrival + Pacer
 
-The pacing **policy** (decode gate / sequencer / jitter-depth) lives in the Rust core; the Swift shell owns the vsync tick + present. On a low-loss link, **default to render-on-arrival, NO jitter buffer** (see [10 §2–3](10-latency-optimization.md)). If judder appears due to vsync phase mismatch, add a Moonlight-style Pacer:
+The pacing **policy** (decode gate / sequencer / jitter-depth) lives in the Rust core; the Swift shell owns the vsync tick + present. On a low-loss link, **default to render-on-arrival, NO jitter buffer** (see [10 §2–3](10-latency-optimization.md)). If judder appears from vsync phase mismatch, add a Moonlight-style Pacer:
 - **2 queues + a dedicated render thread**, vsync tick via **`CVDisplayLink`** (macOS) / **`CADisplayLink`** (iOS) — replacing Windows' `WaitForVBlank`.
-- Cap render-ahead at **3 frames**; frame-drop based on a 500ms window history (drop aggressively if the queue is *continuously* >1).
-- `AVSampleBufferDisplayLayer` self-paces via PTS → simple path; for Metal rendering, build your own CVDisplayLink source.
+- Cap render-ahead at **3 frames**; frame-drop on a 500ms window history (drop aggressively if the queue is *continuously* >1).
+- `AVSampleBufferDisplayLayer` self-paces via PTS → simple path; for Metal, build your own CVDisplayLink source.
 
 **CAMetalDisplayLink:** precise vsync tick (always available on the macOS 26 / iOS 26 floor); set `preferredFrameLatency = 1.0` (only 1.0 or 2.0 accepted; iOS default is 2 → setting 1 saves ~8–16 ms). Runs on every Mac, not Apple-Silicon-only. Render the newest frame right before `targetTimestamp` (beam-racing).
 
-**LTR ack:** the client must report which frames it received back to the host (over the control channel) so the host can drive LTR recovery — see [10 §1](10-latency-optimization.md).
+**LTR ack:** the client must report which frames it received back to the host (control channel) so the host can drive LTR recovery — see [10 §1](10-latency-optimization.md).
 
-> ⚠️ **VRR/Adaptive-sync requires FULLSCREEN (from [11](11-absolute-latency.md)):** adaptive-sync scheduling (`presentDrawable:afterMinimumDuration:`) requires a fullscreen window → a **windowed** client app gets NO benefit from VRR. This conflicts with the "single window" model; consider an optional fullscreen mode on the client if needed. On macOS, test `macOS 26 Tahoe` carefully — there are reports of a decode/present latency regression with CAMetalDisplayLink.
+> ⚠️ **VRR/Adaptive-sync requires FULLSCREEN (from [11](11-absolute-latency.md)):** `presentDrawable:afterMinimumDuration:` requires a fullscreen window → a **windowed** client gets NO VRR benefit. Conflicts with the "single window" model; consider an optional fullscreen mode on the client if needed. On macOS, test `macOS 26 Tahoe` carefully — reports of a decode/present latency regression with CAMetalDisplayLink.
 
 ## 5. iOS vs macOS differences
 

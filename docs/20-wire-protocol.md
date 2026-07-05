@@ -2,17 +2,16 @@
 
 > **STATUS: CURRENT.** §1–8 spec the **PATH 1** terminal byte pipeline (TCP); §9 specs the
 > independent **PATH 2** GUI video path (plain UDP). The two paths share nothing — different
-> transport (UDP vs TCP), different message set, separate version constants, and no shared
+> transport (UDP vs TCP), different message set, separate version constants, no shared
 > `WireMessage` / `FrameDecoder` / `Channel`.
 >
-> The framing, codecs, channel mux and flow control are implemented in **native Swift** — the
-> `SlopDeskProtocol` module (never panics / traps on untrusted input: a malformed frame throws and
-> is dropped), with `SlopDeskTransport` driving the sockets. The codecs are the single source of
-> truth for the wire, frozen bit-for-bit by the golden corpus (`golden/golden_vectors.json`). The
-> wire format below is the contract both ends implement. Binding decisions it realizes: dual
-> data/control channel + plain TCP + `TCP_NODELAY` + ET-style replay-buffer reconnect
-> ([DECISIONS.md](DECISIONS.md), [17](17-native-feel-synthesis.md) §2,
-> [18](18-risk-resolutions.md) H).
+> Framing, codecs, channel mux and flow control are **native Swift** — the `SlopDeskProtocol`
+> module (never panics / traps on untrusted input: a malformed frame throws and is dropped), with
+> `SlopDeskTransport` driving the sockets. The codecs are the single source of truth for the wire,
+> frozen bit-for-bit by the golden corpus (`golden/golden_vectors.json`). The wire format below is
+> the contract both ends implement. Binding decisions it realizes: dual data/control channel +
+> plain TCP + `TCP_NODELAY` + ET-style replay-buffer reconnect ([DECISIONS.md](DECISIONS.md),
+> [17](17-native-feel-synthesis.md) §2, [18](18-risk-resolutions.md) H).
 
 ## 1. Channels (dual TCP)
 
@@ -23,14 +22,14 @@ A session uses **two** TCP connections, not one:
 | `.data`   | `output`, `exit` (host→client); `input` (client→host) | The PTY byte hot path. |
 | `.control`| `hello`/`resize`/`ack`/`bye` (client→host); `helloAck`/`title`/`bell` (host→client) | Lifecycle + sizing. |
 
-**Rationale (Zellij lesson, [DECISIONS.md]):** a burst of PTY `output` on the data channel
-must not delay a `resize`-ack or a disconnect intent. Putting control messages on their own
-TCP connection keeps them head-of-line-independent from output bursts.
+**Rationale (Zellij lesson, [DECISIONS.md]):** a burst of PTY `output` on the data channel must
+not delay a `resize`-ack or a disconnect intent. Putting control messages on their own TCP
+connection keeps them head-of-line-independent from output bursts.
 
-`TCP_NODELAY` is set on **both** sockets immediately after connect — this happens in
-`SlopDeskTransport`, not in the protocol layer. (Nagle can add up to ~200 ms to single-keystroke
-writes.) The framing and decoder are identical on both channels; `WireMessage.channel` is
-advisory metadata stating where each message is expected to travel.
+`TCP_NODELAY` is set on **both** sockets immediately after connect — in `SlopDeskTransport`, not
+the protocol layer. (Nagle can add up to ~200 ms to single-keystroke writes.) Framing and decoder
+are identical on both channels; `WireMessage.channel` is advisory metadata stating where each
+message is expected to travel.
 
 ## 2. Framing
 
@@ -46,13 +45,13 @@ Every message on either channel is a single length-prefixed frame:
   is rejected with `SlopDeskError.frameTooLarge(_:)` — we never allocate or wait for an
   implausibly large frame.
 
-The body uses **manual binary encoding**. The keystroke/output hot path must **not** use
-JSON or `Codable`.
+The body uses **manual binary encoding**. The keystroke/output hot path must **not** use JSON or
+`Codable`.
 
 ### Streaming decode (`FrameDecoder`)
 
-TCP is a byte stream with no message boundaries: one read may deliver half a frame, three
-frames, or a frame split across many reads. `FrameDecoder`:
+TCP is a byte stream with no message boundaries: one read may deliver half a frame, three frames,
+or a frame split across many reads. `FrameDecoder`:
 
 1. Buffers raw bytes via `append(_:)`.
 2. On `nextMessage()`, reads the 4-byte prefix (waiting if fewer than 4 bytes are buffered).
@@ -61,16 +60,16 @@ frames, or a frame split across many reads. `FrameDecoder`:
 5. Slices out and decodes exactly one frame, leaving any trailing bytes buffered for the
    next call.
 
-A partial frame is never an error; only a body that is too short for its declared message
-type (`truncated`), an unknown type byte (`unknownMessageType`), or invalid contents
-(`malformedBody`) are.
+A partial frame is never an error; only a body too short for its declared message type
+(`truncated`), an unknown type byte (`unknownMessageType`), or invalid contents (`malformedBody`)
+are.
 
 ## 3. Endianness
 
-**All** multi-byte integers are big-endian ("network byte order") on the wire:
-`UInt32` length prefix, `Int64` seq, `Int32` exit code, `UInt16` cols/rows/pixels, `UInt16`
-protocol version. The protocol provides its own tiny big-endian read/write helpers
-(`BigEndian.swift`); no third-party dependency.
+**All** multi-byte integers are big-endian ("network byte order") on the wire: `UInt32` length
+prefix, `Int64` seq, `Int32` exit code, `UInt16` cols/rows/pixels, `UInt16` protocol version. The
+protocol provides its own tiny big-endian read/write helpers (`BigEndian.swift`); no third-party
+dependency.
 
 UUIDs (`sessionID`) are sent as their **16 raw bytes** in canonical order (not a string).
 
@@ -106,25 +105,22 @@ UUIDs (`sessionID`) are sent as their **16 raw bytes** in canonical order (not a
 | 33 | `cwd` | host → client | control | `path` UTF-8 (absolute; rest-of-frame, no length prefix — same shape as `title`) — OSC 7 shell-reported working directory; feeds new-tab/split cwd inheritance |
 
 `protocolVersion` is currently **1** (`SlopDesk.protocolVersion`). There is **no version
-negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` whose
-`protocolVersion` differs is rejected outright with a generic `handshakeFailed`
-(`HostTransport`); the host never offers or falls back to another version.
+negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` with a differing
+`protocolVersion` is rejected outright with a generic `handshakeFailed` (`HostTransport`); the host
+never offers or falls back to another version.
 
 ### Field notes
 
-- **`output.seq`** is a **monotonic per-message index starting at 1** — *not* a byte offset.
-  See §5.
+- **`output.seq`** is a **monotonic per-message index starting at 1** — *not* a byte offset. See §5.
 - **`hello.sessionID`** all-zero (`WireMessage.newSessionID`) requests a brand-new session; a
   non-zero UUID requests resume of that session.
-- **`resize`** pixel dimensions are `0` when unknown (cell-only resize); the host maps the
-  fields to `TIOCSWINSZ`.
-- **`helloAck.returningClient`** is decided **by the host** (see §5), not asserted by the
-  client.
-- **`title`** payload must be valid UTF-8; a non-UTF-8 body decodes to
-  `SlopDeskError.malformedBody`.
+- **`resize`** pixel dimensions are `0` when unknown (cell-only resize); the host maps the fields
+  to `TIOCSWINSZ`.
+- **`helloAck.returningClient`** is decided **by the host** (see §5), not asserted by the client.
+- **`title`** payload must be valid UTF-8; a non-UTF-8 body decodes to `SlopDeskError.malformedBody`.
 - **`title` (21) and `bell` (22) are PRODUCED by the host** by a non-destructive OSC/BEL sniffer
-  (`HostTitleBellSniffer` in `SlopDeskHost`, wired into `HostSession`'s output relay): as it
-  relays the raw PTY stream it observes a copy of the bytes and emits:
+  (`HostTitleBellSniffer` in `SlopDeskHost`, wired into `HostSession`'s output relay): as it relays
+  the raw PTY stream it observes a copy of the bytes and emits:
   - **`title`** ← **OSC 0** (`ESC ] 0 ; <text> <term>`, icon + window) or **OSC 2**
     (`ESC ] 2 ; <text> <term>`, window), `<term>` = `BEL` (`0x07`) **or** `ST` (`ESC \`). **OSC 1**
     (icon-name only) is ignored — it never sets the window title. Identical consecutive titles are
@@ -141,9 +137,9 @@ negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` who
   and are **not** sequenced/replayed.
 
 - **`foregroundProcess` (26) and `claudeStatus` (27) carry per-pane Claude-Code agent status**
-  (host → client, CONTROL; W9, docs/41 §4 / docs/42). They are **additive within wire version 1**:
-  a peer that does not know them DROPS the frame (`unknownMessageType`) — validate-then-drop, never
-  a trap. The pane identity is carried by the mux channel envelope, not in either body.
+  (host → client, CONTROL; W9, docs/41 §4 / docs/42). **Additive within wire version 1**: a peer
+  that does not know them DROPS the frame (`unknownMessageType`) — validate-then-drop, never a trap.
+  Pane identity rides the mux channel envelope, not either body.
   - **`foregroundProcess`** is the coarse path: the host watches the PTY master's foreground process
     group (`tcgetpgrp` → `proc_name`, W10) and emits the basename on an edge — `"claude"` means a
     `claude` is in the foreground; `""` (or any other name) clears it. The client derives a
@@ -160,25 +156,24 @@ negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` who
     never an over-read of a hostile datagram) and requires strict UTF-8 for the name/label (an
     invalid sequence → `malformedBody`). Both ride the head-of-line-independent CONTROL channel like
     `title`/`commandStatus` and are **not** sequenced/replayed.
-  - **Host delivery (W10).** Both are emitted from `SlopDeskHost` and gated by two env flags
-    (the repo idiom — check the exact comparison): **`SLOPDESK_AGENT_DETECT`** (DEFAULT-ON, only
-    `"0"` disables) drives the foreground-process watch → type 26/27 (the PRIMARY, zero-config
-    signal, Decision #5); **`SLOPDESK_AGENT_HOOKS`** (DEFAULT-OFF, only `"1"` enables) binds an
-    opt-in `AF_UNIX` hook socket. When the socket is bound, every PTY exports
-    **`SLOPDESK_SOCKET_PATH`** (the socket) + **`SLOPDESK_PANE_ID`** (the routing key) so an
-    installed Claude hook (`slopdesk-hostd integration install claude`) POSTs `pane=<id>\n<json>`
-    records the host folds into type 27 for the owning pane. The host **dedupes** both: type 26 only
-    on a basename edge, type 27 only when the `(state, kind, label)` triple changes — an idle
-    `claude` never spams identical frames.
+  - **Host delivery (W10).** Both are emitted from `SlopDeskHost` and gated by two env flags (the
+    repo idiom — check the exact comparison): **`SLOPDESK_AGENT_DETECT`** (DEFAULT-ON, only `"0"`
+    disables) drives the foreground-process watch → type 26/27 (the PRIMARY, zero-config signal,
+    Decision #5); **`SLOPDESK_AGENT_HOOKS`** (DEFAULT-OFF, only `"1"` enables) binds an opt-in
+    `AF_UNIX` hook socket. When the socket is bound, every PTY exports **`SLOPDESK_SOCKET_PATH`** (the
+    socket) + **`SLOPDESK_PANE_ID`** (the routing key) so an installed Claude hook
+    (`slopdesk-hostd integration install claude`) POSTs `pane=<id>\n<json>` records the host folds
+    into type 27 for the owning pane. The host **dedupes** both: type 26 only on a basename edge,
+    type 27 only when the `(state, kind, label)` triple changes — an idle `claude` never spams
+    identical frames.
 
 - **`metadataRequest` (16) and `metadataResponse` (30) are the generic host-metadata RPC** (E4,
   CONTROL). ONE shared request/response pair backs every Details-Panel surface that reads host-side
   metadata — processes, listening ports, cwd, git status/diff, lazy directory listings, agent-session
-  files — instead of adding ~8 frozen wire types. They are the structural twin of
-  `requestBlockOutput` (15) → `blockOutput` (29). They are **additive within wire version 1**: a peer
-  that does not know either type DROPS the frame (`unknownMessageType`) — validate-then-drop, never a
-  trap. The pane identity is carried by the mux channel envelope, not in either body, so the
-  pane-scoped verbs need no pane field.
+  files — instead of adding ~8 frozen wire types. Structural twin of `requestBlockOutput` (15) →
+  `blockOutput` (29). **Additive within wire version 1**: a peer that does not know either type DROPS
+  the frame (`unknownMessageType`) — validate-then-drop, never a trap. Pane identity rides the mux
+  channel envelope, not either body, so pane-scoped verbs need no pane field.
   - **`metadataRequest`** body = `[UInt32 BE requestID][UInt8 verb][UInt32 BE payloadLen][payload]`.
     `requestID` is a client-chosen monotonic `UInt32` correlating a reply to one of several in-flight
     requests; the host echoes it **verbatim** (stateless responder, like `pong`). `verb` is the raw
@@ -262,7 +257,7 @@ negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` who
     message. (The MANUAL Edit ▸ Secure Keyboard Entry path is client-only and works without the wire.)
   - **Additive within wire version 1**: a peer that does not know type 31 DROPS the frame
     (`unknownMessageType`) — validate-then-drop, never a trap. Host + client **redeploy together** (no
-    version negotiation). The pane identity is carried by the mux channel envelope, not in the body.
+    version negotiation). Pane identity rides the mux channel envelope, not the body.
   - The decoder reads the flag as `byte != 0` (untrusted-bool rule — never assumes `{0,1}`) and a missing
     body decodes to `truncated` (never an over-read). The host **dedupes**: it is anchored at echo-on (the
     canonical default the client also assumes) and emits ONLY on a deviation from — and a restore to —
@@ -295,7 +290,7 @@ negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` who
   - **Additive within wire version 1**: a peer that does not know type 32 DROPS the frame
     (`unknownMessageType`) — validate-then-drop, never a trap. Host + client **redeploy together** (no
     version negotiation). Rides the head-of-line-independent CONTROL channel like the other inline
-    signals; the pane identity is carried by the mux channel envelope, not the body. Not sequenced/replayed.
+    signals; pane identity rides the mux channel envelope, not the body. Not sequenced/replayed.
 
 The next free **client → host** CONTROL type byte is **17** (10–16 used). The next free
 **host → client** CONTROL type byte is **34** (20–33 used). (Byte 28 was once reserved for a W14 OSC-8
@@ -305,42 +300,41 @@ later taken by the Warp-style `commandBlock`. See DECISIONS.md "W14 terminal par
 
 ## 5. Seq / ack / replay semantics
 
-The host assigns every `output` message a **monotonic `Int64` `seq` starting at 1** — a
-per-message index, not a byte count. The replay buffer (implemented in `SlopDeskTransport`,
-WF-2) retains un-acked `output` messages so a reconnect is lossless:
+The host assigns every `output` message a **monotonic `Int64` `seq` starting at 1** — a per-message
+index, not a byte count. The replay buffer (implemented in `SlopDeskTransport`, WF-2) retains
+un-acked `output` messages so a reconnect is lossless:
 
-- The client sends `ack(seq)` carrying the **highest contiguous** seq it has durably
-  received. The host may then release retained entries with `seq <= ack`.
-- On reconnect the client sends `hello(lastReceivedSeq:)`. The host replays every retained
-  `output` with `seq > lastReceivedSeq`, then resumes live streaming. The result is
-  byte-exact resume **without tmux**.
-- The host **decides `RETURNING_CLIENT`** (Eternal Terminal `Connection.cpp`): on a `hello`
-  with a known non-zero `sessionID` it resumes + replays and answers
-  `helloAck(returningClient: true)`; an all-zero or unknown id starts a fresh session
-  (`returningClient: false`). `helloAck.resumeFromSeq` tells the client where replay began.
+- The client sends `ack(seq)` carrying the **highest contiguous** seq it has durably received. The
+  host may then release retained entries with `seq <= ack`.
+- On reconnect the client sends `hello(lastReceivedSeq:)`. The host replays every retained `output`
+  with `seq > lastReceivedSeq`, then resumes live streaming. The result is byte-exact resume
+  **without tmux**.
+- The host **decides `RETURNING_CLIENT`** (Eternal Terminal `Connection.cpp`): on a `hello` with a
+  known non-zero `sessionID` it resumes + replays and answers `helloAck(returningClient: true)`; an
+  all-zero or unknown id starts a fresh session (`returningClient: false`). `helloAck.resumeFromSeq`
+  tells the client where replay began.
 
 ### Replay-buffer caps (WF-2, documented here for the contract)
 
 - **64 MiB** retained-byte ceiling (`ReplayBuffer.maxBackupBytes`; ET `MAX_BACKUP_BYTES`).
 - **4 MiB offline gate** (`ReplayBuffer.offlineGateBytes`): while the client is offline, once
-  buffered bytes pass 4 MiB the host **pauses the PTY drain** (ET `SKIPPED`) instead of
-  growing unbounded; below the gate it keeps buffering (`BUFFERED_ONLY`). A long background
-  build must not overflow the buffer and silently lose output.
+  buffered bytes pass 4 MiB the host **pauses the PTY drain** (ET `SKIPPED`) instead of growing
+  unbounded; below the gate it keeps buffering (`BUFFERED_ONLY`). A long background build must not
+  overflow the buffer and silently lose output.
 - Seq is **`Int64`** (ET proto2 used int32, which truncates on very long sessions).
-- **No app-layer crypto.** Deployment assumes a trusted private network — typically a WireGuard
-  mesh (e.g. NetBird/Tailscale) providing E2E encryption + node auth — so the buffer stores **raw
-  bytes**. ET's `CryptoHandler` (libsodium secretbox + nonce reset) is deliberately omitted; do not
+- **No app-layer crypto.** Deployment assumes a trusted private network — typically a WireGuard mesh
+  (e.g. NetBird/Tailscale) providing E2E encryption + node auth — so the buffer stores **raw bytes**.
+  ET's `CryptoHandler` (libsodium secretbox + nonce reset) is deliberately omitted; do not
   reintroduce it ([18](18-risk-resolutions.md) H).
 
 ### Equivalence to Eternal Terminal
 
-This design is **functionally equivalent to Eternal Terminal's byte-level `BackedWriter`
-sequence number**, lifted from byte offsets to a per-message index. ET tags each chunk of PTY
-output with a monotonically increasing sequence and replays the tail after the last
-client-acknowledged sequence on reconnect (`recover(lastValidSeq)`); SlopDesk does the same at
-the granularity of one `output` message. The reconnect handshake (`hello.lastReceivedSeq` →
-host replays `seq > lastReceivedSeq`) mirrors ET's reconnect path, minus the crypto handler,
-over plain TCP on the trusted private network.
+This design is **functionally equivalent to Eternal Terminal's byte-level `BackedWriter` sequence
+number**, lifted from byte offsets to a per-message index. ET tags each chunk of PTY output with a
+monotonically increasing sequence and replays the tail after the last client-acknowledged sequence
+on reconnect (`recover(lastValidSeq)`); SlopDesk does the same at the granularity of one `output`
+message. The reconnect handshake (`hello.lastReceivedSeq` → host replays `seq > lastReceivedSeq`)
+mirrors ET's reconnect path, minus the crypto handler, over plain TCP on the trusted private network.
 
 ## 6. Errors (`SlopDeskError`)
 
@@ -361,8 +355,8 @@ The Swift `SlopDeskProtocol` module *is* the terminal codecs: the encode/decode 
   `var channel: Channel`, `func encode() -> Data` (full frame, prefix + type + body),
   `static let newSessionID: UUID`.
 - `struct FrameDecoder` — `init()`, `mutating func append(_ data: Data)`,
-  `mutating func nextMessage() throws -> WireMessage?` (handles partial reads + multiple
-  frames per append; **not** `Sendable`, lives inside one actor/task).
+  `mutating func nextMessage() throws -> WireMessage?` (handles partial reads + multiple frames per
+  append; **not** `Sendable`, lives inside one actor/task).
 - `enum SlopDeskError: Error, Equatable, Sendable`.
 - `enum SlopDesk` namespace — `static let protocolVersion: UInt16 = 1`,
   `static let maxFramePayloadLength = 16 * 1024 * 1024`.
@@ -372,94 +366,85 @@ value type by design (it carries the receive buffer for a single connection/chan
 
 ## 8. Channel association & session handshake (WF-2, `SlopDeskTransport`)
 
-> This section documents how the two physical TCP connections of one session are tied
-> together and how the `hello`/`helloAck` handshake runs. It is implemented in
-> `SlopDeskTransport` (`HostTransport` / `ClientTransport` / `ChannelAssociation`). It
-> does **not** change the framing (§2) or the message table (§4); the association
-> preamble is raw bytes the transport peels off *before* the first frame.
+> How the two physical TCP connections of one session are tied together and how the `hello`/`helloAck`
+> handshake runs. Implemented in `SlopDeskTransport` (`HostTransport` / `ClientTransport` /
+> `ChannelAssociation`). It does **not** change the framing (§2) or the message table (§4); the
+> association preamble is raw bytes the transport peels off *before* the first frame.
 
 ### 8.1 Association preamble (per connection)
 
-A session opens **two** TCP connections (§1). To bind them to one logical session,
-each connection sends a tiny fixed preamble as its very first bytes, before any
-length-prefixed `WireMessage` frame:
+A session opens **two** TCP connections (§1). To bind them to one logical session, each connection
+sends a tiny fixed preamble as its very first bytes, before any length-prefixed `WireMessage` frame:
 
 ```
 CONTROL preamble:  [ UInt8 0x01 ]                              (1 byte)
 DATA    preamble:  [ UInt8 0x02 ][ 16 raw sessionID bytes ]    (17 bytes)
 ```
 
-The discriminator byte (`0x01` control / `0x02` data) lets the host route a freshly
-accepted connection without parsing a frame. The DATA preamble additionally carries
-the authoritative `sessionID` (the same 16 raw bytes UUID layout used everywhere in
-§3) so the host can attach the data connection to the right session.
+The discriminator byte (`0x01` control / `0x02` data) lets the host route a freshly accepted
+connection without parsing a frame. The DATA preamble additionally carries the authoritative
+`sessionID` (the same 16 raw bytes UUID layout used everywhere in §3) so the host can attach the
+data connection to the right session.
 
 ### 8.2 Connect ordering (deterministic — no race)
 
-1. **Client** opens the **CONTROL** connection, writes the control preamble (`0x01`),
-   then sends `hello(protocolVersion, sessionID, lastReceivedSeq)`
-   (all-zero `sessionID` = NEW; a non-zero id = resume request).
-2. **Host** reads the control preamble, reads `hello`, and **strictly checks**
-   `protocolVersion == 1` (any other value → `handshakeFailed`, connection dropped; no
-   negotiation, no downgrade). It then **decides** NEW vs RETURNING_CLIENT (it, not the
-   client, is authoritative — see
-   §5 and Eternal Terminal `Connection.cpp`). It replies
-   `helloAck(authoritativeSessionID, resumeFromSeq, returningClient)` on CONTROL:
+1. **Client** opens the **CONTROL** connection, writes the control preamble (`0x01`), then sends
+   `hello(protocolVersion, sessionID, lastReceivedSeq)` (all-zero `sessionID` = NEW; a non-zero id =
+   resume request).
+2. **Host** reads the control preamble, reads `hello`, and **strictly checks** `protocolVersion == 1`
+   (any other value → `handshakeFailed`, connection dropped; no negotiation, no downgrade). It then
+   **decides** NEW vs RETURNING_CLIENT (it, not the client, is authoritative — see §5 and Eternal
+   Terminal `Connection.cpp`). It replies `helloAck(authoritativeSessionID, resumeFromSeq,
+   returningClient)` on CONTROL:
    - unknown / all-zero id → mint a fresh id, `resumeFromSeq = 0`, `returningClient = 0`;
-   - known non-zero id → echo it, `resumeFromSeq = hello.lastReceivedSeq`,
-     `returningClient = 1`.
-3. **Client** reads `helloAck`, learns the authoritative `sessionID`, then opens the
-   **DATA** connection and writes the data preamble (`0x02` + that `sessionID`).
-4. **Host** reads the data preamble and associates the DATA connection with the
-   session it minted/resumed in step 2.
+   - known non-zero id → echo it, `resumeFromSeq = hello.lastReceivedSeq`, `returningClient = 1`.
+3. **Client** reads `helloAck`, learns the authoritative `sessionID`, then opens the **DATA**
+   connection and writes the data preamble (`0x02` + that `sessionID`).
+4. **Host** reads the data preamble and associates the DATA connection with the session it
+   minted/resumed in step 2.
 
-Because the DATA connection only opens *after* the client has the authoritative id,
-the host can always associate it — there is no ordering race to resolve.
+Because the DATA connection only opens *after* the client has the authoritative id, the host can
+always associate it — there is no ordering race to resolve.
 
 ### 8.3 Reconnect / replay
 
-On a RETURNING_CLIENT (step 2, known id) the host, once the new DATA connection
-associates, **replays** `output` with `seq > hello.lastReceivedSeq` from the
-session's `ReplayBuffer` **in order on the new data channel before live output
-resumes**, then continues streaming. The first live `output` after replay carries
-`highestSeq + 1`, so the client sees a contiguous, gap-free, dup-free seq stream
-across the reconnect. Only `output` is sequenced/replayed; control messages are not.
+On a RETURNING_CLIENT (step 2, known id) the host, once the new DATA connection associates,
+**replays** `output` with `seq > hello.lastReceivedSeq` from the session's `ReplayBuffer` **in order
+on the new data channel before live output resumes**, then continues streaming. The first live
+`output` after replay carries `highestSeq + 1`, so the client sees a contiguous, gap-free, dup-free
+seq stream across the reconnect. Only `output` is sequenced/replayed; control messages are not.
 
-The rebind is atomic on the host session actor: it swaps the data/control channels
-and closes the old ones. A live `sendOutput` already suspended on the *old* data
-channel when the rebind runs has its in-flight send cancelled by that close (the OS
-reports POSIX `ECANCELED` 89). This is **not** a fatal fault and **not** byte loss —
-the bytes were retained in the `ReplayBuffer` before the send and are only evicted by
-a client `ack`, so they are re-sent by the rebind's replay loop on the new channel.
-The host therefore treats a dead-channel send (channel swapped out, or a typed
-`notConnected` / `.cancelled`/`.failed` state) as "client offline → replay on next
-reconnect", retaining the bytes rather than throwing. **Symmetrically on the client**,
-a DATA or CONTROL channel that finishes — whether by error *or* a clean FIN/cancel
-(the reconnect-race half-close) — terminates the merged `inbound` and surfaces a
-`.disconnected`, which drives the `ReconnectManager`: there is no mid-session clean
-half-close the host intends, so a clean finish is always a disconnect that reconnects
-(never a silent stall).
+The rebind is atomic on the host session actor: it swaps the data/control channels and closes the
+old ones. A live `sendOutput` already suspended on the *old* data channel when the rebind runs has
+its in-flight send cancelled by that close (the OS reports POSIX `ECANCELED` 89). This is **not** a
+fatal fault and **not** byte loss — the bytes were retained in the `ReplayBuffer` before the send and
+are only evicted by a client `ack`, so they are re-sent by the rebind's replay loop on the new
+channel. The host therefore treats a dead-channel send (channel swapped out, or a typed
+`notConnected` / `.cancelled`/`.failed` state) as "client offline → replay on next reconnect",
+retaining the bytes rather than throwing. **Symmetrically on the client**, a DATA or CONTROL channel
+that finishes — whether by error *or* a clean FIN/cancel (the reconnect-race half-close) — terminates
+the merged `inbound` and surfaces a `.disconnected`, which drives the `ReconnectManager`: there is no
+mid-session clean half-close the host intends, so a clean finish is always a disconnect that
+reconnects (never a silent stall).
 
 ### 8.4 `SlopDeskTransport` public API (WF-2)
 
-- `enum TransportParameters` — `static func makeTCP() -> NWParameters` (the single
-  canonical params: `TCP_NODELAY` + keepalive, no app crypto, no interface pin).
+- `enum TransportParameters` — `static func makeTCP() -> NWParameters` (the single canonical params:
+  `TCP_NODELAY` + keepalive, no app crypto, no interface pin).
 - `protocol MessageChannel: Sendable` — `var channel`, `func send(_:) async throws`,
   `var inbound: AsyncThrowingStream<WireMessage, Error>`.
-- `actor NWMessageChannel: MessageChannel` — one `NWConnection`, drives a
-  `FrameDecoder`, surfaces `State`.
-- `struct ReplayBuffer: Sendable` — pure logic: `append(bytes:) -> Int64`,
-  `ack(upTo:)`, `messages(after:) -> [(seq, bytes)]`, `retainedBytes`,
-  `isClientOnline`, `shouldPauseDrain` (4 MiB offline gate / 64 MiB cap; never drops
-  un-acked data — backpressure via pause instead).
+- `actor NWMessageChannel: MessageChannel` — one `NWConnection`, drives a `FrameDecoder`, surfaces
+  `State`.
+- `struct ReplayBuffer: Sendable` — pure logic: `append(bytes:) -> Int64`, `ack(upTo:)`,
+  `messages(after:) -> [(seq, bytes)]`, `retainedBytes`, `isClientOnline`, `shouldPauseDrain` (4 MiB
+  offline gate / 64 MiB cap; never drops un-acked data — backpressure via pause instead).
 - `actor HostTransport` — `NWListener`; `start(port:)`, `boundPort`, `sessions_`
   (`AsyncStream<HostSessionTransport>`), `stop()`.
-- `actor HostSessionTransport` — per-session `ReplayBuffer` owner; `sendOutput(_:)`,
-  `sendControl(_:)`, `sendExit(code:)`, inbound `inboundInput`/`inboundResize`/
-  `inboundAck`, and `drainPauses: AsyncStream<Bool>` (PTY-drain pause/resume).
-- `actor ClientTransport` — `connect(host:port:resume:lastReceivedSeq:)`, merged
-  `inbound`, `sendInput`/`sendResize`/`sendAck`/`sendBye`, `sessionID`/`resumeFromSeq`/
-  `returningClient`.
+- `actor HostSessionTransport` — per-session `ReplayBuffer` owner; `sendOutput(_:)`, `sendControl(_:)`,
+  `sendExit(code:)`, inbound `inboundInput`/`inboundResize`/`inboundAck`, and
+  `drainPauses: AsyncStream<Bool>` (PTY-drain pause/resume).
+- `actor ClientTransport` — `connect(host:port:resume:lastReceivedSeq:)`, merged `inbound`,
+  `sendInput`/`sendResize`/`sendAck`/`sendBye`, `sessionID`/`resumeFromSeq`/`returningClient`.
 
 ---
 
@@ -474,20 +459,19 @@ half-close the host intends, so a clean finish is always a disconnect that recon
 
 ## 9. Path-2 overview
 
-PATH 2 remotes one host GUI window: ScreenCaptureKit per-window capture (NV12) → VideoToolbox
-HEVC encode → UDP datagrams (packetize + FEC) → VTDecompressionSession decode → Metal render,
-with a client-side composited cursor and client→host CGEvent input injection. Everything is
-**datagram-oriented** — there is no stream framing, no length prefix, no replay buffer. Loss is
-absorbed by FEC and, when unrecoverable, by client→host recovery requests (LTR refresh → IDR).
+PATH 2 remotes one host GUI window: ScreenCaptureKit per-window capture (NV12) → VideoToolbox HEVC
+encode → UDP datagrams (packetize + FEC) → VTDecompressionSession decode → Metal render, with a
+client-side composited cursor and client→host CGEvent input injection. Everything is
+**datagram-oriented** — no stream framing, no length prefix, no replay buffer. Loss is absorbed by
+FEC and, when unrecoverable, by client→host recovery requests (LTR refresh → IDR).
 
 `SlopDeskVideoProtocol.version` is a **`UInt16`, currently `1`**, separate from PATH 1's
 `SlopDesk.protocolVersion`. There is **no negotiation**: the host accepts a `hello` only when
-`protocolVersion == SlopDeskVideoProtocol.version` (strict, mirroring PATH 1 §4); any other value
-is rejected. All multi-byte integers are **big-endian**, exactly as PATH 1 (§3); the
-sub-pixel geometry/cursor/input fields are big-endian IEEE-754 `Float64`. Each codec serialises
-as `[UInt8 messageType][body…]` and is decoded defensively — a short or inconsistent **single
-datagram** throws `VideoProtocolError.truncated` / `.malformed(_)` and is dropped, never
-crashing the receiver.
+`protocolVersion == SlopDeskVideoProtocol.version` (strict, mirroring PATH 1 §4); any other value is
+rejected. All multi-byte integers are **big-endian**, exactly as PATH 1 (§3); the sub-pixel
+geometry/cursor/input fields are big-endian IEEE-754 `Float64`. Each codec serialises as
+`[UInt8 messageType][body…]` and is decoded defensively — a short or inconsistent **single datagram**
+throws `VideoProtocolError.truncated` / `.malformed(_)` and is dropped, never crashing the receiver.
 
 ## 9.1 Transport topology — two sockets, six logical channels
 
@@ -498,9 +482,9 @@ A session uses **two UDP sockets**, not one:
 | **media** | control, video, geometry, input, recovery | each datagram is prefixed with a **1-byte channel tag** (`VideoChannel.rawValue`) |
 | **cursor** | cursor updates + cursor shapes | **bare bytes** (single-purpose socket, no tag) |
 
-The cursor channel is split onto its own socket so pointer latency = RTT, fully decoupled from
-the encode/decode pipeline and from video-burst head-of-line blocking (doc 17 §3.3) — the same
-"don't let bulk traffic delay latency-critical control" rationale as PATH 1's dual TCP (§1).
+The cursor channel is split onto its own socket so pointer latency = RTT, fully decoupled from the
+encode/decode pipeline and from video-burst head-of-line blocking (doc 17 §3.3) — the same "don't let
+bulk traffic delay latency-critical control" rationale as PATH 1's dual TCP (§1).
 
 `VideoChannel` (the 1-byte media-socket tag) — `enum VideoChannel: UInt8`:
 
@@ -521,13 +505,13 @@ the encode/decode pipeline and from video-burst head-of-line blocking (doc 17 §
 > request as a phantom mouse event. The dedicated tag removes that ambiguity (no discriminator byte).
 
 The enum is defined identically (byte-for-byte raw values) in both `SlopDeskVideoHost` and
-`SlopDeskVideoClient`; the client cannot depend on the macOS-only host module, so it carries its
-own copy. *(Candidate to hoist into `SlopDeskVideoProtocol` so one definition is shared.)*
+`SlopDeskVideoClient`; the client cannot depend on the macOS-only host module, so it carries its own
+copy. *(Candidate to hoist into `SlopDeskVideoProtocol` so one definition is shared.)*
 
 ## 9.2 Session bring-up — `VideoControlMessage` (control channel)
 
-PATH 2 has no TCP handshake; a tiny control exchange runs over the UDP **control** channel
-before any media flows. `[UInt8 type][body]`, big-endian:
+PATH 2 has no TCP handshake; a tiny control exchange runs over the UDP **control** channel before any
+media flows. `[UInt8 type][body]`, big-endian:
 
 | Type | Name | Direction | Body |
 |------|------|-----------|------|
@@ -540,33 +524,33 @@ before any media flows. `[UInt8 type][body]`, big-endian:
 - `helloAck` confirms (or rejects via `accepted = 0`) and reports the **host-decided** capture
   dimensions plus the window's current **CG top-left bounds** — the client's input-mapping origin
   until the geometry channel updates it. ("Negotiated" elsewhere in the code/comments means this
-  single host-decides-and-reports step — the host sizes capture to the client viewport and reports
-  it back — **not** a two-way negotiation; the protocol version itself is strictly non-negotiated,
-  per §9 / §4.)
+  single host-decides-and-reports step — the host sizes capture to the client viewport and reports it
+  back — **not** a two-way negotiation; the protocol version itself is strictly non-negotiated, per
+  §9 / §4.)
 - The host starts capture/encode **only on an accepted `hello`**; a duplicate `hello` is re-acked
   idempotently. Either side sends `bye` for a clean teardown.
 - **Session-liveness closure (2026-07-03, the reconnect-wedge fix — behavior only, no wire change):**
   (1) the client **re-sends the `hello` on an exponential backoff (0.5 s → 5 s cap) while
-  unanswered**, so a lost hello/ack — or a host that is still restarting — can no longer wedge a
-  pane in "connecting" forever; (2) the host daemon **sends `bye` (×2) on every live lane at
-  graceful shutdown**; (3) a restarted host that receives an **unbound-lane datagram proving the
-  sender still believes a session exists** (input / recovery / control `keepalive`/`resizeRequest`/
-  `focusWindow`) **answers `bye` on the arrival flow** (rate-limited, one per second per channelID;
+  unanswered**, so a lost hello/ack — or a host that is still restarting — can no longer wedge a pane
+  in "connecting" forever; (2) the host daemon **sends `bye` (×2) on every live lane at graceful
+  shutdown**; (3) a restarted host that receives an **unbound-lane datagram proving the sender still
+  believes a session exists** (input / recovery / control `keepalive`/`resizeRequest`/`focusWindow`)
+  **answers `bye` on the arrival flow** (rate-limited, one per second per channelID;
   hello/discovery/stray-`bye`/undecodable payloads are never answered — validate-then-drop, no
-  reflection). On any received `bye` the client tears down and **rebuilds the whole pipeline**
-  (fresh channelID lane + hello + decoder/pacer/renderer), so a videohostd restart self-heals
-  within one keepalive interval (≤ ~5 s) instead of freezing the pane with dead input.
+  reflection). On any received `bye` the client tears down and **rebuilds the whole pipeline** (fresh
+  channelID lane + hello + decoder/pacer/renderer), so a videohostd restart self-heals within one
+  keepalive interval (≤ ~5 s) instead of freezing the pane with dead input.
 - **Host→client heartbeat + stall scrim (2026-07-03, the residual of the above — behavior only, no
   wire change):** while a session streams, the host sends a zero-body **`keepalive` (6) host→client
   every 1 s** (`KeepaliveTiming.hostHeartbeatInterval`; type 6 was already documented wire-safe in
   both directions — an old client's FSM drops it inertly). The client stamps the arrival of every
-  decodable control message and every video fragment, and a ~1 s monitor evaluates
-  `StreamStallPolicy` (threshold 3 s = tolerates two lost heartbeats): **no frame AND no control for
-  ≥ 3 s while streaming ⇒ the pane overlays a "Reconnecting…" scrim** over the frozen last frame.
-  The heartbeat — not frame arrival — is the liveness signal, so a healthily-idle window
-  (idle-skip suppresses frames by design) never false-stalls. The scrim is **sticky** through the
-  self-heal rebuild (bye → fresh lane/hello) and clears only when traffic actually resumes. A
-  stopped/bye'd host session sends no heartbeat (it must go silent so the monitor sees the truth).
+  decodable control message and every video fragment, and a ~1 s monitor evaluates `StreamStallPolicy`
+  (threshold 3 s = tolerates two lost heartbeats): **no frame AND no control for ≥ 3 s while streaming
+  ⇒ the pane overlays a "Reconnecting…" scrim** over the frozen last frame. The heartbeat — not frame
+  arrival — is the liveness signal, so a healthily-idle window (idle-skip suppresses frames by design)
+  never false-stalls. The scrim is **sticky** through the self-heal rebuild (bye → fresh lane/hello)
+  and clears only when traffic actually resumes. A stopped/bye'd host session sends no heartbeat (it
+  must go silent so the monitor sees the truth).
 - Beyond the handshake the control channel also carries additive host→client info messages, each an
   unknown type an old peer simply drops: `resizeAck` (5), `streamCadence` (10), `scrollOffset` (13),
   `contentMask` (14), and **`displayMax` (15)** = `UInt16 maxWidthPt` + `UInt16 maxHeightPt`, the max
@@ -576,11 +560,10 @@ before any media flows. `[UInt8 type][body]`, big-endian:
 
 ## 9.3 Video frame datagrams — `FrameFragment` (video channel)
 
-An encoded HEVC frame (AVCC: length-prefixed NAL units, with the IDR carrying inline VPS/SPS/PPS —
-the client self-configures its `CMVideoFormatDescription` from those parameter sets, no
-out-of-band parameter exchange) is fragmented into datagrams ≤ **1200 bytes**
-(`VideoPacketizer.maxDatagramSize`, doc 17 §3.6 — under the runtime MTU including WireGuard-mesh
-overhead).
+An encoded HEVC frame (AVCC: length-prefixed NAL units, with the IDR carrying inline VPS/SPS/PPS — the
+client self-configures its `CMVideoFormatDescription` from those parameter sets, no out-of-band
+parameter exchange) is fragmented into datagrams ≤ **1200 bytes** (`VideoPacketizer.maxDatagramSize`,
+doc 17 §3.6 — under the runtime MTU including WireGuard-mesh overhead).
 
 **Fragment header — fixed 15 bytes, big-endian:**
 
@@ -596,23 +579,23 @@ off15: [payloadLen] bytes  — fragment payload (AVCC bytes, or FEC parity)
 
 `streamSeq` is a monotonic per-**datagram** index (every emitted datagram, data and parity alike,
 increments it) — the loss/ordering signal, analogous to PATH 1's per-message `output.seq` but at
-datagram granularity. `frameID` is a monotonic per-**frame** index. `flags` bits:
-`keyframe` (fresh decode anchor / IDR), `parity` (this fragment is FEC parity, not original data),
-`crisp` (the frame came from the on-demand all-intra "crisp" Session-B encoder).
+datagram granularity. `frameID` is a monotonic per-**frame** index. `flags` bits: `keyframe` (fresh
+decode anchor / IDR), `parity` (this fragment is FEC parity, not original data), `crisp` (the frame
+came from the on-demand all-intra "crisp" Session-B encoder).
 
 ## 9.4 Forward error correction (FEC)
 
-To absorb single-packet loss without a round trip, the packetizer appends **XOR parity**
-fragments per frame (`XORParityFEC`, default `groupSize = 5` ⇒ ~20% parity, the Sunshine/doc-17
-target). Each group of up to 5 data fragments yields one parity fragment = the byte-wise XOR of
-the group, where each member is **length-prefixed (`UInt32` BE)** before XOR so recovery
-reproduces the exact original length even when group members differ in size. Parity fragments
-carry the `parity` flag and share the frame's `frameID`/`fragCount`.
+To absorb single-packet loss without a round trip, the packetizer appends **XOR parity** fragments
+per frame (`XORParityFEC`, default `groupSize = 5` ⇒ ~20% parity, the Sunshine/doc-17 target). Each
+group of up to 5 data fragments yields one parity fragment = the byte-wise XOR of the group, where
+each member is **length-prefixed (`UInt32` BE)** before XOR so recovery reproduces the exact original
+length even when group members differ in size. Parity fragments carry the `parity` flag and share the
+frame's `frameID`/`fragCount`.
 
-Recovery fills exactly **one** missing data fragment per group (`parity XOR survivors`, then strip
-the length prefix); **two or more** losses in a group are unrecoverable and left as a hole, which
-the client escalates via §9.8 recovery requests. The `FECScheme` protocol lets a Reed-Solomon
-codec replace XOR later without touching the wire header.
+Recovery fills exactly **one** missing data fragment per group (`parity XOR survivors`, then strip the
+length prefix); **two or more** losses in a group are unrecoverable and left as a hole, which the
+client escalates via §9.8 recovery requests. The `FECScheme` protocol lets a Reed-Solomon codec
+replace XOR later without touching the wire header.
 
 ## 9.5 Window geometry — `WindowGeometryMessage` (geometry channel)
 
@@ -628,10 +611,10 @@ Host → client window move/resize/title so the client view repositions before t
 
 ## 9.6 Cursor side-channel (dedicated cursor socket)
 
-The host strips the cursor from the captured video (`showsCursor = false`) and streams it
-out-of-band so it composites client-side at RTT latency (doc 17 §3.3). Both messages travel on the
-dedicated cursor socket as **bare bytes**, told apart by their leading type byte
-(`CursorChannelMessage` peeks the first byte to route):
+The host strips the cursor from the captured video (`showsCursor = false`) and streams it out-of-band
+so it composites client-side at RTT latency (doc 17 §3.3). Both messages travel on the dedicated
+cursor socket as **bare bytes**, told apart by their leading type byte (`CursorChannelMessage` peeks
+the first byte to route):
 
 **`CursorUpdate` (type `1`) — hot, position-only, fixed 36 bytes (< 64-byte budget), ~120 Hz:**
 
@@ -664,12 +647,11 @@ fragmentation. The client caches each shape by `shapeID` and composites it at
 
 ## 9.7 Input events — `InputEvent` (input channel, client → host)
 
-Client→host input (doc 17 §3.9 / doc 05). Pointer positions are in **normalised window space
-(0..1)** — the client never sends raw pixels, removing all pixel-vs-point ambiguity; the host maps
-normalised → host-window-point via `CoordinateMapping`. Every event carries a `UInt32 tag` =
-the value the host stamps on `eventSourceUserData`, so it filters its own self-injected events out
-of the cursor / geometry watchers and avoids feedback loops (doc 18 §A). `[UInt8 type][body]`,
-big-endian:
+Client→host input (doc 17 §3.9 / doc 05). Pointer positions are in **normalised window space (0..1)**
+— the client never sends raw pixels, removing all pixel-vs-point ambiguity; the host maps normalised →
+host-window-point via `CoordinateMapping`. Every event carries a `UInt32 tag` = the value the host
+stamps on `eventSourceUserData`, so it filters its own self-injected events out of the cursor /
+geometry watchers and avoids feedback loops (doc 18 §A). `[UInt8 type][body]`, big-endian:
 
 | Type | Name | Body (after type byte) |
 |------|------|------------------------|
@@ -681,16 +663,16 @@ big-endian:
 | `6` | `text`      | `UInt32 tag` + remaining bytes = UTF-8 text |
 
 `button`: `0` left / `1` right / `2` other. `modifiers` bitmask: `shift 1<<0`, `control 1<<1`,
-`option 1<<2`, `command 1<<3`, `capsLock 1<<4`, `function 1<<5`. `key` is for navigation /
-shortcuts by host virtual keycode; `text` is the robust layout-independent Unicode-insertion path
-(doc 05 §3) — the host attaches the unicode string to the key-**down** only.
+`option 1<<2`, `command 1<<3`, `capsLock 1<<4`, `function 1<<5`. `key` is for navigation / shortcuts
+by host virtual keycode; `text` is the robust layout-independent Unicode-insertion path (doc 05 §3) —
+the host attaches the unicode string to the key-**down** only.
 
 ## 9.8 Loss recovery — `RecoveryMessage` (client → host)
 
-When the client detects an unrecoverable fragment loss (a frame hole FEC could not fill), it asks
-the host to recover **without** the bandwidth/latency spike of a forced keyframe. Sent on the
-dedicated **`recovery` channel (tag `5`)** of the media socket — never `input` (§9.1). `[UInt8 type]
-[body]`, big-endian:
+When the client detects an unrecoverable fragment loss (a frame hole FEC could not fill), it asks the
+host to recover **without** the bandwidth/latency spike of a forced keyframe. Sent on the dedicated
+**`recovery` channel (tag `5`)** of the media socket — never `input` (§9.1). `[UInt8 type][body]`,
+big-endian:
 
 | Type | Name | Body |
 |------|------|------|
@@ -698,18 +680,18 @@ dedicated **`recovery` channel (tag `5`)** of the media socket — never `input`
 | `2` | `requestLTRRefresh` | `UInt32 fromFrameID` + `UInt32 toFrameID` (the lost frame range) |
 | `3` | `requestIDR`        | *(empty)* |
 
-Recovery **prefers an LTR refresh** (`requestLTRRefresh`): the client names the lost frame range;
-the host invalidates the referenced long-term-reference frame and encodes the next frame against an
-older still-valid LTR (`kVTCompressionPropertyKey_EnableLTR` + `ForceLTRRefresh`). The invalidation
+Recovery **prefers an LTR refresh** (`requestLTRRefresh`): the client names the lost frame range; the
+host invalidates the referenced long-term-reference frame and encodes the next frame against an older
+still-valid LTR (`kVTCompressionPropertyKey_EnableLTR` + `ForceLTRRefresh`). The invalidation
 direction is client→host (doc 17 §3.6). The client's `RecoveryPolicy` escalates to `requestIDR` if no
-decodable frame arrives within ~**2 RTT** of the LTR-refresh request (`idrTimeoutRTTMultiple`,
-default `2.0`; the escalation is driven off the client's loss-detection path against the smoothed
-RTT estimate).
+decodable frame arrives within ~**2 RTT** of the LTR-refresh request (`idrTimeoutRTTMultiple`, default
+`2.0`; the escalation is driven off the client's loss-detection path against the smoothed RTT
+estimate).
 
 **Host handling (`RecoveryDatagramRouter` → `WindowCapturer.requestKeyframe()`):** the host routes a
-`recovery` datagram to recovery handling (not the input injector). Today both `requestLTRRefresh`
-and `requestIDR` map to a **forced IDR on the next captured frame** — a keyframe is always a correct,
-if heavier, refresh; the dedicated LTR-refresh encode is a future optimisation. An `ack` advances no
+`recovery` datagram to recovery handling (not the input injector). Today both `requestLTRRefresh` and
+`requestIDR` map to a **forced IDR on the next captured frame** — a keyframe is always a correct, if
+heavier, refresh; the dedicated LTR-refresh encode is a future optimisation. An `ack` advances no
 window yet (no retransmit buffer) and is recorded for diagnostics. This re-anchors a loss-recovering
 client immediately rather than waiting for the ~1 s heartbeat IDR.
 
@@ -720,5 +702,5 @@ client immediately rather than waiting for the ~1 s heartbeat IDR.
 | `truncated` | A datagram ended before a fixed-size field could be read. |
 | `malformed(String)` | A field held an out-of-range value (unknown message type, unknown channel/cursor/button tag, non-UTF-8 title/text); reason string attached. |
 
-A corrupt single datagram is dropped (the error is caught at the receive boundary), never fatal —
-UDP loss is the normal case PATH 2 is built to tolerate.
+A corrupt single datagram is dropped (the error is caught at the receive boundary), never fatal — UDP
+loss is the normal case PATH 2 is built to tolerate.

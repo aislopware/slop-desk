@@ -1,17 +1,17 @@
 # 41 — Coding-Workspace Redesign: Research Dossier
 
 > Status: research + recommended architecture. Binding decisions land in `DECISIONS.md` after ratification.
-> Scope: the four redesign goals — (1) IDE-focused chrome, (2) retire the infinite canvas for a tmux/Muxy-style Session→Tab→Pane hierarchy, (3) Claude Code via auto-detection + hooks (kill the dedicated pane kind), (4) a complete GUI settings interface, (5) terminal parity with Ghostty/Muxy/Warp.
+> Scope: (1) IDE-focused chrome, (2) retire the infinite canvas for a tmux/Muxy-style Session→Tab→Pane hierarchy, (3) Claude Code via auto-detection + hooks (kill the dedicated pane kind), (4) a complete GUI settings interface, (5) terminal parity with Ghostty/Muxy/Warp.
 
 ---
 
 ## 0. Executive Summary
 
-**What changes.** We replace the single free-floating infinite `Canvas` with a tiled **Session → Tab → Pane** tree, swap the generic `NavigationSplitView` chrome for an IDE shell (sessions sidebar + tab bar + split-pane detail + hidden/minimal title bar), make Claude Code a **runtime-detected status on an ordinary terminal pane** instead of a stored `PaneKind`, and surface the ~80 `SLOPDESK_*` env flags through real GUI settings.
+**What changes.** Replace the free-floating infinite `Canvas` with a tiled **Session → Tab → Pane** tree; swap the generic `NavigationSplitView` chrome for an IDE shell (sessions sidebar + tab bar + split-pane detail + hidden/minimal title bar); make Claude Code a **runtime-detected status on an ordinary terminal pane** instead of a stored `PaneKind`; surface the ~80 `SLOPDESK_*` env flags through real GUI settings.
 
-**Why.** The infinite canvas (drag/snap/non-overlap/camera) is the wrong primitive for a coding tool — every competitor (tmux, Zellij, WezTerm, Muxy, Herdr, Warp) converged on a recursive split tree under named sessions/tabs because it is keyboard-drivable, deterministic, and trivially serializable. The dedicated "Claude Code pane kind" forces the user to pre-declare intent; Muxy/Herdr/Warp instead detect a running `claude` and surface status — strictly better UX. Env-only config blocks non-developers and makes the product undemoable.
+**Why.** The infinite canvas (drag/snap/non-overlap/camera) is the wrong primitive — every competitor (tmux, Zellij, WezTerm, Muxy, Herdr, Warp) converged on a recursive split tree under named sessions/tabs because it is keyboard-drivable, deterministic, and trivially serializable. A dedicated "Claude Code pane kind" forces the user to pre-declare intent; Muxy/Herdr/Warp instead detect a running `claude` and surface status. Env-only config blocks non-developers and makes the product undemoable.
 
-**What is preserved (do not touch).** The entire transport/liveness layer is layout-agnostic and stays verbatim: `PaneID`/`PaneSpec` identity types, `PaneSessionHandle`/`LivePaneSession` registry, `PaneLeafView` kind switch, all `Connection/Terminal/Video/Input/Inspector/iOS` subdirectories, the mux/wire protocol, the golden corpus. `WorkspaceStore`'s **intent-tree → reconcile() → registry** pattern is kept; only the intent tree's *shape* changes from a flat `[CanvasItem]` to a `Session→Tab→SplitNode` tree.
+**Preserved (do not touch).** The transport/liveness layer is layout-agnostic and stays verbatim: `PaneID`/`PaneSpec` identity types, `PaneSessionHandle`/`LivePaneSession` registry, `PaneLeafView` kind switch, all `Connection/Terminal/Video/Input/Inspector/iOS` subdirectories, the mux/wire protocol, the golden corpus. `WorkspaceStore`'s **intent-tree → reconcile() → registry** pattern is kept; only the intent tree's *shape* changes from a flat `[CanvasItem]` to a `Session→Tab→SplitNode` tree.
 
 **Order (detail in §3.8).** Domain model + persistence/migration → store mutations + reconcile over the new tree → split-pane render + IDE chrome → tab/split keybindings + command palette → Claude Code auto-detection → GUI settings → terminal parity backlog. Each layer ships green and atomic.
 
@@ -22,27 +22,27 @@
 ### 1.1 Shell / scene
 - Entry: `Apps/Shared/AppMain.swift:26` (`ClientAppMain`, `@main`) → `SlopDeskClientApp.main()`.
 - App: `Sources/SlopDeskClientUI/SlopDeskClientApp.swift:31`; `body` = one `WindowGroup { WorkspaceRootView }` + `.commands { WorkspaceCommands() }` + `.windowResizability(.contentSize)` + `Settings { SettingsView() }` (`SlopDeskClientApp.swift:197`).
-- **No window styling today**: zero `windowStyle(.hiddenTitleBar)`, no transparent titlebar, no `NSWindowDelegate`. Stock title bar + traffic lights. Min size `720×480` set on the root view (`WorkspaceRootView.swift:85`).
-- Root: `WorkspaceRootView.swift:24` = `NavigationSplitView` (sidebar `min:200 ideal:240 max:360`, `WorkspaceRootView.swift:74`); detail branches on `WorkspaceLayout.isCompact(...)` (`WorkspaceLayout.swift:70`) → `PaneCarouselView` (phone) else `CanvasView`. This is the ONLY responsive branch.
-- `detailToolbar` (`WorkspaceRootView.swift:255`): two items — connection-status menu (`.navigation`) + "New Pane" split button (`.primaryAction`). Overlays: `ConnectionGateView`, `CommandPaletteView` (⌘K), `KeyboardCheatSheetView` (⌘/).
+- **No window styling today**: zero `windowStyle(.hiddenTitleBar)`, no transparent titlebar, no `NSWindowDelegate`. Stock title bar + traffic lights. Min size `720×480` on the root view (`WorkspaceRootView.swift:85`).
+- Root: `WorkspaceRootView.swift:24` = `NavigationSplitView` (sidebar `min:200 ideal:240 max:360`, `WorkspaceRootView.swift:74`); detail branches on `WorkspaceLayout.isCompact(...)` (`WorkspaceLayout.swift:70`) → `PaneCarouselView` (phone) else `CanvasView`. The ONLY responsive branch.
+- `detailToolbar` (`WorkspaceRootView.swift:255`): connection-status menu (`.navigation`) + "New Pane" split button (`.primaryAction`). Overlays: `ConnectionGateView`, `CommandPaletteView` (⌘K), `KeyboardCheatSheetView` (⌘/).
 - iOS: same `App` struct, `#if os(iOS)` blocks; compact → `PaneCarouselView` (paged `TabView`, `PaneCarouselView.swift:24`); scene-phase drives `pauseAll()`/`resumeAll()`. iOS rots silently — run `bash scripts/check-ios.sh` after UIKit edits.
 
 ### 1.2 Domain model (the intent tree)
-- `Workspace` (`Workspace.swift:21`) — the single persisted `Codable` value: `schemaVersion` (9), `canvas: Canvas`, `focusedPane`, `maximizedPane`, `groups: [PaneGroup]`, `connection: ConnectionTarget?`, `bookmarks`, `layoutPresets`, `snippets`.
+- `Workspace` (`Workspace.swift:21`) — single persisted `Codable` value: `schemaVersion` (9), `canvas: Canvas`, `focusedPane`, `maximizedPane`, `groups: [PaneGroup]`, `connection: ConnectionTarget?`, `bookmarks`, `layoutPresets`, `snippets`.
 - `Canvas` (`Canvas.swift:83`) — infinite plane: `items: [CanvasItem]` (array order ≠ z-order) + `camera: CanvasCamera` (`Canvas.swift:15`, pan-only, **no zoom field by design** — a scale transform breaks libghostty 1:1 mouse mapping).
-- `CanvasItem` (`Canvas.swift:40`): `id: PaneID`, `spec: PaneSpec`, `frame: CGRect` (size = on-screen pane size), `z: Int`, `groupID: PaneGroupID?`.
+- `CanvasItem` (`Canvas.swift:40`): `id: PaneID`, `spec: PaneSpec`, `frame: CGRect` (on-screen pane size), `z: Int`, `groupID: PaneGroupID?`.
 - `PaneSpec` (`PaneSpec.swift:99`): `kind: PaneKind`, `title`, `video: VideoEndpoint?`. `PaneKind` (`PaneSpec.swift:42`): `.terminal` / `.claudeCode` / `.remoteGUI` / `.systemDialog` (raw-String Codable).
 - `PaneID`/`PaneGroupID` (`PaneSpec.swift:15,29`): `struct { let raw: UUID }`. `PaneID` is the registry join key — **reuse verbatim**.
 - Layout solvers (all become dead code in a tiled model): `CanvasSnap.swift`, `CanvasNonOverlap.swift:31`, `CanvasGeometry.swift`, `Canvas+Ops.swift`, `SolvedLayout.swift`, `FocusResolver.swift` (geometric neighbor detection — **keep**, still relevant for split focus).
 
 ### 1.3 Store (source of truth)
 - `WorkspaceStore` (`WorkspaceStore.swift:31`) — `@MainActor @Observable final class`. Owns `workspace: Workspace` (intent) + `registry: [PaneID: any PaneSessionHandle]` (liveness). Every mutation = (1) pure op → new `Workspace`, (2) `reconcile()`.
-- `reconcile()` (`WorkspaceStore.swift:2127`) diffs `canvas.allIDs()` vs `registry.keys`; new IDs → `makeSession(spec)` → `LivePaneSession.make(...)`; orphans torn down async. **This pattern is preserved; only `allIDs()`'s source changes.**
+- `reconcile()` (`WorkspaceStore.swift:2127`) diffs `canvas.allIDs()` vs `registry.keys`; new IDs → `makeSession(spec)` → `LivePaneSession.make(...)`; orphans torn down async. **Pattern preserved; only `allIDs()`'s source changes.**
 - Transient (NOT persisted): `liveCameraOffset`, `videoPromotionGeneration`, `pendingRename`, `pendingClose`, `focusHistory` (MRU, `WorkspaceStore.swift:580`), `selectedPanes`, `broadcastActive`, `overviewActive`, `lastSolvedLayout`, `lastViewport`, `recentlyClosed`.
 
 ### 1.4 Persistence
 - File: `<AppSupport>/SlopDesk/workspace.json` (`WorkspacePersistence.swift:41`); pretty-printed sorted-keys JSON, atomic, debounced 600ms.
-- Schema: `currentSchemaVersion = 9` (`Workspace.swift:141`). Migration `WorkspaceSchemaMigration.migrate` (`WorkspaceSchemaMigration.swift:21`) is **forward-only, no field upgrades** — a version mismatch returns `nil` → `defaultWorkspace()` (file moved aside as `workspace.json.corrupt`). Single-user, no backward-compat policy.
+- Schema: `currentSchemaVersion = 9` (`Workspace.swift:141`). Migration `WorkspaceSchemaMigration.migrate` (`WorkspaceSchemaMigration.swift:21`) is **forward-only, no field upgrades** — a version mismatch returns `nil` → `defaultWorkspace()` (file moved aside as `workspace.json.corrupt`). Single-user, no backward-compat.
 - Hosts: `Workspace.connection` (last host, in workspace.json) + `AppConnection.recentTargets` (5-entry MRU in `UserDefaults` key `connection.recentTargets`, `AppConnection.swift:70`). Only ONE host connected at a time (`AppConnection`, `AppConnection.swift:18`).
 - Portable export: `WorkspaceTransfer.swift:17` (`Document` envelope, `format: "slopdesk.workspace"`, `formatVersion: 1`).
 
@@ -54,12 +54,12 @@
 - Wire: `[UInt32 BE len][UInt8 type][body]`, big-endian, manual binary, never JSON on hot path. DATA types 1/2/3; CONTROL 10–14 (c→h) / 20–25 (h→c); next free h→c type byte = **26**. New types are golden-additive (surgical-merge `golden/golden_vectors.json`).
 
 ### 1.6 Claude Code today (explicit kind — being removed)
-- `SlopDeskClaudeCode` module = pure client-side output analysis only: `TerminalModeTracker` (`TerminalModeTracker.swift:39`, DECSET 1049/47/1047 + OSC 133 → `.shellPrompt`/`.altScreen`), `InputBoxModel` (`InputBoxModel.swift:23`, A/B1 affordance + echo dedup), `InputDedupRing`. **No process detection, no IPC, no MCP, no OSC 777.**
+- `SlopDeskClaudeCode` module = client-side output analysis only: `TerminalModeTracker` (`TerminalModeTracker.swift:39`, DECSET 1049/47/1047 + OSC 133 → `.shellPrompt`/`.altScreen`), `InputBoxModel` (`InputBoxModel.swift:23`, A/B1 affordance + echo dedup), `InputDedupRing`. **No process detection, no IPC, no MCP, no OSC 777.**
 - Host: `ClaudeCodeProfile` (`ClaudeCodeProfile.swift:30`) curated PTY launch (`["-lc","claude"]`, forced env `CLAUDE_CODE_ENTRYPOINT=remote_mobile`). `HostServer.LaunchMode` (`HostServer.swift:32`) is a **construction-time constant** (`--claude` flag, `HostdArguments.swift:76`) — whole daemon is shell OR claude, no per-pane switch.
 - `.claudeCode` is created explicitly (⇧⌘N `CommandInterpreter.swift:208`, palette, pill picker) → `addPane(kind:.claudeCode)` → `ClaudeCodePaneView` (`PaneLeafView.swift:401`) = terminal + `InspectorPanel` on `port+1` (inspector wired but **no host daemon exists yet**).
 
 ### 1.7 Settings today
-- Real UI exists: `SettingsScene.swift:75`, 3 `@AppStorage` tabs (Canvas / Notifications / Advanced), 9 keys in `SettingsKey` enum (`SettingsScene.swift:9`), fire-time readers allow live toggle.
+- Real UI: `SettingsScene.swift:75`, 3 `@AppStorage` tabs (Canvas / Notifications / Advanced), 9 keys in `SettingsKey` enum (`SettingsScene.swift:9`), fire-time readers allow live toggle.
 - NOT in UI: all ~80 `SLOPDESK_*` flags (video/FEC/QP/pacer/capture/mux/terminal), read once at static-`let` init from `ProcessInfo.environment`. No live reload. Terminal font/theme/keys: deliberately not loaded (`GhosttyTerminalView.swift:139`); bridge = `ghostty_config_load_string` (`ghostty.h:1133`), blocked on grid-reflow → host PTY resize.
 
 ---
@@ -155,7 +155,7 @@ struct Workspace: Codable, Sendable, Equatable {               // schemaVersion 
 }
 ```
 
-`PaneSpec` is reused unchanged (it carries `kind`/`title`/`video`); the canvas-specific `frame`/`z`/`groupID` are dropped. A pane's `PaneSpec` is stored in a side table on the Session (or keep `CanvasItem`→`PaneEntry` with just `id`+`spec`). The split tree stores only `PaneID`s; specs resolve via a `[PaneID: PaneSpec]` map per session so the tree stays a pure geometry/identity structure.
+`PaneSpec` is reused unchanged (carries `kind`/`title`/`video`); the canvas-specific `frame`/`z`/`groupID` are dropped. The split tree stores only `PaneID`s; specs resolve via a `[PaneID: PaneSpec]` map per session so the tree stays a pure geometry/identity structure.
 
 **Why n-ary, not binary:** matches the close/rebalance UX (redistribute flex equally among N siblings); avoids redundant intermediary nodes for 3-way splits. Mirrors Zellij `TiledPaneLayout`.
 
@@ -170,15 +170,15 @@ struct Workspace: Codable, Sendable, Equatable {               // schemaVersion 
 - `breakPaneToTab(_ id:)` (Zellij/Herdr "break pane") — eject a pane into a new tab.
 
 ### 3.3 Split-tree geometry solver (replaces `SolvedLayout` / `CanvasGeometry`)
-A new `SplitLayoutSolver.solve(_ root: SplitNode, in rect: CGRect) -> [PaneID: CGRect]`: recursive descent, partitioning `rect` along each node's axis by normalized flex weights (fixed children subtracted first). Feeds both render and `FocusResolver`. Keep `FocusResolver.swift` (geometric neighbor detection is layout-model-independent).
+New `SplitLayoutSolver.solve(_ root: SplitNode, in rect: CGRect) -> [PaneID: CGRect]`: recursive descent, partitioning `rect` along each node's axis by normalized flex weights (fixed children subtracted first). Feeds both render and `FocusResolver`. Keep `FocusResolver.swift` (geometric neighbor detection is layout-model-independent).
 
 ### 3.4 App shell / chrome
 - `SlopDeskClientApp.swift:197`: change `.windowResizability(.contentSize)` → `.automatic`; add `.windowStyle(.hiddenTitleBar)` (macOS 13+) so traffic lights float; or `NSWindow` `.fullSizeContentView` + `titlebarAppearsTransparent`.
 - `WorkspaceRootView.swift:71`: keep `NavigationSplitView` spine but re-purpose columns:
-  - **Sidebar** = Sessions list (grouped by host), each row showing session name + rollup agent-status dot (Herdr-style) + unread badge. Footer: "New Session". (`PaneSidebarView.swift:22` repurposed.)
+  - **Sidebar** = Sessions list (grouped by host), each row = session name + rollup agent-status dot (Herdr-style) + unread badge. Footer: "New Session". (`PaneSidebarView.swift:22` repurposed.)
   - **Detail top** = a **tab bar** (custom `HStack` of tab pills + `+`, or macOS 26 `Tab`/`TabSection` with `.tabViewStyle(.sidebarAdaptable)`); injected via `ToolbarItem(.principal)` or a view above the split area.
   - **Detail center** = recursive split-pane view (`SplitTreeView` — new, replaces `CanvasView`), using `GeometryReader` + the solver's rects; dividers are draggable `Divider`-backed handles.
-- Per-pane chrome: repurpose `PaneChromeView.swift:14` (already tmux-shaped) as the slim split-leaf header (kind glyph + live OSC title + RTT badge + Claude status chip + close/split). **Remove** `FloatingPaneHandle.swift` (the pill has no place in a tiled layout). `PaneLeafView.swift:32` is reused **verbatim** (kind switch is layout-agnostic).
+- Per-pane chrome: repurpose `PaneChromeView.swift:14` (already tmux-shaped) as the slim split-leaf header (kind glyph + live OSC title + RTT badge + Claude status chip + close/split). **Remove** `FloatingPaneHandle.swift` (the pill has no place in a tiled layout). `PaneLeafView.swift:32` reused **verbatim** (kind switch is layout-agnostic).
 - Compact (iPhone): `PaneCarouselView.swift:24` becomes the per-tab pane carousel; tab switching is the page indicator at session level.
 
 ### 3.5 How panes bind to transports (unchanged)
@@ -186,7 +186,7 @@ A new `SplitLayoutSolver.solve(_ root: SplitNode, in rect: CGRect) -> [PaneID: C
 
 ### 3.6 Persistence & migration
 - File path unchanged (`workspace.json`). Bump `currentSchemaVersion` → **10**.
-- Because current migration is hard-reset-on-mismatch (`WorkspaceSchemaMigration.swift:21`), a v9→v10 jump would blank existing workspaces. **Write a real v9→v10 migration** (first non-trivial one): wrap the old flat `canvas.items` into a single default Session with a single Tab whose `root` is an N-way `.split` (or a single leaf if 1 item) preserving `PaneID`s and `PaneSpec`s; drop `frame`/`z`/`groupID`/`camera`. Map old `groups` → tabs (one tab per group) if we want to preserve organization. This requires a raw-JSON version peek before typed decode (decode `{schemaVersion}` first, branch).
+- Current migration is hard-reset-on-mismatch (`WorkspaceSchemaMigration.swift:21`), so a v9→v10 jump would blank existing workspaces. **Write a real v9→v10 migration** (first non-trivial one): wrap the old flat `canvas.items` into a single default Session with a single Tab whose `root` is an N-way `.split` (or a single leaf if 1 item) preserving `PaneID`s and `PaneSpec`s; drop `frame`/`z`/`groupID`/`camera`. Map old `groups` → tabs (one tab per group) to preserve organization. Requires a raw-JSON version peek before typed decode (decode `{schemaVersion}` first, branch).
 - `WorkspaceTransfer` envelope `formatVersion` → 2.
 
 ### 3.7 Wire/transport impact
@@ -229,10 +229,10 @@ done --(seen by user)--> idle
 any --SessionEnd | foregroundProcess!=claude--> none
 any --no signal >60s & no transcript update--> stale (dim)
 ```
-Session rows **roll up to most-urgent child** (blocked > working > done > idle), exactly like Herdr. Pane chrome shows the dot + a short label (`label` capped 32 chars from hook `last_assistant_message` / manifest).
+Session rows **roll up to most-urgent child** (blocked > working > done > idle), like Herdr. Pane chrome shows the dot + a short label (`label` capped 32 chars from hook `last_assistant_message` / manifest).
 
 ### 4.4 Host launch mode
-`HostServer.LaunchMode` stays plain-shell by default (no `--claude`); `claude` is just a command the user runs. Drop the curated `ClaudeCodeProfile` auto-launch from the default path (keep it available as a snippet/launch-preset). The forced env (`CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_NO_FLICKER`) can be applied per-session via the settings/launch-preset env injection instead of a daemon mode.
+`HostServer.LaunchMode` stays plain-shell by default (no `--claude`); `claude` is just a command the user runs. Drop the curated `ClaudeCodeProfile` auto-launch from the default path (keep it available as a snippet/launch-preset). The forced env (`CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_NO_FLICKER`) can be applied per-session via settings/launch-preset env injection instead of a daemon mode.
 
 ---
 
@@ -268,7 +268,7 @@ Session rows **roll up to most-urgent child** (blocked > working > done > idle),
 | 2 | **In-surface splits via our tree** | High (core redesign) | `SplitTreeView` + `SplitNode` (§3). Each pane stays one libghostty surface; we tile. |
 | 3 | **Tabs** | High | `Tab` model + tab bar (§3.4). |
 | 4 | **Claude/agent status chips** | High | §4; `PaneChromeView` + sidebar rollup. |
-| 5 | **Scrollback search (⌘F)** | High | Two options: (a) drive `ghostty_surface_binding_action(s,"start_search"/"navigate_search")` if the pinned 1.3.1 ABI exposes the search actions — verify; else (b) client-side search over `TerminalViewModel.ring` (256 KiB raw, no parsed grid → line-level only). |
+| 5 | **Scrollback search (⌘F)** | High | (a) drive `ghostty_surface_binding_action(s,"start_search"/"navigate_search")` if the pinned 1.3.1 ABI exposes the search actions — verify; else (b) client-side search over `TerminalViewModel.ring` (256 KiB raw, no parsed grid → line-level only). |
 | 6 | **Sticky command header** | Medium-High (cheap) | Already have OSC 133 C/D via `HostOutputSniffer`; pin last `commandStatus` command text at top of `TerminalScreenView` when output overflows. |
 | 7 | **OSC 8 hyperlink click-to-open** | Medium | `HostOutputSniffer.finishOSC` (`HostOutputSniffer.swift`) — add `case "8":`; new wire type (≥26); client opens URL. libghostty may render link internally; wire the click. |
 | 8 | **Command palette: tab/split/session + workflows** | Medium | `CommandPaletteView.swift:31` extend; add Warp-style typed filter chips + snippet/launch-preset entries. |
@@ -282,12 +282,12 @@ Session rows **roll up to most-urgent child** (blocked > working > done > idle),
 ## 7. Open Decisions (with recommended default)
 
 1. **Tree arity — binary vs n-ary.** → **n-ary** (Zellij model). Cleaner close/rebalance, no redundant nodes. *Default: n-ary.*
-2. **One host vs per-session host.** Current app is single-host (`AppConnection`). tmux/Muxy attach one server per session. → **per-session `connection`** with a small host-keyed `AppConnection` pool, but **defer the multi-host pool to a later phase** — ship Phase 1–4 single-host (Session.connection optional, all sessions share the one host) to limit blast radius. *Default: model per-session now, implement multi-host pool post-MVP.*
+2. **One host vs per-session host.** Current app is single-host (`AppConnection`); tmux/Muxy attach one server per session. → **per-session `connection`** with a small host-keyed `AppConnection` pool, but **defer the multi-host pool** — ship Phase 1–4 single-host (Session.connection optional, all sessions share the one host) to limit blast radius. *Default: model per-session now, implement multi-host pool post-MVP.*
 3. **Floating panes.** Zellij/Muxy have them; adds complexity. → **defer to Phase 2+**; reserve `Tab.floatingPanes: [PaneID]` in the schema now so no later migration. *Default: schema-reserved, not implemented in MVP.*
 4. **Migration vs hard-reset on v9→v10.** → **write a real v9→v10 migration** (wrap canvas into one Session/Tab, preserve PaneIDs/specs). The single-user no-compat policy technically allows a blank reset, but the first real migration is cheap and preserves user layouts. *Default: real migration.*
 5. **Claude detection primary signal.** → **host foreground-process watch (type 26) as primary**, hooks (type 27) as the richer opt-in, screen-manifest as no-hooks fallback. Process watch is zero-config and robust; hooks add state quality. *Default: ship process-watch + manifest first, hooks installer second.*
-6. **Keep the read-only Inspector (`port+1`)?** It's wired but has no host daemon. → **keep the seam, gate it behind the Claude flag, build the host daemon as part of the agents work** (or drop it if hook-notify + status chips cover the need). *Default: keep seam, build daemon only if hook status proves insufficient.*
-7. **Sessions sidebar grouping.** → group sessions **by host**, with per-host collapse; within a host, sessions ordered MRU. *Default: group-by-host.*
+6. **Keep the read-only Inspector (`port+1`)?** Wired but has no host daemon. → **keep the seam, gate it behind the Claude flag, build the host daemon as part of the agents work** (or drop it if hook-notify + status chips cover the need). *Default: keep seam, build daemon only if hook status proves insufficient.*
+7. **Sessions sidebar grouping.** → group sessions **by host**, per-host collapse; within a host, sessions ordered MRU. *Default: group-by-host.*
 8. **Compact (iPhone) projection.** → tab bar collapses to a page indicator; `PaneCarouselView` shows the active tab's panes as pages; sessions reachable via the sidebar sheet. *Default: carousel-per-tab.*
 9. **`ClaudeCodeProfile` curated launch.** → **retire as a daemon mode**; offer the curated env + `claude` command as a built-in launch preset/snippet instead. *Default: preset, not LaunchMode.*
 10. **Settings live-reload for video flags.** → **no live reload** (static-`let` reality); sidecar read at daemon launch, UI says "applies on reconnect." Refactoring all resolvers to live-reactive is out of scope. *Default: launch-time sidecar.*

@@ -1,13 +1,12 @@
 # SlopDesk — design docs
 
-> Design docs for SlopDesk, a low-latency remote-coding tool for Apple platforms (macOS
-> host, macOS + iOS/iPadOS clients). The client is an infinite canvas of panes; each pane is
-> either a terminal (host PTY → TCP → libghostty) or a live GUI window (ScreenCaptureKit →
-> VideoToolbox HEVC → UDP). Both are first-class. The performance core is Rust
-> (`rust/slopdesk-core`, behind a C ABI — wire codecs, FEC, realtime controllers, terminal
-> protocol); the shell is Swift/SwiftUI (capture, HW codec, Metal, input, UI). Some older docs
-> use the codename "PaneCast" and frame the terminal as the only path — that split has since
-> been levelled (see [00-overview.md](00-overview.md)).
+> Design docs for SlopDesk, a low-latency remote-coding tool for Apple platforms (macOS host;
+> macOS + iOS/iPadOS clients). Client = infinite canvas of panes; each pane is a terminal
+> (host PTY → TCP → libghostty) or a live GUI window (ScreenCaptureKit → VideoToolbox HEVC →
+> UDP) — both first-class. Performance core is Rust (`rust/slopdesk-core`, behind a C ABI:
+> wire codecs, FEC, realtime controllers, terminal protocol); shell is Swift/SwiftUI (capture,
+> HW codec, Metal, input, UI). Older docs use the codename "PaneCast" and frame the terminal as
+> the only path — since levelled (see [00-overview.md](00-overview.md)).
 >
 > Read first: [00-overview.md](00-overview.md) (architecture + every binding decision)
 > · Decision log: [DECISIONS.md](DECISIONS.md)
@@ -25,10 +24,9 @@
 | **Control** | Terminal: input bytes → PTY stdin (no injection). GUI window: activate-then-control + CGEvent |
 
 Non-functional profile (coding, not gaming): terminal text is pixel-perfect by construction
-(PTY → libghostty, never through a codec); the GUI path targets feels-local responsiveness
-and runs at 60 fps by default because 30 fps reads as noticeably stale on scroll and motion.
-This is a coding tool, so it idle-skips when the screen is static rather than burning a fixed
-frame budget — high fps when there is motion, ~0 bandwidth when there isn't.
+(PTY → libghostty, never a codec); GUI path targets feels-local responsiveness at 60 fps
+default (30 fps reads as stale on scroll/motion). Idle-skips when the screen is static rather
+than burning a fixed frame budget — high fps on motion, ~0 bandwidth when static.
 
 ## Document index
 
@@ -109,7 +107,7 @@ frame budget — high fps when there is motion, ~0 bandwidth when there isn't.
 
 | Term | Meaning |
 |------|---------|
-| **PTY** | Pseudo-terminal master/slave fd pair; the host runs the shell in a PTY and relays the master fd |
+| **PTY** | Pseudo-terminal master/slave fd pair; host runs the shell in a PTY and relays the master fd |
 | **TUI** | Full-screen terminal app (vim, Claude Code interactive) |
 | **libghostty** | Ghostty's terminal engine (C ABI) — the client renderer |
 | **alt-screen** | Alternate screen buffer (DECSET 1049) — a TUI taking the whole screen |

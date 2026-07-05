@@ -2,29 +2,29 @@
 
 ## Summary
 
-SlopDesk stores all settings in `~/.config/slopdesk/config.toml` — a lenient TOML file (flat `key = value` pairs, one per line, `#` comments). The Settings panel writes this same file, so panel edits and manual edits are always in sync. Editing the file directly is useful for version-control, cross-machine copying, commenting choices, or setting keys that only exist in the file and not in the GUI. The file is optional; SlopDesk runs on compiled defaults until it is created. Saving the file triggers an immediate hot-reload across every open window with no restart required.
+SlopDesk stores all settings in `~/.config/slopdesk/config.toml` — a lenient TOML file (flat `key = value` pairs, one per line, `#` comments). The Settings panel writes this same file, so panel and manual edits stay in sync. Editing directly suits version-control, cross-machine copying, commenting choices, or file-only keys not in the GUI. The file is optional; SlopDesk runs on compiled defaults until created. Saving triggers immediate hot-reload across every open window — no restart.
 
 ---
 
 ## Behaviors
 
-- **File location:** `~/.config/slopdesk/config.toml`. The file need not exist; SlopDesk runs on defaults until created.
-- **Format:** TOML — flat `key = value` pairs, one assignment per line, `#` for comments.
-- **Leniency:** Quotes around simple string values are optional. Unknown keys are silently ignored (typo-safe; newer configs load on older builds).
-- **Whitespace:** Whitespace around `=` is optional.
-- **Repeat keys for lists:** To add list entries (e.g. keybinds), repeat the same key on multiple lines. Example: `keybind = cmd+shift+t=new_tab` on successive lines.
-- **Environment expansion:** `~` and `$VAR` expand inside string values. Example: `working-directory = ~/projects`.
-- **Includes:** `include = <path>` pulls in another TOML file. Later includes win; the main file is read last. Useful for splitting config or sharing a base across machines.
-- **Settings panel parity:** The Advanced tab's Config File section shows the exact path and an "Open Config File" button that opens the file in the system default editor, creating an empty file first if needed. All panel changes write through to this file.
-- **Hot-reload:** SlopDesk watches the file with a file-system observer. Saving the file applies changes immediately to every open window — no restart, no SIGHUP.
-- **Force reload:** After editing an `include`d file (which SlopDesk may not watch directly), use Settings → Advanced → Config File → Reload Config, or run the **Reload Config** command from the Command Palette.
-- **Value types supported:** String (quoted or bare), Integer, Float, Boolean (`true`/`false` or `on`/`off`), Color (`#RRGGBB`, `#RRGGBBAA`, named), Enum (bare word), List (repeated keys).
+- **File location:** `~/.config/slopdesk/config.toml`. Optional; defaults apply until created.
+- **Format:** TOML — flat `key = value`, one per line, `#` comments.
+- **Leniency:** Quotes around simple strings optional. Unknown keys silently ignored (typo-safe; newer configs load on older builds).
+- **Whitespace:** Optional around `=`.
+- **Repeat keys for lists:** Repeat a key on multiple lines to add list entries. E.g. `keybind = cmd+shift+t=new_tab` on successive lines.
+- **Environment expansion:** `~` and `$VAR` expand inside string values. E.g. `working-directory = ~/projects`.
+- **Includes:** `include = <path>` pulls in another TOML file. Later includes win; main file read last. Splits config or shares a base across machines.
+- **Settings panel parity:** Advanced tab's Config File section shows the path and an "Open Config File" button (opens in system default editor, creating an empty file first if needed). All panel changes write through to this file.
+- **Hot-reload:** File-system observer applies saves immediately to every open window — no restart, no SIGHUP.
+- **Force reload:** After editing an `include`d file (which SlopDesk may not watch), use Settings → Advanced → Config File → Reload Config, or the **Reload Config** Command Palette command.
+- **Value types:** String (quoted/bare), Integer, Float, Boolean (`true`/`false` or `on`/`off`), Color (`#RRGGBB`, `#RRGGBBAA`, named), Enum (bare word), List (repeated keys).
 
 ---
 
 ## Keybindings
 
-The `config-file` page itself defines no keybindings. The table below covers keybindings *related to accessing the config file* as described on this page.
+The `config-file` page defines no keybindings. Below are keybindings *for accessing the config file*.
 
 | Action | Keys |
 |---|---|
@@ -37,7 +37,7 @@ The `config-file` page itself defines no keybindings. The table below covers key
 
 ## Config keys
 
-The full configuration reference lives at `/reference/configuration`. Below is every key documented across the SlopDesk reference, with its default and effect.
+Full reference: `/reference/configuration`. Every documented key with default and effect:
 
 ### Font
 
@@ -361,9 +361,9 @@ Built-in themes: April, April Dark, Ayu Dark, Ayu Light, Catppuccin Mocha, Dracu
 
 ### Site Icon (`otty-icon.png`)
 
-The reference app icon (`otty-icon.png`) is a dark, near-black circular disk (charcoal, approximately `#3a3a3c`) on a white/light-grey rounded-square background (macOS-style app icon shape). On the dark disk, three white glyphs form a terminal prompt motif: `>_` at upper-left and `*` at upper-right, with a short horizontal dash (`-`) below them, centered. The rendering is clean, flat, and high-contrast. Typography is monospace-style, stroke weight is medium-bold. The icon conveys a terminal with an agent/automation asterisk.
+Reference app icon: a dark, near-black circular disk (charcoal ~`#3a3a3c`) on a white/light-grey rounded-square background (macOS app-icon shape). On the disk, three white glyphs form a terminal prompt motif: `>_` upper-left, `*` upper-right, a short horizontal dash (`-`) centered below. Clean, flat, high-contrast; monospace-style, medium-bold stroke. Conveys a terminal with an agent/automation asterisk.
 
-The **config-file** page itself contains no screenshots — it is a purely textual reference/how-to page. The only image present is the reference icon described above.
+The **config-file** page contains no screenshots — purely textual reference/how-to. The only image is the reference icon above.
 
 ---
 
@@ -376,7 +376,7 @@ The **config-file** page itself contains no screenshots — it is a purely textu
 ## Client/host implementation notes
 
 ### Architecture context
-SlopDesk is a remote coding tool: a Swift macOS host runs `slopdesk-hostd` (PTY, screen capture, video encode/FEC), and macOS/iOS clients render the remote terminal via libghostty behind a `TerminalSurface` seam. This config file is the CLIENT-SIDE UX layer; because slopdesk splits a session across a client and a host, some keys resolve entirely on the client while others must round-trip to the host.
+SlopDesk is a remote coding tool: a Swift macOS host runs `slopdesk-hostd` (PTY, screen capture, video encode/FEC); macOS/iOS clients render the remote terminal via libghostty behind a `TerminalSurface` seam. This config file is the CLIENT-SIDE UX layer; since a session splits across client and host, some keys resolve on the client, others round-trip to the host.
 
 ### Straightforward client-side keys
 
@@ -400,28 +400,28 @@ SlopDesk is a remote coding tool: a Swift macOS host runs `slopdesk-hostd` (PTY,
 
 | Key / behavior | Why it's host-side |
 |---|---|
-| `working-directory` | CWD is the HOST's filesystem, not the client's. `working-directory = ~/projects` is resolved on the host and communicated at session open via the wire protocol. The value lives in client config but applies on the host. |
-| `tab-working-directory` / `split-working-directory` | Same HOST-side resolution. On new tab/split, the CWD is inherited from the host-side PTY, not the client's local filesystem. |
+| `working-directory` | CWD is the HOST's filesystem. `working-directory = ~/projects` resolves on the host, communicated at session open via the wire protocol. Value lives in client config but applies on the host. |
+| `tab-working-directory` / `split-working-directory` | Same HOST-side resolution. New tab/split CWD inherited from the host-side PTY, not the client's local filesystem. |
 | `window-working-directory` | `home` default means the HOST's home directory. |
-| `command` | The command runs on the HOST (in `slopdesk-hostd`). Client config stores a preferred command sent over the wire at session-open, but cannot enforce it after launch. |
-| `env` | Environment variables apply on the HOST side in the PTY. Client stores them and sends them at session open. |
-| `ssh-integration` | SlopDesk IS the transport — this is "integration forwarding" over the slopdesk mux channel, not a secondary SSH hop. |
-| `session-restore-*` | Session restore uses `DetachedSessionStore` (`SLOPDESK_DETACH_ENABLED`), aligned with the host-side detach mechanism rather than a purely client-side session log. |
-| `shell-integration` | Shell integration RC block must be injected on the HOST shell (not client). Host manages this; client config controls whether to request it at session open. |
+| `command` | Runs on the HOST (in `slopdesk-hostd`). Client config stores a preferred command sent over the wire at session-open, but cannot enforce it after launch. |
+| `env` | Variables apply on the HOST-side PTY. Client stores and sends them at session open. |
+| `ssh-integration` | SlopDesk IS the transport — this is integration forwarding over the slopdesk mux channel, not a secondary SSH hop. |
+| `session-restore-*` | Uses `DetachedSessionStore` (`SLOPDESK_DETACH_ENABLED`), aligned with the host-side detach mechanism rather than a purely client-side session log. |
+| `shell-integration` | RC block must be injected on the HOST shell. Host manages this; client config controls whether to request it at session open. |
 
 ### Platform-specific or deferred keys
 
 | Key / behavior | Constraint |
 |---|---|
-| `quick-terminal-*` (Quick Terminal) | A system-wide dropdown terminal (like Visor). SlopDesk's client is a full windowed app; there is no OS-level overlay mechanism to implement this without a separate helper app or Accessibility API. Deferred. |
-| `dock-icon-*` | Dock icon badges and animations are macOS-only and client-local. Implementable on the macOS client (`SlopDeskClientUI`) but not on iOS. |
-| `auto-secure-input` / `secure-input-indication` | Secure input (IOHIDSetSecureInput) applies to the CLIENT's event stream. Since slopdesk injects input events via the host, "secure input" on the client does not protect the host shell from interception — the semantics differ fundamentally from a local terminal. N/A for remote sessions. |
-| `freeze-inactive-tab` | For a local terminal this would release a local GPU Metal surface. In slopdesk the video decode surface is always "remote" — inactive panes can suspend the video stream (already possible via the FEC/packetizer path) but libghostty surface management differs. Needs host-side stream-pause integration. |
-| `link-open-with`, `file-open-with`, `folder-open-with` | Paths detected in terminal output are HOST filesystem paths. Opening them requires routing the open-request back through the wire to the host, then having the host open the file in its local app — not a pure client operation. |
-| `progress-bar-commands` | Progress detection requires parsing shell output; since the shell runs on the host, OSC 133 (already tracked by slopdesk's `Blocks/OSC-133` integration) is the correct seam for progress signaling. |
-| `window-opacity` (window-level blur/transparency) | macOS vibrancy/window translucency is client-local and feasible on macOS. On iOS, background blur behind the terminal view requires a different API. Platform-specific. |
-| `notification-foreground`, `privilege-*` (notifications) | Notifications are delivered to the CLIENT device. For iOS remote clients, notifications require APNS push tokens — not just local `UNUserNotificationCenter`. iOS-specific complexity. |
-| `ipc-allow-send-keys` / `ipc-allow-sensitive-sessions` | For a local terminal, IPC refers to a local Unix-socket IPC between processes on the same Mac. In slopdesk, the equivalent is the host-side agent-control socket (`SLOPDESK_AGENT_CONTROL=1`, AF_UNIX NDJSON). The client config key guards client exposure; maps to `AgentControlListener` access policy on the host. |
+| `quick-terminal-*` (Quick Terminal) | System-wide dropdown terminal (like Visor). SlopDesk's client is a full windowed app; no OS-level overlay mechanism without a separate helper app or Accessibility API. Deferred. |
+| `dock-icon-*` | Dock badges/animations are macOS-only and client-local. Implementable on the macOS client (`SlopDeskClientUI`), not iOS. |
+| `auto-secure-input` / `secure-input-indication` | Secure input (IOHIDSetSecureInput) applies to the CLIENT's event stream. Since slopdesk injects input via the host, client "secure input" doesn't protect the host shell from interception — semantics differ from a local terminal. N/A for remote sessions. |
+| `freeze-inactive-tab` | Locally this releases a GPU Metal surface. In slopdesk the video decode surface is always "remote" — inactive panes can suspend the video stream (possible via the FEC/packetizer path) but libghostty surface management differs. Needs host-side stream-pause integration. |
+| `link-open-with`, `file-open-with`, `folder-open-with` | Detected paths are HOST filesystem paths. Opening routes the request back through the wire to the host, which opens the file in its local app — not a pure client operation. |
+| `progress-bar-commands` | Progress detection parses shell output; since the shell runs on the host, OSC 133 (already tracked by slopdesk's `Blocks/OSC-133` integration) is the correct seam. |
+| `window-opacity` (window-level blur/transparency) | macOS vibrancy/window translucency is client-local and feasible on macOS. On iOS, background blur behind the terminal view needs a different API. Platform-specific. |
+| `notification-foreground`, `privilege-*` (notifications) | Delivered to the CLIENT device. iOS remote clients need APNS push tokens — not just local `UNUserNotificationCenter`. iOS-specific complexity. |
+| `ipc-allow-send-keys` / `ipc-allow-sensitive-sessions` | Locally IPC is a Unix-socket between processes on the same Mac. In slopdesk the equivalent is the host-side agent-control socket (`SLOPDESK_AGENT_CONTROL=1`, AF_UNIX NDJSON). The client key guards client exposure; maps to `AgentControlListener` access policy on the host. |
 | Config file format — `include` | Not yet implemented in the config stack; on the parser backlog. |
 
 ### Implementation order

@@ -1,10 +1,8 @@
-This is a crucial distinction for the pilot. `YCbCrConversion.swift` is **clean** (committed delegation at HEAD) — reabsorbing it is a real edit. The other candidates are working-tree-M (uncommitted delegation = `git restore` discards them, which the read-only constraint forbids me from doing and isn't a "real" migration test). The `ycbcr` pilot is the right one: smallest committed FFI delegation, golden-pinned, pure f32, no NEON, no state. I have what I need.
-
 # SlopDesk Rust→Native-Swift Reverse-Migration Plan
 
 **Goal:** Reabsorb the `slopdesk-core` + `slopdesk-ffi` Rust into optimized native Swift, delete the FFI boundary, and collapse the cross-language `golden_parity` proof into a single-implementation Swift pin — without breaking one bit on the wire.
 
-**Verified against the tree (HEAD `a3508b5`):** 40 golden keys present in `rust/slopdesk-core/tests/vectors/golden_vectors.json`; `ycbcr` is golden-pinned with f32 bit-patterns and its Swift site (`YCbCrConversion.swift`) is **clean/committed-delegation** (the real pilot); the NEON kernels are exactly `gf_neon.rs` (318) + `frame_hash.rs` (375) = 693 LOC; the FFI link is `Package.swift` L57-58 `.unsafeFlags(["-L…/rust/target/release","-lslopdesk_ffi"])` on the `CSlopDeskFFI` target, consumed by `SlopDeskProtocol`, `SlopDeskVideoProtocol`, `SlopDeskVideoHost`, `SlopDeskVideoClient`.
+**Verified against the tree (HEAD `a3508b5`):** 40 golden keys in `rust/slopdesk-core/tests/vectors/golden_vectors.json`; `ycbcr` is golden-pinned with f32 bit-patterns and its Swift site (`YCbCrConversion.swift`) is **clean/committed-delegation** (the real pilot); NEON kernels are exactly `gf_neon.rs` (318) + `frame_hash.rs` (375) = 693 LOC; the FFI link is `Package.swift` L57-58 `.unsafeFlags(["-L…/rust/target/release","-lslopdesk_ffi"])` on the `CSlopDeskFFI` target, consumed by `SlopDeskProtocol`, `SlopDeskVideoProtocol`, `SlopDeskVideoHost`, `SlopDeskVideoClient`.
 
 ---
 
@@ -21,7 +19,7 @@ This is a crucial distinction for the pilot. `YCbCrConversion.swift` is **clean*
 | **wire_layout risk** | 21 | every codec: fec, interleaver, fragment, reassembler, mux_header, video_control, input_event, cursor, recovery, window_geometry, terminal wire_message/mux envelope + frame decoders, reader/session/mod |
 | **Golden-pinned modules** | 32 of 40 keys map to a module; 8 modules pinned only by FFI-roundtrip + `slopdesk-loopback-validate` (reassembler, packetizer-glue, mux_router, parking_ledger, decode_gate, recovery_idr_policy, recovery_deduper, scroll_*) |
 
-**Key structural fact that shapes the whole plan:** the overwhelming majority is **A-resurrect**, and a large subset of *those* are **uncommitted working-tree changes** (the in-flight "dedup" job) — for those, reversal is literally discarding the working-tree edit, not writing code. Genuinely-new Rust (Class B, ~8 modules) is the only place real translation happens, and 5 of those 8 are the NEON cluster.
+**Key structural fact that shapes the plan:** the overwhelming majority is **A-resurrect**, and a large subset are **uncommitted working-tree changes** (the in-flight "dedup" job) — for those, reversal is discarding the working-tree edit, not writing code. Genuinely-new Rust (Class B, ~8 modules) is the only place real translation happens, and 5 of those 8 are the NEON cluster.
 
 ---
 
@@ -29,14 +27,14 @@ This is a crucial distinction for the pilot. `YCbCrConversion.swift` is **clean*
 
 **Decision: a tiny native C target compiled by SwiftPM, linked directly into Swift — NOT pure `SIMD16<UInt8>`/`SIMD2<UInt64>`.**
 
-Rationale (straight from the kernel notes): pure Swift SIMD has **no `vqtbl1q_u8`** (16-entry parallel table lookup), so the GF multiply degrades to per-lane scalar table lookups and loses the win; and NEON has **no 64-bit lane multiply**, so the xxHash64 fold needs the synthesized schoolbook `vmull_u32` sequence to reproduce `u64` wrapping_mul exactly. A C target emits byte-identical `tbl.16b`/`umull`/`eor.16b` codegen with zero FFI marshalling (Swift→C is a direct call, no `AisdBytes` heap dance).
+Rationale (from the kernel notes): pure Swift SIMD has **no `vqtbl1q_u8`** (16-entry parallel table lookup), so the GF multiply degrades to per-lane scalar table lookups and loses the win; and NEON has **no 64-bit lane multiply**, so the xxHash64 fold needs the synthesized schoolbook `vmull_u32` sequence to reproduce `u64` wrapping_mul exactly. A C target emits byte-identical `tbl.16b`/`umull`/`eor.16b` codegen with zero FFI marshalling (Swift→C is a direct call, no `AisdBytes` heap dance).
 
 **Two physical kernels** (the 5 "needs_neon" records reduce to these):
 
-1. **GF split-table region multiply** (from `gf_neon.rs`): `void aisd_gf_region_mul_add(uint8_t* dst, const uint8_t* src, size_t len, const uint8_t* table_lo, const uint8_t* table_hi)` — split-nibble vtbl: `low = v & 0x0f; high = v >> 4; prod = vqtbl1q_u8(lo,low) ^ vqtbl1q_u8(hi,high); dst ^= prod`. The Swift side builds `table_lo[i]=mul(c,i)`, `table_hi[i]=mul(c,i<<4)` per coeff, slices chunks of 16, handles the tail + non-arm64 fallback via the **scalar `ScalarGf` Swift reference**.
-2. **xxHash64 32-byte block fold** (from `frame_hash.rs`): `uint64x2x2 aisd_xxh64_fold_blocks(...)` operating on the four lanes held as two `uint64x2_t`, using `round_pair(acc,k)=vmulq_u64_synth(rotl31(acc + vmulq_u64_synth(k,P2)), P1)`. All plane-walk, cross-row buffering (`StreamHasher` seam), `<32B` tail, and finalize stay in **scalar Swift**.
+1. **GF split-table region multiply** (`gf_neon.rs`): `void aisd_gf_region_mul_add(uint8_t* dst, const uint8_t* src, size_t len, const uint8_t* table_lo, const uint8_t* table_hi)` — split-nibble vtbl: `low = v & 0x0f; high = v >> 4; prod = vqtbl1q_u8(lo,low) ^ vqtbl1q_u8(hi,high); dst ^= prod`. Swift builds `table_lo[i]=mul(c,i)`, `table_hi[i]=mul(c,i<<4)` per coeff, slices 16-byte chunks, handles the tail + non-arm64 fallback via the scalar `ScalarGf` Swift reference.
+2. **xxHash64 32-byte block fold** (`frame_hash.rs`): `uint64x2x2 aisd_xxh64_fold_blocks(...)` on the four lanes held as two `uint64x2_t`, `round_pair(acc,k)=vmulq_u64_synth(rotl31(acc + vmulq_u64_synth(k,P2)), P1)`. Plane-walk, cross-row buffering (`StreamHasher` seam), `<32B` tail, and finalize stay in scalar Swift.
 
-**SwiftPM wiring sketch** (replaces the deleted `CSlopDeskFFI`):
+**SwiftPM wiring** (replaces the deleted `CSlopDeskFFI`):
 
 ```
 Sources/CSlopDeskSIMD/
@@ -53,42 +51,42 @@ Sources/CSlopDeskSIMD/
 // consumers (SlopDeskVideoHost, SlopDeskVideoProtocol) add "CSlopDeskSIMD" dep
 ```
 
-This C target is **compiled by SwiftPM from source every build** — it kills the entire "rust staticlib must exist before swift build" ordering constraint. The `#if defined(__aarch64__)` guard gives x86_64 CI/sim a scalar fallback so headless builds stay green.
+This C target is **compiled by SwiftPM from source every build** — it kills the "rust staticlib must exist before swift build" ordering constraint. The `#if defined(__aarch64__)` guard gives x86_64 CI/sim a scalar fallback so headless builds stay green.
 
-**Differential oracle (non-negotiable):** keep the Rust scalar bodies' *logic* as the portable Swift reference (`ScalarGf.mulAdd`, scalar `xxHash64`), and pin `scalar == C-NEON` with a property test over random inputs — exactly the differential test the Rust side ships. **The bit-exact trap here is integer WRAPPING, not FMA** (no float in this cluster): every Rust `wrapping_mul`/`wrapping_add`/`wrapping_sub` + `rotate_left` becomes Swift `&*`/`&+`/`&-`/manual `(x<<n)|(x>>(64-n))`. Plain `*`/`+`/`-` **trap in release**.
+**Differential oracle (non-negotiable):** keep the Rust scalar bodies' logic as the portable Swift reference (`ScalarGf.mulAdd`, scalar `xxHash64`), and pin `scalar == C-NEON` with a property test over random inputs — the differential test the Rust side ships. **The bit-exact trap is integer WRAPPING, not FMA** (no float here): every Rust `wrapping_mul`/`wrapping_add`/`wrapping_sub` + `rotate_left` becomes Swift `&*`/`&+`/`&-`/manual `(x<<n)|(x>>(64-n))`. Plain `*`/`+`/`-` **trap in release**.
 
 ---
 
 ## 3. Dependency-ordered phases
 
-Ordering rule: (a) NEON C-kernel + 1 pilot prove the loop end-to-end; (b) leaf modules with no core-internal deps before their dependents; (c) FFI/cbindgen/build-ordering teardown dead last.
+Ordering rule: (a) NEON C-kernel + 1 pilot prove the loop end-to-end; (b) leaf modules with no core-internal deps before dependents; (c) FFI/cbindgen/build-ordering teardown last.
 
 ### Phase 0 — NEON foundation + PILOT vertical slice
-**Modules:** `CSlopDeskSIMD` C target (2 kernels) **+** the pilot `ycbcr` (see §4).
+**Modules:** `CSlopDeskSIMD` C target (2 kernels) + the pilot `ycbcr` (§4).
 **Class:** B-fresh (C kernels) + A-resurrect (pilot).
-**Golden to re-verify:** `ycbcr`. Plus a new `scalar==NEON` differential test for both kernels.
+**Golden:** `ycbcr`; plus a new `scalar==NEON` differential test for both kernels.
 **Traps:** kernel = integer wrapping (`&*`/`&+`/manual rotl), `vqtbl1q_u8` table fill via `gf256::mul`, schoolbook `vmull_u32` for `vmulq_u64`. Pilot = compute coefficients **in f32 throughout** (`luma_scale=255.0/219.0`, etc.) — an f64 intermediate narrows wrong and diverges the pinned bit-patterns; `full_range` differs only in luma scale/bias.
 **Effort:** kernels **M**, pilot **S**.
-**Exit gate:** `make check` green + `cargo test golden_parity` still green (ycbcr now Swift-native, Rust still present for cross-check) + the kernel differential test passes. This proves "delete an FFI delegation, golden stays green" and "the C kernel matches scalar."
+**Exit gate:** `make check` green + `cargo test golden_parity` green (ycbcr now Swift-native, Rust still present for cross-check) + kernel differential test passes. Proves "delete an FFI delegation, golden stays green" and "the C kernel matches scalar."
 
 ### Phase 1 — Pure value-codec leaves (no NEON, no state, golden-pinned)
-**Modules:** `geometry` value types + `aspect_fit` (float_law), `coordinate_mapping`, `window_geometry`, `input_event`, `cursor`, `recovery` (types 1-5; NACK type-6 already native — keep), `video_control` (re-add ScrollOffset type 13 + ContentMask type 14 on top of `7b6b62a`), `mux_header` (bare prefix), `recovery_idr`-independent geometry callers. Delete the matching FFI marshalling shims (`video/{video_control,input_event,cursor,recovery,ycbcr,aspect_fit,coordinate_mapping,window_geometry}.rs`) as each Swift site goes native.
-**Class:** A-resurrect (+ video_control is MIXED: resurrect `7b6b62a`, re-add types 13/14).
+**Modules:** `geometry` value types + `aspect_fit` (float_law), `coordinate_mapping`, `window_geometry`, `input_event`, `cursor`, `recovery` (types 1-5; NACK type-6 already native — keep), `video_control` (re-add ScrollOffset type 13 + ContentMask type 14 on top of `7b6b62a`), `mux_header` (bare prefix), `recovery_idr`-independent geometry callers. Delete the matching FFI shims (`video/{video_control,input_event,cursor,recovery,ycbcr,aspect_fit,coordinate_mapping,window_geometry}.rs`) as each Swift site goes native.
+**Class:** A-resurrect (video_control MIXED: resurrect `7b6b62a`, re-add types 13/14).
 **Golden:** `coordWindowPoint`, `windowGeometry`, `inputEvent`, `cursorUpdate`, `cursorShape`, `recovery`, `videoControl`, `muxBare`, `muxFragment`.
 **Traps:**
 - aspect_fit/coordinate_mapping/vd/placement/capture: **keep `mul` then `add` SEPARATE — never `mul_add`** (`du=(su-0.5-px)*z+0.5`, `origin.x+du*width`).
 - cursor: **round-half-away-then-truncate** `UInt16(truncatingIfNeeded: Int(w.rounded()))` (32.4→32, 32.6→33).
 - recovery: **reject trailing bytes** (`bytes_remaining()==0 else Malformed`) — load-bearing for byte-keyed dedup; NACK count > 64 → Malformed *before* alloc.
-- input_event/video_control: `read_finite_f64` rejects NaN/Inf (a NaN crashes client `CALayerInvalidGeometry`); strict UTF-8 on Text/strings; `MouseButton::from_u8` only 0/1/2.
+- input_event/video_control: `read_finite_f64` rejects NaN/Inf (NaN crashes client `CALayerInvalidGeometry`); strict UTF-8 on Text/strings; `MouseButton::from_u8` only 0/1/2.
 - geometry intersection: **strict `<` per axis** → edge-touch returns non-null zero-area rect (CGRect-faithful); use native CGRect for the rect methods, do NOT port them onto VideoRect.
 **Effort:** mostly **S**, video_control **L**.
 
 ### Phase 2 — Pure-function controllers + geometry/host-math leaves (float_law, stateless or value)
-**Modules:** `ycbcr` done; now `geometry::aspect_fit` done; `virtual_display_geometry`, `capture_region` (MIXED: resurrect `1f68d89^` + re-apply `is_associatable_layer` layer-101 + `content_rects()`), `window_placement`, `udp_receive_loop_policy` (discard WT delegation), `live_bitrate_policy`, `adaptive_playout` (B-fresh into existing enum), `qp_controller`, `static_frame_suppression`, `stillness_crisp`, `decode_frontier`, `cursor_shape_refresh`, `loss_observation_window`, `recovery_request_redundancy`, `size_negotiation`, `system_dialog_detector`.
+**Modules:** `ycbcr` done; `geometry::aspect_fit` done; `virtual_display_geometry`, `capture_region` (MIXED: resurrect `1f68d89^` + re-apply `is_associatable_layer` layer-101 + `content_rects()`), `window_placement`, `udp_receive_loop_policy` (discard WT delegation), `live_bitrate_policy`, `adaptive_playout` (B-fresh into existing enum), `qp_controller`, `static_frame_suppression`, `stillness_crisp`, `decode_frontier`, `cursor_shape_refresh`, `loss_observation_window`, `recovery_request_redundancy`, `size_negotiation`, `system_dialog_detector`.
 **Class:** A-resurrect (most) + B-fresh (adaptive_playout) + MIXED (capture_region).
 **Golden:** `vdChipPixelLimit`, `vdOriginToRight`, `vdRefreshRates`, `virtualDisplayGeometry`, `captureUnion`, `captureRetarget`, `windowPlacement`, `windowFits`, `udpBackoff`, `udpRearm`, `sizeNegotiationClamp`, `sizeNegotiationEpoch`, `systemDialogClassify`, `systemDialogDetect`.
 **Traps:**
-- **NaN-faithful ordered min/max as ternaries** everywhere (`y<x?y:x`), NEVER `f64::min`/`Swift.min` semantics where notes call it out: capture_region `!(area>0.0)` skip-guard, window_placement `dw<window?dw:window`, size_negotiation `swift_min/max`, vd `ppi>=1.0?ppi:1.0`.
+- **NaN-faithful ordered min/max as ternaries** everywhere (`y<x?y:x`), NEVER `f64::min`/`Swift.min` where notes call it out: capture_region `!(area>0.0)` skip-guard, window_placement `dw<window?dw:window`, size_negotiation `swift_min/max`, vd `ppi>=1.0?ppi:1.0`.
 - vd `chip_pixel_limit` **branch order**: test pro/max/ultra BEFORE "apple m" (`M1 Max`→7680 not 6144); `refresh_rates` strict `fps>60`, sorted DESC + dedup.
 - placement `needs_resize = (w+0.5 < window_w)` exact half-pt tolerance, clamped-vs-RAW.
 - udp_backoff: `0.005 * Double(1<<min(n-1,16))` exact power-of-two scale, `min(scaled,0.25)`.
@@ -145,12 +143,12 @@ Only after EVERY module is reabsorbed and all goldens + loopback-validate + Subp
 ## 4. THE PILOT
 
 **Module:** `rust/slopdesk-core/src/ycbcr.rs` (130 LOC) + its FFI shim `rust/slopdesk-ffi/src/video/ycbcr.rs` (71 LOC).
-**Why it's the single best first slice:** smallest pure module; **no NEON, no opaque-handle, no state, no untrusted decode** (it's a coefficient table, not a codec); golden-pinned; and — verified — its Swift site `Sources/SlopDeskVideoProtocol/YCbCrConversion.swift` is **clean at HEAD** (the delegation is *committed*, not a working-tree edit), so reabsorbing it is a **real native-Swift rewrite that exercises "delete an FFI delegation → golden stays green,"** unlike the working-tree-M candidates (decode_frontier, static_frame_suppression, stillness_crisp) where reversal is just discarding an uncommitted edit and proves nothing.
-**Golden key:** `ycbcr` (present; pins 7 f32 bit-patterns × {video, full} — e.g. `lumaScale=1066732165`, `crToR=1070174988`).
-**Current FFI site to delete:** `Sources/SlopDeskVideoProtocol/RustBridge.swift:987` `aisd_ycbcr_coefficients(fullRange ? 1 : 0)` → replace `YCbCrConversion.coefficients` with the native f32 table.
-**Original Swift rev to resurrect from:** `53b2908` (`Sources/SlopDeskVideoProtocol/YCbCrConversion.swift` body before the `655d69a` swap). The struct/enum scaffolding (`ColorRange`, doc comments) already survives at HEAD; only the `coefficients` computation needs to return native f32 instead of calling FFI.
-**The one trap:** compute every value **in `Float` end-to-end** (`255.0/219.0`, `16.0/255.0`, `128.0/255.0`, literal matrix coeffs `1.5748/0.1873/0.4681/1.8556`). An f64 intermediate narrowed to f32 diverges the low bits and fails the pinned bit-patterns. No mul+add chains, so the FMA rule doesn't bite here.
-**Proof it works:** `make check` + `swift test --filter YCbCr` + `cd rust && cargo test golden_parity` all green with the FFI call gone.
+**Why the best first slice:** smallest pure module; **no NEON, no opaque-handle, no state, no untrusted decode** (a coefficient table, not a codec); golden-pinned; and its Swift site `Sources/SlopDeskVideoProtocol/YCbCrConversion.swift` is **clean at HEAD** (the delegation is *committed*, not a working-tree edit), so reabsorbing it is a **real native-Swift rewrite that exercises "delete an FFI delegation → golden stays green"** — unlike the working-tree-M candidates (decode_frontier, static_frame_suppression, stillness_crisp) where reversal just discards an uncommitted edit and proves nothing.
+**Golden key:** `ycbcr` (pins 7 f32 bit-patterns × {video, full} — e.g. `lumaScale=1066732165`, `crToR=1070174988`).
+**FFI site to delete:** `Sources/SlopDeskVideoProtocol/RustBridge.swift:987` `aisd_ycbcr_coefficients(fullRange ? 1 : 0)` → replace `YCbCrConversion.coefficients` with the native f32 table.
+**Original Swift rev to resurrect:** `53b2908` (`YCbCrConversion.swift` body before the `655d69a` swap). Struct/enum scaffolding (`ColorRange`, doc comments) survives at HEAD; only `coefficients` needs to return native f32 instead of calling FFI.
+**The one trap:** compute every value **in `Float` end-to-end** (`255.0/219.0`, `16.0/255.0`, `128.0/255.0`, matrix coeffs `1.5748/0.1873/0.4681/1.8556`). An f64 intermediate narrowed to f32 diverges the low bits and fails the pinned bit-patterns. No mul+add chains, so the FMA rule doesn't bite here.
+**Proof:** `make check` + `swift test --filter YCbCr` + `cd rust && cargo test golden_parity` all green with the FFI call gone.
 
 ---
 
@@ -158,26 +156,26 @@ Only after EVERY module is reabsorbed and all goldens + loopback-validate + Subp
 
 | # | Risk | Guard |
 |---|---|---|
-| 1 | **FMA rewrite** — clippy/refactor turns separate `mul`+`add` into `mul_add`, diverging low bits and breaking golden parity (aspect_fit, coordinate_mapping, every EWMA controller, adaptive_qp ramp, vd/capture/placement). | Port `mul` and `add` as **two statements**; add a comment `// keep separate — FMA breaks bit-exact parity` at each site; re-run the module's golden key after each port; keep SwiftFormat from collapsing them (it has deleted statements before). |
-| 2 | **Integer-overflow wrapping** in the NEON/hash cluster (gf256 table build, xxHash64 fold, SplitMix PRNGs) — plain Swift `*`/`+`/`-` **traps in release**. | Translate every Rust `wrapping_*`/`rotate_left` to Swift `&*`/`&+`/`&-`/manual `(x<<n)|(x>>(64-n))`; pin `scalar==NEON` differential test in Phase 0; never let the type widen silently. |
-| 3 | **NaN min/max semantics** — Rust `f64::max`/`min` vs Swift `Swift.max`/global-min vs the NaN-faithful ternary form differ on a NaN operand; flipping the form silently mis-routes (capture qualify, placement clamp, size_negotiation, deduper/redundancy NaN kill-switch, recovery `all_copies_lost`). | Reproduce the **exact predicate form** the notes specify (`!(area>0.0)`, `y<x?y:x`, `p.max(0).min(1)`+`out*=p`); do NOT "simplify" to `Swift.min`; add the NaN-input case to each module's unit test. |
-| 4 | **Untrusted-UDP memory safety** — reassembler/recovery/video_control/input_event parse raw datagrams; a force-unwrap or pre-alloc-against-attacker-count panics (release is `panic=abort`). | Every decode throws/returns optional, never force-unwrap; validate counts BEFORE alloc (frag_count≤8192, NACK count≤64, list counts read per-record); guard `frag_index<frag_count` → stale before any per-frame allocation. |
-| 5 | **No-golden stateful modules** (reassembler, recovery_idr_policy, decode_gate, mux_router, parking_ledger) — bit-exactness proven ONLY by FFI-roundtrip + loopback-validate, which vanish with the boundary. | Before deleting each FFI shim, snapshot its `tests/ffi_boundary.rs`/Rust unit assertions as **native Swift tests**; **re-run `.build/release/slopdesk-loopback-validate`** (real VT HEVC + FEC + deterministic loss) after Phase 4 and Phase 5; preserve decide()/verdict() branch ORDER verbatim (test-first: a test that FAILS on a reordered branch). |
+| 1 | **FMA rewrite** — clippy/refactor turns separate `mul`+`add` into `mul_add`, diverging low bits and breaking golden parity (aspect_fit, coordinate_mapping, every EWMA controller, adaptive_qp ramp, vd/capture/placement). | Port `mul` and `add` as **two statements**; comment `// keep separate — FMA breaks bit-exact parity` at each site; re-run the module's golden key after each port; keep SwiftFormat from collapsing them (it has deleted statements before). |
+| 2 | **Integer-overflow wrapping** in the NEON/hash cluster (gf256 table build, xxHash64 fold, SplitMix PRNGs) — plain Swift `*`/`+`/`-` **traps in release**. | Translate every Rust `wrapping_*`/`rotate_left` to `&*`/`&+`/`&-`/manual `(x<<n)|(x>>(64-n))`; pin `scalar==NEON` differential test in Phase 0; never let the type widen silently. |
+| 3 | **NaN min/max semantics** — Rust `f64::max`/`min` vs Swift `Swift.max`/global-min vs the NaN-faithful ternary differ on a NaN operand; flipping the form silently mis-routes (capture qualify, placement clamp, size_negotiation, deduper/redundancy NaN kill-switch, recovery `all_copies_lost`). | Reproduce the **exact predicate form** the notes specify (`!(area>0.0)`, `y<x?y:x`, `p.max(0).min(1)`+`out*=p`); do NOT "simplify" to `Swift.min`; add the NaN-input case to each module's unit test. |
+| 4 | **Untrusted-UDP memory safety** — reassembler/recovery/video_control/input_event parse raw datagrams; a force-unwrap or pre-alloc-against-attacker-count panics (release is `panic=abort`). | Every decode throws/returns optional, never force-unwrap; validate counts BEFORE alloc (frag_count≤8192, NACK count≤64, list counts per-record); guard `frag_index<frag_count` → stale before any per-frame alloc. |
+| 5 | **No-golden stateful modules** (reassembler, recovery_idr_policy, decode_gate, mux_router, parking_ledger) — bit-exactness proven ONLY by FFI-roundtrip + loopback-validate, which vanish with the boundary. | Before deleting each FFI shim, snapshot its `tests/ffi_boundary.rs`/Rust unit assertions as **native Swift tests**; **re-run `.build/release/slopdesk-loopback-validate`** (real VT HEVC + FEC + deterministic loss) after Phases 4 and 5; preserve decide()/verdict() branch ORDER verbatim (test-first: a test that FAILS on a reordered branch). |
 
 ---
 
 ## 6. Teardown checklist (Phase 7 — only after all modules reabsorbed + green)
 
 1. **Delete the FFI marshalling shims** as each Swift site goes native (incremental, per phase): `rust/slopdesk-ffi/src/video/*.rs`, `terminal_mux.rs` (1145 LOC), `aisd_wire_*`/`aisd_frame_decoder_*` in `lib.rs`, `raw.rs`, `gf_neon.rs`/`frame_hash.rs` (logic now in `CSlopDeskSIMD`).
-2. **Delete the whole `slopdesk-ffi` crate** + `rust/slopdesk-core` once nothing links the staticlib; remove the **cargo workspace** (`rust/Cargo.toml`, `rust/target/`).
+2. **Delete the whole `slopdesk-ffi` crate** + `rust/slopdesk-core` once nothing links the staticlib; remove the cargo workspace (`rust/Cargo.toml`, `rust/target/`).
 3. **Delete `Sources/CSlopDeskFFI`** target + its `Package.swift` entry (L54-58, the `.unsafeFlags(["-L…","-lslopdesk_ffi"])`) and remove `"CSlopDeskFFI"` from every consumer's `dependencies` (SlopDeskProtocol, SlopDeskVideoProtocol, SlopDeskVideoHost, SlopDeskVideoClient). Add `"CSlopDeskSIMD"` to the host/protocol targets instead.
-4. **Kill the rust-before-swift build ordering**: `rust/build-apple.sh` (and the cbindgen header-regen + `--ios` slice), the `CSlopDeskFFI` header `slopdesk_ffi.h`, the **cbindgen drift-gate** (`make check`'s `check-ffi-header`, the `rust` CI job, `cbindgen.toml`). `swift build` now compiles from a clean checkout with no prerequisite.
-5. **Collapse `golden_parity` from cross-language to single-impl pin**: the corpus stays (`golden_vectors.json` still generated by `swift run slopdesk-corevectors`), but the consumer becomes a **Swift XCTest** that decodes the JSON and asserts the native codecs reproduce it — there is no second implementation to diff against, so it's now a regression pin, not a parity proof. Delete the Rust `tests/golden_parity.rs`, `tests/ffi_boundary.rs`, `tests/smoke.c`.
+4. **Kill the rust-before-swift build ordering**: `rust/build-apple.sh` (+ cbindgen header-regen + `--ios` slice), the `CSlopDeskFFI` header `slopdesk_ffi.h`, the cbindgen drift-gate (`make check`'s `check-ffi-header`, the `rust` CI job, `cbindgen.toml`). `swift build` now compiles from a clean checkout with no prerequisite.
+5. **Collapse `golden_parity` from cross-language to single-impl pin**: the corpus stays (`golden_vectors.json` still generated by `swift run slopdesk-corevectors`), but the consumer becomes a **Swift XCTest** that decodes the JSON and asserts the native codecs reproduce it — no second implementation to diff against, so it's a regression pin, not a parity proof. Delete Rust `tests/golden_parity.rs`, `tests/ffi_boundary.rs`, `tests/smoke.c`.
 6. **Remove the opaque-handle wrappers** (`final class … { OpaquePointer; deinit { aisd_*_free } }`) — fold each back into a Swift value struct/class owning its state directly (reassembler, decode_gate, recovery_idr_policy, deduper, mux_router, parking_ledger, pacer_depth_policy, owd_late_detector, scroll_reprojector, fec codec).
 7. **Remove all `repr(C)` marshalling + memory contracts**: `AisdBytes`/`AisdBytesArray`/`AisdWireMessage`/`AisdVideoControl`/… structs, every `aisd_*_free`, the `defer { aisd_bytes_free(out) }` copy-then-free dance, the `from_parts`/value-round-trip constructors, the `u8 != 0` bool reads (now native Swift `Bool`).
 8. **CI/docs**: drop the `rust` CI job + `cargo deny`/`machete`/`clippy`; update `CLAUDE.md` (remove "build ordering is mandatory," the FFI conventions §3-5, "Rust core is source of truth"), `docs/00-overview.md`, `docs/DECISIONS.md` (re-scope the Rust-core decision FIRST per convention #9), `docs/20-wire-protocol.md` (wire law now lives in Swift). The `suboptimal_flops` clippy allow-list note migrates to a Swift lint comment convention.
-9. **Final gate:** `make check` (now Swift-only lint+build+test) + `swift test` (~2200) + `bash scripts/check-ios.sh` + `.build/release/slopdesk-loopback-validate --frames 120` + `SubprocessE2ETests`, all green with zero Rust in the tree.
+9. **Final gate:** `make check` (Swift-only lint+build+test) + `swift test` (~2200) + `bash scripts/check-ios.sh` + `.build/release/slopdesk-loopback-validate --frames 120` + `SubprocessE2ETests`, all green with zero Rust in the tree.
 
-**Sequencing note for execution across sessions:** Phases 0→6 each leave the Rust *present* (FFI shim still compiled) so `golden_parity` keeps cross-checking native-Swift-vs-Rust the whole way — you only lose the cross-language oracle at Phase 7. Commit each green phase atomically (branch first; the tree currently has 95+ uncommitted working-tree files from the in-flight dedup job, several of which Phases 2/5/6 simply discard).
+**Sequencing across sessions:** Phases 0→6 each leave the Rust *present* (FFI shim still compiled) so `golden_parity` keeps cross-checking native-Swift-vs-Rust the whole way — you only lose the cross-language oracle at Phase 7. Commit each green phase atomically (branch first; the tree has 95+ uncommitted working-tree files from the in-flight dedup job, several of which Phases 2/5/6 discard).
 
-**Relevant absolute paths:** pilot `/Users/dev/slop-desk/Sources/SlopDeskVideoProtocol/YCbCrConversion.swift` + `/Users/dev/slop-desk/Sources/SlopDeskVideoProtocol/RustBridge.swift:987`; golden corpus `/Users/dev/slop-desk/rust/slopdesk-core/tests/vectors/golden_vectors.json`; NEON kernels `/Users/dev/slop-desk/rust/slopdesk-ffi/src/gf_neon.rs` + `/Users/dev/slop-desk/rust/slopdesk-ffi/src/frame_hash.rs`; FFI link `/Users/dev/slop-desk/Package.swift:57-58`; new C target home `/Users/dev/slop-desk/Sources/CSlopDeskSIMD/`.
+**Absolute paths:** pilot `/Users/dev/slop-desk/Sources/SlopDeskVideoProtocol/YCbCrConversion.swift` + `/Users/dev/slop-desk/Sources/SlopDeskVideoProtocol/RustBridge.swift:987`; golden corpus `/Users/dev/slop-desk/rust/slopdesk-core/tests/vectors/golden_vectors.json`; NEON kernels `/Users/dev/slop-desk/rust/slopdesk-ffi/src/gf_neon.rs` + `/Users/dev/slop-desk/rust/slopdesk-ffi/src/frame_hash.rs`; FFI link `/Users/dev/slop-desk/Package.swift:57-58`; new C target home `/Users/dev/slop-desk/Sources/CSlopDeskSIMD/`.

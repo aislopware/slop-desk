@@ -1,18 +1,18 @@
 # 09 — Codec Choice
 
-> **STATUS: REFERENCE — GUI video-path design depth.** This path is shipped and co-equal with terminal panes — the old "Phase 4 / secondary" framing is retired. Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
+> **STATUS: REFERENCE — GUI video-path design depth.** Shipped, co-equal with terminal panes (old "Phase 4 / secondary" framing retired). Architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-> ⚠️ **Scope (hybrid):** text/code goes over the **PTY path — no codec, absolutely crisp** ([12](12-coding-profile.md)). The codec is **only for GUI windows**, where **HEVC 4:2:0 8-bit is sufficient**. The 4:4:4 / text-crispness problem below is therefore **not central** (no software 4:4:4 tier; 10-bit is optional). The sections below are codec background for the GUI path.
+> ⚠️ **Scope (hybrid):** text/code goes over the **PTY path — no codec, crisp** ([12](12-coding-profile.md)). The codec is **only for GUI windows**, where **HEVC 4:2:0 8-bit is sufficient**. So the 4:4:4 / text-crispness problem below is **not central** (no software 4:4:4 tier; 10-bit optional). Below is codec background for the GUI path.
 
-> Context for the decision: **Apple-only, private LAN, low-latency, screen/text content** (not camera video). Deciding factors: **Apple hardware support** + the peculiarities of screen content.
+> Context: **Apple-only, private LAN, low-latency, screen/text content** (not camera). Deciding factors: **Apple hardware support** + screen-content peculiarities.
 
 ## TL;DR
 
-**Default (GUI video-path): HEVC Main 8-bit 4:2:0, constant-quality (`Quality≈0.6`, Apple Silicon), low-latency rate control, no B-frames (`AllowFrameReordering=false`).** 10-bit = optional. H.264 fallback. **4:4:4 dropped** (Apple HW does not encode it; crisp text goes over the PTY path). AV1/VVC have no HW encode → ruled out.
+**Default (GUI video-path): HEVC Main 8-bit 4:2:0, constant-quality (`Quality≈0.6`, Apple Silicon), low-latency rate control, no B-frames (`AllowFrameReordering=false`).** 10-bit optional. H.264 fallback. **4:4:4 dropped** (Apple HW can't encode it; crisp text goes over the PTY path). AV1/VVC have no HW encode → ruled out.
 
-Two things to remember:
+Remember:
 1. "Low-latency mode is H.264-only" is **WRONG on Apple Silicon** — HEVC supports it too → no latency reason to pick H.264.
-2. The real quality ceiling for text is **chroma 4:2:0** (Apple HW has no 4:4:4), not the H.264-vs-HEVC choice.
+2. The real quality ceiling for text is **chroma 4:2:0** (Apple HW has no 4:4:4), not H.264-vs-HEVC.
 
 ---
 
@@ -20,14 +20,14 @@ Two things to remember:
 
 | Criterion | Result |
 |----------|---------|
-| **Bitrate** | HEVC reaches equivalent text sharpness at **~60–70% of the bitrate** of H.264. Larger blocks (64×64) compress flat regions better; 35 intra modes (vs 9) track sharp UI edges better |
+| **Bitrate** | HEVC reaches equivalent text sharpness at **~60–70% of H.264 bitrate**. Larger blocks (64×64) compress flat regions better; 35 intra modes (vs 9) track sharp UI edges better |
 | **Text legibility** | HEVC: intra prediction + SAO filter → less ringing around glyphs |
-| **Latency/frame (Apple Silicon)** | The difference is **negligible** — both run on the Media Engine. "HEVC is slow" is a multi-vendor PC hardware story (Parsec's caveat), and does not apply to Apple |
+| **Latency/frame (Apple Silicon)** | **Negligible** — both run on the Media Engine. "HEVC is slow" is a multi-vendor PC hardware story (Parsec's caveat), not Apple |
 | **Low-latency rate control** | ✅ **Both on Apple Silicon** (Intel Mac: H.264 only) |
 
 ### Correcting an important assumption
 
-Apple's WWDC21 "low-latency mode is H.264-only" is **outdated**. Evidence: FFmpeg `videotoolboxenc.c` gates conditionally:
+Apple's WWDC21 "low-latency mode is H.264-only" is **outdated**. FFmpeg `videotoolboxenc.c` gates conditionally:
 
 ```c
 if ((flags & AV_CODEC_FLAG_LOW_DELAY) &&
@@ -37,42 +37,42 @@ if ((flags & AV_CODEC_FLAG_LOW_DELAY) &&
 }
 ```
 
-Upstream commit: "enabled only for H.264 on Intel Macs, but can be used with both H.264 and HEVC on Apple Silicon." → **Feature-detect at runtime** (Apple has not pinned a version in the official docs).
+Upstream commit: "enabled only for H.264 on Intel Macs, but can be used with both H.264 and HEVC on Apple Silicon." → **Feature-detect at runtime** (Apple pins no version in official docs).
 
 ---
 
 ## 2. Chroma 4:2:0 — the real quality ceiling for text
 
-This matters **more** than the H.264-vs-HEVC choice:
+Matters **more** than H.264-vs-HEVC:
 
-- **4:2:0 blurs colored text**: red text on a black background, syntax-highlighted code → color fringing/bleeding. Parsec: "4:2:0 falls apart on UI/text that relies on RGB subpixel rendering."
-- **Apple HW encode has NO 4:4:4** — both H.264 and HEVC via VideoToolbox are 4:2:0 (HEVC adds 10-bit; 4:2:2 only exists for ProRes-style paths, not Main 4:4:4 streaming). **Switching codecs cannot fix this.**
-- Parsec/Moonlight both treat **4:4:4 as the #1 lever** for UI sharpness, and can only enable it thanks to Intel/Nvidia 4:4:4 HW encode — **which Apple does not have**.
+- **4:2:0 blurs colored text**: red text on black, syntax-highlighted code → color fringing/bleeding. Parsec: "4:2:0 falls apart on UI/text that relies on RGB subpixel rendering."
+- **Apple HW encode has NO 4:4:4** — both H.264 and HEVC via VideoToolbox are 4:2:0 (HEVC adds 10-bit; 4:2:2 only for ProRes-style paths, not Main 4:4:4 streaming). **Switching codecs cannot fix this.**
+- Parsec/Moonlight both treat **4:4:4 as the #1 lever** for UI sharpness, enabled only via Intel/Nvidia 4:4:4 HW encode — **which Apple lacks**.
 
-### Levers available on Apple (in priority order)
+### Levers available on Apple (priority order)
 
-1. **HEVC 10-bit (Main 10):** reduces banding in gradients/flat regions — **optional** (default 8-bit; only enable if needed).
+1. **HEVC 10-bit (Main 10):** reduces banding in gradients/flat regions — **optional** (default 8-bit; enable only if needed).
 2. **Higher capture resolution** (full retina scale): each glyph gets more chroma pixels → 4:2:0 hurts less.
 
 ---
 
-## 3. The "better" codecs — why they were ruled out
+## 3. The "better" codecs — why ruled out
 
 | Codec | Encode on Apple | Decode | Conclusion |
 |-------|-------------------|--------|----------|
-| **AV1** | ❌ **No HW encode on any chip** (including M5 Max, 2026). Apple's newsroom lists AV1 only under "decode" | ✅ A17 Pro, M3+ | Software AV1 encode destroys latency/battery/thermals → **ruled out for the host**. Decode is not needed (we do not receive third-party AV1 streams) |
-| **VVC/H.266** | ❌ Nothing | ❌ | No `kCMVideoCodecType`, no HW. Apple is betting on AV1 (royalty-free) instead of VVC → **ruled out** |
-| **ProRes** | ✅ Mac M1 Pro/Max, M3+ (base M3/M4 have 1 engine) | ✅ widespread | Intra-only → extremely low latency, robust against packet loss. **But bitrate is tens–hundreds of Mbps** → see §4 |
+| **AV1** | ❌ **No HW encode on any chip** (incl. M5 Max, 2026). Apple newsroom lists AV1 under "decode" only | ✅ A17 Pro, M3+ | Software AV1 encode destroys latency/battery/thermals → **ruled out for the host**. Decode not needed (we receive no third-party AV1) |
+| **VVC/H.266** | ❌ Nothing | ❌ | No `kCMVideoCodecType`, no HW. Apple bets on AV1 (royalty-free) → **ruled out** |
+| **ProRes** | ✅ Mac M1 Pro/Max, M3+ (base M3/M4 have 1 engine) | ✅ widespread | Intra-only → extremely low latency, loss-robust. **But bitrate is tens–hundreds of Mbps** → see §4 |
 
-> ⚠️ One aggregator blog claims "M5 Pro/Max add AV1 hardware encode" — **WRONG**, contradicting Apple's newsroom (3/2026) and Wikipedia (both list AV1 = decode-only). Trust Apple.
+> ⚠️ One aggregator blog claims "M5 Pro/Max add AV1 hardware encode" — **WRONG**, contradicting Apple newsroom (3/2026) and Wikipedia (both: AV1 = decode-only). Trust Apple.
 
 ---
 
 ## 4. ProRes — when does it make sense?
 
 - **Fits:** a **wired multi-Gbps** LAN (e.g. 10GbE) + a Mac host with a ProRes encode engine, needing **visually-lossless quality** + minimal encode latency (intra-only). Use case: production review, color-critical work.
-- **Does not fit (as default):** ProRes Proxy/LT is still 10–50× the bitrate of low-latency HEVC. On Wi-Fi / 1GbE → link saturation → latency **increases** via network buffering.
-- **Conclusion:** opt-in "high-quality wired mode", gated on (a) host having a ProRes engine, (b) a multi-Gbps link. Default remains HEVC.
+- **Does not fit (as default):** ProRes Proxy/LT is 10–50× low-latency HEVC bitrate. On Wi-Fi / 1GbE → link saturation → latency **increases** via network buffering.
+- **Conclusion:** opt-in "high-quality wired mode", gated on (a) host ProRes engine, (b) multi-Gbps link. Default remains HEVC.
 
 ---
 
@@ -80,8 +80,8 @@ This matters **more** than the H.264-vs-HEVC choice:
 
 | Streamer | Codec | Notes |
 |----------|-------|---------|
-| **Parsec** | Default H.264, has H.265 + AV1; "Prefer 4:4:4" in the paid tier | H.264-for-latency is a **cross-vendor PC** conclusion, NOT applicable to Apple-only |
-| **Moonlight/Sunshine** | H.264, HEVC, AV1; added **YUV 4:4:4** (2024) for text — prefer **HEVC 4:4:4** because "AV1 4:4:4 hardware is zero" | A PC-ecosystem story; Apple is the opposite: it has 4:4:4 decode but no encode |
+| **Parsec** | Default H.264, has H.265 + AV1; "Prefer 4:4:4" in paid tier | H.264-for-latency is a **cross-vendor PC** conclusion, NOT applicable to Apple-only |
+| **Moonlight/Sunshine** | H.264, HEVC, AV1; added **YUV 4:4:4** (2024) for text — prefer **HEVC 4:4:4** because "AV1 4:4:4 hardware is zero" | PC-ecosystem story; Apple is opposite: has 4:4:4 decode but no encode |
 | **NVIDIA GameStream/GFN** | H.264 → HEVC → AV1 (Ada) | Game content, not text-first |
 | **Steam Remote Play** | H.264 default, HEVC where supported | Maximizes device reach |
 
@@ -98,7 +98,7 @@ Screen content is bursty: near zero when static, large spikes on full-screen red
 | **H.264** | ~50–80 Mbps | 60 Mbps |
 | **HEVC (8/10-bit)** | ~30–50 Mbps | 40 Mbps |
 
-Rule of thumb: **HEVC gives equivalent text sharpness at ~60–70% of the H.264 bitrate.** On gigabit LAN: set a generous cap (HEVC 40–50, H.264 60–80 Mbps), long GOP + force IDR on detected scene change, and let the rate controller spike on full-screen changes. The average stays far below the cap because idle-skip drops bandwidth toward ~0 between updates — at 60 fps the budget is paid only on motion (scroll/redraw), not held continuously.
+Rule of thumb: **HEVC gives equivalent text sharpness at ~60–70% of the H.264 bitrate.** On gigabit LAN: generous cap (HEVC 40–50, H.264 60–80 Mbps), long GOP + force IDR on detected scene change, let the rate controller spike on full-screen changes. Average stays far below the cap because idle-skip drops bandwidth toward ~0 between updates — at 60 fps the budget is paid only on motion (scroll/redraw), not held continuously.
 
 ---
 
@@ -106,12 +106,12 @@ Rule of thumb: **HEVC gives equivalent text sharpness at ~60–70% of the H.264 
 
 **Default:** HEVC Main **8-bit** 4:2:0 + **constant-quality** (`Quality≈0.6`, Apple Silicon); 10-bit optional; `EnableLowLatencyRateControl` feature-detected (works with HEVC on Apple Silicon); `RealTime=true`, `AllowFrameReordering=false`, `AllowOpenGOP=false`, `MaxFrameDelayCount=0`, long GOP + force IDR/LTR. (4:4:4 dropped — text goes over the PTY path.)
 
-**Fall back to H.264 when:** old / non-Apple clients / weak browser decode; the host is an **Intel Mac** (low-latency is H.264-only); maximum compatibility is required.
+**Fall back to H.264 when:** old / non-Apple clients / weak browser decode; host is an **Intel Mac** (low-latency is H.264-only); maximum compatibility required.
 
 **ProRes:** opt-in wired-high-quality, gated on host + bandwidth.
 
 ### Tasks for Phase 0
 - [ ] Probe `EnableLowLatencyRateControl` with HEVC on the target machine (`VTCopySupportedPropertyDictionaryForEncoder` / try creating a session) — confirm it works.
 - [ ] Try HEVC 8-bit vs **10-bit** on colored text → evaluate real-world fringing.
-- [ ] Measure encode latency H.264 vs HEVC on the same machine (confirm the difference is small).
-- [ ] Test 4:2:0 capture at high resolution to see whether text is acceptable (before even considering software 4:4:4).
+- [ ] Measure encode latency H.264 vs HEVC on the same machine (confirm difference is small).
+- [ ] Test 4:2:0 capture at high resolution to see whether text is acceptable (before considering software 4:4:4).

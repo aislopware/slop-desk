@@ -2,17 +2,17 @@
 
 ## Summary
 
-The status bar is a planned but **not yet implemented** feature of slopdesk's UI shell. No screenshots, configuration keys, keybindings, or full behavioral specification have been finalized yet.
+**Not yet implemented** (as of 2026-06-25). No screenshots, config keys, keybindings, or behavioral spec finalized.
 
-Based on its intended placement in the sidebar (between the Details Panel and Files/Links), it is expected to occupy a persistent horizontal strip — most likely below the tab/title bar or at the bottom of the window — showing per-pane or per-window context, a standard terminal UX pattern.
+Planned placement in the sidebar (between Details Panel and Files/Links) implies a persistent horizontal strip — likely below the tab/title bar or at the window bottom — showing per-pane/per-window context (standard terminal UX pattern).
 
 ## Behaviors
 
-- **NONE SPECIFIED** — feature is unimplemented as of 2026-06-25.
-- Anticipated (inferred from its planned placement and common terminal conventions):
-  - Would display per-pane context: working directory, running process, git branch, or similar metadata surfaced from the Details Panel's Info tab.
-  - Would provide a persistent, always-visible strip so the user does not need to open the Details Panel for quick context.
-  - May mirror or summarize information from the Details Panel (Info tab: cwd, process list, listening ports).
+- **NONE SPECIFIED** — unimplemented as of 2026-06-25.
+- Anticipated (inferred from planned placement + terminal conventions):
+  - Per-pane context: cwd, running process, git branch, or similar metadata from the Details Panel's Info tab.
+  - Persistent always-visible strip so the user avoids opening the Details Panel for quick context.
+  - May mirror/summarize the Details Panel Info tab (cwd, process list, listening ports).
 
 ## Keybindings
 
@@ -30,7 +30,7 @@ Based on its intended placement in the sidebar (between the Details Panel and Fi
 
 ### No screenshots available
 
-No mockups or reference screenshots exist for this feature yet.
+No mockups or reference screenshots exist yet.
 
 ## Screenshots
 
@@ -40,28 +40,28 @@ No mockups or reference screenshots exist for this feature yet.
 
 ### Constraints from slopdesk's remote-host architecture
 
-1. **Working directory (cwd)** — In slopdesk the terminal runs on the *remote macOS host*, not the client. The cwd would need to be forwarded over the wire (OSC 7 is already supported in the ghostty terminal and the shell-integration path; this should be the source of truth). The client can display the host-reported cwd, but it cannot resolve it locally (e.g. for Finder "reveal").
+1. **cwd** — Terminal runs on the *remote macOS host*, not the client, so cwd must be forwarded over the wire (OSC 7 is already supported in ghostty + the shell-integration path — use as source of truth). Client displays host-reported cwd but cannot resolve it locally (e.g. Finder "reveal").
 
-2. **Running process list** — Process introspection (what's running in the PTY) is host-side. The client would need the host to emit process metadata (process name, PID) over the control channel or a side-band. Currently `SlopDeskWorkspaceCore` has Claude auto-detect and OSC-133 shell integration; a status bar could consume those events.
+2. **Running process list** — Host-side. Host must emit process metadata (name, PID) over the control channel or side-band. `SlopDeskWorkspaceCore` already has Claude auto-detect + OSC-133 shell integration a status bar could consume.
 
-3. **Listening ports** — Port enumeration is host-side only; it cannot be inferred client-side without an explicit host probe and wire protocol extension.
+3. **Listening ports** — Host-side only; not inferable client-side without an explicit host probe + wire protocol extension.
 
-4. **Git status** — Repository state lives on the host filesystem. Showing it in a client status bar requires either the host to push git metadata (branch, dirty flag, ahead/behind count) over the control channel, or the client to run `git` remotely — neither is currently in the slopdesk wire protocol.
+4. **Git status** — Repo state lives on the host filesystem. Requires either the host pushing git metadata (branch, dirty flag, ahead/behind) over the control channel, or the client running `git` remotely — neither is in the wire protocol today.
 
-5. **macOS system integrations** — Any macOS-native status-bar affordances (menu-bar extras, NSStatusItem) are irrelevant on iOS; the iOS client would need an equivalent in-window strip.
+5. **macOS system integrations** — Menu-bar extras / NSStatusItem are irrelevant on iOS; the iOS client needs an equivalent in-window strip.
 
 ### What's already available
 
-- **Shell-integration marks (OSC 133)** — Already supported; a status bar could show the last command exit code and command text from the OSC-133 sequence stream without any new wire protocol work.
-- **Session/pane identity** — PaneID, tab label, and connection state are all client-side and available directly from `WorkspaceStore`.
-- **Theme integration** — The status bar strip would follow the existing client design-token system (flat, zero-radius, bg matches pane background).
+- **OSC 133 (shell-integration marks)** — Supported; a status bar could show last command exit code + command text from the OSC-133 stream with no new wire work.
+- **Session/pane identity** — PaneID, tab label, connection state are client-side, available directly from `WorkspaceStore`.
+- **Theme integration** — Strip follows the existing client design-token system (flat, zero-radius, bg matches pane background).
 
 ### Implementation recommendation
 
-Once the status-bar spec is finalized, implement it as a thin SwiftUI `HStack` strip pinned to the bottom of each `TerminalSurface` pane (or the window bottom). Consume:
-- OSC 7 (cwd) → displayed path, truncated to the last 2 components.
+Once the spec is finalized, implement as a thin SwiftUI `HStack` strip pinned to the bottom of each `TerminalSurface` pane (or the window bottom). Consume:
+- OSC 7 (cwd) → displayed path, truncated to last 2 components.
 - OSC 133 (shell integration) → last exit code badge (green/red).
 - `WorkspaceStore` → pane kind, session state, active connection host.
 - A future host-side metadata push for git branch / process name.
 
-Keep the strip height ≤ 20 pt so it does not intrude on terminal real estate.
+Keep strip height ≤ 20 pt so it does not intrude on terminal real estate.

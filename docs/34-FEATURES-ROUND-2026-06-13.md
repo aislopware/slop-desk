@@ -2,9 +2,9 @@
 
 > **Historical session log (2026-06-13). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
 
-**Status: 5 net-new features + a bug-hunt of the prior round + an adversarial self-review, all shipped to `main` with headless tests. Full suite 1972 → 2024/0.** Continuation of the loop the user asked for ("keep going, expand beyond UI/UX, use a loop, don't stop early"). Base `4b76d93`.
+**Status: 5 net-new features + a bug-hunt of the prior round + an adversarial self-review, all shipped to `main` with headless tests. Full suite 1972 → 2024/0.** Base `4b76d93`.
 
-This round deliberately expanded past UI/UX into protocol robustness, multiplexer power-features, security/privacy, and portability — picking features whose **core logic is unit-testable headlessly** (the rig is unavailable from automation), with the HW-feel surface (an alert, a sheet, the on-device echo) noted as pending.
+Expanded past UI/UX into protocol robustness, multiplexer power-features, security/privacy, and portability — features whose **core logic is unit-testable headlessly** (the rig is unavailable from automation); HW-feel surface (alert, sheet, on-device echo) noted as pending.
 
 ## Commits
 | Commit | What | Tests |
@@ -18,17 +18,17 @@ This round deliberately expanded past UI/UX into protocol robustness, multiplexe
 | `918becd` | **Self-review fixes** (3 confirmed) + wired the paste guard | +3 |
 
 ## What each verifiable core is (and what's HW-pending)
-- **Broadcast** — `WorkspaceStore.broadcastTargets()/broadcastText()`, `PaneSessionHandle.sendText/sendBytes`, `⇧⌘B`. *Pending:* the input-bar fan-out at submit (echo/CR dedup across N live shells) + macOS keystroke mirroring.
+- **Broadcast** — `WorkspaceStore.broadcastTargets()/broadcastText()`, `PaneSessionHandle.sendText/sendBytes`, `⇧⌘B`. *Pending:* input-bar fan-out at submit (echo/CR dedup across N live shells) + macOS keystroke mirroring.
 - **Secret redaction** — pure `SecretRedactor` (AWS/GitHub/Slack/Google/JWT/stripe/npm + `key=value` + generic high-entropy backstop; no false-positives on paths/SHAs) at `displayTitle` + notification `postExplicit`, gated `SettingsKey.redactSecrets`. Fully wired.
-- **Snippets** — pure `SnippetExpander` + `SendKeysParser`, `Snippet` Codable (schema 9), store CRUD + `runSnippet`, palette entries. *Pending:* placeholder value-entry sheet + a snippet editor UI.
+- **Snippets** — pure `SnippetExpander` + `SendKeysParser`, `Snippet` Codable (schema 9), store CRUD + `runSnippet`, palette entries. *Pending:* placeholder value-entry sheet + snippet editor UI.
 - **Export/import (+ merge)** — pure `WorkspaceTransfer` (host stripped, hostile-file rejection + dedup/cap hardening), store `.replace`/`.mergeAppend` with id-remint, File-menu NS panels (Export / Import / Merge). Fully wired.
 - **Paste guard** — pure `SecretPasteClassifier.assess → PasteRisk`, wired into the pill's paste via `deliverPaste` + a confirmationDialog. *Pending:* nothing required; the dialog is unverified-on-rig only.
 
 ## Bug-hunt + hardening (5 adversarial passes, converged HIGH→MED→all-LOW)
-The import/decode surface these features added was fuzzed adversarially. Notable:
+The import/decode surface was fuzzed adversarially. Notable:
 - **HIGH crash (`bd6ef13`)** — an imported item with `z = Int.max` survived decode (only frames were sanitized, not `z`), then the next `maxZ + 1` (add-pane / raise) trapped Swift's checked arithmetic → deterministic crash from a hostile file + ⌘N. Fixed by clamping `z` in `CanvasItem.init(from:)` (covers import AND persistence-load).
 - Decode now also dedupes duplicate `PaneGroupID`s (SwiftUI `ForEach` identity), re-mints duplicate snippet ids, drops duplicate preset names, and caps every collection at `maxItems` (1024) — the import-DoS guard. `Workspace.normalizingCollections()` shares these repairs with `WorkspacePersistence.load()`.
-- A confirmation pass found only LOW refinements of the fix code (load idempotency: re-mint only *duplicate* snippet ids; broaden the load cap; trim+fallback blank snippet names) — the convergence signal.
+- Confirmation pass found only LOW refinements (load idempotency: re-mint only *duplicate* snippet ids; broaden the load cap; trim+fallback blank snippet names) — the convergence signal.
 
 ## Discipline notes worth keeping
 - **GitHub push-protection** rejects a commit containing a contiguous vendor-token literal (even a fake one in a test). Assemble token fixtures at runtime (`"sk" + "_live_…"`, `["seg","seg","sig"].joined(separator:".")`) so no contiguous secret sits in source.

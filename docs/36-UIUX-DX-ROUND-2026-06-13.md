@@ -2,33 +2,21 @@
 
 > **Historical session log (2026-06-13). Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
 
-**Status: 17 items + 1 self-review pass shipped to `main` (one commit each), test-first, full suite
-2071 → 2122/0.** Base `afdd1f9` → HEAD `c6ea64a`. An autonomous round: a 9-agent research workflow
-surveyed every client UX/DX surface and synthesised a ranked 58-item backlog; the highest-value,
-headlessly-testable items were implemented one-per-commit, each adversarially verified against the real
-code first; then a 5-dimension review workflow over the whole round caught 4 real defects (1 MED + 3
-LOW, all in the new snippet/paste UI — SwiftUI presentation/focus behaviour tests can't catch), all
-fixed in `c6ea64a`.
+**Status: 17 items + 1 self-review pass shipped to `main` (one commit each), test-first, suite 2071 → 2122/0.** Base `afdd1f9` → HEAD `c6ea64a`. A 9-agent research workflow surveyed every client UX/DX surface into a ranked 58-item backlog; the highest-value, headlessly-testable items shipped one-per-commit, each adversarially verified against the real code first. A 5-dimension review workflow then caught 4 defects (1 MED + 3 LOW, all in the new snippet/paste UI that SwiftUI presentation/focus tests can't catch), fixed in `c6ea64a`.
 
 ## Self-review pass (`c6ea64a`)
-A review workflow (5 reviewers by dimension → adversarial verify each finding) over `afdd1f9..HEAD`:
-- **MED** — snippet-manager "Run Now" on a parameterized snippet presented the value sheet while
-  dismissing the manager in one transaction → macOS drops the 2nd sheet (stranded `pendingSnippetRun`).
-  Fix: dismiss-then-defer-arm + `requestSnippetManager` clears a stranded flag.
-- **LOW** — snippet name field churned (per-keystroke `snippetName` trim/substitute) → store verbatim,
-  fallback at display only.
-- **LOW** — `SnippetValuesSheet` self-referential `.focused($bool, equals:)` focused all fields for ≥2
-  placeholders → index-typed `@FocusState`.
+5 reviewers by dimension → adversarial verify each finding, over `afdd1f9..HEAD`:
+- **MED** — snippet-manager "Run Now" on a parameterized snippet presented the value sheet while dismissing the manager in one transaction → macOS drops the 2nd sheet (stranded `pendingSnippetRun`). Fix: dismiss-then-defer-arm + `requestSnippetManager` clears a stranded flag.
+- **LOW** — snippet name field churned (per-keystroke `snippetName` trim/substitute) → store verbatim, fallback at display only.
+- **LOW** — `SnippetValuesSheet` self-referential `.focused($bool, equals:)` focused all fields for ≥2 placeholders → index-typed `@FocusState`.
 - **LOW** — clean paste left a stale "skipped M" banner → `notePasteFeedback` clears on a clean paste.
-The other 3 reviewer candidates were adversarially rejected as not-real. Lesson: SwiftUI sheet/focus
-behaviour is the gap that headless tests miss — a review pass over new view code earns its keep.
+
+Other 3 candidates adversarially rejected as not-real. Lesson: SwiftUI sheet/focus behaviour is the gap headless tests miss — a review pass over new view code earns its keep.
 
 ## The research
 
-Workflow `w5jn5jzgq` (8 grounded surface readers → 1 synthesiser) produced `/tmp/uxdx-backlog.md`
-(58 ranked items). Standout themes:
-- **Dead-wired features** — shipped power-features whose pure core was tested but no view consumed it
-  (the cheapest, highest-value wins).
+Workflow `w5jn5jzgq` (8 grounded surface readers → 1 synthesiser) produced `/tmp/uxdx-backlog.md` (58 ranked items). Standout themes:
+- **Dead-wired features** — shipped power-features whose pure core was tested but no view consumed it (cheapest, highest-value wins).
 - **Secret-redaction regressions** on high-stakes surfaces (clipboard previews, carousel title).
 - **Command-palette / keyboard universality** gaps (missing verbs, no aliases, no cheat-sheet).
 - **Pane groups half-built** (no group-from-selection, empty-group dead-end).
@@ -57,36 +45,19 @@ Workflow `w5jn5jzgq` (8 grounded surface readers → 1 synthesiser) produced `/t
 
 ## Verify-the-verifier (claims the research got wrong — skipped, not implemented)
 
-The discipline of reading the real code before implementing caught three "findings" that were already
-done or wrong — avoiding redundant/worse changes:
-- **#14 "new panes land off-screen invisibly"** — `addPane`/`addRemoteWindowPane`/`duplicatePane`
-  already all call `recenterIfOffscreen` (added in the docs/33 round).
-- **#22 "reconnect countdown nextRetry always nil"** — `ReconnectManager` supplies a real `nextRetryAt`
-  (line 206) and the pill renders the live "retrying in Ns" via `TimelineView`. Fully wired.
-- **#17 "loosen the Recenter trigger"** — the "zero panes visible" trigger is correct for "get back to
-  the cluster" (`centerOnPane`/⌥⌘C already handles the focused pane); loosening needs HW feel-tuning.
-- **#12 ⌘A for Select All** — bare ⌘A is the focused terminal's select-all-text; the workspace table
-  must never bind ⌘C/V/A, so it shipped as ⌥⌘A.
+Reading the real code before implementing caught three "findings" already done or wrong:
+- **#14 "new panes land off-screen invisibly"** — `addPane`/`addRemoteWindowPane`/`duplicatePane` already all call `recenterIfOffscreen` (added in the docs/33 round).
+- **#22 "reconnect countdown nextRetry always nil"** — `ReconnectManager` supplies a real `nextRetryAt` (line 206) and the pill renders live "retrying in Ns" via `TimelineView`. Fully wired.
+- **#17 "loosen the Recenter trigger"** — the "zero panes visible" trigger is correct for "get back to the cluster" (`centerOnPane`/⌥⌘C handles the focused pane); loosening needs HW feel-tuning.
+- **#12 ⌘A for Select All** — bare ⌘A is the focused terminal's select-all-text; the workspace table must never bind ⌘C/V/A, so it shipped as ⌥⌘A.
 
 ## Discipline notes worth keeping
 
-- **One tap covers both platforms**: macOS surface keystrokes AND the iOS input-bar both funnel through
-  `TerminalViewModel.sendInput` (the iOS `inputBar.sendSink` is wired to it), so broadcast needed only
-  ONE seam there, not two. The macOS terminal has **no input bar** (removed in d2d382f — it stole focus
-  and froze the renderer); type directly into the libghostty surface.
-- **Type-checker budget**: the `WorkspaceRootView` body chain twice tripped "unable to type-check in
-  reasonable time" as overlays/sheets accreted — extract groups into `ViewModifier`s (`SnippetModals`,
-  `WorkspaceOverlayModals`) to keep each expression small.
-- **Test-first caught a real bug**: the Paste-as-Keystrokes feedback initially missed the all-unmappable
-  case (`"é"` → strokes empty → early return before recording feedback); the test forced the fix
-  (record feedback before the empty-strokes guard).
-- **Generated-from-source-of-truth** beats hand-maintained: the cheat sheet's drift guard test fails the
-  moment a new bound command lacks a row.
+- **One tap covers both platforms**: macOS surface keystrokes AND the iOS input-bar both funnel through `TerminalViewModel.sendInput` (the iOS `inputBar.sendSink` is wired to it), so broadcast needed ONE seam, not two. The macOS terminal has **no input bar** (removed in `d2d382f` — it stole focus and froze the renderer); type directly into the libghostty surface.
+- **Type-checker budget**: the `WorkspaceRootView` body chain twice tripped "unable to type-check in reasonable time" as overlays/sheets accreted — extract groups into `ViewModifier`s (`SnippetModals`, `WorkspaceOverlayModals`) to keep each expression small.
+- **Test-first caught a real bug**: Paste-as-Keystrokes feedback initially missed the all-unmappable case (`"é"` → strokes empty → early return before recording feedback); the test forced recording feedback before the empty-strokes guard.
+- **Generated-from-source-of-truth** beats hand-maintained: the cheat sheet's drift guard test fails the moment a new bound command lacks a row.
 
 ## Deferred (HW-rig / gesture-feel — next session with the 2-machine rig)
 
-Marquee/rubber-band selection (needs pan-vs-marquee gesture disambiguation + feel); iPad hardware
-command-combos swallowed by the focused terminal (#16, needs iPad); remote-window RTT/quality HUD;
-find-in-terminal (⌘F); OSC-133 jump-to-prompt; persistent minimap / radar; live-thumbnail overview;
-input-bar command history (iOS-only, duplicates shell history); host-window palette loading/offline
-states; keyboard nudge (step-size feel).
+Marquee/rubber-band selection (needs pan-vs-marquee gesture disambiguation + feel); iPad hardware command-combos swallowed by the focused terminal (#16, needs iPad); remote-window RTT/quality HUD; find-in-terminal (⌘F); OSC-133 jump-to-prompt; persistent minimap / radar; live-thumbnail overview; input-bar command history (iOS-only, duplicates shell history); host-window palette loading/offline states; keyboard nudge (step-size feel).

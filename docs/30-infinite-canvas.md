@@ -1,9 +1,9 @@
 # Pan-Only Infinite Canvas — Implementation Spec of Record
 
-Status: spec of record; shipped as written, except the v2 persistence carries **no migration** (§4.3). Replaces the split-tiling workspace with a pan-only infinite canvas. Built against the actual code (paths + line numbers verified). The governing physical constraint and the architectural seam are both load-bearing and preserved:
+Status: spec of record; shipped as written, except v2 persistence carries **no migration** (§4.3). Replaces the split-tiling workspace with a pan-only infinite canvas. Built against actual code (paths + line numbers verified). Two load-bearing constraints are preserved:
 
-- **Physical**: a libghostty terminal surface sizes itself from its hosting view's `bounds × contentsScale` in **points** and pins `layer.bounds == view.bounds` (`GhosttyTerminalView.layout()`), with mouse coords mapped 1:1 with a y-flip. Therefore the camera is a **pure translate** — never a `scaleEffect`/`CGAffineTransform` on any ancestor of a surface — and a pane's on-screen size always equals its canvas-space size (resize = change the frame → existing reflow path).
-- **Architectural** (docs/22): tree-of-intent (pure value types) + table-of-liveness (`WorkspaceStore.registry` + `reconcile()`). The invariant is unchanged:
+- **Physical**: a libghostty surface sizes from its host view's `bounds × contentsScale` in **points** and pins `layer.bounds == view.bounds` (`GhosttyTerminalView.layout()`), mouse coords mapped 1:1 with a y-flip. So the camera is a **pure translate** — never a `scaleEffect`/`CGAffineTransform` on any surface ancestor — and a pane's on-screen size always equals its canvas-space size (resize = change the frame → existing reflow path).
+- **Architectural** (docs/22): tree-of-intent (pure value types) + table-of-liveness (`WorkspaceStore.registry` + `reconcile()`). Invariant unchanged:
   ```
   Set(registry.keys) == Set(workspace.tabs.flatMap { $0.<canvas>.allIDs() })
   ```
@@ -13,23 +13,23 @@ Status: spec of record; shipped as written, except the v2 persistence carries **
 
 ## 1. Decisions & rationale
 
-**Model shape.** A `Tab`'s `root: PaneNode` (recursive `indirect enum` split tree) becomes `canvas: Canvas` — a flat value type `{ items: [CanvasItem], camera: CanvasCamera }`. Flat-not-recursive removes the only reason the hand-written discriminated `PaneNode+Codable` existed (recursive enum). Each `CanvasItem` carries the **same `PaneID`** (the registry/`reconcile`/`.id(PaneID)` join key is reused unchanged), a value `PaneSpec`, a `frame: CGRect` in canvas space (its width/height ARE the 1:1 on-screen size that drives the terminal host's `.frame` → `layout()` → reflow), and an explicit `z: Int`.
+**Model shape.** A `Tab`'s `root: PaneNode` (recursive `indirect enum` split tree) becomes `canvas: Canvas` — a flat value type `{ items: [CanvasItem], camera: CanvasCamera }`. Flat-not-recursive removes the only reason the hand-written discriminated `PaneNode+Codable` existed. Each `CanvasItem` carries the **same `PaneID`** (registry/`reconcile`/`.id(PaneID)` join key reused unchanged), a value `PaneSpec`, a `frame: CGRect` in canvas space (width/height ARE the 1:1 on-screen size that drives the terminal host's `.frame` → `layout()` → reflow), and an explicit `z: Int`.
 
-**Z-order representation.** **Explicit `z: Int` field** (NOT array order — diverging from proposals 2/3). Rationale: the codebase's persistence is byte-stable with `.sortedKeys` and the corrupt-file repair (`dedupingLeafIDs`/`map`) iterates tabs; an explicit `z` makes `items` array order irrelevant to rendering, so a re-mint, a dedup, or a future reorder can never silently change stacking. `raise(id)` is `z = maxZ + 1` (O(1) amortized). `reconcile()` diffs a `Set` of ids (`allLeafIDs()` → `Set`), so order never mattered to reconcile anyway. Rendering and focus iterate **z-ascending** (ties broken by `id` string) for total determinism; hit-test iterates z-descending.
+**Z-order representation.** **Explicit `z: Int` field** (NOT array order — diverging from proposals 2/3). Rationale: persistence is byte-stable with `.sortedKeys` and the corrupt-file repair (`dedupingLeafIDs`/`map`) iterates tabs; an explicit `z` makes `items` array order irrelevant to rendering, so a re-mint, a dedup, or a future reorder can never silently change stacking. `raise(id)` is `z = maxZ + 1` (O(1) amortized). `reconcile()` diffs a `Set` of ids, so order never mattered to it. Rendering and focus iterate **z-ascending** (ties broken by `id` string); hit-test iterates z-descending.
 
-**`zoomedPane` fate.** **Keep as a pure presentation flag; rename `zoomedPane → maximizedPane`.** Semantics: "render this one item full-viewport, ignore the camera/other items." This preserves the proven no-teardown property (same `.id(PaneID)`, registry untouched — exactly `PaneTreeView`'s zoom branch). It is *more* valuable on a sprawling canvas (a focus-mode escape hatch). The rename kills the dangerous ambiguity that "zoom" implies the scale we structurally forbid. The store op keeps the name `toggleZoom()` (a chord/menu word) but flips `maximizedPane`.
+**`zoomedPane` fate.** **Keep as a pure presentation flag; rename `zoomedPane → maximizedPane`.** Semantics: "render this one item full-viewport, ignore the camera/other items." Preserves the proven no-teardown property (same `.id(PaneID)`, registry untouched — exactly `PaneTreeView`'s zoom branch), and is *more* valuable on a sprawling canvas (focus-mode escape hatch). The rename kills the ambiguity that "zoom" implies the scale we structurally forbid. Store op keeps the name `toggleZoom()` but flips `maximizedPane`.
 
-**New-pane placement.** Cascade + collision-nudge + clamp-into-view, anchored to the focused pane (NSWindow `cascadeTopLeft` convention, ~28pt down-right), then a store-level **in-view guarantee**: after placement, if the new item does not intersect the viewport, pan the camera to center it. Without zoom-to-fit, a new pane that lands off-screen is invisible — so placement + `centered(on:)` together guarantee the new pane is always at least partially visible, focused, and raised. Pure `CanvasGeometry.placement(...)` returns the frame; the store composes `adding` + `centered`.
+**New-pane placement.** Cascade + collision-nudge + clamp-into-view, anchored to the focused pane (NSWindow `cascadeTopLeft` convention, ~28pt down-right), then a store-level **in-view guarantee**: if the new item does not intersect the viewport, pan the camera to center it. Without zoom-to-fit, an off-screen new pane is invisible — so placement + `centered(on:)` together guarantee it's always at least partially visible, focused, and raised. Pure `CanvasGeometry.placement(...)` returns the frame; the store composes `adding` + `centered`.
 
-**Culling policy.** **Kind-aware.** Terminal/`claudeCode` panes are **never culled** (kept mounted, translated off-viewport by the camera offset). Reason from the libghostty research: removing a terminal host view closes the surface; on revisit a fresh surface replays the retained byte ring (capped 256KB), which can show a **stale frame for an alt-screen TUI** (vim/tmux) until the host repaints — which on a static screen may be never. Keeping them mounted (the OS occludes off-screen views; `setFocus(true)` stays, so they repaint on pan-back with zero replay cost) trades a bounded number of idle Metal surfaces (acceptable at the "few dozen panes" scale) for zero stale-frame risk. **`.remoteGUI` (video) panes ARE culled** off-viewport (plus margin), where culling is beneficial (frees a `liveVideoCap` slot) and the `.onAppear/.onDisappear` activate/deactivate gate is built for it. The focused pane is never culled regardless of kind. This requires one defensive store change so the video-cap teardown decision means "off-screen" not just "off active tab" (§5 `isPaneVisible`), because on a canvas an off-viewport pane is still `isPaneOnActiveTab == true`.
+**Culling policy.** **Kind-aware.** Terminal/`claudeCode` panes are **never culled** (kept mounted, translated off-viewport by the camera offset). Reason (libghostty research): removing a terminal host view closes the surface; on revisit a fresh surface replays the retained byte ring (capped 256KB), which can show a **stale frame for an alt-screen TUI** (vim/tmux) until the host repaints — which on a static screen may be never. Keeping them mounted (OS occludes off-screen views; `setFocus(true)` stays, so they repaint on pan-back with zero replay cost) trades a bounded number of idle Metal surfaces (acceptable at "few dozen panes") for zero stale-frame risk. **`.remoteGUI` (video) panes ARE culled** off-viewport (plus margin), freeing a `liveVideoCap` slot via the existing `.onAppear/.onDisappear` activate/deactivate gate. The focused pane is never culled regardless of kind. This needs one defensive store change so video-cap teardown means "off-screen" not just "off active tab" (§5 `isPaneVisible`), because on a canvas an off-viewport pane is still `isPaneOnActiveTab == true`.
 
-**Persistence — no migration.** There is no released persisted format and no users (product owner, 2026-06-06), so the schema bumps to **v2** with no v1→v2 migration. `WorkspacePersistence.load()` decodes the v2 canvas shape directly and, on any failure, resets to default (writing the `.corrupt` sidecar so the original bytes stay recoverable). No legacy `PaneNode`/`LayoutSolver` is retained. See §4.3.
+**Persistence — no migration.** No released persisted format and no users (product owner, 2026-06-06), so the schema bumps to **v2** with no v1→v2 migration. `WorkspacePersistence.load()` decodes the v2 canvas shape directly and, on any failure, resets to default (writing the `.corrupt` sidecar so original bytes stay recoverable). No legacy `PaneNode`/`LayoutSolver` retained. See §4.3.
 
 ---
 
 ## 2. Data model — exact Swift
 
-New file `Sources/SlopDeskClientUI/Workspace/Domain/Canvas.swift`. `import Foundation` + `import CoreGraphics` only (Domain purity — no SwiftUI, no SlopDeskClient — same as `LayoutSolver.swift`/`FocusResolver.swift`).
+New file `Sources/SlopDeskClientUI/Workspace/Domain/Canvas.swift`. `import Foundation` + `import CoreGraphics` only (Domain purity — no SwiftUI, no SlopDeskClient — as in `LayoutSolver.swift`/`FocusResolver.swift`).
 
 ```swift
 import Foundation
@@ -141,7 +141,7 @@ public extension Tab {
 
 ## 3. Pure ops
 
-New files `Sources/SlopDeskClientUI/Workspace/Domain/Canvas+Ops.swift` (queries + mutations + camera/arrange) and `Sources/SlopDeskClientUI/Workspace/Domain/CanvasGeometry.swift` (pure static geometry: resize/placement/screenRect/culling). All on `Canvas`, each returns a new value or a pure read.
+New files `Sources/SlopDeskClientUI/Workspace/Domain/Canvas+Ops.swift` (queries + mutations + camera/arrange) and `Sources/SlopDeskClientUI/Workspace/Domain/CanvasGeometry.swift` (pure static geometry: resize/placement/screenRect/culling). All on `Canvas`; each returns a new value or a pure read.
 
 ### Queries (drive reconcile + coupling — replace PaneNode reads)
 ```swift
@@ -229,7 +229,7 @@ public enum CanvasGeometry {
 ```
 
 ### SolvedLayout from a Canvas (FocusResolver reuse — resolver UNCHANGED)
-`SolvedLayout` becomes just `{ frames: [PaneID: CGRect] }` (no dividers — the divider concept is gone) in a new `Domain/SolvedLayout.swift`; `FocusResolver` is reused verbatim. Build the layout in **canvas space** (camera-independent → directional focus stable across pans; off-screen panes stay keyboard-navigable):
+`SolvedLayout` becomes just `{ frames: [PaneID: CGRect] }` (no dividers — that concept is gone) in a new `Domain/SolvedLayout.swift`; `FocusResolver` is reused verbatim. Build the layout in **canvas space** (camera-independent → directional focus stable across pans; off-screen panes stay keyboard-navigable):
 
 ```swift
 public extension Canvas {
@@ -237,14 +237,14 @@ public extension Canvas {
     func solvedLayout() -> SolvedLayout { SolvedLayout(frames: framesByID()) }
 }
 ```
-`FocusResolver.neighbor(of:_:in:)` and `cycle(_:from:forward:)` consume only `frames` and work unchanged. Overlap ties (cascaded/raised panes) are discriminated by `crossAxisOverlap` then `axialDistance`; identical-frame ties resolve to iteration order — deterministic via z-ascending feed. No resolver edit.
+`FocusResolver.neighbor(of:_:in:)` and `cycle(_:from:forward:)` consume only `frames`, work unchanged. Overlap ties (cascaded/raised panes) are discriminated by `crossAxisOverlap` then `axialDistance`; identical-frame ties resolve to iteration order — deterministic via z-ascending feed. No resolver edit.
 
 ---
 
 ## 4. Codable + schemaVersion v2 + persistence
 
 ### 4.1 Codable for the new types
-`CanvasCamera`, `CanvasItem`, `Canvas` are flat (no recursion) → **synthesized `Codable` is safe** (`CGRect`/`CGPoint`/`CGSize` are Codable via CoreGraphics). The hand-written discriminated codec that `PaneNode+Codable` needed (recursive `indirect enum`) is no longer required.
+`CanvasCamera`, `CanvasItem`, `Canvas` are flat (no recursion) → **synthesized `Codable` is safe** (`CGRect`/`CGPoint`/`CGSize` are Codable via CoreGraphics). The hand-written discriminated codec `PaneNode+Codable` needed (recursive `indirect enum`) is no longer required.
 
 Add ONE defensive `init(from:)`/`encode(to:)` on `Canvas` in `Sources/SlopDeskClientUI/Workspace/Domain/Canvas+Codable.swift` to enforce invariants on decode (mirroring `PaneNode+Codable`'s `children.count >= 2` guard), so corruption fails the decode → `load()` falls back cleanly:
 
@@ -289,7 +289,7 @@ Wire shape (stable, `.sortedKeys`):
 `Workspace.currentSchemaVersion = 2` (`Workspace.swift:36`).
 
 ### 4.3 Persistence — decode-or-reset (no migration)
-There is no released persisted format and no users (product owner, 2026-06-06), so v2 ships **without a v1→v2 migration** — no legacy `PaneNode`/`LayoutSolver` retention, no pre-decode reshape. `WorkspacePersistence.load()` decodes the v2 canvas shape and `resetToDefault()`s on any failure (which writes the `.corrupt` sidecar so the original bytes stay recoverable). An older incompatible on-disk shape simply fails to decode and resets:
+No released persisted format and no users (product owner, 2026-06-06), so v2 ships **without a v1→v2 migration** — no legacy `PaneNode`/`LayoutSolver` retention, no pre-decode reshape. `WorkspacePersistence.load()` decodes the v2 canvas shape and `resetToDefault()`s on any failure (writing the `.corrupt` sidecar so original bytes stay recoverable). An older incompatible shape simply fails to decode and resets:
 
 ```swift
 public func load() -> Workspace {
@@ -306,13 +306,13 @@ public func load() -> Workspace {
 }
 ```
 
-`dedupingItemIDs` re-mints duplicate `PaneID`s (the registry is keyed 1:1 by PaneID); `Canvas.sanitize` (decode, §4.1) clamps every frame finite + ≥ `minItemSize`. `WorkspaceSchemaMigration.migrate` is the identity fast path at v2.
+`dedupingItemIDs` re-mints duplicate `PaneID`s (registry keyed 1:1 by PaneID); `Canvas.sanitize` (decode, §4.1) clamps every frame finite + ≥ `minItemSize`. `WorkspaceSchemaMigration.migrate` is the identity fast path at v2.
 
 ---
 
 ## 5. WorkspaceStore — method-by-method change list
 
-`reconcile()` (`WorkspaceStore.swift:634-725`) is byte-for-byte unchanged **except the one line** `allLeafIDs()` now reads `canvas.allIDs()` (and the autotype autotype-target line `:710`). Therefore the registry, video-cap accounting (`tearingDownVideo`/`hasFreeVideoSlot`/`liveVideoCap`/`videoPromotionGeneration`), `focusCoordinator`/`syncFocusCoordinator`, the debounced-save path (`scheduleSave`/`saveImmediately`/`saveGeneration`/`savingEnabled`), `quiesce`/`pauseAll`/`resumeAll` are **preserved verbatim**. Every new mutation ends in `reconcile()`, so the invariant `Set(registry.keys) == Set(allIDs)` holds after any op; `move/resize/raise/pan/center/tidy/commitCamera` leave the item *set* unchanged → reconcile is a registry no-op (save only); `addPane`/`closePane` change the set by exactly one.
+`reconcile()` (`WorkspaceStore.swift:634-725`) is byte-for-byte unchanged **except the one line** `allLeafIDs()` now reads `canvas.allIDs()` (and the autotype-target line `:710`). So the registry, video-cap accounting (`tearingDownVideo`/`hasFreeVideoSlot`/`liveVideoCap`/`videoPromotionGeneration`), `focusCoordinator`/`syncFocusCoordinator`, the debounced-save path (`scheduleSave`/`saveImmediately`/`saveGeneration`/`savingEnabled`), `quiesce`/`pauseAll`/`resumeAll` are **preserved verbatim**. Every new mutation ends in `reconcile()`, so the invariant `Set(registry.keys) == Set(allIDs)` holds after any op; `move/resize/raise/pan/center/tidy/commitCamera` leave the item *set* unchanged → reconcile is a registry no-op (save only); `addPane`/`closePane` change the set by exactly one.
 
 ### 5.1 Mechanical `.root` → `.canvas` reads
 | Site | Was | Becomes |
@@ -535,7 +535,7 @@ struct CanvasView: View {
     }
 }
 ```
-(`CanvasCamera.translated(by:)` is a tiny pure helper = `camera.origin += delta`.) Use one `@GestureState livePan` for the rigid live preview; the macOS scroll path commits directly (wheel deltas are discrete).
+(`CanvasCamera.translated(by:)` is a tiny pure helper = `camera.origin += delta`.) One `@GestureState livePan` for the rigid live preview; the macOS scroll path commits directly (wheel deltas are discrete).
 
 The camera is applied as **one rigid `.offset`** on the content ZStack — `.offset` is a rendering translate that does NOT change child `bounds`, so each item's `GhosttyLayerBackedView` keeps `bounds == frame == 1:1` and `layout()` derives correct cols/rows; mouse points map 1:1. The content ZStack gets an explicit `.frame(viewport)` so `.position` lays out absolutely (HW-flag below).
 
@@ -562,10 +562,10 @@ struct CanvasScrollCatcher: NSViewRepresentable {
 }
 #endif
 ```
-It returns `nil` from `hitTest` so it never steals a click (libghostty `mouseDown` still reaches the body), but `scrollWheel` is routed to it by location. Mounted as a hit-transparent `.overlay`.
+`hitTest` returns `nil` so it never steals a click (libghostty `mouseDown` still reaches the body), but `scrollWheel` is routed to it by location. Mounted as a hit-transparent `.overlay`.
 
 ### 6.4 `CanvasItemView` — one positioned pane (new file)
-Reuses `PaneChromeView` + `PaneLeafView` **verbatim** (the body is `PaneTreeView.leafView` plus move/resize gestures). Gesture layering is by **region** (hit-test), priority only where regions overlap.
+Reuses `PaneChromeView` + `PaneLeafView` **verbatim** (body = `PaneTreeView.leafView` plus move/resize gestures). Gesture layering is by **region** (hit-test), priority only where regions overlap.
 
 ```swift
 struct CanvasItemView: View {
@@ -626,7 +626,7 @@ struct CanvasItemView: View {
 | Chrome header | `DragGesture` → `movePane` | same | plain `.gesture` (region-isolated) |
 | Resize handle | `DragGesture` → `resizePane` | same | plain `.gesture` (region-isolated) |
 
-Why the body never loses its click: **never** `.highPriorityGesture` on/around the body (it would steal libghostty `mouseDown`); attach **no** gesture to the body; use plain `.gesture` on header/handles, which are region-isolated. The macOS `.onTapGesture { store.focus(id) }` that `PaneTreeView` put on the body (`PaneTreeView.swift:157`) is **removed** on the canvas (it competes with `mouseDown`); body focus comes from `onRequestFocus` (`wireFocusOnClick`, ported verbatim). iOS body focus is the `.simultaneousGesture(Tap)`; z-order keeps the background pan from firing under a pane (the `Color.clear` hit layer is the *bottom* of the ZStack). `focusCoordinator` is threaded to every item (multiple terminal hosts visible — needed unchanged). **Never call `surface.setFocus(false)` to mark a pane inactive** — dim is `.opacity` only (`PaneLeafView` pattern); every mounted terminal keeps `setFocus(true)` so all visible panes repaint (identical to tiling).
+Why the body never loses its click: **never** `.highPriorityGesture` on/around the body (steals libghostty `mouseDown`); attach **no** gesture to the body; use plain `.gesture` on header/handles, which are region-isolated. The macOS `.onTapGesture { store.focus(id) }` `PaneTreeView` put on the body (`PaneTreeView.swift:157`) is **removed** on the canvas (it competes with `mouseDown`); body focus comes from `onRequestFocus` (`wireFocusOnClick`, ported verbatim). iOS body focus is the `.simultaneousGesture(Tap)`; z-order keeps the background pan from firing under a pane (the `Color.clear` hit layer is the *bottom* of the ZStack). `focusCoordinator` is threaded to every item (multiple terminal hosts visible — needed unchanged). **Never call `surface.setFocus(false)` to mark a pane inactive** — dim is `.opacity` only (`PaneLeafView` pattern); every mounted terminal keeps `setFocus(true)` so all visible panes repaint (identical to tiling).
 
 ### 6.6 Compact carousel — kept, reads adapted
 `PaneCarouselView` is reused (a tiny-pane plane is unusable on a phone). `CompactLayoutResolver` (`CompactLayoutResolver.swift:29-42`) reads the canvas in z-order:
@@ -641,7 +641,7 @@ public static func selectedIndex(for tab: Tab) -> Int {
     tab.canvas.allIDs().firstIndex(of: tab.focusedPane) ?? 0
 }
 ```
-`PaneCarouselView` edits: `tab.root.spec(for:)` → `tab.canvas.spec(for:)` (:99); `tab.zoomedPane` → `tab.maximizedPane` (:105); `tab.root.contains` → `tab.canvas.contains` (:245); the `addMenu`/`primaryAction` `store.split(...)` calls → `store.addPane(kind:)` (:195-212). Keeps `.id(PaneID)` (:126). The compact path leaves `paneIDsInViewport` empty → `isPaneVisible` falls back to `isPaneOnActiveTab` (no regression).
+`PaneCarouselView` edits: `tab.root.spec(for:)` → `tab.canvas.spec(for:)` (:99); `tab.zoomedPane` → `tab.maximizedPane` (:105); `tab.root.contains` → `tab.canvas.contains` (:245); the `addMenu`/`primaryAction` `store.split(...)` calls → `store.addPane(kind:)` (:195-212). Keeps `.id(PaneID)` (:126). Compact path leaves `paneIDsInViewport` empty → `isPaneVisible` falls back to `isPaneOnActiveTab` (no regression).
 
 ### 6.7 Other coupled views
 - `PaneChromeView.controls` (:94-110): replace the two `splitMenu(...)` (:96-97, :115-146) with one `addMenu` (`+`, kind picker → `store.addPane(kind:)`). Keep zoom (label "Maximize"/"Restore") + close. Add the `moveHandleGesture` param + attach to the header HStack.
@@ -680,7 +680,7 @@ public enum WorkspaceCommand: Sendable, Equatable {
     case reconnectPane             // ⇧⌘R
 }
 ```
-Removed: `.splitHorizontal`, `.splitVertical` (no axis). Reusing the two split chords keeps muscle-memory productive: `⌘D` = New Pane, `⇧⌘D` = Tidy. `⌥⌘C` = Center (⌥⌘ avoids ⌘C copy).
+Removed: `.splitHorizontal`, `.splitVertical` (no axis). Reusing the two split chords keeps muscle-memory: `⌘D` = New Pane, `⇧⌘D` = Tidy. `⌥⌘C` = Center (⌥⌘ avoids ⌘C copy).
 
 `CommandInterpreter.defaultBindings` (:110-152) edits:
 ```swift
@@ -699,7 +699,7 @@ case .toggleZoom:         store.toggleZoom()
 // closePane/closeTab/newTab/nextTab/prevTab/selectTab/focus/cycleFocus/renameTab/reconnectPane — UNCHANGED
 ```
 
-`WorkspaceCommands.swift` Pane menu (the menu derives shortcuts from the bindings table): "Split Right"/"Split Down" → "New Pane"/"Tidy Layout"; add "Center on Pane" (`.centerFocusedPane`) + "Center on All" (→ `store.centerOnAll()`, a menu-only action); "Zoom Pane" → "Maximize Pane".
+`WorkspaceCommands.swift` Pane menu (derives shortcuts from the bindings table): "Split Right"/"Split Down" → "New Pane"/"Tidy Layout"; add "Center on Pane" (`.centerFocusedPane`) + "Center on All" (→ `store.centerOnAll()`, menu-only); "Zoom Pane" → "Maximize Pane".
 
 ---
 
@@ -778,10 +778,10 @@ case .toggleZoom:         store.toggleZoom()
 
 ## 11. Top risks + mitigations
 
-1. **On-disk shape change resets old workspaces.** v2 is a wire-shape change with no migration, so an older incompatible file fails to decode. *Mitigation:* there are no released formats/users (acceptable by design); `load()` decodes v2 and only `resetToDefault()`s on failure; `resetToDefault` writes the `.corrupt` sidecar (original bytes recoverable, never destroyed); `Canvas.sanitize` clamps every frame finite + ≥ minItemSize on decode; `dedupingItemIDs` re-mints duplicate ids; the existing `savingEnabled` gate defers the first save past the restore reconcile, so a decode bug surfaces as a recoverable in-memory default with the sidecar intact, never an overwrite.
-2. **macOS chrome-header `DragGesture` stealing libghostty body `mouseDown`** (breaks text selection/mouse-reporting; the surface is documented-delicate). *Mitigation:* region isolation, never priority — the move gesture is attached only to the header HStack, a plain `.gesture` (never `.highPriorityGesture`), and the body has zero ancestor gestures; `minimumDistance: 2` so a header click still focuses; the `onRequestFocus` focus path is kept verbatim. HW item #1 is the mandatory acceptance test; fallback is a small dedicated drag glyph.
+1. **On-disk shape change resets old workspaces.** v2 is a wire-shape change with no migration, so an older incompatible file fails to decode. *Mitigation:* no released formats/users (acceptable by design); `load()` decodes v2 and only `resetToDefault()`s on failure; `resetToDefault` writes the `.corrupt` sidecar (original bytes recoverable, never destroyed); `Canvas.sanitize` clamps every frame finite + ≥ minItemSize on decode; `dedupingItemIDs` re-mints duplicate ids; the existing `savingEnabled` gate defers the first save past the restore reconcile, so a decode bug surfaces as a recoverable in-memory default with the sidecar intact, never an overwrite.
+2. **macOS chrome-header `DragGesture` stealing libghostty body `mouseDown`** (breaks text selection/mouse-reporting; the surface is documented-delicate). *Mitigation:* region isolation, never priority — the move gesture is on the header HStack only, a plain `.gesture` (never `.highPriorityGesture`), and the body has zero ancestor gestures; `minimumDistance: 2` so a header click still focuses; `onRequestFocus` kept verbatim. HW item #1 is the mandatory acceptance test; fallback is a small dedicated drag glyph.
 3. **Culling unmounting a terminal surface → stale-frame replay for alt-screen TUIs.** *Mitigation:* terminals are **never culled** (kept mounted, translated off-viewport, `setFocus(true)`); only `.remoteGUI` panes cull; the focused pane is never culled. Encoded in the pure `visibleItems`, unit-tested.
-4. **Off-viewport video pane never freeing its cap slot** (`isPaneOnActiveTab` == "on active tab" ≠ "on screen" on a canvas). *Mitigation:* the `isPaneVisible` signal (active-tab AND in-viewport) gates the teardown re-check, with an empty-set fallback that keeps every non-canvas path byte-identical; tested in `LiveVideoCapTests` + HW item #6.
+4. **Off-viewport video pane never freeing its cap slot** (`isPaneOnActiveTab` == "on active tab" ≠ "on screen" on a canvas). *Mitigation:* the `isPaneVisible` signal (active-tab AND in-viewport) gates the teardown re-check, with an empty-set fallback keeping every non-canvas path byte-identical; tested in `LiveVideoCapTests` + HW item #6.
 5. **`.position` not laying out without an explicitly-sized container.** *Mitigation:* the content ZStack gets an explicit `.frame(viewport)` + `.clipped()`; HW item #5; fallback is per-item `.position(screenRect(...).center)`.
 6. **Lost-in-empty-space (no zoom-to-fit).** *Mitigation:* `needsRecenter` → a visible "Recenter" button; the `addPane` in-view guarantee; `centerOnPane`/`centerOnAll`/`tidy` commands; focusing an off-screen pane wires through `centerOnPane`.
 
