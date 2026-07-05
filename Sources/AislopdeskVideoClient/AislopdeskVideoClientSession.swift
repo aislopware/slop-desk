@@ -1719,6 +1719,20 @@ public actor AislopdeskVideoClientSession {
         // decoder's lazy first configure on the first keyframe). `false` ⇒ VideoRange (today).
         decoder.outputFullRange = fullRange
         self.decoder = decoder
+        // LATE-JOIN ANCHOR (2026-07-05): a freshly-built decoder holds NO reference frames — until an
+        // IDR configures it, every delta is undecodable. A client that joins a LIVE stream mid-GOP (the
+        // host already shipped its first-frame IDR before this client arrived) — or joins a STATIC screen
+        // that emits no deltas at all — would otherwise sit dark until the host's periodic static
+        // re-anchor, or learn the hard way one wasted VT `awaitingKeyframe` failure per pre-anchor delta.
+        // Proactively (a) arm the drop-until-anchor gate so pre-anchor deltas are dropped BEFORE VT, and
+        // (b) ask the host for an IDR now. The host's delivery-keyed `RecoveryIDRPolicy` absorbs this as
+        // an in-flight duplicate when it JUST sent a first-frame IDR (grace window) — so the common
+        // fresh-session case is unchanged — and forces a real IDR only when this client genuinely lacks
+        // an anchor. Anchoring latency ≈ one RTT regardless of screen motion. `requestIDR()` arms the
+        // escalation clock (no loss on record ⇒ only a keyframe clears the episode — the intended
+        // hard-anchor semantics), and the gate arming is idempotent with the reactive path below.
+        decodeGate.noteAwaitingKeyframe()
+        requestIDR()
         reapplyCursor()
         log
             .info(
