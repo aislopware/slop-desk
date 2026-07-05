@@ -1,8 +1,9 @@
 // WorkspaceChromePinTests — pins the E19 / WI-4 testable surface of "Pin Window" WITHOUT an NSWindow.
 //
-// The macOS `NSWindow.level` glue itself is hang-unsafe to exercise (CLAUDE.md rule #6 — never instantiate
-// an NSWindow in a test), so WI-4's `applyPinLevel` / `applyInitialWindowSize` are compiled-and-reviewed
-// only; the pure window-sizing math is covered by `WindowSizeMathTests` (WI-1) and the action routing by
+// The macOS window-level glue itself is hang-unsafe to exercise (CLAUDE.md rule #6 — never instantiate an
+// NSWindow in a test), so WI-4's pin actuation (now the native `.windowLevel(chrome.pinned ? .floating :
+// .normal)` scene modifier) + `applyInitialWindowSize` are compiled-and-reviewed only; the pure window-sizing
+// math is covered by `WindowSizeMathTests` (WI-1) and the action routing by
 // `WorkspaceBindingRoutingTests` (WI-3). What IS unit-testable here is the model contract the glue actuates:
 // the `WorkspaceChromeState.pinned` flag + the `OverlayCoordinator.togglePinWindow` seam the root view
 // (`wireChromeToggles`) and the menu (`WorkspaceCommands`) flip — driven headlessly, no AppKit.

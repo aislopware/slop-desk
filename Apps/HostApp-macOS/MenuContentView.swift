@@ -282,6 +282,9 @@ struct MenuContentView: View {
 private struct TCCRowView: View {
     let row: TCCRow
     let refreshTick: Int
+    /// SwiftUI-native URL opener for the "Enable…" deep-link (was `NSWorkspace.shared.open`). `row.settingsURL`
+    /// is an `x-apple.systempreferences:` deep link, which `openURL` routes through LaunchServices as before.
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         // Re-preflight on every render (grants go stale; never cache). `refreshTick` is read so
@@ -305,7 +308,7 @@ private struct TCCRowView: View {
             Spacer()
             if !granted {
                 Button("Enable…") {
-                    NSWorkspace.shared.open(row.settingsURL)
+                    openURL(row.settingsURL)
                 }
                 .controlSize(.small)
             }

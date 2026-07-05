@@ -9,10 +9,10 @@
 // are emitted by `TerminalConfigBuilder`, WI-2) — there is NO `refreshTerminalControls()` hop here (that seam
 // is for the fire-time `Defaults` Controls toggles, not the typed render prefs).
 //
-// macOS-only: `ColorPicker` + the `NSColor` hex glue are AppKit. The Appearance tab keeps a simpler
-// Style/Blink section on iOS (see `AppearanceSettingsTab`). The pure hex helper (`CursorColorHex`) is
-// cross-platform + headlessly testable (`CursorColorHexTests`). Slate.* tokens only (no raw font/radius
-// literals — `scripts/check-ds-leaks.sh`).
+// macOS-only: the full Cursor section (`ColorPicker` + live preview) is macOS; the Appearance tab keeps a
+// simpler Style/Blink section on iOS (see `AppearanceSettingsTab`). The pure hex helper (`CursorColorHex`) is
+// cross-platform + headlessly testable (`CursorColorHexTests`); the `Color`↔hex glue below is pure SwiftUI
+// (`Color.resolve(in:)`, NO `NSColor`). Slate.* tokens only (no raw font/radius literals — `check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
 import SlopDeskVideoProtocol
@@ -23,8 +23,8 @@ import SwiftUI
 
 /// The pure conversion between a libghostty `cursor-color` 6-hex string (what `TerminalPreferences` persists
 /// and `TerminalConfigBuilder` emits) and integer / unit RGB channels. Kept AppKit-free so
-/// `CursorColorHexTests` can pin the round-trip headlessly; the `NSColor` glue that feeds a SwiftUI
-/// `ColorPicker` lives in the macOS-only `Color` extension below and is code-reviewed, not unit-tested.
+/// `CursorColorHexTests` can pin the round-trip headlessly; the SwiftUI `Color`↔hex glue (via
+/// `Color.resolve(in:)`) lives in the macOS-only `Color` extension below and is code-reviewed, not unit-tested.
 enum CursorColorHex {
     /// Parse a 6-hex RGB string (no leading `#`) into 0…255 channels. Returns `nil` for an empty string
     /// (an empty string means "Default" = follow the theme), the wrong length, or any non-hex character — the caller then
@@ -52,9 +52,8 @@ enum CursorColorHex {
 }
 
 #if os(macOS)
-import AppKit
 
-// MARK: - Color ↔ cursor-hex glue (macOS — NSColor sRGB component extraction)
+// MARK: - Color ↔ cursor-hex glue (macOS — pure SwiftUI, via Color.resolve(in:))
 
 extension Color {
     /// Build a colour from a 6-hex `cursor-color` string, or `nil` when the string is empty / malformed (the
@@ -65,15 +64,16 @@ extension Color {
         self.init(.sRGB, red: Double(rgb.r) / 255, green: Double(rgb.g) / 255, blue: Double(rgb.b) / 255, opacity: 1)
     }
 
-    /// This colour as a 6-hex `cursor-color` string (sRGB), or `""` (follow the theme) when it cannot be
-    /// resolved into an sRGB triple — so a colour that resists conversion degrades to "Default", never traps.
-    var cursorHexString: String {
-        guard let srgb = NSColor(self).usingColorSpace(.sRGB) else { return "" }
-        return CursorColorHex.hex(
-            r: Double(srgb.redComponent),
-            g: Double(srgb.greenComponent),
-            b: Double(srgb.blueComponent),
-        )
+    /// This colour as a 6-hex `cursor-color` string (gamma-encoded sRGB), or `""` (follow the theme) when it
+    /// can't be resolved — so a colour that resists conversion degrades to "Default", never traps. Resolved via
+    /// `Color.resolve(in:)` — the SwiftUI-native replacement for the old `NSColor(self).usingColorSpace(.sRGB)`
+    /// bridge. `Color.Resolved.{red,green,blue}` are the same gamma-encoded sRGB 0…1 channels (wide-gamut picks
+    /// are gamut-mapped to sRGB, as `usingColorSpace(.sRGB)` did), so the persisted hex matches the old path
+    /// within channel rounding. This feeds the libghostty config string, NOT the frozen golden wire —
+    /// `CursorColorHexTests` pins the pure `CursorColorHex.hex` helper (unchanged).
+    func cursorHexString(in environment: EnvironmentValues) -> String {
+        let resolved = resolve(in: environment)
+        return CursorColorHex.hex(r: Double(resolved.red), g: Double(resolved.green), b: Double(resolved.blue))
     }
 }
 
@@ -83,6 +83,10 @@ extension Color {
 /// `store.terminal`. Hosted by `AppearanceSettingsTab` on macOS.
 struct CursorPreviewView: View {
     @Bindable var store: PreferencesStore
+
+    /// The resolved environment — threaded into `Color.cursorHexString(in:)` so a picked colour serializes via
+    /// the SwiftUI-native `Color.resolve(in:)` (no `NSColor` bridge). `\.self` yields the whole `EnvironmentValues`.
+    @Environment(\.self) private var environment
 
     /// Drives the blink animation of the preview caret (mirrors the chosen `cursorBlink`, purely cosmetic).
     @State private var blinkVisible = true
@@ -256,7 +260,7 @@ struct CursorPreviewView: View {
                 let hex = store.terminal[keyPath: keyPath]
                 return Color(cursorHex: hex) ?? Color(cursorHex: fallbackHex) ?? Slate.Text.primary
             },
-            set: { store.terminal[keyPath: keyPath] = $0.cursorHexString },
+            set: { store.terminal[keyPath: keyPath] = $0.cursorHexString(in: environment) },
         )
     }
 }

@@ -677,16 +677,15 @@ public struct SlopDeskClientApp: App {
                     // `performClose(nil)` actuator → the close-confirmation gate, so it actuates a real close
                     // instead of the dead `requestCloseWindow()` park. Re-assigning on a re-fire is idempotent.
                     overlayCoordinator.closeWindow = { [windowBox] in windowBox.window?.performClose(nil) }
-                    // E19 WI-4: capture the window weakly for the `.onChange(of: chrome.pinned)` pin actuator,
-                    // apply the current pin level (idempotent — the callback can re-fire), and apply the
-                    // configured initial size EXACTLY ONCE per window open (so a later manual resize is never
-                    // fought). All NSWindow reach stays inside THIS blessed hook. CAPTURE AUDIT (multi-window
-                    // fix): this closure fires only for the window hosting the WORKSPACE root (the Settings
-                    // scene never mounts this modifier), and File ▸ New Window is removed
-                    // (`CommandGroup(replacing: .newItem)`), so exactly ONE window can ever land here — the
-                    // box is never overwritten by a second workspace window's re-render.
+                    // E19 WI-4: capture the window weakly for the ⌘⇧W / menu / palette `performClose` actuators,
+                    // and apply the configured initial size EXACTLY ONCE per window open (so a later manual
+                    // resize is never fought). All NSWindow reach stays inside THIS blessed hook. (The window
+                    // PIN level moved to a native `.windowLevel(chrome.pinned…)` scene modifier — no longer
+                    // applied here.) CAPTURE AUDIT (multi-window fix): this closure fires only for the window
+                    // hosting the WORKSPACE root (the Settings scene never mounts this modifier), and File ▸ New
+                    // Window is removed (`CommandGroup(replacing: .newItem)`), so exactly ONE window can ever land
+                    // here — the box is never overwritten by a second workspace window's re-render.
                     windowBox.window = window
-                    Self.applyPinLevel(to: window, pinned: chrome.pinned)
                     // E19 WI-4 (A29): pass the LIVE chrome (for the grid `chromeOverhead` — the revealed
                     // sidebar) + the configured terminal font size (the font-derived fallback cell used
                     // only before the terminal surface lays out). The grid sizing DEFERS its once-per-open
@@ -695,23 +694,8 @@ public struct SlopDeskClientApp: App {
                         to: window, store: store, chrome: chrome,
                         fontPointSize: CGFloat(preferences.terminal.fontSize),
                     )
-                    // FOCUS-STEALING FIX: this `.introspect(.window)` closure RE-FIRES on every scene
-                    // re-render (terminal/video output mutates @Observable state continuously). The old
-                    // `!window.isKeyWindow` guard let it re-activate the app on ANY re-render that happened
-                    // while the window was non-key — i.e. the moment the user switched to another app it
-                    // yanked focus straight back. Gate the automation bring-to-front to ONCE per window
-                    // open via the same associated-object one-shot idiom as `applyInitialWindowSize`.
-                    guard Self.hasAutomationEnvironment(),
-                          objc_getAssociatedObject(window, &Self.windowActivatedKey) == nil else { return }
-                    objc_setAssociatedObject(window, &Self.windowActivatedKey, true, .OBJC_ASSOCIATION_RETAIN)
-                    NSApplication.shared.activate(ignoringOtherApps: true)
-                    window.makeKeyAndOrderFront(nil)
-                }
-                // E19 WI-4: the Pin Window toggle flips `chrome.pinned`; re-level the captured window here so
-                // the toggle is LIVE even if SwiftUIIntrospect's closure does not re-fire on a pure flag
-                // change. Reading `chrome.pinned` registers the observation that re-runs this onChange.
-                .onChange(of: chrome.pinned) { _, pinned in
-                    if let window = windowBox.window { Self.applyPinLevel(to: window, pinned: pinned) }
+                    // AUTOMATION ONLY: bring the window to front + make it key ONCE per window open (see helper).
+                    Self.automationBringToFrontOnce(window)
                 }
                 // macOS delivers no reliable flush on ⌘Q; flush the tree synchronously on termination.
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
@@ -745,6 +729,12 @@ public struct SlopDeskClientApp: App {
         .windowResizability(.automatic)
         // G1: open at the odiff reference geometry (1280×800) so a fresh window matches the reference.
         .defaultSize(width: 1280, height: 800)
+        // E19 WI-4: Pin Window (chord-less; menu/palette flips `chrome.pinned`) maps to the WINDOW LEVEL.
+        // Reading the live `chrome.pinned` @Observable in the scene body re-applies this on every flip — the
+        // NATIVE replacement for the old `.introspect(.window)` pin-apply + `.onChange(of:)` actuator +
+        // `applyPinLevel` NSWindow.level reach. `WindowLevel` is macOS 15+; the single-window model (File ▸ New
+        // Window is removed) means this group-wide level only ever touches the one workspace window.
+        .windowLevel(chrome.pinned ? .floating : .normal)
         // E1/N6 (OPTIONAL): the discoverability-only menu bar over the SAME binding registry the dispatcher
         // reads. Each item routes through `WorkspaceBindingRegistry.route` with NO `.keyboardShortcut` — the
         // `NSEvent` monitor (`keyDispatcher`) owns chord dispatch (incl. the multi-key prefix), so a menu
@@ -895,13 +885,18 @@ public struct SlopDeskClientApp: App {
     /// window or it steals focus back whenever the user switches to another app.
     private nonisolated(unsafe) static var windowActivatedKey: UInt8 = 0
 
-    /// E19 WI-4 (A30) — map the pin flag to `NSWindow.level` IDEMPOTENTLY. `.floating` keeps the window above
-    /// other apps (the Pin Window feature); `.normal` restores it. The guard means the re-firing introspect callback
-    /// + a redundant `.onChange` never thrash the level.
+    /// AUTOMATION ONLY: bring the workspace window to front + make it key ONCE per window open, so an
+    /// autoconnect launch goes live without a manual click. Gated by the same associated-object one-shot as
+    /// `applyInitialWindowSize` — the `.introspect(.window)` closure RE-FIRES on every scene re-render
+    /// (terminal/video output mutates @Observable state continuously), and an un-gated re-activate would yank
+    /// focus straight back the moment the user switched to another app. A non-automation launch is a no-op.
     @MainActor
-    private static func applyPinLevel(to window: NSWindow, pinned: Bool) {
-        let level: NSWindow.Level = pinned ? .floating : .normal
-        if window.level != level { window.level = level }
+    private static func automationBringToFrontOnce(_ window: NSWindow) {
+        guard hasAutomationEnvironment(),
+              objc_getAssociatedObject(window, &windowActivatedKey) == nil else { return }
+        objc_setAssociatedObject(window, &windowActivatedKey, true, .OBJC_ASSOCIATION_RETAIN)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
     }
 
     /// E19 WI-4 (A29) — apply the configured initial window size at most once per window open (guarded by an

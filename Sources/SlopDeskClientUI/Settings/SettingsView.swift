@@ -711,6 +711,9 @@ private struct ShellSettingsTab: View {
 private struct NotificationPermissionRow: View {
     /// The current dot — starts amber (unknown) until the async query resolves, never a false green.
     @State private var dot: PermissionStatus.Dot = .amber
+    /// SwiftUI-native URL opener (replaces `NSWorkspace`/`UIApplication.open` for the deep-link below). The
+    /// custom `x-apple.systempreferences:` scheme routes through LaunchServices exactly as `NSWorkspace.open` did.
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         LabeledContent {
@@ -760,13 +763,16 @@ private struct NotificationPermissionRow: View {
     }
 
     private func openSystemSettings() {
+        // SwiftUI-native `openURL` (was `NSWorkspace`/`UIApplication.open`). The macOS custom scheme routes via
+        // LaunchServices; on iOS `UIApplication.openSettingsURLString` is still the URL SOURCE (no SwiftUI
+        // equivalent) — only the open ACTION is now `openURL`.
         #if os(macOS)
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
-            NSWorkspace.shared.open(url)
+            openURL(url)
         }
         #elseif os(iOS)
         if let url = URL(string: UIApplication.openSettingsURLString) {
-            UIApplication.shared.open(url)
+            openURL(url)
         }
         #endif
     }
