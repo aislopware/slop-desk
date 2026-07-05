@@ -6,14 +6,13 @@ import XCTest
 @testable import SlopDeskHost
 @testable import SlopDeskTransport // reach `MuxSubChannel.deliver(payload:)` (the demux inbound seam)
 
-/// WF-3 PTY-level tests: deterministic, headless, no client networking. They drive the
-/// `PTYProcess` master fd directly and assert on the bytes the shell produces.
+/// WF-3 PTY-level tests: deterministic, headless, no client networking — drive the
+/// `PTYProcess` master fd directly and assert on the shell's output bytes.
 final class PTYProcessTests: XCTestCase {
     // MARK: read helpers
 
-    /// Reads from `fd` until `needle` appears in the accumulated output or `deadline`
-    /// passes. Returns the full output read so far. Uses a background blocking read so
-    /// the test has a hard timeout independent of the fd.
+    /// Reads `fd` until `needle` appears or `timeout` passes; returns all output so far.
+    /// A background blocking read gives a hard timeout independent of the fd.
     private func readUntil(
         fd: Int32,
         needle: String,
@@ -89,9 +88,9 @@ final class PTYProcessTests: XCTestCase {
         XCTAssertTrue(output.contains(dir.path), "expected child cwd \(dir.path), got: \(output)")
     }
 
-    /// Bug 1: an inherited cwd that no longer exists (deleted project dir, foreign ssh path, `~`-style
-    /// preset dir) must NOT kill the freshly-spawned shell (`chdir`-fail `_exit 127` = dead pane). The
-    /// host validates the requested cwd and falls back to the user's HOME, so the pane comes up live.
+    /// Bug 1: an inherited cwd that no longer exists (deleted dir, foreign ssh path, `~`-style preset)
+    /// must NOT kill the freshly-spawned shell (`chdir`-fail `_exit 127` = dead pane). The host validates
+    /// the requested cwd and falls back to HOME, so the pane comes up live.
     func testResolveCwdFallsBackToHomeForInvalidRequest() throws {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("slopdesk-home-\(UUID().uuidString)", isDirectory: true)
@@ -160,13 +159,12 @@ final class PTYProcessTests: XCTestCase {
     }
 
     func testControllingTTY() throws {
-        // 40 rows x 132 cols at spawn. We exercise the CONTROLLING-TERMINAL alias
-        // `/dev/tty` (NOT fd 0/1/2): `/dev/tty` only opens if the slave is genuinely the
-        // session's controlling terminal. `tty </dev/tty` / `stty size </dev/tty` operate
-        // on that alias, so they prove POSIX_SPAWN_SETSID acquired the controlling tty —
-        // running the same file-actions WITHOUT setsid yields "/dev/tty: Device not
-        // configured" here (whereas plain `tty`/`stty size` on fd 0 would still pass,
-        // making this the regression-meaningful form). Verified empirically.
+        // 40 rows x 132 cols at spawn. Exercises the CONTROLLING-TERMINAL alias `/dev/tty`
+        // (NOT fd 0/1/2): `/dev/tty` opens only if the slave is genuinely the session's
+        // controlling terminal, so `tty </dev/tty` / `stty size </dev/tty` prove
+        // POSIX_SPAWN_SETSID acquired the ctty — WITHOUT setsid they yield "/dev/tty: Device
+        // not configured", whereas plain `tty`/`stty size` on fd 0 would still pass (making
+        // this the regression-meaningful form).
         let pty = PTYProcess()
         try pty.spawn(
             "/bin/sh",
@@ -176,11 +174,9 @@ final class PTYProcessTests: XCTestCase {
         )
 
         let output = readUntil(fd: pty.masterFD, needle: "40 132")
-        // `tty </dev/tty` resolves and prints the controlling-terminal ALIAS `/dev/tty`
-        // (verified empirically: WITH setsid -> "/dev/tty"; WITHOUT setsid ->
-        // "/dev/tty: Device not configured"). The "Device not configured" check is what
-        // makes this regression-meaningful for POSIX_SPAWN_SETSID — opening fd 0/1/2's
-        // path would pass even with setsid broken, but /dev/tty would not.
+        // WITH setsid `/dev/tty` resolves to itself; WITHOUT it → "Device not configured".
+        // Those checks are what make this regression-meaningful for POSIX_SPAWN_SETSID —
+        // fd 0/1/2's path would pass even with setsid broken, but /dev/tty would not.
         XCTAssertTrue(
             output.contains("/dev/tty"),
             "expected /dev/tty to resolve (controlling terminal), got: \(output)",
@@ -201,25 +197,23 @@ final class PTYProcessTests: XCTestCase {
 
     /// WF10 REGRESSION — controlling terminal + SIGWINCH delivery for an INTERACTIVE zsh.
     ///
-    /// The old `testControllingTTY` only spawned `/bin/sh -c …`, which happened to acquire its
-    /// controlling terminal even under the old `posix_spawn(POSIX_SPAWN_SETSID)` path — so it
-    /// passed while the LIVE interactive zsh (the real workload) had NO ctty (`TTY=??`,
-    /// `TPGID=0`). With no ctty the kernel delivers no `SIGWINCH` on `TIOCSWINSZ`, `$COLUMNS`
-    /// never updates, `TRAPWINCH` never fires, and the post-resize prompt blanks. This test
-    /// reproduces the real workload — `zsh -i` — and proves the `fork()`+`login_tty` spawn
-    /// path restores BOTH the ctty AND signal-driven resize:
+    /// The old `testControllingTTY` spawned only `/bin/sh -c …`, which acquired its ctty even
+    /// under the old `posix_spawn(POSIX_SPAWN_SETSID)` path — while the LIVE interactive zsh (the
+    /// real workload) had NO ctty (`TTY=??`, `TPGID=0`). With no ctty the kernel delivers no
+    /// `SIGWINCH` on `TIOCSWINSZ`: `$COLUMNS` never updates, `TRAPWINCH` never fires, the
+    /// post-resize prompt blanks. This reproduces the real workload (`zsh -i`) and proves the
+    /// `fork()`+`login_tty` path restores BOTH ctty AND signal-driven resize:
     ///   1. `tty` resolves to a real `/dev/ttys*` (not "not a tty") → ctty acquired;
-    ///   2. after a `TIOCSWINSZ` resize, the shell's `TRAPWINCH` fires and observes the NEW
-    ///      `$COLUMNS` → SIGWINCH was actually delivered to the interactive shell.
-    /// If `login_tty` regressed back to a dup2-only spawn, step 2 would never print.
+    ///   2. after a `TIOCSWINSZ` resize, `TRAPWINCH` fires and observes the NEW `$COLUMNS` →
+    ///      SIGWINCH was actually delivered to the interactive shell.
+    /// If `login_tty` regressed to a dup2-only spawn, step 2 would never print.
     func testInteractiveZshControllingTTYAndSigwinch() throws {
         let zsh = "/bin/zsh"
         guard FileManager.default.isExecutableFile(atPath: zsh) else {
             throw XCTSkip("/bin/zsh not present")
         }
         let pty = PTYProcess()
-        // Interactive zsh with NO rc files (-f) so the test is independent of the user's
-        // environment. We install our own TRAPWINCH that prints the new COLUMNS on resize.
+        // Interactive zsh with NO rc files (-f) so the test is independent of the user's environment.
         var env = curatedEnv()
         env["ZDOTDIR"] = "/nonexistent-slopdesk-test" // belt-and-suspenders: no stray rc.
         try pty.spawn(
@@ -231,11 +225,10 @@ final class PTYProcessTests: XCTestCase {
         )
 
         // GUARANTEED non-hang teardown. An interactive zsh holds its slave open forever and may
-        // ignore SIGTERM, so we SIGKILL it and reap it BEFORE closing the master: that releases
-        // any background `readUntil` blocked in `read()` (slave close → EOF) and makes
-        // `closeMaster()` non-blocking. (Bare `terminate()`/deinit would let a parked read race
-        // `close(masterFD)` and wedge the suite — the documented macOS close()-hang.) `defer` runs
-        // even on an XCTAssert early-out.
+        // ignore SIGTERM, so SIGKILL + reap BEFORE closing the master: that releases any background
+        // `readUntil` parked in `read()` (slave close → EOF) and makes `closeMaster()` non-blocking.
+        // (Bare `terminate()`/deinit would let a parked read race `close(masterFD)` and wedge the
+        // suite — the documented macOS close()-hang.) `defer` runs even on an XCTAssert early-out.
         defer {
             pty.forceTerminate()
             pty.waitUntilExited(timeout: 1.0)
@@ -257,12 +250,11 @@ final class PTYProcessTests: XCTestCase {
         )
 
         // (2) SIGWINCH delivery — the load-bearing assertion. zsh updates `$COLUMNS`/`$LINES` ONLY
-        // inside its SIGWINCH handler (it does not re-TIOCGWINSZ on each parameter expansion). So if
-        // a later `print -- $COLUMNS` reports the NEW width, the SIGWINCH was actually delivered to
-        // the shell — which only happens when the slave is the ctty and zsh is the foreground pgroup
-        // (both broken under the old posix_spawn path; restored by fork()+login_tty). With NO ctty
-        // `$COLUMNS` would stay at the spawn value (80) even though `TIOCSWINSZ` changed the kernel
-        // winsize. Resize, settle, then ask zsh for COLUMNS over the fd and look for the new value.
+        // inside its SIGWINCH handler (no re-TIOCGWINSZ per parameter expansion), so a later
+        // `print -- $COLUMNS` reporting the NEW width proves SIGWINCH reached the shell — which needs
+        // the slave to be the ctty and zsh the foreground pgroup (both broken under old posix_spawn,
+        // restored by fork()+login_tty). With NO ctty `$COLUMNS` stays at the spawn value (80) even
+        // though `TIOCSWINSZ` changed the kernel winsize. Resize, settle, then ask zsh for COLUMNS.
         Thread.sleep(forTimeInterval: 0.3)
         pty.setWindowSize(cols: 132, rows: 40)
         Thread.sleep(forTimeInterval: 0.3)
@@ -294,30 +286,27 @@ final class PTYProcessTests: XCTestCase {
 
     /// HOST RESIZE-DEBOUNCE BACKSTOP (the terminal resize-corruption fix, host half).
     ///
-    /// Drives a full `MuxChannelSession` relay (the real control-loop path) and feeds a BURST of
-    /// distinct `.resize` on the CONTROL sub-channel — exactly what a fast client drag produces. The
-    /// inline latest-wins micro-debounce must converge the PTY to the FINAL size (one clean SIGWINCH
-    /// instead of ~N intermediate ones that would desync zsh's incremental prompt redraw), and an
-    /// interleaved `.ack` must FLUSH the pending size FIRST (never strand a size at the ordering
-    /// boundary). Timing is INJECTED (`resizeDebounce: .zero`) so there is no wall-clock sleep — the
-    /// `.ack` flush is synchronous on the control loop, making the applied size deterministic
-    /// (`StaticIDRDecider` `now`-injection discipline).
+    /// Drives a full `MuxChannelSession` relay and feeds a BURST of distinct `.resize` on the CONTROL
+    /// sub-channel — what a fast client drag produces. The inline latest-wins micro-debounce must
+    /// converge the PTY to the FINAL size (one clean SIGWINCH, not ~N intermediates that desync zsh's
+    /// incremental prompt redraw), and an interleaved `.ack` must FLUSH the pending size FIRST (never
+    /// strand a size at the ordering boundary). Timing is INJECTED (`resizeDebounce: .zero`) so there
+    /// is no wall-clock sleep — the `.ack` flush is synchronous on the control loop, making the applied
+    /// size deterministic (`StaticIDRDecider` `now`-injection discipline).
     ///
-    /// We assert the APPLIED winsize directly via `TIOCGWINSZ` on the master fd — NOT via a
-    /// `stty size` shell round-trip. The round-trip was both an UNBOUNDED blocking PTY read (a missed
-    /// needle blocks the kernel read forever — the unkillable 40-min hang) AND a CONTROL-vs-DATA race
-    /// (the resize rides `controlTask`, `stty size` rides `inputTask` — separate async tasks with NO
+    /// Asserts the APPLIED winsize directly via `TIOCGWINSZ` on the master fd — NOT a `stty size`
+    /// round-trip, which was both an UNBOUNDED blocking PTY read (missed needle → the unkillable 40-min
+    /// hang) AND a CONTROL-vs-DATA race (resize rides `controlTask`, `stty size` rides `inputTask` — no
     /// ordering guarantee, so `stty` often ran before the ioctl landed and reported the OLD size).
-    /// Reading the host's applied size removes BOTH defects: we assert what the host applied, with a
-    /// hard 2s iteration ceiling, no shell, no second sub-channel.
+    /// Reading the applied size removes both: hard 2s ceiling, no shell, no second sub-channel.
     func testResizeDebounceConvergesToFinalSizeAndFlushesOnAck() throws {
         let pty = PTYProcess()
         try pty.spawn("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
 
-        // Inert in-memory sub-channels: muxSend is a no-op (we never assert on the wire here — only
-        // on the PTY's applied winsize via `TIOCGWINSZ`). `.zero` debounce ⇒ the pending size applies
-        // on the next runloop turn with NO wall-clock dependence; the `.ack` flush below makes the
-        // FINAL applied size deterministic regardless of debounce timing.
+        // Inert in-memory sub-channels: muxSend is a no-op (we assert only on the PTY's applied
+        // winsize via `TIOCGWINSZ`, never the wire). `.zero` debounce ⇒ the pending size applies on
+        // the next runloop turn with NO wall-clock dependence; the `.ack` flush below makes the FINAL
+        // applied size deterministic regardless of debounce timing.
         let data = MuxSubChannel(channelID: 1, channel: .data) { _, _ in }
         let control = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
         let session = MuxChannelSession(
@@ -325,8 +314,8 @@ final class PTYProcessTests: XCTestCase {
         )
         session.startRelay()
 
-        // A fast-drag burst on the CONTROL channel: 80x24 → … → 120x40 (distinct each step). Feed
-        // them as encoded `.resize` frames via `deliver(payload:)` (the same path the demuxer uses).
+        // Fast-drag burst on the CONTROL channel: 80x24 → … → 120x40 (distinct each step), fed as
+        // encoded `.resize` frames via `deliver(payload:)` (the same path the demuxer uses).
         let burst: [(UInt16, UInt16)] = [(80, 24), (90, 28), (100, 32), (110, 36), (120, 40)]
         let exp = expectation(description: "burst-delivered")
         Task {
@@ -336,8 +325,8 @@ final class PTYProcessTests: XCTestCase {
                 ).encode())
             }
             // An `.ack` is a non-resize control message → the loop FLUSHES the pending (latest 120x40)
-            // BEFORE handling the ack. This deterministically applies the FINAL size without waiting on
-            // the debounce timer (proving both latest-wins AND flush-on-ack in one shot).
+            // BEFORE handling it, applying the FINAL size without waiting on the debounce timer
+            // (proving both latest-wins AND flush-on-ack in one shot).
             await control.deliver(payload: WireMessage.ack(seq: 0).encode())
             exp.fulfill()
         }
@@ -361,10 +350,10 @@ final class PTYProcessTests: XCTestCase {
     }
 
     /// The `.bye` (clean-leave) path must ALSO flush a pending size — a client that resizes then
-    /// immediately leaves must not strand the final size unapplied at teardown. A LARGE debounce
-    /// (`.seconds(60)`) so the timer would NOT fire within the test window — proving the apply comes
-    /// from the `.bye` FLUSH, not the debounce timer. As above, the applied size is read directly via
-    /// `TIOCGWINSZ` in a bounded poll (no `stty size` round-trip → no unbounded read, no ordering race).
+    /// immediately leaves must not strand the final size at teardown. A LARGE debounce (`.seconds(60)`)
+    /// so the timer would NOT fire in the test window — proving the apply comes from the `.bye` FLUSH,
+    /// not the timer. Applied size read directly via `TIOCGWINSZ` in a bounded poll (no `stty size`
+    /// round-trip → no unbounded read, no ordering race).
     func testResizeFlushedOnBye() throws {
         let pty = PTYProcess()
         try pty.spawn("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
@@ -414,9 +403,9 @@ final class PTYProcessTests: XCTestCase {
     }
 
     func testSignalExitReportsShellConvention() throws {
-        // WIFSIGNALED branch of the reaper: a child that signals itself reports
-        // 128 + signal (shell convention). SIGTERM (15) -> 143. This exercises the
-        // `(status & 0o177)` arithmetic that the normal-exit test never touches.
+        // WIFSIGNALED branch of the reaper: a child that signals itself reports 128 + signal (shell
+        // convention). SIGTERM (15) -> 143. Exercises the `(status & 0o177)` arithmetic that the
+        // normal-exit test never touches.
         let pty = PTYProcess()
         try pty.spawn("/bin/sh", arguments: ["-c", "kill -TERM $$"], environment: curatedEnv())
 
@@ -430,19 +419,17 @@ final class PTYProcessTests: XCTestCase {
     }
 
     func testMasterFDClosedOnShutdownNoFDLeak() throws {
-        // FD-hygiene regression: each successful spawn opens one PTY master fd; before the
-        // fix it was never closed (no deinit, terminate()/shutdown() did not close it), so
-        // a long-running daemon leaked one fd per channel and eventually hit EMFILE. Spawn
-        // + drive a full MuxChannelSession relay + shutdown N times and assert the open-fd delta
-        // is ~0 (we allow tiny slack for transient runtime fds, but a per-spawn leak would
-        // show ~N).
+        // FD-hygiene regression: each successful spawn opens one PTY master fd; before the fix it was
+        // never closed (no deinit, terminate()/shutdown() didn't close it), so a long-running daemon
+        // leaked one fd per channel and eventually hit EMFILE. Spawn + relay + shutdown N times and
+        // assert the open-fd delta is ~0 (tiny slack for transient fds; a per-spawn leak shows ~N).
         let n = 40
         let before = Self.openFDCount()
         for _ in 0..<n {
             let pty = PTYProcess()
             try pty.spawn("/bin/sh", arguments: ["-c", "printf hi; exit 0"], environment: curatedEnv())
-            // Inert in-memory sub-channels: the relay writes output into them (the muxSend sink is a
-            // no-op) — we only exercise the PTY spawn → relay → shutdown fd hygiene, not the wire.
+            // Inert in-memory sub-channels (muxSend is a no-op) — we exercise only the PTY spawn →
+            // relay → shutdown fd hygiene, not the wire.
             // ⚠️ Keep the PTY output well UNDER MuxFlowControl.initialWindowBytes (256 KiB): the DATA
             // sub-channel arms a send window and there is NO grant source here, so a >window workload
             // would park the relay's send forever (hang). `printf hi` (2 bytes) is safe.
@@ -467,19 +454,19 @@ final class PTYProcessTests: XCTestCase {
     /// LATENT-HANG REGRESSION (the consolidation-pass find): `MuxChannelSession.shutdown()` ends with
     /// `PTYProcess.closeMaster()` → `close(masterFD)`, and on macOS `close()` of a PTY master BLOCKS
     /// while the `PTYReadLoop` is parked in an in-flight kernel `read()` on that same fd. `stop()`
-    /// signals the loop's gate but cannot interrupt a `read()` already in the kernel — that read only
-    /// returns when the slave closes, i.e. when the CHILD dies. A no-arg `/bin/sh` is INTERACTIVE and
-    /// never exits on its own, so before the fix the reader stayed parked and `shutdown()` hung FOREVER
-    /// (the unkillable multi-minute hang reachable from `HostServer.stop()` / `removeMuxSession()` on a
-    /// clean client disconnect with a live shell).
+    /// signals the loop's gate but cannot interrupt a `read()` already in the kernel — that read returns
+    /// only when the slave closes, i.e. when the CHILD dies. A no-arg `/bin/sh` is INTERACTIVE and never
+    /// exits on its own, so before the fix the reader stayed parked and `shutdown()` hung FOREVER (the
+    /// unkillable multi-minute hang reachable from `HostServer.stop()` / `removeMuxSession()` on a clean
+    /// client disconnect with a live shell).
     ///
     /// The fix makes `shutdown()` (the genuine-DESTROY path) terminate+reap the child BEFORE
     /// `closeMaster()` — SIGTERM, bounded reaper wait, SIGKILL fallback — so the slave closes, the
     /// parked `read()` returns EOF/EIO, and `close()` is non-blocking. This test asserts that, with NO
-    /// `exit` ever written to the shell, `shutdown()` returns within a HARD 3s ceiling. It runs the
+    /// `exit` ever written to the shell, `shutdown()` returns within a HARD 3s ceiling. It runs
     /// `shutdown()` on a background queue under an `expectation`/timeout so a regression FAILS the test
-    /// (the call would hang) instead of wedging the whole suite. (Contrast `drainExitAndShutdown`, which
-    /// only avoided the hang by writing `exit` so the child died first.)
+    /// instead of wedging the whole suite. (Contrast `drainExitAndShutdown`, which avoided the hang by
+    /// writing `exit` so the child died first.)
     func testShutdownReturnsPromptlyWithLiveInteractiveChild() throws {
         let pty = PTYProcess()
         // No args ⇒ an interactive login-style shell that blocks on its tty awaiting input and never
@@ -521,8 +508,8 @@ final class PTYProcessTests: XCTestCase {
     /// SIGTERM→wait→SIGKILL→wait→close to a background queue), while STILL terminating + reaping the
     /// child and closing the master. The caller here stands in for the mux connection's receive loop:
     /// blocking it (as the old inline `shutdown()` from `removeMuxSession` did) stalls every sibling
-    /// pane on the shared connection for up to ~0.25s on each pane close. An interactive `/bin/sh`
-    /// ignores SIGTERM, so `shutdown()` itself takes ~250ms — far longer than the caller-return ceiling.
+    /// pane on the shared connection for ~0.25s per pane close. An interactive `/bin/sh` ignores
+    /// SIGTERM, so `shutdown()` itself takes ~250ms — far longer than the caller-return ceiling.
     func testShutdownDetachedReturnsImmediatelyAndStillReapsChild() throws {
         let pty = PTYProcess()
         try pty.spawn("/bin/sh", environment: curatedEnv())
@@ -548,8 +535,8 @@ final class PTYProcessTests: XCTestCase {
     /// RAPID OPEN/CLOSE CHURN — the "mở/đóng nhanh liên tục" path (open + close many panes fast).
     /// Drives 250 full spawn → relay → shutdown cycles through the fork+login_tty path and asserts the
     /// process's open-fd count does NOT grow — a per-cycle master-fd leak is the documented failure
-    /// (a long-running daemon hit `EMFILE` after ~250 sessions). Each cycle spawns a self-exiting shell
-    /// (so `shutdown()` reaps + closes deterministically and fast) through the SAME `MuxChannelSession`
+    /// (a daemon hit `EMFILE` after ~250 sessions). Each cycle spawns a self-exiting shell (so
+    /// `shutdown()` reaps + closes fast and deterministically) through the SAME `MuxChannelSession`
     /// relay (read loop + reaper thread + tasks) a real pane uses.
     func testRapidSpawnShutdownChurnDoesNotLeakFDs() throws {
         func openFDCount() -> Int {
@@ -594,19 +581,17 @@ final class PTYProcessTests: XCTestCase {
 
     // MARK: nudgeRedraw guard tests
 
-    /// `nudgeRedraw()` on an unspawned `PTYProcess` (masterFD = -1, pid = -1) must be a
-    /// safe no-op — the guard rejects the invalid fd/pid before any syscall. No crash, no
-    /// assertion failure.
+    /// `nudgeRedraw()` on an unspawned `PTYProcess` (masterFD = -1, pid = -1) must be a safe no-op —
+    /// the guard rejects the invalid fd/pid before any syscall. No crash, no assertion failure.
     func testNudgeRedrawIsNoOpOnUnspawnedPTY() {
         let pty = PTYProcess()
         // Guard path: masterFD == -1 → returns immediately without calling tcgetpgrp/killpg.
         pty.nudgeRedraw() // must not crash or trap
     }
 
-    /// `nudgeRedraw()` after `closeMaster()` marks `masterFD` as `-1`, so the guard
-    /// short-circuits and the call is a safe no-op. Verifies the TOCTOU discipline —
-    /// the method reads `masterFD` under `exitLock`, so a concurrent close cannot race
-    /// the subsequent `tcgetpgrp` call.
+    /// After `closeMaster()` marks `masterFD` as `-1`, the guard short-circuits and `nudgeRedraw()`
+    /// is a safe no-op. Verifies the TOCTOU discipline — the method reads `masterFD` under `exitLock`,
+    /// so a concurrent close cannot race the subsequent `tcgetpgrp` call.
     func testNudgeRedrawIsNoOpAfterCloseMaster() throws {
         let pty = PTYProcess()
         try pty.spawn("/bin/sh", arguments: ["-c", "exit 0"], environment: curatedEnv())
@@ -617,13 +602,11 @@ final class PTYProcessTests: XCTestCase {
         pty.nudgeRedraw() // must not crash: fd is -1, guard fires
     }
 
-    /// `nudgeRedraw()` on a live interactive zsh delivers `SIGWINCH` to the foreground
-    /// process group, causing the shell to redraw its prompt. We verify this with the
-    /// same `TRAPWINCH`/`$COLUMNS` technique used by
-    /// `testInteractiveZshControllingTTYAndSigwinch`: after `nudgeRedraw()` zsh must
-    /// report the current `$COLUMNS` in its TRAPWINCH handler, proving the signal was
-    /// actually delivered. This is the production-equivalent of what the reattach path
-    /// does after 200 ms.
+    /// `nudgeRedraw()` on a live interactive zsh delivers `SIGWINCH` to the foreground process group,
+    /// making the shell redraw its prompt. Same `TRAPWINCH`/`$COLUMNS` technique as
+    /// `testInteractiveZshControllingTTYAndSigwinch`: after `nudgeRedraw()` zsh's TRAPWINCH handler
+    /// must report the current `$COLUMNS`, proving the signal was delivered. Production-equivalent of
+    /// what the reattach path does after 200 ms.
     func testNudgeRedrawDeliversSigwinchToInteractiveZsh() throws {
         let zsh = "/bin/zsh"
         guard FileManager.default.isExecutableFile(atPath: zsh) else {
@@ -647,9 +630,8 @@ final class PTYProcessTests: XCTestCase {
         // nudgeRedraw() delivers SIGWINCH to the foreground pgrp (interactive zsh).
         pty.nudgeRedraw()
 
-        // zsh's TRAPWINCH fires and prints NUDGE_COLS=<current columns>. At 80 cols spawn
-        // the shell should report NUDGE_COLS=80. We just need the marker to appear — the
-        // specific value proves SIGWINCH was delivered.
+        // zsh's TRAPWINCH fires and prints NUDGE_COLS=<current columns> (80 at spawn). We only need
+        // the marker to appear — its presence proves SIGWINCH was delivered.
         let out = readUntil(fd: pty.masterFD, needle: "NUDGE_COLS=", timeout: 5.0)
         XCTAssertTrue(
             out.contains("NUDGE_COLS="),
@@ -670,11 +652,11 @@ final class PTYProcessTests: XCTestCase {
     // MARK: util
 
     /// Polls the PTY master's APPLIED winsize via `TIOCGWINSZ` until it equals (`cols`,`rows`) or a
-    /// HARD iteration ceiling passes (400 × 5ms ≈ 2s), then returns whatever the last read was. This
-    /// is the deterministic, BOUNDED replacement for the old unbounded `readUntil("40 120")` PTY
-    /// round-trip: it asserts the size the HOST applied (TIOCSWINSZ) directly — no shell, no DATA
-    /// sub-channel, so neither the unbounded-read hang nor the CONTROL-vs-DATA ordering race can occur.
-    /// A `read()` is never issued, so the kernel can never block us; the loop is guaranteed to return.
+    /// HARD iteration ceiling passes (400 × 5ms ≈ 2s), then returns the last read. The deterministic,
+    /// BOUNDED replacement for the old unbounded `readUntil("40 120")` round-trip: it asserts the size
+    /// the HOST applied (TIOCSWINSZ) directly — no shell, no DATA sub-channel, so neither the
+    /// unbounded-read hang nor the CONTROL-vs-DATA ordering race can occur. No `read()` is ever issued,
+    /// so the kernel can never block us; the loop is guaranteed to return.
     private static func pollWindowSize(
         fd: Int32, untilCols cols: UInt16, rows: UInt16, maxIterations: Int = 400, step: TimeInterval = 0.005,
     ) -> (cols: UInt16, rows: UInt16) {
@@ -697,16 +679,16 @@ final class PTYProcessTests: XCTestCase {
         return entries.count
     }
 
-    /// Drives an interactive child shell to EXIT and reaps it, then tears the relay down. This is the
-    /// teardown discipline the passing `testMasterFDClosedOnShutdownNoFDLeak` relies on: `MuxChannelSession.
-    /// shutdown()` ends with `PTYProcess.closeMaster()` → `close(masterFD)`, and on macOS `close()` of a PTY
-    /// master BLOCKS indefinitely while the `PTYReadLoop` is parked in an in-flight blocking `read()` on that
-    /// same fd (`PTYReadLoop.stop()` signals its gate but cannot interrupt a `read()` already in the kernel).
-    /// A child spawned with no args (`/bin/sh`) is interactive and never exits on its own, so the reader stays
-    /// parked and the shutdown `close()` hangs forever (the unkillable multi-minute hang). The fix mirrors the
-    /// fd-leak test: write `exit` so the shell terminates → the master reaches EOF, the read loop returns, and
-    /// the reaper reaps the child; only THEN is `close()` non-blocking. Bounded: `waitForExit` is awaited under
-    /// a hard 5s `expectation` ceiling so a stuck child fails the test instead of hanging the suite.
+    /// Drives an interactive child shell to EXIT and reaps it, then tears the relay down — the teardown
+    /// discipline `testMasterFDClosedOnShutdownNoFDLeak` relies on: `MuxChannelSession.shutdown()` ends
+    /// with `PTYProcess.closeMaster()` → `close(masterFD)`, and on macOS `close()` of a PTY master BLOCKS
+    /// while the `PTYReadLoop` is parked in an in-flight blocking `read()` on that same fd (`stop()`
+    /// signals its gate but cannot interrupt a `read()` already in the kernel). A no-arg `/bin/sh` is
+    /// interactive and never exits on its own, so the reader stays parked and `close()` hangs forever
+    /// (the unkillable multi-minute hang). Fix mirrors the fd-leak test: write `exit` → the master
+    /// reaches EOF, the read loop returns, the reaper reaps the child; only THEN is `close()`
+    /// non-blocking. Bounded: `waitForExit` awaited under a hard 5s `expectation` ceiling so a stuck
+    /// child fails the test instead of hanging the suite.
     private func drainExitAndShutdown(_ session: MuxChannelSession, pty: PTYProcess) {
         Self.write(pty.masterFD, "exit\n")
         let exited = expectation(description: "child-exit")

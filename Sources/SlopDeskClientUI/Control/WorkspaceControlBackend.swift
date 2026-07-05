@@ -1,33 +1,30 @@
 // E20 WI-3 — Client control backend over the live client stores.
 //
-// The concrete ``ClientControlBackend`` the ``ClientControlServer`` (this same WI) drives: it adapts the
-// running client GUI's `@MainActor` stores — ``WorkspaceStore`` (the `Session → Tab → Pane` tree),
-// ``PreferencesStore`` (live render/appearance config), ``ThemeStore`` / ``ThemeCatalog`` (themes),
-// ``WorkspaceBindingRegistry`` (keybinds), and ``FolderFrecencyStore`` (jump) — onto the verb seam the
-// PURE ``ClientControlDispatcher`` (WI-2) calls.
+// The concrete ``ClientControlBackend`` the ``ClientControlServer`` drives: adapts the running client
+// GUI's `@MainActor` stores — ``WorkspaceStore`` (the `Session → Tab → Pane` tree), ``PreferencesStore``
+// (render/appearance), ``ThemeStore`` / ``ThemeCatalog``, ``WorkspaceBindingRegistry`` (keybinds), and
+// ``FolderFrecencyStore`` (jump) — onto the verb seam the PURE ``ClientControlDispatcher`` (WI-2) calls.
 //
 // ## Compiled-only (hang-safety)
-// Like the host's `AgentControlListener`, this adapter touches live GUI stores and is **never instantiated
-// in a unit test** — the dispatcher is tested against a FAKE backend (WI-2 `ClientControlDispatcherTests`).
-// It holds the stores WEAKLY (the app owns them); a store that has gone away degrades to an empty/`nil`/
-// `false` result, never a trap.
+// Like the host's `AgentControlListener`, this touches live GUI stores and is **never instantiated in a
+// unit test** — the dispatcher is tested against a FAKE backend (WI-2 `ClientControlDispatcherTests`).
+// Stores are held WEAKLY (the app owns them); a deallocated store degrades to empty/`nil`/`false`, never a trap.
 //
 // ## Validate-then-drop
-// The dispatcher has already validated + bounded every param before calling here (CLAUDE.md untrusted-input
-// contract), so each method assumes well-formed inputs and only has to map identity strings → tree nodes
-// (a bad/unknown id resolves to `nil` → the dispatcher emits an `ok:false` error, never a crash). Literal
-// `cd` / send-keys / shim text is sent **VERBATIM UTF-8**; named keys go through a small explicit keycode
-// table (never `SendKeysParser`), per CLAUDE.md.
+// The dispatcher already validated + bounded every param before calling here (CLAUDE.md untrusted-input
+// contract), so each method assumes well-formed inputs and only maps identity strings → tree nodes (a
+// bad/unknown id → `nil` → the dispatcher emits an `ok:false` error, never a crash). Literal `cd` /
+// send-keys / shim text is sent **VERBATIM UTF-8**; named keys go through a small explicit keycode table
+// (never `SendKeysParser`), per CLAUDE.md.
 //
 // ## Refinement boundary (later work items)
-// This adapter wires every method against an existing seam so the socket is functional end-to-end at WI-3.
-// A few methods carry a documented best-effort whose DEPTH lands with the WI that owns the matching CLI
-// surface: the scrollback `pane capture` read (WI-4). Each is marked inline. `config get/set/unset/show/
-// reload` now drive the LIVE settings — `theme` retints via ``ThemeStore``, the render keys reflow/retint
-// via ``PreferencesStore``, unknown keys honestly error (no dead namespace / no `EnvConfig.overlay`
-// write). The `tab badge --kind` override now writes the store-side per-tab override
-// the rail + `tab list` render (E20 ES-E20-3, no longer deferred). The `view`/`edit` shim landed its
-// new-pane placement in WI-6 (below). None of these are on the golden wire; this is the NDJSON control plane only.
+// Every method wires against an existing seam so the socket is functional end-to-end at WI-3. The
+// scrollback `pane capture` read's DEPTH lands with WI-4 (marked inline). `config get/set/unset/show/
+// reload` drive the LIVE settings — `theme` retints via ``ThemeStore``, render keys reflow/retint via
+// ``PreferencesStore``, unknown keys honestly error (no dead namespace / no `EnvConfig.overlay` write).
+// `tab badge --kind` writes the store-side per-tab override the rail + `tab list` render (E20 ES-E20-3).
+// The `view`/`edit` shim landed its new-pane placement in WI-6. None of these are on the golden wire; this
+// is the NDJSON control plane only.
 
 #if canImport(SwiftUI)
 import Foundation
@@ -50,20 +47,18 @@ final class WorkspaceControlBackend: ClientControlBackend {
     private weak var preferences: PreferencesStore?
     private weak var folders: FolderFrecencyStore?
 
-    /// The directory a prior no-query `jump` left — the mutable pole of the `$HOME`↔last-jump-source
-    /// toggle (`reference__cli.md`). Held on this long-lived backend (owned by the running app) so the
-    /// toggle persists across the separate, short-lived `slopdesk jump` CLI processes that drive it.
-    /// `nil` until the first committed jump away from `$HOME`.
+    /// The directory a prior no-query `jump` left — the mutable pole of the `$HOME`↔last-jump-source toggle
+    /// (`reference__cli.md`). Held on this long-lived backend so the toggle persists across the separate,
+    /// short-lived `slopdesk jump` CLI processes that drive it. `nil` until the first committed jump from `$HOME`.
     private var lastJumpSource: String?
 
-    /// Posted by ``configReload()`` (in ADDITION to its concrete re-apply of the live settings) so any
-    /// additional config-change observer can refresh — a broadcast hook alongside the direct re-apply.
+    /// Posted by ``configReload()`` alongside its concrete re-apply, so any additional config-change
+    /// observer can refresh — a broadcast hook beside the direct re-apply.
     static let configReloadNotification = Notification.Name("SlopDeskClientControlConfigReload")
 
     /// How long the `view`/`edit` shim defers its command injection while the new pane's prompt comes up.
     /// The pane's inherited cwd is applied host-side at PTY spawn, so relative paths already resolve there.
-    /// Defaults to the production 1500 ms;
-    /// injectable so a unit test can observe the deferred launch bytes without a 1.5 s wall.
+    /// Defaults to production 1500 ms; injectable so a test observes the deferred launch bytes without a 1.5 s wall.
     private let shimLaunchGrace: Duration
 
     init(
@@ -139,11 +134,11 @@ final class WorkspaceControlBackend: ClientControlBackend {
 
     // MARK: - Tab badge
 
-    /// Set the MANUAL status badge on a tab (the focused tab when `tabId` is nil) — the `tab badge --kind` verb.
-    /// Resolves the target ``TabID`` (an unknown / absent tab → `false`, which the dispatcher turns into
-    /// `tab not found`) and writes the per-tab override the rail + `tab list` consult AHEAD of the derived
-    /// badge (``WorkspaceStore/setTabBadgeOverride(_:for:)``). This is the real ES-E20-3 write path — the
-    /// command no longer reports success while doing nothing.
+    /// Set the MANUAL status badge on a tab (focused tab when `tabId` is nil) — the `tab badge --kind` verb.
+    /// Resolves the target ``TabID`` (unknown/absent → `false` → dispatcher's `tab not found`) and writes the
+    /// per-tab override the rail + `tab list` consult AHEAD of the derived badge
+    /// (``WorkspaceStore/setTabBadgeOverride(_:for:)``). The real ES-E20-3 write path — no longer reports
+    /// success while doing nothing.
     func setTabBadge(tabId: String?, kind: TabBadgeKind) -> Bool {
         guard let store, let target = resolveTabID(tabId) else { return false }
         store.setTabBadgeOverride(kind, for: target)
@@ -153,9 +148,9 @@ final class WorkspaceControlBackend: ClientControlBackend {
     // MARK: - Jump / learn / ignore (frecency)
 
     /// Resolve a frecency target via the PURE ``JumpResolver`` (frecency rank + `$HOME`↔last-jump toggle +
-    /// `--no-cd`) and, unless `--no-cd`, `cd` the focused pane VERBATIM. The resolver is fed the live
-    /// frecency entries, the focused pane's cached OSC-7 cwd, the resolved `$HOME`, and the persisted
-    /// ``lastJumpSource``; its committed source is stored back (a no-op on a `--no-cd` preview).
+    /// `--no-cd`) and, unless `--no-cd`, `cd` the focused pane VERBATIM. Fed the live frecency entries, the
+    /// focused pane's cached OSC-7 cwd, the resolved `$HOME`, and the persisted ``lastJumpSource``; its
+    /// committed source is stored back (a no-op on a `--no-cd` preview).
     func jump(query: String?, changeDirectory: Bool) -> ClientJumpOutcome? {
         guard let folders else { return nil }
         guard let resolution = JumpResolver.resolve(
@@ -175,10 +170,10 @@ final class WorkspaceControlBackend: ClientControlBackend {
         lastJumpSource = resolution.lastJumpSource
         var didChange = false
         if changeDirectory, let handle = focusedHandle() {
-            // The PATH is sent VERBATIM (CLAUDE.md: jump literal text is never routed through `SendKeysParser`)
-            // but SHELL-QUOTED — an unquoted `cd /Users/x/My Project` would `cd` to `/Users/x/My`. Reuses the
-            // shared `'…'`-with-`'\''` idiom (zoxide quotes the target the same way); only shell-safe
-            // quoting is added, the bytes are still derived verbatim from the user's path. Enter == CR.
+            // The PATH is sent VERBATIM (CLAUDE.md: jump literal text never routes through `SendKeysParser`)
+            // but SHELL-QUOTED — unquoted `cd /Users/x/My Project` would `cd` to `/Users/x/My`. Reuses the
+            // shared `'…'`-with-`'\''` idiom (as zoxide does); only shell-safe quoting is added, the bytes
+            // stay verbatim from the user's path. Enter == CR.
             handle.sendText("cd -- " + ShellQuoting.singleQuote(resolution.path))
             handle.sendBytes([0x0D])
             didChange = true
@@ -215,11 +210,11 @@ final class WorkspaceControlBackend: ClientControlBackend {
 
     /// Open the read-only `view` / editor `edit` shim in a NEW pane (`--new-tab` default / `--new-window` /
     /// split side) — NOT a native local file renderer (an slopdesk pane IS a remote PTY; there is no local
-    /// renderer — the documented E20 shim, carry-over §4). The shim TYPES a shell command into the freshly-spawned
-    /// pane: `view` → `open <url>` for a URL else `less <path>`; `edit` → `${EDITOR:-vi} <path>`. The command is
-    /// injected through the SAME new-pane launch seam template panes use
-    /// (``SessionTemplateEngine/launchBytes(cwd:command:)``), after the new pane's prompt appears. Returns `false` only when the placement op spawned
-    /// no pane (e.g. no active session to split / new-tab into).
+    /// renderer — the documented E20 shim, carry-over §4). TYPES a shell command into the freshly-spawned
+    /// pane: `view` → `open <url>` for a URL else `less <path>`; `edit` → `${EDITOR:-vi} <path>`. Injected
+    /// through the SAME new-pane launch seam template panes use (``SessionTemplateEngine/launchBytes(cwd:command:)``),
+    /// after the new pane's prompt appears. Returns `false` only when the placement op spawned no pane
+    /// (e.g. no active session to split / new-tab into).
     func open(target: String, mode: ClientControlOpenMode, placement: ClientControlProtocol.Placement) -> Bool {
         guard let store else { return false }
         let command = Self.shimCommand(target: target, mode: mode)
@@ -229,10 +224,10 @@ final class WorkspaceControlBackend: ClientControlBackend {
         switch placement {
         case .newTab: store.newTab(kind: .terminal)
         // C8 improvement 2 (re-scope): the multi-session UI was pruned (no session switcher), so a
-        // `--new-window` that mints a NEW SESSION and swaps the whole UI to it would strand the user with
-        // no way back. Degrade the UI-reachable `--new-window` to a NEW TAB in the CURRENT session — no
-        // orphan session is ever user-created. The control-plane verb name stays `--new-window` for CLI
-        // compat (see ``ClientControlProtocol/Placement``); only its placement target changed.
+        // `--new-window` that mints a NEW SESSION and swaps the UI to it would strand the user with no way
+        // back. Degrade UI-reachable `--new-window` to a NEW TAB in the CURRENT session — no orphan session
+        // is ever user-created. Verb name stays `--new-window` for CLI compat
+        // (see ``ClientControlProtocol/Placement``); only the placement target changed.
         case .newWindow: store.newTab(kind: .terminal)
         case .left: store.splitActivePane(axis: .horizontal, kind: .terminal, leading: true)
         case .right: store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false)
@@ -251,10 +246,10 @@ final class WorkspaceControlBackend: ClientControlBackend {
     }
 
     /// The shim shell command typed into the new pane: `view` → `open '<url>'` for a URL else `less -- '<path>'`;
-    /// `edit` → `${EDITOR:-vi} -- '<path>'`. The `target` is derived VERBATIM from the file path / URL the user
-    /// passed but SHELL-QUOTED (the shared `'…'`-with-`'\''` idiom) so a path with a space / metacharacter
-    /// (`My Project`, `a'b`) survives as a single argument instead of being word-split. `--` terminates option
-    /// parsing for the path forms; `open` does not take `--` reliably for a URL, so it is quoted without it.
+    /// `edit` → `${EDITOR:-vi} -- '<path>'`. `target` is VERBATIM from the user's path / URL but SHELL-QUOTED
+    /// (the shared `'…'`-with-`'\''` idiom) so a path with a space / metacharacter (`My Project`, `a'b`) stays
+    /// one argument instead of word-splitting. `--` terminates option parsing for the path forms; `open` does
+    /// not take `--` reliably for a URL, so it is quoted without it.
     private static func shimCommand(target: String, mode: ClientControlOpenMode) -> String {
         let quoted = ShellQuoting.singleQuote(target)
         switch mode {
@@ -282,10 +277,10 @@ final class WorkspaceControlBackend: ClientControlBackend {
     /// because it needs the GUI ``ThemeStore`` / ``ThemeCatalog`` the headless store cannot import.
     private static let themeConfigKey = "theme"
 
-    /// Resolve a config key's value for the running app, reflecting the LIVE settings (not a catalog
-    /// default and not a dead namespace): `theme` → the active ``ThemeStore`` theme id; the render keys →
-    /// the live ``PreferencesStore`` typed model. A key slopdesk does NOT bind live falls back to its
-    /// catalog default (best-effort, honest), or `nil` when the catalog has no entry either.
+    /// Resolve a config key's value for the running app, reflecting the LIVE settings (not a catalog default
+    /// or dead namespace): `theme` → the active ``ThemeStore`` theme id; render keys → the live
+    /// ``PreferencesStore`` typed model. A key not bound live falls back to its catalog default, or `nil`
+    /// when the catalog has no entry either.
     func configGet(key: String) -> String? {
         if key == Self.themeConfigKey { return liveThemeName() }
         if let value = preferences?.renderConfigValue(forKey: key) { return value }
@@ -293,19 +288,18 @@ final class WorkspaceControlBackend: ClientControlBackend {
     }
 
     /// Write one config key to the LIVE running app: `theme` retints via ``PreferencesStore/appearance``;
-    /// the render keys reflow/retint via the live typed model (which also persists). A key with NO live
-    /// binding — or a value that fails to parse — returns `false`, which the dispatcher turns into an
-    /// honest `config set rejected` error (NEVER a silent success, the `setTabBadge` lesson).
+    /// render keys reflow/retint via the live typed model (which also persists). A key with NO live binding —
+    /// or a value that fails to parse — returns `false` → dispatcher's honest `config set rejected` (NEVER a
+    /// silent success, the `setTabBadge` lesson).
     ///
-    /// `transient` (apply-to-running-app-without-persisting) is HONESTLY REJECTED (returns `false`): slopdesk's
-    /// live render settings ARE their own persistence — the typed ``PreferencesStore`` model the renderer reads
-    /// is the SAME model whose `didSet` persists, with no separate ephemeral render layer to write. The
-    /// pre-fix backend ignored the flag and persisted identically while the
-    /// dispatcher echoed `transient:true`, lying to the caller; rather than silently persist a "transient" write
-    /// we reject it (the dispatcher surfaces a clear reason). Recorded as a ceiling in `docs/DECISIONS.md`. A
-    /// genuine overlay would require splitting render-source-of-truth from persistence in the libghostty config
+    /// `transient` (apply-without-persisting) is HONESTLY REJECTED (returns `false`): slopdesk's live render
+    /// settings ARE their own persistence — the typed ``PreferencesStore`` model the renderer reads is the
+    /// SAME model whose `didSet` persists; there is no separate ephemeral render layer. The pre-fix backend
+    /// ignored the flag and persisted identically while the dispatcher echoed `transient:true`, lying to the
+    /// caller — so we reject rather than silently persist. Recorded as a ceiling in `docs/DECISIONS.md`. A
+    /// genuine overlay would need splitting render-source-of-truth from persistence in the libghostty config
     /// builder + typed model — out of scope for the CLI. (The old ``EnvConfig/overlay`` route is gone: a
-    /// `nonisolated(unsafe)` static the pipeline read AND that ``PreferencesStore`` wholesale-replaced on any
+    /// `nonisolated(unsafe)` static the pipeline read AND ``PreferencesStore`` wholesale-replaced on any
     /// video/agent change, so the write both raced and was silently clobbered.)
     func configSet(key: String, value: String, transient: Bool) -> Bool {
         guard !transient else { return false }
@@ -543,11 +537,11 @@ final class WorkspaceControlBackend: ClientControlBackend {
     }
 
     /// The id of the focused pane in the LIVE model. The backend operates over the `tree` (every list reads
-    /// `store.tree.sessions`), so in `.tree` mode the focus truth is the active tab's active pane — NOT the
+    /// `store.tree.sessions`), so in `.tree` mode focus truth is the active tab's active pane — NOT the
     /// canvas-only `store.focusedPane`, which in tree mode names a SEPARATE, never-materialized canvas leaf
-    /// (so `handle(for:)` would return `nil` and `jump`/`send-keys`/`capture` would silently target nothing,
-    /// and `pane list`'s `isFocused` would never match). Falls back to the canvas passthrough for a
-    /// `.canvas`-model store (the pre-cutover test seam).
+    /// (so `handle(for:)` returns `nil` and `jump`/`send-keys`/`capture` would silently target nothing, and
+    /// `pane list`'s `isFocused` would never match). Falls back to the canvas passthrough for a `.canvas`-model
+    /// store (the pre-cutover test seam).
     private func focusedPaneID() -> PaneID? {
         guard let store else { return nil }
         switch store.liveModel {

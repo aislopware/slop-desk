@@ -5,45 +5,32 @@ import SlopDeskProtocol
 /// A child process attached to a pseudo-terminal (PTY) on the macOS host.
 ///
 /// ## Spawn strategy (`DECISIONS.md` / [12] Part B §1.1)
-/// `openpty()` allocates the master/slave pair with an initial `termios` (sane
-/// cooked-mode defaults + `IUTF8`) and an initial `winsize`. The child is then launched
-/// with **`fork()` + `login_tty(slave)` + `execve`** (NOT `posix_spawn`, and NOT `forkpty`).
-/// The forked child runs ONLY raw libc/syscalls before `execve` — `login_tty`, `close`,
-/// `execve`, `_exit` — with NO Swift/ObjC runtime work (no allocation/ARC), so it honours the
-/// `DECISIONS.md` Host-PTY caveat that ruled out `forkpty` (running the Swift runtime in a
-/// forked child is what is unsafe — bare pre-exec syscalls are not). In the child:
+/// `openpty()` allocates the master/slave pair with an initial cooked-mode `termios`
+/// (+ `IUTF8`) and `winsize`. The child is launched with **`fork()` + `login_tty(slave)` +
+/// `execve`** (NOT `posix_spawn`, NOT `forkpty`). The child runs ONLY raw libc/syscalls
+/// before `execve` — `login_tty`, `close`, `execve`, `_exit` — with NO Swift/ObjC runtime
+/// work (no allocation/ARC), honouring the `DECISIONS.md` caveat that ruled out `forkpty`
+/// (running the Swift runtime in a forked child is the unsafe part; bare pre-exec syscalls
+/// are not). In the child:
 ///
-/// - `login_tty(slave)` bundles `setsid()` + `ioctl(slave, TIOCSCTTY, 0)` (claim the
-///   controlling terminal) + `dup2(slave → 0/1/2)` + `close(slave)` — this is what gives the
-///   shell job control + `SIGWINCH` (see the controlling-terminal section below);
-/// - `close(master)` — the child must never hold the master, or its EOF would never arrive on
-///   the parent's read;
+/// - `login_tty(slave)` = `setsid()` + `ioctl(slave, TIOCSCTTY, 0)` (claim ctty) +
+///   `dup2(slave → 0/1/2)` + `close(slave)` — this gives the shell job control + `SIGWINCH`;
+/// - `close(master)` — the child must never hold the master, or its EOF never reaches the
+///   parent's read;
 /// - `execve(path, argv, envp)` — argv/envp are materialised in the PARENT before `fork`.
 ///
-/// (The earlier `posix_spawn(POSIX_SPAWN_SETSID)` path was replaced in WF10 — it could not run
-/// `TIOCSCTTY` in the child and left interactive zsh ctty-less; see below.)
-///
 /// ### Controlling terminal (the load-bearing part — `fork`+`login_tty`, not `posix_spawn`)
-/// On macOS a session leader acquires its controlling terminal only when it `open()`s a
-/// tty WITHOUT `O_NOCTTY` *after* `setsid`. A `posix_spawn(POSIX_SPAWN_SETSID)` child only
-/// **`dup2`s** the already-open slave onto fd 0/1/2 — it never `open()`s the tty itself —
-/// so for some programs the slave never becomes the controlling terminal. Empirically
-/// (WF10, macOS 26.5.1) a `posix_spawn`ed **interactive zsh** ends up with NO ctty
-/// (`ps` shows `TTY=??`, `TPGID=0`): job control and — the visible symptom — `SIGWINCH`
-/// delivery are both broken, so a `TIOCSWINSZ` on the master delivers no resize signal and
-/// the post-resize prompt blanks with zero reprint bytes. (`/bin/sh -c …` happened to
-/// acquire it, which is why the old `testControllingTTY` over `/bin/sh` passed while the
-/// live interactive shell was broken.)
-///
-/// The fix: spawn via `fork()` and have the child call **`login_tty(slave)`**, which atomically
-/// `setsid()`s, `ioctl(slave, TIOCSCTTY, 0)`s (explicitly claiming the controlling terminal),
-/// then `dup2`s the slave onto fd 0/1/2 and closes it — then the child `close()`s the master
-/// and `execve`s. The window between `fork` and `execve` runs ONLY raw libc/syscalls
-/// (`login_tty`, `close`, `execve`, `_exit`) — NO Swift runtime / ARC / allocation — so it
-/// honours the `DECISIONS.md` "no Swift runtime in a forked child" constraint that ruled out
-/// `forkpty`. All C strings (path, argv, envp) are built in the PARENT before `fork`.
-/// Verified by `SlopDeskHostTests.testControllingTTY` over **interactive zsh** (`tty </dev/tty`
-/// resolves; `stty size` reflects the openpty winsize; `TIOCSWINSZ` + `SIGWINCH` reflow works).
+/// A session leader acquires its ctty only by `open()`ing a tty WITHOUT `O_NOCTTY` *after*
+/// `setsid`. A `posix_spawn(POSIX_SPAWN_SETSID)` child only `dup2`s the already-open slave
+/// onto fd 0/1/2 — never `open()`s the tty — so for some programs the slave never becomes the
+/// ctty. Empirically (WF10, macOS 26.5.1) a `posix_spawn`ed **interactive zsh** ends up ctty-less
+/// (`ps` shows `TTY=??`, `TPGID=0`): job control and `SIGWINCH` delivery are both broken, so a
+/// `TIOCSWINSZ` on the master delivers no resize signal and the post-resize prompt blanks with
+/// zero reprint bytes. (`/bin/sh -c …` happened to acquire it — why the old `testControllingTTY`
+/// over `/bin/sh` passed while the live interactive shell was broken.) `login_tty` claims the ctty
+/// explicitly, fixing this. Verified by `SlopDeskHostTests.testControllingTTY` over **interactive
+/// zsh** (`tty </dev/tty` resolves; `stty size` reflects the openpty winsize; `TIOCSWINSZ` +
+/// `SIGWINCH` reflow works).
 ///
 /// `setBlocking(true)` clears `O_NONBLOCK` on the master FD around spawn — a
 /// non-blocking master breaks the blocking read relay (Happy #301).
@@ -52,8 +39,8 @@ import SlopDeskProtocol
 /// (no intermediate ring buffer — the NoMachine NX lesson); that lives in
 /// ``MuxChannelSession`` (the ``PTYReadLoop`` it owns).
 ///
-/// All access to the (immutable-after-spawn) `masterFD` / `pid` is safe to share; the
-/// only mutable state is the one-shot exit plumbing, guarded by an `NSLock`.
+/// `masterFD` / `pid` are immutable-after-spawn and safe to share; the only mutable state
+/// is the one-shot exit plumbing, guarded by an `NSLock`.
 public final class PTYProcess: @unchecked Sendable {
     /// Master side of the PTY (host reads child output / writes child input here).
     /// `-1` until ``spawn(_:arguments:environment:)`` succeeds.
@@ -149,16 +136,15 @@ public final class PTYProcess: @unchecked Sendable {
         }
 
         // fork(), NOT posix_spawn: posix_spawn cannot run TIOCSCTTY in the child, and a
-        // POSIX_SPAWN_SETSID child that only dup2s the slave does not reliably acquire the
-        // controlling terminal (interactive zsh ends up ctty-less → no SIGWINCH; see the
-        // type doc). The child below claims the ctty explicitly via login_tty.
+        // POSIX_SPAWN_SETSID child that only dup2s the slave does not reliably acquire the ctty
+        // (interactive zsh ends up ctty-less → no SIGWINCH; see the type doc). The child below
+        // claims the ctty explicitly via login_tty.
         //
         // Swift's Darwin overlay marks `fork()` unavailable, so we resolve the raw libc symbol
-        // once via `dlsym` and call it through a C function pointer. This is the literal libc
-        // `fork(2)`; it has the same single-threaded-child semantics. The child does NO
-        // Swift-runtime work before `execve` (only `login_tty`/`close`/`execve`/`_exit`), so
-        // running in a forked child is safe here (the `DECISIONS.md` forkpty caveat is about
-        // running the Swift/ObjC runtime in the child, which we do not).
+        // via `dlsym` and call it through a C function pointer — the literal `fork(2)`, same
+        // single-threaded-child semantics. Safe here because the child does NO Swift-runtime work
+        // before `execve` (only `login_tty`/`close`/`execve`/`_exit`); the `DECISIONS.md` forkpty
+        // caveat is about running the Swift/ObjC runtime in the child, which we do not.
         let childPID = Self.rawFork()
         if childPID == 0 {
             // ===== CHILD: raw syscalls only, no Swift runtime. =====
@@ -305,31 +291,28 @@ public final class PTYProcess: @unchecked Sendable {
 
     // MARK: Redraw nudge
 
-    /// Delivers `SIGWINCH` to the foreground process group of the PTY so that shells
-    /// and full-screen apps (vim, top, …) repaint immediately after a client reattach.
+    /// Delivers `SIGWINCH` to the PTY's foreground process group so shells and full-screen
+    /// apps (vim, top, …) repaint immediately after a client reattach.
     ///
-    /// On reattach the client terminal is fresh and holds no buffered output, so the pane
-    /// is blank until the user presses a key (which triggers zsh/bash to redraw the
-    /// prompt). A `SIGWINCH` is the correct, safe repaint signal — it asks the foreground
-    /// process to re-query the terminal size and redraw; it cannot corrupt a running app.
+    /// On reattach the client terminal is fresh and holds no buffered output, so the pane is
+    /// blank until a keypress makes zsh/bash redraw the prompt. `SIGWINCH` is the safe repaint
+    /// signal — it asks the foreground process to re-query size and redraw; it cannot corrupt a
+    /// running app.
     ///
     /// ## Delivery strategy
-    /// 1. `tcgetpgrp(masterFD)` — the kernel resolves the **foreground** process group of
-    ///    the terminal, which may be a child `vim` / `make` / … rather than the shell
-    ///    itself.  Preferred over `killpg(childPid's pgrp)` because it honours job-control
-    ///    (the shell may have suspended itself and put a child in the foreground).
-    /// 2. `killpg(fgPgrp, SIGWINCH)` — signals the whole foreground group.
-    /// 3. Fallback: if `tcgetpgrp` returns `≤ 0` (terminal has no foreground group yet, or
-    ///    the master is already closed) fall back to `kill(childPid, SIGWINCH)` to catch
-    ///    the shell itself.
+    /// 1. `tcgetpgrp(masterFD)` resolves the **foreground** group (may be a child `vim`/`make`
+    ///    rather than the shell). Preferred over `killpg(childPid's pgrp)` because it honours
+    ///    job-control (the shell may have suspended itself with a child in the foreground).
+    /// 2. `killpg(fgPgrp, SIGWINCH)` — signal the whole foreground group.
+    /// 3. Fallback: `tcgetpgrp ≤ 0` (no foreground group yet, or master already closed) ⇒
+    ///    `kill(childPid, SIGWINCH)` to catch the shell itself.
     ///
-    /// All guards are checked under `exitLock` (same TOCTOU discipline as
-    /// ``setWindowSize(cols:rows:pxWidth:pxHeight:)``). A closed / invalid fd or a
-    /// non-positive pgrp is a safe no-op — never traps.
+    /// Guards checked under `exitLock` (same TOCTOU discipline as
+    /// ``setWindowSize(cols:rows:pxWidth:pxHeight:)``); a closed/invalid fd or non-positive
+    /// pgrp is a safe no-op, never traps.
     ///
-    /// - Important: Call this ONLY on the **reattach** path, not on fresh-shell spawn
-    ///   (the shell prints its first prompt naturally; a redundant `SIGWINCH` is harmless
-    ///   but noisy for full-screen apps that re-clear the screen).
+    /// - Important: reattach path ONLY, not fresh-shell spawn (the shell prints its first prompt
+    ///   naturally; a redundant `SIGWINCH` is harmless but noisy for apps that re-clear the screen).
     public func nudgeRedraw() {
         exitLock.lock()
         let fd = masterFD

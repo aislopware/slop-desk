@@ -4,18 +4,17 @@ import SwiftUI
 /// The **seam** between the cross-platform SwiftUI client and a remote GUI-window
 /// video view (PATH 2 / Phase 4, doc 17 §3).
 ///
-/// Like ``TerminalRendererFactory`` for the terminal pixels, the cross-platform
-/// library cannot reference `SlopDeskVideoClient.VideoWindowView` directly — that would
-/// pull VideoToolbox + Metal into the headless `swift build` (and those frameworks
-/// HANG without a window-server + TCC session in a test context). Instead the GUI
-/// app target — which links `SlopDeskVideoClient` and runs with the Screen-Recording /
-/// decode entitlements — registers a factory at launch; the library calls it and
-/// falls back to a clearly-labelled placeholder when no factory was registered
-/// (i.e. when no host is capturing a GUI window).
+/// Like ``TerminalRendererFactory``, the cross-platform library cannot reference
+/// `SlopDeskVideoClient.VideoWindowView` directly — that pulls VideoToolbox + Metal into
+/// the headless `swift build`, and those HANG without a window-server + TCC session in a
+/// test context. Instead the GUI app target (linking `SlopDeskVideoClient` with the
+/// Screen-Recording / decode entitlements) registers a factory at launch; the library
+/// calls it, falling back to a labelled placeholder when none was registered (no host
+/// capturing a GUI window).
 ///
-/// This is **gated**: the GUI video path is secondary to the terminal path. A remote
-/// GUI window only appears when (a) the app injects a factory AND (b) the host is
-/// actively capturing a window. Until then the placeholder explains the state.
+/// **Gated**: the GUI video path is secondary to the terminal path. A remote GUI window
+/// appears only when (a) the app injects a factory AND (b) the host is actively capturing
+/// a window; until then the placeholder explains the state.
 ///
 /// Wiring (app target, once at launch):
 /// ```swift
@@ -52,29 +51,29 @@ public struct RemoteWindowDescriptor: Sendable, Equatable {
     }
 
     /// True when the descriptor carries a complete live endpoint (host + two DISTINCT ports).
-    /// The app's `VideoWindowFactory` uses this to choose the LIVE `VideoWindowView`
-    /// (orchestrator comes up) vs. the chrome-only placeholder. The media + cursor sockets
-    /// must be distinct ports (PATH 2 opens two separate UDP connections).
+    /// `VideoWindowFactory` uses this to pick the LIVE `VideoWindowView` vs. the chrome-only
+    /// placeholder. Media + cursor must be distinct ports (PATH 2 opens two separate UDP
+    /// connections).
     public var hasEndpoint: Bool {
         !host.trimmingCharacters(in: .whitespaces).isEmpty
             && mediaPort != 0 && cursorPort != 0 && mediaPort != cursorPort
     }
 }
 
-/// Per-render context the cross-platform canvas passes through the seam to the gated video view, so the
-/// remote-GUI pane behaves like one item on the infinite canvas: only the ACTIVE pane consumes
-/// pointer/scroll, a click ACTIVATES it (and raises the host window), and a scroll over a NON-active pane
-/// pans the canvas instead of being swallowed by the (background) remote window.
+/// Per-render context the canvas passes through the seam to the gated video view, so the remote-GUI pane
+/// behaves like one canvas item: only the ACTIVE pane consumes pointer/scroll, a click ACTIVATES it (and
+/// raises the host window), and a scroll over a NON-active pane pans the canvas instead of being swallowed
+/// by the background window.
 public struct RemotePaneContext {
     /// Whether this pane is the workspace's active/focused pane. The video view forwards pointer/scroll
     /// to the remote window ONLY when active; a non-active pane routes scroll to ``onCanvasScroll``.
     public var isActive: Bool
     /// READ-ONLY INPUT GATE (E21 WI-3). `false` ⇒ a read-only `.remoteGUI` pane: the app-target video client
-    /// must forward NEITHER pointer/scroll NOR keycodes to the host while `!inputEnabled` — it gates every
-    /// forward on `isActive && inputEnabled` (a click may still ACTIVATE the workspace pane, but it is not
-    /// relayed to the remote window, the host window is not raised, and the paste-as-keystrokes sink is
-    /// cleared). Wire-compatible silence: read-only is enforced purely by NOT forwarding input — no
-    /// VideoControl change, no golden touch. Defaults `true` (a normal, writable pane).
+    /// forwards NEITHER pointer/scroll NOR keycodes to the host while `!inputEnabled` — it gates every forward
+    /// on `isActive && inputEnabled` (a click may still ACTIVATE the workspace pane, but nothing is relayed to
+    /// the remote window, the host window is not raised, and the paste-as-keystrokes sink is cleared).
+    /// Wire-compatible silence: enforced purely by NOT forwarding input — no VideoControl change, no golden
+    /// touch. Defaults `true` (a normal, writable pane).
     public var inputEnabled: Bool
     /// Make this pane the workspace's active pane — called on click (mouseDown). For a GUI pane the host
     /// window is ALSO raised by the pane's own `focusWindow`; this sets the *workspace* focus.
@@ -82,54 +81,51 @@ public struct RemotePaneContext {
     /// Pan the canvas by a (sign-adjusted) delta — called when a NON-active pane receives a scroll, so the
     /// gesture navigates the canvas rather than scrolling the background remote window.
     public var onCanvasScroll: (CGSize) -> Void
-    /// 1:1 PANE SNAP: resize this pane so its VIDEO CONTENT goes from `current` to `target`
-    /// points — fired by the video view when the stream's native 1:1 point size becomes known
-    /// (first decoded frame) or changes (host-side resize), so the stream renders pixel-for-pixel
-    /// with no fractional-scaling blur. `nil` (the standalone default) ⇒ no pane to snap; the
-    /// video session then keeps its legacy connect-time host-follow negotiation instead.
+    /// 1:1 PANE SNAP: resize this pane so its VIDEO CONTENT goes from `current` to `target` points — fired
+    /// when the stream's native 1:1 point size becomes known (first decoded frame) or changes (host resize),
+    /// so the stream renders pixel-for-pixel with no fractional-scaling blur. `nil` (standalone default) ⇒
+    /// no pane to snap; the session keeps its legacy connect-time host-follow negotiation instead.
     public var onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)?
-    /// PASTE AS KEYSTROKES: the live video view publishes a key-injection closure here once its
-    /// session exists (and `nil` on teardown), so the pane's "Paste as Keystrokes" action can drive
-    /// the SAME per-key `CGEvent` path the keyboard uses (`InputInjector.postKey`). The closure is
-    /// `(keyCode, down, shift)`. `nil` (the standalone default) ⇒ no canvas to receive the sink.
+    /// PASTE AS KEYSTROKES: the live video view publishes a key-injection closure here once its session
+    /// exists (`nil` on teardown), so "Paste as Keystrokes" drives the SAME per-key `CGEvent` path the
+    /// keyboard uses (`InputInjector.postKey`). Closure is `(keyCode, down, shift)`. `nil` (standalone
+    /// default) ⇒ no canvas to receive the sink.
     public var onKeyInjectorReady: ((((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?) -> Void)?
     /// RESIZE (numeric popover): the live video view publishes a resize-drive closure here once its session
-    /// exists (and `nil` on teardown), so the pane's "Resize…" popover requests an ABSOLUTE host-window
-    /// POINT size. The closure is `(width, height)` in host points. `nil` (the standalone default) ⇒ no
-    /// canvas. Withheld (bound `nil`) while the pane is read-only (see ``videoLeaf(isActive:readOnly:...)``).
+    /// exists (`nil` on teardown), so "Resize…" requests an ABSOLUTE host-window POINT size. Closure is
+    /// `(width, height)` in host points. `nil` (standalone default) ⇒ no canvas. Withheld (bound `nil`)
+    /// while read-only (see ``videoLeaf(isActive:readOnly:...)``).
     public var onResizeInjectorReady: ((((_ width: Double, _ height: Double) -> Void)?) -> Void)?
     /// VIEWPORT CONTROLS: the live video view publishes a client-viewport command sink here once its session
-    /// exists (and `nil` on teardown), so the pane's bottom control bar drives zoom / pan-lock. The closure
-    /// carries a raw command byte (``RemoteWindowModel/ViewportCommand``: 0 zoom-in / 1 zoom-out / 2 reset /
-    /// 3 toggle-lock). Pure CLIENT compositor ops (no host input), so — unlike ``onResizeInjectorReady`` — it
-    /// is NOT withheld while read-only. `nil` (the standalone default) ⇒ no canvas to receive it.
+    /// exists (`nil` on teardown), so the bottom control bar drives zoom / pan-lock. Closure carries a raw
+    /// command byte (``RemoteWindowModel/ViewportCommand``: 0 zoom-in / 1 zoom-out / 2 reset / 3 toggle-lock).
+    /// Pure CLIENT compositor ops (no host input), so — unlike ``onResizeInjectorReady`` — NOT withheld while
+    /// read-only. `nil` (standalone default) ⇒ no canvas to receive it.
     public var onViewportInjectorReady: ((((_ command: UInt8) -> Void)?) -> Void)?
-    /// RELEASE STUCK INPUT (C5, the manual escape hatch): the live video view publishes a zero-arg release
-    /// closure here (and `nil` on teardown) that synthesizes a key-UP for every held modifier + a mouse-UP
-    /// for every button through the existing synthetic-release send paths — the palette's chord-less
-    /// "Release Stuck Input" drives it when the host is left with a latched modifier / button despite the
-    /// automatic redundancy+dedup. SENDS host input, so — like ``onKeyInjectorReady`` — the seam withholds
-    /// it (binds `nil`) while the pane is read-only. `nil` (the standalone default) ⇒ no canvas.
+    /// RELEASE STUCK INPUT (C5, manual escape hatch): the live video view publishes a zero-arg release closure
+    /// here (`nil` on teardown) that synthesizes a key-UP for every held modifier + a mouse-UP for every
+    /// button through the synthetic-release send paths — the palette's "Release Stuck Input" drives it when
+    /// the host is left with a latched modifier / button despite the automatic redundancy+dedup. SENDS host
+    /// input, so — like ``onKeyInjectorReady`` — withheld (bound `nil`) while read-only. `nil` (standalone
+    /// default) ⇒ no canvas.
     public var onInputReleaseReady: (((() -> Void)?) -> Void)?
-    /// HOST-WINDOW RESIZE: the live video view PUSHES the remote window's current + MAX resizable POINT
-    /// sizes through this whenever either changes (first decoded frame / host displayMax report), so the
-    /// "Resize…" popover pre-fills its fields at the current size and caps them at the remote max. `(curW,
-    /// curH, maxW, maxH)`; a zero max = "not yet known" (the popover then leaves that field uncapped).
-    /// Pure informational view→model push (never reaches the host), so it is NOT read-only-gated. `nil` ⇒ none.
+    /// HOST-WINDOW RESIZE: the live video view PUSHES the remote window's current + MAX resizable POINT sizes
+    /// whenever either changes (first decoded frame / host displayMax report), so "Resize…" pre-fills at the
+    /// current size and caps at the remote max. `(curW, curH, maxW, maxH)`; a zero max = "not yet known"
+    /// (field left uncapped). Informational view→model push (never reaches the host), so NOT read-only-gated.
+    /// `nil` ⇒ none.
     public var onWindowGeometryChanged: ((_ curW: Double, _ curH: Double, _ maxW: Double, _ maxH: Double) -> Void)?
-    /// CONNECTION STATS: the live video view PUSHES the host-announced stream cadence (frames/sec) through
-    /// this whenever the host's FPS governor announces a new value, so the sidebar's Connection section shows
-    /// a per-pane "FPS" row. Pure informational view→model push (never reaches the host), so it is NOT
-    /// read-only-gated. `nil` ⇒ none.
+    /// CONNECTION STATS: the live video view PUSHES the host-announced stream cadence (frames/sec) whenever
+    /// the host's FPS governor announces a new value, feeding the sidebar's per-pane "FPS" row. Informational
+    /// view→model push (never reaches the host), so NOT read-only-gated. `nil` ⇒ none.
     public var onStreamCadenceChanged: ((_ fps: Int) -> Void)?
     /// CONNECTION STATS (2026-07-04): the live video view PUSHES the client-measured video PAYLOAD bitrate
-    /// (kilobits/sec, ~1 Hz) through this — the titlebar cluster's stream-weight complication. Pure
-    /// informational view→model push (never reaches the host), so it is NOT read-only-gated. `nil` ⇒ none.
+    /// (kilobits/sec, ~1 Hz) — the titlebar cluster's stream-weight complication. Informational view→model
+    /// push (never reaches the host), so NOT read-only-gated. `nil` ⇒ none.
     public var onStreamBitrateChanged: ((_ kbps: Int) -> Void)?
-    /// STALL SCRIM (2026-07-03): the live video view PUSHES the stream's stall state through this when it
-    /// FLIPS — `true` ⇒ the host went silent past the stall threshold (the pane overlays "Reconnecting…"),
-    /// `false` ⇒ traffic resumed. Pure informational view→model push (never reaches the host), so it is NOT
-    /// read-only-gated. `nil` ⇒ none.
+    /// STALL SCRIM (2026-07-03): the live video view PUSHES the stream's stall state when it FLIPS — `true` ⇒
+    /// host silent past the stall threshold (pane overlays "Reconnecting…"), `false` ⇒ traffic resumed.
+    /// Informational view→model push (never reaches the host), so NOT read-only-gated. `nil` ⇒ none.
     public var onStreamStallChanged: ((_ stalled: Bool) -> Void)?
 
     public init(
@@ -167,15 +163,14 @@ public struct RemotePaneContext {
     public static var standalone: Self { Self() }
 
     /// **E21 WI-3 — the read-only-gated video-leaf context derivation (the pure seam the leaf and its tests
-    /// share).** Maps a pane's `readOnly` policy onto the two input gates a `.remoteGUI` leaf needs, so the
-    /// SwiftUI `GuiLeafView` stays a thin renderer and the policy is unit-testable headlessly (no Metal/VT):
-    ///   • `inputEnabled = !readOnly` — the app-target client gates pointer/scroll/keycode forwarding on
-    ///     `isActive && inputEnabled`, so a read-only pane relays NOTHING to the host (wire-compatible silence).
+    /// share).** Maps a pane's `readOnly` policy onto the two input gates a `.remoteGUI` leaf needs, so
+    /// `GuiLeafView` stays a thin renderer and the policy is unit-testable headlessly (no Metal/VT):
+    ///   • `inputEnabled = !readOnly` — the app-target client gates forwarding on `isActive && inputEnabled`,
+    ///     so a read-only pane relays NOTHING to the host (wire-compatible silence).
     ///   • `onKeyInjectorReady` clears the paste-as-keystrokes sink while read-only — it hands `bindKeyInjector`
-    ///     a `nil` sink (instead of the live one the video view publishes), so the model's
-    ///     ``RemoteWindowModel/canPasteKeystrokes`` is `false` and ``RemoteWindowModel/pasteAsKeystrokes(_:)``
-    ///     is inert. NO model→store coupling: the read-only state is resolved at the seam, not threaded into
-    ///     the model. `bindKeyInjector` is the leaf's `{ model?.keyInjector = $0 }` write.
+    ///     a `nil` sink (not the live one), so ``RemoteWindowModel/canPasteKeystrokes`` is `false` and
+    ///     ``RemoteWindowModel/pasteAsKeystrokes(_:)`` is inert. NO model→store coupling: read-only is resolved
+    ///     at the seam, not threaded into the model. `bindKeyInjector` is the leaf's `{ model?.keyInjector = $0 }`.
     public static func videoLeaf(
         isActive: Bool,
         readOnly: Bool,
@@ -200,8 +195,8 @@ public struct RemotePaneContext {
             onCanvasScroll: onCanvasScroll,
             onStreamNativeSize: onStreamNativeSize,
             onKeyInjectorReady: { sink in bindKeyInjector(readOnly ? nil : sink) },
-            // RESIZE: a read-only pane must not resize the host window — withhold the sink (bind nil),
-            // exactly like the key sink, so the popover is inert (and `GuiLeafView` hides it) while locked.
+            // RESIZE: a read-only pane must not resize the host window — withhold the sink (bind nil), like
+            // the key sink, so the popover is inert (and `GuiLeafView` hides it) while locked.
             onResizeInjectorReady: { sink in bindResizeInjector(readOnly ? nil : sink) },
             // VIEWPORT CONTROLS: zoom / pan-lock are pure CLIENT compositor ops (they never reach the host), so
             // they stay live even on a READ-ONLY pane — bind the sink unconditionally (no read-only gate).

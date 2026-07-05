@@ -1,15 +1,15 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// WB3 — the BEHAVIORAL dispatch of the re-run-last / jump-to-failed actions through the production
-/// ``WorkspaceBindingRegistry/route(_:to:)`` seam, observed on a ``RecordingTerminalPaneSession`` that
-/// carries a REAL ``TerminalViewModel``. Unlike `TreeCommandRoutingTests`'
-/// `testWB3BlockActionsRouteToStoreWithoutMutatingTree` (which drives a ``FakePaneSession`` whose
-/// non-terminal model makes every block op a no-op, so it can only assert tree-immutability and is blind to
-/// which store hook fires), these tests assert the ACTUAL effect:
+/// WB3 — BEHAVIORAL dispatch of the re-run-last / jump-to-failed actions through the production
+/// ``WorkspaceBindingRegistry/route(_:to:)`` seam, on a ``RecordingTerminalPaneSession`` carrying a
+/// REAL ``TerminalViewModel``. Unlike `TreeCommandRoutingTests`'
+/// `testWB3BlockActionsRouteToStoreWithoutMutatingTree` (a ``FakePaneSession`` whose non-terminal model
+/// makes every block op a no-op — it can only assert tree-immutability, blind to which store hook fires),
+/// these assert the ACTUAL effect:
 ///  - re-run sends the latest command's bytes through the input path,
 ///  - the spec-critical `.jumpPreviousFailed → forward:false` / `.jumpNextFailed → forward:true`
-///    INVERSION lands the viewport on the NEWER vs OLDER failure (a swapped mapping would fail here).
+///    INVERSION lands the viewport on the NEWER vs OLDER failure (a swapped mapping fails here).
 ///
 /// HANG-SAFE: the recording session uses a headless ``RecordingSurfaceActions`` (no GhosttySurface /
 /// VideoToolbox / Metal / SCStream) — the hang-safety rule holds.
@@ -48,8 +48,8 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         return session
     }
 
-    /// A failed block. `ordinal` defaults to the index (the no-empty-prompt-cycles case); pass an
-    /// explicit ordinal to model empty-Enter cycles between commands.
+    /// A failed block. `ordinal` defaults to the index (no empty-prompt-cycles); pass an explicit
+    /// ordinal to model empty-Enter cycles between commands.
     private func failed(_ index: UInt32, ordinal: UInt32? = nil) -> CommandBlock {
         CommandBlock(
             index: index, commandText: "cmd\(index)", exitCode: 1, complete: true,
@@ -67,7 +67,7 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
     // MARK: - Re-run last command
 
     /// `.reRunLastCommand` re-injects the LATEST block's command text (verbatim + 1 newline) through the
-    /// pane's input path. Pins it uses `latest` (the last block), not the first.
+    /// pane's input path — the last block, not the first.
     func testReRunLastCommandSendsLatestCommandBytes() throws {
         let store = makeStore()
         let session = try seedBlocks(store, [
@@ -84,8 +84,7 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         )
     }
 
-    /// `.reRunLastCommand` with an empty latest command is a true no-op at the store layer (the encoder
-    /// returns nil) — nothing is sent.
+    /// `.reRunLastCommand` with an empty latest command is a no-op (the encoder returns nil) — nothing sent.
     func testReRunEmptyLatestIsANoOp() throws {
         let store = makeStore()
         let session = try seedBlocks(store, [CommandBlock(index: 0, commandText: "   ", complete: true)])
@@ -108,11 +107,11 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
     // MARK: - Re-run an EXPLICIT command (E11 Open-Quickly Command-row "Re-Run in Current Pane")
 
     /// `reRunCommandInActivePane(_:)` re-injects an EXPLICIT command text (the picked Current Command row,
-    /// not the latest block) verbatim + one newline through the pane's input path — the Open-Quickly
-    /// Command-row "Re-Run in Current Pane" action. Pins it sends the PASSED text (`"git status"`), independent of the
-    /// block list, and that a literal `"<Enter>"` substring is NOT parsed into a control byte (the verbatim
-    /// `BlockReRunEncoder` invariant). FAILS if the action were wired to `reRunLastCommandInActivePane`
-    /// (which would send the latest block "tail", not the picked row) or to a SendKeysParser path.
+    /// not the latest block) verbatim + one newline — the Open-Quickly Command-row "Re-Run in Current
+    /// Pane" action. Pins that it sends the PASSED text (`"git status"`) independent of the block list, and
+    /// that a literal `"<Enter>"` substring is NOT parsed into a control byte (the verbatim
+    /// `BlockReRunEncoder` invariant). FAILS if wired to `reRunLastCommandInActivePane` (sends the latest
+    /// block "tail", not the picked row) or to a SendKeysParser path.
     func testReRunCommandInActivePaneSendsVerbatimBytes() throws {
         let store = makeStore()
         // Seed an UNRELATED latest block so a wrong wiring to `reRunLastCommand` would send "tail\n" instead.
@@ -127,8 +126,8 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         )
     }
 
-    /// `reRunCommandInActivePane("")` (and a whitespace-only text) is a no-op — the encoder returns nil, so
-    /// no bare newline is sent.
+    /// `reRunCommandInActivePane("")` (or whitespace-only) is a no-op — the encoder returns nil, no bare
+    /// newline is sent.
     func testReRunCommandInActivePaneEmptyTextIsANoOp() throws {
         let store = makeStore()
         let session = try activeSession(store)
@@ -140,11 +139,10 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
 
     // MARK: - Copy block output routing (Command Navigator per-row "Copy Output")
 
-    /// `copyBlockOutputInActivePane(index:onResult:)` routes to the ACTIVE pane's terminal model's block-
-    /// output request (wire type 15) for the given index, then resolves the completion from the host's
-    /// reply with the VT-stripped plain text. Pins the store→model routing the navigator's per-row Copy
-    /// affordance depends on (the view only owns the clipboard write). FAILS if the store requested a
-    /// different index or dropped the reply.
+    /// `copyBlockOutputInActivePane(index:onResult:)` routes to the ACTIVE pane's model's block-output
+    /// request (wire type 15) for the index, then resolves the completion from the host's reply with the
+    /// VT-stripped plain text. Pins the store→model routing (the view only owns the clipboard write).
+    /// FAILS if the store requested a different index or dropped the reply.
     func testCopyBlockOutputInActivePaneRoutesToActiveModel() throws {
         let store = makeStore()
         let session = try seedBlocks(store, [ok(3), ok(7)])
@@ -161,8 +159,8 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         XCTAssertEqual(result?.contains("built ok"), true, "the completion receives the sanitized block output")
     }
 
-    /// An EMPTY host reply (block evicted / unavailable) resolves the copy completion as `nil` — a graceful
-    /// no-op the navigator turns into "nothing copied" rather than a hang.
+    /// An EMPTY host reply (block evicted / unavailable) resolves the copy completion as `nil` — the
+    /// navigator turns it into "nothing copied" rather than a hang.
     func testCopyBlockOutputEmptyReplyResolvesNil() throws {
         let store = makeStore()
         let session = try seedBlocks(store, [ok(1)])
@@ -184,9 +182,9 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
 
     /// THE direction guard. Blocks (index-ascending, so navigatorBlocks is newest-first 5,4,3,2,1):
     /// `[5 FAIL, 4 ok, 3 FAIL, 2 ok, 1 FAIL]`. With the cursor on block 3, `.jumpNextFailed` (forward:true,
-    /// toward OLDER) must land on 1, and `.jumpPreviousFailed` (forward:false, toward NEWER) must land on 5.
-    /// A swapped `forward:` mapping (or both true) lands the wrong way and FAILS this — pinning the
-    /// `.jumpPreviousFailed → false` / `.jumpNextFailed → true` inversion the router documents.
+    /// toward OLDER) must land on 1, `.jumpPreviousFailed` (forward:false, toward NEWER) on 5. A swapped
+    /// `forward:` mapping (or both true) lands the wrong way — pinning the `.jumpPreviousFailed → false` /
+    /// `.jumpNextFailed → true` inversion.
     func testJumpNextVsPreviousFailedLandOnOlderVsNewer() throws {
         let store = makeStore()
         let session = try seedBlocks(store, [failed(1), ok(2), failed(3), ok(4), failed(5)])
@@ -216,8 +214,8 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         )
     }
 
-    /// `.jumpPreviousFailed` from the cursor on block 3 walks toward the NEWEST failure (5), not the oldest —
-    /// a second, isolated pin of the inversion that does NOT depend on the next-failed step above.
+    /// `.jumpPreviousFailed` from block 3 walks toward the NEWEST failure (5), not the oldest — an
+    /// isolated pin of the inversion that does NOT depend on the next-failed step above.
     func testJumpPreviousFailedFromMiddleReachesNewest() throws {
         let store = makeStore()
         let session = try seedBlocks(store, [failed(1), ok(2), failed(3), ok(4), failed(5)])
@@ -234,9 +232,9 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
     // MARK: - Bookmark seed wiring (model → store persistence)
 
     /// `seedBlockBookmarks` (run when a leaf materializes) wires the model's `onBookmarksChanged` to the
-    /// store's `save` closure keyed by the session's per-session scope key, with the indices SORTED — and
-    /// `load` seeds the model from persistence. Pins the model→store round-trip the store-glue composes
-    /// (untested before: every prior store test routed through a non-terminal `FakePaneSession`).
+    /// store's `save` closure, keyed by the per-session scope key, indices SORTED — and `load` seeds the
+    /// model from persistence. Pins the model→store round-trip (untested before: every prior store test
+    /// routed through a non-terminal `FakePaneSession`).
     func testSeedBlockBookmarksWiresSaveAndLoad() throws {
         let store = makeStore()
         // Install the persistence seam BEFORE materializing a fresh pane, so seedBlockBookmarks wires it.
@@ -273,9 +271,9 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
     }
 
     /// Each materialized session mints its OWN per-session bookmark scope key, so distinct sessions never
-    /// share a persisted star set — the property that makes a relaunch (a brand-new segmenter numbering
-    /// blocks from 0) start with no stars instead of grafting a prior run's raw indices onto unrelated
-    /// commands. (The stable PaneID would survive relaunch and re-key the same set — the bug this fixes.)
+    /// share a persisted star set — so a relaunch (a fresh segmenter numbering blocks from 0) starts with
+    /// no stars instead of grafting a prior run's raw indices onto unrelated commands. (A stable PaneID
+    /// would survive relaunch and re-key the same set — the bug this fixes.)
     func testEachSessionHasADistinctBookmarkScopeKey() throws {
         let store = makeStore()
         let first = try activeSession(store)
@@ -329,11 +327,11 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
 
     /// A prompt ordinal BEYOND ghostty's i16 binding-parameter range (`jump_to_prompt` is `i16`, max
     /// 32767) must NOT emit a single out-of-range step: a raw `jump_to_prompt:39999` fails the ACTION
-    /// STRING PARSE and silently no-ops the whole binding, landing on the anchor (oldest prompt) instead of
-    /// the target — the long-lived-detached-session bug (every Enter grows the ordinal). The downward
-    /// `ordinal − 1` delta is instead SPLIT into in-range hops whose SUM equals the full delta, so
-    /// consecutive hops compose to land the exact prompt. Pins: every emitted step parses as `i16` AND the
-    /// steps sum to `ordinal − 1`. FAILS on the pre-fix single-step emission (`Int16("39999")` is nil).
+    /// STRING PARSE and silently no-ops the whole binding, landing on the anchor (oldest prompt) not the
+    /// target — the long-lived-detached-session bug (every Enter grows the ordinal). The downward
+    /// `ordinal − 1` delta is instead SPLIT into in-range hops whose SUM equals the full delta. Pins:
+    /// every emitted step parses as `i16` AND the steps sum to `ordinal − 1`. FAILS on the pre-fix
+    /// single-step emission (`Int16("39999")` is nil).
     func testBlockJumpChunksStepBeyondI16Range() {
         let recorder = RecordingSurfaceActions()
         BlockJump.toPromptOrdinal(40000, using: recorder)
@@ -382,9 +380,8 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
     /// E9 (ES-E9-2): clicking a Commands row jumps the scrollback to that block via
     /// `jumpToNavigatorBlockInActivePane(index:)`, driven by the block's HOST-STAMPED prompt ordinal —
     /// NOT its position among the blocks. Seed ordinals ≠ indices (ordinal 2 was an empty-Enter cycle
-    /// that produced no block): jumping to block index 2 (ordinal 3) must step `3 − 1 = 2` prompts below
-    /// the anchor. A position-derived delta (index 2 of 3 blocks → newest-first pos 1 → `3 − 1 = 2`…
-    /// with block 3 it would compute 1) or an index-as-ordinal read fails this pin.
+    /// with no block): jumping to block index 2 (ordinal 3) must step `3 − 1 = 2` prompts below the
+    /// anchor. A position-derived delta or an index-as-ordinal read fails this pin.
     func testJumpToNavigatorBlockUsesHostStampedOrdinalNotPosition() throws {
         let store = makeStore()
         // Ordinals 1, 3, 4: an empty Enter consumed ordinal 2 between cmd1 and cmd2.
@@ -435,9 +432,9 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         XCTAssertTrue(recorder.actions.isEmpty, "an ordinal-less block emits no surface action (never mis-lands)")
     }
 
-    /// An evicted / never-seen index is a graceful no-op — no surface action, no trap (the Outline can hold a
-    /// row whose block has since rolled out of the navigator window). FAILS if the guard that requires the
-    /// index to resolve to a position were dropped (it would emit a stray re-anchor or trap).
+    /// An evicted / never-seen index is a graceful no-op — no surface action, no trap (the Outline can
+    /// hold a row whose block rolled out of the navigator window). FAILS if the position-resolution guard
+    /// were dropped (it would emit a stray re-anchor or trap).
     func testJumpToNavigatorBlockUnknownIndexIsANoOp() throws {
         let store = makeStore()
         let session = try seedBlocks(store, [ok(1), ok(2), ok(3)])
@@ -510,12 +507,11 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         }
     }
 
-    /// The FRESH-PANE case — the one every new terminal hits: the shell's FIRST prompt IS the oldest
-    /// retained row (row 0), so ghostty's downward iterator (which starts at `viewport_top.down(1)` and
-    /// never counts the top row's own prompt) skips prompt #1 for any `scroll_to_top`-anchored count.
-    /// The old `scroll_to_top` + `jump_to_prompt:(total − pos)` landed EVERY jump one command too new
-    /// here; the ordinal choreography's huge-negative anchor makes "top row = prompt #1" an invariant.
-    /// FAILS on the pre-fix code.
+    /// The FRESH-PANE case — every new terminal: the shell's FIRST prompt IS the oldest retained row
+    /// (row 0), so ghostty's downward iterator (starts at `viewport_top.down(1)`, never counts the top
+    /// row's own prompt) skips prompt #1 for any `scroll_to_top`-anchored count. The old `scroll_to_top`
+    /// + `jump_to_prompt:(total − pos)` landed EVERY jump one command too new; the ordinal choreography's
+    /// huge-negative anchor makes "top row = prompt #1" an invariant. FAILS on the pre-fix code.
     func testOutlineJumpLandsOnClickedCommandInFreshPane() throws {
         // rows: 0 prompt#1(cmd1) · 1 output · 2 prompt#2(cmd2) · 3 output · 4 prompt#3(cmd3) · 5 output
         //       · 6 live idle prompt(#4). visibleRows = 3 ⇒ active area = rows 4…6.
@@ -578,13 +574,13 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
 
 /// A faithful, headless port of ghostty's `PageList.zig` `scrollPrompt` (+ `scroll_to_top`/`scroll_to_bottom`)
 /// over a flat prompt-flag buffer — used ONLY to prove the store's emitted libghostty actions land the
-/// viewport on the intended command prompt. Faithful on the three load-bearing behaviours (pinned
-/// v1.3.1): the downward iterator starts at `viewport_top.down(1)` (the top row's own prompt is never
-/// counted), the upward iterator starts at `up(1)`, and a delta LARGER than the available prompt count
-/// moves to the LAST prompt found (ghostty keeps `prompt_pin` across the exhausted loop — the behaviour
-/// the huge-negative re-anchor relies on). A landed prompt inside the active area keeps `.active`
-/// (`pinIsActive`). It is NOT a re-implementation the product depends on; it mirrors the vendored ghostty
-/// semantics so the test isn't tautological against the store's own choreography.
+/// viewport on the intended command prompt. Faithful on three load-bearing behaviours (pinned v1.3.1):
+/// the downward iterator starts at `viewport_top.down(1)` (the top row's own prompt is never counted),
+/// the upward iterator starts at `up(1)`, and a delta LARGER than the available prompt count moves to the
+/// LAST prompt found (ghostty keeps `prompt_pin` across the exhausted loop — what the huge-negative
+/// re-anchor relies on). A landed prompt inside the active area keeps `.active` (`pinIsActive`). NOT a
+/// re-implementation the product depends on; it mirrors the vendored ghostty semantics so the test isn't
+/// tautological against the store's own choreography.
 private struct GhosttyScrollPromptModel {
     let prompts: [Bool] // prompts[i] == true ⇒ row i is a `.prompt` row
     let visibleRows: Int
@@ -594,9 +590,9 @@ private struct GhosttyScrollPromptModel {
 
     /// Replays the recorded action strings (`scroll_to_top` / `scroll_to_bottom` / `jump_to_prompt:<delta>`).
     /// FAITHFUL to ghostty's binding-action parser: `jump_to_prompt` is declared `i16` (`Binding.zig`),
-    /// so a delta outside −32768…32767 FAILS the parse and the whole action silently no-ops — exactly
-    /// the hardware failure the first shipped anchor (−1_000_000) hit. Parsing into `Int16` here makes
-    /// the end-to-end pins catch any out-of-range delta the store might emit.
+    /// so a delta outside −32768…32767 FAILS the parse and the whole action silently no-ops — the
+    /// hardware failure the first shipped anchor (−1_000_000) hit. Parsing into `Int16` here makes the
+    /// end-to-end pins catch any out-of-range delta the store might emit.
     mutating func apply(_ actions: [String]) {
         for action in actions {
             switch action {

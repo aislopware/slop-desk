@@ -2,10 +2,10 @@ import Foundation
 import SlopDeskVideoProtocol
 
 // Pure, platform-free client-session logic for the GUI video path (PATH 2 / Phase 4).
-// NO VideoToolbox / Metal / Network — exactly the discipline of SlopDeskVideoProtocol
-// and the host's `VideoSessionLogic`, so every decision here is unit-testable in
-// isolation. The actor in `SlopDeskVideoClientSession.swift` owns the live components
-// (decoder / pacer / renderer / sockets) and delegates each decision to these types.
+// NO VideoToolbox / Metal / Network (same discipline as SlopDeskVideoProtocol and the
+// host's `VideoSessionLogic`) so every decision is unit-testable in isolation. The actor
+// in `SlopDeskVideoClientSession.swift` owns the live components (decoder / pacer /
+// renderer / sockets) and delegates each decision to these types.
 
 /// Lifecycle state of a client video session (the mirror of the host's
 /// ``VideoSessionState``).
@@ -22,10 +22,9 @@ public enum VideoClientState: Equatable, Sendable {
     case stopped
 }
 
-/// The pure state machine driving a client video session. It emits the `hello`,
-/// consumes the host's `helloAck`, and gates whether received media should be
-/// processed — with NO live component. The actor advances it and acts on the
-/// returned ``Effect``s.
+/// The pure state machine driving a client video session: emits the `hello`,
+/// consumes the host's `helloAck`, and gates whether received media is processed.
+/// No live component — the actor advances it and acts on the returned ``Effect``s.
 public struct VideoClientStateMachine: Sendable {
     public private(set) var state: VideoClientState = .idle
 
@@ -50,43 +49,43 @@ public struct VideoClientStateMachine: Sendable {
     public enum Effect: Equatable, Sendable {
         /// Send this control message to the host (on the control channel).
         case sendControl(VideoControlMessage)
-        /// The session is up at the negotiated capture size: bring up the decoder /
-        /// pacer / renderer (the actor's GUI-only step). `fullRange` (WF-6 #8) is the
-        /// stream's negotiated luma range, taken straight off the `helloAck`; the actor
-        /// sets the decoder's output pixel-format + the renderer's shader coefficients
-        /// from it so both follow the host's actual encoded range. `false` ⇒ video-range.
+        /// Session up at the negotiated capture size: bring up decoder / pacer / renderer
+        /// (the actor's GUI-only step). `fullRange` (WF-6 #8) is the stream's negotiated
+        /// luma range off the `helloAck`; the actor sets the decoder's output pixel-format
+        /// + the renderer's shader coefficients from it to follow the host's actual encoded
+        /// range. `false` ⇒ video-range.
         case startDecodePipeline(captureSize: VideoSize, windowBoundsCG: VideoRect, fullRange: Bool)
         /// Tear the decode pipeline down.
         case stopDecodePipeline
-        /// The host acked an in-session resize: it adopted `size` as the new capture size.
+        /// The host acked an in-session resize, adopting `size` as the new capture size.
         /// The actor stages it as the PENDING capture size and adopts it as the aspect-fit
         /// denominator (`decodedSize`) only once a decoded `CVPixelBuffer` actually arrives at
-        /// that size (in-flight old-size frames may still be in the queue after the ack).
+        /// that size (in-flight old-size frames may still be queued after the ack).
         case updateCaptureSize(VideoSize)
-        /// The host announced (FPS governor) the stream's CONTENT cadence — at session start and
-        /// on every governed step. The actor forwards it to the GUI layer (the pacer rebases its
+        /// FPS-governor announcement of the stream's CONTENT cadence — at session start and on
+        /// every governed step. The actor forwards it to the GUI layer (the pacer rebases its
         /// deadline-mode interval + adaptive-jitter seconds→frames conversion). Duplicate
         /// deliveries (the host dup-sends ×2 for loss tolerance) are idempotent.
         case applyStreamCadence(UInt16)
-        /// Apply a host-measured scroll offset to the client's scroll reprojector (warp the last frame
-        /// between codec frames). `(dx, dy)` are signed NORMALIZED shifts in ten-thousandths of the
-        /// frame extent (±10000 ≈ ±1.0); `(0, 0)` arms the reprojector's decay (scroll stopped).
-        /// `bandTop`/`bandBottom` are the moving-content vertical band (ten-thousandths of height); the
-        /// renderer warps ONLY that band so the static chrome doesn't slide (`bandBottom <= bandTop` ⇒
-        /// whole-frame warp fallback).
+        /// Apply a host-measured scroll offset to the scroll reprojector (warp the last frame
+        /// between codec frames). `(dx, dy)` are signed NORMALIZED shifts in ten-thousandths of
+        /// the frame extent (±10000 ≈ ±1.0); `(0, 0)` arms the reprojector's decay (scroll
+        /// stopped). `bandTop`/`bandBottom` are the moving-content vertical band (ten-thousandths
+        /// of height); the renderer warps ONLY that band so static chrome doesn't slide
+        /// (`bandBottom <= bandTop` ⇒ whole-frame warp fallback).
         case applyScrollOffset(Int16, Int16, UInt16, UInt16)
         /// Apply the opaque-content rect set (capture PIXELS) the host sent after a capture-region
         /// change: the renderer masks everything OUTSIDE these rects to transparent (so a popup
         /// overhanging the window floats over the canvas instead of a black bar). An EMPTY list
         /// clears the mask (whole frame opaque — the contracted/default state).
         case applyContentMask([MaskRect])
-        /// Adopt the host's reported MAXIMUM resizable POINT size (the bounds of the display the captured
-        /// window sits on). The session stores it and forwards it to the view → the "Resize…" popover caps
+        /// Adopt the host's reported MAXIMUM resizable POINT size (the bounds of the display the
+        /// captured window sits on). Stored + forwarded to the view → the "Resize…" popover caps
         /// its width/height fields at it. Purely informational — no capture/decode effect.
         case applyDisplayMax(VideoSize)
         /// The HOST ended this session (a received `bye` — daemon shutdown, VD termination, or the
-        /// restarted daemon answering an unbound lane). The actor surfaces it to the GUI layer, which
-        /// rebuilds the WHOLE pipeline (fresh lane + hello + renderer/pacer/decoder) — the
+        /// restarted daemon answering an unbound lane). The actor surfaces it to the GUI layer,
+        /// which rebuilds the WHOLE pipeline (fresh lane + hello + renderer/pacer/decoder) — the
         /// reconnect-wedge fix. Distinct from a LOCAL ``stop()`` (pane closed), which must NOT rebuild.
         case sessionEndedByHost
     }
@@ -102,10 +101,10 @@ public struct VideoClientStateMachine: Sendable {
         ))]
     }
 
-    /// A control datagram arrived from the host. The only message the client acts on
-    /// is `helloAck` (accept → start pipeline; reject → `.rejected`) and `bye` (host
-    /// tore down → stop). A duplicate accepted ack while already streaming is ignored
-    /// (idempotent — UDP may deliver the ack more than once).
+    /// A control datagram arrived from the host. The client acts only on `helloAck`
+    /// (accept → start pipeline; reject → `.rejected`) and `bye` (host tore down → stop).
+    /// A duplicate accepted ack while already streaming is ignored (idempotent — UDP may
+    /// deliver the ack more than once).
     public mutating func handleControl(_ message: VideoControlMessage) -> [Effect] {
         switch message {
         case let .helloAck(accepted, streamID, cw, ch, bounds, fullRange):
@@ -130,38 +129,34 @@ public struct VideoClientStateMachine: Sendable {
             // a local `stop()` must not trigger a rebuild.
             return [.stopDecodePipeline, .sessionEndedByHost]
         case let .resizeAck(cw, ch, _):
-            // The host adopted a new capture size for an in-session resize. Stage it as the
-            // pending capture size; the actor adopts it as the aspect-fit denominator only when
-            // a decoded CVPixelBuffer actually arrives at that size (frame-gated — in-flight
+            // Host adopted a new capture size. Stage it as pending; adoption as the aspect-fit
+            // denominator is frame-gated to the first decoded buffer at that size (in-flight
             // old-size frames may still be queued after the ack). Acted on ONLY while streaming
-            // (a stray/late ack after teardown is inert). The epoch is the host's echo of the
-            // request that won; the actor does not re-validate it (the host already dropped
-            // stale epochs). On a fixed-size session (the host AX-refuses a resize) no resizeAck
-            // is sent, so this branch is simply never reached.
+            // (a stray/late ack after teardown is inert). The echoed epoch is not re-validated
+            // (the host already dropped stale epochs). Fixed-size sessions (host AX-refuses
+            // resize) send no resizeAck, so this branch is never reached there.
             guard state == .streaming else { return [] }
             return [.updateCaptureSize(VideoSize(width: Double(cw), height: Double(ch)))]
         case let .streamCadence(fps):
-            // FPS governor (host→client): rebase the content-cadence assumptions. Only meaningful
-            // while streaming (a stray/late cadence after teardown is inert); fps 0 is nonsense —
-            // dropped (the host never sends it; defensive against a corrupt body that still parsed).
+            // FPS governor (host→client): rebase content-cadence assumptions. Streaming only.
+            // fps 0 is nonsense — dropped (host never sends it; defensive against a corrupt body
+            // that still parsed).
             guard state == .streaming, fps >= 1 else { return [] }
             return [.applyStreamCadence(fps)]
         case let .scrollOffset(dx, dy, bandTop, bandBottom):
-            // Host→client scroll-reprojection hint + the moving-content band. Only meaningful while
-            // streaming; (0,0,…) still flows (it arms the reprojector's decay when scroll stops). A
-            // stray/late hint after teardown is inert.
+            // Host→client scroll-reprojection hint + moving-content band. Streaming only. (0,0,…)
+            // still flows — it arms the reprojector's decay when scroll stops.
             guard state == .streaming else { return [] }
             return [.applyScrollOffset(dx, dy, bandTop, bandBottom)]
         case let .contentMask(rects):
-            // Host→client transparency mask after a DIALOG-EXPAND region change. Only meaningful
-            // while streaming; an empty list clears the mask. A stray/late mask after teardown is
-            // inert.
+            // Host→client transparency mask after a DIALOG-EXPAND region change. Streaming only;
+            // an empty list clears the mask.
             guard state == .streaming else { return [] }
             return [.applyContentMask(rects)]
         case let .displayMax(w, h):
-            // Host→client max resizable point size (the window's display bounds). Only meaningful while
-            // streaming; a stray/late report after teardown is inert. Zero/degenerate dimensions are
-            // dropped (the popover then stays uncapped) rather than pinning the field max to 0.
+            // Host→client max resizable point size (the window's display bounds). Streaming only.
+            // Zero/degenerate dimensions are dropped (popover stays uncapped) rather than pinning
+            // the field max to 0.
             guard state == .streaming, w >= 1, h >= 1 else { return [] }
             return [.applyDisplayMax(VideoSize(width: Double(w), height: Double(h)))]
         case .hello,
@@ -172,20 +167,20 @@ public struct VideoClientStateMachine: Sendable {
              .focusWindow,
              .listSystemDialogs,
              .systemDialogList:
-            // The client never receives a hello / resizeRequest / keepalive / listWindows / focusWindow /
-            // listSystemDialogs (all client→host). `windowList` and `systemDialogList` ARE host→client but
-            // are handled out-of-band by the discovery / system-dialog-monitor queries (transient lanes),
-            // NOT by a streaming session's FSM — defensive no-op here.
+            // hello / resizeRequest / keepalive / listWindows / focusWindow / listSystemDialogs are
+            // all client→host. `windowList` + `systemDialogList` ARE host→client but handled
+            // out-of-band by the discovery / system-dialog-monitor queries (transient lanes), NOT by
+            // a streaming session's FSM — defensive no-op here.
             return []
         }
     }
 
-    /// Re-emits the `hello` while STILL `.connecting` (the hello-retry path — the reconnect-wedge
-    /// fix's second half). Over plain UDP the one-shot hello or its ack can be lost, and after a
-    /// pipeline rebuild the restarted host may not be listening yet — either way the session used
-    /// to wedge in `.connecting` forever. The actor drives this on the ``HelloRetryPolicy`` cadence;
-    /// any resolved state (streaming / rejected / stopped) returns `[]`, which also ends the retry
-    /// loop. Idempotent on the host (a duplicate hello re-acks without restarting capture).
+    /// Re-emits the `hello` while STILL `.connecting` (hello-retry path — the reconnect-wedge fix's
+    /// second half). Over plain UDP the one-shot hello or its ack can be lost, and after a pipeline
+    /// rebuild the restarted host may not be listening yet — either way the session used to wedge in
+    /// `.connecting` forever. Driven on the ``HelloRetryPolicy`` cadence; any resolved state
+    /// (streaming / rejected / stopped) returns `[]`, ending the retry loop. Idempotent on the host
+    /// (a duplicate hello re-acks without restarting capture).
     public mutating func resendHello() -> [Effect] {
         guard state == .connecting else { return [] }
         return [.sendControl(.hello(
@@ -209,12 +204,11 @@ public struct VideoClientStateMachine: Sendable {
     public var mediaFlowing: Bool { state == .streaming }
 }
 
-/// PURE hello-retry cadence (the reconnect-wedge fix): how long to wait before re-sending the
-/// `hello` while the session is still `.connecting`. Exponential from `initialDelay`, capped at
-/// `maxDelay` — fast enough that a lost ack costs half a second, slow enough that a pane pointed
-/// at a downed host settles to one ~20-byte datagram per `maxDelay` (the same order as the window
-/// dock's discovery poll). No clock, no timer — the actor sleeps the returned delay — so the
-/// cadence is headlessly unit-testable.
+/// PURE hello-retry cadence (reconnect-wedge fix): how long to wait before re-sending the `hello`
+/// while still `.connecting`. Exponential from `initialDelay`, capped at `maxDelay` — fast enough
+/// that a lost ack costs half a second, slow enough that a pane pointed at a downed host settles to
+/// one ~20-byte datagram per `maxDelay` (same order as the window dock's discovery poll). No clock,
+/// no timer (the actor sleeps the returned delay) — headlessly unit-testable.
 public enum HelloRetryPolicy {
     /// First retry fires this long after the initial hello (seconds).
     public static let initialDelay: TimeInterval = 0.5
@@ -226,23 +220,23 @@ public enum HelloRetryPolicy {
     /// clamped to 0 (defensive — the caller counts up from 0).
     public static func delay(attempt: Int) -> TimeInterval {
         let n = max(0, attempt)
-        // 2^4 already exceeds the cap (0.5 × 16 = 8 > 5) — short-circuit so a long-running retry
-        // loop can never overflow the shift.
+        // 2^4 already exceeds the cap (0.5 × 16 = 8 > 5) — short-circuit so a long retry loop
+        // can never overflow the shift.
         guard n < 4 else { return maxDelay }
         return Double.minimum(maxDelay, initialDelay * Double(1 << n))
     }
 }
 
-/// The STICKY show/hide reducer behind the remote-GUI pane's "Reconnecting…" scrim (the stall-scrim
-/// wiring, 2026-07-03 — the presentational residual of the reconnect-wedge fix). The pipeline's stall
-/// monitor folds each ``StreamStallPolicy/Verdict`` through this and notifies the view ONLY on a flip.
+/// The STICKY show/hide reducer behind the remote-GUI pane's "Reconnecting…" scrim (stall-scrim
+/// wiring, 2026-07-03 — the presentational residual of the reconnect-wedge fix). The stall monitor
+/// folds each ``StreamStallPolicy/Verdict`` through this and notifies the view ONLY on a flip.
 ///
-/// Why sticky: once the scrim shows, the recovery path itself makes the verdict leave `.stalled` —
-/// a host-ended rebuild drops the FSM to `.connecting` (verdict `.notConnected`), and the fresh
-/// session starts with no liveness signal at all (verdict `.unknown`). Clearing on either would flash
-/// the pane "healthy" while it still shows a stale frozen frame mid-recovery, so the scrim clears
-/// ONLY on a real `.live` verdict (traffic actually flowing again). Pure value type — headlessly
-/// unit-testable, no timer/clock (the monitor owns the cadence).
+/// Why sticky: once shown, the recovery path itself makes the verdict leave `.stalled` — a
+/// host-ended rebuild drops the FSM to `.connecting` (verdict `.notConnected`), and the fresh
+/// session starts with no liveness signal (verdict `.unknown`). Clearing on either would flash the
+/// pane "healthy" while it still shows a stale frozen frame mid-recovery, so the scrim clears ONLY
+/// on a real `.live` verdict (traffic actually flowing again). Pure value type — no timer/clock (the
+/// monitor owns the cadence), headlessly unit-testable.
 public struct StallScrimLatch: Sendable, Equatable {
     /// Whether the scrim is currently shown.
     public private(set) var visible = false
@@ -251,10 +245,10 @@ public struct StallScrimLatch: Sendable, Equatable {
 
     /// A HOST-ENDED rebuild started (a received `bye` — daemon shutdown / restarted-daemon answer):
     /// show the scrim NOW. The bye path never produces a `.stalled` verdict (the FSM leaves
-    /// `.streaming` before the monitor can see a gap, so verdicts run `.notConnected`) — without this,
-    /// a gracefully-shut-down host that never comes back would leave the pane frozen in hello-retry
-    /// limbo with no scrim (the HW-found bye-path gap). Returns `true` when this SHOWED the scrim
-    /// (caller notifies the view), `nil` when it was already up (duplicate byes are quiet).
+    /// `.streaming` before the monitor can see a gap, so verdicts run `.notConnected`) — without
+    /// this, a gracefully-shut-down host that never returns would leave the pane frozen in
+    /// hello-retry limbo with no scrim (the HW-found bye-path gap). Returns `true` when this SHOWED
+    /// the scrim (caller notifies the view), `nil` when already up (duplicate byes are quiet).
     public mutating func noteReconnecting() -> Bool? {
         guard !visible else { return nil }
         visible = true
@@ -281,15 +275,15 @@ public struct StallScrimLatch: Sendable, Equatable {
     }
 }
 
-/// Pure edge-pan reachability + clamp math for the ACTUAL-SIZE viewport (2026-07-02). The macOS pane shows
-/// the remote window inside a fixed viewport; the DISPLAYED window size is the native POINT size × the client
-/// zoom (a compositor scale of the sublayer), and edge-pan is the only in-pane way to reach content beyond the
-/// pane. Both the navigability GATE and the per-axis pan CLAMP must key off the DISPLAYED (zoomed) size, or a
-/// zoomed-in window's overflow is unreachable (gate false) / only half-reachable (clamp stops at the un-zoomed
-/// size). Pure Double math — headlessly unit-testable, no `CALayer`.
+/// Pure edge-pan reachability + clamp math for the ACTUAL-SIZE viewport (2026-07-02). The pane shows
+/// the remote window inside a fixed viewport; the DISPLAYED window size is the native POINT size ×
+/// the client zoom (a compositor scale of the sublayer), and edge-pan is the only in-pane way to
+/// reach content beyond the pane. Both the navigability GATE and the per-axis pan CLAMP must key off
+/// the DISPLAYED (zoomed) size, or a zoomed-in window's overflow is unreachable (gate false) / only
+/// half-reachable (clamp stops at the un-zoomed size). Pure Double math — no `CALayer`.
 public enum ViewportPan {
-    /// Whether there is displayed window content beyond the pane to pan to on some axis (±1 pt slack). Keys
-    /// off `window × zoom` (the DISPLAYED size), matching the layer frame the compositor lays out.
+    /// Whether displayed window content extends beyond the pane on some axis (±1 pt slack). Keys off
+    /// `window × zoom` (the DISPLAYED size), matching the layer frame the compositor lays out.
     public static func isNavigable(window: VideoSize, pane: VideoSize, zoom: Double) -> Bool {
         window.width * zoom > pane.width + 1 || window.height * zoom > pane.height + 1
     }
@@ -305,12 +299,13 @@ public enum ViewportPan {
     }
 }
 
-/// Tracks which modifier KEYS the view has forwarded to the host as "down" but whose release `flagsChanged`
-/// it may never see because focus moved away (⌘-Tab to another app, pane blur, first-responder resign). Since
-/// the host injects modifiers through a shared `CGEventSource(.hidSystemState)` that LATCHES flag state, a
-/// swallowed key-up leaves the modifier stuck — and later scroll / mouse-move events (which carry no explicit
-/// flags) inherit it, so a plain two-finger scroll becomes ⌘-scroll (the remote page zooms). This lets the
-/// view synthesize the missing key-ups on focus loss. Pure value type — headlessly unit-testable.
+/// Tracks which modifier KEYS the view forwarded to the host as "down" but whose release
+/// `flagsChanged` it may never see because focus moved away (⌘-Tab, pane blur, first-responder
+/// resign). The host injects modifiers through a shared `CGEventSource(.hidSystemState)` that
+/// LATCHES flag state, so a swallowed key-up leaves the modifier stuck — and later scroll /
+/// mouse-move events (which carry no explicit flags) inherit it, turning a plain two-finger scroll
+/// into ⌘-scroll (the remote page zooms). This lets the view synthesize the missing key-ups on
+/// focus loss. Pure value type — headlessly unit-testable.
 public struct ModifierLatchTracker: Sendable, Equatable {
     private var downKeyCodes: Set<UInt16> = []
 
@@ -325,14 +320,14 @@ public struct ModifierLatchTracker: Sendable, Equatable {
     /// Record one modifier `flagsChanged` edge (idempotent — a repeated same-edge is absorbed).
     /// Caps Lock (keyCode 57) is NEVER latched (C5 BUG A): it is a TOGGLE, not a held key, so the
     /// blur-time synthesized "release" (a bare key-up CGEvent on virtualKey 57) would FLIP the host's
-    /// Caps state — focusing/blurring a GUI pane with local Caps on toggled remote Caps every time.
-    /// Its genuine `flagsChanged` edges still forward to the host 1:1; they just bypass the latch.
+    /// Caps state — focus/blur of a GUI pane with local Caps on toggled remote Caps every time. Its
+    /// genuine `flagsChanged` edges still forward to the host 1:1; they just bypass the latch.
     public mutating func note(keyCode: UInt16, down: Bool) {
         guard keyCode != InputModifierKeys.capsLockKeyCode else { return }
         if down { downKeyCodes.insert(keyCode) } else { downKeyCodes.remove(keyCode) }
     }
 
-    /// Returns every latched keyCode (ascending, for a deterministic emit order) and CLEARS the tracker —
+    /// Returns every latched keyCode (ascending, deterministic emit order) and CLEARS the tracker —
     /// the caller synthesizes a host key-up for each so no modifier stays latched after focus loss.
     public mutating func drainForRelease() -> [UInt16] {
         let all = downKeyCodes.sorted()
@@ -343,21 +338,19 @@ public struct ModifierLatchTracker: Sendable, Equatable {
 
 /// Display-scale + cursor-placement math for the client (doc 17 §3.3).
 ///
-/// The decoded frame is `decodedSize` pixels (the host's capture size). The Metal
-/// layer occupies `layerSize` points on screen. `videoScale` is **client-view-points
-/// per host-window-point** — the factor the ``ClientCursorCompositor`` multiplies a
-/// host-space cursor position by so the overlaid pointer lands on the same pixel the
-/// video shows. Pure so the layout math is testable without a layer.
+/// The decoded frame is `decodedSize` pixels (the host's capture size); the Metal layer occupies
+/// `layerSize` points on screen. `videoScale` is **client-view-points per host-window-point** — the
+/// factor the ``ClientCursorCompositor`` multiplies a host-space cursor position by so the overlaid
+/// pointer lands on the same pixel the video shows. Pure so the layout math is testable without a layer.
 public enum VideoScaleMath {
-    /// The single uniform scale relating the host window (capture) to the on-screen
-    /// layer. The renderer draws the decoded frame to fill the whole layer (the quad
-    /// is full-screen), so the effective scale on each axis is `layer / decoded`.
+    /// The single uniform scale relating the host window (capture) to the on-screen layer. The
+    /// renderer draws the decoded frame to fill the whole layer (full-screen quad), so the effective
+    /// scale on each axis is `layer / decoded`.
     ///
-    /// The cursor is reported in host-WINDOW-space POINTS and the capture size is in
-    /// the SAME points (the host clamps the viewport to the window's point size), so a
-    /// single ratio maps host-window-points → client-view-points. We use the WIDTH
-    /// ratio (capture preserves the window aspect, so width and height ratios match;
-    /// width is the stable axis to key on). Returns `1.0` for a degenerate
+    /// The cursor is reported in host-WINDOW-space POINTS and the capture size is in the SAME points
+    /// (the host clamps the viewport to the window's point size), so a single ratio maps
+    /// host-window-points → client-view-points. We key on the WIDTH ratio (capture preserves aspect,
+    /// so width and height ratios match; width is the stable axis). Returns `1.0` for a degenerate
     /// (zero-width) decoded frame so the cursor is still placed sensibly.
     public static func videoScale(layerSize: VideoSize, decodedSize: VideoSize) -> Double {
         guard decodedSize.width > 0 else { return 1.0 }
@@ -369,8 +362,8 @@ public enum VideoScaleMath {
 /// `VTDecompressionSessionDecodeFrame` as a zero-length sample buffer: the decode fails and the
 /// session's hard-failure recovery tears the live `VTDecompressionSession` down + forces a full IDR
 /// round-trip (a visible stall) — needless churn for what is really a corrupt/empty fragment (a
-/// hostile UDP payloadLength that decoded to 0, or a host bug emitting an empty frame). Classify it
-/// up front instead. Pure (Int + Bool only) so it is unit-testable with ZERO VideoToolbox dependency.
+/// hostile UDP payloadLength that decoded to 0, or a host bug emitting an empty frame). Classify up
+/// front instead. Pure (Int + Bool only) — unit-testable with ZERO VideoToolbox dependency.
 public enum FrameDecodability: Equatable, Sendable {
     /// Non-empty — submit to the decoder as usual.
     case decodable
@@ -389,12 +382,12 @@ public enum FrameDecodability: Equatable, Sendable {
     }
 }
 
-/// Pure frame-gated resize-adoption decision (the client mirror of the host's
-/// ``SizeNegotiation``): after the host acks an in-session resize, the client must adopt the new
-/// size as its aspect-fit denominator (``decodedSize``) ONLY when a decoded `CVPixelBuffer` at
-/// the new size actually arrives — an in-flight OLD-size frame queued behind the ack must NOT
-/// trip adoption early (it would briefly mis-scale the cursor / `videoScale`). Two gates, both
-/// required; pure so the gating is unit-testable without a `VTDecompressionSession`.
+/// Pure frame-gated resize-adoption decision (client mirror of the host's ``SizeNegotiation``):
+/// after the host acks an in-session resize, the client adopts the new size as its aspect-fit
+/// denominator (``decodedSize``) ONLY when a decoded `CVPixelBuffer` at the new size actually
+/// arrives — an in-flight OLD-size frame queued behind the ack must NOT trip adoption early (it
+/// would briefly mis-scale the cursor / `videoScale`). Two gates, both required; pure so the gating
+/// is unit-testable without a `VTDecompressionSession`.
 public enum ResizeAdoption {
     /// Whether the just-decoded buffer is the genuinely-NEW size (adopt) rather than an
     /// in-flight old-size frame (reject).
@@ -403,17 +396,17 @@ public enum ResizeAdoption {
     /// - `decoded`: the just-decoded buffer dims (PIXELS = points × captureScale).
     /// - `previousDecoded`: the prior decoded buffer dims (`nil` ⇒ first frame).
     ///
-    /// Gate 1 — ASPECT: the decoded aspect matches the acked aspect. Rejects an old frame when
-    /// the resize CHANGED the aspect (the common freeform-drag case).
-    /// Gate 2 — MAGNITUDE: the decoded pixel size actually CHANGED from the previous decoded
-    /// frame. Rejects an old frame when the resize PRESERVED the aspect (a proportional resize),
-    /// where the aspect gate alone would adopt on the first identical-aspect old frame. The
-    /// client can't exact-match pixels↔points (no captureScale client-side), but the first
-    /// genuinely-new-size frame is the first whose dims differ from the steady old size.
+    /// Gate 1 — ASPECT: decoded aspect matches the acked aspect. Rejects an old frame when the
+    /// resize CHANGED the aspect (the common freeform-drag case).
+    /// Gate 2 — MAGNITUDE: the decoded pixel size actually CHANGED from the previous decoded frame.
+    /// Rejects an old frame when the resize PRESERVED the aspect (proportional resize), where the
+    /// aspect gate alone would adopt on the first identical-aspect old frame. The client can't
+    /// exact-match pixels↔points (no captureScale client-side), but the first genuinely-new-size
+    /// frame is the first whose dims differ from the steady old size.
     ///
-    /// ⚠️ Residual: a rapid double-resize WITHIN the in-flight window can adopt the latest
-    /// `pending` on an intermediate-size frame (both gates pass: aspect matches + dims changed,
-    /// but to the intermediate size, not the final one). Rare; self-heals on the next IDR.
+    /// ⚠️ Residual: a rapid double-resize WITHIN the in-flight window can adopt the latest `pending`
+    /// on an intermediate-size frame (both gates pass, but to the intermediate size, not the final).
+    /// Rare; self-heals on the next IDR.
     public static func shouldAdopt(pending: VideoSize, decoded: VideoSize, previousDecoded: VideoSize?) -> Bool {
         guard pending.width > 0, pending.height > 0, decoded.width > 0, decoded.height > 0 else { return false }
         let aspectMatches = abs(pending.width / pending.height - decoded.width / decoded.height) < 0.02
@@ -423,31 +416,28 @@ public enum ResizeAdoption {
     }
 }
 
-/// Pure client-side debounce for the in-session resize feature (the platform-free mirror
-/// of ``LTREscalationTracker``'s pass-`now`-in discipline): the host view fires a layout
-/// callback on EVERY frame of a live window-drag, but the host should re-size capture only
-/// once per settled size — a flood of `resizeRequest`s mid-drag would thrash the
-/// AX-resize + SCStream reconfigure and pump epochs needlessly. This coalesces a burst to
-/// the size the surface SETTLES on: while the layer is still changing it `.hold`s; once it
-/// has been QUIET for `settleInterval` (and differs from the last requested size by at
-/// least `minDelta` on some axis) it emits `.request(settled)` exactly once. No timer / no
-/// Network — the caller passes the layer size + elapsed-since-last-change in — so the
-/// coalescing is unit-testable in isolation. The epoch counter is minted here so each
-/// emitted request carries a monotonic, host-droppable epoch.
+/// Pure client-side debounce for in-session resize (platform-free mirror of
+/// ``LTREscalationTracker``'s pass-`now`-in discipline): the view fires a layout callback on EVERY
+/// frame of a live window-drag, but capture should re-size only once per settled size — a flood of
+/// `resizeRequest`s mid-drag would thrash the AX-resize + SCStream reconfigure and pump epochs
+/// needlessly. Coalesces a burst to the size the surface SETTLES on: while the layer is still
+/// changing it `.hold`s; once QUIET for `settleInterval` (and differing from the last requested size
+/// by ≥ `minDelta` on some axis) it emits `.request(settled)` once. No timer / no Network (the
+/// caller passes layer size + elapsed-since-last-change) — unit-testable in isolation. The epoch
+/// counter is minted here so each emitted request carries a monotonic, host-droppable epoch.
 public struct ResizeDebounce: Sendable, Equatable {
-    /// The size of the last request the client actually EMITTED (`nil` ⇒ none yet — the
-    /// session is still at its hello-negotiated capture size). A new settled size is
-    /// compared against this to drop sub-`minDelta` jitter.
+    /// Size of the last request actually EMITTED (`nil` ⇒ none yet — still at the hello-negotiated
+    /// capture size). A new settled size is compared against this to drop sub-`minDelta` jitter.
     public private(set) var lastRequested: VideoSize?
-    /// The monotonic epoch of the last emitted request (0 ⇒ none emitted yet). The next
-    /// emitted request carries `lastEpoch + 1`.
+    /// Monotonic epoch of the last emitted request (0 ⇒ none emitted yet). The next emitted request
+    /// carries `lastEpoch + 1`.
     public private(set) var lastEpoch: UInt32 = 0
 
-    /// Minimum per-axis change (points) below which a new settled size is treated as
-    /// jitter and dropped (no request) — prevents a 1px layout wobble re-sizing capture.
+    /// Minimum per-axis change (points) below which a new settled size is jitter, dropped (no
+    /// request) — prevents a 1px layout wobble re-sizing capture.
     public let minDelta: Double
-    /// How long the layer size must be UNCHANGED before the burst is considered settled
-    /// and a request fires (seconds, elapsed-since-last-change passed in by the caller).
+    /// How long the layer size must be UNCHANGED before the burst is settled and a request fires
+    /// (seconds, elapsed-since-last-change passed in by the caller).
     public let settleInterval: TimeInterval
 
     public init(minDelta: Double = 8, settleInterval: TimeInterval = 0.2) {
@@ -464,22 +454,22 @@ public struct ResizeDebounce: Sendable, Equatable {
         case hold
     }
 
-    /// Decides whether `layerSize` should trigger a resize request, given how long the
-    /// layer has been at this size (`elapsedSinceLastChange`, passed in by the caller —
-    /// the actor measures it, exactly like ``LTREscalationTracker`` takes `now`). Pure
-    /// query: it does NOT mutate — call ``noteRequested(_:)`` after acting on `.request`.
+    /// Decides whether `layerSize` should trigger a resize request, given how long the layer has
+    /// been at this size (`elapsedSinceLastChange`, passed in by the caller — the actor measures it,
+    /// like ``LTREscalationTracker`` takes `now`). Pure query: does NOT mutate — call
+    /// ``noteRequested(_:)`` after acting on `.request`.
     public func decide(layerSize: VideoSize, elapsedSinceLastChange: TimeInterval) -> Decision {
-        // Still settling: the layer changed too recently to be the final size — coalesce.
+        // Still settling: changed too recently to be the final size — coalesce.
         guard elapsedSinceLastChange >= settleInterval else { return .hold }
-        // Quiet long enough — is this a meaningful change vs the last request we emitted?
+        // Quiet long enough — meaningful change vs the last emitted request?
         guard changedEnough(from: lastRequested, to: layerSize) else { return .hold }
         return .request(layerSize)
     }
 
-    /// Records that a request for `size` was emitted: stores it as the new baseline and
-    /// advances the epoch. Returns the epoch the emitted request must carry. Call this
-    /// ONLY after acting on a `.request(size)` decision (mirrors
-    /// ``LTREscalationTracker/noteRequestSent(now:)`` being a separate mutator).
+    /// Records that a request for `size` was emitted: stores it as the new baseline and advances the
+    /// epoch. Returns the epoch the emitted request must carry. Call ONLY after acting on a
+    /// `.request(size)` decision (mirrors ``LTREscalationTracker/noteRequestSent(now:)`` being a
+    /// separate mutator).
     @discardableResult
     public mutating func noteRequested(_ size: VideoSize) -> UInt32 {
         lastRequested = size
@@ -487,18 +477,17 @@ public struct ResizeDebounce: Sendable, Equatable {
         return lastEpoch
     }
 
-    /// Rebases the jitter baseline on a size the CLIENT adopted by itself (the 1:1 pane
-    /// snap — the pane resized to the stream, nothing was sent to the host), WITHOUT
-    /// minting an epoch. The snap-induced layout pass then decides `.hold` (zero delta vs
-    /// this baseline), so a client-side snap never echoes a `resizeRequest` back to the
-    /// host — which would AX-resize the host window and re-trigger the snap (a feedback
-    /// loop). A LATER user drag still differs ≥ `minDelta` and requests normally.
+    /// Rebases the jitter baseline on a size the CLIENT adopted by itself (the 1:1 pane snap — pane
+    /// resized to the stream, nothing sent to the host), WITHOUT minting an epoch. The snap-induced
+    /// layout pass then decides `.hold` (zero delta vs this baseline), so a client-side snap never
+    /// echoes a `resizeRequest` back — which would AX-resize the host window and re-trigger the snap
+    /// (a feedback loop). A LATER user drag still differs ≥ `minDelta` and requests normally.
     public mutating func noteAdopted(_ size: VideoSize) {
         lastRequested = size
     }
 
-    /// Whether `to` differs from `from` by at least `minDelta` on some axis. A `nil`
-    /// baseline (no request yet) always counts as changed (the first settle always fires).
+    /// Whether `to` differs from `from` by ≥ `minDelta` on some axis. A `nil` baseline (no request
+    /// yet) always counts as changed (the first settle always fires).
     private func changedEnough(from: VideoSize?, to: VideoSize) -> Bool {
         guard let from else { return true }
         return abs(to.width - from.width) >= minDelta || abs(to.height - from.height) >= minDelta
@@ -506,52 +495,50 @@ public struct ResizeDebounce: Sendable, Equatable {
 }
 
 /// 1:1 PANE SNAP (2026-06-11 "match the virtual display"; corrected 2026-06-16). A remote-GUI
-/// canvas pane adopts the STREAM's natural size so its video renders without a fractional
-/// resample. The snap target is the HOST WINDOW's own POINT size — `decoded pixels / the HOST
-/// captureScale` — which the resizeRequest/resizeAck round-trip carries in POINTS, so the resize
-/// feedback loop has gain 1 and a user drag converges to the size dragged to.
+/// canvas pane adopts the STREAM's natural size so its video renders without a fractional resample.
+/// The snap target is the HOST WINDOW's own POINT size — `decoded pixels / the HOST captureScale` —
+/// which the resizeRequest/resizeAck round-trip carries in POINTS, so the resize feedback loop has
+/// gain 1 and a user drag converges to the size dragged to.
 ///
-/// ⚠️ The bug it fixes (2026-06-16): the target was computed as `decoded pixels / the CLIENT
-/// contentsScale`. That is only correct when the host captures at the client's scale (the 2× VD
-/// on a 2× Retina client). With NO virtual display the host captures at 1× while the client is a
-/// 2× Retina, so `pixels / 2` HALVED the pane every resize cycle (loop gain 0.5) — "khi resize
-/// thì pane cứ bị co nhỏ". The host captureScale is not on the wire, but it is CONSTANT for the
-/// session and inferable from the first decoded frame: `decoded pixels / the acked window points`
-/// (see ``inferredCaptureScale``). Pure math — unit-testable headlessly.
+/// ⚠️ The bug it fixes (2026-06-16): the target was `decoded pixels / the CLIENT contentsScale`,
+/// only correct when the host captures at the client's scale (2× VD on a 2× Retina client). With NO
+/// virtual display the host captures at 1× while the client is 2× Retina, so `pixels / 2` HALVED
+/// the pane every resize cycle (loop gain 0.5) — "khi resize thì pane cứ bị co nhỏ". The host
+/// captureScale is not on the wire but is CONSTANT for the session and inferable from the first
+/// decoded frame: `decoded pixels / the acked window points` (see ``inferredCaptureScale``). Pure
+/// math — unit-testable headlessly.
 public enum StreamSizeSnap {
-    /// The video-layer point size at which the decoded stream renders 1:1: `pixels /
-    /// captureScale`, where `captureScale` is the HOST's capture scale (NOT the client
-    /// contentsScale — see the type doc). Equals the host window's point size, so it round-trips
-    /// cleanly through the point-valued resizeRequest/resizeAck. A non-positive scale falls back
-    /// to 1 (defensive).
+    /// The video-layer point size at which the decoded stream renders 1:1: `pixels / captureScale`,
+    /// where `captureScale` is the HOST's capture scale (NOT the client contentsScale — see the type
+    /// doc). Equals the host window's point size, so it round-trips cleanly through the point-valued
+    /// resizeRequest/resizeAck. A non-positive scale falls back to 1 (defensive).
     public static func targetPoints(pixelSize: VideoSize, captureScale: Double) -> VideoSize {
         let s = captureScale > 0 ? captureScale : 1
         return VideoSize(width: pixelSize.width / s, height: pixelSize.height / s)
     }
 
     /// The HOST capture scale inferred from the first decoded frame: decoded PIXELS per negotiated
-    /// window POINT (the helloAck `captureWidth/Height` are points). CONSTANT for the session — the
-    /// host captures at a fixed scale and only the window points change on resize — so the client
-    /// infers it once and reuses it for every later in-session resize. A non-positive `windowPoints`
-    /// width falls back to 1 (defensive: the helloAck always carries a real size before any frame).
+    /// window POINT (the helloAck `captureWidth/Height` are points). CONSTANT for the session (host
+    /// captures at a fixed scale; only window points change on resize) — so the client infers it once
+    /// and reuses it for every later in-session resize. A non-positive `windowPoints` width falls
+    /// back to 1 (defensive: the helloAck always carries a real size before any frame).
     public static func inferredCaptureScale(decodedPixels: VideoSize, windowPoints: VideoSize) -> Double {
         guard windowPoints.width > 0, decodedPixels.width > 0 else { return 1 }
         return decodedPixels.width / windowPoints.width
     }
 
-    /// Whether the pane should actually snap: the 1:1 target differs from the current layer
-    /// size by at least `epsilon` points on some axis. Sub-epsilon deltas are layout noise —
-    /// snapping on them would churn the canvas frame + persistence for an invisible change.
+    /// Whether the pane should snap: the 1:1 target differs from the current layer size by ≥
+    /// `epsilon` points on some axis. Sub-epsilon deltas are layout noise — snapping on them would
+    /// churn the canvas frame + persistence for an invisible change.
     public static func shouldSnap(target: VideoSize, current: VideoSize, epsilon: Double = 0.5) -> Bool {
         abs(target.width - current.width) >= epsilon || abs(target.height - current.height) >= epsilon
     }
 }
 
-/// Routes a datagram received on the MEDIA socket (control / video / geometry) by the
-/// channel it arrived on, decoding it into a typed value for the actor to act on.
-/// Pure decision logic — no decoder / reassembler instance — so routing is testable
-/// without a `VTDecompressionSession`. (The cursor socket is single-purpose and
-/// handled separately via ``CursorChannelMessage``.)
+/// Routes a MEDIA-socket datagram (control / video / geometry) by its channel, decoding it into a
+/// typed value for the actor. Pure decision logic — no decoder / reassembler instance — so routing
+/// is testable without a `VTDecompressionSession`. (The cursor socket is single-purpose, handled
+/// separately via ``CursorChannelMessage``.)
 public struct ReceivedDatagramRouter: Sendable {
     public init() {}
 
@@ -576,9 +563,9 @@ public struct ReceivedDatagramRouter: Sendable {
     /// - Parameters:
     ///   - channel: the channel the transport demultiplexed from the 1-byte tag.
     ///   - data: the channel payload (tag already stripped by the transport).
-    ///   - mediaFlowing: whether the session is `.streaming`. Control is ALWAYS
-    ///     processed (the `helloAck` that starts streaming, and `bye`, arrive on it);
-    ///     video/geometry are ignored until streaming.
+    ///   - mediaFlowing: whether the session is `.streaming`. Control is ALWAYS processed (the
+    ///     `helloAck` that starts streaming, and `bye`, arrive on it); video/geometry are ignored
+    ///     until streaming.
     public func route(channel: VideoChannel, data: Data, mediaFlowing: Bool) -> Routed {
         switch channel {
         case .control:
@@ -604,14 +591,13 @@ public struct ReceivedDatagramRouter: Sendable {
     }
 }
 
-/// Builds client→host ``InputEvent`` datagrams from view-space pointer/key input,
-/// normalising pointer positions into the 0..1 window space the host expects (doc 05
-/// §2 — the client NEVER sends raw pixels; normalised coords remove pixel-vs-point
-/// ambiguity). Pure so the normalisation is testable.
+/// Builds client→host ``InputEvent`` datagrams from view-space pointer/key input, normalising
+/// pointer positions into the 0..1 window space the host expects (doc 05 §2 — the client NEVER sends
+/// raw pixels; normalised coords remove pixel-vs-point ambiguity). Pure so the normalisation is testable.
 ///
-/// `tag` is the self-inject filter value the host stamps on `eventSourceUserData` so
-/// its own `CursorSampler`/`WindowGeometryWatcher` can drop the events this client
-/// injected (doc 18 §A). The client hands out a monotonic tag per event.
+/// `tag` is the self-inject filter value the host stamps on `eventSourceUserData` so its own
+/// `CursorSampler`/`WindowGeometryWatcher` can drop the events this client injected (doc 18 §A). The
+/// client hands out a monotonic tag per event.
 public struct InputEventEncoder: Sendable {
     private var nextTag: UInt32
 
@@ -619,21 +605,20 @@ public struct InputEventEncoder: Sendable {
         nextTag = initialTag
     }
 
-    /// Normalises a point in the layer's view space (origin top-left, +Y down, the
-    /// same orientation the host's window space uses) to 0..1, clamped to the window so
-    /// an out-of-bounds drag does not send coordinates the host would reject.
+    /// Normalises a point in the layer's view space (origin top-left, +Y down, same orientation as
+    /// the host's window space) to 0..1, clamped to the window so an out-of-bounds drag does not send
+    /// coordinates the host would reject.
     ///
-    /// This is the EXACT INVERSE of the render transform (doc 17 §3.7), so a click lands
-    /// on the host pixel that is under the cursor on screen:
+    /// EXACT INVERSE of the render transform (doc 17 §3.7), so a click lands on the host pixel under
+    /// the cursor on screen:
     ///   1. The renderer ASPECT-FITS the video into a centred sub-rect of the layer
-    ///      (``AspectFit/displayedVideoRect(viewSize:videoNativeSize:)``) — letterbox /
-    ///      pillarbox. We first map the view point into that displayed rect's 0..1 span.
-    ///   2. The renderer then CROPS for zoom/pan (fragment shader
-    ///      `uv = (uv-0.5)*invZoom + 0.5 + pan`). We apply the same crop forward so the
-    ///      source coordinate matches what the user sees. On macOS `zoom==1`, `pan==.zero`
-    ///      so this term is inert and the result is just the letterbox-corrected `u/v`.
-    /// The pan is clamped IDENTICALLY to the renderer (`panLimit = 0.5·(1-invZoom)`) so
-    /// the inverse can never diverge from the forward transform.
+    ///      (``AspectFit/displayedVideoRect(viewSize:videoNativeSize:)``) — letterbox / pillarbox.
+    ///      Map the view point into that displayed rect's 0..1 span.
+    ///   2. The renderer then CROPS for zoom/pan (fragment shader `uv = (uv-0.5)*invZoom + 0.5 +
+    ///      pan`). Apply the same crop forward so the source coordinate matches what the user sees.
+    ///      On macOS `zoom==1`, `pan==.zero` so this term is inert (just letterbox-corrected `u/v`).
+    /// The pan is clamped IDENTICALLY to the renderer (`panLimit = 0.5·(1-invZoom)`) so the inverse
+    /// can never diverge from the forward transform.
     public static func normalize(
         viewPoint: VideoPoint,
         layerSize: VideoSize,
@@ -643,12 +628,12 @@ public struct InputEventEncoder: Sendable {
         mode: VideoContentMode = .fit,
         viewportCrop: VideoRect? = nil,
     ) -> VideoPoint {
-        // ACTUAL-SIZE VIEWPORT (per-axis 1:1 crop, 2026-06-30): when the macOS pane shows the remote window
-        // at its actual point size, the renderer maps a texture sub-rect `viewportCrop` (UV origin + size,
-        // per-axis) onto the WHOLE drawable (fit = (1,1), no letterbox / scalar-zoom). The inverse is a
-        // plain per-axis affine — view fraction → UV — that matches the renderer's `crop.xy + uv·crop.zw`
-        // exactly, so a click lands on the right host pixel even with independent H/V scales. Additive +
-        // default-nil ⇒ the fit/zoom/pan path below (golden-pinned, byte-identical) is untouched.
+        // ACTUAL-SIZE VIEWPORT (per-axis 1:1 crop, 2026-06-30): with the pane at the window's actual
+        // point size, the renderer maps a texture sub-rect `viewportCrop` (UV origin + size, per-axis)
+        // onto the WHOLE drawable (fit = (1,1), no letterbox / scalar-zoom). The inverse is a plain
+        // per-axis affine — view fraction → UV — matching the renderer's `crop.xy + uv·crop.zw`
+        // exactly, so a click lands on the right host pixel even with independent H/V scales. Additive
+        // + default-nil ⇒ the fit/zoom/pan path below (golden-pinned, byte-identical) is untouched.
         if let crop = viewportCrop {
             let u = layerSize.width > 0 ? viewPoint.x / layerSize.width : 0
             let v = layerSize.height > 0 ? viewPoint.y / layerSize.height : 0
@@ -839,27 +824,26 @@ public struct InputEventEncoder: Sendable {
     }
 }
 
-/// Pure decider for the cursor-shape SELF-HEAL (FIX B). A cursor shape bitmap is shipped over
-/// the cursor socket ONCE per `shapeID`; a lost (or over-MTU, IP-fragment-lost) shape would
-/// otherwise leave the overlay permanently wrong/invisible for the whole session — the host
-/// strips the real cursor, so this overlay is the ONLY cursor the user sees.
+/// Pure decider for the cursor-shape SELF-HEAL (FIX B). A cursor shape bitmap is shipped over the
+/// cursor socket ONCE per `shapeID`; a lost (or over-MTU, IP-fragment-lost) shape would otherwise
+/// leave the overlay permanently wrong/invisible for the whole session — the host strips the real
+/// cursor, so this overlay is the ONLY cursor the user sees.
 ///
 /// When a cursor POSITION update references a `shapeID` the client has NOT cached, the client
-/// re-requests that shape on the EXISTING recovery channel (mirroring `requestIDR`). This type
-/// decides WHETHER to send such a request: only for an UNKNOWN id, and at most once per
-/// `reRequestInterval` so a steady stream of position updates referencing a still-missing id
-/// (the host's re-ship may itself be lost) does not flood the recovery channel. `noteShapeArrived`
-/// marks an id cached (idempotent re-insert) so its position updates stop triggering requests.
+/// re-requests it on the EXISTING recovery channel (mirroring `requestIDR`). This type decides
+/// WHETHER to send such a request: only for an UNKNOWN id, and at most once per `reRequestInterval`
+/// so a steady stream of position updates referencing a still-missing id (the host's re-ship may
+/// itself be lost) does not flood the recovery channel. `noteShapeArrived` marks an id cached
+/// (idempotent re-insert) so its position updates stop triggering requests.
 ///
-/// Pure value type — no transport, no clock (the caller passes `now`) — so the decision is
-/// headlessly unit-testable without a socket or a `CALayer`.
+/// Pure value type — no transport, no clock (the caller passes `now`) — headlessly unit-testable
+/// without a socket or a `CALayer`.
 public struct CursorShapeRequestTracker: Sendable, Equatable {
-    /// Shape ids the client has received the bitmap for (cached) — their position updates never
-    /// re-request. A received shape is recorded here even if it arrived before any position update.
+    /// Shape ids the client has cached the bitmap for — their position updates never re-request.
+    /// Recorded even if the shape arrived before any position update.
     private var knownShapeIDs: Set<UInt16> = []
-    /// Host time (seconds) of the last re-request PER missing shapeID, so a still-missing id is
-    /// re-requested at most once per ``reRequestInterval`` instead of on every ~120 Hz position
-    /// update. Cleared for an id once its shape arrives.
+    /// Host time (seconds) of the last re-request PER missing shapeID, capping re-requests at once
+    /// per ``reRequestInterval`` instead of every ~120 Hz position update. Cleared once the shape arrives.
     private var lastRequested: [UInt16: TimeInterval] = [:]
 
     /// Minimum spacing between re-requests for the SAME missing shapeID (seconds). A few × RTT:
@@ -881,10 +865,9 @@ public struct CursorShapeRequestTracker: Sendable, Equatable {
     public func isKnown(_ shapeID: UInt16) -> Bool { knownShapeIDs.contains(shapeID) }
 
     /// A cursor POSITION update referenced `shapeID` at host time `now`. Returns `true` iff the
-    /// client should SEND a `requestCursorShape(shapeID)` now: the id is unknown AND no request
-    /// for it was sent within ``reRequestInterval``. Records the request time when it returns
-    /// `true` (so it is the query+mutator the caller acts on), so the next ~120 Hz update for the
-    /// same still-missing id does not immediately re-fire.
+    /// client should SEND a `requestCursorShape(shapeID)` now: the id is unknown AND no request for
+    /// it was sent within ``reRequestInterval``. Records the request time on `true` (query+mutator),
+    /// so the next ~120 Hz update for the same still-missing id does not immediately re-fire.
     public mutating func shouldRequest(shapeID: UInt16, now: TimeInterval) -> Bool {
         guard !knownShapeIDs.contains(shapeID) else { return false }
         if let last = lastRequested[shapeID], now - last < reRequestInterval {
@@ -897,14 +880,13 @@ public struct CursorShapeRequestTracker: Sendable, Equatable {
 
 /// Pure one-way-delay (OWD) jitter estimator for the network-feedback channel — the RFC3550
 /// inter-arrival-jitter form, computed ENTIRELY in the CLIENT's own monotonic clock from
-/// SECOND-ORDER differences of arrival intervals. Because it uses only the client's relative
-/// deltas (never the host's send timestamp), the constant clock offset cancels and even modest
-/// rate skew is negligible — it is fully clock-skew-immune. The caller passes each frame's arrival
-/// time in (client monotonic seconds), so there is no wall-clock / no I/O and the math is
-/// deterministic + headlessly unit-testable.
+/// SECOND-ORDER differences of arrival intervals. Using only the client's relative deltas (never the
+/// host's send timestamp), the constant clock offset cancels and even modest rate skew is negligible
+/// — fully clock-skew-immune. The caller passes each frame's arrival time in (client monotonic
+/// seconds), so no wall-clock / no I/O — deterministic + headlessly unit-testable.
 ///
-/// ⚠️ Do NOT feed the host `hostSendTsMillis` into this — that would re-introduce cross-machine
-/// clock skew. Jitter is a purely client-local arrival-cadence measure.
+/// ⚠️ Do NOT feed the host `hostSendTsMillis` into this — that re-introduces cross-machine clock
+/// skew. Jitter is a purely client-local arrival-cadence measure.
 public struct OWDJitterEstimator: Sendable, Equatable {
     /// Client-monotonic time (seconds) of the previous arrival (`nil` ⇒ no sample yet).
     private var lastArrival: Double?
@@ -915,9 +897,9 @@ public struct OWDJitterEstimator: Sendable, Equatable {
 
     public init() {}
 
-    /// Folds one frame arrival (client monotonic seconds). The first sample only seeds `lastArrival`
-    /// (no interval yet); the second seeds the first interval (no 2nd-difference yet); from the third
-    /// on it updates the smoothed jitter — so an initial burst never emits a spurious spike.
+    /// Folds one frame arrival (client monotonic seconds). Sample 1 seeds `lastArrival` (no interval
+    /// yet); sample 2 seeds the first interval (no 2nd-difference yet); from sample 3 on it updates
+    /// the smoothed jitter — so an initial burst never emits a spurious spike.
     public mutating func note(arrival: Double) {
         guard let prevArrival = lastArrival else { lastArrival = arrival
             return
@@ -940,22 +922,21 @@ public struct OWDJitterEstimator: Sendable, Equatable {
     }
 }
 
-/// PURE adaptive jitter-buffer depth controller (client). Recommends a presentation buffer
-/// depth (in FRAMES) from the measured inter-arrival jitter, sized so the slack ≈
-/// `jitterSafety` × jitter (NOT 1×, so a marginal link keeps headroom). The response is
-/// asymmetric BY DESIGN — anti-judder hysteresis:
-///   • GROW FAST — a higher recommendation (jitter rose) OR an underrun is applied in the
-///     same step, so the buffer re-inflates the instant a real dip occurs.
-///   • SHRINK SLOW — a lower recommendation steps the depth DOWN by at most ONE, and only
-///     after `shrinkCooldownFrames` CONSECUTIVE low-jitter frames, so a freshly grown buffer
-///     "sticks" for ~cooldown frames and a near-boundary link cannot thrash. `depthForJitter`
-///     uses `ceil`, so small jitter wobble does not flip the integer recommendation.
-/// Clock-free + deterministic (the caller folds each decoded-frame's smoothed jitter), so it
-/// is headlessly unit-testable. The recommendation is always clamped to `[minDepth, maxDepth]`.
+/// PURE adaptive jitter-buffer depth controller (client). Recommends a presentation buffer depth (in
+/// FRAMES) from the measured inter-arrival jitter, sized so the slack ≈ `jitterSafety` × jitter (NOT
+/// 1×, so a marginal link keeps headroom). Asymmetric BY DESIGN — anti-judder hysteresis:
+///   • GROW FAST — a higher recommendation (jitter rose) OR an underrun applies in the same step, so
+///     the buffer re-inflates the instant a real dip occurs.
+///   • SHRINK SLOW — a lower recommendation steps depth DOWN by at most ONE, and only after
+///     `shrinkCooldownFrames` CONSECUTIVE low-jitter frames, so a freshly grown buffer "sticks" for
+///     ~cooldown frames and a near-boundary link cannot thrash. `depthForJitter` uses `ceil`, so
+///     small jitter wobble does not flip the integer recommendation.
+/// Clock-free + deterministic (the caller folds each decoded-frame's smoothed jitter) — headlessly
+/// unit-testable. The recommendation is always clamped to `[minDepth, maxDepth]`.
 ///
-/// On a perfectly steady link `jitter == 0` ⇒ recommendation `minDepth` (the latency floor),
-/// which is the whole point: reclaim the fixed-depth buffer's ~targetDepth/fps of added
-/// latency on a clean LAN while still re-inflating on a real spike.
+/// On a perfectly steady link `jitter == 0` ⇒ recommendation `minDepth` (the latency floor) — the
+/// whole point: reclaim the fixed-depth buffer's ~targetDepth/fps of added latency on a clean LAN
+/// while still re-inflating on a real spike.
 public struct AdaptiveJitterController: Sendable, Equatable {
     /// Floor — never recommend fewer than this many frames (1 ⇒ present as soon as decoded).
     public let minDepth: Int
@@ -966,14 +947,14 @@ public struct AdaptiveJitterController: Sendable, Equatable {
     /// Buffer-sizing multiple: depth ≈ ceil(jitter × fps × safety). >1 gives a marginal link
     /// headroom so ordinary wobble does not underrun.
     public let jitterSafety: Double
-    /// Consecutive low-jitter frames required before a single one-step shrink (the slow,
-    /// hysteretic shrink path). ~3s at 60fps by default.
+    /// Consecutive low-jitter frames required before a single one-step shrink (the slow, hysteretic
+    /// path). ~3s at 60fps by default.
     public let shrinkCooldownFrames: Int
 
     /// The live recommendation (frames). Initialised to the configured/initial depth.
     public private(set) var targetDepth: Int
-    /// Consecutive frames the recommendation has been BELOW `targetDepth`; a one-step shrink
-    /// fires (and resets this) at `shrinkCooldownFrames`. Reset to 0 by any grow or steady step.
+    /// Consecutive frames the recommendation has been BELOW `targetDepth`; a one-step shrink fires
+    /// (and resets this) at `shrinkCooldownFrames`. Reset to 0 by any grow or steady step.
     private var shrinkRun: Int = 0
 
     public init(
@@ -997,10 +978,10 @@ public struct AdaptiveJitterController: Sendable, Equatable {
     /// `[minDepth, maxDepth]`. `j == 0` ⇒ `minDepth`. The `max(0, …)` guards a (theoretical)
     /// negative jitter so the +1 base never underflows the floor.
     private func depthForJitter(_ j: Double) -> Int {
-        // Clamp the Double BEFORE the Int conversion: a non-finite (NaN/Inf) or out-of-range
-        // product would TRAP the `Int(_:)` initialiser. The result is bounded by maxDepth anyway,
-        // so capping `raw` at maxDepth is behaviour-preserving for every reachable value while
-        // making the conversion total (trap-class hardening, codebase invariant).
+        // Clamp the Double BEFORE the Int conversion: a non-finite (NaN/Inf) or out-of-range product
+        // would TRAP `Int(_:)`. The result is bounded by maxDepth anyway, so capping `raw` at
+        // maxDepth is behaviour-preserving for every reachable value while making the conversion
+        // total (trap-class hardening, codebase invariant).
         let raw = (j * fps * jitterSafety).rounded(.up)
         let extra = raw.isFinite ? max(0, Int(min(raw, Double(maxDepth)))) : 0
         return min(maxDepth, max(minDepth, 1 + extra))

@@ -11,24 +11,21 @@ public enum VideoEncoderError: Error {
     case sessionCreateFailed(OSStatus)
     case notHardwareBacked
     case encodeFailed(OSStatus)
-    /// A LATENCY-CRITICAL property failed to set. Carries the property key + the
-    /// `OSStatus` so the caller can see exactly which proven low-latency setting did
-    /// not apply (a silent failure here corrupts the measured doc-18 config).
+    /// A LATENCY-CRITICAL property failed to set. Carries the property key + `OSStatus`
+    /// so the caller sees which low-latency setting failed — a silent failure corrupts the doc-18 config.
     case propertyFailed(key: String, status: OSStatus)
 }
 
 /// The single-session HEVC encoder (doc 18 §E — **MEASURED + SOLVED**), built to the
-/// EXACT configs validated in `docs/research/spikes/vtbench/encode-decode-bench.swift`.
+/// configs validated in `docs/research/spikes/vtbench/encode-decode-bench.swift`.
 ///
-/// ⚠️ **HANG-SAFETY:** `VTCompressionSessionCreate` + encode HW-accelerated HANG
-/// without a window-server + Screen-Recording TCC session (RESULTS.md). This type is
-/// COMPILED and code-reviewed but is NEVER instantiated in a test — only in a real
-/// GUI host app.
+/// ⚠️ **HANG-SAFETY:** `VTCompressionSessionCreate` + HW-accelerated encode HANG
+/// without a window-server + Screen-Recording TCC session (RESULTS.md). COMPILED +
+/// code-reviewed but NEVER instantiated in a test — only in a real GUI host app.
 ///
-/// - **Live session** = low-latency-RC (MEASURED p50 7.5ms vs constant-quality
-///   24ms → live MUST be low-latency-RC). Specification keys
-///   `EnableLowLatencyRateControl=true` + `RequireHardwareAcceleratedVideoEncoder=
-///   true`; property keys `RealTime=true`, `ExpectedFrameRate=30`,
+/// - **Live session** = low-latency-RC (MEASURED p50 7.5ms vs constant-quality 24ms).
+///   Specification keys `EnableLowLatencyRateControl=true` +
+///   `RequireHardwareAcceleratedVideoEncoder=true`; property keys `RealTime=true`, `ExpectedFrameRate=30`,
 ///   `PrioritizeEncodingSpeedOverQuality=false` (QUALITY-first since 2026-06-10;
 ///   `SLOPDESK_SPEED_OVER_QUALITY=1` restores the speed hint), `AllowFrameReordering=false`,
 ///   `MaxKeyFrameInterval=INT_MAX`, `AverageBitRate` + `DataRateLimits=[12_000_000/8,
@@ -44,8 +41,7 @@ public enum VideoEncoderError: Error {
 ///
 /// Quirks honoured (RESULTS.md / doc 18 §E,§G):
 /// - Do NOT query `UsingHardwareAcceleratedVideoEncoder` while low-latency is on
-///   (returns -12900). HW support is gated at creation by
-///   `RequireHardwareAcceleratedVideoEncoder=true` instead.
+///   (returns -12900). HW is gated at creation by `RequireHardwareAcceleratedVideoEncoder=true`.
 /// - Recreate the session on resize.
 /// - Retry create on -12905 (XPC race) with 50-100ms backoff.
 public final class VideoEncoder: @unchecked Sendable {
@@ -56,29 +52,26 @@ public final class VideoEncoder: @unchecked Sendable {
     /// -12905 (XPC) create-race retry backoff, 50-100ms (doc 18 §G).
     public static let createRetryBackoffNanos: UInt64 = 75_000_000
     /// SHARPNESS (2026-06-10): `PrioritizeEncodingSpeedOverQuality` default flipped true → FALSE.
-    /// The hint tilts the HW encoder's rate-distortion choices toward coarser quantization at equal
-    /// bitrate — a direct sharpness loss ("không nét bằng Parsec") — while Apple-silicon HEVC HW
-    /// encodes 4K60 in real time comfortably without it (RealTime + low-latency RC stay set, so the
-    /// latency contract is unchanged). `SLOPDESK_SPEED_OVER_QUALITY=1` restores the speed-first hint
-    /// for A/B or for hardware where quality-first encode misses the 16.7 ms frame budget.
+    /// The hint coarsens quantization at equal bitrate — a sharpness loss ("không nét bằng Parsec") —
+    /// while Apple-silicon HEVC HW encodes 4K60 in real time without it (RealTime + low-latency RC stay
+    /// set, so the latency contract is unchanged). `SLOPDESK_SPEED_OVER_QUALITY=1` restores the
+    /// speed-first hint for A/B or hardware where quality-first misses the 16.7 ms budget.
     static let speedOverQuality = ProcessInfo.processInfo.environment["SLOPDESK_SPEED_OVER_QUALITY"] == "1"
-    /// §A1 (doc 26 §A) worst-case quantizer CEILING for the live session. HEVC QP range is
-    /// 1 (lossless) … 51 (coarsest). VideoToolbox RAISES QP up to this ceiling to keep a frame under
-    /// the hard `DataRateLimits` cap, and DROPS the frame if even at this ceiling it cannot fit — so
-    /// this ceiling is the dial between "coarsen" and "drop" under bitrate pressure.
+    /// §A1 (doc 26 §A) worst-case quantizer CEILING for the live session. HEVC QP range 1 (lossless)
+    /// … 51 (coarsest). VT RAISES QP up to this ceiling to keep a frame under the hard `DataRateLimits`
+    /// cap, and DROPS the frame if it still can't fit — so this is the dial between "coarsen" and
+    /// "drop" under bitrate pressure.
     ///
-    /// 2026-06-08 (scroll-smoothness): raised 32 → 40. A dropped frame IS visible stutter, and with
-    /// the 2× HiDPI display (feature #1) a heavy scroll frame routinely could not fit at QP 32 → it
-    /// was dropped → the user's "scroll/content-change not smooth" report. 40 lets such a frame
-    /// coarsen-and-ship instead of dropping; the CRISP static refresh (``encodeLiveCrispKeyframe``)
-    /// restores razor-sharp text the instant motion stops, so trading a hair of MOTION sharpness for
-    /// never dropping a motion frame is pure win for smoothness. Pure upside vs 32: only frames that
-    /// WOULD have been dropped are affected — a frame that already fit at ≤32 is byte-identical.
-    /// Paired with the now resolution-aware bitrate (``LiveBitratePolicy``) the ceiling rarely even
-    /// binds. A/B without a rebuild via `SLOPDESK_MAX_QP`. Best-effort: -12900/unsupported → tolerated.
+    /// 2026-06-08 (scroll-smoothness): raised 32 → 40. A dropped frame IS visible stutter, and at 2×
+    /// HiDPI (feature #1) a heavy scroll frame routinely couldn't fit at QP 32 → dropped → the "scroll
+    /// not smooth" report. 40 lets it coarsen-and-ship instead; the CRISP static refresh
+    /// (``encodeLiveCrispKeyframe``) restores razor-sharp text when motion stops. Pure upside vs 32:
+    /// only frames that WOULD have dropped are affected — a frame that fit at ≤32 is byte-identical.
+    /// Paired with resolution-aware bitrate (``LiveBitratePolicy``) the ceiling rarely binds. A/B via
+    /// `SLOPDESK_MAX_QP`. Best-effort: -12900/unsupported → tolerated.
     /// NOTE (2026-06-08): the "hover blurs the pane" bug was NOT this — HW A/B showed keyframes
-    /// stayed a constant ~52 KB at both 12 and 40 Mbps and a 32→22 ceiling drop did not fix it;
-    /// the real cause was SCK bounding-rect expansion from Chrome's tooltip child window (see
+    /// stayed ~52 KB at both 12 and 40 Mbps and a 32→22 ceiling drop did not fix it; the real cause
+    /// was SCK bounding-rect expansion from Chrome's tooltip child window (see
     /// WindowCapturer.makeConfiguration `includeChildWindows = false`).
     public static let maxAllowedFrameQP: Int = {
         if let s = ProcessInfo.processInfo.environment["SLOPDESK_MAX_QP"], let v = Int(s), v >= 1,
@@ -91,117 +84,108 @@ public final class VideoEncoder: @unchecked Sendable {
 
     /// OWN RATE-CONTROL — CONSTANT-QP (2026-06-18, `SLOPDESK_CONST_QP`, default OFF = nil). When set
     /// (1…51), the LIVE delta path pins `MinAllowedFrameQP` to this value — the sharp FLOOR VT may
-    /// never undercut — so VideoToolbox encodes every live frame at least this crisp. This takes QP
-    /// control away from VT's `AverageBitRate` VBR steering, which otherwise banks budget while idle and
-    /// then SLAMS QP on the frames after a post-idle burst (the "idle → hard-scroll → rất mờ" clawback).
-    /// `MaxAllowedFrameQP` is normally pinned to the SAME value (constant QP), so a static frame is
-    /// Min==Max==floor; but when a per-frame motion ceiling is supplied (``constQPBand`` — the capturer's
-    /// adaptive-QP measurement under `SLOPDESK_ADAPTIVE_QP`), the MAX rises above the floor on motion so
-    /// VT may coarsen the huge whole-viewport SCROLL frame (shrinking it ~80 KB → ~15-25 KB so it drains
-    /// in a few ms, not ~30 ms — the scroll "nặng"), then the ceiling snaps back to the floor the instant
-    /// motion stops. Frame size floats with content (idle tiny, scroll bounded). Brackets (crisp/compact
-    /// IDRs) keep their own QP. The link backstop is the slow ABR (the link-AIMD nudges this Q).
+    /// never undercut — so every live frame is at least this crisp. Takes QP control away from VT's
+    /// `AverageBitRate` VBR steering, which banks budget while idle then SLAMS QP after a post-idle
+    /// burst (the "idle → hard-scroll → rất mờ" clawback). `MaxAllowedFrameQP` is normally pinned to
+    /// the SAME value (Min==Max==floor on a static frame); but when a per-frame motion ceiling is
+    /// supplied (``constQPBand`` — the capturer's adaptive-QP under `SLOPDESK_ADAPTIVE_QP`), MAX rises
+    /// above the floor on motion so VT may coarsen the whole-viewport SCROLL frame (~80 KB → ~15-25 KB,
+    /// draining in a few ms not ~30 ms — the scroll "nặng"), then snaps back to the floor when motion
+    /// stops. Frame size floats with content (idle tiny, scroll bounded). Brackets (crisp/compact IDRs)
+    /// keep their own QP. The link backstop is the slow ABR (the link-AIMD nudges this Q).
     public static let constQP: Int? = {
         guard let s = ProcessInfo.processInfo.environment["SLOPDESK_CONST_QP"], let v = Int(s),
               v >= 1, v <= 51 else { return nil }
         return v
     }()
 
-    /// QP MIN/MAX DECOUPLE (2026-06-19, `SLOPDESK_QP_DECOUPLE`, default **ON**; `=0` disables). Keeps
-    /// `MinAllowedFrameQP` pinned to the SHARP const-QP floor on a MOTION frame while only
-    /// `MaxAllowedFrameQP` rises to the content-driven ceiling — i.e. a `[floor, ceiling]` BAND instead
-    /// of the legacy `Min==Max` constant. Keeps the STATIC sidebar sharp during scroll: its blocks are
-    /// skip-coded (~free), so VT's per-CTU rate-distortion holds them at the floor while coarsening only
-    /// the expensive moving body up to the ceiling. (VideoToolbox has no per-region/ROI QP and
-    /// `SpatialAdaptiveQPLevel` is rejected under low-latency RC — HW-confirmed −12900 — so this band is
-    /// the ONLY in-RC lever.) HW-VALIDATED 2026-06-19: sidebar stops blurring whole-frame, scroll stays
-    /// light, ~1 VT drop / 150 frames, depth 1, no loss. ⚠️ TRADE-OFF: scroll frames run BIGGER (some
-    /// >50 KB vs ~10-20 KB pinned) because the band doesn't fully bite under the ~60 Mbps backstop — fine
-    /// on a clean link, but on a LOSSY WAN the fatter frames risk burst loss (the old scroll-giật cliff),
-    /// so it is LOSS-TIER-ADAPTIVE (``setLinkCongested``): the `[floor,q]` band is used only while the
-    /// link is CLEAN and auto-collapses to Min==Max==q (small frames) the moment the ABR reports
-    /// congestion (RTT-streak / loss / gradient / catastrophic). `=0` forces the legacy pin. Only bites
-    /// when ``constQP`` != nil.
+    /// QP MIN/MAX DECOUPLE (2026-06-19, `SLOPDESK_QP_DECOUPLE`, default **ON**; `=0` disables). On a
+    /// MOTION frame keeps `MinAllowedFrameQP` at the SHARP const-QP floor while only `MaxAllowedFrameQP`
+    /// rises to the content-driven ceiling — a `[floor, ceiling]` BAND instead of the legacy `Min==Max`.
+    /// Keeps the STATIC sidebar sharp during scroll: its blocks are skip-coded (~free), so VT's per-CTU
+    /// rate-distortion holds them at the floor while coarsening only the moving body to the ceiling.
+    /// (VideoToolbox has no per-region/ROI QP and `SpatialAdaptiveQPLevel` is rejected under low-latency
+    /// RC — HW-confirmed −12900 — so this band is the ONLY in-RC lever.) HW-VALIDATED 2026-06-19: sidebar
+    /// stops blurring whole-frame, scroll stays light, ~1 VT drop / 150 frames, depth 1, no loss.
+    /// ⚠️ TRADE-OFF: scroll frames run BIGGER (some >50 KB vs ~10-20 KB pinned) because the band doesn't
+    /// fully bite under the ~60 Mbps backstop — fine on a clean link, but on a LOSSY WAN the fatter frames
+    /// risk burst loss (the old scroll-giật cliff), so it is LOSS-TIER-ADAPTIVE (``setLinkCongested``):
+    /// the `[floor,q]` band is used only while the link is CLEAN and auto-collapses to Min==Max==q the
+    /// moment the ABR reports congestion (RTT-streak / loss / gradient / catastrophic). `=0` forces the
+    /// legacy pin. Only bites when ``constQP`` != nil.
     /// Resolves through ``EnvConfig`` (ProcessInfo env → overlay) — W12 — so a GUI setting can override
     /// it; with an EMPTY overlay this is byte-identical to the previous `ProcessInfo` read (default-ON
-    /// `!= "0"` idiom preserved exactly).
+    /// `!= "0"` idiom preserved).
     static let qpDecouple: Bool = EnvConfig.boolDefaultOn("SLOPDESK_QP_DECOUPLE")
 
-    /// CRISP STATIC REFRESH (doc 17 §3.4 — Design A, single-session QP-bump, 2026-06-08).
-    /// When the window goes static the heartbeat timer re-encodes the cached frame as a
-    /// near-lossless intra refresh ON THE LIVE SESSION (not a second session): we momentarily
-    /// drop the QP ceiling + widen the rate cap for exactly that one forced IDR, then restore the
-    /// proven low-latency config. Because it is the SAME session the VPS/SPS/PPS are unchanged, so
-    /// the client does NOT rebuild its decoder (no stall), and the crisp IDR becomes the reference
-    /// for the next live delta — so motion resumes seamlessly with no cross-session reference gap.
-    /// HEVC QP 1(lossless)…51(coarsest); ~18 is visually transparent for text while far smaller
-    /// than QP 14. Override for A/B via `SLOPDESK_CRISP_QP` (no rebuild). Best-effort: if the encoder
-    /// rejects a mid-session `MaxAllowedFrameQP` change (-12900) the refresh degrades to a normal
-    /// keyframe (observable — the `crisp=…` host log shows it stayed ~live-keyframe-sized).
+    /// CRISP STATIC REFRESH (doc 17 §3.4 — Design A, single-session QP-bump, 2026-06-08). QP ceiling
+    /// for the near-lossless intra refresh re-encoded on the LIVE session when the window goes static:
+    /// momentarily drop the QP ceiling + widen the rate cap for that one forced IDR, then restore the
+    /// live config. SAME session ⇒ VPS/SPS/PPS unchanged ⇒ client does NOT rebuild its decoder (no
+    /// stall), and the crisp IDR seeds the next live delta (no cross-session reference gap). HEVC QP
+    /// 1(lossless)…51(coarsest); ~18 is visually transparent for text while far smaller than QP 14.
+    /// A/B via `SLOPDESK_CRISP_QP`. Best-effort: a rejected mid-session `MaxAllowedFrameQP` change
+    /// (-12900) degrades to a normal keyframe (observable — the `crisp=…` log stays ~live-keyframe-sized).
     public static let crispMaxQP: Int = {
         if let s = ProcessInfo.processInfo.environment["SLOPDESK_CRISP_QP"], let v = Int(s), v >= 1,
            v <= 51 { return v }
         return 18
     }()
 
-    /// Widened `DataRateLimits` byte budget for the one-second window around a crisp IDR (64 Mbit),
-    /// so the hard rate cap does not DROP the (much larger) near-lossless intra frame. The live cap
-    /// (`dataRateMaxBytes`, 1.5 MB) is restored immediately after. Generous enough for a 2× HiDPI
-    /// intra frame (feature #1) without ever clamping it.
+    /// Widened `DataRateLimits` byte budget for the window around a crisp IDR (64 Mbit) so the hard
+    /// cap does not DROP the (much larger) near-lossless intra frame. The live cap (`dataRateMaxBytes`,
+    /// 1.5 MB) is restored immediately after. Generous enough for a 2× HiDPI intra frame (feature #1).
     public static let crispDataRateMaxBytes = 8_000_000
 
-    /// WF-5 (#5) TUNABLE VBV WINDOW. `DataRateLimits = [maxBytes, seconds]`: a hard cap of `maxBytes`
-    /// over a sliding `seconds` window. Default 1.0s (today exactly). A TIGHTER window caps per-frame
-    /// size spikes / queueing latency while PRESERVING the average rate, because the byte budget
-    /// scales WITH the window: `[(bytesPerSecond)*T, T]` keeps `bytesPerSecond` constant and only
-    /// narrows the burst. A/B via `SLOPDESK_VBV_WINDOW` (seconds). Resolution/QP untouched. Clamped to a
-    /// sane A/B range so a bad env value cannot zero the budget. NOTE (gotcha 5): a TIGHT window
-    /// re-tightens the per-frame byte budget and, paired with the QP40 ceiling, can re-introduce the
-    /// 2× HiDPI scroll drops QP40 was raised to avoid — default stays 1.0 = today.
+    /// WF-5 (#5) TUNABLE VBV WINDOW. `DataRateLimits = [maxBytes, seconds]`: hard cap of `maxBytes`
+    /// over a sliding `seconds` window. Default 1.0s. A TIGHTER window caps per-frame size spikes /
+    /// queueing latency while PRESERVING the average rate — the budget scales WITH the window:
+    /// `[(bytesPerSecond)*T, T]`. A/B via `SLOPDESK_VBV_WINDOW` (seconds). Resolution/QP untouched.
+    /// Clamped to a sane range so a bad env can't zero the budget. NOTE (gotcha 5): a TIGHT window,
+    /// paired with the QP40 ceiling, can re-introduce the 2× HiDPI scroll drops QP40 was raised to
+    /// avoid — default stays 1.0.
     public static let vbvWindowSeconds: Double = resolveVBVWindow(ProcessInfo.processInfo
         .environment["SLOPDESK_VBV_WINDOW"])
 
-    /// PURE: parse + clamp the `SLOPDESK_VBV_WINDOW` env string to a sane window in seconds. `nil` /
-    /// unparseable / out-of-`[0.01, 4.0]` → 1.0 (today's default, so a bad env can never zero the
-    /// budget). Extracted so the clamp is unit-testable without re-triggering the once-resolved static.
+    /// PURE: parse + clamp the `SLOPDESK_VBV_WINDOW` env string to seconds. `nil` / unparseable /
+    /// out-of-`[0.01, 4.0]` → 1.0 (so a bad env can never zero the budget). Extracted so the clamp is
+    /// unit-testable without re-triggering the once-resolved static.
     static func resolveVBVWindow(_ raw: String?) -> Double {
         if let raw, let v = Double(raw), v >= 0.01, v <= 4.0 { return v }
         return 1.0
     }
 
-    /// PURE: scale a per-1.0s byte budget over `seconds` → `(maxBytes, seconds)`, PRESERVING the
-    /// average rate (budget scales WITH the window). At `seconds == 1.0` returns
-    /// `(bytesPerSecond, 1.0)` exactly — `Int(Double(b)*1.0) == b` for `b ≤ 2^53` — so the default
-    /// path is byte-identical. The wrong shape the task warns against is `(budget, T)`, which would
-    /// slash the average to `budget/T`; this always returns `(budget*T, T)`.
+    /// PURE: scale a per-1.0s byte budget over `seconds` → `(maxBytes, seconds)`, PRESERVING the average
+    /// rate (budget scales WITH the window). At `seconds == 1.0` returns `(bytesPerSecond, 1.0)` exactly
+    /// — `Int(Double(b)*1.0) == b` for `b ≤ 2^53` — so the default path is byte-identical. Returns
+    /// `(budget*T, T)`, NOT the wrong `(budget, T)` which would slash the average to `budget/T`.
     static func vbvComponents(bytesPerSecond: Int, seconds: Double) -> (maxBytes: Int, seconds: Double) {
         (Int(Double(bytesPerSecond) * seconds), seconds)
     }
 
     /// Builds `[maxBytes, seconds]` for `bytesPerSecond` (a per-1.0s byte budget) over the resolved
-    /// ``vbvWindowSeconds``. At T==1.0 it returns exactly `[bytesPerSecond, 1.0]` — element[0] an
-    /// `Int` and element[1] the same `Double 1.0` — so the default path bridges to a byte-identical
-    /// CFArray (NSNumber long + NSNumber double). Pass the per-1.0s budget UNCHANGED (`clamped/8`,
-    /// `currentLiveBitrate()/8`, `crispDataRateMaxBytes`, `live/8`); the helper applies `*T`. Routing
-    /// all DataRateLimits set-sites through this one helper makes a half-threaded window impossible.
+    /// ``vbvWindowSeconds``. At T==1.0 returns exactly `[bytesPerSecond, 1.0]` — so the default path
+    /// bridges to a byte-identical CFArray (NSNumber long + NSNumber double). Pass the per-1.0s budget
+    /// UNCHANGED (`clamped/8`, `currentLiveBitrate()/8`, `crispDataRateMaxBytes`, `live/8`); the helper
+    /// applies `*T`. Routing all DataRateLimits set-sites through this one helper makes a half-threaded
+    /// window impossible.
     static func dataRateLimits(bytesPerSecond: Int) -> CFArray {
-        // PURE-VBR (SLOPDESK_PURE_VBR=1): Parsec-style rate control — AverageBitRate steers, the hard
-        // cap never binds. VT's DataRateLimits enforcement DROPS a frame that exceeds the window
-        // budget (silently — the encode callback gets sampleBuffer=nil), and the 2026-06-10 khựng
-        // ladder measured exactly that: capture clean at 60fps, send gaps 28-400ms, on dense
-        // high-entropy content whenever the live budget was tight. Unbinding the cap here (1 GB/s
-        // ≈ ∞) flows through EVERY set-site (create / crisp bracket / compact bracket / ABR
-        // actuate / probe) so a half-threaded gate is impossible; the encoder then COARSENS via
-        // QP under pressure instead of dropping — a soft frame beats a missing one.
+        // PURE-VBR (SLOPDESK_PURE_VBR=1): Parsec-style — AverageBitRate steers, the hard cap never
+        // binds. VT's DataRateLimits DROPS a frame over the window budget (silently — callback gets
+        // sampleBuffer=nil); the 2026-06-10 khựng ladder measured exactly that (clean 60fps capture,
+        // send gaps 28-400ms, on dense content when the budget was tight). Unbinding the cap here
+        // (1 GB/s ≈ ∞) flows through EVERY set-site (create / crisp / compact / ABR actuate / probe)
+        // so a half-threaded gate is impossible; the encoder then COARSENS via QP instead of dropping
+        // — a soft frame beats a missing one.
         let effective = pureVBR ? 1_000_000_000 : bytesPerSecond
         let c = vbvComponents(bytesPerSecond: effective, seconds: vbvWindowSeconds)
         return [c.maxBytes, c.seconds] as CFArray
     }
 
-    /// See ``dataRateLimits(bytesPerSecond:)``. DEFAULT **ON** since 2026-06-11 (defaults
-    /// consolidation): the R7 khựng ladder HW-measured VT's hard cap silently DROPPING dense
-    /// frames (send gaps 28–400ms); pure VBR + a high QP ceiling coarsens instead — a soft frame
-    /// beats a missing one (drop-frame-keep-cadence). `SLOPDESK_PURE_VBR=0` restores the hard cap.
+    /// See ``dataRateLimits(bytesPerSecond:)``. DEFAULT **ON** since 2026-06-11: the R7 khựng ladder
+    /// HW-measured VT's hard cap silently DROPPING dense frames (send gaps 28–400ms); pure VBR + a
+    /// high QP ceiling coarsens instead — a soft frame beats a missing one. `SLOPDESK_PURE_VBR=0`
+    /// restores the hard cap.
     static let pureVBR = ProcessInfo.processInfo.environment["SLOPDESK_PURE_VBR"] != "0"
     /// Drop visibility (SLOPDESK_VIDEO_DEBUG): VT signals a dropped frame as `sampleBuffer == nil`
     /// in the encode callback — swallowing it silently hid the khựng factory for a whole session.
@@ -210,18 +194,17 @@ public final class VideoEncoder: @unchecked Sendable {
     // MARK: Compact recovery/heartbeat IDR (motion-smoothness, 2026-06-08)
 
     //
-    // At 2× HiDPI (feature #1) a full intra frame is ~100 KB. A RECOVERY IDR (client requested it
-    // after losing fragments) sent as one ~100 KB UDP burst routinely loses fragments of ITSELF →
-    // the client still can't decode → it re-requests → another ~100 KB IDR. F1's cooldown caps that
-    // loop at one-per-500 ms, so on a lossy link the IDRs fire in PAIRS 0.5 s apart — each a wire
-    // burst that delays the next delta frame = a periodic motion HITCH ("giật"). A recovery/heartbeat
-    // IDR does NOT need to be pretty (motion masks coarseness; the static-timer CRISP refresh restores
-    // razor-sharp text the instant the screen goes quiet) — it needs to SURVIVE. So it is bracketed
-    // the OPPOSITE way to crisp: QP ceiling RAISED + rate-control target LOWERED, shrinking the IDR to
-    // ~30–50 KB ⇒ ~⅓ the fragments ⇒ it fits inside the single-loss XOR FEC's burst-recovery budget ⇒
-    // the loop breaks. Both knobs A/B-tunable without a rebuild. Best-effort sets (`set`): an encoder
-    // that rejects the mid-session change ships a normal-size IDR (observable — the keyframe byte size
-    // in the host log stays ~100 KB instead of dropping to ~40 KB).
+    // At 2× HiDPI (feature #1) a full intra frame is ~100 KB. A RECOVERY IDR sent as one ~100 KB UDP
+    // burst routinely loses fragments of ITSELF → the client still can't decode → re-requests →
+    // another ~100 KB IDR. F1's cooldown caps that loop at one-per-500 ms, so on a lossy link the IDRs
+    // fire in PAIRS 0.5 s apart — each a wire burst that delays the next delta = a periodic motion
+    // HITCH ("giật"). A recovery/heartbeat IDR needn't be pretty (motion masks coarseness; the CRISP
+    // refresh restores razor-sharp text when the screen goes quiet) — it needs to SURVIVE. So it is
+    // bracketed the OPPOSITE way to crisp: QP ceiling RAISED + rate target LOWERED, shrinking the IDR
+    // to ~30–50 KB ⇒ ~⅓ the fragments ⇒ it fits inside the single-loss XOR FEC's burst-recovery budget
+    // ⇒ the loop breaks. Both knobs A/B-tunable. Best-effort sets (`set`): an encoder that rejects the
+    // mid-session change ships a normal-size IDR (observable — the host-log keyframe byte size stays
+    // ~100 KB instead of ~40 KB).
     //
     /// QP ceiling for a compact IDR — coarser than the live ceiling (`maxAllowedFrameQP`) so the
     /// encoder can shrink the forced IDR by coarsening instead of dropping it. A/B via `SLOPDESK_COMPACT_QP`.
@@ -241,19 +224,18 @@ public final class VideoEncoder: @unchecked Sendable {
     }()
 
     /// Which session produced an output (carried to the packetizer's crisp flag).
-    /// `.crisp` now means "a QP-bumped near-lossless keyframe from the LIVE session" (Design A) —
-    /// purely informational on the wire (the client treats every keyframe identically). Kept so the
-    /// `crisp=…` host log marks the refresh frames and their byte size verifies the QP-bump took.
+    /// `.crisp` = a QP-bumped near-lossless keyframe from the LIVE session (Design A) — purely
+    /// informational on the wire (the client treats every keyframe identically). Kept so the
+    /// `crisp=…` host log marks refresh frames and their byte size verifies the QP-bump took.
     public enum Mode: Sendable { case live, crisp }
 
-    /// Emitted for each finished encode: the AVCC bytes, keyframe flag, which session produced it,
-    /// and (WF-8) the LTR acknowledgement token if this is a Long-Term-Reference frame.
+    /// Emitted for each finished encode: AVCC bytes, keyframe flag, which session produced it, and
+    /// (WF-8) the LTR acknowledgement token if this is a Long-Term-Reference frame.
     ///
-    /// `ltrToken` is non-nil ONLY when `SLOPDESK_LTR` is on AND the encoded sample carried
-    /// `kVTSampleAttachmentKey_RequireLTRAcknowledgementToken` — i.e. this is an LTR frame the client
-    /// must ack. nil on every LTR-off / non-LTR frame, so the OFF path is byte-identical (the 4th arg
-    /// is simply always nil). The host records `frameID ↔ token` and sets the `isLTR` wire bit when it
-    /// is present.
+    /// `ltrToken` is non-nil ONLY when `SLOPDESK_LTR` is on AND the sample carried
+    /// `kVTSampleAttachmentKey_RequireLTRAcknowledgementToken` — an LTR frame the client must ack.
+    /// nil on every LTR-off / non-LTR frame, so the OFF path is byte-identical. The host records
+    /// `frameID ↔ token` and sets the `isLTR` wire bit when present.
     public typealias OutputHandler = @Sendable (
         _ avcc: Data,
         _ keyframe: Bool,
@@ -266,83 +248,82 @@ public final class VideoEncoder: @unchecked Sendable {
     private let width: Int32
     private let height: Int32
     private let outputHandler: OutputHandler
-    /// Live-session target bitrate (bits/sec). The 12 Mbps spike default is great for video,
-    /// but SHARP TEXT (screen sharing) needs more bits or HEVC softens glyph edges — so the
-    /// host can raise it (e.g. ~40 Mbps over LAN/NetBird) for crisp text.
+    /// Live-session target bitrate (bits/sec). The 12 Mbps spike default suits video, but SHARP TEXT
+    /// (screen sharing) needs more bits or HEVC softens glyph edges — so the host can raise it
+    /// (e.g. ~40 Mbps over LAN/NetBird) for crisp text.
     private let bitrate: Int
     /// Live-session `ExpectedFrameRate` hint (fps). Default 60 to match the 60fps capture cap; the
     /// encoder uses it to size its rate-control window. Best-effort (a hint, not latency-critical).
     private let fps: Int
 
     /// WF-6 (#8): emit EXPLICIT BT.709 VUI (ColorPrimaries/TransferFunction/YCbCrMatrix) when true.
-    /// Default false ⇒ NO new VUI keys ⇒ the SPS VUI bytes are byte-identical to today, so the OFF
-    /// path never changes the parameter sets (and thus never trips the client's first-keyframe decoder
-    /// rebuild). The luma RANGE itself (video vs full) is conveyed by the SOURCE pixel-buffer's format
-    /// variant the ``WindowCapturer`` chooses — VT reads it and stamps SPS `video_full_range_flag`; it
-    /// is NOT a VT compression key. So both knobs are driven by the SAME host flag, atomically.
+    /// Default false ⇒ NO new VUI keys ⇒ SPS VUI bytes byte-identical to today, so the OFF path never
+    /// changes the parameter sets (never trips the client's first-keyframe decoder rebuild). The luma
+    /// RANGE (video vs full) rides the SOURCE pixel-buffer's format variant ``WindowCapturer`` chooses
+    /// — VT reads it to stamp SPS `video_full_range_flag`; NOT a VT compression key. Both knobs are
+    /// driven by the SAME host flag, atomically.
     private let fullRange: Bool
 
     /// WF-8: when true, set `kVTCompressionPropertyKey_EnableLTR` on the live session, READ the
-    /// `RequireLTRAcknowledgementToken` attachment off each encoded sample (surfaced as the
-    /// OutputHandler's 4th arg), feed acknowledged tokens via `AcknowledgedLTRTokens`, and honour
-    /// `ForceLTRRefresh` on ``encodeLiveLTRRefresh(pixelBuffer:presentationTime:)``. Default false ⇒
-    /// none of that happens ⇒ the encoder is byte-identical to today (EnableLTR unset, no token read,
-    /// the props dict reduces to today's `[ForceKeyFrame:true]`-or-nil). Probe-proven supported on
-    /// this host (WF-7).
+    /// `RequireLTRAcknowledgementToken` attachment off each sample (surfaced as OutputHandler's 4th
+    /// arg), feed acknowledged tokens via `AcknowledgedLTRTokens`, and honour `ForceLTRRefresh` on
+    /// ``encodeLiveLTRRefresh(pixelBuffer:presentationTime:)``. Default false ⇒ byte-identical to today
+    /// (EnableLTR unset, no token read, props dict reduces to `[ForceKeyFrame:true]`-or-nil).
+    /// Probe-proven supported on this host (WF-7).
     private let ltrEnabled: Bool
 
     private var liveSession: VTCompressionSession?
 
     /// WF-8 acked-token STAGING. The host actor calls ``stageAcknowledgedToken(_:)`` from its `.ack`
-    /// recovery arm (off the capture queue) to hand the encoder a token the client has DECODED+ACKED;
-    /// the next ``encode(...)`` drains+clears this list and feeds it as `AcknowledgedLTRTokens`, so it
-    /// can never grow unbounded (drained every encode). NSLock-guarded — written on the actor, read on
-    /// the capture queue (same `@unchecked Sendable` + NSLock discipline as `bitrateLock`).
+    /// recovery arm (off the capture queue) to hand over a token the client has DECODED+ACKED; the next
+    /// ``encode(...)`` drains+clears this list and feeds it as `AcknowledgedLTRTokens`, so it never
+    /// grows unbounded. NSLock-guarded — written on the actor, read on the capture queue (same
+    /// `@unchecked Sendable` + NSLock discipline as `bitrateLock`).
     private let ackedLock = NSLock()
     private var pendingAckedTokens: [Int64] = []
 
     /// MUTABLE live target bitrate (bits/sec) — the SINGLE source of truth for the rate-control
     /// properties (AverageBitRate + DataRateLimits). Seeded to `bitrate` (the immutable CEILING) so
     /// when WF-2 adaptive bitrate (`SLOPDESK_ABR`) is OFF this never moves and every RC property is
-    /// byte-identical to before. The WF-2 controller lowers/raises it at runtime via
-    /// ``setLiveBitrate(_:)``; the crisp/compact brackets RESTORE from it (via ``currentLiveBitrate()``)
-    /// so a bracket can never revert a controller-lowered rate back to the original ceiling.
+    /// byte-identical to before. The WF-2 controller moves it via ``setLiveBitrate(_:)``; the
+    /// crisp/compact brackets RESTORE from it (``currentLiveBitrate()``) so a bracket can never revert
+    /// a controller-lowered rate back to the ceiling.
     ///
-    /// CONCURRENCY: read on the capture queue (create + bracket restores) and written on the host
-    /// actor (``setLiveBitrate(_:)``), so ALL access goes through `bitrateLock` (NSLock) — the same
-    /// `@unchecked Sendable` + NSLock discipline used elsewhere (InboundQueue/EncodedFrameQueue).
+    /// CONCURRENCY: read on the capture queue (create + bracket restores), written on the host actor
+    /// (``setLiveBitrate(_:)``), so ALL access goes through `bitrateLock` (NSLock) — same
+    /// `@unchecked Sendable` + NSLock discipline as InboundQueue/EncodedFrameQueue.
     private let bitrateLock = NSLock()
     private var liveBitrate: Int
     /// > 0 while a crisp/compact bracket is mid-relax (between its RELAX and its `defer` RESTORE).
-    /// ``setLiveBitrate(_:)`` always updates `liveBitrate` under the lock, but SKIPS issuing the
-    /// VTSessionSetProperty writes while a bracket is active — the active bracket's `defer` re-reads
-    /// ``currentLiveBitrate()`` and applies the newest value on restore, so the controller can never
-    /// clobber the relaxed crisp/compact config mid-IDR and the bracket never reverts the controller.
+    /// ``setLiveBitrate(_:)`` always updates `liveBitrate` under the lock but SKIPS the
+    /// VTSessionSetProperty writes while a bracket is active — the bracket's `defer` re-reads
+    /// ``currentLiveBitrate()`` on restore, so the controller can't clobber the relaxed config mid-IDR
+    /// and the bracket never reverts the controller.
     private var bracketDepth = 0
-    /// LIVE constant-QP value (bitrateLock-guarded) when const-QP mode is on (``constQP`` != nil). Seeded
-    /// from the env, then driven per network report by the host's link-AIMD (``QPController``) via
-    /// ``setConstQP(_:)`` — so the constant quality adapts to the link (coarsen on congestion) without
-    /// VT's per-frame VBR clawback. Only read on the live delta path when ``constQP`` != nil.
+    /// LIVE constant-QP value (bitrateLock-guarded) when const-QP mode is on (``constQP`` != nil).
+    /// Seeded from env, then driven per network report by the host's link-AIMD (``QPController``) via
+    /// ``setConstQP(_:)`` — the constant quality adapts to the link (coarsen on congestion) without VT's
+    /// per-frame VBR clawback. Only read on the live delta path when ``constQP`` != nil.
     private var liveConstQP: Int = VideoEncoder.constQP ?? maxAllowedFrameQP
-    /// Last per-frame adaptive `MaxAllowedFrameQP` actually written (bitrateLock-guarded). Skips the
-    /// redundant VTSessionSetProperty + CFNumber bridge when the smoothed QP is unchanged (the common
-    /// static/typing case → QP pinned at qp_sharp). INVALIDATED to nil by every crisp/compact bracket
-    /// restore (which writes the static ceiling) so the next live frame always re-applies its own QP.
+    /// Last per-frame adaptive `MaxAllowedFrameQP` written (bitrateLock-guarded). Skips the redundant
+    /// VTSessionSetProperty + CFNumber bridge when the QP is unchanged (the common static/typing case).
+    /// INVALIDATED to nil by every crisp/compact bracket restore (which writes the static ceiling) so
+    /// the next live frame re-applies its own QP.
     private var lastAdaptiveQP: Int?
     /// LINK CONGESTED (bitrateLock-guarded) — the host's per-report ABR cut verdict (RTT-streak / loss /
-    /// gradient / catastrophic). Driven by ``setLinkCongested(_:)``. When TRUE, ``qpDecouple`` is
+    /// gradient / catastrophic), driven by ``setLinkCongested(_:)``. When TRUE, ``qpDecouple`` is
     /// SUPPRESSED (Min re-pinned to Max==q) so scroll frames stay small on a stressed link instead of
-    /// fattening for sidebar sharpness — i.e. the decouple is loss-tier-adaptive. Default false (clean).
+    /// fattening for sidebar sharpness. Default false (clean).
     private var linkCongested = false
 
-    /// COMPACT LAZY-RESTORE (2026-06-18, HW-measured). The compact recovery IDR relaxes the session
-    /// QP/rate then drained twice (`VTCompressionSessionCompleteFrames`) to isolate the IDR before
-    /// restoring — but each drain blocked the SCStream capture queue ~115ms (probe E6b: 24 stalls>100ms),
-    /// and under the lossy-WAN recovery-IDR storm (~6 IDR/s) those drains ARE the scroll "giật". Instead,
-    /// when ``compactLazyRestore`` is on, the compact IDR encodes under the relaxed config and DEFERS the
-    /// restore to the next live encode (no drain): the small compact IDR finishes well within the ~16ms
-    /// before the next delta, so it keeps its compact size, and the next delta restores live config first.
-    /// `bitrateLock`-guarded. `SLOPDESK_COMPACT_LAZY_RESTORE=0` reverts to the (drain-bracketed) path.
+    /// COMPACT LAZY-RESTORE (2026-06-18, HW-measured). The old compact recovery IDR relaxed QP/rate then
+    /// drained twice (`VTCompressionSessionCompleteFrames`) to isolate the IDR before restoring — but
+    /// each drain blocked the SCStream capture queue ~115ms (probe E6b: 24 stalls>100ms), and under the
+    /// lossy-WAN recovery-IDR storm (~6 IDR/s) those drains ARE the scroll "giật". Instead, when on, the
+    /// compact IDR encodes under the relaxed config and DEFERS the restore to the next live encode (no
+    /// drain): the small IDR finishes within ~16ms before the next delta, keeping its compact size, and
+    /// the next delta restores live config first. `bitrateLock`-guarded. `SLOPDESK_COMPACT_LAZY_RESTORE=0`
+    /// reverts to the (drain-bracketed) path.
     private static let compactLazyRestore =
         ProcessInfo.processInfo.environment["SLOPDESK_COMPACT_LAZY_RESTORE"] != "0"
     private var pendingCompactRestore = false
@@ -390,11 +371,10 @@ public final class VideoEncoder: @unchecked Sendable {
 
     /// WF-8: stage a token the client has ACKNOWLEDGED (decoded an LTR frame for) so the next encode
     /// feeds it as `kVTEncodeFrameOptionKey_AcknowledgedLTRTokens`. Called from the host actor's `.ack`
-    /// recovery arm. No-op when LTR is off (the actor only calls this under its `SLOPDESK_LTR` gate, but
-    /// the drain is gated again in `encode` so a stray stage is harmless). DEDUP + BOUNDED: the encode
-    /// drain usually outpaces acks, but acks can arrive while no frame is being encoded (a capture
-    /// stall), so dedup repeats and cap to the most-recent few — the encoder only needs the current
-    /// acknowledged set, and an unbounded staging list is the codebase's documented no-no.
+    /// recovery arm. No-op when LTR is off (the drain is gated again in `encode`, so a stray stage is
+    /// harmless). DEDUP + BOUNDED: acks can arrive while no frame is encoding (a capture stall), so
+    /// dedup repeats and cap to the most-recent few — the encoder only needs the current acknowledged
+    /// set, and an unbounded staging list is the codebase's documented no-no.
     public func stageAcknowledgedToken(_ token: Int64) {
         ackedLock.lock()
         defer { ackedLock.unlock() }
@@ -403,10 +383,10 @@ public final class VideoEncoder: @unchecked Sendable {
         if pendingAckedTokens.count > 32 { pendingAckedTokens.removeFirst(pendingAckedTokens.count - 32) }
     }
 
-    /// STALE-LTR FIX (2026-06-12): drops every staged-but-not-yet-drained acked token. Called by
-    /// the host when an encoded KEYFRAME ships — the IDR clears the decoder's DPB (long-term
-    /// references included, HEVC spec), so a pre-IDR ack describes a reference the client no
-    /// longer holds and must never be fed to a later encode as `AcknowledgedLTRTokens`.
+    /// STALE-LTR FIX (2026-06-12): drops every staged-but-not-yet-drained acked token. Called when an
+    /// encoded KEYFRAME ships — the IDR clears the decoder's DPB (long-term references included, HEVC
+    /// spec), so a pre-IDR ack describes a reference the client no longer holds and must never be fed
+    /// to a later encode as `AcknowledgedLTRTokens`.
     public func clearStagedAckedTokens() {
         ackedLock.lock()
         defer { ackedLock.unlock() }
@@ -432,15 +412,15 @@ public final class VideoEncoder: @unchecked Sendable {
     }
 
     /// WF-2 ADAPTIVE BITRATE actuator. Sets the live target bitrate to `target`, clamped to
-    /// `[LiveBitratePolicy.minimumBitrate, bitrate]` — i.e. never 0/negative and never above the
-    /// immutable ceiling. Called from the host actor (handleRecovery, throttled to material changes).
+    /// `[LiveBitratePolicy.minimumBitrate, bitrate]` (never 0/negative, never above the immutable
+    /// ceiling). Called from the host actor (handleRecovery, throttled to material changes).
     ///
-    /// Updates `liveBitrate` (the source of truth) under the lock ALWAYS. It issues the actual
-    /// VTSessionSetProperty writes (BOTH AverageBitRate and DataRateLimits together, so the two RC
-    /// knobs stay consistent) ONLY when no crisp/compact bracket is mid-relax; while a bracket is
-    /// active it skips the writes and lets that bracket's `defer` apply the new value on restore.
-    /// Best-effort (`set`, not `setCritical`): a rejected mid-session change keeps the prior rate and
-    /// never throws/aborts the encoder. Returns whether `liveBitrate` actually changed.
+    /// ALWAYS updates `liveBitrate` (the source of truth) under the lock. Issues the actual
+    /// VTSessionSetProperty writes (BOTH AverageBitRate and DataRateLimits together, so the two RC knobs
+    /// stay consistent) ONLY when no crisp/compact bracket is mid-relax; while a bracket is active it
+    /// skips the writes and lets that bracket's `defer` apply the new value on restore. Best-effort
+    /// (`set`, not `setCritical`): a rejected change keeps the prior rate and never aborts the encoder.
+    /// Returns whether `liveBitrate` changed.
     @discardableResult
     public func setLiveBitrate(_ target: Int) -> Bool {
         let clamped = max(LiveBitratePolicy.minimumBitrate, min(bitrate, target))
@@ -461,10 +441,10 @@ public final class VideoEncoder: @unchecked Sendable {
     }
 
     /// OWN RATE-CONTROL: set the live constant-QP (the link-AIMD ``QPController``'s current Q). No-op
-    /// unless const-QP mode is on (``constQP`` != nil). Clamped to the HEVC range. Clears
-    /// `lastAdaptiveQP` so the next live delta frame re-applies Min==Max==Q; the actual VTSessionSet
-    /// happens on that next `encode()` (not here), so this is a cheap lock-guarded store callable from
-    /// the host actor per network report. Returns whether the value changed.
+    /// unless const-QP mode is on (``constQP`` != nil). Clamped to the HEVC range. Clears `lastAdaptiveQP`
+    /// so the next live delta frame re-applies Min==Max==Q; the actual VTSessionSet happens on that next
+    /// `encode()`, so this is a cheap lock-guarded store callable from the host actor per network report.
+    /// Returns whether the value changed.
     @discardableResult
     public func setConstQP(_ q: Int) -> Bool {
         guard Self.constQP != nil else { return false }
@@ -495,11 +475,10 @@ public final class VideoEncoder: @unchecked Sendable {
     }
 
     /// FPS-GOVERNOR actuation (2026-06-11): live `ExpectedFrameRate` hint. Best-effort mid-session
-    /// `VTSessionSetProperty` — the same proven-live mechanism as ``setLiveBitrate(_:)``'s
-    /// AverageBitRate writes; a -12900 is tolerated (it is an RC-window-sizing HINT, not the
-    /// latency contract — the ``EncodeCadenceGate`` enforces the actual cadence regardless).
-    /// Deliberately NOT bracketed: the crisp/compact brackets save/restore only QP +
-    /// AverageBitRate + DataRateLimits, so there is no save/restore interplay to honour. And
+    /// `VTSessionSetProperty` — same proven-live mechanism as ``setLiveBitrate(_:)``'s AverageBitRate
+    /// writes; a -12900 is tolerated (an RC-window-sizing HINT, not the latency contract — the
+    /// ``EncodeCadenceGate`` enforces the actual cadence). Deliberately NOT bracketed: the crisp/compact
+    /// brackets save/restore only QP + AverageBitRate + DataRateLimits, so there is no interplay. And
     /// `AverageBitRate` is deliberately NOT changed on an fps step — fewer frames sharing the same
     /// bitrate = bigger, sharper frames (the Parsec behaviour the governor wants).
     public func setExpectedFrameRate(_ fps: Int) {
@@ -546,10 +525,9 @@ public final class VideoEncoder: @unchecked Sendable {
         }
         guard status == noErr, let session else { throw VideoEncoderError.sessionCreateFailed(status) }
 
-        // Property keys (via VTSessionSetProperty). EXACT spike config. The
-        // LATENCY-CRITICAL keys THROW on failure — a silent failure here corrupts the
-        // proven low-latency config (doc 18 §E). Best-effort keys are set leniently
-        // (logged on failure) since they degrade quality, not the latency contract.
+        // Property keys (via VTSessionSetProperty). EXACT spike config. LATENCY-CRITICAL keys THROW
+        // on failure — a silent failure corrupts the proven low-latency config (doc 18 §E). Best-effort
+        // keys are logged on failure since they degrade quality, not the latency contract.
         try setCritical(session, kVTCompressionPropertyKey_RealTime, kCFBooleanTrue)
         set(session, kVTCompressionPropertyKey_ExpectedFrameRate, fps as CFNumber) // best-effort (60 default)
         set(
@@ -571,10 +549,9 @@ public final class VideoEncoder: @unchecked Sendable {
             kVTCompressionPropertyKey_MaxKeyFrameInterval,
             Int(Int32.max) as CFNumber,
         ) // IDR on-demand (best-effort)
-        // AverageBitRate + DataRateLimits together ARE the low-latency rate-control
-        // contract — both latency-critical.
-        // Read the LIVE bitrate (== ceiling `bitrate` unless WF-2 ABR has already lowered it) so a
-        // session rebuilt mid-stream (resize) comes up at the controller's current rate, not the ceiling.
+        // AverageBitRate + DataRateLimits together ARE the low-latency rate-control contract — both
+        // latency-critical. Read the LIVE bitrate (== ceiling `bitrate` unless WF-2 ABR lowered it) so
+        // a session rebuilt mid-stream (resize) comes up at the controller's current rate, not the ceiling.
         try setCritical(session, kVTCompressionPropertyKey_AverageBitRate, currentLiveBitrate() as CFNumber)
         // DataRateLimits = [maxBytes, seconds]; hard cap at the live bitrate (/8 not /4).
         try setCritical(
@@ -582,47 +559,39 @@ public final class VideoEncoder: @unchecked Sendable {
             kVTCompressionPropertyKey_DataRateLimits,
             Self.dataRateLimits(bytesPerSecond: currentLiveBitrate() / 8),
         )
-        // SpatialAdaptiveQPLevel=Disable is a QP-modulation HINT. The spike host advertised it,
-        // but it is kVTPropertyNotSupportedErr (-12900) on HEVC encoders that don't implement
-        // the key — and low-latency rate control is ALREADY established by
-        // EnableLowLatencyRateControl (spec) + AverageBitRate/DataRateLimits. So set it
-        // BEST-EFFORT: apply it where supported, tolerate -12900 elsewhere. (Forcing it as
-        // critical aborted the WHOLE encoder on such hardware, leaving PATH 2 unable to produce
-        // a single frame — observed via check-video.sh's host diagnostics, 2026-06-02.)
+        // SpatialAdaptiveQPLevel=Disable is a QP-modulation HINT the spike host advertised, but it is
+        // -12900 (kVTPropertyNotSupportedErr) on HEVC encoders lacking the key — and low-latency RC is
+        // ALREADY established by EnableLowLatencyRateControl (spec) + AverageBitRate/DataRateLimits. So
+        // BEST-EFFORT: apply where supported, tolerate -12900. (Forcing it critical aborted the WHOLE
+        // encoder on such hardware, leaving PATH 2 with zero frames — check-video.sh diagnostics, 2026-06-02.)
         set(session, kVTCompressionPropertyKey_SpatialAdaptiveQPLevel, kVTQPModulationLevel_Disable as CFNumber)
         // §A1 part 2 (doc 26 §A): cap the worst-case quantizer so text never smears under a
-        // bitrate-starved frame. With low-latency RC + a 12 Mbps DataRateLimits hard cap, a busy
-        // frame can otherwise blow its budget and the encoder coarsens QP → blurry glyph edges.
-        // MaxAllowedFrameQP tells the encoder to DROP a frame (or spend an extra IDR) rather than
-        // ship a frame above this QP — on a 24–30fps desktop a held-but-sharp frame beats a
-        // delivered-but-blurry one. QP ~32 (1=lossless..51=worst) keeps text crisp while leaving
-        // motion headroom; tune on hardware.
-        // BEST-EFFORT (NOT setCritical): kVTCompressionPropertyKey_MaxAllowedFrameQP is
-        // kVTPropertyNotSupportedErr/-12900 on some HEVC encoders — same -12900-prone family as
-        // SpatialAdaptiveQPLevel above; forcing it critical would abort the whole encoder on such
-        // hardware (the exact regression class the 2026-06-02 fix #1 guards against). The key
-        // exists on macOS 26; on older OSes it is simply tolerated as a no-op.
+        // bitrate-starved frame. MaxAllowedFrameQP tells the encoder to DROP a frame (or spend an extra
+        // IDR) rather than ship above this QP — on a 24–30fps desktop a held-but-sharp frame beats a
+        // delivered-but-blurry one. QP ~32 (1=lossless..51=worst) keeps text crisp with motion headroom.
+        // BEST-EFFORT (NOT setCritical): MaxAllowedFrameQP is -12900 on some HEVC encoders — same
+        // -12900-prone family as SpatialAdaptiveQPLevel; forcing it critical would abort the whole
+        // encoder (the regression class the 2026-06-02 fix #1 guards against). Exists on macOS 26;
+        // tolerated as a no-op on older OSes.
         set(session, kVTCompressionPropertyKey_MaxAllowedFrameQP, Self.maxAllowedFrameQP as CFNumber)
-        // WF-6 (#8): EXPLICIT BT.709 VUI (color primaries / transfer / matrix). GATED behind
-        // `fullRange` so the OFF path sets NO new keys and the emitted SPS VUI is byte-identical to
-        // today — an UNCONDITIONAL set would change the parameter-set bytes (→ a needless client
-        // decoder rebuild on the first keyframe) and would also relabel the sRGB-transfer capture as
-        // 709-transfer. Best-effort (`set`, NOT `setCritical`): hygiene/quality, not the latency
-        // contract, so a -12900 on an encoder lacking the key is tolerated. NOTE: the luma RANGE is
-        // NOT set here — it rides the source pixel-buffer's FullRange variant (WindowCapturer), which
-        // VT reads to stamp `video_full_range_flag`; these keys only label primaries/transfer/matrix.
+        // WF-6 (#8): EXPLICIT BT.709 VUI (color primaries / transfer / matrix). GATED behind `fullRange`
+        // so the OFF path sets NO new keys and the SPS VUI stays byte-identical — an UNCONDITIONAL set
+        // would change the parameter-set bytes (→ needless client decoder rebuild on the first keyframe)
+        // and relabel the sRGB-transfer capture as 709-transfer. Best-effort (`set`): hygiene, not the
+        // latency contract, so a -12900 is tolerated. NOTE: the luma RANGE is NOT set here — it rides the
+        // source pixel-buffer's FullRange variant (WindowCapturer), which VT reads to stamp
+        // `video_full_range_flag`; these keys only label primaries/transfer/matrix.
         if fullRange {
             set(session, kVTCompressionPropertyKey_ColorPrimaries, kCVImageBufferColorPrimaries_ITU_R_709_2)
             set(session, kVTCompressionPropertyKey_TransferFunction, kCVImageBufferTransferFunction_ITU_R_709_2)
             set(session, kVTCompressionPropertyKey_YCbCrMatrix, kCVImageBufferYCbCrMatrix_ITU_R_709_2)
         }
-        // WF-8: LONG-TERM-REFERENCE recovery. Enable LTR so the encoder periodically promotes frames
-        // to long-term references (each emitted carrying `RequireLTRAcknowledgementToken`) and honours
-        // a later `ForceLTRRefresh` against an ACKNOWLEDGED LTR — a cheap P-frame recovery with NO
-        // decoder flush, vs a full IDR. GATED behind `ltrEnabled` (`SLOPDESK_LTR`) so the OFF path sets
-        // NO new key and the session is byte-identical to today. Best-effort (`set`, NOT `setCritical`,
-        // like fullRange): an encoder lacking the key returns -12900 and the encoder degrades to the
-        // IDR-only recovery path — never aborts. WF-7's HW probe confirmed noErr on THIS host.
+        // WF-8: LONG-TERM-REFERENCE recovery. Enable LTR so the encoder periodically promotes frames to
+        // long-term references (each carrying `RequireLTRAcknowledgementToken`) and honours a later
+        // `ForceLTRRefresh` against an ACKNOWLEDGED LTR — a cheap P-frame recovery, no decoder flush,
+        // vs a full IDR. GATED behind `ltrEnabled` (`SLOPDESK_LTR`) so the OFF path sets NO new key and
+        // the session is byte-identical. Best-effort (`set`): an encoder lacking the key returns -12900
+        // and degrades to IDR-only recovery — never aborts. WF-7's HW probe confirmed noErr on THIS host.
         if ltrEnabled {
             set(session, kVTCompressionPropertyKey_EnableLTR, kCFBooleanTrue)
         }
@@ -637,14 +606,13 @@ public final class VideoEncoder: @unchecked Sendable {
     // MARK: WF-7 (#9) LTR capability probe — DIAGNOSTIC ONLY (SLOPDESK_LTR_PROBE)
 
     //
-    // Answers the CRITICAL UNKNOWN for Long-Term-Reference recovery: does
-    // `kVTCompressionPropertyKey_EnableLTR` + per-frame `ForceLTRRefresh` actually work on a
-    // LOW-LATENCY HEVC session on THIS hardware? EnableLTR shipped H.264-ONLY at launch, so whether it
-    // returns noErr or `kVTPropertyNotSupportedErr` (-12900) on a low-latency HEVC session on macOS 26
-    // is UNVERIFIED. The probe is ISOLATED ON PURPOSE: it is a `static` func with NO instance access,
-    // so it can NEVER read/write `liveSession`, `bitrateLock`, or the crisp/compact bracket state, and
-    // it runs on its OWN throwaway VTCompressionSession that is torn down on every exit path. It does
-    // NOT change the live encode/recovery behaviour — it only logs ONE `LTR-PROBE:` verdict line.
+    // Answers the CRITICAL UNKNOWN for LTR recovery: does `kVTCompressionPropertyKey_EnableLTR` +
+    // per-frame `ForceLTRRefresh` actually work on a LOW-LATENCY HEVC session on THIS hardware?
+    // EnableLTR shipped H.264-ONLY at launch, so whether it returns noErr or -12900 on a low-latency
+    // HEVC session on macOS 26 is UNVERIFIED. ISOLATED ON PURPOSE: a `static` func with NO instance
+    // access, so it can NEVER touch `liveSession`, `bitrateLock`, or the bracket state, and runs on its
+    // OWN throwaway VTCompressionSession torn down on every exit path. Does NOT change live
+    // encode/recovery behaviour — only logs ONE `LTR-PROBE:` verdict line.
 
     /// The single-word verdict of the LTR capability probe. `unknown` = the probe could not be
     /// completed (session-create or pixel-buffer alloc failed → re-run); `unsupported` = EnableLTR or a
@@ -717,15 +685,14 @@ public final class VideoEncoder: @unchecked Sendable {
     }
 
     /// WF-7 (#9) HARDWARE CAPABILITY PROBE. Creates a THROWAWAY low-latency HEVC VTCompressionSession
-    /// (the SAME spec/properties as ``createLiveSession()``), tries `EnableLTR` + a `ForceLTRRefresh`
-    /// encode, and logs ONE `LTR-PROBE:` verdict line. Every `VTSessionSetProperty` /
-    /// `VTCompressionSessionEncodeFrame` status is captured into a local and reported — there is NO
-    /// `setCritical`, NO force-unwrap, NO precondition on any LTR result, so an unsupported property is
-    /// a normal logged branch, never an abort. Gated default-off behind `SLOPDESK_LTR_PROBE` at the daemon
-    /// startup, run BEFORE the listener admits clients so no live session can coexist on the HW encoder.
+    /// (SAME spec/properties as ``createLiveSession()``), tries `EnableLTR` + a `ForceLTRRefresh` encode,
+    /// and logs ONE `LTR-PROBE:` verdict line. Every status is captured + reported — NO `setCritical`,
+    /// NO force-unwrap, NO precondition on any LTR result, so an unsupported property is a normal logged
+    /// branch, never an abort. Gated default-off behind `SLOPDESK_LTR_PROBE` at daemon startup, run
+    /// BEFORE the listener admits clients so no live session can coexist on the HW encoder.
     ///
     /// ⚠️ HANG-SAFETY: like the rest of this type, the HW create/encode HANG without a window-server +
-    /// TCC session — NEVER call this from a test; only from the gated daemon path on a real GUI host.
+    /// TCC session — NEVER call from a test; only from the gated daemon path on a real GUI host.
     public static func runLTRCapabilityProbe(
         width: Int = 1280, height: Int = 720,
         bitrate: Int = bitrateBitsPerSecond, fps: Int = 60,
@@ -868,20 +835,19 @@ public final class VideoEncoder: @unchecked Sendable {
     // MARK: Crisp static refresh (Design A — single-session QP-bump, doc 17 §3.4)
 
     /// Emits a near-lossless intra refresh ON THE LIVE SESSION without a parameter-set change.
-    /// Called by ``WindowCapturer``'s static-IDR timer (frameQueue-serial, and ONLY while the live
-    /// path is quiet — so no live frame is encoding concurrently). Mechanism:
-    ///   1. `CompleteFrames` drains any in-flight frame so the QP swap doesn't affect a still-live-QP encode.
+    /// Called by ``WindowCapturer``'s static-IDR timer (frameQueue-serial, ONLY while the live path is
+    /// quiet — no live frame encoding concurrently). Mechanism:
+    ///   1. `CompleteFrames` drains in-flight frames so the QP swap doesn't affect a still-live-QP encode.
     ///   2. Drop the QP ceiling (`crispMaxQP`) + widen the rate cap (`crispDataRateMaxBytes`) so the
     ///      forced IDR is near-lossless and not dropped by the hard cap.
     ///   3. Encode the cached frame as a forced keyframe (tagged `.crisp` for the host log).
-    ///   4. `CompleteFrames` AGAIN — the VT output callback is async, so this guarantees the crisp
-    ///      frame is fully encoded UNDER the relaxed config BEFORE we restore (restoring first would
-    ///      let it encode at the live ceiling → soft). This second drain is the gap-closer.
-    ///   5. `defer` restores the proven low-latency rate-control config (QP 32 + 1.5 MB cap).
-    /// Same VPS/SPS/PPS ⇒ the client does NOT rebuild its decoder; the crisp IDR becomes the
-    /// reference for the next live delta ⇒ motion resumes seamlessly. The QP/cap sets are
-    /// best-effort: an encoder that rejects a mid-session `MaxAllowedFrameQP` change (-12900) simply
-    /// ships a normal keyframe (visible: the `crisp=…` log byte size stays ~live-keyframe-sized).
+    ///   4. `CompleteFrames` AGAIN — the VT callback is async, so this guarantees the crisp frame is
+    ///      fully encoded UNDER the relaxed config BEFORE restore (restoring first → encodes at the live
+    ///      ceiling → soft). The gap-closer.
+    ///   5. `defer` restores the proven low-latency config (QP 32 + 1.5 MB cap).
+    /// Same VPS/SPS/PPS ⇒ client does NOT rebuild its decoder; the crisp IDR seeds the next live delta.
+    /// QP/cap sets are best-effort: a rejected mid-session `MaxAllowedFrameQP` change (-12900) ships a
+    /// normal keyframe (visible: the `crisp=…` log byte size stays ~live-keyframe-sized).
     public func encodeLiveCrispKeyframe(pixelBuffer: CVPixelBuffer, presentationTime: CMTime) throws {
         guard let session = liveSession else { throw VideoEncoderError.sessionCreateFailed(-12903) }
         restorePendingCompactBracket() // settle any prior lazy compact bracket before relaxing for crisp
@@ -900,24 +866,23 @@ public final class VideoEncoder: @unchecked Sendable {
         )
         set(session, kVTCompressionPropertyKey_MaxAllowedFrameQP, Self.crispMaxQP as CFNumber)
         // CONST-QP: the live path pins Min==constQP; the crisp IDR's sharp Max (crispMaxQP < constQP)
-        // would then be Min>Max. Pin Min to the crisp QP too so the IDR is sharp + valid. No-op when
-        // const-QP is off (no Min is ever set). The defer restores Max to maxAllowedFrameQP (≥ Min), and
-        // the next live frame re-pins Min==Max==constQP.
+        // would make Min>Max. Pin Min to the crisp QP too so the IDR is sharp + valid. No-op when
+        // const-QP is off. The defer restores Max to maxAllowedFrameQP (≥ Min), and the next live frame
+        // re-pins Min==Max==constQP.
         if Self.constQP != nil {
             set(session, kVTCompressionPropertyKey_MinAllowedFrameQP, Self.crispMaxQP as CFNumber)
         }
         // 5. Restore the proven live low-latency config no matter how we exit. CRITICAL: restore the
         //    LIVE cap (`currentLiveBitrate() / 8`, matching the create-site), NOT the static 12 Mbps
-        //    default — otherwise the first static refresh on a `--bitrate >12` session would permanently
-        //    clamp the live stream to 1.5 MB (~⅓ of e.g. a 40 Mbps config) and never recover. Reading
-        //    the LIVE value (not the immutable ceiling) also means a WF-2-lowered rate is preserved.
-        //    Decrement bracketDepth in the SAME defer so it drops only after the restore lands.
-        //    Restore BOTH RC knobs (AverageBitRate + DataRateLimits) from the SAME live snapshot: a
-        //    controller `setLiveBitrate` that landed mid-bracket updated `liveBitrate` but SKIPPED its
-        //    own VTSessionSetProperty writes, so this defer is the ONLY place the new rate is applied.
-        //    The crisp relax only widened DataRateLimits, so restoring just that knob would leave
-        //    AverageBitRate stale at the pre-controller value; writing both keeps the two consistent
-        //    (each is a no-op when no controller change occurred — the value is already current).
+        //    default — else the first static refresh on a `--bitrate >12` session would permanently
+        //    clamp the live stream to 1.5 MB (~⅓ of a 40 Mbps config) and never recover. Reading the
+        //    LIVE value (not the immutable ceiling) also preserves a WF-2-lowered rate. Decrement
+        //    bracketDepth in the SAME defer so it drops only after the restore lands. Restore BOTH RC
+        //    knobs (AverageBitRate + DataRateLimits) from the SAME live snapshot: a controller
+        //    `setLiveBitrate` that landed mid-bracket updated `liveBitrate` but SKIPPED its own writes,
+        //    so this defer is the ONLY place the new rate is applied. The crisp relax only widened
+        //    DataRateLimits, so restoring just that knob would leave AverageBitRate stale; writing both
+        //    keeps them consistent (each a no-op when no controller change occurred).
         defer {
             let live = currentLiveBitrate()
             set(session, kVTCompressionPropertyKey_MaxAllowedFrameQP, Self.maxAllowedFrameQP as CFNumber)
@@ -984,10 +949,10 @@ public final class VideoEncoder: @unchecked Sendable {
         defer {
             // Restore BOTH RC knobs from the SAME live snapshot (not the immutable ceiling) so a
             // WF-2-lowered rate is preserved. The compact relax only lowered AverageBitRate, but a
-            // controller `setLiveBitrate` that landed mid-bracket skipped BOTH writes — so
-            // DataRateLimits (the HARD cap) must be re-applied here too, else it stays stale at the
-            // pre-controller (looser) value and a complex frame can exceed a concurrent congestion
-            // back-off. Each write is a no-op when no controller change occurred.
+            // controller `setLiveBitrate` mid-bracket skipped BOTH writes — so DataRateLimits (the HARD
+            // cap) must be re-applied here too, else it stays stale at the looser pre-controller value
+            // and a complex frame can exceed a concurrent congestion back-off. Each write is a no-op
+            // when no controller change occurred.
             let live = currentLiveBitrate()
             set(session, kVTCompressionPropertyKey_MaxAllowedFrameQP, Self.maxAllowedFrameQP as CFNumber)
             set(session, kVTCompressionPropertyKey_AverageBitRate, live as CFNumber)
@@ -1053,17 +1018,16 @@ public final class VideoEncoder: @unchecked Sendable {
     /// to pin BOTH `Min` and `Max` `AllowedFrameQP` to for one live delta frame:
     /// * `floor` on a STATIC frame (`perFrameMaxQP` nil or ≤ floor) ⇒ Min==Max==floor — pure const-QP,
     ///   byte-identical to before this lever; text stays crisp, no VBR clawback.
-    /// * `perFrameMaxQP` on MOTION (the capturer's adaptive-QP measurement ramps it above the floor)
-    ///   ⇒ Min==Max==that coarser QP, so VT is FORCED to shrink the huge whole-viewport scroll frame
-    ///   (~80 KB → ~10-20 KB → drains in a few ms, not ~32 ms = the scroll "nặng").
+    /// * `perFrameMaxQP` on MOTION (the capturer's adaptive-QP ramps it above the floor) ⇒ Min==Max==that
+    ///   coarser QP, so VT is FORCED to shrink the whole-viewport scroll frame (~80 KB → ~10-20 KB,
+    ///   draining in a few ms not ~32 ms = the scroll "nặng").
     ///
-    /// Pinning Min==Max (a CONSTANT QP) rather than a `[floor, ceiling]` band is deliberate and was
+    /// Pinning Min==Max (a CONSTANT QP) rather than a `[floor, ceiling]` band is deliberate and
     /// HW-required: a mere ceiling never bites because the const-QP bitrate backstop (AverageBitRate
     /// ~60 Mbps) leaves VT no budget pressure, so it keeps picking the sharp floor and the scroll frame
-    /// stays fat. Forcing the QP takes the choice away from VT's VBR steering entirely — the same
-    /// anti-clawback property as pure const-QP, with the constant now keyed to motion (and snapping
-    /// back to the floor the instant motion stops, via the capturer's sharp-instant asymmetric EMA).
-    /// A `perFrameMaxQP` below the floor is clamped UP (the sharp floor always wins).
+    /// stays fat. Forcing the QP takes the choice away from VT's VBR steering — the same anti-clawback
+    /// property as pure const-QP, now keyed to motion (snapping back to the floor when motion stops, via
+    /// the capturer's sharp-instant asymmetric EMA). A `perFrameMaxQP` below the floor is clamped UP.
     static func constQPForFrame(floor: Int, perFrameMaxQP: Int?) -> Int {
         Swift.max(floor, perFrameMaxQP ?? floor)
     }
@@ -1077,18 +1041,17 @@ public final class VideoEncoder: @unchecked Sendable {
         forceLTRRefresh: Bool = false,
         perFrameMaxQP: Int? = nil,
     ) throws {
-        // ADAPTIVE-QP (SLOPDESK_ADAPTIVE_QP): apply the per-frame change-driven QP ceiling on the
-        // LIVE delta path only, and ONLY when no crisp/compact bracket already owns the QP property
-        // (bracketDepth>0). A small change carries a low (sharp) ceiling, a burst carries the higher
-        // configured ceiling. Best-effort (the `set` helper tolerates a -12900 reject); no restore —
-        // the next live frame sets its own, and a bracket restores the static ceiling when it runs.
+        // ADAPTIVE-QP (SLOPDESK_ADAPTIVE_QP): apply the per-frame change-driven QP ceiling on the LIVE
+        // delta path only, and ONLY when no crisp/compact bracket owns the QP property (bracketDepth>0).
+        // A small change → low (sharp) ceiling, a burst → the higher configured ceiling. Best-effort
+        // (`set` tolerates -12900); no restore — the next live frame sets its own, and a bracket restores
+        // the static ceiling.
         // OWN RATE-CONTROL — CONSTANT-QP (motion-keyed, 2026-06-18): pin Min to the const-QP floor so VT
-        // can't blur below the sharp guarantee (no VBR clawback after a post-idle burst); the MAX is the
-        // floor on a STATIC frame (Min==Max==floor → constant QP, today's behavior) but rises to the
-        // capturer's content-driven `perFrameMaxQP` on MOTION so VT may coarsen the fat scroll frame
-        // (``constQPBand``). With adaptive-QP off, `perFrameMaxQP` is nil ⇒ Max==floor ⇒ byte-identical.
-        // Brackets own the QP (bracketDepth>0) → skip. Best-effort (`set` tolerates -12900). Setting Min
-        // is what forces the sharp floor (Max alone is only a ceiling VT undershoots under budget).
+        // can't blur below the sharp guarantee (no VBR clawback after a post-idle burst); MAX is the floor
+        // on a STATIC frame (Min==Max==floor → constant QP) but rises to the capturer's `perFrameMaxQP` on
+        // MOTION so VT may coarsen the fat scroll frame (``constQPBand``). Adaptive-QP off ⇒ `perFrameMaxQP`
+        // nil ⇒ Max==floor ⇒ byte-identical. Brackets own the QP (bracketDepth>0) → skip. Setting Min is
+        // what forces the sharp floor (Max alone is only a ceiling VT undershoots under budget).
         if Self.constQP != nil {
             bitrateLock.lock()
             // floor = the link-AIMD's current Q (seeded from env, nudged per report). Static ⇒ floor;
@@ -1195,12 +1158,11 @@ public final class VideoEncoder: @unchecked Sendable {
             let dataPointer else { return }
         var avcc = Data(bytes: dataPointer, count: totalLength)
 
-        // Read the per-frame sample attachments ONCE and pull BOTH the keyframe flag and (when LTR
-        // is on) the LTR ack token from the same dictionary — they live on the same attachments
-        // object, so a single `CMSampleBufferGetSampleAttachmentsArray` + bridge per frame suffices.
-        // Keyframe? Absence of the not-sync attachment ⇒ keyframe (default true, unchanged).
-        // WF-8: `ltrToken` (an Int64) is read only when `readLTRToken` (the instance `ltrEnabled`);
-        // with LTR off it stays nil ⇒ the handler call is byte-identical to today.
+        // Read the per-frame sample attachments ONCE and pull BOTH the keyframe flag and (when LTR is
+        // on) the LTR ack token from the same dictionary — one `CMSampleBufferGetSampleAttachmentsArray`
+        // + bridge per frame suffices. Keyframe? Absence of the not-sync attachment ⇒ keyframe (default
+        // true). WF-8: `ltrToken` (Int64) is read only when `readLTRToken` (`ltrEnabled`); with LTR off
+        // it stays nil ⇒ the handler call is byte-identical to today.
         var keyframe = true
         var ltrToken: Int64?
         if let attachments = CMSampleBufferGetSampleAttachmentsArray(
@@ -1217,14 +1179,13 @@ public final class VideoEncoder: @unchecked Sendable {
             }
         }
 
-        // CRITICAL: VTCompressionSession keeps the HEVC VPS/SPS/PPS parameter sets in the sample
-        // buffer's FORMAT DESCRIPTION, NOT inline in the CMBlockBuffer — so the bytes above are
-        // the coded slice ONLY. The client builds its CMVideoFormatDescription from parameter
-        // sets it expects to find INLINE ahead of the IDR slice (HEVCParameterSets.extract); with
-        // none present it can never decode (`awaitingKeyframe`) and the window stays blank. So on
-        // a keyframe we prepend the VPS/SPS/PPS (length-prefixed, same 4-byte AVCC framing) pulled
-        // from the format description. (Found via check-video.sh's client decode diagnostics,
-        // 2026-06-02 — the prior "host emits parameter sets inline" assumption was wrong.)
+        // CRITICAL: VTCompressionSession keeps the HEVC VPS/SPS/PPS parameter sets in the sample buffer's
+        // FORMAT DESCRIPTION, NOT inline in the CMBlockBuffer — so the bytes above are the coded slice
+        // ONLY. The client builds its CMVideoFormatDescription from parameter sets it expects INLINE
+        // ahead of the IDR slice (HEVCParameterSets.extract); with none present it can never decode
+        // (`awaitingKeyframe`) and the window stays blank. So on a keyframe we prepend the VPS/SPS/PPS
+        // (length-prefixed, same 4-byte AVCC framing) from the format description. (Found via
+        // check-video.sh's client decode diagnostics, 2026-06-02 — the "inline" assumption was wrong.)
         if keyframe, let fmt = CMSampleBufferGetFormatDescription(sampleBuffer),
            let params = hevcParameterSetsAVCC(from: fmt)
         {
@@ -1266,24 +1227,22 @@ public final class VideoEncoder: @unchecked Sendable {
     /// Re-creates both sessions on a window resize (doc 18 §G — recreate on resize).
     /// The caller passes the new dimensions by constructing a fresh `VideoEncoder`.
 
-    /// Drains BOTH compression sessions, blocking until every in-flight frame's output
-    /// callback has fired (`VTCompressionSessionCompleteFrames` with an INVALID timestamp = the
-    /// documented "complete ALL pending frames" sentinel). Call this before dropping the OLD
-    /// encoder on a resize swap: without it the encoder is invalidated (by `deinit`) while frames
-    /// are still queued, silently dropping their already-encoded output (FFmpeg videotoolboxenc
-    /// CompleteFrames-before-invalidate pattern). Purely ADDITIVE — does NOT touch the hot
-    /// `encodeLive` path. Safe to call once; the sessions are not reused afterward.
+    /// Drains BOTH compression sessions, blocking until every in-flight frame's output callback has
+    /// fired (`VTCompressionSessionCompleteFrames` with an INVALID timestamp = the documented "complete
+    /// ALL pending frames" sentinel). Call before dropping the OLD encoder on a resize swap: without it
+    /// the encoder is invalidated (by `deinit`) while frames are still queued, silently dropping their
+    /// already-encoded output (FFmpeg videotoolboxenc CompleteFrames-before-invalidate pattern). Purely
+    /// ADDITIVE — does NOT touch the hot `encodeLive` path. Safe to call once; sessions not reused after.
     public func completeFrames() {
         if let liveSession { VTCompressionSessionCompleteFrames(liveSession, untilPresentationTimeStamp: .invalid) }
     }
 
     /// Sets a LATENCY-CRITICAL property and THROWS ``VideoEncoderError/propertyFailed(key:status:)``
-    /// if it does not apply. Used for the proven low-latency rate-control keys
-    /// (RealTime, AllowFrameReordering, AverageBitRate, DataRateLimits) where a silent
-    /// failure corrupts the measured config (doc 18 §E). The encoder must NOT proceed with a
-    /// half-applied low-latency config. (SpatialAdaptiveQPLevel is deliberately NOT here — it
-    /// is best-effort; some HEVC encoders return -12900 for it and aborting would yield zero
-    /// frames.)
+    /// if it does not apply. Used for the proven low-latency rate-control keys (RealTime,
+    /// AllowFrameReordering, AverageBitRate, DataRateLimits) where a silent failure corrupts the
+    /// measured config (doc 18 §E) — the encoder must NOT proceed half-applied. (SpatialAdaptiveQPLevel
+    /// is deliberately NOT here — it is best-effort; some HEVC encoders return -12900 and aborting would
+    /// yield zero frames.)
     private func setCritical(_ session: VTCompressionSession, _ key: CFString, _ value: CFTypeRef) throws {
         let status = VTSessionSetProperty(session, key: key, value: value)
         guard status == noErr else {

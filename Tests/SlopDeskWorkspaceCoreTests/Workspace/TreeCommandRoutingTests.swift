@@ -7,16 +7,15 @@ import SwiftUI
 #endif
 
 /// W6 (docs/42 §"W6 — Keybindings + command palette + cheat sheet"): pins the **tree-command-routing**
-/// contract — the single ``WorkspaceBindingRegistry`` source of truth that the menu bar, the ⌘K command
-/// palette, the ⌘/ cheat sheet, AND this test all read. Each registered ``WorkspaceAction`` must, when
-/// routed through ``WorkspaceBindingRegistry/route(_:to:)`` on a `.tree`-live store, land on the intended
-/// store TREE op — asserted through the resulting ``TreeWorkspace`` / registry change, never a recompute
-/// of the registry itself (no tautology).
+/// contract — the single ``WorkspaceBindingRegistry`` source the menu bar, ⌘K palette, ⌘/ cheat sheet, AND
+/// this test all read. Each ``WorkspaceAction`` routed through ``WorkspaceBindingRegistry/route(_:to:)`` on
+/// a `.tree`-live store must land on the intended store TREE op — asserted through the resulting
+/// ``TreeWorkspace`` / registry change, never a recompute of the registry (no tautology).
 ///
-/// The suite injects the spec-only `makeSession` seam with a ``FakePaneSession`` (never a real
-/// `SlopDeskClient` / `HostServer`) and builds every store with ``WorkspaceStore/LiveModel/tree`` so the
-/// tree is the live source the routing drives. No SwiftUI view is constructed — `route(_:to:)` is the pure
-/// seam under test, identical to what a menu `Button` / palette row / chord dispatch invokes.
+/// Injects the `makeSession` seam with a ``FakePaneSession`` (never a real `SlopDeskClient` / `HostServer`)
+/// and builds every store with ``WorkspaceStore/LiveModel/tree`` so the tree is the live source the routing
+/// drives. No SwiftUI view is built — `route(_:to:)` is the pure seam, identical to what a menu `Button` /
+/// palette row / chord dispatch invokes.
 @MainActor
 final class TreeCommandRoutingTests: XCTestCase {
     // MARK: - Fixtures
@@ -87,9 +86,9 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertNotNil(store.handle(for: added) as? FakePaneSession, "the new leaf has a fake handle")
     }
 
-    /// `.splitDown` also adds one leaf — proving the axis routes through too (a vertical split). We assert
-    /// the leaf count grows and the new leaf is focused; the axis difference vs. `.splitRight` is pinned by
-    /// the `WorkspaceTreeOps` suite, so here it suffices that the action reaches the split op.
+    /// `.splitDown` also adds one leaf — proving the axis routes through (a vertical split). The axis
+    /// difference vs. `.splitRight` is pinned by the `WorkspaceTreeOps` suite; here it suffices that the
+    /// action reaches the split op.
     func testSplitDownAddsLeaf() throws {
         let store = makeTreeStore()
         let original = leaves(store)[0]
@@ -285,7 +284,7 @@ final class TreeCommandRoutingTests: XCTestCase {
     /// Double-clicking ONE divider evens ONLY that seam: `evenDividerTree` resets the clicked pair to an
     /// equal share (sum-preserving) while every OTHER split keeps its dragged ratio. The audit bug: the
     /// `PaneDivider` double-click was wired to `balanceActivePaneSplits()`, which rebalances EVERY split of
-    /// the tab — wiping the other seams' carefully dragged ratios. Proven to fail before the targeted op
+    /// the tab — wiping the other seams' dragged ratios. Proven to fail before the targeted op
     /// exists (compile), and behaviourally: the whole-tab reset would flatten `after[0]` back to 1.
     func testEvenDividerTreeResetsOnlyTheClickedSeam() {
         let store = makeTreeStore()
@@ -518,10 +517,10 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(chord(.balancePanes), KeyChord(character: "=", [.control, .command]), "balance = ⌃⌘=")
     }
 
-    /// ⌃⌘F is reserved for **Toggle Fullscreen** (the macOS-native Enter/Exit Full
-    /// Screen). SlopDesk must NOT bind ⌃⌘F to any workspace action — the app-level NSEvent dispatcher reads
-    /// `resolvedChordTable`, so a binding there would resolve + SWALLOW ⌃⌘F and the system Full-Screen menu
-    /// item could never fire. This pins that ⌃⌘F is free (no action).
+    /// ⌃⌘F is reserved for **Toggle Fullscreen** (macOS-native Enter/Exit Full Screen). SlopDesk must NOT
+    /// bind ⌃⌘F to any workspace action — the app-level NSEvent dispatcher reads `resolvedChordTable`, so a
+    /// binding would resolve + SWALLOW ⌃⌘F and the system Full-Screen menu item could never fire. Pins ⌃⌘F
+    /// free (no action).
     func testControlCommandFIsFreeForSystemToggleFullscreen() {
         let controlCommandF = KeyChord(character: "f", [.control, .command])
         XCTAssertNil(
@@ -603,11 +602,11 @@ final class TreeCommandRoutingTests: XCTestCase {
     // MARK: - Registry integrity (the single source of truth)
 
     /// C1: every binding the DISPATCHER sees (``allBindings`` — incl. the nine generated ⌘1…⌘9 select-tab
-    /// chords the `bindings` table omits) has a stable, unique id and (for the chord-carrying ones) a unique
-    /// chord. Iterating only `bindings` (the old test) missed the nine digit chords the dispatcher actually
-    /// routes, so a collision among them — or with a ⌘-digit elsewhere — could slip past. We ALSO assert
-    /// `chordTable.count == #chord-bearing allBindings + #aliasChords`, proving no two entries collapsed onto
-    /// one chord (the dict would silently drop a duplicate) while accounting for the display-less aliases.
+    /// chords the `bindings` table omits) has a unique id and (for chord-carrying ones) a unique chord.
+    /// Iterating only `bindings` (the old test) missed the nine digit chords, so a collision among them — or
+    /// with a ⌘-digit elsewhere — could slip past. ALSO asserts `chordTable.count == #chord-bearing
+    /// allBindings + #aliasChords`, proving no two entries collapsed onto one chord (the dict silently drops
+    /// a duplicate), aliases accounted for.
     func testRegistryBindingsHaveUniqueIDsAndChords() {
         let ids = WorkspaceBindingRegistry.allBindings.map(\.id)
         XCTAssertEqual(Set(ids).count, ids.count, "all binding ids (incl. select-tab digits) are unique")
@@ -633,8 +632,8 @@ final class TreeCommandRoutingTests: XCTestCase {
     /// The cheat sheet's SINGLE source (``groupedForDisplay``) must surface a Tabs-group row collapsing the
     /// nine generated ⌘1…⌘9 select-tab chords — the doc contract (lines 204-207 / 524-526) promises one
     /// representative row, yet the nine per-digit chords live only in ``selectTabBindings`` (absent from the
-    /// `bindings` table groupedForDisplay iterates). Without the synthesized representative, the cheat sheet
-    /// silently omits the whole "switch to tab N" family. FAILS on the un-fixed code (no such row exists).
+    /// `bindings` table groupedForDisplay iterates). Without it the cheat sheet silently omits the whole
+    /// "switch to tab N" family. FAILS on the un-fixed code (no such row exists).
     func testGroupedForDisplaySurfacesCollapsedSelectTabRow() {
         let tabs = WorkspaceBindingRegistry.groupedForDisplay.first { $0.category == .tabs }
         XCTAssertNotNil(tabs, "the Tabs group is present in the cheat-sheet display set")

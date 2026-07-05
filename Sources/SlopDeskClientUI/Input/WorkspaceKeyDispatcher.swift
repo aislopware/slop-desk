@@ -1,25 +1,22 @@
 // WorkspaceKeyDispatcher — the LIVE keybinding dispatcher (WS-B / B3).
 //
-// THE re-scope: docs/DECISIONS.md previously recorded "there is no NSEvent monitor — a binding absent from
-// the menu is a dead chord" (the ⌘⇧I sync-input note). That rule held while every workspace chord was a
-// single ⌘/⌥-prefixed shortcut a SwiftUI `.commands` menu could express. The WS-B prefix engine breaks that
-// premise: a tmux/zellij-style MULTI-KEY prefix (e.g. ⌃A then D) cannot be expressed by `.keyboardShortcut`,
-// and — more importantly — a `.commands` menu cannot SWALLOW the follow-up key BEFORE the terminal first
-// responder (libghostty's `GhosttyLayerBackedView`) sees it, so the second key of a sequence would leak into
-// the PTY. Hence ONE app-level `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` installed at launch.
-// docs/DECISIONS.md is updated to record this re-scope (per CLAUDE.md "update DECISIONS.md when re-scoping").
+// Re-scope of the old "no NSEvent monitor — an off-menu binding is a dead chord" rule (DECISIONS.md, the
+// ⌘⇧I sync-input note): it held only while every chord was a single ⌘/⌥ shortcut a SwiftUI `.commands` menu
+// could express. A tmux/zellij MULTI-KEY prefix (⌃A then D) can't be a `.keyboardShortcut`, and a `.commands`
+// menu can't SWALLOW the follow-up key BEFORE the terminal first responder (libghostty's
+// `GhosttyLayerBackedView`) sees it — so the second key would leak into the PTY. Hence ONE app-level
+// `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` installed at launch. DECISIONS.md records the re-scope.
 //
-// CONTRACT (the load-bearing rule): a BARE unmodified key MUST pass through untouched — normal typing always
-// reaches the PTY/video responder. The monitor only intercepts:
+// CONTRACT (load-bearing): a BARE unmodified key MUST pass through untouched — normal typing always reaches
+// the PTY/video responder. The monitor only intercepts:
 //   • the configured prefix (arm / send-prefix double-tap),
 //   • armed-state follow-up keys (resolve a bound chord/sequence, or swallow an unbound one), and
-//   • bound single chords (the existing ⌘D/⌘T/… table, override-aware via `resolvedChordTable`).
-// Everything else returns the event UNCHANGED so it flows to the focused responder.
+//   • bound single chords (the ⌘D/⌘T/… table, override-aware via `resolvedChordTable`).
+// Everything else returns the event UNCHANGED.
 //
-// PURITY: the NSEvent→`KeyChord` normalization is factored into the pure, AppKit-free `KeyChordNormalizer`
-// (mirroring GhosttyTerminalView's `ghosttyMods` + `charactersIgnoringModifiers` for parity) so the chord
-// mapping is unit-tested headlessly; the transition logic lives entirely in the pure `PrefixStateMachine`
-// (B2). Only the thin NSEvent→intent wiring lives here.
+// PURITY: NSEvent→`KeyChord` normalization lives in the pure, AppKit-free `KeyChordNormalizer` (mirrors
+// GhosttyTerminalView's `ghosttyMods` + `charactersIgnoringModifiers` for parity) so it's unit-tested
+// headlessly; transition logic lives in the pure `PrefixStateMachine` (B2). Only NSEvent→intent wiring is here.
 
 #if os(macOS)
 import AppKit
@@ -32,94 +29,83 @@ import SlopDeskWorkspaceCore
 final class WorkspaceKeyDispatcher {
     private let store: WorkspaceStore
     /// The view-overlay toggles `route(...)` takes (palette / cheat sheet / find / peek-reply). The live app
-    /// wires these to its `@State`; omitted here keeps those actions graceful no-ops. E1/WI-7 widens the
-    /// construction so E2 can thread `toggleFind`/`togglePeekReply` without re-touching this seam (nil OK in
-    /// E1 — those overlays don't exist yet, so the corresponding actions stay graceful no-ops via `route`).
+    /// wires these to its `@State`; `nil` keeps those actions graceful no-ops via `route`.
     private let togglePalette: (() -> Void)?
     private let toggleCheatSheet: (() -> Void)?
     private let toggleFind: (() -> Void)?
     private let togglePeekReply: (() -> Void)?
-    /// E5 / WI-4: the cross-tab Global Search overlay toggle (⇧⌘F). View-overlay state (the
-    /// ``OverlayCoordinator``), so it is passed in as a closure like `togglePalette`; `nil` (the headless /
-    /// test default) keeps `.globalSearch` a graceful no-op via `route` — never a dead chord.
+    /// The cross-tab Global Search overlay toggle (⇧⌘F). ``OverlayCoordinator`` state, passed as a closure;
+    /// `nil` (headless / test default) keeps `.globalSearch` a graceful no-op via `route` — never a dead chord.
     private let toggleGlobalSearch: (() -> Void)?
-    /// E10 / WI-8: the Jump-To panel toggle (⌘J). View-overlay state (the ``OverlayCoordinator``), so it is
-    /// passed in as a closure like `toggleGlobalSearch`; `nil` (the headless / test default) keeps `.jumpTo`
-    /// a graceful no-op via `route` — never a dead chord. E11 re-points the app's `⌘J` binding to "open
-    /// Open-Quickly at `.current`" (the folded-in Jump-To); the dispatcher still threads it as `toggleJumpTo`.
+    /// The Jump-To panel toggle (⌘J). ``OverlayCoordinator`` state, passed as a closure; `nil` (headless /
+    /// test default) keeps `.jumpTo` a graceful no-op via `route` — never a dead chord. E11 re-points ⌘J to
+    /// "open Open-Quickly at `.current`" (folded-in Jump-To); still threaded here as `toggleJumpTo`.
     private let toggleJumpTo: (() -> Void)?
-    /// E11 / WI-7: the Open-Quickly picker toggle (⌘⇧O → the merged `.all` pill). View-overlay state (the
-    /// ``OverlayCoordinator`` owns `openQuicklyVisible`/`openQuicklyFilter`), so it is passed in as a closure
-    /// like `toggleJumpTo`; `nil` (the headless / test default) keeps `.openQuickly` a graceful no-op via
-    /// `route` — never a dead chord. ⌘⇧O (this) and ⌘J (`toggleJumpTo`) are the ONLY global Open-Quickly
-    /// chords — the pill / ⌘1–9 / Tab / ⌘K chords are PICKER-LOCAL (handled in `OpenQuicklyView`).
+    /// The Open-Quickly picker toggle (⌘⇧O → the merged `.all` pill). ``OverlayCoordinator`` state
+    /// (`openQuicklyVisible`/`openQuicklyFilter`), passed as a closure; `nil` (headless / test default) keeps
+    /// `.openQuickly` a graceful no-op via `route` — never a dead chord. ⌘⇧O (this) and ⌘J (`toggleJumpTo`)
+    /// are the ONLY global Open-Quickly chords — the pill / ⌘1–9 / Tab / ⌘K chords are PICKER-LOCAL (in
+    /// `OpenQuicklyView`).
     private let toggleOpenQuickly: (() -> Void)?
-    /// The left sidebar / Tabs-panel toggle (⌘⇧L). View-owned `@State`:
-    /// the macOS sidebar collapse is `WorkspaceChromeState.sidebarCollapsed` (the native split reads it), NOT
-    /// the legacy `store.sidebarCollapsed`, so the root view installs the real closure via
-    /// ``setToggleSidebar(_:)`` on appear. Until then `nil` ⇒ `.toggleSidebar` falls back to the store flag in
-    /// `route` (a non-trapping graceful op), never a dead chord.
+    /// The left sidebar / Tabs-panel toggle (⌘⇧L). View-owned `@State`: macOS collapse is
+    /// `WorkspaceChromeState.sidebarCollapsed` (the native split reads it), NOT the legacy
+    /// `store.sidebarCollapsed`, so the root view installs the real closure via ``setToggleSidebar(_:)`` on
+    /// appear. Until then `nil` ⇒ `.toggleSidebar` falls back to the store flag in `route` — never a dead chord.
     private var toggleSidebar: (() -> Void)?
-    /// E19/A30 (WI-4): "Pin Window" (View ▸ Pin Window). View-owned `@State` (`WorkspaceChromeState`), so
-    /// it is installed late by the root view via ``setTogglePinWindow(_:)`` once the chrome exists. Pin Window
-    /// is CHORD-LESS by default (no chord ships out of the box), so this fires only if a user binds a chord to the
-    /// `.pinWindow` action; until installed `nil` ⇒ `.pinWindow` is a graceful no-op (never a dead chord).
+    /// "Pin Window" (View ▸ Pin Window). View-owned `@State` (`WorkspaceChromeState`), installed late by the
+    /// root view via ``setTogglePinWindow(_:)`` once the chrome exists. Pin Window is CHORD-LESS by default, so
+    /// this fires only if a user binds a chord to `.pinWindow`; until installed `nil` ⇒ graceful no-op.
     private var togglePinWindow: (() -> Void)?
-    /// E3 WI-4 (audit fix): the "Close Window" actuator (⌘⇧W / View ▸ Close Window). A macOS
-    /// `NSWindow.performClose(_:)` concern, so it is installed late by the app via ``setCloseWindow(_:)`` once
-    /// the scene's window is captured; the app wires it to `window.performClose(nil)`, which fires the native
-    /// `windowShouldClose` → the existing window-close confirmation gate. Until installed `nil` ⇒ `.closeWindow`
-    /// falls back to `store.requestCloseWindow()` in `route` (a non-trapping graceful park), never a dead chord.
+    /// The "Close Window" actuator (⌘⇧W / View ▸ Close Window). An `NSWindow.performClose(_:)` concern,
+    /// installed late by the app via ``setCloseWindow(_:)`` once the scene's window is captured; wired to
+    /// `window.performClose(nil)`, which fires `windowShouldClose` → the existing close-confirmation gate.
+    /// Until installed `nil` ⇒ `.closeWindow` falls back to `store.requestCloseWindow()` in `route` — never a
+    /// dead chord.
     private var closeWindow: (() -> Void)?
 
-    /// E11 review fix: a predicate the monitor consults BEFORE resolving any chord — `true` while a
-    /// keyboard-capturing overlay (the Open-Quickly picker) is presented. The app NSEvent monitor is built to
-    /// PREEMPT the responder chain (a multi-key prefix can't be a `.commands` menu item), so without this gate
-    /// every globally-bound ⌘-chord is resolved + SWALLOWED before the picker's `.onKeyPress` runs — ⌘1–9 would
-    /// switch the tab BEHIND the picker (instead of quick-picking the Nth result) and ⌘W would DESTRUCTIVELY
-    /// close the focused pane/session behind the open picker. When this returns `true` the monitor behaves like
-    /// a modal sheet and YIELDS the whole keyboard to the focused overlay: every key passes through UNCHANGED so
-    /// the picker owns its picker-local chords (⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J, ⌘1–9, ⌘K), and Esc / a scrim-tap close it.
-    /// `{ false }` (the headless / test default) keeps the at-rest behaviour byte-identical; ⌘⇧O / ⌘J stay the
-    /// GLOBAL entry chords only while the picker is HIDDEN (they open it).
+    /// A predicate the monitor consults BEFORE resolving any chord — `true` while a keyboard-capturing overlay
+    /// (the Open-Quickly picker) is presented. The monitor PREEMPTS the responder chain (a multi-key prefix
+    /// can't be a `.commands` menu item), so without this gate every global ⌘-chord is resolved + SWALLOWED
+    /// before the picker's `.onKeyPress` runs — ⌘1–9 would switch the tab BEHIND the picker and ⌘W would
+    /// DESTRUCTIVELY close the focused pane behind it. When `true` the monitor yields the whole keyboard like a
+    /// modal sheet: every key passes through UNCHANGED so the picker owns its picker-local chords
+    /// (⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J, ⌘1–9, ⌘K), and Esc / a scrim-tap close it. `{ false }` (headless / test default)
+    /// keeps at-rest behaviour byte-identical; ⌘⇧O / ⌘J are GLOBAL entry chords only while the picker is HIDDEN.
     private let isOverlayCapturingKeys: () -> Bool
 
-    /// A predicate the monitor consults FIRST — `true` only while the WORKSPACE window is the key window. The
-    /// app NSEvent monitor is application-wide (a `.keyDown` local monitor fires for events delivered to ANY
-    /// window in this process), so without this gate a bound chord typed while the separate stock SwiftUI
-    /// Settings scene window (⌘,) — or an attached sheet (first-launch / close-confirm) — is
-    /// key resolves against the HIDDEN main-window workspace tree and is swallowed before the Settings window
-    /// ever sees it: ⌘W closes a background terminal pane while Settings refuses to close, ⌘T/⌘D/⌘1–9 mutate
-    /// the hidden tree, and the keybindings recorder is starved (this monitor eats the chord it is trying to
-    /// record). When this returns `false` every key passes through UNCHANGED so the frontmost Settings window /
-    /// sheet owns its own keystrokes. `{ true }` (the headless / test default) keeps the at-rest behaviour
-    /// byte-identical — a test with no real window server always reports the workspace as key.
+    /// A predicate the monitor consults FIRST — `true` only while the WORKSPACE window is key. The monitor is
+    /// application-wide (a `.keyDown` local monitor fires for events to ANY window in this process), so without
+    /// this gate a chord typed while the stock Settings window (⌘,) — or an attached sheet (first-launch /
+    /// close-confirm) — is key resolves against the HIDDEN workspace tree and is swallowed before Settings sees
+    /// it: ⌘W closes a background pane while Settings refuses to close, ⌘T/⌘D/⌘1–9 mutate the hidden tree, and
+    /// the keybindings recorder is starved (this monitor eats the chord it is recording). When `false` every key
+    /// passes through UNCHANGED so the frontmost window / sheet owns its keystrokes. `{ true }` (headless / test
+    /// default) keeps at-rest behaviour byte-identical — a test with no window server reports workspace as key.
     private let isWorkspaceWindowKey: () -> Bool
 
-    /// Keyboard-improvement (prefix-armed indicator): reports every ARMED edge of the prefix machine — `true`
-    /// when the prefix arms, `false` on ANY disarm (a resolved follow-up, an unbound follow-up, the double-tap
-    /// send-prefix, or the escape TIMEOUT via ``armExpiryTask``). The app wires this to
-    /// ``OverlayCoordinator/setPrefixArmed(_:)`` so the workspace chip shows exactly while a follow-up key is
-    /// awaited. `{ _ in }` (the headless / test default) keeps the dispatcher inert without a UI.
+    /// Prefix-armed indicator: reports every ARMED edge — `true` when the prefix arms, `false` on ANY disarm
+    /// (resolved follow-up, unbound follow-up, double-tap send-prefix, or the escape TIMEOUT via
+    /// ``armExpiryTask``). The app wires this to ``OverlayCoordinator/setPrefixArmed(_:)`` so the chip shows
+    /// exactly while a follow-up key is awaited. `{ _ in }` (headless / test default) keeps the dispatcher inert.
     private let onPrefixArmedChange: (Bool) -> Void
 
     /// The pure prefix machine (B2). Its sequence resolver reads the override-aware `resolvedSequenceTable`
     /// (single-chord fallback to `resolvedChordTable`) so a rebind — single OR multi-key — takes effect; the
-    /// prefix chord itself is configurable (defaults to the store's live `workspaceKeyPrefix`).
+    /// prefix chord is configurable (defaults to the store's live `workspaceKeyPrefix`).
     private let machine: PrefixStateMachine
 
     /// The pending armed-timeout expiry: scheduled when the prefix arms, cancelled on the next keystroke.
-    /// The machine itself is clock-lazy (a stale arm expires only when `feed`/`expireIfStale` runs), so
-    /// WITHOUT this task an abandoned arm would leave the indicator lit until the next keypress. Firing it
-    /// calls `expireIfStale` (idempotent) and reports the `false` edge.
+    /// The machine is clock-lazy (a stale arm expires only when `feed`/`expireIfStale` runs), so WITHOUT this
+    /// an abandoned arm would leave the indicator lit until the next keypress. Firing calls `expireIfStale`
+    /// (idempotent) and reports the `false` edge.
     private var armExpiryTask: Task<Void, Never>?
 
     private var monitor: Any?
 
-    /// - Parameter prefix: the configured prefix chord. Pass `nil` (the default) to adopt the store's live
+    /// - Parameter prefix: the configured prefix chord. Pass `nil` (default) to adopt the store's live
     ///   ``WorkspaceStore/workspaceKeyPrefix`` so the app monitor and the per-surface ``TerminalKeyInterceptor``
-    ///   arm on ONE shared, configured prefix (no split-brain when the prefix is moved off ⌃A). An explicit
-    ///   value overrides the store (test seam).
+    ///   arm on ONE shared prefix (no split-brain when the prefix moves off ⌃A). An explicit value overrides the
+    ///   store (test seam).
     init(
         store: WorkspaceStore,
         prefix: KeyChord? = nil,
@@ -149,10 +135,10 @@ final class WorkspaceKeyDispatcher {
         self.isOverlayCapturingKeys = isOverlayCapturingKeys
         self.isWorkspaceWindowKey = isWorkspaceWindowKey
         self.onPrefixArmedChange = onPrefixArmedChange
-        // The prefix machine resolves a post-prefix key against the override-aware SEQUENCE table FIRST (so a
-        // multi-key prefix sequence whose tail key is not a standalone binding still fires), falling back to
-        // the SINGLE-CHORD table (so the seeded ⌃A→⌘D, where ⌘D is also a standalone chord, keeps working and
-        // an override is honoured). The prefix itself defaults to the store's live `workspaceKeyPrefix`.
+        // Resolve a post-prefix key against the override-aware SEQUENCE table FIRST (so a multi-key sequence
+        // whose tail key isn't a standalone binding still fires), falling back to the SINGLE-CHORD table (so the
+        // seeded ⌃A→⌘D keeps working and an override is honoured). Prefix defaults to the store's live
+        // `workspaceKeyPrefix`.
         machine = PrefixStateMachine(
             prefix: prefix ?? store.workspaceKeyPrefix,
             resolveAfterPrefix: { chord in WorkspaceBindingRegistry.resolvedChordTable[chord] },
@@ -168,10 +154,9 @@ final class WorkspaceKeyDispatcher {
     /// the expiry edge is observable without a 1 s wait; the machine clamps a negative/NaN value itself.
     func setPrefixTimeout(_ timeout: TimeInterval) { machine.timeout = timeout }
 
-    /// Install the left sidebar / Tabs-panel toggle once the `WorkspaceChromeState` exists (the root view
-    /// wires this to `chrome.toggleSidebar` on appear). Without it, ⌘⇧L resolves to `.toggleSidebar` and
-    /// `route` falls back to the legacy `store.sidebarCollapsed` (which nothing reads on macOS) — so this
-    /// closure makes ⌘⇧L actually collapse the native sidebar item ("Toggle Tabs Panel").
+    /// Install the left sidebar / Tabs-panel toggle once `WorkspaceChromeState` exists (the root view wires
+    /// this to `chrome.toggleSidebar` on appear). Without it ⌘⇧L falls back to `store.sidebarCollapsed` (which
+    /// nothing reads on macOS); this closure makes ⌘⇧L actually collapse the native sidebar item.
     func setToggleSidebar(_ toggle: @escaping () -> Void) { toggleSidebar = toggle }
 
     /// Install the "Pin Window" toggle once the `WorkspaceChromeState` exists (the root view wires this to
@@ -180,10 +165,10 @@ final class WorkspaceKeyDispatcher {
     func setTogglePinWindow(_ toggle: @escaping () -> Void) { togglePinWindow = toggle }
 
     /// Install the "Close Window" actuator once the scene's `NSWindow` is captured (the app wires this to
-    /// `window.performClose(nil)`, which fires `windowShouldClose` → the existing window-close confirmation
-    /// gate). Until installed, `.closeWindow` falls back to `store.requestCloseWindow()` in `route` (a
-    /// non-trapping graceful park), so ⌘⇧W is never a dead chord. The closure makes ⌘⇧W ACTUATE a close
-    /// (the audit found the bare store-park path never closed anything — it had no SwiftUI observer).
+    /// `window.performClose(nil)`, which fires `windowShouldClose` → the existing close-confirmation gate).
+    /// Until installed, `.closeWindow` falls back to `store.requestCloseWindow()` in `route` — never a dead
+    /// chord. The closure makes ⌘⇧W ACTUATE a close (the bare store-park path never closed anything — no
+    /// SwiftUI observer).
     func setCloseWindow(_ close: @escaping () -> Void) { closeWindow = close }
 
     /// Install the `.keyDown` local monitor. Returning `nil` from the handler SWALLOWS the event; returning
@@ -196,9 +181,9 @@ final class WorkspaceKeyDispatcher {
         }
     }
 
-    /// Remove the monitor (app-lifetime in practice, so rarely called — exposed for completeness / tests).
-    /// No `deinit`-time removal: the monitor captures `self` weakly and the dispatcher lives for the whole
-    /// process, and a `nonisolated deinit` cannot touch the non-`Sendable` monitor token anyway.
+    /// Remove the monitor (app-lifetime, so rarely called — exposed for tests). No `deinit`-time removal: the
+    /// monitor captures `self` weakly and the dispatcher lives the whole process, and a `nonisolated deinit`
+    /// cannot touch the non-`Sendable` monitor token anyway.
     func teardown() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
@@ -206,24 +191,22 @@ final class WorkspaceKeyDispatcher {
         armExpiryTask = nil
     }
 
-    /// Map one `NSEvent` keystroke to swallow (`nil`) or pass-through (the event), routing any resolved
-    /// action through `WorkspaceBindingRegistry.route(...)`. Pure transition logic lives in the machine; this
-    /// only does NSEvent→chord normalization + the intent→effect wiring. `internal` (not `private`) so the
-    /// modal-yield gate below is unit-testable headlessly via `@testable` (it constructs a synthetic NSEvent,
-    /// never a window-server resource — the hang-safety rule is about SCStream/VT/Metal, not NSEvent).
+    /// Map one `NSEvent` keystroke to swallow (`nil`) or pass-through (the event), routing any resolved action
+    /// through `WorkspaceBindingRegistry.route(...)`. Pure transition logic lives in the machine; this does
+    /// NSEvent→chord normalization + intent→effect wiring. `internal` (not `private`) so the modal-yield gate
+    /// is unit-testable via `@testable` (a synthetic NSEvent is not a window-server resource — the hang-safety
+    /// rule is about SCStream/VT/Metal, not NSEvent).
     func handle(_ event: NSEvent) -> NSEvent? {
-        // KEY-WINDOW GATE: the monitor is application-wide, but every workspace chord is meaningful ONLY when
-        // the workspace window holds focus. If a separate window is key — the stock Settings scene (⌘,), or an
-        // attached sheet — pass EVERY key through UNCHANGED so that window receives its own keystrokes (and the
-        // keybindings recorder can capture the chord it is trying to record) instead of this monitor resolving
-        // + swallowing it against the hidden workspace tree behind them.
+        // KEY-WINDOW GATE: the monitor is application-wide, but a workspace chord is meaningful ONLY when the
+        // workspace window holds focus. If a separate window is key (Settings, a sheet), pass EVERY key through
+        // UNCHANGED so that window (and the keybindings recorder) receives its own keystrokes instead of this
+        // monitor resolving + swallowing against the hidden workspace tree.
         if !isWorkspaceWindowKey() { return event }
         // MODAL YIELD: while a keyboard-capturing overlay (the Open-Quickly picker) is presented, this monitor
         // — which PREEMPTS the responder chain — must NOT resolve the global chord table behind it, or ⌘1–9
-        // would switch the BACKGROUND tab (instead of quick-picking the Nth result) and ⌘W would DESTROY the
-        // focused pane behind the open picker. Yield the whole keyboard to it like a modal sheet: pass every
-        // key through UNCHANGED so the picker's `.onKeyPress` owns its picker-local chords (⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J,
-        // ⌘1–9, ⌘K) and Esc / a scrim-tap close it. (⌘⇧O / ⌘J are global only while the picker is hidden.)
+        // would switch the BACKGROUND tab and ⌘W would DESTROY the focused pane behind it. Pass every key
+        // through UNCHANGED so the picker's `.onKeyPress` owns its picker-local chords (⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J,
+        // ⌘1–9, ⌘K); Esc / a scrim-tap close it. (⌘⇧O / ⌘J are global only while the picker is hidden.)
         if isOverlayCapturingKeys() { return event }
         // A keystroke that does not normalize to a chord we model (a pure modifier, a dead key, …) is left
         // untouched — never swallow what we cannot classify.
@@ -244,22 +227,22 @@ final class WorkspaceKeyDispatcher {
         syncPrefixArmedIndicator()
         switch intent {
         case let .passthrough(passed):
-            // E1/WI-7: a user `text:`/`csi:`/`esc:` config binding (a literal-byte binding) resolves
-            // BEFORE the action table — the chord sends its already-resolved bytes (ESC/CSI lead bytes baked
-            // in by `KeybindGrammar`) to the focused pane and is swallowed.
+            // A user `text:`/`csi:`/`esc:` literal-byte binding resolves BEFORE the action table — the chord
+            // sends its already-resolved bytes (ESC/CSI lead bytes baked in by `KeybindGrammar`) to the focused
+            // pane and is swallowed.
             if let textBinding = WorkspaceBindingRegistry.textBinding(for: passed) {
                 if let active = activePaneID {
                     store.handle(for: active)?.sendBytes(textBinding.payload)
                 }
                 return nil // swallow — the text binding owns this chord
             }
-            // An `unbind:` target suppresses its DEFAULT action: pass the event straight through to the
-            // focused responder (the terminal/video pane handles it) instead of firing the registry action.
+            // An `unbind:` target suppresses its DEFAULT action: pass the event through to the focused
+            // responder instead of firing the registry action.
             if WorkspaceBindingRegistry.isUnbound(passed) {
                 return event
             }
-            // Idle + an unbound key: a workspace single chord still resolves here (the machine only owns the
-            // prefix-sequence path). A plain/Ctrl-letter the table does not bind falls through to the PTY.
+            // Idle: a workspace single chord still resolves here (the machine only owns the prefix-sequence
+            // path). A plain/Ctrl-letter the table doesn't bind falls through to the PTY.
             if let action = WorkspaceBindingRegistry.resolvedChordTable[passed] {
                 dispatch(action)
                 return nil // swallow — the workspace owns this chord

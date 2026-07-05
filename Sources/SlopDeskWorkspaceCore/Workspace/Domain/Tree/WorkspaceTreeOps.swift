@@ -3,24 +3,22 @@ import Foundation
 
 // MARK: - WorkspaceTreeOps (the facade over Session / Tab / split tree)
 
-/// The pure operation facade over the tree-rooted ``TreeWorkspace`` (docs/42 §"Pure ops"). Every method
-/// is a pure transformation on the value types — it returns a NEW ``TreeWorkspace`` (some also the minted
-/// ``PaneID``), never mutates in place, never does I/O or touches the GUI. Each op preserves the
-/// **specs == leafIDs invariant** and keeps the active-selection invariants (active session / tab /
-/// pane never dangle), so the store cutover (W4) can wrap these directly before `reconcile()`.
+/// Pure operation facade over the tree-rooted ``TreeWorkspace`` (docs/42 §"Pure ops"). Every method
+/// returns a NEW ``TreeWorkspace`` (some also the minted ``PaneID``) — no in-place mutation, no I/O, no
+/// GUI. Each op preserves the **specs == leafIDs invariant** and the active-selection invariants (active
+/// session / tab / pane never dangle), so the store cutover (W4) wraps these directly before `reconcile()`.
 ///
 /// Float math follows the house idiom: separate `*`/`+`/`/` (never `addingProduct`/`fma`) and
 /// NaN-faithful ordered `Double.maximum`/`Double.minimum`.
 public enum WorkspaceTreeOps {
     // MARK: Split
 
-    /// Splits the pane `target` along `axis`, creating a new leaf carrying `newSpec`. The new pane is
-    /// inserted as a sibling if the parent split already has `axis`, else `target` becomes a 2-child
-    /// split (see ``SplitNode/splitting(_:axis:inserting:before:)``). `before == true` inserts the new pane
-    /// on the LEADING side of `target` (the split-left/up chords; the default `false` keeps the natural
-    /// trailing insert, so every existing call site is byte-identical). The new pane is focused/activated.
-    /// Returns the new workspace and the minted ``PaneID``. A no-op (target absent) returns the workspace
-    /// unchanged with a throw-away id that is not in the tree — callers split a real pane.
+    /// Splits pane `target` along `axis`, creating a new leaf carrying `newSpec`. Inserted as a sibling if
+    /// the parent split already has `axis`, else `target` becomes a 2-child split (see
+    /// ``SplitNode/splitting(_:axis:inserting:before:)``). `before == true` inserts on `target`'s LEADING
+    /// side (the split-left/up chords); the default `false` is the trailing insert, so existing call sites
+    /// stay byte-identical. The new pane is focused. Returns the new workspace + minted ``PaneID``. No-op
+    /// (target absent) returns `ws` unchanged with a throw-away id not in the tree.
     public static func splitPane(
         _ target: PaneID,
         axis: SplitAxis,
@@ -47,14 +45,12 @@ public enum WorkspaceTreeOps {
     // MARK: Close a pane (cascade + rebalance + refocus)
 
     /// Closes pane `target`: removes it from its tab's tree (collapsing the single-child parent and
-    /// re-balancing surviving siblings), drops its spec, and cascades —
+    /// re-balancing siblings), drops its spec, and cascades —
     /// - the tab's **last** pane closing closes the tab (selecting an adjacent tab);
     /// - the session's **last** tab closing closes the session (selecting another session);
-    /// - the workspace's **last** pane closing re-seeds a fresh default pane (the workspace is never
-    ///   empty).
+    /// - the workspace's **last** pane closing re-seeds a fresh default pane (never empty).
     /// A dangling zoom on the closed pane is cleared; focus moves to a geometric neighbour via
-    /// ``FocusResolver`` (else the surviving first leaf). No-op if `target` is absent. Preserves the
-    /// invariant.
+    /// ``FocusResolver`` (else the surviving first leaf). No-op if `target` is absent. Preserves the invariant.
     public static func closePane(_ target: PaneID, in ws: TreeWorkspace) -> TreeWorkspace {
         guard let (sIdx, tIdx) = locate(target, in: ws) else { return ws }
         var copy = ws
@@ -193,10 +189,9 @@ public enum WorkspaceTreeOps {
 
     // MARK: Move / swap
 
-    /// Exchanges the positions of two leaves within whichever tab(s) own them (same-tab swap moves both
-    /// ids; cross-tab is not attempted — the ids move only if both are in the same tab). No-op if either
-    /// is absent or they are in different tabs. Preserves the invariant (specs unchanged, leaf set
-    /// unchanged).
+    /// Exchanges the positions of two leaves — only if both live in the SAME tab (cross-tab swap isn't
+    /// attempted). No-op if either is absent or they're in different tabs. Preserves the invariant (specs +
+    /// leaf set unchanged).
     public static func swapPanes(_ a: PaneID, _ b: PaneID, in ws: TreeWorkspace) -> TreeWorkspace {
         guard a != b, let (sa, ta) = locate(a, in: ws), let (sb, tb) = locate(b, in: ws), sa == sb, ta == tb
         else { return ws }
@@ -207,18 +202,17 @@ public enum WorkspaceTreeOps {
         return copy
     }
 
-    /// Relocates leaf `source` to sit beside leaf `target` along `axis`, on the BEFORE side when `before`
-    /// (else after) — the drag-drop **re-split** commit: you grabbed `source`'s top handle and dropped it on
-    /// an EDGE of `target` (top/bottom/left/right), so `source` becomes a new row/column beside `target` on
-    /// that side. `source` is pruned from its current slot (collapsing/re-balancing exactly as a close would)
-    /// and re-inserted as `target`'s sibling **keeping its `PaneID`** — so reconcile is a registry no-op (no
-    /// surface teardown, the remote stream survives) and only the solved geometry changes. `source` stays the
-    /// active pane. Dropping side-by-side panes onto each other's TOP/BOTTOM edge turns the side-by-side
-    /// (`.horizontal`) split into a stacked (`.vertical`) one (and vice-versa) — the user's "dọc → ngang".
+    /// Relocates leaf `source` beside leaf `target` along `axis`, on the BEFORE side when `before` (else
+    /// after) — the drag-drop **re-split** commit: dropped on an EDGE of `target`, `source` becomes a new
+    /// row/column beside it. `source` is pruned from its slot (collapsing/re-balancing as a close would) and
+    /// re-inserted as `target`'s sibling **keeping its `PaneID`** — so reconcile is a registry no-op (no
+    /// surface teardown, the remote stream survives) and only the geometry changes. `source` stays active.
+    /// Dropping side-by-side panes onto each other's TOP/BOTTOM edge flips a `.horizontal` split to
+    /// `.vertical` (and vice-versa) — the user's "dọc → ngang".
     ///
-    /// No-op (returns `ws` unchanged) if `source == target`, either is absent, or they are in different tabs
-    /// (cross-tab relocation isn't attempted — matches ``swapPanes(_:_:in:)``). Preserves the **specs ==
-    /// leafIDs invariant** (the leaf set + specs are unchanged — only a position moves).
+    /// No-op if `source == target`, either is absent, or they're in different tabs (cross-tab relocation
+    /// isn't attempted — matches ``swapPanes(_:_:in:)``). Preserves the **specs == leafIDs invariant** (leaf
+    /// set + specs unchanged — only a position moves).
     public static func moveLeaf(
         _ source: PaneID,
         beside target: PaneID,
@@ -232,17 +226,15 @@ public enum WorkspaceTreeOps {
         else { return ws }
         var copy = ws
         var tab = copy.sessions[sa].tabs[ta]
-        // Prune `source` first — it can NEVER empty the tab (target lives in the same tab, so ≥1 leaf
-        // survives), so the optional is non-nil for a valid tab; guard it defensively anyway. Then re-insert
-        // beside `target` on the requested side. A cross-axis insert wraps the target's slot in one extra
-        // level: reject (no-op) if that would breach the decoder's ``SplitNode/maxDepth`` ceiling — a tree
-        // the decoder would later truncate loses a leaf, i.e. a remote surface.
+        // Prune `source` first — it can NEVER empty the tab (target shares the tab, so ≥1 leaf survives);
+        // guard defensively anyway. Then re-insert beside `target`. A cross-axis insert wraps the target's
+        // slot one level deeper: reject if that would breach the decoder's ``SplitNode/maxDepth`` ceiling —
+        // a tree the decoder later truncates loses a leaf, i.e. a remote surface.
         guard let pruned = tab.root.removing(source),
               let relocated = pruned.inserting(source, beside: target, axis: axis, before: before),
               relocated.depth <= SplitNode.maxDepth,
-              // A drop that reproduces the same arrangement (e.g. onto the edge the pane already occupies)
-              // would still differ by `==` because the rebuild mints a fresh split id — skip the no-op so it
-              // doesn't churn a reconcile/save.
+              // A drop reproducing the same arrangement still differs by `==` (rebuild mints a fresh split
+              // id) — skip it so it doesn't churn a reconcile/save.
               !relocated.isStructurallyEqual(to: tab.root)
         else { return ws }
         tab.root = relocated
@@ -251,14 +243,13 @@ public enum WorkspaceTreeOps {
         return copy
     }
 
-    /// Docks leaf `source` to the OUTERMOST `edge` of its tab — the drag-to-CONTAINER-edge commit: you
-    /// dragged `source`'s handle into the container's outer gutter, so it becomes a full-span column
-    /// (`.left`/`.right`) or row (`.top`/`.bottom`) spanning the whole tab. `source` is pruned (collapse +
-    /// rebalance) then re-inserted at the ROOT on `edge.axis`, KEEPING its `PaneID` (reconcile is a registry
-    /// no-op — no surface teardown). `source` stays active. Distinct from
-    /// ``moveLeaf(_:beside:axis:before:in:)`` which needs a target leaf to sit beside; a gutter drop has
-    /// none, so this prepends/appends at the root (or wraps it). No-op if `source` is absent, its tab has
-    /// only the one leaf (nothing to dock against), or the dock would breach ``SplitNode/maxDepth``.
+    /// Docks leaf `source` to the OUTERMOST `edge` of its tab — the drag-to-CONTAINER-edge commit: dragged
+    /// into the outer gutter, `source` becomes a full-span column (`.left`/`.right`) or row
+    /// (`.top`/`.bottom`) spanning the whole tab. `source` is pruned (collapse + rebalance) then re-inserted
+    /// at the ROOT on `edge.axis`, KEEPING its `PaneID` (reconcile is a registry no-op — no surface
+    /// teardown). `source` stays active. Unlike ``moveLeaf(_:beside:axis:before:in:)``, a gutter drop has no
+    /// target leaf, so this prepends/appends at the root (or wraps it). No-op if `source` is absent, its tab
+    /// has only one leaf (nothing to dock against), or the dock would breach ``SplitNode/maxDepth``.
     /// Preserves the **specs == leafIDs invariant**.
     public static func moveLeafToRootEdge(
         _ source: PaneID,
@@ -282,11 +273,10 @@ public enum WorkspaceTreeOps {
     }
 
     /// Moves pane `pane` in `direction` by EXCHANGING it with its geometric neighbour on that side (Zellij
-    /// "move pane"): resolves the directional neighbour against the active tab solved into `bounds` (the same
-    /// geometry the user sees + ``moveFocus(_:bounds:in:)`` reads), then ``swapPanes(_:_:in:)`` the two.
-    /// `.next`/`.previous` and "no neighbour that side" are no-ops (returns `ws` unchanged). Because
-    /// `swapPanes` keeps the ``PaneID`` identity, `pane` stays the active pane after the move. Preserves the
-    /// invariant (specs + leaf set unchanged — only positions move).
+    /// "move pane"): resolves the neighbour against the active tab solved into `bounds` (the geometry the
+    /// user sees + ``moveFocus(_:bounds:in:)`` reads), then ``swapPanes(_:_:in:)`` the two. `.next`/`.previous`
+    /// and "no neighbour that side" are no-ops. `swapPanes` keeps ``PaneID`` identity, so `pane` stays
+    /// active. Preserves the invariant (specs + leaf set unchanged — only positions move).
     public static func movePaneInDirection(
         _ pane: PaneID,
         _ direction: FocusDirection,
@@ -313,13 +303,13 @@ public enum WorkspaceTreeOps {
 
     // MARK: Resize the active pane (keyboard divider nudge)
 
-    /// Grows / shrinks pane `pane` along `direction` by nudging the divider of the nearest enclosing split
-    /// on the relevant axis (the keyboard counterpart to a drag-resize). `.left`/`.right` act on the nearest
+    /// Grows / shrinks pane `pane` along `direction` by nudging the nearest enclosing split's divider on the
+    /// relevant axis (the keyboard counterpart to a drag-resize). `.left`/`.right` act on the nearest
     /// enclosing **horizontal** split (width); `.up`/`.down` on the nearest **vertical** split (height).
     /// `.right`/`.down` GROW the pane, `.left`/`.up` SHRINK it. `.next`/`.previous` and "no enclosing split"
     /// are no-ops. The underlying ``resizeDivider(splitID:leadingChildIndex:delta:in:)`` is sum-preserving +
     /// clamped at ``SplitWeight/minWeight``, so the active pane can never starve a sibling to nothing.
-    /// Preserves the invariant (the leaf set is unchanged).
+    /// Preserves the invariant (leaf set unchanged).
     public static func resizeActivePane(
         _ pane: PaneID,
         _ direction: FocusDirection,
@@ -343,11 +333,10 @@ public enum WorkspaceTreeOps {
 
         let i = enclosing.childIndex
         let lastIndex = enclosing.childCount - 1
-        // Map (grow/shrink, position) to which divider to nudge and by what signed delta so the ACTIVE pane
-        // grows/shrinks. For a non-last child the divider to its right (leadingIndex == i) governs it:
-        // a +delta there grows the leading (active) child. For the LAST child there is no divider to its
-        // right, so the i-1 divider governs it with the sign flipped (a −delta there grows the trailing
-        // (active) child).
+        // Map (grow/shrink, position) to which divider to nudge + signed delta so the ACTIVE pane
+        // grows/shrinks. Non-last child: the divider to its right (leadingIndex == i) governs it — +delta
+        // grows the leading (active) child. LAST child: no divider to its right, so the i-1 divider governs
+        // it with the sign flipped (−delta grows the trailing active child).
         let leadingIndex: Int
         let delta: Double
         if i < lastIndex {
@@ -396,16 +385,15 @@ public enum WorkspaceTreeOps {
         case tiled
     }
 
-    /// Re-tiles the tiled tree of the tab that owns `pane` into `preset`, **preserving every leaf
-    /// `PaneID`** (a pure geometry change — no surface is created or destroyed, so the store's reconcile
-    /// materializes/tears down nothing). The rebuilt tree resets all split weights to an EQUAL `.flex(1)`
-    /// share (any prior divider drags are intentionally discarded — `select-layout` semantics).
+    /// Re-tiles the tab owning `pane` into `preset`, **preserving every leaf `PaneID`** (a pure geometry
+    /// change — reconcile materializes/tears down nothing). The rebuilt tree resets all split weights to an
+    /// EQUAL `.flex(1)` share (prior divider drags are intentionally discarded — `select-layout` semantics).
     ///
-    /// The leaf ORDER is the tab's pre-order DFS (``SplitNode/allPaneIDs()``); for the `main-*` presets the
-    /// ACTIVE leaf (``Tab/activePane`` when it is a live leaf, else the first leaf) is moved to the front so
-    /// it becomes the large pane. A ZOOM is cleared first (re-tiling under a full-screen single-pane zoom
-    /// is meaningless; tmux's `select-layout` exits zoom). A tab with 0 or 1 leaf is a NO-OP (returns `ws`
-    /// unchanged — a 1-child split would violate the ≥2-children invariant). No-op if `pane` is absent.
+    /// Leaf ORDER is the tab's pre-order DFS (``SplitNode/allPaneIDs()``); for the `main-*` presets the
+    /// ACTIVE leaf (``Tab/activePane`` when a live leaf, else the first) moves to the front to become the
+    /// large pane. A ZOOM is cleared first (re-tiling under a full-screen zoom is meaningless; tmux's
+    /// `select-layout` exits zoom). A 0/1-leaf tab is a NO-OP (a 1-child split would violate the
+    /// ≥2-children invariant). No-op if `pane` is absent.
     public static func applyLayout(
         _ preset: LayoutPreset,
         activeTabContaining pane: PaneID,
@@ -418,8 +406,8 @@ public enum WorkspaceTreeOps {
         let dfs = tab.root.allPaneIDs()
         guard dfs.count > 1 else { return ws } // 0/1 leaf → nothing to re-tile.
 
-        // The active leaf goes to the front for the main-* presets (only when it is actually a live leaf —
-        // a nil / dangling activePane falls back to the first leaf, the DFS head).
+        // Active leaf goes to the front for the main-* presets (only when it is a live leaf — a nil /
+        // dangling activePane falls back to the first leaf, the DFS head).
         let active = tab.activePane.flatMap { dfs.contains($0) ? $0 : nil }
         let leaves: [PaneID] =
             switch preset {
@@ -504,16 +492,15 @@ public enum WorkspaceTreeOps {
     /// `.vertical` split of `rows` row-nodes, each row a `.horizontal` split of its leaf slice. A grid /
     /// row of one element collapses to the bare leaf.
     ///
-    /// The leaves are spread across the rows as `rows` NEAR-EQUAL slices (the first `n % rows` rows get one
-    /// extra leaf) — the symmetric tmux `select-layout tiled` fill — rather than greedily packing every row
-    /// to `cols` and dumping the remainder in the last row (which makes a lopsided last row, e.g. n=7 →
-    /// `[3,3,1]` instead of the balanced `[3,2,2]`). Both keep the same leaf SET; this is purely the
-    /// cosmetic row distribution. `cols`/`rows` set how many rows exist; the per-row width is then balanced.
+    /// Leaves spread across rows as `rows` NEAR-EQUAL slices (the first `n % rows` rows get one extra) — the
+    /// symmetric tmux `select-layout tiled` fill — rather than greedily packing each row to `cols` and
+    /// dumping the remainder in a lopsided last row (n=7 → `[3,3,1]` vs the balanced `[3,2,2]`). Same leaf
+    /// SET either way; only the cosmetic row distribution differs.
     private static func tiled(leaves: [PaneID]) -> SplitNode {
         let n = leaves.count
-        // Integer ceil(sqrt) and ceil division — pure index arithmetic (no float / fma concerns). The
-        // ceil-sqrt is computed by incrementing `cols` while `cols*cols < n` so there is no floating
-        // perfect-square rounding edge for large n.
+        // Integer ceil(sqrt) and ceil division — pure index arithmetic (no float / fma concerns). ceil-sqrt
+        // increments `cols` while `cols*cols < n`, so there's no floating perfect-square rounding edge for
+        // large n.
         var cols = 1
         while cols * cols < n { cols += 1 }
         let safeCols = max(cols, 1)
@@ -543,9 +530,8 @@ public enum WorkspaceTreeOps {
     // MARK: Focus
 
     /// Focuses `target` (sets the owning tab's `activePane` and selects that session/tab). Focusing a pane
-    /// OTHER than the tab's zoomed one exits that tab's zoom first (the applyLayout/cycleLayout un-zoom
-    /// rule) — focus must never land on a pane the zoom collapse hides; re-focusing the zoomed pane itself
-    /// keeps the zoom. No-op if absent.
+    /// OTHER than the tab's zoomed one exits zoom first — focus must never land on a pane the zoom collapse
+    /// hides; re-focusing the zoomed pane itself keeps the zoom. No-op if absent.
     public static func focusPane(_ target: PaneID, in ws: TreeWorkspace) -> TreeWorkspace {
         guard let (sIdx, tIdx) = locate(target, in: ws) else { return ws }
         var copy = ws
@@ -593,17 +579,16 @@ public enum WorkspaceTreeOps {
         return focusPane(next, in: ws)
     }
 
-    /// The pane a sequential ⌘]/⌘[ pane-cycle step (E1 ES-E1-2 / E3 ES-E3-5) would focus, or `nil` when it
-    /// is a no-op — the **single source** of the DFS-wrap math the store delegates to
+    /// The pane a sequential ⌘]/⌘[ pane-cycle step (E1 ES-E1-2 / E3 ES-E3-5) would focus, or `nil` for a
+    /// no-op — the **single source** of the DFS-wrap math the store delegates to
     /// (``WorkspaceStore/paneCycleTreeTarget(forward:)``). Walks the active session's active tab in
     /// ``Tab/allPaneIDs()`` order (pre-order DFS — the same order reconcile + the carousel read);
-    /// `forward == true` steps to the NEXT id, `false` to the previous, WRAPPING at both
-    /// ends (last → first / first → last).
+    /// `forward == true` steps to the NEXT id, `false` the previous, WRAPPING at both ends.
     ///
-    /// A no-op (`nil`) when: there is no active session / tab; the active tab has fewer than two panes
-    /// (nothing to cycle to); or ``Tab/activePane`` is `nil` or is NOT a live leaf (a dangling active has
-    /// no place in the walk — cycling must not silently jump focus to the front).
-    /// Pure (no focus side effect), so the wrap + the guard is unit-testable in isolation.
+    /// A no-op (`nil`) when: no active session / tab; the active tab has fewer than two panes; or
+    /// ``Tab/activePane`` is `nil` or NOT a live leaf (a dangling active has no place in the walk — cycling
+    /// must not silently jump focus to the front). Pure (no focus side effect), so the wrap + guard is
+    /// unit-testable in isolation.
     public static func cyclePaneTarget(forward: Bool, in ws: TreeWorkspace) -> PaneID? {
         guard let tab = ws.activeSession?.activeTab else { return nil }
         let ids = tab.allPaneIDs()
@@ -631,9 +616,9 @@ public enum WorkspaceTreeOps {
     /// Returns the new workspace + the new pane's id. No-op (returns a throw-away id) if there is no active
     /// session.
     ///
-    /// `position` defaults to ``NewTabPosition/end`` so every existing call site is byte-identical to the
-    /// pre-E3 `tabs.append(...)` (inserting at the end index is an append, and the selected index is then
-    /// `tabs.count - 1`). Only the user-facing ⌘T path passes the configured ``NewTabPosition``.
+    /// `position` defaults to ``NewTabPosition/end`` so existing call sites stay byte-identical to the pre-E3
+    /// `tabs.append(...)` (end index = append, selected index = `tabs.count - 1`). Only the ⌘T path passes a
+    /// configured ``NewTabPosition``.
     public static func newTab(
         in ws: TreeWorkspace,
         spec: PaneSpec,
@@ -719,11 +704,10 @@ public enum WorkspaceTreeOps {
         return (copy, session.allPaneIDs()[0])
     }
 
-    /// Inserts a pre-built `session` (e.g. one ``SessionTemplateEngine/makeSession(from:name:)`` expanded)
-    /// into `ws`, appending it to `sessions`; when `makeActive` it also becomes the selected session. Other
-    /// sessions are untouched (their tabs / specs / active state are preserved), so the **specs == leafIDs
-    /// invariant** holds for the whole workspace as long as the inserted session holds it. Mirrors the tail
-    /// of ``newSession(in:name:spec:)`` for an already-constructed session. Pure.
+    /// Inserts a pre-built `session` (e.g. a ``SessionTemplateEngine/makeSession(from:name:)`` expansion),
+    /// appending it to `sessions`; when `makeActive` it also becomes selected. Other sessions are untouched,
+    /// so the **specs == leafIDs invariant** holds for the whole workspace as long as the inserted session
+    /// does. Mirrors the tail of ``newSession(in:name:spec:)`` for an already-constructed session. Pure.
     public static func insertSession(
         _ session: Session,
         in ws: TreeWorkspace,

@@ -4,17 +4,15 @@ import SlopDeskProtocol
 // MARK: - E11 WI-3 (ES-E11-1..4): the pure Open-Quickly (`⌘⇧O`) switcher model
 
 /// The Open-Quickly filter pills — the `⌘⇧O` taxonomy (distinct from the `⌘⇧P` command-palette
-/// `QueryFilter`). One floating picker fuzzy-searches across these sources; `.all` merges the rest into a
-/// single ranked list with ALL-CAPS section headers.
+/// `QueryFilter`). One floating picker fuzzy-searches these sources; `.all` merges the rest into a single
+/// ranked list with ALL-CAPS section headers.
 ///
 /// ### Pill set
-/// The full pill set considered was `All / Opened / Recent / Folders / SSH / Agents / Current / Recipes`.
-/// Two are dropped by product decision:
-/// - **SSH** is a product cut (no `~/.ssh/config` parse, no `⌘S` chord, no SSH Actions row).
-/// - **Recipes** was removed with the recipe feature (2026-07-03).
-///
-/// So the pill ring is **All / Opened / Recent / Folders / Agents / Current** — both cuts are structural:
-/// no `ssh` / `recipes` case exists on this enum at all, so nothing can route to a missing source.
+/// The ring is **All / Opened / Recent / Folders / Agents / Current**. Two pills were dropped by product
+/// decision — the cuts are structural (no `ssh` / `recipes` case exists on this enum, so nothing can route
+/// to a missing source):
+/// - **SSH** cut: no `~/.ssh/config` parse, no `⌘S` chord, no SSH Actions row.
+/// - **Recipes** removed with the recipe feature (2026-07-03).
 public enum OpenQuicklyFilter: String, CaseIterable, Equatable, Hashable, Sendable {
     /// The merged, section-headered list of every source — the `⌘⇧O` default.
     case all
@@ -52,8 +50,7 @@ public enum OpenQuicklyFilter: String, CaseIterable, Equatable, Hashable, Sendab
         }
     }
 
-    /// The ALL-CAPS group header this source renders under in the merged `.all` list (an uppercased pill
-    /// name, e.g. "WINDOWS"/"TABS"-style styling).
+    /// The ALL-CAPS group header this source renders under in the merged `.all` list (the uppercased pill name).
     public var sectionHeader: String { label.uppercased() }
 
     /// The pill's leading SF Symbol name (`Image(systemName:)`).
@@ -155,8 +152,8 @@ public enum OpenQuicklyKind: String, CaseIterable, Equatable, Hashable, Sendable
 /// store) so the merge/rank/section/select logic is headlessly unit-tested; the view turns ``act`` into a
 /// store op / `LinkActionActuator` call via a thin switch.
 public struct OpenQuicklyItem: Identifiable, Equatable, Hashable, Sendable {
-    /// What firing the row does. Carrying the typed source keeps the view's actuator a thin switch and keeps
-    /// the routing decisions in one place (the model), not scattered across the view.
+    /// What firing the row does. Carrying the typed source keeps routing decisions in the model (a thin view
+    /// actuator), not scattered across the view.
     public enum Act: Equatable, Hashable, Sendable {
         /// Focus a currently-open pane (Opened `↩`).
         case focusPane(PaneID)
@@ -188,16 +185,16 @@ public struct OpenQuicklyItem: Identifiable, Equatable, Hashable, Sendable {
     public let act: Act
 
     /// E21 WI-2: the WORKSPACE pane kind a `.pane` row is backed by. For a `.remoteGUI`/`.systemDialog` VIDEO
-    /// pane this differentiates the row's ``symbol``/``badge`` so a remote-window peer reads as a *window* (a
-    /// window glyph + a "Window"/"Dialog" badge) instead of a generic split "Pane", while ``act`` stays
-    /// kind-generic (`.focusPane` — `↩` focuses the pane exactly as a terminal row does). Defaults to
-    /// `.terminal`, the non-differentiating value, for every NON-pane source (folders / agents / recent /
-    /// current), where it is inert (those rows keep their ``OpenQuicklyKind`` chrome).
+    /// pane it differentiates ``symbol``/``badge`` so the row reads as a *window* (window glyph +
+    /// "Window"/"Dialog" badge) instead of a generic split "Pane", while ``act`` stays kind-generic
+    /// (`.focusPane` — `↩` focuses the pane exactly as a terminal row does). Defaults to `.terminal` (the
+    /// non-differentiating value) for every NON-pane source (folders / agents / recent / current), where it is
+    /// inert (those rows keep their ``OpenQuicklyKind`` chrome).
     public let paneKind: PaneKind
 
-    /// The trailing type badge. A `.pane` row backed by a VIDEO pane reads as a *window* — "Window" for a
-    /// `.remoteGUI` and "Dialog" for the auto `.systemDialog` — so a remote-window peer is differentiated from
-    /// a generic terminal "Pane"; every other row delegates to its ``OpenQuicklyKind``. (E21 WI-2.)
+    /// The trailing type badge. A `.pane` row backed by a VIDEO pane reads as a *window* — "Window" for
+    /// `.remoteGUI`, "Dialog" for the auto `.systemDialog` — differentiating it from a generic terminal
+    /// "Pane"; every other row delegates to its ``OpenQuicklyKind``. (E21 WI-2.)
     public var badge: String {
         switch paneKind {
         case .remoteGUI: "Window"
@@ -253,10 +250,10 @@ public struct OpenQuicklySection: Identifiable, Equatable, Sendable {
     }
 }
 
-/// The PURE merge / rank / section / cycle / quick-pick logic + the pure source builders for the
-/// Open-Quickly picker. No SwiftUI, no store — every source is handed in pre-built (the view assembles them
-/// from `WorkspaceStore` / `MetadataClient` / `JumpToModel`), so the ordering + selection contract is
-/// headlessly testable.
+/// The PURE merge / rank / section / cycle / quick-pick logic + the source builders for the Open-Quickly
+/// picker. No SwiftUI, no store — every source is handed in pre-built (the view assembles them from
+/// `WorkspaceStore` / `MetadataClient` / `JumpToModel`), so the ordering + selection contract is headlessly
+/// testable.
 ///
 /// ### Reuse
 /// - Ranking takes an INJECTED `score` closure (the view passes `FuzzyMatcher.score(_:_:)?.score`; the tests
@@ -440,9 +437,8 @@ public enum OpenQuicklyModel {
     /// `↩` focuses the pane; title + cwd are both matchable.
     ///
     /// `paneKind` (E21 WI-2) differentiates a VIDEO pane (`.remoteGUI`/`.systemDialog`) so the row reads as a
-    /// *window* — a window glyph + a "Window"/"Dialog" badge + a host/window subtitle — while the ``Act`` stays
-    /// the kind-generic `.focusPane`. It defaults to `.terminal` (the non-differentiating value), so every
-    /// existing caller and every non-video pane keeps the generic "Pane" chrome.
+    /// *window* (glyph + "Window"/"Dialog" badge + host/window subtitle) while ``Act`` stays the kind-generic
+    /// `.focusPane`. Defaults to `.terminal`, so every existing caller and non-video pane keeps "Pane" chrome.
     public static func paneItem(
         paneID: PaneID,
         title: String,
@@ -463,21 +459,19 @@ public enum OpenQuicklyModel {
         )
     }
 
-    /// The subtitle for an Opened pane row (E21 WI-2). A terminal pane shows its working directory (or nothing
-    /// when the cwd is unknown — never a blank line). A VIDEO pane (`.remoteGUI`/`.systemDialog`) has no shell
-    /// cwd, so the host-side window's owning APP name (`appName`) stands in — mirroring the sidebar's
-    /// ``PaneSpec/railSubtitle`` discipline (window title on line 1, host app on line 2), so a remote-window row
-    /// never echoes its own title on both lines. It falls back to the window ``title`` only when the app name is
-    /// empty (a manual-id binding), so the row is still a labelled window (glyph + badge + subtitle), never a
-    /// bare single line. A real cwd, if present, always wins (the subtitle never silently drops a working
-    /// directory).
+    /// The subtitle for an Opened pane row (E21 WI-2). A terminal pane shows its cwd (or nothing when unknown —
+    /// never a blank line). A VIDEO pane (`.remoteGUI`/`.systemDialog`) has no shell cwd, so the host window's
+    /// owning APP name (`appName`) stands in — mirroring the sidebar's ``PaneSpec/railSubtitle`` discipline
+    /// (window title on line 1, host app on line 2) so the row never echoes its title on both lines. It falls
+    /// back to the window ``title`` only when `appName` is empty (a manual-id binding), keeping the row a
+    /// labelled window (glyph + badge + subtitle) not a bare line. A real cwd always wins (never silently
+    /// dropped).
     private static func paneRowSubtitle(cwd: String?, title: String, paneKind: PaneKind, appName: String?) -> String? {
         if let cwd = nonEmpty(cwd) { return cwd }
         guard paneKind.isVideo else { return nil }
-        // EMPTY HOST-TITLE PARITY: only surface the host app on line 2 when it is NOT already what line 1
-        // shows. An empty streamed-window title makes the display title (line 1) fall back to the app name,
-        // so an app-name subtitle would echo it on both lines — a single line instead (the window-title
-        // fallback is likewise an echo of line 1, so it is dropped rather than duplicated).
+        // EMPTY HOST-TITLE PARITY: surface the host app on line 2 only when it is NOT already line 1. An empty
+        // streamed-window title makes line 1 fall back to the app name, so an app-name subtitle would echo it
+        // on both lines — drop to a single line (the window-title fallback is likewise an echo of line 1).
         if let app = nonEmpty(appName), app != title { return app }
         return nil
     }
@@ -516,12 +510,12 @@ public enum OpenQuicklyModel {
                         cwd: nonEmpty(spec?.lastKnownCwd),
                         // E21 WI-2: thread the workspace pane kind so a `.remoteGUI`/`.systemDialog` row reads
                         // as a window (glyph + "Window"/"Dialog" badge + host/window subtitle). Defaults to
-                        // `.terminal` when the spec side-table is momentarily missing (the same gap
-                        // ``paneDisplayTitle`` tolerates) — a spec-less pane stays a generic "Pane" row.
+                        // `.terminal` when the spec side-table is momentarily missing (the gap
+                        // ``paneDisplayTitle`` also tolerates) — a spec-less pane stays a generic "Pane".
                         paneKind: spec?.kind ?? .terminal,
-                        // E21 F2: thread the host-side app name (the same `VideoEndpoint.appName` the rail's
-                        // `railSubtitle` reads) so a remote-window row's subtitle is the host app — not an echo
-                        // of the window title already shown on line 1. Falls back to the title when absent.
+                        // E21 F2: thread the host-side app name (same `VideoEndpoint.appName` the rail's
+                        // `railSubtitle` reads) so a remote-window row's subtitle is the host app, not an echo
+                        // of the line-1 window title. Falls back to the title when absent.
                         appName: spec?.video?.appName,
                     ))
                 }

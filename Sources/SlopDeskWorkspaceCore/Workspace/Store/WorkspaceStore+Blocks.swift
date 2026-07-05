@@ -4,25 +4,25 @@ import SlopDeskTerminal
 
 // MARK: - CommandBlock → PeekBlockLine (the P4 peek "recent output" shape)
 
-/// ``CommandBlock`` already carries the typed command line + a short status label, so it satisfies the
-/// pure ``PeekBlockLine`` shape ``PeekContent/recentLines(from:limit:)`` reads — letting the peek DTO be
-/// built off the live ``TerminalBlockModel`` while the builder itself stays free of an `SlopDeskTerminal`
-/// import (the P4 overlay's recent-lines text is then unit-tested with a stand-in).
+/// ``CommandBlock`` carries the typed command line + status label, satisfying the pure ``PeekBlockLine``
+/// shape ``PeekContent/recentLines(from:limit:)`` reads — so the peek DTO builds off the live
+/// ``TerminalBlockModel`` while the builder stays free of an `SlopDeskTerminal` import (the P4 overlay's
+/// recent-lines text is unit-tested with a stand-in).
 extension CommandBlock: PeekBlockLine {}
 
 // MARK: - TerminalModelProviding (the store↔live-session seam the block ops resolve through)
 
-/// The tiny capability seam the WB2/WB3 active-pane block ops resolve through INSTEAD of an
+/// The capability seam the WB2/WB3 active-pane block ops resolve through INSTEAD of an
 /// `as? LivePaneSession` cast — so the store's block-routing glue (navigator / jump-to-block /
-/// re-run-last / jump-to-failed / bookmark seed) is exercisable by a recording test double that carries a
-/// REAL ``TerminalViewModel`` but never opens a socket. The production conformer is ``LivePaneSession``
-/// (returns its `connection.terminalModel`); a headless test conformer returns a directly-built model.
+/// re-run-last / jump-to-failed / bookmark seed) is testable via a recording double carrying a REAL
+/// ``TerminalViewModel`` that never opens a socket. Production conformer: ``LivePaneSession`` (returns
+/// its `connection.terminalModel`); a headless test conformer returns a directly-built model.
 ///
 /// `bookmarkScopeKey` is the per-SESSION persistence identity (NOT the stable pane id): a token minted
-/// fresh each time the session is materialized, so a relaunch (a brand-new segmenter re-numbering blocks
-/// from 0) starts with NO stars rather than re-applying a prior run's raw indices onto unrelated commands
-/// (the cross-session mis-restore the persisted-by-pane-id wiring caused). Stable across a transport
-/// reconnect within one launch (same session instance).
+/// fresh each materialization, so a relaunch (a fresh segmenter re-numbering blocks from 0) starts with
+/// NO stars rather than re-applying a prior run's raw indices onto unrelated commands (the cross-session
+/// mis-restore the persisted-by-pane-id wiring caused). Stable across a transport reconnect within one
+/// launch (same session instance).
 @MainActor
 protocol TerminalModelProviding: AnyObject {
     /// The live terminal model the block ops drive, or `nil` for a non-terminal session (`.remoteGUI`).
@@ -56,56 +56,55 @@ public struct BlockBookmarkSeam {
 // MARK: - BlockJump (the ONE shared absolute re-anchor jump — navigator + store share it)
 
 /// The single absolute "jump the viewport to the block whose prompt ordinal is N" implementation
-/// (WB2/WB3/E9), so the navigator's per-row jump and the store's jump-to-failed cannot drift on the
+/// (WB2/WB3/E9), so the navigator's per-row jump and the store's jump-to-failed can't drift on the
 /// choreography. Pure over the ``TerminalSurfaceActions`` seam; `nonisolated` so both call sites reach it.
 ///
 /// ## Why an ORDINAL, not a "position among the blocks"
 /// libghostty's `scrollPrompt` (ghostty `PageList.zig`, pinned v1.3.1) counts `.prompt` ROWS — one per
-/// OSC-133 `A` mark — which includes prompt cycles that never became a block (an empty Enter / Ctrl-C
-/// runs precmd and re-fires `A` but the segmenter rightly discards the blockless cycle). A delta computed
-/// from the block COUNT therefore under-counts by every such cycle and lands on an older command. The
-/// host stamps each block with its ``CommandBlock/promptOrdinal`` (the 1-based `A`-cycle count at the
-/// block's start) so the jump counts exactly what ghostty counts.
+/// OSC-133 `A` mark — including prompt cycles that never became a block (an empty Enter / Ctrl-C re-fires
+/// `A` but the segmenter discards the blockless cycle). A delta from the block COUNT therefore
+/// under-counts by every such cycle and lands on an older command. The host stamps each block with its
+/// ``CommandBlock/promptOrdinal`` (the 1-based `A`-cycle count at the block's start) so the jump counts
+/// exactly what ghostty counts.
 ///
 /// ## Why anchor with a HUGE NEGATIVE jump, not `scroll_to_top`
 /// For a downward (positive) delta ghostty starts its `PromptIterator` at `viewport_top.down(1)` — the
-/// prompt ON the viewport-top row itself is never counted. After `scroll_to_top` the top row may or may
-/// not be a prompt row (in a fresh pane the shell's FIRST prompt IS row 0; after a banner or ring
-/// eviction it is not), so a top-anchored count is off by one in the common fresh-pane case and the
-/// client cannot know which case holds. A `jump_to_prompt:` with a negative delta LARGER than the prompt
-/// count instead exhausts the upward iterator and ghostty moves the viewport to the LAST prompt found —
-/// the OLDEST retained prompt row. That makes "the viewport top IS prompt row #1" an invariant, so a
-/// downward delta of `k` deterministically lands prompt row #(k + 1): delta `ordinal − 1` lands the
-/// block's own prompt row (no second jump for ordinal 1 — the anchor already landed on it). A target
-/// inside the active area pins the viewport to `.active` (ghostty cannot scroll DOWN into it) — the
-/// target is on screen, the correct landing. `scroll_to_bottom` first makes the anchor state
-/// deterministic regardless of where the user had scrolled.
+/// prompt ON the viewport-top row is never counted. After `scroll_to_top` the top row may or may not be a
+/// prompt row (fresh pane: the shell's FIRST prompt IS row 0; after a banner or ring eviction it is not),
+/// so a top-anchored count is off by one in the common fresh-pane case and the client can't know which
+/// holds. A `jump_to_prompt:` with a negative delta LARGER than the prompt count instead exhausts the
+/// upward iterator, moving the viewport to the LAST prompt found — the OLDEST retained prompt row. That
+/// makes "the viewport top IS prompt row #1" an invariant, so a downward delta of `k` deterministically
+/// lands prompt row #(k + 1): delta `ordinal − 1` lands the block's own prompt row (no second jump for
+/// ordinal 1 — the anchor already landed on it). A target inside the active area pins the viewport to
+/// `.active` (ghostty can't scroll DOWN into it) — on screen, the correct landing. `scroll_to_bottom`
+/// first makes the anchor state deterministic regardless of the user's scroll position.
 ///
 /// Degradation: if ghostty's scrollback RING has evicted the earliest prompts, the oldest RETAINED
 /// prompt is no longer ordinal #1 and the landing shifts by the evicted count — the long-session edge;
 /// every jump in a normal session lands exactly.
 enum BlockJump {
-    /// Larger than any real scrollback's prompt count — exhausts ghostty's upward `PromptIterator` so
-    /// the viewport pins to the OLDEST retained prompt row (see the type doc).
+    /// Larger than any real scrollback's prompt count — exhausts ghostty's upward `PromptIterator` so the
+    /// viewport pins to the OLDEST retained prompt row (see the type doc).
     ///
     /// MUST fit ghostty's binding parameter type: `jump_to_prompt` is declared `i16` (`Binding.zig`,
-    /// pinned v1.3.1), so any |delta| > 32768 fails the ACTION-STRING PARSE and the whole binding
-    /// silently no-ops — the jump then degenerates to bare `scroll_to_bottom` (the first shipped value,
-    /// 1_000_000, did exactly that on hardware). 32_000 is comfortably inside `i16` while still far
-    /// beyond any retained scrollback's prompt count.
+    /// pinned v1.3.1), so any |delta| > 32768 fails the ACTION-STRING PARSE and the whole binding silently
+    /// no-ops — the jump then degenerates to bare `scroll_to_bottom` (the first shipped value, 1_000_000,
+    /// did exactly that on hardware). 32_000 stays inside `i16` while far beyond any retained scrollback's
+    /// prompt count.
     nonisolated static let reAnchorDelta = 32000
 
     /// The largest single DOWNWARD `jump_to_prompt` step that fits ghostty's binding parameter.
     ///
     /// `jump_to_prompt` is declared `i16` (`Binding.zig`, pinned v1.3.1 — max 32767), so a single step
     /// whose delta exceeds that fails the ACTION-STRING PARSE and silently no-ops the WHOLE binding — the
-    /// exact i16 trap the anchor delta hit in 84b2cf3. The step delta is `ordinal − 1`, which is unbounded
-    /// (a long-lived detached session stamps ever-growing prompt ordinals — every Enter counts), so past
-    /// ordinal 32768 the raw step would silently land on the anchor (oldest prompt) instead of the target.
-    /// A step beyond this bound is therefore SPLIT into multiple in-range hops: each positive
-    /// `jump_to_prompt` re-counts from the NEW viewport-top's `down(1)` (that row's own prompt is never
-    /// re-counted), so consecutive hops COMPOSE to the full delta and land the exact prompt — saturation
-    /// would land short, chunking lands true. 32000 matches the re-anchor magnitude and stays inside i16.
+    /// exact i16 trap the anchor delta hit in 84b2cf3. The step delta `ordinal − 1` is unbounded (a
+    /// long-lived detached session stamps ever-growing ordinals — every Enter counts), so past ordinal
+    /// 32768 the raw step would silently land on the anchor (oldest prompt) instead of the target. A step
+    /// beyond this bound is therefore SPLIT into in-range hops: each positive `jump_to_prompt` re-counts
+    /// from the NEW viewport-top's `down(1)` (that row's own prompt is never re-counted), so consecutive
+    /// hops COMPOSE to the full delta and land the exact prompt — saturation would land short, chunking
+    /// lands true. 32000 matches the re-anchor magnitude and stays inside i16.
     nonisolated static let maxStep = 32000
 
     /// Anchors on the oldest retained prompt row, then jumps `actions` DOWN to 1-based prompt ordinal
@@ -128,10 +127,10 @@ enum BlockJump {
             if !actions.performBindingAction("jump_to_prompt:\(hop)") { stepsOK = false }
             remaining -= hop
         }
-        // A `false` from a REAL surface (an out-of-range/rejected delta, or a headless/placeholder surface)
-        // means the viewport did NOT move to the target. Surface it at DEFAULT log level — not only the
-        // debug-gated trace — so a silently-failed navigator / Jump-to-Failed jump is diagnosable in the
-        // field without setting SLOPDESK_BLOCKS_DEBUG. (The recording test surface always returns true.)
+        // A `false` from a REAL surface (out-of-range/rejected delta, or a headless/placeholder surface)
+        // means the viewport did NOT move to the target. Log at DEFAULT level — not only the debug-gated
+        // trace — so a silently-failed navigator / Jump-to-Failed jump is diagnosable in the field without
+        // SLOPDESK_BLOCKS_DEBUG. (The recording test surface always returns true.)
         if !anchor1 || !anchor2 || !stepsOK {
             log.error("command jump did not land (binding no-op): ordinal=\(ordinal, privacy: .public)")
         }
@@ -253,10 +252,10 @@ public extension WorkspaceStore {
     /// "Re-Run in Current Pane" action, E11 WI-6) by re-injecting it verbatim into the active pane's shell —
     /// the SAME ``BlockReRunEncoder`` verbatim-UTF-8 path ``reRunLastCommandInActivePane()`` uses (strip any
     /// trailing CR/LF, append exactly one `0x0A`; NEVER ``SendKeysParser``, so a literal `"<Enter>"` in the
-    /// captured text can't be turned into a control byte — the injection-safety invariant). Distinct from
-    /// the latest-block re-run only in that the caller names the command (a picked Current row, not the tail
-    /// of the block list). A no-op when there is no live terminal pane or the command is empty/whitespace
-    /// (the encoder returns `nil`). No wire change — funnels through ``TerminalViewModel/sendInput(_:)`` like
+    /// captured text can't become a control byte — the injection-safety invariant). Differs from the
+    /// latest-block re-run only in that the caller names the command (a picked Current row, not the block
+    /// list's tail). A no-op when there is no live terminal pane or the command is empty/whitespace (the
+    /// encoder returns `nil`). No wire change — funnels through ``TerminalViewModel/sendInput(_:)`` like
     /// ordinary keystrokes.
     func reRunCommandInActivePane(_ text: String) {
         guard let model = activeTerminalModel, let bytes = BlockReRunEncoder.bytes(for: text) else { return }

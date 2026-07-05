@@ -1,12 +1,11 @@
-// OverlayCoordinatorMountTests — pins the E2 / WI-1 mount wiring at the model level (the GUI press of
-// ⌘⇧P / ⌘/ + the in-app toast emission are acceptance-tested in `check-macos.sh`; these pin the contract
-// the app's wiring depends on so a refactor can't silently sever it).
+// OverlayCoordinatorMountTests — pins the E2 / WI-1 mount wiring at the model level. (The ⌘⇧P / ⌘/ GUI
+// press + toast emission are acceptance-tested in `check-macos.sh`; these pin the contract the app's
+// wiring depends on so a refactor can't silently sever it.)
 //
-// WI-1 builds an `OverlayCoordinator` in `SlopDeskClientApp.init()`, injects its `connectionTarget`,
-// threads `togglePalette`/`toggleCheatSheet` into the macOS `WorkspaceKeyDispatcher`, and routes the
-// store's background-event sinks through `pushToast`. These tests exercise the SAME coordinator surface
-// those app closures call — headless, no video/Metal/SCStream (per the hang-safety rule), driven by a
-// tree-model `WorkspaceStore` over a tiny fake session.
+// WI-1 builds an `OverlayCoordinator` in `SlopDeskClientApp.init()`, injects `connectionTarget`, threads
+// `togglePalette`/`toggleCheatSheet` into the macOS `WorkspaceKeyDispatcher`, and routes the store's
+// background-event sinks through `pushToast`. These exercise the SAME coordinator surface — headless, no
+// video/Metal/SCStream (hang-safety rule), over a tree-model `WorkspaceStore` + tiny fake session.
 
 import SlopDeskAgentDetect
 import XCTest
@@ -15,8 +14,8 @@ import XCTest
 
 @MainActor
 final class OverlayCoordinatorMountTests: XCTestCase {
-    /// Builds the coordinator the way the app does: over a headless tree-model store, with the
-    /// `connectionTarget` seam injected. No socket, no video — the fake session never opens one.
+    /// Builds the coordinator the way the app does: headless tree-model store, `connectionTarget` seam
+    /// injected. No socket, no video — the fake session never opens one.
     private func makeCoordinator() -> (OverlayCoordinator, WorkspaceStore) {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
         let overlay = OverlayCoordinator(store: store)
@@ -26,9 +25,9 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     // MARK: - ES-E2-1 / WI-1: the dispatcher + menu toggle drive `paletteVisible`
 
-    /// The ⌘⇧P toggle the app threads into `WorkspaceKeyDispatcher` is `overlay.togglePalette()`. Pin that
-    /// it opens then closes, and that `closePalette()` clears the transient query/filter/selection so the
-    /// next open starts clean (the dispatcher fires the SAME closure each press).
+    /// The ⌘⇧P toggle the app threads into `WorkspaceKeyDispatcher` is `overlay.togglePalette()`. Pin
+    /// open-then-close, and that `closePalette()` clears the transient query/filter/selection so the next
+    /// open starts clean (the dispatcher fires the SAME closure each press).
     func testTogglePaletteOpensAndCloses() {
         let (overlay, _) = makeCoordinator()
         XCTAssertFalse(overlay.paletteVisible, "the palette starts hidden")
@@ -49,13 +48,12 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     // MARK: - Batch-5b (A): opening the palette resolves the focused pane's cwd (populates the WD pill)
 
-    /// THE Batch-5b (A) fix: opening the command palette EAGERLY resolves the focused pane's working directory
-    /// so the WORKING DIRECTORY header's cwd pill is populated even on a fresh prompt where no command has
-    /// completed (OSC 133;D) and the Details/Info tab is closed — the two lazy `lastKnownCwd` writers that left
-    /// the pill blank in the live capture. The app binds `overlay.resolveActiveCwd` (in `WorkspaceRootView`) to
-    /// the live metadata `cwd()` RPC → `store.setLastKnownCwd`. Pin that `openPalette()` AND the ⌘⇧P toggle's
-    /// open path BOTH fire that injected closure. REVERT-TO-CONFIRM-FAIL: drop the `resolveActiveCwd()` call from
-    /// `openPalette()` and `fired` stays 0.
+    /// Batch-5b (A) fix: opening the palette EAGERLY resolves the focused pane's cwd so the WORKING DIRECTORY
+    /// header's cwd pill populates even on a fresh prompt (no OSC 133;D completion yet) with the Details/Info
+    /// tab closed — the case the two lazy `lastKnownCwd` writers left blank. The app binds
+    /// `overlay.resolveActiveCwd` (in `WorkspaceRootView`) to the live `cwd()` RPC → `store.setLastKnownCwd`.
+    /// Pin that `openPalette()` AND the ⌘⇧P toggle's open path BOTH fire it. REVERT-TO-CONFIRM-FAIL: drop the
+    /// `resolveActiveCwd()` call from `openPalette()` and `fired` stays 0.
     func testOpenPaletteFiresActiveCwdResolution() {
         let (overlay, _) = makeCoordinator()
         var fired = 0
@@ -120,12 +118,12 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         )
     }
 
-    /// Regression (E2 review): once a recents-worthy command has run, the DEFAULT zero-state shows the SAME
-    /// catalog verb under both "Recents" and "Actions". The two rows MUST carry distinct ids — a duplicate id
-    /// is SwiftUI's documented "the ID occurs multiple times … undefined results" (the palette's `ForEach` +
-    /// `.id(_:)` drop/mis-diff rows and `proxy.scrollTo` resolves an ambiguous target). Pin that every
-    /// zero-state row id is unique with a populated recents ring, that the recents row is `recent.*`-namespaced,
-    /// and that the catalog row still appears under Actions.
+    /// Regression (E2 review): once a recents-worthy command has run, the zero-state shows the SAME catalog
+    /// verb under both "Recents" and "Actions". The two rows MUST carry distinct ids — a duplicate id is
+    /// SwiftUI's documented "the ID occurs multiple times … undefined results" (`ForEach` + `.id(_:)`
+    /// drop/mis-diff rows, `proxy.scrollTo` resolves an ambiguous target). Pin that every zero-state row id is
+    /// unique with a populated recents ring, that the recents row is `recent.*`-namespaced, and that the
+    /// catalog row still appears under Actions.
     func testZeroStateRowIDsUniqueWithRecents() {
         let (overlay, store) = makeCoordinator()
         // Populate the recents ring the way the store chokepoint does when these verbs run.
@@ -150,8 +148,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     /// The namespaced recents row is cosmetic only — its `action` is the catalog verb, so accepting it still
     /// mutates the store. The zero-state now LEADS with WORKING DIRECTORY (Copy Path), so the MRU recents row
-    /// is no longer index 0; locate it and pin that running it performs the New-Tab action (a duplicate-id
-    /// regression that dropped the row would leave nothing to accept here).
+    /// is no longer index 0; locate it and pin that running it performs the New-Tab action.
     func testNamespacedRecentRowStillRunsCatalogAction() throws {
         let (overlay, store) = makeCoordinator()
         store.recordRecentCommand(.newPane(.terminal))
@@ -241,11 +238,11 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     // MARK: - ES-E2-1: the keyboard selection stays valid when the query narrows (the clamp fix)
 
-    /// The bug: the palette's keyboard selection index isn't reset when the query changes, so after a query
-    /// NARROWS (fewer ranked rows) a parked index points past the end — the highlight vanishes and ↩ becomes a
-    /// silent no-op (`acceptSelected` guards `selection < rows.count`). The fix resets the selection to the
-    /// first row whenever the query changes. This FAILS on the un-fixed coordinator: the parked index survives
-    /// the narrowing (out of range), so the clamp assertion trips AND ↩ runs nothing (the tab count is unchanged).
+    /// The bug: the selection index isn't reset when the query changes, so after a query NARROWS (fewer ranked
+    /// rows) a parked index points past the end — the highlight vanishes and ↩ becomes a silent no-op
+    /// (`acceptSelected` guards `selection < rows.count`). The fix resets the selection to the first row on
+    /// every query change. FAILS on the un-fixed coordinator: the parked index survives the narrowing (out of
+    /// range), so the clamp assertion trips AND ↩ runs nothing (tab count unchanged).
     func testSelectionResetsWhenQueryNarrowsSoReturnStillActivates() {
         let (overlay, store) = makeCoordinator()
         overlay.openPalette()
@@ -316,12 +313,12 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     // MARK: - Keyboard audit: "Open Settings" routes through the injected openSettings action
 
-    /// THE audit fix (Bug 4): the palette "Open Settings" row + the agent footer's settings hook both call
+    /// Audit fix (Bug 4): the palette "Open Settings" row + the agent footer's settings hook both call
     /// `overlay.openSettings()`, which previously only flipped a `settingsVisible` flag NO view observed — a
     /// dead control. Now it invokes the injected `openSettingsAction` (the app binds it to the SwiftUI
     /// `openSettings` environment action → the stock Settings scene). Pin that `openSettings()` fires the
-    /// injected closure, AND that running the "Open Settings" palette row routes through it. REVERT-TO-CONFIRM-
-    /// FAIL: restore `openSettings()` to set a flag instead of calling `openSettingsAction` and `fired` stays 0.
+    /// closure AND that running the "Open Settings" palette row routes through it. REVERT-TO-CONFIRM-FAIL:
+    /// restore `openSettings()` to set a flag instead of calling `openSettingsAction` and `fired` stays 0.
     func testOpenSettingsFiresInjectedAction() throws {
         let (overlay, _) = makeCoordinator()
         var fired = 0
@@ -493,24 +490,20 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     }
 
     /// The chip-rendering contract the view depends on: a chord-bearing row resolves a non-empty glyph from
-    /// the registry (the chips), while the chord-LESS rows the table carries render NO chip. Those are the
-    /// collapsed ⌘1…⌘9 representative + the chord-less Rename Tab verb + the chord-less Close Tab verb (E7
-    /// re-scoped ⌘⇧W onto Close Window, leaving Close Tab reachable only via the ⌘W cascade / palette, see
-    /// DECISIONS.md) + the three E17 view toggles
-    /// `Read Only` + `Secure Keyboard Entry` + `Vi Mode Key Hints` (none ships a default chord —
-    /// palette/menu-only, `chord: nil`, the user may bind them in Settings → Keybindings) + the E19 `Pin
-    /// Window` view toggle (the "View ▸ Pin Window" toggle ships no default chord — palette/menu-only,
-    /// `chord: nil`, pinned chord-less by `WorkspaceBindingRoutingTests`). The representative
-    /// bakes its hint
-    /// into its title instead. The trap this pins: `glyph(for:)` of the representative's stand-in `.selectTab(1)`
-    /// action resolves the REAL ⌘1 binding, so the view MUST gate on the row's own `chord` (not the action's
-    /// glyph) or it would wrongly stamp a "⌘1" chip onto the "Select Tab (⌘1…⌘9)" row.
+    /// the registry (the chips), while the chord-LESS rows render NO chip. Those are the collapsed ⌘1…⌘9
+    /// representative + chord-less Rename Tab + chord-less Close Tab (E7 re-scoped ⌘⇧W onto Close Window,
+    /// leaving Close Tab reachable only via the ⌘W cascade / palette, see DECISIONS.md) + the three E17 view
+    /// toggles `Read Only` + `Secure Keyboard Entry` + `Vi Mode Key Hints` + the E19 `Pin Window` toggle —
+    /// all palette/menu-only, `chord: nil` (bindable in Settings → Keybindings; Pin Window pinned chord-less
+    /// by `WorkspaceBindingRoutingTests`). The representative bakes its hint into its title instead. The trap:
+    /// `glyph(for:)` of the representative's stand-in `.selectTab(1)` action resolves the REAL ⌘1 binding, so
+    /// the view MUST gate on the row's own `chord` (not the action's glyph) or it stamps a "⌘1" chip onto the
+    /// "Select Tab (⌘1…⌘9)" row.
     func testCheatSheetGlyphChipsGateOnRowChord() {
         let rows = WorkspaceBindingRegistry.groupedForDisplay.flatMap(\.bindings)
 
-        // The chord-less rows in the display table are EXACTLY the representative + Rename Tab + Close Tab +
-        // the three E17 view toggles + the E10 Hint to Reveal verb +
-        // the E19 Pin Window toggle (all palette/menu-only, no key).
+        // The chord-less rows are EXACTLY the representative + Rename Tab + Close Tab + the three E17 view
+        // toggles + the E10 Hint to Reveal verb + the E19 Pin Window toggle (all palette/menu-only, no key).
         let chordLessIDs = Set(rows.filter { $0.chord == nil }.map(\.id))
         XCTAssertEqual(
             chordLessIDs,
@@ -762,10 +755,10 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     /// `capturesKeyboardWhileVisible` is the SINGLE source of truth the app's `isOverlayCapturingKeys` gate
     /// reads so the global NSEvent dispatcher YIELDS modeled chords to a focused overlay. Pin that it tracks
-    /// EVERY keyboard-owning overlay: Open-Quickly, Peek & Reply, AND — after the
-    /// Batch-1 audit fix — the four SCRIMMED modals (palette / cheat sheet / connect / remote picker).
-    /// The NSEvent monitor PREEMPTS the responder chain so the sheet-presented panels cannot rely on it
-    /// alone; ⌘W/⌘T/⌘2 would destructively mutate the BACKGROUND tree behind their scrim without this gate.
+    /// EVERY keyboard-owning overlay: Open-Quickly, Peek & Reply, AND (after the Batch-1 audit fix) the four
+    /// SCRIMMED modals (palette / cheat sheet / connect / remote picker). The NSEvent monitor PREEMPTS the
+    /// responder chain, so sheet-presented panels can't rely on it alone; ⌘W/⌘T/⌘2 would destructively mutate
+    /// the BACKGROUND tree behind their scrim without this gate.
     func testCapturesKeyboardWhileVisibleFoldsInKeyboardOwningOverlays() throws {
         let (overlay, store) = makeCoordinator()
         XCTAssertFalse(overlay.capturesKeyboardWhileVisible, "nothing up ⇒ the dispatcher owns chords normally")
@@ -848,11 +841,10 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     }
 
     /// The CLOSED loop (the gap the predicate-only test above leaves): RUNNING the "Toggle Tabs Panel" row
-    /// through the coordinator must flip the SAME `chrome.sidebarCollapsed` the ✓ predicate reads, so the
-    /// palette's ✓ tracks a palette-driven toggle (ES-E2-3). Wires the coordinator's `toggleSidebar` to the
-    /// live chrome exactly as `WorkspaceRootView` does, then asserts the predicate flips after `run`. This
-    /// FAILS on the old wiring (the row ran `store.toggleSidebarCollapsed()`, a dead flag the ✓ never reads —
-    /// the predicate would never move).
+    /// through the coordinator must flip the SAME `chrome.sidebarCollapsed` the ✓ predicate reads (ES-E2-3).
+    /// Wires `toggleSidebar` to the live chrome exactly as `WorkspaceRootView` does, then asserts the
+    /// predicate flips after `run`. FAILS on the old wiring (the row ran `store.toggleSidebarCollapsed()`, a
+    /// dead flag the ✓ never reads — the predicate would never move).
     func testRunningToggleSidebarRowFlipsTheLiveChromeTheCheckmarkReads() throws {
         let (overlay, store) = makeCoordinator()
         let chrome = WorkspaceChromeState()
@@ -885,13 +877,13 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
 // MARK: - MountTestPaneSession (the headless store double for this suite)
 
-/// The tiniest `PaneSessionHandle` that satisfies the store's `makeSession` seam without opening a socket
-/// or touching video — so a tree-model ``WorkspaceStore`` materializes for the coordinator tests. Mirrors
-/// `FakePaneSession` (which lives in the WorkspaceCore test target, out of reach here) down to the
-/// `PaneSessionIDAdopting` adoption the reconcile invariant needs — and to the explicit `@MainActor`
-/// conformance markers on `PaneSessionHandle` / `Identifiable`. Without those markers the `Identifiable.id`
-/// requirement is nonisolated while the `@MainActor` class's `id` getter is isolated, which Swift 6 strict
-/// concurrency flags as a data-race-crossing conformance (#ConformanceIsolation).
+/// The tiniest `PaneSessionHandle` satisfying the store's `makeSession` seam without opening a socket or
+/// touching video — so a tree-model ``WorkspaceStore`` materializes for the coordinator tests. Mirrors
+/// `FakePaneSession` (in the WorkspaceCore test target, out of reach here) down to the `PaneSessionIDAdopting`
+/// adoption the reconcile invariant needs, and the explicit `@MainActor` conformance markers on
+/// `PaneSessionHandle` / `Identifiable`. Without those markers the `Identifiable.id` requirement is
+/// nonisolated while the `@MainActor` class's `id` getter is isolated, which Swift 6 strict concurrency flags
+/// as a data-race-crossing conformance (#ConformanceIsolation).
 @MainActor
 final class MountTestPaneSession: @MainActor PaneSessionHandle, @MainActor Identifiable, PaneSessionIDAdopting {
     private(set) var id: PaneID

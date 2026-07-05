@@ -4,17 +4,16 @@ import ApplicationServices
 import Foundation
 import SlopDeskVideoProtocol
 
-/// PURE display-pick math for the host-window-resize feature (2026-06-30, unit-tested): given a
-/// window's frame and the active displays' bounds — all in CG global POINTS (top-left origin) — pick
-/// the display the window sits on. Two callers share it: the resize MAX the host reports to the client
-/// (`displayMax` = the display's point size, so the "Resize…" popover caps its fields) and the
-/// reposition-to-display-ORIGIN the host performs before an AX resize (so macOS lets the window grow to
-/// the full screen instead of clamping it at its old off-origin position).
+/// PURE display-pick math for host-window-resize (2026-06-30, unit-tested): given a window frame and
+/// the active displays' bounds (all CG global POINTS, top-left origin), pick the display the window
+/// sits on. Two callers: the resize MAX reported to the client (`displayMax` = display point size,
+/// caps the "Resize…" popover) and the reposition-to-display-ORIGIN before an AX resize (else macOS
+/// clamps the window at its old off-origin position instead of letting it grow to full screen).
 public enum WindowDisplayResolver {
-    /// The display whose bounds CONTAIN the window's centre; else the LARGEST display (a window off every
-    /// screen / straddling a gap falls back to the biggest); else `nil` (no displays enumerated). Uses an
-    /// ordered area comparison (never a bare `<` that mis-handles ties) and the centre (not a corner) so a
-    /// window mostly on one screen resolves to it even with a sliver overhanging a neighbour.
+    /// The display whose bounds CONTAIN the window's centre; else the LARGEST display (window off every
+    /// screen / straddling a gap → biggest); else `nil` (no displays). Ordered area comparison (not a
+    /// bare `<` that mis-handles ties); centre not a corner, so a window mostly on one screen resolves
+    /// to it despite a sliver overhanging a neighbour.
     public static func display(forWindowFrame frame: CGRect, displays: [CGRect]) -> CGRect? {
         guard !displays.isEmpty else { return nil }
         let centre = CGPoint(x: frame.midX, y: frame.midY)
@@ -22,9 +21,9 @@ public enum WindowDisplayResolver {
         return displays.max(by: { ($0.width * $0.height) < ($1.width * $1.height) })
     }
 
-    /// The CG bounds of every active display (global POINTS, top-left origin). GUI-only (reads the live
-    /// display config) but cheap + non-hanging — unlike SCStream/VT it needs no window-server session.
-    /// Returns `[]` on a query failure so callers fall back to no-clamp / no-reposition.
+    /// CG bounds of every active display (global POINTS, top-left origin). GUI-only (reads live display
+    /// config) but cheap + non-hanging — unlike SCStream/VT it needs no window-server session. Returns
+    /// `[]` on query failure so callers fall back to no-clamp / no-reposition.
     static func activeDisplayBounds() -> [CGRect] {
         var count: UInt32 = 0
         guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
@@ -34,23 +33,22 @@ public enum WindowDisplayResolver {
     }
 }
 
-/// PURE geometry for the DIALOG-EXPAND feature (host-side, unit-tested): decide the capture region
-/// = the target window frame ∪ any associated panel windows (a file-open / print / share dialog
-/// the OS attaches to the window), so a dialog larger than the streamed window shows in full and is
-/// clickable — instead of being cropped to the window frame by the display-anchored crop.
+/// PURE geometry for DIALOG-EXPAND (host-side, unit-tested): capture region = the target window frame
+/// ∪ any associated panel windows (a file-open / print / share dialog the OS attaches to the window),
+/// so a dialog larger than the streamed window shows in full and clickable instead of cropped to the
+/// window frame by the display-anchored crop.
 ///
-/// Native Swift — the single source of truth (the Rust core's `capture_region` mirrored this; it is
-/// now reabsorbed). STATELESS: every function is pure; `windowsInFront` is iterated in order
-/// (front-to-back, the slice strictly IN FRONT of the target). All `CGRect` operations
-/// (standardized `width`/`height`, `intersection`, `union`, the `CGRectNull` outcome) delegate to
-/// the CG-faithful native `CGRect` methods — this enum does not reinvent them.
+/// Native Swift, single source of truth (reabsorbed from the Rust core's `capture_region`). STATELESS
+/// / pure; `windowsInFront` is front-to-back, the slice strictly IN FRONT of the target. All `CGRect`
+/// ops (standardized `width`/`height`, `intersection`, `union`, `CGRectNull`) delegate to native
+/// `CGRect` — not reinvented here.
 ///
-/// The association is by **owning process**: the open/save panel is attributed to the host app's
-/// own pid (HW-verified 2026-06-12: a Chrome file dialog enumerates as `pid==Chrome, layer==0,
-/// name=="Open"`). So a panel qualifies when it is a DIFFERENT window owned by the SAME pid, on an
-/// *associatable* layer (``isAssociatableLayer``: `0` for sheets/dialogs, `101` for pop-up /
-/// context menus — HW-verified 2026-06-17 a VS Code gear menu enumerates as `pid==Code, layer==101`),
-/// overlapping the target by ≥ `minOverlapFraction` of the smaller rect's area.
+/// Association is by **owning process**: the open/save panel is attributed to the host app's own pid
+/// (HW-verified 2026-06-12: a Chrome file dialog enumerates as `pid==Chrome, layer==0, name=="Open"`).
+/// A panel qualifies when it is a DIFFERENT window, SAME pid, on an *associatable* layer
+/// (``isAssociatableLayer``: `0` sheets/dialogs, `101` pop-up / context menus — HW-verified 2026-06-17
+/// a VS Code gear menu is `pid==Code, layer==101`), overlapping the target by ≥ `minOverlapFraction`
+/// of the smaller rect's area.
 public enum CaptureRegionMath {
     /// Minimum overlap fraction (of the smaller rect's area) for a same-pid front window to count
     /// as an attached panel. Matches the Rust core's `DEFAULT_MIN_OVERLAP_FRACTION`.
@@ -63,14 +61,14 @@ public enum CaptureRegionMath {
     /// Whether a CG window level counts as "attached" to the streamed window for capture-region
     /// expansion.
     ///
-    /// `0` (`kCGNormalWindowLevel`) — file/save/print sheets & dialogs the OS attributes to the
-    /// app's own pid. `101` (`kCGPopUpMenuWindowLevel`) — pop-up / context / dropdown menus that
-    /// render as a SEPARATE same-pid window and can overhang the streamed window (HW-measured
-    /// 2026-06-17: VS Code's gear "Manage" menu enumerates at layer `101`).
+    /// `0` (`kCGNormalWindowLevel`) — file/save/print sheets & dialogs, attributed to the app's own
+    /// pid. `101` (`kCGPopUpMenuWindowLevel`) — pop-up / context / dropdown menus that render as a
+    /// SEPARATE same-pid window and can overhang the streamed window (HW-measured 2026-06-17: VS Code's
+    /// gear "Manage" menu enumerates at layer `101`).
     ///
-    /// DELIBERATELY excludes the menu bar (`24`), Dock (`20`), and tooltips / status windows (`25`):
-    /// those are system chrome or transient — unioning them would drag the crop onto the top strip
-    /// (menu bar) or churn the encoder open/closed on every hover (tooltips).
+    /// DELIBERATELY excludes menu bar (`24`), Dock (`20`), tooltips / status windows (`25`): system
+    /// chrome or transient — unioning them would drag the crop onto the top strip or churn the encoder
+    /// open/closed on every hover.
     public static func isAssociatableLayer(_ layer: Int) -> Bool {
         layer == 0 || layer == 101
     }
@@ -89,16 +87,14 @@ public enum CaptureRegionMath {
         }
     }
 
-    /// The union of `targetFrame` with every qualifying associated panel in `windowsInFront`
-    /// (front-to-back order, the slice strictly IN FRONT of the target), clamped to `displayBounds`.
-    /// Returns `targetFrame` (clamped) when nothing qualifies — i.e. no dialog, or the dialog fits
-    /// inside the window.
+    /// Union of `targetFrame` with every qualifying associated panel in `windowsInFront` (front-to-back,
+    /// the slice strictly IN FRONT of the target), clamped to `displayBounds`. Returns `targetFrame`
+    /// (clamped) when nothing qualifies — no dialog, or the dialog fits inside the window.
     ///
-    /// A window qualifies as an attached panel when it is: a DIFFERENT window than the target, owned
-    /// by `targetPID`, on an associatable layer (``isAssociatableLayer`` — `0` sheets/dialogs, `101`
-    /// pop-up menus), and overlapping the target by a meaningful fraction (≥ `minOverlapFraction`
-    /// of the SMALLER rect's area — skips an incidental 1px edge touch). The whole panel frame joins
-    /// the union even where it overhangs the window.
+    /// A window qualifies when it is a DIFFERENT window, owned by `targetPID`, on an associatable layer
+    /// (``isAssociatableLayer`` — `0` sheets/dialogs, `101` pop-up menus), overlapping by ≥
+    /// `minOverlapFraction` of the SMALLER rect's area (skips an incidental 1px edge touch). The whole
+    /// panel frame joins the union even where it overhangs the window.
     public static func unionRegion(
         targetFrame: CGRect,
         targetWindowID: UInt32,
@@ -109,10 +105,10 @@ public enum CaptureRegionMath {
     ) -> CGRect {
         var union = targetFrame
         // CGRect.width / .height are standardized (always ≥ 0).
-        // keep the two factors as a SEPARATE mul — no FMA (no add chained here, but kept explicit).
+        // SEPARATE mul — no FMA (kept explicit even with no add chained here).
         let targetArea = targetFrame.width * targetFrame.height
-        // `!(targetArea > 0.0)` (NOT `targetArea <= 0`) → NaN-faithful skip-guard: a zero/NaN area
-        // is skipped and falls back to the clamped frame. Reproduces the Rust core's exact predicate.
+        // `!(targetArea > 0.0)` (NOT `targetArea <= 0`): NaN-faithful skip-guard — zero/NaN area falls
+        // back to the clamped frame. Reproduces the Rust core's exact predicate.
         if !(targetArea > 0.0) {
             return targetFrame.intersection(displayBounds)
         }
@@ -125,8 +121,8 @@ public enum CaptureRegionMath {
             // keep each product a SEPARATE mul — no FMA.
             let interArea = inter.width * inter.height
             let wArea = w.frame.width * w.frame.height
-            // Swift global `min(targetArea, wArea)` == `wArea < targetArea ? wArea : targetArea`
-            // (NaN-faithful ternary; differs from Swift.min on NaN — inputs finite here, kept exact).
+            // NaN-faithful ternary min `wArea < targetArea ? wArea : targetArea` (differs from
+            // Swift.min on NaN — inputs finite here, kept exact).
             let smallerArea = wArea < targetArea ? wArea : targetArea
             // `>=` is inclusive (overlap exactly == fraction qualifies); negated guards stay `!(…)`
             // to mirror the Rust core's NaN-faithful skip semantics.
@@ -137,14 +133,13 @@ public enum CaptureRegionMath {
         return clamped.isNull ? targetFrame.intersection(displayBounds) : clamped
     }
 
-    /// The list of OPAQUE content rectangles within the capture region: the target window frame
-    /// followed by each qualifying associated panel/popup, every rect clamped to `displayBounds`.
+    /// The OPAQUE content rectangles within the capture region: the target window frame then each
+    /// qualifying panel/popup, every rect clamped to `displayBounds`.
     ///
-    /// Same qualification rule as ``unionRegion``. Where ``unionRegion`` returns the bounding box,
-    /// this returns the INDIVIDUAL rects so the client can mask the empty area BETWEEN them (the
-    /// black flank beside a narrow popup) to transparent — the union bounding box alone can't express
-    /// that hole. Front-to-back order, target first. A rect whose clamp to the display is null is
-    /// dropped; an empty result means nothing is on the display.
+    /// Same qualification rule as ``unionRegion``, but returns the INDIVIDUAL rects (not the bounding
+    /// box) so the client can mask the empty area BETWEEN them (the black flank beside a narrow popup)
+    /// to transparent — the union bbox can't express that hole. Front-to-back, target first. A rect
+    /// whose clamp to the display is null is dropped; an empty result means nothing is on the display.
     public static func contentRects(
         targetFrame: CGRect,
         targetWindowID: UInt32,
@@ -158,8 +153,8 @@ public enum CaptureRegionMath {
         if !clampedTarget.isNull { rects.append(clampedTarget) }
         // keep the two factors as a SEPARATE mul — no FMA.
         let targetArea = targetFrame.width * targetFrame.height
-        // Mirror unionRegion's NaN-skips-guard: with a zero/NaN target area no popup qualifies (the
-        // overlap fraction is undefined), so return just the target. EXACT `!(targetArea > 0.0)`.
+        // Mirror unionRegion's NaN skip-guard: with zero/NaN target area no popup qualifies (overlap
+        // fraction undefined), so return just the target. EXACT `!(targetArea > 0.0)`.
         if !(targetArea > 0.0) { return rects }
         for w in windowsInFront {
             guard w.windowID != targetWindowID, w.ownerPID == targetPID, isAssociatableLayer(w.layer)
@@ -178,12 +173,11 @@ public enum CaptureRegionMath {
         return rects
     }
 
-    /// Hysteresis gate for committing a region change: each change is an encoder rebuild + IDR, so
-    /// only retarget when the desired region differs from the current capture region by more than
-    /// `minDelta` points on ANY edge. Returns true when the change is worth a rebuild. Uses `abs()`
-    /// and a strict `>`; a single edge differing by exactly `minDelta` does NOT retarget. The
-    /// capture regions fed here are always positive-size, so `.minX`/`.minY` equal the standardized
-    /// edges; the standardized `.width`/`.height` accessors give the size deltas.
+    /// Hysteresis gate for a region change: each change is an encoder rebuild + IDR, so retarget only
+    /// when the desired region differs from the current on ANY edge by more than `minDelta` points.
+    /// Strict `>`, so exactly `minDelta` does NOT retarget. Capture regions here are always
+    /// positive-size, so `.minX`/`.minY` equal the standardized edges and `.width`/`.height` give the
+    /// size deltas.
     public static func shouldRetarget(current: CGRect, desired: CGRect, minDelta: Double = defaultMinDelta) -> Bool {
         abs(desired.minX - current.minX) > minDelta
             || abs(desired.minY - current.minY) > minDelta
@@ -193,28 +187,26 @@ public enum CaptureRegionMath {
 
     /// Whether a window-move geometry event should re-origin the input/cursor mapping to the PLAIN
     /// window frame. NO while a DIALOG-EXPAND capture region is active (`activeRegionGlobal != nil`):
-    /// the mapping origin is then owned by the union region (set in `applyCaptureRegion` against
-    /// window∪dialog), and the stream is still union-sized. Re-origining to the plain window frame
-    /// would desync input/cursor from that stream — a normalized client point in the dialog area
-    /// (left/above the window) would map to a wrong absolute point (clicks land wrong) and the cursor
-    /// would report not-visible over the dialog.
+    /// the mapping origin is then owned by the union region (window∪dialog, set in `applyCaptureRegion`)
+    /// and the stream is still union-sized. Re-origining would desync input/cursor — a normalized client
+    /// point in the dialog area (left/above the window) maps to a wrong absolute point (clicks land
+    /// wrong) and the cursor reports not-visible over the dialog.
     public static func shouldReoriginToWindowOnGeometry(activeRegionGlobal: CGRect?) -> Bool {
         activeRegionGlobal == nil
     }
 }
 
-/// Watches a tracked window's geometry (move / resize / title) and emits
-/// ``WindowGeometryMessage`` for the geometry channel (doc 17 §3.8, doc 18 §B).
+/// Watches a tracked window's geometry (move / resize / title) and emits ``WindowGeometryMessage`` for
+/// the geometry channel (doc 17 §3.8, doc 18 §B).
 ///
-/// ⚠️ **GUI-ONLY:** uses the Accessibility API (`AXObserver`) and
-/// `CGWindowListCopyWindowInfo` which need an AppKit run loop + Accessibility TCC.
-/// COMPILED + reviewed; not driven from tests.
+/// ⚠️ **GUI-ONLY:** the Accessibility API (`AXObserver`) and `CGWindowListCopyWindowInfo` need an
+/// AppKit run loop + Accessibility TCC. COMPILED + reviewed; not driven from tests.
 ///
 /// Two complementary sources (doc 18 §B):
-/// - **AX `kAXWindowMovedNotification` / `kAXWindowResizedNotification`** fire at the
-///   END of a move/resize — authoritative final position.
-/// - **Polling `CGWindowListCopyWindowInfo` during a drag** keeps the client window
-///   in sync per-frame while AX is silent mid-drag (AX only fires at the end).
+/// - **AX `kAXWindowMovedNotification` / `kAXWindowResizedNotification`** fire at the END of a
+///   move/resize — authoritative final position.
+/// - **Polling `CGWindowListCopyWindowInfo` during a drag** keeps the client in sync per-frame while
+///   AX is silent mid-drag.
 ///
 /// The TCC need is documented in ``InputInjector`` (Accessibility).
 public final class WindowGeometryWatcher: @unchecked Sendable {
@@ -232,20 +224,20 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
     private var lastBounds: VideoRect?
     private var lastTitle: String?
 
-    /// DIALOG-EXPAND (host-only): when set, every Nth drag poll enumerates the on-screen windows IN
-    /// FRONT of the tracked window, computes the capture region = window ∪ any attached same-pid
-    /// panel (a file-open dialog the OS attributes to the app's pid), and fires this handler with the
-    /// GLOBAL-point union whenever it changes beyond hysteresis. Off (nil) ⇒ zero extra work. The
-    /// union math lives in ``CaptureRegionMath`` (pure native Swift, unit-tested); this method only
-    /// feeds it the `CGWindowListCopyWindowInfo` snapshot. queue-confined.
-    /// `(unionGlobal, contentRectsGlobal)` — the capture-region bounding union AND the individual
-    /// opaque content rects (window + popups, global points) the client masks the black flank with.
+    /// DIALOG-EXPAND (host-only): when set, every Nth drag poll enumerates windows IN FRONT of the
+    /// tracked window, computes the capture region = window ∪ any attached same-pid panel (a file-open
+    /// dialog the OS attributes to the app's pid), and fires this handler with the GLOBAL-point union
+    /// whenever it changes beyond hysteresis. Off (nil) ⇒ zero extra work. The union math lives in
+    /// ``CaptureRegionMath`` (pure native Swift, unit-tested); this only feeds it the
+    /// `CGWindowListCopyWindowInfo` snapshot. queue-confined.
+    /// `(unionGlobal, contentRectsGlobal)` — the bounding union AND the individual opaque content rects
+    /// (window + popups, global points) the client masks the black flank with.
     public typealias UnionHandler = @Sendable (CGRect, [CGRect]) -> Void
     private var associatedUnionHandler: UnionHandler?
     private var lastUnionEmitted: CGRect = .null
     private var unionPollCounter = 0
-    /// Enumerate the union every `unionPollDivider`-th drag poll (~6 Hz at the 30 Hz drag cadence) —
-    /// a dialog open/close is a discrete event, not a per-frame one, so 6 Hz is ample and cheap.
+    /// Enumerate the union every `unionPollDivider`-th drag poll (~6 Hz at 30 Hz drag cadence) — a
+    /// dialog open/close is a discrete event, so 6 Hz is ample and cheap.
     private static let unionPollDivider = 5
 
     public init(windowID: CGWindowID, pid: pid_t, geometryHandler: @escaping GeometryHandler) {
@@ -375,9 +367,9 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         var windowsRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef) == .success,
               let axWindows = windowsRef as? [AXUIElement] else { return }
-        // Match the EXACT window by CGWindowID via ``axWindowID(of:)`` (robust even when several
-        // windows share a frame, e.g. panes stacked at one origin on the shared VD). The old
-        // frame-equality heuristic bound the WRONG window in that case.
+        // Match the EXACT window by CGWindowID via ``axWindowID(of:)`` — robust when windows share a
+        // frame (panes stacked at one origin on the shared VD); the old frame-equality heuristic bound
+        // the WRONG window there.
         for axWindow in axWindows where axWindowID(of: axWindow) == windowID {
             var titleRef: CFTypeRef?
             if AXUIElementCopyAttributeValue(axWindow, kAXTitleAttribute as CFString, &titleRef) == .success,
@@ -390,21 +382,19 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         }
     }
 
-    /// PATH A in-session resize (host-window-resize feature):
-    /// resize the REAL tracked window to `desiredPoints` via the Accessibility API and return
-    /// the size the window ACTUALLY adopted (points). The window may clamp to its own
-    /// min/max — so the ACHIEVED size (read back from `kAXSizeAttribute`), not the requested
-    /// size, is the source of truth for the SCStream/encoder reconfigure + the `resizeAck`.
+    /// PATH A in-session resize: resize the REAL tracked window to `desiredPoints` via the
+    /// Accessibility API and return the size it ACTUALLY adopted (points). The window may clamp to its
+    /// own min/max, so the ACHIEVED size (read back from `kAXSizeAttribute`), not the requested one, is
+    /// the source of truth for the SCStream/encoder reconfigure + `resizeAck`.
     ///
-    /// Returns `nil` (resize ABORTED, caller keeps the old encoder running, sends no ack) when:
-    /// the app/window cannot be looked up, or the window does not support a size write
-    /// (`kAXErrorAttributeUnsupported` on a fixed-size/sheet window) or the AX call cannot
-    /// complete (`kAXErrorCannotComplete` on a hung/modal app). NEVER crashes.
+    /// Returns `nil` (resize ABORTED — caller keeps the old encoder, sends no ack) when the app/window
+    /// can't be looked up, the window rejects a size write (`kAXErrorAttributeUnsupported` on a
+    /// fixed-size/sheet window), or the AX call can't complete (`kAXErrorCannotComplete` on a
+    /// hung/modal app). NEVER crashes.
     ///
-    /// ⚠️ **GUI-ONLY + TCC:** needs the Accessibility grant (same one the watcher/injector
-    /// already require). `AXUIElementSetMessagingTimeout` caps a hung target (mirrors
-    /// ``InputInjector/raiseTargetWindow()``) so a beachballing app fails fast instead of
-    /// stalling the resize path.
+    /// ⚠️ **GUI-ONLY + TCC:** needs the Accessibility grant (as watcher/injector do).
+    /// `AXUIElementSetMessagingTimeout` caps a hung target (mirrors ``InputInjector/raiseTargetWindow()``)
+    /// so a beachballing app fails fast instead of stalling the resize.
     @preconcurrency
     @MainActor
     public func resizeWindow(toPoints desiredPoints: VideoSize) -> VideoSize? {
@@ -413,15 +403,15 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         var windowsRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef) == .success,
               let axWindows = windowsRef as? [AXUIElement] else { return nil }
-        // Match the EXACT window by CGWindowID via ``axWindowID(of:)`` (robust even when several
-        // windows share a frame — the prior frame-equality lookup could resize the WRONG window
-        // when panes are stacked at one origin on the shared VD).
+        // Match the EXACT window by CGWindowID via ``axWindowID(of:)`` — robust when windows share a
+        // frame; the prior frame-equality lookup could resize the WRONG window when panes stack at one
+        // origin on the shared VD.
         for axWindow in axWindows where axWindowID(of: axWindow) == windowID {
-            // RESIZE-TO-ORIGIN (2026-06-30): re-anchor the window at its display's TOP-LEFT BEFORE the size
-            // write. macOS clamps an AX size-set so the window stays on-screen from its CURRENT position, so
-            // a window parked mid-screen can't grow to the full display; moving it to the display origin
-            // first lets the requested (up-to-display-max) size actually take. Best-effort — a window that
-            // refuses the position write (kAXErrorAttributeUnsupported) still gets the size write below.
+            // RESIZE-TO-ORIGIN (2026-06-30): re-anchor at the display's TOP-LEFT BEFORE the size write.
+            // macOS clamps an AX size-set to keep the window on-screen from its CURRENT position, so a
+            // window parked mid-screen can't grow to the full display; moving it to the display origin
+            // first lets the requested size take. Best-effort — a window that refuses the position write
+            // (kAXErrorAttributeUnsupported) still gets the size write below.
             if let live = axWindowFrame(axWindow),
                let display = WindowDisplayResolver.display(
                    forWindowFrame: CGRect(
@@ -437,13 +427,13 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
             }
             var size = CGSize(width: max(1, desiredPoints.width), height: max(1, desiredPoints.height))
             guard let value = AXValueCreate(.cgSize, &size) else { return nil }
-            // WRITE the new size. Tolerate (do NOT crash on) unsupported/cannot-complete —
-            // a fixed-size window returns kAXErrorAttributeUnsupported; a hung app times out
-            // to kAXErrorCannotComplete. Either ⇒ abort the resize (return nil).
+            // WRITE the new size. Tolerate (never crash on) unsupported/cannot-complete — a fixed-size
+            // window returns kAXErrorAttributeUnsupported, a hung app times out to
+            // kAXErrorCannotComplete. Either ⇒ abort (return nil).
             let setStatus = AXUIElementSetAttributeValue(axWindow, kAXSizeAttribute as CFString, value)
             guard setStatus == .success else { return nil }
-            // READ BACK the achieved size — the window may have clamped to its own min/max.
-            // The achieved (not requested) size is the source of truth for the reconfigure.
+            // READ BACK the achieved size — the window may have clamped to its own min/max; the
+            // achieved (not requested) size is the source of truth for the reconfigure.
             return axWindowFrame(axWindow)?.size ?? desiredPoints
         }
         return nil
@@ -458,8 +448,8 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         else {
             return nil
         }
-        // `as?` to a CoreFoundation type (AXValue) always succeeds (compile error); the AX copies
-        // above succeeded so these are non-nil AXValues. Force cast traps on an OS-contract break.
+        // `as?` to a CF type (AXValue) always succeeds (compile error); the AX copies above succeeded,
+        // so these are non-nil AXValues. Force cast traps only on an OS-contract break.
         // swiftlint:disable:next force_cast
         let posValue = posRef as! AXValue
         // swiftlint:disable:next force_cast

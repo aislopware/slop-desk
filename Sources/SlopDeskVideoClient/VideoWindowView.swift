@@ -6,9 +6,8 @@ import QuartzCore
 import SlopDeskVideoProtocol
 import SwiftUI
 
-/// Connection parameters for a remote GUI window (PATH 2 / Phase 4, doc 17 §3): the
-/// host endpoint + the window to remote. The GUI app builds this once it knows a host
-/// is capturing a window and hands it to ``VideoWindowView``.
+/// Connection parameters for a remote GUI window (PATH 2 / Phase 4, doc 17 §3): host
+/// endpoint + the window to remote. Built by the GUI app and handed to ``VideoWindowView``.
 public struct VideoWindowConnection: Sendable, Equatable {
     /// The host's NetBird-routable address (or hostname).
     public var host: String
@@ -27,13 +26,11 @@ public struct VideoWindowConnection: Sendable, Equatable {
     }
 }
 
-/// Bridges the SwiftUI control overlay (fit/fill toggle + zoom reset) to the platform
-/// backing view's pipeline. The backing view sets the `onToggle*` closures on `activate`
-/// and publishes `mode`/`zoomed` so the overlay icons reflect live state. Deliberately a
-/// SwiftUI overlay — NOT AppKit/UIKit subviews of the Metal view: adding subviews +
-/// gesture recognizers to the layer-backed Metal view perturbed its geometry and swallowed
-/// the `mouseUp` of a trackpad three-finger-drag (→ a stuck remote button). The overlay
-/// touches none of that.
+/// Bridges the SwiftUI control overlay (fit/fill toggle + zoom reset) to the backing view's
+/// pipeline: the view sets the `onToggle*` closures on `activate` and publishes `mode`/`zoomed`
+/// for the overlay icons. Deliberately a SwiftUI overlay — NOT AppKit/UIKit subviews of the Metal
+/// view: subviews + gesture recognizers on the layer-backed Metal view perturbed its geometry and
+/// swallowed the `mouseUp` of a trackpad three-finger-drag (→ a stuck remote button).
 @preconcurrency
 @MainActor
 public final class VideoPaneControls: ObservableObject {
@@ -182,11 +179,9 @@ public struct VideoWindowView: View {
     @StateObject private var controls = VideoPaneControls()
 
     public var body: some View {
-        // FILL THE PANE. Without this frame the bare representable does not claim space, so it shrinks to a
-        // small island and clicks across the rest of the pane miss it. Mirrors the proven terminal seam.
-        // No control overlay any more: the ACTUAL-SIZE viewport auto-anchors to the window top-left and the
-        // edge-pan navigates — there is no zoom to reset, so the old 1× button (which collided with the
-        // resize grip) is gone.
+        // FILL THE PANE. Without this frame the bare representable claims no space → it shrinks to a small
+        // island and clicks across the rest of the pane miss it. Mirrors the terminal seam. No control
+        // overlay: the ACTUAL-SIZE viewport auto-anchors to the window top-left and edge-pan navigates.
         MetalVideoLayerView(
             connection: connection,
             controls: controls,
@@ -255,9 +250,8 @@ struct MetalVideoLayerView: NSViewRepresentable {
         // STALL SCRIM: before activate so a stall detected on the very first monitor tick reaches the model.
         view.onStreamStallReady = onStreamStallChanged
         view.activate(connection: connection)
-        // PASTE AS KEYSTROKES: publish a key-injection sink routed to THIS view's pipeline (the
-        // `pipeline.key` guard no-ops until the session is up, so publishing now is safe). The
-        // backing view clears it on `deactivate`.
+        // PASTE AS KEYSTROKES: publish a key-injection sink routed to THIS view's pipeline (`pipeline.key`
+        // no-ops until the session is up, so publishing now is safe). Cleared on `deactivate`.
         view.onKeyInjectorReady = onKeyInjectorReady
         view.publishKeyInjector()
         // RESIZE GRIP: publish a resize-drive sink routed to THIS view's pipeline (the session's
@@ -1001,9 +995,8 @@ final class MetalLayerBackedView: NSView {
         pipeline.mouseDrag(.right, viewPoint(event), Self.clampClickCount(event.clickCount), mods(event))
     }
 
-    // CLICK = ACTIVATE: a mouseDown makes this the active pane (`onActivate` → workspace focus) AND
-    // raises the host window to top (`focusWindow`), THEN lands as a remote click. This is the
-    // "click to activate + raise GUI window on click" model (replaces the earlier hover-raise). The
+    // CLICK = ACTIVATE: a mouseDown makes this the active pane (`onActivate` → workspace focus) AND raises
+    // the host window (`focusWindow`), THEN lands as a remote click (replaces the earlier hover-raise). The
     // activating click is always forwarded so clicking a control in a background window just works.
     override func mouseDown(with event: NSEvent) {
         // BUG-1 probe: clicking is the reported freeze trigger. Correlate this line with `cursorAPPLY`/
@@ -1103,36 +1096,31 @@ final class MetalLayerBackedView: NSView {
         onCanvasScroll(CGSize(width: -dx, height: -dy))
     }
 
-    // ALL keys (printable + special) go through the layout-level keycode `.key` path so
-    // the HOST's keyboard layout + input method (e.g. OpenKey/xkey Telex) interpret and
-    // COMPOSE them server-side — exactly like Parsec/VNC/Screen-Sharing "scancode mode".
-    // The old `.text` path posted a virtualKey-0 CGEvent + keyboardSetUnicodeString, which
-    // is invisible to an IME's keycode-driven composer (OpenKey reads only the virtual
-    // keycode + shift/caps flag, never the event's Unicode string), so the pre-baked glyph
-    // rode straight through and Vietnamese never composed (`tieesng` inserted literally).
-    // Forwarding the real keycode + modifier flags lets the host IME compose normally.
+    // ALL keys (printable + special) go through the layout-level keycode `.key` path so the HOST's
+    // keyboard layout + input method (e.g. OpenKey/xkey Telex) interpret and COMPOSE them server-side —
+    // like Parsec/VNC/Screen-Sharing "scancode mode". The old `.text` path posted a virtualKey-0 CGEvent +
+    // keyboardSetUnicodeString, invisible to a keycode-driven IME composer (OpenKey reads only the virtual
+    // keycode + shift/caps flag, never the Unicode string), so the pre-baked glyph rode through and
+    // Vietnamese never composed (`tieesng` inserted literally). The real keycode + flags let the host IME
+    // compose normally.
     //
-    // We send ONLY `.key` per keypress (never `.key` + `.text` together) — sending both was
-    // the old duplicate-character bug, because the host injects a char from EACH path.
-    // The `.text` / pipeline.text(...) / host `postText` plumbing stays in place (now unused
-    // by live typing) for future layout-independent input such as clipboard paste.
+    // Send ONLY `.key` per keypress (never `.key` + `.text` together — sending both was the old
+    // duplicate-character bug, one char injected per path). The `.text` / pipeline.text(...) / host
+    // `postText` plumbing stays (unused by live typing) for future layout-independent input like paste.
     // WS-B / B6 — WORKSPACE PREFIX over the video pane.
     //
-    // The tmux/zellij prefix (⌃A by default) MUST NOT leak to the remote host when it is meant to arm a
-    // LOCAL workspace command. That interception happens UPSTREAM of this responder: the app-level
-    // `WorkspaceKeyDispatcher` (B3) installs ONE `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` at
-    // launch, which fires BEFORE the first responder — so a prefix arm / resolved chord / send-prefix
-    // double-tap is consumed (the handler returns `nil`) and this `keyDown` is NEVER reached for those
-    // keystrokes. A bare/unmodified key returns from the monitor unchanged and lands here, where it is
-    // forwarded to the host as normal typing — exactly the intended behaviour.
+    // The tmux/zellij prefix (⌃A) MUST NOT leak to the remote host when arming a LOCAL workspace command.
+    // That interception is UPSTREAM: the app-level `WorkspaceKeyDispatcher` (B3) installs ONE
+    // `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` at launch, firing BEFORE the first responder —
+    // so a prefix arm / resolved chord / send-prefix double-tap is consumed (handler returns `nil`) and
+    // this `keyDown` is NEVER reached for those. A bare key returns unchanged and lands here as normal typing.
     //
-    // No thin pre-check is mirrored here (unlike B4's libghostty surface) ON PURPOSE: the
-    // `TerminalKeyInterceptor` lives in `SlopDeskWorkspaceCore`, and `SlopDeskVideoClient` depends ONLY
-    // on `SlopDeskVideoProtocol` (Package.swift) — importing WorkspaceCore here would invert the module
-    // graph (the HARD RULE keeps these layers separated). The B4 belt-and-suspenders pass exists because the
-    // libghostty surface is hosted INSIDE the WorkspaceCore-importing app target and can reach the engine;
-    // this gated video surface cannot, and does not need to — the monitor already covers it. (Gated module:
-    // never instantiated in tests; verified by REVIEW per the brief.)
+    // No thin pre-check is mirrored here (unlike B4's libghostty surface) ON PURPOSE: `TerminalKeyInterceptor`
+    // lives in `SlopDeskWorkspaceCore`, and `SlopDeskVideoClient` depends ONLY on `SlopDeskVideoProtocol`
+    // (Package.swift) — importing WorkspaceCore here would invert the module graph (the HARD RULE keeps these
+    // layers separated). B4's belt-and-suspenders exists because the libghostty surface is hosted INSIDE the
+    // WorkspaceCore-importing app target and can reach the engine; this gated video surface cannot and need
+    // not — the monitor already covers it. (Gated module: never instantiated in tests; verified by REVIEW.)
     override func keyDown(with event: NSEvent) {
         guard inputEnabled else { return } // read-only ⇒ no keycode forward (E21 WI-3)
         pipeline.key(keyCode: event.keyCode, down: true, modifiers: mods(event))
@@ -1143,15 +1131,13 @@ final class MetalLayerBackedView: NSView {
         pipeline.key(keyCode: event.keyCode, down: false, modifiers: mods(event))
     }
 
-    // Modifier press/release. Without this, ⌘/⇧/⌃/⌥ are NEVER sent as discrete key
-    // events — they only ride as per-event flags on key/mouse events. On the host
-    // `postKey` posts a CGEvent whose flags come from those per-event mods, but the
-    // shared `CGEventSource(stateID:.hidSystemState)` LATCHES modifier state: a ⌘ flag
-    // injected on (say) Delete with no matching modifier KEY-UP stays latched and
-    // corrupts every later `.text` insertion (e.g. ⌘+Delete then a stuck ⌘ turns the
-    // next Return into a newline-with-⌘). Emitting the real modifier key-up here posts a
-    // CGEvent that clears the latched flag. (`pipeline.key` already carries
-    // keyCode+down+modifiers — no protocol change.)
+    // Modifier press/release. Without this, ⌘/⇧/⌃/⌥ are NEVER sent as discrete key events — they only
+    // ride as per-event flags on key/mouse events. On the host `postKey` posts a CGEvent whose flags come
+    // from those per-event mods, but the shared `CGEventSource(stateID:.hidSystemState)` LATCHES modifier
+    // state: a ⌘ flag injected on (say) Delete with no matching modifier KEY-UP stays latched and corrupts
+    // every later `.text` insertion (⌘+Delete then a stuck ⌘ turns the next Return into newline-with-⌘).
+    // Emitting the real modifier key-up here posts a CGEvent that clears the latched flag. (`pipeline.key`
+    // already carries keyCode+down+modifiers — no protocol change.)
     override func flagsChanged(with event: NSEvent) {
         guard inputEnabled else { return } // read-only ⇒ no modifier key-event forward (E21 WI-3)
         guard let down = Self.modifierDown(keyCode: event.keyCode, flags: event.modifierFlags) else { return }
@@ -1300,9 +1286,8 @@ import UIKit
 struct MetalVideoLayerView: UIViewRepresentable {
     let connection: VideoWindowConnection?
     var controls: VideoPaneControls?
-    // Accepted for signature parity with the macOS representable (the shared `VideoWindowView.body`
-    // constructs both). iOS pane activation already runs through the canvas's per-pane SwiftUI tap
-    // gesture + a background `DragGesture` for panning, so these are currently unused on iOS.
+    // Signature parity with the macOS representable (the shared `VideoWindowView.body` builds both). iOS
+    // pane activation runs through the canvas's per-pane tap gesture + a background `DragGesture`, so unused here.
     var isActive: Bool = true
     // E21 WI-3 read-only gate — signature parity only. The iOS video view forwards NO host pointer/key
     // input (its gestures are LOCAL zoom/pan), so there is nothing to suppress; accepted + ignored here.

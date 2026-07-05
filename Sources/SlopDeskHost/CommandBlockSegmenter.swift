@@ -5,11 +5,10 @@ import SlopDeskProtocol
 // byte stream into per-command blocks using ONLY the OSC 133 A/B/C/D marks the live
 // ``HostOutputSniffer`` already sniffs — no libghostty region-extract.
 //
-// This is a PURE value type. It runs as an ADDITIVE PARALLEL tap alongside the live
-// ``HostOutputSniffer`` (which is unchanged): the segmenter only OBSERVES the same outbound
-// chunks the sniffer sees; the byte pipeline forwards the original bytes unchanged. It is
-// env-gated (`SLOPDESK_BLOCKS`, default-ON) at its call site so the byte pipeline + sniffer
-// stay byte-identical when off.
+// PURE value type, run as an ADDITIVE PARALLEL tap that only OBSERVES the same outbound chunks
+// the (unchanged) ``HostOutputSniffer`` sees; the byte pipeline forwards the original bytes
+// unchanged. Env-gated (`SLOPDESK_BLOCKS`, default-ON) at its call site so the byte pipeline +
+// sniffer stay byte-identical when off.
 //
 // ## OSC 133 semantics (the shell-integration marks, FinalTerm/iTerm2)
 //   - `A` = prompt start
@@ -23,24 +22,22 @@ import SlopDeskProtocol
 //   - `D`'s payload carries the exit code; the host measures the C→D duration via a clock.
 //
 // ## 133 detection — MIRRORS ``HostOutputSniffer`` (it is NOT changed)
-// We reuse the SAME byte-at-a-time OSC state machine the live sniffer runs: an `ESC ]`
-// opens an OSC, a `BEL` or `ST` (`ESC \`) closes it, an over-cap OSC is discarded to its
-// terminator, and DCS/SOS/PM/APC string sequences swallow their body so an embedded
-// `ESC]133;…` inside such a string can NOT spoof a mark (the exact security property the
-// live sniffer carries). The live machine is `private`, so the SPIKE mirrors the relevant
-// subset verbatim rather than reaching into it — keeping the live path byte-identical. The
-// shared 133-payload semantics (split on `;`, the 256-byte cmd cap, the exit parse) are
-// duplicated here from the same source of truth.
+// Reuses the SAME byte-at-a-time OSC state machine: `ESC ]` opens an OSC, `BEL` or `ST`
+// (`ESC \`) closes it, an over-cap OSC is discarded to its terminator, and DCS/SOS/PM/APC
+// string sequences swallow their body so an embedded `ESC]133;…` inside such a string can NOT
+// spoof a mark (the live sniffer's security property). The live machine is `private`, so this
+// mirrors the subset verbatim rather than reaching into it — keeping the live path
+// byte-identical. Shared 133-payload semantics (split on `;`, the 256-byte cmd cap, the exit
+// parse) are duplicated here from the same source of truth.
 //
 // ## What it does with OUTPUT control sequences + the cap
 //   - `output` is captured RAW (control sequences PRESERVED) — Blocks needs the literal VT
-//     bytes to re-render or copy faithfully; stripping is a presentation concern left to the
-//     consumer. (The `commandText` between B and C IS OSC-stripped: it is the typed line, and
-//     any 133 marks inside it are detection bytes, not text.)
-//   - A per-block output CAP (``outputCap``, default 256 KiB) bounds memory: once a block's
-//     captured output hits the cap, further output bytes for that block are DROPPED (the block
-//     is flagged ``outputTruncated``) — a runaway `yes` can never blow host memory. Capture
-//     stops, but the A→D state machine keeps running so the block still closes cleanly on `D`.
+//     bytes to re-render or copy faithfully; stripping is left to the consumer. (`commandText`
+//     between B and C IS OSC-stripped: any 133 marks in it are detection bytes, not text.)
+//   - A per-block output CAP (``outputCap``, default 256 KiB) bounds memory: past the cap,
+//     output bytes are DROPPED and the block is flagged ``outputTruncated`` — a runaway `yes`
+//     can never blow host memory. Capture stops, but the A→D machine keeps running so the block
+//     still closes cleanly on `D`.
 public struct CommandBlockSegmenter {
     /// One segmented command block: a single A→D cycle (or a still-running B/C→… block).
     public struct CommandBlock: Equatable, Sendable {
@@ -62,7 +59,7 @@ public struct CommandBlockSegmenter {
         public var outputTruncated: Bool
         /// The 1-based count of `133;A` PROMPT CYCLES seen when this block's cycle began — the block's
         /// prompt-row ordinal in the terminal. Counts EVERY primary prompt start (including empty-Enter /
-        /// Ctrl-C cycles that never become a block, and redraw-immune: `A` is emitted once per cycle from
+        /// Ctrl-C cycles that never become a block; redraw-immune since `A` fires once per cycle from
         /// precmd while only the in-`$PROMPT` `B` re-fires on redraws), exactly as libghostty counts
         /// `.prompt` rows for `jump_to_prompt`. `0` = unknown (no `A` seen before the block opened).
         public var promptOrdinal: Int
@@ -98,9 +95,9 @@ public struct CommandBlockSegmenter {
     private let outputCap: Int
 
     /// K2 auto-progress (E14/WI-3): the configured slow-command PREFIX list ("Auto Progress-Bar
-    /// Commands"). EMPTY disables auto-progress entirely — no synthetic spinner is ever emitted, so the
-    /// segmenter is byte-identical to the pre-E14 tap. Resolved by the owner from
-    /// `SLOPDESK_AUTO_PROGRESS_COMMANDS` (host) → ``AutoProgressMatcher/builtInPrefixes`` fallback.
+    /// Commands"). EMPTY disables auto-progress — no synthetic spinner is emitted, so the segmenter is
+    /// byte-identical to the pre-E14 tap. Resolved by the owner from `SLOPDESK_AUTO_PROGRESS_COMMANDS`
+    /// (host) → ``AutoProgressMatcher/builtInPrefixes`` fallback.
     private let autoProgressPrefixes: [String]
 
     /// - Parameters:
@@ -115,8 +112,8 @@ public struct CommandBlockSegmenter {
         autoProgressPrefixes: [String] = [],
     ) {
         self.clock = clock
-        // Validate-then-clamp: a non-positive cap would mean "capture nothing"; treat <=0 as
-        // the default so a caller can never accidentally disable capture or under/overflow.
+        // Validate-then-clamp: a non-positive cap means "capture nothing", so treat <=0 as the
+        // default — a caller can never accidentally disable capture or under/overflow.
         self.outputCap = outputCap > 0 ? outputCap : Self.defaultOutputCap
         self.autoProgressPrefixes = autoProgressPrefixes
     }
@@ -160,18 +157,16 @@ public struct CommandBlockSegmenter {
 
     /// A NON-DESTRUCTIVE snapshot of the currently-OPEN (still-running) block, or `nil` if none is
     /// open. Unlike ``finish()`` this does NOT materialize/clear the block, so the segmenter keeps
-    /// accumulating its output — it lets the live tap emit a `commandBlock` METADATA update for a
-    /// running command (RUNNING indicator, partial output length) without disturbing segmentation.
-    /// The snapshot carries the index the block WILL receive when it closes (the next free index),
-    /// `complete == false`, and a `nil` duration (it has not finished).
+    /// accumulating output — it lets the live tap emit a `commandBlock` METADATA update for a running
+    /// command (RUNNING indicator, partial output length) without disturbing segmentation. The
+    /// snapshot carries the index the block WILL receive on close (the next free index),
+    /// `complete == false`, and a `nil` duration.
     public func peekOpenBlock() -> CommandBlock? {
-        // Only surface a block that has actually STARTED EXECUTING — one that saw its `C` (preexec)
-        // mark and is in the `.output` phase. A block still in the `.command` phase is the CURRENT
-        // PROMPT waiting for input (the user is typing, or idling at the prompt), NOT a running
-        // command; surfacing it would show a spurious "(no command) running…" entry that sits forever
-        // at the top of the Commands / Outline panel — and, because the `B` mark re-fires on every
-        // prompt redraw (see the `B` arm), one such entry per resize. A real command's block is
-        // surfaced from its `C` onward, with its full `commandText` already captured.
+        // Only surface a block that has actually STARTED EXECUTING — saw its `C` (preexec) mark and
+        // is in the `.output` phase. A `.command`-phase block is the CURRENT PROMPT waiting for input
+        // (user typing / idling), NOT a running command; surfacing it shows a spurious "(no command)
+        // running…" entry that sits forever atop the Commands / Outline panel — and, since `B`
+        // re-fires on every prompt redraw (see the `B` arm), one such entry per resize.
         guard hasOpenBlock, phase == .output else { return nil }
         return CommandBlock(
             index: nextIndex,
@@ -229,20 +224,20 @@ public struct CommandBlockSegmenter {
     private var openCommandBytes: [UInt8] = []
     /// The EXPLICIT command line reported by the `133;E` preexec mark (unescaped raw bytes), or `nil`
     /// when no explicit mark was seen for the open block — then `commandText` falls back to the echoed
-    /// ``openCommandBytes``. The explicit line is immune to the line-editor redraw pollution
+    /// ``openCommandBytes``. The explicit line is immune to line-editor redraw pollution
     /// (zsh-autosuggestions ghost text, zsh-syntax-highlighting re-colors, starship transient redraws)
-    /// that made the echo-reconstructed command a soup of every glyph ever painted in the prompt region.
+    /// that made the echo-reconstructed command a soup of every glyph painted in the prompt region.
     /// See the `E` arm in ``finishOSC``.
     private var openCommandExplicit: [UInt8]?
     private var openOutputBytes: [UInt8] = []
     private var openOutputTruncated = false
     private var hasOpenBlock = false
     private var runningSince: Date?
-    /// Running count of PRIMARY `133;A` prompt starts (kind `initial` — a `k=c`/`k=s`/`k=r` mark is a
+    /// Running count of PRIMARY `133;A` prompt starts (kind `initial` — `k=c`/`k=s`/`k=r` is a
     /// continuation / secondary / right-prompt, which libghostty does NOT count as a new prompt row).
     /// Increments once per prompt CYCLE (the shim emits `A` from precmd, so a `zle reset-prompt` redraw
-    /// storm — which re-fires only the in-`$PROMPT` `B` — never inflates it), including cycles that are
-    /// later discarded (empty Enter / Ctrl-C), so it stays 1:1 with the terminal's `.prompt` rows.
+    /// storm — which re-fires only the in-`$PROMPT` `B` — never inflates it), including later-discarded
+    /// cycles (empty Enter / Ctrl-C), so it stays 1:1 with the terminal's `.prompt` rows.
     private var promptCycleCount = 0
     /// ``promptCycleCount`` captured when the open block's cycle began — stamped onto the block.
     private var openPromptOrdinal = 0
@@ -252,9 +247,9 @@ public struct CommandBlockSegmenter {
     /// Whether a SYNTHETIC indeterminate spinner is currently active for the open block — so its
     /// matching clear is emitted exactly once when the block closes (and never twice).
     private var syntheticSpinnerActive = false
-    /// Whether the PROGRAM drove its OWN OSC 9;4 in the open block. A real `9;4` (which the live
-    /// ``HostOutputSniffer`` parses into the real type-32 `.progress`) SUPPRESSES the synthetic
-    /// spinner/clear so the two never fight — the program owns the indicator then.
+    /// Whether the PROGRAM drove its OWN OSC 9;4 in the open block. A real `9;4` (parsed by the live
+    /// ``HostOutputSniffer`` into the real type-32 `.progress`) SUPPRESSES the synthetic spinner/clear
+    /// so the two never fight — the program owns the indicator then.
     private var sawRealProgressThisBlock = false
     /// The SYNTHETIC ``WireMessage/progress`` frames queued at the `C` / `D` marks, drained by
     /// ``drainAutoProgress()`` and enqueued on the CONTROL channel beside the type-28 block metadata.
@@ -296,10 +291,10 @@ public struct CommandBlockSegmenter {
             case Self.leftBracket:
                 // CSI `ESC [ … <final 0x40–0x7E>` (SGR colour runs, cursor ops, erases). A colorized
                 // command line (zsh-syntax-highlighting / fish / oh-my-zsh wrap the typed line in SGR
-                // runs as you type) emits CSI in the B→C region, so the WHOLE sequence — introducer,
-                // parameters, AND final byte — must be tracked and stripped from `commandText`. The old
-                // code returned to ground after the introducer, leaking the `32m`/`0m` parameter+final
-                // bytes as ground text. For OUTPUT the sequence is preserved verbatim (see `.csi`).
+                // runs) emits CSI in the B→C region, so the WHOLE sequence — introducer, parameters,
+                // AND final byte — must be tracked and stripped from `commandText` (returning to ground
+                // after the introducer leaks the `32m`/`0m` bytes as ground text). For OUTPUT the
+                // sequence is preserved verbatim (see `.csi`).
                 if phase == .output {
                     appendContent(Self.esc)
                     appendContent(byte)
@@ -319,11 +314,10 @@ public struct CommandBlockSegmenter {
             case Self.esc:
                 state = .escape
             default:
-                // Some OTHER (non-CSI, non-OSC) escape: a 2-byte / nF escape (`ESC c`, `ESC ( B`). The two
-                // consumed bytes (`ESC` + this) are part of the opaque VT stream — for OUTPUT we preserve
-                // them so the captured bytes stay a faithful VT stream; for the COMMAND span they are
-                // STRIPPED (the typed line carries no raw escapes we surface — `commandText` is doc-pinned
-                // as OSC/escape-stripped). `appendContent` no-ops for `.idle`, so only the `.output` phase
+                // Some OTHER (non-CSI, non-OSC) escape: a 2-byte / nF escape (`ESC c`, `ESC ( B`). The
+                // two consumed bytes (`ESC` + this) are opaque VT stream — preserved for OUTPUT (keeps
+                // the capture a faithful VT stream) but STRIPPED for the COMMAND span (`commandText` is
+                // doc-pinned OSC/escape-stripped). `appendContent` no-ops for `.idle`, so only `.output`
                 // preserves the ESC+byte; the guard makes the `.command` strip explicit.
                 if phase == .output {
                     appendContent(Self.esc)
@@ -334,10 +328,10 @@ public struct CommandBlockSegmenter {
 
         case .csi:
             // CSI body: parameter / intermediate bytes (0x20–0x3F) until a FINAL byte (0x40–0x7E) ends
-            // the sequence. Preserve every byte for OUTPUT (so the captured stream stays a faithful VT
-            // stream — `testControlSequencesPreservedInOutput` pins this); strip ALL of it for the COMMAND
-            // span. A final byte returns to ground; anything else (incl. an unexpected `ESC`, which a
-            // conformant terminal treats as aborting the CSI) is handled defensively.
+            // it. Preserve every byte for OUTPUT (`testControlSequencesPreservedInOutput` pins this);
+            // strip ALL of it for the COMMAND span. A final byte returns to ground; anything else
+            // (incl. a stray `ESC`, which a conformant terminal treats as aborting the CSI) is
+            // handled defensively.
             if phase == .output { appendContent(byte) }
             switch byte {
             case 0x40...0x7E:
@@ -443,9 +437,9 @@ public struct CommandBlockSegmenter {
         let psBytes = oscBuffer[oscBuffer.startIndex..<sep]
         let ps = String(bytes: psBytes, encoding: .utf8) ?? ""
         // K2 auto-progress (E14/WI-3): NOTICE a program-emitted OSC 9;4 so the SYNTHETIC spinner stands
-        // down (the program drives the badge itself; the live ``HostOutputSniffer`` emits the REAL
-        // type-32 `.progress` — the segmenter only OBSERVES, it never emits the real one). Allocation-free
-        // byte probe for a body of `"4"` or `"4;…"`, mirroring HostOutputSniffer's `9;4` intercept.
+        // down (the program drives the badge; the live ``HostOutputSniffer`` emits the REAL type-32
+        // `.progress` — the segmenter only OBSERVES, never emits the real one). Allocation-free byte
+        // probe for a body of `"4"` or `"4;…"`, mirroring HostOutputSniffer's `9;4` intercept.
         if ps == "9" {
             let bodyStart = oscBuffer.index(after: sep)
             if bodyStart < oscBuffer.endIndex, oscBuffer[bodyStart] == 0x34 { // ASCII '4'
@@ -465,22 +459,21 @@ public struct CommandBlockSegmenter {
         // EXACT-PARITY guard: the live ``HostOutputSniffer`` ignores a 133 payload over 256 bytes, so a
         // >256-byte A/B/C/D mark (hostile) is dropped here too. The EXPLICIT command-line mark
         // (`133;E;<escaped-cmd>`) is the ONE exception — it legitimately carries a long command and the
-        // live sniffer does NOT act on it (its `E` arm is a no-op), so it is bounded only by the general
-        // 4096-byte OSC cap the `.osc` state already enforces before this point.
+        // live sniffer's `E` arm is a no-op, so it is bounded only by the general 4096-byte OSC cap the
+        // `.osc` state already enforced.
         if fields[1] != "E" {
             guard oscBuffer.count <= Self.cmdOscCap else { return }
         }
 
         switch fields[1] {
         case "A":
-            // Prompt start. If a block is still open here (a stream that re-prompted without a `D`),
-            // close it as incomplete ONLY if it actually STARTED EXECUTING (reached its `C`, phase
-            // == .output) — a real running command interrupted by a fresh prompt (a nested shell /
-            // ssh whose inner shell emits its own OSC-133). A block still in the `.command`/idle
-            // phase never ran (an empty prompt, an empty Enter, a Ctrl-C line-abort): DISCARD it so
-            // it leaves no phantom "(no command)" block. The incomplete close stamps the C→interrupt
-            // duration so the tracker's dedup treats it as a distinct final update (else the client
-            // shows it "running…" forever).
+            // Prompt start. If a block is still open (a stream that re-prompted without a `D`), close
+            // it as incomplete ONLY if it STARTED EXECUTING (reached its `C`, phase == .output) — a
+            // real running command interrupted by a fresh prompt (a nested shell / ssh emitting its
+            // own OSC-133). A `.command`/idle-phase block never ran (empty prompt, empty Enter, Ctrl-C
+            // line-abort): DISCARD it so it leaves no phantom "(no command)" block. The incomplete
+            // close stamps the C→interrupt duration so the tracker's dedup treats it as a distinct
+            // final update (else the client shows it "running…" forever).
             if hasOpenBlock {
                 if phase == .output {
                     let duration = runningSince.map { Self.durationMS(from: $0, to: clock()) }
@@ -494,7 +487,7 @@ public struct CommandBlockSegmenter {
             phase = .idle
             // Count the new PRIMARY prompt cycle (after closing the interrupted block, which keeps ITS
             // ordinal). A `k=c`/`k=s`/`k=r` mark is a continuation/secondary/right-prompt — libghostty
-            // does not start a new `.prompt` row group for those, so neither does the ordinal.
+            // starts no new `.prompt` row group for those, so neither does the ordinal.
             if Self.isPrimaryPromptStart(fields) {
                 promptCycleCount += 1
             }
@@ -503,29 +496,27 @@ public struct CommandBlockSegmenter {
             // Command start (prompt end). Distinguish a genuine NEW prompt from a PROMPT REDRAW.
             //
             // The `B` mark lives INSIDE `$PROMPT` as a zero-width sequence, so zsh reprints it on
-            // every `zle reset-prompt`: the shim's own `TRAPWINCH` fires one per SIGWINCH, and a
-            // remote pane resizes constantly (splits, sidebar toggles, window drags), plus starship /
-            // transient-prompt hooks fire more. Such a redraw re-fires `B` while we are STILL at the
-            // prompt — the open block never saw a `C`, so it is in the `.command` phase with no
-            // output. That is the SAME prompt, NOT a new command. Closing the empty block as an
-            // incomplete (forever-"running") phantom here is the bug that piled up "(no command)
-            // running…" blocks on every resize (wrong Outline, "all loading" Commands panel).
+            // every `zle reset-prompt` (the shim's `TRAPWINCH` per SIGWINCH — and a remote pane
+            // resizes constantly: splits, sidebar toggles, window drags — plus starship / transient-
+            // prompt hooks). Such a redraw re-fires `B` while STILL at the prompt — the open block
+            // never saw a `C`, so it is in the `.command` phase with no output. That is the SAME
+            // prompt, NOT a new command. Closing it as an incomplete (forever-"running") phantom is
+            // the bug that piled up "(no command) running…" blocks per resize (wrong Outline, "all
+            // loading" Commands panel).
             //
-            // So a re-fired `B` in the `.command` phase just RE-ARMS the open block: discard any
-            // partial command bytes (the redraw reprints PROMPT — captured as stray command bytes —
-            // then re-echoes the input BUFFER, which we recapture cleanly) and keep the SAME open
-            // block / index. Only a block that reached the `.output` phase (a real, executing command
-            // interrupted by a fresh prompt without a `D`) is closed as incomplete before a new block
-            // opens.
+            // So a re-fired `B` in the `.command` phase RE-ARMS the open block: discard any partial
+            // command bytes (the redraw reprints PROMPT — captured as stray command bytes — then
+            // re-echoes the input BUFFER, which we recapture cleanly) and keep the SAME open block /
+            // index. Only a `.output`-phase block (a real command interrupted by a fresh prompt
+            // without a `D`) is closed as incomplete before a new block opens.
             if hasOpenBlock, phase == .command {
                 openCommandBytes.removeAll(keepingCapacity: true)
                 return
             }
             // (A `B` without a preceding `A` is tolerated — `A` only set phase to idle.)
-            // As in the `A` arm: only a block that reached `.output` (a real running command
-            // re-prompted without a `D`) is closed as incomplete (duration-stamped so the close is a
-            // distinct update); an open block that never executed is discarded, not turned into a
-            // phantom.
+            // As in the `A` arm: only a `.output`-phase block (a real command re-prompted without a
+            // `D`) is closed as incomplete (duration-stamped so the close is a distinct update); an
+            // open block that never executed is discarded, not turned into a phantom.
             if hasOpenBlock {
                 if phase == .output {
                     let duration = runningSince.map { Self.durationMS(from: $0, to: clock()) }
@@ -542,15 +533,15 @@ public struct CommandBlockSegmenter {
         case "E":
             // EXPLICIT command line (slopdesk extension). The shim's `preexec` hook reports the exact
             // typed command from `$1` as `133;E;<escaped>` right BEFORE `C`, so the host does NOT
-            // reconstruct it from the terminal ECHO. Echo reconstruction is unreliable under a line editor
-            // that repaints the command region in place — zsh-autosuggestions ghost text, zsh-syntax-
-            // highlighting re-colors, starship transient redraws — which the CSI stripper cannot undo (it
-            // removes the escape sequences but keeps every printed glyph), so the echo-built commandText
-            // came out as a soup of every character ever painted there. The explicit mark is immune.
-            // `<escaped>` escapes `;`, `\`, ESC, BEL, CR, LF as `\xNN`, so it is a single clean field with
-            // no separator / OSC-terminator bytes; ``unescapeCommand`` restores the exact command bytes.
-            // Normally `E` arrives with the block already open (from `B`); tolerate a mid-stream join by
-            // opening one so the following `C` still captures output against the reported command.
+            // reconstruct it from the terminal ECHO. Echo reconstruction is unreliable under a line
+            // editor that repaints the command region in place (zsh-autosuggestions ghost text, zsh-
+            // syntax-highlighting re-colors, starship transient redraws) — the CSI stripper removes the
+            // escapes but keeps every printed glyph, so the echo-built commandText came out a soup. The
+            // explicit mark is immune. `<escaped>` escapes `;`, `\`, ESC, BEL, CR, LF as `\xNN`, so it
+            // is a single clean field with no separator / OSC-terminator bytes; ``unescapeCommand``
+            // restores the exact command bytes. Normally `E` arrives with the block already open (from
+            // `B`); tolerate a mid-stream join by opening one so the following `C` still captures
+            // output against the reported command.
             if !hasOpenBlock {
                 startOpenBlock()
                 phase = .command
@@ -558,17 +549,17 @@ public struct CommandBlockSegmenter {
             openCommandExplicit = fields.count >= 3 ? Self.unescapeCommand(fields[2]) : []
 
         case "C":
-            // Output start. A `C` with no `B` (e.g. the very first prompt, or a stream that
-            // joined mid-command) still opens a block so the OUTPUT is captured — with an empty
-            // commandText. Start the duration clock here (matches the live sniffer's C→D timing).
+            // Output start. A `C` with no `B` (the very first prompt, or a mid-command join) still
+            // opens a block so the OUTPUT is captured — with an empty commandText. Start the duration
+            // clock here (matches the live sniffer's C→D timing).
             if !hasOpenBlock {
                 startOpenBlock()
             }
             runningSince = clock()
             phase = .output
             // K2 auto-progress (E14/WI-3): synthesize an INDETERMINATE OSC-9;4 spinner when the typed
-            // command matches a configured slow-command prefix AND the program has not already driven its
-            // OWN 9;4 in this block. An empty prefix list disables this (matches() → false). This is the
+            // command matches a configured slow-command prefix AND the program has not already driven
+            // its OWN 9;4 in this block. An empty prefix list disables this (matches() → false). The
             // host-side shell-integration auto-wrap of known slow commands.
             if !syntheticSpinnerActive,
                !sawRealProgressThisBlock,
@@ -582,16 +573,16 @@ public struct CommandBlockSegmenter {
             }
 
         case "D":
-            // Command finished. Only close a block that actually STARTED EXECUTING — one that saw
-            // its `C` (phase == .output, `runningSince` set). The zsh shim emits `D;$?` from precmd
-            // on EVERY prompt cycle, INCLUDING an empty Enter or a Ctrl-C line-abort: those run
-            // precmd but NOT preexec, so no `C` fired and the open block is still in the `.command`
-            // phase carrying the PREVIOUS command's `$?`. Minting a "completed" phantom from that
-            // (empty commandText + stale exit) piled bogus "(no command)" / red-failed rows into the
-            // Commands / Outline on every empty Enter. DROP it silently — mirrors the live
-            // ``HostOutputSniffer`` gating `D` on `runningSince` (:415). Discard the unexecuted open
-            // block so it leaves no phantom (a following `A`/`B` opens a fresh one). A `D` with no
-            // open block at all is the first-prompt phantom `D;0`.
+            // Command finished. Only close a block that STARTED EXECUTING — saw its `C` (phase ==
+            // .output, `runningSince` set). The zsh shim emits `D;$?` from precmd on EVERY prompt
+            // cycle, INCLUDING an empty Enter or Ctrl-C line-abort: those run precmd but NOT preexec,
+            // so no `C` fired and the open block is still in `.command`, carrying the PREVIOUS
+            // command's `$?`. Minting a "completed" phantom from that (empty commandText + stale exit)
+            // piled bogus "(no command)" / red-failed rows into Commands / Outline on every empty
+            // Enter. DROP it silently — mirrors the live ``HostOutputSniffer`` gating `D` on
+            // `runningSince` (:415). Discard the unexecuted open block so it leaves no phantom (a
+            // following `A`/`B` opens a fresh one). A `D` with no open block is the first-prompt
+            // phantom `D;0`.
             guard hasOpenBlock, phase == .output else {
                 if hasOpenBlock { discardOpenBlock() }
                 phase = .idle
@@ -618,8 +609,8 @@ public struct CommandBlockSegmenter {
         openOutputBytes.removeAll(keepingCapacity: true)
         openOutputTruncated = false
         hasOpenBlock = true
-        // Stamp the cycle's prompt ordinal: the count of primary `A` marks seen so far (0 = none yet —
-        // a mid-stream join; the client then skips the outline jump rather than mis-landing).
+        // Stamp the cycle's prompt ordinal: primary `A` marks seen so far (0 = none yet, a mid-stream
+        // join; the client then skips the outline jump rather than mis-landing).
         openPromptOrdinal = promptCycleCount
         // K2 auto-progress (E14/WI-3): a fresh block starts with no synthetic spinner + no observed
         // real 9;4 (suppression is strictly per-block).
@@ -629,14 +620,13 @@ public struct CommandBlockSegmenter {
 
     /// Discards the currently-open block WITHOUT emitting it and WITHOUT consuming an index — for a
     /// prompt block that never executed (an empty Enter / Ctrl-C line-abort, or an idle-prompt A/B
-    /// with no `C`). Such a cycle represents NO command, so it must leave no phantom block — neither a
-    /// completed one (the old `D`-arm bug) nor a forever-"running" incomplete one. Unlike
-    /// ``takeOpenBlock`` it does NOT bump ``nextIndex`` (the discarded prompt claims no block index),
-    /// so the next real command reuses the slot.
+    /// with no `C`). Such a cycle is NO command, so it must leave no phantom — neither a completed one
+    /// (the old `D`-arm bug) nor a forever-"running" incomplete one. Unlike ``takeOpenBlock`` it does
+    /// NOT bump ``nextIndex`` (the discarded prompt claims no block index), so the next real command
+    /// reuses the slot.
     private mutating func discardOpenBlock() {
-        // A `.command`/idle-phase block never armed the synthetic spinner (that happens at `C`), so
-        // no clear frame is owed; reset the per-block K2 flags defensively so a following block starts
-        // clean.
+        // A `.command`/idle-phase block never armed the synthetic spinner (that happens at `C`), so no
+        // clear is owed; reset the per-block K2 flags defensively so a following block starts clean.
         syntheticSpinnerActive = false
         sawRealProgressThisBlock = false
         hasOpenBlock = false
@@ -657,7 +647,7 @@ public struct CommandBlockSegmenter {
         // K2 auto-progress (E14/WI-3): CLEAR a synthetic spinner when its block closes (complete OR
         // not — a `D`, or an interrupted re-prompt at `A`/`B`/`finish`), UNLESS the program drove its
         // OWN 9;4 (then the program owns the clear — its 9;4;0 / the client's command-finish handler
-        // resets it). This is the per-block "double-driving" suppression the plan requires.
+        // resets it). The per-block "double-driving" suppression.
         if syntheticSpinnerActive, !sawRealProgressThisBlock {
             pendingProgress.append(.progress(state: ProgressState.clear.rawValue, percent: 0))
         }
@@ -695,10 +685,10 @@ public struct CommandBlockSegmenter {
 
     /// Unescapes a `133;E` command-line field: each `\xNN` two-hex-digit escape → that byte; every other
     /// byte passes through. The shim escapes exactly `;`, `\`, ESC, BEL, CR, LF this way, so the field
-    /// carries no separator / OSC-terminator bytes — here we invert it to recover the exact command bytes
-    /// (multi-byte UTF-8 rides through untouched, since none of its bytes match the escaped set). Defensive:
-    /// a `\` not followed by `xHH` is emitted literally (the shim never produces one, but a hostile stream
-    /// might).
+    /// carries no separator / OSC-terminator bytes; inverting it recovers the exact command bytes
+    /// (multi-byte UTF-8 rides through untouched — none of its bytes match the escaped set). Defensive:
+    /// a `\` not followed by `xHH` is emitted literally (the shim never produces one, but a hostile
+    /// stream might).
     private static func unescapeCommand(_ field: Substring) -> [UInt8] {
         let bytes = Array(field.utf8)
         var out: [UInt8] = []
@@ -724,8 +714,7 @@ public struct CommandBlockSegmenter {
 
     /// Whether a `133;A[;k=…]` mark starts a PRIMARY prompt (the only kind libghostty marks as a new
     /// `.prompt` row group): kind absent or `k=i`. `k=c` (continuation), `k=s` (secondary/PS2) and
-    /// `k=r` (right prompt — same row as the primary) do NOT start a new prompt row, so they must not
-    /// consume a prompt ordinal.
+    /// `k=r` (right prompt — same row) do NOT start a new prompt row, so must not consume an ordinal.
     private static func isPrimaryPromptStart(_ fields: [Substring]) -> Bool {
         for field in fields.dropFirst(2) where field.hasPrefix("k=") {
             return field == "k=i"

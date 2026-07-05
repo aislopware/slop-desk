@@ -2,27 +2,24 @@ import Foundation
 
 /// Client→host loss-recovery / acknowledgement messages (doc 17 §3.6).
 ///
-/// Recovery prefers an **LTR refresh** over a forced IDR to avoid the bandwidth /
-/// latency spike of a keyframe: the client sends an RFI (reference-frame-invalidate)
-/// range naming the frames it failed to receive; the host marks the referenced
-/// long-term-reference frame invalid and encodes the next frame against an older,
-/// still-valid LTR (`kVTCompressionPropertyKey_EnableLTR` + `ForceLTRRefresh`). If
-/// the client gets no usable frame within ~2 RTT it escalates to a forced-IDR
-/// request. The invalidation direction is **client→host** (doc 17 §3.6 correction).
-///
-/// This type models the messages only; the LTR encode wiring lives in
+/// Recovery prefers an **LTR refresh** over a forced IDR to dodge a keyframe's
+/// bandwidth/latency spike: the client sends an RFI (reference-frame-invalidate)
+/// range naming the frames it missed; the host marks that long-term-reference frame
+/// invalid and encodes the next frame against an older, still-valid LTR
+/// (`kVTCompressionPropertyKey_EnableLTR` + `ForceLTRRefresh`). No usable frame within
+/// ~2 RTT ⇒ escalate to a forced-IDR request. Invalidation direction is **client→host**
+/// (doc 17 §3.6 correction). Models the messages only; the LTR encode wiring lives in
 /// `SlopDeskVideoHost.VideoEncoder`.
 ///
-/// A client→host **NetworkStats** report (the network-feedback telemetry channel) rides this same
-/// `.recovery` channel. It is a fixed-width, all-`UInt32` body, so a malformed/truncated report
-/// throws on decode → the router drops the single datagram → the host never crashes on hostile
-/// stats input. All eleven fields are RELATIVE (windowed counters / a host-stamp echo / client-local
-/// deltas / client-computed detector output / a depth gauge), so the host can derive RTT in its own
-/// clock without any cross-machine clock skew.
+/// A client→host **NetworkStats** report rides this same `.recovery` channel. Fixed-width,
+/// all-`UInt32`: a malformed/truncated report throws on decode → the router drops the one
+/// datagram → no crash on hostile stats. All eleven fields are RELATIVE (windowed counters /
+/// host-stamp echo / client-local deltas / detector output / depth gauge), so the host derives
+/// RTT in its own clock free of clock skew.
 public struct NetworkStatsReport: Equatable, Sendable {
     /// Complete frames the client received in this report window.
     public var framesReceived: UInt32
-    /// Of those, how many were completed via FEC recovery (a data hole the parity filled).
+    /// Of those, how many completed via FEC recovery (parity filled a data hole).
     public var fecRecovered: UInt32
     /// Frames the client declared unrecoverably lost in this window (the loss numerator).
     public var unrecovered: UInt32
@@ -37,9 +34,9 @@ public struct NetworkStatsReport: Equatable, Sendable {
     /// (relative deltas only) — fully clock-skew-immune.
     public var owdJitterMicros: UInt32
     /// Component 3 (delay-gradient, 2026-06-11): the client trendline detector's `modifiedTrend`
-    /// ×1000, clamped ±1e9, carried as an `Int32` bit-pattern (see ``owdTrendModifiedMilliSigned``).
-    /// 0 when the trendline is disabled (`SLOPDESK_TREND=0`) or has not warmed up. Like the jitter
-    /// field, it is computed PURELY from client-clock deltas + host-stamp deltas — skew-immune.
+    /// ×1000, clamped ±1e9, as an `Int32` bit-pattern (see ``owdTrendModifiedMilliSigned``).
+    /// 0 when disabled (`SLOPDESK_TREND=0`) or not yet warmed up. Like the jitter field, computed
+    /// PURELY from client-clock + host-stamp deltas — skew-immune.
     public var owdTrendMilli: UInt32
     /// Component 3: detector flags — bits 0-1 = state (0 normal / 1 overusing / 2 underusing),
     /// bits 8-15 = `min(numDeltas, 255)` (sample-count context for host logs). 0 = inert.
@@ -88,25 +85,23 @@ public struct NetworkStatsReport: Equatable, Sendable {
 }
 
 public enum RecoveryMessage: Equatable, Sendable {
-    /// Acknowledge the highest contiguous `streamSeq` durably received. Lets the
-    /// host bound its retransmit / LTR-pin window.
+    /// Acknowledge the highest contiguous `streamSeq` durably received, bounding the
+    /// host's retransmit / LTR-pin window.
     ///
-    /// WF-8 REUSE (single-user repo, no backcompat): the client now sends this after a SUCCESSFUL
-    /// decode of an LTR-flagged frame (``FrameFragmentHeader/Flags/isLTR``), carrying that frame's
-    /// `frameID` in the `streamSeq` field (the field name is historical — the host's `.ack` arm feeds
-    /// it to ``LTRController/ackFrame(frameID:)``, NOT as a streamSeq). This is the ACKED-ONLY signal:
-    /// the host learns the client holds that long-term reference and may `ForceLTRRefresh` against it.
+    /// WF-8 REUSE (single-user repo, no backcompat): now also sent after a SUCCESSFUL decode of an
+    /// LTR-flagged frame (``FrameFragmentHeader/Flags/isLTR``), carrying that frame's `frameID` in
+    /// the `streamSeq` field (name is historical — the host's `.ack` arm feeds it to
+    /// ``LTRController/ackFrame(frameID:)``, NOT as a streamSeq). Tells the host the client holds
+    /// that long-term reference and may `ForceLTRRefresh` against it.
     case ack(streamSeq: UInt32)
 
-    /// Request-for-invalidate: the client lost the frames in `[fromFrameID,
-    /// toFrameID]` (inclusive) and asks the host to refresh from an earlier LTR
-    /// rather than send a full IDR.
+    /// Request-for-invalidate: the client lost frames `[fromFrameID, toFrameID]`
+    /// (inclusive) and asks the host to refresh from an earlier LTR, not a full IDR.
     ///
-    /// DELIVERY-KEYED COOLDOWN (component 2, 2026-06-11): carries `lastDecodedFrameID`
-    /// — the client's wrap-aware highest SUCCESSFULLY-DECODED frameID
-    /// (``noFrameDecodedSentinel`` when nothing decoded yet) — so the host's
-    /// `RecoveryIDRPolicy` can prove whether a recently-sent keyframe was delivered
-    /// (request newer than it ⇒ delivered) or is a casualty (request older + past the
+    /// DELIVERY-KEYED COOLDOWN (component 2, 2026-06-11): carries `lastDecodedFrameID` — the
+    /// client's wrap-aware highest SUCCESSFULLY-DECODED frameID (``noFrameDecodedSentinel`` when
+    /// none yet) — so the host's `RecoveryIDRPolicy` can tell a recently-sent keyframe that was
+    /// delivered (request newer than it) from one that's a casualty (request older + past the
     /// in-flight grace ⇒ bypass the cooldown immediately).
     case requestLTRRefresh(fromFrameID: UInt32, toFrameID: UInt32, lastDecodedFrameID: UInt32)
 
@@ -116,27 +111,25 @@ public enum RecoveryMessage: Equatable, Sendable {
     /// host can key its recovery-IDR cooldown on DELIVERY instead of send-time.
     case requestIDR(lastDecodedFrameID: UInt32)
 
-    /// Re-request a cursor SHAPE bitmap the client is missing (doc 17 §3.3 self-heal). A
-    /// cursor shape is shipped over the cursor socket ONCE per `shapeID`; a lost (or
-    /// over-MTU, IP-fragment-lost) shape datagram would otherwise leave the overlay
-    /// permanently wrong/invisible for the whole session (the host strips the real cursor).
-    /// When a cursor POSITION update references a `shapeID` not in the client cache, the
-    /// client sends this on the EXISTING recovery channel (mirroring ``requestIDR``) and the
-    /// host re-emits that shape's bitmap. The cache re-insert is idempotent.
+    /// Re-request a cursor SHAPE bitmap the client is missing (doc 17 §3.3 self-heal). A shape
+    /// ships over the cursor socket ONCE per `shapeID`; a lost (or over-MTU, IP-fragment-lost)
+    /// shape datagram would otherwise leave the overlay permanently wrong/invisible for the whole
+    /// session (the host strips the real cursor). When a cursor POSITION update references a
+    /// `shapeID` not in the client cache, the client sends this on the EXISTING recovery channel
+    /// (mirroring ``requestIDR``) and the host re-emits the bitmap. The cache re-insert is idempotent.
     case requestCursorShape(shapeID: UInt16)
 
-    /// Periodic client→host network-feedback telemetry (the network-feedback channel). Carries a
-    /// ``NetworkStatsReport`` (windowed loss/FEC counters + the newest observed host-send-ts echo +
-    /// the client-local hold + inter-arrival jitter) so the host can MAINTAIN+LOG a clock-skew-free
-    /// RTT/loss/jitter estimate. Telemetry only — it does not change stream behaviour this phase.
+    /// Periodic client→host network-feedback telemetry. Carries a ``NetworkStatsReport`` (windowed
+    /// loss/FEC counters + newest observed host-send-ts echo + client-local hold + inter-arrival
+    /// jitter) so the host maintains+logs a clock-skew-free RTT/loss/jitter estimate. Telemetry
+    /// only — does not change stream behaviour this phase.
     case networkStats(NetworkStatsReport)
 
     /// NACK / selective ARQ: the client is missing specific DATA fragments of `frameID` and asks the
-    /// host to retransmit exactly those (from its send-history ring) instead of forcing a full
-    /// recovery-IDR. With the client's playout buffer ≫ RTT the retransmit lands before playout → no
-    /// stutter. Variable-length but SELF-DELIMITING (a count precedes the indices) so the
-    /// trailing-bytes rejection still holds. Capped at ``maxNackFragments`` (a larger loss escalates
-    /// to an LTR refresh / IDR instead).
+    /// host to retransmit exactly those (from its send-history ring) instead of a full recovery-IDR.
+    /// With the client's playout buffer ≫ RTT the retransmit lands before playout → no stutter.
+    /// Variable-length but SELF-DELIMITING (a count precedes the indices) so the trailing-bytes
+    /// rejection still holds. Capped at ``maxNackFragments`` (a larger loss escalates to LTR / IDR).
     case requestFragments(frameID: UInt32, fragIndices: [UInt16])
 
     /// Wire sentinel for "the client has not decoded any frame yet" in the
@@ -166,8 +159,8 @@ public enum RecoveryMessage: Equatable, Sendable {
     /// Serialises the message: `[UInt8 type][body...]`. Native Swift is the single source of
     /// truth (byte-identical to the wire pinned by the golden vectors + the round-trip tests).
     public func encode() -> Data {
-        // The NACK (type 6) is variable-length (a frag-index list); it is encoded NATIVELY by the
-        // dedicated helper — byte-identical to the rest of this codec.
+        // NACK (type 6) is variable-length (a frag-index list) → the dedicated native helper,
+        // byte-identical to the rest of this codec.
         if case let .requestFragments(frameID, fragIndices) = self {
             return Self.encodeRequestFragments(frameID: frameID, fragIndices: fragIndices)
         }
@@ -221,16 +214,16 @@ public enum RecoveryMessage: Equatable, Sendable {
         return d
     }
 
-    /// Parses a recovery message. Throws ``VideoProtocolError`` on an unknown type, a short body,
-    /// or TRAILING bytes. The trailing-bytes rejection (2026-06-11) is load-bearing: the client
-    /// always emits exact-width datagrams, and the host's `RecoveryRequestDeduper` keys on the RAW
-    /// datagram bytes — a decoder that tolerated suffixes would let suffix-varied copies of one
-    /// logical request each decode identically yet bypass the byte-keyed dedup (re-triggering a
-    /// second ForceLTRRefresh/IDR). No backcompat needed; both ends redeploy together.
+    /// Parses a recovery message. Throws ``VideoProtocolError`` on unknown type, short body, or
+    /// TRAILING bytes. The trailing-bytes rejection (2026-06-11) is load-bearing: the client always
+    /// emits exact-width datagrams and the host's `RecoveryRequestDeduper` keys on the RAW datagram
+    /// bytes — a decoder tolerating suffixes would let suffix-varied copies of one logical request
+    /// each decode identically yet bypass the byte-keyed dedup (re-triggering a second
+    /// ForceLTRRefresh/IDR). No backcompat needed; both ends redeploy together.
     public static func decode(_ data: Data) throws -> Self {
-        // A NACK (type 6) is decoded by the dedicated variable-length helper; the rest are
-        // fixed-width and read inline below. Every read is bounds-checked → a short body throws
-        // `.truncated` and the router drops the single datagram (never crashes on hostile input).
+        // NACK (type 6) → the variable-length helper; the rest are fixed-width, read inline below.
+        // Every read is bounds-checked → a short body throws `.truncated` and the router drops the
+        // datagram (never crashes on hostile input).
         if data.first == 6 {
             return try decodeRequestFragments(data)
         }
@@ -241,21 +234,21 @@ public enum RecoveryMessage: Equatable, Sendable {
         case 1:
             message = try .ack(streamSeq: reader.readUInt32())
         case 2:
-            // Three fixed-width UInt32s; bounds-checked reads ⇒ a body < 12 bytes throws .truncated
-            // → the router drops the single datagram (never crashes on hostile input).
+            // Three fixed-width UInt32s; bounds-checked ⇒ a body < 12 bytes throws .truncated →
+            // dropped (never crashes on hostile input).
             let from = try reader.readUInt32()
             let to = try reader.readUInt32()
             let lastDecoded = try reader.readUInt32()
             message = .requestLTRRefresh(fromFrameID: from, toFrameID: to, lastDecodedFrameID: lastDecoded)
         case 3:
-            // One bounds-checked UInt32 (lastDecodedFrameID); a 0-byte legacy body now throws
+            // One bounds-checked UInt32 (lastDecodedFrameID); a 0-byte legacy body throws
             // .truncated and is dropped — no backcompat (both ends redeploy together).
             message = try .requestIDR(lastDecodedFrameID: reader.readUInt32())
         case 4:
             message = try .requestCursorShape(shapeID: reader.readUInt16())
         case 5:
-            // Eleven fixed-width UInt32s; each read is bounds-checked, so a body < 44 bytes throws
-            // .truncated → the router drops the datagram (no OOB / overflow / force-unwrap surface).
+            // Eleven fixed-width UInt32s; each read bounds-checked, so a body < 44 bytes throws
+            // .truncated → dropped (no OOB / overflow / force-unwrap surface).
             let framesReceived = try reader.readUInt32()
             let fecRecovered = try reader.readUInt32()
             let unrecovered = try reader.readUInt32()
@@ -282,9 +275,9 @@ public enum RecoveryMessage: Equatable, Sendable {
         return message
     }
 
-    /// Native decode of the NACK, mirroring the Rust decoder exactly: bounds-checked fixed reads, the
-    /// ``maxNackFragments`` cap, and the TRAILING-bytes rejection (load-bearing for the host's
-    /// byte-keyed dedup — the body length must equal `7 + 2 × count`).
+    /// Native decode of the NACK: bounds-checked fixed reads, the ``maxNackFragments`` cap, and the
+    /// TRAILING-bytes rejection (load-bearing for the host's byte-keyed dedup — body length must
+    /// equal `7 + 2 × count`).
     static func decodeRequestFragments(_ data: Data) throws -> Self {
         let bytes = [UInt8](data)
         guard bytes.count >= 1 + 4 + 2 else { throw VideoProtocolError.truncated }
@@ -315,20 +308,19 @@ public struct RecoveryPolicy: Sendable {
     /// Escalate to IDR if no decodable frame arrives within this multiple of the
     /// measured RTT (doc 17 §3.6: "fallback IDR after timeout 2-RTT").
     public let idrTimeoutRTTMultiple: Double
-    /// Component 5 (recovery-redundancy, 2026-06-11): the HALVED escalation multiple used while
-    /// the client is OBSERVING LOSS (``LossObservationWindow``). Under loss the conservative
-    /// 2·RTT wait is the dominant residual freeze term once requests are sent redundantly — a
-    /// lossy path has already corroborated that waiting longer rarely saves the IDR.
+    /// Component 5 (recovery-redundancy, 2026-06-11): the HALVED escalation multiple used while the
+    /// client is OBSERVING LOSS (``LossObservationWindow``). Once requests go out redundantly, the
+    /// 2·RTT wait becomes the dominant residual freeze term — a lossy path has already shown that
+    /// waiting longer rarely saves the IDR.
     public let lossyIdrTimeoutRTTMultiple: Double
-    /// Floor on the LOSSY deadline. RAISED 30 → 60 ms (2026-06-11 telemetry round): an LTR-refresh
+    /// Floor on the LOSSY deadline. RAISED 30 → 60 ms (2026-06-11 telemetry): an LTR-refresh
     /// response PHYSICALLY needs host encode + flight + client decode ≈ 40-60 ms at the live path's
     /// 10-30 ms RTT — the old 30 ms floor let the client escalate to `requestIDR` BEFORE the LTR
-    /// medicine could land (measured: 202 requestIDR vs 100 LTR refreshes in 169 s; the host
-    /// absorbed a 97-suppression storm). The effective floor is
-    /// `max(lossyEscalationFloor, lossyEscalationFloorRTTMultiple × rtt)` so it tracks the path:
-    /// 60 ms at low RTT, 1.5·RTT once the RTT itself dominates the response time.
-    /// `SLOPDESK_ESCALATION_FLOOR_MS` (default 60, clamp 20...500) tunes the constant part.
-    /// The NORMAL (non-lossy) path has NO floor and stays byte-identical to today.
+    /// medicine could land (measured: 202 requestIDR vs 100 LTR refreshes in 169 s; a 97-suppression
+    /// storm). Effective floor `max(lossyEscalationFloor, lossyEscalationFloorRTTMultiple × rtt)`
+    /// tracks the path: 60 ms at low RTT, 1.5·RTT once RTT dominates. `SLOPDESK_ESCALATION_FLOOR_MS`
+    /// (default 60, clamp 20...500) tunes the constant part. The NORMAL (non-lossy) path has NO
+    /// floor and stays byte-identical to today.
     public let lossyEscalationFloor: TimeInterval
     /// The RTT-proportional part of the lossy floor (see ``lossyEscalationFloor``): a refresh
     /// round-trip is ≥1·RTT, plus encode/decode/frame-interval overhead ≈ half an RTT on the
@@ -367,21 +359,20 @@ public struct RecoveryPolicy: Sendable {
         .requestLTRRefresh(fromFrameID: lostFrom, toFrameID: lostTo, lastDecodedFrameID: lastDecoded)
     }
 
-    /// Whether the client should escalate to a forced IDR given how long it has
-    /// waited since the LTR-refresh request, and the current RTT estimate.
-    /// Convenience for the historical 2-arg call shape — `observingLoss: false`
-    /// (byte-identical to the pre-component-5 behaviour).
+    /// Whether to escalate to a forced IDR given elapsed-since-request and the RTT estimate.
+    /// Convenience for the historical 2-arg call shape — `observingLoss: false` (byte-identical
+    /// to the pre-component-5 behaviour).
     public func shouldEscalateToIDR(elapsedSinceRequest: TimeInterval, rtt: TimeInterval) -> Bool {
         shouldEscalateToIDR(elapsedSinceRequest: elapsedSinceRequest, rtt: rtt, observingLoss: false)
     }
 
-    /// Component 5: the loss-adaptive escalation clock. `observingLoss == false` ⇒ today's
-    /// `2·RTT`, no floor. `observingLoss == true` ⇒ the halved clock floored at the
-    /// physically-arrivable response time:
+    /// Component 5: the loss-adaptive escalation clock. `observingLoss == false` ⇒ today's `2·RTT`,
+    /// no floor. `observingLoss == true` ⇒ the halved clock floored at the physically-arrivable
+    /// response time:
     /// `max(lossyIdrTimeoutRTTMultiple·RTT, lossyEscalationFloor, lossyEscalationFloorRTTMultiple·RTT)`
-    /// — at the defaults `max(1·RTT, 60 ms, 1.5·RTT)`. The loss-state halving (1× vs 2×) is kept
-    /// ABOVE the floor; the floor just guarantees an LTR refresh gets the time it physically needs
-    /// before the IDR sledgehammer.
+    /// — defaults `max(1·RTT, 60 ms, 1.5·RTT)`. The halving (1× vs 2×) stays ABOVE the floor; the
+    /// floor just guarantees an LTR refresh gets the time it physically needs before the IDR
+    /// sledgehammer.
     public func shouldEscalateToIDR(elapsedSinceRequest: TimeInterval, rtt: TimeInterval, observingLoss: Bool) -> Bool {
         let deadline: TimeInterval
         if observingLoss {
@@ -400,14 +391,14 @@ public struct RecoveryPolicy: Sendable {
 /// recovery request (`requestLTRRefresh` / `requestIDR`) the client sends, and their spacing.
 ///
 /// WHY redundancy: the recovery REQUEST is a single ≤17-byte datagram riding the same lossy path
-/// it is reporting on (measured bursts 3-9%). A lost request costs the full escalation wait
-/// (~2·RTT ≈ 100 ms at the bootstrap EWMA) of extra frozen frame — the ranked hitch tail.
+/// it reports on (measured bursts 3-9%). A lost request costs the full escalation wait (~2·RTT ≈
+/// 100 ms at the bootstrap EWMA) of extra frozen frame — the ranked hitch tail.
 ///
 /// SPACING 5 ms → 3 ms (2026-06-11): 5 ms left only a 10 ms margin between the max copy spread
-/// (20 ms at copies=5) and the host dedup window — thin enough that a delayed copy could re-admit.
+/// (20 ms at copies=5) and the host dedup window — thin enough for a delayed copy to re-admit.
 ///
-/// WHY 3 ms spacing (not back-to-back like the input path's `redundantUpCount`): measured losses
-/// are BURSTY (up to ~15 adjacent wire datagrams — the FragmentInterleaver memory), so spacing
+/// WHY 3 ms (not back-to-back like the input path's `redundantUpCount`): measured losses are
+/// BURSTY (up to ~15 adjacent wire datagrams — the FragmentInterleaver memory), so spacing
 /// decorrelates the copies' fate; at recovery time the send lane is mostly idle so wire adjacency
 /// is otherwise likely. COUPLING INVARIANT (vs the host dedup window, default 25 ms): the total
 /// spread (copies−1)·spacing must stay ≤ HALF the window for every legal copies count — 6 ms at
@@ -453,11 +444,11 @@ public struct RecoveryRequestRedundancy: Sendable, Equatable {
 /// Component 5: the client-side LOSS-OBSERVING predicate gating the halved escalation clock
 /// (``RecoveryPolicy/shouldEscalateToIDR(elapsedSinceRequest:rtt:observingLoss:)``).
 ///
-/// Events are fed from data the client already has: (i) every UNRECOVERABLE loss, and (ii) every
+/// Fed from data the client already has: (i) every UNRECOVERABLE loss, and (ii) every
 /// FEC-RECOVERED frame completion (the early-warning channel — the measured 10 s bursts produce
 /// multiple FEC recoveries per second BEFORE the first unrecoverable frame, so the FIRST
-/// frozen-frame episode of a burst already runs the halved clock). Defaults {1.0 s, ≥2} keep a
-/// lone baseline ~1% loss (1 event) on today's conservative 2·RTT clock.
+/// frozen-frame episode already runs the halved clock). Defaults {1.0 s, ≥2} keep a lone baseline
+/// ~1% loss (1 event) on today's conservative 2·RTT clock.
 public struct LossObservationWindow: Sendable, Equatable {
     private let windowSeconds: TimeInterval
     private let minEvents: Int

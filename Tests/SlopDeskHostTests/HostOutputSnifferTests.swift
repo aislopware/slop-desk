@@ -3,19 +3,16 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
 
-/// The FUSED ``HostOutputSniffer`` test suite: every test from the two suites it replaces
-/// (`HostTitleBellSnifferTests` — 30 tests — and `HostCommandStatusSnifferTests` — 13
-/// tests), ported mechanically onto the fused machine, plus the PERMANENT
-/// chunking-invariance property test (`testChunkingInvarianceOracle`).
+/// The FUSED ``HostOutputSniffer`` test suite: the two suites it replaces
+/// (`HostTitleBellSnifferTests`, `HostCommandStatusSnifferTests`) ported onto the fused
+/// machine, plus the PERMANENT chunking-invariance oracle (`testChunkingInvarianceOracle`).
 ///
-/// The crown-jewel properties carried over verbatim:
-///   1. **Non-destructive** — feeding the stream and concatenating the chunks back yields
-///      the original bytes UNCHANGED (the sniffer never consumes/strips a byte). Asserted
-///      in `assertForwardsUnchanged` on every title-side test stream below.
-///   2. **Split-boundary equivalence** — feeding the SAME stream chunked at every boundary
-///      (one byte at a time .. whole) produces identical control messages. The standing
-///      oracle below additionally pins the fused fast path to the per-byte path forever
-///      (chunk-size-1 bypasses the memchr fast path entirely).
+/// Two crown-jewel properties carried over:
+///   1. **Non-destructive** — the sniffer never consumes/strips a byte; concatenating the
+///      chunks back yields the original bytes. Asserted in `assertForwardsUnchanged`.
+///   2. **Split-boundary equivalence** — the same stream chunked at every boundary (one
+///      byte .. whole) produces identical messages. The oracle below pins the fast path to
+///      the per-byte path forever (chunk-size-1 bypasses the memchr fast path).
 final class HostOutputSnifferTests: XCTestCase {
     private let ESC = "\u{1B}"
     private let BEL = "\u{07}"
@@ -70,11 +67,10 @@ final class HostOutputSnifferTests: XCTestCase {
         return out
     }
 
-    /// Asserts the NON-DESTRUCTIVE invariant for `bytes`: an out-of-band relay that
-    /// forwards each chunk's original bytes (the contract of the `onChunk` sink, which
-    /// yields the UNCHANGED chunk regardless of what the sniffer detected) reconstructs the
-    /// input byte-for-byte, at every chunk boundary. The sniffer only OBSERVES; it must
-    /// never alter the relayed bytes.
+    /// Asserts the NON-DESTRUCTIVE invariant: the `onChunk` relay yields each chunk's
+    /// original bytes UNCHANGED regardless of what the sniffer detected, so forwarding
+    /// reconstructs the input byte-for-byte at every chunk boundary. The sniffer only
+    /// OBSERVES; it must never alter the relayed bytes.
     private func assertForwardsUnchanged(_ bytes: [UInt8], file: StaticString = #filePath, line: UInt = #line) {
         for size in 1...max(1, bytes.count) {
             let s = HostOutputSniffer()
@@ -93,11 +89,10 @@ final class HostOutputSnifferTests: XCTestCase {
 
     // MARK: PERMANENT chunking-invariance oracle (fast path vs per-byte path)
 
-    /// STANDING ORACLE — keep forever. `observe(whole)` must equal the concatenation of
-    /// `observe` one byte at a time on the SAME machine state trajectory. Chunk-size-1
-    /// BYPASSES the memchr fast path (every chunk is a single byte, so the fast path can
-    /// never skip ahead), so this property permanently pins the fast path (which only
-    /// chooses WHICH bytes reach `step()`) to the per-byte transition table.
+    /// STANDING ORACLE — keep forever. `observe(whole)` must equal `observe` one byte at a
+    /// time. Chunk-size-1 BYPASSES the memchr fast path (every chunk is one byte, so it can
+    /// never skip ahead), pinning the fast path — which only chooses WHICH bytes reach
+    /// `step()` — to the per-byte transition table.
     func testChunkingInvarianceOracle() {
         let streams: [String] = [
             // ground content + bells around escapes
@@ -233,11 +228,10 @@ final class HostOutputSnifferTests: XCTestCase {
     // MARK: stray ESC followed by a valid sequence — introducer not swallowed
 
     func testUnterminatedOSCThenValidTitleNotLost() {
-        // `ESC ]0;abc` (no explicit terminator) directly followed by `ESC ]2;real BEL`.
-        // The stray ESC ends the first OSC — and because `0;abc` is itself a COMPLETE
-        // OSC 0 payload, ending it fires `.title("abc")` — AND that same ESC introduces
-        // the next OSC. The headline property: the second title `"real"` must NOT be
-        // dropped (the prior stray-ESC bug swallowed the next sequence's introducer).
+        // `ESC]0;abc` (no terminator) then `ESC]2;real BEL`. The stray ESC ends the first
+        // OSC; since `0;abc` is a COMPLETE OSC 0 payload, ending it fires `.title("abc")` —
+        // AND that same ESC introduces the next OSC. Headline: the second title "real" must
+        // NOT be dropped (the prior stray-ESC bug swallowed the next introducer).
         let bytes = Array("\(ESC)]0;abc".utf8) + Array("\(ESC)]2;real\(BEL)".utf8)
         let msgs = observeWhole(bytes)
         XCTAssertEqual(msgs, [.title("abc"), .title("real")])
@@ -255,21 +249,21 @@ final class HostOutputSnifferTests: XCTestCase {
     }
 
     func testStrayESCInOSCThenBELIsNotABell() {
-        // `ESC ]0;abc` (a complete OSC 0 payload) then `ESC X`. The first `ESC` after the OSC ends it, so
-        // the title `abc` fires — but `ESC X` is the SOS (Start Of String) introducer, a STRING sequence
-        // whose body a conformant terminal swallows to its ST/BEL terminator, emitting NOTHING. So the
-        // trailing BEL is the SOS TERMINATOR, NOT a real bell — exactly what this test's NAME asserts.
-        // (R9 #4: before the DCS/SOS/PM/APC string-state fix, the sniffer wrongly fired a phantom `.bell`
-        // here, since it treated `X` as an untracked escape and re-parsed the BEL in ground state.)
+        // `ESC]0;abc` (complete OSC 0) then `ESC X`. The ESC ends the OSC so title `abc`
+        // fires; `ESC X` is the SOS (Start Of String) introducer — a STRING sequence whose
+        // body a conformant terminal swallows to its ST/BEL terminator, emitting NOTHING. So
+        // the trailing BEL is the SOS TERMINATOR, not a real bell.
+        // (R9 #4: before the DCS/SOS/PM/APC string-state fix the sniffer fired a phantom
+        // `.bell` here — it treated `X` as an untracked escape and re-parsed the BEL in ground.)
         let bytes = Array("\(ESC)]0;abc".utf8) + Array("\(ESC)X".utf8) + Array(BEL.utf8)
         XCTAssertEqual(observeWhole(bytes), [.title("abc")])
         assertForwardsUnchanged(bytes)
     }
 
-    /// R9 #4 (security): a BEL inside a DCS/SOS/PM/APC string sequence is the string body/terminator, not
-    /// a real bell — a conformant terminal never rings it. A malicious remote program (`printf
-    /// '\033P\007'`) must not be able to inject a phantom bell, and an `ESC]2;…` embedded in a string body
-    /// must not spoof the tab title.
+    /// R9 #4 (security): a BEL inside a DCS/SOS/PM/APC string is the body/terminator, not a
+    /// real bell — a conformant terminal never rings it. A malicious remote (`printf
+    /// '\033P\007'`) must not inject a phantom bell, and an `ESC]2;…` embedded in a string
+    /// body must not spoof the tab title.
     func testStringSequencesSwallowEmbeddedBellAndTitle() {
         // DCS with an embedded BEL → swallowed (no phantom bell). `ESC P` … `BEL`.
         XCTAssertEqual(observeWhole(Array("\(ESC)Pq\(BEL)".utf8)), [], "a BEL inside a DCS string is not a bell")
@@ -297,9 +291,9 @@ final class HostOutputSnifferTests: XCTestCase {
     // MARK: over-long unterminated OSC is bounded and the parser resyncs
 
     func testOverlongUnterminatedOSCBoundedThenResync() {
-        // A huge unterminated OSC (far exceeds the 4096 cap) followed by a real title. The
-        // overlong OSC must be abandoned at the cap (no partial title, no wedge) and the
-        // following valid OSC 0 must still be detected.
+        // A huge unterminated OSC (far over the 4096 cap) then a real title. The overlong
+        // OSC must be abandoned at the cap (no partial title, no wedge) and the following
+        // valid OSC 0 still detected.
         let junk = String(repeating: "x", count: 10000)
         let bytes = Array("\(ESC)]2;\(junk)".utf8) + Array("\(ESC)]0;after\(BEL)".utf8)
         XCTAssertEqual(observeWhole(bytes), [.title("after")])
@@ -316,8 +310,8 @@ final class HostOutputSnifferTests: XCTestCase {
         }
     }
 
-    /// REGRESSION: an over-cap OSC whose OWN terminator is a `BEL` must have that BEL consumed
-    /// as the (discarded) OSC's terminator — NOT re-parsed in ground as a phantom `.bell`. The
+    /// REGRESSION: an over-cap OSC whose OWN terminator is a `BEL` must consume that BEL as
+    /// the (discarded) OSC's terminator, NOT re-parse it in ground as a phantom `.bell`. The
     /// old code dropped to `.ground` AT the cap, so the terminator BEL fired a spurious bell
     /// (and could misread following bytes). A following real title must still be detected.
     func testOverlongOSCTerminatorBELIsNotAPhantomBell() {
@@ -679,10 +673,9 @@ final class HostOutputSnifferTests: XCTestCase {
     func testIgnoresNon133OSCAndPlainContent() {
         let clock = TestClock()
         let sniffer = HostOutputSniffer(clock: clock.date)
-        // A title OSC (0;…) + plain prompt text → NO commandStatus. (FUSED-sniffer port
-        // note: the old command sniffer returned [] here; the fused machine of course also
-        // emits the `.title` — so the command-status assertion is the FILTERED subsequence,
-        // and the title emission is asserted alongside.)
+        // A title OSC (0;…) + plain prompt text → NO commandStatus. (Fused-port note: the
+        // old command sniffer returned [] here; the fused machine also emits `.title`, so the
+        // command-status assertion is the FILTERED subsequence, title asserted alongside.)
         let preamble = Array("\u{1B}]0;my title\u{07}user@host % ".utf8)
         let onPreamble = sniffer.observe(preamble)
         XCTAssertEqual(commandOnly(onPreamble), [])
@@ -754,10 +747,10 @@ final class HostOutputSnifferTests: XCTestCase {
         XCTAssertEqual(notificationsOnly(observeWhole(bytes("\u{1B}]777;precmd;something\u{07}"))), [])
     }
 
-    /// M8-watch-notify-toggle: an `slopdesk watch` finish banner is an OSC 777 notify whose TITLE field is
-    /// the private ``WatchNotificationMarker/title`` sentinel. The host preserves the marker intact in the
-    /// title (a distinguishable notification the client routes to `.watchFinish`), while a plain OSC 9 stays a
-    /// generic empty-title notification. This is the host half of "the watch toggle actually gates".
+    /// M8-watch-notify-toggle: an `slopdesk watch` finish banner is an OSC 777 notify whose
+    /// TITLE field is the private ``WatchNotificationMarker/title`` sentinel. The host keeps
+    /// the marker intact in the title (the client routes it to `.watchFinish`), while a plain
+    /// OSC 9 stays a generic empty-title notification. Host half of "the watch toggle gates".
     func testOSC777WatchFinishMarkerPreservedInTitle() {
         let message = "watch: make finished"
         XCTAssertEqual(
@@ -777,9 +770,10 @@ final class HostOutputSnifferTests: XCTestCase {
     }
 
     func testOSC9ProgressBarSubtypeIsNotANotification() {
-        // ConEmu/iTerm2 OSC 9 is overloaded: `ESC]9;4;<state>;<pct>` is the taskbar PROGRESS-BAR protocol,
-        // emitted continuously by winget / long builds — NOT a desktop notification. It must be skipped so
-        // benign progress output doesn't flood the user with alerts whose body is raw text like "4;1;50".
+        // ConEmu/iTerm2 OSC 9 is overloaded: `ESC]9;4;<state>;<pct>` is the taskbar
+        // PROGRESS-BAR protocol, emitted continuously by winget / long builds — NOT a desktop
+        // notification. Skip it, else benign progress floods the user with alerts whose body
+        // is raw text like "4;1;50".
         XCTAssertEqual(
             notificationsOnly(observeWhole(bytes("\u{1B}]9;4;1;50\u{07}"))),
             [],

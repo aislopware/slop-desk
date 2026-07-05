@@ -4,28 +4,27 @@ import SlopDeskTransport
 
 /// Agent-control socket server — the herdr/zellij-style control surface for AI agents.
 ///
-/// Binds an `AF_UNIX` stream socket at `$TMPDIR/slopdesk-ctl-<pid>.sock` (chmod 0600),
-/// accepts connections, and speaks **NDJSON** over each: one UTF-8 JSON object per line,
+/// Binds an `AF_UNIX` stream socket at `$TMPDIR/slopdesk-ctl-<pid>.sock` (chmod 0600) and speaks
+/// **NDJSON** per connection: one UTF-8 JSON object per line,
 /// request `{"id":"…","method":"…","params":{…}}` → response `{"id":"…","ok":true,"result":{…}}`
 /// or `{"id":"…","ok":false,"error":"…"}`.
 ///
 /// ## Hang-safety
-/// The accept loop and per-connection read loop run on dedicated background threads (never
-/// on the cooperative-concurrency pool), so a blocked `read(2)` or a slow shell write never
-/// parks a Swift concurrency thread. The `wait` verb (the only blocking verb) parks its
-/// connection thread on an `NSCondition` until the PTY fires a chunk matching the regex or
-/// the timeout elapses.
+/// The accept loop and per-connection read loop run on dedicated background threads (never the
+/// cooperative-concurrency pool), so a blocked `read(2)` or slow shell write never parks a Swift
+/// concurrency thread. The `wait` verb (the only blocking verb) parks its connection thread on an
+/// `NSCondition` until the PTY fires a chunk matching the regex or the timeout elapses.
 ///
 /// ## Pure handler split (same pattern as ``AgentHookListener``)
-/// - ``AgentControlHandler`` — the PURE verb dispatcher: given an `(id, method, params)` triple
-///   and a reference to the ``HostServer``, it executes the verb and returns the JSON
-///   response line. No socket I/O; fully unit-testable with a fake `HostServer`.
-/// - ``AgentControlAcceptor`` — the THIN `AF_UNIX` shim: binds, accepts, reads NDJSON lines,
-///   routes each to ``AgentControlHandler``, and writes the response. Never instantiated in a
-///   test (hang-safety rule: no real socket in a unit test).
+/// - ``AgentControlHandler`` — PURE verb dispatcher: `(id, method, params)` + a ``HostServer`` ref
+///   → executes the verb, returns the JSON response line. No socket I/O; unit-testable with a
+///   fake `HostServer`.
+/// - ``AgentControlAcceptor`` — THIN `AF_UNIX` shim: binds, accepts, reads NDJSON lines, routes
+///   each to ``AgentControlHandler``, writes the response. Never instantiated in a test
+///   (hang-safety: no real socket in a unit test).
 ///
-/// **Validate-then-drop**: any request line that is not valid UTF-8, not valid JSON, exceeds
-/// 64 KiB, or has an unknown method receives an error response — the server never traps.
+/// **Validate-then-drop**: a request line that is not valid UTF-8, not valid JSON, exceeds
+/// 64 KiB, or has an unknown method gets an error response — the server never traps.
 public final class AgentControlListener: @unchecked Sendable {
     private let acceptor: AgentControlAcceptor
     /// The socket path exported to PTY envs and logged at startup.
@@ -54,11 +53,11 @@ public final class AgentControlListener: @unchecked Sendable {
 
 /// The PURE verb dispatcher for the agent-control protocol.
 ///
-/// Given a parsed request triple `(id, method, params)` and the host server, executes the
-/// requested verb and returns a complete NDJSON response line (UTF-8, newline-terminated).
+/// Given `(id, method, params)` and the host server, executes the verb and returns a complete
+/// NDJSON response line (UTF-8, newline-terminated).
 ///
 /// **All methods are synchronous** except `wait`, which must be called on a background thread
-/// (it blocks via `NSCondition`). The `wait` result is also returned as a NDJSON line.
+/// (it blocks via `NSCondition`); its result is also returned as an NDJSON line.
 ///
 /// Unit-tested with a fake host — no real socket, no real PTY.
 public struct AgentControlHandler: Sendable {
@@ -67,19 +66,19 @@ public struct AgentControlHandler: Sendable {
 
     // MARK: E14/K13 IPC guards
 
-    /// The MUTATING ("send keys" equivalent) verbs — they write to a PTY, spawn, kill, or resize a
-    /// pane. Gated behind ``IPCGuards/allowSendKeys``. The READ-ONLY verbs (`list-panes`/`read`/`wait`/
-    /// `report`) are NOT in this set and are always allowed. (`subscribe` is intercepted in the acceptor
-    /// before `dispatch` and only STREAMS output, so it is read-only too.)
+    /// The MUTATING ("send keys" equivalent) verbs — write to a PTY, spawn, kill, or resize a pane.
+    /// Gated behind ``IPCGuards/allowSendKeys``. The READ-ONLY verbs (`list-panes`/`read`/`wait`/
+    /// `report`) are NOT in this set and are always allowed. (`subscribe` is intercepted in the
+    /// acceptor before `dispatch` and only STREAMS output, so it is read-only too.)
     static let mutatingVerbs: Set<String> = ["write", "run", "spawn", "kill", "resize"]
 
     /// Whether `method` mutates a pane (and so is gated by the send-keys / sensitive-session guards).
     static func isMutatingVerb(_ method: String) -> Bool { mutatingVerbs.contains(method) }
 
-    /// The default foreground-name resolver for the sensitive-session gate: looks the pane up on the
-    /// server and probes its live PTY foreground basename via ``PTYForegroundProbe``. Returns `""` when
-    /// the pane is unknown / the probe fails (→ not sensitive; the send-keys gate still applies). Tests
-    /// inject a fake resolver into ``dispatch(id:method:params:server:guards:foregroundName:)`` instead.
+    /// Default foreground-name resolver for the sensitive-session gate: looks the pane up and probes
+    /// its live PTY foreground basename via ``PTYForegroundProbe``. Returns `""` when the pane is
+    /// unknown / the probe fails (→ not sensitive; the send-keys gate still applies). Tests inject a
+    /// fake resolver into ``dispatch(id:method:params:server:guards:foregroundName:)`` instead.
     @usableFromInline static let probeForegroundName: @Sendable (HostServer, String) -> String = { server, paneId in
         guard let session = server.lookupPaneForControl(paneId: paneId) else { return "" }
         return PTYForegroundProbe.foregroundName(masterFD: session.pty.masterFD)
@@ -91,14 +90,13 @@ public struct AgentControlHandler: Sendable {
     /// May block on the calling thread for the `wait` verb.
     ///
     /// **E14/K13 — IPC guards.** Before the verb runs, the MUTATING verbs
-    /// (`write`/`run`/`spawn`/`kill`/`resize`, the "send keys" equivalents) are gated behind
-    /// ``IPCGuards/allowSendKeys`` (default OFF), and a mutating verb whose target pane runs a
-    /// SENSITIVE foreground process (`ssh`/`sudo`/`login`/…) is additionally gated behind
-    /// ``IPCGuards/allowSensitiveSessions`` (default OFF). The READ-ONLY verbs
-    /// (`list-panes`/`read`/`wait`/`report`) are ALWAYS allowed. No new socket, no tokens, no crypto —
-    /// these are pure host-side guards on the existing NDJSON ctl socket (the WireGuard mesh is the
-    /// security boundary). The two flags resolve from the host env AT THIS dispatch site via
-    /// ``IPCGuards/resolved()``; tests inject `guards` (and `foregroundName`) directly.
+    /// (`write`/`run`/`spawn`/`kill`/`resize`) are gated behind ``IPCGuards/allowSendKeys``
+    /// (default OFF); a mutating verb whose target pane runs a SENSITIVE foreground process
+    /// (`ssh`/`sudo`/`login`/…) is additionally gated behind ``IPCGuards/allowSensitiveSessions``
+    /// (default OFF). The READ-ONLY verbs (`list-panes`/`read`/`wait`/`report`) are ALWAYS allowed.
+    /// No new socket, no tokens, no crypto — pure host-side guards on the existing NDJSON ctl socket
+    /// (the WireGuard mesh is the security boundary). Both flags resolve from the host env at this
+    /// dispatch site via ``IPCGuards/resolved()``; tests inject `guards` (and `foregroundName`) directly.
     ///
     /// - Parameters:
     ///   - guards: the resolved send-keys / sensitive-session permissions (default: from env).
@@ -113,8 +111,8 @@ public struct AgentControlHandler: Sendable {
         guards: IPCGuards = .resolved(),
         foregroundName: @Sendable (HostServer, String) -> String = Self.probeForegroundName,
     ) -> String {
-        // E14/K13: gate the mutating verbs on the trusted ctl socket. Fire BEFORE the verb acts (and
-        // before any pane lookup / side effect) so a refused verb never touches the PTY.
+        // E14/K13: gate mutating verbs. Fire BEFORE the verb acts (and before any pane lookup /
+        // side effect) so a refused verb never touches the PTY.
         if isMutatingVerb(method) {
             guard guards.allowSendKeys else {
                 return errorResponse(id: id, message: "ipc send-keys disabled")
@@ -166,13 +164,12 @@ public struct AgentControlHandler: Sendable {
 
     /// `read` → `{text: "…"}` — scrollback snapshot for a pane (ANSI stripped by default).
     ///
-    /// When `source == "unwrapped"` (P1), returns `{text, lines: [...]}` where `lines` is the
-    /// array of LOGICAL lines (joined chunks, ANSI-stripped, split on hard `\n`; only the empty
-    /// artifact of a terminating newline is dropped — an UNTERMINATED final line is KEPT, since it
-    /// is typically the live prompt / awaiting-input cue an orchestrator scrapes) and `text` is
-    /// those lines re-joined — so an agent regex is robust to read-CHUNK boundaries. An optional
-    /// `lines` count limits to the last N. (True reverse-of-terminal-width wrapping is impossible
-    /// host-side — the host keeps no screen buffer.)
+    /// When `source == "unwrapped"` (P1), returns `{text, lines: [...]}` where `lines` is the array
+    /// of LOGICAL lines (joined chunks, ANSI-stripped, split on hard `\n`; only the empty artifact of
+    /// a terminating newline is dropped — an UNTERMINATED final line is KEPT, since it is typically the
+    /// live prompt / awaiting-input cue an orchestrator scrapes), and `text` is those lines re-joined —
+    /// so an agent regex is robust to read-CHUNK boundaries. Optional `lines` limits to the last N.
+    /// (True reverse-of-terminal-width unwrapping is impossible host-side — the host keeps no screen buffer.)
     static func readPane(id: String, params: [String: Any], server: HostServer) -> String {
         guard let paneId = params["paneId"] as? String else {
             return errorResponse(id: id, message: "missing params.paneId")
@@ -282,10 +279,9 @@ public struct AgentControlHandler: Sendable {
             return errorResponse(id: id, message: "invalid regex: \(error.localizedDescription)")
         }
 
-        // Box the mutable accumulator + matched flag in a class so the @Sendable observer
-        // closure (which runs on the PTY read-loop thread) and the NSCondition wait (which
-        // runs on the connection thread) can share state safely without capturing `var`s
-        // across concurrency boundaries — required by Swift 6 strict sendability.
+        // Box the mutable accumulator + matched flag in a class so the @Sendable observer closure
+        // (PTY read-loop thread) and the NSCondition wait (connection thread) share state without
+        // capturing `var`s across concurrency boundaries — Swift 6 strict sendability.
         final class WaitState: @unchecked Sendable {
             let condition = NSCondition()
             var matched = false
@@ -440,8 +436,8 @@ public struct AgentControlHandler: Sendable {
     }
 
     /// Minimal JSON encoder — handles the fixed types the verb results produce.
-    /// `JSONSerialization` is the right choice here (Foundation is already imported everywhere;
-    /// no `Codable` ceremony for a simple string→Any dict).
+    /// `JSONSerialization` fits here: Foundation is already imported everywhere, no `Codable`
+    /// ceremony for a simple string→Any dict.
     static func encodeJSON(_ value: Any) -> String {
         guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else {
             return #"{"ok":false,"error":"json encode failure"}"#
@@ -470,9 +466,9 @@ public struct AgentControlHandler: Sendable {
 ///
 /// Pure value the dispatcher consults BEFORE running a mutating verb. The flags resolve from the host
 /// env (``HostEnvironment/ipcAllowSendKeys(environment:)`` / ``ipcAllowSensitiveSessions(environment:)``)
-/// at the dispatch site via ``resolved()`` — DEFAULT-OFF (only an explicit `"1"` enables), the same idiom
-/// as ``HostEnvironment/agentControlEnabled(environment:)``. **No new socket, no tokens, no crypto:** these
-/// are host-side guards on the existing NDJSON ctl socket; the WireGuard mesh is the security boundary.
+/// at the dispatch site via ``resolved()`` — DEFAULT-OFF (only an explicit `"1"` enables), same idiom as
+/// ``HostEnvironment/agentControlEnabled(environment:)``. **No new socket, no tokens, no crypto:** host-side
+/// guards on the existing NDJSON ctl socket; the WireGuard mesh is the security boundary.
 public struct IPCGuards: Sendable {
     /// Whether the MUTATING verbs (`write`/`run`/`spawn`/`kill`/`resize`) may run at all.
     public let allowSendKeys: Bool
@@ -525,8 +521,7 @@ public enum SensitiveSessionPolicy {
     /// default is to allow rather than fail-closed on an unresolved probe.
     public static func isSensitive(processName: String) -> Bool {
         guard !processName.isEmpty else { return false }
-        // Reuse the host's existing basename reducer (the same one that resolves foreground-process
-        // basenames) so a full path and a bare basename are matched identically.
+        // Reuse the host's basename reducer so a full path and a bare basename match identically.
         let base = ForegroundProcessDetector.basename(of: processName)
         return sensitiveBasenames.contains(base)
     }
@@ -713,18 +708,17 @@ public final class AgentControlAcceptor: @unchecked Sendable {
     // MARK: subscribe — streaming event pump
 
     /// Implements the `subscribe` verb: streams NDJSON event lines to `fd` until the pane exits
-    /// or the client disconnects (EPIPE). No initial handshake line is sent — event streaming
-    /// begins immediately. The connection fd is consumed (this method owns it until return).
+    /// or the client disconnects (EPIPE). No initial handshake line — streaming begins immediately.
+    /// The connection fd is consumed (this method owns it until return).
     ///
     /// Event shapes (one UTF-8 NDJSON line per event, newline-terminated):
     /// - `{"event":"output","text":"<plain-text chunk>"}` — zero or more per PTY read chunk
     ///   (ANSI-stripped for clean agent consumption).
-    /// - `{"event":"closed"}` — exactly one, after the PTY's read loop has fully drained to EOF
-    ///   (guaranteed to arrive after all `output` events for the session).
+    /// - `{"event":"closed"}` — exactly one, after the PTY read loop has fully drained to EOF
+    ///   (guaranteed after all `output` events for the session).
     ///
-    /// Cleanup: both the output observer and the close observer are removed on any disconnect
-    /// or pane exit. The pump runs on the connection thread already detached by the acceptor —
-    /// no new thread is needed.
+    /// Cleanup: both observers are removed on any disconnect or pane exit. The pump runs on the
+    /// connection thread already detached by the acceptor — no new thread needed.
     private static func serveSubscribe(
         fd: Int32,
         id: String,
@@ -748,9 +742,9 @@ public final class AgentControlAcceptor: @unchecked Sendable {
         let ansiStrip = (params["ansiStrip"] as? Bool) ?? true
 
         // Box shared state under NSCondition so the output observer (PTY read-loop thread) and
-        // close observer (exit task thread) can deliver events to the pump thread safely.
-        // Swift 6 strict sendability: mutable state lives in an @unchecked Sendable class; the
-        // NSCondition serialises all accesses — no captured `var`s across concurrency boundaries.
+        // close observer (exit task thread) deliver events to the pump thread safely. Swift 6
+        // strict sendability: mutable state lives in an @unchecked Sendable class; the NSCondition
+        // serialises all accesses — no captured `var`s across concurrency boundaries.
         final class SubscribeState: @unchecked Sendable {
             let condition = NSCondition()
             var lines: [Data] = [] // pending NDJSON event lines buffered by observers
@@ -857,11 +851,11 @@ public final class AgentControlAcceptor: @unchecked Sendable {
     ///   `{"type":"agent_status_changed","paneId":"<uuid>","state":"<idle|working|done|blocked>","title":"<osc title>","ts":<unix-seconds>}`
     ///
     /// Reuses the SAME ``SubscribeState``/`NSCondition`/`writeAll` pattern as ``serveSubscribe``.
-    /// A server-level observer (registered via ``HostServer/registerAgentStatusObserver(id:_:)``)
-    /// pushes lines into the condition-guarded buffer; the pump drains them to `fd`. Consecutive
-    /// identical `(paneId, state)` pairs are deduped at the fan-out (the detector already dedupes
-    /// type-27, but a belt-and-braces per-pane dedupe here defends against any double-notify).
-    /// The observer is deregistered on disconnect; the fd is consumed (this method owns it).
+    /// A server-level observer (``HostServer/registerAgentStatusObserver(id:_:)``) pushes lines
+    /// into the condition-guarded buffer; the pump drains them to `fd`. Consecutive identical
+    /// `(paneId, state)` pairs are deduped at the fan-out (the detector already dedupes type-27,
+    /// but a belt-and-braces per-pane dedupe defends against any double-notify). The observer is
+    /// deregistered on disconnect; the fd is consumed (this method owns it).
     private static func serveSubscribeAll(
         fd: Int32,
         id _: String,

@@ -1,24 +1,22 @@
-// OpenQuicklyView — the floating Open-Quickly picker (E11 / WI-6), an Xcode-style `⌘⇧O` multi-source
-// quick switcher (`open-quickly.png`). It FOLDS in the E10 Jump-To panel: ONE centered, SCRIMMED card with a
-// pre-focused search field, a row of filter pills (All / Opened / Recent / Folders / Agents / Current —
-// SSH is absent by product decision), a sectioned + fuzzy-ranked result list, a per-row `⌘K` Actions
-// popover, and a context-sensitive footer hint bar. `⌘⇧O` opens it on **All**; `⌘J` opens it on **Current**
-// (the Jump-To scope).
+// OpenQuicklyView — the floating Open-Quickly picker (E11 / WI-6), an Xcode-style `⌘⇧O` multi-source quick
+// switcher (`open-quickly.png`) that folds in the E10 Jump-To panel: pre-focused search field, filter pills
+// (All / Opened / Recent / Folders / Agents / Current — SSH absent by product decision), a sectioned +
+// fuzzy-ranked result list, per-row `⌘K` Actions popover, footer hint bar. `⌘⇧O` opens on **All**; `⌘J`
+// opens on **Current** (the Jump-To scope).
 //
-// SEAM discipline: every source is assembled by the PURE `OpenQuicklyModel` (headlessly tested) — Opened from
-// the live `WorkspaceStore.tree`, Recent from `recentlyClosedTabs`, Folders from the injected
-// `FolderFrecencyStore`, Current from the focused pane's `JumpToModel` snapshot, and Agents from the focused
-// pane's host metadata RPC (`MetadataClient.listAgentSessions`, Claude-only) loaded ASYNC.
-// Ranking runs the vendored `FuzzyMatcher`. Every row's
-// default action + its `⌘K` action table actuate through the shared `LinkActionActuator` (the same thin
-// platform dispatch the renderer + Jump-To use), so link/cd/host routing has ONE home. The active pill lives
-// on the `OverlayCoordinator` (`openQuicklyFilter`); the search query + keyboard selection are local view state.
+// SEAM: every source is assembled by the PURE `OpenQuicklyModel` (headlessly tested) — Opened from
+// `WorkspaceStore.tree`, Recent from `recentlyClosedTabs`, Folders from the injected `FolderFrecencyStore`,
+// Current from the focused pane's `JumpToModel` snapshot, Agents from its host metadata RPC
+// (`MetadataClient.listAgentSessions`, Claude-only) loaded ASYNC. Ranking runs the vendored `FuzzyMatcher`.
+// Each row's default + `⌘K` actions actuate through the shared `LinkActionActuator` (renderer + Jump-To use
+// the same dispatch), so link/cd/host routing has ONE home. The active pill lives on the `OverlayCoordinator`
+// (`openQuicklyFilter`); the search query + keyboard selection are local view state.
 //
 // Picker-LOCAL keys (handled here, NEVER globally registered): `Tab`/`⇧Tab` cycle pills, `⌘1–9` quick-pick a
-// visible row, `⌘K` toggles the Actions popover, `⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J` jump straight to a pill, `↑`/`↓`
-// move, `↩` runs the selected row, `Esc` closes. Presented as a NATIVE `.sheet` by `OverlayHostView` (the
-// system provides the window chrome); OpenQuicklyView carries only its content. `Slate.*` tokens ONLY for
-// that content (raw font/colour/radius literals fail check-ds-leaks).
+// visible row, `⌘K` toggles Actions, `⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J` jump to a pill, `↑`/`↓` move, `↩` runs the row,
+// `Esc` closes. Presented as a NATIVE `.sheet` by `OverlayHostView` (the system provides the window chrome);
+// this view carries only its content. `Slate.*` tokens ONLY (raw font/colour/radius literals fail
+// check-ds-leaks).
 
 #if canImport(SwiftUI)
 import Foundation
@@ -28,14 +26,14 @@ import SlopDeskWorkspaceCore
 import SwiftUI
 
 struct OpenQuicklyView: View {
-    /// The live store — the source of Opened panes / Recent tabs, the focused-pane Current snapshot, the
-    /// pane-focus + scrollback-jump + reopen ops, and the active terminal model the actuator writes to.
+    /// The live store — source of Opened panes / Recent tabs / Current snapshot, the focus + jump + reopen
+    /// ops, and the active terminal model the actuator writes to.
     let store: WorkspaceStore
-    /// The single overlay reducer — owns the active pill (``OverlayCoordinator/openQuicklyFilter``) + closes
-    /// the picker. `@Observable`, so reading `openQuicklyFilter` in `body` auto-tracks the pill highlight.
+    /// The overlay reducer — owns the active pill (``OverlayCoordinator/openQuicklyFilter``) + closes the
+    /// picker. `@Observable`, so reading `openQuicklyFilter` in `body` auto-tracks the pill highlight.
     let coordinator: OverlayCoordinator
-    /// The app-owned, client-side Folders frecency store (the **Folders** pill source + "Forget This Folder").
-    /// `nil` on iOS / tests / previews ⇒ the Folders source is simply empty there.
+    /// The client-side Folders frecency store (the **Folders** pill source + "Forget This Folder").
+    /// `nil` on iOS / tests / previews ⇒ Folders source is empty there.
     let folders: FolderFrecencyStore?
 
     /// The query field text. Editing it re-filters (cheap) the in-memory sources + resets the selection.
@@ -48,9 +46,9 @@ struct OpenQuicklyView: View {
     @State private var actionsQuery = ""
     /// The keyboard-highlighted action index within the popover's FILTERED action list.
     @State private var actionsSelection = 0
-    /// The focused pane's Jump-To rows, SNAPSHOTTED once on appear (running the detector over the whole
-    /// scrollback is not per-keystroke work) — the **Current** source, kept verbatim so a Current row's ⌘K
-    /// reuses the shared `LinkActionActuator.rowActions(for:JumpToItem,…)` table.
+    /// The focused pane's Jump-To rows, SNAPSHOTTED once on appear (detecting over the whole scrollback isn't
+    /// per-keystroke work) — the **Current** source, kept verbatim so a Current row's ⌘K reuses the shared
+    /// `LinkActionActuator.rowActions(for:JumpToItem,…)` table.
     @State private var currentJumpItems: [JumpToItem] = []
     /// The **Agents** rows (Claude-only), loaded ASYNC from the focused pane's host metadata RPC.
     @State private var agentItems: [OpenQuicklyItem] = []
@@ -62,15 +60,15 @@ struct OpenQuicklyView: View {
     /// Pre-focuses the ⌘K Actions popover's filter field when it opens (so typing filters actions at once).
     @FocusState private var actionsFocused: Bool
 
-    // The fixed panel width + results viewport cap (open-quickly.png: a centered card, wider than Jump-To so
-    // the six pills + the trailing cwd/badge fit).
+    // Fixed panel width + results viewport cap (open-quickly.png: a centered card, wider than Jump-To so the
+    // six pills + trailing cwd/badge fit).
     private let panelWidth: CGFloat = 640
     private let resultsMaxHeight: CGFloat = 360
     /// The rendered row height (`row(_:)` frame) — the divisor for one PageUp/PageDown "page" of rows.
     private let rowHeight: CGFloat = 38
 
-    /// One PageUp/PageDown "page" measured in rows: the visible viewport height divided by the row height,
-    /// floored to at least one row (so a page always advances). Integer math — no float on the wire/selection.
+    /// One PageUp/PageDown "page" in rows: viewport height / row height, floored to ≥1 (so a page always
+    /// advances). Integer math — no float on the wire/selection.
     private var pageStep: Int { max(1, Int(resultsMaxHeight / rowHeight)) }
 
     var body: some View {
@@ -82,8 +80,8 @@ struct OpenQuicklyView: View {
             divider
             footerBar
         }
-        // Presented as a native `.sheet` by `OverlayHostView` — the system provides the window chrome (bg /
-        // rounded corners / shadow), so this view carries only its content + a fixed macOS dialog width.
+        // Native `.sheet` via `OverlayHostView` — the system provides window chrome (bg / corners / shadow),
+        // so this view carries only content + a fixed macOS dialog width.
         #if os(macOS)
         .frame(width: panelWidth)
         #endif
@@ -98,23 +96,23 @@ struct OpenQuicklyView: View {
             selection = 0
             actionsVisible = false
         }
-        // Opening the ⌘K Actions popover starts with a blank filter + the first action highlighted; closing it
-        // returns the keyboard to the main search field. Retyping the filter resets the highlight to the top.
+        // Opening ⌘K Actions starts with a blank filter + first action highlighted; closing returns the
+        // keyboard to the main search field. Retyping the filter resets the highlight to the top.
         .onChange(of: actionsVisible) { _, visible in
             actionsQuery = ""
             actionsSelection = 0
             if !visible { searchFocused = true }
         }
         .onChange(of: actionsQuery) { _, _ in actionsSelection = 0 }
-        // Async-load the Agents source on appear + whenever the focused pane / its metadata façade changes or
-        // the picker switches to a pill that surfaces Agents (.all / .agents). `.task(id:)` auto-cancels the
-        // prior fetch, so a stale in-flight list can never clobber the current one.
+        // Async-load Agents on appear + whenever the focused pane / its metadata façade changes or the picker
+        // switches to a pill surfacing Agents (.all / .agents). `.task(id:)` auto-cancels the prior fetch, so
+        // a stale in-flight list can never clobber the current one.
         .task(id: agentLoadKey) { await loadAgents() }
-        // Keyboard: while this picker is presented the app NSEvent monitor YIELDS the whole keyboard to this
-        // focused overlay (its `isOverlayCapturingKeys` gate, keyed on `openQuicklyVisible`), so the global
-        // chord table never fires behind it — the picker-local chords below (⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J/⌘E, ⌘1–9, ⌘K,
-        // Tab, arrows) reach ``handleKey`` instead of switching the background tab / closing the focused pane. Plain
-        // ↩ is the field's `.onSubmit` (TextField-native), so a single ↩ never double-fires.
+        // Keyboard: while presented, the app NSEvent monitor YIELDS the whole keyboard to this focused overlay
+        // (its `isOverlayCapturingKeys` gate, keyed on `openQuicklyVisible`), so the global chord table never
+        // fires behind it — the picker-local chords (⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J/⌘E, ⌘1–9, ⌘K, Tab, arrows) reach
+        // ``handleKey`` instead of switching the background tab / closing the focused pane. Plain ↩ is the
+        // field's `.onSubmit` (TextField-native), so a single ↩ never double-fires.
         .onKeyPress(phases: .down) { press in handleKey(press) }
         #if os(macOS)
             .onExitCommand { close() }
@@ -271,10 +269,10 @@ struct OpenQuicklyView: View {
             }
             badge(item.badge)
             #if os(iOS)
-            // iOS touch fallback for the ⌘K Actions popover (E11 iOS flag — the chord needs a hardware
-            // keyboard, so every chord-only affordance gets a tap fallback): a trailing ellipsis selects
-            // this row then opens its Actions popover (anchored on the now-selected row). macOS keeps the
-            // ⌘K chord and shows no button (the affordance is hidden behind `#if os(iOS)`).
+            // iOS touch fallback for ⌘K (the chord needs a hardware keyboard, so every chord-only affordance
+            // gets a tap fallback): a trailing ellipsis selects this row then opens its Actions popover
+            // (anchored on the now-selected row). macOS keeps the ⌘K chord, no button (hidden behind
+            // `#if os(iOS)`).
             Button {
                 selection = selectableIndex
                 actionsVisible = true
@@ -323,9 +321,9 @@ struct OpenQuicklyView: View {
 
     // MARK: - Title highlight (fzf ranges)
 
-    /// The row title with the fzf-matched runs tinted the accent colour + semibold (the palette idiom). The
-    /// fuzzy haystack is the item's ``OpenQuicklyItem/searchText`` (a folder matches on its full path) but the
-    /// highlight is applied over the visible ``title`` — so a path-only match renders the title flat.
+    /// The row title with fzf-matched runs tinted accent + semibold (the palette idiom). The fuzzy haystack is
+    /// ``OpenQuicklyItem/searchText`` (a folder matches on its full path) but the highlight applies over the
+    /// visible ``title`` — so a path-only match renders the title flat.
     private func highlightedTitle(_ item: OpenQuicklyItem) -> Text {
         let title = item.title
         let trimmed = query.trimmingCharacters(in: .whitespaces)
@@ -398,9 +396,9 @@ struct OpenQuicklyView: View {
     private func actionsPopover(for item: OpenQuicklyItem) -> some View {
         let actions = filteredActions(for: item)
         return VStack(alignment: .leading, spacing: 0) {
-            // A pre-focused fuzzy filter field (spec line 39 — the ⌘K Actions popover is itself
-            // fuzzy-searchable). Typing narrows `actions` through the SAME `FuzzyMatcher.score` the main list
-            // uses; ↑/↓ move the highlight; ↩ runs the highlighted action.
+            // A pre-focused fuzzy filter field (the ⌘K Actions popover is itself searchable). Typing narrows
+            // `actions` through the SAME `FuzzyMatcher.score` the main list uses; ↑/↓ move the highlight; ↩
+            // runs the highlighted action.
             actionsSearchField
             divider
             if actions.isEmpty {
@@ -510,17 +508,16 @@ struct OpenQuicklyView: View {
 
     /// The per-kind ⌘K action table. A **Current** row (a Jump-To detection) reuses the shared
     /// `LinkActionActuator.rowActions(for:JumpToItem,…)` table verbatim (reconstructing the carried
-    /// `JumpToItem` — `rowActions` keys only on its act + title); the other kinds (Pane / Folder / Agent /
-    /// Recent) get their own per-kind action subset, with the SSH row dropped (no SSH source exists).
+    /// `JumpToItem` — `rowActions` keys only on its act + title); other kinds (Pane / Folder / Agent / Recent)
+    /// get their own subset, with the SSH row dropped (no SSH source exists).
     private func rowActions(for item: OpenQuicklyItem) -> [LinkActionActuator.RowAction] {
         typealias RowAction = LinkActionActuator.RowAction
         switch item.act {
         case let .jumpTo(jumpAct):
-            // A Current COMMAND row ("Re-Run in Current Pane · Re-Run in New Tab · Copy Command", per
-            // the spec Actions table + ES-E11-3) gets the verbatim-re-run action set, NOT the generic
-            // Jump-to+Copy the shared Jump-To table returns. "Re-Run in New Tab" is a deliberate deferral
-            // (no defer-bytes-into-a-fresh-PTY store hook exists; pinned in docs/DECISIONS.md) — omitted, not
-            // shipped as a dead row. Prompt/path/url/file rows keep the shared Jump-To table below.
+            // A Current COMMAND row gets the verbatim-re-run set ("Re-Run in Current Pane · Copy Command"),
+            // NOT the generic Jump-to+Copy the shared Jump-To table returns. "Re-Run in New Tab" (in the spec
+            // set) is a deliberate deferral — no defer-bytes-into-a-fresh-PTY store hook exists, pinned in
+            // docs/DECISIONS.md; omitted, not a dead row. Prompt/path/url/file rows keep the shared table.
             if item.kind == .command {
                 return [
                     RowAction(title: "Re-Run in Current Pane", symbol: "arrow.clockwise") {
@@ -542,9 +539,8 @@ struct OpenQuicklyView: View {
         case let .focusPane(id):
             // The Tab action set = "Close Tab · Move Tab to New Window · Reveal CWD in Finder · Copy CWD Path".
             // "Move Tab to New Window" is N/A in this single-window vertical-rail model (pinned N/A in
-            // docs/DECISIONS.md — not a dead row); "Switch to Pane" is DROPPED (↩ already switches, so it was
-            // a redundant duplicate of the default action). Close routes through the busy-shell/close-confirm
-            // path so a dirty/busy pane still prompts.
+            // docs/DECISIONS.md — not a dead row); "Switch to Pane" is DROPPED (↩ already switches — redundant).
+            // Close routes through the busy-shell/close-confirm path so a dirty/busy pane still prompts.
             var actions = [RowAction(title: "Close Pane", symbol: "xmark") {
                 store.requestClosePaneTree(id)
             }]
@@ -587,14 +583,13 @@ struct OpenQuicklyView: View {
         }
     }
 
-    /// The Folder ⌘K action table (`open-quickly.png` Actions: "Open in New Window · Split Right / Down ·
-    /// Change Directory Here · Reveal · Copy Path · Forget This Folder"). **Open in New Window** is N/A in the
-    /// single-window vertical-rail model (pinned N/A in `docs/DECISIONS.md`, like "Move Tab to New Window") and
-    /// is omitted rather than shipped as a dead row. **Split Right / Down** open a FRESH terminal split rooted
-    /// at the folder (the same `openTerminalRooted` ingress the external folder-drop Split-zones reuse, now with
-    /// an `axis` so Split-Down is a vertical split). `static` so the ⌘K action set is reachable headlessly
-    /// (`OpenQuicklyFolderActionsTests`) without instantiating the SwiftUI view — `model`/`folders` accept the
-    /// nil/no-store path.
+    /// The Folder ⌘K action table (`open-quickly.png`: "Open in New Window · Split Right / Down · Change
+    /// Directory Here · Reveal · Copy Path · Forget This Folder"). **Open in New Window** is N/A in the
+    /// single-window vertical-rail model (pinned N/A in `docs/DECISIONS.md`, like "Move Tab to New Window") —
+    /// omitted, not a dead row. **Split Right / Down** open a FRESH terminal split rooted at the folder (the
+    /// same `openTerminalRooted` ingress the external folder-drop Split-zones reuse, now with an `axis` so
+    /// Split-Down is vertical). `static` so the ⌘K set is reachable headlessly (`OpenQuicklyFolderActionsTests`)
+    /// without a SwiftUI view — `model`/`folders` accept the nil/no-store path.
     static func folderRowActions(
         path: String,
         store: WorkspaceStore,
@@ -890,8 +885,8 @@ struct OpenQuicklyView: View {
         case let .focusPane(id):
             store.focusPaneTree(id)
         case let .openFolder(path):
-            // The folder default action is "change directory here" — verbatim `cd` into the focused
-            // pane (parent-if-file is handled by the policy, though a frecent entry is always a directory).
+            // Folder default action = "change directory here" — verbatim `cd` into the focused pane
+            // (parent-if-file handled by the policy, though a frecent entry is always a directory).
             LinkActionActuator.actuate(.changeDirectoryPTY(path), model: activeModel)
         case let .resumeAgent(sessionID, cwd):
             resumeAgent(sessionID: sessionID, cwd: cwd)

@@ -6,24 +6,24 @@ import XCTest
 /// HW-gated and never instantiated in a test, so this is the only headlessly-verifiable layer — it
 /// covers the decision math (warmup gate, multiplicative decrease, severe-loss halving, hold-down,
 /// additive recovery, [floor, ceiling] clamps, never-0, never-above-ceiling) plus the host's
-/// actuation churn gate. All inputs are injected ``NetworkEstimate`` snapshots — fully deterministic.
+/// actuation churn gate. Inputs are injected ``NetworkEstimate`` snapshots — fully deterministic.
 ///
-/// These tests assume the production default tunables (no `SLOPDESK_ABR_*` set in the test environment),
-/// mirroring ``LiveBitratePolicyTests`` (which assumes `SLOPDESK_BPP` unset). They reference the static
-/// tunables symbolically so they stay correct even if a default is changed.
+/// Assumes production default tunables (no `SLOPDESK_ABR_*` in the test env), like
+/// ``LiveBitratePolicyTests`` (assumes `SLOPDESK_BPP` unset); tunables referenced symbolically so a
+/// changed default stays correct.
 final class LiveCongestionControllerTests: XCTestCase {
     // A representative 2× HiDPI ceiling (≈45 Mbps) so the percentages are realistic.
     private let ceiling = 45_000_000
 
-    /// Builds a `NetworkEstimate` with chosen loss / RTT congestion characteristics by folding
-    /// crafted reports. Loss is EWMA-damped, so to reach a target loss we fold a steady stream.
+    /// Builds a `NetworkEstimate` with chosen loss / RTT characteristics by folding crafted reports.
+    /// Loss is EWMA-damped, so reaching a target loss needs a steady fold stream.
     private func estimate(
         lossSamples: Double = 0,
         folds: Int = 0,
         rttCongested: Bool = false,
     ) -> NetworkEstimate {
         var est = NetworkEstimate()
-        // Seed a clean baseline RTT (minRTT = 50) so the RTT-congestion predicate has a baseline.
+        // Seed a clean baseline RTT (minRTT = 50) for the RTT-congestion predicate.
         for _ in 0..<max(1, folds) {
             if rttCongested {
                 // Drive smoothedRTT well above minRTT*1.25 with a rising jitter gradient.
@@ -127,7 +127,7 @@ final class LiveCongestionControllerTests: XCTestCase {
     func testWarmupIsANoOp() {
         var ctrl = LiveCongestionController(ceiling: ceiling)
         // SUSTAINED 50% loss: 8 folds push the EWMA lossRate to ~0.33 > catastrophic 0.25, so the
-        // first post-warmup report halves even at flat RTT — would normally act.
+        // first post-warmup report halves even at flat RTT.
         let lossy = estimate(lossSamples: 0.5, folds: 8)
         // The first (warmupTicks - 1) reports must NOT change anything.
         for _ in 0..<(LiveCongestionController.warmupTicks - 1) {
@@ -291,13 +291,12 @@ final class LiveCongestionControllerTests: XCTestCase {
             "a huge queue cuts at the hard clamp floor in one step",
         )
 
-        // Gentle end: LOW baseline (~10ms — the absolute 15ms slack governs, the proportional
-        // fraction is sub-floor there) with smoothed crossing the min+15 gate fast enough to
-        // outrun the ~1%/fold min-drift but landing within 5% of it (sample 31 — swept
-        // numerically; ≤30 the drifting gate is never crossed, ≥36 the cut is deeper than the
-        // cap). On HIGH baselines a barely-over scenario chases the 1.75× gate forever BY DESIGN
-        // (proportional slack — see testHighBaselineWobbleDoesNotCut), so the gentle-cap contract
-        // is pinned where it actually applies.
+        // Gentle end: LOW baseline (~10ms — the absolute 15ms slack governs; the proportional
+        // fraction is sub-floor here). Smoothed crosses the min+15 gate fast enough to outrun the
+        // ~1%/fold min-drift yet lands within 5% of it (sample 31, swept numerically; ≤30 never
+        // crosses the drifting gate, ≥36 cuts deeper than the cap). HIGH baselines chase the 1.75×
+        // gate forever BY DESIGN (proportional slack — see testHighBaselineWobbleDoesNotCut), so the
+        // gentle-cap contract is pinned where it actually applies.
         var gentle = warmedController(ceiling: ceiling)
         var est2 = NetworkEstimate()
         est2.fold(rttMillis: 10, framesReceived: 1000, unrecovered: 0, owdJitterMicros: 100)
@@ -653,9 +652,9 @@ final class LiveCongestionControllerTests: XCTestCase {
         )
     }
 
-    /// REGRESSION (finding 3): a no-op decrease at the floor must NOT re-arm the hold-down. After the
-    /// rate is pinned at the floor by sustained loss, the instant the link clears the controller climbs —
-    /// it does not sit at the floor for an extra hold-down window re-armed by no-op decreases.
+    /// REGRESSION (finding 3): a no-op decrease at the floor must NOT re-arm the hold-down. Once the
+    /// rate is floored by sustained loss, the controller climbs the instant the link clears — it does
+    /// not sit for an extra hold-down window re-armed by no-op decreases.
     func testNoOpDecreaseAtFloorDoesNotExtendHoldDown() {
         var ctrl = warmedController(ceiling: ceiling)
         var est = NetworkEstimate()

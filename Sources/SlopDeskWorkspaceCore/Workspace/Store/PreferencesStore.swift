@@ -2,39 +2,35 @@ import Defaults
 import Foundation
 import Observation
 
-// L0 / G2: de-SwiftUI'd — this store is UserDefaults-backed (no `@AppStorage`) and lives in the
-// headless `SlopDeskWorkspaceCore`. The `import SwiftUI` + `#if canImport(SwiftUI)` guard are gone;
-// `@MainActor`/`@Observable` come from the Observation framework.
+// L0 / G2: de-SwiftUI'd — UserDefaults-backed (no `@AppStorage`), headless in `SlopDeskWorkspaceCore`.
+// No `import SwiftUI` / `#if canImport(SwiftUI)` guard; `@MainActor`/`@Observable` come from Observation.
 import SlopDeskVideoProtocol
 
 // MARK: - PreferencesStore (the one live settings owner)
 
 /// The single live source of truth for the GUI Settings system (W13). A `@MainActor @Observable`
-/// store that owns the four W12 `Codable` models — ``VideoPreferences``, ``TerminalPreferences``,
-/// ``AgentPreferences``, ``KeybindingPreferences`` — and persists each to `UserDefaults` (the
-/// `@AppStorage`-style bridge for client/terminal prefs) PLUS the `video-prefs.json` sidecar (the
-/// daemon-at-launch bridge for the video/agent host flags).
+/// store owning the four W12 `Codable` models — ``VideoPreferences``, ``TerminalPreferences``,
+/// ``AgentPreferences``, ``KeybindingPreferences`` — persisting each to `UserDefaults` (client/terminal
+/// prefs) PLUS the `video-prefs.json` sidecar (the daemon-at-launch bridge for video/agent host flags).
 ///
 /// FOUR apply paths (decision #6 / #10):
-///   1. **Live client/agent prefs → ``EnvConfig/overlay``.** `sharpen` and the agent gates that the
-///      CLIENT process reads are folded into the process-wide overlay so a live setting overrides the
-///      compile-time default WITHOUT an env var.
-///   2. **Video prefs → the `video-prefs.json` SIDECAR (no live apply).** The ~80 video flags are read
-///      at `static let` init and CANNOT live-reload, so a change is written to the sidecar the HOST
-///      daemon reads at next launch — the UI marks these **"applies on reconnect."**
-///   3. **Terminal prefs → the live terminal reload.** A change rebuilds the libghostty config string
+///   1. **Live client/agent prefs → ``EnvConfig/overlay``.** `sharpen` + the CLIENT-read agent gates fold
+///      into the process-wide overlay, overriding the compile-time default WITHOUT an env var.
+///   2. **Video prefs → the `video-prefs.json` SIDECAR (no live apply).** The ~80 video flags are read at
+///      `static let` init and CANNOT live-reload; a change is written to the sidecar the HOST daemon reads
+///      at next launch — the UI marks these **"applies on reconnect."**
+///   3. **Terminal prefs → the live terminal reload.** Rebuilds the libghostty config string
 ///      (``TerminalConfigBuilder``) and bumps ``TerminalConfigBroadcaster`` so the (Xcode-app-target-
 ///      only) `GhosttyTerminalView` re-applies it via `ghostty_config_load_string` + a PTY grid resize.
-///   4. **Keybinding prefs → the W6 registry overrides.** The store publishes the current
-///      ``KeybindingPreferences`` to ``WorkspaceBindingRegistry`` (via
-///      ``WorkspaceBindingRegistry/activeOverrides``) so a chord resolves with the user override when one
-///      is present — the registry stays the single binding TABLE; this only supplies the overrides.
+///   4. **Keybinding prefs → the W6 registry overrides.** Publishes the current ``KeybindingPreferences``
+///      to ``WorkspaceBindingRegistry`` (via ``WorkspaceBindingRegistry/activeOverrides``) so a chord
+///      resolves with the user override — the registry stays the single binding TABLE; this only supplies
+///      overrides.
 ///
-/// BEHAVIOR-PRESERVATION: a fresh install (no persisted prefs) loads the model DEFAULTS — for video /
-/// agent that is the all-`nil` model ⇒ an EMPTY ``EnvConfig`` overlay ⇒ no sidecar override ⇒
-/// byte-identical to today (the golden corpus is unaffected). Terminal prefs DO have real defaults
-/// (they are render prefs), but the libghostty apply is compile-only and the headless build / golden
-/// never sees it.
+/// BEHAVIOR-PRESERVATION: a fresh install loads the model DEFAULTS — for video / agent the all-`nil` model
+/// ⇒ EMPTY ``EnvConfig`` overlay ⇒ no sidecar override ⇒ byte-identical to today (golden corpus unaffected).
+/// Terminal prefs have real defaults (render prefs), but the libghostty apply is compile-only — the
+/// headless build / golden never sees it.
 @preconcurrency
 @MainActor
 @Observable
@@ -70,10 +66,10 @@ public final class PreferencesStore {
         } }
     }
 
-    /// CLIENT-chrome appearance (theme + density). A `didSet` persists + applies. CRITICAL: this is
-    /// pure client chrome — it is NEVER folded into ``EnvConfig/overlay`` nor written to the sidecar (so
-    /// the golden corpus is untouched); it repoints the runtime ``ThemeStore`` (via ``AppearanceApplier``)
-    /// and writes ``SettingsKey/density`` only. Default (all-`nil`) ⇒ no behaviour change.
+    /// CLIENT-chrome appearance (theme + density). A `didSet` persists + applies. CRITICAL: pure client
+    /// chrome — NEVER folded into ``EnvConfig/overlay`` nor the sidecar (golden corpus untouched); repoints
+    /// the runtime ``ThemeStore`` (via ``AppearanceApplier``) and writes ``SettingsKey/density`` only.
+    /// Default (all-`nil`) ⇒ no behaviour change.
     public var appearance: AppearancePreferences {
         didSet { if appearance != oldValue { persistAppearance()
             applyAppearance()
@@ -104,22 +100,22 @@ public final class PreferencesStore {
         static let appearance = "settings.appearance.v1"
         static let rawOverrides = "settings.rawOverrides.v1"
         static let blockBookmarks = "settings.blockBookmarks.v1"
-        /// L4 / W4: the dismissed agent-notification suggestion chips, keyed by agent display-name. A
-        /// plain `[agentName: true]` JSON map so a dismissed "Enable Claude Code notifications" pill
-        /// stays dismissed across launches (Warp persists this in `AISSettings` keyed by agent+host).
+        /// L4 / W4: dismissed agent-notification suggestion chips, keyed by agent display-name. A plain
+        /// `[agentName: true]` JSON map so a dismissed pill stays dismissed across launches (Warp persists
+        /// this in `AISSettings` keyed by agent+host).
         static let notificationChipDismissed = "settings.agentNotificationDismissed.v1"
-        /// L4 / W4: agents for which the user has ENABLED rich notifications (clicked the green pill). No
-        /// host wire exists for the OSC/notification-enable path today, so this records intent + drives
-        /// the chip's "already enabled ⇒ hide" behaviour. `[agentName: true]`.
+        /// L4 / W4: agents for which the user ENABLED rich notifications (clicked the green pill). No host
+        /// wire exists for the OSC/notification-enable path, so this records intent + drives the chip's
+        /// "already enabled ⇒ hide" behaviour. `[agentName: true]`.
         static let notificationChipEnabled = "settings.agentNotificationEnabled.v1"
     }
 
     // MARK: Init / load
 
-    /// Loads the persisted prefs (or the model defaults on a fresh install) and applies them. The
-    /// `sidecarURL` defaults to the shared `video-prefs.json` location; tests inject a temp URL (or
-    /// `nil` to skip the sidecar write). `applyOnInit` runs the apply paths once after load (default
-    /// ON; a test that only wants round-trip can pass `false` to avoid mutating the process overlay).
+    /// Loads the persisted prefs (or model defaults on a fresh install) and applies them. `sidecarURL`
+    /// defaults to the shared `video-prefs.json` location; tests inject a temp URL (or `nil` to skip the
+    /// sidecar write). `applyOnInit` runs the apply paths once after load (default ON; a round-trip test
+    /// can pass `false` to avoid mutating the process overlay).
     public init(
         defaults: UserDefaults = .standard,
         sidecarURL: URL? = EnvBridge.defaultSidecarURL(),
@@ -169,19 +165,18 @@ public final class PreferencesStore {
         // the resolved `ThemeStore.active` (GUI only; `nil` headless ⇒ the pref's own colours stand).
         let themeColors = AppearanceApplier.resolveTerminalColors?()
         // E8 WI-2: resolve the fire-time Controls bundle (`copy-on-select` / `clipboard-*` / `mouse-*` /
-        // ⇧+arrow select). The Controls toggles live in `Defaults.standard` (the global `SettingsKey`
-        // namespace — NOT the per-instance injected `defaults`, which stays test-isolated for the typed
-        // models), so read them from `.standard`; the builder maps an absent key to its declared default.
+        // ⇧+arrow select). The Controls toggles live in `Defaults.standard` (global `SettingsKey` namespace
+        // — NOT the per-instance injected `defaults`, which stays test-isolated for the typed models), so
+        // read from `.standard`; the builder maps an absent key to its declared default.
         let controls = TerminalControls.from(defaults: .standard)
         // E15 ES-E15-4: resolve the per-SCOPE font family. The Font → Light/Dark-Theme tabs persist a font
         // keyed by the slot's theme slug in `appearance.themeFonts`; that override never reached the live
-        // terminal before (the builder read `terminal.fontFamily` raw). Resolve it via the pure
-        // ``FontScopeResolver`` precedence (an explicitly-set ACTIVE-slot per-theme font WINS; else the Global
-        // `terminal.fontFamily`; else the same value as the bundled fallback), keyed by the GUI-resolved active
-        // theme slug. Scope-over-Global is deliberate: slopdesk's Global default is non-empty, so a
-        // "Global wins everywhere" rule would silently SHADOW a per-theme font (E15 review #4 — see
-        // ``FontScopeResolver``). `nil` hook (headless) ⇒ no slug ⇒ Global stands, so a default build is
-        // byte-identical.
+        // terminal before (the builder read `terminal.fontFamily` raw). Resolve via the pure
+        // ``FontScopeResolver`` precedence (explicit ACTIVE-slot per-theme font WINS; else Global
+        // `terminal.fontFamily`; else the bundled fallback), keyed by the GUI-resolved active theme slug.
+        // Scope-over-Global is deliberate: slopdesk's Global default is non-empty, so "Global wins
+        // everywhere" would silently SHADOW a per-theme font (E15 review #4 — see ``FontScopeResolver``).
+        // `nil` hook (headless) ⇒ no slug ⇒ Global stands, so a default build is byte-identical.
         let resolvedFontFamily = FontScopeResolver.resolvedFamily(
             global: terminal.fontFamily,
             themeFonts: appearance.themeFonts,
@@ -205,9 +200,9 @@ public final class PreferencesStore {
 
     /// Rebuild + publish the libghostty config from the live terminal prefs AND the current fire-time
     /// Controls toggles, so a Controls change re-applies live. The Settings rows call this from their
-    /// `.onChange` (PreferencesStore stays isolated on its injected `UserDefaults`; the Controls toggles
-    /// live in `Defaults.standard`, so an explicit refresh is the seam that re-reads them — there is no
-    /// `Defaults.observe` wiring in the store, by design, to keep it test-isolated).
+    /// `.onChange`: PreferencesStore stays isolated on its injected `UserDefaults`, but the Controls toggles
+    /// live in `Defaults.standard`, so an explicit refresh is the seam that re-reads them — no
+    /// `Defaults.observe` wiring in the store, by design, to keep it test-isolated.
     public func refreshTerminalControls() {
         applyTerminal()
     }
@@ -221,9 +216,9 @@ public final class PreferencesStore {
 
     /// ⌘+ / ⌘= — bump the terminal font size one step. Mutates the SINGLE source of truth
     /// (``terminal``.`fontSize`), whose `didSet` rebuilds the libghostty config + reflows the live surface —
-    /// the SAME path the Settings "Size" stepper drives, so the stepper stays in sync (and vice-versa). A
-    /// font-SIZE change DOES reflow the remote PTY grid (the cell box resizes → SIGWINCH); that is correct,
-    /// not a bug (only font FAMILY/STYLE rebuilds are grid-preserving). Clamped to ``fontSizeRange``.
+    /// the SAME path the Settings "Size" stepper drives, so both stay in sync. A font-SIZE change DOES reflow
+    /// the remote PTY grid (cell box resizes → SIGWINCH); that is correct, not a bug (only font FAMILY/STYLE
+    /// rebuilds are grid-preserving). Clamped to ``fontSizeRange``.
     public func increaseFontSize() { setFontSize(terminal.fontSize + Self.fontSizeStep) }
 
     /// ⌘- — shrink the terminal font size one step (single source of truth; see ``increaseFontSize()``).
@@ -245,10 +240,10 @@ public final class PreferencesStore {
     }
 
     /// Map the WorkspaceCore fire-time ``TerminalControls`` bundle to the leaf ``TerminalControlsConfig`` the
-    /// (VideoProtocol) ``TerminalConfigBuilder`` consumes: the boolean knobs pass straight through, the
-    /// multi-state enums resolve to their libghostty token (`ClipboardAccess.rawValue` /
-    /// `MouseShiftCapture.configValue`). The mapping lives HERE (not in the leaf) so the builder never
-    /// imports WorkspaceCore — the one-way module graph (WorkspaceCore → VideoProtocol) is preserved.
+    /// (VideoProtocol) ``TerminalConfigBuilder`` consumes: boolean knobs pass straight through, multi-state
+    /// enums resolve to their libghostty token (`ClipboardAccess.rawValue` / `MouseShiftCapture.configValue`).
+    /// The mapping lives HERE (not the leaf) so the builder never imports WorkspaceCore — the one-way module
+    /// graph (WorkspaceCore → VideoProtocol) is preserved.
     private static func controlsConfig(from controls: TerminalControls) -> TerminalControlsConfig {
         TerminalControlsConfig(
             copyOnSelect: controls.copyOnSelect,
@@ -270,15 +265,14 @@ public final class PreferencesStore {
         )
     }
 
-    /// Fold the video + agent prefs (and the raw overrides) into the process-wide ``EnvConfig`` overlay
-    /// for the CLIENT-readable flags, and write the `video-prefs.json` SIDECAR for the host daemon.
+    /// Fold the video + agent prefs (and raw overrides) into the process-wide ``EnvConfig`` overlay for the
+    /// CLIENT-readable flags, and write the `video-prefs.json` SIDECAR for the host daemon.
     ///
-    /// WITHIN the overlay, precedence is typed-prefs (video ∪ agent) THEN the raw power-user overrides on
-    /// top, so an explicit `SLOPDESK_*` typed by hand in the Settings raw-overrides box wins over the
-    /// matching toggle. ACROSS tiers, a real `ProcessInfo` env var STILL wins over the whole overlay
-    /// (decision #16, `env → overlay → default`): ``EnvConfig/string(_:)`` checks the real env var FIRST
-    /// and only falls back to the overlay, so a deliberate `launchctl`/`--args` env on the CLIENT is never
-    /// clobbered by a persisted setting — consistent with the host sidecar's gap-fill.
+    /// WITHIN the overlay: typed-prefs (video ∪ agent) THEN the raw power-user overrides on top, so a hand-
+    /// typed `SLOPDESK_*` in the raw-overrides box wins over the matching toggle. ACROSS tiers: a real
+    /// `ProcessInfo` env var STILL wins over the whole overlay (decision #16, `env → overlay → default`) —
+    /// ``EnvConfig/string(_:)`` checks the real env var FIRST, so a deliberate `launchctl`/`--args` env on
+    /// the CLIENT is never clobbered by a persisted setting — consistent with the host sidecar's gap-fill.
     private func applyVideoAndAgent() {
         var overlay = EnvBridge.toEnv(video).merging(EnvBridge.toEnv(agent)) { _, new in new }
         for (key, value) in rawOverrides where !key.isEmpty { overlay[key] = value }
@@ -304,11 +298,11 @@ public final class PreferencesStore {
     /// Apply the CLIENT-chrome appearance: repoint the runtime ``ThemeStore`` (via ``AppearanceApplier`` —
     /// the GUI layer's injected closure; `nil` on headless) and write ``SettingsKey/density`` when set.
     ///
-    /// GOLDEN-SAFE BY CONSTRUCTION: appearance NEVER touches ``EnvConfig/overlay`` nor the sidecar — it is
-    /// pure client chrome. A `nil` density leaves the key untouched (so a default ``AppearancePreferences``
-    /// is a pure no-op, behaviour-preserving). The theme hook is invoked with the WHOLE model (E15 WI-3 — the
-    /// GUI layer resolves the dual-slot / custom-slug / follow-OS selection) so it can fall back to its
-    /// compile-time default when appearance is reset.
+    /// GOLDEN-SAFE BY CONSTRUCTION: appearance NEVER touches ``EnvConfig/overlay`` nor the sidecar — pure
+    /// client chrome. A `nil` density leaves the key untouched (default ``AppearancePreferences`` is a pure
+    /// no-op, behaviour-preserving). The theme hook gets the WHOLE model (E15 WI-3 — the GUI layer resolves
+    /// the dual-slot / custom-slug / follow-OS selection) so it can fall back to its compile-time default
+    /// when appearance is reset.
     private func applyAppearance() {
         AppearanceApplier.apply?(appearance)
         // The theme also drives the terminal CELL bg/fg (flat design), so rebuild the terminal config AFTER
@@ -320,11 +314,11 @@ public final class PreferencesStore {
     }
 
     /// Re-fire the live CLIENT apply paths (theme retint + terminal reflow + keybinding overrides) WITHOUT
-    /// mutating any model — the concrete effect behind `slopdesk config reload` (E20). It deliberately
-    /// SKIPS ``applyVideoAndAgent()``: those host flags are "applies on reconnect", and the path rewrites
-    /// the process-wide ``EnvConfig/overlay`` (a `nonisolated(unsafe)` static the realtime pipeline reads),
-    /// so a reload must not race-rewrite it. ``applyAppearance()`` already rebuilds the terminal config, so
-    /// the chrome + the terminal cells both re-apply.
+    /// mutating any model — the effect behind `slopdesk config reload` (E20). Deliberately SKIPS
+    /// ``applyVideoAndAgent()``: those host flags are "applies on reconnect", and the path rewrites the
+    /// process-wide ``EnvConfig/overlay`` (a `nonisolated(unsafe)` static the realtime pipeline reads), so a
+    /// reload must not race-rewrite it. ``applyAppearance()`` already rebuilds the terminal config, so chrome
+    /// + terminal cells both re-apply.
     public func reapplyLiveSettings() {
         applyAppearance()
         applyKeybindings()
@@ -332,14 +326,14 @@ public final class PreferencesStore {
 
     // MARK: Convenience for the UI
 
-    /// Reset EVERY pref to its model default (the "Reset All Settings" affordance). The `didSet`s persist
-    /// + re-apply each typed model, so the process returns to behavior-preserving defaults (empty overlay,
-    /// no sidecar override) exactly as a fresh install. ALSO clears EVERY `.standard`-backed global
-    /// `Defaults.Keys` user setting — both the tab-reachable toggles AND the advanced-only privilege/IPC keys
-    /// — so a "Reset All" genuinely returns the whole catalog (every row the Advanced → All Settings list
-    /// advertises) to default, not just the five typed models (E7 / `customization__advanced-settings.md`).
-    /// Non-setting STATE keys (first-launch flag, CLI-installed flag, window geometry,
-    /// tab sort/grouping) are deliberately excluded — they are app state, not user-editable settings.
+    /// Reset EVERY pref to its model default (the "Reset All Settings" affordance). The `didSet`s persist +
+    /// re-apply each typed model, so the process returns to behavior-preserving defaults (empty overlay, no
+    /// sidecar override), exactly as a fresh install. ALSO clears EVERY `.standard`-backed global
+    /// `Defaults.Keys` user setting — tab-reachable toggles AND advanced-only privilege/IPC keys — so it
+    /// returns the whole catalog (every Advanced → All Settings row) to default, not just the five typed
+    /// models (E7 / `customization__advanced-settings.md`). Non-setting STATE keys (first-launch flag,
+    /// CLI-installed flag, window geometry, tab sort/grouping) are deliberately excluded — app state, not
+    /// user-editable settings.
     public func resetAll() {
         terminal = TerminalPreferences()
         video = VideoPreferences()
@@ -350,7 +344,7 @@ public final class PreferencesStore {
         Defaults.reset(Self.tabReachableDefaultsKeys)
         Defaults.reset(Self.advancedOnlyDefaultsKeys)
         defaults.removeObject(forKey: SettingsKey.density)
-        // The typed-model `didSet`s above ran `applyTerminal()` BEFORE the `Defaults.reset(...)`, so the last
+        // The typed-model `didSet`s above ran `applyTerminal()` BEFORE `Defaults.reset(...)`, so the last
         // libghostty config still carried the PRE-reset fire-time Controls (`copy-on-select` / `clipboard-*` /
         // `mouse-*` / scroll-multiplier / option-as-alt); and if a typed model was already default, no
         // re-publish happened at all. Rebuild from the now-DEFAULT Controls so the live terminal reflects the
@@ -363,12 +357,12 @@ public final class PreferencesStore {
     /// (those not reachable from General, Shell, Appearance, or Key Bindings), leaving font, theme, and
     /// keybinding choices intact."
     ///
-    /// The advanced-only surface is the `video` / `agent` host flags, the raw `SLOPDESK_*` overrides, AND
-    /// the privilege/IPC `Defaults.Keys` that live ONLY in the Advanced panel (``advancedOnlyDefaultsKeys`` —
+    /// The advanced-only surface: the `video` / `agent` host flags, the raw `SLOPDESK_*` overrides, AND the
+    /// privilege/IPC `Defaults.Keys` that live ONLY in the Advanced panel (``advancedOnlyDefaultsKeys`` —
     /// title gates, the OSC-52 master + read/write tri-state, the agent-control IPC guards, the auto-progress
-    /// command list). EVERY key in ``tabReachableDefaultsKeys`` IS reachable from a dedicated tab (General /
-    /// Shell / Controls / Appearance / Agents), so this must NOT touch any of them, or it destroys
-    /// the user's other-tab choices — which Reset-Advanced-Only promises to leave intact.
+    /// command list). EVERY key in ``tabReachableDefaultsKeys`` IS reachable from a dedicated tab, so this
+    /// must NOT touch any of them, or it destroys the user's other-tab choices — which Reset-Advanced-Only
+    /// promises to leave intact.
     public func resetAdvancedOnly() {
         video = VideoPreferences()
         agent = AgentPreferences()
@@ -377,10 +371,10 @@ public final class PreferencesStore {
     }
 
     /// The `.standard`-backed global `Defaults.Keys` settings that ONLY surface in the Advanced panel (no
-    /// dedicated tab) — reset by BOTH ``resetAll()`` and ``resetAdvancedOnly()``. These are the E14 privilege
-    /// gates (`title*` / `clipboard-shell-controlled` / the OSC-52 read+write tri-state), the agent-control
-    /// IPC guards, and the auto-progress command list — every one of them is edited solely from the Advanced
-    /// → Privileges section / the All-Settings inline list, so resetting them never destroys a tab choice.
+    /// dedicated tab) — reset by BOTH ``resetAll()`` and ``resetAdvancedOnly()``. The E14 privilege gates
+    /// (`title*` / `clipboard-shell-controlled` / the OSC-52 read+write tri-state), the agent-control IPC
+    /// guards, and the auto-progress command list — all edited solely from the Advanced → Privileges section
+    /// / the All-Settings inline list, so resetting them never destroys a tab choice.
     nonisolated static let advancedOnlyDefaultsKeys: [Defaults.Keys] = [
         .titleShellControlled, .titleReport, .clipboardShellControlled,
         .clipboardRead, .clipboardWrite,
@@ -390,10 +384,10 @@ public final class PreferencesStore {
     /// The `.standard`-backed global `Defaults.Keys` settings reachable from a DEDICATED tab — reset by
     /// ``resetAll()`` ONLY (Reset-Advanced-Only leaves every tab-reachable choice intact). They live in
     /// `Defaults.standard` (NOT the injected ``defaults`` — the per-instance store stays test-isolated), so
-    /// they are reset via `Defaults.reset(_:)` regardless of the store's injected suite. The list is the
-    /// union of every user setting the `Settings` tabs edit; together with ``advancedOnlyDefaultsKeys``
-    /// it covers every key the Advanced → All Settings catalog advertises (pinned by
-    /// `AllSettingsCatalogTests`), so no advertised row survives a Reset All at a non-default value.
+    /// they reset via `Defaults.reset(_:)` regardless of the store's injected suite. The union of every user
+    /// setting the `Settings` tabs edit; with ``advancedOnlyDefaultsKeys`` it covers every key the Advanced →
+    /// All Settings catalog advertises (pinned by `AllSettingsCatalogTests`), so no advertised row survives a
+    /// Reset All at a non-default value.
     nonisolated static let tabReachableDefaultsKeys: [Defaults.Keys] = [
         // General
         .onLaunch, .redactSecrets, .defaultPaneKind, .closeConfirmTab, .closeConfirmWindow,
@@ -429,10 +423,10 @@ public final class PreferencesStore {
 
     // MARK: Block bookmarks (WB3 — per-session starred command blocks)
 
-    /// The persisted per-session block bookmarks: `sessionUUID → [block index]`. A separate
-    /// `UserDefaults` key (`settings.blockBookmarks.v1`) holding a plain `[String: [UInt32]]` JSON map —
-    /// NOT part of the four typed prefs models, and never folded into the env overlay / sidecar (so the
-    /// golden corpus is untouched). An absent key (fresh install) reads as empty.
+    /// The persisted per-session block bookmarks: `sessionUUID → [block index]`. A separate `UserDefaults`
+    /// key (`settings.blockBookmarks.v1`) holding a plain `[String: [UInt32]]` JSON map — NOT part of the
+    /// four typed prefs models, never folded into the env overlay / sidecar (golden corpus untouched). An
+    /// absent key (fresh install) reads as empty.
     private func loadBlockBookmarkMap() -> [String: [UInt32]] {
         Self.decode([String: [UInt32]].self, defaults, Key.blockBookmarks) ?? [:]
     }
@@ -507,14 +501,14 @@ public final class PreferencesStore {
 
 // MARK: - TerminalConfigBroadcaster (the live terminal-reload seam)
 
-/// The process-wide bridge that carries the current libghostty config STRING from the
-/// ``PreferencesStore`` to the (Xcode-app-target-only) `GhosttyTerminalView`, which re-applies it via
-/// `ghostty_config_load_string` and re-measures + resizes the PTY grid.
+/// The process-wide bridge carrying the current libghostty config STRING from ``PreferencesStore`` to the
+/// (Xcode-app-target-only) `GhosttyTerminalView`, which re-applies it via `ghostty_config_load_string`
+/// and re-measures + resizes the PTY grid.
 ///
-/// It is a tiny `@Observable` holder (not the model) so the gated renderer can `@Observe` it without
-/// importing the whole store, and the HEADLESS build keeps a no-op consumer (the placeholder ignores
-/// it). The `generation` bumps on each publish so an idempotent re-publish of the SAME string still
-/// triggers a reload (e.g. the user toggles a value back and forth).
+/// A tiny `@Observable` holder (not the model) so the gated renderer can `@Observe` it without importing
+/// the whole store; the HEADLESS build keeps a no-op consumer. The `generation` bumps on each publish so
+/// an idempotent re-publish of the SAME string still triggers a reload (e.g. toggling a value back and
+/// forth).
 @preconcurrency
 @MainActor
 @Observable

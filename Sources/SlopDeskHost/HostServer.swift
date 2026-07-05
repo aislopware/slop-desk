@@ -7,16 +7,14 @@ import SlopDeskTransport
 /// spawns a fresh login shell + per-channel relay for every channel a client opens on them.
 ///
 /// ## Lifecycle
-/// `start()` brings up the listener and starts consuming newly-accepted shared mux connections; for
-/// each ``MuxNWConnection`` yielded on `HostTransport.muxConnections` it installs a
-/// per-channel-open handler. Every `channelOpen` the client sends mints a PTY + per-channel relay
+/// `start()` brings up the listener and consumes newly-accepted mux connections, installing a
+/// per-channel-open handler on each. Every `channelOpen` mints a PTY + per-channel relay
 /// (``MuxChannelSession``) and acks. `stop()` cancels the listener and shuts every channel down.
 ///
 /// ## Session survival & reconnect
-/// MANY panes ride ONE shared connection, each as a logical channel. A channel's PTY + relay stay
-/// bound to the channel; a clean `bye` keeps the shell alive (keep-alive), while a peer
-/// `channelClose` or a link drop reaps the channel's shell (no per-channel reconnect/resume at this
-/// stage). The daemon never kills a shell on a transient client disconnect.
+/// MANY panes ride ONE shared connection, each as a logical channel. A clean `bye` keeps the shell
+/// alive (keep-alive); a peer `channelClose` or link drop reaps it (no per-channel reconnect/resume
+/// yet). The daemon never kills a shell on a transient client disconnect.
 ///
 /// `@unchecked Sendable`: mutable state (`muxSessions`, `acceptTasks`) is guarded by `lock`.
 public final class HostServer: @unchecked Sendable {
@@ -26,10 +24,10 @@ public final class HostServer: @unchecked Sendable {
     /// Absolute path to the shell to spawn (defaults to the user's login shell).
     public let shellPath: String
 
-    /// What every new channel spawns: a plain login shell. The curated `claude` launch is no
-    /// longer a daemon mode — a Claude session is just a `.terminal` pane that runs `claude`,
-    /// auto-detected by the host foreground-process watch + hook listener (W11, Decision #5/#9).
-    /// The curated env is offered client-side as a launch preset, not a host launch mode.
+    /// What every new channel spawns: a plain login shell. Not a daemon mode — a Claude session is
+    /// just a `.terminal` pane running `claude`, auto-detected by the host foreground-process watch
+    /// + hook listener (W11, Decision #5/#9). The curated env is a client-side launch preset, not a
+    /// host launch mode.
     public enum LaunchMode: Sendable, Equatable {
         /// Plain login shell (the WF-3 path): `[shell] argv0=-shell`, curated generic env.
         case shell
@@ -39,9 +37,9 @@ public final class HostServer: @unchecked Sendable {
     public let launchMode: LaunchMode
 
     /// W10 — whether new channels run the host-side foreground-process watch (the PRIMARY,
-    /// zero-config Claude-Code detection signal, Decision #5). Resolved from
-    /// `SLOPDESK_AGENT_DETECT` (default-ON; only `"0"` disables) by the daemon and passed in
-    /// at construction. When false, the channel's byte pipeline is byte-identical to pre-W10.
+    /// zero-config Claude-Code detection signal, Decision #5). Resolved by the daemon from
+    /// `SLOPDESK_AGENT_DETECT` (default-ON; only `"0"` disables). When false, the channel's byte
+    /// pipeline is byte-identical to pre-W10.
     public let agentDetectEnabled: Bool
 
     /// W10 — the OPT-IN Claude-hook listener (the `AF_UNIX` socket), or `nil` when hooks are
@@ -99,11 +97,11 @@ public final class HostServer: @unchecked Sendable {
 
     /// Accepted shared mux connections, keyed by their stable `connectionID`, guarded by `lock`
     /// (R5 rank 3). The host must RETAIN every accepted ``MuxNWConnection`` so it can `close()` it —
-    /// cancelling its 2 receive loops + 2 `NWConnection`s/sockets — on ``stop()`` or when its physical
-    /// link drops. Before this map existed, `stop()` closed nothing and the host open-handler captured
-    /// the connection strongly (a retain cycle), so every Start→Stop cycle on the long-lived menu-bar
-    /// host abandoned one live connection + 2 sockets + 2 tasks, accumulating toward EMFILE. The map is
-    /// also the strong-ref the open handler looks the connection up from (instead of capturing it).
+    /// cancelling its 2 receive loops + 2 `NWConnection`s/sockets — on ``stop()`` or link drop.
+    /// Without this map, `stop()` closed nothing and the open-handler captured the connection strongly
+    /// (a retain cycle), so every Start→Stop cycle on the long-lived menu-bar host abandoned one live
+    /// connection + 2 sockets + 2 tasks, accumulating toward EMFILE. The map is also the strong ref the
+    /// open handler resolves the connection from (instead of capturing it).
     private var muxConnections: [UUID: MuxNWConnection] = [:]
 
     /// Set true by ``stop()`` (under `lock`) before draining sessions. The accepted connections' receive
@@ -126,16 +124,14 @@ public final class HostServer: @unchecked Sendable {
     public var onLog: (@Sendable (String) -> Void)?
 
     /// An optional hook called with the current count of distinct client *connections* (one
-    /// shared TCP mux connection per client, regardless of how many panes/channels ride it —
-    /// the same semantics as ``liveSessionIDs()``). Fired whenever a channel is added or
-    /// removed (so the count rises on the first channel of a new connection and falls to 0
-    /// when the last channel of the last connection goes away), and reset to 0 on ``stop()``.
+    /// shared TCP mux connection per client, regardless of panes/channels — same semantics as
+    /// ``liveSessionIDs()``). Fired whenever a channel is added or removed, and reset to 0 on
+    /// ``stop()``.
     ///
-    /// Purely observational and ADDITIVE: it defaults to `nil`, so the headless `slopdesk-hostd`
-    /// daemon (which never sets it) is byte-identical. It exists for the menu-bar host app,
-    /// which surfaces a live "N client(s) connected" line without polling. The closure is
-    /// `@Sendable` and may be invoked off the main actor (from the lock-guarded spawn/remove
-    /// paths) — the app hops to its actor before touching UI state.
+    /// Purely observational and ADDITIVE: defaults to `nil`, so the headless `slopdesk-hostd`
+    /// daemon (which never sets it) is byte-identical. Exists for the menu-bar host app's live
+    /// "N client(s) connected" line. The closure is `@Sendable` and may be invoked off the main
+    /// actor (from the lock-guarded spawn/remove paths) — the app hops to its actor before touching UI.
     public var onConnectionCountChanged: (@Sendable (Int) -> Void)?
 
     /// Fired when the listener fails AFTER it became ready (R15 #2) — a post-bind interface drop /
@@ -162,11 +158,10 @@ public final class HostServer: @unchecked Sendable {
 
     /// E13 WI-3 (ES-E13-6) — the "Resume Session on Recovery" host policy (client toggle
     /// ``AgentPreferences/resumeOnRecovery`` → `SLOPDESK_AGENT_RESUME_ON_RECOVERY`, default-ON `!= "0"`).
-    /// This toggle maps directly onto ``DetachedSessionStore`` (spec
-    /// `getting-started__first-launch` §"Resume Session on Recovery"): when ON, a recovered terminal
-    /// reattaches to the still-running detached agent session; when OFF, the host neither keeps nor
-    /// reattaches detached sessions, so recovery yields a FRESH shell. Resolved once at init and AND-ed into
-    /// ``detachEnabled`` (the single reattach gate), so this flag actually actuates rather than no-op'ing.
+    /// Maps onto ``DetachedSessionStore`` (spec `getting-started__first-launch` §"Resume Session on
+    /// Recovery"): ON → a recovered terminal reattaches to the still-running detached session; OFF →
+    /// the host neither keeps nor reattaches, so recovery yields a FRESH shell. Resolved once at init
+    /// and AND-ed into ``detachEnabled`` (the single reattach gate) so this flag actuates.
     public let resumeOnRecovery: Bool
 
     /// S3 — the store for detached sessions. `nil` when `detachEnabled == false`.
@@ -199,11 +194,9 @@ public final class HostServer: @unchecked Sendable {
 
         // S3: resolve detach from env (default-ON: only "0" disables) unless overridden by the caller.
         let envDetach = ProcessInfo.processInfo.environment["SLOPDESK_DETACH_ENABLED"]
-        // E13 WI-3 (ES-E13-6): "Resume on Recovery" gates the SAME reattach machinery (the toggle maps
-        // onto DetachedSessionStore). Resolve once (default-ON; the client sidecar reaches it via
-        // SLOPDESK_AGENT_RESUME_ON_RECOVERY) and AND it into the detach gate — when OFF, detached sessions
-        // are neither kept (handleLinkDown hard-shuts down) nor reattached (spawnMuxChannel sees a nil store),
-        // so recovery yields a fresh shell. This is the consumer that makes the flag actuate.
+        // E13 WI-3 (ES-E13-6): "Resume on Recovery" gates the SAME reattach machinery. AND it into the
+        // detach gate — when OFF, detached sessions are neither kept (handleLinkDown hard-shuts down) nor
+        // reattached (spawnMuxChannel sees a nil store), so recovery yields a fresh shell.
         let effectiveResume = resumeOnRecovery ?? HostEnvironment.agentResumeOnRecoveryEnabled()
         self.resumeOnRecovery = effectiveResume
         let effectiveDetach = (detachEnabled ?? (envDetach != "0")) && effectiveResume
@@ -238,12 +231,12 @@ public final class HostServer: @unchecked Sendable {
         try await transport.start(port: port, onListenerFailed: { [weak self] err in
             self?.onListenerFailed?(err)
         })
-        // Pre-warm the terminfo resolution OFF any connection's receive loop. The resolution can run a
-        // directory probe and (on a host lacking the ghostty terminfo) spawn `infocmp` — doing that
-        // lazily inside `spawnMuxChannel` blocks the MuxNWConnection actor's receive loop on the first
+        // Pre-warm the terminfo resolution OFF any connection's receive loop: the resolution can run a
+        // directory probe and (on a host lacking the ghostty terminfo) spawn `infocmp`, which done lazily
+        // inside `spawnMuxChannel` would block the MuxNWConnection actor's receive loop on the first
         // channel-open (review #5). Resolving the common key (.ghostty, false) here in a detached task
-        // populates `resolvedTermCache`, so `spawnMuxChannel` reads a warm cache with no probe/IO on the
-        // connection's actor. (The .xterm256-explicit path short-circuits the probe entirely.)
+        // warms `resolvedTermCache`, so `spawnMuxChannel` reads it with no probe/IO on the connection's
+        // actor. (The .xterm256-explicit path short-circuits the probe entirely.)
         Task.detached(priority: .utility) { [weak self] in
             _ = self?.resolveEffectiveTerm(requested: .ghostty, explicitOverride: false)
         }
@@ -424,10 +417,9 @@ public final class HostServer: @unchecked Sendable {
                 spawnMuxChannel(open, on: conn, connectionID: connectionID)
             }
         }
-        // S3: a clean peer `channelClose` (client explicitly closed the pane) means the client is done
-        // with this pane — no detach needed, just shut it down as before (S1 behavior). A link DROP
-        // (peer crash / TCP reset) is what triggers detach: the client MAY reconnect. Both paths
-        // remain consistent: channelClose = hard kill; link-down = soft detach (if enabled) or kill.
+        // S3: a clean peer `channelClose` means the client is done with the pane — no detach, just shut
+        // it down (S1 behavior). A link DROP (peer crash / TCP reset) triggers detach: the client MAY
+        // reconnect. So: channelClose = hard kill; link-down = soft detach (if enabled) or kill.
         await connection.setHostCloseHandler { [weak self] channelID in
             self?.removeMuxSession(MuxSessionKey(connectionID: connectionID, channelID: channelID))
         }
@@ -653,14 +645,12 @@ public final class HostServer: @unchecked Sendable {
     /// Resolves the effective `TERM` for a new PTY against the host's terminfo database
     /// (audit #17), logging the auto-fallback exactly when it fires.
     ///
-    /// Delegates the decision to ``TerminfoResolver`` (pure logic + the live terminfo probe).
-    /// When the host cannot resolve `xterm-ghostty` and no explicit `.xterm256` override is in
-    /// effect, the resolver returns `.xterm256` with `fellBack == true`; we then emit ONE
-    /// diagnostic line via ``onLog`` (host stderr — the same out-of-band channel as every other
-    /// session-lifecycle log, NOT the PTY byte stream, so it never pollutes what the client
-    /// renders). The log is gated on `fellBack`: when ghostty resolves, or `.xterm256` was the
-    /// explicit request, nothing is logged. (The plain-shell path always passes `.ghostty` with
-    /// no override, so the fallback only ever fires for a host that lacks the ghostty terminfo.)
+    /// Delegates to ``TerminfoResolver``. When the host cannot resolve `xterm-ghostty` and no explicit
+    /// `.xterm256` override is in effect, the resolver returns `.xterm256` with `fellBack == true`; we
+    /// then emit ONE diagnostic via ``onLog`` (host stderr, NOT the PTY byte stream, so it never
+    /// pollutes what the client renders). Gated on `fellBack`: nothing is logged when ghostty resolves
+    /// or `.xterm256` was the explicit request. (The plain-shell path always passes `.ghostty` with no
+    /// override, so the fallback only fires on a host lacking the ghostty terminfo.)
     private func resolveEffectiveTerm(
         requested: ClaudeCodeProfile.Term,
         explicitOverride: Bool,
@@ -874,17 +864,15 @@ public final class HostServer: @unchecked Sendable {
         }
     }
 
-    /// E13 WI-3 (prevent-sleep STRICT BALANCE): fans a FINAL `.none` agent status for a pane that is being
-    /// torn down WHILE it still carries a non-`.none` agent status. A pane normally delivers its own
-    /// `working → done/idle` transition (the detector poll / hook), but a pane that is CLOSED mid-turn — a
-    /// tab close (`removeMuxSession`), a child that exits mid-turn (`removeMuxSession`/`removeControlSession`),
-    /// a link drop, or a ctl `kill` (`killPaneForControl`) — never delivers a non-working transition on its
-    /// own. Without this fan, a `.working`-tracking observer (the `slopdesk-hostd` prevent-sleep driver)
-    /// keeps that dead paneId in its set forever, `anyAgentWorking` stays true, and the
-    /// `IOPMAssertion` is held for the daemon's whole lifetime — a leaked assertion that keeps the Mac awake
-    /// forever (the balance directive the EnableSecureEventInput lesson mirrors). Reuses the existing P1
-    /// fan-out so EVERY observer (prevent-sleep + cross-pane subscribers) clears the pane uniformly. Gated on
-    /// a non-`.none` prior status so a plain shell with no agent never emits a spurious teardown event.
+    /// E13 WI-3 (prevent-sleep STRICT BALANCE): fans a FINAL `.none` agent status for a pane torn down
+    /// WHILE it still carries a non-`.none` status. A pane normally delivers its own `working → done/idle`
+    /// transition (detector poll / hook), but one CLOSED mid-turn — tab close (`removeMuxSession`), child
+    /// exit (`removeMuxSession`/`removeControlSession`), link drop, or ctl `kill` (`killPaneForControl`) —
+    /// never does. Without this fan, a `.working`-tracking observer (the `slopdesk-hostd` prevent-sleep
+    /// driver) keeps that dead paneId forever, `anyAgentWorking` stays true, and the `IOPMAssertion` is
+    /// held for the daemon's whole lifetime — a leaked assertion keeping the Mac awake forever. Reuses the
+    /// P1 fan-out so EVERY observer (prevent-sleep + cross-pane subscribers) clears the pane uniformly.
+    /// Gated on a non-`.none` prior status so a plain shell with no agent never emits a spurious teardown.
     private func fanAgentTeardown(_ session: MuxChannelSession) {
         guard session.agentStatusForControl != .none else { return }
         fanAgentStatusChanged(

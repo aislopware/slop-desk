@@ -12,13 +12,12 @@ import SlopDeskProtocol
 /// - ``WireMessage/cwd(_:)`` — OSC 7 `file://host/path`, the shell's current working directory.
 ///
 /// ## Provenance (exact-parity port)
-/// The two old sniffers shared an IDENTICAL 8-state transition table; the title sniffer was
-/// the strict superset (it additionally emits `.bell` in ground). ``step(_:into:)`` here is
-/// that table VERBATIM. The only fusion point is ``finishOSC(into:)``, which dispatches on
-/// the Ps prefix: `0`/`2` → the title path (incl. the `lastTitle` dedup), `133` → the old
-/// command sniffer's C/D logic — guarded by an EXACT-PARITY 256-byte payload cap (see
-/// ``cmdOscCap``) so payloads of 257..4096 bytes stay ignored exactly as the old command
-/// sniffer (whose buffer cap was 256) ignored them.
+/// Both old sniffers shared an IDENTICAL 8-state transition table; the title sniffer was the
+/// strict superset (it also emits `.bell` in ground). ``step(_:into:)`` is that table VERBATIM.
+/// The only fusion point is ``finishOSC(into:)``, dispatching on the Ps prefix: `0`/`2` → title
+/// (incl. `lastTitle` dedup), `133` → the command sniffer's C/D logic, guarded by an
+/// EXACT-PARITY 256-byte cap (``cmdOscCap``) so payloads of 257..4096 bytes stay ignored
+/// exactly as the old command sniffer (buffer cap 256) ignored them.
 ///
 /// Cross-type messages are emitted in BYTE order (the old pair emitted all title/bell before
 /// all command messages per chunk); per-type subsequences are byte-identical to the old pair.
@@ -34,12 +33,11 @@ import SlopDeskProtocol
 ///
 /// ## Fast path (hot read-loop thread)
 /// In the three "skim" states — `.ground`, `.oscDiscard`, `.stringConsume` — the ONLY bytes
-/// that can change anything are `ESC` (0x1B) and `BEL` (0x07); every other byte is a no-op
-/// (verified against ``step(_:into:)``: ground ignores content, discard/string swallow it;
-/// note that in THIS grammar `BEL` DOES terminate `.stringConsume` too). ``observe(_:)``
-/// therefore `memchr`s for the next interesting byte and routes ONLY that byte through
-/// ``step(_:into:)`` — the fast path decides WHICH bytes reach `step()`, it never replaces
-/// a transition. All other states step per-byte.
+/// that matter are `ESC` (0x1B) and `BEL` (0x07); every other byte is a no-op (verified
+/// against ``step(_:into:)``: ground ignores content, discard/string swallow it; in THIS
+/// grammar `BEL` DOES terminate `.stringConsume` too). ``observe(_:)`` therefore `memchr`s
+/// for the next interesting byte and routes ONLY that byte through ``step(_:into:)`` — it
+/// decides WHICH bytes reach `step()`, never replaces a transition. Other states step per-byte.
 ///
 /// `@unchecked Sendable`: the mutable parser/timing state is guarded by ``lock``. In
 /// practice ``observe(_:)`` is only ever called from the single serial `PTYReadLoop` queue
@@ -60,11 +58,11 @@ public final class HostOutputSniffer: @unchecked Sendable {
     private let lock = NSLock()
     private let clock: @Sendable () -> Date
 
-    /// Lower-cased host identities an OSC 7 `file://<authority>/…` may carry for the path to be
-    /// treated as a LOCAL cwd. An empty authority and `localhost` are always local; the host
-    /// machine's own hostname(s) are added at init. A FOREIGN authority (a shell ssh'd into another
-    /// box that emits OSC 7) is DROPPED so it cannot poison cwd inheritance — the check iTerm2 /
-    /// Terminal.app / ghostty perform. See ``osc7Path(from:localHostnames:)``.
+    /// Lower-cased host identities an OSC 7 `file://<authority>/…` may carry for its path to count as
+    /// a LOCAL cwd. Empty authority and `localhost` are always local; the host's own hostname(s) are
+    /// added at init. A FOREIGN authority (a shell ssh'd into another box) is DROPPED so it can't
+    /// poison cwd inheritance — the same check iTerm2 / Terminal.app / ghostty perform. See
+    /// ``osc7Path(from:localHostnames:)``.
     private let localHostnames: Set<String>
 
     /// The default local identities: `localhost`, the empty authority, and this host machine's own
@@ -82,10 +80,10 @@ public final class HostOutputSniffer: @unchecked Sendable {
     /// When the foreground command started (set on `133;C`, cleared on `133;D`); `nil` idle.
     private var runningSince: Date?
 
-    /// `true` once an idle signal has been emitted for the current prompt cycle (set by `133;D` and by the
-    /// `133;B` startup-prompt path, reset by `133;C`). Prevents `133;B` from emitting a redundant second
-    /// `.idle` after `133;D` has already advertised the exit code — while still surfacing `133;B` at first
-    /// launch (before any command has run, so no `133;D` has fired).
+    /// `true` once an idle signal has been emitted for the current prompt cycle (set by `133;D` and the
+    /// `133;B` startup-prompt path, reset by `133;C`). Stops `133;B` from emitting a redundant second
+    /// `.idle` after `133;D` already advertised the exit code, while still surfacing `133;B` at first
+    /// launch (before any command has run, so no `133;D` fired).
     private var idleSentSinceLastC = false
 
     // MARK: Parser state (verbatim from HostTitleBellSniffer)
@@ -129,10 +127,9 @@ public final class HostOutputSniffer: @unchecked Sendable {
     /// chunk-invariance oracle (byte-split == whole) still holds.
     private var kittyAssembly: [String: (title: String, body: String)] = [:]
 
-    /// Hard cap on the buffered OSC payload (the TITLE sniffer's cap — the larger of the
-    /// two). A real title is tiny; anything longer is not a title we care about — abandon it
-    /// and resync. (Generous enough for long window titles / paths, small enough to bound a
-    /// hostile unterminated OSC.)
+    /// Hard cap on the buffered OSC payload (the TITLE sniffer's cap — the larger of the two).
+    /// A real title is tiny; anything longer is abandoned + resynced. Generous enough for long
+    /// window titles / paths, small enough to bound a hostile unterminated OSC.
     private static let oscCap = 4096
 
     /// EXACT-PARITY guard for the 133 path: the old ``HostCommandStatusSniffer`` capped ITS
@@ -190,13 +187,11 @@ public final class HostOutputSniffer: @unchecked Sendable {
                     // Find the next ESC in the remainder…
                     let escPointer = memchr(base + i, Int32(Self.esc), count - i)
                     let escOffset = escPointer.map { base.distance(to: UnsafeRawPointer($0)) } ?? count
-                    // …then scan for BELs ONLY in the prefix BEFORE that ESC. CRITICAL
-                    // bound: an UNBOUNDED BEL memchr over the whole remainder, re-run on
-                    // every ground re-entry, degrades to O(n^2) on escape-dense streams and
-                    // was MEASURED at 29 MiB/s — SLOWER than the per-byte loop it replaces.
-                    // Bounding the BEL scan to [i, escOffset) keeps total scanned bytes
-                    // <= 2x the input (each byte is seen by at most one ESC scan and one
-                    // BEL scan).
+                    // …then scan for BELs ONLY in the prefix BEFORE that ESC. CRITICAL bound: an
+                    // UNBOUNDED BEL memchr over the whole remainder, re-run on every ground re-entry,
+                    // degrades to O(n^2) on escape-dense streams (MEASURED at 29 MiB/s — SLOWER than
+                    // the per-byte loop it replaces). Bounding to [i, escOffset) keeps total scanned
+                    // bytes <= 2x the input (each byte seen by at most one ESC scan + one BEL scan).
                     var j = i
                     while j < escOffset {
                         guard let belPointer = memchr(base + j, Int32(Self.bel), escOffset - j) else { break }
@@ -287,10 +282,9 @@ public final class HostOutputSniffer: @unchecked Sendable {
                 // `ESC ESC` — stay in escape, waiting to classify the second ESC.
                 state = .escape
             default:
-                // Some other escape (CSI `ESC[`, a 2-byte / nF escape like `ESC c`). Not
-                // an OSC; we do not track it. Return to ground. NOTE: a BEL here would be
-                // an `ESC BEL` which is not a real sequence we care about and not a
-                // standalone bell — treating it as ground content is fine.
+                // Some other escape (CSI `ESC[`, a 2-byte / nF escape like `ESC c`) — not an OSC,
+                // untracked, return to ground. A BEL here (`ESC BEL`) is neither a sequence we care
+                // about nor a standalone bell — treating it as ground content is fine.
                 state = .ground
             }
 
@@ -307,12 +301,11 @@ public final class HostOutputSniffer: @unchecked Sendable {
             default:
                 oscBuffer.append(byte)
                 if oscBuffer.count > Self.oscCap {
-                    // Overlong — not a sequence we care about; abandon WITHOUT emitting.
-                    // Do NOT drop to `.ground` here: we are still INSIDE the OSC, so its real
-                    // terminator (BEL / ST) has not arrived yet. Dropping to ground would make
-                    // that terminator BEL be re-parsed as a spurious `.bell` (and any following
-                    // bytes misread). Switch to `.oscDiscard` to swallow the rest of the OSC —
-                    // including its terminator — byte-at-a-time (bounded, no buffering).
+                    // Overlong — abandon WITHOUT emitting. Do NOT drop to `.ground`: we are still
+                    // INSIDE the OSC, so its terminator (BEL / ST) hasn't arrived; dropping to ground
+                    // would re-parse that terminator BEL as a spurious `.bell` (and misread following
+                    // bytes). Switch to `.oscDiscard` to swallow the rest — terminator included —
+                    // byte-at-a-time (bounded, no buffering).
                     oscBuffer.removeAll(keepingCapacity: true)
                     state = .oscDiscard
                 }
@@ -372,12 +365,11 @@ public final class HostOutputSniffer: @unchecked Sendable {
                 finishOSC(into: &messages)
                 state = .ground
             } else {
-                // The `ESC` was not an ST terminator. Treat the OSC as terminated by the
-                // stray ESC, but the ESC we already consumed may itself introduce a NEW
-                // sequence — so re-enter `.escape` (NOT `.ground`) and re-classify this
-                // byte as that sequence's introducer. Dropping to ground here would orphan
-                // the ESC and let a following sequence's `]` be parsed as plain content,
-                // losing the whole sequence (the prior stray-ESC bug — see the old sniffers).
+                // The `ESC` was not an ST terminator. Treat the OSC as terminated by the stray ESC,
+                // but that consumed ESC may itself introduce a NEW sequence — re-enter `.escape` (NOT
+                // `.ground`) and re-classify this byte as its introducer. Dropping to ground would
+                // orphan the ESC and let a following sequence's `]` be read as plain content, losing
+                // the whole sequence (the prior stray-ESC bug — see the old sniffers).
                 finishOSC(into: &messages)
                 state = .escape
                 step(byte, into: &messages)
@@ -442,11 +434,10 @@ public final class HostOutputSniffer: @unchecked Sendable {
                 let durationMS = Self.durationMS(from: started, to: clock())
                 messages.append(.commandStatus(.idle(exitCode: exit, durationMS: durationMS)))
             case "B":
-                // Prompt-ready mark: the shell has finished rendering its prompt and the line editor
-                // is accepting input. When no idle signal has been sent since the last command (i.e. at
-                // first launch, before any command has run), emit `.idle` so the client knows the shell
-                // is at a prompt. After a `D` the client already has the idle signal — suppress the
-                // redundant B to preserve the exit-code and duration the D carried.
+                // Prompt-ready mark: the shell finished rendering its prompt and the line editor accepts
+                // input. When no idle signal has fired since the last command (i.e. first launch, before
+                // any command ran), emit `.idle` so the client knows the shell is at a prompt. After a
+                // `D` the client already has it — suppress the redundant B to keep D's exit-code/duration.
                 if runningSince == nil, !idleSentSinceLastC {
                     idleSentSinceLastC = true
                     messages.append(.commandStatus(.idle(exitCode: nil, durationMS: 0)))
@@ -477,11 +468,11 @@ public final class HostOutputSniffer: @unchecked Sendable {
             let body = String(bytes: bodyBytes, encoding: .utf8) ?? ""
             guard !body.isEmpty else { return }
             // OSC 9 is overloaded: iTerm2/ConEmu use `ESC]9;4;<state>;<pct>` for the taskbar PROGRESS-BAR
-            // protocol (emitted continuously by winget, long builds, etc.), NOT a desktop notification.
-            // Surfacing those as alerts with body text like "4;1;50" floods the user with raw program
-            // output. So the `9;4` subtype is parsed into a `.progress` CONTROL message (E14/K1) — never
-            // a `.notification` — while the free-text iTerm2 form (`ESC]9;<message>`) stays a notification,
-            // BYTE-IDENTICAL to before (only the previously-DROPPED `9;4` subtype now emits progress).
+            // protocol (emitted continuously by winget, long builds, etc.), NOT a desktop notification;
+            // surfacing those as alerts with body "4;1;50" floods the user with raw output. So `9;4` is
+            // parsed into a `.progress` CONTROL message (E14/K1), never a `.notification`, while the
+            // free-text iTerm2 form (`ESC]9;<message>`) stays a notification — BYTE-IDENTICAL to before
+            // (only the previously-DROPPED `9;4` subtype now emits progress).
             if body == "4" || body.hasPrefix("4;") {
                 if let (state, percent) = ProgressOSCParser.parse(body) {
                     messages.append(.progress(state: state.rawValue, percent: percent))

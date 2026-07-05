@@ -1,25 +1,23 @@
-// NavigatorColumn — the left sidebar navigator. macOS renders a flat "TABS" panel: a warm
-// `Slate.Surface.ground` background (NOT the native `.sidebar` vibrancy/inset-grouped selection — the host
-// split item is a PLAIN item now), a "TABS" header with the sort hamburger, a flat search field, and the
-// active session's tabs rendered as `SlateTabRow`s — grouped into `SlateSectionHeader` sections when the
-// hamburger's Group-By is set (E6 WI-5). The top 40pt is reserved for the traffic lights under the hidden
-// titlebar.
+// NavigatorColumn — the left sidebar navigator. macOS renders a flat "TABS" panel on a warm
+// `Slate.Surface.ground` background (NOT native `.sidebar` vibrancy/inset-grouped selection — the host split
+// item is a PLAIN item), a "TABS" header + sort hamburger, a flat search field, and the active session's tabs
+// as `SlateTabRow`s — grouped into `SlateSectionHeader` sections when the hamburger's Group-By is set
+// (E6 WI-5). Top 40pt is reserved for the traffic lights under the hidden titlebar.
 //
 // E6 WI-5 wires the panel to the STORE as the single source of row order:
-//   • a flat search field filters via the pure ``RailRowsBuilder/filtered(_:query:)`` (reused, not rebuilt);
+//   • the flat search field filters via the pure ``RailRowsBuilder/filtered(_:query:)`` (reused, not rebuilt);
 //   • the rendered SECTIONS are ``WorkspaceStore/orderedTabGroups(now:)`` (a pure derivation of the store's
 //     ``WorkspaceStore/tabGrouping`` / ``WorkspaceStore/tabSort`` / recency), so the hamburger's choice — and
 //     a manual drag — mutate the STORE, never local `@State` (the E6-carryover binding constraint);
-//   • each row carries the new ``RailRow`` chrome (subtitle / fused badge / process label);
+//   • each row carries the ``RailRow`` chrome (subtitle / fused badge / process label);
 //   • dragging a row reorders the session's tabs via ``WorkspaceStore/moveTabRendered(from:to:)`` — a WYSIWYG
-//     move by RENDERED position (so only the dragged row moves, even under `.updated`), which flips Sort to
+//     move by RENDERED position (only the dragged row moves, even under `.updated`), which flips Sort to
 //     Manual; the leaf set is unchanged, so reconcile is a registry no-op (no surface teardown). Manual order
-//     is a flat-list affordance, so the drag source/target are OFF whenever a grouping is active.
+//     is a flat-list affordance, so the drag source/target are OFF whenever grouping is active.
 //
 // iOS: a `List(selection:)` so NavigationSplitView pushes to the content column on a compact iPhone (a custom
-// button list does not drive column navigation). Themed to match the macOS chrome but keeps the system list's
-// navigation wiring; it gains the same search field, grouped `Section`s, badge, and drag reorder
-// under `#if os(iOS)`.
+// button list does not drive column navigation). Themed to match macOS but keeps the system list's navigation
+// wiring; gains the same search field, grouped `Section`s, badge, and drag reorder under `#if os(iOS)`.
 
 #if canImport(SwiftUI)
 import Defaults
@@ -32,26 +30,25 @@ struct NavigatorColumn: View {
     let store: WorkspaceStore
 
     /// The live ``PreferencesStore`` — threaded in so the tab context menu can surface the host-LOCAL
-    /// **Prevent Sleep While Processing** flag (Batch 4 catalog-completeness;
-    /// `docs/ui-shell/screenshots/open-code-agent-history.png` shows it on the tab menu). The macOS sidebar
-    /// is hosted in a SEPARATE `NSHostingController` that does not
+    /// **Prevent Sleep While Processing** flag (Batch 4; `docs/ui-shell/screenshots/open-code-agent-history.png`
+    /// shows it on the tab menu). The macOS sidebar is hosted in a SEPARATE `NSHostingController` that does not
     /// inherit the WindowGroup environment, so the split-view host passes it explicitly (`nil` on a preview /
-    /// pre-injection ⇒ the Prevent-Sleep row is simply hidden, never a dead control). On iOS the column inherits
-    /// the value via the `NavigationSplitView`, but it is still passed explicitly for parity.
+    /// pre-injection ⇒ the Prevent-Sleep row is hidden, never a dead control). iOS inherits it via the
+    /// `NavigationSplitView` but still passes it explicitly for parity.
     var preferences: PreferencesStore?
 
     /// The shared chrome state — the macOS sidebar hosts its OWN collapse toggle at the top-trailing corner
-    /// of the traffic-light strip (the button lives inside the panel it hides; the content titlebar keeps
-    /// only the collapsed-state REOPEN button). Threaded in by the split-view host like `preferences` (the
-    /// sidebar's `NSHostingController` inherits no environment). `nil` (previews / iOS, where the
-    /// `NavigationSplitView` provides its own toggle) simply omits the button.
+    /// of the traffic-light strip (the button lives inside the panel it hides; the content titlebar keeps only
+    /// the collapsed-state REOPEN button). Threaded in by the split-view host like `preferences` (the sidebar's
+    /// `NSHostingController` inherits no environment). `nil` (previews / iOS, where `NavigationSplitView`
+    /// provides its own toggle) omits the button.
     var chrome: WorkspaceChromeState?
 
-    /// The app-global connection — the SIDEBAR TOP is the connection cluster's resting home (leading-
-    /// aligned in a fixed-width column, so the ticking telemetry numbers can't layout-shift anything;
-    /// trailing-aligned in the titlebar they wiggled the cluster every second). While the sidebar is
-    /// COLLAPSED the titlebar hosts the fallback (`SlateTitlebar`) so the state never vanishes. Threaded
-    /// in by the split-view host like `preferences`; `nil` (previews / iOS) simply omits the cluster.
+    /// The app-global connection — the SIDEBAR TOP is the connection cluster's resting home (leading-aligned
+    /// in a fixed-width column, so the ticking telemetry numbers can't layout-shift anything; trailing-aligned
+    /// in the titlebar they wiggled the cluster every second). While the sidebar is COLLAPSED the titlebar
+    /// hosts the fallback (`SlateTitlebar`) so the state never vanishes. Threaded in like `preferences`; `nil`
+    /// (previews / iOS) omits the cluster.
     var connection: AppConnection?
     /// Tapping the cluster opens the Connect-to-Host editor (``OverlayCoordinator/openConnect()``).
     var onConnect: () -> Void = {}
@@ -67,9 +64,9 @@ struct NavigatorColumn: View {
 
     // MARK: - WINDOWS section (MERIDIAN C4)
 
-    /// The remote-GUI pane rows, rendered as the sidebar's SECOND section (TABS · WINDOWS — same row
-    /// anatomy, spec §3.6): the only difference is the leading identity monogram. Narrowed by the same
-    /// search query as the tab rows.
+    /// The remote-GUI pane rows, rendered as the sidebar's SECOND section (TABS · WINDOWS — same row anatomy,
+    /// spec §3.6): the only difference is the leading identity monogram. Narrowed by the same search query as
+    /// the tab rows.
     private func windowRows(from allRows: [RailRow]) -> [RailRow] {
         RailRowsBuilder.filtered(allRows.filter { $0.kind == .remoteGUI }, query: query)
     }
@@ -112,18 +109,17 @@ struct NavigatorColumn: View {
 
     /// Whether the manual drag-reorder affordance is live: ONLY a flat, UNFILTERED list — `tabGrouping ==`
     /// ``TabGrouping/none`` AND an empty search `query`. You cannot hand-order across derived buckets
-    /// (By-Project / By-Date), so the rows are neither draggable nor drop targets while grouping is on —
-    /// pretending to would silently discard a cross-group drop (it would snap back to its own bucket). And a
-    /// search FILTER hides rows while ``renderedTabOrder`` / ``renderedPosition(of:)`` are computed against
+    /// (By-Project / By-Date), so rows are neither draggable nor drop targets while grouping is on —
+    /// pretending to would silently discard a cross-group drop (it snaps back to its own bucket). A search
+    /// FILTER is off for the same reason: ``renderedTabOrder`` / ``renderedPosition(of:)`` are computed against
     /// the FULL ordered groups, so a drag between two visible rows would move in full-order coordinates
-    /// relative to tabs the user can't see — not WYSIWYG against the filtered list. Same flat-list-only
-    /// rationale as the grouping gate, so a filtered list is off too.
+    /// relative to tabs the user can't see — not WYSIWYG against the filtered list.
     private var dragReorderEnabled: Bool { store.tabGrouping == .none && query.isEmpty }
 
     /// The active session's tab ids in RENDERED order — the flat sidebar order
     /// (``WorkspaceStore/orderedTabGroups(now:)`` flattened). The basis for a WYSIWYG drag: the dragged tab's
-    /// IDENTITY (its payload) and the drop target are resolved into RENDERED positions into THIS list at drop
-    /// time, not raw `session.tabs` indices (which differ from the rendered order under ``TabSort/updated``).
+    /// IDENTITY (its payload) and the drop target resolve into RENDERED positions in THIS list at drop time,
+    /// not raw `session.tabs` indices (which differ from the rendered order under ``TabSort/updated``).
     /// Consulted only while `dragReorderEnabled`.
     private var renderedTabOrder: [TabID] {
         store.orderedTabGroups().flatMap(\.tabIDs)
@@ -137,12 +133,12 @@ struct NavigatorColumn: View {
 
     /// Apply a manual drag-reorder. The drag payload is the dragged row's tab IDENTITY (FIX 2), resolved at
     /// DROP time to its CURRENT rendered position via ``TabDragPayload/resolveMove(payload:onto:in:)`` — so a
-    /// mid-drag reorder (an `.updated` completion re-derives ``renderedTabOrder`` while the drag is in flight)
-    /// still moves the DRAGGED tab, not whatever tab now sits at a stale index. Both resolved positions are
-    /// into ``renderedTabOrder``, so the move is WYSIWYG. Routes through
-    /// ``WorkspaceStore/moveTabRendered(from:to:)``, which materializes the rendered order into the tabs
-    /// array then moves only the dragged tab (flipping Sort → Manual, no surface teardown). An unparseable /
-    /// foreign payload, a self / OOB drop, or any drop while grouping is on is a no-op (validate-then-drop).
+    /// mid-drag reorder (an `.updated` completion re-derives ``renderedTabOrder`` in flight) still moves the
+    /// DRAGGED tab, not whatever tab now sits at a stale index. Both positions are into ``renderedTabOrder``,
+    /// so the move is WYSIWYG. Routes through ``WorkspaceStore/moveTabRendered(from:to:)``, which materializes
+    /// the rendered order into the tabs array then moves only the dragged tab (flipping Sort → Manual, no
+    /// surface teardown). An unparseable / foreign payload, a self / OOB drop, or any drop while grouping is on
+    /// is a no-op (validate-then-drop).
     private func handleTabDrop(_ items: [String], onto target: RailRow) -> Bool {
         guard dragReorderEnabled, let raw = items.first,
               let move = TabDragPayload.resolveMove(payload: raw, onto: target.tabID, in: renderedTabOrder)
@@ -152,12 +148,12 @@ struct NavigatorColumn: View {
     }
 
     /// Conditionally attach the drag SOURCE + drop TARGET to a row's content: only while `dragReorderEnabled`
-    /// and the row has a rendered position (it is shown). The drag payload is the row's tab IDENTITY (FIX 2),
-    /// so the drop resolves the dragged tab by id against the live rendered order — never a stale array index.
-    /// Off (grouping on / filtered / no position) ⇒ the bare content, so the rows aren't draggable across
-    /// buckets or against hidden rows. While enabled the row is wrapped in a ``ReorderableRow`` so it can own
-    /// the per-row `isTargeted` hover flag (a `@ViewBuilder` helper can't hold `@State`) and paint the E18
-    /// WI-7 insertion-line indicator. The drop handler / payload / gate are UNCHANGED — passed straight in.
+    /// and the row has a rendered position (it is shown). The payload is the row's tab IDENTITY (FIX 2), so the
+    /// drop resolves the dragged tab by id against the live rendered order — never a stale array index. Off
+    /// (grouping on / filtered / no position) ⇒ the bare content, so rows aren't draggable across buckets or
+    /// against hidden rows. While enabled the row is wrapped in a ``ReorderableRow`` so it can own the per-row
+    /// `isTargeted` hover flag (a `@ViewBuilder` helper can't hold `@State`) and paint the E18 WI-7
+    /// insertion-line indicator. The drop handler / payload / gate pass through UNCHANGED.
     @ViewBuilder
     private func reorderable(_ content: some View, row: RailRow) -> some View {
         if dragReorderEnabled, renderedPosition(of: row) != nil {
@@ -217,16 +213,16 @@ struct NavigatorColumn: View {
         let windows = windowRows(from: allRows)
         let sections = buildSections(tabRows, query: query)
         return VStack(alignment: .leading, spacing: 0) {
-            // The titlebar / traffic-light strip. The sidebar-collapse toggle sits INSIDE the sidebar —
-            // top-trailing on the traffic-light row (top 3 centres the 24pt plate's icon at y≈15, the same
-            // row the titlebar plates sit on). The content titlebar carries only the collapsed-state
-            // reopen button (there is no sidebar to host it then).
+            // The titlebar / traffic-light strip. The sidebar-collapse toggle sits INSIDE the sidebar,
+            // top-trailing on the traffic-light row (top 3 centres the 24pt plate's icon at y≈15, the row the
+            // titlebar plates sit on). The content titlebar carries only the collapsed-state reopen button
+            // (there is no sidebar to host it then).
             //
-            // The button is anchored to the sidebar's TRAILING edge, which RIDES the collapse/expand slide
-            // — left visible mid-slide it glides with the moving edge and reads as a flash. So it is shown
-            // only in the SETTLED expanded state: it hides INSTANTLY the moment the collapse flag flips
-            // (before the slide starts) and, on expand, fades back in only after the slide fully settles
-            // (0.25 clears the ~0.25s NSSplitView collapse animation; 0.15 still caught the tail).
+            // The button is anchored to the sidebar's TRAILING edge, which RIDES the collapse/expand slide —
+            // visible mid-slide it glides with the moving edge and reads as a flash. So it shows only in the
+            // SETTLED expanded state: hides INSTANTLY when the collapse flag flips (before the slide starts)
+            // and, on expand, fades back only after the slide settles (0.25 clears the ~0.25s NSSplitView
+            // collapse animation; 0.15 still caught the tail).
             ZStack(alignment: .topTrailing) {
                 Color.clear
                 if let chrome {
@@ -339,9 +335,9 @@ struct NavigatorColumn: View {
     }
 
     /// One macOS WINDOWS row (MERIDIAN C4): the SAME `SlateTabRow` chrome as a tab row (rename / badge /
-    /// hover close / context menu all included) — name-first like every other row (the thumbnail, then
-    /// the monogram, were both pruned by user verdict); the owning APP is the instrument-voice subtitle.
-    /// NOT wrapped `reorderable` — manual order is a TABS affordance.
+    /// hover close / context menu) — name-first like every other row (the thumbnail, then the monogram, were
+    /// both pruned by user verdict); the owning APP is the instrument-voice subtitle. NOT wrapped
+    /// `reorderable` — manual order is a TABS affordance.
     private func windowRow(_ row: RailRow) -> some View {
         let model = remoteModel(for: row)
         return SlateTabRow(
@@ -467,7 +463,7 @@ struct NavigatorColumn: View {
     /// the pane spec — surfaces it, winning over the folder name) then clear the pending state so the field
     /// closes. A blank draft renames nothing (``WorkspaceStore/renamePane(_:to:)`` no-ops), keeping the folder
     /// name; the pending state still clears so the field dismisses. Shared across the macOS + iOS row builders
-    /// (outside the platform guards) so both paths land the same commit semantics.
+    /// so both paths land the same commit semantics.
     private func commitRename(_ row: RailRow, to text: String) {
         store.renamePane(row.id, to: text)
         store.clearTabRenameRequest()
@@ -479,14 +475,12 @@ struct NavigatorColumn: View {
     /// the Agent-Behaviour toggles surfaced on the tab. "Clear Badge" acknowledges the pane's completion/attention;
     /// the three BADGE items are PER-PANE override toggles (seeded from the pane's CURRENT effective gates, so
     /// the first flip preserves the other two — an absent override follows the global Settings → Agents
-    /// default); the two NOTIFY items toggle the GLOBAL fire-time keys (notify preferences are global, not
-    /// per-pane). Claude-only.
-    /// **Prevent Sleep While Processing** (Batch 4) is a host-LOCAL `AgentPreferences` flag living in
-    /// `PreferencesStore` (it rides the sidecar → applies on reconnect; default-OFF). It is surfaced here only
-    /// when the store is threaded in (the split-view host now does), bound to the SAME global `agent.preventSleep`
-    /// Settings → Agent Behaviour edits — the tab menu lists it too (see
-    /// `docs/ui-shell/screenshots/open-code-agent-history.png`). A `nil` store
-    /// (preview / pre-injection) simply hides the row.
+    /// default); the two NOTIFY items toggle the GLOBAL fire-time keys (notify prefs are global, not per-pane).
+    /// Claude-only.
+    /// **Prevent Sleep While Processing** (Batch 4) is a host-LOCAL `AgentPreferences` flag in
+    /// `PreferencesStore` (rides the sidecar → applies on reconnect; default-OFF). Surfaced only when the store
+    /// is threaded in (the split-view host now does), bound to the SAME global `agent.preventSleep` Settings →
+    /// Agent Behaviour edits. A `nil` store (preview / pre-injection) hides the row.
     @ViewBuilder
     private func rowContextMenu(_ row: RailRow) -> some View {
         // C3 BUG B: a mouse-reachable "Rename" — sets the pending-rename for THIS row's tab so its inline
@@ -519,9 +513,9 @@ struct NavigatorColumn: View {
             get: { Defaults[.agentNotifyAwaitInput] },
             set: { Defaults[.agentNotifyAwaitInput] = $0 },
         ))
-        // Prevent Sleep While Processing (E13 ES-E13-3) — the host-LOCAL system-sleep assertion
-        // gate. Bound to the GLOBAL `agent.preventSleep` flag (the SAME Settings → Agent Behaviour edits), shown
-        // only when the live store is threaded in. `?? false` mirrors the daemon default-OFF (`nil` ⇒ unset).
+        // Prevent Sleep While Processing (E13 ES-E13-3) — the host-LOCAL system-sleep assertion gate. Bound to
+        // the GLOBAL `agent.preventSleep` flag (the SAME Settings → Agent Behaviour edits), shown only when the
+        // live store is threaded in. `?? false` mirrors the daemon default-OFF (`nil` ⇒ unset).
         if let preferences {
             Divider()
             Toggle("Prevent Sleep While Processing", isOn: Binding(
@@ -580,11 +574,10 @@ struct NavigatorColumn: View {
 
 /// A rail row wrapped with the manual drag-reorder source + drop target AND the E18 WI-7 insertion-line
 /// indicator. It owns the per-row `isTargeted` hover flag — a `@ViewBuilder` helper can't hold `@State`, so
-/// the targeting highlight lives here — and paints a thin insertion-line indicator for the landing
-/// position between tabs as a 2pt accent rule on the row's TOP edge while a tab-reorder drag hovers it. The
-/// drag payload, drop handler and reorder gate are passed in UNCHANGED from ``NavigatorColumn`` (the by-uuid
-/// payload, ``NavigatorColumn``'s `handleTabDrop`, and the grouping/search gate are untouched) — this view
-/// only adds the targeting highlight via the pure ``TabReorderInsertionLine`` placement model.
+/// the targeting highlight lives here — and paints the insertion-line indicator (a 2pt accent rule on the
+/// row's TOP edge) for the landing position between tabs while a tab-reorder drag hovers it. The drag payload,
+/// drop handler and reorder gate pass through UNCHANGED from ``NavigatorColumn`` — this view only adds the
+/// targeting highlight via the pure ``TabReorderInsertionLine`` placement model.
 private struct ReorderableRow<Content: View>: View {
     /// The drag payload string (the row's tab IDENTITY — ``TabDragPayload/encode(_:)``).
     let payload: String

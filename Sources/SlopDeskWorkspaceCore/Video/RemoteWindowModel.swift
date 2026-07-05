@@ -1,17 +1,14 @@
 import Foundation
 
-// L0: extracted from the deleted SwiftUI `RemoteWindowPanel.swift`. `RemoteWindowModel` is the
-// per-pane `@MainActor @Observable` LOGIC for opening one remote GUI window (PATH 2): the picker
-// refresh/pick, open/close, rebind, and paste-as-keystrokes. It has no SwiftUI usage (the deleted
-// `RemoteWindowPanel` view bound to it); the rebuilt UI (L6) will bind a new view to this model.
+// Per-pane `@MainActor @Observable` LOGIC for opening one remote GUI window (PATH 2): picker
+// refresh/pick, open/close, rebind, and paste-as-keystrokes. No SwiftUI usage (a rebuilt view binds to it).
 @preconcurrency
 @MainActor
 @Observable
 public final class RemoteWindowModel {
     // MARK: Entry fields (bound to the form)
 
-    /// Which host-side window to mirror (set by the picker, or typed in the manual fallback). Host/ports
-    /// come from the app target.
+    /// Which host-side window to mirror (picker or manual fallback). Host/ports come from the app target.
     public var windowID: String
     public var title: String
     /// PANE REBIND: the owning app's name (filled by ``pick(_:)``; empty for manual entry). Persisted
@@ -31,8 +28,8 @@ public final class RemoteWindowModel {
     /// A short message when discovery yielded nothing / no discovery seam (the panel offers manual entry).
     public private(set) var loadError: String?
 
-    /// Resolves the app-global ``ConnectionTarget`` (host + UDP ports) at open-time, so every video pane
-    /// rides the one shared UDP flow at the app host (docs/31). The pane no longer enters a host/ports.
+    /// Resolves the app-global ``ConnectionTarget`` (host + UDP ports) at open-time so every video pane
+    /// rides the one shared UDP flow at the app host (docs/31).
     private let target: @MainActor () -> ConnectionTarget
 
     /// The opened window's descriptor (carries the full endpoint). `nil` ⇒ the form is shown;
@@ -41,64 +38,59 @@ public final class RemoteWindowModel {
 
     // MARK: Paste as Keystrokes (per-key CGEvent typing into secure fields)
 
-    /// The live key-injection sink the gated ``VideoWindowView`` publishes (via
-    /// ``RemotePaneContext/onKeyInjectorReady``) once its session exists, and clears (`nil`) on
-    /// teardown. Each call drives the host's per-event input path (`InputInjector.postKey`, plain
-    /// `CGEvent`) — which types into `sudo` / SecurityAgent password fields (CGEvent keys reach the
-    /// secure field even under Secure Event Input). `(keyCode, down, shift)`.
+    /// The live key-injection sink ``VideoWindowView`` publishes (via
+    /// ``RemotePaneContext/onKeyInjectorReady``) once its session exists, cleared (`nil`) on teardown.
+    /// Each call drives the host's per-event input path (`InputInjector.postKey`, plain `CGEvent`) — CGEvent
+    /// keys reach `sudo` / SecurityAgent password fields even under Secure Event Input. `(keyCode, down, shift)`.
     ///
-    /// READ-ONLY GATE (E21 WI-3): when the owning pane is read-only the SEAM clears this — `GuiLeafView`
-    /// derives the context through ``RemotePaneContext/videoLeaf(isActive:readOnly:...)``, which binds a
-    /// `nil` sink here instead of the live one. So paste-as-keystrokes is inert on a read-only pane
-    /// (``canPasteKeystrokes`` is then `false` and ``pasteAsKeystrokes(_:)`` no-ops) WITHOUT any
-    /// model→store coupling — the model never learns the read-only state; the seam withholds the sink.
+    /// READ-ONLY GATE (E21 WI-3): on a read-only pane the SEAM binds a `nil` sink here (`GuiLeafView` →
+    /// ``RemotePaneContext/videoLeaf(isActive:readOnly:...)``), so paste-as-keystrokes is inert
+    /// (``canPasteKeystrokes`` `false`, ``pasteAsKeystrokes(_:)`` no-ops) WITHOUT any model→store coupling —
+    /// the model never learns the read-only state; the seam withholds the sink.
     public var keyInjector: ((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?
 
-    /// RESIZE (numeric popover): the live ``VideoWindowView`` publishes this once its session exists (and
-    /// clears it, `nil`, on teardown / when the pane is read-only). The pane's "Resize…" popover calls it
-    /// to request an ABSOLUTE host-window POINT size; `(width, height)`. `nil` ⇒ no live sink (no button).
+    /// RESIZE (numeric popover): the live ``VideoWindowView`` publishes this once its session exists
+    /// (cleared `nil` on teardown / when read-only). The "Resize…" popover calls it to request an ABSOLUTE
+    /// host-window POINT size; `(width, height)`. `nil` ⇒ no live sink (no button).
     public var resizeInjector: ((_ width: Double, _ height: Double) -> Void)?
 
     /// Whether the resize control should be live: streaming AND a resize sink is wired (withheld while
     /// read-only). `GuiLeafView` gates the "Resize…" button on this.
     public var canResizeWindow: Bool { active != nil && resizeInjector != nil }
 
-    /// The remote window's CURRENT POINT size, pushed by the live ``VideoWindowView`` on the first decoded
-    /// frame and on every host-/popover-driven resize (via ``noteWindowGeometry(currentW:currentH:maxW:maxH:)``).
-    /// `nil` until the first frame. The "Resize…" popover pre-fills its width/height fields from it.
+    /// The remote window's CURRENT POINT size, pushed by ``VideoWindowView`` on the first decoded frame and
+    /// every host-/popover-driven resize (via ``noteWindowGeometry(currentW:currentH:maxW:maxH:)``). `nil`
+    /// until the first frame; the "Resize…" popover pre-fills its width/height fields from it.
     public private(set) var windowPointSize: CGSize?
-    /// The MAX resizable POINT size the host reported for the remote window (its display bounds), pushed by
-    /// the live ``VideoWindowView`` once the host's `displayMax` lands. `nil` until known — the popover then
-    /// leaves its fields uncapped (the host still clamps server-side). The host's resize-to-display-origin
-    /// makes this maximum actually reachable.
+    /// The MAX resizable POINT size the host reported (its display bounds), pushed by ``VideoWindowView``
+    /// once the host's `displayMax` lands. `nil` until known — the popover then leaves its fields uncapped
+    /// (the host still clamps server-side). The host's resize-to-display-origin makes this max reachable.
     public private(set) var windowMaxPointSize: CGSize?
 
-    /// HOST-WINDOW RESIZE: the live view pushes the window's current + max resizable POINT sizes here. The
-    /// current size pre-fills the popover; the max (once known) caps its fields. A zero/absent max leaves the
-    /// max un-set (uncapped) — and once known it persists (a later zero-max push never clears it).
+    /// HOST-WINDOW RESIZE: the live view pushes the window's current + max resizable POINT sizes here.
+    /// Current pre-fills the popover; max (once known) caps its fields. A zero/absent max leaves the max
+    /// uncapped — and once known it persists (a later zero-max push never clears it).
     public func noteWindowGeometry(currentW: Double, currentH: Double, maxW: Double, maxH: Double) {
         if currentW > 0, currentH > 0 { windowPointSize = CGSize(width: currentW, height: currentH) }
         if maxW > 0, maxH > 0 { windowMaxPointSize = CGSize(width: maxW, height: maxH) }
     }
 
-    /// The host-announced stream CADENCE (frames/sec) for this video pane, pushed by the live
-    /// ``VideoWindowView`` whenever the host's FPS governor announces a new cadence (the initial cadence and
-    /// every change). `nil` until the first cadence lands. The sidebar's Connection section reads it to show
-    /// a per-pane "FPS" row (terminal panes have no fps, so the row is hidden there). It is the host's
-    /// negotiated encode rate — not a client-measured present throughput.
+    /// The host-announced stream CADENCE (frames/sec), pushed by ``VideoWindowView`` on the initial cadence
+    /// and every FPS-governor change. `nil` until the first lands. The sidebar's Connection section shows it
+    /// as a per-pane "FPS" row (hidden for terminal panes). It is the host's negotiated encode rate — NOT a
+    /// client-measured present throughput.
     public private(set) var streamFps: Int?
 
-    /// Records the host-announced stream cadence (frames/sec). A non-positive value is ignored so a spurious
-    /// zero never blanks the row — the last good reading stands. Only writes the observable on a real change.
+    /// Records the host-announced cadence. A non-positive value is ignored (a spurious zero never blanks the
+    /// row — the last good reading stands). Only writes the observable on a real change.
     public func noteStreamFps(_ fps: Int) {
         guard fps > 0, streamFps != fps else { return }
         streamFps = fps
     }
 
-    /// CONNECTION STATS (2026-07-04): the client-measured video PAYLOAD bitrate (kilobits/sec), pushed
-    /// ~1 Hz by ``VideoWindowView``. Unlike ``streamFps`` a ZERO is a real reading (idle-skip = nothing
-    /// flows — the instrument shows the stream breathing), so it is kept; only a negative (nonsense)
-    /// value is dropped. `nil` until the first report lands.
+    /// CONNECTION STATS (2026-07-04): client-measured video PAYLOAD bitrate (kilobits/sec), pushed ~1 Hz by
+    /// ``VideoWindowView``. Unlike ``streamFps`` a ZERO is a real reading (idle-skip = nothing flows), so it
+    /// is kept; only a negative (nonsense) value is dropped. `nil` until the first report lands.
     public private(set) var streamKbps: Int?
 
     /// Records one ~1 Hz bitrate reading. Only writes the observable on a real change.
@@ -107,16 +99,14 @@ public final class RemoteWindowModel {
         streamKbps = kbps
     }
 
-    /// STALL SCRIM (2026-07-03, the reconnect-wedge residual): whether the stream is currently STALLED —
-    /// the host went silent (no frame AND no 1 s host heartbeat) past the stall threshold, so the pane
-    /// overlays a "Reconnecting…" scrim over the frozen last frame instead of looking healthy-but-dead.
-    /// Pushed by the live ``VideoWindowView`` on every flip (sticky through the client's self-heal rebuild:
-    /// it clears only when traffic actually resumes). Defaults `false`.
+    /// STALL SCRIM (2026-07-03, reconnect-wedge residual): whether the stream is STALLED — the host went
+    /// silent (no frame AND no 1 s host heartbeat) past the stall threshold, so the pane overlays a
+    /// "Reconnecting…" scrim over the frozen last frame. Pushed by ``VideoWindowView`` on every flip (sticky
+    /// through the client's self-heal rebuild — clears only when traffic actually resumes). Defaults `false`.
     public private(set) var isStreamStalled = false
 
     /// When the current stall was detected (`nil` while live) — drives the scrim's frame-age caption
-    /// ("RECONNECTING · 12S"), honest information about how old the frozen frame is instead of a bare
-    /// spinner. Set/cleared together with ``isStreamStalled``.
+    /// ("RECONNECTING · 12S"). Set/cleared together with ``isStreamStalled``.
     public private(set) var streamStalledAt: Date?
 
     /// Records a stall flip from the live view. Only writes the observable on a real change.
@@ -127,18 +117,17 @@ public final class RemoteWindowModel {
     }
 
     /// Request an ABSOLUTE host-window POINT size from the "Resize…" popover (no-op when no sink is wired —
-    /// the pane is not streaming or is read-only). The host clamps to the window's achievable min/max and
-    /// re-anchors the window at its display origin so an up-to-display-max size takes.
+    /// not streaming or read-only). The host clamps to the window's achievable min/max and re-anchors at its
+    /// display origin so an up-to-display-max size takes.
     public func resizeWindow(toWidth width: Double, height: Double) {
         resizeInjector?(width, height)
     }
 
     /// VIEWPORT CONTROLS (client-side zoom + pan-lock): the live ``VideoWindowView`` publishes this once its
-    /// session exists (and clears it, `nil`, on teardown). The pane's bottom CONTROL bar drives it to zoom the
-    /// actual-size video sublayer in/out and to freeze the edge-hover auto-pan. These are pure CLIENT
-    /// compositor ops (they never touch the host), so — UNLIKE ``resizeInjector`` — the sink is NOT withheld
-    /// while the pane is read-only. The argument is a raw command byte (``ViewportCommand``) — a `UInt8` keeps
-    /// the app-target ``VideoWindowView`` decoupled from this module, exactly like ``resizeInjector``'s phase.
+    /// session exists (cleared `nil` on teardown). The bottom control bar zooms the actual-size video sublayer
+    /// and freezes the edge-hover auto-pan. These are pure CLIENT compositor ops (never touch the host), so —
+    /// UNLIKE ``resizeInjector`` — the sink is NOT withheld while read-only. The argument is a raw command byte
+    /// (``ViewportCommand``); the `UInt8` keeps the app-target ``VideoWindowView`` decoupled from this module.
     public var viewportInjector: ((_ command: UInt8) -> Void)?
 
     /// Whether the footer viewport controls (zoom / lock) are live: streaming AND a viewport sink is wired.
@@ -156,12 +145,12 @@ public final class RemoteWindowModel {
     /// Drive one client-viewport ``ViewportCommand`` through the live ``viewportInjector`` (no-op when no sink).
     public func sendViewport(_ command: ViewportCommand) { viewportInjector?(command.rawValue) }
 
-    /// RELEASE STUCK INPUT (C5, the manual escape hatch): the live ``VideoWindowView`` publishes this
-    /// zero-arg closure once its session exists (via ``RemotePaneContext/onInputReleaseReady``; cleared
-    /// `nil` on teardown, and WITHHELD by the seam while the pane is read-only — it sends host input).
-    /// Firing it synthesizes a key-UP for every held modifier + a mouse-UP for every button through the
-    /// existing synthetic-release send paths, clearing a modifier/button the host was left holding
-    /// despite the automatic redundancy+dedup (e.g. every release datagram of a burst lost).
+    /// RELEASE STUCK INPUT (C5, the manual escape hatch): a zero-arg closure ``VideoWindowView`` publishes
+    /// once its session exists (via ``RemotePaneContext/onInputReleaseReady``; cleared `nil` on teardown,
+    /// WITHHELD by the seam while read-only — it sends host input). Firing it synthesizes a key-UP for every
+    /// held modifier + a mouse-UP for every button through the existing synthetic-release paths, clearing a
+    /// modifier/button the host was left holding despite the automatic redundancy+dedup (e.g. every release
+    /// datagram of a burst lost).
     public var inputReleaseInjector: (() -> Void)?
 
     /// Whether the palette's "Release Stuck Input" can act right now: streaming AND a live release sink
@@ -185,10 +174,10 @@ public final class RemoteWindowModel {
     /// feel instant for a password. Injectable for deterministic tests (`.zero`).
     private let pasteInterval: Duration
 
-    /// Transient "typed N, skipped M" result of the last paste-as-keystrokes — set only when some
-    /// characters had NO US-QWERTY mapping (accents / emoji / non-Latin) and were dropped, so the user
-    /// learns the paste was incomplete instead of silently losing them. Auto-clears after
-    /// ``pasteFeedbackDuration``; `nil` when the last paste mapped cleanly. The payload is never stored.
+    /// Transient "typed N, skipped M" result of the last paste — set only when some characters had NO
+    /// US-QWERTY mapping (accents / emoji / non-Latin) and were dropped, so the user learns the paste was
+    /// incomplete. Auto-clears after ``pasteFeedbackDuration``; `nil` when the last paste mapped cleanly. The
+    /// payload is never stored.
     public struct PasteFeedback: Sendable, Equatable {
         public var typed: Int
         public var skipped: Int
@@ -224,10 +213,10 @@ public final class RemoteWindowModel {
         pasteTask = Task { @MainActor [weak self] in
             for stroke in strokes {
                 if Task.isCancelled { return }
-                // READ-ONLY GATE (E21 WI-3): re-read the LIVE sink each iteration rather than a value
-                // captured at spawn. If the seam clears `keyInjector` mid-paste (the pane was switched to
-                // read-only), the remaining strokes are withheld — keystrokes stop reaching the host
-                // (incl. a secure field) the instant the lock lands, not at the end of the paste.
+                // READ-ONLY GATE (E21 WI-3): re-read the LIVE sink each iteration, not a value captured at
+                // spawn. If the seam clears `keyInjector` mid-paste (pane switched to read-only), the remaining
+                // strokes are withheld — keystrokes stop reaching the host (incl. a secure field) the instant
+                // the lock lands, not at the end of the paste.
                 guard let injector = self?.keyInjector else { return }
                 injector(stroke.keyCode, true, stroke.shift)
                 injector(stroke.keyCode, false, stroke.shift)
@@ -238,8 +227,7 @@ public final class RemoteWindowModel {
     }
 
     /// Records the transient paste feedback when characters were dropped, and schedules its auto-clear.
-    /// A CLEAN paste (every character mapped) clears any STALE banner from a prior skipped paste rather
-    /// than leaving it up to time out — a successful paste should not keep showing the old warning.
+    /// A CLEAN paste clears any STALE banner from a prior skipped paste rather than letting it time out.
     private func notePasteFeedback(typed: Int, skipped: Int) {
         guard skipped > 0 else { dismissPasteFeedback()
             return
@@ -318,9 +306,9 @@ public final class RemoteWindowModel {
     }
 
     /// The message shown inside the discovered-window list when the active filter excludes every window.
-    /// The list renders only when discovery found ≥1 window (and an empty filter matches all), so this is
-    /// always a filter-exclusion case — name the filter AND point at the fix (clearing it reveals the
-    /// `totalCount` discovered windows), rather than the dead-end "no windows match". Pure for tests.
+    /// The list renders only when discovery found ≥1 window (empty filter matches all), so this is always a
+    /// filter-exclusion case — name the filter AND point at the fix (clearing it reveals `totalCount`
+    /// windows), not the dead-end "no windows match". Pure for tests.
     public static func windowFilterEmptyMessage(filter: String, totalCount: Int) -> String {
         let trimmed = filter.trimmingCharacters(in: .whitespaces)
         let windowWord = totalCount == 1 ? "window" : "windows"
@@ -362,16 +350,16 @@ public final class RemoteWindowModel {
         ))
     }
 
-    /// The user picked `window` from the live picker list and wants it live. Opens optimistically (so the
-    /// surface mounts instantly on the common case), THEN revalidates the binding against a FRESH host query.
+    /// The user picked `window` and wants it live. Opens optimistically (surface mounts instantly on the
+    /// common case), THEN revalidates the binding against a FRESH host query.
     ///
     /// WHY not a bare `pick`+`open`: the picker list is fetched on appear and only refreshed manually, so a
-    /// window can close on the host between the fetch and the tap. The host then rejects the dead CGWindowID
-    /// SILENTLY (`helloAck(accepted:false)` → zero client effects, or the mux drops the hello outright) — the
-    /// pane streams a permanent black surface with NO error and no way back. Revalidation re-queries the live
-    /// list and, if the window is gone, closes back to the picker with a ``loadError`` (the re-pick affordance);
-    /// if the id was merely recycled it re-binds the same app+title. A live window is `.kept` (one extra query,
-    /// no visible change). Mirrors the restored-binding self-heal (``LivePaneSession`` runs it once on restore).
+    /// window can close on the host between fetch and tap. The host then rejects the dead CGWindowID SILENTLY
+    /// (`helloAck(accepted:false)` → zero client effects, or the mux drops the hello) — the pane streams a
+    /// permanent black surface with NO error. Revalidation re-queries the live list: if the window is gone it
+    /// closes back to the picker with a ``loadError`` (the re-pick affordance); if the id was merely recycled
+    /// it re-binds the same app+title; a live window is `.kept` (one extra query, no visible change). Mirrors
+    /// the restored-binding self-heal (``LivePaneSession`` runs it once on restore).
     public func pickAndOpen(_ window: RemoteWindowSummary) {
         pick(window)
         open()
@@ -396,12 +384,10 @@ public final class RemoteWindowModel {
         case unbound
     }
 
-    /// Validates the CURRENT (typically restored) binding against the host's live window list and
-    /// self-heals a stale CGWindowID via ``WindowRebind``. Called once per session by
-    /// `LivePaneSession.setVideoActive` AFTER the optimistic `open()` (the common no-restart case
-    /// streams instantly; a stale binding re-binds within the discovery round-trip instead of
-    /// sitting on a silent black pane forever). Best-effort: an unreachable host / missing seam
-    /// changes nothing.
+    /// Validates the CURRENT (typically restored) binding against the host's live window list and self-heals
+    /// a stale CGWindowID via ``WindowRebind``. Called once per session by `LivePaneSession.setVideoActive`
+    /// AFTER the optimistic `open()` (a stale binding re-binds within the discovery round-trip instead of
+    /// sitting on a silent black pane). Best-effort: an unreachable host / missing seam changes nothing.
     public func revalidateBinding() async -> RebindOutcome {
         guard let query = RemoteWindowDiscovery.shared, let wid = parsedWindowID else { return .skipped }
         let t = target()
@@ -427,16 +413,14 @@ public final class RemoteWindowModel {
 
     // MARK: Resize-reflow scrim signal (generic with the terminal pane)
 
-    /// TRUE from the instant this pane is resized until the host re-captures the window at the new size
-    /// and the first SHARP frame at that size renders — the video analogue of the terminal's
-    /// ``TerminalViewModel/awaitingResizeReflow``. The pane resize-scrim (``PaneContainer``) waits on it
-    /// so the calm overlay BRIDGES the gap during which the Metal view shows the last frame STRETCHED /
-    /// upscaled (blurry) before the re-captured pixels arrive — instead of clearing on a fixed geometry
-    /// settle timer that uncovers the blur early. The app-target ``VideoWindowView`` drives it:
-    /// ``noteResized()`` on a layout-size change (which prompts the 1:1 host re-capture) and
-    /// ``noteRendered()`` on the first frame at the new native size. A safety timeout + ``close()`` clear
-    /// it so it can never stick. (The live-video pane mount is deferred — see ``PaneContainer`` — so this
-    /// seam is exercised by tests today and goes live the moment the video pane is wired.)
+    /// TRUE from the instant this pane is resized until the host re-captures at the new size and the first
+    /// SHARP frame renders — the video analogue of ``TerminalViewModel/awaitingResizeReflow``. The pane
+    /// resize-scrim (``PaneContainer``) waits on it so the overlay BRIDGES the gap during which the Metal
+    /// view shows the last frame STRETCHED/upscaled (blurry) before re-captured pixels arrive — instead of
+    /// clearing on a fixed settle timer that uncovers the blur early. ``VideoWindowView`` drives it:
+    /// ``noteResized()`` on a layout-size change (prompts the 1:1 host re-capture), ``noteRendered()`` on the
+    /// first frame at the new native size. A safety timeout + ``close()`` clear it so it can never stick.
+    /// (The live-video pane mount is deferred — see ``PaneContainer`` — so this seam is test-exercised today.)
     public private(set) var awaitingResizeReflow = false
 
     /// Belt-and-braces ceiling on ``awaitingResizeReflow`` (mirrors the terminal model): clears the scrim

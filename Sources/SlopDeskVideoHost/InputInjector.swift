@@ -54,27 +54,24 @@ public final class InputInjector: @unchecked Sendable {
     /// (so the self-inject filter still recognises them). Confined to `scrollQueue`.
     private var lastScrollTag: UInt32 = 0
 
-    /// Serial background queue for the window-raise AX chain. The chain is ~6–10 SYNCHRONOUS
-    /// cross-process AX IPC calls (each capped at the 0.08s messaging timeout) plus an
-    /// O(app-windows) match loop — MEASURED at 1–7s against a BACKGROUNDED target on the host (the
-    /// captured app is never frontmost while the remote user drives it from the client, so the
-    /// `frontmost == target` short-circuit never fires and every raise runs the full chain). Running
-    /// that on the MAIN ACTOR starved the cursor-SHAPE refresh — `NSCursor.currentSystem` is
-    /// main-only — for those whole seconds → the "cursor shape delay khi refocus" (HW-measured
-    /// `shape-refresh main-hop waited 7380ms`). The raise is BEST-EFFORT (posted CGEvents deliver
-    /// clicks regardless — proven on-device), and AX client APIs are thread-safe, so confining the
-    /// chain to this queue keeps the main actor free for the cursor stream at no input-path cost.
+    /// Serial background queue for the window-raise AX chain: ~6–10 SYNCHRONOUS cross-process AX
+    /// IPC calls (each capped at the 0.08s messaging timeout) + an O(app-windows) match loop —
+    /// MEASURED 1–7s against a BACKGROUNDED target (the captured app is never frontmost while the
+    /// client drives it, so the `frontmost == target` short-circuit never fires). On the MAIN ACTOR
+    /// that starved the cursor-SHAPE refresh (`NSCursor.currentSystem` is main-only) for whole
+    /// seconds → the refocus cursor-shape delay (HW-measured `shape-refresh main-hop waited 7380ms`).
+    /// The raise is BEST-EFFORT (posted CGEvents deliver clicks regardless) and AX client APIs are
+    /// thread-safe, so confining it here keeps the main actor free at no input-path cost.
     private let raiseQueue = DispatchQueue(label: "slopdesk.window-raise", qos: .userInitiated)
 
     /// Whether the full AX raise chain has run at least once for this session (the CLICK-latency
     /// fix). Now `raiseQueue`-confined (the raise moved off the main actor), so it needs no lock.
     private var hasRaisedTargetOnce = false
 
-    /// When the last raise actually ran (the CLICK-latency throttle). One click dispatches SEVERAL raise
-    /// requests — the proactive `focusWindow` raise, the mouseDown's `alwaysRaises`, each loss-resilience
-    /// duplicate mouseUp re-arming the latch, and the first post-up move — so without a throttle they
-    /// would pile up back-to-back on ``raiseQueue``. Coalesce them: skip a raise that lands within
-    /// ``raiseThrottle`` of the previous one. Best-effort, so coalescing is harmless. `raiseQueue`-confined.
+    /// When the last raise actually ran (the CLICK-latency throttle). One click fires SEVERAL raise
+    /// requests (proactive focus, the mouseDown's `alwaysRaises`, each loss-resilient duplicate mouseUp,
+    /// the first post-up move); without a throttle they pile up on ``raiseQueue``. Coalesce: skip a raise
+    /// within ``raiseThrottle`` of the previous. Best-effort, so coalescing is harmless. `raiseQueue`-confined.
     private var lastRaiseAt: Date?
     private static let raiseThrottle: TimeInterval = 0.5
 
@@ -94,9 +91,8 @@ public final class InputInjector: @unchecked Sendable {
     private static let inputTrace = ProcessInfo.processInfo.environment["SLOPDESK_INPUT_TRACE"] != nil
     /// Scroll gain multiplier (`SLOPDESK_SCROLL_GAIN`, default 1.0 = byte-identical pass-through).
     /// The client forwards macOS's already-accelerated trackpad deltas 1:1 and the coalescer never
-    /// merges or drops a scroll, so distance parity with a local gesture holds at 1.0 — this knob
-    /// exists for the "remote scroll should travel further per flick" feel A/B (Parsec-style input
-    /// boost). Clamped to a sane band so a typo can't make scroll unusable.
+    /// merges/drops a scroll, so distance parity with a local gesture holds at 1.0; this knob is only
+    /// for the "travel further per flick" feel A/B (Parsec-style boost). Clamped so a typo can't break scroll.
     private static let scrollGain: Double = {
         guard let s = ProcessInfo.processInfo.environment["SLOPDESK_SCROLL_GAIN"],
               let v = Double(s), v.isFinite, v >= 0.1, v <= 10 else { return 1.0 }
@@ -114,12 +110,12 @@ public final class InputInjector: @unchecked Sendable {
 
     /// SCROLL RESAMPLE output rate (`SLOPDESK_SCROLL_RESAMPLE_HZ`, default **0 = OFF**). HW-measured
     /// (2026-06-19): Chromium/Electron renders INJECTED smooth-scroll at a rate that climbs with the
-    /// injection event rate, only hitting the display's 60 fps near ~250 Hz (4× vsync); the wire
-    /// delivers scroll at the client trackpad rate (~60–120 Hz, burstier under jitter), so a captured
-    /// VS Code scroll renders ~20–35 fps ("giật"). When > 0, the bursty wire scroll is resampled
+    /// injection rate, only hitting the display's 60 fps near ~250 Hz (4× vsync); the wire delivers
+    /// scroll at the client trackpad rate (~60–120 Hz, burstier under jitter), so a captured VS Code
+    /// scroll renders ~20–35 fps ("giật"). When > 0, the bursty wire scroll is resampled
     /// (``ScrollResampler``) to a STEADY `Hz` stream via a timer, driving the source app's native
-    /// 60 fps smooth-scroll — fixing the stutter at the source instead of client-side reprojection.
-    /// `0` keeps the legacy direct-post path (byte-identical). Set to `250` to enable. Clamped [60, 1000].
+    /// 60 fps smooth-scroll — fixing it at the source, not client-side reprojection. `0` keeps the
+    /// legacy direct-post path (byte-identical). Set to `250` to enable. Clamped [60, 1000].
     private static let scrollResampleHz: Int = {
         // W12: resolve through `EnvConfig` (ProcessInfo env → settings overlay → nil) so a GUI setting
         // can drive it; an EMPTY overlay is byte-identical to the raw read. The parse + 0-default +
@@ -135,20 +131,18 @@ public final class InputInjector: @unchecked Sendable {
         self.windowBoundsCG = windowBoundsCG
         eventSource = CGEventSource(stateID: .hidSystemState)
         if let eventSource {
-            // Default local-events suppression interval is 0.25s: after a posted (or warped)
-            // event, subsequent synthetic events landing inside that window can be eaten —
-            // exactly why a click right after a warp-move sometimes "didn't take". Zero it so
-            // injected events are never suppressed. (CGEventSource header; the free
-            // `CGEventSourceSetLocalEventsSuppressionInterval` is obsoleted, this property
-            // is the modern equivalent.)
+            // Default suppression interval is 0.25s: after a posted/warped event, synthetic events
+            // landing in that window can be eaten — why a click right after a warp-move sometimes
+            // "didn't take". Zero it so injected events are never suppressed. (This property is the
+            // modern equivalent of the obsoleted `CGEventSourceSetLocalEventsSuppressionInterval`.)
             eventSource.localEventsSuppressionInterval = 0
         }
     }
 
     deinit {
-        // Stop the scroll-resample pump. The timer is never suspended (it runs continuously once
-        // started), so a plain `cancel()` from any thread releases it cleanly — no suspend/resume
-        // balance to honour. Safe even if it was never started (`nil`).
+        // Stop the scroll-resample pump. The timer is never suspended (runs continuously once
+        // started), so `cancel()` from any thread releases it cleanly — no suspend/resume balance
+        // to honour. Safe even if never started (`nil`).
         scrollTimer?.cancel()
     }
 
@@ -171,10 +165,9 @@ public final class InputInjector: @unchecked Sendable {
     /// throttled on macOS 14+) with `activate()` (doc 05 §4 caveat). NONISOLATED: the AX chain
     /// now runs on ``raiseQueue`` (off the main actor), so callers no longer wrap it in a main hop.
     public func raiseTargetWindow() {
-        // OFF-MAIN: hop the whole AX chain onto ``raiseQueue`` and return IMMEDIATELY. The chain is
-        // best-effort (posted CGEvents deliver the click regardless) and AX client APIs are
-        // thread-safe, so running it here — instead of the caller's `Task { @MainActor }` — keeps the
-        // MAIN ACTOR free for the cursor-SHAPE refresh it was previously starving for whole seconds.
+        // OFF-MAIN: hop the whole AX chain onto ``raiseQueue`` and return IMMEDIATELY — running it
+        // here instead of the caller's `Task { @MainActor }` keeps the MAIN ACTOR free for the
+        // cursor-SHAPE refresh it was starving. Safe: best-effort + AX client APIs are thread-safe.
         raiseQueue.async { [weak self] in self?.performRaise() }
     }
 
@@ -201,9 +194,9 @@ public final class InputInjector: @unchecked Sendable {
                 )
         }
         guard willRaise else { return }
-        // THROTTLE redundant back-to-back raises within one click (see ``lastRaiseAt``): the first raise
-        // of a click runs; the rest (proactive focus + duplicate ups + the post-up move) return instantly,
-        // so ``raiseQueue`` is never churned by N futile AX chains per click.
+        // THROTTLE back-to-back raises within one click (see ``lastRaiseAt``): the first runs; the
+        // rest (proactive focus + duplicate ups + post-up move) return instantly, so ``raiseQueue``
+        // is never churned by N futile AX chains per click.
         if let lastRaiseAt, Date().timeIntervalSince(lastRaiseAt) < Self.raiseThrottle { return }
         lastRaiseAt = Date()
         hasRaisedTargetOnce = true
@@ -317,13 +310,11 @@ public final class InputInjector: @unchecked Sendable {
 
     private func postMouseMove(normalized: VideoPoint, tag: UInt32) {
         let pt = target(normalized)
-        // Absolute HOVER move: warp the cursor, then post `.mouseMoved` so apps reading
-        // deltas see it (doc 05 §1). A button-held drag is NEVER inferred here — the client
-        // sends an explicit `.mouseDrag` for that (see ``postMouseDrag``), so a move is
-        // always a pure hover. This is the fix for the former GAP D1: when the host inferred
-        // "is a button held?" from its own state, a lost `mouseUp` datagram left that state
-        // stuck, turning every later hover into a phantom `.leftMouseDragged` (runaway
-        // selection until the next click). Stateless = no phantom drag.
+        // Absolute HOVER move: warp the cursor, then post `.mouseMoved` so apps reading deltas see
+        // it (doc 05 §1). A button-held drag is NEVER inferred here — the client sends an explicit
+        // `.mouseDrag` (see ``postMouseDrag``), so a move is always a pure hover. Fix for GAP D1:
+        // inferring "button held?" from host state let a lost `mouseUp` strand that state, turning
+        // every later hover into a phantom `.leftMouseDragged` (runaway selection). Stateless = no phantom drag.
         warp(to: pt)
         if let event = CGEvent(
             mouseEventSource: eventSource,
@@ -335,16 +326,14 @@ public final class InputInjector: @unchecked Sendable {
         }
     }
 
-    /// Posts a drag-move: the `*MouseDragged` matching the held `button`, at `pt`. STATELESS
-    /// — the CLIENT told us a button is held (its view reported `mouseDragged`, a distinct
-    /// callback from `mouseMoved`), so we never track held state on the host. A `*MouseDragged`
-    /// is the event type macOS selection/drag engines consume between mouseDown and mouseUp; a
-    /// bare `.mouseMoved` mid-gesture is ignored and can collapse a selection — which broke
-    /// drag-select ("bôi không được"). Statelessness also makes this wire-reorder-safe: over
-    /// plain UDP a drag can arrive before its `mouseDown`; the target app just ignores a
-    /// dragged with no active session, then anchors when the down lands and extends to the
-    /// final drag — so the selection range stays correct even if early drag samples are lost
-    /// or reordered.
+    /// Posts a drag-move: the `*MouseDragged` matching the held `button`, at `pt`. STATELESS — the
+    /// CLIENT reported the button held (its view fired `mouseDragged`, distinct from `mouseMoved`), so
+    /// the host never tracks held state. macOS selection/drag engines consume `*MouseDragged` between
+    /// mouseDown/mouseUp; a bare `.mouseMoved` mid-gesture is ignored and can collapse a selection
+    /// (broke drag-select, "bôi không được"). Statelessness is also wire-reorder-safe: over UDP a
+    /// drag can arrive before its `mouseDown`; the app ignores a dragged with no active session, then
+    /// anchors on the down and extends to the final drag — so the range stays correct even if early
+    /// drag samples are lost or reordered.
     private func postMouseDrag(
         button: MouseButton,
         normalized: VideoPoint,
@@ -366,10 +355,9 @@ public final class InputInjector: @unchecked Sendable {
             mouseCursorPosition: pt,
             mouseButton: cgButton,
         ) else { return }
-        // A real drag carries the originating click's clickState (1 = drag-select, 2 =
-        // word-by-word). A freshly-created dragged event defaults to clickState 0, which some
-        // selection engines treat as "not part of a drag" → nothing selects. Match the down:
-        // SAME value on the down, the drags, and the up (`postMouseButton` sets it too).
+        // A real drag carries the originating click's clickState (1 = drag-select, 2 = word-by-word).
+        // A fresh dragged event defaults to 0, which some selection engines treat as "not a drag" →
+        // nothing selects. Match the down: SAME value on down, drags, and up (`postMouseButton` too).
         event.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, Int(clickCount))))
         event.flags = cgFlags(modifiers)
         stampAndPost(event, tag: tag)
@@ -384,9 +372,9 @@ public final class InputInjector: @unchecked Sendable {
         tag: UInt32,
     ) {
         let pt = target(normalized)
-        // Warp before posting so a tap with no preceding move still lands at `pt` and the
-        // visible cursor agrees with where the click registers. Safe now that the
-        // suppression interval is 0 and `warp` re-associates the cursor.
+        // Warp before posting so a tap with no preceding move still lands at `pt` and the visible
+        // cursor agrees with where the click registers. Safe now that suppression is 0 and `warp`
+        // re-associates the cursor.
         warp(to: pt)
         let (cgButton, downType, upType): (CGMouseButton, CGEventType, CGEventType)
         switch button {
@@ -400,10 +388,10 @@ public final class InputInjector: @unchecked Sendable {
             mouseCursorPosition: pt,
             mouseButton: cgButton,
         ) else { return }
-        // A single click needs clickState = 1 to register reliably (focus / insertion point);
-        // 2 = double, 3 = triple. It MUST be set on BOTH the down and the up edge with the
-        // SAME value — a freshly-created CGEvent does not reliably carry clickState = 1, so
-        // clicks "didn't take" or landed wrong. (`mouseEventClickState`; Apple forum 685901.)
+        // A single click needs clickState = 1 to register reliably (focus / insertion point); 2 =
+        // double, 3 = triple. MUST be set on BOTH down and up with the SAME value — a fresh CGEvent
+        // doesn't reliably carry clickState = 1, so clicks "didn't take" or landed wrong.
+        // (`mouseEventClickState`; Apple forum 685901.)
         event.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, Int(clickCount))))
         event.flags = cgFlags(modifiers)
         stampAndPost(event, tag: tag)
@@ -440,8 +428,8 @@ public final class InputInjector: @unchecked Sendable {
                     continuous: m.continuous, tag: tag,
                 )
             }
-            // Emit the FIRST resampled chunk on THIS hop (no full-tick wait), so a fresh scroll moves
-            // pixels immediately — P1 zero-latency; the timer then maintains the steady output rate.
+            // Emit the FIRST resampled chunk on THIS hop (no full-tick wait) so a fresh scroll moves
+            // pixels immediately (P1 zero-latency); the timer then maintains the steady output rate.
             if let sub = scrollResampler.drain() {
                 postScrollEvent(
                     dx: sub.dx, dy: sub.dy, scrollPhase: sub.scrollPhase, momentumPhase: sub.momentumPhase,
@@ -481,17 +469,15 @@ public final class InputInjector: @unchecked Sendable {
         continuous: Bool,
         tag: UInt32,
     ) {
-        // dx/dy arrive off the (untrusted) wire. `Int32(Double)` is the TRAPPING
-        // initializer — it fatal-errors on NaN/±inf or any value outside Int32's range
-        // (e.g. a hostile `1e300`), so a single crafted scroll datagram could crash the
-        // whole host process. `SlopDeskVideoProtocol` already rejects non-finite deltas at
-        // decode; this clamp is the defence-in-depth backstop for a finite-but-huge value,
-        // and it can never trap.
+        // dx/dy arrive off the (untrusted) wire. `Int32(Double)` TRAPS on NaN/±inf or out-of-range
+        // (e.g. a hostile `1e300`), so a crafted scroll datagram could crash the host.
+        // `SlopDeskVideoProtocol` already rejects non-finite deltas at decode; this clamp is the
+        // defence-in-depth backstop for a finite-but-huge value, and it can never trap.
         let phased = Self.scrollPhaseEnabled
-        // A precise/continuous trackpad gesture must NOT be re-scaled: the OS derives the inertial
-        // coast velocity from the Began/Changed delta cadence, so applying scrollGain would desync
-        // the fling. Gain is only meaningful for legacy discrete-wheel events. Keep it 1:1 whenever
-        // we are replaying a real gesture (phase forwarding on AND the gesture is continuous).
+        // A precise/continuous trackpad gesture must NOT be re-scaled: the OS derives inertial coast
+        // velocity from the Began/Changed delta cadence, so scrollGain would desync the fling. Gain
+        // only means anything for legacy discrete-wheel events. Keep it 1:1 whenever replaying a real
+        // gesture (phase forwarding on AND continuous).
         let gain = (phased && continuous) ? 1.0 : Self.scrollGain
         guard let event = CGEvent(
             scrollWheelEvent2Source: eventSource,
@@ -503,9 +489,9 @@ public final class InputInjector: @unchecked Sendable {
         ) else { return }
         if phased {
             // Replay the forwarded gesture. `IsContinuous` follows the precise flag (1 for a trackpad
-            // gesture incl. its momentum tail, 0 for a genuine wheel notch). The two phase fields carry
-            // the CoreGraphics integer codes verbatim and are mutually exclusive (client guarantees at
-            // most one non-zero), so Chromium/AppKit drive native 1:1 inertial + rubber-band scrolling.
+            // gesture incl. momentum tail, 0 for a genuine wheel notch). The two phase fields carry the
+            // CoreGraphics integer codes verbatim and are mutually exclusive (client guarantees at most
+            // one non-zero), so Chromium/AppKit drive native 1:1 inertial + rubber-band scrolling.
             event.setIntegerValueField(.scrollWheelEventIsContinuous, value: continuous ? 1 : 0)
             if scrollPhase != 0 {
                 event.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(scrollPhase))
@@ -520,10 +506,9 @@ public final class InputInjector: @unchecked Sendable {
         stampAndPost(event, tag: tag)
     }
 
-    /// Clamps a wire-supplied scroll delta into `Int32` without ever trapping. `NaN` becomes
-    /// 0; ±infinity and any out-of-range magnitude saturate to `Int32.min`/`Int32.max`. (The
-    /// NaN check MUST come first — every comparison with NaN is false, so it would otherwise
-    /// fall through to the trapping `Int32(_:)`.)
+    /// Clamps a wire-supplied scroll delta into `Int32` without ever trapping. `NaN` → 0; ±inf and
+    /// out-of-range magnitudes saturate to `Int32.min`/`Int32.max`. (The NaN check MUST come first —
+    /// every NaN comparison is false, so it would otherwise fall through to the trapping `Int32(_:)`.)
     static func clampToInt32(_ value: Double) -> Int32 {
         if value.isNaN { return 0 }
         if value >= Double(Int32.max) { return Int32.max }
@@ -531,9 +516,9 @@ public final class InputInjector: @unchecked Sendable {
         return Int32(value.rounded())
     }
 
-    /// Applies the scroll gain BEFORE the trap-free clamp, so a hostile wire delta times a large
-    /// gain still saturates instead of trapping (the product stays a plain Double: `inf × gain`
-    /// and overflow both land in the clamp's saturating branches).
+    /// Applies gain BEFORE the trap-free clamp, so a hostile wire delta × a large gain still
+    /// saturates instead of trapping (`inf × gain` and overflow both land in the clamp's
+    /// saturating branches).
     static func scaledScrollDelta(_ value: Double, gain: Double) -> Int32 {
         clampToInt32(value * gain)
     }
@@ -541,11 +526,10 @@ public final class InputInjector: @unchecked Sendable {
     private func postKey(keyCode: UInt16, down: Bool, modifiers: InputModifiers, tag _: UInt32) {
         // A posted `CGEvent` key reaches even a SecurityAgent/coreauthd secure field: HW-proven
         // (2026-06-15, Tahoe 26.5.1) a `CGEvent(.cghidEventTap)` keystroke fills the SecurityAgent
-        // password field (dots) and authenticates while `IsSecureEventInputEnabled()` is true —
-        // Secure Event Input blocks event-tap interception, NOT trusted HID-tap injection. (This is
-        // why the former DriverKit virtual-HID keyboard backend was removed: CGEvent already reaches
-        // every dialog the host can surface; virtual-HID would only matter at the login window /
-        // lock screen, which the host can't capture or inject into anyway.)
+        // password field and authenticates while `IsSecureEventInputEnabled()` is true — Secure Event
+        // Input blocks event-tap interception, NOT trusted HID-tap injection. (Why the former DriverKit
+        // virtual-HID keyboard was removed: CGEvent already reaches every dialog the host can surface;
+        // virtual-HID would only matter at the login/lock screen, which the host can't capture anyway.)
         guard let event = CGEvent(keyboardEventSource: eventSource, virtualKey: CGKeyCode(keyCode), keyDown: down)
         else { return }
         event.flags = cgFlags(modifiers)
@@ -554,51 +538,44 @@ public final class InputInjector: @unchecked Sendable {
 
     /// Unicode text injection — layout-independent, the robust text path (doc 05 §3).
     ///
-    /// The unicode string is attached to the **key-DOWN event ONLY**. Attaching it to
-    /// BOTH the down and the up double-inserts the text (the up-event would emit the
-    /// string a second time), so the key-up is posted bare — it just completes the
-    /// keystroke so the target app sees a balanced down/up pair (CGEvent contract).
+    /// The unicode string attaches to the **key-DOWN event ONLY**. Attaching it to BOTH edges
+    /// double-inserts the text, so the key-up is posted bare — it just completes the keystroke so
+    /// the app sees a balanced down/up pair (CGEvent contract).
     private func postText(_ string: String, tag _: UInt32) {
         let units = Array(string.utf16)
         guard let down = CGEvent(keyboardEventSource: eventSource, virtualKey: 0, keyDown: true) else { return }
         units.withUnsafeBufferPointer { buffer in
             down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress)
         }
-        // Force a MODIFIER-FREE insertion. A plain-text keystroke must never inherit a
-        // latched/residual modifier from the shared `.hidSystemState` source — e.g. a ⌘
-        // left stuck after ⌘+Delete would turn this insertion into a ⌘-modified keystroke
-        // (Return → newline-with-⌘, etc.). `postKey` already sets `flags` explicitly; only
-        // `postText` left them at the source default, so clear them here on both edges.
+        // Force a MODIFIER-FREE insertion. A plain-text keystroke must never inherit a latched/residual
+        // modifier from the shared `.hidSystemState` source — e.g. a ⌘ stuck after ⌘+Delete would make
+        // this a ⌘-modified keystroke. `postKey` sets `flags` explicitly; only `postText` left them at
+        // the source default, so clear them here on both edges.
         down.flags = []
         postKeyboardEvent(down)
-        // Bare key-up: NO keyboardSetUnicodeString (attaching it here would insert the
-        // text a second time). Also modifier-free, matching the down.
+        // Bare key-up: NO keyboardSetUnicodeString (would double-insert). Modifier-free, matching the down.
         if let up = CGEvent(keyboardEventSource: eventSource, virtualKey: 0, keyDown: false) {
             up.flags = []
             postKeyboardEvent(up)
         }
     }
 
-    /// Posts a KEYBOARD event at the HID tap, deliberately WITHOUT stamping
-    /// `eventSourceUserData`. This is the one place that diverges from ``stampAndPost``.
+    /// Posts a KEYBOARD event at the HID tap, deliberately WITHOUT stamping `eventSourceUserData` —
+    /// the one place that diverges from ``stampAndPost``.
     ///
-    /// A host Vietnamese IME (the user runs **xkey** — xmannv/xkey) installs TWO event
-    /// taps: a HID tap (`.cghidEventTap`, head-insert) and a session tap
-    /// (`.cgSessionEventTap`, tail-append) that exists specifically to catch
-    /// remote-desktop-injected keystrokes. To avoid composing the same keystroke twice it
-    /// DEDUPES across the two taps using `eventSourceUserData`: the HID tap marks an event
-    /// it has handled so the session tap can skip it. A keystroke we post to the HID tap
-    /// carrying our own NONZERO self-inject `tag` defeats that dedup — xkey's session tap
-    /// re-processes it → DOUBLE Telex composition → garbage (empirically verified with
-    /// `scripts/inject-telex-probe.swift`: injecting "ddaa" WITH a nonzero userData yields
-    /// "daa"; with userData cleared it yields the correct "đâ"). Posting `userData = 0`
-    /// restores the dedup and the IME composes exactly once.
+    /// A host Vietnamese IME (the user runs **xkey** — xmannv/xkey) installs TWO taps: a HID tap
+    /// (`.cghidEventTap`, head-insert) and a session tap (`.cgSessionEventTap`, tail-append) that
+    /// exists to catch remote-desktop-injected keystrokes. It DEDUPES across them via
+    /// `eventSourceUserData`: the HID tap marks an event handled so the session tap skips it. A
+    /// keystroke posted to the HID tap carrying our NONZERO self-inject `tag` defeats that dedup —
+    /// xkey's session tap re-processes it → DOUBLE Telex composition → garbage (verified with
+    /// `scripts/inject-telex-probe.swift`: "ddaa" WITH nonzero userData yields "daa"; cleared, the
+    /// correct "đâ"). Posting `userData = 0` restores the dedup so the IME composes exactly once.
     ///
-    /// Keys are safe to leave untagged: the self-inject filter exists only for the
-    /// `CursorSampler` / `WindowGeometryWatcher` feedback loop, which is driven by POINTER
-    /// and GEOMETRY events — a keystroke never moves the cursor or resizes the window, so it
-    /// can never feed back. Mouse/scroll events still go through ``stampAndPost`` (xkey only
-    /// taps keyboard events, so their tag is harmless to it and needed by our own watchers).
+    /// Keys are safe to leave untagged: the self-inject filter serves only the `CursorSampler` /
+    /// `WindowGeometryWatcher` feedback loop, driven by POINTER/GEOMETRY events — a keystroke never
+    /// moves the cursor or resizes the window, so it can't feed back. Mouse/scroll still go through
+    /// ``stampAndPost`` (xkey only taps keyboard, so their tag is harmless to it and our watchers need it).
     private func postKeyboardEvent(_ event: CGEvent) {
         event.post(tap: .cghidEventTap)
     }

@@ -7,9 +7,8 @@ import SlopDeskTransport
 ///
 /// A ``PTYProcess`` bridged to the client over a channel's data + control ``MuxSubChannel`` pair,
 /// with per-channel `output` sequencing via a private ``ReplayBuffer``. MANY of these ride ONE
-/// shared ``MuxNWConnection`` — so one TCP connection-pair carries N panes, each with its own
-/// shell. The relay is implemented over the ``MessageChannel`` protocol (which ``MuxSubChannel``
-/// conforms to), honouring "per-channel PTY from one shared connection".
+/// shared ``MuxNWConnection`` — one TCP connection-pair carries N panes, each with its own shell.
+/// Implemented over the ``MessageChannel`` protocol (which ``MuxSubChannel`` conforms to).
 ///
 /// Relay shape:
 /// - OUTPUT: a no-buffer ``PTYReadLoop`` → an ordered FIFO → one sequential awaiter that assigns a
@@ -21,23 +20,22 @@ import SlopDeskTransport
 /// - EXIT: the reaper enqueues `exit(code:)` on the same FIFO so it follows the final output tail.
 ///
 /// ### Bounded output queue (always on)
-/// The DATA sub-channel's send window already SUSPENDS the output drain when a flooding channel
-/// runs out of credit — but without an upstream bound that just moves the unboundedness one hop:
-/// the `PTYReadLoop` would keep buffering the whole `yes` flood into the FIFO in memory. So the
-/// queue is BOUNDED by a ``SlopDeskProtocol/BoundedQueuePolicy`` (byte high-water mark): when
-/// enqueued-not-yet-sent bytes cross the bound, the ``PTYReadLoop`` is PAUSED (its `NSCondition`
-/// gate stops issuing `read()`, so the kernel PTY buffer fills and backpressures the shell — the
-/// real fix for the flood); it RESUMES when the drain brings the queue back under the bound.
+/// The DATA send window SUSPENDS the drain when a flooding channel runs out of credit — but without
+/// an upstream bound that just moves the unboundedness one hop: the `PTYReadLoop` would buffer the
+/// whole `yes` flood into the FIFO. So the queue is BOUNDED by a
+/// ``SlopDeskProtocol/BoundedQueuePolicy`` (byte high-water mark): when enqueued-not-yet-sent bytes
+/// cross the bound the ``PTYReadLoop`` is PAUSED (its `NSCondition` gate stops issuing `read()`, so
+/// the kernel PTY buffer fills and backpressures the shell — the real flood fix); it RESUMES when
+/// the drain brings the queue back under the bound.
 ///
 /// ### Detach / reattach (tmux-style survival, C1–C4)
-/// When the client disconnects with `SLOPDESK_DETACH_ENABLED` on, ``detach()`` is called
-/// instead of ``shutdown()``. It cancels the relay tasks and engages the ReplayBuffer's offline
-/// gate so the PTY drain pauses, but it does NOT stop or close the ``PTYReadLoop`` — `stop()` is
-/// irreversible. The shell (and the read loop, in its paused state) survive. When the client
-/// returns, ``rebindRelay(data:control:)`` replaces the stale sub-channels, KEEPS the out-FIFO
-/// (its chunks were never sequenced into the ReplayBuffer — they are the detached-window output
-/// the restarted drain must ship), clears the stateless control-out, rebuilds the wake streams,
-/// and restarts the relay tasks.
+/// On client disconnect with `SLOPDESK_DETACH_ENABLED` on, ``detach()`` runs instead of
+/// ``shutdown()``: it cancels the relay tasks and engages the ReplayBuffer's offline gate to pause
+/// the PTY drain, but does NOT stop/close the ``PTYReadLoop`` — `stop()` is irreversible. The shell
+/// (and the paused read loop) survive. On return, ``rebindRelay(data:control:)`` swaps the stale
+/// sub-channels, KEEPS the out-FIFO (its chunks were never sequenced into the ReplayBuffer — they
+/// are the detached-window output the restarted drain must ship), clears the stateless control-out,
+/// rebuilds the wake streams, and restarts the relay tasks.
 ///
 /// `@unchecked Sendable`: mutable state is touched under `taskLock` / `replayLock` / the
 /// ``PausableQueueGate``'s own lock; the PTY/channels are themselves thread-safe.
@@ -59,10 +57,10 @@ final class MuxChannelSession: @unchecked Sendable {
     private var data: MuxSubChannel
     private var control: MuxSubChannel
 
-    /// The per-session ZDOTDIR shim directory (R8 #3), if the zsh shell-integration shim was installed
-    /// for this pane. Deleted in ``shutdown()`` once the child has exited — the shell read its rc files
-    /// at exec time, so the dir is safe to remove on teardown. Without this, every opened pane leaked one
-    /// `slopdesk-zdotdir-*` dir + 4 files into the temp dir for the host's (long-lived) lifetime.
+    /// The per-session ZDOTDIR shim directory (R8 #3), if the zsh shell-integration shim was
+    /// installed for this pane. Deleted in ``shutdown()`` once the child has exited — safe because
+    /// the shell read its rc files at exec time. Without this, every opened pane leaked one
+    /// `slopdesk-zdotdir-*` dir + 4 files into temp for the host's long-lived lifetime.
     private let shimDir: URL?
 
     /// W10 — whether host-side Claude-Code agent detection (the foreground process-watch) is
@@ -115,13 +113,11 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// C3 — connect-time warm-up guard for the echo edge (guarded by `echoDetectLock`). A freshly
     /// connected PTY master can read `ECHO`-cleared for a sample or two right after attach — before the
-    /// shell's line discipline settles to echo-on — and folding that transient as a real edge would emit
-    /// a spurious `inputEcho(false)` that LATCHES the client's Secure-Input pill on a normal echo-on
-    /// prompt. So the connect/keystroke/poll path (``foldEchoSample(echoOn:)``) HONORS a no-echo edge only
-    /// AFTER it has first observed a confirmed echo-ON sample (a stable read cycle). This is the
-    /// "genuine echo→no-echo transition" the AUTO signal is meant for. The reattach path
-    /// (``reestablishEchoOnReattach(echoOn:)``) is SEPARATE — it deliberately re-asserts the current echo
-    /// truth immediately and is NOT gated by this flag.
+    /// line discipline settles to echo-on — and folding that transient as a real edge would emit a
+    /// spurious `inputEcho(false)` that LATCHES the client's Secure-Input pill on a normal prompt. So
+    /// ``foldEchoSample(echoOn:)`` HONORS a no-echo edge only AFTER first observing a confirmed echo-ON
+    /// sample. The reattach path (``reestablishEchoOnReattach(echoOn:)``) is SEPARATE — it re-asserts
+    /// the current echo truth immediately and is NOT gated by this flag.
     private var echoWarmedUp = false
 
     // MARK: - Agent-control surface state
@@ -424,11 +420,9 @@ final class MuxChannelSession: @unchecked Sendable {
             onChunk: { [weak self] chunk in
                 guard let self else { return }
                 // ONE fused non-destructive sniffer pass over the chunk (title/bell + OSC 133
-                // command status — formerly two copy-derived per-byte machines scanning every
-                // byte twice on this hot thread). It only OBSERVES; the bytes are forwarded
-                // unchanged below. Emission order is byte-faithful interleaved (the old
-                // grouped-per-sniffer order was already chunk-boundary-dependent; consumers
-                // fold each type independently).
+                // command status — one pass, not two per-byte machines scanning this hot thread
+                // twice). It only OBSERVES; the bytes are forwarded unchanged below. Emission
+                // order is byte-faithful interleaved (consumers fold each type independently).
                 let controlMsgs = sniffer.observe(chunk)
                 // Agent-control: cache the latest title from any sniffed title message so
                 // `list-panes` can return it without an extra sniffer pass. Runs on the PTY
@@ -511,15 +505,15 @@ final class MuxChannelSession: @unchecked Sendable {
         // CONTROL: resize / bye / ack on the CONTROL sub-channel.
         //
         // RESIZE backstop (defense-in-depth): a fast client drag can deliver ~100 distinct `.resize`
-        // (the client coalescer is the PRIMARY converger, but an older/replayed/slow client may not
+        // (the client coalescer is the PRIMARY converger, but an old/replayed/slow client may not
         // coalesce). Applying each `TIOCSWINSZ` immediately fires zsh's SIGWINCH handler at every
-        // INTERMEDIATE size; its incremental prompt-redraw math then desyncs against a size that keeps
+        // INTERMEDIATE size; its incremental prompt-redraw math desyncs against a size that keeps
         // changing → orphaned cursor / misaligned prompt that only a fresh prompt heals. A LOCAL
-        // terminal never hits this because the KERNEL coalesces SIGWINCH (the app reads the latest
-        // size once). So we restore that: latest-wins micro-debounce on this SERIAL loop — overwrite
-        // `pendingResize`, cancel+re-arm ONE debounce task that applies the LATEST size once after a
-        // one-frame settle. INLINE on the serial loop (no Task-per-resize → no reorder hazard); the
-        // ioctl itself (microseconds) stays inline — only the FREQUENCY of distinct applies is bounded.
+        // terminal never hits this because the KERNEL coalesces SIGWINCH. So we restore that:
+        // latest-wins micro-debounce on this SERIAL loop — overwrite `pendingResize`, cancel+re-arm
+        // ONE debounce task that applies the LATEST size once after a one-frame settle. INLINE on the
+        // serial loop (no Task-per-resize → no reorder hazard); only the FREQUENCY of distinct
+        // applies is bounded (the ioctl itself, microseconds, stays inline).
         controlTask = Task {
             do {
                 for try await message in control.inbound {
@@ -644,10 +638,10 @@ final class MuxChannelSession: @unchecked Sendable {
     private func foldEchoSample(echoOn: Bool) {
         echoDetectLock.lock()
         // C3: until a confirmed echo-ON sample has been seen on THIS connection, suppress a no-echo
-        // reading entirely (don't fold it, don't emit) — a transient startup no-echo (the PTY termios
-        // not yet settled to echo-on) must not latch the client's Secure-Input pill. The first echo-on
-        // sample warms the path up; from then on a genuine echo→no-echo transition folds normally and
-        // emits with no added latency. (Reattach has its own un-gated re-assert path.)
+        // reading entirely (don't fold, don't emit) — a transient startup no-echo (termios not yet
+        // settled to echo-on) must not latch the client's Secure-Input pill. The first echo-on sample
+        // warms the path up; thereafter a genuine echo→no-echo edge folds normally. (Reattach has its
+        // own un-gated re-assert path.)
         if !echoWarmedUp {
             guard echoOn else {
                 echoDetectLock.unlock()
@@ -773,14 +767,14 @@ final class MuxChannelSession: @unchecked Sendable {
         // C3 (revised): the out-FIFO is KEPT, not cleared. Seq assignment / ReplayBuffer retention
         // happens at DRAIN time (`takeMergedFrame` POPS a frame BEFORE `nextSeq` appends it), so no
         // FIFO byte is ever in the ReplayBuffer — the FIFO holds exactly the DETACHED-WINDOW output
-        // the read loop kept producing after detach() cancelled the drain. `replayTail` cannot replay
-        // those bytes; clearing them here dropped them permanently (a silent transcript gap) AND
-        // leaked their PausableQueueGate accounting (no matching dequeue → a ≥64 KiB detached burst
-        // left the read loop paused FOREVER — a permanently frozen pane). The restarted drain below
-        // ships them with fresh seqs (> every replayed seq, so byte order is preserved: replay tail
-        // first, then the detached-window bytes) and dequeues their gate accounting as it sends,
-        // which is what rebalances a gate-paused read loop. Only `controlOut` is cleared — control
-        // is stateless/re-derived (echo truth + block metadata are re-asserted right below).
+        // the read loop produced after detach() cancelled the drain. `replayTail` cannot replay those
+        // bytes; clearing them here dropped them permanently (silent transcript gap) AND leaked their
+        // PausableQueueGate accounting (no matching dequeue → a ≥64 KiB detached burst left the read
+        // loop paused FOREVER — a frozen pane). The restarted drain below ships them with fresh seqs
+        // (> every replayed seq → byte order preserved: replay tail first, then detached bytes) and
+        // dequeues their gate accounting as it sends, rebalancing a gate-paused read loop. Only
+        // `controlOut` is cleared — control is stateless/re-derived (echo truth + block metadata
+        // re-asserted below).
         controlOutLock.lock()
         controlOut.removeAll(keepingCapacity: false)
         controlOutLock.unlock()
@@ -930,12 +924,11 @@ final class MuxChannelSession: @unchecked Sendable {
         }
 
         // R2 (benign): agentWatchTask was NOT cancelled by detach() — it survives the detached
-        // window intentionally so the poll keeps running. However, its control wake continuation
-        // was finished by detach(), so any agent-status update emitted WHILE DETACHED is dropped
-        // (the controlWakeContinuation was nil). The new continuation rebuilt above will carry
-        // future updates; a brief stale status display until the next poll tick (~1 s) is
-        // acceptable. A cheap nudge here would require exporting sampleForeground to be called
-        // after unlock; the risk is not worth it vs. the natural 1-s poll cadence.
+        // window so the poll keeps running. But its control wake continuation was finished by
+        // detach(), so any agent-status update emitted WHILE DETACHED is dropped (nil continuation).
+        // The new continuation rebuilt above carries future updates; a brief stale status until the
+        // next poll tick (~1 s) is acceptable. A nudge here would need sampleForeground exported to
+        // run after unlock — not worth the risk vs. the natural 1-s poll cadence.
 
         taskLock.unlock()
 
@@ -1249,9 +1242,8 @@ final class MuxChannelSession: @unchecked Sendable {
         guard !bytes.isEmpty else { return }
         let masterFD = pty.masterFD
         guard masterFD >= 0 else { return }
-        // Hop off the caller's thread: `write(2)` on a blocking master fd may park if the
-        // PTY kernel buffer is full (shell not reading). Use a low-priority background queue
-        // so a stalled shell never blocks the control listener.
+        // Hop off the caller's thread: `write(2)` on a blocking master fd may park when the PTY
+        // kernel buffer is full (shell not reading), so a stalled shell must not block the listener.
         DispatchQueue.global(qos: .utility).async {
             Self.writeAll(fd: masterFD, data: bytes)
         }
@@ -1413,12 +1405,11 @@ final class MuxChannelSession: @unchecked Sendable {
     /// WB / reattach — RE-SENDS every block the tracker still holds (its metadata) as a burst of type-28
     /// `commandBlock` messages on the CONTROL channel, so a client that (re)attaches to an already-running
     /// session rebuilds its Commands/Outline navigator. Block metadata rides the control channel and is
-    /// NEVER replayed by the ReplayBuffer (only raw `.output` is sequenced), so a returning client — e.g.
-    /// the user quitting the app and reopening it onto the still-alive detached session — would otherwise
-    /// show an EMPTY navigator even though the host still holds every block. Mirrors
-    /// ``reestablishEchoOnReattach`` (echo truth is likewise carried only on the control channel and so is
-    /// re-anchored on reattach). A no-op when blocks are disabled. Output bytes are fetched on demand
-    /// (type 15 → 29); this restores the list only.
+    /// NEVER replayed by the ReplayBuffer (only raw `.output` is sequenced), so a returning client would
+    /// otherwise show an EMPTY navigator even though the host still holds every block. Mirrors
+    /// ``reestablishEchoOnReattach`` (echo truth is likewise control-only and re-anchored on reattach).
+    /// A no-op when blocks are disabled. Output bytes are fetched on demand (type 15 → 29); this restores
+    /// the list only.
     private func resendBlocksOnReattach() {
         guard blocksEnabled else { return }
         blocksLock.lock()

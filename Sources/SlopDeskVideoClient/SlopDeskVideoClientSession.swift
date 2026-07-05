@@ -32,16 +32,14 @@ import SlopDeskVideoProtocol
 public actor SlopDeskVideoClientSession {
     private let log = Logger(subsystem: "slopdesk.video.client", category: "SlopDeskVideoClientSession")
 
-    /// Opt-in stderr diagnostics (`SLOPDESK_VIDEO_DEBUG=1`) — the client counterpart to the host's,
-    /// so `scripts/check-video.sh` can see whether media datagrams arrive, frames reassemble, and
-    /// decode succeeds (OSLog `.info` is not persisted; a white client window is otherwise opaque).
-    /// No-op in production.
+    /// Opt-in stderr diagnostics (`SLOPDESK_VIDEO_DEBUG=1`), client counterpart to the host's — so
+    /// `scripts/check-video.sh` sees datagram arrival / reassembly / decode (OSLog `.info` isn't
+    /// persisted; a white client window is otherwise opaque). No-op in production.
     private static let debugStderr = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
-    /// Redundancy for the critical RELEASE edge. Over plain UDP a dropped `mouseUp` strands the
-    /// target app mid-selection; we send the up a few times back-to-back so a single loss can't.
-    /// Genuinely idempotent on the host: button-balance posts the FIRST up (the one that releases
-    /// the held button) and SUPPRESSES the duplicates, so the target app never sees a spurious
-    /// extra `*MouseUp`.
+    /// Redundancy for the critical RELEASE edge: a dropped `mouseUp` over plain UDP strands the target
+    /// app mid-selection, so we send the up back-to-back. Idempotent on the host: button-balance posts
+    /// the FIRST up (which releases the held button) and SUPPRESSES the duplicates — no spurious extra
+    /// `*MouseUp`.
     private static let redundantUpCount = 3
     private var dbgMediaCount = 0
     private var dbgDecodeCount = 0
@@ -57,13 +55,11 @@ public actor SlopDeskVideoClientSession {
         FileHandle.standardError.write(Data("SlopDesk[video.client]: \(message())\n".utf8))
     }
 
-    /// Diagnostics for the input-coordinate path (`SLOPDESK_VIDEO_DEBUG`): prints the view
-    /// point, the on-screen layer size, the aspect-fit NATIVE size, the resulting
-    /// displayed-video sub-rect, and the normalised 0..1 the host receives — so a "toạ độ
-    /// sai" / "không fill" report can be ROOT-CAUSED from the log instead of guessed
-    /// (does the video fill the pane? is the native size capture-pinned or geometry-
-    /// corrupted? does the click land where the user aimed?). Moves are sampled 1-in-30;
-    /// every button-down / drag / up is logged.
+    /// Diagnostics for the input-coordinate path (`SLOPDESK_VIDEO_DEBUG`): prints view point,
+    /// on-screen layer size, aspect-fit NATIVE size, the displayed-video sub-rect, and the
+    /// normalised 0..1 the host receives — so a "toạ độ sai" / "không fill" report is root-caused
+    /// from the log instead of guessed. Moves are sampled 1-in-30; every button-down / drag / up is
+    /// logged.
     private func dbgPointer(_ kind: String, _ viewPoint: VideoPoint) {
         guard Self.debugStderr else { return }
         dbgPointerCount += 1
@@ -86,13 +82,11 @@ public actor SlopDeskVideoClientSession {
             + "→ norm=(\(String(format: "%.3f", n.x)),\(String(format: "%.3f", n.y)))")
     }
 
-    /// GUI hand-off seams. The renderer / cursor compositor / display link are all
-    /// `@MainActor`-isolated (they touch `CAMetalLayer` / `CALayer` / a view's
-    /// display link), so the actor never holds them directly; it calls these
-    /// `@Sendable` closures. The decoded NV12 frame is submitted to the pacer the
-    /// `VideoWindowPipeline` owns (most-recent-wins), which renders it at the display
-    /// link's vsync. This keeps the orchestrator pure-actor and Sendable-clean while
-    /// the GUI objects stay main-thread-confined. `VideoWindowPipeline` provides them.
+    /// GUI hand-off seams (provided by `VideoWindowPipeline`). The renderer / cursor compositor /
+    /// display link are `@MainActor`-isolated (they touch `CAMetalLayer` / `CALayer` / a display
+    /// link), so the actor never holds them directly — it calls these `@Sendable` closures. The
+    /// decoded NV12 frame goes to the pipeline-owned pacer (most-recent-wins), rendered at the display
+    /// link's vsync. Keeps the orchestrator pure-actor + Sendable-clean, GUI objects main-confined.
     public struct GUIHooks: Sendable {
         /// Hand a freshly decoded NV12 buffer to the (pipeline-owned) frame pacer.
         public var submitDecodedFrame: @Sendable (CVImageBuffer) -> Void
@@ -106,13 +100,12 @@ public actor SlopDeskVideoClientSession {
         /// Called once at pipeline bring-up, BEFORE the first frame renders (the `helloAck` carrying
         /// the range arrives before any media). `.video` ⇒ today's coefficients, byte-identical.
         public var setColorRange: @Sendable (ColorRange) -> Void
-        /// 1:1 PANE SNAP (2026-06-11; carries POINTS as of 2026-06-16): fired when the decoded
-        /// frames' size CHANGES — the session's first decoded frame, or the first frame at a new
-        /// capture size after an in-session resize — carrying the HOST WINDOW's POINT size (the
-        /// snap target the session derives as `decoded pixels / the inferred host captureScale`,
-        /// ``StreamSizeSnap``). The view snaps its canvas pane straight to those points. `nil` ⇒
-        /// no pane to snap (a standalone window) → the session keeps the legacy connect-time
-        /// host-follow negotiation (`startDecodePipeline` kicks the resize debounce) instead.
+        /// 1:1 PANE SNAP (2026-06-11; carries POINTS as of 2026-06-16): fired when the decoded size
+        /// CHANGES (first decoded frame, or first frame at a new capture size after an in-session
+        /// resize), carrying the HOST WINDOW's POINT size (snap target = `decoded pixels / inferred
+        /// host captureScale`, ``StreamSizeSnap``). The view snaps its canvas pane to those points.
+        /// `nil` ⇒ no pane to snap (standalone window) → the session keeps the legacy connect-time
+        /// host-follow negotiation (`startDecodePipeline` kicks the resize debounce).
         public var notifyStreamNativePoints: (@Sendable (VideoSize) -> Void)?
         /// FPS GOVERNOR (2026-06-11): the host announced the stream's CONTENT cadence (fps) — at
         /// session start and on every governed step. The pipeline rebases the pacer's deadline-mode
@@ -151,13 +144,13 @@ public actor SlopDeskVideoClientSession {
         /// which alpha-masks everything OUTSIDE the rects (a popup overhanging the window floats over
         /// the canvas instead of a black bar). An EMPTY list clears the mask. `nil` ⇒ no renderer.
         public var applyContentMask: (@Sendable ([MaskRect]) -> Void)?
-        /// ACTUAL-SIZE VIEWPORT (2026-06-30, RealVNC-mobile): fired UNCONDITIONALLY whenever the decoded
-        /// size changes (first frame + every host-/grip-driven resize) carrying the HOST WINDOW's POINT
-        /// size — the SAME value ``notifyStreamNativePoints`` carries, but WITHOUT the 1:1-pane-snap
-        /// semantics (which resizes the pane). The macOS view uses it to auto-pick a zoom that renders the
-        /// remote window at its ACTUAL point size inside a FIXED pane viewport (edge-pan reaches the
-        /// overflow), so a tiled GUI pane no longer scales the whole window to fit. `nil` ⇒ no view wants
-        /// it (iOS uses manual pinch; standalone has no canvas) → byte-identical to before.
+        /// ACTUAL-SIZE VIEWPORT (2026-06-30, RealVNC-mobile): fired UNCONDITIONALLY when the decoded
+        /// size changes (first frame + every host-/grip-driven resize), carrying the HOST WINDOW's
+        /// POINT size — same value as ``notifyStreamNativePoints`` but WITHOUT the 1:1-pane-snap (which
+        /// resizes the pane). The macOS view auto-picks a zoom rendering the remote window at ACTUAL
+        /// point size inside a FIXED pane viewport (edge-pan reaches the overflow), so a tiled GUI pane
+        /// no longer scales the whole window to fit. `nil` ⇒ no view wants it (iOS pinch; standalone has
+        /// no canvas).
         public var notifyDecodedPoints: (@Sendable (VideoSize) -> Void)?
         /// HOST-WINDOW RESIZE (2026-06-30): fired once when the host reports the captured window's MAXIMUM
         /// resizable POINT size (its display bounds). The macOS view forwards it to the model so the
@@ -244,17 +237,17 @@ public actor SlopDeskVideoClientSession {
     /// DECODE-OFFQUEUE. The synchronous VT decode (~8ms/frame, ``VideoDecoder/decode``) ran ON this
     /// session actor, blocking fragment ingest (+ contending with the 120 Hz cursor / FEC) → the
     /// HW-measured ~98ms ingest-gap jitter on a clean LAN (host send was steady) = the residual
-    /// "occasional chậm". When ON, the decode runs on a dedicated SERIAL queue (in submit order → the
-    /// pacer still receives frames in order) and only the cheap, order-insensitive post-decode bookkeeping
-    /// hops back to the actor; the actor's ingest/reassembly is never blocked by decode.
+    /// "occasional chậm". When ON, decode runs on a dedicated SERIAL queue (submit order → the pacer
+    /// still receives frames in order) and only the cheap, order-insensitive post-decode bookkeeping
+    /// hops back to the actor; ingest/reassembly is never blocked by decode.
     ///
-    /// DEFAULT ON (2026-06-18 — flip, HW-confirmed smooth). It frees the session actor so input sends +
-    /// fragment ingest never queue behind the decode during dense-frame scroll / fast typing. The inline
-    /// path costs ~50–100µs LESS per single isolated frame, but that is imperceptible and the actor-free
-    /// win dominates whenever frames are dense. The only edge is during a recovery episode (post-loss):
-    /// the drop-until-anchor gate reopens one decode-round-trip late (≤1 extra dropped frame + 1
-    /// redundant IDR request, self-correcting) — negligible on a non-lossy link. `SLOPDESK_DECODE_OFFQUEUE=0`
-    /// restores the inline-on-actor path. The client analog of the host's encode-offqueue.
+    /// DEFAULT ON (2026-06-18 — HW-confirmed smooth). Frees the actor so input sends + fragment ingest
+    /// never queue behind decode during dense-frame scroll / fast typing. The inline path costs
+    /// ~50–100µs LESS per isolated frame (imperceptible; the actor-free win dominates when frames are
+    /// dense). Only edge: during a recovery episode the drop-until-anchor gate reopens one
+    /// decode-round-trip late (≤1 extra dropped frame + 1 redundant IDR, self-correcting) — negligible
+    /// on a non-lossy link. `SLOPDESK_DECODE_OFFQUEUE=0` restores the inline-on-actor path. Client
+    /// analog of the host's encode-offqueue.
     private static let decodeOffQueue = ProcessInfo.processInfo.environment["SLOPDESK_DECODE_OFFQUEUE"] != "0"
     /// Serial queue owning the off-queue VT decode (incl. its keyframe reconfigure + `invalidateSession`),
     /// so the decoder stays single-threaded. `.userInteractive` to match the latency-critical path.
@@ -1227,31 +1220,28 @@ public actor SlopDeskVideoClientSession {
         }
     }
 
-    /// Called from the decoder's frame handler with the ACTUAL decoded `CVPixelBuffer`
-    /// dimensions (pixels). Frame-gated in-session-resize adoption: when a host resize has been
-    /// acked (`pendingCaptureSize` set) and a decoded frame finally arrives AT that size, adopt
-    /// it as the aspect-fit denominator (`decodedSize`) and re-place the cursor for the new
-    /// geometry. We compare against the BUFFER dims (not the ack) so an in-flight OLD-size frame
-    /// that arrives after the ack does NOT trip the adoption early (it would briefly mis-scale).
+    /// Called from the decoder's frame handler with the ACTUAL decoded `CVPixelBuffer` dimensions
+    /// (pixels). Frame-gated in-session-resize adoption: when a host resize has been acked
+    /// (`pendingCaptureSize` set) and a decoded frame finally arrives AT that size, adopt it as the
+    /// aspect-fit denominator (`decodedSize`) and re-place the cursor. Compares against the BUFFER dims
+    /// (not the ack) so an in-flight OLD-size frame arriving after the ack does NOT trip adoption early
+    /// (it would briefly mis-scale).
     ///
-    /// `decodedSize` is in the SAME unit family the aspect-fit math uses (ratios are
-    /// scale-invariant), and the host clamps the achieved size to the wire UInt16 the ack
-    /// carries, so a per-axis rounding tolerance absorbs any capture-scale rounding between the
-    /// acked points and the decoded pixels. No-op when nothing is ever pending (no in-session
-    /// resize in flight).
+    /// `decodedSize` shares the aspect-fit unit family (ratios are scale-invariant), and the host
+    /// clamps the achieved size to the ack's wire UInt16, so a per-axis rounding tolerance absorbs
+    /// capture-scale rounding between acked points and decoded pixels. No-op when nothing is pending.
     private func noteDecoded(width: Double, height: Double) {
         // Track the magnitude baseline FIRST (every decoded frame) so the next
         // frame can tell a genuinely-new size from an in-flight old-size one.
         let decoded = VideoSize(width: width, height: height)
         let previous = lastDecodedPixelSize
         lastDecodedPixelSize = decoded
-        // 1:1 PANE SNAP: surface the host window's POINT size whenever the decoded size changes
-        // (first frame of the session, or the first frame at a new capture size). The host's
-        // captureScale is not on the wire, but it is CONSTANT and inferable from the first frame
-        // (`decoded pixels / the negotiated window points`); reuse it for every later resize.
-        // Snapping to `decoded / streamCaptureScale` (= the host window points) — NOT `decoded /
-        // the CLIENT contentsScale` — keeps the resize loop gain at 1, so a 1× no-VD capture on a
-        // 2× Retina client no longer halves the pane each cycle ("pane cứ bị co nhỏ").
+        // 1:1 PANE SNAP: surface the host window's POINT size whenever the decoded size changes (first
+        // frame, or first frame at a new capture size). The host's captureScale isn't on the wire but
+        // is CONSTANT and inferable from the first frame (`decoded pixels / negotiated window points`);
+        // reused for every later resize. Snapping to `decoded / streamCaptureScale` (= host window
+        // points) — NOT `decoded / CLIENT contentsScale` — keeps the resize loop gain at 1, so a 1×
+        // no-VD capture on a 2× Retina client no longer halves the pane each cycle ("pane cứ bị co nhỏ").
         if previous != decoded {
             // The window points for THIS decoded size: the in-flight resize ack's `pending`
             // (a resize just landed), else the session's current `decodedSize` (first frame).
@@ -1269,14 +1259,13 @@ public actor SlopDeskVideoClientSession {
             // snap coupling) so the macOS pane can auto-zoom the stream to 1:1 inside a fixed viewport.
             gui.notifyDecodedPoints?(nativePoints)
             // HOST-INITIATED RESIZE denominator refresh (the "cursor lệch khi resize" fix):
-            // `decodedSize` is the aspect-fit DENOMINATOR the pointer/cursor mapping inverts, but it is
-            // otherwise only adopted on a CLIENT-initiated resize ack (`pendingCaptureSize`, below). When
-            // the remote window is resized by ANY other means — the user dragging the window's own corner,
-            // an app-driven resize — no ack is pending, so the denominator would stay STALE at the old
-            // size while the renderer already draws the new frame, and `InputEventEncoder.normalize`
-            // letterboxes against the wrong aspect → clicks land offset (worse the more the aspect
-            // changed). Adopt the live native point size as the denominator whenever NO client resize is
-            // in flight, so input/cursor mapping always matches what is on screen.
+            // `decodedSize` (the pointer/cursor aspect-fit DENOMINATOR) is otherwise only adopted on a
+            // CLIENT-initiated resize ack (`pendingCaptureSize`, below). A resize by ANY other means
+            // (user dragging the window's corner, an app-driven resize) has no ack pending, so the
+            // denominator would stay STALE while the renderer already draws the new frame, and
+            // `InputEventEncoder.normalize` letterboxes against the wrong aspect → clicks land offset.
+            // Adopt the live native point size whenever NO client resize is in flight, so input/cursor
+            // mapping always matches the screen.
             if pendingCaptureSize == nil, nativePoints.width > 0, nativePoints.height > 0 {
                 decodedSize = nativePoints
                 reapplyCursor()
@@ -1301,18 +1290,15 @@ public actor SlopDeskVideoClientSession {
     }
 
     private func applyGeometry(_ message: WindowGeometryMessage) {
-        // ⚠️ The video-native size (the aspect-fit denominator `normalize` and the renderer
-        // share) MUST equal the ACTUAL decoded frame size. That size is the capture size
-        // negotiated in the helloAck and is FIXED for the session: the host configures the
-        // SCStream once and does NOT reconfigure it when its window resizes — the frame
-        // keeps arriving at the same dimensions (the resized window is scaled into the same
-        // buffer). The renderer aspect-fits using `CVPixelBufferGetWidth/Height` (the fixed
-        // frame), so if we re-derive `decodedSize` from a window-resize geometry message the
-        // INPUT path letterboxes against a different aspect than the RENDER path → drag/click
-        // land on the wrong pixel and the video stops matching the pane ("toạ độ sai / không
-        // fill"). So geometry NEVER touches `decodedSize`; it stays capture-pinned. (Window
-        // move/resize still drives the host-side cursor/input bounds — handled host-side in
-        // `SlopDeskVideoHostSession.onGeometry` — so absolute injection tracks the live window.)
+        // ⚠️ The video-native size (aspect-fit denominator shared by `normalize` and the renderer)
+        // MUST equal the ACTUAL decoded frame size = the helloAck capture size, FIXED for the session:
+        // the host configures the SCStream ONCE and does NOT reconfigure on window resize (the resized
+        // window is scaled into the same buffer). The renderer aspect-fits via
+        // `CVPixelBufferGetWidth/Height`, so re-deriving `decodedSize` from a window-resize geometry
+        // message would letterbox INPUT against a different aspect than RENDER → drag/click land on the
+        // wrong pixel ("toạ độ sai / không fill"). So geometry NEVER touches `decodedSize`; it stays
+        // capture-pinned. (Move/resize still drives host-side cursor/input bounds in
+        // `SlopDeskVideoHostSession.onGeometry`, so absolute injection tracks the live window.)
         let kind =
             switch message {
             case .move: "move"
@@ -1457,11 +1443,10 @@ public actor SlopDeskVideoClientSession {
 
     public func sendMouseUp(button: MouseButton, viewPoint: VideoPoint, clickCount: UInt8, modifiers: InputModifiers) {
         dbgPointer("up", viewPoint)
-        // Build the up ONCE, then send it `redundantUpCount` times (fire-and-forget UDP): the
-        // release edge is the one event whose loss is catastrophic (a stuck selection), so it
-        // gets redundancy a lost mid-drag sample never needs. Same bytes/tag each time — the
-        // host posts the FIRST and button-balance SUPPRESSES the rest (the button is already
-        // released), so duplicates never become spurious extra `*MouseUp` events.
+        // Build the up ONCE, send it `redundantUpCount` times (fire-and-forget UDP): the release edge
+        // is the one event whose loss is catastrophic (a stuck selection). Same bytes/tag each time —
+        // the host posts the FIRST and button-balance SUPPRESSES the rest (button already released), so
+        // duplicates never become spurious extra `*MouseUp` events.
         let up = inputEncoder.mouseUp(
             button: button,
             viewPoint: viewPoint,
@@ -1561,14 +1546,12 @@ public actor SlopDeskVideoClientSession {
 
     // MARK: Recovery (client → host)
 
-    /// Component 5: sends one logical recovery request as `recoveryRedundancy.copies`
-    /// BYTE-IDENTICAL datagrams — the first immediately (unchanged latency), the rest from a
-    /// short-lived (≤12 ms) Task spaced `spacing` apart to decorrelate burst loss. The payload is
-    /// encoded ONCE by the caller so every copy is byte-equal — the host
-    /// `RecoveryRequestDeduper`'s contract (and future-proof for any body layout change).
-    /// `transport.send` is sync fire-and-forget on a Sendable transport, so the Task captures
-    /// ONLY the transport (never self — it cannot delay session teardown; a send after stop()
-    /// is a logged no-op by the transport's fire-and-forget contract).
+    /// Component 5: sends one logical recovery request as `recoveryRedundancy.copies` BYTE-IDENTICAL
+    /// datagrams — the first immediately (unchanged latency), the rest from a short-lived (≤12 ms) Task
+    /// spaced `spacing` apart to decorrelate burst loss. The caller encodes the payload ONCE so every
+    /// copy is byte-equal (the host `RecoveryRequestDeduper`'s contract). `transport.send` is sync
+    /// fire-and-forget on a Sendable transport, so the Task captures ONLY the transport (never self — a
+    /// send after stop() is a logged no-op, so it can't delay session teardown).
     private func sendRecoveryRequest(_ payload: Data) {
         transport.send(payload, on: .recovery)
         let extra = Self.recoveryRedundancy.copies - 1
@@ -1666,27 +1649,23 @@ public actor SlopDeskVideoClientSession {
             "decode pipeline up — native(capture)=\(Int(captureSize.width))x\(Int(captureSize.height)) fullRange=\(fullRange); this is the FIXED aspect-fit denominator for the session",
         )
         // 1:1 PIXEL MATCH (2026-06-10 sharpness vs Parsec): the resize debounce only ran from
-        // `setLayerSize` (layout passes), and at connect those all land BEFORE mediaFlowing —
-        // so the INITIAL pane size was never negotiated and every frame paid a permanent
-        // non-integer fit-scale (measured live: native 2662x1658 → drawable 2485x1576 = 0.93×
-        // bilinear blur on all text — the "Parsec 1920x1200 nét căng mà mình thì không" gap).
-        // Kick the debounce ONCE at stream start so the host AX-resizes the captured window to
-        // the pane's point size (capture@2× == drawable px ⇒ zero resample). Guarded so a pane
-        // already matching the capture (within the debounce's own minDelta) does not trigger a
-        // pointless capture restart at connect.
+        // `setLayerSize` (layout passes), which at connect all land BEFORE mediaFlowing — so the INITIAL
+        // pane size was never negotiated and every frame paid a permanent non-integer fit-scale
+        // (measured: native 2662x1658 → drawable 2485x1576 = 0.93× bilinear blur on all text, the
+        // "Parsec 1920x1200 nét căng mà mình thì không" gap). Kick the debounce ONCE at stream start so
+        // the host AX-resizes the captured window to the pane's point size (capture@2× == drawable px ⇒
+        // zero resample). Guarded so a pane already matching capture (within minDelta) doesn't trigger a
+        // pointless capture restart.
         //
-        // 1:1 PANE SNAP (2026-06-11): this legacy host-follow negotiation runs ONLY for a
-        // standalone view (`notifyStreamNativePoints == nil`). A canvas pane registers the snap
-        // hook, and the direction inverts: the PANE adopts the stream's natural size (the host
-        // window's POINT size, fired from `noteDecoded` on the first frame), so the host window
-        // is never disturbed at connect — "pane resizes to match the virtual display", not the
-        // other way around.
-        // KEEP-ORIGINAL-SIZE (no-VD in-place capture, task #4): the connect-time host-follow negotiation
-        // AX-resizes the remote window to the pane's size for a 1:1 sharp capture — but with in-place
-        // capture the user wants the remote window to KEEP its own size (the pane just `.fit`-letterboxes
-        // it and pinch-zoom/edge-pan reach detail). Left on, it also BOUNCED the window back to the pane
-        // size right after a manual corner-drag resize, fighting the user. So it now runs ONLY when the
-        // host-follow opt-in (`windowFollowsPane`) is set; default-off keeps the window untouched.
+        // 1:1 PANE SNAP (2026-06-11): this legacy host-follow negotiation runs ONLY for a standalone
+        // view (`notifyStreamNativePoints == nil`). A canvas pane registers the snap hook and the
+        // direction inverts — the PANE adopts the stream's natural size (host window POINT size, fired
+        // from `noteDecoded` on the first frame), so the host window is never disturbed at connect.
+        // KEEP-ORIGINAL-SIZE (no-VD in-place capture, task #4): the host-follow negotiation AX-resizes
+        // the remote window to the pane's size for a sharp 1:1 capture — but with in-place capture the
+        // user wants the remote window to KEEP its own size (the pane `.fit`-letterboxes; pinch/edge-pan
+        // reach detail). Left on, it also BOUNCED the window back after a manual corner-drag, fighting
+        // the user. So it runs ONLY under the `windowFollowsPane` opt-in; default-off leaves it untouched.
         if Self.windowFollowsPane, gui.notifyStreamNativePoints == nil,
            abs(layerSize.width - captureSize.width) >= 8 || abs(layerSize.height - captureSize.height) >= 8
         {
@@ -1720,17 +1699,16 @@ public actor SlopDeskVideoClientSession {
         decoder.outputFullRange = fullRange
         self.decoder = decoder
         // LATE-JOIN ANCHOR (2026-07-05): a freshly-built decoder holds NO reference frames — until an
-        // IDR configures it, every delta is undecodable. A client that joins a LIVE stream mid-GOP (the
-        // host already shipped its first-frame IDR before this client arrived) — or joins a STATIC screen
-        // that emits no deltas at all — would otherwise sit dark until the host's periodic static
-        // re-anchor, or learn the hard way one wasted VT `awaitingKeyframe` failure per pre-anchor delta.
-        // Proactively (a) arm the drop-until-anchor gate so pre-anchor deltas are dropped BEFORE VT, and
-        // (b) ask the host for an IDR now. The host's delivery-keyed `RecoveryIDRPolicy` absorbs this as
-        // an in-flight duplicate when it JUST sent a first-frame IDR (grace window) — so the common
-        // fresh-session case is unchanged — and forces a real IDR only when this client genuinely lacks
-        // an anchor. Anchoring latency ≈ one RTT regardless of screen motion. `requestIDR()` arms the
-        // escalation clock (no loss on record ⇒ only a keyframe clears the episode — the intended
-        // hard-anchor semantics), and the gate arming is idempotent with the reactive path below.
+        // IDR configures it, every delta is undecodable. A client joining a LIVE stream mid-GOP (host
+        // already shipped its first-frame IDR) or a STATIC screen with no deltas would otherwise sit
+        // dark until the host's periodic static re-anchor, wasting one VT `awaitingKeyframe` per
+        // pre-anchor delta. Proactively (a) arm the drop-until-anchor gate so pre-anchor deltas drop
+        // BEFORE VT, and (b) ask for an IDR now. The host's delivery-keyed `RecoveryIDRPolicy` absorbs
+        // this as an in-flight duplicate when it JUST sent a first-frame IDR (grace window) — common
+        // fresh-session case unchanged — and forces a real IDR only when this client genuinely lacks an
+        // anchor. Anchoring latency ≈ one RTT regardless of motion. `requestIDR()` arms the escalation
+        // clock (no loss on record ⇒ only a keyframe clears the episode — the intended hard-anchor
+        // semantics); the gate arming is idempotent with the reactive path below.
         decodeGate.noteAwaitingKeyframe()
         requestIDR()
         reapplyCursor()
@@ -1753,21 +1731,17 @@ public actor SlopDeskVideoClientSession {
     }
 }
 
-/// Tracks the **first** outstanding LTR-refresh request so the 2·RTT IDR escalation
-/// can actually fire under sustained loss (doc 17 §3.6). Pure value type — no
-/// transport / wall-clock; the actor passes `now` in — so the escalation timing is
-/// unit-testable without a socket or `VTDecompressionSession`.
+/// Tracks the **first** outstanding LTR-refresh request so the 2·RTT IDR escalation can actually fire
+/// under sustained loss (doc 17 §3.6). Pure value type — no transport / wall-clock (the actor passes
+/// `now` in) — so escalation timing is unit-testable without a socket or `VTDecompressionSession`.
 ///
-/// The bug this fixes (BUG-H): the client detects loss once per dropped frame and, on
-/// every detection, was resetting the "when did I last ask for recovery" clock
-/// (`lastRecoveryRequestTime = now` in `requestRecovery`). Under sustained loss that
-/// clock never reached 2·RTT, so the guaranteed-recovery forced IDR never fired and
-/// the stream could starve forever on a degraded path.
+/// BUG-H: loss is detected once per dropped frame, and every detection was resetting the recovery
+/// clock (`lastRecoveryRequestTime = now` in `requestRecovery`). Under sustained loss it never reached
+/// 2·RTT, so the guaranteed-recovery forced IDR never fired and the stream could starve forever.
 ///
-/// The fix: the recovery clock is the time of the FIRST request in the current
-/// recovery episode. It is armed only when entering recovery (no request outstanding),
-/// NOT rearmed on each subsequent loss, and cleared only when a keyframe decodes and
-/// ends the episode.
+/// The fix: the clock is the time of the FIRST request in the current episode — armed only on entering
+/// recovery (no request outstanding), NOT rearmed on each later loss, cleared only when a keyframe
+/// decodes.
 public struct LTREscalationTracker: Sendable, Equatable {
     /// Host time (seconds) of the first request in the current recovery episode, or
     /// `nil` when no recovery is outstanding. Cleared by ``keyframeDecoded()`` or by
@@ -1779,13 +1753,12 @@ public struct LTREscalationTracker: Sendable, Equatable {
     /// no frameID — then ONLY a keyframe can clear it, exactly the old behaviour). Recorded by
     /// ``noteLoss(frameID:)``; lets ``frameDecoded(frameID:)`` recognise a SELF-HEALED stream.
     ///
-    /// WHY (2026-06-11 self-heal): the episode used to clear ONLY on a decoded KEYFRAME. But the
-    /// WF-8 LTR-refresh recovery frame — and every SELF-HEAL cadence refresh — is a plain P-frame
-    /// (`kf=false` on the wire, HW-proven in the ack-ref probe), so a recovery that SUCCEEDED via
-    /// refresh left the episode armed and the 2·RTT escalation fired a spurious forced IDR anyway
-    /// (a live bug: LTR recovery never actually saved the IDR). A delta that references a LOST
-    /// frame cannot decode (VT throws — measured, 9/9 in the probe's baseline arm), so a frame
-    /// NEWER than every loss of the episode decoding SUCCESSFULLY proves the chain re-anchored —
+    /// WHY (2026-06-11 self-heal): the episode used to clear ONLY on a decoded KEYFRAME. But the WF-8
+    /// LTR-refresh recovery frame — and every SELF-HEAL cadence refresh — is a plain P-frame (`kf=false`
+    /// on the wire, HW-proven in the ack-ref probe), so a recovery that SUCCEEDED via refresh left the
+    /// episode armed and the 2·RTT escalation fired a spurious IDR (LTR recovery never actually saved
+    /// the IDR). A delta referencing a LOST frame cannot decode (VT throws — measured 9/9 in the probe
+    /// baseline), so any frame NEWER than every loss decoding SUCCESSFULLY proves the chain re-anchored,
     /// keyframe or not.
     public private(set) var maxLostFrameID: UInt32?
 
@@ -1848,18 +1821,14 @@ public struct LTREscalationTracker: Sendable, Equatable {
         maxLostFrameID = nil
     }
 
-    /// Re-anchor the clock to `now` AFTER a forced-IDR escalation actually fired (F7).
-    /// Once ``shouldEscalate(now:rtt:policy:)`` returns true, every SUBSEQUENT dropped
-    /// frame in the same loss episode would otherwise keep returning true (the first
-    /// request is still ≥ 2·RTT old) and the drain loop would resend a redundant
-    /// `requestIDR` per dropped frame. Re-anchoring `firstRequestTime = now` gates the
-    /// NEXT escalation to one-per-2·RTT — a single forced IDR per escalation window
-    /// instead of a burst.
+    /// Re-anchor the clock to `now` AFTER a forced-IDR escalation actually fired (F7). Otherwise, once
+    /// ``shouldEscalate(now:rtt:policy:)`` returns true, every SUBSEQUENT dropped frame in the episode
+    /// keeps returning true (the first request is still ≥ 2·RTT old) and the drain loop resends a
+    /// redundant `requestIDR` per frame. Re-anchoring gates the NEXT escalation to one-per-2·RTT.
     ///
-    /// This is DISTINCT from ``noteRequestSent(now:)``: an ordinary recovery request must
-    /// NOT move the first-request clock (BUG-H — that is what let the 2·RTT window elapse
-    /// in the first place). Only a fired escalation re-arms it. The episode is still
-    /// cleared by ``keyframeDecoded()`` when recovery actually lands.
+    /// DISTINCT from ``noteRequestSent(now:)``: an ordinary recovery request must NOT move the
+    /// first-request clock (BUG-H — that's what let the 2·RTT window elapse). Only a fired escalation
+    /// re-arms it. The episode is still cleared by ``keyframeDecoded()`` when recovery lands.
     public mutating func noteEscalated(now: TimeInterval) {
         firstRequestTime = now
     }

@@ -1,81 +1,79 @@
 import Foundation
 
-/// Adaptive FEC (WF-4): chooses the per-frame XOR-parity group size from the
-/// host's measured loss, and signals that choice on the wire so the client splits
-/// data/parity identically. Two clearly-separated, PURE concerns (mirroring the
-/// `NetworkEstimate` / `LiveCongestionController` value-type style):
+/// Adaptive FEC (WF-4): picks the per-frame XOR-parity group size from the host's
+/// measured loss and signals it on the wire so the client splits data/parity
+/// identically. Two PURE concerns (value-type style, like `NetworkEstimate` /
+/// `LiveCongestionController`):
 ///
 ///  A. WIRE CODEC — ``groupSize(forTier:default:)`` maps a 3-bit on-wire tier index
-///     (carried in the spare bits of the fragment flags byte) to the group size BOTH
-///     ends must use. Used by the host packetizer AND the client reassembler.
+///     (in the spare bits of the fragment flags byte) to the group size BOTH ends
+///     must use. Host packetizer AND client reassembler.
 ///  B. LOSS→TIER DECISION — ``tier(forLossRate:previousTier:)`` (host only) picks the
 ///     tier from the EWMA loss with hysteresis + a one-step clamp (anti-flap).
 ///
 /// SIGNALLING INVARIANT: tier 0 means "use the endpoint's CONFIGURED default group
-/// size" (NOT a hardcoded 5). Production both ends run `XORParityFEC(5)`, so tier 0
-/// is byte-identical to today. With `SLOPDESK_ADAPTIVE_FEC` unset the host always sends
+/// size" (NOT a hardcoded 5). Prod both ends run `XORParityFEC(5)`, so tier 0 is
+/// byte-identical to today. With `SLOPDESK_ADAPTIVE_FEC` unset the host always sends
 /// tier 0, so the spare flags bits stay zero and every frame is wire-identical to the
 /// pre-WF-4 path.
 public enum AdaptiveFECPolicy {
     /// The default on-wire tier. Tier 0 routes to the endpoint's configured `fec.groupSize`
-    /// on BOTH ends (5 in prod), and its bits in the flags byte are all-zero → byte-identical
-    /// to the pre-adaptive path when the host always sends it.
+    /// on BOTH ends (5 in prod); its flags-byte bits are all-zero → byte-identical to the
+    /// pre-adaptive path when the host always sends it.
     public static let defaultTier: UInt8 = 0
 
     // MARK: Multi-loss Reed-Solomon activation (SLOPDESK_FEC_M / SLOPDESK_FEC_K)
 
-    /// The env-gated multi-loss FEC configuration: the parity-shards-per-group `m` and the
-    /// FIXED data-group size `k` the host packetizer + client reassembler both build from.
+    /// Env-gated multi-loss FEC: the parity-shards-per-group `m` and the FIXED data-group size `k`
+    /// the host packetizer + client reassembler both build from.
     ///
-    /// DEFAULT `m == 1`: the production XOR-equivalent / byte-identical wire. The whole adaptive
-    /// path (per-frame tiers, the loss→tier ladder, OFF/g10/g3/g2) is UNTOUCHED — every method below
-    /// behaves exactly as before, the golden vectors are unchanged, and a mixed fleet interoperates
-    /// (tier 0 frames decode on any host/client).
+    /// DEFAULT `m == 1`: production XOR-equivalent / byte-identical wire. The whole adaptive path
+    /// (per-frame tiers, loss→tier ladder, OFF/g10/g3/g2) is UNTOUCHED, golden vectors unchanged, and
+    /// a mixed fleet interoperates (tier 0 frames decode on any host/client).
     ///
-    /// When `SLOPDESK_FEC_M >= 2` it activates a true `[k + m, k]` Reed-Solomon code that recovers up
-    /// to `m` losses PER GROUP (which `m == 1`/XOR provably cannot). The constraint that makes this
-    /// safe: the `m >= 2` Cauchy encode matrix has EXACTLY `k` columns and the codec clamps a per-call
-    /// group size to `min(g, k)`, so for `m > 1` the per-frame group size MUST equal `k`. The host
-    /// therefore forces a FIXED `(k, m)` with `group_size == k` for EVERY frame (it sends the
-    /// today-default tier 0, whose wire mapping resolves to the endpoint's configured `fec.groupSize`,
-    /// which is `k`) instead of the dynamic per-tier adaptive group sizes — see ``wireTier(adaptiveTier:)``.
+    /// `SLOPDESK_FEC_M >= 2` activates a true `[k + m, k]` Reed-Solomon code recovering up to `m`
+    /// losses PER GROUP (which `m == 1`/XOR provably cannot). Safety constraint: the `m >= 2` Cauchy
+    /// encode matrix has EXACTLY `k` columns and the codec clamps a per-call group size to `min(g, k)`,
+    /// so for `m > 1` the per-frame group size MUST equal `k`. The host therefore forces a FIXED
+    /// `(k, m)` with `group_size == k` for EVERY frame (sending tier 0, whose wire mapping resolves to
+    /// the configured `fec.groupSize` = `k`) rather than the dynamic per-tier group sizes — see
+    /// ``wireTier(adaptiveTier:)``.
     ///
-    /// DEPLOY-TOGETHER: with `m > 1` the parity-fragment COUNT PER GROUP changes on the wire (a group
-    /// now carries `m` parity shards, not 1). The host and the client MUST read the SAME
-    /// `SLOPDESK_FEC_M` / `SLOPDESK_FEC_K` and be deployed together — a host emitting `m` parity to
-    /// a client reassembler built for a different `m` mis-maps the parity boundary and fails to repair.
-    /// Tier 0 / default `m == 1` stays the mixed-fleet interop baseline; only flip `m > 1` on a
-    /// host+client pair you control and ship as one unit.
+    /// DEPLOY-TOGETHER: with `m > 1` the parity-fragment COUNT PER GROUP changes on the wire (`m`
+    /// shards, not 1). Host and client MUST read the SAME `SLOPDESK_FEC_M` / `SLOPDESK_FEC_K` and
+    /// deploy together — a host emitting `m` parity to a reassembler built for a different `m` mis-maps
+    /// the parity boundary and fails to repair. Tier 0 / `m == 1` stays the mixed-fleet interop
+    /// baseline; only flip `m > 1` on a host+client pair you control and ship as one unit.
     public enum MultiLossFEC {
-        /// Allowed range for the parity-shard count `m` (the per-group loss-recovery budget). The
-        /// upper bound is conservative (8 parity shards is already heavy redundancy); the GF(2^8)
-        /// field bound `k + m <= 255` is enforced jointly below.
+        /// Allowed range for the parity-shard count `m` (per-group loss-recovery budget). Upper bound
+        /// 8 is conservative (already heavy redundancy); the GF(2^8) bound `k + m <= 255` is enforced
+        /// jointly below.
         public static let mRange = 1...8
         /// Allowed range for the fixed data-group size `k` (= the codec's column count when `m > 1`).
-        /// Floored at 2 (a 1-data-shard group is degenerate) and capped at 64 (well within MTU-bound
+        /// Floored at 2 (a 1-data-shard group is degenerate), capped at 64 (well within MTU-bound
         /// fragment counts), with `k + m <= 255` enforced jointly.
         public static let kRange = 2...64
-        /// The default fixed group size when multi-loss is active but `SLOPDESK_FEC_K` is unset (5 ⇒
-        /// the prod default, 20% parity at `m == 1`; `m/k` overhead at `m > 1`).
+        /// Default fixed group size when multi-loss is active but `SLOPDESK_FEC_K` is unset (5 ⇒ prod
+        /// default, 20% parity at `m == 1`; `m/k` overhead at `m > 1`).
         public static let defaultK = 5
 
-        /// The resolved parity count `m` (clamped to ``mRange``; `1` = inactive / unchanged wire),
-        /// read once from `SLOPDESK_FEC_M` at process start (env static — fixed for the lifetime, so
-        /// host and client never disagree mid-session). Resolves through ``EnvConfig`` (ProcessInfo
-        /// env → overlay) — W12 — so a GUI setting can override it; with an EMPTY overlay
-        /// ``configEnv`` is byte-identical to `ProcessInfo.processInfo.environment` for these two keys,
-        /// so this site (and the golden corpus pinning the defaults) is unchanged.
+        /// Resolved parity count `m` (clamped to ``mRange``; `1` = inactive / unchanged wire), read
+        /// once from `SLOPDESK_FEC_M` at process start (env static — fixed for the lifetime, so host
+        /// and client never disagree mid-session). Resolves through ``EnvConfig`` (ProcessInfo env →
+        /// overlay, W12) so a GUI setting can override it; an EMPTY overlay ⇒ ``configEnv`` byte-
+        /// identical to `ProcessInfo.processInfo.environment` for these two keys, so this site (and the
+        /// golden corpus pinning the defaults) is unchanged.
         public static let parityCount = resolveParityCount(env: configEnv)
         /// The resolved fixed group size `k` (clamped to ``kRange`` and to `255 - m`), read once from
         /// `SLOPDESK_FEC_K`. Only consulted when ``parityCount`` `>= 2`.
         public static let groupSize = resolveGroupSize(env: configEnv)
 
         /// The two FEC keys resolved through ``EnvConfig`` (ProcessInfo env → settings overlay), wrapped
-        /// back into the `[String: String]` shape the PURE resolvers consume — so the resolution law
-        /// stays in the unit-testable pure functions while the *source* of each key honours a GUI
-        /// override. An empty overlay ⇒ exactly the two `ProcessInfo` entries (or none), so the
-        /// resolvers behave byte-identically to the old `ProcessInfo.processInfo.environment` read.
-        /// `internal` (not `private`) so the reaches-consumer test can prove the overlay is consulted.
+        /// into the `[String: String]` shape the PURE resolvers consume — resolution law stays in the
+        /// unit-testable pure functions while each key's *source* honours a GUI override. An empty
+        /// overlay ⇒ exactly the two `ProcessInfo` entries (or none), so resolvers behave byte-
+        /// identically to the old `ProcessInfo.processInfo.environment` read. `internal` (not `private`)
+        /// so the reaches-consumer test can prove the overlay is consulted.
         static var configEnv: [String: String] {
             var env: [String: String] = [:]
             if let m = EnvConfig.string("SLOPDESK_FEC_M") { env["SLOPDESK_FEC_M"] = m }
@@ -105,10 +103,10 @@ public enum AdaptiveFECPolicy {
     }
 
     /// Builds the process's configured ``FECScheme``: the env-gated multi-loss Reed-Solomon codec when
-    /// `SLOPDESK_FEC_M >= 2` (a FIXED `[k + m, k]` with `k = SLOPDESK_FEC_K`), else the production
-    /// `m == 1` default (XOR-equivalent, byte-identical wire). The DEFAULT-ARGUMENT for the host
-    /// packetizer's and the client reassembler's `fec:` so BOTH ends resolve the SAME env at the SAME
-    /// site — there is no way to build one end multi-loss and the other single-loss within a process.
+    /// `SLOPDESK_FEC_M >= 2` (FIXED `[k + m, k]`, `k = SLOPDESK_FEC_K`), else the production `m == 1`
+    /// default (XOR-equivalent, byte-identical wire). The DEFAULT-ARGUMENT for both the host
+    /// packetizer's and client reassembler's `fec:`, so BOTH ends resolve the SAME env at the SAME
+    /// site — no way to build one end multi-loss and the other single-loss within a process.
     ///
     /// `m == 1` returns `RustReedSolomonFEC(groupSize: 5, parityCount: 1)` — bit-for-bit the legacy
     /// default `XORParityFEC()`.
@@ -121,12 +119,12 @@ public enum AdaptiveFECPolicy {
 
     // MARK: Adaptive parity-count (`m`) ladder
 
-    /// Wire FEC tiers carrying the adaptive-`m` ladder's three parity levels. Chosen from the
-    /// reserved tier slots 5/6/7, all of which ``groupSize(forTier:default:)`` maps to the
-    /// endpoint default (`= k`) — the hard `m > 1` constraint (the RS Cauchy encoder has exactly
-    /// `k` columns; the group-size tiers 2/3/4 map to `g != k` and so can NOT carry `m > 1`).
-    /// Mirror of the Rust `adaptive_fec::PARITY_TIER_*` constants; the receive `m` they resolve to
-    /// (2 / 3 / 5) lives in `adaptive_fec::parity_count` (read by the core reassembler).
+    /// Wire FEC tiers carrying the adaptive-`m` ladder's three parity levels. From reserved tier
+    /// slots 5/6/7, all of which ``groupSize(forTier:default:)`` maps to the endpoint default (`= k`)
+    /// — the hard `m > 1` constraint (the RS Cauchy encoder has exactly `k` columns; group-size tiers
+    /// 2/3/4 map to `g != k` and so can NOT carry `m > 1`). Mirror of the Rust
+    /// `adaptive_fec::PARITY_TIER_*` constants; the receive `m` they resolve to (2 / 3 / 5) lives in
+    /// `adaptive_fec::parity_count` (read by the core reassembler).
     public static let parityTierClean: UInt8 = 5 // m = 2 (least overhead, clean link)
     public static let parityTierNormal: UInt8 = 6 // m = 3 (baseline, == legacy fixed FEC_M=3)
     public static let parityTierBurst: UInt8 = 7 // m = 5 (heavy recovery on a loss burst)
@@ -134,35 +132,33 @@ public enum AdaptiveFECPolicy {
     /// Whether the adaptive parity-count (`m`) ladder is active (`SLOPDESK_ADAPTIVE_FEC_M=1`),
     /// host-side. Default OFF.
     ///
-    /// Requires a multi-loss codec (``MultiLossFEC/isActive``, `SLOPDESK_FEC_M >= 2`): the
-    /// tier→`m` table is gated on `default_m >= 2`, so on the single-parity codec it is inert.
-    /// The CLIENT needs no flag — its reassembler always honours the per-frame wire tier — but
-    /// MUST run a matched `FEC_M >= 2` so its `default_m` activates the same table. Deploy
-    /// host+client together.
+    /// Requires a multi-loss codec (``MultiLossFEC/isActive``, `SLOPDESK_FEC_M >= 2`): the tier→`m`
+    /// table is gated on `default_m >= 2`, so on the single-parity codec it is inert. The CLIENT needs
+    /// no flag — its reassembler always honours the per-frame wire tier — but MUST run a matched
+    /// `FEC_M >= 2` so its `default_m` activates the same table. Deploy host+client together.
     public static let adaptiveMEnabled = adaptiveMFromEnv(ProcessInfo.processInfo.environment)
 
-    /// Pure env resolution for the adaptive-`m` gate (testable without process state): the flag is
-    /// set AND the env resolves a multi-loss codec (`FEC_M >= 2`), the precondition for the
-    /// tier→`m` table to activate.
+    /// Pure env resolution for the adaptive-`m` gate (testable without process state): flag set AND
+    /// the env resolves a multi-loss codec (`FEC_M >= 2`), the precondition for the tier→`m` table.
     static func adaptiveMFromEnv(_ env: [String: String]) -> Bool {
         env["SLOPDESK_ADAPTIVE_FEC_M"] == "1" && MultiLossFEC.resolveParityCount(env: env) >= 2
     }
 
-    /// The wire FEC tier the host must stamp on EVERY frame given the active scheme.
+    /// The wire FEC tier the host must stamp on EVERY frame, given the active scheme.
     ///
-    /// When multi-loss is active (`m >= 2`) this is FORCED to ``defaultTier`` (tier 0), whose wire
-    /// mapping (``groupSize(forTier:default:)``) resolves to the endpoint's configured `fec.groupSize`
-    /// — i.e. exactly `k`. This pins the per-frame group size to `k` for every frame (the `m > 1`
-    /// codec REQUIRES `group_size == k`, since its Cauchy matrix has `k` columns and clamps `g` to
-    /// `min(g, k)`); the dynamic adaptive tiers (g2/g3/g10/OFF) must NOT be used, as a `group_size != k`
-    /// would feed the decoder a window the matrix was never built for and silently fail to repair.
+    /// Multi-loss active (`m >= 2`): FORCED to ``defaultTier`` (tier 0), whose wire mapping
+    /// (``groupSize(forTier:default:)``) resolves to the configured `fec.groupSize` = exactly `k`.
+    /// This pins the per-frame group size to `k` (the `m > 1` codec REQUIRES `group_size == k` — its
+    /// Cauchy matrix has `k` columns and clamps `g` to `min(g, k)`); the dynamic tiers (g2/g3/g10/OFF)
+    /// must NOT be used, as `group_size != k` feeds the decoder a window the matrix was never built
+    /// for and silently fails to repair.
     ///
-    /// When `m == 1` this returns `adaptiveTier` unchanged, so the adaptive-FEC path is byte-identical.
+    /// `m == 1`: returns `adaptiveTier` unchanged, so the adaptive-FEC path is byte-identical.
     ///
-    /// ADAPTIVE-`m` EXCEPTION: when ``adaptiveMEnabled``, the per-frame `m` ladder drives the tier,
-    /// and it only ever emits the parity tiers 5/6/7 (``parityTierClean``/`Normal`/`Burst`), all of
-    /// which map to group size `= k` — safe for the `m > 1` Cauchy code. So pass the chosen m-tier
-    /// straight through instead of forcing tier 0 (which would pin a single fixed `m`).
+    /// ADAPTIVE-`m` EXCEPTION: when ``adaptiveMEnabled``, the per-frame `m` ladder drives the tier and
+    /// only ever emits the parity tiers 5/6/7 (``parityTierClean``/`Normal`/`Burst`), all of which map
+    /// to group size `= k` — safe for the `m > 1` Cauchy code. So pass the chosen m-tier straight
+    /// through instead of forcing tier 0 (which would pin a single fixed `m`).
     public static func wireTier(adaptiveTier: UInt8) -> UInt8 {
         if adaptiveMEnabled {
             return adaptiveTier
@@ -172,11 +168,10 @@ public enum AdaptiveFECPolicy {
 
     // MARK: A. Wire codec (host packetize + client reassemble)
 
-    /// Maps a wire tier index to the FEC group size both ends must use, or `nil` for the
-    /// OFF (no-parity) tier. TOTAL over EVERY `UInt8` value — a malformed/unknown tier read
-    /// off a corrupt fragment can NEVER trap; unknown indices fall back to the default group
-    /// size. The fragment flags byte only carries 3 bits (0..7), but this function is defined
-    /// for all 256 values defensively.
+    /// Maps a wire tier index to the FEC group size both ends must use, or `nil` for the OFF
+    /// (no-parity) tier. TOTAL over EVERY `UInt8` — a malformed/unknown tier off a corrupt fragment
+    /// can NEVER trap; unknown indices fall back to the default group size. The flags byte carries
+    /// only 3 bits (0..7), but this is defined for all 256 values defensively.
     ///
     /// - tier 0 → `default` (g5 in prod): the "default" — off-path AND adaptive-medium. Bits 3-5 = 0.
     /// - tier 1 → `nil`  (OFF, no parity): clean link, FEC overhead removed.
@@ -185,8 +180,8 @@ public enum AdaptiveFECPolicy {
     /// - tier 4 → 2   (severe, 50% overhead).
     /// - tier 5,6,7 and any other value → `default` (reserved → safe default, forward-compatible).
     public static func groupSize(forTier tier: UInt8, default defaultGroupSize: Int) -> Int? {
-        // Native Swift (single source of truth). TOTAL over every UInt8 — a malformed/unknown
-        // tier off a corrupt fragment can NEVER trap; golden-vector `adaptiveGroupSize` pins it.
+        // Native Swift (single source of truth); TOTAL over every UInt8 — golden-vector
+        // `adaptiveGroupSize` pins it, and a corrupt-fragment tier can NEVER trap.
         switch tier {
         case 1: nil // OFF (clean link, no parity)
         case 2: 10 // light (~10%)
@@ -198,14 +193,13 @@ public enum AdaptiveFECPolicy {
 
     // MARK: B. Loss → tier decision (host only)
 
-    /// FEC LADDER FLOOR (2026-06-11, telemetry round). The relax path FLOORS at level 1 (g10,
-    /// ~10% overhead) and never selects the OFF tier by default. MEASURED on the live FPT↔Viettel
-    /// path (169 s, baseline loss 0.1–0.6%): 158 tier transitions including 18 visits to OFF;
-    /// 102 unrecovered frame losses (1.1%) vs 186 FEC-recovered → 65 client decode-fails ≈ 1 per
-    /// 2.6 s, each a blip risk. On a path with NONZERO baseline loss the OFF tier is never safe —
-    /// the dwell only slows the walk there, it does not stop it. `SLOPDESK_FEC_ALLOW_OFF=1`
-    /// re-enables the old relax-to-OFF behaviour (a genuinely loss-free LAN/loopback can reclaim
-    /// the standing ~10%). The WIRE CODEC for tier 1 is untouched — an OFF-tier frame from an
+    /// FEC LADDER FLOOR (2026-06-11, telemetry round). The relax path FLOORS at level 1 (g10, ~10%
+    /// overhead) and never selects OFF by default. MEASURED on the live FPT↔Viettel path (169 s,
+    /// baseline loss 0.1–0.6%): 158 tier transitions incl. 18 to OFF; 102 unrecovered frame losses
+    /// (1.1%) vs 186 FEC-recovered → 65 client decode-fails ≈ 1 per 2.6 s, each a blip risk. On a
+    /// NONZERO-baseline-loss path OFF is never safe — the dwell only slows the walk there, not stops
+    /// it. `SLOPDESK_FEC_ALLOW_OFF=1` re-enables relax-to-OFF (a genuinely loss-free LAN/loopback can
+    /// reclaim the standing ~10%). The WIRE CODEC for tier 1 is untouched — an OFF-tier frame from an
     /// old/flagged host still decodes.
     public static let allowOffTierDefault = allowOffTier(env: ProcessInfo.processInfo.environment)
 
@@ -214,13 +208,13 @@ public enum AdaptiveFECPolicy {
         env["SLOPDESK_FEC_ALLOW_OFF"] == "1"
     }
 
-    /// Picks the next wire tier from the EWMA loss and the previous tier, with hysteresis and a
-    /// strict one-level-per-call clamp (anti-flap). The clamp means relaxation on a sustained clean
-    /// link is GRADUAL (one level per report) and a loss spike never jumps multiple levels at once.
-    /// Relaxation floors at level 1 (g10) unless `allowOff` (see ``allowOffTierDefault``); from a
-    /// pre-existing OFF state with the floor active, the first call steps UP to g10 (defensive —
-    /// unreachable in production, where the env gate is fixed for the process lifetime). The host
-    /// only ever calls this on a real netstats report (inert with no data).
+    /// Picks the next wire tier from the EWMA loss and previous tier, with hysteresis and a strict
+    /// one-level-per-call clamp (anti-flap): relaxation on a sustained clean link is GRADUAL (one
+    /// level per report) and a loss spike never jumps multiple levels. Relaxation floors at level 1
+    /// (g10) unless `allowOff` (see ``allowOffTierDefault``); from a pre-existing OFF state with the
+    /// floor active, the first call steps UP to g10 (defensive — unreachable in production, where the
+    /// env gate is fixed for the process lifetime). The host only calls this on a real netstats report
+    /// (inert with no data).
     public static func tier(
         forLossRate loss: Double,
         previousTier: UInt8,
@@ -290,31 +284,30 @@ public enum AdaptiveFECPolicy {
     // MARK: Relax dwell (2026-06-11, 4G burst-flap fix)
 
     /// How many CONSECUTIVE relax-demanding reports must accumulate before the tier steps DOWN one
-    /// level. Escalation stays immediate (one step per report, as before).
+    /// level. Escalation stays immediate (one step per report).
     ///
     /// WHY: on the real 4G path the first adaptive-FEC deployment FLAPPED — 224 tier changes in one
     /// session, cycling OFF→g10→g5→g10→OFF every ~8s. Mobile loss arrives in BURSTS seconds apart;
-    /// the loss EWMA decays below the relax thresholds between bursts, so the one-step-per-report
-    /// relax walked back to OFF in ~1s and EVERY burst landed on an unprotected stream (118
-    /// unrecovered frames ≈ 1%, almost all inside OFF windows). Requiring ~12s of consecutively
-    /// clean reports (24 at the ~2/s netstats cadence) keeps g10 armed BETWEEN bursts while a
-    /// genuinely clean path (home WiFi) still relaxes to OFF — just ~12s per step slower, a
-    /// one-time cost against a standing 10-20% overhead saving.
+    /// the loss EWMA decays below the relax thresholds between bursts, so one-step-per-report relax
+    /// walked back to OFF in ~1s and EVERY burst landed on an unprotected stream (118 unrecovered
+    /// frames ≈ 1%, almost all in OFF windows). Requiring ~12s of consecutively clean reports (24 at
+    /// the ~2/s netstats cadence) keeps g10 armed BETWEEN bursts while a genuinely clean path (home
+    /// WiFi) still relaxes to OFF — just ~12s per step slower, a one-time cost against a standing
+    /// 10-20% overhead saving.
     public static let relaxDwellReports = 24
 
     /// STICKY RELAX (2026-06-11, telemetry round): a report carrying UNRECOVERED frame loss proves
     /// the CURRENT redundancy was insufficient — relaxing soon after is exactly the measured
-    /// blip-per-2.6s failure mode. For this many reports after any `unrecovered > 0` report the
-    /// relax dwell is DOUBLED (escalation stays immediate). Cheap: one countdown `Int` on
-    /// ``TierState``. The window is `2 × dwell` BY CONSTRUCTION: a shorter window would close
-    /// before a streak could ever reach the doubled dwell, reducing the whole mechanism to a
-    /// one-report delay.
+    /// blip-per-2.6s failure mode. For this many reports after any `unrecovered > 0` report the relax
+    /// dwell is DOUBLED (escalation stays immediate). Cheap: one countdown `Int` on ``TierState``. The
+    /// window is `2 × dwell` BY CONSTRUCTION — a shorter window would close before a streak could reach
+    /// the doubled dwell, reducing the mechanism to a one-report delay.
     public static let stickyRelaxWindowReports = 2 * relaxDwellReports
 
-    /// Tier decision state for the dwell-gated variant: the current wire tier, the count of
-    /// consecutive reports that demanded relaxation, and the sticky-relax countdown (reports left
-    /// in the doubled-dwell window after an unrecovered loss). Value type, host-session owned —
-    /// same "pure decider beside the actor" shape as `LTRController`/`StaticIDRDecider`.
+    /// Tier decision state for the dwell-gated variant: current wire tier, count of consecutive
+    /// relax-demanding reports, and the sticky-relax countdown (reports left in the doubled-dwell
+    /// window after an unrecovered loss). Value type, host-session owned — same "pure decider beside
+    /// the actor" shape as `LTRController`/`StaticIDRDecider`.
     public struct TierState: Equatable, Sendable {
         public var tier: UInt8
         public var relaxStreak: Int
@@ -334,11 +327,11 @@ public enum AdaptiveFECPolicy {
 
     /// Dwell-gated tier step — the production entry point (plain ``tier(forLossRate:previousTier:allowOff:)``
     /// stays for tests/tools). Escalation: immediate one-step, resets the relax streak. Relaxation:
-    /// counted across consecutive relax-demanding reports and applied only when the streak reaches
-    /// the EFFECTIVE dwell (`dwell`, doubled while the sticky window from a recent unrecovered loss
-    /// is open — see ``stickyRelaxWindowReports``); any report that does NOT demand relaxation
-    /// (hold or escalate) resets the streak, so a burst arriving mid-dwell re-arms the full wait.
-    /// Relaxation floors at level 1 (g10) unless `allowOff` (see ``allowOffTierDefault``).
+    /// counted across consecutive relax-demanding reports, applied only when the streak reaches the
+    /// EFFECTIVE dwell (`dwell`, doubled while the sticky window from a recent unrecovered loss is open
+    /// — see ``stickyRelaxWindowReports``); any report that does NOT demand relaxation (hold/escalate)
+    /// resets the streak, so a burst mid-dwell re-arms the full wait. Relaxation floors at level 1
+    /// (g10) unless `allowOff` (see ``allowOffTierDefault``).
     public static func nextTierState(
         forLossRate loss: Double,
         state: TierState,
@@ -370,12 +363,12 @@ public enum AdaptiveFECPolicy {
 
     /// Dwell-gated PARITY-tier step — the m-adaptive counterpart of ``nextTierState(forLossRate:state:dwell:allowOff:sawUnrecoveredLoss:)``.
     ///
-    /// Steps the per-frame parity multiplicity `m` (over ``parityTierClean``/`Normal`/`Burst` →
-    /// `m` 2/3/5) with the same hysteresis + dwell + sticky-relax: escalation is immediate on a
-    /// loss burst, relaxation waits out the (sticky-doubled) dwell, and the floor is the CLEAN
-    /// level (`m == 2`) — there is no OFF tier on this path, so unlike the group-size ladder it
-    /// takes no `allowOff`. Delegates to the Rust core (`adaptive_fec::next_parity_tier_state`,
-    /// the single source of truth shared with the Android host); `dwell` stays Swift-side.
+    /// Steps the per-frame parity multiplicity `m` (over ``parityTierClean``/`Normal`/`Burst` → `m`
+    /// 2/3/5) with the same hysteresis + dwell + sticky-relax: escalation immediate on a loss burst,
+    /// relaxation waits out the (sticky-doubled) dwell, floor is the CLEAN level (`m == 2`) — no OFF
+    /// tier on this path, so unlike the group-size ladder it takes no `allowOff`. Delegates to the
+    /// Rust core (`adaptive_fec::next_parity_tier_state`, the single source of truth shared with the
+    /// Android host); `dwell` stays Swift-side.
     public static func nextParityTierState(
         forLossRate loss: Double,
         state: TierState,

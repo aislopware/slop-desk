@@ -2,16 +2,16 @@ import Foundation
 import Network
 import SlopDeskProtocol
 
-/// Host side of the SlopDesk transport: an `NWListener` that accepts the shared-mux (CONTROL + DATA)
+/// Host side of the SlopDesk transport: an `NWListener` that accepts shared-mux (CONTROL + DATA)
 /// TCP socket pairs, pairs the two physical connections by their preamble `connectionID` into one
 /// ``MuxNWConnection``, and surfaces them on ``muxConnections`` for the mux relay owner.
 ///
 /// ## Handshake (shared-mux pairing)
-/// 1. A new connection arrives; the listener reads the 1-byte association preamble.
+/// 1. The listener reads the 1-byte association preamble.
 /// 2. **MUX CONTROL** (`0x03`) / **MUX DATA** (`0x04`): each carries a 16-byte `connectionID`. The
-///    first socket to arrive parks in `pendingMux`; the second with the same id completes the pair.
-///    Once both are present they are wrapped into one ``MuxNWConnection`` (role `.host`), the
-///    receive loops are started, and it is yielded on ``muxConnections``.
+///    first socket to arrive parks in `pendingMux`; the second with the same id completes the pair,
+///    wrapping both into one ``MuxNWConnection`` (role `.host`), starting receive loops, and yielding
+///    it on ``muxConnections``.
 ///
 /// Each pane on a shared connection is a logical channel (SSH-style), opened via `channelOpen`; the
 /// per-channel PTY relay (``SlopDeskHost/MuxChannelSession``) is owned by the relay owner, not here.
@@ -21,20 +21,19 @@ public actor HostTransport {
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "slopdesk.host.listener")
 
-    /// Bounded wait for the whole accept→handshake sequence on a single connection,
-    /// symmetric with the client's `handshakeTimeout`. Without it, a connection that
-    /// stalls mid-handshake (never sends its preamble) parks a detached `handshake()`
-    /// Task and its `NWConnection` forever.
+    /// Bounded wait for the accept→handshake sequence on one connection, symmetric with the
+    /// client's `handshakeTimeout`. Without it, a connection that stalls mid-handshake (never
+    /// sends its preamble) parks a detached `handshake()` Task and its `NWConnection` forever.
     let handshakeTimeout: Duration
 
     /// How long a half-paired mux link (one of the CONTROL/DATA pair arrived, the other never did)
     /// may linger before the reaper closes it and drops the pending entry. Guards the
-    /// iOS-background / NetBird-flap case where the partner socket never arrives. Injectable (tiny
-    /// values) so tests drive it without wall-clock sleeps; default 15s.
+    /// iOS-background / NetBird-flap case where the partner never arrives. Injectable (tiny values)
+    /// so tests drive it without wall-clock sleeps; default 15s.
     let pendingDataTimeout: Duration
 
-    /// Clock used for pending-entry expiry. Injectable so a test can stamp + drive the
-    /// reaper deterministically; production uses the real ``ContinuousClock``.
+    /// Clock for pending-entry expiry. Injectable so a test can stamp + drive the reaper
+    /// deterministically; production uses the real ``ContinuousClock``.
     private let clock: ContinuousClock
 
     // Accepted SHARED mux connections (CONTROL+DATA paired) published here for the mux relay owner.
@@ -93,12 +92,12 @@ public actor HostTransport {
     /// result from ``boundPort``). Suspends until the listener is `.ready`.
     ///
     /// - Parameters:
-    ///   - readinessTimeout: a bound on reaching `.ready` (R15 #3). `NWListener` can park in
-    ///     `.waiting` (no network at login, DHCP not yet up) and never resolve; without a bound the
-    ///     `withCheckedThrowingContinuation` below would suspend `start()` forever, wedging the host
-    ///     (the menu-bar app's Start spinner never clears, every escape control disabled). On expiry
-    ///     `start()` throws ``SlopDeskTransportError/timedOut(_:)`` so the caller can recover. 10s is far
-    ///     beyond a real local bind (milliseconds), so it never false-positives the healthy path.
+    ///   - readinessTimeout: bounds reaching `.ready` (R15 #3). `NWListener` can park in `.waiting`
+    ///     (no network at login, DHCP not yet up) and never resolve; without a bound the
+    ///     `withCheckedThrowingContinuation` below suspends `start()` forever, wedging the host (the
+    ///     menu-bar Start spinner never clears). On expiry `start()` throws
+    ///     ``SlopDeskTransportError/timedOut(_:)``. 10s is far beyond a real local bind (ms), so it
+    ///     never false-positives the healthy path.
     ///   - onListenerFailed: surfaced when the listener fails AFTER it became ready (R15 #2) — a
     ///     post-bind interface drop / socket error. The continuation resolves on the FIRST
     ///     ready/failed, so a LATER failure otherwise vanishes and a long-lived host keeps showing
@@ -110,8 +109,8 @@ public actor HostTransport {
         readinessTimeout: Duration = .seconds(10),
         onListenerFailed: (@Sendable (SlopDeskTransportError) -> Void)? = nil,
     ) async throws {
-        // NOTE (R10 self-audit): do NOT reset `stopped` here. A `HostTransport` is SINGLE-USE — `stop()`
-        // permanently `finish()`es `muxConnectionContinuation`, so even a fresh listener after stop would
+        // R10 self-audit: do NOT reset `stopped` here. A `HostTransport` is SINGLE-USE — `stop()`
+        // permanently `finish()`es `muxConnectionContinuation`, so a fresh listener after stop would
         // yield accepted muxes into a dead stream (the relay owner never sees them → leak). Resetting
         // `stopped` would falsely advertise restart support and ACCEPT-then-leak instead of refusing.
         // Production restarts by building a FRESH `HostTransport` per Start (`HostServer.init`), so the
@@ -169,16 +168,16 @@ public actor HostTransport {
                     }
                 case let .waiting(error):
                     // `.waiting` is normally the framework's RETRYABLE "no usable network path yet" state
-                    // (DHCP not up, Wi-Fi joining); it auto-recovers to `.ready` once a path appears, so we
-                    // keep waiting — the readiness timeout bounds a genuinely stuck transient. The ONE
-                    // exception is a bind conflict: on some OS versions an already-in-use port surfaces as a
-                    // STUCK `.waiting(.posix(.EADDRINUSE))` that never reaches `.failed` and never
-                    // auto-recovers (another process owns the port). For that single errno, resolve NOW as a
-                    // port-in-use failure instead of burning the full readiness timeout and then
-                    // mis-reporting a generic "timed out". On the common macOS path the `.waiting` flash
-                    // carries ENETDOWN (not EADDRINUSE) and the real `.failed(EADDRINUSE)` lands right after,
-                    // so this branch no-ops there and `.failed` handles it. (Pure decision in
-                    // `SlopDeskTransportError.waitingErrnoIsFatalBindConflict`, unit-tested.)
+                    // (DHCP not up, Wi-Fi joining); it auto-recovers to `.ready`, so we keep waiting — the
+                    // readiness timeout bounds a genuinely stuck transient. The ONE exception is a bind
+                    // conflict: on some OS versions an in-use port surfaces as a STUCK
+                    // `.waiting(.posix(.EADDRINUSE))` that never reaches `.failed` and never auto-recovers.
+                    // For that single errno, resolve NOW as a port-in-use failure instead of burning the
+                    // full readiness timeout and then mis-reporting a generic "timed out". On the common
+                    // macOS path the `.waiting` flash carries ENETDOWN (not EADDRINUSE) and the real
+                    // `.failed(EADDRINUSE)` lands right after, so this branch no-ops there and `.failed`
+                    // handles it. (Pure decision in `SlopDeskTransportError.waitingErrnoIsFatalBindConflict`,
+                    // unit-tested.)
                     if case let .posix(code) = error,
                        SlopDeskTransportError.waitingErrnoIsFatalBindConflict(code.rawValue)
                     {
@@ -199,10 +198,10 @@ public actor HostTransport {
         }
         boundPort = resolvedPort
 
-        // Start the background reaper that periodically expires stale half-paired mux links. It
-        // ticks at a fraction of the timeout so an abandoned pending entry never lingers much past
-        // the bound. Tests inject a tiny `pendingDataTimeout` and/or drive `reapExpiredPending(now:)`
-        // directly, so they never wait on this wall-clock timer.
+        // Background reaper: periodically expires stale half-paired mux links, ticking at a fraction
+        // of the timeout so an abandoned pending entry never lingers much past the bound. Tests inject
+        // a tiny `pendingDataTimeout` and/or drive `reapExpiredPending(now:)` directly, never waiting
+        // on this wall-clock timer.
         startReaper()
     }
 
@@ -285,12 +284,11 @@ public actor HostTransport {
     // MARK: Accept + handshake
 
     private func acceptConnection(_ connection: NWConnection) {
-        // Each new connection is handshaked independently; failures are isolated. The
-        // whole sequence is bounded by `handshakeTimeout` (symmetric with the client):
-        // a connection that opens but stalls before/within the handshake (never sends a
-        // preamble) must not park this Task + its NWConnection forever. We race the
-        // handshake against a single sleep; whichever finishes first wins, and on a
-        // timeout (or any error) we cancel the connection so nothing leaks.
+        // Each connection handshakes independently (failures isolated), bounded by
+        // `handshakeTimeout` (symmetric with the client): a connection that opens but stalls before
+        // sending a preamble must not park this Task + its NWConnection forever. Race the handshake
+        // against a single sleep; whichever finishes first wins, and on timeout (or any error) we
+        // cancel the connection so nothing leaks.
         Task {
             do {
                 try await withThrowingTaskGroup(of: Void.self) { group in
@@ -382,14 +380,13 @@ public actor HostTransport {
             }
         } else {
             // A same-side duplicate preamble (e.g. two CONTROL sockets for one connectionID before the
-            // DATA peer arrives) must NOT silently overwrite the parked half-pair: the previously-parked
-            // NWMuxByteLink owns a live NWConnection/fd that the reaper only ever sees via the CURRENT map
-            // entry, so the displaced link would leak its fd — and a peer re-sending the same side
-            // repeatedly leaks one per duplicate AND restamps createdAt, pushing the reaper deadline out.
-            // The pure, unit-tested ``MuxPairing`` decides whether this re-park displaces a same-side
-            // half; if so close it, and preserve the original createdAt so the reaper deadline cannot be
-            // deferred (R12 #2). On the genuine first arrival (existing == nil) nothing is displaced and
-            // createdAt falls through to now.
+            // DATA peer arrives) must NOT silently overwrite the parked half-pair: the displaced
+            // NWMuxByteLink owns a live NWConnection/fd the reaper only sees via the CURRENT map entry,
+            // so it would leak its fd — and a peer re-sending the same side repeatedly leaks one per
+            // duplicate AND restamps createdAt, pushing the reaper deadline out. The pure, unit-tested
+            // ``MuxPairing`` decides whether this re-park displaces a same-side half; if so close it,
+            // and preserve the original createdAt so the reaper deadline cannot be deferred (R12 #2).
+            // On the genuine first arrival (existing == nil) nothing is displaced and createdAt is now.
             let decision = MuxPairing.decide(
                 existingHasControl: existing?.control != nil,
                 existingHasData: existing?.data != nil,

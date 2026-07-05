@@ -12,11 +12,11 @@
 //     NetworkEstimate.fold / computeRTTMillis, LiveCongestionController.onReport,
 //     AdaptiveFECPolicy.tier, OWDJitterEstimator + AdaptiveJitterController, LTRController.
 //
-// The HW HEVC encode + decode are MEASURED to run headlessly from a normal executable in a
-// Background shell (they hang ONLY inside xctest; only capture + Metal need a GUI/TCC session).
-// runLTRCapabilityProbe() runs FIRST as a liveness smoke. The harness is intentionally AppKit-free
-// and fully synchronous (encode is drained by completeFrames(); decode uses flags:[] = synchronous),
-// so there is NO dispatchMain / NSApplication.run / detached Task — it runs top-to-bottom and exit(0)s.
+// The HW HEVC encode + decode run headlessly from a normal executable (they hang ONLY inside
+// xctest; only capture + Metal need a GUI/TCC session). runLTRCapabilityProbe() runs FIRST as a
+// liveness smoke. The harness is AppKit-free and fully synchronous (encode drained by
+// completeFrames(); decode uses flags:[] = synchronous), so there is NO dispatchMain /
+// NSApplication.run / detached Task — it runs top-to-bottom and exit(0)s.
 //
 // USAGE:
 //   slopdesk-loopback-validate            # full run: 6 scenarios + FEC-tier sweep + controllers
@@ -62,8 +62,8 @@ final class FrameSink: @unchecked Sendable {
     }
 }
 
-/// A simple counter the decoder's `@Sendable` handler increments. Decode is synchronous (flags:[]),
-/// so the handler runs on the calling thread before decode() returns — no real concurrency.
+/// Counter the decoder's `@Sendable` handler increments. Decode is synchronous (flags:[]), so the
+/// handler runs on the calling thread before decode() returns — no real concurrency.
 final class Counter: @unchecked Sendable { var value = 0 }
 
 // MARK: - Per-scenario stats
@@ -145,9 +145,9 @@ func makePixelBuffer(width: Int, height: Int, fullRange: Bool) -> CVPixelBuffer?
 }
 
 /// Fills `pb` with STRUCTURED, frame-varying content: a 16px checkerboard + a moving luma gradient +
-/// a moving high-contrast block. Structured (so an HEVC keyframe is a healthy multi-fragment size,
-/// exercising fragmentation + FEC group splitting) yet changes every frame (so deltas are non-trivial
-/// — a flat buffer would collapse to ~1 fragment). Chroma stays near-neutral with a faint pattern.
+/// a moving high-contrast block. Structured so a keyframe is a healthy multi-fragment size
+/// (exercises fragmentation + FEC group splitting); frame-varying so deltas are non-trivial (a flat
+/// buffer would collapse to ~1 fragment). Chroma stays near-neutral with a faint pattern.
 func fillFrame(_ pb: CVPixelBuffer, _ i: Int) {
     CVPixelBufferLockBaseAddress(pb, [])
     defer { CVPixelBufferUnlockBaseAddress(pb, []) }
@@ -3587,8 +3587,7 @@ print("")
 
 if args.contains("--recovery-idr") {
     // Component 2 standalone: just the [F] recovery-IDR delivery-keyed-cooldown scenario (fast —
-    // A-C are pure policy traces, D encodes 20 real HW frames), for quick iteration without the
-    // multi-minute full closed-loop suite.
+    // A-C are pure policy traces, D encodes 20 real HW frames) for quick iteration.
     print("\n  [F] RECOVERY-IDR delivery-keyed cooldown (component 2: kfDup double-loss bypass vs legacy 500ms gate)")
     let ri = runRecoveryIDRCooldownScenario(verbose: true)
     print(String(
@@ -3621,7 +3620,7 @@ if args.contains("--recovery-idr") {
 
 if args.contains("--gradient") {
     // Component 3 standalone: just the [G] delay-gradient onset scenario (two ~4.5s-equivalent
-    // bottleneck arms + the wobble guard) for quick iteration without the multi-minute suite.
+    // bottleneck arms + the wobble guard) for quick iteration.
     print(
         "\n  [G] DELAY-GRADIENT early cut (component 3: capacity step to 40% — client trendline + raw-RTT one-report cut, A/B in-process)",
     )
@@ -3651,7 +3650,7 @@ if args.contains("--gradient") {
 
 if args.contains("--pacer-depth") {
     // Component 4 standalone: just the [H] adaptive-pacer-depth reflex scenario (pure virtual
-    // clock — instant) for quick iteration without the multi-minute full closed-loop suite.
+    // clock — instant) for quick iteration.
     print(
         "\n  [H] ADAPTIVE PACER DEPTH v3 (component 4: owd-late 1↔2 boost — real OwdLateDetector + policy, virtual clock, phases A-E)",
     )
@@ -3672,8 +3671,8 @@ if args.contains("--pacer-depth") {
 
 if args.contains("--recovery-loss") {
     // Component 5 standalone: just the [I] recovery-request-redundancy scenario (fast — the
-    // timing arms are pure virtual clock; the straddle arm encodes 2×6 real HW frames), for
-    // quick iteration without the multi-minute full closed-loop suite.
+    // timing arms are pure virtual clock; the straddle arm encodes 2×6 real HW frames) for
+    // quick iteration.
     print(
         "\n  [I] RECOVERY-REQUEST REDUNDANCY (component 5: 3× spaced copies + host dedup + loss-adaptive halved escalation)",
     )

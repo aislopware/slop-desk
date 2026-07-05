@@ -11,14 +11,13 @@ import AppKit
 import UIKit
 #endif
 
-/// The `@MainActor` glue that owns the GUI objects (``MetalVideoRenderer`` +
+/// The `@MainActor` glue owning the GUI objects (``MetalVideoRenderer`` +
 /// ``ClientCursorCompositor``) and the orchestrator (``SlopDeskVideoClientSession``) for
-/// one remote GUI window, and bridges layout + input from the platform backing view.
+/// one remote GUI window, bridging layout + input from the platform backing view.
 ///
-/// `VideoWindowView`'s `NSView`/`UIView` holds one of these. It is the single place
-/// that constructs the live pipeline (renderer, compositor, transport, session) on
-/// activate and tears it down on deactivate, computes the videoScale each layout pass,
-/// and forwards input events to the host through the session.
+/// `VideoWindowView`'s `NSView`/`UIView` holds one. It constructs the live pipeline
+/// (renderer, compositor, transport, session) on activate, tears it down on deactivate,
+/// computes videoScale each layout pass, and forwards input to the host via the session.
 ///
 /// ⚠️ **GUI-ONLY:** constructs a Metal renderer + UDP transport + orchestrator (which
 /// brings up a `VTDecompressionSession` + display link). NEVER instantiated in a test.
@@ -26,12 +25,11 @@ import UIKit
 final class VideoWindowPipeline {
     private let log = Logger(subsystem: "slopdesk.video.client", category: "VideoWindowPipeline")
 
-    /// UDP-mux injection point: the per-host shared-flow pool every pane vends its lane from. The app
-    /// installs this ONCE at launch (``VideoMuxInstaller/install()``), so panes targeting the SAME host
-    /// share ONE UDP flow via per-channelID lanes (``VideoConnectionRegistry``). Read at the per-pane
-    /// transport construction site in ``activate(view:videoLayer:connection:maxFrameRate:)``. The host's
-    /// `NWVideoMuxDatagramTransport` speaks the same 19-byte channelID-prefixed wire — the only video
-    /// wire there is now.
+    /// UDP-mux injection point: the per-host shared-flow pool every pane vends its lane from. Installed
+    /// ONCE at launch (``VideoMuxInstaller/install()``), so panes targeting the SAME host share ONE UDP
+    /// flow via per-channelID lanes (``VideoConnectionRegistry``). Read at the per-pane transport site in
+    /// ``activate(view:videoLayer:connection:maxFrameRate:)``. The host's `NWVideoMuxDatagramTransport`
+    /// speaks the same 19-byte channelID-prefixed wire — the only video wire now.
     static var sharedRegistry: VideoConnectionRegistry?
 
     private var renderer: MetalVideoRenderer?
@@ -41,12 +39,12 @@ final class VideoWindowPipeline {
     private var activeConnection: VideoWindowConnection?
     private var layerSize: VideoSize = .init(width: 0, height: 0)
 
-    /// RECONNECT-WEDGE FIX (2026-07-03): what a host-initiated session end needs to rebuild the
-    /// WHOLE pipeline in place — the view/layer the pane renders into (weak: the pane may be gone
-    /// by the time the bye lands) + the activate parameters. A videohostd restart ends every live
-    /// session with a `bye` (at shutdown, or from the restarted daemon answering an unbound lane);
-    /// the rebuild tears everything down (fresh lane + hello + renderer/pacer/decoder) so the pane
-    /// self-heals instead of freezing with dead input.
+    /// RECONNECT-WEDGE FIX (2026-07-03): what a host-ended session needs to rebuild the WHOLE pipeline
+    /// in place — the view/layer the pane renders into (weak: the pane may be gone by the time the bye
+    /// lands) + the activate params. A videohostd restart ends every live session with a `bye` (at
+    /// shutdown, or the restarted daemon answering an unbound lane); the rebuild tears everything down
+    /// (fresh lane + hello + renderer/pacer/decoder) so the pane self-heals instead of freezing with
+    /// dead input.
     private weak var attachedView: HostView?
     private weak var attachedLayer: CAMetalLayer?
     private var attachedMaxFrameRate: Double = 30.0
@@ -55,12 +53,11 @@ final class VideoWindowPipeline {
     /// The client's own 5 s keepalive re-triggers a rebuild if a throttled bye mattered.
     private var lastHostEndedRebuild: TimeInterval = 0
 
-    /// STALL SCRIM (2026-07-03, the reconnect-wedge residual): fired on the @MainActor when the
-    /// stream's stall state FLIPS — `true` ⇒ the host went silent past the ``StreamStallPolicy``
-    /// threshold (dead daemon / network drop) and the pane should overlay its "Reconnecting…" scrim;
-    /// `false` ⇒ traffic is flowing again. Sticky through the recovery rebuild (``StallScrimLatch``),
-    /// so the scrim holds from "host went dark" until frames/heartbeats actually resume. Set by the
-    /// view in `activate`.
+    /// STALL SCRIM (2026-07-03, reconnect-wedge residual): fired on the @MainActor when the stream's
+    /// stall state FLIPS — `true` ⇒ host silent past the ``StreamStallPolicy`` threshold (dead daemon /
+    /// network drop), pane overlays its "Reconnecting…" scrim; `false` ⇒ traffic flowing again. Sticky
+    /// through the recovery rebuild (``StallScrimLatch``), so the scrim holds from "host went dark" until
+    /// frames/heartbeats resume. Set by the view in `activate`.
     var onStreamStallChanged: ((Bool) -> Void)?
     /// The ~1 s monitor Task evaluating ``StreamStallPolicy`` over the session's liveness snapshot.
     /// Started in `activate`, cancelled in `deactivate`. The LATCH deliberately lives on the
@@ -70,12 +67,12 @@ final class VideoWindowPipeline {
     private var stallLatch = StallScrimLatch()
     private static let stallPolicy = StreamStallPolicy()
 
-    /// SCROLL-HINT REPROJECTION (default-OFF, env `SLOPDESK_SCROLL_REPROJECT == "1"`): the offset
-    /// law for this pane, or `nil` when the feature is off (then NOTHING below engages and the present
-    /// path is byte-identical). Owned here; shared with the ``pacer`` (which integrates + applies it on
-    /// between-content ticks and resets it on a real frame). Driven ONLY by the host's MEASURED
-    /// per-frame scroll offset (``applyHostScrollOffset(dx:dy:bandTop:bandBottom:)``) — the local
-    /// trackpad-velocity GUESS was removed (it snapped/shook against the host's real scroll).
+    /// SCROLL-HINT REPROJECTION (default-OFF, env `SLOPDESK_SCROLL_REPROJECT == "1"`): the offset law
+    /// for this pane, or `nil` when off (then NOTHING below engages and the present path is
+    /// byte-identical). Shared with the ``pacer`` (integrates + applies it on between-content ticks,
+    /// resets on a real frame). Driven ONLY by the host's MEASURED per-frame scroll offset
+    /// (``applyHostScrollOffset(dx:dy:bandTop:bandBottom:)``) — the local trackpad-velocity GUESS was
+    /// removed (it snapped/shook against the host's real scroll).
     private var reprojector: ScrollReprojector?
     /// Content fps captured at activate() — converts a host per-frame scroll offset to a reprojector
     /// velocity (norm/sec = norm-per-frame × fps). See ``applyHostScrollOffset(dx:dy:)``.
@@ -91,36 +88,34 @@ final class VideoWindowPipeline {
 
     /// INBOUND cursor-overlay coalescing (BUG-1 freeze fix). The ~120 Hz cursor stream used to spawn ONE
     /// `Task { @MainActor in compositor.apply }` PER packet. When a click flips workspace focus, the
-    /// resulting synchronous SwiftUI re-render holds the MAIN ACTOR for a span; every queued cursor Task
-    /// is head-of-line-blocked behind it, then drains as a BURST of now-stale positions — the overlay
-    /// "freezes for a moment, then lurches". (The host keeps emitting fine — verified — so the freeze is
-    /// purely client main-actor contention, which is why the prior host-side off-main fix changed
-    /// nothing.) The coalescer keeps only the LATEST update+placement (most-recent-wins) and schedules at
-    /// most ONE flush Task at a time, so a busy span collapses to a SINGLE fresh apply the instant the
-    /// actor frees — no stale burst, and 120 Tasks/s never pile up. Mirrors the OUTBOUND `motionPump`
-    /// most-recent-wins discipline above.
+    /// synchronous SwiftUI re-render holds the MAIN ACTOR; queued cursor Tasks head-of-line-block behind
+    /// it, then drain as a BURST of stale positions — the overlay "freezes then lurches". (The host keeps
+    /// emitting fine — verified — so it's purely client main-actor contention; the prior host-side
+    /// off-main fix changed nothing.) The coalescer keeps only the LATEST update+placement
+    /// (most-recent-wins) and schedules at most ONE flush Task, so a busy span collapses to a SINGLE
+    /// fresh apply the instant the actor frees. Mirrors the OUTBOUND `motionPump` discipline above.
     private var pendingCursorUpdate: CursorUpdate?
     private var pendingCursorPlacement: SlopDeskVideoClientSession.CursorPlacement?
     private var cursorFlushScheduled = false
 
-    /// Whether the server (host) cursor overlay is CURRENTLY visible — the latest applied
-    /// ``CursorUpdate/visible`` flag (the host reports `true` only while its mouse is inside the captured
-    /// window, so this is `false` in `.fit` letterbox margins or when the host hides its own cursor). The
-    /// macOS backing view reads this to decide whether to hide the LOCAL OS arrow while the pointer is
-    /// inside an active pane, so the host-streamed cursor and the OS cursor don't BOTH show ("duplicate
-    /// cursor"). Defaults `false` (no overlay yet ⇒ keep the OS arrow).
+    /// Whether the host cursor overlay is CURRENTLY visible — the latest applied
+    /// ``CursorUpdate/visible`` flag (host reports `true` only while its mouse is inside the captured
+    /// window, so `false` in `.fit` letterbox margins or when the host hides its cursor). The macOS
+    /// backing view reads this to hide the LOCAL OS arrow while the pointer is inside an active pane, so
+    /// host-streamed and OS cursors don't BOTH show ("duplicate cursor"). Defaults `false` (no overlay
+    /// yet ⇒ keep the OS arrow).
     private(set) var isServerCursorVisible = false
     /// Fired on the @MainActor whenever ``isServerCursorVisible`` FLIPS (not per 120 Hz packet). The
     /// backing view re-evaluates its OS-cursor decision. Set by the view in `activate`; `nil` on iOS.
     var onServerCursorVisibilityChanged: ((Bool) -> Void)?
 
-    /// 1:1 PANE SNAP: fired on the @MainActor when the stream's decoded size changes (first
-    /// decoded frame, or the first frame at a new capture size after a host-side resize). Carries
-    /// the HOST WINDOW's POINT size (= decoded pixels / the inferred host captureScale — the
-    /// session does the conversion, ``StreamSizeSnap``); the view snaps its canvas pane straight
-    /// to it. MUST be set (or left nil) BEFORE ``activate(view:videoLayer:connection:maxFrameRate:)``
-    /// — its nil-ness decides at session construction whether the pane follows the stream (snap)
-    /// or the legacy connect-time host-follow negotiation runs (standalone windows).
+    /// 1:1 PANE SNAP: fired on the @MainActor when the stream's decoded size changes (first decoded
+    /// frame, or the first frame at a new capture size after a host-side resize). Carries the HOST
+    /// WINDOW's POINT size (= decoded pixels / inferred host captureScale — session converts,
+    /// ``StreamSizeSnap``); the view snaps its canvas pane to it. MUST be set (or left nil) BEFORE
+    /// ``activate(view:videoLayer:connection:maxFrameRate:)`` — its nil-ness decides at session
+    /// construction whether the pane follows the stream (snap) or the legacy connect-time host-follow
+    /// negotiation runs (standalone windows).
     var onStreamNativePoints: ((VideoSize) -> Void)?
 
     /// ACTUAL-SIZE VIEWPORT (2026-06-30): fired on the @MainActor whenever the decoded size changes,
@@ -157,41 +152,40 @@ final class VideoWindowPipeline {
     #endif
 
     /// BUG-1 freeze LOCALISATION (env-gated `SLOPDESK_VIDEO_DEBUG`). Monotonic gap probes on the two
-    /// MAIN-ACTOR paths whose stall the user perceives as "the pointer freezes when I click back": the
-    /// cursor APPLY (``coalesceCursor``) and the video RENDER hop. Compared against the SESSION-ACTOR cursor
-    /// RX probe in ``SlopDeskVideoClientSession``: if RX gaps stay SMALL on click-back while these spike, the
-    /// freeze is a main-actor BLOCK (the click→focus SwiftUI re-render holding the main thread), which the
-    /// coalescer cannot shorten — not a host/network stall. Decisive data instead of a 4th blind guess.
+    /// MAIN-ACTOR paths the user perceives as "the pointer freezes when I click back": the cursor APPLY
+    /// (``coalesceCursor``) and the video RENDER hop. Compared against the SESSION-ACTOR cursor RX probe
+    /// in ``SlopDeskVideoClientSession``: if RX gaps stay SMALL on click-back while these spike, the
+    /// freeze is a main-actor BLOCK (the click→focus SwiftUI re-render holding the main thread), which
+    /// the coalescer cannot shorten — not a host/network stall.
     private static let dbgGapEnabled = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
     private var dbgLastCursorApply: Double = 0
     private var dbgLastRender: Double = 0
 
     /// Client half of the input-latency fix: coalesce high-rate HOVER motion to one send per
-    /// display-refresh interval (most-recent-wins), so a 60-120 Hz trackpad does not spawn a Task
-    /// per event and flood the wire + the session actor's mailbox. `pendingMotionSend` holds the
-    /// latest deferred hover move; `motionPump` flushes it every `motionInterval`; any drag /
-    /// button / scroll / key / text flushes it FIRST so a move that physically preceded it is never
-    /// sent after it (noVNC `_flushMouseMoveTimer` / TigerVNC `pointerEventInterval`). The host
-    /// additionally coalesces whatever still arrives, so this is a bandwidth/CPU optimisation
-    /// layered on a correctness fix that already holds host-side. DRAGS no longer defer here
-    /// (2026-06-10 select-text latency — see `mouseDrag`): they are feedback-critical, so they ride
-    /// the ordered FIFO immediately like buttons/scroll.
-    /// The latest deferred hover move as an `async` action (the actual `session.sendMouseMove`
-    /// await), NOT a fire-and-forget `Task`. Storing the bare async work lets a following event fold
-    /// the flush + itself into ONE ordered hop (`takePendingMotion()`), while the motion pump
-    /// still fire-and-forgets it on its own tick (`flushPendingMotion()`).
+    /// display-refresh interval (most-recent-wins), so a 60-120 Hz trackpad doesn't spawn a Task per
+    /// event and flood the wire + session actor mailbox. `pendingMotionSend` holds the latest deferred
+    /// hover move; `motionPump` flushes it every `motionInterval`; any drag / button / scroll / key /
+    /// text flushes it FIRST so a move that physically preceded it is never sent after it (noVNC
+    /// `_flushMouseMoveTimer` / TigerVNC `pointerEventInterval`). The host also coalesces what arrives,
+    /// so this is a bandwidth/CPU optimisation over a correctness fix that already holds host-side.
+    /// DRAGS no longer defer here (2026-06-10 select-text latency — see `mouseDrag`): feedback-critical,
+    /// so they ride the ordered FIFO immediately like buttons/scroll.
+    /// Stored as the bare `async` action (the `session.sendMouseMove` await), NOT a fire-and-forget
+    /// `Task`, so a following event can fold the flush + itself into ONE ordered hop
+    /// (`takePendingMotion()`), while the motion pump fire-and-forgets it on its own tick
+    /// (`flushPendingMotion()`).
     private var pendingMotionSend: (@Sendable () async -> Void)?
     private var motionPump: Task<Void, Never>?
     private var motionInterval: TimeInterval = 1.0 / 120.0
 
     /// SINGLE ordered outbound-input FIFO + its one consumer. Every input send (move/drag/down/up/
-    /// scroll/key/text) is ENQUEUED here synchronously on the @MainActor (no `await` between a
-    /// pending-move flush and the button that follows it), and a single consumer Task `await`s each
-    /// action in enqueue = physical order. This replaces the per-event `Task { await … }` shape, which
-    /// gave NO ordering guarantee: a `mouseDown` whose Task suspended on the pending-move flush let the
-    /// following `mouseUp` Task (no flush → no suspension) reach the session actor FIRST, so the host
-    /// received UP-before-DOWN → a suppressed up + a held-with-no-up down = a stuck button / phantom
-    /// selection (and the same race could invert keyDown/keyUp). One FIFO makes order race-free.
+    /// scroll/key/text) is ENQUEUED synchronously on the @MainActor (no `await` between a pending-move
+    /// flush and the button that follows), and one consumer Task `await`s each action in enqueue =
+    /// physical order. Replaces the per-event `Task { await … }` shape, which gave NO ordering guarantee:
+    /// a `mouseDown` whose Task suspended on the pending-move flush let the following `mouseUp` Task (no
+    /// flush → no suspension) reach the session actor FIRST → UP-before-DOWN → suppressed up + held
+    /// down = stuck button / phantom selection (same race could invert keyDown/keyUp). One FIFO makes
+    /// order race-free.
     private var outboundContinuation: AsyncStream<@Sendable () async -> Void>.Continuation?
     private var outboundConsumer: Task<Void, Never>?
 
@@ -235,12 +229,11 @@ final class VideoWindowPipeline {
         self.renderer = renderer
         self.compositor = compositor
 
-        // The pacer drains its jitter buffer one frame per vsync and renders; the render
-        // callback is main-confined (the renderer is `@MainActor`). The pacer's callback is
-        // `@Sendable` and invoked on the display-link's main run loop. Jitter-buffer depths
-        // are env-tunable for on-device A/B without a rebuild (`SLOPDESK_JITTER_DEPTH` =
-        // priming/slack frames ≈ added latency; `SLOPDESK_JITTER_MAX` = hard cap before
-        // dropping the oldest). Defaults 2 / 5 absorb the idle→scroll size-jump backlog at
+        // The pacer drains its jitter buffer one frame per vsync and renders; the render callback is
+        // main-confined (renderer is `@MainActor`), `@Sendable`, invoked on the display-link's main run
+        // loop. Jitter-buffer depths are env-tunable for on-device A/B without a rebuild
+        // (`SLOPDESK_JITTER_DEPTH` = priming/slack frames ≈ added latency; `SLOPDESK_JITTER_MAX` = hard
+        // cap before dropping the oldest). Defaults 2 / 5 absorb the idle→scroll size-jump backlog at
         // ~33 ms latency.
         let env = ProcessInfo.processInfo.environment
         // LAT-2 (2026-06-09): default 3 → 2. At 60fps depth 2 ≈ 33ms standing buffer = Parsec's budget.
@@ -376,10 +369,10 @@ final class VideoWindowPipeline {
             // `CADisplayLink`, which fires on the MAIN run loop — so this callback is ALREADY on the main
             // actor's executor. The old async `Task` deferred the render to a LATER main-actor slot, so a
             // frame could miss its own vsync (0-16ms present jitter under main-actor load = cadence khựng).
-            // `assumeIsolated` runs it now, in-tick, landing the frame on THIS vsync. Safe: the only caller
+            // `assumeIsolated` runs it in-tick, landing the frame on THIS vsync. Safe: the only caller
             // (display-link `step()` → `tick()` → `frameForVSync()`) is main-thread; off-main would trap.
-            // `UnsafeTransfer` boxes the non-Sendable CVImageBuffer across the @Sendable→@MainActor closure
-            // boundary; it is sound here because the hand-off is SYNCHRONOUS (no escape, same thread/tick).
+            // `UnsafeTransfer` boxes the non-Sendable CVImageBuffer across the @Sendable→@MainActor
+            // boundary; sound because the hand-off is SYNCHRONOUS (no escape, same thread/tick).
             let box = UnsafeTransfer(buffer)
             MainActor.assumeIsolated {
                 renderer.render(box.value)
@@ -392,9 +385,8 @@ final class VideoWindowPipeline {
         // sane size even before the first layout pass).
         let viewport = VideoSize(width: max(1, layerSize.width), height: max(1, layerSize.height))
         // UDP-mux: vend a per-channelID lane on the host's ONE shared UDP flow
-        // (`VideoMuxClientTransport`). Panes targeting the same host share ONE flow via the registry,
-        // which the app installs once at launch. The host's `NWVideoMuxDatagramTransport` speaks the
-        // matching 19-byte channelID-prefixed wire — the only video wire now.
+        // (`VideoMuxClientTransport`); panes to the same host share ONE flow via the registry. The host's
+        // `NWVideoMuxDatagramTransport` speaks the matching 19-byte channelID-prefixed wire.
         guard let registry = Self.sharedRegistry else {
             log.error("VideoConnectionRegistry not installed — cannot bring up video pane")
             return
@@ -411,11 +403,10 @@ final class VideoWindowPipeline {
             ) },
         )
 
-        // 1:1 PANE SNAP: only a view that wired `onStreamNativePoints` gets the hook — its
-        // nil-ness is how the session distinguishes a canvas pane (pane follows the stream)
-        // from a standalone window (legacy connect-time host-follow negotiation). Hoisted out
-        // of the GUIHooks init with an explicit type (the ternary inside the big call defeated
-        // the type-checker).
+        // 1:1 PANE SNAP: only a view that wired `onStreamNativePoints` gets the hook — its nil-ness is
+        // how the session distinguishes a canvas pane (follows the stream) from a standalone window
+        // (legacy connect-time host-follow negotiation). Hoisted out of the GUIHooks init with an
+        // explicit type (the ternary inside the big call defeated the type-checker).
         let notifyStreamNativePoints: (@Sendable (VideoSize) -> Void)? =
             if onStreamNativePoints == nil {
                 nil
@@ -798,13 +789,12 @@ final class VideoWindowPipeline {
     }
 
     /// SCROLL REPROJECTION (host-truth): apply a host-MEASURED per-frame scroll offset as the
-    /// reprojector's velocity. The host measures the TRUE pixel shift between frames and sends it, so
-    /// the client never GUESSES from local trackpad deltas — that guess snapped badly (the host applies
-    /// momentum/accel/clamping the client can't know) and WAS the scroll-hint "shake"; it is gone, the
-    /// reprojector now moves only on this host truth. `dx`/`dy` are signed NORMALIZED shifts over ONE
-    /// frame in ten-thousandths of the frame extent; velocity (norm/sec) = norm-per-frame × contentFps.
-    /// `(0, 0)` arms the decay (scroll stopped). No-op unless the feature is on (`reprojector` nil).
-    /// Main-confined.
+    /// reprojector's velocity. The host measures the TRUE pixel shift between frames, so the client never
+    /// GUESSES from local trackpad deltas — that guess snapped badly (host applies momentum/accel/clamping
+    /// the client can't know) and WAS the scroll-hint "shake"; the reprojector now moves only on host
+    /// truth. `dx`/`dy` are signed NORMALIZED shifts over ONE frame in ten-thousandths of the frame
+    /// extent; velocity (norm/sec) = norm-per-frame × contentFps. `(0, 0)` arms the decay (scroll
+    /// stopped). No-op unless the feature is on (`reprojector` nil). Main-confined.
     func applyHostScrollOffset(dx: Int16, dy: Int16, bandTop: UInt16, bandBottom: UInt16) {
         guard let reprojector else { return }
         let normX = Double(dx) / 10000.0

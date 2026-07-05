@@ -5,8 +5,7 @@ import SlopDeskTransport
 /// The SlopDesk client session driver — the real, working PATH 1 client.
 ///
 /// `SlopDeskClient` owns a single ``ClientTransporting`` and turns its merged
-/// host→client ``ClientTransporting/inbound`` stream into the three things a UI/CLI
-/// cares about:
+/// host→client ``ClientTransporting/inbound`` stream into three things a UI/CLI needs:
 ///
 /// - **output bytes** — exposed as an `AsyncStream<Data>` (``output``) *and* fed to an
 ///   optional ``TerminalSurface`` (the libghostty seam / `HeadlessTerminalSurface`);
@@ -14,39 +13,38 @@ import SlopDeskTransport
 /// - **exit** — surfaced via ``events`` and terminates ``output``.
 ///
 /// ### Ack policy
-/// The client tracks the **highest contiguous** `output.seq` it has delivered to the
-/// surface (``highestContiguousSeq``) and periodically `sendAck`s it so the host's
-/// `ReplayBuffer` can release acked output and the offline gate can recover. Acking is
-/// **coalesced**: a pending-ack flag is set whenever the contiguous counter advances and
-/// a background ticker flushes it at most once every ``ackInterval`` (default 50ms). We
-/// never ack a seq we have not delivered — correctness over cadence (`docs/20` §5).
+/// Tracks the **highest contiguous** `output.seq` delivered to the surface
+/// (``highestContiguousSeq``) and periodically `sendAck`s it so the host's `ReplayBuffer`
+/// can release acked output and the offline gate can recover. **Coalesced**: a pending-ack
+/// flag is set when the contiguous counter advances; a background ticker flushes it at most
+/// once every ``ackInterval`` (default 50ms). Never ack a seq we have not delivered —
+/// correctness over cadence (`docs/20` §5).
 ///
 /// ### Reconnect + seq dedup
 /// On a transport drop ``ReconnectManager`` calls back into ``connect(...)`` presenting the
-/// SAME `sessionID` + ``highestContiguousSeq`` as `lastReceivedSeq`. The seq **dedup** mechanism
-/// itself is robust: the client drops any inbound `output` whose `seq <= highestSeqFed`, so were a
-/// host to replay an already-delivered tail (or were the client to re-present a stale seq), the
-/// result spliced into ``output`` would be gap-free and dup-free.
+/// SAME `sessionID` + ``highestContiguousSeq`` as `lastReceivedSeq`. The **dedup** is robust:
+/// the client drops any inbound `output` whose `seq <= highestSeqFed`, so a replayed
+/// already-delivered tail (or a re-presented stale seq) splices into ``output`` gap-free and
+/// dup-free.
 ///
-/// IMPORTANT — what reconnect actually does TODAY: the mux transport (the sole terminal
-/// connectivity) has **no per-channel server-side resume**. A real drop kills the host shell and
-/// the reconnect spawns a BRAND-NEW one whose `output` restarts at seq 1 — there is no replay (see
-/// `MuxChannelSession` "S1 has no per-channel reconnect/resume", `HostServer.spawnMuxChannel`). So
-/// reconnect is the **ssh model (fresh shell)**, NOT a byte-exact resume, and ``connect(...)``
-/// therefore RESETS the dedup/ack high-water marks on every (re)connect so the fresh shell renders
-/// from seq 1. Client-side scrollback is preserved across a SwiftUI surface rebuild (tab switch)
-/// via the view model's replay ring, but NOT across a transport drop. Host-side survival + true
-/// `seq > lastReceivedSeq` replay (`docs/20` §8.3) is a designed-but-unimplemented later stage; if
-/// it lands, the unconditional reset in ``connect(...)`` must become conditional on a
-/// host-authoritative returning flag.
+/// IMPORTANT — what reconnect does TODAY: the mux transport (the sole terminal connectivity)
+/// has **no per-channel server-side resume**. A real drop kills the host shell; reconnect spawns
+/// a BRAND-NEW one whose `output` restarts at seq 1 — no replay (see `MuxChannelSession` "S1 has
+/// no per-channel reconnect/resume", `HostServer.spawnMuxChannel`). So reconnect is the **ssh
+/// model (fresh shell)**, NOT a byte-exact resume, and ``connect(...)`` RESETS the dedup/ack
+/// high-water marks on every (re)connect so the fresh shell renders from seq 1. Client-side
+/// scrollback survives a SwiftUI surface rebuild (tab switch) via the view model's replay ring,
+/// but NOT a transport drop. Host-side survival + true `seq > lastReceivedSeq` replay
+/// (`docs/20` §8.3) is designed-but-unimplemented; if it lands, the unconditional reset in
+/// ``connect(...)`` must become conditional on a host-authoritative returning flag.
 ///
 /// ### iOS lifecycle seam ([17] §2.5, [18] §H)
-/// ``pause()`` / ``resume()`` are the hooks WF-8 wires to UIKit
-/// `didEnterBackground` / `willEnterForeground`. `pause()` proactively closes the
-/// transport (iOS would tear the TCP down a few seconds after backgrounding anyway —
-/// see DECISIONS §reconnect); `resume()` triggers a reconnect with the preserved
-/// `sessionID` + seq. Per the reconnect note above, on the mux path this yields a FRESH shell (not
-/// a byte-exact resume) — the renderer is reset and the new shell repaints from its first prompt.
+/// ``pause()`` / ``resume()`` are the hooks WF-8 wires to UIKit `didEnterBackground` /
+/// `willEnterForeground`. `pause()` proactively closes the transport (iOS tears the TCP down a
+/// few seconds after backgrounding anyway — see DECISIONS §reconnect); `resume()` triggers a
+/// reconnect with the preserved `sessionID` + seq. Per the reconnect note above, on the mux path
+/// this yields a FRESH shell (not a byte-exact resume): the renderer resets and the new shell
+/// repaints from its first prompt.
 ///
 /// All mutable state lives inside this `actor`. No `@unchecked Sendable`.
 public actor SlopDeskClient {
@@ -170,13 +168,12 @@ public actor SlopDeskClient {
 
     // MARK: Surfaced streams
 
-    /// Inbox of delivered-but-not-yet-consumed `output` payloads, drained in batches by
-    /// the single consumer via ``takeOutputBatch()``. Replaces the old per-chunk
-    /// `AsyncStream<Data>` so a backlog crosses to the consumer as ONE batch (one
-    /// MainActor hop, one render flush) instead of one job per wire chunk. Each entry
-    /// carries its message's wire byte count: taking a batch CREDITS those bytes back to
-    /// the host (credit-at-consumption), so the inbox can never hold more than ~one mux
-    /// window and the host's PTY-pause backpressure finally engages from a slow client.
+    /// Inbox of delivered-but-not-yet-consumed `output` payloads, drained in batches by the
+    /// single consumer via ``takeOutputBatch()``. Replaces the old per-chunk `AsyncStream<Data>`
+    /// so a backlog crosses to the consumer as ONE batch (one MainActor hop, one render flush)
+    /// instead of one job per wire chunk. Each entry carries its wire byte count: taking a batch
+    /// CREDITS those bytes back to the host (credit-at-consumption), so the inbox can never hold
+    /// more than ~one mux window and the host's PTY-pause backpressure engages from a slow client.
     private var outputInbox: [(bytes: Data, wireBytes: Int)] = []
     private let outputWakeStream: AsyncStream<Void>
     private let outputWakeContinuation: AsyncStream<Void>.Continuation
@@ -280,18 +277,17 @@ public actor SlopDeskClient {
     private var connectGeneration: UInt64 = 0
 
     /// Set while we are deliberately replacing the transport (reconnect entry / pause).
-    /// `teardownTransport()` closes the OLD transport, which finishes the OLD inbound
-    /// stream and lands the old pump in ``handleStreamEnded(error:)`` with `nil` — a
-    /// SELF-INFLICTED end, not a real drop. This flag lets `handleStreamEnded` suppress
-    /// that spurious `.disconnected` (mirror of the `closed` guard), so `ReconnectManager`
-    /// does not queue a redundant reconnect campaign. The real drop path
-    /// (``forceDropForTesting()`` / transport failing on its own) leaves this `false`.
-    /// DEPTH counter (not a bare Bool) so two overlapping teardowns — a reentrant connect()/pause() whose
-    /// teardownTransport awaits across another connect()/pause() — cannot clobber each other's suppression
-    /// window: a shared Bool let the inner scope's `= false` clear the outer's `= true`, briefly un-
-    /// suppressing handleStreamEnded so a self-inflicted old-pump stream-end surfaced a spurious
-    /// `.disconnected` + a redundant reconnect. Each scope inc/decrements only its own, so the depth stays
-    /// > 0 for the whole span any teardown is in flight (R13 #11).
+    /// `teardownTransport()` closes the OLD transport, finishing the OLD inbound stream and landing
+    /// the old pump in ``handleStreamEnded(error:)`` with `nil` — a SELF-INFLICTED end, not a real
+    /// drop. This flag lets `handleStreamEnded` suppress that spurious `.disconnected` (mirror of
+    /// the `closed` guard), so `ReconnectManager` does not queue a redundant reconnect campaign. The
+    /// real drop path (``forceDropForTesting()`` / transport failing on its own) leaves this `false`.
+    /// DEPTH counter, not a bare Bool: two overlapping teardowns — a reentrant connect()/pause() whose
+    /// teardownTransport awaits across another — must not clobber each other's suppression window. A
+    /// shared Bool let the inner scope's `= false` clear the outer's `= true`, briefly un-suppressing
+    /// handleStreamEnded so a self-inflicted stream-end surfaced a spurious `.disconnected` + redundant
+    /// reconnect. Each scope inc/decrements only its own, so depth stays > 0 for the whole span any
+    /// teardown is in flight (R13 #11).
     private var tearingDownDepth = 0
     private var tearingDown: Bool { tearingDownDepth > 0 }
     private var lastSentResize: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
@@ -420,23 +416,22 @@ public actor SlopDeskClient {
 
         // RESET DEDUP / ACK STATE — conditional on the HOST's authoritative resumeFromSeq.
         //
-        // The correct signal is the HOST-AUTHORITATIVE `resumeFromSeq` returned in the handshake
-        // ack, NOT the client-side `returningClient` flag (which is computed as `resume != newSessionID`
-        // and was ALWAYS true on reconnect, making the old `!returning` gate skip the reset exactly
-        // when it was most needed — the existing dedup-regression test pins this).
+        // The correct signal is the HOST-AUTHORITATIVE `resumeFromSeq` from the handshake ack, NOT
+        // the client-side `returningClient` flag (computed as `resume != newSessionID`, so ALWAYS
+        // true on reconnect — the old `!returning` gate skipped the reset exactly when it was most
+        // needed; the dedup-regression test pins this).
         //
         //   • resumeFromSeq == 0  →  HOST spawned a FRESH shell. The old session is gone; its
-        //     `highestSeqFed`/`highestContiguousSeq` belong to the dead session and MUST be reset
-        //     so `deliverOutput` doesn't silently drop the fresh shell's seq-1 output. The inbox
-        //     is also flushed for the same reason (see below).
+        //     `highestSeqFed`/`highestContiguousSeq` MUST be reset so `deliverOutput` doesn't
+        //     silently drop the fresh shell's seq-1 output. The inbox is flushed for the same
+        //     reason (see below).
         //
         //   • resumeFromSeq > 0  →  HOST honored a real RETURNING_CLIENT resume (SLOPDESK_DETACH_ENABLED
-        //     path): the host will replay the tail from `resumeFromSeq` onward. The client's marks
-        //     were seeded by ``seedResumeIdentity(sessionID:seq:)`` to match, so the dedup
-        //     high-water is ALREADY correct — resetting would discard the marks and cause
-        //     `deliverOutput` to re-deliver the replayed tail as new, duplicating output on the
-        //     pane. Leave them in place; the inbox is already empty (it was drained on the prior
-        //     disconnect / before seeding).
+        //     path): it replays the tail from `resumeFromSeq` onward. The client's marks were seeded
+        //     by ``seedResumeIdentity(sessionID:seq:)`` to match, so the dedup high-water is ALREADY
+        //     correct — resetting would discard them and make `deliverOutput` re-deliver the replayed
+        //     tail as new, duplicating output on the pane. Leave them; the inbox is already empty
+        //     (drained on the prior disconnect / before seeding).
         if resumeFromSeq == 0 {
             highestSeqFed = 0
             highestContiguousSeq = 0

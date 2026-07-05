@@ -2,24 +2,23 @@
 import Foundation
 import PackageDescription
 
-// Absolute path to this package's root, computed from the manifest's own location at
-// evaluation time. Used to make the Rust staticlib search path (`-L`) absolute so it resolves
-// in BOTH `swift build` (CWD = package root) AND an Xcode app build (CWD = DerivedData), where
-// a relative `-Lrust/target/release` is not found. Portable: recomputes if the repo moves.
+// Absolute package-root path from the manifest's own location. Makes the Rust staticlib `-L`
+// search path absolute so it resolves in BOTH `swift build` (CWD = package root) AND an Xcode
+// app build (CWD = DerivedData), where relative `-Lrust/target/release` is not found. Recomputes
+// if the repo moves.
 let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 
 // SlopDesk — terminal-first remote-coding for Apple platforms.
 //
-// Headless-first layout (see docs/19-implementation-plan.md): the PATH 1 byte
-// pipeline (host PTY <-> TCP/TCP_NODELAY <-> client, with replay-buffer reconnect)
-// is the de-risked core and builds + tests with NO GUI and NO libghostty.
+// Headless-first (docs/19-implementation-plan.md): the PATH 1 byte pipeline (host PTY <->
+// TCP/TCP_NODELAY <-> client, replay-buffer reconnect) is the de-risked core; builds + tests
+// with NO GUI, NO libghostty.
 //
-// Swift 6 tools default to the Swift 6 language mode (strict concurrency).
+// Swift 6 tools default to Swift 6 language mode (strict concurrency).
 let package = Package(
     name: "SlopDesk",
     platforms: [
-        // swift-tools-version:6.2 → PackageDescription 6.2, so the `.v26` enum is available
-        // for the macOS 26 / iOS 26 floor (previously expressed via the string form under 6.0).
+        // PackageDescription 6.2 makes the `.v26` enum available for the macOS 26 / iOS 26 floor.
         .macOS(.v26),
         .iOS(.v26),
     ],
@@ -34,79 +33,72 @@ let package = Package(
         .library(name: "SlopDeskClaudeCode", targets: ["SlopDeskClaudeCode"]),
         .library(name: "SlopDeskAgentDetect", targets: ["SlopDeskAgentDetect"]),
         .library(name: "SlopDeskWorkspaceCore", targets: ["SlopDeskWorkspaceCore"]),
-        // The native-SwiftUI rewrite (REBUILD-V2): the rebuilt SwiftUI client UI (a thin layer over
-        // SlopDeskWorkspaceCore using STOCK SwiftUI + system semantic colours/fonts — no custom token
-        // target). The deleted `SlopDeskDesignSystem` (Warp-clone token system) is gone for good.
+        // REBUILD-V2: thin SwiftUI layer over SlopDeskWorkspaceCore, STOCK SwiftUI + system semantic
+        // colours/fonts — no custom token target (the Warp-clone `SlopDeskDesignSystem` is deleted).
         .library(name: "SlopDeskClientUI", targets: ["SlopDeskClientUI"]),
         // PATH 2 (GUI video path, Phase 4 / WF-9).
         .library(name: "SlopDeskVideoProtocol", targets: ["SlopDeskVideoProtocol"]),
         .library(name: "SlopDeskVideoHost", targets: ["SlopDeskVideoHost"]),
         .library(name: "SlopDeskVideoClient", targets: ["SlopDeskVideoClient"]),
     ],
-    // External UI dependencies — attach ONLY to the GUI target `SlopDeskClientUI` (the headless core +
-    // wire/codec/controller targets stay dependency-free, so `swift test` / golden never fetch). Adopting
-    // these trades the "clean checkout builds with no prerequisite" property for SPM network resolution;
-    // versions are pinned in Package.resolved. KeyboardShortcuts is macOS-only → platform-conditioned.
+    // External UI deps — attach ONLY to `SlopDeskClientUI` so the headless core + wire/codec/controller
+    // targets stay dependency-free (`swift test` / golden never fetch). Trades "clean checkout builds
+    // with no prerequisite" for SPM resolution; versions pinned in Package.resolved. KeyboardShortcuts
+    // is macOS-only → platform-conditioned.
     dependencies: [
         .package(url: "https://github.com/siteline/swiftui-introspect.git", from: "26.0.1"),
         .package(url: "https://github.com/SFSafeSymbols/SFSafeSymbols.git", from: "7.0.0"),
-        // KeyboardShortcuts floor pinned to 3.0.1: 3.0.0 CRASHES in release builds compiled by the
-        // Swift 6.3 compiler (Xcode 26.5 ships Swift 6.3.2); 3.0.1 is the crash fix. macOS-only.
+        // Pinned to 3.0.1: 3.0.0 CRASHES in release builds under the Swift 6.3 compiler (Xcode 26.5
+        // ships 6.3.2); 3.0.1 is the crash fix. macOS-only.
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", from: "3.0.1"),
-        // Type-safe UserDefaults for the global app-flag namespace (`SettingsKey`). We depend ONLY on the
-        // `Defaults` library product — it is pure-Foundation with NO transitive deps; the package's
-        // swift-syntax dependency is reachable only from the `DefaultsMacros`/macro targets, which we do
-        // NOT use. `Defaults` is exempt from the "UI deps attach only to ClientUI" rule because it is not
-        // UI — it lands on the headless `SlopDeskWorkspaceCore` where `SettingsKey` lives (and on
-        // ClientUI for the `@Default` views). HELD at 8.2.0 (upToNextMajor, so the latest swift-syntax-FREE
-        // 8.x): Defaults 9.x added the `@ObservableDefault` macro target, which drags swift-syntax (603.x,
-        // a 75k-file fetch) into Package.resolved — verified absent at 8.x, present at 9.0.9. We use
-        // Defaults ONLY for type-safe UserDefaults, never the macro, so 9.x gives ZERO functional gain
-        // while regressing the deliberate "no swift-syntax in the resolved graph" invariant. Re-evaluate
-        // only if a future need requires the macro. (Phase-D upgrade 2026-06-29.)
+        // Type-safe UserDefaults for the global `SettingsKey` namespace. Depend ONLY on the `Defaults`
+        // product — pure-Foundation, NO transitive deps (swift-syntax is reachable only from the
+        // `DefaultsMacros` targets we don't use). Exempt from the "UI deps attach only to ClientUI"
+        // rule: it's not UI, and lands on the headless `SlopDeskWorkspaceCore` (where `SettingsKey`
+        // lives) plus ClientUI's `@Default` views. HELD at 8.2.0 (upToNextMajor = latest swift-syntax-
+        // FREE 8.x): 9.x adds the `@ObservableDefault` macro target, which drags swift-syntax (603.x,
+        // 75k-file fetch) into Package.resolved (absent at 8.x, present at 9.0.9) for ZERO functional
+        // gain, regressing the "no swift-syntax in the resolved graph" invariant. Re-evaluate only if
+        // the macro is needed. (Phase-D upgrade 2026-06-29.)
         .package(url: "https://github.com/sindresorhus/Defaults.git", from: "8.2.0"),
     ],
     targets: [
         // MARK: Libraries
 
-        // Native SIMD kernels (the all-Swift migration's replacement for the Rust FFI NEON).
-        // A tiny C target SwiftPM COMPILES FROM SOURCE every build — no cbindgen, no marshalling,
-        // no prebuilt staticlib, no build-ordering. Holds the two genuine-SIMD kernels: the
-        // GF(2^8) split-table region multiply (`vqtbl1q_u8`) and the xxHash64 NV12 frame-hash
-        // fold (synthesized `vmull_u32` u64 lane multiply), each guarded `#if __aarch64__` with a
-        // scalar fallback so x86_64 CI/sim builds stay green. Swift links it directly via the
-        // `include/` modulemap; byte-identical to the scalar reference (pinned by a differential
-        // test). This is the ONLY remaining C/unsafe surface after the Rust core is reabsorbed.
+        // Native SIMD kernels (replaces the Rust FFI NEON). A tiny C target SwiftPM COMPILES FROM
+        // SOURCE every build — no cbindgen, no marshalling, no prebuilt staticlib, no build-ordering.
+        // Holds the two genuine-SIMD kernels: the GF(2^8) split-table region multiply (`vqtbl1q_u8`)
+        // and the xxHash64 NV12 frame-hash fold (synthesized `vmull_u32` u64 lane multiply), each
+        // guarded `#if __aarch64__` with a scalar fallback so x86_64 CI/sim builds stay green. Swift
+        // links it via the `include/` modulemap; byte-identical to the scalar reference (pinned by a
+        // differential test). The ONLY remaining C/unsafe surface after the Rust core is reabsorbed.
         .target(
             name: "CSlopDeskSIMD",
             path: "Sources/CSlopDeskSIMD",
             cSettings: [.unsafeFlags(["-O3"])],
         ),
 
-        // Pure-Swift wire format: framing, MessageType, seq(Int64), Hello/Ack.
-        // ZERO platform dependency (no Network/Darwin) so it builds for macOS + iOS
-        // and is unit-testable in isolation. Native Swift codecs (single source of truth).
+        // Pure-Swift wire format: framing, MessageType, seq(Int64), Hello/Ack. ZERO platform
+        // dependency (no Network/Darwin) → builds macOS + iOS, unit-testable in isolation. Native
+        // Swift codecs (single source of truth).
         .target(name: "SlopDeskProtocol"),
 
         // NWConnection + TCP_NODELAY, dual data/control channel, ET-style replay
         // buffer, reconnect handshake. (Implemented in WF-2.)
         .target(name: "SlopDeskTransport", dependencies: ["SlopDeskProtocol"]),
 
-        // macOS host: PTY (openpty + posix_spawn createSession), session mgr,
-        // no-buffer PTY<->transport relay, TIOCSWINSZ resize. (Implemented in WF-3.)
-        // Also hosts the inspector's second-connection server (InspectorServer):
-        // SlopDeskHost depends on SlopDeskInspector for the wire types + replay log. This is
-        // acyclic — SlopDeskInspector depends ONLY on SlopDeskProtocol, never on SlopDeskHost.
+        // macOS host: PTY (openpty + posix_spawn createSession), session mgr, no-buffer
+        // PTY<->transport relay, TIOCSWINSZ resize. (WF-3.) Also hosts the inspector's
+        // second-connection server (InspectorServer), depending on SlopDeskInspector for the wire
+        // types + replay log — acyclic, since SlopDeskInspector depends ONLY on SlopDeskProtocol.
         //
         // W10 adds SlopDeskAgentDetect: the host folds foreground-process / Claude-hook signals
-        // through the pure `ClaudeStatusMachine` to decide the type-26/27 CONTROL emissions. The
-        // edge stays acyclic — SlopDeskAgentDetect depends on NOTHING (it physically cannot
-        // import SlopDeskHost), and SlopDeskInspector still depends only on SlopDeskProtocol.
-        // W12: SlopDeskHost also depends on SlopDeskVideoProtocol for `EnvConfig` — the host's
-        // agent-detection gates (`SLOPDESK_AGENT_DETECT`/`_HOOKS`) resolve through the settings overlay
-        // so a GUI toggle reaches them (it loads the same `video-prefs.json` sidecar). The edge is
-        // acyclic — SlopDeskVideoProtocol is the cross-platform PURE wire/settings leaf (deps only
-        // CSlopDeskSIMD) and never imports any host module.
+        // through the pure `ClaudeStatusMachine` to decide the type-26/27 CONTROL emissions. Acyclic
+        // — SlopDeskAgentDetect depends on NOTHING (physically cannot import SlopDeskHost).
+        // W12 adds SlopDeskVideoProtocol for `EnvConfig` — the agent-detection gates
+        // (`SLOPDESK_AGENT_DETECT`/`_HOOKS`) resolve through the settings overlay so a GUI toggle
+        // reaches them (same `video-prefs.json` sidecar). Acyclic — SlopDeskVideoProtocol is the
+        // cross-platform PURE wire/settings leaf (deps only CSlopDeskSIMD), never imports a host module.
         .target(
             name: "SlopDeskHost",
             dependencies: [
@@ -118,59 +110,51 @@ let package = Package(
         // Shared client: connection mgr, reconnect, input encoding. (WF-4.)
         .target(name: "SlopDeskClient", dependencies: ["SlopDeskTransport", "SlopDeskProtocol"]),
 
-        // TerminalSurface protocol + HeadlessTerminalSurface. The libghostty-backed
-        // GhosttySurface lives in the GUI app target (WF-5) and conforms to the same
-        // protocol.
+        // TerminalSurface protocol + HeadlessTerminalSurface. The libghostty-backed GhosttySurface
+        // lives in the GUI app target (WF-5) and conforms to the same protocol.
         .target(name: "SlopDeskTerminal", dependencies: ["SlopDeskProtocol"]),
 
-        // Local-terminal raw-mode + termios save/restore + TIOCGWINSZ/TIOCSWINSZ helpers
-        // for the interactive CLI. Split into a library so the save/restore + SIGWINCH
-        // mapping logic is unit-testable (the executable target itself is not importable).
+        // Local-terminal raw-mode + termios save/restore + TIOCGWINSZ/TIOCSWINSZ helpers for the
+        // interactive CLI. A library so the save/restore + SIGWINCH mapping logic is unit-testable
+        // (the executable target is not importable).
         .target(name: "SlopDeskTTY"),
 
-        // Read-only structured inspector (WF-6). Tails Claude Code's JSONL transcript
-        // (+ subagent files + hooks) on the host, models typed `InspectorEvent`s, and
-        // streams them over a SECOND length-prefixed channel (NWConnection #2) to a
-        // SwiftUI read-only client. INDEPENDENT of the terminal byte pipeline — it
-        // reuses only SlopDeskProtocol's framing *style*, never the terminal WireMessage.
-        // Read-only: it observes the transcript, it never drives the agent.
+        // Read-only structured inspector (WF-6). Tails Claude Code's JSONL transcript (+ subagent
+        // files + hooks) on the host, models typed `InspectorEvent`s, streams them over a SECOND
+        // length-prefixed channel (NWConnection #2) to a SwiftUI client. INDEPENDENT of the terminal
+        // byte pipeline — reuses only SlopDeskProtocol's framing *style*, never the terminal
+        // WireMessage. Read-only: observes the transcript, never drives the agent.
         .target(name: "SlopDeskInspector", dependencies: ["SlopDeskProtocol"]),
 
-        // Cross-platform Claude Code integration LOGIC (WF-7): the terminal-mode sniffer
-        // (DECSET/DECRST 1049 + OSC 133, robust to sequences split across chunk
-        // boundaries), the input dedup ring (input-box B1 echo suppression), and the
-        // input-box state machine (A shell / B1 TUI-compose). Pure Swift, no platform
-        // dependency beyond Foundation — builds for macOS + iOS, fixture-tested. The host
+        // Cross-platform Claude Code integration LOGIC (WF-7): the terminal-mode sniffer (DECSET/
+        // DECRST 1049 + OSC 133, robust to sequences split across chunk boundaries), the input
+        // dedup ring (input-box B1 echo suppression), the input-box state machine (A shell / B1
+        // TUI-compose). Pure Swift, Foundation-only — builds macOS + iOS, fixture-tested. The host
         // launch env + auth resolution live in SlopDeskHost (macOS, the WF-7 seam).
         .target(name: "SlopDeskClaudeCode", dependencies: ["SlopDeskProtocol"]),
 
-        // Pure, headless Claude-Code DETECTION CORE (W7): the per-pane status enum
-        // (`ClaudeStatus`), the deterministic, clock-injected state machine
-        // (`ClaudeStatusMachine` — `Date()` is physically unreachable; time arrives as
-        // a `TimeInterval` parameter), and the Herdr-style no-hooks fallback
-        // (`ClaudeManifestMatcher`) that reads a terminal pane's title/screen for
-        // recognizable Claude TUI cues. Foundation-only — it depends on NOTHING
-        // GUI/transport/video so it physically cannot import them; the adapter that
-        // maps `SlopDeskInspector.HookPayload` → `ClaudeSignal` is W8/W10, not here.
-        // Validate-then-drop on every foreign string; no force-unwrap.
+        // Pure, headless Claude-Code DETECTION CORE (W7): the per-pane status enum (`ClaudeStatus`),
+        // the deterministic clock-injected state machine (`ClaudeStatusMachine` — `Date()` is
+        // physically unreachable; time arrives as a `TimeInterval` parameter), and the Herdr-style
+        // no-hooks fallback (`ClaudeManifestMatcher`) reading a pane's title/screen for Claude TUI
+        // cues. Foundation-only — depends on NOTHING GUI/transport/video, so it physically cannot
+        // import them; the `SlopDeskInspector.HookPayload` → `ClaudeSignal` adapter is W8/W10, not
+        // here. Validate-then-drop on every foreign string; no force-unwrap.
         .target(name: "SlopDeskAgentDetect"),
 
-        // Headless workspace CORE (L0 of the Warp-clone UI rewrite): the proven logic extracted out
-        // of the dying `SlopDeskClientUI` view target — the tree-of-intent domain value types, the
-        // single `@MainActor @Observable WorkspaceStore` + its extensions, `AppConnection`/
-        // `ConnectionViewModel`, the terminal block/search/context-menu engines, the video &
-        // remote-window LOGIC, `InputBarModel`, the pure iOS input logic, `PreferencesStore`, and the
-        // injection SEAMS (`TerminalRendererFactory`, `VideoWindowFactory`, `RemoteWindowDiscovery`,
-        // `SystemDialogDiscovery`).
+        // Headless workspace CORE (L0 of the UI rewrite): the proven logic extracted from the dying
+        // `SlopDeskClientUI` view target — the tree-of-intent domain value types, the single
+        // `@MainActor @Observable WorkspaceStore` + extensions, `AppConnection`/`ConnectionViewModel`,
+        // the terminal block/search/context-menu engines, the video & remote-window LOGIC,
+        // `InputBarModel`, the pure iOS input logic, `PreferencesStore`, and the injection SEAMS
+        // (`TerminalRendererFactory`, `VideoWindowFactory`, `RemoteWindowDiscovery`, `SystemDialogDiscovery`).
         //
-        // This target imports NO view chrome / design-system tokens — every SwiftUI/AppKit/UIKit
-        // *presentation* file was deleted (D1) and the SEAM placeholder `View` bodies were split out
-        // (A2). The rebuilt `SlopDeskClientUI` (L1+) will be a thin SwiftUI layer over this core +
-        // a new headless `SlopDeskDesignSystem`. The terminal pixels and the remote-GUI video view
-        // stay behind the factory seams so the library + tests stay headless (no libghostty / Metal /
-        // VideoToolbox / SCStream in `swift build` or a test).
+        // Imports NO view chrome / design-system tokens — every SwiftUI/AppKit/UIKit *presentation*
+        // file was deleted (D1), SEAM placeholder `View` bodies split out (A2). The terminal pixels
+        // and remote-GUI video view stay behind the factory seams so the library + tests stay headless
+        // (no libghostty / Metal / VideoToolbox / SCStream in `swift build` or a test).
         //
-        // Builds for macOS 26 + iOS 26 (the deployment floor — no fallback below that).
+        // Builds macOS 26 + iOS 26 (the deployment floor — no fallback below).
         .target(
             name: "SlopDeskWorkspaceCore",
             dependencies: [
@@ -194,13 +178,12 @@ let package = Package(
             ],
         ),
 
-        // The native-SwiftUI rewrite (REBUILD-V2): the rebuilt `SlopDeskClientUI` — pure SwiftUI views
-        // over `SlopDeskWorkspaceCore` (the proven headless logic), built from STOCK SwiftUI components
-        // and SYSTEM semantic colours/fonts (no custom design-system token target — the old
-        // `SlopDeskDesignSystem` was deleted in L0). The app SCENE + the native IDE shell land here; the
-        // pane/terminal/video content stays behind the `TerminalRendererFactory`/`VideoWindowFactory` seams
-        // (it renders the headless placeholder in `swift build`/tests — NO libghostty/Metal/VideoToolbox).
-        // L0 ships a minimal placeholder scene; L1+ rebuild the real shell.
+        // REBUILD-V2: `SlopDeskClientUI` — pure SwiftUI views over `SlopDeskWorkspaceCore`, STOCK
+        // SwiftUI + SYSTEM semantic colours/fonts (no custom token target — the old
+        // `SlopDeskDesignSystem` was deleted in L0). The app SCENE + native IDE shell land here; the
+        // pane/terminal/video content stays behind the `TerminalRendererFactory`/`VideoWindowFactory`
+        // seams (renders the headless placeholder in `swift build`/tests — NO libghostty/Metal/
+        // VideoToolbox). L0 ships a placeholder scene; L1+ rebuild the real shell.
         .target(
             name: "SlopDeskClientUI",
             dependencies: [
@@ -242,21 +225,18 @@ let package = Package(
 
         // MARK: PATH 2 — GUI video path (Phase 4 / WF-9)
 
-        // Cross-platform PURE wire format for the GUI video path: UDP frame
-        // packetizer/reassembler (with loss detect + recovery signalling), FEC
-        // (XOR parity, swappable for Reed-Solomon), cursor side-channel codec,
-        // window-geometry codec, coordinate-mapping math (multi-monitor Cocoa-flip +
-        // Retina), and the client->host input-event codec. ZERO platform dependency
-        // (no ScreenCaptureKit/VideoToolbox/AppKit) so it builds macOS + iOS and is
-        // fully unit-testable in isolation — same discipline as SlopDeskProtocol.
+        // Cross-platform PURE wire format for the GUI video path: UDP frame packetizer/reassembler
+        // (loss detect + recovery signalling), FEC (XOR parity, swappable for Reed-Solomon), cursor
+        // side-channel codec, window-geometry codec, coordinate-mapping math (multi-monitor
+        // Cocoa-flip + Retina), and the client->host input-event codec. ZERO platform dependency (no
+        // ScreenCaptureKit/VideoToolbox/AppKit) → builds macOS + iOS, unit-testable in isolation.
         .target(name: "SlopDeskVideoProtocol", dependencies: ["CSlopDeskSIMD"]),
 
-        // macOS-only host capture + encode + input injection. USES
-        // ScreenCaptureKit / VideoToolbox / CoreGraphics / AppKit. COMPILED + code-
-        // reviewed, NEVER executed in tests: SCStream capture AND VTCompressionSession
-        // HW encode HANG without a window-server + Screen-Recording TCC session, which
-        // a headless test/CI run does not have (docs/research/spikes/vtbench/RESULTS.md).
-        // The encoder/capture configs match the MEASURED spike configs exactly.
+        // macOS-only host capture + encode + input injection. USES ScreenCaptureKit / VideoToolbox /
+        // CoreGraphics / AppKit. COMPILED + code-reviewed, NEVER executed in tests: SCStream capture
+        // AND VTCompressionSession HW encode HANG without a window-server + Screen-Recording TCC
+        // session, absent in a headless test/CI run (docs/research/spikes/vtbench/RESULTS.md). The
+        // encoder/capture configs match the MEASURED spike configs exactly.
         // Private CoreGraphics `CGVirtualDisplay*` headers (clang module). Lets the host create a
         // HiDPI 2× virtual display so a remoted window renders at real Retina backing (sharp text)
         // instead of point-resolution upscale. macOS-only (CoreGraphics); see the header for the
@@ -276,10 +256,9 @@ let package = Package(
             swiftSettings: [],
         ),
 
-        // macOS + iOS client decode + Metal render + client-side cursor. USES
-        // VideoToolbox (decode) / Metal / CoreVideo / QuartzCore. COMPILED + reviewed;
-        // decode is MEASURED-safe (~0.9-1.1ms synchronous) but to honour the hang-
-        // safety rule NO VTDecompressionSession is instantiated in tests either.
+        // macOS + iOS client decode + Metal render + client-side cursor. USES VideoToolbox (decode) /
+        // Metal / CoreVideo / QuartzCore. COMPILED + reviewed; decode is MEASURED-safe (~0.9-1.1ms
+        // synchronous) but per the hang-safety rule NO VTDecompressionSession is instantiated in tests.
         .target(name: "SlopDeskVideoClient", dependencies: ["SlopDeskVideoProtocol"]),
 
         // MARK: Executables
@@ -287,11 +266,10 @@ let package = Package(
         // Headless host daemon (PTY + transport). Sources under Sources/slopdesk-hostd.
         .executableTarget(name: "slopdesk-hostd", dependencies: ["SlopDeskHost"]),
 
-        // Pure, testable core for slopdesk-ctl: arg-parsing (GlobalArgs / parseGlobal) and
-        // NDJSON request/response helpers (encodeRequestLine / decodeResponseLine / verb
-        // param builders). No socket I/O — Foundation-only so it builds for macOS + iOS and
-        // is unit-testable without any AF_UNIX socket (hang-safety rule). The thin
-        // `slopdesk-ctl` executable imports this and adds the socket I/O + exit calls.
+        // Pure, testable core for slopdesk-ctl: arg-parsing (GlobalArgs / parseGlobal) + NDJSON
+        // request/response helpers (encodeRequestLine / decodeResponseLine / verb param builders).
+        // No socket I/O — Foundation-only, unit-testable without any AF_UNIX socket (hang-safety
+        // rule). The thin `slopdesk-ctl` executable adds the socket I/O + exit calls.
         .target(name: "SlopDeskCtlCore"),
 
         // Agent-control CLI: the reference client for the agent-control Unix-domain socket.
@@ -300,14 +278,13 @@ let package = Package(
         // the testable logic lives in SlopDeskCtlCore.
         .executableTarget(name: "slopdesk-ctl", dependencies: ["SlopDeskCtlCore"]),
 
-        // PURE, testable core of the user-facing `slopdesk` CLI (E20): the global-flag
-        // parser (`CLIArgs`), the `version` summary builder (`CLIVersion`), the per-shell completion
+        // PURE, testable core of the user-facing `slopdesk` CLI (E20): the global-flag parser
+        // (`CLIArgs`), the `version` summary builder (`CLIVersion`), the per-shell completion
         // generator (`CLICompletions`), and (later WIs) list formatting / watch-progress / jump
-        // resolution. No socket I/O, no exit — Foundation-only so it builds macOS + iOS and is
-        // exhaustively unit-testable without an AF_UNIX socket or a GUI (hang-safety rule). The thin
-        // `slopdesk` executable imports this and adds the socket I/O + GUI launch + dispatch.
-        // Reuses the `SlopDeskCtlCore` NDJSON line protocol; reads `SlopDeskProtocol` for the
-        // wire-version summary and `SlopDeskWorkspaceCore` for the frecency/progress reuse seams.
+        // resolution. No socket I/O, no exit — Foundation-only, unit-testable without an AF_UNIX
+        // socket or a GUI (hang-safety rule). Reuses `SlopDeskCtlCore`'s NDJSON line protocol; reads
+        // `SlopDeskProtocol` for the wire-version summary and `SlopDeskWorkspaceCore` for the
+        // frecency/progress reuse seams.
         .target(
             name: "SlopDeskCLICore",
             // SlopDeskAgentDetect supplies `ClaudeStatus`, which `WatchClaudeOutcome` (WI-8) maps to
@@ -401,14 +378,13 @@ let package = Package(
         // `FuzzyMatcher`. `swift run -c release slopdesk-fuzzybench [scaleN]`.
         .executableTarget(name: "slopdesk-fuzzybench", dependencies: ["SlopDeskClientUI"]),
 
-        // Golden-vector dumper: emits the golden reference corpus for the Rust core's
-        // parity test — a deterministic JSON corpus from the SlopDeskVideoProtocol codecs
-        // + the pure realtime controllers (public API only) that the Rust `slopdesk-core`
-        // crate asserts byte-/bit-identical against in its `golden_parity` test. Pure value
-        // types only — constructs NO SCStream / encoder, so it touches no GUI/TCC:
+        // Golden-vector dumper: emits the golden reference corpus — a deterministic JSON corpus from
+        // the SlopDeskVideoProtocol codecs + the pure realtime controllers (public API only) that the
+        // Rust `slopdesk-core` crate asserts byte-/bit-identical against in its `golden_parity` test.
+        // Pure value types only — constructs NO SCStream / encoder, so it touches no GUI/TCC:
         // `swift run slopdesk-corevectors > rust/slopdesk-core/tests/vectors/golden_vectors.json`.
-        // IMPORTANT: run with no `SLOPDESK_*` env set so the controllers resolve their
-        // default tunables (the Rust core pins those defaults as compile-time consts).
+        // IMPORTANT: run with no `SLOPDESK_*` env set so the controllers resolve their default
+        // tunables (the Rust core pins those defaults as compile-time consts).
         .executableTarget(
             name: "slopdesk-corevectors",
             dependencies: [

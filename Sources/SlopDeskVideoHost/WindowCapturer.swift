@@ -29,28 +29,28 @@ import SlopDeskVideoProtocol
 ///   no send (doc 17 §3.5). >90% of coding frames are static.
 /// - Heartbeat IDR ~1s so a reconnecting/loss-recovering client catches a frame.
 public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
-    /// Heartbeat IDR cadence (seconds): force a keyframe periodically so a late-joining / loss-recovering
+    /// Heartbeat IDR cadence (seconds): periodic forced keyframe so a late-joining / loss-recovering
     /// client gets a decode anchor. Raised 1.0 → 2.5 (F2 flicker fix, 2026-06-08): on a never-idle window
-    /// every heartbeat is a full 50-135 KB IDR burst (the crisp path never fires) that risks burst loss for
-    /// ZERO visual benefit to an already-in-sync client — ~2.5 s removes most of those periodic bursts
-    /// while keeping a prompt insurance anchor (DETECTED loss recovers via the recovery channel, not this
-    /// heartbeat). Env A/B `SLOPDESK_HEARTBEAT_S`, clamped [0.25, 60].
+    /// every heartbeat is a 50-135 KB IDR burst (crisp path never fires) risking burst loss for ZERO
+    /// benefit to an in-sync client — 2.5 s removes most periodic bursts while keeping a prompt insurance
+    /// anchor (DETECTED loss recovers via the recovery channel, not this heartbeat). Env
+    /// `SLOPDESK_HEARTBEAT_S`, clamped [0.25, 60].
     public static let heartbeatIDRInterval: TimeInterval = {
         if let s = ProcessInfo.processInfo.environment["SLOPDESK_HEARTBEAT_S"], let v = Double(s), v >= 0.25,
            v <= 60 { return v }
         return 2.5
     }()
 
-    /// CAD-3 (2026-06-09 smoothness): whether to force a periodic heartbeat IDR on the LIVE (active-motion)
-    /// path. DEFAULT OFF. On a never-idle window the heartbeat is a 50-135 KB IDR through
+    /// CAD-3 (2026-06-09 smoothness): force a periodic heartbeat IDR on the LIVE (active-motion) path.
+    /// DEFAULT OFF. On a never-idle window the heartbeat is a 50-135 KB IDR through
     /// `encodeCompactKeyframe`, whose two synchronous `VTCompressionSessionCompleteFrames` calls BLOCK the
     /// capture queue ~15 ms → a dropped capture + a big frame every `heartbeatIDRInterval` (2.5s) = a
-    /// PERIODIC cadence hitch during a long scroll ("vuốt lâu thì khựng"). As the heartbeat comment notes,
-    /// it is "ZERO visual benefit to an already-in-sync client" and DETECTED loss recovers via the recovery
-    /// channel (requestIDR), not this heartbeat. The STATIC-window timer (`onIDRTimerTick`) still re-anchors
-    /// with a crisp IDR the instant motion pauses, and a late-joining/decode-failed client still requests an
-    /// IDR — so suppressing the motion heartbeat removes the hitch with no resilience loss on a low-loss
-    /// link. `SLOPDESK_MOTION_HEARTBEAT=1` restores the periodic motion IDR (for a genuinely lossy WAN).
+    /// PERIODIC cadence hitch during a long scroll ("vuốt lâu thì khựng"). It has zero benefit to an
+    /// in-sync client and DETECTED loss recovers via the recovery channel (requestIDR), not this heartbeat.
+    /// The STATIC-window timer (`onIDRTimerTick`) still re-anchors with a crisp IDR the instant motion
+    /// pauses, and a late-joining/decode-failed client still requests an IDR — so suppressing it removes the
+    /// hitch with no resilience loss on a low-loss link. `SLOPDESK_MOTION_HEARTBEAT=1` restores the periodic
+    /// motion IDR (for a genuinely lossy WAN).
     static let motionHeartbeatEnabled = ProcessInfo.processInfo.environment["SLOPDESK_MOTION_HEARTBEAT"] == "1"
 
     /// Called for each captured frame with its NV12 `CVPixelBuffer`, whether the encoder should
@@ -91,25 +91,23 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
 
     /// STATIC-FRAME SUPPRESSION (default OFF). When enabled, each `.complete` frame's locked NV12
     /// planes are hashed (the native ``FrameHasher/hashNV12(y:yStride:width:height:cbcr:cbcrStride:)``
-    /// NEON kernel) and compared to the
-    /// last submitted frame's hash; a pixel-identical re-delivery with no forced obligation pending
-    /// is DROPPED before the encoder (HEVC + SCK idle-skip handle most static content — this catches
-    /// the residual `.complete` re-deliveries that are byte-identical). DEFAULT OFF ⇒ no hash is
-    /// computed, nothing is suppressed, and the capture path is byte-identical to today. Needs a
-    /// real GUI + TCC session to exercise (the SCStream path hangs headlessly); only the pure
-    /// decider + the hash kernel are unit-tested. `SLOPDESK_STATIC_SUPPRESS=1` enables it.
+    /// NEON kernel) and compared to the last submitted frame's hash; a pixel-identical re-delivery with
+    /// no forced obligation pending is DROPPED before the encoder (HEVC + SCK idle-skip handle most
+    /// static content — this catches the residual byte-identical `.complete` re-deliveries). OFF ⇒ no
+    /// hash, byte-identical to today. Needs a real GUI + TCC session to exercise (the SCStream path hangs
+    /// headlessly); only the pure decider + hash kernel are unit-tested. `SLOPDESK_STATIC_SUPPRESS=1`.
     private static let staticSuppressEnabled =
         ProcessInfo.processInfo.environment["SLOPDESK_STATIC_SUPPRESS"] == "1"
 
     /// EVENT-DRIVEN CRISP RE-ANCHOR (default OFF; 2026-06-16 latency-first reframe). When enabled, each
     /// `.complete` frame's NV12 planes are hashed (NEON) and `stillCrispThreshold` consecutive byte-
     /// identical frames trigger the crisp re-anchor IMMEDIATELY (``StillnessCrispDecider``) instead of
-    /// waiting the full ~300ms wall-clock quiet window — re-sharpen lands ~1-2 frames after motion visibly
-    /// stops WHEN SCK re-delivers the static frame (otherwise the StaticIDRDecider quiet-window timer is
-    /// the fallback). DEFAULT OFF: it adds a per-`.complete`-frame hash on the userInteractive capture
-    /// queue, and P1 input latency must not pay unmeasured hot-path work — flip ON only after a HW A/B
-    /// confirms the hash cost is negligible (the NEON kernel is built to be). `SLOPDESK_STILL_CRISP=1`
-    /// enables; `SLOPDESK_STILL_CRISP_FRAMES` overrides the threshold (default 2, clamp 1…30).
+    /// waiting the ~300ms wall-clock quiet window — re-sharpen lands ~1-2 frames after motion stops WHEN
+    /// SCK re-delivers the static frame (else the StaticIDRDecider quiet-window timer is the fallback).
+    /// OFF because it adds a per-`.complete`-frame hash on the userInteractive capture queue and P1 input
+    /// latency must not pay unmeasured hot-path work — flip ON only after a HW A/B confirms the hash cost
+    /// is negligible. `SLOPDESK_STILL_CRISP=1` enables; `SLOPDESK_STILL_CRISP_FRAMES` overrides the
+    /// threshold (default 2, clamp 1…30).
     private static let stillCrispEnabled =
         ProcessInfo.processInfo.environment["SLOPDESK_STILL_CRISP"] == "1"
     private static let stillCrispThreshold: Int = {
@@ -145,9 +143,8 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// "almost-static editing" case. DEFAULT OFF ⇒ no measurement, byte-identical. Host-only, no wire.
     /// `SLOPDESK_ADAPTIVE_QP=1`; `SLOPDESK_AQP_SHARP` (sharp ceiling, default 22),
     /// `SLOPDESK_AQP_BLO_MILLI`/`_BHI_MILLI` (change-fraction band ×1000, default 20/300).
-    /// W12: routed through `EnvConfig` (ProcessInfo env → settings overlay → default) so a GUI setting
-    /// can drive it. The default-OFF (`== "1"`) idiom is preserved exactly via `boolDefaultOff`; an
-    /// EMPTY overlay is byte-identical to the old `ProcessInfo` read.
+    /// W12: routed through `EnvConfig` so a GUI setting can drive it; the default-OFF (`== "1"`) idiom is
+    /// preserved via `boolDefaultOff`, an EMPTY overlay byte-identical to the old `ProcessInfo` read.
     private static let adaptiveQPEnabled =
         EnvConfig.boolDefaultOff("SLOPDESK_ADAPTIVE_QP")
     private static let adaptiveQPSharp: Int = {
@@ -212,20 +209,18 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     }()
 
     /// TRUE IDLE-SKIP (default OFF). Parsec sends ZERO packets when the screen is static; on our
-    /// VD/`displayIncluding` capture path SCK sometimes re-delivers byte-identical `.complete` frames
-    /// that SCK does NOT mark `.idle`, so without this they get re-encoded + re-sent — a wasteful drip
-    /// Parsec never pays. When enabled, a frame the adaptive-QP NEON measurement reports as TRULY idle
-    /// (`measured && changeMilli == 0`, i.e. every row-hash identical to the previous frame) and that
-    /// carries no pending obligation (keyframe / recovery / heartbeat — peeked, never drained) is
-    /// dropped before the encode hand-off. CRITICAL: a skipped frame does NOT re-anchor
-    /// `staticIDRDecider` (the quiet-window clock is allowed to go stale) so the ~300ms crisp refresh
-    /// still fires on a genuinely-static window — the exact invariant the retired `STATIC_SUPPRESS`
-    /// gate violated (it re-anchored on every dropped duplicate → the quiet window never opened → the
-    /// stream froze). REUSES the adaptive-QP measurement, so it needs `SLOPDESK_ADAPTIVE_QP=1` too.
-    /// Gate OFF ⇒ `idleSkip` is always false ⇒ byte-identical to today. `SLOPDESK_IDLE_SKIP=1`.
-    /// W12: routed through `EnvConfig` (ProcessInfo env → settings overlay → default) so a GUI setting
-    /// can drive it. The default-OFF (`== "1"`) idiom is preserved exactly via `boolDefaultOff`; an
-    /// EMPTY overlay is byte-identical to the old `ProcessInfo` read.
+    /// VD/`displayIncluding` capture path SCK sometimes re-delivers byte-identical `.complete` frames it
+    /// does NOT mark `.idle`, so without this they get re-encoded + re-sent — a wasteful drip Parsec never
+    /// pays. When enabled, a frame the adaptive-QP NEON measurement reports as TRULY idle
+    /// (`measured && changeMilli == 0`, every row-hash identical to the previous frame) carrying no pending
+    /// obligation (keyframe / recovery / heartbeat — peeked, never drained) is dropped before the encode
+    /// hand-off. CRITICAL: a skipped frame does NOT re-anchor `staticIDRDecider` (the quiet-window clock is
+    /// allowed to go stale) so the ~300ms crisp refresh still fires on a genuinely-static window — the
+    /// exact invariant the retired `STATIC_SUPPRESS` gate violated (it re-anchored on every dropped
+    /// duplicate → the quiet window never opened → the stream froze). REUSES the adaptive-QP measurement,
+    /// so it needs `SLOPDESK_ADAPTIVE_QP=1` too. OFF ⇒ `idleSkip` always false ⇒ byte-identical.
+    /// `SLOPDESK_IDLE_SKIP=1`. W12: routed through `EnvConfig` so a GUI setting can drive it; default-OFF
+    /// (`== "1"`) preserved via `boolDefaultOff`, empty overlay byte-identical to the old `ProcessInfo` read.
     private static let idleSkipEnabled =
         EnvConfig.boolDefaultOff("SLOPDESK_IDLE_SKIP")
 

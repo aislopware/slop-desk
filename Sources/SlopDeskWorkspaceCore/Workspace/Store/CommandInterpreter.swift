@@ -3,10 +3,9 @@ import Foundation
 // MARK: - Workspace commands (the intent layer)
 
 /// A resolved workspace command — the pure intent the keyboard layer produces and the store
-/// later applies (docs/22 §5). SwiftUI `Commands` (macOS menu bar, iPad `UIKeyCommand`) and
-/// `.keyboardShortcut` are thin adapters over this tested core; the on-screen compact affordances
-/// (`.contextMenu`, swipe) emit the same cases. Keeping it a value type makes the chord → command
-/// mapping fully unit-testable with no view.
+/// later applies (docs/22 §5). SwiftUI `Commands`, `.keyboardShortcut`, and the compact
+/// affordances (`.contextMenu`, swipe) are thin adapters emitting the same cases. A value type
+/// so the chord → command mapping is fully unit-testable with no view.
 public enum WorkspaceCommand: Sendable, Equatable {
     case newPaneDefault // ⌘N   — a pane of the user's default kind (Settings ▸ Canvas)
     case newPane(PaneKind) // ⌘T terminal, ⌥⌘N remoteGUI
@@ -36,10 +35,10 @@ public enum WorkspaceCommand: Sendable, Equatable {
 }
 
 public extension WorkspaceCommand {
-    /// Whether this command is worth surfacing in the ⌘K palette's "recents" — the action VERBS, not
-    /// the navigation/transient moves (focus, cycle, bookmarks) which have their own affordances and
-    /// would just churn the small recents ring. Recorded at the ``apply(_:to:)`` chokepoint so a verb
-    /// run by keyboard or menu (not just the palette) populates the recents.
+    /// Whether this command is worth surfacing in the ⌘K palette's "recents" — action VERBS only, not
+    /// navigation/transient moves (focus, cycle, bookmarks) that would churn the small recents ring.
+    /// Recorded at the ``apply(_:to:)`` chokepoint so a verb run by keyboard or menu (not just the
+    /// palette) populates recents.
     var isRecentsWorthy: Bool {
         switch self {
         case .focus,
@@ -57,9 +56,9 @@ public extension WorkspaceCommand {
         }
     }
 
-    /// Whether this command acts on "the focused pane" and is a graceful no-op without one — so the ⌘K
-    /// palette can OMIT it on an empty canvas (offering "Close Pane" with nothing to close reads as
-    /// broken). Creation / camera / global verbs do NOT require a focused pane and always show.
+    /// Whether this command acts on "the focused pane" (a no-op without one) so the ⌘K palette can OMIT
+    /// it on an empty canvas ("Close Pane" with nothing to close reads as broken). Creation / camera /
+    /// global verbs don't require a focused pane and always show.
     var requiresFocusedPane: Bool {
         switch self {
         case .duplicatePane,
@@ -79,8 +78,8 @@ public extension WorkspaceCommand {
 
 /// A keyboard chord: a normalized key token plus its modifier set. The join key of the bindings
 /// table (``CommandInterpreter/bindings``). Framework-neutral (no SwiftUI `KeyEquivalent` /
-/// `EventModifiers`) so it is pure and `Hashable`-keyable in tests; the platform key adapters
-/// translate their native events into this shape.
+/// `EventModifiers`) so it stays pure and `Hashable`-keyable in tests; platform adapters translate
+/// native events into this shape.
 public struct KeyChord: Hashable, Sendable {
     /// The modifier flags carried by a chord. An `OptionSet` so combinations (⇧⌘, ⌥⌘) compose.
     public struct Modifiers: OptionSet, Hashable, Sendable {
@@ -101,17 +100,17 @@ public struct KeyChord: Hashable, Sendable {
         case character(Character)
         case tab
         case `return`
-        /// The Space bar as a NAMED key (keyCode 49), NOT a `.character(" ")` — the macOS normalizer rejects a
-        /// whitespace character, so a Space chord must be a named key (like Tab/Return). Only ever bound with a
+        /// The Space bar as a NAMED key (keyCode 49), NOT `.character(" ")` — the macOS normalizer rejects a
+        /// whitespace character, so a Space chord must be named (like Tab/Return). Only ever bound with a
         /// non-shift modifier (Vi Mode entry is ⌃⇧Space); a bare/⇧-only Space stays normal typing.
         case space
         case leftArrow
         case rightArrow
         case upArrow
         case downArrow
-        /// Non-printable named navigation keys (terminal-native shift-scroll / page-jump chords). They are
-        /// the one exemption to the "every workspace chord is ⌘/⌥-prefixed" §5 rule — a ⇧-prefixed named key
-        /// cannot steal a printable terminal letter (E1 scroll bindings).
+        /// Non-printable named navigation keys (terminal-native shift-scroll / page-jump chords). The one
+        /// exemption to the "every workspace chord is ⌘/⌥-prefixed" §5 rule — a ⇧-prefixed named key cannot
+        /// steal a printable terminal letter (E1 scroll bindings).
         case pageUp
         case pageDown
         case home
@@ -136,13 +135,13 @@ public struct KeyChord: Hashable, Sendable {
 
 // MARK: - Key sequences (multi-key / prefix bindings)
 
-/// An ordered, non-empty list of ``KeyChord``s — the tmux/zellij prefix idiom (e.g. `⌃A` then `D` to
-/// split). A single-chord binding is the degenerate length-1 sequence; the dispatcher's prefix machine
-/// (``CommandInterpreter`` prefix state) walks a sequence chord-by-chord. Pure / `Hashable` / value-typed
-/// so the chord → action mapping stays fully unit-testable with no view.
+/// An ordered, non-empty list of ``KeyChord``s — the tmux/zellij prefix idiom (e.g. `⌃A` then `D`).
+/// A single-chord binding is the degenerate length-1 sequence; the prefix machine walks a sequence
+/// chord-by-chord. Pure / `Hashable` / value-typed so the chord → action mapping is unit-testable
+/// with no view.
 ///
-/// Invariant: ``chords`` is never empty. The initialiser drops a caller-supplied empty list to a single
-/// no-op-safe path by returning `nil` (validate-then-default), so a sequence value always has a first key.
+/// Invariant: ``chords`` is never empty — the initialiser returns `nil` for an empty list
+/// (validate-then-default), so a sequence value always has a first key.
 public struct KeySequence: Hashable, Sendable {
     /// The chords in press order. Guaranteed non-empty.
     public let chords: [KeyChord]
@@ -153,8 +152,8 @@ public struct KeySequence: Hashable, Sendable {
         self.chords = chords
     }
 
-    /// A single-chord (length-1) sequence — the degenerate case bridging an ordinary chord into the
-    /// sequence world (so a single chord and a 1-element sequence compare equal where it matters).
+    /// A single-chord (length-1) sequence — bridges an ordinary chord into the sequence world (so a
+    /// single chord and a 1-element sequence compare equal where it matters).
     public init(single chord: KeyChord) {
         chords = [chord]
     }
@@ -171,9 +170,8 @@ public struct KeySequence: Hashable, Sendable {
 /// Maps key chords to ``WorkspaceCommand``s against a rebindable table (docs/22 §5). `@MainActor`
 /// because it is owned by the UI.
 ///
-/// Per the WF2 scope this owns ONLY the pure chord → command mapping. It does **not** apply a
-/// command to a store (the store does not exist yet); `apply(_:to:)` lives with the store in a
-/// later workstream.
+/// Per WF2 scope this owns ONLY the pure chord → command mapping — it does **not** apply a command
+/// to a store; `apply(_:to:)` lives with the store in a later workstream.
 @preconcurrency
 @MainActor
 public final class CommandInterpreter {
@@ -189,18 +187,18 @@ public final class CommandInterpreter {
         self.bindings = bindings
     }
 
-    /// Resolves `chord` to a command, or `nil` if it is not bound (the caller then lets the chord
-    /// fall through — e.g. to the focused terminal, per the §5 conflict rule: every workspace
-    /// chord is ⌘/⌥-prefixed so plain keys and Ctrl-letters reach the terminal untouched).
+    /// Resolves `chord` to a command, or `nil` if unbound (the caller then lets the chord fall through
+    /// — e.g. to the focused terminal, per the §5 conflict rule: every workspace chord is ⌘/⌥-prefixed
+    /// so plain keys and Ctrl-letters reach the terminal untouched).
     public func feed(_ chord: KeyChord) -> WorkspaceCommand? {
         bindings[chord]
     }
 
-    /// Every default chord bound to `command`, in a DETERMINISTIC display order (fewest modifiers
-    /// first, ties broken lexicographically). A command may carry more than one chord (⌘N and the
-    /// ⌘T alias both make a terminal pane); the old `first { $0.value == command }` reverse lookup
-    /// was dictionary-order nondeterministic the moment that became true — every shortcut-display
-    /// site (menu items, palette hints) goes through this instead. `[0]` is the canonical chord.
+    /// Every default chord bound to `command`, in a DETERMINISTIC display order (fewest modifiers first,
+    /// ties broken lexicographically). A command may carry more than one chord (⌘N and the ⌘T alias both
+    /// make a terminal pane); the old `first { $0.value == command }` reverse lookup was dictionary-order
+    /// nondeterministic once that held — every shortcut-display site (menu items, palette hints) goes
+    /// through this instead. `[0]` is the canonical chord.
     public static func defaultChords(for command: WorkspaceCommand) -> [KeyChord] {
         defaultBindings
             .filter { $0.value == command }
@@ -243,11 +241,11 @@ public extension CommandInterpreter {
     static var defaultBindings: [KeyChord: WorkspaceCommand] {
         var map: [KeyChord: WorkspaceCommand] = [:]
 
-        // New pane. ⌘N is the macOS-native "new" (the File menu replaces the default New-Window item,
-        // so ⌘N makes a pane instead of an unwanted second window) — it creates the user's DEFAULT kind
-        // (Settings ▸ Canvas, default Terminal). ⌘T is the muscle-memory alias that always makes a
-        // Terminal (the freed "new tab" chord). ⌥⌘N makes a Remote Window. (W11: there is no Claude Code
-        // pane kind any more — a `claude` running in any terminal is auto-detected — so ⇧⌘N is freed.)
+        // New pane. ⌘N = macOS-native "new" (the File menu replaces New-Window, so ⌘N makes a pane not
+        // an unwanted second window) creating the user's DEFAULT kind (Settings ▸ Canvas, default
+        // Terminal). ⌘T is the muscle-memory alias that always makes a Terminal (the freed "new tab"
+        // chord). ⌥⌘N makes a Remote Window. (W11: no Claude Code pane kind any more — a `claude` in any
+        // terminal is auto-detected — so ⇧⌘N is freed.)
         map[KeyChord(character: "n", [.command])] = .newPaneDefault
         map[KeyChord(character: "t", [.command])] = .newPane(.terminal)
         map[KeyChord(character: "n", [.command, .option])] = .newPane(.remoteGUI)
@@ -259,15 +257,15 @@ public extension CommandInterpreter {
         // ⇧⌘D = tidy into a grid.
         map[KeyChord(character: "d", [.command, .shift])] = .tidy
 
-        // Close the focused pane: ⌘W. Reopen the last closed pane: ⇧⌘T (the browser idiom, sitting
-        // naturally beside ⌘T = new pane). NOT ⌘Z — that chord belongs to text-field undo (the inline
-        // rename fields), which a menu-level binding would shadow.
+        // Close the focused pane: ⌘W. Reopen the last closed pane: ⇧⌘T (browser idiom, beside ⌘T = new
+        // pane). NOT ⌘Z — that belongs to text-field undo (the inline rename fields), which a menu-level
+        // binding would shadow.
         map[KeyChord(character: "w", [.command])] = .closePane
         map[KeyChord(character: "t", [.command, .shift])] = .reopenClosedPane
 
-        // New group: ⌃⌘G (groups organize panes in the sidebar + draw a labeled box on the canvas). It is
-        // context-sensitive in `apply`: with a multi-selection it groups the selection, else makes an empty
-        // group. ⌥⌘G is the explicit "Group Selected Panes" (no-op without a selection).
+        // New group: ⌃⌘G (groups organize panes in the sidebar + draw a labeled box). Context-sensitive in
+        // `apply`: with a multi-selection it groups the selection, else makes an empty group. ⌥⌘G is the
+        // explicit "Group Selected Panes" (no-op without a selection).
         map[KeyChord(character: "g", [.control, .command])] = .newGroup
         map[KeyChord(character: "g", [.option, .command])] = .groupSelection
 
@@ -289,16 +287,15 @@ public extension CommandInterpreter {
         map[KeyChord(character: "]", [.command])] = .cycleFocus(forward: true)
         map[KeyChord(character: "[", [.command])] = .cycleFocus(forward: false)
 
-        // Recent-pane quick-switch (the "go to last pane" idiom every editor/terminal has): ⌥⌘;
-        // jumps to the previously-focused pane (steps toward OLDER in the focus-history MRU), ⌥⇧⌘;
-        // walks back toward newer. ⌥⌘-prefixed (";" is free for the terminal) and beside the other nav
-        // chords. `forward:false` = toward the previous pane (the primary action).
+        // Recent-pane quick-switch ("go to last pane"): ⌥⌘; jumps to the previously-focused pane (toward
+        // OLDER in the focus-history MRU), ⌥⇧⌘; walks back toward newer. ⌥⌘-prefixed (";" is free for the
+        // terminal). `forward:false` = toward the previous pane (the primary action).
         map[KeyChord(character: ";", [.option, .command])] = .switchRecentPane(forward: false)
         map[KeyChord(character: ";", [.option, .command, .shift])] = .switchRecentPane(forward: true)
 
-        // Cycle focus WITHIN the focused pane's group only: ⌃⌘] forward / ⌃⌘[ back — the companion to the
-        // whole-canvas ⌘]/⌘[, so a 3-pane cluster is navigable in isolation. ⌃⌘ (the newGroup prefix) is a
-        // safe ⌘-carrying chord; "]"/"[" are not Ctrl-letters the terminal needs.
+        // Cycle focus WITHIN the focused pane's group only: ⌃⌘] forward / ⌃⌘[ back — companion to the
+        // whole-canvas ⌘]/⌘[, so a cluster is navigable in isolation. ⌃⌘ (the newGroup prefix) is a safe
+        // ⌘-carrying chord; "]"/"[" are not Ctrl-letters the terminal needs.
         map[KeyChord(character: "]", [.control, .command])] = .cycleFocusInGroup(forward: true)
         map[KeyChord(character: "[", [.control, .command])] = .cycleFocusInGroup(forward: false)
 
@@ -315,8 +312,8 @@ public extension CommandInterpreter {
         // Rename the focused pane: ⌘R.
         map[KeyChord(character: "r", [.command])] = .renamePane
 
-        // Reconnect the focused pane: ⇧⌘R. The primary failure-recovery command was palette-only;
-        // a chord makes it learnable and surfaces its glyph in the menu + palette automatically.
+        // Reconnect the focused pane: ⇧⌘R. The primary failure-recovery command was palette-only; a chord
+        // makes it learnable and surfaces its glyph in the menu + palette.
         map[KeyChord(character: "r", [.command, .shift])] = .reconnectPane
 
         // Viewport bookmarks: ⇧⌘n saves the current viewport into slot n, ⌘n jumps back — the
@@ -375,28 +372,27 @@ public enum PrefixIntent: Equatable, Sendable {
 @preconcurrency
 @MainActor
 public final class PrefixStateMachine {
-    /// The configured prefix chord (default `⌃A`). Pressing it from idle arms the machine; pressing it again
-    /// while armed sends the literal prefix byte (double-tap passthrough). CONFIGURABLE so the user can move
-    /// it off a Ctrl-letter.
+    /// The configured prefix chord (default `⌃A`). From idle it arms the machine; again while armed it sends
+    /// the literal prefix byte (double-tap passthrough). CONFIGURABLE so the user can move it off a Ctrl-letter.
     public var prefix: KeyChord
 
     /// The escape timeout (seconds). An armed machine that has not seen a follow-up key within this window
     /// silently falls back to idle, so a stale arm never eats a later normal keystroke.
     public var timeout: TimeInterval
 
-    /// Resolve a post-prefix key to its action, or `nil` if the key is UNBOUND while armed. Injected (the
-    /// live dispatcher passes a lookup over ``WorkspaceBindingRegistry/resolvedChordTable``); pure so the
-    /// machine stays headless-testable. This is the SINGLE-chord fallback — it is consulted only after the
-    /// multi-key ``resolveSequenceAfterPrefix`` (when injected) misses, so a prefix sequence whose tail key is
-    /// ALSO a standalone binding keeps resolving as before.
+    /// Resolve a post-prefix key to its action, or `nil` if UNBOUND while armed. Injected (the live
+    /// dispatcher passes a lookup over ``WorkspaceBindingRegistry/resolvedChordTable``); pure so the machine
+    /// stays headless-testable. The SINGLE-chord fallback — consulted only after the multi-key
+    /// ``resolveSequenceAfterPrefix`` (when injected) misses, so a prefix sequence whose tail key is ALSO a
+    /// standalone binding keeps resolving as before.
     public var resolveAfterPrefix: (KeyChord) -> WorkspaceAction?
 
     /// Resolve a COMPLETED multi-key prefix sequence (the full `[prefix, follow-up]` ``KeySequence``) to its
-    /// action, or `nil` if no sequence binding matches. Injected (the live dispatcher passes a lookup over
+    /// action, or `nil` if no sequence binding matches. Injected (a lookup over
     /// ``WorkspaceBindingRegistry/resolvedSequenceTable``); `nil` when unset (the machine then resolves the
     /// follow-up via ``resolveAfterPrefix`` alone — the pre-B1 single-chord behaviour). Consulted FIRST while
-    /// armed so a user-defined sequence whose tail key is NOT a standalone binding still fires (the WS-B
-    /// "multi-key prefix sequences" goal). Keeping it here keeps ALL prefix transition logic in this machine.
+    /// armed so a user-defined sequence whose tail key is NOT a standalone binding still fires (WS-B goal).
+    /// Keeping it here keeps ALL prefix transition logic in this machine.
     public var resolveSequenceAfterPrefix: ((KeySequence) -> WorkspaceAction?)?
 
     /// Internal state: idle, or armed at an absolute time (the escape-timeout anchor).

@@ -1,15 +1,15 @@
 // slopdesk-videohostd — the GUI video path (PATH 2 / Phase 4) host daemon.
 //
-// It is the executable wrapper the `SlopDeskVideoHostSession` orchestrator was missing: it
-// enumerates the host's shareable windows (ScreenCaptureKit), binds ONE shared UDP media +
-// cursor flow (`NWVideoMuxDatagramTransport`), and mints a per-channel session from each
-// client `hello`'s own windowID — which then captures → HEVC encodes (live + crisp refresh) → packetizes
-// → serves, and injects client input back (doc 17 §3, doc 18). One UDP flow per host, N panes.
+// The executable wrapper for `SlopDeskVideoHostSession`: enumerates the host's shareable windows
+// (ScreenCaptureKit), binds ONE shared UDP media + cursor flow (`NWVideoMuxDatagramTransport`), and
+// mints a per-channel session from each client `hello`'s own windowID — which captures → HEVC encodes
+// (live + crisp refresh) → packetizes → serves, and injects client input back (doc 17 §3, doc 18). One
+// UDP flow per host, N panes.
 //
 // ⚠️ GUI + TCC ONLY. `SCShareableContent` (and the capture/encode the session starts) need a
 // real window-server session + Screen-Recording permission (and Accessibility + Post-Event for
-// input injection). They HANG / fail headlessly — run this from a real GUI login session, not
-// SSH. This binary is COMPILED + reviewed; its live behaviour is verified on hardware.
+// input injection). They HANG / fail headlessly — run from a real GUI login session, not SSH.
+// This binary is COMPILED + reviewed; live behaviour is verified on hardware.
 //
 // USAGE:
 //   slopdesk-videohostd --list                          # enumerate shareable windows + exit
@@ -39,12 +39,11 @@ struct VideoHostdArguments {
     var scale: Double = 1.0 // capture at window-points × scale PIXELS (1 = point-res/light; raise for sharper)
     var bitrateMbps: Int = 12 // live-encoder target bitrate (Mbps); raise for crisper text
     var fps: Int = 30 // encoder frame-rate cap (coding tool, not game stream); --fps 60 for smoother motion
-    // Feature #1: OPTIONALLY create a HiDPI 2× virtual display and move each remoted window onto it, so
-    // the window renders at REAL Retina backing (sharp text) instead of a point-res upscale on a 1× host.
-    // DEFAULT OFF (2026-07-05, user directive): capture the REAL display directly — no synthetic display
-    // appearing in the host's arrangement, no window parking. On a 1× host that means 1× capture (softer
-    // text, the display's native detail); the VD is the ONLY way to get 2× on a 1× host, so opt back in
-    // with `--virtual-display` / `SLOPDESK_VD=1` when text sharpness matters more than a clean setup.
+    // Feature #1: OPTIONALLY create a HiDPI 2× virtual display and move each remoted window onto it, so it
+    // renders at REAL Retina backing (sharp text) instead of a point-res upscale on a 1× host.
+    // DEFAULT OFF (2026-07-05, user directive): capture the REAL display directly — no synthetic display in
+    // the host's arrangement, no window parking. On a 1× host that means 1× capture (softer text); the VD
+    // is the ONLY way to get 2× on a 1× host, so opt back in with `--virtual-display` / `SLOPDESK_VD=1`.
     var virtualDisplay = false
     var vdPointWidth = 1920 // VD logical (point) size; windows larger than this are resized to fit
     var vdPointHeight = 1080
@@ -135,17 +134,15 @@ struct VideoHostdArguments {
             }
             i += 1
         }
-        // Env override (only when no explicit CLI flag was given): SLOPDESK_VD=1 opts the now-default-OFF
-        // virtual display back ON (only "0" keeps it off; any other value enables). A
-        // `--virtual-display`/`--no-virtual-display` flag always wins over the env. W12: resolve through
-        // `EnvConfig` (ProcessInfo env → settings overlay) so a GUI toggle can drive it.
+        // Env override (only when no explicit CLI flag was given): SLOPDESK_VD enables the now-default-OFF
+        // virtual display — only "0" keeps it off, any other value enables; a CLI flag always wins. W12:
+        // resolve through `EnvConfig` (ProcessInfo env → settings overlay) so a GUI toggle can drive it.
         if !vdExplicit, let vd = EnvConfig.string("SLOPDESK_VD") {
             a.virtualDisplay = (vd != "0")
         }
-        // The daemon ALWAYS runs the UDP-mux path: it mints a per-channel session from EACH client
-        // hello's own windowID (the §2 asymmetry: two panes watch different windows over one shared
-        // flow), so no fixed window arg is required (one may still be passed to validate at --list
-        // time). Only `--list` and the per-hello mint pick a window now.
+        // The daemon ALWAYS runs the UDP-mux path: it mints a per-channel session from EACH client hello's
+        // own windowID (the §2 asymmetry: two panes watch different windows over one shared flow), so no
+        // fixed window arg is required. Only `--list` and the per-hello mint pick a window.
         // Two DISTINCT non-zero UDP ports (NWEndpoint.Port rejects 0; the sockets must differ).
         if a.mediaPort == 0 || a.cursorPort == 0 || a.mediaPort == a.cursorPort { return nil }
         return a
@@ -305,13 +302,12 @@ func currentWindowFrame(windowID: UInt32, expectedPid: Int32) -> CGRect? {
 }
 
 /// C6 BUG C: recover windows a CRASHED/SIGKILLed previous daemon left stranded on its (now gone)
-/// virtual display. Clean shutdown restores through `performGracefulShutdown`; this covers the
-/// unclean exits the old comment only promised to. Reads the parked-window sidecar the previous
-/// run persisted, deletes it FIRST (one-shot — a hygiene crash must not loop), then AX-restores
-/// each recorded window that still exists (same windowID AND owner pid) and still sits at an
-/// implausible position (intersecting NO current display — the pure
-/// ``StrandedWindowRestorePolicy``). Run BEFORE this launch creates a fresh VD, so "intersects no
-/// display" cannot be confused by the new VD's own off-screen bounds.
+/// virtual display (clean shutdown restores through `performGracefulShutdown`). Reads the parked-window
+/// sidecar the previous run persisted, deletes it FIRST (one-shot — a hygiene crash must not loop), then
+/// AX-restores each recorded window that still exists (same windowID AND owner pid) and still sits at an
+/// implausible position (intersecting NO current display — the pure ``StrandedWindowRestorePolicy``). Run
+/// BEFORE this launch creates a fresh VD, so "intersects no display" cannot be confused by the new VD's
+/// own off-screen bounds.
 @MainActor
 func runParkedWindowLaunchHygiene(at url: URL?) {
     guard let url, let data = try? Data(contentsOf: url) else { return } // no leftover file — clean exit
@@ -340,13 +336,12 @@ func runParkedWindowLaunchHygiene(at url: URL?) {
     }
 }
 
-// Live ScreenCaptureKit capture needs a window-server connection. A bare command-line binary
-// never establishes one, so `SCStream.startCapture()` aborts with
-// `Assertion failed: (did_initialize), CGS_REQUIRE_INIT` — even though `SCShareableContent`
-// enumeration (used by --list) works without it. Initialising the shared `NSApplication`
-// connects this process to the window server; `.accessory` keeps it off the Dock / out of the
-// menu bar. Do this BEFORE any capture starts. (We keep `dispatchMain()` as the run loop;
-// frame delivery is on SCStream's own dispatch queue.)
+// Live ScreenCaptureKit capture needs a window-server connection. A bare command-line binary never
+// establishes one, so `SCStream.startCapture()` aborts with
+// `Assertion failed: (did_initialize), CGS_REQUIRE_INIT` — even though `SCShareableContent` enumeration
+// (used by --list) works without it. Initialising the shared `NSApplication` connects this process to the
+// window server; `.accessory` keeps it off the Dock / out of the menu bar. Do this BEFORE any capture
+// starts. (`dispatchMain()` stays the run loop; frame delivery is on SCStream's own dispatch queue.)
 NSApplication.shared.setActivationPolicy(.accessory)
 
 /// Fetches the shareable, on-screen windows (excluding desktop chrome).
@@ -473,11 +468,10 @@ func answerSystemDialogList(
     if !dialogs.isEmpty { log("answered listSystemDialogs on chan=\(channelID): \(dialogs.count) dialog(s)") }
 }
 
-// What is held for the process lifetime; SIGINT drives the orderly stop. Set by the bring-up
-// Task, read by the SIGINT Task — different threads, so a lock guards the shared vars (the
-// `@unchecked Sendable` would otherwise hide a real data race). The daemon always runs the
-// UDP-mux path, so the `registry` + shared `mux` transport are held (N sessions, one per
-// channel/window, over the one shared flow).
+// Held for the process lifetime; SIGINT drives the orderly stop. Set by the bring-up Task, read by the
+// SIGINT Task — different threads, so a lock guards the shared vars (the `@unchecked Sendable` would
+// otherwise hide a real data race). The daemon always runs the UDP-mux path, so the `registry` + shared
+// `mux` transport are held (N sessions, one per channel/window, over the one shared flow).
 final class Holder: @unchecked Sendable {
     private let lock = NSLock()
     private var registry: VideoMuxSessionRegistry?
@@ -766,14 +760,13 @@ Task {
         }
 
         // ── WF-7 (#9) LTR capability probe (SLOPDESK_LTR_PROBE, default OFF) — DIAGNOSTIC ONLY ──────────
-        // Runs ONCE here, BEFORE `mux.start` admits any client, on a THROWAWAY VTCompressionSession
-        // that never touches a live encoder, and logs a single `LTR-PROBE:` verdict line to stderr (the
-        // user reads it on the Mac Studio host). Placing it before the listener guarantees zero
-        // HW-encoder concurrency (no live session can exist yet). NSApplication.accessory (above) has
-        // already connected the window-server so the HW create/encode won't CGS_REQUIRE_INIT-abort. The
-        // probe is bounded by VTCompressionSessionCompleteFrames (a few ms) so it does not meaningfully
-        // delay bring-up. When the env var is unset this branch is skipped → the normal path is
-        // byte-identical (no live encode/recovery behaviour changes).
+        // Runs ONCE here, BEFORE `mux.start` admits any client, on a THROWAWAY VTCompressionSession that
+        // never touches a live encoder, and logs a single `LTR-PROBE:` verdict line to stderr. Placing it
+        // before the listener guarantees zero HW-encoder concurrency (no live session can exist yet).
+        // NSApplication.accessory (above) has already connected the window-server so the HW create/encode
+        // won't CGS_REQUIRE_INIT-abort. Bounded by VTCompressionSessionCompleteFrames (a few ms). When the
+        // env var is unset this branch is skipped → the normal path is byte-identical (no live
+        // encode/recovery behaviour changes).
         if ProcessInfo.processInfo.environment["SLOPDESK_LTR_PROBE"] != nil {
             VideoEncoder.runLTRCapabilityProbe(bitrate: args.bitrateMbps * 1_000_000, fps: args.fps, log: log)
         }

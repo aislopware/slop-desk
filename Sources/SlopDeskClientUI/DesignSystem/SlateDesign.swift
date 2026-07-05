@@ -1,35 +1,32 @@
-// SlateDesign — the clean, minimalist design-token layer (REBUILD-V2, L5/L6).
+// SlateDesign — the minimalist design-token layer (REBUILD-V2, L5/L6).
 //
-// A THIN, headless token layer (no separate SPM target — the deleted `SlopDeskDesignSystem` stays
-// deleted; these are just `Color`/`CGFloat`/`Animation` constants compiled into `SlopDeskClientUI`).
-//
-// These declarations ARE the source of truth for the token layer:
-//   • the dark + light theme structs below → the canonical token table for each chrome role.
-//   • `.paper`'s hand-tuned "Paper" light palette.
-//   • `Slate.Anim` → the exact timing curves (no springs anywhere).
+// A THIN, headless token layer: no separate SPM target (`SlopDeskDesignSystem` stays deleted) — just
+// `Color`/`CGFloat`/`Animation` constants compiled into `SlopDeskClientUI`. Source of truth for the tokens:
+// the theme structs below, `.paper`'s hand-tuned light palette, and `Slate.Anim`'s timing curves (no
+// springs anywhere).
 //
 // Design DNA — "clean / modern / minimalist", FLAT, relit by MERIDIAN L5 (2026-07-04):
-//   - FLAT pane: the terminal viewport fills its leaf edge-to-edge with NO corner radius and NO card;
-//     adjacent split panes are separated only by the hairline `PaneDivider`.
+//   - FLAT pane: the terminal viewport fills its leaf edge-to-edge, NO corner radius, NO card; adjacent
+//     split panes are separated only by the hairline `PaneDivider`.
 //   - MERIDIAN L5 (depth by light, not lines): the SIDEBAR column sits ONE luminance step BELOW the pane
-//     surface (`card`/`content` = the seed background) — the pane is the lit face of the instrument, the
-//     sidebar its unlit housing. The step IS the structure; no divider between. SCOPE (user report "title
-//     màu khác với pane… lạc quẻ"): the CONTENT column is lit end-to-end — its titlebar band paints the
-//     pane tone, because panes sit flush under it (no gap/radius) and a darker strip there reads as a
-//     mispainted header. `window` (== sidebar tone) remains the ground of AUXILIARY windows
-//     (Settings / first-launch / overlays), which are chrome, not pane.
+//     surface (`card`/`content` = the seed background) — pane = lit face, sidebar = unlit housing. The step
+//     IS the structure; no divider between. SCOPE (user report "title màu khác với pane… lạc quẻ"): the
+//     CONTENT column is lit end-to-end — its titlebar band paints the pane tone, because panes sit flush
+//     under it (no gap/radius) and a darker strip there reads as a mispainted header. `window` (== sidebar
+//     tone) stays the ground of AUXILIARY windows (Settings / first-launch / overlays), which are chrome,
+//     not pane.
 //   - 8pt grid; ultra-thin structure: borders ~6% opacity, hover ~4–5% — low contrast = minimalist.
 //   - Minimal palette: three text levels + an accent used ONLY for active state.
 //
 // MULTI-THEME: `SlateTheme` ships the six Monokai Pro filters (`.monokaiProClassic` — the DEFAULT — plus
-// Light / Octagon / Machine / Ristretto / Spectrum) and keeps the legacy `.paper` / `.dark`. The `Slate.*`
-// accessors read `Slate.theme`, which (D3) indirects through `ThemeStore.shared.active` (default
-// `.monokaiProClassic`) so runtime switching repoints every token live. Each theme also carries the
+// Light / Octagon / Machine / Ristretto / Spectrum) plus the legacy `.paper` / `.dark`. `Slate.*` accessors
+// read `Slate.theme`, which (D3) indirects through `ThemeStore.shared.active` (default `.monokaiProClassic`)
+// so runtime switching repoints every token live. Each theme carries the
 // `terminalBackgroundHex`/`terminalForegroundHex` that pin the libghostty cells to the same flat palette.
-// SwiftUI `@Environment`/`.preferredColorScheme` does NOT cross the
-// AppKit split-controller boundary into the column `NSHostingController`s, so the runtime theme rides this
-// `@Observable` store + an `NSWindow.appearance` re-pin (in `SlopDeskSplitViewController`) instead — the
-// `ThemeStore`-backed `@MainActor` accessors keep the `NativePaneColor` injection pattern.
+// SwiftUI `@Environment`/`.preferredColorScheme` does NOT cross the AppKit split-controller boundary into
+// the column `NSHostingController`s, so the runtime theme rides this `@Observable` store + an
+// `NSWindow.appearance` re-pin (in `SlopDeskSplitViewController`) — the `ThemeStore`-backed `@MainActor`
+// accessors keep the `NativePaneColor` injection pattern.
 
 #if canImport(SwiftUI)
 import SlopDeskVideoProtocol
@@ -38,10 +35,10 @@ import SwiftUI
 /// A full colour theme (every chrome role). Two instances ship: `.paper` (light, default) and `.dark`.
 struct SlateTheme: Equatable {
     // Surfaces — the 3-rung ladder (MERIDIAN C1). Exactly three names, each REAL in every theme (a rung
-    // that collapses to another in practice gets DELETED, not kept as aspirational vocabulary):
-    //   ground → the chrome housing: sidebar column + auxiliary windows (Settings / overlays' backdrop)
+    // that collapses to another gets DELETED, not kept as aspirational vocabulary):
+    //   ground → chrome housing: sidebar column + auxiliary windows (Settings / overlays' backdrop)
     //   face   → the lit pane surface: terminal cells, the content column, sheet/popover grounds
-    //   raised → one step lifted: the active row card, popover panels, inset controls (search / kbd / chips)
+    //   raised → one step lifted: active row card, popover panels, inset controls (search / kbd / chips)
     let ground: Color
     let face: Color
     let raised: Color
@@ -99,8 +96,8 @@ struct SlateTheme: Equatable {
     /// Glyph-under-cursor colour (`cursor-text`), 6-hex no `#`; `nil` ⇒ follow the background.
     let cursorTextHex: String?
 
-    /// "Paper" — the original warm off-white + green light palette; kept as a selectable theme (the default
-    /// is now Monokai Pro Classic).
+    /// "Paper" — the original warm off-white + green light palette; a selectable theme (default is now
+    /// Monokai Pro Classic).
     static let paper = Self(
         // MERIDIAN L5: chrome recedes onto the `ground` tone; the pane keeps the brighter paper (`face`).
         ground: Color(slateHex: 0xF5F4F0),
@@ -172,8 +169,7 @@ struct SlateTheme: Equatable {
         id: "dark",
         terminalBackgroundHex: "161616",
         terminalForegroundHex: "EEEEEE",
-        // Neutral dark-terminal ANSI set (One-Dark-style — a clean general-purpose dark palette to match the
-        // grey chrome + system-blue accent).
+        // Neutral dark-terminal ANSI set (One-Dark-style) matching the grey chrome + system-blue accent.
         ansiPalette: [
             "2A2A2A", "E06C75", "98C379", "E5C07B", "61AFEF", "C678DD", "56B6C2", "ABB2BF",
             "5C6370", "E06C75", "98C379", "E5C07B", "61AFEF", "C678DD", "56B6C2", "FFFFFF",
@@ -210,17 +206,17 @@ struct SlateTheme: Equatable {
     /// Build a full ``SlateTheme`` from a Monokai ``MonokaiSeed`` — structural opacities (borders / hover /
     /// selection) are shared and keyed only on light/dark; the colour roles come from the seed.
     private static func monokai(_ s: MonokaiSeed) -> Self {
-        // Structure tints (divider / borders / hover / selection) DERIVE from the theme palette, not a
-        // hardcoded black/white: a DARK filter seeds them from its FOREGROUND so every variant's hairline
-        // carries that filter's own hue (teal-white for Machine, warm-rose for Ristretto, cool-violet for
-        // Spectrum) instead of one flat `Color.white` outlier shared by all five — the "divider của dark
-        // theme đang màu trắng / hardcode" report. Light filters keep a near-black structure line.
+        // Structure tints (divider / borders / hover / selection) DERIVE from the palette, not a hardcoded
+        // black/white: a DARK filter seeds them from its FOREGROUND so every variant's hairline carries that
+        // filter's own hue (teal-white Machine, warm-rose Ristretto, cool-violet Spectrum) instead of one
+        // flat `Color.white` outlier shared by all five — the "divider của dark theme đang màu trắng /
+        // hardcode" report. Light filters keep a near-black structure line.
         let line = Color(slateHex: s.isLight ? 0x000000 : s.foreground)
         return Self(
-            // MERIDIAN L5 (depth by light, not lines): the chrome `ground` (the sidebar column; auxiliary
-            // windows) recedes onto the seed's dimmed `sidebar` tone while the PANE surface (`face` /
-            // terminal bg) keeps the brighter seed `background` — the pane is the lit face of the
-            // instrument. The workspace CONTENT column paints `face`, not `ground` (see ContentColumn).
+            // MERIDIAN L5 (depth by light, not lines): chrome `ground` (sidebar column; auxiliary windows)
+            // recedes onto the seed's dimmed `sidebar` tone while the PANE surface (`face` / terminal bg)
+            // keeps the brighter seed `background`. The workspace CONTENT column paints `face`, not `ground`
+            // (see ContentColumn).
             ground: Color(slateHex: s.sidebar),
             face: Color(slateHex: s.background),
             raised: Color(slateHex: s.elevated),
@@ -280,10 +276,10 @@ struct SlateTheme: Equatable {
         orange: 0xFC9867, purple: 0xAB9DF2, isLight: false,
     ))
 
-    // P5 (Phase-C GUI audit): the navigator `sidebar` was a touch dim/cool vs the intended warm cream/paper. Nudged
-    // 0xEDE7E5 → 0xF1EBE8 — brighter + a hair warmer, HUE-PRESERVING (keeps the seed's rose R>G>B ratio, just
-    // closer to the warm `background`) so the navigator reads as warm paper, not grey. Only `sidebar` moves —
-    // `background`/`elevated` (the flat backdrop + active-tab card) are untouched, so no surface ripples.
+    // P5 (Phase-C GUI audit): navigator `sidebar` read dim/cool vs the intended warm cream. Nudged
+    // 0xEDE7E5 → 0xF1EBE8 — brighter + a hair warmer, HUE-PRESERVING (keeps the seed's rose R>G>B ratio,
+    // closer to `background`) so it reads as warm paper, not grey. Only `sidebar` moves; `background` /
+    // `elevated` (flat backdrop + active-tab card) untouched, so no surface ripples.
     /// Monokai Pro Light (Classic Light) — the warm off-white light filter.
     static let monokaiProClassicLight = monokai(MonokaiSeed(
         name: "classic-light", background: 0xFAF4F2, sidebar: 0xF1EBE8, elevated: 0xFFFFFF,
@@ -436,9 +432,9 @@ enum Slate {
         static let hairline: CGFloat = 1
         static let cardBorderWidth: CGFloat = 1
         static let dividerHoverWidth: CGFloat = 2
-        /// The active-pane focus marker: leg length (points) of the small FILLED accent triangle tucked into
-        /// the focused pane's TOP-LEFT corner (Warp-style — the kept treatment after the box / bracket /
-        /// underline / dot / top-bar iterations). REPLACING the old unfocused-dim treatment.
+        /// Active-pane focus marker: leg length (points) of the small FILLED accent triangle in the focused
+        /// pane's TOP-LEFT corner (Warp-style — the kept treatment after box / bracket / underline / dot /
+        /// top-bar iterations, replacing the old unfocused-dim).
         static let focusCornerSize: CGFloat = 12
 
         // Control plate (PlateIconButton) — rides the ladder's control rung.

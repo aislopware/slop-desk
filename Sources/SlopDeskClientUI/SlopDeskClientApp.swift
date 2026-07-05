@@ -1,13 +1,5 @@
-// SlopDeskClientApp — the native-SwiftUI rewrite (REBUILD-V2) app scene, L1.
-//
-// The old Warp-clone view tree + the custom `SlopDeskDesignSystem` token target were DELETED in L0.
-// L1 restores the REAL app-init logic (recovered verbatim from the pre-L0 scene) and renders the new
-// native 3-pane IDE shell (`WorkspaceRootView` → `NSSplitViewController` on macOS / `NavigationSplitView`
-// on iOS). Versus the old scene this differs ONLY by: no DesignSystem import / `Fonts.register()` /
-// `.theme(...)` (native uses system colours + fonts), and no `.windowStyle(.hiddenTitleBar)` (we want the
-// system titlebar so the unified toolbar + sidebar toggle land in a later layer). Everything else — the
-// `WorkspaceStore` + `AppConnection` construction, the autoconnect/auto-reconnect/monitor wiring, the
-// notification router, the scene-phase lifecycle — is PRESERVED.
+// SlopDeskClientApp — the native-SwiftUI app scene, rendering the native 3-pane IDE shell
+// (`WorkspaceRootView` → `NSSplitViewController` on macOS / `NavigationSplitView` on iOS).
 //
 // It owns ONE `WorkspaceStore` + ONE `AppConnection` (docs/22 §7 / logic-api-surface §8), builds them
 // once in `init()` with the production `liveMakeSession` factory over the shared mux registry, honors
@@ -56,7 +48,7 @@ public struct SlopDeskClientApp: App {
     /// store + app connection, injected into the scene env (`\.overlayCoordinator`) and handed to
     /// ``WorkspaceRootView``. The macOS ``WorkspaceKeyDispatcher`` threads its palette/cheat toggles so the
     /// SAME NSEvent monitor that owns every chord drives the overlays; the store's background-event sinks
-    /// ALSO push an in-app toast through it. The panel views + the host mount land in WI-2…WI-5.
+    /// ALSO push an in-app toast through it.
     @State private var overlayCoordinator: OverlayCoordinator
     /// E11 / WI-7: the app-owned, client-side Folders frecency store — the backing of the Open-Quickly
     /// **Folders** pill (⌘Z). Owned HERE so it outlives the ``OverlayCoordinator``'s WEAK `folders` reference
@@ -114,7 +106,7 @@ public struct SlopDeskClientApp: App {
         AppearanceApplier.apply = { appearance in
             ThemeStore.shared.apply(appearance: appearance)
         }
-        // The terminal CELLS adopt the active theme's flat palette (flat cell design, no per-cell texture): this hook reads the
+        // The terminal CELLS adopt the active theme's flat palette: this hook reads the
         // already-resolved `ThemeStore.active` (so the dual-slot / `.system` selection is concrete) and hands
         // its libghostty 6-hex background/foreground PLUS (E15 WI-3) the 16-entry ANSI palette + selection
         // colour to `PreferencesStore` when it (re)builds the terminal config.
@@ -138,16 +130,15 @@ public struct SlopDeskClientApp: App {
         // Build the GUI Settings store FIRST so its apply paths run before the video pipeline / any
         // `static let` env flag is forced (folds persisted prefs into `EnvConfig.overlay`).
         let preferences = PreferencesStore()
-        // E1/WI-6 + WI-2: fold the `~/.config/slopdesk/config.toml` keybind lines into the live
-        // keybindings so ES-E1-6 is reachable end-to-end — setting `keybindings` republishes the merged model
-        // to `WorkspaceBindingRegistry.activeOverrides` via the store's `didSet`, which the dispatcher reads
-        // BEFORE the action table. The `text:` / `csi:` / `esc:` / `unbind:` directives need no registry and
-        // fold inside the loader; the NAMED / parameterized directives (`cmd+t:new_tab`, `cmd+1:goto_tab:1`)
-        // are resolved HERE via the production `resolveNamedBinding` hook — the loader lives in
-        // `SlopDeskVideoProtocol` (which must not import the registry), so the app layer (which imports
-        // `SlopDeskWorkspaceCore`) supplies the action-name → bindingID table. An unknown / out-of-range
-        // name resolves to `nil` and the line is dropped (validate-then-drop, no trap). A missing/broken file
-        // is a no-op, so a fresh install is behaviour-identical.
+        // E1/WI-6 + WI-2: fold the `~/.config/slopdesk/config.toml` keybind lines into the live keybindings.
+        // Setting `keybindings` republishes the merged model to `WorkspaceBindingRegistry.activeOverrides` via
+        // the store's `didSet`, which the dispatcher reads BEFORE the action table. The `text:` / `csi:` /
+        // `esc:` / `unbind:` directives need no registry and fold inside the loader; the NAMED / parameterized
+        // directives (`cmd+t:new_tab`, `cmd+1:goto_tab:1`) resolve HERE via `resolveNamedBinding` — the loader
+        // lives in `SlopDeskVideoProtocol` (which must not import the registry), so the app layer supplies the
+        // action-name → bindingID table. An unknown / out-of-range name resolves to `nil` and the line is
+        // dropped (validate-then-drop, no trap). A missing/broken file is a no-op, so a fresh install is
+        // behaviour-identical.
         if let configURL = KeybindConfigLoader.defaultConfigURL() {
             let merged = KeybindConfigLoader.loadFile(
                 at: configURL,
@@ -169,7 +160,7 @@ public struct SlopDeskClientApp: App {
         let isAutomation = Self.hasAutomationEnvironment()
         let persistence: WorkspacePersistence? = isAutomation ? nil : WorkspacePersistence()
 
-        // Per-device live-video ceiling (resolved ONCE at launch, per-device).
+        // Per-device live-video ceiling, resolved ONCE at launch.
         #if os(macOS)
         let liveVideoCap = VideoCapPolicy.cap(for: .mac)
         #elseif os(iOS)
@@ -247,11 +238,11 @@ public struct SlopDeskClientApp: App {
             }
         }
 
-        // E11 / WI-7: the app-owned, client-side Folders frecency store — the backing of the Open-Quickly
-        // Folders pill (⌘Z). Owned here (retained by `_folderFrecency` below) and attached to the coordinator,
-        // which holds it WEAKLY (like `store`). Under automation, point it at a THROWAWAY temp sidecar so an
-        // autoconnect run never pollutes the developer's real `folders-frecency.json` (mirroring the
-        // nil-persistence guard that protects `workspace.json`).
+        // E11 / WI-7: build the client-side Folders frecency store (backing the Open-Quickly Folders pill,
+        // ⌘Z). Retained by `_folderFrecency` below; the coordinator holds it WEAKLY (like `store`). Under
+        // automation, point it at a THROWAWAY temp sidecar so an autoconnect run never pollutes the
+        // developer's real `folders-frecency.json` (mirroring the nil-persistence guard that protects
+        // `workspace.json`).
         let folderFrecency: FolderFrecencyStore = isAutomation
             ? FolderFrecencyStore(fileURL: FileManager.default.temporaryDirectory
                 .appendingPathComponent("slopdesk-automation-folders-frecency.json"))
@@ -263,12 +254,12 @@ public struct SlopDeskClientApp: App {
         // the store via `_folderFrecency`.
         store.onCwdVisited = { [weak folderFrecency] cwd in folderFrecency?.record(cwd: cwd) }
 
-        // E2/WI-1: the single overlay coordinator. Built HERE — after the store + app connection exist — so
+        // E2/WI-1: build the single overlay coordinator HERE — after the store + app connection exist — so
         // the macOS dispatcher (below) can thread its ⌘⇧P / ⌘/ toggles into the SAME NSEvent monitor that
         // owns every chord, and the store's background-event sinks can ALSO surface an in-app toast.
-        // `connectionTarget` lets the remote-window-picker modal query the live host. The app-owned Folders
-        // frecency store is attached here (the coordinator holds it weakly, backing the Open-Quickly Folders
-        // pill). Retained for the scene lifetime by `_overlayCoordinator` / `_folderFrecency` below.
+        // `connectionTarget` lets the remote-window-picker modal query the live host. The Folders frecency
+        // store is attached here (held weakly). Retained for the scene lifetime by `_overlayCoordinator` /
+        // `_folderFrecency` below.
         let overlay = OverlayCoordinator(store: store, folders: folderFrecency)
         overlay.connectionTarget = { [weak appConnection] in appConnection?.target ?? .default }
         // Batch 4 (catalog-completeness): the palette's "Switch Theme" verb is a LOCAL client action over the
@@ -560,8 +551,7 @@ public struct SlopDeskClientApp: App {
                 // Agent-Behaviour toggle block greyed out (the controller's `@Environment` resolved nil).
                 .agentHooksController(agentHooks)
                 // E2/WI-1: inject the single overlay coordinator so deep views (the agent footer's "open
-                // settings" hook, future toast emitters) reach it via `\.overlayCoordinator`. The host view
-                // that renders the palette / cheat sheet / toasts lands in WI-5.
+                // settings" hook, future toast emitters) reach it via `\.overlayCoordinator`.
                 .overlayCoordinator(overlayCoordinator)
                 // E20 WI-9 (ES-E20-4): the guided first-launch sheet — composes On-Launch / Default-Terminal /
                 // Install-CLI / Theme / Install-Claude-hooks. Presents once on a fresh install (the
@@ -804,10 +794,9 @@ public struct SlopDeskClientApp: App {
         #endif
 
         // D4: the GUI Settings surface (⌘,). A STOCK SwiftUI `Settings` scene — the main window is
-        // `.hiddenTitleBar` and the in-app overlay host (`OverlayCoordinator`) is not yet mounted, so a
-        // separate system-chromed window is the non-clashing home for now (it relocates into an in-window
-        // settings panel once the coordinator lands). Binds the SAME single live `PreferencesStore`. macOS-only:
-        // `Settings` is unavailable on iOS (the iOS settings surface lands as an in-app sheet later).
+        // `.hiddenTitleBar` and the in-app overlay host is not yet mounted, so a separate system-chromed
+        // window is the non-clashing home. Binds the SAME single live `PreferencesStore`. macOS-only:
+        // `Settings` is unavailable on iOS (the iOS settings surface is an in-app sheet).
         #if os(macOS)
         SlopDeskSettingsScene(store: preferences, agentHooks: agentHooks)
         #endif

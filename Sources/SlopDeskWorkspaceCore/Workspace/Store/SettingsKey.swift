@@ -2,15 +2,14 @@ import Defaults
 import Foundation
 import SlopDeskVideoProtocol
 
-// L0: extracted from the deleted SwiftUI `SettingsScene.swift`. `SettingsKey` is the pure
-// `UserDefaults`-key namespace + the fire-time boolean/`PaneKind` accessors that the headless logic
-// (CommandCompletionNotifier, AppLaunchMonitor, WorkspaceStore+Completion, the monitors) reads. The
-// new Settings UI binds the SAME keys via `@Default(.key)` (the typed `Defaults.Keys` below).
+// `SettingsKey`: the pure `UserDefaults`-key namespace + fire-time boolean/`PaneKind` accessors read by the
+// headless logic (CommandCompletionNotifier, AppLaunchMonitor, WorkspaceStore+Completion, the monitors). The
+// Settings UI binds the SAME keys via `@Default(.key)` (the typed `Defaults.Keys` below).
 //
-// G2 / Defaults: the fire-time accessors now read sindresorhus/Defaults typed keys — the per-key default
-// lives ONCE in the `Defaults.Keys` declaration instead of being repeated in each `?? true`. The wire
-// STRING constants stay (the `Defaults.Key` names reuse them, so there is one source of truth that
-// `SettingsKeyTests` pins and the `@Default`/`@AppStorage` consumers share). No SwiftUI import — headless.
+// Accessors read sindresorhus/Defaults typed keys — the per-key default lives ONCE in `Defaults.Keys`, not
+// repeated in each `?? true`. The wire STRING constants stay the one source of truth (the `Defaults.Key`
+// names reuse them; `SettingsKeyTests` pins them, `@Default`/`@AppStorage` consumers share them). No SwiftUI
+// import — headless.
 public enum SettingsKey {
     // Canvas
     public static let defaultPaneKindKey = "canvas.defaultPaneKind" // PaneKind.rawValue
@@ -24,8 +23,8 @@ public enum SettingsKey {
     public static let oscNotifications = "notifications.osc"
     public static let longCommandNotifications = "notifications.longCommand"
     // E14/K9 (notification-setting.png NOTIFICATION section). Fire-time `Defaults.Keys` flags, never folded
-    // into a typed prefs model (golden-safe, like `oscNotifications`). The pure ``NotificationPolicy`` reads
-    // the resolved ``notificationSettings`` bundle; the UI (WI-7 navigator) binds the SAME keys.
+    // into a typed prefs model → golden-safe. The pure ``NotificationPolicy`` reads the resolved
+    // ``notificationSettings`` bundle; the UI (WI-7 navigator) binds the SAME keys.
     /// "Notify on Command Finish" — fire when a command exits 0 (default OFF).
     public static let notifyOnFinish = "notifications.onFinish"
     /// "Notify on Error Exit" — fire when a command exits non-zero (default ON).
@@ -33,8 +32,8 @@ public enum SettingsKey {
     /// "Notify on Watch Finish" — fire when an `slopdesk watch`-wrapped command finishes (default ON).
     public static let notifyOnWatchFinish = "notifications.onWatchFinish"
     /// "Notify While Foreground" — banner behaviour while the app is frontmost. Stored as the
-    /// ``NotifyWhileForeground`` rawValue (`off`/`always`/`tab-unfocused`); default `.off`. Named with the
-    /// `Key` suffix (like ``newTabPositionKey``) so the typed accessor below takes the bare name.
+    /// ``NotifyWhileForeground`` rawValue (`off`/`always`/`tab-unfocused`); default `.off`. `Key` suffix frees
+    /// the bare name for the typed accessor.
     public static let notifyWhileForegroundKey = "notifications.whileForeground" // NotifyWhileForeground.rawValue
     /// "Bounce Dock Icon" — bounce the Dock when a notification arrives and the app is not focused
     /// (default ON; macOS-only behaviour — the Dock tile is process-global, wired in WI-5).
@@ -47,37 +46,37 @@ public enum SettingsKey {
     public static let agentNotifyTaskComplete = "notifications.agentTaskComplete"
     /// "Code Agent — Notify When Awaiting Input" — agent needs approval / input (default ON; Claude-only).
     public static let agentNotifyAwaitInput = "notifications.agentAwaitInput"
-    // E13/WI-3 (agents__agents-overview.md "Agent Behaviour"). The three BADGE toggles, fire-time
-    // `Defaults.Keys` flags (never folded into a typed prefs model → golden-safe, like `agentNotify*`). They
-    // gate which fused tab badge the sidebar SHOWS via the pure ``AgentBadgeGates`` (the resolver stays pure +
-    // unchanged); a per-pane override in ``WorkspaceStore`` beats this global default. Claude-only.
-    /// "Badge while processing" — show the agent THINKING spinner (default OFF, per
-    /// `progress-state.md` line 42/63 "Claude Code — While Processing (off by default)"; Claude-only). This
-    /// gates ONLY the agent's own spinner — a program's busy / OSC 9;4 progress spinner is never silenced by it.
+    // E13/WI-3 (agents__agents-overview.md "Agent Behaviour"). The three BADGE toggles — fire-time
+    // `Defaults.Keys` flags, never folded into a typed prefs model → golden-safe. They gate which fused tab
+    // badge the sidebar SHOWS via the pure ``AgentBadgeGates``; a per-pane override in ``WorkspaceStore`` beats
+    // this global default. Claude-only.
+    /// "Badge while processing" — show the agent THINKING spinner (default OFF per `progress-state.md`
+    /// "Claude Code — While Processing (off by default)"; Claude-only). Gates ONLY the agent's own spinner — a
+    /// program's busy / OSC 9;4 progress spinner is never silenced by it.
     public static let agentBadgeWhileProcessing = "agents.badgeWhileProcessing"
     /// "Badge when complete" — show the completed-checkmark / finished-dot badge (default ON; Claude-only).
     public static let agentBadgeWhenComplete = "agents.badgeWhenComplete"
     /// "Badge when awaiting input" — show the awaiting-input hand badge (default ON; Claude-only).
     public static let agentBadgeWhenAwaitingInput = "agents.badgeWhenAwaitingInput"
-    // Progress cluster (progress-state.md lines 32-35 — Settings → Shell "TAB BADGE" section). The three
-    // COMMAND-driven badge toggles, DISTINCT from the Claude `agentBadge*` set above so a user controls command
-    // vs agent badges independently. Fire-time `Defaults.Keys` flags (never folded into a typed prefs model →
-    // golden-safe, like `agentBadge*`). Consumed via `SettingsKey.commandBadgeGates` → `TabBadgeGating.resolve`.
+    // Progress cluster (progress-state.md — Settings → Shell "TAB BADGE"). The three COMMAND-driven badge
+    // toggles, DISTINCT from the Claude `agentBadge*` set so command vs agent badges are controlled
+    // independently. Fire-time flags, never folded into a typed prefs model → golden-safe. Consumed via
+    // `SettingsKey.commandBadgeGates` → `TabBadgeGating.resolve`.
     /// "Tab Badge — When Command Finishes" — show the completed/finished badge for a clean command exit
     /// (default ON). Distinct from the agent `agentBadgeWhenComplete` gate.
     public static let tabBadgeOnCommandFinish = "tabBadge.onCommandFinish"
     /// "Tab Badge — When Command Fails" — show the error badge for a non-zero command exit (default ON).
     /// Gates only the `.failure` COMMAND-exit badge; an OSC 9;4;2 program progress error has no opt-out.
     public static let tabBadgeOnCommandFail = "tabBadge.onCommandFail"
-    /// "Tab Badge — When Command Awaits Input" — show the awaiting-input hand for a plain command stopped
-    /// at an interactive prompt (default ON). The host-side ~1.5s cursor-at-prompt quiescence detector that
-    /// would DRIVE this badge is a deferred ceiling (see `docs/DECISIONS.md`); the toggle is wired so the future
-    /// signal gates without a later code change. Distinct from the agent `agentBadgeWhenAwaitingInput` gate.
+    /// "Tab Badge — When Command Awaits Input" — show the awaiting-input hand for a plain command stopped at
+    /// an interactive prompt (default ON). The host-side ~1.5s cursor-at-prompt quiescence detector that would
+    /// DRIVE it is deferred (see `docs/DECISIONS.md`); the toggle is wired so the future signal gates without a
+    /// code change. Distinct from the agent `agentBadgeWhenAwaitingInput` gate.
     public static let tabBadgeOnCommandAwaitInput = "tabBadge.onCommandAwaitInput"
-    // Controls / scroll / copy (Controls section). These are FIRE-TIME `Defaults.Keys` flags — they
-    // are deliberately NOT folded into any typed prefs model, so they never reach the `EnvConfig` overlay
-    // or the `video-prefs.json` sidecar (golden-safe by construction, like `oscNotifications`). E8 owns the
-    // BEHAVIOUR; E7 only declares + surfaces them. They are persisted forward-stubs that round-trip today.
+    // Controls / scroll / copy (Controls section). FIRE-TIME `Defaults.Keys` flags, deliberately NOT folded
+    // into any typed prefs model, so they never reach the `EnvConfig` overlay or the `video-prefs.json`
+    // sidecar → golden-safe. E8 owns the BEHAVIOUR; E7 only declares + surfaces them (persisted forward-stubs
+    // that round-trip today).
     /// `copy-on-select` — copy the selection to the pasteboard as soon as it is made (default OFF).
     /// **E8 owns the behaviour.**
     public static let copyOnSelect = "controls.copyOnSelect"
@@ -100,11 +99,10 @@ public enum SettingsKey {
     /// behaviour.**
     public static let scrollMultiplier = "controls.scrollMultiplier"
 
-    // E8 WI-1: the remaining Controls / Mouse / Scroll knobs. Same fire-time `Defaults.Keys`
-    // discipline (never folded into a typed prefs model → never reach the env overlay / sidecar →
-    // golden-safe). E8 owns the behaviour; declared + persisted here so the Controls UI round-trips. The
-    // bool keys take the bare name (`…Enabled` accessor); the enum-valued keys take a `…Key` suffix (like
-    // `onLaunchKey`) so the typed accessor below can use the bare name.
+    // E8 WI-1: the remaining Controls / Mouse / Scroll knobs. Same fire-time flags → golden-safe. E8 owns the
+    // behaviour; declared + persisted here so the Controls UI round-trips. Bool keys take the bare name
+    // (`…Enabled` accessor); enum-valued keys take a `…Key` suffix (like `onLaunchKey`) so the typed accessor
+    // below can use the bare name.
     /// `selection-clear-on-typing` — clear the selection when the user types (default ON).
     public static let clearSelectionOnTyping = "controls.clearSelectionOnTyping"
     /// `selection-clear-on-copy` — clear the selection after an explicit copy (default OFF).
@@ -156,8 +154,8 @@ public enum SettingsKey {
     public static let secureInputIndicator = "controls.secureInputIndicator"
 
     // E14/K11-K12 (terminal-features__notifications.md privilege surface — Settings → Advanced). Fire-time
-    // `Defaults.Keys` flags (never folded into a typed prefs model → golden-safe, like the clipboard keys).
-    // These gate what an OSC sequence from the remote shell is allowed to do client-side.
+    // flags, never folded into a typed prefs model → golden-safe. These gate what an OSC sequence from the
+    // remote shell is allowed to do client-side.
     /// "Title — Shell Controlled" — allow apps to set the tab/window title via `OSC 0` / `OSC 2`
     /// (default ON). Read fire-time by ``TerminalViewModel`` at the `.title` event: OFF drops the title update.
     public static let titleShellControlled = "controls.titleShellControlled"
@@ -171,13 +169,11 @@ public enum SettingsKey {
     /// ahead of the per-direction gate, so the libghostty config emits `clipboard-read/write = deny`.
     public static let clipboardShellControlled = "controls.clipboardShellControlled"
 
-    // E10 (Path/link detection — Settings → Controls → Open With / Link Schemes). Fire-time
-    // `Defaults.Keys` flags (never folded into a typed prefs model → golden-safe). Declared + persisted here
-    // so the Controls UI round-trips; E10 WI-5/6/8/9 read them fire-time (the ⌘-hold underline, the
-    // click/context-menu dispatch, Jump-To, and Hint Mode). The bool key takes the bare name (`…Enabled`
-    // accessor); the enum-valued keys take a `…Key` suffix (like `rightClickActionKey`) so the typed accessor
-    // below can use the bare name; the list-valued keys take the bare name (read via the bridged accessors /
-    // `@Default`, like `customLinkSchemes`).
+    // E10 (Path/link detection — Settings → Controls → Open With / Link Schemes). Fire-time flags, never
+    // folded into a typed prefs model → golden-safe. Declared + persisted here so the Controls UI round-trips;
+    // E10 WI-5/6/8/9 read them fire-time (⌘-hold underline, click/context-menu dispatch, Jump-To, Hint Mode).
+    // Naming: bool key = bare name (`…Enabled` accessor); enum-valued keys = `…Key` suffix (like
+    // `rightClickActionKey`); list-valued keys = bare name (read via bridged accessors / `@Default`).
     /// `link-detection` — detect paths / URLs in terminal output and underline them on ⌘-hover (default
     /// ON). Turn OFF when a TUI's mouse reporting conflicts with the detection overlay.
     public static let linkDetection = "controls.linkDetection"
@@ -212,12 +208,11 @@ public enum SettingsKey {
     /// `SLOPDESK_FEC_M`) — a live edit re-drives the host on the NEXT launch. Stored `[String]`.
     public static let autoProgressCommands = "advanced.autoProgressCommands" // [String]
     // E14/K13 (IPC guards on the agent-control ctl socket — terminal-features__notifications.md privilege
-    // surface → Settings → Advanced). Fire-time `Defaults.Keys` flags (never folded into a typed prefs model
-    // → golden-safe, like `autoProgressCommands`). These are CLIENT-displayed toggles whose ENFORCEMENT is
-    // HOST-side: the guard runs on the host's NDJSON ctl socket, so a live client edit applies on the NEXT
-    // host launch via the env bridge (same resolution discipline as K2 — set identically host+client, like
-    // `SLOPDESK_FEC_M`). These guards exist because the WireGuard mesh, not app-layer auth, is the
-    // security boundary here; this maps the toggles onto the host agent-control socket. See docs/DECISIONS.md.
+    // surface → Settings → Advanced). Fire-time flags, never folded into a typed prefs model → golden-safe.
+    // CLIENT-displayed toggles whose ENFORCEMENT is HOST-side: the guard runs on the host's NDJSON ctl socket,
+    // so a live client edit applies on the NEXT host launch via the env bridge (set identically host+client,
+    // like `SLOPDESK_FEC_M`). The guards exist because the WireGuard mesh, not app-layer auth, is the security
+    // boundary; this maps the toggles onto the host agent-control socket. See docs/DECISIONS.md.
     /// E14-K13 "IPC — Allow Send Keys" — whether the agent-control ctl socket may run the MUTATING verbs
     /// (`write`/`run`/`spawn`/`kill`/`resize`, the "send keys" equivalents). Default OFF. The host ENFORCES
     /// via `HostEnvironment.ipcAllowSendKeys()` (`SLOPDESK_IPC_ALLOW_SEND_KEYS`); read-only verbs
@@ -236,8 +231,8 @@ public enum SettingsKey {
     /// Whether the per-block sticky command divider/header is shown over terminal panes. Default ON.
     public static let showBlockDividers = "terminal.showBlockDividers"
     // E14/K5/K8 (terminal-features__progress-state.md "DOCK ICON" group). macOS-only NSDockTile behaviour;
-    // the keys still compile + round-trip on iOS, where the feature is inert (no Dock). Fire-time
-    // `Defaults.Keys` flags, never folded into a typed prefs model → golden-safe (like `showBlockDividers`).
+    // the keys compile + round-trip on iOS, inert there (no Dock). Fire-time flags, never folded into a typed
+    // prefs model → golden-safe.
     /// "Animate Dock Icon During Progress" (`dock-icon-animate-progress`) — animate the macOS Dock tile
     /// while ANY session reports an OSC 9;4 in-progress / indeterminate state (default OFF; macOS-only). Read
     /// by the macOS ``DockProgressController`` via the pure ``DockTintPolicy``.
@@ -248,15 +243,15 @@ public enum SettingsKey {
     public static let dockIconErrorBadge = "appearance.dockIconErrorBadge"
     // Shell / window behaviour
     /// Where a new tab is inserted in the active session's tab bar (`new-tab-position`). Stored as the
-    /// ``NewTabPosition`` rawValue (`auto`/`end`/`after-current`); default `.auto` (= append). Read at the
-    /// ⌘T fire-site (`WorkspaceStore.newTab`). Named with the `Key` suffix (like ``defaultPaneKindKey``) so
-    /// the typed ``NewTabPosition`` accessor below can take the bare ``newTabPosition`` name.
+    /// ``NewTabPosition`` rawValue (`auto`/`end`/`after-current`); default `.auto` (= append). Read at the ⌘T
+    /// fire-site (`WorkspaceStore.newTab`). `Key` suffix (like ``defaultPaneKindKey``) frees the bare
+    /// ``newTabPosition`` name for the typed accessor.
     public static let newTabPositionKey = "shell.newTabPosition" // NewTabPosition.rawValue
 
-    /// How the vertical sidebar BUCKETS tabs into sections (sort-hamburger "Group By", E6). Stored as
-    /// the ``TabGrouping`` rawValue (`none`/`byProject`/`byDate`); default `.none` (one flat list). Read +
-    /// written by ``WorkspaceStore`` (the single source of truth for row order). Named with the `Key` suffix
-    /// (like ``newTabPositionKey``) so the typed ``tabGrouping`` accessor below takes the bare name.
+    /// How the vertical sidebar BUCKETS tabs into sections (sort-hamburger "Group By", E6). Stored as the
+    /// ``TabGrouping`` rawValue (`none`/`byProject`/`byDate`); default `.none` (one flat list). Read + written
+    /// by ``WorkspaceStore`` (the single source of truth for row order). `Key` suffix frees the bare
+    /// ``tabGrouping`` name for the typed accessor.
     public static let tabGroupingKey = "shell.tabGrouping" // TabGrouping.rawValue
     /// How tabs are ORDERED within a sidebar section (sort-hamburger "Sort By", E6). Stored as the
     /// ``TabSort`` rawValue (`created`/`updated`/`manual`); default `.created` (= `session.tabs` array order).
@@ -264,10 +259,9 @@ public enum SettingsKey {
 
     /// When the vertical TABS panel (sidebar) is shown (`auto-hide-tabs-panel`, E19/A18). Stored as the
     /// ``AutoHideTabsPanelMode`` rawValue (`default`/`always`/`auto`); default `.default` (always shown). Only
-    /// `.auto` auto-hides the panel when the active session has a single tab — the show/hide decision lives in
-    /// the pure ``SidebarAutoHidePolicy/desiredCollapsed(mode:tabCount:)`` and the view-side glue (WI-7) drives
-    /// ``WorkspaceChromeState/sidebarCollapsed`` from it. Named with the `Key` suffix (like ``tabSortKey``) so
-    /// the typed ``autoHideTabsPanel`` accessor below can take the bare name.
+    /// `.auto` auto-hides when the active session has a single tab — the decision lives in the pure
+    /// ``SidebarAutoHidePolicy/desiredCollapsed(mode:tabCount:)`` and the view-side glue (WI-7) drives
+    /// ``WorkspaceChromeState/sidebarCollapsed`` from it. `Key` suffix frees the bare ``autoHideTabsPanel`` name.
     public static let autoHideTabsPanelKey = "shell.autoHideTabsPanel" // AutoHideTabsPanelMode.rawValue
 
     /// The working-directory policy for a NEW WINDOW (`working-directory`), default `home` — a fresh
@@ -293,14 +287,14 @@ public enum SettingsKey {
     /// the window-close fire-site (`WorkspaceStore.requestCloseWindow`).
     public static let closeConfirmWindowKey = "shell.closeConfirm.window" // CloseConfirmationPolicy.rawValue
 
-    // E19/A29 (`window-size` — user-interface__window-tab-split.md). A NEW `window.*` namespace, so a
-    // stale read decode-fails to the key default per [[rwork-no-backcompat]] (no migration). These are the
-    // CLIENT-side initial-window-sizing settings: the macOS `NSWindow` glue (WI-4) reads them once per window
-    // open + resolves the content size via ``WindowSizeMath``; iOS has no resizable window (the keys still
-    // compile + round-trip there, inert). touchesWire:false — purely client view state.
+    // E19/A29 (`window-size` — user-interface__window-tab-split.md). A NEW `window.*` namespace, so a stale
+    // read decode-fails to the key default per [[rwork-no-backcompat]] (no migration). CLIENT-side
+    // initial-window-sizing: the macOS `NSWindow` glue (WI-4) reads them once per window open + resolves the
+    // content size via ``WindowSizeMath``; iOS has no resizable window (keys compile + round-trip inert).
+    // touchesWire:false — purely client view state.
     /// How a new window decides its initial dimensions (`window-size`). Stored as the ``WindowSizeMode``
-    /// rawValue (`remember`/`grid`/`frame`); default `.remember` (restore the autosaved frame). Named with
-    /// the `Key` suffix (like ``newTabPositionKey``) so the typed ``windowSize`` accessor takes the bare name.
+    /// rawValue (`remember`/`grid`/`frame`); default `.remember` (restore the autosaved frame). `Key` suffix
+    /// frees the bare ``windowSize`` name for the typed accessor.
     public static let windowSizeKey = "window.size" // WindowSizeMode.rawValue
     /// The column count for a new window when ``windowSize`` is ``WindowSizeMode/grid`` (`window-cols`),
     /// default `80`. Clamped into a sane band by ``WindowSizeMath/clampCols(_:)`` at the sizing fire-site.
@@ -317,10 +311,10 @@ public enum SettingsKey {
 
     // E20/WI-9 (First-launch flow + Shell → SlopDesk CLI card — getting-started__first-launch.md). A new
     // `firstLaunch.*` / `shell.cli.*` namespace, so a stale read decode-fails to the key default per
-    // [[rwork-no-backcompat]] (no migration). Fire-time `Defaults.Keys` flags, never folded into a typed prefs
-    // model → golden-safe (purely client-side; touchesWire:false). `hasCompletedFirstLaunch` gates the
-    // one-time guided sheet; the three `shell.cli.*` keys are the "Install CLI" / "Omit Prefix" /
-    // "Allow Overwrite" toggles, displayed on macOS (the `/usr/local/bin` install is `#if os(macOS)`).
+    // [[rwork-no-backcompat]] (no migration). Fire-time flags → golden-safe (client-side; touchesWire:false).
+    // `hasCompletedFirstLaunch` gates the one-time guided sheet; the three `shell.cli.*` keys are the "Install
+    // CLI" / "Omit Prefix" / "Allow Overwrite" toggles, displayed on macOS (the `/usr/local/bin` install is
+    // `#if os(macOS)`).
     /// Whether the guided first-launch sheet has already run (first-launch). Default OFF — a fresh install
     /// presents the sheet exactly once; `FirstLaunchModel.finish()` flips it ON. Read at app launch via
     /// ``FirstLaunchModel/shouldPresent(hasCompleted:automationActive:)``.
@@ -449,11 +443,10 @@ public enum SettingsKey {
     /// by default; the escape hatch is for someone who genuinely wants raw titles). Read at fire-time.
     public static var redactSecretsEnabled: Bool { Defaults[.redactSecrets] }
 
-    /// Whether copied text is archived into the clipboard-history ring that backs the pill's "Paste
-    /// Recent" submenu (default ON). Turn it OFF to stop the monitor from retaining any copied string —
-    /// the privacy escape hatch for someone who copies secrets to paste into sudo/SSH prompts. Read at
-    /// fire-time so a settings change applies live; existing entries are cleared from the pill's "Clear
-    /// History".
+    /// Whether copied text is archived into the clipboard-history ring that backs the pill's "Paste Recent"
+    /// submenu (default ON). OFF stops the monitor retaining any copied string — the privacy escape hatch for
+    /// someone who copies secrets into sudo/SSH prompts. Read at fire-time (applies live); existing entries are
+    /// cleared from the pill's "Clear History".
     public static var recordClipboardHistoryEnabled: Bool { Defaults[.recordClipboardHistory] }
 
     /// The built-in slow-command prefix list (E14/K2) — the DEFAULT for ``autoProgressCommands``
@@ -518,10 +511,10 @@ public enum SettingsKey {
     /// default ON (macOS-only; inert on iOS). Read fire-time by ``DockProgressController`` via ``DockTintPolicy``.
     public static var dockIconErrorBadgeEnabled: Bool { Defaults[.dockIconErrorBadge] }
 
-    /// The default kind for a generic "New Pane" (toolbar primary action / empty state), default
-    /// `.terminal`. The ⌥⌘N per-kind shortcut is unaffected. A stale persisted `"claudeCode"` value (the
-    /// kind retired in W11) is not a valid raw value here → falls back to `.terminal`, exactly right
-    /// (the `RawRepresentableBridge` returns the key default when the stored raw value no longer maps).
+    /// The default kind for a generic "New Pane" (toolbar primary action / empty state), default `.terminal`.
+    /// The ⌥⌘N per-kind shortcut is unaffected. A stale persisted `"claudeCode"` value (the kind retired in
+    /// W11) is not a valid raw value here → falls back to `.terminal` via the `RawRepresentableBridge` (returns
+    /// the key default when the stored raw value no longer maps).
     public static var defaultPaneKind: PaneKind { Defaults[.defaultPaneKind] }
 
     /// Where a new tab opens in the active session's tab bar (`new-tab-position`), default `.auto`
@@ -789,9 +782,9 @@ public enum SettingsKey {
 public extension Defaults.Keys {
     static let oscNotifications = Key<Bool>(SettingsKey.oscNotifications, default: true)
     static let longCommandNotifications = Key<Bool>(SettingsKey.longCommandNotifications, default: true)
-    // E14/K9 notification policy (notification-setting.png). Fire-time flags, never folded into a typed prefs
-    // model → golden-safe. The enum-valued `notifyWhileForeground` stores the bare rawValue via the
-    // `RawRepresentableBridge` (repairing a stale value to `.off`, like `closeConfirmTab`).
+    // E14/K9 notification policy (notification-setting.png). Fire-time flags → golden-safe. The enum-valued
+    // `notifyWhileForeground` stores the bare rawValue via the `RawRepresentableBridge` (repairing a stale
+    // value to `.off`).
     static let notifyOnFinish = Key<Bool>(SettingsKey.notifyOnFinish, default: false)
     static let notifyOnError = Key<Bool>(SettingsKey.notifyOnError, default: true)
     static let notifyOnWatchFinish = Key<Bool>(SettingsKey.notifyOnWatchFinish, default: true)
@@ -804,10 +797,9 @@ public extension Defaults.Keys {
     static let soundOnErrorExit = Key<Bool>(SettingsKey.soundOnErrorExit, default: false)
     static let agentNotifyTaskComplete = Key<Bool>(SettingsKey.agentNotifyTaskComplete, default: true)
     static let agentNotifyAwaitInput = Key<Bool>(SettingsKey.agentNotifyAwaitInput, default: true)
-    // E13/WI-3 agent badge gates (agents__agents-overview.md "Agent Behaviour"). Fire-time flags, never folded
-    // into a typed prefs model → golden-safe. Consumed via `SettingsKey.agentBadgeGates` → `TabBadgeGating.resolve`.
-    // `whileProcessing` defaults OFF (progress-state.md "Claude Code — While Processing (off by default)"); the
-    // other two default ON.
+    // E13/WI-3 agent badge gates (agents__agents-overview.md "Agent Behaviour"). Fire-time flags → golden-safe.
+    // Consumed via `SettingsKey.agentBadgeGates` → `TabBadgeGating.resolve`. `whileProcessing` defaults OFF
+    // (progress-state.md "Claude Code — While Processing (off by default)"); the other two default ON.
     static let agentBadgeWhileProcessing = Key<Bool>(SettingsKey.agentBadgeWhileProcessing, default: false)
     static let agentBadgeWhenComplete = Key<Bool>(SettingsKey.agentBadgeWhenComplete, default: true)
     static let agentBadgeWhenAwaitingInput = Key<Bool>(SettingsKey.agentBadgeWhenAwaitingInput, default: true)
@@ -821,16 +813,15 @@ public extension Defaults.Keys {
     static let autoSwitchLayouts = Key<Bool>(SettingsKey.autoSwitchLayouts, default: true)
     static let redactSecrets = Key<Bool>(SettingsKey.redactSecrets, default: true)
     static let recordClipboardHistory = Key<Bool>(SettingsKey.recordClipboardHistory, default: true)
-    // E14/K2: the "Auto Progress-Bar Commands" list. Fire-time `[String]` key (never folded into a
-    // typed prefs model → golden-safe, like `customLinkSchemes`). Default = the built-in slow-command
-    // list; the host enforces its own copy from `SLOPDESK_AUTO_PROGRESS_COMMANDS`.
+    // E14/K2: the "Auto Progress-Bar Commands" list. Fire-time `[String]` key → golden-safe. Default = the
+    // built-in slow-command list; the host enforces its own copy from `SLOPDESK_AUTO_PROGRESS_COMMANDS`.
     static let autoProgressCommands = Key<[String]>(
         SettingsKey.autoProgressCommands,
         default: SettingsKey.autoProgressCommandsBuiltIn,
     )
-    // E14/K13: the IPC guards on the agent-control ctl socket. Fire-time flags (never folded into a typed
-    // prefs model → golden-safe). Both default OFF (conservative — mutation/sensitive access is opt-in); the
-    // host enforces its own copy via SLOPDESK_IPC_ALLOW_SEND_KEYS / _SENSITIVE on the next launch.
+    // E14/K13: the IPC guards on the agent-control ctl socket. Fire-time flags → golden-safe. Both default OFF
+    // (mutation/sensitive access is opt-in); the host enforces its own copy via SLOPDESK_IPC_ALLOW_SEND_KEYS /
+    // _SENSITIVE on the next launch.
     static let ipcAllowSendKeys = Key<Bool>(SettingsKey.ipcAllowSendKeys, default: false)
     static let ipcAllowSensitiveSessions = Key<Bool>(SettingsKey.ipcAllowSensitiveSessions, default: false)
     static let showBlockDividers = Key<Bool>(SettingsKey.showBlockDividers, default: true)
@@ -870,18 +861,16 @@ public extension Defaults.Keys {
     static let windowRows = Key<Int>(SettingsKey.windowRowsKey, default: 24)
     static let windowWidthPx = Key<Int>(SettingsKey.windowWidthPxKey, default: 1000)
     static let windowHeightPx = Key<Int>(SettingsKey.windowHeightPxKey, default: 600)
-    // E20/WI-9 first-launch + SlopDesk CLI (getting-started__first-launch.md). Fire-time flags (never folded
-    // into a typed prefs model → golden-safe; purely client-side). `hasCompletedFirstLaunch` gates the one-time
-    // sheet (default OFF — present once on a fresh install); the three `shell.cli.*` toggles default OFF (the
-    // CLI is opt-in, the prefix-less functions are opt-in, and they never clobber a user command unless Allow
-    // Overwrite is on). macOS surfaces the install toggles; the keys round-trip inert on iOS.
+    // E20/WI-9 first-launch + SlopDesk CLI (getting-started__first-launch.md). Fire-time flags → golden-safe;
+    // client-side. `hasCompletedFirstLaunch` gates the one-time sheet (default OFF — present once on a fresh
+    // install); the three `shell.cli.*` toggles default OFF (CLI opt-in, prefix-less functions opt-in, never
+    // clobber a user command unless Allow Overwrite is on). macOS surfaces the install toggles; inert on iOS.
     static let hasCompletedFirstLaunch = Key<Bool>(SettingsKey.hasCompletedFirstLaunch, default: false)
     static let cliInstalled = Key<Bool>(SettingsKey.cliInstalled, default: false)
     static let omitCLIPrefix = Key<Bool>(SettingsKey.omitCLIPrefix, default: false)
     static let allowPrefixOverwrite = Key<Bool>(SettingsKey.allowPrefixOverwrite, default: false)
-    // Controls / scroll / copy (Controls). FIRE-TIME flags only — never folded into a typed prefs model
-    // (so they never reach the env overlay / sidecar → golden-safe). E8 owns the behaviour; these persist
-    // the user's choice and round-trip today.
+    // Controls / scroll / copy (Controls). FIRE-TIME flags only — never folded into a typed prefs model → never
+    // reach the env overlay / sidecar → golden-safe. E8 owns the behaviour; these persist + round-trip today.
     static let copyOnSelect = Key<Bool>(SettingsKey.copyOnSelect, default: false)
     static let trimTrailingSpacesOnCopy = Key<Bool>(SettingsKey.trimTrailingSpacesOnCopy, default: true)
     static let pasteProtection = Key<Bool>(SettingsKey.pasteProtection, default: true)
@@ -889,18 +878,17 @@ public extension Defaults.Keys {
     static let focusFollowsMouse = Key<Bool>(SettingsKey.focusFollowsMouse, default: false)
     static let scrollOnOutput = Key<Bool>(SettingsKey.scrollOnOutput, default: true)
     static let scrollMultiplier = Key<Double>(SettingsKey.scrollMultiplier, default: 1.0)
-    // E8 WI-1: the remaining Controls / Mouse / Scroll knobs. Same fire-time-only discipline (never folded
-    // into a typed prefs model → golden-safe). The enum-valued keys store the bare enum rawValue via the
-    // `RawRepresentableBridge` (the `Defaults.PreferRawRepresentable` conformances below), repairing a stale
-    // value to the default exactly like `closeConfirmTab` / `onLaunch`.
+    // E8 WI-1: the remaining Controls / Mouse / Scroll knobs. Same fire-time-only discipline → golden-safe. The
+    // enum-valued keys store the bare enum rawValue via the `RawRepresentableBridge` (the
+    // `Defaults.PreferRawRepresentable` conformances below), repairing a stale value to the default like
+    // `closeConfirmTab` / `onLaunch`.
     static let clearSelectionOnTyping = Key<Bool>(SettingsKey.clearSelectionOnTyping, default: true)
     static let clearSelectionOnCopy = Key<Bool>(SettingsKey.clearSelectionOnCopy, default: false)
     // Default OFF — NOT YET FUNCTIONAL: the pinned libghostty fork exposes no set-selection / cursor-geometry
-    // C API, so a faithful "Backspace deletes the whole selection wherever it sits" cannot be actuated (a
-    // blind DEL run would delete the WRONG characters for a mid-line selection — default-on data loss). With
-    // the toggle ON the behaviour is INDISTINGUISHABLE from OFF (one character deleted + selection cleared),
-    // so it ships OFF rather than as a default-ON toggle that does nothing. See `BackspaceSelectionPolicy`
-    // and docs/DECISIONS.md (E8 WI-10) — the policy stays wired for a future libghostty geometry API.
+    // C API, so a faithful "Backspace deletes the whole selection wherever it sits" cannot be actuated (a blind
+    // DEL run would delete the WRONG characters for a mid-line selection — default-on data loss). ON is
+    // INDISTINGUISHABLE from OFF (one char deleted + selection cleared), so it ships OFF. See
+    // `BackspaceSelectionPolicy` + docs/DECISIONS.md (E8 WI-10) — the policy stays wired for a future geometry API.
     static let backspaceDeletesSelection = Key<Bool>(SettingsKey.backspaceDeletesSelection, default: false)
     static let shiftArrowSelect = Key<Bool>(SettingsKey.shiftArrowSelect, default: true)
     static let pasteBracketedSafe = Key<Bool>(SettingsKey.pasteBracketedSafe, default: true)
@@ -942,9 +930,9 @@ public extension Defaults.Keys {
     static let hintPatternActions = Key<[String]>(SettingsKey.hintPatternActions, default: [])
 }
 
-/// Store ``PaneKind`` as its bare `String` rawValue (not JSON-wrapped) so the value stays wire-compatible
-/// with the existing direct-string writes + the `defaultPaneKindKey` `@AppStorage`/`@Default` consumers;
-/// `PreferRawRepresentable` selects `RawRepresentableBridge`, which also yields the key default for a
+/// Store ``PaneKind`` as its bare `String` rawValue (not JSON-wrapped) so it stays wire-compatible with the
+/// existing direct-string writes + `defaultPaneKindKey` `@AppStorage`/`@Default` consumers.
+/// `PreferRawRepresentable` selects `RawRepresentableBridge`, which yields the key default for a
 /// retired/invalid raw value (e.g. the W11 `"claudeCode"`).
 extension PaneKind: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 
@@ -962,7 +950,7 @@ extension TabSort: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 /// Store ``AutoHideTabsPanelMode`` as its bare `String` rawValue (`default`/`always`/`auto`) so the persisted
 /// `auto-hide-tabs-panel` setting (E19/A18) round-trips with the config value; `PreferRawRepresentable`
 /// selects the `RawRepresentableBridge`, which yields the key default (`.default`) for a stale / invalid raw
-/// value — the same shape as ``NewTabPosition`` / ``WindowSizeMode``.
+/// value.
 extension AutoHideTabsPanelMode: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 
 /// Store ``CloseConfirmationPolicy`` as its bare `String` rawValue (`process`/`always`/`multiple_tabs`) so
@@ -980,20 +968,20 @@ extension OnLaunchBehavior: Defaults.Serializable, Defaults.PreferRawRepresentab
 /// Store ``WindowSizeMode`` as its bare `String` rawValue (`remember`/`grid`/`frame`) so the persisted
 /// `window-size` setting (E19/A29) round-trips with the config value; `PreferRawRepresentable`
 /// selects the `RawRepresentableBridge`, which yields the key default (`.remember`) for a stale / invalid
-/// raw value — the same shape as ``NewTabPosition`` / ``OnLaunchBehavior``.
+/// raw value.
 extension WindowSizeMode: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 
 /// Store ``NotifyWhileForeground`` as its bare `String` rawValue (`off`/`always`/`tab-unfocused`) so the
 /// persisted "Notify While Foreground" setting round-trips with the config value (E14/K9);
 /// `PreferRawRepresentable` selects the `RawRepresentableBridge`, which yields the key default (`.off`) for a
-/// stale / invalid raw value — the same shape as ``CloseConfirmationPolicy``.
+/// stale / invalid raw value.
 extension NotifyWhileForeground: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 
-/// Store the E8 Controls / Mouse / Scroll enums as their bare `String` rawValue (the slopdesk
-/// config tokens) so each persisted setting round-trips compactly; `PreferRawRepresentable` selects the
+/// Store the E8 Controls / Mouse / Scroll enums as their bare `String` rawValue (the slopdesk config tokens)
+/// so each persisted setting round-trips compactly; `PreferRawRepresentable` selects the
 /// `RawRepresentableBridge`. Each enum's own non-failable ``init(rawValue:)`` repairs a stale / hostile
 /// persisted string to its default (`.ask` / `.contextMenu` / `.disabled` / `.enabled`), so a future-version
-/// value can never trap the bridge — the same shape as ``CloseConfirmationPolicy`` / ``OnLaunchBehavior``.
+/// value can never trap the bridge.
 extension ClipboardAccess: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 extension RightClickAction: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 extension ScrollPastLast: Defaults.Serializable, Defaults.PreferRawRepresentable {}
@@ -1001,11 +989,11 @@ extension ScrollPastFirst: Defaults.Serializable, Defaults.PreferRawRepresentabl
 extension MouseShiftCapture: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 extension OptionAsAlt: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 
-/// Store the E10 link-interaction enums as their bare `String` rawValue (the slopdesk config
-/// tokens) so each persisted link setting round-trips compactly; `PreferRawRepresentable` selects the
+/// Store the E10 link-interaction enums as their bare `String` rawValue (the slopdesk config tokens) so each
+/// persisted link setting round-trips compactly; `PreferRawRepresentable` selects the
 /// `RawRepresentableBridge`. Each enum's own non-failable ``init(rawValue:)`` repairs a stale / hostile
 /// persisted string to its default (`.open` / `.revealFinder` / `.all`), so a future-version value can never
-/// trap the bridge — the same shape as ``RightClickAction`` / ``ScrollPastLast``.
+/// trap the bridge.
 extension LinkCmdClick: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 extension LinkCmdShiftClick: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 extension AutoDetectLinkSchemes: Defaults.Serializable, Defaults.PreferRawRepresentable {}

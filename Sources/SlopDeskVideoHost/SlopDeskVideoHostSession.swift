@@ -7,8 +7,7 @@ import SlopDeskVideoProtocol
 
 /// The host-side session orchestrator for the GUI video path (PATH 2 / Phase 4).
 ///
-/// This is the driver that wires the previously-disconnected islands into a working
-/// pipeline:
+/// Wires the components into a working pipeline:
 ///
 /// ```
 /// WindowCapturer (NV12 frame) ─▶ VideoEncoder (single-session HEVC + crisp refresh, doc 18 §E)
@@ -34,41 +33,36 @@ import SlopDeskVideoProtocol
 public actor SlopDeskVideoHostSession {
     private let log = Logger(subsystem: "slopdesk.video.host", category: "SlopDeskVideoHostSession")
 
-    /// Opt-in stderr diagnostics (set `SLOPDESK_VIDEO_DEBUG=1`). OSLog `.info`/`.debug` are not
-    /// persisted, so a headless verify (`scripts/check-video.sh`) cannot read the capture/encode
-    /// flow from `log show`. When enabled, the key lifecycle beats are mirrored to stderr so the
-    /// gate can pinpoint where (if anywhere) the pipeline stalls. No-op in production.
+    /// Opt-in stderr diagnostics (`SLOPDESK_VIDEO_DEBUG=1`). OSLog `.info`/`.debug` aren't persisted,
+    /// so a headless verify (`scripts/check-video.sh`) can't read the capture/encode flow from
+    /// `log show`; when enabled, lifecycle beats mirror to stderr to pinpoint pipeline stalls. No-op in production.
     private static let debugStderr = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
-    /// Burst-resilient transmission interleaving (2026-06-08 flicker fix). DEFAULT ON; `SLOPDESK_INTERLEAVE=0`
-    /// reverts to the plain consecutive send order. The white/blank stream once seen on first enable was
-    /// HW-investigated (2026-06-09) and is GONE on the current codebase — proven two ways: (1) the headless
-    /// `slopdesk-loopback-validate` harness runs synthetic→REAL HW HEVC encode→packetize→interleave→reassemble
-    /// →REAL HW decode and reports 120/120 clean at no-loss AND full FEC recovery of a 2- and 3-adjacent
-    /// datagram burst that the plain order drops entirely (0/120); (2) the live GUI loopback (capture→encode
-    /// →UDP→decode→Metal) with `SLOPDESK_INTERLEAVE=1` rendered the remote window crisply with zero decode
-    /// failures. The original symptom was a live-only artifact since fixed incidentally by the header rewrite
-    /// + reassembler dataCount-inversion. Reorder is a pure send-order permutation (header/`fragIndex`
-    /// untouched, reassembler reorder-tolerant) → no wire change. The pure ``FragmentInterleaver`` (+ tests)
-    /// and the harness interleave scenarios stand as regression proof.
+    /// Burst-resilient transmission interleaving (2026-06-08 flicker fix). DEFAULT ON;
+    /// `SLOPDESK_INTERLEAVE=0` reverts to plain consecutive send order. The white/blank stream once seen
+    /// on first enable was HW-investigated (2026-06-09) and is GONE on the current codebase, proven two
+    /// ways: (1) `slopdesk-loopback-validate` (synthetic→REAL HW HEVC→packetize→interleave→reassemble→REAL
+    /// HW decode) reports 120/120 clean at no-loss AND full FEC recovery of a 2- and 3-adjacent datagram
+    /// burst the plain order drops entirely (0/120); (2) live GUI loopback with `SLOPDESK_INTERLEAVE=1`
+    /// rendered crisply with zero decode failures. Reorder is a pure send-order permutation (header/
+    /// `fragIndex` untouched, reassembler reorder-tolerant) → NO wire change. The pure
+    /// ``FragmentInterleaver`` (+ tests) and the harness scenarios are the regression proof.
     private static let interleaveTransmit = ProcessInfo.processInfo.environment["SLOPDESK_INTERLEAVE"] != "0"
     /// SEND PACING (2026-06-08 flicker fix, the SAFE one — no reorder, no wire change). A large frame
     /// (a ~115 KB heartbeat IDR ≈ 97 datagrams, or a big scroll delta) sent as ONE instant burst
     /// overflows the client UDP receive buffer / WireGuard tunnel → consecutive packet loss → the
     /// single-loss XOR FEC cannot recover → a corrupt frame the next one only half-fixes → FLICKER.
     /// Pacing splits a large frame's datagrams into small chunks separated by a sub-ms gap so the
-    /// receiver drains them as they arrive (no burst overflow); tiny frames (the static-window common
-    /// case, ~1 datagram) still send instantly.
+    /// receiver drains them as they arrive; tiny frames (static-window common case, ~1 datagram) still
+    /// send instantly.
     ///
     /// DEFAULT **ON** since 2026-06-10 (`SLOPDESK_PACE=0` disables). HISTORY: the 2026-06-09 latency
-    /// workflow turned pacing OFF after measuring "pure latency harm on a non-lossy link" — but
-    /// that verdict was for EXACT-rate pacing (k=1: a heavy frame serialized over 30-130ms,
-    /// backlogging the consumer). 2026-06-10 HW (testufo stars-hdr, 40Mbps, Wi-Fi client): the
-    /// un-paced path blasts a 133KB frame as ~110 back-to-back datagrams → measured 2-13% burst
-    /// loss windows → FEC misses → recovery IDRs + ABR sawtooth 40→20→40Mbps = the periodic
-    /// "khựng". The fix is pacing at a MULTIPLE of the live rate (``paceRateMultiplier``): bursts
-    /// are capped at k× the link's sustained rate while the heaviest frame still drains in ~10ms
-    /// (≲ a frame interval), so the consumer never falls behind. Frames ≤ ``paceChunkFragments``
-    /// datagrams still send in one shot (input-feedback latency unaffected).
+    /// workflow turned pacing OFF after measuring "pure latency harm on a non-lossy link" — but that
+    /// verdict was for EXACT-rate pacing (k=1: a heavy frame serialized over 30-130ms, backlogging the
+    /// consumer). 2026-06-10 HW (testufo stars-hdr, 40Mbps, Wi-Fi client): un-paced blasts a 133KB frame
+    /// as ~110 back-to-back datagrams → 2-13% burst loss → FEC misses → recovery IDRs + ABR sawtooth
+    /// 40→20→40Mbps = periodic "khựng". Fix: pace at a MULTIPLE of the live rate (``paceRateMultiplier``)
+    /// — bursts capped at k× the sustained rate while the heaviest frame still drains in ~10ms (≲ a frame
+    /// interval). Frames ≤ ``paceChunkFragments`` datagrams still send in one shot (input latency unaffected).
     private static let paceSend = ProcessInfo.processInfo.environment["SLOPDESK_PACE"] != "0"
     /// Frames with at most this many datagrams send in one shot (no pacing) — covers static-window
     /// P-frames and small deltas. Above it, send in chunks of this size with ``paceGapNanos`` between.
@@ -82,13 +76,12 @@ public actor SlopDeskVideoHostSession {
     }()
 
     /// RC-2 (2026-06-09 smoothness): RATE-PROPORTIONAL pacing. The fixed `paceGapNanos` (0.5ms) drains an
-    /// 8-fragment (~9600-byte) chunk ~13× FASTER than a 12Mbps link can absorb → a big frame blasts
-    /// ~146Mbps into the link → self-inflicted burst loss (measured 10–14% on a real scroll) → ABR
-    /// collapse + FEC failure = the blur/khung/flicker chain. When ON (default; `SLOPDESK_PACE_ADAPTIVE=0`
-    /// reverts to the fixed gap), the inter-chunk gap is computed so a chunk drains at ≈ the LIVE ABR
-    /// target (`lastActuatedBitrate`): gap = chunkBytes×8 / targetBps. This is slopdesk's equivalent of
-    /// Parsec's window-AIMD-paced send — it never puts more bytes/sec on the wire than the link drains.
-    /// An explicit `SLOPDESK_PACE_US` still pins a static gap (overrides adaptive, for A/B).
+    /// 8-fragment (~9600-byte) chunk ~13× FASTER than a 12Mbps link absorbs → a big frame blasts ~146Mbps
+    /// → self-inflicted burst loss (measured 10–14% on a real scroll) → ABR collapse + FEC failure = the
+    /// blur/khung/flicker chain. When ON (default; `SLOPDESK_PACE_ADAPTIVE=0` reverts to the fixed gap), the
+    /// inter-chunk gap is computed so a chunk drains at ≈ the LIVE ABR target (`lastActuatedBitrate`): gap =
+    /// chunkBytes×8 / targetBps. slopdesk's equivalent of Parsec's window-AIMD-paced send — never puts more
+    /// bytes/sec on the wire than the link drains. An explicit `SLOPDESK_PACE_US` pins a static gap (A/B).
     private static let pacingAdaptive: Bool = {
         if ProcessInfo.processInfo.environment["SLOPDESK_PACE_US"] != nil { return false } // explicit static pin wins
         return ProcessInfo.processInfo.environment["SLOPDESK_PACE_ADAPTIVE"] != "0"
@@ -130,19 +123,16 @@ public actor SlopDeskVideoHostSession {
     }()
 
     /// CONGESTION BACKPRESSURE (2026-06-17). The paced ``VideoSendLane`` is an unbounded FIFO: under a
-    /// sustained scroll burst (or a direction-reversal frame) the encoder produces 60fps faster than the
-    /// lane drains, the queue grows without bound, and end-to-end latency bloats to seconds (HW-measured
-    /// RTT 1475ms / client hold 2547ms on a 10ms link — the "chậm/khựng" that env-tuning could never fix,
-    /// because no rate-limit on a deep-buffered path triggers a loss-based backoff until the buffer is
-    /// already huge). The fix is the real-time discipline a streamer needs and Parsec has: when the lane
-    /// is backed up, DROP rather than queue. Specifically — when ``VideoSendLane/depth`` exceeds
-    /// ``backpressureDepth``, SKIP feeding the encoder (drop the capture frame BEFORE encode → the
-    /// encoder's P-frame reference chain stays intact, so the client never sees a decode break, unlike
-    /// dropping already-queued frames). fps gracefully dips-and-recovers under bursts; latency stays
-    /// bounded to ≈`depth` frame intervals. A frame carrying a forced obligation (keyframe / crisp /
-    /// compact / LTR-refresh) ALWAYS passes — those are recovery/sharpness anchors, never droppable.
-    /// DEFAULT ON; `SLOPDESK_BACKPRESSURE=0` disables (reverts to the unbounded FIFO).
-    /// `SLOPDESK_BACKPRESSURE_DEPTH` overrides the threshold (clamp 1…30).
+    /// sustained scroll burst the encoder outruns the drain, the queue grows without bound, and latency
+    /// bloats to seconds (HW-measured RTT 1475ms / client hold 2547ms on a 10ms link — the "chậm/khựng"
+    /// env-tuning could never fix, since a deep-buffered path triggers no loss-based backoff until the
+    /// buffer is already huge). Fix (the real-time discipline Parsec has): when the lane is backed up,
+    /// DROP rather than queue. When ``VideoSendLane/depth`` exceeds ``backpressureDepth``, SKIP feeding
+    /// the encoder (drop the capture frame BEFORE encode → the P-frame reference chain stays intact, so
+    /// the client never sees a decode break, unlike dropping already-queued frames). fps dips-and-recovers
+    /// under bursts; latency stays bounded to ≈`depth` frame intervals. A frame with a forced obligation
+    /// (keyframe / crisp / compact / LTR-refresh) ALWAYS passes — recovery/sharpness anchors, never
+    /// droppable. DEFAULT ON; `SLOPDESK_BACKPRESSURE=0` disables. `SLOPDESK_BACKPRESSURE_DEPTH` overrides (clamp 1…30).
     private static let backpressureEnabled =
         ProcessInfo.processInfo.environment["SLOPDESK_BACKPRESSURE"] != "0"
     private static let backpressureDepth: Int = {
@@ -152,15 +142,14 @@ public actor SlopDeskVideoHostSession {
         return 3
     }()
 
-    /// SCROLL COALESCING (2026-06-17). A fast trackpad scroll + its OS momentum coast is a ~200/s
-    /// event flood; each delta was injected as its own synchronous `CGEvent.post` (the coalescer
-    /// treated `.scroll` as a non-mergeable barrier — only mouse-move collapsed). HW-measured: the
-    /// flood saturates the WindowServer → SCStream capture STALLS (61ms capture-gap / 1210ms
-    /// send-gap interleaved with the inject burst) → the scroll/reversal hitch + jerky host-side
-    /// scroll, the dominant "kém xa Parsec" gap once the send path was fixed. When ON, the drain
-    /// coalesces consecutive same-phase scroll deltas by SUMMING them → one smooth phased post per
-    /// drain (≈ refresh rate, what Parsec/Sunshine and macOS itself do), preserving total travel.
-    /// DEFAULT ON; `SLOPDESK_SCROLL_COALESCE=0` reverts to the per-delta barrier (for A/B).
+    /// SCROLL COALESCING (2026-06-17). A fast trackpad scroll + its OS momentum coast is a ~200/s event
+    /// flood; each delta was injected as its own synchronous `CGEvent.post` (the coalescer treated
+    /// `.scroll` as a non-mergeable barrier — only mouse-move collapsed). HW-measured: the flood saturates
+    /// the WindowServer → SCStream capture STALLS (61ms capture-gap / 1210ms send-gap) → the scroll/reversal
+    /// hitch + jerky host-side scroll, the dominant "kém xa Parsec" gap once the send path was fixed. When
+    /// ON, the drain SUMS consecutive same-phase scroll deltas → one smooth phased post per drain (≈ refresh
+    /// rate, as Parsec/Sunshine and macOS do), preserving total travel. DEFAULT ON;
+    /// `SLOPDESK_SCROLL_COALESCE=0` reverts to the per-delta barrier (A/B).
     private static let scrollCoalesceEnabled =
         ProcessInfo.processInfo.environment["SLOPDESK_SCROLL_COALESCE"] != "0"
 
@@ -202,19 +191,18 @@ public actor SlopDeskVideoHostSession {
         return laneDepth > depthThreshold
     }
 
-    /// FPS GOVERNOR (2026-06-11) — regular-cadence content/congestion-adaptive fps, the successor
-    /// of the retired `AdaptiveFPSController` (whose alternating skip delivered irregular
-    /// 16.7/33.3 ms intervals = the PRIMARY cadence khựng; deleted with `SLOPDESK_ADAPTIVE_FPS`).
-    /// When ON, the host folds encoded-frame sizes into an ``FPSGovernor`` and ticks it on every
-    /// NetworkStats report: when the offered load exceeds the actuated bitrate past the QP51
-    /// coarsening floor AND there is positive congestion evidence, fps steps DOWN a clean-divisor
-    /// ladder rung (60→30→20→15) — actuated by the capturer's schedule-anchored
+    /// FPS GOVERNOR (2026-06-11) — regular-cadence content/congestion-adaptive fps, successor to the
+    /// retired `AdaptiveFPSController` (whose alternating skip gave irregular 16.7/33.3 ms intervals = the
+    /// PRIMARY cadence khựng; deleted with `SLOPDESK_ADAPTIVE_FPS`). When ON, the host folds encoded-frame
+    /// sizes into an ``FPSGovernor`` and ticks it on every NetworkStats report: when offered load exceeds
+    /// the actuated bitrate past the QP51 coarsening floor AND congestion evidence is positive, fps steps
+    /// DOWN a clean-divisor ladder rung (60→30→20→15) — actuated by the capturer's schedule-anchored
     /// ``EncodeCadenceGate`` (metronome-regular), a live encoder `ExpectedFrameRate` hint, and a
-    /// `streamCadence` control message so the client rebases its pacing. DEFAULT OFF: cadence is
-    /// this project's highest-sensitivity axis ("user hand-feel is the only valid metric") — the
-    /// established pattern is env-gated OFF → HW feel-test → flip default (ABR/LTR/kfDup all
-    /// shipped this way). When OFF the host is byte-identical: no gate, no streamCadence message,
-    /// no self-heal rebase. `SLOPDESK_FPS_GOVERNOR=1` enables; tunables `SLOPDESK_FPS_GOV_*`.
+    /// `streamCadence` message so the client rebases its pacing. DEFAULT OFF: cadence is this project's
+    /// highest-sensitivity axis ("user hand-feel is the only valid metric") — the established pattern is
+    /// env-gated OFF → HW feel-test → flip default (ABR/LTR/kfDup all shipped this way). When OFF the host
+    /// is byte-identical: no gate, no streamCadence message, no self-heal rebase. `SLOPDESK_FPS_GOVERNOR=1`
+    /// enables; tunables `SLOPDESK_FPS_GOV_*`.
     private static let fpsGovernorEnabled = ProcessInfo.processInfo.environment["SLOPDESK_FPS_GOVERNOR"] == "1"
     /// In-place SCStream resize (default ON): reconfigure the live stream via `updateConfiguration` on
     /// a window resize instead of restarting it (~120ms SCK spin-up = the resize freeze). HW-validated
@@ -248,16 +236,15 @@ public actor SlopDeskVideoHostSession {
 
     /// KEYFRAME DUPLICATE-SEND (F3 flicker fix, 2026-06-08). Forward redundancy by REPETITION: re-send a
     /// keyframe's datagrams a second time (paced + time-separated) so a large IDR survives a time-correlated
-    /// burst loss that the single-loss XOR FEC cannot repair. This is the only host-only, REORDER-FREE way
-    /// to add real burst tolerance (the client reassembler dedups by frameID/fragIndex, so duplicates are
-    /// harmless and the frame decodes exactly once → NO white-screen risk, unlike the gated-off interleave).
-    /// Keyframes ONLY (never deltas). DEFAULT **ON** since 2026-06-10 (LOSS-TOLERANCE #3): the
-    /// measured worst-case freeze is a LOST KEYFRAME inside the 500ms recovery-IDR cooldown — the
-    /// client shows the last good frame for up to the full window. Duplicating keyframes makes that
-    /// require BOTH copies of a fragment lost (weather loss ~1% ⇒ ~1e-4 per fragment), and the
-    /// ``VideoSendLane`` means the duplicate no longer sleeps inside the encoder pump. Byte cost is
-    /// keyframes only, throttled ≤1 dup per 250ms, on a path measured to carry 30Mbps at the same
-    /// loss as 5Mbps. `SLOPDESK_KF_DUP=0` disables.
+    /// burst loss the single-loss XOR FEC cannot repair. The only host-only, REORDER-FREE way to add real
+    /// burst tolerance (the client reassembler dedups by frameID/fragIndex, so duplicates are harmless and
+    /// the frame decodes exactly once → NO white-screen risk, unlike the gated-off interleave). Keyframes
+    /// ONLY (never deltas). DEFAULT **ON** since 2026-06-10 (LOSS-TOLERANCE #3): the measured worst-case
+    /// freeze is a LOST KEYFRAME inside the 500ms recovery-IDR cooldown — the client shows the last good
+    /// frame for up to the full window. Duplicating keyframes makes that require BOTH copies of a fragment
+    /// lost (weather loss ~1% ⇒ ~1e-4 per fragment), and the ``VideoSendLane`` means the duplicate no longer
+    /// sleeps inside the encoder pump. Byte cost is keyframes only, throttled ≤1 dup per 250ms, on a path
+    /// measured to carry 30Mbps at the same loss as 5Mbps. `SLOPDESK_KF_DUP=0` disables.
     private static let kfDup = ProcessInfo.processInfo.environment["SLOPDESK_KF_DUP"] != "0"
     /// Throttle so a recovery-IDR burst is not byte-amplified: duplicate at most one keyframe per interval.
     private static let kfDupMinInterval: TimeInterval = 0.25
@@ -967,15 +954,13 @@ public actor SlopDeskVideoHostSession {
         if case .bye = message { transport.resetClientFlow() }
     }
 
-    // R11 (dead-code removal): a `handleReap()` crash-without-bye hook lived here, documented as
-    // "wired as `Task { await session.handleReap() }` from `transport.onReap`". That wiring never
-    // existed — `transport` has no `onReap`, and the only reaper in the live (mux) path is
-    // `NWVideoMuxDatagramTransport.runReaperTick` → `onReapLane` → `VideoMuxSessionRegistry.retireAndStop`
-    // → `session.stop()`. `stop()` is a STRICT SUPERSET of what the dead hook did (it also drains the
-    // inbound/encoded pumps and runs `teardownLiveComponents` unconditionally), so the reaped client is
-    // already torn down correctly. The method was a single-pin-era leftover with zero call sites
-    // (verified across Sources + Tests) and a misleading docstring, so it was removed rather than kept
-    // as a confusing public no-op.
+    // R11 (dead-code removal): a `handleReap()` crash-without-bye hook lived here, documented as wired
+    // from `transport.onReap`. That wiring never existed — `transport` has no `onReap`, and the only
+    // reaper in the live (mux) path is `NWVideoMuxDatagramTransport.runReaperTick` → `onReapLane` →
+    // `VideoMuxSessionRegistry.retireAndStop` → `session.stop()`. `stop()` is a STRICT SUPERSET of what
+    // the dead hook did (drains the inbound/encoded pumps + runs `teardownLiveComponents`
+    // unconditionally), so the reaped client is already torn down correctly. Removed (zero call sites,
+    // misleading docstring) rather than kept as a confusing public no-op.
 
     private func inject(_ event: InputEvent, raiseFirst: Bool) {
         guard let injector else { return }

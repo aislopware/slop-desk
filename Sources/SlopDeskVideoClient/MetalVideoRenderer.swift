@@ -9,22 +9,20 @@ import SlopDeskVideoProtocol
 
 /// Zero-copy NV12 → RGB Metal renderer for decoded frames (doc 04, doc 17 §3.7).
 ///
-/// ⚠️ **GUI-ONLY:** needs a real Metal device + a layer on screen. COMPILED +
-/// reviewed; not driven from tests.
+/// ⚠️ **GUI-ONLY:** needs a real Metal device + on-screen layer. COMPILED + reviewed; not tested.
 ///
 /// Design (cited):
 /// - `CVMetalTextureCache` maps the decoded NV12 `CVPixelBuffer` to Metal textures
-///   **zero-copy** (plane 0 = luma R8, plane 1 = chroma RG8) — a YCbCr→RGB fragment
+///   **zero-copy** (plane 0 = luma R8, plane 1 = chroma RG8); a YCbCr→RGB fragment
 ///   shader converts on the GPU (doc 04 / doc 17 §3.7).
-/// - Presents to a `CAMetalLayer` with `maximumDrawableCount = 2` (latency ~1 vsync,
+/// - Presents to a `CAMetalLayer` with `maximumDrawableCount = 2` (~1 vsync latency,
 ///   doc 04 line 117).
 /// - Driven from **VSync (`CADisplayLink`)**, NOT decode-completion — see
-///   ``FramePacer``. On an empty queue it shows the last decoded frame; late frames
-///   are skipped (doc 17 §3.7).
+///   ``FramePacer``. Empty queue shows the last decoded frame; late frames skipped (doc 17 §3.7).
 /// - Does NOT use `AVSampleBufferDisplayLayer` (adds >=1 frame buffering — doc 18 §F).
 ///
-/// `@MainActor`-isolated: it owns + presents to a `CAMetalLayer`, which is main-thread
-/// state. The frame pacer renders through a main-actor hop each vsync.
+/// `@MainActor`-isolated: owns + presents to a `CAMetalLayer` (main-thread state); the
+/// frame pacer renders through a main-actor hop each vsync.
 @preconcurrency
 @MainActor
 public final class MetalVideoRenderer {
@@ -38,71 +36,68 @@ public final class MetalVideoRenderer {
     public let metalLayer: CAMetalLayer
 
     /// VNC-style zoom (≥1) + normalized pan, applied by CROPPING the sampled texture region
-    /// (so zooming re-samples the source at the drawable's native Retina resolution — it
-    /// reveals real detail, not a magnified blur). Driven by pinch/pan gestures; the frame
-    /// pacer re-presents the last frame each vsync, so changes apply live on a static window.
+    /// (zoom re-samples the source at native Retina res → reveals real detail, not a magnified
+    /// blur). Driven by pinch/pan; the pacer re-presents the last frame each vsync, so changes
+    /// apply live on a static window.
     public var zoom: CGFloat = 1
     public var panNormalized: CGPoint = .zero
 
-    /// SCROLL-HINT REPROJECTION (default-OFF, env `SLOPDESK_SCROLL_REPROJECT`): a small normalized
-    /// UV translation the renderer ADDS to the sampled coordinate so the last decoded frame can be
-    /// shifted by the integrated local scroll velocity on the pacer's between-content ticks — the
-    /// picture keeps moving at display rate between real codec frames. It is a DEDICATED uniform that
-    /// COMPOSES with zoom/pan (it never overloads them); the fragment shader clamps any sample that
-    /// falls outside `[0, 1]` (the newly-revealed disocclusion edge) to black. The offset law lives in
-    /// the Rust core (`ScrollReprojector`); this is purely the GPU application of its current value.
-    /// Stays exactly `(0, 0)` when the feature is off, so the sampled UV — and the rendered bytes —
-    /// are byte-identical to before this feature.
+    /// SCROLL-HINT REPROJECTION (default-OFF, env `SLOPDESK_SCROLL_REPROJECT`): a normalized UV
+    /// translation the renderer ADDS to the sampled coordinate, shifting the last decoded frame by the
+    /// integrated scroll velocity on the pacer's between-content ticks — the picture keeps moving at
+    /// display rate between codec frames. A DEDICATED uniform that COMPOSES with zoom/pan (never
+    /// overloads them); the shader clamps out-of-`[0,1]` samples (the disocclusion edge) to black. The
+    /// offset law lives in the Rust core (`ScrollReprojector`); this is just the GPU application. Stays
+    /// exactly `(0, 0)` when off ⇒ sampled UV and rendered bytes byte-identical to before this feature.
     public var reprojectionOffset: SIMD2<Float> = .zero
     /// CHROME-REGION REPROJECT MASK (host-measured, 2026-06-18): the moving-content vertical band as
-    /// normalized sample-UV `y` bounds `(top, bottom)`. The reproject offset is applied ONLY to samples
-    /// whose `uv.y` is inside this band (the editor body) and the shifted sample is CLAMPED to it, so
-    /// the static chrome (toolbars / tabs / status bar) above and below keeps its un-shifted UV and does
-    /// NOT slide with the content — the whole-frame warp was the single worst scroll-reproject artifact.
-    /// A degenerate band (`y <= x`, e.g. the default `(0, 0)`) ⇒ the legacy whole-frame warp, so the
-    /// rendered bytes are unchanged when no band is set (and when the feature is off, `reprojectionOffset`
-    /// stays `(0, 0)` ⇒ the band is irrelevant). Set from `VideoWindowPipeline.applyHostScrollOffset`.
+    /// normalized sample-UV `y` bounds `(top, bottom)`. The reproject offset applies ONLY to samples
+    /// with `uv.y` inside this band (editor body), and the shifted sample is CLAMPED to it, so static
+    /// chrome (toolbars/tabs/status bar) above and below keeps its un-shifted UV and does NOT slide with
+    /// the content — the whole-frame warp was the worst scroll-reproject artifact. A degenerate band
+    /// (`y <= x`, e.g. default `(0, 0)`) ⇒ legacy whole-frame warp, so bytes are unchanged when no band
+    /// is set (and when off, `reprojectionOffset` stays `(0,0)` ⇒ band is irrelevant). Set from
+    /// `VideoWindowPipeline.applyHostScrollOffset`.
     public var reprojectBand: SIMD2<Float> = .zero
-    /// `.fit` (letterbox/pillarbox — whole window, bars) or `.fill` (cover — the video is
-    /// scaled up to cover the whole drawable, the overflowing axis clipped by the viewport;
-    /// no bars, aspect preserved). Both go through the SAME ``AspectFit/displayedVideoRect``
-    /// the input encoder + cursor invert, so a fit↔fill toggle never desyncs click mapping.
+    /// `.fit` (letterbox/pillarbox — whole window, bars) or `.fill` (cover — scaled to fill the
+    /// drawable, overflowing axis clipped by the viewport; no bars, aspect preserved). Both go through
+    /// the SAME ``AspectFit/displayedVideoRect`` the input encoder + cursor invert, so a fit↔fill
+    /// toggle never desyncs click mapping.
     public var contentMode: VideoContentMode = .fit
 
     /// WF-6 (#8): the negotiated luma range driving the YCbCr→RGB shader coefficients. Set before the
     /// first render from the stream's `helloAck.fullRange` (via the pipeline's `setColorRange` hook).
-    /// Default `.video` ⇒ the GPU output is byte-identical to today — the `.video` coefficients ARE the
-    /// prior hardcoded shader literals. There is ONE pipeline state (the matrix is the same); only the
-    /// per-frame coefficient uniform values differ, so no shader recompile is needed.
+    /// Default `.video` ⇒ GPU output byte-identical to today — `.video` coefficients ARE the prior
+    /// hardcoded shader literals. ONE pipeline state (same matrix); only the per-frame coefficient
+    /// uniform values differ, so no shader recompile.
     public var colorRange: ColorRange = .video
 
     /// CONTENT MASK (transparency, 2026-06-17): the opaque-content rects (capture PIXELS, top-left)
-    /// the host sent after a DIALOG-EXPAND region change — the window block + each popup. The
-    /// fragment shader masks every sample OUTSIDE these rects to alpha 0, so a popup overhanging the
-    /// window floats over the canvas instead of sitting in a black bar. EMPTY ⇒ no mask (whole frame
-    /// opaque, the default). Setting it toggles `metalLayer.isOpaque` so the alpha actually
-    /// composites; the pacer re-presents the last frame each vsync, so it applies live on a static
-    /// window. Capped at ``maxMaskRects`` (a window + nested menus never need more).
+    /// the host sent after a DIALOG-EXPAND region change — the window block + each popup. The shader
+    /// masks every sample OUTSIDE these rects to alpha 0, so a popup overhanging the window floats over
+    /// the canvas instead of a black bar. EMPTY ⇒ no mask (whole frame opaque, the default). Setting it
+    /// toggles `metalLayer.isOpaque` so the alpha composites; the pacer re-presents the last frame each
+    /// vsync, so it applies live on a static window. Capped at ``maxMaskRects``.
     public var contentMask: [MaskRect] = [] {
         didSet { metalLayer.isOpaque = contentMask.isEmpty }
     }
 
     /// Max opaque rects the shader loop handles (window + a few nested menus). Extra rects are
-    /// dropped — the overflow would fall back to transparent, never wrong-opaque.
+    /// dropped — overflow falls back to transparent, never wrong-opaque.
     static let maxMaskRects = 8
 
     /// Unsharp-mask strength on the LUMA channel (`SLOPDESK_SHARPEN`, default 0 = off). When the host
-    /// streams 1× (downscaled, for smoothness — `SLOPDESK_CAPTURE_SCALE=1`) the upscaled text reads
-    /// soft; a luma unsharp pass crisps the edges back up (text = luma edges; chroma/images left
-    /// alone). It ENHANCES perceived sharpness, it cannot reconstruct the detail lost at 1×. Typical
-    /// 0.4–1.0; live-tunable since it's read per-render. `0` ⇒ byte-identical to before (no sharpen).
+    /// streams 1× (downscaled for smoothness — `SLOPDESK_CAPTURE_SCALE=1`) upscaled text reads soft; a
+    /// luma unsharp pass crisps the edges back up (text = luma edges; chroma/images left alone). It
+    /// ENHANCES perceived sharpness, cannot reconstruct detail lost at 1×. Typical 0.4–1.0; live-tunable
+    /// (read per-render). `0` ⇒ byte-identical to before (no sharpen).
     static let sharpenStrength: Float = resolveSharpenStrength()
 
     /// Resolve `SLOPDESK_SHARPEN` through ``EnvConfig`` (ProcessInfo env → settings overlay) — W12 —
-    /// so a GUI slider can override it. The EXACT parse/clamp the old inline `static let` used (parse
-    /// `Float`; reject `<= 0` → 0 off; clamp `> 4` → 4): an EMPTY overlay + no env ⇒ `0`, byte-identical
-    /// to before. Extracted to a named function so the reaches-consumer test can drive it via the
-    /// overlay without forcing the (Metal-touching) renderer type.
+    /// so a GUI slider can override it. EXACT parse/clamp of the old inline `static let` (parse `Float`;
+    /// reject `<= 0` → 0 off; clamp `> 4` → 4): empty overlay + no env ⇒ `0`, byte-identical to before.
+    /// A named function so the reaches-consumer test can drive it via the overlay without instantiating
+    /// the (Metal-touching) renderer type.
     static func resolveSharpenStrength() -> Float {
         guard let s = EnvConfig.string("SLOPDESK_SHARPEN"), let v = Float(s), v > 0
         else { return 0 }
@@ -110,9 +105,9 @@ public final class MetalVideoRenderer {
     }
 
     /// How far the sharpen may OVERSHOOT the local [min,max] (`SLOPDESK_SHARPEN_PUNCH`, 0…1, default 1).
-    /// `0` = pure RCAS (clamp to the local neighbourhood, ringing-free but gentle). `1` = clamp only to
-    /// [0,1] (classic unsharp — crisper/punchier, allows controlled halos). In between blends the two,
-    /// so it's a live "how aggressive" dial on top of `SLOPDESK_SHARPEN`'s strength.
+    /// `0` = pure RCAS (clamp to local neighbourhood, ringing-free but gentle). `1` = clamp only to
+    /// [0,1] (classic unsharp — crisper, allows controlled halos). In between blends the two: a live
+    /// "how aggressive" dial on top of `SLOPDESK_SHARPEN`'s strength.
     static let sharpenPunch: Float = {
         guard let s = ProcessInfo.processInfo.environment["SLOPDESK_SHARPEN_PUNCH"], let v = Float(s)
         else { return 1 }
@@ -120,9 +115,9 @@ public final class MetalVideoRenderer {
     }()
 
     /// Extra sharpen in DARK regions (`SLOPDESK_SHARPEN_DARK`, default 0). Dark-mode text (light strokes
-    /// on a dark bg) softens more — thin strokes anti-alias to mid-grey at 1× and the eye is fussier about
-    /// edges on dark. This scales the luma sharpen by `1 + dark·(1 − localMean)`, so a dark neighbourhood
-    /// gets up to `(1+dark)×` the boost while bright areas are untouched. Live-tunable; 0 = uniform.
+    /// on dark bg) softens more — thin strokes anti-alias to mid-grey at 1×. Scales the luma sharpen by
+    /// `1 + dark·(1 − localMean)`, so a dark neighbourhood gets up to `(1+dark)×` the boost while bright
+    /// areas are untouched. Live-tunable; 0 = uniform.
     static let sharpenDark: Float = {
         guard let s = ProcessInfo.processInfo.environment["SLOPDESK_SHARPEN_DARK"], let v = Float(s), v > 0
         else { return 0 }
@@ -142,12 +137,11 @@ public final class MetalVideoRenderer {
         metalLayer.pixelFormat = .bgra8Unorm
         metalLayer.framebufferOnly = true
         metalLayer.maximumDrawableCount = 2 // ~1 vsync latency (doc 04)
-        // LAT (2026-06-10 loopback hunt, env SLOPDESK_NO_VSYNC=1): present the drawable as soon as
-        // the GPU finishes instead of holding it for the next display refresh — shaves the
-        // 0-16.7ms (avg ~8) composite-alignment wait at the cost of possible tearing mid-scan.
-        // Default ON-vsync (today's behavior); opt-in for the latency-first profile.
-        // macOS-only: `displaySyncEnabled` does not exist on iOS (this line shipped ungated in
-        // the R4-R7b series and broke the iOS app build — caught + gated 2026-06-11).
+        // LAT (2026-06-10 loopback hunt, env SLOPDESK_NO_VSYNC=1): present the drawable as soon as the
+        // GPU finishes instead of holding for the next refresh — shaves the 0-16.7ms (avg ~8)
+        // composite-alignment wait at the cost of possible mid-scan tearing. Default ON-vsync; opt-in.
+        // macOS-only: `displaySyncEnabled` does not exist on iOS (shipped ungated in R4-R7b, broke the
+        // iOS app build — caught + gated 2026-06-11).
         #if os(macOS)
         if ProcessInfo.processInfo.environment["SLOPDESK_NO_VSYNC"] == "1" {
             metalLayer.displaySyncEnabled = false
@@ -186,10 +180,10 @@ public final class MetalVideoRenderer {
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
 
-        // DIAGNOSTIC: the exact render-time geometry — drawable TEXTURE px (what the GPU
-        // actually allocated, not the requested drawableSize), layer bounds (pt), contentsScale,
-        // gravity, native px. The "half-size top-left" symptom means drawable.texture ≠
-        // bounds×scale or gravity isn't resize. Logged on frame 1 + every 120 frames.
+        // DIAGNOSTIC: render-time geometry — drawable TEXTURE px (what the GPU actually allocated, not
+        // requested drawableSize), layer bounds (pt), contentsScale, gravity, native px. The
+        // "half-size top-left" symptom means drawable.texture ≠ bounds×scale or gravity isn't resize.
+        // Logged on frame 1 + every 120 frames.
         if Self.renderDiag, renderDiagCount == 0 || renderDiagCount.isMultiple(of: 120) {
             FileHandle.standardError
                 .write(
@@ -201,13 +195,11 @@ public final class MetalVideoRenderer {
         }
         renderDiagCount += 1
 
-        // Keep the CVMetalTexture WRAPPERS (not just the MTLTextures) alive: the
-        // MTLTexture does not retain its parent CVMetalTexture, and the texture's backing
-        // IOSurface is owned by the wrapper + the cache. The GPU samples these textures
-        // ASYNCHRONOUSLY (after `commit()`), so releasing the wrappers at function return
-        // is a use-after-free → green/garbage frames or a GPU fault (classic
-        // CVMetalTextureCache pitfall). We hold both wrappers until the command buffer
-        // completes (see `addCompletedHandler` below).
+        // Keep the CVMetalTexture WRAPPERS (not just the MTLTextures) alive: the MTLTexture does not
+        // retain its parent CVMetalTexture, and the backing IOSurface is owned by the wrapper + cache.
+        // The GPU samples ASYNCHRONOUSLY (after `commit()`), so releasing the wrappers at function
+        // return is a use-after-free → green/garbage frames or GPU fault (classic CVMetalTextureCache
+        // pitfall). Hold both wrappers until the command buffer completes (see `addCompletedHandler`).
         guard let lumaCV = makeTexture(
             pixelBuffer,
             cache: textureCache,
@@ -233,23 +225,22 @@ public final class MetalVideoRenderer {
         let passDescriptor = MTLRenderPassDescriptor()
         passDescriptor.colorAttachments[0].texture = drawable.texture
         passDescriptor.colorAttachments[0].loadAction = .clear
-        // Clear alpha 0 while a content mask is active so uncovered area (letterbox bars + the masked
-        // flank the shader discards) is TRANSPARENT, not an opaque black bar; opaque black otherwise
-        // (the prior default — byte-identical when no mask).
+        // Clear alpha 0 while a content mask is active so uncovered area (letterbox bars + the shader-
+        // discarded masked flank) is TRANSPARENT, not opaque black; opaque black otherwise (prior
+        // default — byte-identical when no mask).
         let clearAlpha = contentMask.isEmpty ? 1.0 : 0.0
         passDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: clearAlpha)
         passDescriptor.colorAttachments[0].storeAction = .store
 
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else { return }
-        // Pin the viewport to the drawable's PIXEL size. The default viewport for a
-        // CAMetalLayer-backed render target resolves to the layer's POINT bounds (656×433),
-        // not the drawable texture's pixel size (1312×866) on a 2× display — so the full-size
-        // quad rendered into the top-left half of the drawable, the rest cleared black, then
-        // stretched to fill: the video landed in the top-left QUARTER of the pane ("nhỏ 1 góc"
-        // + half-scale). libghostty's renderer sets its own viewport, which is why the terminal
-        // never showed this. Setting it explicitly to the texture size makes the quad cover the
-        // whole drawable. (drawable.texture matches metalLayer.drawableSize.)
+        // Pin the viewport to the drawable's PIXEL size. The default viewport for a CAMetalLayer render
+        // target resolves to the layer's POINT bounds (656×433), not the drawable texture's pixels
+        // (1312×866) on a 2× display — so the full-size quad rendered into the top-left half, rest
+        // cleared black, then stretched to fill: video landed in the top-left QUARTER ("nhỏ 1 góc" +
+        // half-scale). libghostty sets its own viewport, so the terminal never showed this. Explicit
+        // texture-size viewport makes the quad cover the whole drawable. (drawable.texture matches
+        // metalLayer.drawableSize.)
         encoder.setViewport(MTLViewport(
             originX: 0,
             originY: 0,
@@ -259,24 +250,21 @@ public final class MetalVideoRenderer {
             zfar: 1,
         ))
         encoder.setRenderPipelineState(pipelineState)
-        // ASPECT-FIT: the quad fills the whole drawable unless we shrink it to the video's
-        // aspect ratio, which would otherwise STRETCH (distort) a landscape window into a
-        // portrait layer (and vice-versa). Compute a per-axis scale that letterboxes /
-        // pillarboxes the video inside the drawable; the cleared black background shows in the
-        // bars. Drawable size is in PIXELS, matched by the Retina drawableSize set in the
-        // pipeline's layoutChanged — so both the fit math and the sampling run at native res.
+        // ASPECT-FIT: shrink the full-drawable quad to the video's aspect ratio (else a landscape
+        // window STRETCHES into a portrait layer, and vice-versa). Per-axis scale letterboxes/
+        // pillarboxes the video; the cleared black background shows in the bars. Drawable size is in
+        // PIXELS (Retina drawableSize set in the pipeline's layoutChanged), so fit math and sampling
+        // run at native res.
         var fit = SIMD2<Float>(1, 1)
         let dw = Double(metalLayer.drawableSize.width), dh = Double(metalLayer.drawableSize.height)
         if dw > 0, dh > 0, width > 0, height > 0 {
-            // Derive `fit` from the SAME `displayedVideoRect` the input encoder + cursor
-            // overlay invert, so render-forward and input-inverse can never drift (doc 17
-            // §3.7). Computed in PIXELS here (drawableSize, video pixel size); the input
-            // path computes in POINTS — aspect ratio is scale-invariant so the fit is
-            // identical either way. `fit` is the quad's per-axis half-extent scale =
-            // displayed extent / full extent.
-            // `.fill` returns a rect LARGER than the drawable (size > dw/dh) → fit > 1 → the
-            // quad extends past NDC [-1,1] and the overflow is clipped by the viewport: a
-            // centred cover-crop. `.fit` returns a rect ≤ drawable → fit ≤ 1 → letterbox.
+            // Derive `fit` from the SAME `displayedVideoRect` the input encoder + cursor overlay
+            // invert, so render-forward and input-inverse can't drift (doc 17 §3.7). Computed in PIXELS
+            // here (drawableSize, video pixel size); the input path computes in POINTS — aspect ratio is
+            // scale-invariant so fit is identical. `fit` = the quad's per-axis half-extent scale =
+            // displayed extent / full extent. `.fill` returns a rect LARGER than the drawable (> dw/dh)
+            // → fit > 1 → quad extends past NDC [-1,1], overflow clipped by the viewport: a centred
+            // cover-crop. `.fit` returns a rect ≤ drawable → fit ≤ 1 → letterbox.
             let r = AspectFit.displayedVideoRect(
                 viewSize: VideoSize(width: dw, height: dh),
                 videoNativeSize: VideoSize(width: Double(width), height: Double(height)),
@@ -304,21 +292,20 @@ public final class MetalVideoRenderer {
         let py = min(max(Float(panNormalized.y), -panLimit), panLimit)
         var zoomPan = SIMD4<Float>(invZoom, px, py, 0)
         encoder.setFragmentBytes(&zoomPan, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
-        // SCROLL-HINT REPROJECTION: a dedicated UV offset the shader ADDS after the zoom/pan crop (it
-        // never overloads them). When the feature is off this is `(0, 0)` ⇒ the sampled UV is
-        // unchanged ⇒ byte-identical output. The shader clamps out-of-[0,1] samples (the disocclusion
-        // edge revealed by the shift) to black.
+        // SCROLL-HINT REPROJECTION: a dedicated UV offset the shader ADDS after the zoom/pan crop
+        // (never overloads them). Off ⇒ `(0, 0)` ⇒ sampled UV unchanged ⇒ byte-identical output. The
+        // shader clamps out-of-[0,1] samples (the disocclusion edge) to black.
         var reproj = reprojectionOffset
         encoder.setFragmentBytes(&reproj, length: MemoryLayout<SIMD2<Float>>.size, index: 2)
         // CHROME-REGION MASK band (normalized UV y bounds): the shader applies `reproj` only inside it.
         // (0,0) (or any y<=x) ⇒ whole-frame warp (byte-identical to before this feature). buffer(9).
         var rband = reprojectBand
         encoder.setFragmentBytes(&rband, length: MemoryLayout<SIMD2<Float>>.size, index: 9)
-        // CONTENT MASK: normalize each opaque rect (capture pixels) to sample-UV space [0,1] using the
-        // decoded frame size, then hand the shader the rect list + count. The shader keeps a fragment
-        // OPAQUE only when its sampled UV is inside one of these rects; everything else → alpha 0. The
-        // mask test uses the SAME (zoom/pan/reproj-adjusted) UV the texture is sampled at, so the mask
-        // tracks zoom/pan. Empty list ⇒ count 0 ⇒ the shader leaves every fragment opaque.
+        // CONTENT MASK: normalize each opaque rect (capture pixels) to sample-UV [0,1] via the decoded
+        // frame size, then hand the shader the rect list + count. A fragment stays OPAQUE only when its
+        // sampled UV is inside one rect; else → alpha 0. Tested against the SAME (zoom/pan/reproj-
+        // adjusted) UV the texture samples at, so the mask tracks zoom/pan. Empty ⇒ count 0 ⇒ every
+        // fragment opaque.
         var maskRects = [SIMD4<Float>]()
         if !contentMask.isEmpty, width > 0, height > 0 {
             let fw = Float(width), fh = Float(height)
@@ -352,10 +339,10 @@ public final class MetalVideoRenderer {
                 if let base = raw.baseAddress { encoder.setFragmentBytes(base, length: raw.count, index: 3) }
             }
         }
-        // WF-6 (#8): the YCbCr→RGB coefficients for the negotiated luma range, from the single pure
-        // source of truth (YCbCrConversion). For `.video` these are exactly the prior hardcoded shader
-        // literals → byte-identical GPU input on the default-OFF path. Only luma scale/bias differ for
-        // `.full`. Packed as two `float4` (the 8th lane is padding) for Metal's 16-byte alignment.
+        // WF-6 (#8): YCbCr→RGB coefficients for the negotiated luma range, from the single source of
+        // truth (YCbCrConversion). For `.video` exactly the prior hardcoded shader literals →
+        // byte-identical GPU input on the default-OFF path. Only luma scale/bias differ for `.full`.
+        // Packed as two `float4` (8th lane padding) for Metal's 16-byte alignment.
         let coeffs = YCbCrConversion.coefficients(colorRange)
         var ycbcr = YCbCrCoeffsUniform(
             c0: SIMD4<Float>(coeffs.lumaScale, coeffs.lumaBias, coeffs.chromaBias, coeffs.crToR),
@@ -367,20 +354,18 @@ public final class MetalVideoRenderer {
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         encoder.endEncoding()
         commandBuffer.present(drawable)
-        // Pin both CVMetalTexture wrappers (+ the pixel buffer) until the GPU is done
-        // reading them. The completed handler runs on a private Metal thread; capturing
-        // the wrappers there keeps their IOSurfaces valid for the whole async read. The
-        // CV handles are not `Sendable`, so we ferry them in an unchecked-Sendable box —
-        // the handler only RETAINS them (never reads), so crossing the boundary is safe.
+        // Pin both CVMetalTexture wrappers (+ pixel buffer) until the GPU finishes reading. The
+        // completed handler runs on a private Metal thread; capturing the wrappers there keeps their
+        // IOSurfaces valid for the whole async read. The CV handles aren't `Sendable`, so we ferry them
+        // in an unchecked-Sendable box — the handler only RETAINS (never reads), so crossing is safe.
         let pinned = TexturePin(luma: lumaCV, chroma: chromaCV, pixelBuffer: pixelBuffer)
         commandBuffer.addCompletedHandler { _ in
             withExtendedLifetime(pinned) {}
         }
         commandBuffer.commit()
 
-        // Release this frame's recycled texture mappings so the cache's internal
-        // registry does not grow unbounded across frames (the wrappers above keep the
-        // in-flight surfaces alive regardless of the flush).
+        // Release this frame's recycled texture mappings so the cache's internal registry does not grow
+        // unbounded across frames (the wrappers above keep the in-flight surfaces alive regardless).
         CVMetalTextureCacheFlush(textureCache, 0)
     }
 
@@ -401,11 +386,10 @@ public final class MetalVideoRenderer {
         return cvTexture
     }
 
-    /// Keeps a frame's CVMetalTexture wrappers + source pixel buffer alive across the
-    /// asynchronous GPU read (held by the command buffer's completion handler). The
-    /// handler only retains these immutable CoreVideo handles — never reads or mutates
-    /// them — so ferrying them into the `@Sendable` handler is the documented escape
-    /// hatch for immutable CV handles under strict concurrency.
+    /// Keeps a frame's CVMetalTexture wrappers + source pixel buffer alive across the async GPU read
+    /// (held by the command buffer's completion handler). The handler only retains these immutable
+    /// CoreVideo handles — never reads/mutates — so ferrying them into the `@Sendable` handler is the
+    /// documented escape hatch for immutable CV handles under strict concurrency.
     private struct TexturePin: @unchecked Sendable {
         let luma: CVMetalTexture
         let chroma: CVMetalTexture

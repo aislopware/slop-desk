@@ -55,14 +55,12 @@ public final class WorkspaceStore {
     /// methods change it (each then reconciles), so the registry can never drift from the tree.
     public private(set) var workspace: Workspace
 
-    /// W4 (docs/42 §"W4 — Store retarget"): the **DORMANT** tree-of-intent the store gains alongside the
-    /// live canvas `workspace`. The `Session → Tab → Pane` split-tree replacement (``TreeWorkspace``). It
-    /// is mutated by the tree-mutation methods below (each delegating to ``WorkspaceTreeOps`` then calling
-    /// ``reconcileTree()``), but it is NOT the live path yet: `init` does NOT reconcile it, and the live
-    /// update loop keeps using the canvas `reconcile()` (the still-canvas Views bind `workspace`). The W5
-    /// cutover promotes it to the live source of truth and retires the canvas. `private(set)`: only the
-    /// tree-mutation methods change it (each then `reconcileTree()`s), so the registry can never drift.
-    /// `internal(set)`: read-only to the UI (cross-module), settable only by the store's own tree-mutation
+    /// W4 (docs/42 §"W4 — Store retarget"): the **DORMANT** `Session → Tab → Pane` split-tree replacement
+    /// (``TreeWorkspace``) the store gains alongside the live canvas `workspace`. Mutated by the tree-mutation
+    /// methods below (each delegates to ``WorkspaceTreeOps`` then ``reconcileTree()``s, so the registry can't
+    /// drift), but NOT the live path yet: `init` does NOT reconcile it and the live loop keeps using the
+    /// canvas `reconcile()`. The W5 cutover promotes it to the live source of truth and retires the canvas.
+    /// `internal(set)`: read-only to the UI (cross-module), settable only by the store's tree-mutation
     /// methods + same-module extensions (e.g. `WorkspaceStore+RemoteWindow`).
     public internal(set) var tree: TreeWorkspace
 
@@ -74,10 +72,9 @@ public final class WorkspaceStore {
     /// TRUE while an INTERACTIVE divider drag is in progress (a pane-divider OR the sidebar/inspector
     /// `NSSplitView` divider) — bracketed by ``setTerminalResizeSuspended(_:)``'s begin (`true`) / end
     /// (`false`). The pane resize-scrim reads it so the overlay stays up across a PAUSED drag (mouse held,
-    /// cursor still): the per-frame geometry-settle timer would otherwise clear the scrim mid-drag, then it
-    /// would flash back on release (the "nháy" — the host grid-send is DEFERRED to release, so during the
-    /// pause nothing else holds the scrim). ``PaneContainer`` gates it on THIS pane having actually changed
-    /// size during the drag, so only the panes being resized scrim — never the untouched ones.
+    /// cursor still): otherwise the per-frame geometry-settle timer clears the scrim mid-drag and it flashes
+    /// back on release (the host grid-send is DEFERRED to release, so nothing else holds the scrim during the
+    /// pause). ``PaneContainer`` gates it on THIS pane actually changing size, so only resized panes scrim.
     public private(set) var isInteractiveResizeActive = false
 
     /// The injection seam (docs/22 §0). Spec-only — the store re-points the built handle at the leaf
@@ -90,26 +87,21 @@ public final class WorkspaceStore {
     /// plain `Int` shape and is agnostic to how the number was chosen.
     ///
     /// ### UDP-mux interaction — cap is intentionally per-pane
-    /// Same-host video panes SHARE one UDP flow (2 sockets/host instead of 2N), but each pane STILL owns
-    /// its own `VTDecompressionSession` + `CVDisplayLink` + Metal renderer — those are NOT shared, only
-    /// the UDP socket is. The dominant, scarce resources the cap exists to bound (decode + composite, the
-    /// "N-VTDecompression / N-CVDisplayLink" part of the ceiling) remain strictly per-pane, so the
-    /// per-pane cap stays CORRECT (it can never under-count live decoders). The only term that weakens
-    /// under mux is "2N-UDP" → "2-per-host", which only makes the cap more conservative, never wrong. So
-    /// the cap is kept per-pane (a per-host socket count would loosen admission for no decode/composite
-    /// headroom gain).
+    /// Same-host video panes SHARE one UDP flow (2 sockets/host, not 2N), but each pane STILL owns its own
+    /// `VTDecompressionSession` + `CVDisplayLink` + Metal renderer — only the UDP socket is shared. The
+    /// scarce resources the cap bounds (decode + composite) stay strictly per-pane, so the per-pane cap can
+    /// never under-count live decoders. Mux only weakens the "2N-UDP" term to "2-per-host", making the cap
+    /// more conservative, never wrong — a per-host socket count would loosen admission for no headroom gain.
     public let liveVideoCap: Int
 
-    /// A monotonic nudge the view layer observes to RE-ATTEMPT video admission for gated panes (ITEM
-    /// #2). The store can never flip a pane's liveness itself — admission is **view-driven**: only an
-    /// on-screen pane decodes, via ``RemoteGUIPaneView``'s `.onAppear` → ``activateVideo(_:)``. So when
-    /// a slot frees (a video pane deactivated, or an active-video pane was closed), there is no one to
-    /// promote a queued-but-still-on-screen pane that was previously gated. This counter is bumped on
-    /// exactly those slot-freeing events; the gated leaves observe it via `.onChange` and re-call
-    /// `activateVideo` — which still flows through the cap, so the ceiling is never breached. Only the
-    /// store bumps it (`private(set)`), and the bump is GUARDED to real slot-freeing transitions so a
-    /// no-op deactivate / a non-video close never churns the view. Pure MainActor `Int` bookkeeping (no
-    /// new concurrency / Sendable surface).
+    /// A monotonic nudge the view layer observes to RE-ATTEMPT video admission for gated panes (ITEM #2).
+    /// The store can't flip a pane's liveness itself — admission is **view-driven**: only an on-screen pane
+    /// decodes, via ``RemoteGUIPaneView``'s `.onAppear` → ``activateVideo(_:)``. So when a slot frees (a
+    /// video pane deactivated, or an active-video pane closed), no one promotes a queued-but-still-on-screen
+    /// gated pane. Bumped on exactly those slot-freeing events; gated leaves observe it via `.onChange` and
+    /// re-call `activateVideo` (still cap-gated, so the ceiling holds). Only the store bumps it
+    /// (`private(set)`), GUARDED to real slot-freeing transitions so a no-op deactivate / non-video close
+    /// never churns the view. Pure MainActor `Int` bookkeeping (no new concurrency / Sendable surface).
     public private(set) var videoPromotionGeneration: Int = 0
 
     /// The pane whose sidebar row should open its inline rename field — set by the ⌘R / menu /
@@ -178,35 +170,31 @@ public final class WorkspaceStore {
     /// mutation"). One write per quiet period, not one per keystroke-driven split/resize.
     private let saveDebounce: Duration
 
-    /// FIX #4: how long to let a closed `.remoteGUI` pane's video stack ACTUALLY release before the
-    /// store frees its ``liveVideoCap`` slot. `teardown()` for a `.remoteGUI` pane sets
-    /// `RemoteWindowModel.active = nil`, which only triggers the SwiftUI dismantle of the
-    /// `VideoWindowView` → `VideoWindowPipeline.deactivate()` → a detached `session.stop()` that
-    /// closes the two UDP `NWConnection`s + `VTDecompressionSession` + display link. That real
-    /// release completes a few runloop turns AFTER `teardown()` returns, so freeing the slot the
-    /// instant `teardown()` returns can transiently admit a sibling while the old stack is still up
-    /// (cap+1 — no crash/leak, just a momentary over-commit). The pipeline now runs `stop()` as one
-    /// ordered task (`VideoWindowPipeline.awaitStopped()`), but it lives inside the SwiftUI-owned
-    /// AppKit view and is not reachable from the store for a direct `await`; so the store holds the
-    /// slot for this bounded settle past `teardown()` to cover the dismantle→stop lag. Injectable so
-    /// a test can set it to `.zero` for deterministic, sleep-free assertions. DEFAULT `.zero` = the
-    /// old free-immediately behaviour, so EVERY existing test + the OFF/terminal-only paths are
-    /// byte-identical (they never enter this gate); the PRODUCTION app opts in with a small window
-    /// (``SlopDeskClientApp``). [MS-confirm] the real dismantle→stop lag on hardware.
+    /// FIX #4: how long to let a closed `.remoteGUI` pane's video stack ACTUALLY release before the store
+    /// frees its ``liveVideoCap`` slot. `teardown()` sets `RemoteWindowModel.active = nil`, which only
+    /// triggers the SwiftUI dismantle → `VideoWindowPipeline.deactivate()` → detached `session.stop()`
+    /// closing the two UDP `NWConnection`s + `VTDecompressionSession` + display link — completing a few
+    /// runloop turns AFTER `teardown()` returns. Freeing the slot immediately could admit a sibling while
+    /// the old stack is still up (cap+1 — no crash/leak, just a momentary over-commit). `stop()` is now one
+    /// ordered task (`VideoWindowPipeline.awaitStopped()`), but it lives in the SwiftUI-owned AppKit view,
+    /// unreachable for a direct store `await`; so the store holds the slot for this bounded settle past
+    /// `teardown()` to cover the dismantle→stop lag. Injectable; DEFAULT `.zero` = old free-immediately
+    /// behaviour, so every existing test + the OFF/terminal-only paths are byte-identical (they never enter
+    /// this gate). The PRODUCTION app opts in with a small window (``SlopDeskClientApp``). [MS-confirm] the
+    /// real dismantle→stop lag on hardware.
     private let videoTeardownSettle: Duration
 
     /// The pending debounced-save task. Cancelled + replaced on each mutation so only the last
     /// mutation in a burst actually writes; cancel-safe (a cancelled sleep simply returns).
     private var saveTask: Task<Void, Never>?
 
-    /// A monotonic save-generation guard (mirrors the ``FocusGenerationGuard`` idiom). Each
-    /// `scheduleSave()` bumps it and captures the value; the debounced write re-checks it on a MainActor
-    /// hop BEFORE writing and skips if superseded (BUG-D), and the trailing `saveTask = nil` clears the
-    /// handle ONLY if it is still the current generation — so a superseded (but already-past-sleep) prior
-    /// task can neither clobber the file with a stale snapshot NOR nil out the newest handle and strand
-    /// it uncancellable. Pure MainActor Int bookkeeping (no new concurrency / Sendable surface).
-    /// `internal private(set)` so only the store bumps it, but the generation-guard logic is observable
-    /// to the `@testable` BUG-D test via ``isCurrentSaveGeneration(_:)``.
+    /// A monotonic save-generation guard (mirrors ``FocusGenerationGuard``). Each `scheduleSave()` bumps it
+    /// and captures the value; the debounced write re-checks it on a MainActor hop BEFORE writing and skips
+    /// if superseded (BUG-D), and the trailing `saveTask = nil` clears the handle ONLY if still current — so
+    /// a superseded (already-past-sleep) prior task can neither clobber the file with a stale snapshot NOR
+    /// nil out the newest handle and strand it uncancellable. Pure MainActor Int bookkeeping.
+    /// `internal private(set)`: only the store bumps it, but the guard is observable to the `@testable`
+    /// BUG-D test via ``isCurrentSaveGeneration(_:)``.
     private(set) var saveGeneration = 0
 
     /// The pure generation-guard predicate the debounced write consults before writing (BUG-D): a
@@ -221,29 +209,27 @@ public final class WorkspaceStore {
     /// re-write a just-loaded file with identical bytes). Flipped off once init completes.
     private var savingEnabled = false
 
-    /// In-flight teardown tasks spawned by ``reconcile()`` (teardown is `async`; reconcile is called
-    /// inline by synchronous mutations). Tracked so tests — and a deliberate shutdown — can `await`
-    /// every orphaned session's `teardown()` to actually complete via ``quiesce()``. The registry
-    /// invariant (`keys == leafIDs`) holds the instant reconcile returns (orphans are removed
-    /// synchronously); `quiesce()` only waits for the *cleanup* of those already-removed sessions.
+    /// In-flight teardown tasks spawned by ``reconcile()`` (teardown is `async`; reconcile is called inline
+    /// by synchronous mutations). Tracked so tests — and a deliberate shutdown — can `await` every orphaned
+    /// session's `teardown()` via ``quiesce()``. The registry invariant (`keys == leafIDs`) holds the instant
+    /// reconcile returns (orphans removed synchronously); `quiesce()` only waits for the *cleanup*.
     ///
-    /// Keyed by a monotonic id (not an array) so each task can self-prune its own entry on completion
-    /// without the task-captures-itself chicken-and-egg — freeing the handle promptly rather than only
-    /// on the next orphaning reconcile. Every site (the reconcile insert, the self-remove, the
-    /// `quiesce()` drain) runs on `@MainActor`, so the bookkeeping is serialized with no data race.
+    /// Keyed by a monotonic id (not an array) so each task self-prunes its own entry on completion without
+    /// the task-captures-itself chicken-and-egg — freeing the handle promptly rather than on the next
+    /// orphaning reconcile. Every site (reconcile insert, self-remove, `quiesce()` drain) runs on
+    /// `@MainActor`, so the bookkeeping is serialized with no data race.
     private var teardownTasks: [Int: Task<Void, Never>] = [:]
     /// The next teardown-task id (monotonic, wraps harmlessly).
     private var nextTeardownID = 0
 
-    /// The ids of `.remoteGUI` panes whose video stack is STILL tearing down (orphaned by a reconcile,
-    /// removed from the registry, but their async `teardown()` — which stops the UDP / VTDecompression /
-    /// CVDisplayLink stack — has not yet completed). This is what protects the ``liveVideoCap`` ceiling
-    /// across a same-tick close+reopen (docs/22 §7, ITEM #3): a pane that is gone from the registry but
-    /// still holding its video resources must keep counting against the cap until those resources are
-    /// actually released. `reconcile()` inserts an orphan's id here (reading `isVideoActive` BEFORE
-    /// teardown nils it); the orphan's teardown task removes it after the `await`. ``activateVideo(_:)``
-    /// adds `tearingDownVideo.count` to the live count, and ``quiesce()`` defensively clears it. Every
-    /// site runs on `@MainActor`, serialized with the `teardownTasks` self-prune — no data race.
+    /// The ids of `.remoteGUI` panes whose video stack is STILL tearing down (orphaned + removed from the
+    /// registry, but their async `teardown()` — stopping the UDP / VTDecompression / CVDisplayLink stack —
+    /// has not completed). Protects the ``liveVideoCap`` ceiling across a same-tick close+reopen (docs/22 §7,
+    /// ITEM #3): a pane gone from the registry but still holding its video resources must keep counting
+    /// against the cap until they release. `reconcile()` inserts an orphan's id (reading `isVideoActive`
+    /// BEFORE teardown nils it); the teardown task removes it after the `await`. ``activateVideo(_:)`` adds
+    /// `tearingDownVideo.count` to the live count; ``quiesce()`` defensively clears it. Every site runs on
+    /// `@MainActor`, serialized with the `teardownTasks` self-prune — no data race.
     private var tearingDownVideo: Set<PaneID> = []
 
     /// The last layout the view solved, cached so geometric ``move(_:)`` can resolve a neighbour
@@ -275,28 +261,25 @@ public final class WorkspaceStore {
     private var hasReportedViewport = false
 
     /// VISUAL-ONLY live scroll-pan offset (screen-space) — the scroll counterpart of ``CanvasView``'s
-    /// `livePan` @State for a background DRAG. A trackpad/wheel scroll, over the empty background OR over a
-    /// pane (via ``scrollPan(by:)``), accumulates here and the camera is committed ONCE, ~110 ms after the
-    /// scroll settles (``commitScrollPan()``). THIS IS THE BUG-2/BUG-1 FREEZE FIX (2026-06-08, proven
-    /// on-device): the old path called ``commitCamera(_:)`` on EVERY scroll step, and each call mutates
-    /// `workspace.canvas` → fires the `.onChange(of: canvas)` → `report()` cascade (viewport / membership /
-    /// solved-layout writes) → a full-canvas SwiftUI re-render that BLOCKS the main thread, starving the
-    /// Metal video render + cursor overlay (all measured freeze gaps were main-actor; cursor RX was clean).
-    /// Accumulating here touches ONLY ``CanvasView`` (panes diff unchanged, NO `report()`), so the pan
-    /// stays smooth and the stream never freezes. Not persisted; folded into the real camera on commit with
-    /// NO visual jump (the committed offset equals the live offset).
+    /// `livePan` @State for a background DRAG. A trackpad/wheel scroll over background OR a pane (via
+    /// ``scrollPan(by:)``) accumulates here; the camera is committed ONCE ~110 ms after the scroll settles
+    /// (``commitScrollPan()``). BUG-2/BUG-1 FREEZE FIX (2026-06-08, proven on-device): the old per-step
+    /// ``commitCamera(_:)`` mutated `workspace.canvas` → fired the `.onChange(of: canvas)` → `report()`
+    /// cascade (viewport / membership / solved-layout) → a full-canvas SwiftUI re-render that BLOCKS the main
+    /// thread, starving the Metal video render + cursor overlay (freeze gaps were all main-actor; cursor RX
+    /// was clean). Accumulating here touches ONLY ``CanvasView`` (panes diff unchanged, NO `report()`), so
+    /// the pan stays smooth. Not persisted; folded into the real camera on commit with NO visual jump (the
+    /// committed offset equals the live offset).
     public private(set) var liveCameraOffset: CGSize = .zero
     /// Debounce handle: cancelled + rescheduled on each ``scrollPan(by:)`` so the single commit fires only
     /// after the scroll (incl. trackpad momentum) settles.
     private var scrollCommitTask: Task<Void, Never>?
 
-    /// The single-focus arbiter for the iOS multi-visible (iPad-regular) input path (docs/22 §7). One
-    /// per workspace, created alongside the store. The regular `PaneTreeView` leaves route their
-    /// ``TerminalInputHost`` first-responder through this so a stale async `becomeFirstResponder`
-    /// callback can never win (resign-before-become + generation reject). Compact mode mounts exactly
-    /// one host and skips it. Cross-platform-compilable (the UIKit calls inside are `#if os(iOS)`), so
-    /// the macOS build is unaffected. Exposed so the view layer can drive `focus(_:)` on a focus
-    /// change.
+    /// The single-focus arbiter for the iOS multi-visible (iPad-regular) input path (docs/22 §7). One per
+    /// workspace. The regular `PaneTreeView` leaves route their ``TerminalInputHost`` first-responder through
+    /// this so a stale async `becomeFirstResponder` callback can never win (resign-before-become + generation
+    /// reject). Compact mode mounts one host and skips it. Cross-platform-compilable (the UIKit calls inside
+    /// are `#if os(iOS)`). Exposed so the view layer can drive `focus(_:)` on a focus change.
     public let focusCoordinator = PaneFocusCoordinator()
 
     // MARK: Init
@@ -788,14 +771,9 @@ public final class WorkspaceStore {
             title: label,
             video: VideoEndpoint(windowID: windowID, title: label, appName: owner),
         )
-        // W5 (ITEM A2): on the LIVE tree shell the canvas is dead, so an ephemeral dialog pane must be
-        // inserted into the TREE — a NEW TAB of the active session (the least-disruptive transient shape:
-        // a tab the monitor closes again the moment the dialog leaves, without resplitting the user's
-        // current layout). The `.canvas` path keeps the old behaviour byte-identical.
-        // W5 (ITEM A2): on the LIVE tree shell the canvas is dead, so an ephemeral dialog pane must be
-        // inserted into the TREE — a NEW TAB of the active session (the least-disruptive transient shape:
-        // a tab the monitor closes again the moment the dialog leaves, without resplitting the user's
-        // current layout). The `.canvas` path keeps the old behaviour byte-identical.
+        // W5 (ITEM A2): on the LIVE tree shell the canvas is dead, so an ephemeral dialog pane inserts into
+        // the TREE — a NEW TAB of the active session (least-disruptive transient shape: the monitor closes
+        // it again when the dialog leaves, without resplitting the layout). `.canvas` keeps old behaviour.
         let id: PaneID
         switch liveModel {
         case .tree:
@@ -843,12 +821,11 @@ public final class WorkspaceStore {
 
     /// Focuses pane `id` (a pure focus change; leaf set unchanged). Maximize follows focus.
     ///
-    /// BUG-1 (cursor freezes "khi click vào pane"): a click on a GUI pane runs `mouseDown → onActivate →
-    /// focus(id)`. Without the guard below, clicking the ALREADY-focused pane STILL reassigned the whole
-    /// `@Observable workspace` (struct assignment notifies regardless of equality) → a full-canvas SwiftUI
-    /// re-render that blocks the main thread → the Metal video + cursor overlay freeze for that span on
-    /// EVERY click. Re-focusing the pane that is already focused (and already maximized-or-not the same) is
-    /// a genuine no-op, so skip it entirely — no reassignment, no re-render, no freeze.
+    /// BUG-1 (cursor freezes on click): a click on a GUI pane runs `mouseDown → onActivate → focus(id)`.
+    /// Without the guard below, clicking the ALREADY-focused pane still reassigned the whole `@Observable
+    /// workspace` (struct assignment notifies regardless of equality) → a full-canvas SwiftUI re-render that
+    /// blocks the main thread → the Metal video + cursor overlay freeze on EVERY click. Re-focusing the
+    /// already-focused pane is a genuine no-op, so skip it entirely — no reassignment, no re-render, no freeze.
     public func focus(_ id: PaneID) {
         focus(id, recordVisit: true)
     }
@@ -1167,14 +1144,12 @@ public final class WorkspaceStore {
             .id
     }
 
-    /// 1:1 SNAP (remote-GUI panes): resizes pane `id` by the VIDEO-CONTENT delta `target −
-    /// current` so its stream renders pixel-for-pixel — the pane chrome (header + divider) is a
-    /// constant additive inset around the content, so adjusting the FRAME by the CONTENT delta
-    /// needs no chrome-height constant and stays correct if the chrome ever changes. The origin
-    /// stays pinned (the pane grows right/down, no jump under the cursor). Skipped while the pane
-    /// is maximized (its on-screen size is the viewport override — mutating the underlying frame
-    /// would surprise the restore) and for sub-half-point deltas (layout noise; not worth a
-    /// canvas mutation + persistence write).
+    /// 1:1 SNAP (remote-GUI panes): resizes pane `id` by the VIDEO-CONTENT delta `target − current` so its
+    /// stream renders pixel-for-pixel — the pane chrome (header + divider) is a constant additive inset, so
+    /// adjusting the FRAME by the CONTENT delta needs no chrome-height constant and survives a chrome change.
+    /// The origin stays pinned (grows right/down, no jump under the cursor). Skipped while maximized (its
+    /// on-screen size is the viewport override — mutating the frame would surprise the restore) and for
+    /// sub-half-point deltas (layout noise; not worth a canvas mutation + persistence write).
     public func snapPaneToContentSize(_ id: PaneID, target: CGSize, current: CGSize) {
         guard workspace.maximizedPane != id,
               let frame = workspace.canvas.frame(of: id) else { return }
@@ -1708,20 +1683,19 @@ public final class WorkspaceStore {
     public var onSessionResumeOutcome: ((_ paneID: PaneID, _ outcome: SlopDeskClient.SessionResumeOutcome) -> Void)?
 
     /// WS-B / B4·B5·B6·B7: the configured tmux/zellij PREFIX chord (default ⌃A, CONFIGURABLE off a
-    /// Ctrl-letter). Both the app-level `WorkspaceKeyDispatcher` (B3) and the per-surface
-    /// ``TerminalKeyInterceptor``s the store wires into each pane (`wireMaterializedLeaf`) must read the SAME
-    /// prefix or they disagree on what arms the engine — so it lives here, on the single store, as the one
-    /// place a settings change re-points it. Re-wiring already-materialized panes is intentionally NOT done
-    /// here (a process restart re-reads it; a single-user tool changing its prefix mid-session is rare and
-    /// the new panes pick it up). `@ObservationIgnored`: wiring, not view state.
+    /// Ctrl-letter). The app-level `WorkspaceKeyDispatcher` (B3) and the per-surface ``TerminalKeyInterceptor``s
+    /// (wired per pane in `wireMaterializedLeaf`) must read the SAME prefix or they disagree on what arms the
+    /// engine — so it lives here, the one place a settings change re-points it. Already-materialized panes are
+    /// intentionally NOT re-wired here (a process restart re-reads it; changing the prefix mid-session is rare
+    /// and new panes pick it up). `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var workspaceKeyPrefix: KeyChord = .init(character: "a", [.control])
 
     /// View-injected overlay-toggle closures the per-pane hardware-keyboard ``TerminalKeyInterceptor`` threads
     /// into ``WorkspaceBindingRegistry/route`` (see ``routeInterceptedKey(_:)``). On iOS the per-pane
-    /// interceptor is the ONLY hardware-chord path (there is no app-level NSEvent monitor — macOS's
-    /// `WorkspaceKeyDispatcher` PREEMPTS the surface, so these stay the all-`nil` default there and the
-    /// dispatcher owns the overlay chords). `nil` members ⇒ a graceful no-op (the prior behaviour), so a
-    /// chord like ⌘⇧P / ⇧⌘F / ⌘⇧O / ⌘J / ⌘⌃↩ from a focused iPad terminal opens its overlay instead of dying.
+    /// interceptor is the ONLY hardware-chord path (no app-level NSEvent monitor; macOS's
+    /// `WorkspaceKeyDispatcher` PREEMPTS the surface, so these stay all-`nil` there and the dispatcher owns
+    /// the overlay chords). `nil` members ⇒ a graceful no-op, so a chord like ⌘⇧P / ⇧⌘F / ⌘⇧O / ⌘J / ⌘⌃↩ from
+    /// a focused iPad terminal opens its overlay instead of dying.
     @ObservationIgnored public var overlayKeyToggles = WorkspaceOverlayKeyToggles()
 
     /// Routes a child-requested notification from pane `id` to the app poster. Internal seam — wired
@@ -1839,11 +1813,10 @@ public final class WorkspaceStore {
     }
 
     /// Switches the live canvas to saved layout `name`: replaces the panes + groups + focus with the
-    /// snapshot (KEEPING the app connection + the saved presets themselves), then reconciles — which
-    /// tears down every current session and materializes the snapshot's. The pane ids are re-minted on
-    /// save's `strippingEphemeral`? No — the snapshot keeps the original ids; but a switch back-and-forth
-    /// would re-use ids across teardown, so the snapshot's items get FRESH ids here to avoid colliding
-    /// with the live registry mid-teardown (the same rule as reopen/restore). No-op for an unknown name.
+    /// snapshot (KEEPING the app connection + the saved presets), then reconciles — tearing down every
+    /// current session and materializing the snapshot's. The snapshot's items get FRESH ids here so a
+    /// back-and-forth switch can't collide a re-used id with the live registry mid-teardown (same rule as
+    /// reopen/restore). No-op for an unknown name.
     public func switchToLayoutPreset(name: String) {
         guard let preset = workspace.layoutPresets.first(where: { $0.name == name }) else { return }
         // The preset's camera is set ABSOLUTELY below, so drop any in-flight live scroll first — else a
@@ -2163,15 +2136,11 @@ public final class WorkspaceStore {
     ///   from `SLOPDESK_VIDEO_AUTOCONNECT_TITLE` if set.
     /// - neither set ⇒ the plain default single-terminal workspace.
     ///
-    /// The actual connect TRIGGER stays out of the store (the app auto-connects ``AppConnection`` in
-    /// automation), so the env-var names stay unchanged and `check-macos.sh`/`check-video.sh` keep working.
-    /// The automation inputs: the process environment overlaid with any `KEY=VALUE` launch
-    /// arguments whose key begins with `SLOPDESK_`.
-    ///
-    /// The env vars are the canonical seam, but a GUI-session launch cannot always inject env
-    /// (e.g. `open --args …` over SSH, where there is no way to set the child's environment
-    /// without root). Passing the same `SLOPDESK_…=value` tokens as launch arguments is the
-    /// equivalent; a matching argument overrides the inherited env.
+    /// `automationInputs`: the process environment overlaid with any `KEY=VALUE` launch argument whose key
+    /// begins with `SLOPDESK_`. The env vars are the canonical seam, but a GUI-session launch cannot always
+    /// inject env (e.g. `open --args …` over SSH, no way to set the child's env without root); passing the
+    /// same `SLOPDESK_…=value` tokens as launch arguments is the equivalent — a matching argument overrides
+    /// the inherited env.
     public static func automationInputs(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         arguments: [String] = CommandLine.arguments,
@@ -2273,10 +2242,9 @@ public final class WorkspaceStore {
         splitActivePane(axis: axis, kind: kind, leading: leading, launchGrace: .milliseconds(1400))
     }
 
-    /// Core of ``splitActivePane(axis:kind:leading:)``. `launchGrace` is retained for call-site + overload
-    /// parity with the launch-preset / template / drop paths that still schedule a deferred send, but this
-    /// path no longer types a startup `cd` — the inherited cwd rides `channelOpen` (host-side spawn), so the
-    /// grace is unused here (`_`).
+    /// Core of ``splitActivePane(axis:kind:leading:)``. `launchGrace` is kept for call-site + overload parity
+    /// with the paths that still schedule a deferred send, but this path types no startup `cd` — the
+    /// inherited cwd rides `channelOpen` (host-side spawn), so the grace is unused here (`_`).
     func splitActivePane(axis: SplitAxis, kind: PaneKind, leading: Bool, launchGrace _: Duration) {
         guard let active = tree.activeSession?.activeTab?.activePane else { return }
         // A26 cwd-inheritance: resolve the new pane's initial cwd from the NEW-SPLIT working-directory policy
@@ -2376,12 +2344,12 @@ public final class WorkspaceStore {
     }
 
     /// Moves tree focus in `direction` — the keyboard / menu / command-palette entry point that has no
-    /// `GeometryReader` of its own. Resolves against ``treeGeometryBounds``: the view-reported layout when
-    /// one has landed (``updateSolvedLayout(_:)``, wired from `SplitContainer`'s layout pass), else a
-    /// nominal rect — direction is scale-invariant for the tiled tree (`moveFocusTree` re-solves the tree
-    /// into the bounds), so the ⌃⌘arrow chords are NEVER dead. The audit found the old
-    /// wait-for-a-report guard blocked forever: no production view called `updateSolvedLayout` after the
-    /// L0/L2 rewrite deleted `SplitTreeView`, so every directional chord silently no-opped.
+    /// `GeometryReader` of its own. Resolves against ``treeGeometryBounds``: the view-reported layout when one
+    /// has landed (``updateSolvedLayout(_:)``, wired from `SplitContainer`'s layout pass), else a nominal rect
+    /// — direction is scale-invariant for the tiled tree (`moveFocusTree` re-solves into the bounds), so the
+    /// ⌃⌘arrow chords are NEVER dead. NOT gated on a layout report: the old wait-for-a-report guard blocked
+    /// forever once the L0/L2 rewrite deleted `SplitTreeView` (no view called `updateSolvedLayout`), silently
+    /// no-opping every directional chord.
     public func moveFocusTreeUsingReportedLayout(_ direction: FocusDirection) {
         moveFocusTree(direction, bounds: treeGeometryBounds)
     }
@@ -2394,9 +2362,9 @@ public final class WorkspaceStore {
         newTab(kind: kind, launchGrace: .milliseconds(1400))
     }
 
-    /// Core of ``newTab(kind:)``. `launchGrace` is retained for call-site + overload parity with the paths
-    /// that still schedule a deferred send (chat / agent-resume call this then defer their OWN command), but
-    /// this path types no startup `cd` — the inherited cwd rides `channelOpen`, so the grace is unused (`_`).
+    /// Core of ``newTab(kind:)``. `launchGrace` is kept for call-site + overload parity with the paths that
+    /// still schedule a deferred send (chat / agent-resume call this then defer their OWN command), but this
+    /// path types no startup `cd` — the inherited cwd rides `channelOpen`, so the grace is unused (`_`).
     func newTab(kind: PaneKind, launchGrace _: Duration) {
         // A26 cwd-inheritance: resolve the new tab's initial cwd from the NEW-TAB working-directory policy
         // against the active pane's last-known cwd (none when there is no active pane) and stamp it on the
@@ -2470,7 +2438,7 @@ public final class WorkspaceStore {
         newSession(name: name, kind: kind, launchGrace: .milliseconds(1400))
     }
 
-    /// Core of ``newSession(name:kind:)``. `launchGrace` is retained for call-site + overload parity with
+    /// Core of ``newSession(name:kind:)``. `launchGrace` is kept for call-site + overload parity with
     /// `newTab` / `splitActivePane`, but this path types no startup `cd` — the inherited cwd rides
     /// `channelOpen` (host-side spawn), so the grace is unused here (`_`).
     func newSession(name: String, kind: PaneKind, launchGrace _: Duration) {
@@ -2500,16 +2468,14 @@ public final class WorkspaceStore {
     }
 
     /// SESSION-RETENTION LRU (R-lifecycle #3): the most-recent-first session ids whose pane subtrees the
-    /// keep-mounted compositor keeps MOUNTED (at `opacity 0`) even while they are not the active session —
-    /// so an A→B→A session round-trip does NOT dismantle A's ghostty surfaces and repaint them from the lossy
-    /// 256 KB ring (dropped prompts on unfocused panes, blank alt-screen TUIs). Capped at
-    /// ``retainedSessionCap`` (the active session + the previous one; LRU-evicted beyond that) — a bounded set
-    /// so we never hold every session's live Metal surface on-window. The view (`SplitContainer`) renders a
-    /// hidden layer for each retained session's tabs; retained-but-inactive sessions have no active tab, so
-    /// every one of their panes is hidden + non-interactive (and, being off-screen, their video panes release
-    /// their `liveVideoCap` slots via the visibility-driven activation lifecycle).
-    /// `internal(set)` (not `private(set)`) so the `WorkspaceStore+Lifecycle` extension's retention helpers can
-    /// mutate it; still not publicly settable.
+    /// keep-mounted compositor keeps MOUNTED (at `opacity 0`) even while inactive — so an A→B→A round-trip
+    /// does NOT dismantle A's ghostty surfaces and repaint them from the lossy 256 KB ring (dropped prompts
+    /// on unfocused panes, blank alt-screen TUIs). Capped at ``retainedSessionCap`` (active + previous;
+    /// LRU-evicted beyond) so we never hold every session's live Metal surface on-window. `SplitContainer`
+    /// renders a hidden layer for each retained session's tabs; retained-but-inactive sessions have no active
+    /// tab, so their panes are hidden + non-interactive (and, off-screen, their video panes release their
+    /// `liveVideoCap` slots via the visibility-driven lifecycle). `internal(set)` so the
+    /// `WorkspaceStore+Lifecycle` retention helpers can mutate it; still not publicly settable.
     public internal(set) var retainedSessionIDs: [SessionID] = []
 
     /// Selects session `sessionID` — a pure active-state change (the full leaf set stays registered).
@@ -2798,44 +2764,39 @@ public final class WorkspaceStore {
     /// The per-pane Claude status the detection signals reduce to. Defaults ``ClaudeStatus/none`` for every
     /// leaf; the W10/W11 wiring (foreground-process watch + hooks + manifest fallback) feeds real verdicts
     /// in from the `LivePaneSession`. Stored on the store so the sidebar/chrome dots have a single
-    /// observable source. PRUNED to the live leaf set on every reconcile (review #10/#13) — in the same
-    /// shared diff core as the `selectedPanes` / `nativeFrameSize` caches — so a closed pane's entry drops
-    /// out (no unbounded growth, no dead-pane status surfacing in a rollup).
+    /// observable source. PRUNED to the live leaf set on every reconcile (review #10/#13), in the shared
+    /// diff core alongside `selectedPanes` / `nativeFrameSize`.
     public internal(set) var paneAgentStatus: [PaneID: ClaudeStatus] = [:]
 
     /// The per-pane host-provided agent LABEL (the type-27 `label`: the blocking prompt / last assistant
-    /// line) — the genuinely cheap, host-trusted activity summary the sidebar shows under the session name
-    /// (P3 piece 5). No scrollback access, no LLM, no round-trip; it is carried verbatim on the wire and
-    /// captured here. PRUNED to the live leaf set alongside ``paneAgentStatus`` (reconcileRegistry) so a
-    /// closed pane's label drops out. An empty / whitespace label is treated as absent (no key).
+    /// line) — the cheap, host-trusted activity summary the sidebar shows under the session name (P3 piece
+    /// 5). No scrollback access, no LLM, no round-trip; carried verbatim on the wire. PRUNED to the live leaf
+    /// set alongside ``paneAgentStatus``. An empty / whitespace label is treated as absent (no key).
     public internal(set) var paneAgentLabel: [PaneID: String] = [:]
 
-    /// The per-pane COARSE foreground-process name the host reports (wire type 26 — the same display-only
-    /// hint ``LivePaneSession/foregroundProcessName`` captures), mirrored onto the store so the E6 sidebar
-    /// rail can show the trailing process label ("zsh") and the ``TabBadgeResolver`` can classify a
-    /// `caffeinate`/`sudo` session WITHOUT reaching into the private handle. Written by
-    /// ``setForegroundProcess(_:for:)`` from ``handleAgentSignal(id:event:)``; an empty / whitespace name
-    /// removes the key. PRUNED to the live leaf set on every reconcile alongside ``paneAgentStatus`` (the
-    /// shared `reconcileRegistry` cache-prune) so a closed pane's entry drops out (no unbounded growth).
+    /// The per-pane COARSE foreground-process name the host reports (wire type 26 — the display-only hint
+    /// ``LivePaneSession/foregroundProcessName`` captures), mirrored onto the store so the E6 sidebar rail
+    /// can show the trailing process label ("zsh") and ``TabBadgeResolver`` can classify a `caffeinate`/`sudo`
+    /// session WITHOUT reaching into the private handle. Written by ``setForegroundProcess(_:for:)`` from
+    /// ``handleAgentSignal(id:event:)``; an empty / whitespace name removes the key. PRUNED to the live leaf
+    /// set alongside ``paneAgentStatus``.
     public internal(set) var paneForegroundProcess: [PaneID: String] = [:]
 
     /// The per-pane OSC 9;4 PROGRESS mirror (E14/K1, wire type 32) — the SINGLE observable source the sidebar
     /// tab badge (via ``TabBadgeResolver`` → ``RailRowsBuilder``) and the macOS Dock aggregate
     /// (``rollupProgress(forSession:)``) both read. Written by ``handleProgress(_:for:)`` from each live
-    /// pane's `.progress` event (routed off ``Connection/ConnectionViewModel`` `onProgressUpdate` → the store
-    /// hook in `wireMaterializedLeaf`); a ``ProgressState/clear`` removes the key. A progress edge bumps
-    /// ``completionFlashTick`` so the rail repaints. PRUNED to the live leaf set on every reconcile alongside
-    /// ``paneForegroundProcess`` so a closed pane's entry drops out (no unbounded growth, no stale spinner in
-    /// a rollup). The methods live in `WorkspaceStore+Progress.swift`; the stored dict stays here so
-    /// `@Observable` synthesises on it.
+    /// pane's `.progress` event (``Connection/ConnectionViewModel`` `onProgressUpdate` → the store hook in
+    /// `wireMaterializedLeaf`); a ``ProgressState/clear`` removes the key. A progress edge bumps
+    /// ``completionFlashTick`` so the rail repaints. PRUNED to the live leaf set alongside
+    /// ``paneForegroundProcess``. The methods live in `WorkspaceStore+Progress.swift`; the stored dict stays
+    /// here so `@Observable` synthesises on it.
     public internal(set) var paneProgress: [PaneID: PaneProgress] = [:]
 
     /// E13 WI-3 (ES-E13-2): the per-pane ``AgentBadgeGates`` OVERRIDE map — the tab-context-menu badge
     /// toggles. An absent key ⇒ the pane follows the GLOBAL default (``SettingsKey/agentBadgeGates``);
     /// ``agentBadgeGates(for:)`` resolves override-else-global, and ``RailRowsBuilder`` feeds it to
-    /// ``TabBadgeGating/resolve(...)``. Pure VIEW state, NOT persisted (a
-    /// per-pane override is a runtime affordance, like ``paneReadOnly``). PRUNED to the live leaf set on every
-    /// reconcile alongside ``paneAgentStatus`` so a closed pane's override drops out (no unbounded growth).
+    /// ``TabBadgeGating/resolve(...)``. Pure VIEW state, NOT persisted (a runtime affordance, like
+    /// ``paneReadOnly``). PRUNED to the live leaf set alongside ``paneAgentStatus``.
     public internal(set) var paneAgentBadgeOverrides: [PaneID: AgentBadgeGates] = [:]
 
     // MARK: - Read-only mode (E17 ES-E17-1 — the per-pane input gate's single source of truth)
@@ -2845,9 +2806,8 @@ public final class WorkspaceStore {
     /// from ANY entry point (the pill `×`, the View-menu item, the command-palette term, or a programmatic
     /// `setPaneReadOnly`) converges to one value. Written by the per-pane seams in
     /// `WorkspaceStore+ReadOnly.swift` AND mirrored from each live ``TerminalViewModel/onReadOnlyChanged``
-    /// (wired in ``wireMaterializedLeaf``). Pure VIEW state, NOT persisted (read-only is a runtime toggle —
-    /// there is no launch config key for it). PRUNED to the live leaf set on every reconcile alongside
-    /// ``paneAgentStatus`` so a closed pane's entry drops out (no unbounded growth, no stale lock surfacing).
+    /// (wired in ``wireMaterializedLeaf``). Pure VIEW state, NOT persisted (a runtime toggle — no launch
+    /// config key). PRUNED to the live leaf set alongside ``paneAgentStatus``.
     public internal(set) var paneReadOnly: Set<PaneID> = []
 
     // MARK: - Tab grouping / sort + recency (E6 WI-3 — the sidebar hamburger's store-backed order)
@@ -2864,28 +2824,26 @@ public final class WorkspaceStore {
     public internal(set) var tabSort: TabSort = .created
 
     /// RUNTIME-ONLY tab recency mirror driving the ``TabSort/updated`` order + the ``TabGrouping/byDate``
-    /// buckets (E6 Design #2 — NOT persisted, NOT on the `Tab` Codable, so there is no schema bump / no
-    /// migration; recency resets to load order on relaunch, which is acceptable). Stamped by
-    /// ``stampTabActivity(_:at:)`` from every became-active / activity path (`newTab` / reopen-closed /
-    /// `selectTab` / `breakPaneToTab` / agent / completion), and PRUNED to the live
-    /// tab set on every ``reconcileTree()`` (keyed by ``TabID``, so it is pruned there, not in the
-    /// pane-keyed `reconcileRegistry` cache-prune).
+    /// buckets (E6 Design #2 — NOT persisted, NOT on the `Tab` Codable, so no schema bump / migration;
+    /// recency resets to load order on relaunch, acceptable). Stamped by ``stampTabActivity(_:at:)`` from
+    /// every became-active / activity path (`newTab` / reopen-closed / `selectTab` / `breakPaneToTab` /
+    /// agent / completion). ``TabID``-keyed, so PRUNED on every ``reconcileTree()`` (not in the pane-keyed
+    /// `reconcileRegistry` prune).
     public internal(set) var tabLastActiveAt: [TabID: Date] = [:]
 
     /// E20 ES-E20-3: the per-TAB MANUAL status-badge override set by `slopdesk tab badge --kind <kind>`
     /// (the client-control CLI). An EXPLICIT override that wins over the per-pane DERIVED badge
     /// (``TabBadgeResolver`` — agent / completion / busy / progress) for the tab's REPRESENTATIVE (active)
     /// pane row in the sidebar rail and the `tab list` badge column. Keyed by ``TabID`` (the badge is
-    /// per-tab, not per-pane); because it is an explicit affordance, it bypasses the per-pane agent-badge gates. Pure VIEW
-    /// state, NOT persisted (a runtime affordance like ``tabLastActiveAt`` / ``paneAgentBadgeOverrides``).
-    /// Written by ``setTabBadgeOverride(_:for:)``; PRUNED to the live tab set on every ``reconcileTree()``
-    /// (TabID-keyed → in ``pruneTreeSidebarMirrors``, not the pane-keyed `reconcileRegistry` prune) so a
-    /// closed tab's override drops out (no unbounded growth, no stale badge on a recycled id).
+    /// per-tab); being explicit, it bypasses the per-pane agent-badge gates. Pure VIEW state, NOT persisted
+    /// (a runtime affordance like ``tabLastActiveAt`` / ``paneAgentBadgeOverrides``). Written by
+    /// ``setTabBadgeOverride(_:for:)``; PRUNED on every ``reconcileTree()`` (TabID-keyed → in
+    /// ``pruneTreeSidebarMirrors``, not the pane-keyed prune).
     public internal(set) var tabBadgeOverrides: [TabID: TabBadgeKind] = [:]
 
     /// Per-pane cached git toplevel (the absolute `git rev-parse --show-toplevel`) used as the precise
     /// ``TabGrouping/byProject`` key. Populated by the debounced E6 WI-7 fetch (``refreshProjectKeysIfNeeded()``)
-    /// while grouping By-Project, carried on the E4 `gitStatus` RPC's `repoRoot` field. Until the first fetch
+    /// while grouping By-Project, carried on the E4 `gitStatus` RPC's `repoRoot`. Until the first fetch
     /// resolves (and for a non-repo pane, which caches an empty string), ``paneProjectKey(_:)`` falls back to
     /// `lastKnownCwd`, so By-Project groups by cwd immediately and WI-7 is never a hard dependency. PRUNED to
     /// the live leaf set alongside the other per-pane mirrors.
@@ -2945,19 +2903,17 @@ public final class WorkspaceStore {
 
     /// The per-pane "a command finished while you were elsewhere" badge: a green ✓ / red ✗ a BACKGROUND
     /// pane carries until you look at it (mirrors ``paneAgentStatus``). Set only for an UNFOCUSED pane,
-    /// cleared when the pane gains focus (or the app returns active). PRUNED to the live leaf set on every
-    /// reconcile alongside ``paneAgentStatus`` so a closed pane's entry drops out (no unbounded growth).
-    /// `internal(set)` (not `private(set)`) so the badge mutators in `WorkspaceStore+Completion.swift` (a
-    /// same-module extension in another file) can write it; still read-only to other modules.
+    /// cleared when the pane gains focus (or the app returns active). PRUNED to the live leaf set alongside
+    /// ``paneAgentStatus``. `internal(set)` so the badge mutators in `WorkspaceStore+Completion.swift` (a
+    /// same-module extension) can write it; still read-only to other modules.
     public internal(set) var panePendingCompletion: [PaneID: PaneCompletionBadge] = [:]
 
-    /// RUNTIME-ONLY per-pane "when did this clean completion land" mirror — the EPHEMERAL `completedAt`
-    /// that lets the badge flash decay from ``TabBadgeKind/completed`` (the brief checkmark) to
-    /// ``TabBadgeKind/finished`` (the persistent accent dot). Stamped on a `.success` completion-badge
-    /// edge (``setCompletionBadge(_:for:)``) and on an agent's entry into ``ClaudeStatus/done``
-    /// (``setAgentStatus(_:for:)``); read by ``completionFreshness(forPane:now:)`` which compares it to
-    /// "now". Like ``tabLastActiveAt`` it is NOT persisted (Design #2 — no `Tab` schema bump / migration;
-    /// it resets on relaunch, harmless) and is PRUNED to the live leaf set on every reconcile alongside
+    /// RUNTIME-ONLY per-pane "when did this clean completion land" mirror — the EPHEMERAL `completedAt` that
+    /// lets the badge flash decay from ``TabBadgeKind/completed`` (the brief checkmark) to
+    /// ``TabBadgeKind/finished`` (the persistent accent dot). Stamped on a `.success` completion-badge edge
+    /// (``setCompletionBadge(_:for:)``) and on an agent's entry into ``ClaudeStatus/done``
+    /// (``setAgentStatus(_:for:)``); read by ``completionFreshness(forPane:now:)`` vs "now". NOT persisted
+    /// (Design #2 — resets on relaunch, harmless); PRUNED to the live leaf set alongside
     /// ``panePendingCompletion``.
     public internal(set) var paneCompletedAt: [PaneID: Date] = [:]
 
@@ -2967,24 +2923,23 @@ public final class WorkspaceStore {
     /// ``completionFreshness(forPane:now:)``.
     public static let completedFlashWindow: TimeInterval = 3
 
-    /// A lightweight monotonic counter the sidebar rail OBSERVES so the completion-badge flash can decay
-    /// on its own (FIX 1). ``completionFreshness(forPane:now:)`` reads the wall clock at row-BUILD time —
-    /// NOT an `@Observable` dependency — so once a quiet completed pane stops mutating the store, nothing
-    /// would re-render its row and the brief ``TabBadgeKind/completed`` checkmark would stick forever
-    /// (until an unrelated mutation / focusing the tab clears the badge). When a clean completion stamps
-    /// ``paneCompletedAt``, the store arms a one-shot (``flashDecayScheduler``) that, after
-    /// ``completedFlashWindow``, bumps this tick → the rail re-renders EXACTLY ONCE and the row recomputes
-    /// to the settled ``TabBadgeKind/finished`` dot. The bump carries no row data (it changes nothing the
-    /// resolver reads); it exists ONLY to invalidate the observing view at the flash-window boundary.
+    /// A lightweight monotonic counter the sidebar rail OBSERVES so the completion-badge flash can decay on
+    /// its own (FIX 1). ``completionFreshness(forPane:now:)`` reads the wall clock at row-BUILD time — NOT an
+    /// `@Observable` dependency — so once a quiet completed pane stops mutating the store, nothing re-renders
+    /// its row and the brief ``TabBadgeKind/completed`` checkmark would stick forever (until an unrelated
+    /// mutation / focusing the tab clears it). When a clean completion stamps ``paneCompletedAt``, the store
+    /// arms a one-shot (``flashDecayScheduler``) that after ``completedFlashWindow`` bumps this tick → the
+    /// rail re-renders EXACTLY ONCE and the row settles to the ``TabBadgeKind/finished`` dot. The bump
+    /// carries no row data; it exists ONLY to invalidate the observing view at the flash-window boundary.
     public internal(set) var completionFlashTick: UInt = 0
 
     /// The injectable one-shot that drives the ``completionFlashTick`` bump at the flash-window boundary
-    /// (FIX 1): the store calls it as `flashDecayScheduler(completedFlashWindow) { bump }` right after a
-    /// clean completion stamps ``paneCompletedAt``. The default (``mainRunLoopFlashDecay``) fires on the
-    /// main run loop — a real per-completion one-shot, NOT a global per-second timer, so a quiet workspace
-    /// never re-renders the rail on a tick. Tests inject a stub that CAPTURES the `bump` (and the delay) and
-    /// fires it synchronously, so the boundary re-render is deterministic with no wall-clock `Task.sleep`.
-    /// `@ObservationIgnored`: it is wiring, not view state (like ``onLongCommandNotify``).
+    /// (FIX 1): called as `flashDecayScheduler(completedFlashWindow) { bump }` right after a clean completion
+    /// stamps ``paneCompletedAt``. The default (``mainRunLoopFlashDecay``) fires on the main run loop — a
+    /// per-completion one-shot, NOT a global per-second timer, so a quiet workspace never re-renders the rail
+    /// on a tick. Tests inject a stub that CAPTURES the `bump` (and delay) and fires it synchronously, for a
+    /// deterministic boundary re-render with no wall-clock `Task.sleep`. `@ObservationIgnored`: wiring, not
+    /// view state (like ``onLongCommandNotify``).
     @ObservationIgnored
     public var flashDecayScheduler = WorkspaceStore.mainRunLoopFlashDecay
 
@@ -3017,18 +2972,16 @@ public final class WorkspaceStore {
     // MARK: - reconcileTree (W4 seam → W5 LIVE path)
 
     /// The tree-driven counterpart of ``reconcile()`` (W4 seam, promoted to the LIVE path in W5), diffing
-    /// the desired leaf set `tree.allPaneIDs()` against the `[PaneID: any PaneSessionHandle]` registry. It
-    /// delegates the whole load-bearing diff to the shared ``reconcileRegistry(desiredLeafIDs:spec:onMaterialize:)``
-    /// — the exact same orphan-remove-then-teardown, `tearingDownVideo` ceiling-accounting, per-pane cache
-    /// pruning, and `makeSession`/`adopt(id:)` materialize the canvas path uses — but sourced from ``tree``
-    /// and resolving each spec via `tree.spec(for:)`.
+    /// `tree.allPaneIDs()` against the registry. Delegates the whole load-bearing diff to the shared
+    /// ``reconcileRegistry(desiredLeafIDs:spec:onMaterialize:)`` — the same orphan-remove-then-teardown,
+    /// `tearingDownVideo` ceiling-accounting, cache pruning, and `makeSession`/`adopt(id:)` materialize the
+    /// canvas path uses — but sourced from ``tree`` via `tree.spec(for:)`.
     ///
     /// W5: it now wires the SAME per-leaf side effects the canvas `reconcile()` does (pane-rebind /
     /// `onEndpointCommitted`, OSC-9 `onExplicitNotification`), marks the autotype target, syncs the focus
-    /// coordinator to the TREE's active pane, and schedules the debounced save — so the tree is a complete
-    /// live reconcile. These are all inert for the dormant-tree unit tests (`FakePaneSession` is not a
-    /// `LivePaneSession`, and those stores carry no `persistence`), so the W4 tree-reconcile suite still
-    /// pins the bare diff. Idempotent.
+    /// coordinator to the TREE's active pane, and schedules the debounced save. These are inert for the
+    /// dormant-tree unit tests (`FakePaneSession` is not a `LivePaneSession`, and those stores carry no
+    /// `persistence`), so the W4 tree-reconcile suite still pins the bare diff. Idempotent.
     public func reconcileTree() {
         reconcileRegistry(
             desiredLeafIDs: tree.allPaneIDs(),
@@ -3171,12 +3124,11 @@ public final class WorkspaceStore {
         let terminal = (handle as? LivePaneSession)?.terminalModel
         terminal?.broadcastTap = { [weak self] data in self?.fanSyncInput(from: id, data) }
         // TILING from the terminal surface: the renderer's right-click "Split Right/Down" fires
-        // `onContextMenuSplit` (the rebindable ⌘D/⌘⇧D now flows through `wireKeyInterceptor` → the shared
-        // `route(...)`, not here). A split MINTS a pane, so — like the `+`/⌘D/title-menu — it offers the
-        // pane-type chooser (terminal / remote window) instead of a hard-coded terminal. Focus THIS pane
-        // first so the chooser's active-pane split targets the surface the user acted on. No chooser host
-        // (headless / no titlebar) → the legacy direct terminal split. `true` = side-by-side (horizontal),
-        // `false` = stacked (vertical).
+        // `onContextMenuSplit` (the rebindable ⌘D/⌘⇧D flows through `wireKeyInterceptor` → the shared
+        // `route(...)`, not here). A split MINTS a pane, so it offers the pane-type chooser (terminal / remote
+        // window), not a hard-coded terminal. Focus THIS pane first so the chooser's active-pane split targets
+        // the surface the user acted on. No chooser host (headless / no titlebar) → the legacy direct terminal
+        // split. `true` = side-by-side (horizontal), `false` = stacked (vertical).
         terminal?.onContextMenuSplit = { [weak self] horizontal in
             self?.splitFromContextMenu(paneID: id, horizontal: horizontal)
         }
@@ -3246,27 +3198,23 @@ public final class WorkspaceStore {
 
     /// The leaf-source-agnostic core BOTH ``reconcile()`` (canvas) and ``reconcileTree()`` (tree) share, so
     /// the subtlest store logic — orphan detection/removal, the ``liveVideoCap`` ceiling-accounting
-    /// (`tearingDownVideo` / `videoPromotionGeneration` / the `videoTeardownSettle` teardown `Task`), the
-    /// per-pane cache pruning (`selectedPanes` / `nativeFrameSize`), and materialize-via-`makeSession` +
-    /// `adopt(id:)` — exists ONCE rather than in two hand-synced copies (the W4 review's maintenance
-    /// hazard). The caller supplies the desired leaf id list (`desiredLeafIDs`, in canonical order) and a
-    /// `spec(for:)` lookup; an optional `onMaterialize` runs the caller's per-new-leaf side wiring (the
-    /// canvas path's pane-rebind / OSC-9 closures). After it returns:
+    /// (`tearingDownVideo` / `videoPromotionGeneration` / the `videoTeardownSettle` teardown `Task`),
+    /// per-pane cache pruning, and materialize-via-`makeSession` + `adopt(id:)` — exists ONCE, not in two
+    /// hand-synced copies (the W4 review's maintenance hazard). The caller supplies the canonical-order
+    /// `desiredLeafIDs` + a `spec(for:)` lookup; an optional `onMaterialize` runs its per-new-leaf side
+    /// wiring (pane-rebind / OSC-9). After it returns:
     ///
     ///   `Set(registry.keys) == Set(desiredLeafIDs)`
     ///
     /// Steps, in the exact order the canvas path historically ran them (see ``reconcile()``'s doc for the
-    /// full rationale — prune caches, then orphan-remove synchronously + launch the tracked teardown,
-    /// then materialize):
-    /// 1. **Prune per-pane caches** to the live leaf set (so a closed/switched-away pane drops out of the
-    ///    multi-selection and the native-size cache cannot grow unbounded).
-    /// 2. **Orphan removal (synchronous) + teardown (async, launched not awaited)** — removing the
-    ///    registry entry synchronously so the `keys == leafIDs` invariant holds the instant this returns;
-    ///    the ceiling-accounting for an orphan that was holding a live video stack (`tearingDownVideo` +
-    ///    the close-time / completion-site `videoPromotionGeneration` nudges + the `videoTeardownSettle`
-    ///    hold) is identical to before.
-    /// 3. **Materialize new leaves** — `makeSession(spec)` + `adopt(id:)` per new leaf, then run
-    ///    `onMaterialize` so the caller can wire that handle.
+    /// full rationale):
+    /// 1. **Prune per-pane caches** to the live leaf set (a closed/switched-away pane drops out; caches can't
+    ///    grow unbounded).
+    /// 2. **Orphan removal (synchronous) + teardown (async, launched not awaited)** — the registry entry is
+    ///    removed synchronously so `keys == leafIDs` holds the instant this returns; the ceiling-accounting
+    ///    for an orphan holding a live video stack (`tearingDownVideo` + the close-time / completion-site
+    ///    `videoPromotionGeneration` nudges + the `videoTeardownSettle` hold) is identical to before.
+    /// 3. **Materialize new leaves** — `makeSession(spec)` + `adopt(id:)` per new leaf, then `onMaterialize`.
     private func reconcileRegistry(
         desiredLeafIDs: [PaneID],
         spec: (PaneID) -> PaneSpec?,
@@ -3284,62 +3232,50 @@ public final class WorkspaceStore {
         if !nativeFrameSize.isEmpty {
             nativeFrameSize = nativeFrameSize.filter { leafSet.contains($0.key) }
         }
-        // Prune the per-pane agent status for orphaned panes (review #10/#13): like the sibling caches
-        // above, a closed pane's `paneAgentStatus` entry must drop out — an absent key reads `.none`, but
-        // without this the dict grew unbounded across a long session of open/close AND a recycled-id-free
-        // stale entry could surface a dead pane's status in a rollup. Prune in the same place the other
-        // per-pane caches are pruned (the shared diff core).
+        // Prune the per-pane mirrors below to the live leaf set in lockstep — a closed pane must drop out so
+        // the dict can't grow unbounded and no stale entry surfaces in a rollup / on a recycled id.
+        // Agent status (review #10/#13; absent key reads `.none`):
         if !paneAgentStatus.isEmpty {
             paneAgentStatus = paneAgentStatus.filter { leafSet.contains($0.key) }
         }
-        // Prune the per-pane agent label + the attention-notify coalescing memory in lockstep with the
-        // status above (P3): a closed pane must not keep a stale sidebar summary, and a recycled pane id
-        // must re-arm cleanly so the next genuine edge notifies (no leak, no mis-flap on a reused id).
+        // Agent label + attention-notify coalescing memory (P3): a recycled id must re-arm cleanly so the
+        // next genuine edge notifies (no mis-flap).
         if !paneAgentLabel.isEmpty {
             paneAgentLabel = paneAgentLabel.filter { leafSet.contains($0.key) }
         }
         if !lastNotifiedStatus.isEmpty {
             lastNotifiedStatus = lastNotifiedStatus.filter { leafSet.contains($0.key) }
         }
-        // Prune the per-pane completion badge for orphaned panes (same leak/stale-rollup hazard as the
-        // agent status above — a closed pane must not keep a ✓/✗ in a rollup).
+        // Completion badge (✓/✗):
         if !panePendingCompletion.isEmpty {
             panePendingCompletion = panePendingCompletion.filter { leafSet.contains($0.key) }
         }
-        // Prune the ephemeral completion-timestamp mirror in lockstep (the badge-flash decay clock) so a
-        // closed pane's stamp drops out — no leak, no stale freshness on a recycled id.
+        // Completion-timestamp mirror (the badge-flash decay clock):
         if !paneCompletedAt.isEmpty {
             paneCompletedAt = paneCompletedAt.filter { leafSet.contains($0.key) }
         }
-        // Prune the per-pane foreground-process mirror in lockstep with the agent status (E6 WI-2): a
-        // closed pane must not keep a stale process label / privilege badge, and the dict must not grow
-        // unbounded across a long session of open/close.
+        // Foreground-process mirror (E6 WI-2 — process label / privilege badge):
         if !paneForegroundProcess.isEmpty {
             paneForegroundProcess = paneForegroundProcess.filter { leafSet.contains($0.key) }
         }
-        // Prune the per-pane git-summary mirror in lockstep (the sidebar git line): a closed pane must
-        // not keep a stale branch line, and the dict must not grow unbounded across a long session.
+        // Git-summary mirror (the sidebar git line):
         if !paneGitSummary.isEmpty {
             paneGitSummary = paneGitSummary.filter { leafSet.contains($0.key) }
         }
-        // Prune the git-summary freshness clock (C3 BUG C) in lockstep so a closed pane's fetch timestamp
-        // drops out — no leak, no stale freshness on a recycled id.
+        // Git-summary freshness clock (C3 BUG C):
         if !paneGitFetchedAt.isEmpty {
             paneGitFetchedAt = paneGitFetchedAt.filter { leafSet.contains($0.key) }
         }
-        // Prune the per-pane OSC 9;4 progress mirror in lockstep (E14): a closed pane must not keep a stale
-        // spinner/bar in a Dock rollup, and the dict must not grow unbounded across a long session.
+        // OSC 9;4 progress mirror (E14 — a stale spinner/bar in a Dock rollup):
         if !paneProgress.isEmpty {
             paneProgress = paneProgress.filter { leafSet.contains($0.key) }
         }
-        // Prune the per-pane READ-ONLY set in lockstep (E17): a closed pane must not keep a stale lock, and
-        // the set must not grow unbounded across a long session of open/close. An absent id reads writable.
-        // Mirrors the `selectedPanes` Set-prune idiom above (intersect, not reallocate, only when needed).
+        // READ-ONLY set (E17; absent id reads writable). Mirrors the `selectedPanes` Set-prune idiom above
+        // (intersect, not reallocate, only when needed).
         if !paneReadOnly.isEmpty, !paneReadOnly.isSubset(of: leafSet) {
             paneReadOnly.formIntersection(leafSet)
         }
-        // Prune the per-pane agent-badge override map in lockstep (E13 WI-3): a closed pane must not keep a
-        // stale badge override, and the dict must not grow unbounded across a long session of open/close.
+        // Agent-badge override map (E13 WI-3):
         if !paneAgentBadgeOverrides.isEmpty {
             paneAgentBadgeOverrides = paneAgentBadgeOverrides.filter { leafSet.contains($0.key) }
         }
@@ -3440,16 +3376,15 @@ public final class WorkspaceStore {
     /// A projection flip (compact ↔ regular) does NOT call this — it is a view-only change; the tree
     /// (hence the leaf set) is unchanged, so even if called it would be a no-op (docs/22 §4, §9.9).
     ///
-    /// NOTE — same-tick close+reopen and the video ceiling (ITEM #3): because step-1 teardown is
-    /// launched (not awaited) before step-2 materialize, a same-tick close of one `.remoteGUI` pane and
-    /// open of another would transiently overlap their live video stacks while the first is still
-    /// tearing down. The ceiling IS now protected without making reconcile `async`: step-1 records an
-    /// orphan whose `isVideoActive` was true into `tearingDownVideo` (reading the flag BEFORE teardown
-    /// nils it), the orphan's teardown task removes it after the `await`, and ``activateVideo(_:)``
-    /// counts `tearingDownVideo.count` as occupied slots — so a new pane cannot be admitted until the
-    /// orphan's UDP / VTDecompression / CVDisplayLink stack is actually released. reconcile staying
-    /// synchronous is deliberate — it is called inline by every mutation method and from `init` — so
-    /// awaiting teardown before materialize would ripple `async` through the whole mutation surface.
+    /// NOTE — same-tick close+reopen and the video ceiling (ITEM #3): step-1 teardown is launched (not
+    /// awaited) before step-2 materialize, so a same-tick close+open of two `.remoteGUI` panes would
+    /// transiently overlap their live video stacks. The ceiling IS still protected without making reconcile
+    /// `async`: step-1 records an orphan whose `isVideoActive` was true into `tearingDownVideo` (reading the
+    /// flag BEFORE teardown nils it), the teardown task removes it after the `await`, and ``activateVideo(_:)``
+    /// counts `tearingDownVideo.count` as occupied — so a new pane can't be admitted until the orphan's UDP /
+    /// VTDecompression / CVDisplayLink stack actually releases. reconcile staying synchronous is deliberate
+    /// (called inline by every mutation and from `init`) — awaiting teardown before materialize would ripple
+    /// `async` through the whole mutation surface.
     private func reconcile() {
         // W5 SAFETY: when the LIVE model is the tree, the canvas is retained-but-dead and its `reconcile()`
         // must NEVER run — it diffs the SAME registry against the (default, dead) canvas leaf set, which
@@ -3467,13 +3402,12 @@ public final class WorkspaceStore {
             spec: { spec(for: $0) },
             onMaterialize: { [weak self] id, handle in
                 guard let self else { return }
-                // PANE REBIND (2026-06-12): persist every committed video endpoint into the pane's
-                // spec. Until now a picked window lived only in the RemoteWindowModel — the spec kept
-                // `video: nil`, so a relaunch always re-showed the picker; and a REBOUND endpoint
-                // (stale CGWindowID re-resolved by app+title) must overwrite the stale id. The leaf
-                // set is unchanged by `updateSpec`, so the nested reconcile is a no-op + save. The
-                // pane TITLE follows the binding only while it was tracking the previous binding
-                // (or was never bound) — a user rename survives re-picks.
+                // PANE REBIND (2026-06-12): persist every committed video endpoint into the pane's spec —
+                // else a picked window lives only in the RemoteWindowModel (spec `video: nil`) and a relaunch
+                // re-shows the picker; a REBOUND endpoint (stale CGWindowID re-resolved by app+title) must
+                // overwrite the stale id. The leaf set is unchanged by `updateSpec`, so the nested reconcile
+                // is a no-op + save. The TITLE follows the binding only while it was tracking the previous
+                // binding (or was never bound) — a user rename survives re-picks.
                 if let model = (handle as? LivePaneSession)?.remoteWindow {
                     model.onEndpointCommitted = { [weak self] endpoint in
                         self?.updateSpec(id) { spec in
@@ -3561,25 +3495,17 @@ public final class WorkspaceStore {
 
     // MARK: - Persistence (debounced; cancel-safe)
 
-    /// Schedules a debounced save of the value tree (docs/22 §6). Cancels any pending save and starts
-    /// a fresh one, so a burst of mutations writes exactly once after the quiet period. Cancel-safe: a
-    /// superseded task's `Task.sleep` throws `CancellationError`, which the `try?` swallows before any
-    /// write. A no-op until `savingEnabled` (set after the init reconcile) and when no `persistence`
-    /// is configured (the fake/test seam never touches disk).
+    /// Schedules a debounced save of the value tree (docs/22 §6): cancels any pending save and starts a
+    /// fresh one, so a burst of mutations writes exactly once after the quiet period. Cancel-safe (a
+    /// superseded task's `Task.sleep` throws `CancellationError`, which `try?` swallows before any write). A
+    /// no-op until `savingEnabled` (set after the init reconcile) and when no `persistence` is configured
+    /// (the fake/test seam never touches disk). The BUG-D / F5 supersession-guard-plus-atomic-write critical
+    /// section lives in the body below.
     ///
-    /// BUG-D / F5 — the supersession re-check AND the atomic write happen together inside ONE
-    /// `await MainActor.run` (see the body), never releasing the actor between the guard and the rename.
-    /// `Task.cancel()` does not interrupt a task already PAST its sleep, so without this single critical
-    /// section a debounced write could race `saveImmediately()` (or a newer debounced write) and let a
-    /// stale snapshot win the last atomic rename. Deciding supersession AND writing on the main actor —
-    /// where every `saveGeneration` bump and `saveImmediately()`'s own write happen — serializes the
-    /// renames so `saveImmediately()` (which bumps the generation under cancel) reliably wins: any
-    /// in-flight debounced task whose generation no longer matches simply returns without writing.
-    /// The workspace as it should be PERSISTED: ephemeral (auto-managed) panes — the system-dialog
-    /// overlays — are stripped so they never survive a relaunch (the monitor re-spawns the live ones on
-    /// reconnect). A stale dialog windowID restored next launch would otherwise stream a dead window.
-    /// Focus is re-normalized in case it pointed at a stripped pane. Identity passthrough when there are
-    /// none (the common case), so a normal save pays nothing.
+    /// The workspace as it should be PERSISTED: ephemeral (auto-managed) system-dialog panes are stripped so
+    /// they never survive a relaunch (the monitor re-spawns live ones on reconnect — a stale dialog windowID
+    /// would otherwise stream a dead window). Focus is re-normalized in case it pointed at a stripped pane.
+    /// Identity passthrough when there are none, so a normal save pays nothing.
     private func persistableWorkspace() -> Workspace {
         let ephemeral = workspace.canvas.allIDs().filter { workspace.canvas.spec(for: $0)?.kind.isEphemeral == true }
         guard !ephemeral.isEmpty else { return workspace }
@@ -3632,15 +3558,14 @@ public final class WorkspaceStore {
                 return // superseded by a newer mutation (cancelled) — that one will write.
             }
             // BUG-D / F5 — the supersession re-check AND the atomic write are ONE main-actor critical
-            // section: re-check `saveGeneration` and, only if still current, write the snapshot — all
-            // inside a single `await MainActor.run` that never releases the actor between the guard and
-            // the rename. This matches `saveImmediately()` (which also writes on the main actor under a
-            // bumped generation), so the two RENAMES serialize on the main actor and a stale snapshot's
-            // rename can never interleave between a newer write's guard and rename. `Task.cancel()`
-            // cannot stop a task already past its sleep, so the generation guard — decided on the actor
-            // where every `saveGeneration` mutation happens — is what makes `saveImmediately()` / a newer
-            // debounced write reliably win. Encoding the small layout tree on the main actor is
-            // acceptable; the clear of the (now-current) handle happens in the same block.
+            // section: `await MainActor.run` re-checks `saveGeneration` and, only if still current, writes,
+            // never releasing the actor between guard and rename. `saveImmediately()` also writes on the main
+            // actor under a bumped generation, so the two RENAMES serialize there and a stale snapshot's
+            // rename can never interleave between a newer write's guard and rename. `Task.cancel()` cannot
+            // stop a task already past its sleep, so the generation guard — decided on the actor where every
+            // `saveGeneration` mutation happens — is what lets `saveImmediately()` / a newer write win.
+            // Encoding the small layout tree on the main actor is acceptable; the (now-current) handle clear
+            // happens in the same block.
             await MainActor.run { [weak self] in
                 guard let self, isCurrentSaveGeneration(generation) else { return }
                 // A failed save keeps the previous good file (best-effort).
@@ -3682,11 +3607,11 @@ public final class WorkspaceStore {
     public var onFontSizeStep: ((FontSizeStep) -> Void)?
 
     /// The E11 cwd-visit sink: fired with the pane's NEW working directory whenever ``setLastKnownCwd(_:for:)``
-    /// records a CHANGED cwd (i.e. it passes the dirty guard). The app wires this to
-    /// ``FolderFrecencyStore/record(cwd:)`` so the Open-Quickly **Folders** filter learns the directories you
-    /// actually visit — but the store stays SwiftUI-/Folders-agnostic: it's a plain `(String) -> Void` closure,
-    /// not a dependency on the Folders module. `nil` in tests / headless ⇒ no frecency side effect (the prior
-    /// behavior). Gated by the dirty guard so a re-focus / unchanged refresh never records a phantom visit.
+    /// records a CHANGED cwd (passes the dirty guard). The app wires this to ``FolderFrecencyStore/record(cwd:)``
+    /// so the Open-Quickly **Folders** filter learns the directories you visit — but the store stays
+    /// SwiftUI-/Folders-agnostic: a plain `(String) -> Void`, not a dependency on the Folders module. `nil` in
+    /// tests / headless ⇒ no frecency side effect. Dirty-guarded, so a re-focus / unchanged refresh never
+    /// records a phantom visit.
     public var onCwdVisited: ((String) -> Void)?
 
     /// Commits the app-global connection ``ConnectionTarget`` into the persisted ``Workspace/connection``
@@ -4045,18 +3970,16 @@ public extension WorkspaceStore {
     /// dynamically once a `claude` is detected in it, W11).
     ///
     /// ### Guardrail (docs/22 §7 + the WF5 brief): the LIVE network inspector path is NOT runtime-proven
-    /// The terminal byte-pipeline (PATH 1) is proven; the structured inspector second channel
-    /// (NWConnection #2) is wired here cleanly but **no host-side inspector serving / port is
-    /// established yet** — there is no `slopdesk-hostd` inspector daemon to invent. So this returns a
-    /// *ready, lazily-connecting* client rather than eagerly dialing: it stands up an
-    /// ``NWByteChannel`` over a fresh `NWConnection` to `host:inspectorPort` (the
-    /// ``inspectorPort(for:)`` convention) but does NOT `start()` it here — the channel connects on the
-    /// first `send`/`subscribe`, which is driven by ``LivePaneSession/subscribeInspector()`` (the
-    /// leaf's `.task` on appear, WF5). Against a host that does not yet serve the inspector port the
-    /// connection simply never completes its handshake and the fold yields no cards — the terminal is
-    /// unaffected. The FOLD logic itself is fully unit-testable in-process via
-    /// `LoopbackByteChannel.pair()` + ``InspectorClient/init(channel:)`` (docs/22 §8), independent of
-    /// this network builder. Real-network inspector serving is recorded as a hardware followup.
+    /// PATH 1 (the terminal byte-pipeline) is proven; the inspector second channel (NWConnection #2) is wired
+    /// cleanly but **no host-side inspector serving / port exists yet** (no `slopdesk-hostd` inspector daemon
+    /// to invent). So this returns a *ready, lazily-connecting* client rather than eagerly dialing: it stands
+    /// up an ``NWByteChannel`` over a fresh `NWConnection` to `host:inspectorPort` (the ``inspectorPort(for:)``
+    /// convention) but does NOT `start()` it — the channel connects on the first `send`/`subscribe`, driven by
+    /// ``LivePaneSession/subscribeInspector()`` (the leaf's `.task` on appear, WF5). Against a host that
+    /// doesn't serve the port the connection never completes its handshake and the fold yields no cards — the
+    /// terminal is unaffected. The FOLD logic is fully unit-testable in-process via `LoopbackByteChannel.pair()`
+    /// + ``InspectorClient/init(channel:)`` (docs/22 §8), independent of this builder. Real-network inspector
+    /// serving is a hardware followup.
     ///
     /// Returns `nil` only when no inspector port can be derived (terminal on the top port).
     @MainActor

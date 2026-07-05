@@ -4,12 +4,11 @@ import SlopDeskClient
 // MARK: - CommandBlock (one Warp-style per-command block, client-side)
 
 /// One Warp-style "Block" as the client knows it (WB2): a per-command record built from the host's
-/// `commandBlock` metadata (wire type 28). It carries ONLY the metadata — the captured OUTPUT bytes are
-/// fetched on demand (``TerminalBlockModel/requestOutput(index:send:)`` → wire type 15 → 29) so the
-/// CONTROL channel never floods with command output.
+/// `commandBlock` metadata (wire type 28). Metadata ONLY — the captured OUTPUT bytes are fetched on
+/// demand (``TerminalBlockModel/requestOutput(index:send:)`` → wire type 15 → 29) so the CONTROL
+/// channel never floods with command output.
 ///
-/// A PURE value type (no SwiftUI / client import beyond the metadata) so the whole block model is
-/// headlessly unit-testable.
+/// A PURE value type (metadata only, no SwiftUI/client) so the block model is headlessly testable.
 public struct CommandBlock: Equatable, Sendable, Identifiable {
     /// The 0-based block index in the channel's segmenter lifetime — the upsert key AND the
     /// ``TerminalBlockModel/requestOutput(index:send:)`` request key. Stable for a block's lifetime.
@@ -65,11 +64,10 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
 
     /// The derived status: running until complete, then succeeded (exit 0 / unknown) or failed (≠0).
     ///
-    /// A block INTERRUPTED by a new prompt (a nested shell / ssh whose inner shell emits its own
-    /// OSC-133 A/B without a `D`) is closed on the host as `complete == false` but carries a
-    /// non-nil `durationMS` (the host stamps the C→interrupt time). Treat "has a duration" as
-    /// FINISHED so such a row does not spin `running…` forever — a genuinely-running block always
-    /// arrives with `durationMS == nil` (the host never stamps a duration on the running peek).
+    /// A block INTERRUPTED by a new prompt (a nested shell / ssh emits its own OSC-133 A/B without a
+    /// `D`) is closed on the host as `complete == false` but with non-nil `durationMS` (the host stamps
+    /// the C→interrupt time). Treat "has a duration" as FINISHED so the row doesn't spin `running…`
+    /// forever — a genuinely-running block always arrives with `durationMS == nil`.
     public var status: Status {
         guard complete || durationMS != nil else { return .running }
         switch exitCode {
@@ -99,9 +97,9 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
         }
     }
 
-    /// Whether this block FAILED: completed with a reported non-zero exit code. A still-running block is
-    /// NEVER failed (no code yet), and a completed block with exit 0 / no reported code is a success. The
-    /// single predicate the "Failed" navigator filter + jump-to-failed both read.
+    /// Whether this block FAILED: completed with a reported non-zero exit code. A running block is NEVER
+    /// failed; a completed exit-0 / no-code block is a success. The single predicate the "Failed"
+    /// navigator filter + jump-to-failed both read.
     public var isFailed: Bool {
         if case .failed = status { return true }
         return false
@@ -122,20 +120,19 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
 
 /// The per-pane block store (WB2): an ORDERED, BOUNDED `[CommandBlock]` keyed by `index`, upserted from
 /// the host's `commandBlock` metadata (wire type 28), plus a pending-output-request registry resolved by
-/// `blockOutput` (type 29) with strict empty-eviction handling (never hangs).
+/// `blockOutput` (type 29) — empty-eviction handled so it never hangs.
 ///
-/// PURE + headlessly testable: it holds no SwiftUI / surface / actor state. The owning
-/// ``TerminalViewModel`` folds the two block events into it and the SwiftUI surfaces (navigator / sticky
-/// header / chrome chip) read its observable projections. `@MainActor @Observable` like the rest of the
-/// view-model layer (the events fold + the SwiftUI reads are both on the main actor), but every method is
-/// a synchronous pure mutation a unit test drives directly.
+/// PURE + headlessly testable: no SwiftUI / surface / actor state. The owning ``TerminalViewModel``
+/// folds the two block events in; the SwiftUI surfaces (navigator / sticky header / chrome chip) read
+/// its observable projections. `@MainActor @Observable` (fold + reads are both on the main actor), yet
+/// every method is a synchronous pure mutation a unit test drives directly.
 @preconcurrency
 @MainActor
 @Observable
 public final class TerminalBlockModel {
     /// The block ring cap — mirrors the host `CommandBlockTracker`'s 64-block ring so the client can never
-    /// hold a block the host already evicted (a request for an over-old index just yields an empty type-29,
-    /// handled gracefully). Eviction drops the OLDEST (lowest-index) blocks.
+    /// hold a block the host already evicted (an over-old index just yields an empty type-29). Eviction
+    /// drops the OLDEST (lowest-index) blocks.
     public static let maxBlocks = 64
 
     /// The blocks in INDEX order (oldest first). Newest is `last`. Bounded to ``maxBlocks``.
@@ -152,16 +149,16 @@ public final class TerminalBlockModel {
 
     // MARK: First-seen timestamps (E9 Outline — per-index client-receive time)
 
-    /// The CLIENT-RECEIVE time of the FIRST `commandBlock` update for each block index — the Outline tab's
-    /// per-row relative-timestamp source. A SIDE-MAP (NOT a field on the ``CommandBlock`` value type) so its
-    /// many call sites + its `Equatable` stay untouched. Captured ONCE on the new-index upsert (a later
-    /// in-place running→complete update does NOT move it), dropped on eviction + on ``reset()``.
-    /// Client-receive rather than the host clock because the host time would differ by the link RTT and
-    /// there is no timestamp on the wire (E9 makes no wire change).
+    /// The CLIENT-RECEIVE time of the FIRST `commandBlock` update per block index — the Outline tab's
+    /// per-row relative-timestamp source. A SIDE-MAP (not a ``CommandBlock`` field) so its many call sites
+    /// + its `Equatable` stay untouched. Captured ONCE on the new-index upsert (a later in-place
+    /// running→complete update does NOT move it), dropped on eviction + ``reset()``. Client-receive rather
+    /// than the host clock because host time would differ by the link RTT and there's no wire timestamp
+    /// (E9 makes no wire change).
     @ObservationIgnored private var firstSeenByIndex: [UInt32: Date] = [:]
 
-    /// The clock the first-seen capture reads — injectable so a unit test pins a fixed time (the production
-    /// default is the real wall clock). `@ObservationIgnored`: a wiring seam, not observed state.
+    /// The clock first-seen capture reads — injectable so a unit test pins a fixed time (production default
+    /// is the real wall clock). `@ObservationIgnored`: a wiring seam, not observed state.
     @ObservationIgnored var now: () -> Date = { Date() }
 
     /// The client-receive time of `index`'s first `commandBlock` update, or `nil` if unknown / evicted —
@@ -170,9 +167,8 @@ public final class TerminalBlockModel {
 
     // MARK: Bookmarks (WB3 — star a block)
 
-    /// The cap on how many bookmarks one pane retains, so a long-lived session can't grow the set
-    /// unbounded. When a toggle would exceed it, the OLDEST-inserted bookmark is evicted (FIFO). Generous
-    /// enough that no real session hits it.
+    /// Cap on bookmarks per pane so a long-lived session can't grow the set unbounded. Over the cap, the
+    /// OLDEST-inserted bookmark is evicted (FIFO). Generous enough no real session hits it.
     public static let maxBookmarks = 256
 
     /// The bookmarked block indices, in INSERTION order (so the cap evicts the oldest). Stored as an
@@ -184,9 +180,9 @@ public final class TerminalBlockModel {
     /// Observed so the navigator star + "Bookmarked" filter re-render on a toggle.
     public private(set) var bookmarkedIndices: Set<UInt32> = []
 
-    /// Fired on EVERY bookmark mutation with the current set, so the wiring layer can persist it (the model
-    /// stays `UserDefaults`-free / pure / testable). `nil` (the default) = no persistence (a unit test or a
-    /// preview). `@ObservationIgnored`: a wiring sink, not view state.
+    /// Fired on EVERY bookmark mutation with the current set so the wiring layer can persist it (the model
+    /// stays `UserDefaults`-free / pure). `nil` (default) = no persistence (unit test or preview).
+    /// `@ObservationIgnored`: a wiring sink, not view state.
     @ObservationIgnored public var onBookmarksChanged: ((Set<UInt32>) -> Void)?
 
     /// Whether `index` is bookmarked.
@@ -211,10 +207,9 @@ public final class TerminalBlockModel {
         onBookmarksChanged?(bookmarkedIndices)
     }
 
-    /// SEEDS the bookmark set from persistence on attach (does NOT fire ``onBookmarksChanged`` — this is
-    /// the restore direction, not a user edit). Applies the same cap (a corrupt over-long persisted set is
-    /// trimmed, keeping the FIRST ``maxBookmarks`` in the provided order). The order is the caller's
-    /// (persistence stores it as an array); insertion order is preserved for future FIFO eviction.
+    /// SEEDS the bookmark set from persistence on attach (does NOT fire ``onBookmarksChanged`` — restore,
+    /// not a user edit). Applies the same cap (a corrupt over-long set is trimmed to the FIRST
+    /// ``maxBookmarks`` in the caller's order); insertion order is preserved for future FIFO eviction.
     public func setBookmarks(_ indices: [UInt32]) {
         bookmarkOrder = []
         bookmarkedIndices = []
@@ -249,10 +244,9 @@ public final class TerminalBlockModel {
     // MARK: Upsert (wire type 28 fold)
 
     /// Upserts a block from a `commandBlock` metadata update: a NEW index appends (kept index-ordered,
-    /// evicting the oldest past ``maxBlocks``); a KNOWN index updates the existing record in place
-    /// (running → completed transition, growing `outputLen`, a late command-text fill). The host emits
-    /// monotonically increasing indices, but we tolerate any order: a binary-free linear scan finds the
-    /// slot, and a brand-new lower index (shouldn't happen) still inserts in order.
+    /// evicting the oldest past ``maxBlocks``); a KNOWN index updates in place (running → completed,
+    /// growing `outputLen`, a late command-text fill). The host emits ascending indices, but we tolerate
+    /// any order: a linear scan finds the slot, and a brand-new lower index still inserts in order.
     public func upsert(
         index: UInt32,
         commandText: String,
@@ -276,8 +270,7 @@ public final class TerminalBlockModel {
             return
         }
         // New index — capture its client-receive time (Outline timestamp), insert at the index-ordered
-        // position (almost always the end, since the host emits ascending indices), then evict the oldest
-        // to stay bounded.
+        // position (almost always the end), then evict the oldest to stay bounded.
         firstSeenByIndex[index] = now()
         let insertAt = blocks.firstIndex(where: { $0.index > index }) ?? blocks.endIndex
         blocks.insert(block, at: insertAt)
@@ -313,14 +306,14 @@ public final class TerminalBlockModel {
     /// one never hangs). Called on a session reset / reconnect — the dead session's blocks are stale.
     public func reset() {
         blocks.removeAll()
-        // The dead session's first-seen timestamps die with its blocks (a fresh session re-captures them).
+        // First-seen timestamps die with the blocks (a fresh session re-captures them).
         firstSeenByIndex.removeAll()
-        // Bookmarks are per-SESSION display state — a fresh session starts with none. The wiring layer
-        // re-seeds them from persistence on the next attach (a new materialization mints a NEW
-        // per-session scope key, so a relaunch starts empty rather than re-applying stale indices).
-        // Cleared WITHOUT firing onBookmarksChanged so a reset doesn't overwrite the persisted set with
-        // empty (persistence keys by the session scope key — `LivePaneSession.bookmarkScopeKey` — not the
-        // stable pane id, so a within-launch reconnect's reset leaves the prior set untouched on disk).
+        // Bookmarks are per-SESSION display state — a fresh session starts with none, re-seeded from
+        // persistence on the next attach (a new materialization mints a NEW per-session scope key, so a
+        // relaunch starts empty rather than re-applying stale indices). Cleared WITHOUT firing
+        // onBookmarksChanged so a reset doesn't overwrite the persisted set with empty (persistence keys
+        // by the session scope key — `LivePaneSession.bookmarkScopeKey` — not the stable pane id, so a
+        // within-launch reconnect's reset leaves the prior set untouched on disk).
         bookmarkOrder.removeAll()
         bookmarkedIndices.removeAll()
         // Resolve every in-flight request as "unavailable" so its continuation never strands.
@@ -358,12 +351,12 @@ public final class TerminalBlockModel {
     }
 
     /// Requests block `index`'s output, invoking `completion` with the RAW VT bytes when the host replies
-    /// (or `nil` on an EMPTY reply = evicted/unknown). `send` actually fires the wire request (it is the
-    /// `SlopDeskClient.requestBlockOutput` call, injected so the model stays pure / testable); a request
-    /// for an already-pending index does NOT re-send (it coalesces). Returns the request GENERATION the
-    /// caller should pass to ``timeoutPending(index:generation:)`` so a stale timer can't kill a later
-    /// request (#5). The flow NEVER hangs: a `blockOutput` always resolves it (empty → `nil`), and the
-    /// generation-gated timeout is the belt-and-braces guard for a dropped reply.
+    /// (or `nil` on an EMPTY reply = evicted/unknown). `send` fires the wire request (the injected
+    /// `SlopDeskClient.requestBlockOutput`, so the model stays pure / testable); an already-pending index
+    /// does NOT re-send (it coalesces). Returns the request GENERATION to pass to
+    /// ``timeoutPending(index:generation:)`` so a stale timer can't kill a later request (#5). NEVER hangs:
+    /// a `blockOutput` always resolves it (empty → `nil`), and the generation-gated timeout guards a
+    /// dropped reply.
     @discardableResult
     public func requestOutput(
         index: UInt32,
