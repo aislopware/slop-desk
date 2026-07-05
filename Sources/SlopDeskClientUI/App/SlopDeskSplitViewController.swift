@@ -191,15 +191,22 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         let backdrop = NSColor(slateHex6: Slate.theme.terminalBackgroundHex)
         view.window?.appearance = NSAppearance(named: Slate.theme.isLight ? .aqua : .darkAqua)
         view.window?.backgroundColor = backdrop
-        // The sidebar/content divider is the 1px GAP between the hosting columns. Once the split view is
-        // layer-backed (it hosts layer-backed `NSHostingController` columns) `drawDivider(in:)` is bypassed and
-        // the gap shows the split view's OWN backdrop — the default dark seam, invisible on the dark themes but
-        // a black line on the LIGHT ones. Pin that backdrop to the faint DIVIDER tone (the theme hairline
-        // composited over the window tone) so the seam reads as the SAME mờ-mờ line as the pane dividers
-        // (which draw `Slate.Line.divider` over the flat pane) — theme-aware, in both appearances.
+        // The sidebar/content divider is the 1px GAP between the hosting columns. It is painted TWO ways that
+        // must agree: `FlatDividerSplitView.drawDivider(in:)` fills it, AND (once the split view is layer-backed
+        // for its `NSHostingController` columns) the gap also shows this layer `backgroundColor`. Both are set
+        // to `flatDividerTone()` (the sidebar `ground`), so the seam is just the ground→face luminance step.
+        //
+        // CRITICAL — repaint on a RUNTIME theme switch: `drawDivider` draws OPAQUE ground pixels that AppKit
+        // CACHES in the layer; a plain `needsDisplay` does NOT re-invoke it for the divider rect, so after a
+        // light→dark (or dark→light) switch the seam kept its STALE pre-switch colour — a bright near-white
+        // line on the freshly-dark chrome (the SwiftUI columns repaint via `@Observable`, but this AppKit seam
+        // did not). `layer?.setNeedsDisplay()` invalidates the layer's drawn CONTENT so `drawDivider` re-runs
+        // with the now-current theme; `displayIfNeeded()` forces it synchronously so no stale frame is shown.
         splitView.wantsLayer = true
         splitView.layer?.backgroundColor = flatDividerTone().cgColor
         splitView.needsDisplay = true
+        splitView.layer?.setNeedsDisplay()
+        splitView.displayIfNeeded()
     }
 
     /// React to a runtime theme switch (the `AppearanceApplier` hook already repointed `ThemeStore.shared`).
@@ -250,30 +257,28 @@ private final class FlatDividerSplitView: NSSplitView {
     }
 }
 
-/// The flat divider tone: the theme hairline ``Slate/Line/divider`` composited OVER the flat window backdrop
-/// into an OPAQUE sRGB colour, so the 1px split gap reads as the SAME faint line as the pane dividers (which
-/// draw that hairline over the flat pane) — in BOTH appearances. Built from concrete sRGB components (the
-/// window tone from the theme hex, the overlay resolved through `.sRGB`) so it never resolves to black on the
-/// light themes the way a raw `NSColor(_: SwiftUI.Color)` fill did.
+/// The flat divider tone: the sidebar `ground` surface as an OPAQUE sRGB colour — NO drawn hairline.
+///
+/// MERIDIAN L5 (depth by light, not lines): the sidebar (`ground`) and the content (`face`) are separated by
+/// ONE luminance step, NO divider line. So the 1px split gap must NOT be a hairline lighter/darker than both
+/// surfaces — it must blend into the sidebar so only the natural ground→face step reads as the seam.
+///
+/// Why not composite the `Slate.Line.divider` hairline here (as an earlier pass did): the sidebar seam borders
+/// the DARKER `ground` on one side and the LIGHTER `face` on the other, and the hairline's tint FLIPS per
+/// appearance (near-white on dark, near-black on light). Over `face` the white hairline read as a bright
+/// near-white seam against the dark sidebar ("divider sáng quá / màu trắng"); over `ground` the black hairline
+/// read as a heavy dark line on the light chrome ("divider đen đậm"). No single composite base is faint against
+/// BOTH a dark-ish and a light-ish neighbour, so we draw NO line at all — the gap is `ground`, and the seam is
+/// purely the ground→face luminance step, faint and clean in both appearances (the pane-grid dividers keep
+/// their own faint hairline; the sidebar boundary is chrome, not a content split).
+///
+/// Resolved via `Color.resolve(in:)` (NOT `NSColor(_: SwiftUI.Color)`, which resolves through the effective
+/// appearance and read black on the light themes) — `ground` is a concrete `Color(.sRGB, …)`, so resolve is
+/// appearance-stable and exact.
 @MainActor
 private func flatDividerTone() -> NSColor {
-    let backdrop = NSColor(slateHex6: Slate.theme.terminalBackgroundHex)
-    guard let base = backdrop.usingColorSpace(.sRGB) else { return backdrop }
-    // Resolve the hairline to concrete sRGB components via `Color.resolve(in:)`, NOT `NSColor(_: SwiftUI.Color)`:
-    // the bridge drops the `.opacity()` modifier on these `Color(slateHex:).opacity(0.07)` hairlines, so the gap
-    // rendered with alpha=1 — the FULL near-white foreground on the dark Monokai default — a bright seam unlike
-    // the faint pane divider (which SwiftUI composites at the real 7% over the pane). `.resolve(in:)` carries the
-    // opacity faithfully and is appearance-stable for these concrete sRGB colours. Compositing base over the SAME
-    // pane backdrop (`terminalBackgroundHex` == `card` on every flat theme) makes the gap the SAME tone as the
-    // pane hairline.
-    let overlay = Slate.theme.divider.resolve(in: EnvironmentValues())
-    let a = CGFloat(overlay.opacity)
-    return NSColor(
-        srgbRed: base.redComponent * (1 - a) + CGFloat(overlay.red) * a,
-        green: base.greenComponent * (1 - a) + CGFloat(overlay.green) * a,
-        blue: base.blueComponent * (1 - a) + CGFloat(overlay.blue) * a,
-        alpha: 1,
-    )
+    let g = Slate.theme.ground.resolve(in: EnvironmentValues())
+    return NSColor(srgbRed: CGFloat(g.red), green: CGFloat(g.green), blue: CGFloat(g.blue), alpha: 1)
 }
 
 private extension NSColor {
