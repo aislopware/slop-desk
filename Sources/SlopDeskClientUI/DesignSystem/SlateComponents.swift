@@ -21,6 +21,66 @@ struct SlateStatusDot: View {
     }
 }
 
+/// The AGENT-working indicator (MERIDIAN L3 exception — "animation is reserved for sustained live signals"):
+/// a smooth "comet" arc, a ~260° stroked ring whose angular gradient fades solid→transparent (the comet tail)
+/// and rotates continuously. This premium vector spinner replaced the `ProgressView`/braille rings and is
+/// reserved for a WORKING AI agent — a plain command uses the quiet muted dot instead — so a spinning arc
+/// always means "the agent is thinking". Rotation rides the WALL CLOCK via ``TimelineView`` (no `@State`), so
+/// a list re-render — the rail rebuilds on every store tick — can't reset the spin. It stays within `size`, so
+/// swapping it for a settled dot never shifts a tab row's height. Pure SwiftUI; no video/capture (hang-safety #6).
+struct SlateCometArc: View {
+    let color: Color
+    var size: CGFloat = 13
+    var lineWidth: CGFloat = 1.6
+    /// Seconds per full revolution.
+    private let period: Double = 1.1
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            // A continuous 0…360° sweep from the wall clock (separate `/` then `*` — no fused multiply-add).
+            let t = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period)
+            let angle = t / period * 360
+            Circle()
+                .trim(from: 0, to: 0.72)
+                .stroke(
+                    AngularGradient(gradient: Gradient(colors: [color.opacity(0), color]), center: .center),
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round),
+                )
+                .frame(width: size, height: size)
+                .rotationEffect(.degrees(angle))
+        }
+    }
+}
+
+/// The AWAITING-INPUT attention indicator (the MERIDIAN L3 live-signal exception): a steady filled core dot
+/// plus ONE halo ring that expands and fades on a gentle loop — a soft "ping" that draws the eye for the
+/// most-urgent state WITHOUT the constant motion of a spinner. The halo's peak scale is capped so it stays
+/// inside the badge box, so it never shifts a row's height. Wall-clock driven (``TimelineView``) so a
+/// re-render can't reset the loop. Pure SwiftUI; no video/capture (hang-safety #6).
+struct SlatePingDot: View {
+    let color: Color
+    var size: CGFloat = 8
+    /// Seconds per ping.
+    private let period: Double = 1.5
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            // 0…1 loop phase from the wall clock (separate `/` `*` `-` — no fused multiply-add).
+            let phase = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
+            ZStack {
+                Circle()
+                    .stroke(color, lineWidth: 1.2)
+                    .frame(width: size, height: size)
+                    .scaleEffect(1.0 + 0.85 * phase)
+                    .opacity(0.55 * (1 - phase))
+                Circle()
+                    .fill(color)
+                    .frame(width: size * 0.7, height: size * 0.7)
+            }
+        }
+    }
+}
+
 /// A compact label/value row: a secondary label on the left, a trailing primary value.
 struct SlateKeyValueRow<Value: View>: View {
     let label: String

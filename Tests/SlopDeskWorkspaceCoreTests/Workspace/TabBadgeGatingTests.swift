@@ -5,8 +5,8 @@ import XCTest
 /// Progress cluster: ``TabBadgeGating/resolve(...)`` — the SOURCE-AWARE tab-badge gating that masks the
 /// resolver inputs by source so the agent (``AgentBadgeGates``) and command (``CommandBadgeGates``) toggles
 /// gate their OWN badge families independently. The crux: turning OFF the agent "while processing" spinner must
-/// NOT silence a program's busy / OSC 9;4 progress spinner — the bug the old post-fuse `AgentBadgeGates.gated`
-/// could not avoid (it saw only the single fused `.running`).
+/// NOT silence a program's busy / OSC 9;4 progress marker — which now surfaces as its own `.commandRunning`
+/// (distinct from the agent `.running`), so masking by source keeps it visible.
 final class TabBadgeGatingTests: XCTestCase {
     private let agentSpinnerOff = AgentBadgeGates(
         badgeWhileProcessing: false, badgeWhenComplete: true, badgeWhenAwaitingInput: true,
@@ -23,23 +23,25 @@ final class TabBadgeGatingTests: XCTestCase {
         XCTAssertNil(badge, "the agent thinking spinner is gated off")
     }
 
-    /// …but the SAME gate must NOT hide a PROGRAM's busy spinner. Revert-to-confirm-fail: a post-fuse gate that
-    /// drops every `.running` (the old `AgentBadgeGates.gated`) returns nil here — masking by source keeps it.
+    /// …but the SAME gate must NOT hide a PROGRAM's busy marker. Revert-to-confirm-fail: a post-fuse gate that
+    /// drops the agent badge returns nil here — masking by source keeps the program's own `.commandRunning`.
     func testAgentSpinnerGateKeepsBusyShellSpinner() {
         let badge = TabBadgeGating.resolve(
             agent: .none, completion: nil, isBusy: true, foregroundProcess: nil,
             agentGates: agentSpinnerOff, commandGates: .allOn,
         )
-        XCTAssertEqual(badge, .running, "a busy program spinner is never silenced by the agent gate")
+        XCTAssertEqual(badge, .commandRunning, "a busy program marker is never silenced by the agent gate")
     }
 
-    /// …nor a program's OSC 9;4 indeterminate progress spinner (the exact spec'd no-opt-out badge).
+    /// …nor a program's OSC 9;4 indeterminate progress (the exact spec'd no-opt-out badge).
     func testAgentSpinnerGateKeepsOSC94ProgressSpinner() {
         let badge = TabBadgeGating.resolve(
             agent: .none, completion: nil, isBusy: false, foregroundProcess: nil,
             progress: .indeterminate, agentGates: agentSpinnerOff, commandGates: .allOn,
         )
-        XCTAssertEqual(badge, .running, "OSC 9;4 program progress survives the agent while-processing gate")
+        XCTAssertEqual(
+            badge, .commandRunning, "OSC 9;4 program progress survives the agent while-processing gate",
+        )
     }
 
     /// An OSC 9;4;2 program progress ERROR has NO opt-out: it survives BOTH the agent gate AND the command

@@ -17,8 +17,18 @@ final class TabBadgePresentationTests: XCTestCase {
         return nil
     }
 
-    private func isSpinner(_ kind: TabBadgeKind) -> Bool {
-        if case .spinner = StatusPresentation.tabBadge(kind) { return true }
+    private func isWorking(_ kind: TabBadgeKind) -> Bool {
+        if case .working = StatusPresentation.tabBadge(kind) { return true }
+        return false
+    }
+
+    private func isCommandBusy(_ kind: TabBadgeKind) -> Bool {
+        if case .commandBusy = StatusPresentation.tabBadge(kind) { return true }
+        return false
+    }
+
+    private func isAttention(_ kind: TabBadgeKind) -> Bool {
+        if case .attention = StatusPresentation.tabBadge(kind) { return true }
         return false
     }
 
@@ -27,10 +37,18 @@ final class TabBadgePresentationTests: XCTestCase {
         return false
     }
 
-    /// `.running` ⇒ the indeterminate spinner shape (a busy shell / working agent), not an SF-symbol.
-    func testRunningIsSpinner() {
-        XCTAssertTrue(isSpinner(.running))
-        XCTAssertNil(symbolName(of: .running), "the spinner is a bespoke shape, not an SF-symbol")
+    /// `.running` (a WORKING agent) ⇒ the bespoke comet-arc shape, not an SF-symbol.
+    func testRunningIsAgentComet() {
+        XCTAssertTrue(isWorking(.running))
+        XCTAssertNil(symbolName(of: .running), "the comet arc is a bespoke shape, not an SF-symbol")
+    }
+
+    /// `.commandRunning` (a plain busy shell) ⇒ the QUIET muted dot, distinct from the agent comet — NOT a
+    /// symbol, and NOT the loud `.working` arc.
+    func testCommandRunningIsMutedDot() {
+        XCTAssertTrue(isCommandBusy(.commandRunning))
+        XCTAssertFalse(isWorking(.commandRunning), "a plain command must not use the agent comet")
+        XCTAssertNil(symbolName(of: .commandRunning))
     }
 
     /// `.finished` ⇒ the small filled accent dot (the settled "unread output" marker), not a symbol.
@@ -49,9 +67,10 @@ final class TabBadgePresentationTests: XCTestCase {
         XCTAssertEqual(symbolName(of: .error), "exclamationmark.triangle.fill")
     }
 
-    /// `.awaitingInput` ⇒ the raised hand (`plan next move` row in `tab-badge.png`).
-    func testAwaitingInputIsHandSymbol() {
-        XCTAssertEqual(symbolName(of: .awaitingInput), "hand.raised.fill")
+    /// `.awaitingInput` ⇒ the bespoke attention PING shape (the most-urgent state), not an SF-symbol.
+    func testAwaitingInputIsAttentionPing() {
+        XCTAssertTrue(isAttention(.awaitingInput))
+        XCTAssertNil(symbolName(of: .awaitingInput), "the ping is a bespoke shape, not an SF-symbol")
     }
 
     /// `.caffeinate` ⇒ the coffee cup (a sleep-blocking session at rest).
@@ -67,7 +86,7 @@ final class TabBadgePresentationTests: XCTestCase {
     /// Every kind carries a non-empty, distinct AX/tooltip label so the icon-only badge is legible/testable.
     func testEveryKindHasADistinctNonEmptyLabel() {
         let kinds: [TabBadgeKind] = [
-            .running, .completed, .finished, .error, .awaitingInput, .caffeinate, .sudo,
+            .running, .commandRunning, .completed, .finished, .error, .awaitingInput, .caffeinate, .sudo,
         ]
         let labels = kinds.map { StatusPresentation.tabBadgeLabel($0) }
         XCTAssertTrue(labels.allSatisfy { !$0.isEmpty }, "no blank badge labels")

@@ -142,8 +142,8 @@ final class AgentBadgeStoreTests: XCTestCase {
             TabBadgeResolver.badge(
                 agent: .none, completion: store.pendingCompletion(for: id), isBusy: true, foregroundProcess: nil,
             ),
-            .running,
-            "with the stale badge cleared, the busy pane now shows the running spinner",
+            .commandRunning,
+            "with the stale badge cleared, the busy pane now shows the command-running marker",
         )
     }
 

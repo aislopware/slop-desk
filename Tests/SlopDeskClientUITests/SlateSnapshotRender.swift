@@ -227,18 +227,24 @@ private struct SlateShowcase: View {
 
     /// One showcase tab row on the shared ``SlateListRow`` shell (the same anatomy `SlateTabRow` rides).
     private func showcaseRow(title: String, badge: String?, active: Bool) -> some View {
-        SlateListRow(active: active) {
-            Text(title)
-                .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
-                .foregroundStyle(Slate.Text.primary)
-                .lineLimit(1)
-        } trailing: { _ in
-            if let badge {
-                Text(badge)
-                    .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                    .foregroundStyle(Slate.Text.secondary)
-            }
-        }
+        SlateListRow(
+            active: active,
+            title: {
+                Text(title)
+                    .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
+                    .foregroundStyle(Slate.Text.primary)
+                    .lineLimit(1)
+            },
+            titleTrailing: { _ in
+                if let badge {
+                    Text(badge)
+                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                        .foregroundStyle(Slate.Text.secondary)
+                }
+            },
+            subtitleTrailing: { _ in EmptyView() },
+            trailingOverlay: { _ in EmptyView() },
+        )
     }
 
     private var content: some View {

@@ -11,9 +11,10 @@ import SlopDeskAgentDetect
 ///
 /// **Why mask inputs, not the fused badge.** ``TabBadgeResolver/badge(...)`` stays PURE + signal-only
 /// (E6) — it knows nothing about user preferences. Applying the gates by masking the resolver INPUTS (rather
-/// than the single fused ``TabBadgeKind``) is what lets the agent spinner be gated WITHOUT silencing a
-/// program's busy / OSC 9;4 progress spinner — the two share the one ``TabBadgeKind/running`` output, so a
-/// post-fuse gate could not tell them apart.
+/// than the single fused ``TabBadgeKind``) keeps the policy at the source: gating the agent's own
+/// ``ClaudeStatus/working`` spinner (→ `.idle`) lets a still-busy shell fall through to the quiet
+/// ``TabBadgeKind/commandRunning`` marker, since `isBusy` / `progress` are left untouched — the agent badge is
+/// silenced without silencing a program's own busy / OSC 9;4 progress indicator.
 ///
 /// **What the agent gates DROP** (their own agent badge family only):
 ///  - `badgeWhileProcessing == false` → drop the AGENT thinking spinner (status ``ClaudeStatus/working``).

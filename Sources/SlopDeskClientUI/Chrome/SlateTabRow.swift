@@ -11,10 +11,11 @@ import SwiftUI
 
 /// One sidebar tab row. ACTIVE = the raised-card treatment; hover = flat plate + close `×`.
 ///
-/// E6 WI-4 grew the row from a name-only plate to its full chrome: an optional second-line cwd subtitle
-/// and a trailing cluster of the fused status `badge` and — on the ACTIVE row — the foreground-process
-/// label ("zsh"). Heights ride the ladder via ``SlateListRow`` (`heightRow` name-only, `heightRowTall`
-/// with a subtitle — `docs/ui-shell/screenshots/tab-badge.png`). The trailing cluster fades under hover `×`.
+/// E6 WI-4 grew the row from a name-only plate to its full chrome. The trailing accessories are now split
+/// PER LINE: the foreground-process label ("zsh", ACTIVE row only) rides LINE 1 beside the tab name, and the
+/// fused status `badge` sits ALONE on the compact LINE-2 subtitle (a single-line row with no subtitle keeps
+/// the badge on line 1). Heights ride the ladder via ``SlateListRow`` (`heightRow` name-only, `heightRowTall`
+/// with a subtitle — `docs/ui-shell/screenshots/tab-badge.png`). Both clusters fade under the hover `×`.
 struct SlateTabRow: View {
     let title: String
     let active: Bool
@@ -55,35 +56,47 @@ struct SlateTabRow: View {
     @State private var renameResolved = false
     @FocusState private var fieldFocused: Bool
 
+    /// Whether the row carries a second line (cwd / git line / host app). Mirrors ``SlateListRow``'s own test
+    /// so line-1 vs line-2 accessory placement stays in lock-step with where the shell actually draws line 2.
+    private var hasSubtitle: Bool { !(subtitle ?? "").isEmpty }
+
     var body: some View {
         // The row is the shared ``SlateListRow`` shell (MERIDIAN C2): the shell owns the height ladder,
         // padding, hover plate and the active raised-card treatment; this view supplies only the
-        // tab-specific slots — the title/rename field and the hover-swapped trailing cluster.
+        // tab-specific slots — the title/rename field and the per-line trailing clusters (running-process
+        // label pinned to line 1, the status badge alone on the compact line 2).
         SlateListRow(
             active: active,
             subtitle: subtitle,
             subtitleColored: gitSummary.flatMap(Self.gitLine),
             // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the field.
             onTap: { if !isEditing { onSelect() } },
-        ) {
-            if isEditing {
-                renameField
-            } else {
-                Text(title)
-                    .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
-                    .foregroundStyle(Slate.Text.primary)
-                    .lineLimit(1)
-            }
-        } trailing: { hovering in
-            if !isEditing {
-                ZStack(alignment: .trailing) {
-                    trailingMeta.opacity(hovering ? 0 : 1)
+            title: {
+                if isEditing {
+                    renameField
+                } else {
+                    Text(title)
+                        .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
+                        .foregroundStyle(Slate.Text.primary)
+                        .lineLimit(1)
+                }
+            },
+            titleTrailing: { hovering in
+                if !isEditing { lineOneTrailing(hovering: hovering) }
+            },
+            subtitleTrailing: { hovering in
+                if !isEditing { lineTwoTrailing(hovering: hovering) }
+            },
+            trailingOverlay: { hovering in
+                // The close `×` — centered over the whole row, revealed only on hover (the line-1/line-2 meta
+                // fade out beneath it). Not shown while renaming.
+                if !isEditing {
                     closeButton
                         .opacity(hovering ? 1 : 0)
                         .allowsHitTesting(hovering)
                 }
-            }
-        }
+            },
+        )
         .help(helpText ?? "")
     }
 
@@ -154,11 +167,14 @@ struct SlateTabRow: View {
         #endif
     }
 
-    /// The trailing status cluster: the read-only lock (if locked), the fused `badge` (if any), then the
-    /// foreground-process label on the ACTIVE row — all muted, right-aligned. Fades under the hover `×`.
+    /// LINE 1 trailing (right of the title): the read-only lock (if locked) then the foreground-process label
+    /// on the ACTIVE row ("zsh") — the running process now rides the FIRST line beside the tab name. A row with
+    /// no second line (no cwd/git subtitle) has nowhere else to put the status badge, so it also carries the
+    /// fused `badge` here; a two-line row moves the badge down to ``lineTwoTrailing`` instead. All muted,
+    /// right-aligned; the whole cluster fades out under the centered hover `×` (the row's ``trailingOverlay``).
     /// (The persistent `⌘N` switch-shortcut chip is REMOVED per user feedback — the ⌘1…⌘9 chords still
     /// work; the row just no longer advertises them.)
-    private var trailingMeta: some View {
+    private func lineOneTrailing(hovering: Bool) -> some View {
         HStack(spacing: 6) {
             if readOnly {
                 Image(systemSymbol: .lockFill)
@@ -167,16 +183,44 @@ struct SlateTabRow: View {
                     .accessibilityLabel("Read only")
                     .help("Read only")
             }
-            if let badge {
-                TabBadgeView(kind: badge)
-            }
             if active, let processLabel, !processLabel.isEmpty {
                 Text(processLabel)
                     .font(Slate.Typeface.instrument(Slate.Typeface.small))
                     .foregroundStyle(Slate.Text.secondary)
                     .lineLimit(1)
             }
+            // Single-line rows (no subtitle) host the status badge here — reserve its FIXED box (`Color.clear`
+            // reliably reserves; an empty conditional does not) so line 1 is the same height whether or not a
+            // badge is showing.
+            if !hasSubtitle {
+                Color.clear
+                    .frame(width: TabBadgeView.side, height: TabBadgeView.side)
+                    .overlay { if let badge { TabBadgeView(kind: badge) } }
+            }
         }
+        // Fades out under the hover close `×` (the centered ``trailingOverlay``).
+        .opacity(hovering ? 0 : 1)
+    }
+
+    /// LINE 2 trailing (right of the compact subtitle): the fused status `badge` alone — this is the "area now
+    /// holds only status" the redesign asked for, keeping the second line minimal instead of a duplicate of
+    /// line 1's meta. Rendered only when the row HAS a subtitle (else the badge stays on line 1); fades under
+    /// the hover `×`.
+    ///
+    /// The badge box (`TabBadgeView.side`) is TALLER than the subtitle text, so a badge appearing (a command
+    /// starting) would otherwise grow line 2 and re-centre the row content — reading as the tab getting taller.
+    /// We RESERVE the badge's fixed box with a `Color.clear` slot that is ALWAYS present (an empty conditional
+    /// + `.frame` does NOT reserve space in SwiftUI — that was the earlier miss); the badge draws into the slot
+    /// via `.overlay` when present. So line 2 is the same height with or without a badge: zero shift.
+    private func lineTwoTrailing(hovering: Bool) -> some View {
+        Color.clear
+            .frame(width: TabBadgeView.side, height: TabBadgeView.side)
+            .overlay {
+                if hasSubtitle, let badge {
+                    TabBadgeView(kind: badge)
+                        .opacity(hovering ? 0 : 1)
+                }
+            }
     }
 
     private var closeButton: some View {

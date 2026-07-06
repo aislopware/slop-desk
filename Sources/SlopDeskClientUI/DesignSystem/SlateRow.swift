@@ -16,10 +16,16 @@
 #if canImport(SwiftUI)
 import SwiftUI
 
-/// One list row: `leading` accessory + `title` slot (+ optional instrument `subtitle`) + `trailing`
-/// accessories. The `trailing` builder receives the live hover flag so a caller can swap clusters under
-/// hover (e.g. status meta ↔ close button) without owning its own hover state.
-struct SlateListRow<Leading: View, Title: View, Trailing: View>: View {
+/// One list row: `leading` accessory + `title` slot (+ optional instrument `subtitle`) + PER-LINE trailing
+/// accessories. `titleTrailing` sits on line 1 (right of the title); `subtitleTrailing` sits on the compact
+/// line-2 subtitle (right of the cwd/git line) and renders ONLY when a subtitle exists. Both builders receive
+/// the live hover flag so a caller can swap clusters under hover (e.g. status meta ↔ close button) without
+/// owning its own hover state. Splitting the trailing per line (was ONE full-height centered column) is what
+/// lets a two-line row keep the running-process label pinned to line 1 and the status badge alone on the
+/// compact line 2, instead of a single accessory floating vertically between the two lines.
+struct SlateListRow<
+    Leading: View, Title: View, TitleTrailing: View, SubtitleTrailing: View, TrailingOverlay: View,
+>: View {
     /// Active/selected treatment — the raised card. Default resting row.
     var active = false
     /// The muted truncating-middle second line (cwd / git line / host app). `nil`/empty ⇒ single-line row.
@@ -34,7 +40,15 @@ struct SlateListRow<Leading: View, Title: View, Trailing: View>: View {
     var onTap: (() -> Void)?
     @ViewBuilder let leading: () -> Leading
     @ViewBuilder let title: () -> Title
-    @ViewBuilder let trailing: (_ hovering: Bool) -> Trailing
+    /// Line-1 trailing cluster (right of the title) — receives the hover flag.
+    @ViewBuilder let titleTrailing: (_ hovering: Bool) -> TitleTrailing
+    /// Line-2 trailing cluster (right of the subtitle) — rendered ONLY when a subtitle exists; receives hover.
+    @ViewBuilder let subtitleTrailing: (_ hovering: Bool) -> SubtitleTrailing
+    /// A FULL-HEIGHT trailing overlay, vertically CENTERED over the whole row (both lines) at the same trailing
+    /// inset as the content — the home for a hover-revealed close `×`, which must sit centered on the row
+    /// rather than pinned to either line's baseline. Receives the hover flag; draw nothing (EmptyView) for a
+    /// row with no such affordance.
+    @ViewBuilder let trailingOverlay: (_ hovering: Bool) -> TrailingOverlay
 
     @State private var hovering = false
 
@@ -44,22 +58,35 @@ struct SlateListRow<Leading: View, Title: View, Trailing: View>: View {
         HStack(spacing: Slate.Metric.space2) {
             leading()
             VStack(alignment: .leading, spacing: 1) {
-                title()
+                HStack(spacing: Slate.Metric.space2) {
+                    title()
+                    Spacer(minLength: Slate.Metric.space2)
+                    titleTrailing(hovering)
+                }
                 if hasSubtitle {
-                    // The COLOURED git line (when supplied) renders in place of the plain string — same
-                    // instrument font, same secondary default, only per-run status colour differs.
-                    (subtitleColored.map(Text.init) ?? Text(subtitle ?? ""))
-                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                        .foregroundStyle(Slate.Text.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    HStack(spacing: Slate.Metric.space2) {
+                        // The COLOURED git line (when supplied) renders in place of the plain string — same
+                        // instrument font, same secondary default, only per-run status colour differs.
+                        (subtitleColored.map(Text.init) ?? Text(subtitle ?? ""))
+                            .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                            .foregroundStyle(Slate.Text.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: Slate.Metric.space2)
+                        subtitleTrailing(hovering)
+                    }
                 }
             }
-            Spacer(minLength: Slate.Metric.space2)
-            trailing(hovering)
         }
         .padding(.horizontal, Slate.Metric.space3)
         .frame(height: hasSubtitle ? Slate.Metric.heightRowTall : Slate.Metric.heightRow)
+        // The close `×` (and any future full-height affordance) rides a CENTERED trailing overlay — pinned to
+        // the same trailing inset as the content, vertically centered over BOTH lines so it never floats off a
+        // single line's baseline (the per-line clusters above fade out under hover to clear the way for it).
+        .overlay(alignment: .trailing) {
+            trailingOverlay(hovering)
+                .padding(.trailing, Slate.Metric.space3)
+        }
         .background(rowBackground, in: .rect(cornerRadius: Slate.Metric.radiusTab))
         .overlay { if active { RoundedRectangle(cornerRadius: Slate.Metric.radiusTab).strokeBorder(
             Slate.Line.card,
@@ -80,18 +107,23 @@ struct SlateListRow<Leading: View, Title: View, Trailing: View>: View {
 }
 
 extension SlateListRow where Leading == EmptyView {
-    /// A row with no leading accessory (the sidebar tab rows — name-first, no icon).
+    /// A row with no leading accessory (the sidebar tab rows — name-first, no icon), with per-line trailing
+    /// clusters: `titleTrailing` on line 1 (running-process label / hover close) and `subtitleTrailing` on the
+    /// compact line 2 (the status badge).
     init(
         active: Bool = false,
         subtitle: String? = nil,
         subtitleColored: AttributedString? = nil,
         onTap: (() -> Void)? = nil,
         @ViewBuilder title: @escaping () -> Title,
-        @ViewBuilder trailing: @escaping (_ hovering: Bool) -> Trailing,
+        @ViewBuilder titleTrailing: @escaping (_ hovering: Bool) -> TitleTrailing,
+        @ViewBuilder subtitleTrailing: @escaping (_ hovering: Bool) -> SubtitleTrailing,
+        @ViewBuilder trailingOverlay: @escaping (_ hovering: Bool) -> TrailingOverlay,
     ) {
         self.init(
             active: active, subtitle: subtitle, subtitleColored: subtitleColored, onTap: onTap,
-            leading: { EmptyView() }, title: title, trailing: trailing,
+            leading: { EmptyView() }, title: title, titleTrailing: titleTrailing,
+            subtitleTrailing: subtitleTrailing, trailingOverlay: trailingOverlay,
         )
     }
 }

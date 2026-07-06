@@ -10,9 +10,17 @@ import SlopDeskAgentDetect
 ///
 /// Each case maps to a badge described in `progress-state.md` → "The full badge set".
 public enum TabBadgeKind: Equatable, Sendable {
-    /// **Running** — a spinner. `OSC 9;4;1`/`3` in progress, a long-running watch command, or a busy shell /
-    /// a working agent. Rendered as an indeterminate spinner in the view layer.
+    /// **Running (agent)** — a WORKING code agent (`ClaudeStatus.working`). The loud, animated "agent is
+    /// thinking" indicator (accent comet arc in the view layer). Split from a plain command's
+    /// ``commandRunning`` so the sidebar reads "the AGENT is working" distinctly from "a command is running"
+    /// (herdr's `Working` vs `Unknown` distinction). A busy PRIVILEGED shell still ranks here (above the
+    /// shield), so a running `sudo …` shows activity, not the privilege badge.
     case running
+    /// **Running (command)** — a plain busy shell / a long-running watch command / an `OSC 9;4;1`/`3` progress
+    /// with NO agent working. The QUIET, muted marker (normal secondary text colour, no accent) — a running
+    /// command is not agent chatter, so it stays low-key (herdr renders a plain shell as a dim dot, never the
+    /// agent spinner). Ranks just below ``running`` and above the privilege badges.
+    case commandRunning
     /// **Completed** — the green checkmark. The brief success flash a command shows on a clean exit
     /// (`OSC 133;D` exit 0) before it settles to ``finished``. This resolver emits ``completed`` for a
     /// `.success` completion / an agent that just finished its turn ONLY while the caller reports the
@@ -47,12 +55,13 @@ public enum TabBadgeKind: Equatable, Sendable {
 /// **Fixed precedence** (E6 plan Design #5, distilled from `progress-state.md` + `parallel-tasks.md`):
 ///
 /// ```
-/// awaitingInput  >  error  >  running  >  sudo  >  caffeinate  >  completed/finished  >  nil
+/// awaitingInput  >  error  >  running(agent)  >  commandRunning  >  sudo  >  caffeinate  >  completed/finished  >  nil
 /// ```
 ///
-/// Caffeinate/sudo deliberately sit **below** the active states so a *running* privileged command still
-/// spins; the privilege badge only surfaces when the shell is at rest (i.e., not actively running a
-/// foreground command).
+/// A working AGENT (``running``) outranks a plain busy shell (``commandRunning``) — if a pane is somehow both,
+/// the agent signal wins. Caffeinate/sudo deliberately sit **below** the active states so a *running*
+/// privileged command still shows activity; the privilege badge only surfaces when the shell is at rest
+/// (i.e., not actively running a foreground command).
 ///
 /// Headless + deterministic: no SwiftUI, no clock, no I/O. The only inputs are the agent verdict, the
 /// stored completion badge, the busy bit, and the (untrusted) foreground-process string — which is
@@ -115,11 +124,13 @@ public enum TabBadgeResolver {
         if completion == .failure { return .error }
         if let progress, case .error = progress { return .error }
 
-        // 3. Running — a busy shell, a working agent, or an active OSC 9;4;1/3 progress spinner. (A
-        // progress `.error` already returned at the error tier above, so `isRunning` here is exactly the
-        // indeterminate/determinate "still going" states.)
-        if isBusy || agent == .working { return .running }
-        if let progress, progress.isRunning { return .running }
+        // 3. Running — a WORKING agent gets the loud agent badge (``running``); a plain busy shell or an active
+        // OSC 9;4;1/3 progress with no working agent gets the QUIET ``commandRunning`` marker. Agent wins if
+        // both. (A progress `.error` already returned at the error tier above, so `isRunning` here is exactly
+        // the indeterminate/determinate "still going" states.)
+        if agent == .working { return .running }
+        if isBusy { return .commandRunning }
+        if let progress, progress.isRunning { return .commandRunning }
 
         // 4 + 5. Privilege badges, only when the shell is at rest: sudo (shield) > caffeinate (coffee).
         if let privilege = privilegeBadge(forProcess: foregroundProcess) { return privilege }

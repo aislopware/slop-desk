@@ -103,6 +103,7 @@ public enum ClientControlProtocol {
     public static func badgeToken(for kind: TabBadgeKind) -> String {
         switch kind {
         case .running: "running"
+        case .commandRunning: "command-running"
         case .completed: "completed"
         case .finished: "finished"
         case .error: "error"

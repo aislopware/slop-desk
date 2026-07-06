@@ -71,11 +71,15 @@ enum StatusPresentation {
     /// have a single source.
     static func tabBadge(_ kind: TabBadgeKind) -> TabBadgeStyle {
         switch kind {
-        case .running: .spinner
+        // Agent WORKING — the loud, animated accent comet arc ("agent is thinking").
+        case .running: .working(tint: Slate.State.accent)
+        // A plain command running — the QUIET muted dot (normal secondary text colour, no accent, no spin).
+        case .commandRunning: .commandBusy(tint: Slate.Text.secondary)
         case .completed: .symbol(name: "checkmark.circle.fill", tint: Slate.Status.ok)
         case .finished: .dot(Slate.Status.ok)
         case .error: .symbol(name: "exclamationmark.triangle.fill", tint: Slate.Status.err)
-        case .awaitingInput: .symbol(name: "hand.raised.fill", tint: Slate.Status.warn)
+        // Awaiting input — the most-urgent state: a gentle amber attention PING (core dot + expanding halo).
+        case .awaitingInput: .attention(tint: Slate.Status.warn)
         case .caffeinate: .symbol(name: "cup.and.saucer.fill", tint: Slate.Text.secondary)
         case .sudo: .symbol(name: "shield.lefthalf.filled", tint: Slate.Text.secondary)
         }
@@ -85,7 +89,8 @@ enum StatusPresentation {
     /// legible and testable. Pure text — mirrors the `progress-state.md` badge vocabulary.
     static func tabBadgeLabel(_ kind: TabBadgeKind) -> String {
         switch kind {
-        case .running: "Running"
+        case .running: "Agent working"
+        case .commandRunning: "Running"
         case .completed: "Completed"
         case .finished: "Finished"
         case .error: "Error"
@@ -136,12 +141,18 @@ enum ProgressPresentation: Equatable {
 /// are bespoke shapes the view draws directly; `.symbol` is an SF-symbol name + its tint. A pure value (no
 /// view), so the badge map can be unit-tested without rendering.
 enum TabBadgeStyle {
-    /// An indeterminate gray spinner (a running command / working agent). A pure SwiftUI animation — never a
-    /// video/capture session (CLAUDE.md hang-safety rule #6).
-    case spinner
-    /// A small filled accent dot (the settled "unread output" `.finished` marker).
+    /// The AGENT-working indicator — a smooth accent comet arc (``SlateCometArc``), the "agent is thinking"
+    /// pulse. A pure SwiftUI animation, never a video/capture session (CLAUDE.md hang-safety rule #6).
+    case working(tint: Color)
+    /// A plain COMMAND running — a quiet muted dot (normal secondary text colour), no animation. Distinct from
+    /// ``working`` so the sidebar reads "a command is running" apart from "the agent is thinking".
+    case commandBusy(tint: Color)
+    /// The AWAITING-INPUT attention indicator — a gentle ping (``SlatePingDot``): a filled core dot plus one
+    /// expanding, fading halo ring. Draws the eye (the most-urgent state) without spinning.
+    case attention(tint: Color)
+    /// A small filled dot (the settled "unread output" `.finished` marker).
     case dot(Color)
-    /// A tinted SF-symbol fill (completed / error / awaiting-input / caffeinate / sudo).
+    /// A tinted SF-symbol fill (completed / error / caffeinate / sudo).
     case symbol(name: String, tint: Color)
 }
 #endif

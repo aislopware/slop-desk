@@ -3,9 +3,10 @@ import XCTest
 @testable import SlopDeskWorkspaceCore
 
 /// E14/K1 WI-2 — the OSC 9;4 PROGRESS input to the pure ``TabBadgeResolver``. WI-2 routes a live
-/// ``PaneProgress`` into the EXISTING precedence (no new badge kind): an active in-progress / indeterminate
-/// resolves to the `.running` spinner; a `9;4;2` error resolves to the `.error` alert (ranked at the error
-/// tier, above a stale completion dot). A cleared progress (`nil`) falls through to the pre-E14 badge.
+/// ``PaneProgress`` into the EXISTING precedence: an active in-progress / indeterminate is a COMMAND-level
+/// signal, so it resolves to the quiet `.commandRunning` marker (not the loud agent `.running`); a `9;4;2`
+/// error resolves to the `.error` alert (ranked at the error tier, above a stale completion dot). A cleared
+/// progress (`nil`) falls through to the pre-E14 badge.
 ///
 /// REVERT-TO-CONFIRM-FAIL: each test compares a progress-FED resolver against the un-fed (`progress: nil`)
 /// result — on the pre-WI-2 resolver (no `progress` parameter) these would not compile, and the fed-vs-unfed
@@ -26,19 +27,21 @@ final class TabBadgeResolverProgressTests: XCTestCase {
         )
     }
 
-    // MARK: - active progress → the running spinner
+    // MARK: - active progress → the command-running marker
 
-    /// An OSC 9;4;3 indeterminate spinner ⇒ `.running` (otherwise the idle row is all-clear).
-    func testIndeterminateProgressMapsToRunning() {
+    /// An OSC 9;4;3 indeterminate progress ⇒ `.commandRunning` (a command signal; otherwise the row is clear).
+    func testIndeterminateProgressMapsToCommandRunning() {
         XCTAssertNil(badge(progress: nil), "no progress on an otherwise idle row is all-clear")
-        XCTAssertEqual(badge(progress: .indeterminate), .running, "an OSC 9;4;3 spinner ⇒ running")
+        XCTAssertEqual(badge(progress: .indeterminate), .commandRunning, "an OSC 9;4;3 ⇒ command-running")
     }
 
-    /// An OSC 9;4;1;<pct> determinate value ⇒ `.running`, at any percent (0…100; not-yet-cleared still spins).
-    func testInProgressDeterminateMapsToRunning() {
-        XCTAssertEqual(badge(progress: .determinate(percent: 40)), .running, "an OSC 9;4;1;40 ⇒ running")
-        XCTAssertEqual(badge(progress: .determinate(percent: 0)), .running, "even 0% in-progress ⇒ running")
-        XCTAssertEqual(badge(progress: .determinate(percent: 100)), .running, "100% (not yet cleared) ⇒ running")
+    /// An OSC 9;4;1;<pct> determinate value ⇒ `.commandRunning`, at any percent (0…100; not-yet-cleared).
+    func testInProgressDeterminateMapsToCommandRunning() {
+        XCTAssertEqual(badge(progress: .determinate(percent: 40)), .commandRunning, "9;4;1;40 ⇒ command-running")
+        XCTAssertEqual(badge(progress: .determinate(percent: 0)), .commandRunning, "even 0% ⇒ command-running")
+        XCTAssertEqual(
+            badge(progress: .determinate(percent: 100)), .commandRunning, "100% (not yet cleared) ⇒ command-running",
+        )
     }
 
     // MARK: - error progress (state 2) → the error alert
@@ -89,8 +92,8 @@ final class TabBadgeResolverProgressTests: XCTestCase {
             "a failed exit still outranks a running spinner",
         )
         XCTAssertEqual(
-            badge(foregroundProcess: "sudo", progress: .indeterminate), .running,
-            "an active progress spinner outranks the sudo badge (a running privileged command spins)",
+            badge(foregroundProcess: "sudo", progress: .indeterminate), .commandRunning,
+            "an active progress outranks the sudo badge (a running privileged command shows activity)",
         )
     }
 }
