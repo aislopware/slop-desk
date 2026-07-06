@@ -101,6 +101,10 @@ public enum HostEnvironment {
         // set — absent leaves the shim's default-on branch unchanged.
         if let osc133 = parent[ShellIntegration.osc133EnvKey] { env[ShellIntegration.osc133EnvKey] = osc133 }
 
+        // Same contract for the cursor-shape opt-out: the shim's `.zshrc` reads
+        // `${SLOPDESK_SHELL_CURSOR:-1}` in the CHILD; forwarded ONLY when set.
+        if let cursor = parent[ShellIntegration.cursorEnvKey] { env[ShellIntegration.cursorEnvKey] = cursor }
+
         // W10: export the agent-hook socket path + pane id into the PTY env (Muxy's
         // MUXY_SOCKET_PATH / MUXY_PANE_ID analog) when the host has the opt-in hook listener
         // enabled. The installed hook script (``AgentInstaller/hookScript()``) reads these to

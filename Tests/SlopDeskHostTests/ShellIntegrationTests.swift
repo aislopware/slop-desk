@@ -322,6 +322,70 @@ final class ShellIntegrationTests: XCTestCase {
         )
     }
 
+    // MARK: Cursor-shape shell integration (ghostty/kitty parity)
+
+    /// The ghostty/kitty "cursor" shell-integration feature: a BAR caret at the prompt (no foreground
+    /// command), restored to the configured default (block) while a command runs. precmd emits
+    /// DECSCUSR 5 (blinking bar — ghostty's exact sequence) right before the prompt draws; preexec
+    /// emits DECSCUSR 0 (reset to the terminal's configured `cursor-style`) as the command starts.
+    /// libghostty on the client handles DECSCUSR natively, so the shim only has to emit the bytes.
+    ///
+    /// Revert-to-confirm-fail: on the un-fixed shim this fails because no DECSCUSR is emitted.
+    func testZshrcInstallsCursorShapeHooksViaAddZshHook() throws {
+        let dir = try XCTUnwrap(ShellIntegration.writeShimDirectory(into: makeTempDir()))
+        let zshrc = try String(contentsOf: dir.appendingPathComponent(".zshrc"), encoding: .utf8)
+        // Registered via add-zsh-hook (composes with starship/omz/p10k — never a bare precmd()).
+        XCTAssertTrue(
+            zshrc.contains("add-zsh-hook precmd  __slopdesk_cursor_precmd")
+                || zshrc.contains("add-zsh-hook precmd __slopdesk_cursor_precmd"),
+            "must register the cursor precmd hook via add-zsh-hook",
+        )
+        XCTAssertTrue(
+            zshrc.contains("add-zsh-hook preexec __slopdesk_cursor_preexec"),
+            "must register the cursor preexec hook via add-zsh-hook",
+        )
+        // precmd → blinking bar (DECSCUSR 5); preexec → reset to configured default (DECSCUSR 0).
+        // Literal octal escapes (\\033) — same shell-literal rule as the OSC 133 marks.
+        guard let precmdRange = zshrc.range(of: "__slopdesk_cursor_precmd()") else {
+            XCTFail("cursor precmd function not found")
+            return
+        }
+        let precmdBody = zshrc[precmdRange.upperBound...].prefix(while: { $0 != "}" })
+        XCTAssertTrue(
+            precmdBody.contains("\\033[5 q"),
+            "the cursor precmd must emit DECSCUSR 5 (blinking bar at the prompt)",
+        )
+        guard let preexecRange = zshrc.range(of: "__slopdesk_cursor_preexec()") else {
+            XCTFail("cursor preexec function not found")
+            return
+        }
+        let preexecBody = zshrc[preexecRange.upperBound...].prefix(while: { $0 != "}" })
+        XCTAssertTrue(
+            preexecBody.contains("\\033[0 q"),
+            "the cursor preexec must emit DECSCUSR 0 (reset to the configured default while a command runs)",
+        )
+    }
+
+    /// A marks-independent opt-out: `SLOPDESK_SHELL_CURSOR=0` disables JUST the cursor-shape
+    /// feature (OSC 133 marks and the resize reprint fix stay on), mirroring the SLOPDESK_OSC133
+    /// idiom (`${…:-1}` default-ON, standard falsy values disable, evaluated in the CHILD shell).
+    func testZshrcCursorShapeIsGatedBySlopDeskShellCursor() throws {
+        let dir = try XCTUnwrap(ShellIntegration.writeShimDirectory(into: makeTempDir()))
+        let zshrc = try String(contentsOf: dir.appendingPathComponent(".zshrc"), encoding: .utf8)
+        XCTAssertTrue(
+            zshrc.contains("case \"${SLOPDESK_SHELL_CURSOR:-1}\" in"),
+            "cursor-shape emission must be gated by SLOPDESK_SHELL_CURSOR, default-ON",
+        )
+        // The gate must accept the standard falsy opt-out values inside ITS OWN case (not just the
+        // OSC 133 gate's): assert the falsy arm appears after the cursor gate.
+        let gateRange = try XCTUnwrap(zshrc.range(of: "case \"${SLOPDESK_SHELL_CURSOR:-1}\" in"))
+        let afterGate = zshrc[gateRange.upperBound...]
+        XCTAssertTrue(
+            afterGate.contains("0|false|no|off"),
+            "SLOPDESK_SHELL_CURSOR must accept the standard falsy opt-out values",
+        )
+    }
+
     func testZshrcKeepsResizeReprintFixAlongsideOSC133() throws {
         let dir = try XCTUnwrap(ShellIntegration.writeShimDirectory(into: makeTempDir()))
         let zshrc = try String(contentsOf: dir.appendingPathComponent(".zshrc"), encoding: .utf8)

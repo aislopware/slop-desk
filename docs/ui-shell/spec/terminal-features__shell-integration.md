@@ -15,6 +15,8 @@ SlopDesk injects small shell hooks that emit OSC 133 (FTCS) prompt marks, poweri
 | `OSC 133 ; C` | When the command starts running | Output begins here |
 | `OSC 133 ; D ; <exit>` | When the command finishes | Records exit status |
 | `OSC 7 ; file://<host><cwd>` | At every prompt | Tracks pane cwd |
+| `CSI 5 SP q` (DECSCUSR 5) | Right before drawing the prompt | Bar caret while the shell is idle at its prompt (ghostty/kitty "cursor" feature) |
+| `CSI 0 SP q` (DECSCUSR 0) | When the command starts running | Restores the configured default caret (block) while a command runs |
 
 ### Features driven by OSC 133 C / D (command status)
 
@@ -107,6 +109,7 @@ None on this page. (Jump-to-prompt and outline navigation keybindings are in the
 |-----|---------|--------|
 | `shell-integration` | `enabled` | Master toggle. Mirrors **Settings → Shell → Shell Integration → Provide Shell Integration**. When `disabled`, removes all injected blocks and stops per-session env injection; prompt marks, command status, CWD tracking, `edit`/`view`/`jump` wrappers, custom aliases, and SSH integration go dark. |
 | `SLOPDESK_DISABLE_INTEGRATION` (env var) | unset | Set to `1` in a shell rc (before SlopDesk's payload) to skip integration for that shell instance only, without changing the global setting. |
+| `SLOPDESK_SHELL_CURSOR` (env var) | unset (feature ON) | Set to `0`/`false`/`no`/`off` to disable just the prompt cursor-shape feature (bar at prompt, block while a command runs) while keeping the OSC 133 marks. Evaluated in the child shell; forwarded across the curated env allowlist like `SLOPDESK_OSC133`. |
 
 ## Visual spec
 

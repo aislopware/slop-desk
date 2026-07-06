@@ -42,6 +42,14 @@ public enum ShellIntegration {
     /// daemon-side setting to take effect.
     public static let osc133EnvKey = "SLOPDESK_OSC133"
 
+    /// Env var that opts OUT of JUST the cursor-shape feature (bar caret at the prompt, configured
+    /// default while a command runs — ghostty/kitty's "cursor" shell-integration feature) when set
+    /// to `0` / `false` / `no` / `off`. Evaluated in the CHILD shell by the generated `.zshrc`
+    /// (`${SLOPDESK_SHELL_CURSOR:-1}`), so it must be FORWARDED across the curated env allowlist
+    /// (``HostEnvironment/curated(parent:term:agentSocketPath:paneID:controlSocketPath:)``) — same
+    /// contract as ``osc133EnvKey``.
+    public static let cursorEnvKey = "SLOPDESK_SHELL_CURSOR"
+
     /// A private env var the shim's `.zshenv` reads to learn the user's *real* `ZDOTDIR`
     /// before we overrode it (defaults to `$HOME` inside the script when unset). Carrying it
     /// explicitly means the shim never has to guess what `ZDOTDIR` would have been.
@@ -166,9 +174,10 @@ public enum ShellIntegration {
 
     /// The shim `.zshrc`: source the user's real `.zshrc` (p10k loads here), install the WINCH
     /// reprint hook chaining any pre-existing `TRAPWINCH`, install the OSC 133 command marks via
-    /// `add-zsh-hook` (composes with starship/omz/p10k; gated by `SLOPDESK_OSC133`), then restore
-    /// `ZDOTDIR` to the user's real value as the LAST act so the running shell sees the env it
-    /// expects.
+    /// `add-zsh-hook` (composes with starship/omz/p10k; gated by `SLOPDESK_OSC133`), install the
+    /// cursor-shape hooks (bar at prompt / default while running — ghostty/kitty parity; gated by
+    /// `SLOPDESK_SHELL_CURSOR`), then restore `ZDOTDIR` to the user's real value as the LAST act
+    /// so the running shell sees the env it expects.
     static let zshrcBody: String = """
     # slopdesk shell-integration shim — sources the user's real .zshrc, then installs a
     # SIGWINCH prompt-reprint hook so the prompt is redrawn after a remote resize.
@@ -281,6 +290,29 @@ public enum ShellIntegration {
         }
         add-zsh-hook preexec __slopdesk_osc133_preexec
         add-zsh-hook precmd  __slopdesk_osc133_precmd
+        ;;
+    esac
+
+    # slopdesk cursor-shape shell integration — the ghostty/kitty "cursor" feature: a BAR caret
+    # while the shell is at its prompt (no foreground command) and the terminal's configured
+    # default (block) while a command runs. DECSCUSR (CSI Ps SP q) is handled natively by the
+    # client's libghostty renderer, so the shim only emits the bytes: precmd fires right before
+    # the prompt draws → 5 (blinking bar, ghostty's exact sequence); preexec fires as the command
+    # starts → 0 (reset to the configured cursor-style). A full-screen program (vim) that sets its
+    # own DECSCUSR is naturally restored on exit by the next precmd. Same add-zsh-hook composition
+    # and octal-escape rules as the OSC 133 block above. Opt out with SLOPDESK_SHELL_CURSOR=0.
+    case "${SLOPDESK_SHELL_CURSOR:-1}" in
+      0|false|no|off) ;;
+      *)
+        autoload -Uz add-zsh-hook
+        __slopdesk_cursor_precmd() {
+          printf '\\033[5 q'
+        }
+        __slopdesk_cursor_preexec() {
+          printf '\\033[0 q'
+        }
+        add-zsh-hook precmd  __slopdesk_cursor_precmd
+        add-zsh-hook preexec __slopdesk_cursor_preexec
         ;;
     esac
 

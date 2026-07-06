@@ -106,6 +106,20 @@ final class AgentEnvironmentTests: XCTestCase {
         XCTAssertNil(env["SLOPDESK_OSC133"], "an unset OSC133 must not be materialized (keep the shim default)")
     }
 
+    /// The daemon-side cursor-shape opt-out (`SLOPDESK_SHELL_CURSOR=0`) must be forwarded into the
+    /// curated child env — the shim's `.zshrc` reads `${SLOPDESK_SHELL_CURSOR:-1}` in the CHILD
+    /// (same contract as `SLOPDESK_OSC133`), so the allowlist must carry it or the opt-out is dead code.
+    func testCuratedForwardsShellCursorOptOut() {
+        let env = HostEnvironment.curated(parent: ["SLOPDESK_SHELL_CURSOR": "0", "HOME": "/Users/x"])
+        XCTAssertEqual(env["SLOPDESK_SHELL_CURSOR"], "0", "the daemon-side cursor opt-out must reach the child shell")
+    }
+
+    /// When unset, curated must not synthesize it — the shim's default-ON branch must be preserved.
+    func testCuratedOmitsShellCursorWhenUnset() {
+        let env = HostEnvironment.curated(parent: ["HOME": "/Users/x"])
+        XCTAssertNil(env["SLOPDESK_SHELL_CURSOR"], "an unset cursor flag must not be materialized")
+    }
+
     func testPaneIDIsTheCompositeKey() {
         let conn = UUID()
         let id = HostServer.paneID(connectionID: conn, channelID: 4)
